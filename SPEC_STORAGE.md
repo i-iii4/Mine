@@ -388,10 +388,17 @@ Rules:
   through `read_projection_snapshot` inside one SQLite savepoint. A concurrent
   writer is therefore observed either entirely before or entirely after the
   snapshot, never between its fields.
-- A preview manifest is route-visible only when `preview_state = ready` and
-  `preview_source_stamp` equals the current `source_index_state.source_stamp`
-  for that slug. A legacy/nonmatching manifest remains stored for diagnosis or
-  recovery but the route publishes the card's type-correct fallback.
+- A preview manifest is route-visible when `preview_state = ready`, and also
+  when it is `stale` with a non-null `preview_source_stamp`. The second case is
+  a preview that exists on disk and is merely marked for recomputation: every
+  write to a block marks it, including one that edited only frontmatter tags,
+  and the source stamp covers the whole `.md`. Withholding it turned connecting
+  a card to a collection into minutes of a missing video, because the card fell
+  back to text until the preview queue reached it. The cost of serving it is a
+  poster one generation behind until reconciliation replaces it.
+- A `stale` preview with a null stamp was never generated, so nothing exists to
+  draw; it stays withheld, as do `missing` and `failed`. The stamp is what tells
+  "not built yet" apart from "built, worth rechecking".
 - Progressive preview batches are separate committed generations. The UI may
   replace generation `N` with `N + 1`; it must not merge rows/pages from two
   different generations or apply an older response after a newer one.

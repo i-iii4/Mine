@@ -2821,6 +2821,58 @@ mod tests {
     }
 
     #[test]
+    fn list_grid_blocks_keeps_serving_a_preview_that_only_went_stale() {
+        // Editing frontmatter tags marks every block stale, and the source
+        // stamp covers the whole `.md`, so connecting a card to a collection
+        // invalidated a poster no medium had touched. Withholding it left the
+        // card text-only until the preview queue came round — minutes of a
+        // video missing from the feed for an edit that changed no media.
+        let conn = test_conn();
+        let mut block = make_block_full(
+            "stale-but-drawn",
+            "image",
+            Some("Stale but drawn"),
+            "2026-01-01T00:00:00Z",
+            &[],
+            "",
+        );
+        block.frontmatter.file = Some("photo.jpg".to_string());
+        upsert_block(&conn, &block, None).unwrap();
+        conn.execute(
+            "INSERT INTO source_index_state (slug, source_kind, source_stamp)
+             VALUES ('stale-but-drawn', 'block', 'source-v1')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE blocks SET preview_state = 'ready', preview_source_stamp = 'source-v1'
+             WHERE slug = 'stale-but-drawn'",
+            [],
+        )
+        .unwrap();
+
+        // A tag edit: the block is rewritten, which marks the preview stale
+        // while leaving the stamp of the artifact already on disk.
+        block.frontmatter.tags.push("Красивый веб".to_string());
+        upsert_block(&conn, &block, None).unwrap();
+
+        let state: String = conn
+            .query_row(
+                "SELECT preview_state FROM blocks WHERE slug = 'stale-but-drawn'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(state, "stale");
+
+        let (blocks, _) = list_grid_blocks(&conn, None, 0, 20).unwrap();
+        assert!(
+            blocks[0].preview_manifest.is_some(),
+            "a stale preview that exists on disk must still be drawn",
+        );
+    }
+
+    #[test]
     fn list_grid_blocks_with_query_filters_route_and_returns_match_excerpt() {
         let conn = test_conn();
         upsert_block(

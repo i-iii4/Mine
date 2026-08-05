@@ -36,6 +36,18 @@ pub fn list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>> {
 /// List only the blocks needed by the visible grid, optionally filtered by tag.
 /// Excludes channel documents and omits per-block tag arrays to keep the
 /// startup/switch payload small; tag membership is fetched lazily for menus/detail.
+///
+/// A `stale` preview is still served. `stale` means "worth recomputing", not
+/// "wrong": every write to a block marks it, including one that only edited
+/// frontmatter tags, and the source stamp covers the whole `.md` — so
+/// connecting a card to a collection invalidated a poster that no medium had
+/// touched. Withholding the manifest turned such a card into a text-only one
+/// until the preview queue reached it, which on a large vault is minutes of a
+/// video simply gone from the feed.
+///
+/// The worst case of serving it is a poster one generation behind, visible
+/// until reconciliation replaces it. `missing` and `failed` are still withheld:
+/// there the artifact genuinely is not on disk.
 pub fn list_grid_blocks(
     conn: &Connection,
     tag: Option<&str>,
@@ -50,16 +62,10 @@ pub fn list_grid_blocks(
                     CASE WHEN b.card_kind = 'article' THEN SUBSTR(b.body, 1, ?1) ELSE '' END,
                     b.preview_text, b.first_image, b.media_urls, b.media_dimensions,
                     CASE WHEN b.preview_state = 'ready'
-                              AND b.preview_source_stamp = (
-                                  SELECT source.source_stamp FROM source_index_state source
-                                  WHERE source.slug = b.slug
-                              )
+                              OR (b.preview_state = 'stale' AND b.preview_source_stamp IS NOT NULL)
                          THEN b.preview_manifest END,
                     CASE WHEN b.preview_state = 'ready'
-                              AND b.preview_source_stamp = (
-                                  SELECT source.source_stamp FROM source_index_state source
-                                  WHERE source.slug = b.slug
-                              )
+                              OR (b.preview_state = 'stale' AND b.preview_source_stamp IS NOT NULL)
                          THEN b.feed_playback END
              FROM blocks b
              INNER JOIN block_tags bt ON bt.block_id = b.id
@@ -73,16 +79,10 @@ pub fn list_grid_blocks(
                     CASE WHEN card_kind = 'article' THEN SUBSTR(body, 1, ?1) ELSE '' END,
                     preview_text, first_image, media_urls, media_dimensions,
                     CASE WHEN preview_state = 'ready'
-                              AND preview_source_stamp = (
-                                  SELECT source.source_stamp FROM source_index_state source
-                                  WHERE source.slug = blocks.slug
-                              )
+                              OR (preview_state = 'stale' AND preview_source_stamp IS NOT NULL)
                          THEN preview_manifest END,
                     CASE WHEN preview_state = 'ready'
-                              AND preview_source_stamp = (
-                                  SELECT source.source_stamp FROM source_index_state source
-                                  WHERE source.slug = blocks.slug
-                              )
+                              OR (preview_state = 'stale' AND preview_source_stamp IS NOT NULL)
                          THEN feed_playback END
              FROM blocks
              WHERE card_kind != 'channel'
