@@ -186,8 +186,8 @@ Image click contract:
 - because of this the image surface must not suppress `mousedown`: doing so
   would also suppress the click. Native HTML `dragstart` stays suppressed, since
   dragging belongs to dnd-kit;
-- the resting cursor is `zoom-in` (the click is the primary gesture); `grabbing`
-  appears only while a drag is actually in progress;
+- the image has no resting cursor of its own; `grabbing` appears only while a
+  drag is actually in progress;
 - the top-right media controls keep the standard `Expand` icon button for
   fullscreen image preview;
 - both entry points pass every image of the card, in reading order, so the

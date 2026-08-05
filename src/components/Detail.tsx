@@ -1558,11 +1558,9 @@ function MediaAssetActionFrame({
       {...(canDrag ? dragListeners : {})}
       className={cn(
         "not-prose group/detail-media relative inline-flex max-h-[85vh] max-w-full overflow-hidden align-top leading-none [&_img]:m-0 [&_img]:block [&_video]:m-0 [&_video]:block",
+        // No resting cursor of its own: the pointer stays default until a drag
+        // actually starts, and only then becomes grabbing.
         canDrag && "select-none active:cursor-grabbing",
-        // Click is the primary gesture, so the resting cursor advertises it.
-        // The grab cursor belongs to the moment a drag actually starts, not to
-        // an image sitting still under the pointer.
-        canOpenImagePreview && "cursor-zoom-in",
         isDragging && "opacity-40",
         className,
       )}
