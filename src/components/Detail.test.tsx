@@ -1523,7 +1523,7 @@ describe("Detail", () => {
     expect(within(dialog).queryByText("2 cards reference this file.")).not.toBeInTheDocument();
     expect(within(dialog).queryByText("photo.jpg")).not.toBeInTheDocument();
     expect(photoRow).toHaveAttribute("data-related-note-item", "button");
-    expect(photoRow).toHaveClass("bg-component-fill", "cursor-pointer");
+    expect(photoRow).toHaveClass("bg-component-fill");
     expect(sourceRow).toHaveAttribute("data-related-note-item", "button");
     expect(dialog.querySelector("img")).toHaveAttribute(
       "src",
@@ -1864,7 +1864,6 @@ describe("Detail", () => {
       "border-border",
       "bg-component-fill",
       "p-[3px]",
-      "cursor-pointer",
       "font-sans",
       "text-base",
       "text-muted-foreground",

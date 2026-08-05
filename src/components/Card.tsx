@@ -190,7 +190,7 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       className={cn(
-        "h-full cursor-pointer",
+        "h-full",
         isArticleFeedCard && "feed-article-card",
         isDragging && "opacity-30",
       )}
@@ -516,7 +516,7 @@ export function InteractiveCardPreview({
       data-block-slug={block.slug}
       role={onClick ? "button" : undefined}
       tabIndex={onClick ? 0 : undefined}
-      className={cn("cursor-pointer rounded-1 shadow-lg", !onClick && "cursor-default", className)}
+      className={cn("rounded-1 shadow-lg", !onClick && "cursor-default", className)}
       style={{ width, borderRadius: "var(--radius-1)" }}
       onClick={() => onClick?.(block)}
       onKeyDown={(event) => {

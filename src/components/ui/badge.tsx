@@ -25,7 +25,7 @@ const badgeVariants = cva(
           "font-semibold text-primary underline-offset-4 [a&]:hover:underline",
       },
       interactive: {
-        true: "cursor-pointer hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
+        true: "hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
         false: "",
       },
     },

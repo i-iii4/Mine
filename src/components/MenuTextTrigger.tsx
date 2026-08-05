@@ -35,7 +35,7 @@ export const MenuTextTrigger = React.forwardRef<HTMLButtonElement, MenuTextTrigg
         ref={ref}
         type="button"
         className={cn(
-          "group cursor-pointer select-none bg-transparent outline-0",
+          "group select-none bg-transparent outline-0",
           surface === "topChrome" &&
             "inline-flex h-full min-w-0 flex-none items-center overflow-hidden rounded-0 font-mono text-sm text-muted-foreground focus-visible:outline-none",
           surface === "clipperHeader" &&

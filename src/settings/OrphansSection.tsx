@@ -151,7 +151,7 @@ export function OrphansSection() {
               const isImage = IMAGE_EXTS.has(fileExt(item.file_name));
               return (
                 <li key={item.file_name}>
-                  <label className="flex h-10 cursor-pointer items-center gap-s2 rounded-1 px-2 hover:bg-active">
+                  <label className="flex h-10 items-center gap-s2 rounded-1 px-2 hover:bg-active">
                     <Checkbox
                       aria-label={`Select ${item.file_name}`}
                       checked={selected.has(item.file_name)}

@@ -271,7 +271,7 @@ function SelectStep({
         {channels.map((ch) => (
           <label
             key={ch.slug}
-            className="flex cursor-pointer items-center gap-3 border-b border-border px-4 py-3 last:border-0 hover:bg-accent"
+            className="flex items-center gap-3 border-b border-border px-4 py-3 last:border-0 hover:bg-accent"
           >
             <Checkbox
               checked={selected.has(ch.slug)}

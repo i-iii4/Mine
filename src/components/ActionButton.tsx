@@ -42,7 +42,7 @@ export const ActionButton = React.forwardRef<HTMLDivElement, ActionButtonProps>(
         onClick={onClick}
         onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onClick?.(); }}
         className={cn(
-          "action-button group inline-flex h-6 shrink-0 cursor-pointer items-center rounded-1 p-[2px] font-mono text-sm",
+          "action-button group inline-flex h-6 shrink-0 items-center rounded-1 p-[2px] font-mono text-sm",
           "select-none overflow-hidden outline-0",
           isSelected
             ? "bg-active"
@@ -115,7 +115,7 @@ const StandardActionButton = React.forwardRef<HTMLDivElement, ActionButtonProps>
         onClick={onClick}
         onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onClick?.(); }}
         className={cn(
-          "group inline-flex shrink-0 cursor-pointer select-none items-center outline-0",
+          "group inline-flex shrink-0 select-none items-center outline-0",
           hotkey && "gap-2",
           // Separates this pair from the next control. Without it the label
           // runs into the following button and stops reading as one group: the

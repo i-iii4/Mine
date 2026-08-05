@@ -59,7 +59,7 @@ export const CardReferenceButton = forwardRef<HTMLButtonElement, CardReferenceRo
       type="button"
       className={cn(
         CARD_REFERENCE_ROW_SHELL_CLASSES,
-        "cursor-pointer text-left outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
+        "text-left outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
         className,
       )}
       {...buttonProps}

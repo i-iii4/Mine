@@ -68,7 +68,7 @@ const SIDEBAR_PREVIEW_MASK_FADE_WIDTH = EDGE_FADE_WIDTH;
 const SIDEBAR_PREVIEW_MASK_CLEAR_TAIL_WIDTH =
   SIDEBAR_ROW_RIGHT_GUIDELINE_OFFSET + SIDEBAR_PREVIEW_DIVIDER_GAP;
 const SIDEBAR_ROW_ACTION_BUTTON_CLASS =
-  "inline-flex h-6 cursor-pointer items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover";
+  "inline-flex h-6 items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover";
 const SIDEBAR_ROW_TEXT_MASK_STYLE = createRightFadeMaskStyle(
   SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH,
   SIDEBAR_PREVIEW_DIVIDER_GAP,
@@ -1673,7 +1673,7 @@ function SidebarPreviewStrip({
             className={cn(
               "size-8 shrink-0 overflow-hidden bg-accent",
               canPreview &&
-                "cursor-pointer outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover",
+                "outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover",
               isPreviewActive &&
                 "outline-1 -outline-offset-1 outline-component-fill-hover",
             )}

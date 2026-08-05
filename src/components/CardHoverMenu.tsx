@@ -504,7 +504,9 @@ export const CardHoverMenu = memo(function CardHoverMenu({
           <Button
             variant="default"
             size="default"
-            className="flex-1"
+            // Leaves the app for the browser — the one case that keeps the
+            // pointing hand under the native cursor contract.
+            className="flex-1 cursor-pointer"
             onClick={() => {
               onInteractionStart?.();
               if (block.url) openUrl(block.url);

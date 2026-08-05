@@ -840,7 +840,6 @@ describe("Sidebar", () => {
     const firstThumbnail = thumbnails[0];
     const secondThumbnail = thumbnails[1];
     expect(firstThumbnail).toHaveAttribute("data-sidebar-preview-thumbnail", "trigger");
-    expect(firstThumbnail).toHaveClass("cursor-pointer");
 
     fireEvent.pointerEnter(firstThumbnail!);
     await act(async () => {

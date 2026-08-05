@@ -384,7 +384,7 @@ export function CollectionPicker({
                 // The trailing inset matches the button's vertical breathing
                 // room ((row height − button height) / 2) so the action sits
                 // evenly inside the row on both row sizes (menu and clipper).
-                "flex h-[var(--menu-row-height)] w-full cursor-pointer items-center gap-2 rounded-1 pl-2 pr-[calc((var(--menu-row-height)-1.5rem)/2)] text-base",
+                "flex h-[var(--menu-row-height)] w-full items-center gap-2 rounded-1 pl-2 pr-[calc((var(--menu-row-height)-1.5rem)/2)] text-base",
                 isActive && "bg-active",
               )}
               data-collection-picker-row=""
@@ -420,7 +420,7 @@ export function CollectionPicker({
                     event.stopPropagation();
                   }}
                   className={cn(
-                    "absolute right-0 inline-flex h-6 w-[10ch] cursor-pointer items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
+                    "absolute right-0 inline-flex h-6 w-[10ch] items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
                     buttonVisible ? "opacity-100" : "pointer-events-none opacity-0",
                     hasTag && isActive && "text-detach",
                   )}
@@ -666,7 +666,7 @@ export function BatchCollectionPicker({
                 }
               }}
               className={cn(
-                "flex h-[var(--menu-row-height)] w-full cursor-pointer items-center gap-2 rounded-1 pl-2 pr-[calc((var(--menu-row-height)-1.5rem)/2)] text-base",
+                "flex h-[var(--menu-row-height)] w-full items-center gap-2 rounded-1 pl-2 pr-[calc((var(--menu-row-height)-1.5rem)/2)] text-base",
                 isActive && "bg-active",
               )}
               data-batch-collection-row=""
@@ -704,7 +704,7 @@ export function BatchCollectionPicker({
                     event.stopPropagation();
                   }}
                   className={cn(
-                    "absolute right-0 inline-flex h-6 w-[10ch] cursor-pointer items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
+                    "absolute right-0 inline-flex h-6 w-[10ch] items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
                     buttonVisible ? "opacity-100" : "pointer-events-none opacity-0",
                     membership === "all" && isActive && "text-detach",
                   )}

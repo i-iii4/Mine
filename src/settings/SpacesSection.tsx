@@ -90,7 +90,7 @@ function SpaceRow({ path, isActive, stats, onSwitch, onRemove }: SpaceRowProps) 
       {...listeners}
       style={{ transform: CSS.Transform.toString(transform), transition }}
       className={cn(
-        "group/space cursor-pointer rounded-1 border border-border px-3 py-2",
+        "group/space rounded-1 border border-border px-3 py-2",
         isActive ? "bg-active" : "bg-accent hover:bg-active",
         isDragging && "opacity-30",
       )}

@@ -910,7 +910,9 @@ function DetailActionRow({
           type="button"
           variant="default"
           size="default"
-          className="min-w-0 flex-1 bg-component-fill-inner"
+          // Opens the browser, so it carries the pointing hand; every other
+          // control in this bar acts inside Mine and keeps the arrow.
+          className="min-w-0 flex-1 cursor-pointer bg-component-fill-inner"
           onClick={() => openUrl(block.url!)}
         >
           Source

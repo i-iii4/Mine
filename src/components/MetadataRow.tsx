@@ -31,7 +31,12 @@ export function MetadataLinkValue({
     <button
       type="button"
       onClick={onClick}
-      className={cn(METADATA_VALUE_BASE_CLASSES, "w-full truncate text-right hover:underline")}
+      // Leaves the app for the browser, which is the one thing the pointing
+      // hand means in macOS. Controls that act inside Mine keep the arrow.
+      className={cn(
+        METADATA_VALUE_BASE_CLASSES,
+        "w-full cursor-pointer truncate text-right hover:underline",
+      )}
       title={value}
     >
       {value}

@@ -550,7 +550,7 @@ export function SearchOverlay({
                   role="button"
                   tabIndex={-1}
                   aria-label="Open element"
-                  className="group relative cursor-pointer"
+                  className="group relative"
                   onClick={() => onOpenBlock(activeBlock)}
                   data-search-overlay-preview
                 >
