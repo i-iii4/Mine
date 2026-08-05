@@ -48,3 +48,34 @@ describe("Bluesky post URLs", () => {
     expect(parsed?.handleOrDid).toBe("did:plc:yhcxtphccfv3jeacygabveql");
   });
 });
+
+/// Mirrors parseBlueskyPlaylist in content.js.
+function parseBlueskyPlaylist(
+  playlist: string | null | undefined,
+): { did: string; cid: string } | null {
+  const match = String(playlist ?? "").match(/\/watch\/([^/]+)\/([^/]+)\/playlist\.m3u8/i);
+  if (!match) return null;
+  try {
+    return { did: decodeURIComponent(match[1]!), cid: decodeURIComponent(match[2]!) };
+  } catch {
+    return null;
+  }
+}
+
+describe("Bluesky video playlists", () => {
+  const playlist =
+    "https://video.bsky.app/watch/did%3Aplc%3A2dwd4zvjtr3fob2pv2pwuf3t/bafkreifcfi/playlist.m3u8";
+
+  it("recovers the repository the video blob lives in", () => {
+    expect(parseBlueskyPlaylist(playlist)).toEqual({
+      did: "did:plc:2dwd4zvjtr3fob2pv2pwuf3t",
+      cid: "bafkreifcfi",
+    });
+  });
+
+  it("returns null for anything that is not a watch playlist", () => {
+    expect(parseBlueskyPlaylist("https://video.bsky.app/watch/did/thumbnail.jpg")).toBeNull();
+    expect(parseBlueskyPlaylist("")).toBeNull();
+    expect(parseBlueskyPlaylist(null)).toBeNull();
+  });
+});

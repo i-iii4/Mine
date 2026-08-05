@@ -1115,12 +1115,59 @@ fn write_new_bytes(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
 }
 
 fn ext_from_url(url: &str) -> &str {
+    ext_from_url_opt(url).unwrap_or("jpg")
+}
+
+/// The extension a URL states outright, or `None` when it states none.
+///
+/// Kept separate from [`ext_from_url`] so callers who can find out what a file
+/// actually is — by asking the server — can tell "the URL says jpg" apart from
+/// "the URL says nothing and jpg is a guess". API-style URLs such as
+/// `.../xrpc/com.atproto.sync.getBlob` are the case that matters: their last
+/// dotted segment is a method name, not a file type.
+fn ext_from_url_opt(url: &str) -> Option<&str> {
     let path = url.split('?').next().unwrap_or(url);
     let path = path.split('#').next().unwrap_or(path);
-    match path.rsplit('.').next() {
-        Some(ext) if ext.len() <= 5 && !ext.contains('/') => ext,
-        _ => "jpg",
+    let (_, ext) = path.rsplit_once('.')?;
+    if ext.is_empty() || ext.len() > 5 || ext.contains('/') {
+        return None;
     }
+    Some(ext)
+}
+
+/// Map a `Content-Type` value to the extension Mine stores media under.
+///
+/// Only the types the rest of the pipeline can display are mapped; anything
+/// else returns `None` so the caller keeps whatever it already assumed.
+fn ext_from_content_type(content_type: &str) -> Option<&'static str> {
+    let mime = content_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
+    Some(match mime.as_str() {
+        "image/jpeg" => "jpg",
+        "image/png" => "png",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/avif" => "avif",
+        "image/heic" => "heic",
+        "image/svg+xml" => "svg",
+        "video/mp4" => "mp4",
+        "video/webm" => "webm",
+        "video/quicktime" => "mov",
+        _ => return None,
+    })
+}
+
+/// Ask a server what it is about to serve, for URLs that do not say.
+///
+/// A failure here is not an error: the caller falls back to its own assumption,
+/// so a server that refuses HEAD costs nothing beyond one request.
+fn probe_ext_over_network(url: &str) -> Option<&'static str> {
+    let resp = mine_lib::net::fetch_validated_head(url, INLINE_REQUEST_TIMEOUT, &[]).ok()?;
+    ext_from_content_type(resp.header("Content-Type")?)
 }
 
 /// Per-request timeout for inline-media downloads. ureq 2.x default is
@@ -1370,6 +1417,21 @@ fn host_from_url(url: &str) -> String {
 /// http(s) matches; non-http URLs and malformed `![alt](...)` patterns
 /// are skipped without consuming the cap.
 fn scan_inline_tasks(body: &str, vault: &VaultLayout, slug: &str) -> Vec<InlineTask> {
+    scan_inline_tasks_with(body, vault, slug, &|_| None)
+}
+
+/// As [`scan_inline_tasks`], but consulting `probe` for URLs that carry no
+/// extension of their own.
+///
+/// The probe is a parameter so the scan stays a pure function over the body:
+/// tests pass one that answers nothing, and only the save path pays for the
+/// network round-trip — and only for the rare URL that needs it.
+fn scan_inline_tasks_with(
+    body: &str,
+    vault: &VaultLayout,
+    slug: &str,
+    probe: &dyn Fn(&str) -> Option<&'static str>,
+) -> Vec<InlineTask> {
     let mut tasks = Vec::new();
     let mut image_idx: u32 = 0;
     let mut video_idx: u32 = 0;
@@ -1402,7 +1464,12 @@ fn scan_inline_tasks(body: &str, vault: &VaultLayout, slug: &str) -> Vec<InlineT
             continue;
         }
 
-        let ext = ext_from_url(url);
+        // A URL that names its own type is trusted; one that does not is asked
+        // about, so an API endpoint serving a video is not filed as a JPEG.
+        let ext = match ext_from_url_opt(url) {
+            Some(ext) => ext,
+            None => probe(url).unwrap_or("jpg"),
+        };
         let kind = inline_media_kind_from_ext(ext);
         let idx = match kind {
             InlineMediaKind::Image => {
@@ -1616,7 +1683,7 @@ fn localize_body_images(
     slug: &str,
     page_url: &str,
 ) -> (String, Vec<std::path::PathBuf>) {
-    let tasks = scan_inline_tasks(body, vault, slug);
+    let tasks = scan_inline_tasks_with(body, vault, slug, &probe_ext_over_network);
     if tasks.is_empty() {
         return (body.to_string(), Vec::new());
     }
@@ -2824,6 +2891,60 @@ mod tests {
                 ext
             );
         }
+    }
+
+    #[test]
+    fn url_without_extension_states_nothing() {
+        // The AT Protocol blob endpoint: its last dotted segment is a method
+        // name, and reading it as a file type is what filed videos as JPEGs.
+        assert_eq!(
+            ext_from_url_opt("https://pds.example/xrpc/com.atproto.sync.getBlob?did=d&cid=c"),
+            None
+        );
+        assert_eq!(ext_from_url_opt("https://h.example/media"), None);
+        assert_eq!(ext_from_url_opt("https://h.example/a.jpg"), Some("jpg"));
+        assert_eq!(ext_from_url_opt("https://h.example/a.mp4?v=2"), Some("mp4"));
+        // The guessing wrapper keeps its old answer for both cases.
+        assert_eq!(ext_from_url("https://h.example/media"), "jpg");
+        assert_eq!(ext_from_url("https://h.example/a.mp4"), "mp4");
+    }
+
+    #[test]
+    fn content_type_maps_to_storable_extension() {
+        assert_eq!(ext_from_content_type("video/mp4"), Some("mp4"));
+        assert_eq!(ext_from_content_type("Video/MP4; codecs=avc1"), Some("mp4"));
+        assert_eq!(ext_from_content_type("image/png"), Some("png"));
+        assert_eq!(ext_from_content_type("application/octet-stream"), None);
+        assert_eq!(ext_from_content_type(""), None);
+    }
+
+    #[test]
+    fn probe_classifies_extensionless_url_as_video() {
+        let tmp = tempfile::tempdir().unwrap();
+        let body = "![a](https://pds.example/xrpc/com.atproto.sync.getBlob?did=d&cid=c)";
+        let tasks = scan_inline_tasks_with(body, &vault_at(tmp.path()), "Post", &|_| Some("mp4"));
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].kind, InlineMediaKind::Video);
+        assert_eq!(tasks[0].dest_name, "Post (video 1).mp4");
+    }
+
+    #[test]
+    fn silent_probe_leaves_previous_behaviour_intact() {
+        let tmp = tempfile::tempdir().unwrap();
+        let body = "![a](https://pds.example/xrpc/com.atproto.sync.getBlob?did=d&cid=c)";
+        let tasks = scan_inline_tasks_with(body, &vault_at(tmp.path()), "Post", &|_| None);
+        assert_eq!(tasks[0].kind, InlineMediaKind::Image);
+        assert_eq!(tasks[0].dest_name, "Post (image 1).jpg");
+    }
+
+    #[test]
+    fn url_extension_wins_over_probe() {
+        let tmp = tempfile::tempdir().unwrap();
+        let body = "![a](https://h.example/clip.mp4)";
+        let tasks = scan_inline_tasks_with(body, &vault_at(tmp.path()), "Post", &|_| {
+            panic!("probe must not run for a URL that states its extension")
+        });
+        assert_eq!(tasks[0].dest_name, "Post (video 1).mp4");
     }
 
     #[test]

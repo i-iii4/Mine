@@ -99,11 +99,43 @@ pub fn fetch_validated_get(
     timeout: Duration,
     headers: &[(&str, &str)],
 ) -> Result<ureq::Response> {
+    fetch_validated(Method::Get, url, timeout, headers)
+}
+
+/// HEAD `url` under the same validation and redirect rules as
+/// [`fetch_validated_get`], for callers that need only the response headers.
+///
+/// Servers are free to reject HEAD; a caller that depends on the answer should
+/// treat an error as "unknown" rather than as a failure of the whole operation.
+pub fn fetch_validated_head(
+    url: &str,
+    timeout: Duration,
+    headers: &[(&str, &str)],
+) -> Result<ureq::Response> {
+    fetch_validated(Method::Head, url, timeout, headers)
+}
+
+#[derive(Clone, Copy)]
+enum Method {
+    Get,
+    Head,
+}
+
+fn fetch_validated(
+    method: Method,
+    url: &str,
+    timeout: Duration,
+    headers: &[(&str, &str)],
+) -> Result<ureq::Response> {
     let agent = ureq::AgentBuilder::new().redirects(0).build();
     let mut current = url.to_string();
     for _ in 0..=MAX_REDIRECTS {
         validate_fetch_url(&current)?;
-        let mut req = agent.get(&current).timeout(timeout);
+        let mut req = match method {
+            Method::Get => agent.get(&current),
+            Method::Head => agent.head(&current),
+        }
+        .timeout(timeout);
         for (name, value) in headers {
             req = req.set(name, value);
         }

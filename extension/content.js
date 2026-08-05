@@ -388,8 +388,9 @@
     if (isVideoUrl(meta.url)) return "video";
     // Twitter threads — always save as article
     if (isTwitterUrl(meta.url)) return "article";
-    // Instagram posts — always save as article
+    // Bluesky posts — always save as article
     if (isBlueskyPostUrl(meta.url)) return "article";
+    // Instagram posts — always save as article
     if (isInstagramPostUrl(meta.url)) return "article";
     // Article pages
     if (isArticlePage(meta)) return "article";
@@ -644,6 +645,73 @@
     return /(?:^|\/\/)(?:[\w.-]*\.)?bsky\.app\/profile\/[^/]+\/post\/[\w]+/i.test(url ?? "");
   }
 
+  /// Split a Bluesky video playlist URL into the repository it lives in.
+  ///
+  /// The playlist path carries both halves of the blob's address —
+  /// `/watch/<did>/<cid>/playlist.m3u8` — so it is preferred over the embed's
+  /// own fields, which describe the view rather than the record.
+  function parseBlueskyPlaylist(playlist) {
+    const match = String(playlist ?? "").match(
+      /\/watch\/([^/]+)\/([^/]+)\/playlist\.m3u8/i,
+    );
+    if (!match) return null;
+    try {
+      return { did: decodeURIComponent(match[1]), cid: decodeURIComponent(match[2]) };
+    } catch {
+      return null;
+    }
+  }
+
+  /// Find the personal data server holding a DID's repository.
+  ///
+  /// `did:plc` identifiers are looked up in the PLC directory; `did:web` ones
+  /// resolve against the domain itself. Both return a DID document whose
+  /// AT Protocol service entry names the host.
+  async function resolveBlueskyPds(did) {
+    let documentUrl;
+    if (did.startsWith("did:plc:")) {
+      documentUrl = `https://plc.directory/${encodeURIComponent(did)}`;
+    } else if (did.startsWith("did:web:")) {
+      const domain = decodeURIComponent(did.slice("did:web:".length)).replace(/:/g, "/");
+      documentUrl = `https://${domain}/.well-known/did.json`;
+    } else {
+      return null;
+    }
+
+    const resp = await fetch(documentUrl);
+    if (!resp.ok) return null;
+    const services = (await resp.json())?.service;
+    if (!Array.isArray(services)) return null;
+
+    const pds = services.find(
+      (service) =>
+        service?.type === "AtprotoPersonalDataServer" ||
+        String(service?.id ?? "").endsWith("#atproto_pds"),
+    );
+    const endpoint = String(pds?.serviceEndpoint ?? "");
+    return endpoint.startsWith("https://") ? endpoint.replace(/\/+$/, "") : null;
+  }
+
+  /// Build a direct URL to a Bluesky video's original file.
+  ///
+  /// Returns null when the address cannot be determined, leaving the caller to
+  /// fall back to the poster rather than emitting a link that would download a
+  /// playlist instead of a video.
+  async function resolveBlueskyVideoBlobUrl(embed, authorDid) {
+    const parsed = parseBlueskyPlaylist(embed?.playlist);
+    const did = parsed?.did || authorDid;
+    const cid = parsed?.cid || embed?.cid;
+    if (!did || !cid) return null;
+
+    try {
+      const pds = await resolveBlueskyPds(did);
+      if (!pds) return null;
+      return `${pds}/xrpc/com.atproto.sync.getBlob?did=${encodeURIComponent(did)}&cid=${encodeURIComponent(cid)}`;
+    } catch {
+      return null;
+    }
+  }
+
   /// Extract a Bluesky post through the public AT Protocol API.
   ///
   /// Unlike the other social sources here, this needs no session and no
@@ -682,17 +750,23 @@
       const handle = post.author?.handle || handleOrDid;
 
       const mediaEntries = [];
-      // Media sits under one of a few embed shapes; a quoted post carries its
-      // own media alongside the quote, so both are unwrapped.
+      // Media sits under one of a few embed shapes: when a post both quotes
+      // another and carries media, its own media moves under `media`.
       const embeds = [post.embed, post.embed?.media].filter(Boolean);
       for (const embed of embeds) {
         for (const image of embed.images || []) {
           if (image.fullsize) mediaEntries.push({ kind: "image", url: image.fullsize });
         }
         if (embed.playlist || embed.thumbnail) {
-          // Video is served as an HLS playlist, which cannot be saved as a file
-          // or previewed; the poster is a plain image and is worth keeping.
-          if (embed.thumbnail) {
+          // The playlist is HLS and cannot be saved as a file, but it is only a
+          // streaming derivative: the uploaded file itself is a blob in the
+          // author's repository, addressable by content hash and served whole.
+          const blob = await resolveBlueskyVideoBlobUrl(embed, did);
+          if (blob) {
+            mediaEntries.push({ kind: "video", url: blob });
+          } else if (embed.thumbnail) {
+            // No repository to read the blob from — keep the poster so the post
+            // still carries something visual.
             mediaEntries.push({ kind: "image", url: embed.thumbnail });
           }
         }
