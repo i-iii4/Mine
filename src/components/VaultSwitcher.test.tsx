@@ -223,6 +223,29 @@ describe("VaultSwitcher", () => {
     });
   });
 
+  it("dresses the row actions like the rest of the system", async () => {
+    await openSwitcherWithSpaces();
+
+    const reveal = screen.getByRole("button", { name: "Reveal Тест in Finder" });
+    const remove = screen.getByRole("button", { name: "Remove Тест from the list" });
+
+    // Muted at rest, filled on approach — the same contract as the search
+    // field's clear button. An icon painted detach-orange at rest would read as
+    // a standing warning about the space rather than an available action.
+    for (const action of [reveal, remove]) {
+      expect(action).toHaveClass("text-muted-foreground");
+      expect(action).toHaveClass("hover:bg-component-fill-hover");
+      expect(action.className).not.toMatch(/(^|\s)text-detach/);
+    }
+    expect(remove).toHaveClass("hover:text-detach");
+
+    // Icon size comes from the icon-xs button contract; restating it locally is
+    // what made these glyphs bigger than the same ones elsewhere.
+    for (const icon of [reveal.querySelector("svg"), remove.querySelector("svg")]) {
+      expect(icon?.getAttribute("class") ?? "").not.toMatch(/\bsize-\d/);
+    }
+  });
+
   it("forgets nothing when the confirmation is dismissed", async () => {
     await openSwitcherWithSpaces();
 

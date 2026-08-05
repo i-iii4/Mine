@@ -9,7 +9,7 @@ import {
 } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { FolderOpen, Unlink } from "lucide-react";
+import { FolderOpen, X } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -44,6 +44,16 @@ interface VaultSwitcherProps {
   surface?: "actionBar" | "topChrome";
   topChromeCollapsed?: boolean;
 }
+
+/// Icon actions inside a menu row: muted at rest, filled on approach.
+///
+/// Mirrors the search field's clear button, the closest existing case of an
+/// icon action living inside a row. Icon size is left to the `icon-xs` button
+/// contract rather than restated here — restating it is what made these glyphs
+/// larger than the same ones elsewhere in the app.
+const ROW_ACTION_CLASS =
+  "text-muted-foreground hover:bg-component-fill-hover hover:text-foreground "
+  + "focus-visible:bg-component-fill-hover focus-visible:text-foreground";
 
 function vaultName(path: string): string {
   const trimmed = path.replace(/\/+$/, "");
@@ -455,6 +465,7 @@ function SpaceRow({
           variant="ghost"
           size="icon-xs"
           aria-label={`Reveal ${name} in Finder`}
+          className={ROW_ACTION_CLASS}
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => {
             event.preventDefault();
@@ -462,14 +473,17 @@ function SpaceRow({
             onReveal();
           }}
         >
-          <FolderOpen className="size-4" />
+          <FolderOpen />
         </Button>
         <Button
           type="button"
           variant="ghost"
           size="icon-xs"
           aria-label={`Remove ${name} from the list`}
-          className="text-detach hover:text-detach"
+          // The detach colour belongs to the moment the action is aimed at, not
+          // to an icon sitting in a list: a row painted orange at rest reads as
+          // a warning about the space itself.
+          className={cn(ROW_ACTION_CLASS, "hover:text-detach focus-visible:text-detach")}
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => {
             event.preventDefault();
@@ -477,7 +491,7 @@ function SpaceRow({
             onRequestForget();
           }}
         >
-          <Unlink className="size-4" />
+          <X />
         </Button>
       </div>
     </div>
