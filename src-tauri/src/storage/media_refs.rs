@@ -114,6 +114,18 @@ pub fn resolve_indexed_media(
 ) -> Option<PathBuf> {
     resolve_root_relative(vault, reference)
         .or_else(|| resolve_frontmatter_media(vault, block_slug, reference))
+        // Last resort, and the one that survives a reorganised vault: find the
+        // file by name anywhere inside it, nearest folder first. `file:` in
+        // frontmatter is written as `"[[name.ext]]"` — a name, not a path — so
+        // once notes and media live in different folders, resolving it only
+        // against the note's own folder finds nothing. Inline embeds already
+        // fall back this way; indexed references had no such fallback, and a
+        // vault sorted into Cards/ and Media/ lost every frontmatter medium.
+        .or_else(|| {
+            (!has_path_separator(reference))
+                .then(|| resolve_by_basename(vault, block_slug, reference))
+                .flatten()
+        })
 }
 
 /// Resolve an inline media reference using syntax-specific rules.
@@ -345,6 +357,55 @@ mod tests {
         );
 
         assert_eq!(got, Some(image));
+    }
+
+    #[test]
+    fn indexed_media_finds_a_frontmatter_file_that_moved_to_another_folder() {
+        // The layout this exists for: notes in Cards/, media in Media/, and
+        // `file: "[[photo.jpg]]"` naming the file without a path. Resolving that
+        // only against the note's folder finds nothing, and every card with a
+        // frontmatter medium loses its preview.
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        std::fs::create_dir_all(dir.path().join("Cards")).unwrap();
+        std::fs::create_dir_all(dir.path().join("Media")).unwrap();
+        std::fs::write(dir.path().join("Cards/note.md"), "").unwrap();
+        let image = dir.path().join("Media/photo.jpg");
+        std::fs::write(&image, b"img").unwrap();
+
+        assert_eq!(
+            resolve_indexed_media(&vault, "Cards/note", "photo.jpg"),
+            Some(image),
+        );
+    }
+
+    #[test]
+    fn indexed_media_keeps_preferring_an_explicit_path() {
+        // A reference that states a path means that path; the basename search
+        // is a fallback, not an override.
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        std::fs::create_dir_all(dir.path().join("Cards")).unwrap();
+        std::fs::create_dir_all(dir.path().join("Media")).unwrap();
+        std::fs::write(dir.path().join("Cards/note.md"), "").unwrap();
+        let stated = dir.path().join("Media/photo.jpg");
+        std::fs::write(&stated, b"img").unwrap();
+        std::fs::write(dir.path().join("Cards/photo.jpg"), b"other").unwrap();
+
+        assert_eq!(
+            resolve_indexed_media(&vault, "Cards/note", "Media/photo.jpg"),
+            Some(stated),
+        );
+    }
+
+    #[test]
+    fn indexed_media_still_reports_a_missing_file_as_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        std::fs::create_dir_all(dir.path().join("Cards")).unwrap();
+        std::fs::write(dir.path().join("Cards/note.md"), "").unwrap();
+
+        assert_eq!(resolve_indexed_media(&vault, "Cards/note", "gone.jpg"), None);
     }
 
     #[test]
