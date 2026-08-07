@@ -272,7 +272,7 @@ pub fn reconcile_vault(
         index::remove_block(&tx, slug)
             .with_context(|| format!("remove stale block {slug}"))
             .map_err(ReconcileError::Commit)?;
-        index::remove_channel(&tx, slug)
+        remove_channel_if_orphaned(&tx, vault, slug)
             .with_context(|| format!("remove stale channel {slug}"))
             .map_err(ReconcileError::Commit)?;
         tx.execute("DELETE FROM source_index_state WHERE slug = ?1", [slug])
@@ -326,12 +326,30 @@ pub fn project_source_path(conn: &Connection, vault: &VaultLayout, path: &Path) 
     Ok(source.block)
 }
 
+/// Drop a channel row only when no document answers to that name any more.
+///
+/// A collection is keyed by name while its document is keyed by path, so a
+/// document that moves disappears under its old slug and reappears under a new
+/// one. When the old slug happens to equal the collection's name — which is
+/// exactly what sorting a flat vault into folders produces — the cleanup for
+/// the vanished path would delete the collection that the moved document had
+/// just registered.
+fn remove_channel_if_orphaned(conn: &Connection, vault: &VaultLayout, slug: &str) -> Result<()> {
+    let collection_ref = crate::domain::collection::collection_ref_from_slug(slug);
+    if crate::storage::media_refs::resolve_collection_document(vault, &collection_ref).is_some() {
+        return Ok(());
+    }
+    index::remove_channel(conn, &collection_ref)?;
+    Ok(())
+}
+
 /// Remove every projection row owned by a deleted Markdown source.
 ///
 /// This is nestable inside a larger source mutation transaction.
-pub fn remove_source_projection(conn: &Connection, slug: &str) -> Result<()> {
+pub fn remove_source_projection(conn: &Connection, vault: &VaultLayout, slug: &str) -> Result<()> {
     index::remove_block(conn, slug).with_context(|| format!("remove stale block {slug}"))?;
-    index::remove_channel(conn, slug).with_context(|| format!("remove stale channel {slug}"))?;
+    remove_channel_if_orphaned(conn, vault, slug)
+        .with_context(|| format!("remove stale channel {slug}"))?;
     conn.execute("DELETE FROM source_index_state WHERE slug = ?1", [slug])
         .with_context(|| format!("remove stale source state {slug}"))?;
     Ok(())
@@ -596,6 +614,52 @@ mod tests {
             format!("---\ntype: article\nsaved_at: 2026-07-10T00:00:00Z\n---\n{body}"),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn moving_a_collection_document_into_a_folder_keeps_the_collection() {
+        // Sorting a flat vault produces exactly this: the document vanishes from
+        // `Каталоги` and reappears at `Collections/Каталоги`. The collection is
+        // keyed by name, so the cleanup for the vanished slug was deleting the
+        // very row the moved document had just registered — every collection
+        // disappeared from the sidebar after the migration.
+        let (_dir, vault, conn) = setup();
+        std::fs::write(
+            vault.block_path("Каталоги"),
+            "---\ntype: channel\nsaved_at: 2026-07-10T00:00:00Z\nposition: 1\n---\n",
+        )
+        .unwrap();
+        reconcile_vault(&conn, &vault).unwrap();
+        assert_eq!(index::list_channels(&conn).unwrap().len(), 1);
+
+        std::fs::create_dir_all(vault.root().join("Collections")).unwrap();
+        std::fs::rename(
+            vault.block_path("Каталоги"),
+            vault.root().join("Collections/Каталоги.md"),
+        )
+        .unwrap();
+        reconcile_vault(&conn, &vault).unwrap();
+
+        let channels = index::list_channels(&conn).unwrap();
+        assert_eq!(channels.len(), 1, "the collection must survive the move");
+        assert_eq!(channels[0].tag, "Каталоги", "and keep the name cards use");
+    }
+
+    #[test]
+    fn deleting_a_collection_document_still_removes_the_collection() {
+        let (_dir, vault, conn) = setup();
+        std::fs::write(
+            vault.block_path("Каталоги"),
+            "---\ntype: channel\nsaved_at: 2026-07-10T00:00:00Z\nposition: 1\n---\n",
+        )
+        .unwrap();
+        reconcile_vault(&conn, &vault).unwrap();
+        assert_eq!(index::list_channels(&conn).unwrap().len(), 1);
+
+        std::fs::remove_file(vault.block_path("Каталоги")).unwrap();
+        reconcile_vault(&conn, &vault).unwrap();
+
+        assert!(index::list_channels(&conn).unwrap().is_empty());
     }
 
     #[test]

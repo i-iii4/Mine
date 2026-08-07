@@ -1809,7 +1809,7 @@ fn apply_merge_blocks(
                 reconcile::project_source_path(index_conn, vault, &write.path)?;
             }
             for source in sources {
-                reconcile::remove_source_projection(index_conn, &source.block.slug)?;
+                reconcile::remove_source_projection(index_conn, vault, &source.block.slug)?;
             }
             Ok(())
         })
