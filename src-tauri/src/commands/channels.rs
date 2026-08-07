@@ -13,6 +13,7 @@ use crate::domain::block::{
     parse_markdown_document, serialize_block, Block, BlockType, DateTime, Frontmatter,
 };
 use crate::domain::channel::Channel;
+use crate::domain::vault::VaultLayout;
 use crate::domain::collection::{normalize_collection_ref, validate_collection_ref};
 use crate::storage::source_mutation::{SourceFileWrite, SourceMutationError, StagedSourceMutation};
 use crate::storage::{db, files, index, projection};
@@ -153,7 +154,10 @@ pub fn create_channel(
     channel.position = index::next_channel_position(&vs.conn)?;
 
     let block = channel_to_block(&channel);
-    let path = vs.vault.block_path(&channel.tag);
+    // A new collection joins the others. Where that is depends on how the vault
+    // is arranged — root in a flat vault, `Collections/` in a sorted one — so it
+    // is read from an existing collection rather than assumed.
+    let path = collections_home(&vs.conn, &vs.vault).join(format!("{}.md", channel.tag));
     let staged = StagedSourceMutation::stage(vec![SourceFileWrite::create(
         path,
         serialize_block(&block).into_bytes(),
@@ -223,7 +227,8 @@ pub fn reorder_channels(
             Channel::new(&tag, dt).map_err(|e| CommandError::Internal(e.to_string()))?
         };
         channel.position = item.position;
-        let path = vs.vault.block_path(&tag);
+        let path = crate::storage::media_refs::resolve_collection_document(&vs.vault, &tag)
+            .unwrap_or_else(|| vs.vault.block_path(&tag));
         let bytes = serialize_block(&channel_to_block(&channel)).into_bytes();
         writes.push(if path.exists() {
             SourceFileWrite::replace(path, bytes)
@@ -340,8 +345,15 @@ pub fn rename_channel(
     };
 
     let new_block = channel_to_block(&new_channel);
-    let old_path = vs.vault.block_path(&normalized_old);
-    let new_path = vs.vault.block_path(&normalized_new);
+    // Rename in place: a collection that lives in its own folder must stay
+    // there, so the new document is written beside the old one rather than in
+    // the vault root.
+    let old_path = crate::storage::media_refs::resolve_collection_document(&vs.vault, &normalized_old)
+        .unwrap_or_else(|| vs.vault.block_path(&normalized_old));
+    let new_path = old_path
+        .parent()
+        .map(|parent| parent.join(format!("{normalized_new}.md")))
+        .unwrap_or_else(|| vs.vault.block_path(&normalized_new));
     let page_bytes = serialize_block(&new_block).into_bytes();
     writes.push(if old_path.exists() {
         SourceFileWrite::rename_with_bytes(old_path.clone(), new_path, page_bytes)
@@ -486,7 +498,8 @@ pub fn delete_channel(state: State<'_, AppState>, tag: String) -> Result<bool, C
     }
     validate_collection_ref(&tag).map_err(CommandError::Internal)?;
 
-    let md_path = vs.vault.block_path(&tag);
+    let md_path = crate::storage::media_refs::resolve_collection_document(&vs.vault, &tag)
+        .unwrap_or_else(|| vs.vault.block_path(&tag));
     let writes = if md_path.exists() {
         vec![SourceFileWrite::delete(md_path)]
     } else {
@@ -589,4 +602,21 @@ mod tests {
         assert_eq!(std::fs::read(&old_path).unwrap(), b"old page");
         assert!(!new_path.exists());
     }
+}
+
+/// The folder collections live in, learned from the ones already there.
+///
+/// Flat vaults answer with the root; a vault sorted into folders answers with
+/// whichever folder holds its collections. Nothing is assumed and nothing is
+/// configured — the existing arrangement is the answer.
+fn collections_home(conn: &rusqlite::Connection, vault: &VaultLayout) -> std::path::PathBuf {
+    let existing = index::list_channels(conn).ok().unwrap_or_default();
+    for channel in existing {
+        if let Some(path) = crate::storage::media_refs::resolve_collection_document(vault, &channel.tag) {
+            if let Some(parent) = path.parent() {
+                return parent.to_path_buf();
+            }
+        }
+    }
+    vault.root().to_path_buf()
 }

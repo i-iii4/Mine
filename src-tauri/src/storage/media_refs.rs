@@ -93,6 +93,34 @@ impl<'a> MediaResolver<'a> {
     }
 }
 
+/// Find the document of a collection, wherever it sits in the vault.
+///
+/// A collection is referred to by name (`[[Каталоги]]`), while its document is
+/// a file that may live in any folder. Commands that open, rename or delete a
+/// collection used to assume the vault root; once collections moved into their
+/// own folder that assumption stopped holding.
+///
+/// Returns `None` when no such document exists — the caller decides whether
+/// that is an error or an invitation to create one.
+pub fn resolve_collection_document(vault: &VaultLayout, collection_ref: &str) -> Option<PathBuf> {
+    let direct = vault.block_path(collection_ref);
+    if direct.exists() {
+        return Some(direct);
+    }
+    if has_path_separator(collection_ref) {
+        return None;
+    }
+    let file_name = format!("{collection_ref}.md");
+    let mut candidates = Vec::new();
+    collect_basename_matches(vault.root(), &file_name, &mut candidates);
+    candidates.sort_by(|a, b| {
+        let a_key = candidate_rank(vault.root(), vault.root(), a);
+        let b_key = candidate_rank(vault.root(), vault.root(), b);
+        a_key.cmp(&b_key)
+    });
+    candidates.into_iter().next()
+}
+
 /// Resolve a frontmatter media field as a normal local path.
 pub fn resolve_frontmatter_media(
     vault: &VaultLayout,
@@ -357,6 +385,31 @@ mod tests {
         );
 
         assert_eq!(got, Some(image));
+    }
+
+    #[test]
+    fn collection_document_is_found_in_its_folder() {
+        // Commands that open, rename or delete a collection used to assume the
+        // vault root. A sorted vault keeps collections elsewhere, and the name
+        // in `[[Каталоги]]` says nothing about where.
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        std::fs::create_dir_all(dir.path().join("Collections")).unwrap();
+        let doc = dir.path().join("Collections/Каталоги.md");
+        std::fs::write(&doc, "---\ntype: channel\n---\n").unwrap();
+
+        assert_eq!(resolve_collection_document(&vault, "Каталоги"), Some(doc));
+        assert_eq!(resolve_collection_document(&vault, "Нет такой"), None);
+    }
+
+    #[test]
+    fn collection_document_in_a_flat_vault_is_still_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let doc = dir.path().join("Каталоги.md");
+        std::fs::write(&doc, "---\ntype: channel\n---\n").unwrap();
+
+        assert_eq!(resolve_collection_document(&vault, "Каталоги"), Some(doc));
     }
 
     #[test]

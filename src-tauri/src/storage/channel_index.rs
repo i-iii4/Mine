@@ -33,7 +33,10 @@ pub fn upsert_channel(conn: &Connection, channel: &Channel) -> Result<i64> {
 }
 
 pub fn upsert_channel_from_block(conn: &Connection, block: &Block) -> Result<i64> {
-    let mut channel = Channel::new(&block.slug, block.frontmatter.saved_at.clone())
+    // By name, not by path: cards tag themselves `[[Каталоги]]`, so a channel
+    // registered as `Collections/Каталоги` would never match any of them.
+    let collection_ref = crate::domain::collection::collection_ref_from_slug(&block.slug);
+    let mut channel = Channel::new(&collection_ref, block.frontmatter.saved_at.clone())
         .map_err(|error| anyhow::anyhow!("invalid channel from block: {error}"))?;
     channel.description = block.frontmatter.description.clone();
     channel.color = block.frontmatter.color.clone();

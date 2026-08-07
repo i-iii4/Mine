@@ -17,6 +17,23 @@ pub fn normalize_collection_ref(raw: &str) -> String {
     inner.split('|').next().unwrap_or("").trim().to_string()
 }
 
+/// The name a collection is referred to by, given the slug of its document.
+///
+/// Membership is written as `[[Каталоги]]` — a wikilink target, which Obsidian
+/// resolves by name anywhere in the vault. The document's slug, on the other
+/// hand, is its path: once collections live in their own folder it becomes
+/// `Collections/Каталоги`. Registering the channel under the path while cards
+/// are tagged by the name splits one collection into two — an empty one from
+/// the document and a real one from the cards.
+pub fn collection_ref_from_slug(slug: &str) -> String {
+    let normalized = normalize_collection_ref(slug);
+    normalized
+        .rsplit('/')
+        .next()
+        .unwrap_or(&normalized)
+        .to_string()
+}
+
 pub fn collection_ref_from_canonical_value(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
     if !(trimmed.starts_with("[[") && trimmed.ends_with("]]")) {
@@ -291,5 +308,18 @@ mod tests {
             output,
             "---\ntags:\n  - old\nMine Collections: []\n---\nBody"
         );
+    }
+
+    #[test]
+    fn collection_ref_uses_the_document_name_not_its_folder() {
+        // Cards tag themselves `[[Каталоги]]`, so a collection whose document
+        // moved into a folder must keep answering to that name. Registering it
+        // under the path split one collection into two in the sidebar: an empty
+        // one from the document, a populated one from the cards.
+        assert_eq!(collection_ref_from_slug("Collections/Каталоги"), "Каталоги");
+        assert_eq!(collection_ref_from_slug("a/b/c/Design"), "Design");
+        assert_eq!(collection_ref_from_slug("Каталоги"), "Каталоги");
+        assert_eq!(collection_ref_from_slug("[[Collections/Design]]"), "Design");
+        assert_eq!(collection_ref_from_slug(""), "");
     }
 }
