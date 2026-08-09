@@ -7,12 +7,14 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
+import { FolderOpen, FolderPlus } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ChromeCloseButton } from "@/components/ChromeCloseButton";
+import { MenuIconSlot } from "@/components/ui/menu-icon-slot";
 import { MenuTextTrigger } from "@/components/MenuTextTrigger";
 import { QuantizedMenuScrollArea } from "@/components/QuantizedMenuScrollArea";
 import { SearchMenuAction } from "@/components/SearchMenuAction";
@@ -23,6 +25,10 @@ interface VaultSelectProps {
   value: string | null;
   options: string[];
   onChange: (value: string) => void;
+  /// Desktop parity: the pinned actions below the space list. Reveal targets
+  /// the current space; Add opens the host's system folder chooser.
+  onReveal: (path: string) => void;
+  onAddSpace: () => void;
   onClose?: () => void;
 }
 
@@ -31,7 +37,7 @@ function vaultName(path: string): string {
   return trimmed.split("/").pop() || path;
 }
 
-export function VaultSelect({ value, options, onChange, onClose }: VaultSelectProps) {
+export function VaultSelect({ value, options, onChange, onReveal, onAddSpace, onClose }: VaultSelectProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
@@ -56,6 +62,10 @@ export function VaultSelect({ value, options, onChange, onClose }: VaultSelectPr
     )
   ), [destinationVaults, query]);
 
+  const revealActionIndex = visibleVaults.length;
+  const addSpaceActionIndex = visibleVaults.length + 1;
+  const actionCount = visibleVaults.length + 2;
+
   const activeActionId = activeIndex === null
     ? undefined
     : `${actionIdPrefix}-clipper-space-action-${activeIndex}`;
@@ -76,10 +86,10 @@ export function VaultSelect({ value, options, onChange, onClose }: VaultSelectPr
   useEffect(() => {
     setActiveIndex((current) => {
       if (current === null) return current;
-      if (current < visibleVaults.length) return current;
-      return visibleVaults.length > 0 ? visibleVaults.length - 1 : null;
+      if (current < actionCount) return current;
+      return actionCount > 0 ? actionCount - 1 : null;
     });
-  }, [visibleVaults.length]);
+  }, [actionCount]);
 
   const selectVault = useCallback((path: string) => {
     setOpen(false);
@@ -89,15 +99,15 @@ export function VaultSelect({ value, options, onChange, onClose }: VaultSelectPr
   }, [onChange]);
 
   const moveActiveIndex = useCallback((direction: 1 | -1) => {
-    if (visibleVaults.length <= 0) return;
+    if (actionCount <= 0) return;
     setActiveIndex((current) => {
-      if (current === null) return direction > 0 ? 0 : visibleVaults.length - 1;
+      if (current === null) return direction > 0 ? 0 : actionCount - 1;
       const nextIndex = current + direction;
       if (nextIndex < 0) return 0;
-      if (nextIndex >= visibleVaults.length) return visibleVaults.length - 1;
+      if (nextIndex >= actionCount) return actionCount - 1;
       return nextIndex;
     });
-  }, [visibleVaults.length]);
+  }, [actionCount]);
 
   const handleSearchKeyDown = useCallback((event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Escape") {
@@ -119,12 +129,34 @@ export function VaultSelect({ value, options, onChange, onClose }: VaultSelectPr
     }
 
     if (event.key !== "Enter" || activeIndex === null) return;
-    const path = visibleVaults[activeIndex];
-    if (!path) return;
     event.preventDefault();
     event.stopPropagation();
-    selectVault(path);
-  }, [activeIndex, moveActiveIndex, query, selectVault, visibleVaults]);
+    const path = visibleVaults[activeIndex];
+    if (path) {
+      selectVault(path);
+      return;
+    }
+    if (activeIndex === revealActionIndex && value) {
+      setOpen(false);
+      onReveal(value);
+      return;
+    }
+    if (activeIndex === addSpaceActionIndex) {
+      setOpen(false);
+      onAddSpace();
+    }
+  }, [
+    activeIndex,
+    addSpaceActionIndex,
+    moveActiveIndex,
+    onAddSpace,
+    onReveal,
+    query,
+    revealActionIndex,
+    selectVault,
+    value,
+    visibleVaults,
+  ]);
 
   return (
     <div className="flex h-10 shrink-0 items-center border-b border-border bg-accent px-2" data-clipper-space-row="">
@@ -179,17 +211,52 @@ export function VaultSelect({ value, options, onChange, onClose }: VaultSelectPr
                   onActive={() => setActiveIndex(index)}
                   onPress={() => selectVault(path)}
                 >
+                  <MenuIconSlot />
                   <span className="min-w-0 truncate">
                     {vaultName(path)}
                   </span>
                 </SearchMenuAction>
               ))
             ) : (
-              <div className="flex h-[var(--menu-row-height)] items-center px-2 text-base text-muted-foreground">
+              <div className="flex h-[var(--menu-row-height)] items-center gap-2 px-2 text-base text-muted-foreground">
+                <MenuIconSlot />
                 No other spaces
               </div>
             )}
           </QuantizedMenuScrollArea>
+          <div className="border-t border-border p-1" data-clipper-space-pinned-actions="">
+            <SearchMenuAction
+              id={`${actionIdPrefix}-clipper-space-action-${revealActionIndex}`}
+              active={activeIndex === revealActionIndex}
+              rowSize="clipper"
+              onActive={() => setActiveIndex(revealActionIndex)}
+              onPress={() => {
+                if (!value) return;
+                setOpen(false);
+                onReveal(value);
+              }}
+            >
+              <MenuIconSlot>
+                <FolderOpen className="size-3" />
+              </MenuIconSlot>
+              Reveal in Finder
+            </SearchMenuAction>
+            <SearchMenuAction
+              id={`${actionIdPrefix}-clipper-space-action-${addSpaceActionIndex}`}
+              active={activeIndex === addSpaceActionIndex}
+              rowSize="clipper"
+              onActive={() => setActiveIndex(addSpaceActionIndex)}
+              onPress={() => {
+                setOpen(false);
+                onAddSpace();
+              }}
+            >
+              <MenuIconSlot>
+                <FolderPlus className="size-3" />
+              </MenuIconSlot>
+              Add space
+            </SearchMenuAction>
+          </div>
         </DropdownMenuContent>
       </DropdownMenu>
       {onClose && (

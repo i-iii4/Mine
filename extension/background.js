@@ -363,7 +363,10 @@ function getNativePort() {
 // Worst case: ureq retry × 15s × per-domain ограничения ≈ 150s. 180s — буфер.
 // Остальные actions (get_status, list_channels, …) — мгновенные read-only.
 function timeoutForAction(action) {
-  return action === "save_block" ? 180_000 : 30_000;
+  if (action === "save_block") return 180_000;
+  // The folder chooser waits on a human, not on IPC.
+  if (action === "pick_vault_folder") return 300_000;
+  return 30_000;
 }
 
 function sendNativeMessage(message) {

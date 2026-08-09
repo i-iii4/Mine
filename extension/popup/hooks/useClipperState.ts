@@ -57,6 +57,8 @@ import {
   type PageMetadata,
   type ArticleData,
   type ContextMenuData,
+  pickVaultFolder,
+  revealVault,
 } from "../lib/messaging";
 
 // Detection: when PopupApp runs as a content-script overlay, chrome.tabs /
@@ -949,6 +951,20 @@ export function useClipperState() {
     setSelectedTags([]);
   }, [refreshChannels]);
 
+  /// Desktop parity for the space switcher: the host shows the system folder
+  /// chooser, registers the folder in the shared config, and the clipper
+  /// switches to it — the same flow Add space runs in the app.
+  const addSpace = useCallback(async () => {
+    const resp = await pickVaultFolder();
+    if (!resp.ok || resp.cancelled || !resp.path) return;
+    setKnownVaults(resp.vaults);
+    await switchVault(resp.path);
+  }, [switchVault]);
+
+  const revealSpace = useCallback(async (vaultPath: string) => {
+    await revealVault(vaultPath);
+  }, []);
+
   return {
     state,
     error,
@@ -973,6 +989,8 @@ export function useClipperState() {
     knownVaults,
     selectedVault,
     switchVault,
+    addSpace,
+    revealSpace,
   };
 }
 

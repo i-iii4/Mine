@@ -24,7 +24,11 @@ export interface ChannelInfo {
 // must mirror background.js timeoutForAction(). Остальные actions —
 // быстрый read-only IPC через bg.js port.
 function timeoutForAction(action: string): number {
-  return action === "save_block" ? 180_000 : 10_000;
+  if (action === "save_block") return 180_000;
+  // The folder chooser waits on a human: the promise resolves when the
+  // dialog does, not on IPC speed.
+  if (action === "pick_vault_folder") return 300_000;
+  return 10_000;
 }
 
 export async function sendToNative(payload: NativeRequest): Promise<NativeResponse> {
@@ -69,6 +73,25 @@ export interface KnownVaultsResponse extends NativeResponse {
 export async function listKnownVaults(): Promise<KnownVaultsResponse> {
   const resp = await sendToNative({ action: "list_known_vaults" });
   return resp as KnownVaultsResponse;
+}
+
+export interface PickVaultFolderResponse extends NativeResponse {
+  cancelled: boolean;
+  path: string | null;
+  vaults: string[];
+}
+
+/// Asks the native host to show the system folder chooser and register the
+/// picked folder as a known vault. The extension has no filesystem UI of its
+/// own; the host, an ordinary local process, opens the dialog on its behalf.
+export async function pickVaultFolder(): Promise<PickVaultFolderResponse> {
+  const resp = await sendToNative({ action: "pick_vault_folder" });
+  return resp as PickVaultFolderResponse;
+}
+
+/// Reveals a known vault in Finder via the native host.
+export async function revealVault(path: string): Promise<NativeResponse> {
+  return sendToNative({ action: "reveal_vault", params: { path } });
 }
 
 export interface ContextMenuData {

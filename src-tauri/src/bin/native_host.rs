@@ -465,6 +465,126 @@ fn handle_list_known_vaults() {
     });
 }
 
+/// Adds a vault path to the shared desktop config's `known_vaults`, keeping
+/// the write atomic (tmp + rename) so a concurrently reading desktop app never
+/// sees a torn file. Returns the updated list.
+fn add_known_vault(path: &str) -> Result<Vec<String>, String> {
+    let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
+    let config_dir = PathBuf::from(&home).join("Library/Application Support/com.mine.app");
+    std::fs::create_dir_all(&config_dir)
+        .map_err(|e| format!("cannot create config directory: {e}"))?;
+    let config_path = config_dir.join("config.json");
+    let mut json: serde_json::Value = std::fs::read_to_string(&config_path)
+        .ok()
+        .and_then(|data| serde_json::from_str(&data).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+
+    let mut vaults: Vec<String> = json
+        .get("known_vaults")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    if !vaults.iter().any(|existing| existing == path) {
+        vaults.push(path.to_string());
+    }
+    json["known_vaults"] = serde_json::json!(vaults);
+
+    let serialized = serde_json::to_string_pretty(&json)
+        .map_err(|e| format!("cannot serialize config: {e}"))?;
+    let tmp_path = config_dir.join("config.json.tmp");
+    std::fs::write(&tmp_path, serialized).map_err(|e| format!("cannot write config: {e}"))?;
+    std::fs::rename(&tmp_path, &config_path)
+        .map_err(|e| format!("cannot commit config: {e}"))?;
+    Ok(vaults)
+}
+
+/// Shows the native macOS folder chooser and registers the picked folder as a
+/// known vault. The clipper cannot open a file dialog itself — extensions have
+/// no filesystem UI — so the host, an ordinary local process, asks the system
+/// on its behalf via osascript. Cancelling the dialog is a normal outcome, not
+/// an error.
+fn handle_pick_vault_folder() {
+    #[derive(serde::Serialize)]
+    struct PickVaultResponse {
+        ok: bool,
+        cancelled: bool,
+        path: Option<String>,
+        vaults: Vec<String>,
+    }
+
+    let script = concat!(
+        "tell application \"System Events\" to activate\n",
+        "POSIX path of (choose folder with prompt \"Choose a folder for the Mine space\")",
+    );
+    let output = match std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+    {
+        Ok(output) => output,
+        Err(e) => return send_error(&format!("cannot run osascript: {e}")),
+    };
+    if !output.status.success() {
+        // The only non-zero path a plain `choose folder` produces is the user
+        // pressing Cancel (-128).
+        send_response(&PickVaultResponse {
+            ok: true,
+            cancelled: true,
+            path: None,
+            vaults: load_known_vaults(),
+        });
+        return;
+    }
+    let picked = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let picked = picked.trim_end_matches('/').to_string();
+    if picked.is_empty() || !PathBuf::from(&picked).is_dir() {
+        return send_error("folder chooser returned no usable path");
+    }
+    match add_known_vault(&picked) {
+        Ok(vaults) => send_response(&PickVaultResponse {
+            ok: true,
+            cancelled: false,
+            path: Some(picked),
+            vaults,
+        }),
+        Err(e) => send_error(&e),
+    }
+}
+
+/// Reveals a known vault in Finder. Restricted to paths the config already
+/// lists so a compromised page cannot use the clipper bridge to probe or open
+/// arbitrary directories.
+fn handle_reveal_vault(params: serde_json::Value) {
+    #[derive(serde::Deserialize)]
+    struct RevealVaultParams {
+        path: String,
+    }
+    #[derive(serde::Serialize)]
+    struct RevealVaultResponse {
+        ok: bool,
+    }
+    let p: RevealVaultParams = match serde_json::from_value(params) {
+        Ok(p) => p,
+        Err(e) => return send_error(&format!("invalid reveal_vault params: {e}")),
+    };
+    let mut allowed = load_known_vaults();
+    if let Some(current) = load_vault_path() {
+        allowed.push(current);
+    }
+    if !allowed.iter().any(|vault| vault == &p.path) {
+        return send_error("path is not a known vault");
+    }
+    match std::process::Command::new("open").arg("-R").arg(&p.path).status() {
+        Ok(status) if status.success() => send_response(&RevealVaultResponse { ok: true }),
+        Ok(status) => send_error(&format!("open -R exited with {status}")),
+        Err(e) => return send_error(&format!("cannot run open: {e}")),
+    }
+}
+
 fn handle_get_status_with_upload(upload: &Option<UploadServer>) {
     let vault_path = load_vault_path();
     let ok = vault_path.is_some();
@@ -2404,6 +2524,8 @@ fn main() {
         match req.action.as_str() {
             "get_status" => handle_get_status_with_upload(&upload_server),
             "list_known_vaults" => handle_list_known_vaults(),
+            "pick_vault_folder" => handle_pick_vault_folder(),
+            "reveal_vault" => handle_reveal_vault(req.params),
             "resolve_twitter_media" => handle_resolve_twitter_media(req.params),
 
             "list_channels" | "save_block" | "create_channel" => {
