@@ -90,7 +90,7 @@ describe("VaultSwitcher", () => {
     expect(trigger).toHaveTextContent("Mine");
   });
 
-  it("omits the current space and icon markers from the top-chrome dropdown", async () => {
+  it("omits the current space and keeps space rows free of icon markers", async () => {
     commandMocks.listKnownVaults.mockResolvedValue([
       "/Users/i_iii/Library/Mobile Documents/com~apple~CloudDocs/Mine",
       "/Users/i_iii/Desktop/Тест",
@@ -116,17 +116,83 @@ describe("VaultSwitcher", () => {
     expect(screen.queryByRole("menuitem", { name: "Mine" })).not.toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Тест" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Add space" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Reveal in Finder" })).toBeInTheDocument();
     expect(document.querySelector("[data-vault-switcher-menu]")).toHaveAttribute(
       "data-vault-switcher-menu-align-offset",
       "12",
     );
-    // The rows stay textual: the only icon in the menu is the per-row overflow
-    // trigger, which carries the space's own actions.
+    // Icons live in two places only: the per-row actions, and the pinned
+    // commands below the divider. A space row is still a name and nothing else.
     const content = document.querySelector("[data-slot='dropdown-menu-content']");
     const icons = content?.querySelectorAll("svg") ?? [];
     for (const icon of icons) {
-      expect(icon.closest("[data-vault-switcher-row-actions]")).not.toBeNull();
+      const allowed = icon.closest("[data-vault-switcher-row-actions]")
+        ?? icon.closest("[data-vault-switcher-pinned-actions]");
+      expect(allowed).not.toBeNull();
     }
+  });
+
+  it("reveals the current space from the pinned action and closes the menu", async () => {
+    await openSwitcherWithSpaces();
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Reveal in Finder" }));
+
+    // The action targets the space the switcher is pointing at, not a row.
+    await waitFor(() => {
+      expect(revealItemInDir).toHaveBeenCalledWith(
+        "/Users/i_iii/Library/Mobile Documents/com~apple~CloudDocs/Mine",
+      );
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("menuitem", { name: "Reveal in Finder" })).not.toBeInTheDocument();
+    });
+  });
+
+  it("gives both pinned actions a leading icon and space rows an empty slot of the same width", async () => {
+    await openSwitcherWithSpaces();
+
+    for (const name of ["Reveal in Finder", "Add space"]) {
+      const action = screen.getByRole("menuitem", { name });
+      const slot = action.querySelector("[data-card-menu-icon-slot]");
+      expect(slot).not.toBeNull();
+      // Leading position: the slot is the first child, so the icon sits left of
+      // the label the way ordinary menu rows are built.
+      expect(action.firstElementChild).toBe(slot);
+      expect(slot?.querySelector("svg")).not.toBeNull();
+    }
+
+    // One text column through the whole menu: the row keeps the slot, empty.
+    const row = screen.getByRole("menuitem", { name: "Тест" });
+    const rowSlot = row.querySelector("[data-card-menu-icon-slot]");
+    expect(rowSlot).not.toBeNull();
+    expect(rowSlot?.querySelector("svg")).toBeNull();
+  });
+
+  it("reaches the pinned actions with arrow navigation", async () => {
+    await openSwitcherWithSpaces();
+    const search = screen.getByRole("textbox", { name: "Search spaces" });
+
+    // One space, then Reveal in Finder, then Add space.
+    fireEvent.keyDown(search, { key: "ArrowDown" });
+    fireEvent.keyDown(search, { key: "ArrowDown" });
+
+    expect(screen.getByRole("menuitem", { name: "Reveal in Finder" })).toHaveAttribute(
+      "data-search-menu-action-active",
+      "true",
+    );
+
+    fireEvent.keyDown(search, { key: "ArrowDown" });
+    expect(screen.getByRole("menuitem", { name: "Add space" })).toHaveAttribute(
+      "data-search-menu-action-active",
+      "true",
+    );
+
+    // Past the last action the selection stops rather than wrapping.
+    fireEvent.keyDown(search, { key: "ArrowDown" });
+    expect(screen.getByRole("menuitem", { name: "Add space" })).toHaveAttribute(
+      "data-search-menu-action-active",
+      "true",
+    );
   });
 
   it("filters spaces and keeps input focus while arrow navigation changes the active row", async () => {
@@ -244,6 +310,26 @@ describe("VaultSwitcher", () => {
     for (const icon of [reveal.querySelector("svg"), remove.querySelector("svg")]) {
       expect(icon?.getAttribute("class") ?? "").not.toMatch(/\bsize-\d/);
     }
+  });
+
+  it("explains the reveal action on hover", async () => {
+    await openSwitcherWithSpaces();
+
+    fireEvent.pointerMove(screen.getByRole("button", { name: "Reveal Тест in Finder" }));
+
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Reveal in Finder");
+  });
+
+  it("says on hover that removing a space leaves the files on disk", async () => {
+    await openSwitcherWithSpaces();
+
+    fireEvent.pointerMove(screen.getByRole("button", { name: "Remove Тест from the list" }));
+
+    // The consequence, not the label: this action is the one users read as
+    // "delete the folder", and the tooltip has to rule that out.
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Remove from the list — files stay on disk",
+    );
   });
 
   it("forgets nothing when the confirmation is dismissed", async () => {

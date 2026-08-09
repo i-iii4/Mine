@@ -9,7 +9,7 @@ import {
 } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { FolderOpen, X } from "lucide-react";
+import { FolderOpen, FolderPlus, X } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,6 +18,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { MenuTextTrigger } from "@/components/MenuTextTrigger";
+import { MenuIconSlot } from "@/components/ui/menu-icon-slot";
 import { QuantizedMenuScrollArea } from "@/components/QuantizedMenuScrollArea";
 import { SearchMenuAction } from "@/components/SearchMenuAction";
 import { SearchMenuInput } from "@/components/SearchMenuInput";
@@ -34,6 +35,12 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { forgetKnownVault, listKnownVaults, selectVault } from "@/lib/commands";
 import { cn } from "@/lib/utils";
 
@@ -114,6 +121,17 @@ export function VaultSwitcher({
     }
   }, []);
 
+  /// Reveals the space the switcher is currently pointing at.
+  ///
+  /// Unlike the per-row reveal, this one closes the menu: it hands the window
+  /// over to Finder, and a dropdown left hanging behind another app is state
+  /// the user did not ask to keep.
+  const handleRevealCurrent = useCallback(() => {
+    setOpen(false);
+    resetMenuSearch();
+    void handleReveal(currentPath);
+  }, [currentPath, handleReveal, resetMenuSearch]);
+
   const handleAddSpace = useCallback(async () => {
     const selected = await openDialog({ directory: true, multiple: false });
     if (!selected) return;
@@ -141,8 +159,11 @@ export function VaultSwitcher({
       : sorted
   ), [isTopChrome, query, sorted]);
 
-  const actionCount = visibleVaults.length + 1;
-  const addSpaceActionIndex = visibleVaults.length;
+  // Keyboard order follows visual order: destination spaces, then the two
+  // pinned actions below the divider.
+  const revealActionIndex = visibleVaults.length;
+  const addSpaceActionIndex = visibleVaults.length + 1;
+  const actionCount = visibleVaults.length + 2;
   const activeActionId = activeIndex === null
     ? undefined
     : `${actionIdPrefix}-space-action-${activeIndex}`;
@@ -194,10 +215,21 @@ export function VaultSwitcher({
       void handleSwitch(path);
       return;
     }
+    if (index === revealActionIndex) {
+      handleRevealCurrent();
+      return;
+    }
     if (index === addSpaceActionIndex) {
       void handleAddSpace();
     }
-  }, [addSpaceActionIndex, handleAddSpace, handleSwitch, visibleVaults]);
+  }, [
+    addSpaceActionIndex,
+    handleAddSpace,
+    handleRevealCurrent,
+    handleSwitch,
+    revealActionIndex,
+    visibleVaults,
+  ]);
 
   const restoreSearchFocus = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -242,7 +274,7 @@ export function VaultSwitcher({
   }, [isTopChrome]);
 
   return (
-    <>
+    <TooltipProvider>
     <DropdownMenu
       open={isTopChrome ? open : undefined}
       onOpenChange={handleOpenChange}
@@ -317,7 +349,8 @@ export function VaultSwitcher({
                 />
               ))
             ) : (
-              <div className="flex h-[var(--menu-row-height)] items-center px-2 text-base text-muted-foreground">
+              <div className="flex h-[var(--menu-row-height)] items-center gap-2 px-2 text-base text-muted-foreground">
+                <MenuIconSlot />
                 No other spaces
               </div>
             )}
@@ -332,20 +365,33 @@ export function VaultSwitcher({
                     void handleSwitch(path);
                   }}
                 >
+                  <MenuIconSlot />
                   <span className="min-w-0 truncate">
                     {vaultName(path)}
                   </span>
                 </DropdownMenuItem>
               ))
             ) : (
-              <div className="px-2 py-1.5 text-base text-muted-foreground">
+              <div className="flex items-center gap-2 px-2 py-1.5 text-base text-muted-foreground">
+                <MenuIconSlot />
                 No other spaces
               </div>
             )}
           </div>
         )}
         {isTopChrome ? (
-          <div className="border-t border-border p-1">
+          <div className="border-t border-border p-1" data-vault-switcher-pinned-actions="">
+            <SearchMenuAction
+              id={`${actionIdPrefix}-space-action-${revealActionIndex}`}
+              active={activeIndex === revealActionIndex}
+              onActive={() => setActiveIndex(revealActionIndex)}
+              onPress={handleRevealCurrent}
+            >
+              <MenuIconSlot>
+                <FolderOpen className="size-3" />
+              </MenuIconSlot>
+              Reveal in Finder
+            </SearchMenuAction>
             <SearchMenuAction
               id={`${actionIdPrefix}-space-action-${addSpaceActionIndex}`}
               active={activeIndex === addSpaceActionIndex}
@@ -354,17 +400,29 @@ export function VaultSwitcher({
                 void handleAddSpace();
               }}
             >
+              <MenuIconSlot>
+                <FolderPlus className="size-3" />
+              </MenuIconSlot>
               Add space
             </SearchMenuAction>
           </div>
         ) : (
           <>
             <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={handleRevealCurrent}>
+              <MenuIconSlot>
+                <FolderOpen className="size-3" />
+              </MenuIconSlot>
+              Reveal in Finder
+            </DropdownMenuItem>
             <DropdownMenuItem
               onSelect={() => {
                 void handleAddSpace();
               }}
             >
+              <MenuIconSlot>
+                <FolderPlus className="size-3" />
+              </MenuIconSlot>
               Add space
             </DropdownMenuItem>
           </>
@@ -405,7 +463,7 @@ export function VaultSwitcher({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
-    </>
+    </TooltipProvider>
   );
 }
 
@@ -451,6 +509,10 @@ function SpaceRow({
         onPress={onSwitch}
         className="pr-14"
       >
+        {/* Empty leading slot: the pinned actions below the divider carry
+            icons, and one text column through the whole menu is the icon
+            economy rule (DESIGN_SYSTEM.md). */}
+        <MenuIconSlot />
         <span className="min-w-0 truncate">{name}</span>
       </SearchMenuAction>
       <div
@@ -460,39 +522,53 @@ function SpaceRow({
         )}
         data-vault-switcher-row-actions=""
       >
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={`Reveal ${name} in Finder`}
-          className={ROW_ACTION_CLASS}
-          onPointerDown={(event) => event.stopPropagation()}
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            onReveal();
-          }}
-        >
-          <FolderOpen />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={`Remove ${name} from the list`}
-          // The detach colour belongs to the moment the action is aimed at, not
-          // to an icon sitting in a list: a row painted orange at rest reads as
-          // a warning about the space itself.
-          className={cn(ROW_ACTION_CLASS, "hover:text-detach focus-visible:text-detach")}
-          onPointerDown={(event) => event.stopPropagation()}
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            onRequestForget();
-          }}
-        >
-          <X />
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label={`Reveal ${name} in Finder`}
+              className={ROW_ACTION_CLASS}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onReveal();
+              }}
+            >
+              <FolderOpen />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="top">Reveal in Finder</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label={`Remove ${name} from the list`}
+              // The detach colour belongs to the moment the action is aimed at,
+              // not to an icon sitting in a list: a row painted orange at rest
+              // reads as a warning about the space itself.
+              className={cn(ROW_ACTION_CLASS, "hover:text-detach focus-visible:text-detach")}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onRequestForget();
+              }}
+            >
+              <X />
+            </Button>
+          </TooltipTrigger>
+          {/* The X is the one action in this menu whose consequence is easy to
+              misread, so the tooltip states what stays untouched. */}
+          <TooltipContent side="top">
+            Remove from the list — files stay on disk
+          </TooltipContent>
+        </Tooltip>
       </div>
     </div>
   );
