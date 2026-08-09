@@ -169,14 +169,37 @@ count header (`1 карточка`, `2 карточки`, `5 карточек`) 
   reorder-first merge dialog from [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md);
 - `Delete` opens the existing batch delete confirmation.
 
-Only `Connect` has a visible icon in the focused-card batch menu.
-`Disconnect`, `Merge` and `Delete` are text commands with an empty leading icon
-slot, so labels align with `Connect` without adding visual noise.
+`Connect` (`Plus`), `Disconnect` (`Unlink`) and `Delete` (`Trash2`) carry icons
+in the batch menu, matching the card menus; `Merge` is a text command with an
+empty leading icon slot, so labels stay aligned.
 
 `Source`, `Rename`, `Reveal`, `Copy Path`, single-card collection actions and
 other single-card actions are not present in this focused-card batch menu. This
 keeps keyboard batch actions local to the active card while the count header
 makes the selected-set scope explicit.
+
+## Right-click on a Selection
+
+Right-click follows the same scope rule as `Cmd+K`, so the pointer path cannot
+act on less than the user sees selected.
+
+- right-clicking a card whose slug is in `selectedSlugs` opens a selection
+  context menu carrying the same commands as the focused-card batch menu: count
+  header, `Connect`, `Disconnect` (only with `currentTag`), `Merge` (only from
+  two cards) and `Delete`. Every command applies to all selected cards, never to
+  the clicked card alone;
+- right-clicking a card outside the selection opens the ordinary single-card
+  menu and leaves `selectedSlugs` untouched, so an accidental right-click never
+  silently drops a selection;
+- `Reveal in Finder`, `Copy Path`, `Rename…` and `Source` are absent from the
+  selection menu rather than disabled: each addresses exactly one file or one
+  URL, so on a selection they would either pick a card silently or open a window
+  per card;
+- the delete confirmation is the shared selection dialog and is mounted by the
+  grid, not by the menu content, which unmounts as soon as the menu closes.
+
+Both entry points read their state through one hook, so the two menus cannot
+drift apart in what a batch command does.
 
 ## Selected Card Visual
 

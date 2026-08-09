@@ -22,6 +22,8 @@ import { MeasureCard } from "./MeasureCard";
 import { CardTagMenu } from "./CardContextMenu";
 import { GroupSelectionActionBar } from "./GroupSelectionActionBar";
 import { GroupSelectionCardMenu } from "./GroupSelectionCardMenu";
+import { GroupSelectionContextMenu } from "./GroupSelectionContextMenu";
+import { DeleteSelectedCardsDialog } from "./DeleteSelectedCardsDialog";
 import { MergeCardsDialog } from "./MergeCardsDialog";
 import {
   computeMasonryLayout,
@@ -436,6 +438,11 @@ export function Grid({
     INITIAL_FEED_SCROLL_SIGNAL,
   );
   const [menuBlock, setMenuBlock] = useState<LightBlock | null>(null);
+  /// Whether the next right-click menu addresses one card or the selection.
+  /// Decided when the menu is summoned, because that is the only moment the
+  /// clicked card and the selection are both known.
+  const [contextMenuScope, setContextMenuScope] = useState<"card" | "selection">("card");
+  const [deleteSelectionDialogOpen, setDeleteSelectionDialogOpen] = useState(false);
   const [focusedSlug, setFocusedSlug] = useState<string | null>(null);
   const [selectedSlugs, setSelectedSlugs] = useState<Set<string>>(() => new Set());
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
@@ -1767,14 +1774,22 @@ export function Grid({
         return;
       }
       const slug = el.getAttribute("data-block-slug")!;
+      // Right-clicking a card that is part of the selection addresses the whole
+      // selection, the way Finder does. Right-clicking outside it stays a
+      // single-card menu and leaves the selection alone.
+      if (selectedSlugs.has(slug)) {
+        setContextMenuScope("selection");
+        return;
+      }
       const block = blocksBySlug.get(slug);
       if (block) {
+        setContextMenuScope("card");
         setMenuBlock(block);
       } else {
         e.preventDefault();
       }
     },
-    [blocksBySlug],
+    [blocksBySlug, selectedSlugs],
   );
 
   const handleRequestDelete = useCallback((slug: string) => {
@@ -1785,6 +1800,11 @@ export function Grid({
     () => blocks.filter((block) => selectedSlugs.has(block.slug)),
     [blocks, selectedSlugs],
   );
+
+  const handleConfirmDeleteSelection = useCallback(async () => {
+    await onDeleteSelectedBlocks(selectedBlocks.map((block) => block.slug));
+    clearSelection();
+  }, [clearSelection, onDeleteSelectedBlocks, selectedBlocks]);
 
   const openMergeDialog = useCallback(() => {
     if (selectedSlugs.size < 2) return;
@@ -1930,6 +1950,13 @@ export function Grid({
         />
       )}
 
+      <DeleteSelectedCardsDialog
+        open={deleteSelectionDialogOpen}
+        selectedCount={selectedBlocks.length}
+        onOpenChange={setDeleteSelectionDialogOpen}
+        onConfirm={handleConfirmDeleteSelection}
+      />
+
       <MergeCardsDialog
         open={mergeDialogOpen}
         selectedBlocks={selectedBlocks}
@@ -1938,7 +1965,19 @@ export function Grid({
         onConfirm={handleConfirmMerge}
       />
 
-      {menuBlock && (
+      {contextMenuScope === "selection" && selectedBlocks.length > 0 ? (
+        <GroupSelectionContextMenu
+          selectedBlocks={selectedBlocks}
+          tags={tags}
+          currentTag={currentTag}
+          onLoadBlockTags={onLoadBlockTags}
+          onBatchSetTag={onBatchSetTag}
+          onCreateAndAssignBatch={onCreateAndAssignBatch}
+          onRequestDeleteSelected={() => setDeleteSelectionDialogOpen(true)}
+          onMergeSelectedBlocks={openMergeDialog}
+          onClearSelection={clearSelection}
+        />
+      ) : menuBlock ? (
         <CardTagMenu
           block={menuBlock}
           vaultPath={vaultPath}
@@ -1949,7 +1988,7 @@ export function Grid({
           onRequestRename={onRequestRename}
           onRequestDelete={onRequestDelete}
         />
-      )}
+      ) : null}
     </ContextMenu>
       <TopFadeScrim scrolled={topFade.scrolled} surface="feed" color="var(--background)" />
     </div>

@@ -1615,6 +1615,94 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(gridItemForSlug("block-9531")).toHaveAttribute("data-feed-grid-item-selected", "true");
   });
 
+  it("right-clicks a selected card into a selection menu without single-card commands", async () => {
+    vi.useFakeTimers();
+
+    const onDeleteSelectedBlocks = vi.fn();
+    const blocks = [makeBlock(9541), makeBlock(9542)];
+    setBlockHeight(9541, 200);
+    setBlockHeight(9542, 220);
+
+    render(
+      <Grid
+        {...BASE_PROPS}
+        blocks={blocks}
+        onDeleteSelectedBlocks={onDeleteSelectedBlocks}
+      />,
+    );
+    await flushAsync();
+
+    for (const slug of ["block-9541", "block-9542"]) {
+      fireEvent.click(document.querySelector(`[data-block-slug="${slug}"]`) as HTMLElement, {
+        metaKey: true,
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+    }
+
+    fireEvent.contextMenu(document.querySelector('[data-block-slug="block-9541"]') as HTMLElement);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const menu = document.querySelector(
+      "[data-feed-grid-selection-context-menu]",
+    ) as HTMLElement;
+    expect(menu).toBeInTheDocument();
+    expect(within(menu).getByText("2 карточки")).toBeInTheDocument();
+
+    // Commands that address a single file or URL have no group meaning, so the
+    // selection menu does not offer them at all.
+    for (const label of ["Reveal in Finder", "Copy Path", "Rename…", "Source"]) {
+      expect(within(menu).queryByText(label)).toBeNull();
+    }
+    expect(within(menu).getByText("Connect")).toBeInTheDocument();
+    expect(within(menu).getByText("Delete")).toBeInTheDocument();
+
+    fireEvent.click(within(menu).getByText("Delete"));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const dialog = document.querySelector("[role='alertdialog']") as HTMLElement;
+    expect(dialog).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // The whole point: the click landed on one card, the delete covers both.
+    expect(onDeleteSelectedBlocks).toHaveBeenCalledWith(["block-9541", "block-9542"]);
+  });
+
+  it("keeps the single-card menu when the right-clicked card is outside the selection", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [makeBlock(9543), makeBlock(9544)];
+    setBlockHeight(9543, 200);
+    setBlockHeight(9544, 220);
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} />);
+    await flushAsync();
+
+    fireEvent.click(document.querySelector('[data-block-slug="block-9543"]') as HTMLElement, {
+      metaKey: true,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    fireEvent.contextMenu(document.querySelector('[data-block-slug="block-9544"]') as HTMLElement);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(document.querySelector("[data-feed-grid-selection-context-menu]")).toBeNull();
+    const menu = document.querySelector("[data-slot='context-menu-content']") as HTMLElement;
+    expect(within(menu).getByText("Reveal in Finder")).toBeInTheDocument();
+  });
+
   it("shows collection-scoped Disconnect in the focused-card batch menu outside Everything", async () => {
     vi.useFakeTimers();
 

@@ -1,22 +1,5 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { MoreHorizontal, Plus, Trash2, Unlink } from "lucide-react";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -28,12 +11,11 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { MenuIconSlot } from "@/components/ui/menu-icon-slot";
+import { useGroupSelectionMenuActions } from "@/hooks/useGroupSelectionMenuActions";
 import type { LightBlock, TagCount } from "@/types";
-import {
-  patchTagLookup,
-  scheduleAfterOptimisticUiUpdate,
-  selectedCardCountLabel,
-} from "@/lib/groupSelection";
+import { selectedCardCountLabel } from "@/lib/groupSelection";
+import { DeleteSelectedCardsDialog } from "./DeleteSelectedCardsDialog";
 import {
   BatchCollectionPicker,
   COLLECTION_PICKER_CONTENT_CLASS,
@@ -52,18 +34,6 @@ interface GroupSelectionCardMenuProps {
   onClearSelection: () => void;
 }
 
-function MenuIconSlot({ children }: { children?: ReactNode }) {
-  return (
-    <span
-      aria-hidden="true"
-      className="flex size-3 shrink-0 items-center justify-center"
-      data-card-menu-icon-slot=""
-    >
-      {children}
-    </span>
-  );
-}
-
 export function GroupSelectionCardMenu({
   selectedBlocks,
   tags,
@@ -76,27 +46,26 @@ export function GroupSelectionCardMenu({
   onMergeSelectedBlocks,
   onClearSelection,
 }: GroupSelectionCardMenuProps) {
-  const selectedSlugs = useMemo(
-    () => selectedBlocks.map((block) => block.slug),
-    [selectedBlocks],
-  );
+  const actions = useGroupSelectionMenuActions({
+    selectedBlocks,
+    currentTag,
+    onLoadBlockTags,
+    onBatchSetTag,
+    onCreateAndAssignBatch,
+  });
   const [menuOpen, setMenuOpen] = useState(false);
   const menuOpenRef = useRef(false);
-  const [connectOpen, setConnectOpen] = useState(false);
   const connectTriggerRef = useRef<HTMLDivElement>(null);
-  const [tagLookup, setTagLookup] = useState<Map<string, string[]>>(new Map());
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
   const lastOpenRequestSequenceRef = useRef(0);
 
   const updateMenuOpen = useCallback((open: boolean) => {
     menuOpenRef.current = open;
     setMenuOpen(open);
     if (!open) {
-      setConnectOpen(false);
+      actions.setConnectOpen(false);
     }
-  }, []);
+  }, [actions]);
 
   useEffect(() => {
     if (openRequestSequence <= lastOpenRequestSequenceRef.current) return;
@@ -104,71 +73,16 @@ export function GroupSelectionCardMenu({
     updateMenuOpen(!menuOpenRef.current);
   }, [openRequestSequence, updateMenuOpen]);
 
-  useEffect(() => {
-    if (!connectOpen || selectedSlugs.length === 0) return;
-    let cancelled = false;
-    void onLoadBlockTags(selectedSlugs)
-      .then((lookup) => {
-        if (!cancelled) {
-          setTagLookup(lookup);
-          setActionError(null);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setActionError(err instanceof Error ? err.message : String(err));
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [connectOpen, onLoadBlockTags, selectedSlugs]);
-
-  const handleBatchSetTag = (
-    targetSlugs: string[],
-    tag: string,
-    connected: boolean,
-  ) => {
-    if (targetSlugs.length === 0) return;
-    setTagLookup((current) => patchTagLookup(current, targetSlugs, tag, connected));
-    setActionError(null);
-    scheduleAfterOptimisticUiUpdate(() => {
-      void Promise.resolve(onBatchSetTag(targetSlugs, tag, connected)).catch((err) => {
-        setActionError(err instanceof Error ? err.message : String(err));
-      });
-    });
-  };
-
-  const handleCreateAndAssignBatch = (tag: string) => {
-    setTagLookup((current) => patchTagLookup(current, selectedSlugs, tag, true));
-    setActionError(null);
-    scheduleAfterOptimisticUiUpdate(() => {
-      void Promise.resolve(onCreateAndAssignBatch(tag, selectedSlugs)).catch((err) => {
-        setActionError(err instanceof Error ? err.message : String(err));
-      });
-    });
-  };
-
   const handleDisconnectFromCollection = () => {
-    if (!currentTag) return;
-    handleBatchSetTag(selectedSlugs, currentTag, false);
+    actions.disconnectFromCurrentCollection();
     updateMenuOpen(false);
     onClearSelection();
   };
 
   const handleConfirmDelete = async () => {
-    setDeleting(true);
-    try {
-      await onDeleteSelectedBlocks(selectedSlugs);
-      setActionError(null);
-      setDeleteOpen(false);
-      updateMenuOpen(false);
-      onClearSelection();
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setDeleting(false);
-    }
+    await onDeleteSelectedBlocks(actions.selectedSlugs);
+    updateMenuOpen(false);
+    onClearSelection();
   };
 
   const handleMerge = () => {
@@ -207,7 +121,7 @@ export function GroupSelectionCardMenu({
             {selectedCardCountLabel(selectedBlocks.length)}
           </div>
           <DropdownMenuSeparator />
-          <DropdownMenuSub open={connectOpen} onOpenChange={setConnectOpen}>
+          <DropdownMenuSub open={actions.connectOpen} onOpenChange={actions.setConnectOpen}>
             <DropdownMenuSubTrigger ref={connectTriggerRef}>
               <MenuIconSlot>
                 <Plus className="size-3" />
@@ -216,13 +130,13 @@ export function GroupSelectionCardMenu({
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent widthRole="picker" className={COLLECTION_PICKER_CONTENT_CLASS}>
               <BatchCollectionPicker
-                selectedSlugs={selectedSlugs}
+                selectedSlugs={actions.selectedSlugs}
                 tags={tags}
-                tagLookup={tagLookup}
-                onBatchSetTag={handleBatchSetTag}
-                onCreateAndAssign={handleCreateAndAssignBatch}
+                tagLookup={actions.tagLookup}
+                onBatchSetTag={actions.batchSetTag}
+                onCreateAndAssign={actions.createAndAssignBatch}
                 onRequestClose={() => {
-                  setConnectOpen(false);
+                  actions.setConnectOpen(false);
                   requestAnimationFrame(() => connectTriggerRef.current?.focus());
                 }}
               />
@@ -254,40 +168,23 @@ export function GroupSelectionCardMenu({
             </MenuIconSlot>
             Delete
           </DropdownMenuItem>
-          {actionError && (
+          {actions.actionError && (
             <>
               <DropdownMenuSeparator />
               <div className="px-2 py-1.5 text-sm text-destructive">
-                {actionError}
+                {actions.actionError}
               </div>
             </>
           )}
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <AlertDialogContent size="sm">
-          <AlertDialogHeader className="place-items-start text-left">
-            <AlertDialogTitle>Delete selected cards?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will delete {selectedCardCountLabel(selectedBlocks.length)}. Media files stay in the vault.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              disabled={deleting}
-              onClick={(event) => {
-                event.preventDefault();
-                void handleConfirmDelete();
-              }}
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <DeleteSelectedCardsDialog
+        open={deleteOpen}
+        selectedCount={selectedBlocks.length}
+        onOpenChange={setDeleteOpen}
+        onConfirm={handleConfirmDelete}
+      />
     </>
   );
 }
