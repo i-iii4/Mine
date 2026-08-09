@@ -613,22 +613,51 @@ extension: запись может перейти в broken state или исч�
 
 ```
 ┌──────────────────────────────────────┐
-│ Mine                              ˅  │ ← 40px bright text selector row
+│ Mine                              ˅  │ ← 40px bright text selector row (fixed)
 ├──────────────────────────────────────┤
-│ Type:       [Content|Screenshot|Link]│ ← 40px type row
+│ Type:       [Content|Screenshot|Link]│ ← 40px type row (fixed)
 ├──────────────────────────────────────┤
 │  ┌────────────────────────────────┐  │
-│  │ Content / screenshot preview   │  │ ← legacy local rounded card
+│  │ Content / screenshot preview   │  │ ← shrinks, inner scroll
 │  └────────────────────────────────┘  │
 │  ┌────────────────────────────────┐  │
 │  │ Search collections...             │  │
-│  ├────────────────────────────────┤  │ ← shared CollectionPicker surface
-│  │ design                 Connect │  │
+│  ├────────────────────────────────┤  │ ← shared CollectionPicker surface,
+│  │ design                 Connect │  │   shrinks, inner quantized scroll
 │  │ inspiration          Connected │  │
 │  └────────────────────────────────┘  │
-│  Save to Mine                         │ ← legacy save/status stack
+│  [error line, if any]                │ ← fixed footer: error above button
+│  Save to Mine                        │
 └──────────────────────────────────────┘
 ```
+
+Высотный контракт панели — **эластичные превью между жёсткими краями**.
+Overlay-панель несёт `max-h-[calc(100vh-32px)]` и является flex-колонкой; в
+detached window ту же роль играет цепочка `html/body/#root { height:100% }`.
+Строки space и Type закреплены сверху, save-футер закреплён снизу.
+
+При стеснённой высоте сжимаются только зоны просмотра, у каждой — честное
+внутреннее поведение сжатия:
+
+- изображение (screenshot/image) — бокс `flex min-h-24 shrink
+  overflow-hidden`, `img object-contain min-h-0 max-h-[220px]`: картинка
+  масштабируется вниз, бокс никогда не переполняет соседей;
+- article preview — `max-h-[280px] min-h-24` со своим внутренним скроллом;
+- channel picker — квантованный список сам перемеряет доступную высоту и
+  отдаёт строки до пола `min-h-[136px]` (поиск + две строки), никогда в ноль;
+  выше пола он держит обычный кап 8 строк с собственным скроллом.
+
+Всё остальное жёсткое: строки шапки, кнопки `Crop Area`/`Retake`
+(`shrink-0` — их исчезновение и было главным дефектом сжимаемой v1),
+save-футер. Сжатие блока ниже его контента без внутреннего правила
+переполнения запрещено — оно рисует контент поверх соседей.
+
+**Кнопка Save всегда на экране по построению — состояния «доскроллить до
+кнопки» не существует.** В обычном диапазоне высот ничего не скроллится и всё
+видно. Страховка за пределами реальных окон: ниже суммы жёстких минимумов
+(~430px) панель скроллится целиком (`overflow-y-auto` на панели). Видимый
+тонкий скроллбар есть только у content preview (`[data-clipper-scrollbar]`);
+общие компоненты сохраняют скрытые скроллбары приложения.
 
 ### Popup Components (React)
 
@@ -663,6 +692,17 @@ Space dropdown использует существующий `DropdownMenuConten
 dropdown рендерится через `QuantizedMenuScrollArea` с clipper row token 40px:
 высота scroll-зоны всегда равна `padding + N × 40px`, поэтому нижний элемент не
 может обрезаться половиной строки.
+
+Под списком, за разделителем — два pinned action, зеркало десктопного
+переключателя пространств: `Reveal in Finder` (`FolderOpen`, текущее
+пространство) и `Add space` (`FolderPlus`). Иконки в общем `MenuIconSlot`;
+строки пространств и placeholder несут тот же слот пустым. `Add space`
+делегирует выбор папки native host'у (`pick_vault_folder`): системный диалог
+показывает host — у расширения нет файлового UI — выбранная папка дописывается
+в общий `config.json` (`known_vaults`) и клиппер сразу переключается на неё.
+`Reveal in Finder` идёт через `reveal_vault` и ограничен известными
+пространствами. Стрелочная навигация из поиска проходит список и оба pinned
+action.
 
 Type row — отдельная строка `h-10 border-b border-border bg-chrome px-4`. Это
 второй уровень клиппера и он использует тот же half-step surface, что верхний
@@ -706,9 +746,13 @@ clipper surface и floating app picker используют один scroll-heig
 Surface class живёт в `CollectionPicker`
 как `COLLECTION_PICKER_CONTENT_CLASS` для Radix floating content и
 `COLLECTION_PICKER_INLINE_SURFACE_CLASS` для inline clipper surface. Checkbox
-list в клиппере запрещён. Save/status stack остаётся отдельным блоком
-`.mine-clipper-section-stack` без separator line; видимый `StatusBar`
-сохраняется.
+list в клиппере запрещён. Save-футер — отдельный закреплённый блок
+`.mine-clipper-section-stack shrink-0` без separator line. Отдельного
+статус-компонента нет: успех живёт на самой кнопке (`Saved`, disabled,
+автозакрытие ~1.2s), ошибка — строка `text-sm text-destructive`
+(`data-clipper-save-error`) **над** кнопкой, чтобы короткий viewport не увёл
+единственное объяснение сбоя за экран. Ошибка native host status показывается
+той же строкой.
 
 Article preview в popup рендерит полноценный Markdown через `ReactMarkdown` +
 `remark-gfm`, но использует отдельную compact preview scale. Это не обрезает
@@ -727,14 +771,12 @@ Instagram save buttons are never valid article input.
 
 | Component | File | shadcn/ui | Description |
 |---|---|---|---|
-| PopupApp | `PopupApp.tsx` | — | Корневой компонент, состояния (loading → error → main), Cmd+Enter / Esc |
-| PreviewCard | `components/PreviewCard.tsx` | `<Input>` | Thumbnail + editable body H1/display heading when the clip type has a real page/article heading; media-only and selection clips do not synthesize title |
+| PopupApp | `PopupApp.tsx` | — | Корневой компонент, состояния (loading → error → main), Cmd+Enter / Esc, высотный каркас панели |
 | VaultSelect | `components/VaultSelect.tsx` | `<MenuTextTrigger>`, `<DropdownMenu>`, `<Input>`, `<SearchMenuAction>`, `<QuantizedMenuScrollArea>`, `<ChromeCloseButton>` | Shadow-safe space selector; top-chrome inner pill state, clipper `h-10` row, chevron inside the pill, no current item in menu, row-quantized dropdown height, shared top-right close action |
 | TypeSwitcher | `components/TypeSwitcher.tsx` | `<SegmentedControl size="clipper">` | Content / Screenshot / Link in the 40px Type row without height jumps |
 | ChannelList | `components/ChannelList.tsx` | `<CollectionPicker>` adapter | Same picker surface and channel-selection component as desktop Connect menus, including quantized scroll list height |
 | ScreenshotPreview | `components/ScreenshotPreview.tsx` | `<Button size="sm">` | Legacy rounded screenshot card with always-visible 28px Crop Area / Retake buttons |
-| SaveButton | `components/SaveButton.tsx` | `<Button variant="default">` | Полная ширина, без kbd-подсказки (Cmd+Enter handler есть, но не всегда срабатывает из overlay — см. DEVLOG `24.04.2026 — Clipper: Tab-cycling`) |
-| StatusBar | `components/StatusBar.tsx` | — | Legacy visible status component below Save |
+| SaveButton | `components/SaveButton.tsx` | `<Button variant="default">` | Полная ширина, три состояния (`idle`/`saving`/`saved`); без kbd-подсказки (Cmd+Enter handler есть, но не всегда срабатывает из overlay — см. DEVLOG `24.04.2026 — Clipper: Tab-cycling`) |
 
 ### Хуки и адаптеры
 
@@ -750,8 +792,9 @@ Instagram save buttons are never valid article input.
 | Loading | Спиннер-анимация (CSS-паттерн основного приложения) |
 | Error | Иконка + красное сообщение |
 | Main | Все поля заполнены, кнопка Save активна |
-| Saving | Disabled кнопка Save |
-| Saved | Зелёная строка статуса, автозакрытие через 1.5с |
+| Saving | Кнопку заменяет indeterminate progress bar |
+| Saved | Кнопка становится `Saved` (disabled), автозакрытие через ~1.2с |
+| Save error | Строка `text-destructive` над кнопкой, кнопка снова активна |
 
 ## Context Menu
 
@@ -771,7 +814,7 @@ Background service worker регистрирует 4 пункта:
 |---|---|---|
 | `Option+A` | Глобальный (настраиваемый через chrome://extensions/shortcuts) | Открыть popup |
 | `Cmd+Enter` | Popup | Сохранить (best-effort — из overlay срабатывает не всегда) |
-| `Escape` | Popup | Закрыть без сохранения |
+| `Escape` | Popup | Слоями, изнутри наружу: непустой поиск очищает запрос; открытый dropdown закрывается сам; и только свободный Escape закрывает клиппер без сохранения |
 | `Up/Down` | Popup, фокус на ChannelPicker | Навигация по каналам |
 | `Enter` | Popup, фокус на ChannelPicker | Выбрать/снять канал |
 
@@ -1024,6 +1067,44 @@ Response:
   "tag": "new-topic"
 }
 ```
+
+#### `pick_vault_folder`
+
+Показ системного диалога выбора папки от имени host-процесса (у расширения нет
+файлового UI) и регистрация выбранной папки в общем `config.json`
+(`known_vaults`, атомарная запись tmp+rename). Отмена диалога — штатный
+результат, не ошибка. Таймаут канала — 300s (диалог ждёт человека), зеркально в
+`background.js` и `messaging.ts`.
+
+```json
+{
+  "action": "pick_vault_folder"
+}
+```
+
+Response:
+```json
+{
+  "ok": true,
+  "cancelled": false,
+  "path": "/Users/x/Spaces/New",
+  "vaults": ["/Users/x/Spaces/Mine", "/Users/x/Spaces/New"]
+}
+```
+
+#### `reveal_vault`
+
+Показ пространства в Finder (`open -R`). Путь обязан входить в
+`known_vaults`/current — клиппер не может открывать произвольные каталоги.
+
+```json
+{
+  "action": "reveal_vault",
+  "params": { "path": "/Users/x/Spaces/Mine" }
+}
+```
+
+Response: `{ "ok": true }`.
 
 ### Error Response
 

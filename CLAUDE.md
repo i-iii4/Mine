@@ -166,7 +166,7 @@ local-arena/
 │   │   ├── main.tsx            # React entry
 │   │   ├── popup-layout.css    # Импорт global.css + popup-размеры
 │   │   ├── PopupApp.tsx        # Корневой компонент
-│   │   ├── components/         # PreviewCard, TypeSwitcher, ChannelList, SaveButton, StatusBar
+│   │   ├── components/         # VaultSelect, TypeSwitcher, ChannelList, SaveButton, ScreenshotPreview
 │   │   ├── hooks/              # useClipperState.ts
 │   │   └── lib/                # messaging.ts (типизированный native messaging)
 │   ├── dist/                   # Собранный попап (output Vite)

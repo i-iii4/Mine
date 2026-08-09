@@ -1144,8 +1144,10 @@ Space selector uses shared `MenuTextTrigger`, clip type uses shared
 `SegmentedControl`, screenshot actions use shared `Button`, and channel picker
 is a thin adapter over the same `CollectionPicker` default menu layout used by
 desktop Connect menus. The final popup chrome keeps the new two-level header
-(space selector + Type row) and the legacy lower body stack (local rounded
-preview cards, Save and visible StatusBar). Picker surface geometry is exported
+(space selector + Type row) above an elastic middle (preview surfaces compress,
+buttons and the quantized picker stay rigid) and a fixed save footer — success
+lives on the Save button itself, errors as a plain destructive line above it;
+there is no separate status component. Picker surface geometry is exported
 from `CollectionPicker` so clipper inline picker and desktop floating menus
 share one contract; clipper-specific components may adapt data and state, but
 must not duplicate app visual primitives.
