@@ -817,6 +817,11 @@ divider; в collapsed state search скрыт и `All / Connected` не ренд
 часть top chrome начинается с того же кликабельного collection switcher, затем
 показывает название карточки, overflow `…`, close `X`.
 
+Название карточки в compact-меню — block drag handle
+(`data-detail-drag-handle`, `cursor-grab`), как filename в classic-заголовке
+Detail, и не является `data-tauri-drag-region`: одна поверхность не совмещает
+перетаскивание карточки и окна, окно таскается за пустые участки top chrome.
+
 Геометрия Compact Detail top menu:
 
 - Height: `h-8`, как permanent top chrome.

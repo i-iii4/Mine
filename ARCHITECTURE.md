@@ -970,9 +970,14 @@ lifecycle contract. Он отражает режим просмотра/линк
 конкретного блока: смена `linkedBlockSlug` обновляет связанные каналы в строках,
 но не перезапускает enter motion левой плашки.
 
-Filename в Detail top menu является block drag handle. DnD payload всегда
-передаёт `{ type: "block", slug, block }`; обычная feed card и Detail menu
-попадают в один `handleCardDrop(slug, tag)` path. Drag overlay для block drag
+Filename в Detail top menu является block drag handle — в обоих режимах
+хрома: classic-заголовок Detail и compact global top menu
+(`CompactDetailCardTitleDragHandle`). В compact-режиме заголовок раньше был
+`data-tauri-drag-region`, и тот же жест, который под classic-хромом тащил
+карточку в коллекцию, под compact тащил окно; заголовок не совмещает обе роли —
+окно сохраняет drag-поверхность на пустых участках top chrome. DnD payload
+всегда передаёт `{ type: "block", slug, block }`; обычная feed card и Detail
+menu попадают в один `handleCardDrop(slug, tag)` path. Drag overlay для block drag
 рендерит feed-card preview фиксированной column width, а не строковый label,
 чтобы размер и визуальная модель совпадали с лентой.
 
