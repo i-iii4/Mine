@@ -104,6 +104,32 @@ describe("CardHoverMenu", () => {
     });
   });
 
+  it("keeps every hover layer on its own compositing layer", () => {
+    const { container } = render(
+      <CardHoverMenu
+        block={makeBlock()}
+        vaultPath="/vault"
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+      />,
+    );
+
+    // WKWebView promotes <video> into its own compositing layer, and a plain
+    // positioned sibling loses to it in paint order despite the higher
+    // z-index — the ⋯ button drew underneath feed videos. transform-gpu forces
+    // a compositing layer per hover surface so z-order is honoured again.
+    for (const selector of [
+      "[data-card-hover-overlay]",
+      "[data-card-hover-more-action]",
+      "[data-card-hover-bottom-actions]",
+    ]) {
+      expect(container.querySelector(selector), selector).toHaveClass("transform-gpu");
+    }
+  });
+
   it("shows Rename in the overflow menu", async () => {
     const onRequestRename = vi.fn();
 

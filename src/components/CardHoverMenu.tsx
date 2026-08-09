@@ -439,7 +439,7 @@ export const CardHoverMenu = memo(function CardHoverMenu({
       {/* Overlay — затенение при hover */}
       <div
         className={cn(
-          "pointer-events-none absolute inset-0 z-[4] bg-[var(--card-hover-overlay)] transition-opacity",
+          "pointer-events-none absolute inset-0 z-[4] transform-gpu bg-[var(--card-hover-overlay)] transition-opacity",
           hoverEnabled && "group-hover:opacity-100",
           hoverActionsPinned ? "opacity-100" : "opacity-0",
         )}
@@ -447,10 +447,14 @@ export const CardHoverMenu = memo(function CardHoverMenu({
         data-card-hover-enabled={hoverEnabled ? "true" : undefined}
       />
 
-      {/* More (···) — верхний правый */}
+      {/* More (···) — верхний правый. transform-gpu on this and the layers
+          below is load-bearing: WKWebView promotes <video> to its own
+          compositing layer, and a plain positioned sibling loses to it in
+          paint order despite the higher z-index — the button drew underneath
+          feed videos. A compositing layer of its own restores the contract. */}
       <div
         className={cn(
-          "pointer-events-none absolute right-2 top-2 z-[5] transition-opacity",
+          "pointer-events-none absolute right-2 top-2 z-[5] transform-gpu transition-opacity",
           hoverEnabled && "group-hover:pointer-events-auto group-hover:opacity-100",
           anyMenuOpen ? "pointer-events-auto opacity-100" : "opacity-0",
         )}
@@ -490,7 +494,7 @@ export const CardHoverMenu = memo(function CardHoverMenu({
       {/* Нижний ряд: Source (лево) + Connect (право) */}
       <div
         className={cn(
-          "pointer-events-none absolute bottom-2 left-2 right-2 z-[5] flex gap-2 transition-opacity",
+          "pointer-events-none absolute bottom-2 left-2 right-2 z-[5] transform-gpu flex gap-2 transition-opacity",
           hoverEnabled && "group-hover:pointer-events-auto group-hover:opacity-100",
           hoverActionsPinned ? "pointer-events-auto opacity-100" : "opacity-0",
         )}
