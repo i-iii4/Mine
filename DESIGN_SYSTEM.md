@@ -724,9 +724,23 @@ Pointer-drag не открывает dropdown: trigger defers Radix pointer-open
 
 Space dropdown не показывает текущий space повторно и не использует checkmark
 или другие selected markers. Внутри есть `Search spaces` input, список только
-destination spaces и pinned `Add space` action без иконки. Rows ниже input —
-menu-styled buttons с `role="menuitem"`; hover может менять active row, но не
-забирает DOM focus из input. Ширина dropdown — floating width role `selector`
+destination spaces и два pinned action под разделителем: `Reveal in Finder`
+(`FolderOpen`) и `Add space` (`FolderPlus`), именно в этом порядке. Оба несут
+иконку в leading slot (`MenuIconSlot`, `size-3`) слева от текста; строки
+destination spaces и placeholder `No other spaces` получают тот же слот пустым,
+чтобы текстовая колонка меню была одна. `Reveal in Finder` действует на текущий
+space, а не на строку, и закрывает меню — окно уходит в Finder, и оставленный
+позади dropdown был бы забытым состоянием. Per-row reveal, наоборот, меню не
+закрывает: оттуда пользователь может открыть несколько папок подряд. Порядок
+стрелочной навигации повторяет визуальный: spaces, `Reveal in Finder`,
+`Add space`. Rows ниже input — menu-styled buttons с `role="menuitem"`; hover
+может менять active row, но не забирает DOM focus из input.
+
+Icon actions строки пространства (`FolderOpen` — reveal, `X` — forget) обязаны
+нести tooltip: иконка без подписи внутри списка не объясняет себя, а цена
+ошибки здесь несимметрична. Тексты — `Reveal in Finder` и `Remove from the list
+— files stay on disk`; второй называет последствие, а не действие, потому что
+именно эту команду читают как «удалить папку». Ширина dropdown — floating width role `selector`
 (`18rem` с available-width cap), а не ширина trigger и не content-fit.
 Позиционирование dropdown привязано к видимой внутренней пуле selector, а не к
 невидимому root slot: Radix `align="start"` использует `alignOffset=12`, равный
@@ -1095,6 +1109,17 @@ top `More` и bottom action row, но программное открытие `C
   ширины, чтобы текстовая колонка была выровнена по одному уровню. Термин
   `Remove from collection` запрещён для card membership actions — в UI
   используется только `Disconnect`.
+
+### Selection Context Menu
+
+Правый клик по карточке, входящей в текущее выделение, открывает selection-scoped
+меню (`GroupSelectionContextMenu`) с тем же набором команд, что и `Cmd+K` batch
+menu: count header, `Connect`, `Disconnect`, `Merge`, `Delete`. Single-card
+команды (`Reveal in Finder`, `Copy Path`, `Rename…`, `Source`) в этом меню
+отсутствуют, а не показываются отключёнными: каждая адресует ровно один файл или
+один URL. Правый клик по карточке вне выделения открывает обычное single-card
+меню и не меняет выделение. Подробности — в
+[SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md).
 
 ### Media Asset Hover Menu
 
@@ -1600,6 +1625,43 @@ card minimum plus two `32px` side insets. Desktop `minWidth` is `904px`
 Обычные строки sidebar не заменяют счётчик hover-действиями: правый `w-8`
 slot всегда показывает count в `font-mono`. Rename/Delete доступны через
 `ContextMenu` строки, а не через hover-многоточие.
+
+#### Перетаскивание строк (reorder)
+
+Контракт жеста — переупорядочивание в боковых списках macOS (Finder, Notes,
+Things):
+
+1. Исходная строка на время жеста исчезает из списка полностью
+   (`opacity-0`, transform применяется) — она и есть движущийся плейсхолдер,
+   показывающий точное место вставки. Полупрозрачный призрак на старом месте
+   запрещён.
+2. За курсором следует копия строки в `DragOverlay`
+   (`SidebarTagRowDragPreview`): те же элементы разметки, что у строки —
+   title cell, preview rail с настоящей полосой миниатюр, счётчик — на
+   поверхности `bg-sidebar` + `border` + `shadow-md`. Медиа строки обязано
+   лететь вместе с ней. Точка захвата сохраняется — модификатор snap-to-cursor
+   к этому жесту не применяется. Копия не содержит поведения: ни NavLink, ни
+   hover-превью, ни кнопок.
+3. Соседние строки раздвигаются transform-переходом dnd-kit, монотонно, без
+   осцилляций. Цель сортировки — слот под указателем (`pointerWithin`) по
+   rect'ам, замеренным на старте жеста, только среди сортируемых строк;
+   `closestCenter` — только fallback, когда указатель покинул список. Центр
+   прямоугольника схваченной строки целью не является: строка висит на курсоре
+   там, где её взяли, и цель по центру уводила бы дырку на полстроки от
+   курсора.
+4. На время жеста строки инертны: `[data-sidebar-tag-dragging="true"]` на
+   scrollport выключает pointer-events строк (ховеры, превью, count-swap) и
+   ставит `cursor: grabbing`. Hover-превью дополнительно глушится в JS.
+5. Отпускание: новый порядок применяется в тот же кадр (optimistic,
+   `applyPendingTagOrder`), копия долетает в плейсхолдер drop-анимацией 200ms
+   `cubic-bezier(0.22,1,0.36,1)`; на время полёта реальная строка скрыта
+   side-effect'ом. Снап-бэк и поздний прыжок после записи запрещены.
+6. Escape или дроп мимо списка возвращают порядок без изменений.
+7. Перетаскивание карточек/медиа/текста на коллекции не затрагивается: их цель
+   по-прежнему решается hit-testing'ом по живому DOM.
+
+Контракт закреплён браузерным аудитом `bun run test:sidebar-reorder`
+(`scripts/sidebar-reorder-audit.mjs`, роут `/__sidebar-reorder-audit`).
 Sidebar navigation rows, включая `Everything` и каналы, не используют
 `hover:bg-*`, `bg-sidebar-accent` или `text-sidebar-accent-foreground`: выбор
 маршрута отражается состоянием приложения, но не визуальной плашкой строки.

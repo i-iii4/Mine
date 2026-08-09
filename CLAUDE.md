@@ -150,10 +150,11 @@ local-arena/
 │   │   └── useSidebarResize.ts # Хук ресайза сайдбара (pointer events + persist)
 │   ├── types/                  # generated.ts from Rust/Specta + frontend-owned index.ts
 │   ├── lib/                    # commands.ts (IPC), assets.ts, utils.ts (cn()), recentTags.ts
-│   ├── dev/                    # Dev-only Feed, Graph and ColdSpace acceptance routes
+│   ├── dev/                    # Dev-only Feed, Graph, ColdSpace and SidebarReorder acceptance routes
 │   └── styles/                 # Глобальные стили
 ├── scripts/
 │   ├── feed-scroll-audit.mjs   # Playwright Grid scroll/source-request acceptance
+│   ├── sidebar-reorder-audit.mjs # Playwright sidebar collection reorder gesture acceptance
 │   ├── graph-view-audit.mjs    # Dark/light Canvas pixel/interaction/performance acceptance
 │   ├── cold-space-browser-audit.mjs # First/settled/deep cold Grid acceptance
 │   └── native-shell-smoke.mjs  # Packaged macOS WKWebView + Tauri IPC smoke
@@ -263,6 +264,7 @@ bun run test                   # Полная проверка: Vitest + Rust wo
 bun run test:feed-scroll       # Browser Grid acceptance (requires running dev server)
 bun run test:graph             # Browser Graph Canvas acceptance (requires running dev server)
 bun run test:cold-space        # Browser cold first/settled/deep Grid acceptance (requires running dev server)
+bun run test:sidebar-reorder   # Browser sidebar collection reorder gesture acceptance (requires running dev server)
 bun run test:browser           # Сам поднимает Vite и запускает все browser gates
 bun run test:native-shell      # Packaged macOS WKWebView + real Tauri invoke smoke
 bun run bindings:generate      # Обновить committed Rust/Specta TypeScript bindings

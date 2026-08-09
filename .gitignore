@@ -38,3 +38,6 @@ src-tauri/.fastembed_cache/
 extension/generated/
 safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/generated/
 safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/clipperHostCompatibility.js
+
+# Claude Code background-session worktrees (local scratch checkouts)
+.claude/worktrees/

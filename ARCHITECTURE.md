@@ -1190,11 +1190,47 @@ not an empty plate; front card stays untransformed, back cards use integer
 offsets with small rotations and never use `scale(...)`. DOM state never becomes
 the source of truth for the dragged group.
 
-Sidebar channel targeting uses `sidebarPointerWithin`: before falling back to
-dnd-kit `pointerWithin`, App resolves the actual `[data-sidebar-row]` under
-`pointerCoordinates` via `document.elementsFromPoint()`. This keeps drop hover
-and final drop aligned to the visible cursor row even when sidebar rows were
-scrolled or remeasured during drag.
+Sidebar channel targeting uses `sidebarPointerWithin`, which answers two
+different questions with two different strategies, chosen by what is being
+dragged.
+
+Dropping a card, media asset or text selection *onto* a collection resolves the
+actual `[data-sidebar-row]` under `pointerCoordinates` via
+`document.elementsFromPoint()`, falling back to dnd-kit `pointerWithin`. The
+rows stand still during such a drag, so the live DOM is the honest source and
+drop hover stays aligned to the visible cursor row even when rows were scrolled
+or remeasured.
+
+Sorting collections cannot use that path. The sortable strategy shifts rows by
+transform in response to the resolved target, so reading the target back from
+the transformed DOM is a feedback loop: the target oscillates on every
+pointermove and the list visibly shakes. A collection sort therefore resolves
+the slot under the *pointer* (`pointerWithin`) over the rects dnd-kit measured
+at gesture start, restricted to the sortable `tag:` containers so a
+neighbouring drop target cannot blank the target and snap every row back;
+`closestCenter` over the same rects is the fallback for a pointer that left the
+list. The grabbed row's own rectangle is never the reference — it hangs off the
+pointer by the grab offset, and targeting its centre parks the hole up to half
+a row away from the cursor. The `Sidebar` component itself is a thin shell that
+owns the `useDndContext` subscription and passes the derived drop target into a
+memoised core, so `over` churn during a drag re-renders rows through their own
+`useSortable` subscriptions instead of the whole sidebar. For the same reason sidebar rows carry no
+`content-visibility`: skipped content reports `contain-intrinsic-size` instead
+of its real box, and the sort would run against sizes that do not match the
+screen. The dragged row keeps its sortable transform but turns invisible
+(`opacity-0`, pointer-events none): it is the moving hole that marks the drop
+position, while the visible copy — a non-interactive row replica
+(`SidebarTagRowDragPreview`) — travels in the `DragOverlay` and, on release,
+flies into the hole with the drop animation from `lib/tagRowDragOverlay`.
+During the gesture the scrollport carries `data-sidebar-tag-dragging`, which
+makes rows inert (no hover states, no previews) and shows `cursor: grabbing`.
+The gesture contract is enforced by the `sidebar-reorder` browser audit
+(`scripts/sidebar-reorder-audit.mjs` over `/__sidebar-reorder-audit`).
+
+A drop applies the new order optimistically (`applyPendingTagOrder` over the
+vault order) and writes to `reorder_channels` afterwards, dropping the optimistic
+order once the reload confirms it or the write fails. Waiting for the round trip
+before moving the row made every drop read as a snap-back followed by a jump.
 
 Детальная спецификация: [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md).
 
