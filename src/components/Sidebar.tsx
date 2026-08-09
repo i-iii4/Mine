@@ -118,6 +118,10 @@ interface SidebarProps {
   channelPreviews: Map<string, PreviewCard[]>;
   totalBlocks: number;
   isDropDragging: boolean;
+  /// A collection row is being reordered. Separate from `isDropDragging`
+  /// because the two gestures need opposite pointer behaviour: a drop reads
+  /// rows through hit-testing, a sort must make them inert.
+  isTagDragging?: boolean;
   isCreatingChannel: boolean;
   onSetCreatingChannel: (v: boolean) => void;
   onDeleteTag: (tag: string) => void;
@@ -162,7 +166,22 @@ function createSidebarSeamAccentSet(
   return accentKeys;
 }
 
-export function Sidebar({
+/// Thin shell around the sidebar whose only job is the dnd-context
+/// subscription. The context updates on every `over` change — dozens of times a
+/// second while a drag crosses the list — and re-rendering the whole sidebar at
+/// that rate is what fast gestures stutter on. The shell derives the one value
+/// the core needs (the drop target row, and only for card/media/text drops) and
+/// the memoised core skips every update that leaves it unchanged. A collection
+/// sort derives nothing, so during it the core does not re-render at all: only
+/// the sortable rows move, each through its own useSortable subscription.
+export function Sidebar(props: SidebarProps) {
+  const { over } = useDndContext();
+  const dropOverId = props.isDropDragging && over?.id != null ? String(over.id) : null;
+  return <SidebarCore {...props} dropOverId={dropOverId} />;
+}
+
+const SidebarCore = memo(function SidebarCore({
+  dropOverId,
   isResizing,
   vaultPath,
   thumbsRootPath,
@@ -170,6 +189,7 @@ export function Sidebar({
   channelPreviews,
   totalBlocks,
   isDropDragging,
+  isTagDragging = false,
   isCreatingChannel,
   onSetCreatingChannel,
   onDeleteTag,
@@ -192,7 +212,7 @@ export function Sidebar({
   showLinkModeChrome = true,
   detailChromeClosing = false,
   scrollEdgeFade = false,
-}: SidebarProps) {
+}: SidebarProps & { dropOverId: string | null }) {
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const [uncontrolledLinkMode, setUncontrolledLinkMode] = useState<SidebarLinkMode>("all");
   const effectiveLinkMode = linkMode ?? uncontrolledLinkMode;
@@ -209,6 +229,8 @@ export function Sidebar({
   // value at fire time, not the value captured when the timer was scheduled.
   const isDropDraggingRef = useRef(isDropDragging);
   isDropDraggingRef.current = isDropDragging;
+  const isTagDraggingRef = useRef(isTagDragging);
+  isTagDraggingRef.current = isTagDragging;
   const sidebarRowSwitchFrameRef = useRef<number | null>(null);
   const sidebarKeyboardFocusTimerRef = useRef<number | null>(null);
   const sidebarRowFocusKeyRef = useRef<string | null>(null);
@@ -220,7 +242,6 @@ export function Sidebar({
   const [sidebarRowFocusMode, setSidebarRowFocusMode] = useState(false);
   const [sidebarRowSwitching, setSidebarRowSwitching] = useState(false);
   const location = useLocation();
-  const { over } = useDndContext();
 
   useEffect(() => {
     const recordPointerPoint = (event: Event) => {
@@ -248,6 +269,13 @@ export function Sidebar({
       scrollActiveSidebarItemIntoView(nav, active);
     }
   }, [location.pathname]);
+
+  // Row callbacks are identity-stable so `memo(TagNavItem)` can actually skip
+  // work: the sidebar re-renders on every dnd `over` change, and inline arrows
+  // would hand each row a fresh function and force a full repaint of the list
+  // mid-gesture.
+  const startRenamingTag = useCallback((tag: string) => setEditingTag(tag), []);
+  const cancelRenamingTag = useCallback(() => setEditingTag(null), []);
 
   const handleRename = useCallback(
     (oldTag: string, newValue: string) => {
@@ -280,7 +308,7 @@ export function Sidebar({
       : null;
   const orderedRowKeys = buildSidebarRowOrder(visibleTags, showEverythingRow, true);
   const activePreviewRowKey = hoveredPreview?.rowKey ?? null;
-  const overId = isDropDragging && over?.id != null ? String(over.id) : null;
+  const overId = dropOverId;
   const dropOverRowKey = overId?.startsWith("tag:")
     ? overId
     : overId === "create-channel"
@@ -448,23 +476,23 @@ export function Sidebar({
 
   // Tear down an already-open preview the moment a drag begins.
   useEffect(() => {
-    if (isDropDragging) {
+    if (isDropDragging || isTagDragging) {
       closePreview();
     }
-  }, [isDropDragging, closePreview]);
+  }, [isDropDragging, isTagDragging, closePreview]);
 
   const openPreview = useCallback((target: SidebarPreviewTarget) => {
     // Never reveal the hover preview while a drag is in flight — pointer-enter
     // events still fire over the sidebar during a drag-and-drop gesture.
     if (hoverPreviewFrozen) return;
-    if (isDropDraggingRef.current) return;
+    if (isDropDraggingRef.current || isTagDraggingRef.current) return;
     if (!previewTriggerRefs.current.has(target.key)) return;
     setHoveredPreview(target);
   }, [hoverPreviewFrozen]);
 
   const schedulePreviewOpen = useCallback((target: SidebarPreviewTarget) => {
     if (hoverPreviewFrozen) return;
-    if (isDropDraggingRef.current) return;
+    if (isDropDraggingRef.current || isTagDraggingRef.current) return;
     clearPreviewOpenTimer();
     clearPreviewCloseTimer();
     setHoveredPreview(null);
@@ -653,6 +681,7 @@ export function Sidebar({
             : "px-[var(--sidebar-nav-pad-x)] pt-[var(--sidebar-nav-pad-top)]",
         )}
         data-sidebar-scroll
+        data-sidebar-tag-dragging={isTagDragging ? "true" : undefined}
         data-sidebar-top-fade={topFade.scrolled ? "true" : undefined}
         data-sidebar-link-editor-mode={isLinkEditorActive ? "true" : undefined}
         data-sidebar-row-hover-seam={SIDEBAR_ROW_HOVER_SEAM_ENABLED ? "true" : "false"}
@@ -719,7 +748,7 @@ export function Sidebar({
                   label={collectionRefLabel(tc.tag)}
                   count={tc.count}
                   tag={tc.tag}
-                  cards={channelPreviews.get(tc.tag) ?? []}
+                  cards={channelPreviews.get(tc.tag) ?? EMPTY_PREVIEW_CARDS}
                   previewKeyPrefix={`tag:${tc.tag}`}
                   onPreviewEnter={schedulePreviewOpen}
                   onPreviewLeave={requestPreviewClose}
@@ -734,10 +763,10 @@ export function Sidebar({
                     checked,
                     onToggle: () => onToggleLinkedTag(linkedBlockSlug, tc.tag, checked),
                   } : undefined}
-                  onDoubleClick={() => setEditingTag(tc.tag)}
-                  onRenameSubmit={(v) => handleRename(tc.tag, v)}
-                  onRenameCancel={() => setEditingTag(null)}
-                  onDelete={() => onDeleteTag(tc.tag)}
+                  onDoubleClick={startRenamingTag}
+                  onRenameSubmit={handleRename}
+                  onRenameCancel={cancelRenamingTag}
+                  onDelete={onDeleteTag}
                   onClick={onNavClick}
                   onSameClick={isLinkEditorActive ? undefined : onScrollToTop}
                   rowKey={`tag:${tc.tag}`}
@@ -792,7 +821,7 @@ export function Sidebar({
 
     </aside>
   );
-}
+});
 
 // ─── Components ──────────────────────────────────────────────────────────────
 
@@ -1335,6 +1364,10 @@ const NavItem = memo(function NavItem({
   );
 });
 
+/// One shared empty list for rows without previews — a fresh `[]` per render
+/// defeats the row memo just as surely as a fresh callback does.
+const EMPTY_PREVIEW_CARDS: PreviewCard[] = [];
+
 const TagNavItem = memo(function TagNavItem({
   to,
   label,
@@ -1381,10 +1414,10 @@ const TagNavItem = memo(function TagNavItem({
     checked: boolean;
     onToggle: () => void;
   };
-  onDoubleClick: () => void;
-  onRenameSubmit: (value: string) => void;
+  onDoubleClick: (tag: string) => void;
+  onRenameSubmit: (tag: string, value: string) => void;
   onRenameCancel: () => void;
-  onDelete: () => void;
+  onDelete: (tag: string) => void;
   onClick?: () => void;
   onSameClick?: () => void;
   rowKey: string;
@@ -1394,6 +1427,13 @@ const TagNavItem = memo(function TagNavItem({
   const location = useLocation();
   const [deleteOpen, setDeleteOpen] = useState(false);
   const isLinkEditor = !!linkEditor;
+  // The parent hands out one callback for every row; each row binds its own tag.
+  const startRename = useCallback(() => onDoubleClick(tag), [onDoubleClick, tag]);
+  const submitRename = useCallback(
+    (value: string) => onRenameSubmit(tag, value),
+    [onRenameSubmit, tag],
+  );
+  const deleteTag = useCallback(() => onDelete(tag), [onDelete, tag]);
   const isCurrentRoute = location.pathname === to || location.pathname.startsWith(`${to}/`);
 
   const {
@@ -1405,18 +1445,19 @@ const TagNavItem = memo(function TagNavItem({
     isDragging,
   } = useSortable({ id: `tag:${tag}` });
 
-  // Disabled while dragging onto tags so dnd-kit's
-  // getBoundingClientRect calls on drop targets always return real
-  // geometry instead of the intrinsic placeholder.
+  // No `content-visibility` here. Drag-and-drop needs every row's real
+  // geometry, and skipped content reports the intrinsic placeholder instead —
+  // dnd-kit then sorts against sizes that do not match the screen. A list of
+  // collections is tens of rows, not thousands; the render it saved was never
+  // worth the geometry it broke.
+  //
+  // The dragged row keeps its transform and turns invisible: it is the moving
+  // hole that shows where the drop will land, while the visible copy travels in
+  // the DragOverlay. A translucent ghost left at the origin reads as a second
+  // row that belongs to no one.
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
-    ...(!isDropDragging && !isDragging
-      ? {
-          contentVisibility: "auto" as const,
-          containIntrinsicSize: "auto 42px",
-        }
-      : {}),
   };
 
   if (isEditing) {
@@ -1430,7 +1471,7 @@ const TagNavItem = memo(function TagNavItem({
         isSidebarRowSeamAccent={isSidebarRowSeamAccent}
         isEditing
         className={cn(
-          isDragging && "opacity-30",
+          isDragging && "pointer-events-none opacity-0",
         )}
         style={style}
         nodeRef={setNodeRef}
@@ -1441,7 +1482,7 @@ const TagNavItem = memo(function TagNavItem({
           placeholder={label}
           ariaLabel={`Переименовать ${label}`}
           compact={compact}
-          onSubmit={onRenameSubmit}
+          onSubmit={submitRename}
           onCancel={onRenameCancel}
         />
       </SidebarRowFrame>
@@ -1460,7 +1501,7 @@ const TagNavItem = memo(function TagNavItem({
             isSidebarRowFocused={isSidebarRowFocused}
             isSidebarRowSeamAccent={isSidebarRowSeamAccent}
             className={cn(
-              isDragging && "opacity-30",
+              isDragging && "pointer-events-none opacity-0",
             )}
             style={style}
             nodeRef={setNodeRef}
@@ -1487,13 +1528,13 @@ const TagNavItem = memo(function TagNavItem({
               isDropDragging={isDropDragging}
               onClick={onClick}
               onSameClick={onSameClick}
-              onDoubleClick={onDoubleClick}
+              onDoubleClick={startRename}
               linkEditor={linkEditor}
             />
           </SidebarRowFrame>
         </ContextMenuTrigger>
         <ContextMenuContent>
-          <ContextMenuItem onSelect={onDoubleClick}>
+          <ContextMenuItem onSelect={startRename}>
             <Pencil className="size-3" />
             Rename
           </ContextMenuItem>
@@ -1514,7 +1555,7 @@ const TagNavItem = memo(function TagNavItem({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={onDelete}>
+            <AlertDialogAction variant="destructive" onClick={deleteTag}>
               Delete
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -1817,6 +1858,58 @@ function InlineChannelNameEditor({
           </span>
         </button>
       )}
+    </div>
+  );
+}
+
+const DRAG_PREVIEW_NOOP = () => {};
+
+/// The row copy that travels in the DragOverlay while a collection is being
+/// reordered.
+///
+/// It repeats the resting row's own layout pieces — title cell, preview rail
+/// with the real thumbnail strip, count column — so the picked-up row is the
+/// row, media included, not an abbreviation of it. What it deliberately drops
+/// is behaviour: no NavLink and no preview interactivity (the strip renders
+/// with `allowHoverPreview` off and no-op handlers). A control inside a drag
+/// overlay can never be interacted with, so wiring it up would only re-run
+/// effects for nothing. The lifted look (surface, border, shadow) marks the row
+/// as picked up, matching the system's floating elements.
+export function SidebarTagRowDragPreview({
+  label,
+  count,
+  cards,
+}: {
+  label: string;
+  count: number;
+  cards: PreviewCard[];
+}) {
+  return (
+    <div
+      className="flex h-full w-full items-center rounded-1 border border-border bg-sidebar shadow-md"
+      data-sidebar-tag-drag-preview=""
+    >
+      <div className="relative flex w-full min-w-0 items-center py-1 pl-[var(--sidebar-row-pad-x)] font-sans text-base text-muted-foreground">
+        <SidebarRowTitleCell>{label}</SidebarRowTitleCell>
+        <SidebarPreviewRail>
+          <SidebarPreviewStrip
+            cards={cards}
+            previewKeyPrefix="drag-preview"
+            rowKey="drag-preview"
+            onPreviewEnter={DRAG_PREVIEW_NOOP}
+            onPreviewLeave={DRAG_PREVIEW_NOOP}
+            onPreviewClick={DRAG_PREVIEW_NOOP}
+            onPreviewTriggerRef={DRAG_PREVIEW_NOOP}
+            activePreviewKey={null}
+          />
+        </SidebarPreviewRail>
+        <span
+          className="absolute inset-y-0 right-[var(--sidebar-row-pad-x)] flex w-8 -translate-x-px items-center justify-end text-right font-mono text-sm"
+          data-sidebar-row-text=""
+        >
+          {count || ""}
+        </span>
+      </div>
     </div>
   );
 }

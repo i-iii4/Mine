@@ -11,6 +11,7 @@
     "test:feed-scroll": "node scripts/feed-scroll-audit.mjs",
     "test:graph": "node scripts/graph-view-audit.mjs",
     "test:cold-space": "node scripts/cold-space-browser-audit.mjs",
+    "test:sidebar-reorder": "node scripts/sidebar-reorder-audit.mjs",
     "test:native-shell": "node scripts/native-shell-smoke.mjs",
     "test:browser": "node scripts/browser-audits.mjs",
     "test:rust": "cargo test --workspace --all-targets --locked",

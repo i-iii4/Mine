@@ -70,6 +70,8 @@ const graphAuditRoute =
   import.meta.env.DEV && window.location.pathname === "/__graph-audit";
 const coldSpaceAuditRoute =
   import.meta.env.DEV && window.location.pathname === "/__cold-space-audit";
+const sidebarReorderAuditRoute =
+  import.meta.env.DEV && window.location.pathname === "/__sidebar-reorder-audit";
 const nativeShellSmokeRoute = new URLSearchParams(window.location.search)
   .has("mine-native-shell-smoke");
 const auditRoute = feedScrollAuditRoute
@@ -78,7 +80,9 @@ const auditRoute = feedScrollAuditRoute
     ? "graph"
     : coldSpaceAuditRoute
       ? "cold-space"
-      : null;
+      : sidebarReorderAuditRoute
+        ? "sidebar-reorder"
+        : null;
 
 type AuditTauriWindow = Window & {
   __TAURI_INTERNALS__?: {
@@ -119,14 +123,18 @@ function Root() {
         ? await import("./dev/FeedScrollAuditRoute")
         : auditRoute === "graph"
           ? await import("./dev/GraphAuditRoute")
-          : await import("./dev/ColdSpaceAuditRoute");
+          : auditRoute === "sidebar-reorder"
+            ? await import("./dev/SidebarReorderAuditRoute")
+            : await import("./dev/ColdSpaceAuditRoute");
       if (!cancelled) {
         setAuditRoute(() => (
           "FeedScrollAuditRoute" in module
             ? module.FeedScrollAuditRoute
             : "GraphAuditRoute" in module
               ? module.GraphAuditRoute
-              : module.ColdSpaceAuditRoute
+              : "SidebarReorderAuditRoute" in module
+                ? module.SidebarReorderAuditRoute
+                : module.ColdSpaceAuditRoute
         ));
       }
     })();

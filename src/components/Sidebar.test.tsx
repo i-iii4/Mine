@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router";
 import { DndContext } from "@dnd-kit/core";
 import { invoke } from "@tauri-apps/api/core";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { Sidebar } from "./Sidebar";
+import { Sidebar, SidebarTagRowDragPreview } from "./Sidebar";
 import type { IndexedBlock, TagCount } from "@/types";
 import {
   HOVER_PREVIEW_COLD_OPEN_DELAY_MS,
@@ -1091,6 +1091,83 @@ describe("Sidebar", () => {
 
     expect(container.querySelector("[data-sidebar-link-mode-bar]")).toBe(bar);
     expect(bar).toHaveAttribute("data-entered", "true");
+  });
+
+  it("leaves collection rows fully rendered so drag-and-drop can measure them", () => {
+    const { container } = renderSidebar();
+
+    // `content-visibility: auto` reports `contain-intrinsic-size` instead of the
+    // real box for rows the browser skipped, and dnd-kit sorts against those
+    // numbers — the rows then land where the measurement said, not where they
+    // are drawn. A list of collections is small enough not to need the trade.
+    for (const key of ["tag:alpha", "tag:beta"]) {
+      const row = container.querySelector(`[data-sidebar-row-key="${key}"]`) as HTMLElement;
+      expect(row).not.toBeNull();
+      expect(row.style.contentVisibility).toBe("");
+      expect(row.style.containIntrinsicSize).toBe("");
+    }
+  });
+
+  it("marks the scrollport and refuses hover previews while a collection is being reordered", async () => {
+    vi.useFakeTimers();
+    vi.mocked(invoke).mockResolvedValue(previewBlock("alpha-a"));
+    const previews = new Map([
+      ["alpha", [{
+        url: "asset://localhost/thumbs/alpha-a.jpg",
+        text: false,
+        hasThumb: true,
+        slug: "alpha-a",
+      }]],
+    ]);
+    const props = {
+      ...defaultProps,
+      width: 600,
+      vaultPath: "/vault",
+      thumbsRootPath: "/vault/.mine/cache/thumbs",
+      channelPreviews: previews,
+      isTagDragging: true,
+    };
+    const { container } = renderSidebar(props);
+
+    // The flag CSS keys off: rows go inert and the closed hand shows.
+    expect(container.querySelector("[data-sidebar-scroll]")).toHaveAttribute(
+      "data-sidebar-tag-dragging",
+      "true",
+    );
+
+    const thumbnail = container.querySelector(
+      '[data-sidebar-preview-thumbnail="trigger"]',
+    ) as HTMLElement;
+    fireEvent.pointerEnter(thumbnail, { clientX: 110, clientY: 110 });
+    await act(async () => {
+      vi.advanceTimersByTime(HOVER_PREVIEW_COLD_OPEN_DELAY_MS + 1);
+      await Promise.resolve();
+    });
+
+    // Pointer-enter still fires during a drag; the preview must not open.
+    expect(container.querySelector("[data-sidebar-thumbnail-hover-preview]")).not.toBeInTheDocument();
+  });
+
+  it("carries the row's media into the drag preview without its behaviour", () => {
+    const cards = [
+      { slug: "a", url: "/thumbs/a.jpg", text: false, hasThumb: true },
+      { slug: "b", url: "/thumbs/b.jpg", text: false, hasThumb: true },
+    ];
+    const { container } = render(
+      <SidebarTagRowDragPreview label="Красивый веб" count={31} cards={cards} />,
+    );
+
+    const preview = container.querySelector("[data-sidebar-tag-drag-preview]") as HTMLElement;
+    expect(preview).toHaveTextContent("Красивый веб");
+    expect(preview).toHaveTextContent("31");
+    // The picked-up row is the row, media included: the copy renders the real
+    // thumbnail strip, one thumbnail per preview card.
+    expect(preview.querySelectorAll("[data-sidebar-preview-thumbnail]")).toHaveLength(2);
+    // …but none of the row's behaviour: no links, no buttons, no hover
+    // triggers. A copy inside the DragOverlay can never be interacted with.
+    expect(preview.querySelector("a")).toBeNull();
+    expect(preview.querySelector("button")).toBeNull();
+    expect(preview.querySelector('[data-sidebar-preview-thumbnail="trigger"]')).toBeNull();
   });
 
 });

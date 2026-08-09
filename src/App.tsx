@@ -31,7 +31,12 @@ import {
   type DragEndEvent,
   type Modifier,
 } from "@dnd-kit/core";
+import {
+  TAG_ROW_DROP_ANIMATION,
+  TAG_ROW_OVERLAY_MODIFIERS,
+} from "@/lib/tagRowDragOverlay";
 import { arrayMove } from "@dnd-kit/sortable";
+import { applyPendingTagOrder } from "@/lib/collectionOrder";
 import { collectionRefLabel } from "@/lib/collections";
 import { reconcileBlocks } from "@/lib/blockIdentity";
 import { refreshPageLimit } from "@/lib/gridPaging";
@@ -141,6 +146,12 @@ const snapToCursor: Modifier = ({ activatorEvent, draggingNodeRect, transform })
   };
 };
 
+/// A card/media/text drag snaps the overlay to the cursor tip and drops with
+/// no return flight — the payload lands in a collection, not back in the feed.
+/// The collection-row dressing is the opposite and lives in
+/// `lib/tagRowDragOverlay` so the audit route measures the same gesture.
+const POINT_OVERLAY_MODIFIERS: Modifier[] = [snapToCursor];
+
 const BATCH_TAG_REFRESH_DELAY_MS = 750;
 function fetchGridBlocks(
   tag: string | undefined,
@@ -215,7 +226,7 @@ import { useProjectionRevisionOwner } from "@/hooks/useProjectionRevisionOwner";
 import { VaultPicker } from "@/components/VaultPicker";
 import { VaultSwitcher } from "@/components/VaultSwitcher";
 import { TopCollectionSwitcher } from "@/components/TopCollectionSwitcher";
-import { Sidebar } from "@/components/Sidebar";
+import { Sidebar, SidebarTagRowDragPreview } from "@/components/Sidebar";
 import { SidebarResizeHandle } from "@/components/SidebarResizeHandle";
 import { ClipperRecoveryBanner } from "@/components/ClipperRecoveryBanner";
 import { VaultConflictsBanner } from "@/components/VaultConflictsBanner";
@@ -490,6 +501,12 @@ export function AppWithVault({
   } | null>(null);
   const [activeDragBlocks, setActiveDragBlocks] = useState<LightBlock[]>([]);
   const [activeDragTag, setActiveDragTag] = useState<string | null>(null);
+  /// Which dressing the DragOverlay wears. Set on drag start and deliberately
+  /// NOT reset on drag end: the drop animation outlives the drag state, and
+  /// swapping modifiers or dropAnimation mid-flight would cancel it.
+  const [overlayDressing, setOverlayDressing] = useState<"row" | "point">("point");
+  /// Collection order produced by a drop, shown until the reload confirms it.
+  const [pendingTagOrder, setPendingTagOrder] = useState<string[] | null>(null);
   const [activeDragMediaAsset, setActiveDragMediaAsset] = useState<MediaAssetDragPreview | null>(null);
   const [activeDragTextSelection, setActiveDragTextSelection] = useState<TextSelectionDragPreview | null>(null);
   const mainRef = useRef<HTMLDivElement>(null);
@@ -1889,8 +1906,8 @@ export function AppWithVault({
     const noPos = tags.filter((tc) => !channelTags.has(tc.tag));
     noPos.sort((a, b) => a.tag.localeCompare(b.tag));
 
-    return [...withPos, ...noPos];
-  }, [tags, channels]);
+    return applyPendingTagOrder([...withPos, ...noPos], pendingTagOrder);
+  }, [tags, channels, pendingTagOrder]);
 
   const handleTopCollectionNavigate = useCallback((tag?: string) => {
     navigate(tag ? `/channel/${encodeURIComponent(tag)}` : "/");
@@ -2157,14 +2174,23 @@ export function AppWithVault({
       const newIndex = currentOrder.indexOf(overTag);
       if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) return;
 
+      const newOrder = arrayMove(currentOrder, oldIndex, newIndex);
+      // Show the result of the gesture at once. Waiting for the write and a
+      // full snapshot reload leaves the row in its old place for the whole
+      // round trip, which reads as the drop snapping back and then jumping.
+      setPendingTagOrder(newOrder);
       try {
-        const newOrder = arrayMove(currentOrder, oldIndex, newIndex);
         const items = newOrder.map((tag, i) => ({ tag, position: i }));
         await reorderChannels(items);
+        await reloadAllSnapshots();
       } catch (err) {
+        // Dropping the optimistic order restores whatever the vault says, so a
+        // failed write never leaves the sidebar claiming an order it does not
+        // have.
         console.error("Failed to reorder channels:", err);
+      } finally {
+        setPendingTagOrder(null);
       }
-      await reloadAllSnapshots();
     },
     [orderedTags, reloadAllSnapshots],
   );
@@ -2368,6 +2394,7 @@ export function AppWithVault({
         setActiveDragBlocks([]);
         setActiveDragTag(null);
         setActiveDragTextSelection(null);
+        setOverlayDressing("point");
         return;
       }
       const textSelectionPayload = data?.type === "text_selection"
@@ -2382,6 +2409,7 @@ export function AppWithVault({
         setActiveDragBlocks([]);
         setActiveDragTag(null);
         setActiveDragMediaAsset(null);
+        setOverlayDressing("point");
         return;
       }
       if (id.startsWith("tag:")) {
@@ -2389,6 +2417,7 @@ export function AppWithVault({
         setActiveDragBlocks([]);
         setActiveDragMediaAsset(null);
         setActiveDragTextSelection(null);
+        setOverlayDressing("row");
       } else {
         if (data?.type === "block") {
           data.clearSelectionOnDragStart?.();
@@ -2397,6 +2426,7 @@ export function AppWithVault({
         setActiveDragTag(null);
         setActiveDragMediaAsset(null);
         setActiveDragTextSelection(null);
+        setOverlayDressing("point");
       }
     },
     [blocks],
@@ -2965,6 +2995,7 @@ export function AppWithVault({
           || activeDragMediaAsset !== null
           || activeDragTextSelection !== null
         }
+        isTagDragging={activeDragTag !== null}
         isCreatingChannel={isCreatingChannel}
         onSetCreatingChannel={handleSetCreatingChannel}
         onDeleteTag={handleDeleteTagFromAll}
@@ -3262,8 +3293,8 @@ export function AppWithVault({
     </div>{/* end flex-col */}
 
     <DragOverlay
-      dropAnimation={null}
-      modifiers={[snapToCursor]}
+      dropAnimation={overlayDressing === "row" ? TAG_ROW_DROP_ANIMATION : null}
+      modifiers={overlayDressing === "row" ? TAG_ROW_OVERLAY_MODIFIERS : POINT_OVERLAY_MODIFIERS}
       style={{ pointerEvents: "none" }}
     >
       {activeDragBlocks.length > 0 && (
@@ -3304,9 +3335,11 @@ export function AppWithVault({
         </div>
       )}
       {activeDragTag && (
-        <div className="pointer-events-none rounded-1 bg-secondary px-3 py-1.5 text-base font-semibold shadow-lg">
-          {collectionRefLabel(activeDragTag)}
-        </div>
+        <SidebarTagRowDragPreview
+          label={collectionRefLabel(activeDragTag)}
+          count={orderedTags.find((tc) => tc.tag === activeDragTag)?.count ?? 0}
+          cards={channelPreviews.get(activeDragTag) ?? []}
+        />
       )}
     </DragOverlay>
     </DndContext>

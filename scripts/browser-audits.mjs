@@ -200,6 +200,9 @@ async function main() {
     await runAudit("scripts/cold-space-browser-audit.mjs", {
       MINE_COLD_SPACE_AUDIT_URL: `${origin}/__cold-space-audit`,
     }, onAuditChildChange);
+    await runAudit("scripts/sidebar-reorder-audit.mjs", {
+      MINE_SIDEBAR_REORDER_AUDIT_URL: `${origin}/__sidebar-reorder-audit`,
+    }, onAuditChildChange);
   } finally {
     process.removeListener("SIGINT", interrupt);
     process.removeListener("SIGTERM", terminate);

@@ -167,6 +167,20 @@ select,
   pointer-events: none;
 }
 
+/* Reordering a collection: rows go inert so no hover state — row tint,
+ * preview-strip outline, count swap — can fire under the travelling copy, and
+ * the whole list shows the closed hand for the duration of the gesture. CSS
+ * because :hover lives here, not in React; pointer-events also drops the rows
+ * out of hit-testing, which is safe exactly because the sort strategy measures
+ * rects instead of reading elementsFromPoint. */
+[data-sidebar-scroll][data-sidebar-tag-dragging="true"] [data-sidebar-row] {
+  pointer-events: none;
+}
+
+[data-sidebar-scroll][data-sidebar-tag-dragging="true"] {
+  cursor: grabbing;
+}
+
 [data-sidebar-scroll][data-sidebar-row-switching="true"] [data-sidebar-row-text] {
   transition-duration: 0ms;
 }
