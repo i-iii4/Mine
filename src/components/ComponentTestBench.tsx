@@ -76,7 +76,6 @@ import type { LightBlock, TagCount } from "@/types";
 import { ChannelList } from "../../extension/popup/components/ChannelList";
 import { SaveButton } from "../../extension/popup/components/SaveButton";
 import { ScreenshotPreview } from "../../extension/popup/components/ScreenshotPreview";
-import { StatusBar } from "../../extension/popup/components/StatusBar";
 import { TypeSwitcher } from "../../extension/popup/components/TypeSwitcher";
 import { VaultSelect } from "../../extension/popup/components/VaultSelect";
 import type { ChannelInfo } from "../../extension/popup/lib/messaging";
@@ -1073,6 +1072,8 @@ function ClipperFrame({ type }: { type: ClipPreviewType }) {
             "/Users/i_iii/Library/Mobile Documents/com~apple~CloudDocs/Journal",
           ]}
           onChange={() => {}}
+          onReveal={() => {}}
+          onAddSpace={() => {}}
           onClose={() => {}}
         />
 
@@ -1106,10 +1107,12 @@ function ClipperFrame({ type }: { type: ClipPreviewType }) {
           />
 
           <div className="mine-clipper-section-stack">
-            <SaveButton count={1} saving={false} onClick={() => {}} />
             {type === "content" && (
-              <StatusBar message="Saved state / error state uses same slot" type="success" />
+              <p className="text-sm text-destructive" data-clipper-save-error="">
+                Save error strip sits above the button
+              </p>
             )}
+            <SaveButton count={1} state="idle" onClick={() => {}} />
           </div>
         </div>
       </div>

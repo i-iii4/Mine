@@ -15,12 +15,16 @@ export function ScreenshotPreview({
   cropSupported,
 }: ScreenshotPreviewProps) {
   return (
-    <div className="mine-clipper-section-stack">
-      <div className="rounded-1 border border-border bg-accent">
+    <div className="mine-clipper-section-stack min-h-0">
+      {/* The image is the section's only elastic element: in a short viewport
+          the box compresses and object-contain scales the screenshot down.
+          The action row below is rigid — Crop Area and Retake must never
+          shrink away or be painted over. */}
+      <div className="flex min-h-24 shrink justify-center overflow-hidden rounded-1 border border-border bg-accent">
         <img
           src={dataUrl}
           alt=""
-          className="mx-auto block max-h-[220px] w-auto max-w-full rounded-1 object-contain"
+          className="block max-h-[220px] min-h-0 w-auto max-w-full rounded-1 object-contain"
         />
       </div>
       {/* Always visible (unlike main app CardHoverMenu which reveals on
@@ -28,7 +32,7 @@ export function ScreenshotPreview({
           this clip type — the user must always be able to retake or
           crop without discovery. Standard Button variant="default"
           size="sm" with built-in hover (outline inset). */}
-      <div className="flex gap-2">
+      <div className="flex shrink-0 gap-2">
         <Button
           variant="default"
           size="sm"

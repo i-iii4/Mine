@@ -239,6 +239,16 @@ export function CollectionPicker({
 
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") {
+      // Escape climbs the layers, innermost first: a live query is the
+      // innermost state, so the first press only clears it. The next press
+      // reaches the surface above — Radix closes its menu, the clipper
+      // closes its panel.
+      if (search) {
+        event.preventDefault();
+        event.stopPropagation();
+        setSearch("");
+        return;
+      }
       if (onRequestClose) {
         event.preventDefault();
         event.stopPropagation();
@@ -546,6 +556,16 @@ export function BatchCollectionPicker({
 
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") {
+      // Escape climbs the layers, innermost first: a live query is the
+      // innermost state, so the first press only clears it. The next press
+      // reaches the surface above — Radix closes its menu, the clipper
+      // closes its panel.
+      if (search) {
+        event.preventDefault();
+        event.stopPropagation();
+        setSearch("");
+        return;
+      }
       if (onRequestClose) {
         event.preventDefault();
         event.stopPropagation();

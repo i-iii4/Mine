@@ -35,7 +35,14 @@ export function OverlayShell({ portalContainer }: { portalContainer: HTMLElement
         ref={ref}
         data-mine-clipper-panel
         tabIndex={-1}
-        className="pointer-events-auto fixed right-4 top-4 w-[360px] rounded-1 border border-border bg-background shadow-[0_4px_24px_rgba(0,0,0,0.12)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.4)] outline-none"
+        // max-h pins the panel inside the viewport (16px top and bottom
+        // margins); the flex column lets the elastic previews compress while
+        // buttons, picker and the save stack keep their heights. overflow-auto
+        // is the last-resort safety: below the sum of the hard minimums
+        // (~430px, under any real browser window) the panel scrolls as a
+        // whole instead of clipping. Shadow is the system floating-element
+        // shadow, not a bespoke rgba.
+        className="pointer-events-auto fixed right-4 top-4 flex max-h-[calc(100vh-32px)] w-[360px] flex-col overflow-y-auto rounded-1 border border-border bg-background shadow-md outline-none"
       >
         <PopupApp />
       </div>

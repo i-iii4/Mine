@@ -29,7 +29,10 @@ export function ChannelList({
   }, [channels]);
 
   return (
-    <div className={COLLECTION_PICKER_INLINE_SURFACE_CLASS}>
+    // The quantized list inside re-measures on squeeze and yields rows down
+    // to this floor (search row + two channel rows), never to zero. Above the
+    // floor the picker keeps its usual capped height with its own scroll.
+    <div className={`${COLLECTION_PICKER_INLINE_SURFACE_CLASS} min-h-[136px]`}>
       <CollectionPicker
         blockSlug="__clipper__"
         selectedTags={selectedTags}

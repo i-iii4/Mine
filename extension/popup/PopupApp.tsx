@@ -2,14 +2,13 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { safeMarkdownUrl } from "@/lib/markdownUrl";
-import { Play } from "lucide-react";
+import { PlayBadge } from "@/components/PlayBadge";
 import { useClipperState } from "./hooks/useClipperState";
 import { resolveContentBody } from "./lib/resolveContentBody";
 import { TypeSwitcher } from "./components/TypeSwitcher";
 import { ChannelList } from "./components/ChannelList";
 import { SaveButton } from "./components/SaveButton";
 import { ScreenshotPreview } from "./components/ScreenshotPreview";
-import { StatusBar } from "./components/StatusBar";
 import { VaultSelect } from "./components/VaultSelect";
 import { emptyContentMessage } from "./lib/articleExtractionState";
 import { buildEmbeddedVideoPreviewMap, isVideoUrl, videoPreviewKey } from "./lib/videoPreview";
@@ -22,7 +21,7 @@ function VideoPosterPreview({
   title: string;
 }) {
   return (
-    <div className="relative overflow-hidden rounded-1 bg-accent">
+    <div className="relative overflow-hidden rounded-1 bg-accent" aria-label={title}>
       {posterUrl ? (
         <img
           src={posterUrl}
@@ -33,14 +32,9 @@ function VideoPosterPreview({
       ) : (
         <div className="h-[120px] w-full bg-muted" />
       )}
-      <div className="absolute inset-0 grid place-items-center bg-black/10">
-        <div
-          className="grid size-9 place-items-center rounded-round bg-background/90 text-foreground shadow-[0_2px_10px_rgba(0,0,0,0.22)]"
-          aria-label={title}
-        >
-          <Play className="ml-0.5 size-4 fill-current" />
-        </div>
-      </div>
+      {/* The same play affordance the feed draws over still posters — a
+          clipper-only badge variant was a contract violation. */}
+      <PlayBadge />
     </div>
   );
 }
@@ -63,9 +57,8 @@ function TypeRow({
 export function PopupApp() {
   const clipper = useClipperState();
 
-  const [status, setStatus] = useState<{ message: string; type: "success" | "error" } | null>(
-    null,
-  );
+  const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Context-aware close: in the overlay (content-script isolated world)
   // `window.close()` would try to close the whole tab because `window`
@@ -82,13 +75,14 @@ export function PopupApp() {
   }, []);
 
   const handleSave = useCallback(async () => {
+    setSaveError(null);
     const result = await clipper.save();
     if (!result) return;
     if (result.ok) {
-      setStatus({ message: "Saved!", type: "success" });
+      setSaved(true);
       setTimeout(closeClipper, 1200);
     } else {
-      setStatus({ message: result.error ?? "Failed to save", type: "error" });
+      setSaveError(result.error ?? "Failed to save");
     }
   }, [clipper.save, closeClipper]);
 
@@ -147,6 +141,12 @@ export function PopupApp() {
       if (!host.contains(document.activeElement)) return false;
       return isText(drillToLeaf(document.activeElement));
     }
+    function hasOpenFloatingLayer(): boolean {
+      const host = document.querySelector("[data-mine-clipper-overlay]");
+      const scope: ParentNode = (host as HTMLElement & { shadowRoot?: ShadowRoot | null })
+        ?.shadowRoot ?? document;
+      return scope.querySelector('[data-slot="dropdown-menu-content"]') !== null;
+    }
     function onKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
         e.preventDefault();
@@ -154,6 +154,13 @@ export function PopupApp() {
         return;
       }
       if (e.key === "Escape") {
+        // Escape climbs the layers, innermost first: a search field clears
+        // its query (or blurs), an open dropdown closes itself. This capture
+        // listener fires before either of them, so it must stand down while
+        // any inner surface still has a claim — otherwise Escape in the
+        // space search tears down the whole clipper.
+        if (activeIsOverlayTextField()) return;
+        if (hasOpenFloatingLayer()) return;
         closeClipper();
         return;
       }
@@ -193,13 +200,17 @@ export function PopupApp() {
     return <ErrorState message={clipper.error ?? "Unknown error"} />;
   }
 
+  const footerError = saveError ?? clipper.nativeStatusError;
+
   return (
-    <div className="flex flex-col">
+    <div className="flex min-h-0 flex-col">
       {clipper.selectedVault && (
         <VaultSelect
           value={clipper.selectedVault}
           options={clipper.knownVaults}
           onChange={clipper.switchVault}
+          onReveal={clipper.revealSpace}
+          onAddSpace={clipper.addSpace}
           onClose={closeClipper}
         />
       )}
@@ -209,7 +220,14 @@ export function PopupApp() {
       )}
 
       <div className="mine-clipper-body" data-after-type={hasTypeRow ? "true" : "false"}>
-        <div className="mine-clipper-section-stack">
+        {/* Elastic model: the only elements that compress under a short
+            viewport are the preview surfaces themselves — an image scales
+            down (object-contain), the article box shrinks onto its own
+            scroll. Buttons, the channel picker's quantized list and the save
+            stack keep their heights, so nothing overlaps and nothing
+            disappears. min-h-0 lets the flex chain pass the squeeze down to
+            those elastic boxes. */}
+        <div className="mine-clipper-section-stack min-h-0">
           {clipper.currentType === "link" && (
             <div className="space-y-1.5 rounded-1 border border-border p-2">
               {ogImage && (
@@ -230,7 +248,10 @@ export function PopupApp() {
           )}
 
           {clipper.currentType === "content" && (
-            <div className="max-h-[280px] overflow-y-auto rounded-1 border border-border p-2">
+            <div
+              className="max-h-[280px] min-h-24 overflow-y-auto rounded-1 border border-border p-2"
+              data-clipper-scrollbar=""
+            >
               {metadata?.detectedType === "video" && embeddedVideoPreviews.length === 0 && ogImage && (
                 <VideoPosterPreview posterUrl={ogImage} title="Video preview" />
               )}
@@ -297,11 +318,11 @@ export function PopupApp() {
           )}
 
           {clipper.currentType === "image" && ogImage && (
-            <div className="rounded-1 border border-border bg-accent">
+            <div className="flex min-h-24 shrink justify-center overflow-hidden rounded-1 border border-border bg-accent">
               <img
                 src={ogImage}
                 alt=""
-                className="mx-auto block max-h-[220px] w-auto max-w-full rounded-1 object-contain"
+                className="block max-h-[220px] min-h-0 w-auto max-w-full rounded-1 object-contain"
               />
             </div>
           )}
@@ -323,17 +344,19 @@ export function PopupApp() {
           onCreate={clipper.createChannel}
         />
 
-        <div className="mine-clipper-section-stack">
+        <div className="mine-clipper-section-stack shrink-0">
+          {/* The error sits above the button: below it, a short viewport
+              would push the one line that explains the failure off screen. */}
+          {footerError && !saved && (
+            <p className="text-sm text-destructive" data-clipper-save-error="">
+              {footerError}
+            </p>
+          )}
           <SaveButton
             count={clipper.selectedTags.length}
-            saving={clipper.saving}
+            state={saved ? "saved" : clipper.saving ? "saving" : "idle"}
             onClick={handleSave}
           />
-          {status ? (
-            <StatusBar message={status.message} type={status.type} />
-          ) : clipper.nativeStatusError ? (
-            <StatusBar message={clipper.nativeStatusError} type="error" />
-          ) : null}
         </div>
       </div>
     </div>

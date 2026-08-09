@@ -295,6 +295,14 @@ body {
   --mine-clipper-after-type-gap: 16px;
 
   display: flex;
+  /* The middle of a height-bounded panel. Only the preview surfaces are
+     elastic — an image scales down, the article box shrinks onto its own
+     scroll, the quantized channel list yields rows to a floor. Buttons and
+     the save stack are rigid, so nothing overlaps and nothing disappears;
+     the save button is always on screen by construction. Below the sum of
+     the hard minimums the panel itself scrolls (its overflow safety). */
+  min-height: 0;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: var(--mine-clipper-section-gap);
   padding-inline: var(--mine-clipper-body-inset);

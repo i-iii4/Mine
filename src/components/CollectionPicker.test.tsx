@@ -243,6 +243,28 @@ describe("CollectionPicker", () => {
     expect(onRequestClose).toHaveBeenCalledTimes(1);
   });
 
+  it("clears a live query on Escape instead of letting the layer above close", () => {
+    const { container } = render(
+      <CollectionPicker
+        blockSlug="alpha"
+        selectedTags={[]}
+        tags={[tag("tools", 1), tag("design", 2)]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+      />,
+    );
+    const search = screen.getByRole("textbox");
+    fireEvent.change(search, { target: { value: "des" } });
+    expect(rowTitles(container)).toEqual(["design"]);
+
+    // First press: only the innermost state — the query — is undone. The
+    // event must not propagate, or the surface above (a Radix menu, the
+    // clipper panel) would close on the same press.
+    fireEvent.keyDown(search, { key: "Escape" });
+    expect((search as HTMLInputElement).value).toBe("");
+    expect(rowTitles(container)).toEqual(["tools", "design"]);
+  });
+
   it("moves printable keyboard input into search", () => {
     const { container } = render(
       <CollectionPicker
