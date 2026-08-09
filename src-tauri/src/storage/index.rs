@@ -42,8 +42,8 @@ pub use crate::storage::block_queries::{
 #[cfg(test)]
 pub(crate) use crate::storage::block_queries::{get_tags_for_block, list_grid_blocks_with_query};
 pub use crate::storage::channel_index::{
-    list_channels, next_channel_position, remove_channel, update_channel_positions, upsert_channel,
-    upsert_channel_from_block,
+    list_channels, next_channel_position, remove_channel, sweep_channels_without_documents,
+    update_channel_positions, upsert_channel, upsert_channel_from_block,
 };
 pub use crate::storage::vault_conflicts::{
     clear_vault_conflict, list_vault_conflicts, record_vault_conflict, vault_conflict_exists,

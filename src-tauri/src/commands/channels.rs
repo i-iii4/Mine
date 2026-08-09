@@ -229,6 +229,22 @@ pub fn reorder_channels(
         channel.position = item.position;
         let path = crate::storage::media_refs::resolve_collection_document(&vs.vault, &tag)
             .unwrap_or_else(|| vs.vault.block_path(&tag));
+        // A reorder may only write the collection's own document: the file's
+        // stem is the collection's name. A tag that resolves to a file with a
+        // different stem is a stale index row aimed at another collection's
+        // document — before this guard, such a row (e.g. a pre-rename
+        // `Collections/Видео` phantom next to the real `Видео`) produced two
+        // writes to one path, the staged mutation refused the duplicate, and
+        // every reorder in the space rolled back. The phantom row itself is
+        // swept out by reconciliation; skipping it here keeps the positions of
+        // every real collection applying meanwhile.
+        let owns_document = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .is_some_and(|stem| stem == tag);
+        if !owns_document {
+            continue;
+        }
         let bytes = serialize_block(&channel_to_block(&channel)).into_bytes();
         writes.push(if path.exists() {
             SourceFileWrite::replace(path, bytes)

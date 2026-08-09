@@ -106,6 +106,34 @@ pub fn update_channel_positions(conn: &Connection, positions: &[(String, u32)]) 
     Ok(())
 }
 
+/// Deletes channel rows whose collection is not backed by any live channel
+/// document, returning the removed tags.
+///
+/// `live_refs` is the set of collection names derived from the channel
+/// documents a reconciliation pass actually saw on disk. Anything else in the
+/// table is a phantom — most often a row keyed by a folder-qualified slug from
+/// before collections were identified by name. The per-file cleanup cannot
+/// reach such rows: it fires when a file vanishes, and a row that never
+/// matched any file outlives every vanishing.
+pub fn sweep_channels_without_documents(
+    conn: &Connection,
+    live_refs: &std::collections::BTreeSet<String>,
+) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT tag FROM channels")?;
+    let tags = stmt
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut swept = Vec::new();
+    for tag in tags {
+        if live_refs.contains(&tag) {
+            continue;
+        }
+        conn.execute("DELETE FROM channels WHERE tag = ?1", [&tag])?;
+        swept.push(tag);
+    }
+    Ok(swept)
+}
+
 pub fn remove_channel(conn: &Connection, tag: &str) -> Result<bool> {
     let count = conn.execute("DELETE FROM channels WHERE tag = ?1", [tag])?;
     Ok(count > 0)

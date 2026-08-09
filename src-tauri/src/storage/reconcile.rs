@@ -159,6 +159,9 @@ pub fn reconcile_vault(
     let indexed_kinds = load_indexed_kinds(conn).map_err(ReconcileError::State)?;
 
     let mut live_slugs = BTreeSet::new();
+    // Collection names backed by a channel document this pass saw on disk —
+    // the ground truth the phantom-channel sweep below compares the table to.
+    let mut live_channel_refs = BTreeSet::new();
     let mut prepared = Vec::new();
     let mut unchanged = 0usize;
     let mut errors = Vec::new();
@@ -216,6 +219,10 @@ pub fn reconcile_vault(
             || projection_stale;
         if !source_changed {
             unchanged += 1;
+            if previous.is_some_and(|state| state.kind == SourceKind::Channel) {
+                live_channel_refs
+                    .insert(crate::domain::collection::collection_ref_from_slug(&slug));
+            }
             continue;
         }
 
@@ -223,6 +230,13 @@ pub fn reconcile_vault(
         match prepare_source(vault, path, markdown_stamp, dependency_changed) {
             Ok(source) => prepared.push(source),
             Err(error) => errors.push(error),
+        }
+    }
+
+    for source in &prepared {
+        if source.kind == SourceKind::Channel {
+            live_channel_refs
+                .insert(crate::domain::collection::collection_ref_from_slug(&source.slug));
         }
     }
 
@@ -280,6 +294,19 @@ pub fn reconcile_vault(
             .map_err(ReconcileError::Commit)?;
         database_writes += 1;
     }
+
+    // A channel row no live document backs is a phantom. The per-file cleanup
+    // above only fires when a file vanishes, so a row keyed by a
+    // folder-qualified slug from before collections were identified by name —
+    // which never matched any file — outlives every such cleanup. Phantoms are
+    // not cosmetic: a phantom's tag resolves to the real collection's document,
+    // a reorder then plans two writes to one path, and the whole reorder is
+    // refused — the sidebar shows a duplicate collection that also blocks
+    // repositioning everything else.
+    let swept = index::sweep_channels_without_documents(&tx, &live_channel_refs)
+        .context("sweep phantom channels")
+        .map_err(ReconcileError::Commit)?;
+    database_writes += swept.len();
 
     tx.commit()
         .context("commit VaultReconciler transaction")
@@ -592,6 +619,7 @@ fn file_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::channel::Channel;
     use crate::domain::search::parse_search_query;
     use crate::storage::db;
     use crate::storage::graph;
@@ -643,6 +671,61 @@ mod tests {
         let channels = index::list_channels(&conn).unwrap();
         assert_eq!(channels.len(), 1, "the collection must survive the move");
         assert_eq!(channels[0].tag, "Каталоги", "and keep the name cards use");
+    }
+
+    #[test]
+    fn sweeps_a_phantom_channel_row_no_document_backs() {
+        // The NSFV space after the layout migration: the real collection's
+        // document lives at Collections/Видео.md, while the channels table
+        // still holds a second row keyed by the folder-qualified slug from
+        // before collections were identified by name. That row made the
+        // sidebar show two collections named «Видео» and made every reorder
+        // fail — its tag resolves to the real document, so the reorder planned
+        // two writes to one path and the staged mutation refused it.
+        let (_dir, vault, conn) = setup();
+        std::fs::create_dir_all(vault.root().join("Collections")).unwrap();
+        std::fs::write(
+            vault.root().join("Collections/Видео.md"),
+            "---\ntype: channel\nsaved_at: 2026-08-05T00:00:00Z\nposition: 0\n---\n",
+        )
+        .unwrap();
+        let phantom = Channel::new(
+            "Collections/Видео",
+            DateTime::new("2026-08-05T00:00:00Z").unwrap(),
+        )
+        .unwrap();
+        index::upsert_channel(&conn, &phantom).unwrap();
+
+        reconcile_vault(&conn, &vault).unwrap();
+
+        let channels = index::list_channels(&conn).unwrap();
+        assert_eq!(
+            channels.iter().map(|ch| ch.tag.as_str()).collect::<Vec<_>>(),
+            vec!["Видео"],
+            "the phantom row goes, the real collection stays",
+        );
+    }
+
+    #[test]
+    fn sweeps_a_channel_row_whose_name_no_document_answers() {
+        let (_dir, vault, conn) = setup();
+        std::fs::create_dir_all(vault.root().join("Collections")).unwrap();
+        std::fs::write(
+            vault.root().join("Collections/Анимация.md"),
+            "---\ntype: channel\nsaved_at: 2026-08-05T00:00:00Z\nposition: 1\n---\n",
+        )
+        .unwrap();
+        let stale =
+            Channel::new("Старый", DateTime::new("2026-08-05T00:00:00Z").unwrap()).unwrap();
+        index::upsert_channel(&conn, &stale).unwrap();
+
+        reconcile_vault(&conn, &vault).unwrap();
+
+        let channels = index::list_channels(&conn).unwrap();
+        assert_eq!(
+            channels.iter().map(|ch| ch.tag.as_str()).collect::<Vec<_>>(),
+            vec!["Анимация"],
+        );
     }
 
     #[test]
