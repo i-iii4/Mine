@@ -333,6 +333,48 @@ function MainViewModeSwitch({
   );
 }
 
+/// The card title in the compact top menu is the block's drag handle, exactly
+/// as the filename is in the classic Detail header.
+///
+/// It used to be a `data-tauri-drag-region` instead, which silently swapped
+/// the gesture's meaning with the chrome mode: the same grab that dragged the
+/// card into a collection under the classic header started dragging the
+/// window under the compact one. The window keeps its drag surface on the
+/// header's empty stretches; the card's identity stays draggable everywhere
+/// it is shown.
+function CompactDetailCardTitleDragHandle({
+  block,
+  cardTitle,
+}: {
+  block: LightBlock | IndexedBlock;
+  cardTitle: string;
+}) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `detail:${block.slug}`,
+    data: {
+      type: "block",
+      slug: block.slug,
+      block,
+    },
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      className={cn(
+        "min-w-0 flex-1 cursor-grab truncate pl-0 pr-3 font-mono text-sm text-muted-foreground active:cursor-grabbing",
+        isDragging && "opacity-30",
+      )}
+      title={cardTitle}
+      data-compact-detail-card-title=""
+      data-detail-drag-handle
+    >
+      {cardTitle}
+    </div>
+  );
+}
+
 export function CompactDetailTopMenu({
   block,
   cardTitle,
@@ -368,14 +410,7 @@ export function CompactDetailTopMenu({
       data-entered={entered ? "true" : "false"}
       data-compact-detail-top-menu=""
     >
-      <div
-        data-tauri-drag-region
-        className="min-w-0 flex-1 truncate pl-0 pr-3 font-mono text-sm text-muted-foreground"
-        title={cardTitle}
-        data-compact-detail-card-title=""
-      >
-        {cardTitle}
-      </div>
+      <CompactDetailCardTitleDragHandle block={block} cardTitle={cardTitle} />
       <CardMoreMenu
         block={block}
         vaultPath={vaultPath}

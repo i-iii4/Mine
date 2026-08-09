@@ -1722,6 +1722,13 @@ describe("AppWithVault", () => {
       "",
     );
     expect(compactTitle).toHaveClass("pl-0");
+    // The title is the card's drag handle here, as the filename is in the
+    // classic Detail header. It must not double as a window drag region —
+    // that is what silently turned "drag the card to a collection" into
+    // "drag the window" whenever the compact chrome was on.
+    expect(compactTitle).toHaveAttribute("data-detail-drag-handle");
+    expect(compactTitle).not.toHaveAttribute("data-tauri-drag-region");
+    expect(compactTitle).toHaveClass("cursor-grab");
     fireEvent.click(compactCollectionSwitcher);
     const collectionSearch = await screen.findByRole("textbox", { name: "Search collections" });
     await waitFor(() => {
