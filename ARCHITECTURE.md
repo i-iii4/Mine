@@ -214,7 +214,7 @@ watcher пропустил событие или native host сохранял cl
   Metadata-only links remain compact link cards and never inherit a media shell;
   visual media cannot become preview-ready from a text placeholder.
 - `Detail` остаётся full-fidelity path и может открывать оригиналы;
-- async asset protocol override убирает синхронный `asset://` hotspot с main thread WebView для оставшихся asset-paths;
+- async asset protocol override убирает синхронный `asset://` hotspot с main thread WebView для оставшихся asset-paths; тело ответа строится в `spawn_blocking`, но сам `responder.respond` обязан уходить через `run_on_main_thread`: `WKURLSchemeTask` — состояние главного потока, и ответ из tokio-воркера гоняется с отменой задачи (NSException → Rust-паника в extern "C" → SIGABRT всего приложения, tauri#12338);
 - multi-image article/social card preview описывается `preview_manifest` как
   rich tile set; hot micro-preview asset `<slug>.jpg` остаётся single
   representative media/poster, чтобы sidebar/related thumbnails не тащили

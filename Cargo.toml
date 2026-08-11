@@ -6,4 +6,10 @@ resolver = "2"
 strip = true
 lto = true
 codegen-units = 1
-panic = "abort"
+# panic stays "unwind" as a safety belt: with abort, any Rust panic in a
+# background task kills the whole app. It does NOT fix the WKWebView
+# scheme-handler race by itself — a panic born inside an extern "C" frame
+# aborts under either strategy. The actual fix for the 10.08.2026 SIGABRTs
+# is responding to asset requests on the main thread (asset_protocol.rs),
+# which serializes the respond block with WebKit's task cancellation.
+panic = "unwind"

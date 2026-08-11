@@ -25,6 +25,7 @@ const MAX_RANGE_LEN: u64 = 1000 * 1024;
 pub fn register<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder.register_asynchronous_uri_scheme_protocol("asset", |ctx, request, responder| {
         let app = ctx.app_handle().clone();
+        let app_for_respond = app.clone();
         tauri::async_runtime::spawn(async move {
             let response =
                 tauri::async_runtime::spawn_blocking(move || build_asset_response(&app, request))
@@ -36,7 +37,22 @@ pub fn register<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
                             .body(Vec::<u8>::new().into())
                             .expect("failed to build asset protocol join-error response")
                     });
-            responder.respond(response);
+            // The respond MUST run on the main thread. WKURLSchemeTask is
+            // main-thread state: wry validates the task and then walks
+            // didReceiveResponse/didReceiveData/didFinish as one straight-line
+            // block, while WebKit delivers task cancellation (a scrolled-away
+            // <img>, a navigation) on the main thread. Responding from a tokio
+            // worker lets a cancellation land between wry's validity check and
+            // the ObjC calls; the resulting NSException surfaces as a Rust
+            // panic inside an extern "C" frame, which cannot unwind — an
+            // instant SIGABRT of the whole app (tauri#12338; four crashes on
+            // 10.08.2026, identical stacks). On the main thread the respond
+            // block and the cancellation serialize, so the race cannot exist.
+            if let Err(err) =
+                app_for_respond.run_on_main_thread(move || responder.respond(response))
+            {
+                log::error!("asset protocol respond dispatch failed: {}", err);
+            }
         });
     })
 }
