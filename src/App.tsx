@@ -260,6 +260,7 @@ import {
   ImagePreviewOverlay,
   type ImagePreviewRequest,
 } from "@/components/ImagePreviewOverlay";
+import { copyTextToClipboard } from "@/lib/clipboard";
 
 const Detail = lazy(async () => {
   const mod = await import("@/components/Detail");
@@ -1730,9 +1731,7 @@ export function AppWithVault({
       ) {
         if (isDetailShortcutBlockedTarget(e.target)) return;
         e.preventDefault();
-        void navigator.clipboard
-          .writeText(blockMarkdownPath(vaultPath, selectedBlock.slug))
-          .catch((err) => console.error("Failed to copy card path:", err));
+        copyTextToClipboard(blockMarkdownPath(vaultPath, selectedBlock.slug));
         return;
       }
       if (isOverlayKeyboardTarget(e.target)) return;

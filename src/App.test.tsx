@@ -65,7 +65,9 @@ const sidebarResizeState = vi.hoisted(() => ({
   toggleCollapsed: vi.fn(),
 }));
 
-const clipboardWriteText = vi.fn<(text: string) => Promise<void>>();
+const clipboardWriteText = vi.hoisted(() => vi.fn<(text: string) => Promise<void>>());
+vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ writeText: clipboardWriteText }));
+const webClipboardWriteText = vi.fn<(text: string) => Promise<void>>();
 
 vi.mock("@/lib/commands", () => ({
   getVaultPath: commandMocks.getVaultPath,
@@ -416,9 +418,10 @@ describe("AppWithVault", () => {
     sidebarResizeState.collapsed = false;
     sidebarResizeState.isResizing = false;
     clipboardWriteText.mockResolvedValue(undefined);
+    webClipboardWriteText.mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
-      value: { writeText: clipboardWriteText },
+      value: { writeText: webClipboardWriteText },
     });
 
     const allBlocks = [block(1, "alpha-block"), block(2, "beta-block")];
@@ -1839,6 +1842,9 @@ describe("AppWithVault", () => {
     fireEvent.keyDown(screen.getByTestId("detail-title"), { key: "l", metaKey: true });
 
     expect(clipboardWriteText).toHaveBeenCalledWith("/vault/alpha-block.md");
+    // Through the native clipboard, never the web API: WKWebView rejects the
+    // latter whenever focus has moved, and the rejection is invisible.
+    expect(webClipboardWriteText).not.toHaveBeenCalled();
   });
 
   it("does not copy a card path with Command-L when Detail is closed", async () => {

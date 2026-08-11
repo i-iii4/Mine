@@ -15,6 +15,9 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
   revealItemInDir: vi.fn(),
 }));
 
+const writeText = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ writeText }));
+
 function makeBlock(): LightBlock {
   return {
     id: 1,
@@ -128,6 +131,36 @@ describe("CardHoverMenu", () => {
     ]) {
       expect(container.querySelector(selector), selector).toHaveClass("transform-gpu");
     }
+  });
+
+  it("copies the card path through the native clipboard, not the web API", async () => {
+    // navigator.clipboard rejects once Radix closes the menu and focus leaves
+    // the document, and the rejection was swallowed — the button did nothing.
+    const webClipboard = vi.fn();
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: webClipboard },
+    });
+
+    render(
+      <CardHoverMenu
+        block={makeBlock()}
+        vaultPath="/vault"
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        openMoreMenuRequestSequence={1}
+      />,
+    );
+
+    fireEvent.click(await screen.findByText("Copy Path"));
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith("/vault/alpha-block.md");
+    });
+    expect(webClipboard).not.toHaveBeenCalled();
   });
 
   it("shows Rename in the overflow menu", async () => {

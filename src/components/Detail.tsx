@@ -123,6 +123,7 @@ import { QuantizedMenuScrollArea } from "./QuantizedMenuScrollArea";
 import { SearchMenuInput } from "./SearchMenuInput";
 import { microPreviewFromIndexedBlock } from "./MicroPreviewThumbnail";
 import type { ImagePreviewRequest, ImagePreviewSibling } from "./ImagePreviewOverlay";
+import { copyTextToClipboard } from "@/lib/clipboard";
 
 // Layout constants shared by scroll content and fixed metadata. The rail is
 // anchored to the right edge with a fixed 20rem inspector width, while the
@@ -1737,7 +1738,7 @@ function MediaAssetMoreMenu({
             <MenuIconSlot />
             Reveal in Finder
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => navigator.clipboard.writeText(mediaPath)}>
+          <DropdownMenuItem onSelect={() => copyTextToClipboard(mediaPath)}>
             <MenuIconSlot />
             Copy Path
           </DropdownMenuItem>

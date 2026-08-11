@@ -31,6 +31,7 @@ import {
   COLLECTION_PICKER_CONTENT_CLASS,
   CollectionPicker,
 } from "./CollectionPicker";
+import { copyTextToClipboard } from "@/lib/clipboard";
 
 interface CardMenuActionsProps<TBlock extends LightBlock | IndexedBlock> {
   block: TBlock;
@@ -253,7 +254,7 @@ function CardMenuDropdownContent<TBlock extends LightBlock | IndexedBlock>({
         Reveal in Finder
       </DropdownMenuItem>
 
-      <DropdownMenuItem onSelect={() => navigator.clipboard.writeText(filePath)}>
+      <DropdownMenuItem onSelect={() => copyTextToClipboard(filePath)}>
         <MenuIconSlot />
         Copy Path
       </DropdownMenuItem>

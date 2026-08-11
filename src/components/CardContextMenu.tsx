@@ -18,6 +18,7 @@ import {
   COLLECTION_PICKER_CONTENT_CLASS,
   CollectionPicker,
 } from "./CollectionPicker";
+import { copyTextToClipboard } from "@/lib/clipboard";
 
 interface CardTagMenuProps {
   block: LightBlock;
@@ -100,7 +101,7 @@ export function CardTagMenu({
         Reveal in Finder
       </ContextMenuItem>
 
-      <ContextMenuItem onSelect={() => navigator.clipboard.writeText(filePath)}>
+      <ContextMenuItem onSelect={() => copyTextToClipboard(filePath)}>
         <MenuIconSlot />
         Copy Path
       </ContextMenuItem>

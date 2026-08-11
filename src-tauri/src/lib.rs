@@ -104,6 +104,10 @@ pub fn run() {
         ])
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        // Copying a path is a desktop operation, not a web one: WKWebView
+        // refuses navigator.clipboard once the menu that triggered it takes
+        // focus away, and the rejection is invisible.
+        .plugin(tauri_plugin_clipboard_manager::init())
         .on_menu_event(|app, event| match event.id().as_ref() {
             MENU_ID_FIND_CARDS => {
                 let _ = app.emit("surface-search-shortcut", "main");
