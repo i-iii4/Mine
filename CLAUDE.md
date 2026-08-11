@@ -53,6 +53,7 @@
 | TailwindCSS v4 | Стилизация (CSS-first конфигурация) |
 | shadcn/ui CLI 4.x | Source-owned дизайн-система: OKLCH-токены, Radix-base компоненты, glass-вариант, `cn()` |
 | radix-ui | Текущая headless-основа компонентов Mine (`shadcn info`: `base = radix`) |
+| tauri-plugin-clipboard-manager | Системный буфер обмена (веб-API отказывает при потере фокуса) |
 | lucide-react | Иконки (замена ручных SVG) |
 | class-variance-authority | Варианты компонентов (CVA) |
 | tw-animate-css | CSS-анимации для Tailwind v4 (Dialog, DropdownMenu, ContextMenu) |

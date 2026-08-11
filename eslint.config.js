@@ -13,6 +13,9 @@ export default tseslint.config(
       "safari-extension/",
       "scripts/",
       "target/",
+      // Any sibling cargo target dir: diagnostic or profiling builds land
+      // beside target/ and are full of generated bundles, not source.
+      "target-*/",
     ],
   },
   {
