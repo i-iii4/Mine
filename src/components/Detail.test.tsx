@@ -597,7 +597,11 @@ describe("Detail", () => {
       "w-full",
       "max-w-[48rem]",
     );
-    expect(stackedMetadataRow).toHaveClass("col-start-2", "mt-8", "min-w-0");
+    expect(stackedMetadataRow).toHaveClass(
+      "col-start-2",
+      "mt-[var(--edge-rhythm,32px)]",
+      "min-w-0",
+    );
     expect(container.querySelector("[data-detail-fixed-metadata-layer]")).toBeNull();
     expect(container.querySelector("[data-detail-metadata-spacer]")).toBeNull();
   });

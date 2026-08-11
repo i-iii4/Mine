@@ -507,7 +507,7 @@ export function Detail({
             </div>
             {isStackedLayout ? (
               <div
-                className="col-start-2 mt-8 min-w-0"
+                className="col-start-2 mt-[var(--edge-rhythm,32px)] min-w-0"
                 data-detail-stacked-metadata-row
               >
                 <MetadataPanel

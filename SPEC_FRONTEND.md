@@ -1222,11 +1222,13 @@ Image media expansion:
   Detail container width drops below `816px` (`400px` article minimum +
   `20rem` rail + three `2rem` grid insets), Detail switches to stacked layout
   instead of shrinking article text further.
-- Stacked layout uses `grid-cols-[2rem_minmax(240px,1fr)_2rem]`: the
-  article/media column remains centered with `max-w-[48rem]`, and
+- Stacked layout uses
+  `grid-cols-[var(--edge-rhythm,32px)_minmax(240px,1fr)_var(--edge-rhythm,32px)]`:
+  the article/media column remains centered with `max-w-[48rem]`, and
   metadata/Connected Cards render as a full-width scroll-flow row below the
-  primary content. The fixed metadata overlay layer is not rendered in stacked
-  mode.
+  primary content, offset by `mt-[var(--edge-rhythm,32px)]` — the same density
+  token as the side insets. The fixed metadata overlay layer is not rendered in
+  stacked mode.
 - Metadata card itself has `min-width: 240px`, so the `Source` / `Connect`
   action row cannot squeeze below its content minimum.
 - Article column lives in column 2 (`col-start-2`) and is centered inside the

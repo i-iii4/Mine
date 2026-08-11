@@ -1834,10 +1834,13 @@ grid.
 Если реальная ширина Detail-контейнера становится меньше `816px`
 (`400px` article minimum + `320px` rail + три grid inset по `32px`), layout
 переключается в stacked mode: grid становится
-`grid-cols-[2rem_minmax(240px,1fr)_2rem]`, article/media column остаётся
-центрированной с `max-w-[48rem]`, а metadata/Connected Cards больше не fixed
-rail и рендерятся отдельным full-width row под основным контентом в scroll
-flow.
+`grid-cols-[var(--edge-rhythm,32px)_minmax(240px,1fr)_var(--edge-rhythm,32px)]`,
+article/media column остаётся центрированной с `max-w-[48rem]`, а
+metadata/Connected Cards больше не fixed rail и рендерятся отдельным
+full-width row под основным контентом в scroll flow. Вертикальный зазор между
+контентом и metadata row задаётся тем же токеном `--edge-rhythm`, что и
+боковые insets сетки, — плотность Spacing сжимает его вместе с остальными
+отступами.
 
 Metadata card keeps `min-width: 240px`, so the bottom `Source` / `Connect`
 button row cannot compress below the buttons' intrinsic content.
