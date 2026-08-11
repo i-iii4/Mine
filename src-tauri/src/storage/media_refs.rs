@@ -218,6 +218,24 @@ fn resolve_root_relative(vault: &VaultLayout, reference: &str) -> Option<PathBuf
     Some(resolved)
 }
 
+/// Find a file by name anywhere under `root`, nearest to the root first.
+///
+/// The vault writes media references as Obsidian wikilinks — a bare name, not
+/// a path — so a name alone is all a consumer outside the index has to go on.
+/// Used by the asset protocol, which receives `<vault>/<name>` URLs built by
+/// the frontend and must still find the file after the vault was sorted into
+/// folders.
+pub fn resolve_basename_under(root: &Path, file_name: &str) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    collect_basename_matches(root, file_name, &mut candidates);
+    candidates.sort_by(|a, b| {
+        let a_key = candidate_rank(root, root, a);
+        let b_key = candidate_rank(root, root, b);
+        a_key.cmp(&b_key)
+    });
+    candidates.into_iter().next()
+}
+
 fn resolve_by_basename(vault: &VaultLayout, block_slug: &str, file_name: &str) -> Option<PathBuf> {
     let block_path = vault.block_path(block_slug);
     let block_parent = block_path.parent().unwrap_or(vault.root());
@@ -349,6 +367,39 @@ mod tests {
             source: source.to_string(),
             syntax,
         }
+    }
+
+    #[test]
+    fn resolves_a_bare_name_from_a_sorted_vault() {
+        // What the asset protocol faces: the frontend builds `<vault>/<name>`
+        // from the index, but a sorted vault keeps media under Media/.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("Media")).unwrap();
+        std::fs::write(root.join("Media/Work by — Hassco Design©.jpg"), b"jpg").unwrap();
+
+        let resolved = resolve_basename_under(root, "Work by — Hassco Design©.jpg").unwrap();
+
+        assert_eq!(resolved, root.join("Media/Work by — Hassco Design©.jpg"));
+    }
+
+    #[test]
+    fn prefers_the_copy_closest_to_the_vault_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("Media/nested")).unwrap();
+        std::fs::write(root.join("shot.png"), b"png").unwrap();
+        std::fs::write(root.join("Media/nested/shot.png"), b"png").unwrap();
+
+        let resolved = resolve_basename_under(root, "shot.png").unwrap();
+
+        assert_eq!(resolved, root.join("shot.png"));
+    }
+
+    #[test]
+    fn missing_name_resolves_to_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(resolve_basename_under(dir.path(), "absent.jpg").is_none());
     }
 
     #[test]

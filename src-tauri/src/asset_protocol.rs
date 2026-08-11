@@ -76,6 +76,27 @@ fn build_asset_response<R: Runtime>(
         return empty_response(resp.status(StatusCode::FORBIDDEN));
     }
 
+    let path = match std::fs::metadata(&path) {
+        Ok(_) => path,
+        // The frontend builds `<vault>/<name>` from the index, where a medium
+        // is stored the way the note writes it — an Obsidian wikilink, a bare
+        // name with no folder. Once a vault is sorted into Cards/ and Media/,
+        // that URL points at a file which is not there, and every full-size
+        // image in Detail broke. Resolving the name inside the vault mirrors
+        // both Obsidian's own wikilink rule and `resolve_indexed_media`, which
+        // already rescued the thumbnail pipeline the same way. Doing it here,
+        // at the single door every asset URL passes through, fixes Detail,
+        // the media actions, the full-size preview and inline article media
+        // at once.
+        Err(_) => match resolve_asset_by_name(app, &path) {
+            Some(resolved) => resolved,
+            None => {
+                log::error!("asset path missing: {}", path.display());
+                return empty_response(resp.status(StatusCode::NOT_FOUND));
+            }
+        },
+    };
+
     let Ok(meta) = std::fs::metadata(&path) else {
         log::error!("asset path missing: {}", path.display());
         return empty_response(resp.status(StatusCode::NOT_FOUND));
@@ -100,6 +121,30 @@ fn build_asset_response<R: Runtime>(
             empty_response(resp.status(StatusCode::INTERNAL_SERVER_ERROR))
         }
     }
+}
+
+#[cfg(feature = "desktop")]
+fn resolve_asset_by_name<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    requested: &Path,
+) -> Option<PathBuf> {
+    // The directory the URL pointed into is the vault root for frontend-built
+    // media URLs; searching under it keeps the lookup inside the tree the
+    // request already named.
+    let root = requested.parent()?;
+    let file_name = requested.file_name()?.to_str()?;
+    let resolved = crate::storage::media_refs::resolve_basename_under(root, file_name)?;
+    // The resolved path is a different file from the one the scope approved,
+    // so it has to clear the same gate — a fallback must not widen what the
+    // protocol may serve.
+    if !app.asset_protocol_scope().is_allowed(&resolved) {
+        log::error!(
+            "asset protocol not configured to allow resolved path: {}",
+            resolved.display()
+        );
+        return None;
+    }
+    Some(resolved)
 }
 
 #[cfg(feature = "desktop")]
