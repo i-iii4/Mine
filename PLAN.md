@@ -103,6 +103,33 @@ Status vocabulary:
 - `Unresolved` отсутствует в Rust/TypeScript DTO, Graph UI и browser audit;
   старая видимая строка относилась к процессу Mine, запущенному до пересборки.
 
+### Field checkpoint — 02.08.2026–11.08.2026
+
+Полевые сессии после закрытия A0–A8; детали по датам — в `DEVLOG.md`. Статус
+A5 не меняется: остаётся `MANUAL QA` (финальное визуальное открытие и полный
+перезапуск на реальном пространстве).
+
+- Растворение верхней кромки прокручиваемых поверхностей реализовано и
+  зафиксировано в `SPEC_SCROLL_EDGE_FADE.md`; переключение каналов при
+  открытой карточке починено (02.08.2026).
+- Видео из постов X с возрастным ограничением забирает yt-dlp
+  (решение 031 в `ARCHITECTURE.md`); без бинарника шаг завершается понятной
+  ошибкой (04.08.2026).
+- Переключатель пространств получил pinned `Reveal in Finder` / `Add space`;
+  правый клик по групповому выделению открывает selection-scoped меню;
+  сортировка коллекций в сайдбаре переписана по контракту дизайн-системы и
+  закреплена browser gate `bun run test:sidebar-reorder`; фантомные записи
+  каналов выметаются в `reconcile_vault` (09.08.2026).
+- Клиппер: эластичный высотный каркас панели с жёстким save-футером, статусы
+  на кнопке вместо StatusBar, слоистый Escape, host-команды `pick_vault_folder`
+  / `reveal_vault` (10.08.2026).
+- SIGABRT-гонка asset-протокола с WKWebView закрыта: `responder.respond`
+  уходит через `run_on_main_thread`; release-профиль переведён на
+  `panic = "unwind"` (10.08.2026).
+- Резолв медиа по имени внутри хранилища добавлен в asset-протокол — починены
+  все карточки после миграции раскладки `Cards/`/`Media/`; копирование в буфер
+  переведено на `tauri-plugin-clipboard-manager` (11.08.2026).
+
 Production distribution is `DEFERRED` by explicit product decision and is not
 part of local desktop completion. Current acceptance ends at a locally built
 debug `Mine.app`.

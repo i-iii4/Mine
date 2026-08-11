@@ -1,5 +1,56 @@
 # Devlog
 
+## 11.08.2026 — Аудит документации: сверка с кодом и синхронизация AGENTS.md
+
+### Задача
+Провести аудит проектной документации и устранить расхождения с фактическим
+состоянием кода.
+
+### Что нашлось
+- `CLAUDE.md` и `AGENTS.md` разошлись в обе стороны (105 строк diff): в
+  каноническом `CLAUDE.md` не было fastembed, tiny_http, Playwright и article
+  audio, а в `AGENTS.md` — clipboard-manager и кастомного masonry; при этом
+  `AGENTS.md` всё ещё упоминал удалённый `@virtuoso.dev/masonry`.
+- Required reading в `CLAUDE.md` не знал о девяти существующих спеках
+  (`SPEC_SEARCH`, `SPEC_GROUP_SELECTION`, `SPEC_FEED_SCROLL_PERFORMANCE`,
+  `SPEC_GRID_LAYOUT_READINESS`, `SPEC_FEED_VIDEO`, `SPEC_ARTICLE_AUDIO`,
+  `SPEC_TEXT_SELECTION_EXTRACTION`, `SPEC_DISPLAY_TITLE`,
+  `SPEC_DISTRIBUTION`).
+- Дерево Structure отставало от `src-tauri/src` на ~23 модуля (реконсиляция,
+  hybrid search, article audio, media refs, миграционные CLI) и указывало
+  несуществующий `tailwind.config.ts` (Tailwind v4 — CSS-first).
+- Приписка к схеме SQLite в `ARCHITECTURE.md` отправляла за каноническим DDL в
+  `db.rs`, тогда как после A8 он живёт в `storage/migrations.rs`; диаграмма
+  derived store показывала `thumbs/` в корне вместо `cache/thumbs` +
+  `cache/audio`.
+- `PLAN.md` не имел чекпойнтов после 25.07.2026 — августовские сессии жили
+  только в DEVLOG.
+
+### Что сделано
+- `CLAUDE.md`: полный Required reading (30 спек), Stack дополнен реально
+  используемыми зависимостями (mp4 + openh264, fastembed, whatlang, tiny_http,
+  react-router, Vitest, Playwright + pngjs, Swift audio helper), дерево
+  Structure приведено к фактическому состоянию `src-tauri/src`, `src/`,
+  `scripts/`, `extension/`, добавлены `pack:extension`,
+  `clipper:install-host`, `test:frontend`, `test:rust` в Development.
+- `AGENTS.md` пересобран как копия `CLAUDE.md` с примечанием о каноничности —
+  класс расхождений устранён целиком, а не построчно.
+- `ARCHITECTURE.md`: указатель канонического DDL исправлен на
+  `migrations.rs`, перечень производных таблиц дополнен, диаграмма derived
+  store соответствует `domain/vault.rs`, в related documents добавлен
+  `SPEC_TEXT_SELECTION_EXTRACTION.md`.
+- `PLAN.md`: добавлен Field checkpoint 02.08–11.08.2026 (кромка, yt-dlp,
+  пространства/выделение/сортировка, каркас клиппера, SIGABRT, резолв медиа по
+  имени); статус A5 не менялся — `MANUAL QA`.
+
+### Уроки
+- Два файла инструкций, обновляемых вручную, гарантированно расходятся:
+  правки попадали то в один, то в другой. Копия с примечанием дешевле и
+  честнее частичной синхронизации.
+- Дерево Structure деградирует быстрее всего: модули появляются каждую
+  сессию, а дерево правится только при явном напоминании. Сверка `ls` против
+  дерева должна быть частью любого документационного аудита.
+
 ## 11.08.2026 — Битые изображения в карточках и мёртвая кнопка Copy Path
 
 ### Задача
