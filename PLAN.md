@@ -134,6 +134,12 @@ A5 не меняется: остаётся `MANUAL QA` (финальное ви�
 - Документационный аудит: `AGENTS.md` пересобран как копия канонического
   `CLAUDE.md`, Required reading/Stack/Structure сверены с кодом, указатель
   канонического DDL исправлен на `storage/migrations.rs` (11.08.2026).
+- Article audio выключен целиком и выведен из сборки: Cargo feature
+  `article-audio` вне `default`, IPC-команды и Swift-хелпер под ней, пустой
+  `externalBin`, `ARTICLE_AUDIO_ENABLED = false` на фронте. Код оставлен в
+  дереве, процедура включения — в `SPEC_ARTICLE_AUDIO.md`. Фазы 14 и 15
+  остаются выполненными; выключен продукт, а не откачена реализация
+  (12.08.2026).
 - Вертикальные зазоры в Detail приведены к одному токену: внешний отступ
   metadata row в stacked-раскладке взят из `--edge-rhythm`, хвостовой margin
   последнего блока статьи обнулён, инлайновое видео получило
@@ -1286,7 +1292,7 @@ Goal: полноценная поддержка видео-страниц в к�
 | M2.6 | Channel list / навигация | [x] |
 | M2.7 | Detail view (просмотр блока) | [x] |
 
-### Phase 14 — Article Audio Renditions v1 [COMPLETED]
+### Phase 14 — Article Audio Renditions v1 [COMPLETED, ВЫКЛЮЧЕНО 12.08.2026]
 
 Goal: manual local audio renditions для `article` blocks на desktop и iOS с общим Rust speech-prep contract, compact controls и local playback persistence.
 
@@ -1302,7 +1308,7 @@ SPEC: [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md)
 | 14.6 | iOS `AudioSection`, `ArticleAudioService`, `ArticleAudioController`, local CAF cache | [x] |
 | 14.7 | Verification: Rust tests, frontend tests, `cargo check -p mine-ffi`, arm64 iOS simulator build | [x] |
 
-### Phase 15 — Apple TTS Stabilization v2 [COMPLETED]
+### Phase 15 — Apple TTS Stabilization v2 [COMPLETED, ВЫКЛЮЧЕНО 12.08.2026]
 
 Goal: стабилизировать desktop article-audio backend без UI-изменений: убрать нестабильный `/usr/bin/say -o`, перевести desktop generation на native macOS helper, ввести persisted Apple voice defaults и перестать переиспользовать legacy audio artifacts.
 

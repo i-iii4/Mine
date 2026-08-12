@@ -928,6 +928,10 @@ rename_derived_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str) ->
   - article audio artifacts и sidecar через `storage::article_audio::rename_all_artifacts`
 - Используется и watcher external rename path, и explicit in-app rename command
 - Если higher-level rename flow меняет speakable article text, audio может быть дополнительно инвалидирован поверх этого helper'а
+- Генерация article audio выключена (см. `SPEC_ARTICLE_AUDIO.md`), но
+  обслуживание уже существующих артефактов — переименование, инвалидация,
+  удаление вместе с блоком — остаётся скомпилированным намеренно: иначе аудио,
+  созданное до отключения, зависло бы в derived store навсегда
 
 ### Поведение persist_new_reference_block
 
