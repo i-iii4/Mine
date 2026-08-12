@@ -236,7 +236,10 @@ export function computeCardHeight(
     `preview_manifest` → `block.width/height`. Тот же порядок обязан
     использовать render-время (`primaryAspectRatio` в `cardLayout.ts`):
     зарезервированная высота и нарисованная пропорция — одна и та же карточка,
-    и расхождение источников уводит графику из отведённого ей слота
+    и расхождение источников уводит графику из отведённого ей слота.
+    Целевой контракт заменяет эту цепочку одним источником — размерами
+    сгенерированного превью — и вводит кламп пропорции как единственную точку
+    решения об обрезке: [SPEC_CARD_MEDIA_GEOMETRY.md](SPEC_CARD_MEDIA_GEOMETRY.md)
   - video: `columnWidth * 9 / 16` (fixed 16:9 + play overlay)
   - link: `columnWidth * 9 / 16 + 76` (16:9 thumbnail + 76px text)
   - file: fixed compact height

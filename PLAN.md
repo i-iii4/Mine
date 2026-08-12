@@ -17,6 +17,7 @@ for the active critical path.
 
 Status vocabulary:
 
+- `SPEC` — contract is written and awaiting acceptance; no implementation started;
 - `ACTIVE` — missing contract or test is confirmed in the current code;
 - `DONE` — current code/tests prove the old item was completed;
 - `SUPERSEDED` — the old solution is invalid under the current architecture;
@@ -37,6 +38,7 @@ Status vocabulary:
 | A6. Verification gate hardening | DONE | Self-starting browser audit runner wired into `bun run verify` | A clean shell runs Feed, Graph and cold-space gates without a prestarted server and always tears the server down |
 | A7. Structural decomposition | DONE | Split App/Grid/Graph, command-state orchestration and storage DB/index responsibilities at existing ownership boundaries | Composition roots retain orchestration; focused owners contain migrations, coordinators, interaction/physics/paint and secondary chrome; behavior gates stay green |
 | A8. Persistence and read-model contracts | DONE | Versioned SQLite migrations, shared projection revisions, independent search revisions, generated IPC bindings, native-shell smoke and truthful MSRV | Upgrade tests, atomic snapshot tests, binding freshness, browser/native gates and Rust 1.88 locked-workspace CI all pass |
+| A9. Card media geometry | SPEC | Artifact-owned preview dimensions, typed source/preview split, aspect clamp as the single cropping decision | Contract in `SPEC_CARD_MEDIA_GEOMETRY.md` accepted; then: generator writes preview dimensions, fallback chain removed, autoplay profile tests stay green unchanged, feed audit covers surface width and collage tile ratios |
 
 ### Tooling maintenance checkpoint — 19.07.2026
 
