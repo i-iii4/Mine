@@ -129,6 +129,13 @@ A5 не меняется: остаётся `MANUAL QA` (финальное ви�
 - Резолв медиа по имени внутри хранилища добавлен в asset-протокол — починены
   все карточки после миграции раскладки `Cards/`/`Media/`; копирование в буфер
   переведено на `tauri-plugin-clipboard-manager` (11.08.2026).
+- Документационный аудит: `AGENTS.md` пересобран как копия канонического
+  `CLAUDE.md`, Required reading/Stack/Structure сверены с кодом, указатель
+  канонического DDL исправлен на `storage/migrations.rs` (11.08.2026).
+- Вертикальные зазоры в Detail приведены к одному токену: внешний отступ
+  metadata row в stacked-раскладке взят из `--edge-rhythm`, хвостовой margin
+  последнего блока статьи обнулён, инлайновое видео получило
+  `h-auto max-w-full` вместо letterbox из intrinsic-высоты (11.08.2026).
 
 Production distribution is `DEFERRED` by explicit product decision and is not
 part of local desktop completion. Current acceptance ends at a locally built
