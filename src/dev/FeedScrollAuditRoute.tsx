@@ -46,6 +46,10 @@ function makeAuditPreviewManifest(index: number): string | null {
       preview_path: AUDIT_MEDIA_ASSETS[assetIndex]!,
       width: 960,
       height: 960,
+      // Collage tiles are cropped into fixed slots, so the artifact is square
+      // regardless of the source shape.
+      preview_width: 320,
+      preview_height: 320,
       is_video: false,
       is_video_poster: false,
     };
@@ -56,16 +60,17 @@ function makeAuditPreviewManifest(index: number): string | null {
     primary_preview_path: tiles[0]?.preview_path ?? null,
     width: 960,
     height: 960,
+    preview_width: 640,
+    preview_height: 640,
     tiles,
     overflow_count: 0,
   });
 }
 
-/// A single-media card whose committed height and render ratio come from
-/// different sources: no per-file dimensions, a wide preview manifest driving
-/// the height, and narrow block dimensions driving the graphic ratio. A surface
-/// that derives its width from its height collapses here; a full-width surface
-/// stays on the card edge.
+/// A single-media card whose source geometry contradicts its artifact
+/// geometry. Layout must follow the artifact; a surface that derives its width
+/// from a height reserved by some other ratio collapses away from the card
+/// edge, which the audit measures.
 function makeRatioMismatchBlock(index: number): LightBlock {
   const id = 100_000 + index;
   return {
@@ -92,8 +97,12 @@ function makeRatioMismatchBlock(index: number): LightBlock {
     preview_manifest: JSON.stringify({
       kind: "media",
       primary_preview_path: AUDIT_MEDIA_ASSETS[index % AUDIT_MEDIA_ASSETS.length]!,
+      // Source claims one shape...
       width: 1200,
       height: 800,
+      // ...the artifact on disk is another. The card follows the artifact.
+      preview_width: 400,
+      preview_height: 600,
       tiles: [],
       overflow_count: 0,
     }),

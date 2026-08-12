@@ -417,6 +417,42 @@ async function runViewportAudit(browser, viewport) {
     failures.push("metadata-only link did not render its link title");
   }
 
+  // Collage tiles are cropped into fixed slots and must keep the layout they
+  // had before card geometry moved to artifact dimensions: their own ratios are
+  // deliberately not the source ratios, and nothing about this change may
+  // reshape them.
+  const collageTileShapes = await page.evaluate(() => {
+    const shapes = [];
+    for (const item of document.querySelectorAll("[data-feed-grid-item-slug]")) {
+      const tiles = item.querySelectorAll("[data-card-media-tile]");
+      // Only the 2x2 grid: with three tiles the first one deliberately spans
+      // both rows, so its slot is not square by design.
+      if (tiles.length !== 4) continue;
+      for (const tile of tiles) {
+        const rect = tile.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        shapes.push({
+          slug: item.getAttribute("data-feed-grid-item-slug"),
+          ratio: rect.width / rect.height,
+        });
+      }
+      if (shapes.length >= 12) break;
+    }
+    return shapes;
+  });
+  const skewedTiles = collageTileShapes.filter(
+    (entry) => entry.ratio < 0.85 || entry.ratio > 1.18,
+  );
+  if (collageTileShapes.length > 0 && skewedTiles.length > 0) {
+    const sample = skewedTiles
+      .slice(0, 3)
+      .map((entry) => `${entry.slug} ${entry.ratio.toFixed(2)}`)
+      .join(", ");
+    failures.push(
+      `collage tiles left their square slots on ${skewedTiles.length} tile(s): ${sample}`,
+    );
+  }
+
   for (const top of positions) {
     await resetPerformanceProbe(page);
     const immediateMetrics = await jumpAndReadImmediateViewport(page, top);

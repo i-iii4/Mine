@@ -19,6 +19,7 @@ use crate::storage::preview_plan::{
     self, media_ext_lower, PreviewMediaKind, MICRO_PREVIEW_IMAGE_LIMIT, PREVIEW_TILE_LIMIT,
 };
 pub use crate::storage::preview_plan::{is_image_ext, is_video_ext};
+use crate::storage::media_dimensions::PreviewDimensions;
 use crate::storage::{files, media_refs};
 
 /// Default max side for thumbnails: 640px covers masonry columns up to
@@ -410,7 +411,7 @@ fn read_thumb_magic(thumb_path: &Path) -> Option<[u8; 3]> {
 /// - Saves as JPEG (quality 80) to `dest`
 /// - Creates destination directories if needed
 /// - Returns (width, height) of the result
-pub fn generate_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Result<(u32, u32)> {
+pub fn generate_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Result<PreviewDimensions> {
     let img = image::open(source)
         .with_context(|| format!("failed to open image: {}", source.display()))?;
 
@@ -431,7 +432,8 @@ pub fn generate_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Result<(
             .with_context(|| format!("failed to encode thumbnail: {}", dest.display()))
     })?;
 
-    Ok((rw, rh))
+    PreviewDimensions::new(rw, rh)
+        .with_context(|| format!("generated thumbnail has a zero dimension: {}", dest.display()))
 }
 
 fn composite_layout_slots(count: usize, size: u32) -> Vec<(u32, u32, u32, u32)> {
@@ -469,7 +471,7 @@ pub fn generate_composite_thumbnail(
     sources: &[std::path::PathBuf],
     dest: &Path,
     max_size: u32,
-) -> Result<(u32, u32)> {
+) -> Result<PreviewDimensions> {
     let tile_count = sources.len().min(PREVIEW_TILE_LIMIT);
     anyhow::ensure!(
         tile_count >= 2,
@@ -511,7 +513,8 @@ pub fn generate_composite_thumbnail(
             .with_context(|| format!("failed to encode composite thumbnail: {}", dest.display()))
     })?;
 
-    Ok((max_size, max_size))
+    PreviewDimensions::new(max_size, max_size)
+        .with_context(|| format!("composite thumbnail has a zero dimension: {}", dest.display()))
 }
 
 // ─── Text thumbnail ─────────────────────────────────────────────────────────
@@ -552,7 +555,7 @@ const TITLE_COLOR: Rgba<u8> = Rgba([51, 51, 51, 255]);
 /// - Saves as PNG; the app asset protocol sniffs image magic bytes because
 ///   the stable thumbnail path is still `<slug>.jpg`
 /// - Sidebar wraps in `bg-background` div + `dark:invert` for theme adaptation
-pub fn generate_text_thumbnail(title: Option<&str>, body: &str, dest: &Path) -> Result<(u32, u32)> {
+pub fn generate_text_thumbnail(title: Option<&str>, body: &str, dest: &Path) -> Result<PreviewDimensions> {
     let font = &*FONT;
 
     let size = TEXT_THUMB_SIZE;
@@ -615,7 +618,8 @@ pub fn generate_text_thumbnail(title: Option<&str>, body: &str, dest: &Path) -> 
             .with_context(|| format!("failed to encode text thumbnail: {}", dest.display()))
     })?;
 
-    Ok((size, size))
+    PreviewDimensions::new(size, size)
+        .with_context(|| format!("text thumbnail has a zero dimension: {}", dest.display()))
 }
 
 /// Generate a thumbnail from the first frame of an MP4 video.
@@ -625,7 +629,7 @@ pub fn generate_text_thumbnail(title: Option<&str>, body: &str, dest: &Path) -> 
 /// - Decodes H.264 to YUV via OpenH264, converts to RGB
 /// - Resizes and saves as JPEG
 #[cfg(not(target_os = "ios"))]
-pub fn generate_video_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Result<(u32, u32)> {
+pub fn generate_video_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Result<PreviewDimensions> {
     use mp4::TrackType;
     use openh264::decoder::Decoder;
     use openh264::formats::YUVSource;
@@ -772,7 +776,8 @@ pub fn generate_video_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Re
             .with_context(|| format!("failed to encode video thumbnail: {}", dest.display()))
     })?;
 
-    Ok((rw, rh))
+    PreviewDimensions::new(rw, rh)
+        .with_context(|| format!("generated video thumbnail has a zero dimension: {}", dest.display()))
 }
 
 #[cfg(target_os = "ios")]
@@ -780,7 +785,7 @@ pub fn generate_video_thumbnail(
     _source: &Path,
     _dest: &Path,
     _max_size: u32,
-) -> Result<(u32, u32)> {
+) -> Result<PreviewDimensions> {
     anyhow::bail!("video thumbnail generation is unavailable on iOS builds");
 }
 
@@ -1187,7 +1192,7 @@ mod tests {
         let dest = dir.path().join("thumb.jpg");
 
         create_test_image(&source, 800, 600);
-        let (w, h) = generate_thumbnail(&source, &dest, 240).unwrap();
+        let PreviewDimensions { width: w, height: h } = generate_thumbnail(&source, &dest, 240).unwrap();
 
         assert!(dest.exists());
         assert!(w <= 240);
@@ -1204,7 +1209,7 @@ mod tests {
         let dest = dir.path().join("thumb.jpg");
 
         create_test_image(&source, 100, 80);
-        let (w, h) = generate_thumbnail(&source, &dest, 240).unwrap();
+        let PreviewDimensions { width: w, height: h } = generate_thumbnail(&source, &dest, 240).unwrap();
 
         assert!(dest.exists());
         assert_eq!(w, 100);
@@ -1218,7 +1223,7 @@ mod tests {
         let dest = dir.path().join("sub").join("deep").join("thumb.jpg");
 
         create_test_image(&source, 400, 400);
-        let (w, h) = generate_thumbnail(&source, &dest, 240).unwrap();
+        let PreviewDimensions { width: w, height: h } = generate_thumbnail(&source, &dest, 240).unwrap();
 
         assert!(dest.exists());
         assert_eq!(w, 240);
@@ -1240,7 +1245,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("text-thumb.jpg");
 
-        let (w, h) = generate_text_thumbnail(
+        let PreviewDimensions { width: w, height: h } = generate_text_thumbnail(
             Some("Design Patterns in Rust"),
             "This is a sample article body.\n\nIt has multiple paragraphs with **bold** and [links](http://example.com).\n\n## Section Header\n\nMore content follows here.",
             &dest,
@@ -1278,7 +1283,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("empty-thumb.jpg");
 
-        let (w, h) = generate_text_thumbnail(Some("Title Only"), "", &dest).unwrap();
+        let PreviewDimensions { width: w, height: h } = generate_text_thumbnail(Some("Title Only"), "", &dest).unwrap();
         assert!(dest.exists());
         assert_eq!(w, 480);
         assert_eq!(h, 480);

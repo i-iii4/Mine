@@ -4,8 +4,13 @@ import { decodeLocalMarkdownUrl } from "@/lib/markdownWikilinks";
 export interface NormalizedFeedPreviewTile {
   sourcePath: string;
   previewPath: string | null;
+  /// Source-file geometry. Feeds playback budgets, never card layout.
   width: number | null;
   height: number | null;
+  /// Derived-artifact geometry: the only legitimate input to card layout.
+  /// See SPEC_CARD_MEDIA_GEOMETRY.md.
+  previewWidth: number | null;
+  previewHeight: number | null;
   isVideo: boolean;
   isVideoPoster: boolean;
 }
@@ -13,8 +18,14 @@ export interface NormalizedFeedPreviewTile {
 export interface NormalizedFeedPreviewManifest {
   kind: FeedPreviewKind;
   primaryPreviewPath: string | null;
+  /// Source-file geometry. Feeds playback budgets, never card layout.
   width: number | null;
   height: number | null;
+  /// Derived-artifact geometry: the only legitimate input to card layout.
+  /// Absent means "not known yet", which callers must handle as a state of its
+  /// own rather than substituting a default aspect.
+  previewWidth: number | null;
+  previewHeight: number | null;
   tiles: NormalizedFeedPreviewTile[];
   overflowCount: number;
 }
@@ -107,6 +118,8 @@ function normalizePreviewManifest(
             previewPath,
             width: asNullableNumber(tile.width),
             height: asNullableNumber(tile.height),
+            previewWidth: asNullableNumber(tile.preview_width),
+            previewHeight: asNullableNumber(tile.preview_height),
             isVideo,
             isVideoPoster,
           };
@@ -119,6 +132,8 @@ function normalizePreviewManifest(
     primaryPreviewPath,
     width,
     height,
+    previewWidth: asNullableNumber(parsed.preview_width),
+    previewHeight: asNullableNumber(parsed.preview_height),
     tiles,
     overflowCount,
   };

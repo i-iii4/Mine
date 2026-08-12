@@ -16,7 +16,7 @@ import type { WordWidths } from "@/types/fontMetrics";
 import { countLines } from "./wordWrap";
 import { deriveCardLayoutDescriptor, deriveContentCardSlots, getRuntimeCardKind, parsePreviewManifest } from "./cardLayout";
 import { CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX } from "./cardTypography";
-import { parseMediaDimensions } from "./mediaDimensions";
+import { clampCardAspect } from "./cardAspect";
 
 export interface FeedPlaybackSurfaceEnvelope {
   topOffsetPx: number;
@@ -144,33 +144,23 @@ const ARTICLE_IMAGE_ASPECT = 9 / 16;
 
 // ─── Image-card fallback when no width/height metadata ──────────────────────
 
+/// Shape an image card is laid out at, or `null` while its artifact does not
+/// exist yet.
+///
+/// Reads exactly one thing: the geometry of the preview the feed paints, written
+/// by the generator that produced it. The clamp is applied here too, so the
+/// reserved height and the painted ratio are the same number by construction.
+/// Contract: `SPEC_CARD_MEDIA_GEOMETRY.md`.
 export function explicitImageAspectRatio(block: LightBlock): number | null {
-  const dims = parseMediaDimensions(block);
-  if (dims && block.media_file) {
-    const entry = dims[block.media_file];
-    if (entry) {
-      const [width, height] = entry;
-      if (width > 0 && height > 0) {
-        return width / height;
-      }
-    }
-  }
-
   const previewManifest = parsePreviewManifest(block);
-  if (
-    previewManifest?.width &&
-    previewManifest.height &&
-    previewManifest.width > 0 &&
-    previewManifest.height > 0
-  ) {
-    return previewManifest.width / previewManifest.height;
-  }
-
-  if (block.width && block.height && block.width > 0 && block.height > 0) {
-    return block.width / block.height;
-  }
-
-  return null;
+  const artifactAspect =
+    previewManifest?.previewWidth &&
+    previewManifest.previewHeight &&
+    previewManifest.previewWidth > 0 &&
+    previewManifest.previewHeight > 0
+      ? previewManifest.previewWidth / previewManifest.previewHeight
+      : null;
+  return artifactAspect === null ? null : clampCardAspect(artifactAspect);
 }
 
 function computeImageMinimumHeight(columnWidth: number): number {

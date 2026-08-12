@@ -67,9 +67,27 @@ export type FeedPlaybackProfile = "standard" | "heavy"
 
 export type FeedPreviewKind = "text" | "image" | "video_poster" | "composite"
 
-export type FeedPreviewManifest = { kind: FeedPreviewKind; primary_preview_path: string | null; width: number | null; height: number | null; tiles: FeedPreviewTile[]; overflow_count: number }
+/**
+ * Preview plan for one card.
+ *
+ * Same split as [`FeedPreviewTile`]: `width`/`height` are the source,
+ * `preview_width`/`preview_height` are the artifact the feed paints. Absent
+ * preview dimensions mean "geometry not known yet" — a legitimate state for
+ * formats Rust cannot decode — and must never be substituted with a default
+ * aspect.
+ */
+export type FeedPreviewManifest = { kind: FeedPreviewKind; primary_preview_path: string | null; width: number | null; height: number | null; preview_width?: number | null; preview_height?: number | null; tiles: FeedPreviewTile[]; overflow_count: number }
 
-export type FeedPreviewTile = { source_path: string; preview_path: string | null; width: number | null; height: number | null; is_video: boolean; is_video_poster: boolean }
+/**
+ * One preview tile.
+ *
+ * `width`/`height` describe the **source** file and exist for playback
+ * budgets. `preview_width`/`preview_height` describe the **derived artifact**
+ * this tile actually paints and are the only legitimate input to card
+ * geometry. For composite previews the two differ by design: collage tiles are
+ * cropped to fixed slots. See `SPEC_CARD_MEDIA_GEOMETRY.md`.
+ */
+export type FeedPreviewTile = { source_path: string; preview_path: string | null; width: number | null; height: number | null; preview_width?: number | null; preview_height?: number | null; is_video: boolean; is_video_poster: boolean }
 
 export type GraphLink = { id: string; kind: GraphLinkKind; source: string; target: string; directed: boolean; count: number; target_ref: string | null }
 

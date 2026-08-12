@@ -14,7 +14,7 @@ use crate::domain::block::{parse_markdown_document, Block, BlockType, CardKind, 
 use crate::domain::vault::VaultLayout;
 use crate::storage::index::{self, FeedPreviewKind, FeedPreviewManifest};
 use crate::storage::preview_plan::{is_image_media, is_video_media};
-use crate::storage::{files, media_refs, thumbnails};
+use crate::storage::{files, media_dimensions, media_refs, thumbnails};
 
 pub const PREVIEW_RECONCILE_BATCH_SIZE: usize = 24;
 
@@ -480,13 +480,38 @@ pub fn reconcile_preview_for_slug(
 
     let all_ready = expected.iter().all(|path| is_ready_preview(path));
     if all_ready && (!source_changed || generation_failure.is_none()) {
+        // The artifacts exist now, so their geometry is knowable and belongs in
+        // the manifest. Reading it here — rather than returning it up from every
+        // generator branch — also backfills previews written before this field
+        // existed, and covers tiles that were already ready and skipped above.
+        //
+        // Written as its own guarded update: the manifest passed to
+        // `update_preview_state` is an optimistic-locking condition, not a
+        // value, so publishing a rewritten manifest through it would look like
+        // a stale worker and be rejected. If another writer changed the
+        // manifest first, this pass keeps the old one and the next reconcile
+        // stamps it.
+        let stamped = stamp_preview_dimensions(vault, &manifest)?;
+        let expected_manifest = match stamped.as_deref() {
+            Some(stamped_manifest)
+                if store_stamped_manifest(
+                    conn,
+                    slug,
+                    record.manifest.as_deref(),
+                    stamped_manifest,
+                )? =>
+            {
+                Some(stamped_manifest)
+            }
+            _ => record.manifest.as_deref(),
+        };
         let changed = update_preview_state(
             conn,
             slug,
             DerivedPreviewState::Ready,
             Some(&source_stamp),
             None,
-            record.manifest.as_deref(),
+            expected_manifest,
         )?;
         return Ok(Some(PreviewReconcileOutcome {
             slug: slug.to_string(),
@@ -697,6 +722,74 @@ fn is_ready_preview(path: &Path) -> bool {
         thumbnails::thumb_disk_state(path),
         thumbnails::ThumbDiskState::Jpeg
     )
+}
+
+/// Persist a manifest that now carries artifact geometry.
+///
+/// Guarded by the manifest it replaces, so a concurrent writer that changed the
+/// plan wins and this pass leaves the row alone.
+fn store_stamped_manifest(
+    conn: &Connection,
+    slug: &str,
+    expected_manifest: Option<&str>,
+    stamped_manifest: &str,
+) -> Result<bool> {
+    let changed = conn.execute(
+        "UPDATE blocks
+         SET preview_manifest = ?3
+         WHERE slug = ?1 AND preview_manifest IS ?2",
+        params![slug, expected_manifest, stamped_manifest],
+    )?;
+    Ok(changed > 0)
+}
+
+/// Record the geometry of every existing preview artifact in the manifest.
+///
+/// The feed lays cards out from the artifact it paints, so the artifact's own
+/// size is the authority; see `SPEC_CARD_MEDIA_GEOMETRY.md`. Returns the
+/// re-serialized manifest when anything changed, and `None` when it already
+/// matched — so an unchanged manifest is not rewritten on every reconcile.
+fn stamp_preview_dimensions(
+    vault: &VaultLayout,
+    manifest: &FeedPreviewManifest,
+) -> Result<Option<String>> {
+    let mut stamped = manifest.clone();
+    let mut changed = false;
+
+    if let Some(primary) = stamped.primary_preview_path.as_deref() {
+        let path = preview_disk_path(vault, primary)?;
+        if let Some(dims) = media_dimensions::extract_preview_dimensions(&path) {
+            if stamped.preview_width != Some(dims.width)
+                || stamped.preview_height != Some(dims.height)
+            {
+                stamped.preview_width = Some(dims.width);
+                stamped.preview_height = Some(dims.height);
+                changed = true;
+            }
+        }
+    }
+
+    for tile in &mut stamped.tiles {
+        let Some(preview_path) = tile.preview_path.as_deref() else {
+            continue;
+        };
+        let path = preview_disk_path(vault, preview_path)?;
+        let Some(dims) = media_dimensions::extract_preview_dimensions(&path) else {
+            continue;
+        };
+        if tile.preview_width != Some(dims.width) || tile.preview_height != Some(dims.height) {
+            tile.preview_width = Some(dims.width);
+            tile.preview_height = Some(dims.height);
+            changed = true;
+        }
+    }
+
+    if !changed {
+        return Ok(None);
+    }
+    serde_json::to_string(&stamped)
+        .map(Some)
+        .context("failed to serialize preview manifest with artifact dimensions")
 }
 
 fn read_source_block(vault: &VaultLayout, slug: &str) -> Result<Block> {
@@ -914,6 +1007,8 @@ mod tests {
             primary_preview_path: None,
             width: None,
             height: None,
+            preview_width: None,
+            preview_height: None,
             tiles: Vec::new(),
             overflow_count: 0,
         })
@@ -1152,6 +1247,45 @@ mod tests {
 
         assert_eq!(outcome.state, DerivedPreviewState::Failed);
         assert!(!vault.derived_root().join("escape.jpg").exists());
+    }
+
+    #[test]
+    fn ready_preview_records_artifact_dimensions_not_source_dimensions() {
+        let (_source, vault, conn) = setup();
+        let block = image_block("Tall", "tall.png");
+        // Larger than DEFAULT_MAX_SIZE on the long side, so the artifact is
+        // downscaled and its pixel size cannot equal the source's.
+        let image = image::RgbImage::from_pixel(500, 1000, image::Rgb([10, 20, 30]));
+        image.save(vault.root().join("tall.png")).unwrap();
+        files::write_block_file(&vault, &block).unwrap();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+        reconcile_preview_for_slug(&conn, &vault, "Tall").unwrap();
+
+        let raw: String = conn
+            .query_row(
+                "SELECT preview_manifest FROM blocks WHERE slug = 'Tall'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let manifest: FeedPreviewManifest = serde_json::from_str(&raw).unwrap();
+
+        let preview = manifest
+            .preview_dimensions()
+            .expect("ready preview must record artifact geometry");
+        assert_eq!(
+            (preview.width, preview.height),
+            (320, 640),
+            "artifact geometry must be the downscaled size actually written to disk"
+        );
+        // Same shape, different scale: geometry is equivalent, pixel budgets are not.
+        assert_eq!((manifest.width, manifest.height), (Some(500), Some(1000)));
+
+        let tile = manifest.tiles.first().expect("single media tile");
+        let tile_preview = tile
+            .preview_dimensions()
+            .expect("tile must record artifact geometry");
+        assert_eq!((tile_preview.width, tile_preview.height), (320, 640));
     }
 
     #[test]

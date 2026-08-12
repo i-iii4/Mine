@@ -5,6 +5,7 @@ import {
 } from "@/lib/feedPreview";
 import { getDisplayTitle } from "@/lib/displayTitle";
 import { parseMediaDimensions } from "@/lib/mediaDimensions";
+import { clampCardAspect } from "@/lib/cardAspect";
 
 export type CardLayoutVariant =
   | "image"
@@ -166,18 +167,18 @@ function mediaFileAspectRatio(block: CardLayoutBlock): number | null {
 
 /// Ratio an image card renders its graphic at.
 ///
-/// Deliberately the same source order as `explicitImageAspectRatio` in
-/// `cardHeight.ts`: per-file dimensions, then the preview manifest, then block
-/// dimensions. The two must agree — the height reserved by the layout and the
-/// ratio painted into it are the same card. When they disagreed, the graphic
-/// no longer fit the slot the layout had reserved for it.
+/// One source: the geometry of the artifact the feed actually paints, written
+/// by the generator that produced it. No fallback chain — a card whose artifact
+/// geometry is unknown is in a state of its own (see
+/// `previewGeometryState`), not a card with an invented square.
+/// Contract: `SPEC_CARD_MEDIA_GEOMETRY.md`.
 function imageSurfaceAspectRatio(
-  block: CardLayoutBlock,
   previewManifest: ReturnType<typeof parsePreviewManifest>,
 ): number | null {
-  return parseAspectRatio(parseMediaDimensions(block), block.media_file)
-    ?? aspectRatioFromDimensions(previewManifest?.width, previewManifest?.height)
-    ?? aspectRatioFromDimensions(block.width, block.height);
+  return aspectRatioFromDimensions(
+    previewManifest?.previewWidth,
+    previewManifest?.previewHeight,
+  );
 }
 
 function mediaItemsFromMediaMetadata(
@@ -240,12 +241,15 @@ function deriveMediaCardLayoutDescriptor(
   }
 
   if (hasImageMediaSignal(block, previewManifest)) {
+    const artifactAspect = imageSurfaceAspectRatio(previewManifest);
     return {
       variant: "image",
       titleText,
       previewText: "",
       authorText: "",
-      primaryAspectRatio: imageSurfaceAspectRatio(block, previewManifest) ?? 1,
+      // Null means the artifact has not been produced yet, and stays null: the
+      // provisional envelope is chosen by the consumer, not invented here.
+      primaryAspectRatio: artifactAspect === null ? null : clampCardAspect(artifactAspect),
       mediaItems,
       visibleMediaCount: mediaItems.length,
       totalMediaCount: mediaItems.length,

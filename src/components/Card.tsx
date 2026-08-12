@@ -722,7 +722,12 @@ function GalleryTiles({
         const tileStyle = count === 3 && index === 0 ? { gridRow: "1 / span 2" } : undefined;
 
         return (
-          <div key={`${item.sourcePath}-${index}`} className="relative overflow-hidden bg-card" style={tileStyle}>
+          <div
+            key={`${item.sourcePath}-${index}`}
+            className="relative overflow-hidden bg-card"
+            style={tileStyle}
+            data-card-media-tile=""
+          >
             {!measurementMode && !item.isVideo && (
               <GalleryTileImage
                 item={item}
@@ -803,15 +808,23 @@ const ImageCard = memo(function ImageCard({
 
   const currentSrc = sources[sourceIndex] ?? null;
   const navigationLabel = getNavigationLabel(block);
-  const aspectRatio = descriptor.primaryAspectRatio
-    ? `${descriptor.primaryAspectRatio}`
-    : "1";
+  // A null ratio means the preview artifact does not exist yet, which is a
+  // state of its own rather than a shape. Claiming a square here would state a
+  // proportion the card does not know and crop the image to it; instead the
+  // surface fills the provisional envelope the layout reserved, and the one
+  // `thumb:updated` that follows re-lays the card with real geometry.
+  // See SPEC_CARD_MEDIA_GEOMETRY.md.
+  const geometryPending = descriptor.primaryAspectRatio === null;
+  const surfaceStyle = geometryPending
+    ? undefined
+    : { aspectRatio: `${descriptor.primaryAspectRatio}` };
 
   if (currentSrc === null) {
     return (
       <GraphicSurface
         className="flex h-full w-full items-center justify-center"
-        style={{ aspectRatio }}
+        style={surfaceStyle}
+        data-card-preview-geometry={geometryPending ? "pending" : undefined}
       >
         <div className="text-center">
           <ImageOff className="mx-auto size-6 text-muted-foreground/50" />
@@ -823,23 +836,19 @@ const ImageCard = memo(function ImageCard({
     );
   }
 
-  // Aspect ratio is ALWAYS set — either from metadata (accurate) or a square
-  // fallback (neutral default when metadata is missing). This makes the card
-  // layout deterministic before the image loads, which is required for the
-  // hidden DOM measurement pass in Grid.tsx to read a stable height.
+  // The ratio comes from the artifact this card paints, and the layout reserved
+  // its height from that same number, so the surface fits its slot exactly.
   //
-  // Width is claimed explicitly. With height alone, `aspect-ratio` derives the
-  // width from whatever height the layout hands down, and the surface shrinks
-  // away from the card edge whenever the committed height disagrees with this
-  // ratio — the height comes from `explicitImageAspectRatio` (dimensions →
-  // manifest → block), this ratio from `mediaFileAspectRatio` (dimensions →
-  // block), and the two disagree whenever a preview was derived at a different
-  // ratio than its source. Full width plus `object-cover` keeps the graphic on
-  // the card edge and absorbs the disagreement on the axis the layout owns.
+  // Width is claimed explicitly all the same. With height alone, `aspect-ratio`
+  // derives the width from whatever height the layout hands down, so any
+  // residual disagreement — a clamped height, a stale committed row — would
+  // shrink the graphic away from the card edge instead of being absorbed by
+  // `object-cover` on the axis the layout owns.
   return (
     <GraphicSurface
       className="h-full w-full"
-      style={{ aspectRatio }}
+      style={surfaceStyle}
+      data-card-preview-geometry={geometryPending ? "pending" : undefined}
     >
       {!measurementMode && (
         <img

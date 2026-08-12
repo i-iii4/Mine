@@ -37,6 +37,38 @@ function makeBlock(
   };
 }
 
+
+/// Manifest as the generator leaves it: the artifact's own geometry recorded
+/// alongside the source's. Card layout must read only the former.
+function readyImageManifest(options: {
+  previewWidth: number | null;
+  previewHeight: number | null;
+  sourceWidth?: number;
+  sourceHeight?: number;
+}): string {
+  return JSON.stringify({
+    kind: "image",
+    primary_preview_path: "test.jpg",
+    width: options.sourceWidth ?? null,
+    height: options.sourceHeight ?? null,
+    preview_width: options.previewWidth,
+    preview_height: options.previewHeight,
+    tiles: [
+      {
+        source_path: "photo.jpg",
+        preview_path: "test.jpg",
+        width: options.sourceWidth ?? null,
+        height: options.sourceHeight ?? null,
+        preview_width: options.previewWidth,
+        preview_height: options.previewHeight,
+        is_video: false,
+        is_video_poster: false,
+      },
+    ],
+    overflow_count: 0,
+  });
+}
+
 describe("deriveCardLayoutDescriptor", () => {
   it("renders metadata-only links as text cards without a faux media surface", () => {
     const descriptor = deriveCardLayoutDescriptor(
@@ -73,26 +105,91 @@ describe("deriveCardLayoutDescriptor", () => {
     expect(descriptor.primaryAspectRatio).toBeCloseTo(1200 / 630);
   });
 
-  it("classifies image blocks with exact ratio", () => {
-    const descriptor = deriveCardLayoutDescriptor(
-      makeBlock({ block_type: "image", width: 1600, height: 900 }),
-    );
-    expect(descriptor.variant).toBe("image");
-    expect(descriptor.primaryAspectRatio).toBeCloseTo(1600 / 900);
-  });
-
-  it("prefers media_dimensions over stale image frontmatter dimensions", () => {
+  it("takes the image ratio from the artifact it paints", () => {
     const descriptor = deriveCardLayoutDescriptor(
       makeBlock({
         block_type: "image",
-        media_file: "wide-screenshot.jpg",
-        width: 4036,
-        height: 2578,
-        media_dimensions: "{\"wide-screenshot.jpg\":[2880,980]}",
+        media_file: "photo.jpg",
+        // Source is 1600x900; the artifact carries the same shape at 640px.
+        preview_manifest: readyImageManifest({
+          previewWidth: 640,
+          previewHeight: 360,
+          sourceWidth: 1600,
+          sourceHeight: 900,
+        }),
       }),
     );
     expect(descriptor.variant).toBe("image");
-    expect(descriptor.primaryAspectRatio).toBeCloseTo(2880 / 980);
+    expect(descriptor.primaryAspectRatio).toBeCloseTo(640 / 360);
+  });
+
+  it("ignores source dimensions that disagree with the artifact", () => {
+    const descriptor = deriveCardLayoutDescriptor(
+      makeBlock({
+        block_type: "image",
+        media_file: "photo.jpg",
+        width: 4036,
+        height: 2578,
+        media_dimensions: "{\"photo.jpg\":[2880,980]}",
+        preview_manifest: readyImageManifest({ previewWidth: 600, previewHeight: 400 }),
+      }),
+    );
+    expect(descriptor.variant).toBe("image");
+    expect(descriptor.primaryAspectRatio).toBeCloseTo(600 / 400);
+  });
+
+  it("shows ordinary portrait and landscape shapes whole", () => {
+    const portrait = deriveCardLayoutDescriptor(
+      makeBlock({
+        block_type: "image",
+        media_file: "photo.jpg",
+        preview_manifest: readyImageManifest({ previewWidth: 506, previewHeight: 640 }),
+      }),
+    );
+    expect(portrait.primaryAspectRatio).toBeCloseTo(506 / 640);
+
+    const landscape = deriveCardLayoutDescriptor(
+      makeBlock({
+        block_type: "image",
+        media_file: "photo.jpg",
+        preview_manifest: readyImageManifest({ previewWidth: 640, previewHeight: 458 }),
+      }),
+    );
+    expect(landscape.primaryAspectRatio).toBeCloseTo(640 / 458);
+  });
+
+  it("clamps only genuinely extreme shapes", () => {
+    const panorama = deriveCardLayoutDescriptor(
+      makeBlock({
+        block_type: "image",
+        media_file: "photo.jpg",
+        preview_manifest: readyImageManifest({ previewWidth: 640, previewHeight: 128 }),
+      }),
+    );
+    expect(panorama.primaryAspectRatio).toBeCloseTo(2);
+
+    const scroll = deriveCardLayoutDescriptor(
+      makeBlock({
+        block_type: "image",
+        media_file: "photo.jpg",
+        preview_manifest: readyImageManifest({ previewWidth: 128, previewHeight: 640 }),
+      }),
+    );
+    expect(scroll.primaryAspectRatio).toBeCloseTo(0.5);
+  });
+
+  it("reports unknown artifact geometry as unknown, not as a square", () => {
+    const descriptor = deriveCardLayoutDescriptor(
+      makeBlock({
+        block_type: "image",
+        media_file: "photo.jpg",
+        width: 1000,
+        height: 1000,
+        preview_manifest: readyImageManifest({ previewWidth: null, previewHeight: null }),
+      }),
+    );
+    expect(descriptor.variant).toBe("image");
+    expect(descriptor.primaryAspectRatio).toBeNull();
   });
 
   it("keeps legacy first-image metadata text-only until a ready manifest arrives", () => {
@@ -403,10 +500,11 @@ describe("deriveCardLayoutDescriptor", () => {
         media_file: "photo.jpg",
         width: 1200,
         height: 800,
+        preview_manifest: readyImageManifest({ previewWidth: 600, previewHeight: 400 }),
       }),
     );
     expect(descriptor.variant).toBe("image");
-    expect(descriptor.primaryAspectRatio).toBeCloseTo(1200 / 800);
+    expect(descriptor.primaryAspectRatio).toBeCloseTo(600 / 400);
   });
 
   it("keeps url-only media with image preview on the link shell", () => {

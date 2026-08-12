@@ -2,6 +2,8 @@
 
 Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)
 
+> Статус: реализовано 12.08.2026. Ниже — действующий контракт, а не план.
+
 ## Goal
 
 Зафиксировать, откуда лента берёт геометрию медиа-карточки и когда она вправе

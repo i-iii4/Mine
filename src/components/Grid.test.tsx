@@ -103,12 +103,18 @@ function makeImageBlock(id: number, overrides: Partial<LightBlock> = {}): LightB
       primary_preview_path: `image-${id}.jpg`,
       width: 1000,
       height: 1000,
+      // A ready manifest carries the artifact's own geometry — the source is
+      // 1000x1000, the generated preview is the same shape at 640px.
+      preview_width: 640,
+      preview_height: 640,
       tiles: [
         {
           source_path: `image-${id}.jpg`,
           preview_path: `image-${id}.jpg`,
           width: 1000,
           height: 1000,
+          preview_width: 640,
+          preview_height: 640,
           is_video: false,
           is_video_poster: false,
         },
@@ -2681,6 +2687,30 @@ describe("Grid — no collapse after add / revisit", () => {
         media_file: "tall-prewarm-spacer.jpg",
         width: 100,
         height: 136,
+        // A tall spacer that pushes the video card past the viewport. Its
+        // artifact sits at the tall end of the allowed range, so the height is
+        // reserved without relying on an out-of-range shape.
+        preview_manifest: JSON.stringify({
+          kind: "image",
+          primary_preview_path: "tall-prewarm-spacer.jpg",
+          width: 100,
+          height: 155,
+          preview_width: 100,
+          preview_height: 155,
+          tiles: [
+            {
+              source_path: "tall-prewarm-spacer.jpg",
+              preview_path: "tall-prewarm-spacer.jpg",
+              width: 100,
+              height: 155,
+              preview_width: 100,
+              preview_height: 155,
+              is_video: false,
+              is_video_poster: false,
+            },
+          ],
+          overflow_count: 0,
+        }),
       }),
       makeVideoBlock(1401),
     ];

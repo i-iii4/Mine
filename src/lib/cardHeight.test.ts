@@ -41,6 +41,30 @@ function makeBlock(overrides: Partial<LightBlock> & { block_type: LightBlock["bl
   };
 }
 
+function artifactManifest(previewWidth: number, previewHeight: number): string {
+  return JSON.stringify({
+    kind: "image",
+    primary_preview_path: "test.jpg",
+    width: null,
+    height: null,
+    preview_width: previewWidth,
+    preview_height: previewHeight,
+    tiles: [
+      {
+        source_path: "photo.jpg",
+        preview_path: "test.jpg",
+        width: null,
+        height: null,
+        preview_width: previewWidth,
+        preview_height: previewHeight,
+        is_video: false,
+        is_video_poster: false,
+      },
+    ],
+    overflow_count: 0,
+  });
+}
+
 function derivedPreviewManifest(
   sources: string[],
   dimensions: Record<string, [number, number]> = {},
@@ -69,27 +93,60 @@ function derivedPreviewManifest(
 const CARD_BORDER = 2;
 
 describe("computeCardHeight — image", () => {
-  it("uses exact aspect ratio when width/height metadata present", () => {
-    const block = makeBlock({ block_type: "image", width: 1600, height: 900 });
+  it("reserves height from the artifact ratio", () => {
+    const block = makeBlock({
+      block_type: "image",
+      media_file: "photo.jpg",
+      // Stale source metadata that disagrees with the artifact.
+      width: 1000,
+      height: 1000,
+      preview_manifest: artifactManifest(640, 360),
+    });
     const h = computeCardHeight(block, 280, null);
-    // inner width = 280 - 2 = 278; image h = round(278 * 9/16) = 156; + border
-    expect(h).toBe(Math.round(278 * (900 / 1600)) + CARD_BORDER);
+    // inner width = 278; artifact ratio 640/360 is inside the clamp range
+    expect(h).toBe(Math.round(278 * (360 / 640)) + CARD_BORDER);
   });
 
-  it("enforces minimum height for ultra-wide images", () => {
-    const block = makeBlock({ block_type: "image", width: 2000, height: 100 });
-    const h = computeCardHeight(block, 280, null);
-    // raw = 14px; adaptive minimum = round(278 * 0.4) = 111px; + border
-    expect(h).toBe(113);
+  it("keeps a tall portrait whole up to the clamp", () => {
+    const block = makeBlock({
+      block_type: "image",
+      media_file: "photo.jpg",
+      preview_manifest: artifactManifest(506, 640),
+    });
+    // 506/640 is inside the range: full height, no crop.
+    expect(computeCardHeight(block, 280, null)).toBe(
+      Math.round(278 * (640 / 506)) + CARD_BORDER,
+    );
   });
 
-  it("adapts the ultra-wide image minimum to the column width", () => {
-    const block = makeBlock({ block_type: "image", width: 2000, height: 100 });
+  it("clamps a panorama to twice its width instead of collapsing it", () => {
+    const block = makeBlock({
+      block_type: "image",
+      media_file: "photo.jpg",
+      preview_manifest: artifactManifest(2000, 100),
+    });
+    // Raw ratio 20 would leave a 14px strip; the clamp holds it at 2:1.
+    expect(computeCardHeight(block, 280, null)).toBe(Math.round(278 / 2) + CARD_BORDER);
+  });
 
-    // Narrow columns can contract to the 90px interactive card floor.
-    expect(computeCardHeight(block, 200, null)).toBe(CARD_HOVER_ACTION_MIN_HEIGHT);
-    // Wide columns stop growing at the 120px image-surface cap plus border.
-    expect(computeCardHeight(block, 500, null)).toBe(122);
+  it("clamps a scroll-shaped screenshot to twice its height", () => {
+    const block = makeBlock({
+      block_type: "image",
+      media_file: "photo.jpg",
+      preview_manifest: artifactManifest(100, 2000),
+    });
+    // Raw ratio 0.05 would hand one card several screens.
+    expect(computeCardHeight(block, 280, null)).toBe(Math.round(278 / 0.5) + CARD_BORDER);
+  });
+
+  it("still honours the interactive floor on very narrow columns", () => {
+    const block = makeBlock({
+      block_type: "image",
+      media_file: "photo.jpg",
+      preview_manifest: artifactManifest(2000, 100),
+    });
+    // Clamped height would be 74px here, below the hover-control floor.
+    expect(computeCardHeight(block, 150, null)).toBe(CARD_HOVER_ACTION_MIN_HEIGHT);
   });
 
   it("falls back to DEFAULT_CARD_HEIGHT without metadata", () => {
@@ -105,9 +162,10 @@ describe("computeCardHeight — image", () => {
       media_file: "photo.jpg",
       width: 1600,
       height: 900,
+      preview_manifest: artifactManifest(640, 360),
     });
     expect(computeCardHeight(block, 280, null)).toBe(
-      Math.round(278 * (900 / 1600)) + CARD_BORDER,
+      Math.round(278 * (360 / 640)) + CARD_BORDER,
     );
   });
 });

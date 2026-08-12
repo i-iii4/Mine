@@ -24,7 +24,8 @@ use crate::domain::search::{SearchFilter, SearchQuery};
 use crate::domain::vault::{validate_slug, VaultLayout};
 use crate::storage::db;
 use crate::storage::media_dimensions::{
-    build_media_dimensions_json, build_media_dimensions_json_from_sources,
+    build_media_dimensions_json, build_media_dimensions_json_from_sources, PreviewDimensions,
+    SourceDimensions,
 };
 use crate::storage::media_refs;
 use crate::storage::preview_plan::{
@@ -232,24 +233,60 @@ impl FeedPreviewKind {
     }
 }
 
+/// One preview tile.
+///
+/// `width`/`height` describe the **source** file and exist for playback
+/// budgets. `preview_width`/`preview_height` describe the **derived artifact**
+/// this tile actually paints and are the only legitimate input to card
+/// geometry. For composite previews the two differ by design: collage tiles are
+/// cropped to fixed slots. See `SPEC_CARD_MEDIA_GEOMETRY.md`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 pub struct FeedPreviewTile {
     pub source_path: String,
     pub preview_path: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
+    #[serde(default)]
+    pub preview_width: Option<u32>,
+    #[serde(default)]
+    pub preview_height: Option<u32>,
     pub is_video: bool,
     pub is_video_poster: bool,
 }
 
+/// Preview plan for one card.
+///
+/// Same split as [`FeedPreviewTile`]: `width`/`height` are the source,
+/// `preview_width`/`preview_height` are the artifact the feed paints. Absent
+/// preview dimensions mean "geometry not known yet" — a legitimate state for
+/// formats Rust cannot decode — and must never be substituted with a default
+/// aspect.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 pub struct FeedPreviewManifest {
     pub kind: FeedPreviewKind,
     pub primary_preview_path: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
+    #[serde(default)]
+    pub preview_width: Option<u32>,
+    #[serde(default)]
+    pub preview_height: Option<u32>,
     pub tiles: Vec<FeedPreviewTile>,
     pub overflow_count: usize,
+}
+
+impl FeedPreviewManifest {
+    /// Dimensions of the artifact this card paints, when known.
+    pub fn preview_dimensions(&self) -> Option<PreviewDimensions> {
+        PreviewDimensions::from_parts(self.preview_width, self.preview_height)
+    }
+}
+
+impl FeedPreviewTile {
+    /// Dimensions of the artifact this tile paints, when known.
+    pub fn preview_dimensions(&self) -> Option<PreviewDimensions> {
+        PreviewDimensions::from_parts(self.preview_width, self.preview_height)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
@@ -450,6 +487,9 @@ fn media_tile(
         preview_path: None,
         width: dims_entry.map(|[w, _]| w),
         height: dims_entry.map(|[_, h]| h),
+        // The plan does not know artifact geometry — the generator writes it.
+        preview_width: None,
+        preview_height: None,
         is_video,
         is_video_poster,
     }
@@ -594,7 +634,11 @@ fn serialize_feed_preview_manifest(
                     primary_preview_path: Some(primary_preview_path(&block.slug)),
                     width: preview_width,
                     height: preview_height,
+                    preview_width: None,
+                    preview_height: None,
                     tiles: vec![FeedPreviewTile {
+                        preview_width: None,
+                        preview_height: None,
                         source_path: source.to_string(),
                         preview_path: None,
                         width: preview_width,
@@ -610,6 +654,8 @@ fn serialize_feed_preview_manifest(
                     primary_preview_path: None,
                     width: None,
                     height: None,
+                    preview_width: None,
+                    preview_height: None,
                     tiles: Vec::new(),
                     overflow_count: 0,
                 }
@@ -620,6 +666,8 @@ fn serialize_feed_preview_manifest(
             primary_preview_path: None,
             width: None,
             height: None,
+            preview_width: None,
+            preview_height: None,
             tiles: Vec::new(),
             overflow_count: 0,
         },
@@ -637,11 +685,15 @@ fn serialize_feed_preview_manifest(
                     primary_preview_path: Some(primary_preview_path(&block.slug)),
                     width: preview_width,
                     height: preview_height,
+                    preview_width: None,
+                    preview_height: None,
                     tiles: vec![FeedPreviewTile {
                         source_path: source.to_string(),
                         preview_path: None,
                         width: preview_width,
                         height: preview_height,
+                        preview_width: None,
+                        preview_height: None,
                         is_video: false,
                         is_video_poster: false,
                     }],
@@ -653,6 +705,8 @@ fn serialize_feed_preview_manifest(
                     primary_preview_path: None,
                     width: None,
                     height: None,
+                    preview_width: None,
+                    preview_height: None,
                     tiles: Vec::new(),
                     overflow_count: 0,
                 }
@@ -691,11 +745,15 @@ fn serialize_feed_preview_manifest(
                                 primary_preview_path: Some(primary_preview_path(&block.slug)),
                                 width: tile.width,
                                 height: tile.height,
+                                preview_width: None,
+                                preview_height: None,
                                 tiles: vec![tile],
                                 overflow_count: 0,
                             }
                         }
                         None => FeedPreviewManifest {
+                            preview_width: None,
+                            preview_height: None,
                             kind: FeedPreviewKind::Text,
                             primary_preview_path: None,
                             width: None,
@@ -705,6 +763,8 @@ fn serialize_feed_preview_manifest(
                         },
                     },
                     [single] => FeedPreviewManifest {
+                        preview_width: None,
+                        preview_height: None,
                         kind: if single.is_video {
                             FeedPreviewKind::VideoPoster
                         } else {
@@ -717,6 +777,8 @@ fn serialize_feed_preview_manifest(
                         overflow_count,
                     },
                     _ => FeedPreviewManifest {
+                        preview_width: None,
+                        preview_height: None,
                         kind: FeedPreviewKind::Composite,
                         primary_preview_path: Some(primary_preview_path(&block.slug)),
                         width: Some(1),
@@ -742,6 +804,8 @@ fn serialize_feed_preview_manifest(
                         primary_preview_path: Some(primary_preview_path(&block.slug)),
                         width: Some(1),
                         height: Some(1),
+                        preview_width: None,
+                        preview_height: None,
                         tiles: image_tiles,
                         overflow_count,
                     }
@@ -751,6 +815,8 @@ fn serialize_feed_preview_manifest(
                         primary_preview_path: Some(primary_preview_path(&block.slug)),
                         width: single.width,
                         height: single.height,
+                        preview_width: None,
+                        preview_height: None,
                         tiles: image_tiles,
                         overflow_count: 0,
                     }
@@ -768,6 +834,8 @@ fn serialize_feed_preview_manifest(
                         primary_preview_path: Some(primary_preview_path(&block.slug)),
                         width: tile.width,
                         height: tile.height,
+                        preview_width: None,
+                        preview_height: None,
                         tiles: vec![tile],
                         overflow_count: 0,
                     }
@@ -777,6 +845,8 @@ fn serialize_feed_preview_manifest(
                         primary_preview_path: None,
                         width: None,
                         height: None,
+                        preview_width: None,
+                        preview_height: None,
                         tiles: Vec::new(),
                         overflow_count: 0,
                     }
@@ -880,12 +950,20 @@ fn feed_autoplay_dimensions_within_limits(
     true
 }
 
+/// Autoplay profile for a feed video.
+///
+/// Takes [`SourceDimensions`] and nothing else on purpose: every budget here is
+/// a statement about the original file. Preview dimensions are a different type
+/// and cannot reach this function, so the mistake of relaxing all limits by
+/// handing it a downscaled artifact is a compile error. See
+/// `SPEC_CARD_MEDIA_GEOMETRY.md`.
 fn feed_autoplay_profile_for_source(
     vault_root: Option<&Path>,
     source_path: &str,
-    width: Option<u32>,
-    height: Option<u32>,
+    source: Option<SourceDimensions>,
 ) -> Option<FeedPlaybackProfile> {
+    let width = source.map(|dims| dims.width);
+    let height = source.map(|dims| dims.height);
     // Hard pixel caps disqualify autoplay outright, but only when a dimension
     // is actually known: a missing width/height passes this check trivially.
     if !feed_autoplay_dimensions_within_limits(
@@ -956,11 +1034,15 @@ fn serialize_feed_playback(
     let manifest = parse_feed_preview_manifest(preview_manifest)?;
     let poster_preview_path = manifest.primary_preview_path?;
 
-    let (source_path, playback_width, playback_height) = match card_kind {
+    let (source_path, playback_source) = match card_kind {
         CardKind::Media => {
             let source_path = media_file?;
             let container = autoplay_container_for_source(source_path)?;
-            let profile = feed_autoplay_profile_for_source(vault_root, source_path, width, height)?;
+            let profile = feed_autoplay_profile_for_source(
+                vault_root,
+                source_path,
+                SourceDimensions::from_parts(width, height),
+            )?;
             let descriptor = FeedPlaybackDescriptor {
                 kind: FeedPlaybackKind::SingleVideo,
                 source_path: source_path.to_string(),
@@ -984,28 +1066,25 @@ fn serialize_feed_playback(
             if !tile.is_video {
                 return None;
             }
+            // Source dimensions, never the tile's preview dimensions: this
+            // feeds the autoplay pixel budget.
             (
                 tile.source_path.clone(),
-                tile.width.or(manifest.width),
-                tile.height.or(manifest.height),
+                SourceDimensions::from_parts(tile.width, tile.height)
+                    .or_else(|| SourceDimensions::from_parts(manifest.width, manifest.height)),
             )
         }
         CardKind::Link | CardKind::Channel => return None,
     };
 
     let container = autoplay_container_for_source(&source_path)?;
-    let profile = feed_autoplay_profile_for_source(
-        vault_root,
-        &source_path,
-        playback_width,
-        playback_height,
-    )?;
+    let profile = feed_autoplay_profile_for_source(vault_root, &source_path, playback_source)?;
     let descriptor = FeedPlaybackDescriptor {
         kind: FeedPlaybackKind::SingleVideo,
         source_path,
         poster_preview_path,
-        width: playback_width,
-        height: playback_height,
+        width: playback_source.map(|dims| dims.width),
+        height: playback_source.map(|dims| dims.height),
         container,
         profile,
     };
@@ -3404,12 +3483,12 @@ mod tests {
         // Unknown frame size (e.g. a `.mov` we cannot probe) must stream as
         // heavy, never buffer/decode blind at standard cost, even when small.
         assert_eq!(
-            feed_autoplay_profile_for_source(Some(vault.root()), "clip.mov", None, None),
+            feed_autoplay_profile_for_source(Some(vault.root()), "clip.mov", None),
             Some(FeedPlaybackProfile::Heavy)
         );
         // The same small file with known, in-limit dimensions is standard.
         assert_eq!(
-            feed_autoplay_profile_for_source(Some(vault.root()), "clip.mov", Some(1280), Some(720)),
+            feed_autoplay_profile_for_source(Some(vault.root()), "clip.mov", SourceDimensions::new(1280, 720)),
             Some(FeedPlaybackProfile::Standard)
         );
     }
@@ -3428,7 +3507,7 @@ mod tests {
         // 200 MiB with known in-limit dimensions is a valid heavy clip.
         write_sparse("big.mp4", 200 * 1024 * 1024);
         assert_eq!(
-            feed_autoplay_profile_for_source(Some(vault.root()), "big.mp4", Some(1920), Some(1080)),
+            feed_autoplay_profile_for_source(Some(vault.root()), "big.mp4", SourceDimensions::new(1920, 1080)),
             Some(FeedPlaybackProfile::Heavy)
         );
 
@@ -3439,8 +3518,7 @@ mod tests {
             feed_autoplay_profile_for_source(
                 Some(vault.root()),
                 "huge.mp4",
-                Some(1920),
-                Some(1080)
+                SourceDimensions::new(1920, 1080)
             ),
             None
         );
@@ -4299,7 +4377,7 @@ mod tests {
     fn profile_for_video_of_size(size_bytes: usize) -> Option<FeedPlaybackProfile> {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("clip.mp4"), vec![0u8; size_bytes]).unwrap();
-        feed_autoplay_profile_for_source(Some(dir.path()), "clip.mp4", Some(1280), Some(720))
+        feed_autoplay_profile_for_source(Some(dir.path()), "clip.mp4", SourceDimensions::new(1280, 720))
     }
 
     #[test]
@@ -4334,7 +4412,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("clip.mp4"), vec![0u8; 1024]).unwrap();
         assert_eq!(
-            feed_autoplay_profile_for_source(Some(dir.path()), "clip.mp4", Some(6000), Some(6000)),
+            feed_autoplay_profile_for_source(Some(dir.path()), "clip.mp4", SourceDimensions::new(6000, 6000)),
             None,
         );
     }

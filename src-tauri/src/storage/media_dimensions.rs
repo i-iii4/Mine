@@ -23,12 +23,68 @@ use crate::domain::block::iter_inline_media_references;
 use crate::domain::vault::VaultLayout;
 use crate::storage::media_refs;
 use image::ImageReader;
+use serde::{Deserialize, Serialize};
+
+/// Pixel size of an original media file in the source vault.
+///
+/// Deliberately a distinct type from [`PreviewDimensions`]. Feed playback
+/// decides its profile from the original's pixel budget, so handing it the
+/// dimensions of a downscaled preview would silently lift every limit. Keeping
+/// the two apart makes that mistake fail to compile rather than fail in the
+/// field. See `SPEC_CARD_MEDIA_GEOMETRY.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct SourceDimensions {
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Pixel size of a derived preview artifact in the local derived store.
+///
+/// This is what the feed actually paints, and therefore the only legitimate
+/// input to card geometry. Distinct from [`SourceDimensions`] by design.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct PreviewDimensions {
+    pub width: u32,
+    pub height: u32,
+}
+
+impl SourceDimensions {
+    pub fn new(width: u32, height: u32) -> Option<Self> {
+        (width > 0 && height > 0).then_some(Self { width, height })
+    }
+
+    pub fn from_pair(pair: Option<(u32, u32)>) -> Option<Self> {
+        pair.and_then(|(width, height)| Self::new(width, height))
+    }
+
+    pub fn from_parts(width: Option<u32>, height: Option<u32>) -> Option<Self> {
+        Self::new(width?, height?)
+    }
+}
+
+impl PreviewDimensions {
+    pub fn new(width: u32, height: u32) -> Option<Self> {
+        (width > 0 && height > 0).then_some(Self { width, height })
+    }
+
+    pub fn from_parts(width: Option<u32>, height: Option<u32>) -> Option<Self> {
+        Self::new(width?, height?)
+    }
+}
 
 /// Extract (width, height) from an image file header. Returns None on any
 /// error (missing file, unsupported format, corrupt header). Header-only
 /// read — does not decode the full image.
 pub fn extract_image_dimensions(path: &Path) -> Option<(u32, u32)> {
     ImageReader::open(path).ok()?.into_dimensions().ok()
+}
+
+/// Extract the pixel size of a derived preview artifact. Header-only read, same
+/// cost as [`extract_image_dimensions`], but typed as preview geometry so it
+/// cannot be mistaken for source geometry.
+pub fn extract_preview_dimensions(path: &Path) -> Option<PreviewDimensions> {
+    let (width, height) = extract_image_dimensions(path)?;
+    PreviewDimensions::new(width, height)
 }
 
 /// Extract (width, height) from an MP4 video file. Reads only the MP4
