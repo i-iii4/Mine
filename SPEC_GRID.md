@@ -229,17 +229,18 @@ export function computeCardHeight(
 
 - **media** — presentation variant выводится из `media_file`, `thumbnail`,
   `preview_manifest`, URL и file extension:
-  - image: `max(columnWidth / aspectRatio, adaptiveImageMinimum)` при наличии
-    metadata; `adaptiveImageMinimum = clamp(interactiveFloor, columnWidth * 0.4,
-    120px)`; без metadata используется conservative fallback.
-    `aspectRatio` берётся строго в порядке per-file `media_dimensions` →
-    `preview_manifest` → `block.width/height`. Тот же порядок обязан
-    использовать render-время (`primaryAspectRatio` в `cardLayout.ts`):
-    зарезервированная высота и нарисованная пропорция — одна и та же карточка,
-    и расхождение источников уводит графику из отведённого ей слота.
-    Целевой контракт заменяет эту цепочку одним источником — размерами
-    сгенерированного превью — и вводит кламп пропорции как единственную точку
-    решения об обрезке: [SPEC_CARD_MEDIA_GEOMETRY.md](SPEC_CARD_MEDIA_GEOMETRY.md)
+  - image: `max(columnWidth / aspectRatio, adaptiveImageMinimum)`;
+    `adaptiveImageMinimum = clamp(interactiveFloor, columnWidth * 0.4, 120px)`.
+    `aspectRatio` имеет ровно один источник — `preview_width/preview_height`
+    сгенерированного превью, записанные генератором, — и уже приходит
+    клампленным в диапазон `1:2 … 2:1`. Render-время (`primaryAspectRatio` в
+    `cardLayout.ts`) читает то же самое поле и тот же кламп, поэтому
+    зарезервированная высота и нарисованная пропорция совпадают по построению.
+    Пока артефакт не создан, пропорция остаётся `null`: карточка получает
+    `DEFAULT_CARD_HEIGHT` и предварительный конверт
+    (`data-card-preview-geometry="pending"`), а не выдуманный квадрат.
+    Полный контракт:
+    [SPEC_CARD_MEDIA_GEOMETRY.md](SPEC_CARD_MEDIA_GEOMETRY.md)
   - video: `columnWidth * 9 / 16` (fixed 16:9 + play overlay)
   - link: `columnWidth * 9 / 16 + 76` (16:9 thumbnail + 76px text)
   - file: fixed compact height
@@ -665,10 +666,13 @@ Phase 11 закрыта через доказуемые вертикальные
 
 ## Edge cases
 
-1. **Block без `width/height` метаданных (image)** — используется
-   `DEFAULT_CARD_HEIGHT = 240` как conservative fallback, а image surface
-   заполняет весь зарезервированный envelope через `object-cover`, поэтому
-   fallback не создаёт пустую полосу. Graphic surface обязана занимать полную
+1. **Block без размеров артефакта (image)** — то есть превью ещё не создано
+   (AVIF/HEIC/VP8X до декодирования в WebView) — используется
+   `DEFAULT_CARD_HEIGHT = 240` как conservative envelope, а image surface
+   заполняет его через `object-cover`, поэтому fallback не создаёт пустую
+   полосу. Пропорция при этом не назначается вовсе: поверхность помечается
+   `data-card-preview-geometry="pending"` и не заявляет `aspect-ratio`, так как
+   назначить квадрат значило бы выдать незнание за факт. Graphic surface обязана занимать полную
    ширину (`w-full`), а не выводить ширину из выданной ей высоты: при
    `aspect-ratio` с одной лишь заданной высотой любое расхождение между
    committed height и render ratio сжимает графику от края карточки. Полная

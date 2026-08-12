@@ -44,7 +44,10 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTU
 - `kind`
 - `tiles`
 - `overflow_count`
-- preview geometry
+- `preview_width` / `preview_height` — геометрия артефакта, которую записывает
+  генератор превью; из неё раскладывается карточка
+- `width` / `height` — геометрия источника; из неё считаются пиксельные бюджеты
+  autoplay
 
 `preview_manifest` не несёт autoplay semantics.
 
@@ -122,6 +125,14 @@ type FeedPlaybackDescriptor = {
 - above hard limits (пиксельные лимиты или source bytes > 512 MiB) =>
   `feed_playback = null`: клип остаётся poster-only в ленте, играбелен только в
   Detail
+
+Все пороги этого раздела — утверждения об **исходном файле**, а не о превью.
+`feed_autoplay_profile_for_source` принимает только `SourceDimensions`; размеры
+артефакта имеют отдельный тип `PreviewDimensions` и физически не могут сюда
+попасть. Это не стилистика: превью вписано в `640px`, поэтому подстановка его
+габаритов перевела бы каждое видео в `standard` и разом сняла бы все пиксельные
+ограничения. Граница держится компилятором и переносится в TypeScript через
+specta — см. [SPEC_CARD_MEDIA_GEOMETRY.md](SPEC_CARD_MEDIA_GEOMETRY.md).
 
 Правило выбора профиля: `standard` требует полностью известных габаритов
 (`width` и `height` оба заданы) в пределах standard-лимитов. Видео с
