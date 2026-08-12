@@ -27,7 +27,7 @@
 - `SPEC_FEED_VIDEO.md` — desktop feed video contract: четыре surfaces, `feed_playback` descriptor, autoplay gating standard/heavy
 - `SPEC_GRAPH_VIEW.md` — спецификация Graph View: Canvas force-directed graph на базе решения Longevity Landscape, graph snapshot read model, коллекции/wikilinks/related notes, физика, UX и проверки
 - `SPEC_GROUP_SELECTION.md` — групповое выделение в Grid: marquee/keyboard selection, batch card actions, selection-scoped меню
-- `SPEC_ARTICLE_AUDIO.md` — manual article audio renditions: speech prep, derived audio state, desktop/iOS controls
+- `SPEC_ARTICLE_AUDIO.md` — manual article audio renditions: speech prep, derived audio state, desktop/iOS controls. **Функция выключена** (Cargo feature `article-audio` вне `default`, `ARTICLE_AUDIO_ENABLED = false`); процедура включения — в самой спецификации
 - `SPEC_TEXT_SELECTION_EXTRACTION.md` — извлечение выделенного текста статьи в отдельный article-блок и удаление фрагмента из source `.md`
 - `SPEC_MEDIA_ASSET_ACTIONS.md` — media-level hover/drag/actions для конкретного local media asset, независимо от frontmatter/body source
 - `SPEC_INLINE_MEDIA_EXTRACTION.md` — спецификация перетаскивания inline-изображений из статьи в отдельный блок с односторонней связью на исходную заметку
@@ -81,7 +81,7 @@
 | ESLint 10 + typescript-eslint | Линтинг фронтенда (TypeScript) |
 | Vitest + Testing Library | Frontend-тесты (`bun run test:frontend`) |
 | Playwright + pngjs | Browser acceptance gates: Feed, Graph, cold-space, sidebar reorder |
-| AVFoundation + native Swift helper | Desktop article audio: генерация через `AVSpeechSynthesizer.write` |
+| AVFoundation + native Swift helper | Desktop article audio: генерация через `AVSpeechSynthesizer.write`. Не собирается: feature `article-audio` выключена |
 | SwiftUI | iOS UI-фреймворк (нативный, без WebView) |
 | UniFFI (Mozilla) | FFI-генератор: Rust → Swift bindings |
 | AVKit + AVFoundation + AVSpeechSynthesizer | Видео и article audio на iOS (LoopingVideoView, AutoplayVideo, AudioSection) |
@@ -324,6 +324,7 @@ local-arena/
 bun install                    # Установка JS-зависимостей
 cargo tauri dev                # Запуск в режиме разработки (Rust + Vite)
 cargo tauri build              # Сборка .dmg/.app
+cargo tauri build --features article-audio # Сборка с включённым article audio (по умолчанию выключен)
 bun run build:extension        # Обязательная отдельная сборка Mine Clipper → extension/dist
 bun run pack:extension         # Упаковка расширения в архив
 bun run clipper:install-host   # Установка/обновление native host бинарника

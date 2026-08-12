@@ -345,6 +345,13 @@ Frontend feed-video runtime теперь использует единый poste
 
 ## Article Audio Contract
 
+> **Выключено с 12.08.2026.** Функция не входит в сборку: команды и Swift-хелпер
+> под Cargo feature `article-audio` (нет в `default`), `externalBin` пуст,
+> фронтенд не монтирует контролы при `ARTICLE_AUDIO_ENABLED = false`. Код
+> оставлен в дереве; процедура включения — в
+> [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md). Раздел ниже описывает
+> контракт включённой функции.
+
 Article audio — отдельный manual pipeline поверх `article` blocks. Это не source-vault feature и не inline markdown mutation.
 
 Ключевой контракт:

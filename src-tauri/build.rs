@@ -1,12 +1,14 @@
 fn main() {
-    #[cfg(all(feature = "desktop", target_os = "macos"))]
+    // Article audio is opt-in; without the feature the Swift helper is neither
+    // compiled nor placed in `binaries/` for bundling.
+    #[cfg(all(feature = "desktop", feature = "article-audio", target_os = "macos"))]
     build_article_audio_helper();
 
     #[cfg(feature = "desktop")]
     tauri_build::build();
 }
 
-#[cfg(all(feature = "desktop", target_os = "macos"))]
+#[cfg(all(feature = "desktop", feature = "article-audio", target_os = "macos"))]
 fn build_article_audio_helper() {
     use std::env;
     use std::path::PathBuf;

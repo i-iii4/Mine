@@ -2,6 +2,38 @@
 
 Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md)
 
+## Status: выключено (12.08.2026)
+
+Функция отключена целиком и не входит в сборку. Реализация намеренно оставлена
+в дереве — это выключатель, а не удаление.
+
+| Слой | Что сделано |
+|---|---|
+| Cargo | feature `article-audio`, отсутствует в `default` |
+| IPC | четыре команды регистрируются только под этой feature |
+| Rust-модули | `commands/article_audio.rs`, `commands/article_audio_desktop.rs` компилируются только под feature |
+| Нативный хелпер | `build.rs` собирает `article_audio_helper.swift` только под feature |
+| Бандл | `externalBin` в `tauri.conf.json` пуст |
+| Frontend | `ARTICLE_AUDIO_ENABLED = false` в `src/lib/featureFlags.ts`: `ArticleAudioControls` не монтируется, gateway-провайдер не оборачивает приложение |
+
+Что осталось скомпилированным намеренно: типы состояния
+(`storage/article_audio.rs`), speech-prep в `domain/article_audio.rs` и уборка
+локальных аудио-артефактов при удалении блока. Они не создают аудио и не видны
+пользователю, но держат стабильными generated bindings и очистку кэша.
+
+### Как включить обратно
+
+1. `cargo` c feature: `--features article-audio` (или вернуть её в `default`).
+2. Вернуть `"binaries/article-audio-helper"` в `bundle.externalBin`
+   (`src-tauri/tauri.conf.json`) — иначе собранный хелпер не попадёт в `.app`.
+3. `ARTICLE_AUDIO_ENABLED = true` в `src/lib/featureFlags.ts`.
+4. Проверка выключенного состояния живёт в `Detail.test.tsx`
+   («does not mount article audio controls while the feature is off») — при
+   включении она падает первой и должна быть переписана под включённое
+   состояние.
+
+Контракт ниже описывает функцию в её включённом виде и остаётся действующим.
+
 ## Goal
 
 Добавить production-grade `Listen` pipeline для статей без авто-генерации по умолчанию:

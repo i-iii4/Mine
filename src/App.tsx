@@ -205,6 +205,7 @@ import {
 } from "@/lib/commands";
 import { ArticleAudioGatewayProvider } from "@/lib/articleAudioGateway";
 import { desktopArticleAudioGateway } from "@/lib/articleAudioDesktopGateway";
+import { ARTICLE_AUDIO_ENABLED } from "@/lib/featureFlags";
 import { pushRecentTag } from "@/lib/recentTags";
 import {
   resolveBlockDragBlocks,
@@ -395,16 +396,24 @@ export function App() {
     return <VaultPicker onVaultSelected={setVaultPath} />;
   }
 
-  return (
+  const routedApp = (
+    <BrowserRouter>
+      <AppWithVault
+        key={vaultPath}
+        vaultPath={vaultPath}
+        onVaultSelected={setVaultPath}
+      />
+    </BrowserRouter>
+  );
+
+  // With article audio switched off nothing consumes the gateway, so the
+  // provider is not mounted either — see ARTICLE_AUDIO_ENABLED.
+  return ARTICLE_AUDIO_ENABLED ? (
     <ArticleAudioGatewayProvider gateway={desktopArticleAudioGateway}>
-      <BrowserRouter>
-        <AppWithVault
-          key={vaultPath}
-          vaultPath={vaultPath}
-          onVaultSelected={setVaultPath}
-        />
-      </BrowserRouter>
+      {routedApp}
     </ArticleAudioGatewayProvider>
+  ) : (
+    routedApp
   );
 }
 

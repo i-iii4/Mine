@@ -36,7 +36,18 @@ const MENU_ID_SETTINGS: &str = "open-settings-window";
 pub fn run() {
     crate::asset_protocol::register(tauri::Builder::default())
         .manage(AppState::new())
+        // Article audio commands are registered only with the `article-audio`
+        // feature; `generate_handler!` takes a flat list, so the gate lives on
+        // this attribute rather than on individual entries.
         .invoke_handler(tauri::generate_handler![
+            #[cfg(feature = "article-audio")]
+            commands::article_audio::get_article_audio_state,
+            #[cfg(feature = "article-audio")]
+            commands::article_audio::generate_article_audio,
+            #[cfg(feature = "article-audio")]
+            commands::article_audio::delete_article_audio,
+            #[cfg(feature = "article-audio")]
+            commands::article_audio::set_article_audio_position,
             commands::vault::select_vault,
             commands::vault::open_vault,
             commands::vault::get_vault_path,
@@ -45,10 +56,6 @@ pub fn run() {
             commands::vault::rebuild_index,
             commands::vault::sweep_vault_thumbnails,
             commands::vault_stats::get_vault_stats,
-            commands::article_audio::get_article_audio_state,
-            commands::article_audio::generate_article_audio,
-            commands::article_audio::delete_article_audio,
-            commands::article_audio::set_article_audio_position,
             commands::blocks::list_blocks,
             commands::blocks::list_grid_blocks,
             commands::graph::list_graph_snapshot,

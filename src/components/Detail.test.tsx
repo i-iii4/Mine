@@ -181,6 +181,29 @@ describe("Detail", () => {
     });
   });
 
+  it("does not mount article audio controls while the feature is off", () => {
+    render(
+      <Detail
+        block={block({ body: "# Heading\n\nSpoken prose would go here." })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={vi.fn()}
+      />,
+    );
+
+    // ARTICLE_AUDIO_ENABLED is false: the implementation stays in the tree but
+    // nothing renders it. Flip the flag and this assertion is what fails first.
+    expect(screen.queryByTestId("article-audio-controls")).not.toBeInTheDocument();
+  });
+
   it("names the detail dialog with the active filename", () => {
     render(
       <Detail

@@ -106,6 +106,7 @@ import {
 } from "@/lib/textSelectionActionBarPlacement";
 import { VideoFromBlob } from "./VideoFromBlob";
 import { ArticleAudioControls } from "./ArticleAudioControls";
+import { ARTICLE_AUDIO_ENABLED } from "@/lib/featureFlags";
 import { CardMoreMenu } from "./CardHoverMenu";
 import { MenuIconSlot } from "@/components/ui/menu-icon-slot";
 import {
@@ -738,11 +739,13 @@ function MetadataPanel({
         </div>
       )}
       <div className="min-w-0 overflow-x-hidden">
-        <ArticleAudioControls
-          slug={displayBlock.slug}
-          blockType={displayBlock.card_kind === "article" ? "article" : displayBlock.card_kind}
-          url={displayBlock.url}
-        />
+        {ARTICLE_AUDIO_ENABLED && (
+          <ArticleAudioControls
+            slug={displayBlock.slug}
+            blockType={displayBlock.card_kind === "article" ? "article" : displayBlock.card_kind}
+            url={displayBlock.url}
+          />
+        )}
 
         <div className="flex min-w-0 flex-col gap-6" data-metadata-sections>
           <section

@@ -17,6 +17,11 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 default = ["desktop"]
 desktop = ["tauri", "tauri-plugin-log", "tauri-plugin-dialog", "tauri-plugin-opener", "tauri-plugin-clipboard-manager", "tauri-build", "notify"]
 custom-protocol = ["tauri/custom-protocol"]
+# Article audio (spoken article text). Off by default: the IPC commands are not
+# registered and the Swift synthesis helper is not compiled or bundled. The
+# implementation stays in the tree — see SPEC_ARTICLE_AUDIO.md for how to turn
+# it back on.
+article-audio = []
 
 [build-dependencies]
 tauri-build = { version = "2", features = [], optional = true }
