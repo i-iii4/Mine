@@ -61,7 +61,49 @@ function makeAuditPreviewManifest(index: number): string | null {
   });
 }
 
+/// A single-media card whose committed height and render ratio come from
+/// different sources: no per-file dimensions, a wide preview manifest driving
+/// the height, and narrow block dimensions driving the graphic ratio. A surface
+/// that derives its width from its height collapses here; a full-width surface
+/// stays on the card edge.
+function makeRatioMismatchBlock(index: number): LightBlock {
+  const id = 100_000 + index;
+  return {
+    id,
+    slug: `feed-scroll-audit-ratio-${id}`,
+    card_kind: "media",
+    block_type: "image",
+    title: null,
+    content_heading: null,
+    display_title: null,
+    fallback_label: `Ratio mismatch ${index + 1}`,
+    url: null,
+    media_file: AUDIT_MEDIA_ASSETS[index % AUDIT_MEDIA_ASSETS.length]!,
+    thumbnail: null,
+    saved_at: AUDIT_SAVED_AT,
+    width: 800,
+    height: 1200,
+    author: null,
+    body: "",
+    preview_text: null,
+    first_image: null,
+    media_urls: null,
+    media_dimensions: null,
+    preview_manifest: JSON.stringify({
+      kind: "media",
+      primary_preview_path: AUDIT_MEDIA_ASSETS[index % AUDIT_MEDIA_ASSETS.length]!,
+      width: 1200,
+      height: 800,
+      tiles: [],
+      overflow_count: 0,
+    }),
+    feed_playback: null,
+    search_match: null,
+  };
+}
+
 function makeAuditBlock(index: number): LightBlock {
+  if (index % 37 === 5) return makeRatioMismatchBlock(index);
   const id = 100_000 + index;
   const metadataOnlyLink = index % 23 === 0;
   const body = metadataOnlyLink ? "" : auditBodies[index % auditBodies.length];

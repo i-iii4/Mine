@@ -810,7 +810,7 @@ const ImageCard = memo(function ImageCard({
   if (currentSrc === null) {
     return (
       <GraphicSurface
-        className="flex h-full items-center justify-center"
+        className="flex h-full w-full items-center justify-center"
         style={{ aspectRatio }}
       >
         <div className="text-center">
@@ -827,9 +827,18 @@ const ImageCard = memo(function ImageCard({
   // fallback (neutral default when metadata is missing). This makes the card
   // layout deterministic before the image loads, which is required for the
   // hidden DOM measurement pass in Grid.tsx to read a stable height.
+  //
+  // Width is claimed explicitly. With height alone, `aspect-ratio` derives the
+  // width from whatever height the layout hands down, and the surface shrinks
+  // away from the card edge whenever the committed height disagrees with this
+  // ratio — the height comes from `explicitImageAspectRatio` (dimensions →
+  // manifest → block), this ratio from `mediaFileAspectRatio` (dimensions →
+  // block), and the two disagree whenever a preview was derived at a different
+  // ratio than its source. Full width plus `object-cover` keeps the graphic on
+  // the card edge and absorbs the disagreement on the axis the layout owns.
   return (
     <GraphicSurface
-      className="h-full"
+      className="h-full w-full"
       style={{ aspectRatio }}
     >
       {!measurementMode && (

@@ -376,6 +376,43 @@ async function runViewportAudit(browser, viewport) {
   if (metadataLinkProbe.graphicSurfaceCount !== 0) {
     failures.push("metadata-only link mounted a faux graphic surface");
   }
+
+  // A graphic surface that derives its width from the height it is handed
+  // shrinks away from the card edge as soon as the committed height and the
+  // render ratio disagree. Measure it: the graphic must span its card.
+  const narrowGraphicSurfaces = await page.evaluate(() => {
+    const narrow = [];
+    for (const item of document.querySelectorAll("[data-feed-grid-item-slug]")) {
+      const surface = item.querySelector("[data-card-graphic-surface]");
+      const holder = surface?.parentElement;
+      if (!(surface instanceof HTMLElement) || !(holder instanceof HTMLElement)) continue;
+      const style = getComputedStyle(holder);
+      // Content width of whatever holds the surface: the card frame for media
+      // cards, the padded content box for article cards.
+      const available =
+        holder.clientWidth -
+        Number.parseFloat(style.paddingLeft) -
+        Number.parseFloat(style.paddingRight);
+      const surfaceWidth = surface.getBoundingClientRect().width;
+      if (surfaceWidth < available - 1) {
+        narrow.push({
+          slug: item.getAttribute("data-feed-grid-item-slug"),
+          surfaceWidth: Math.round(surfaceWidth),
+          available: Math.round(available),
+        });
+      }
+    }
+    return narrow;
+  });
+  if (narrowGraphicSurfaces.length > 0) {
+    const sample = narrowGraphicSurfaces
+      .slice(0, 3)
+      .map((entry) => `${entry.slug} ${entry.surfaceWidth}/${entry.available}`)
+      .join(", ");
+    failures.push(
+      `graphic surface narrower than its card on ${narrowGraphicSurfaces.length} card(s): ${sample}`,
+    );
+  }
   if (!metadataLinkProbe.text.includes("AI 2027 link")) {
     failures.push("metadata-only link did not render its link title");
   }

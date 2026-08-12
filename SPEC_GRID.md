@@ -231,7 +231,12 @@ export function computeCardHeight(
   `preview_manifest`, URL и file extension:
   - image: `max(columnWidth / aspectRatio, adaptiveImageMinimum)` при наличии
     metadata; `adaptiveImageMinimum = clamp(interactiveFloor, columnWidth * 0.4,
-    120px)`; без metadata используется conservative fallback
+    120px)`; без metadata используется conservative fallback.
+    `aspectRatio` берётся строго в порядке per-file `media_dimensions` →
+    `preview_manifest` → `block.width/height`. Тот же порядок обязан
+    использовать render-время (`primaryAspectRatio` в `cardLayout.ts`):
+    зарезервированная высота и нарисованная пропорция — одна и та же карточка,
+    и расхождение источников уводит графику из отведённого ей слота
   - video: `columnWidth * 9 / 16` (fixed 16:9 + play overlay)
   - link: `columnWidth * 9 / 16 + 76` (16:9 thumbnail + 76px text)
   - file: fixed compact height
@@ -660,7 +665,14 @@ Phase 11 закрыта через доказуемые вертикальные
 1. **Block без `width/height` метаданных (image)** — используется
    `DEFAULT_CARD_HEIGHT = 240` как conservative fallback, а image surface
    заполняет весь зарезервированный envelope через `object-cover`, поэтому
-   fallback не создаёт пустую полосу. Если загруженная image-карточка ещё не
+   fallback не создаёт пустую полосу. Graphic surface обязана занимать полную
+   ширину (`w-full`), а не выводить ширину из выданной ей высоты: при
+   `aspect-ratio` с одной лишь заданной высотой любое расхождение между
+   committed height и render ratio сжимает графику от края карточки. Полная
+   ширина плюс `object-cover` поглощают расхождение по той оси, которой владеет
+   layout. Браузерный feed-аудит меряет это: ширина
+   `[data-card-graphic-surface]` не может быть меньше контентной ширины своего
+   контейнера. Если загруженная image-карточка ещё не
    имела детерминированной геометрии, первое `thumb:updated` немедленно
    обновляет текущий Grid snapshot; карточки с уже известными размерами
    сохраняют дешёвый pixel-only cache-buster path.

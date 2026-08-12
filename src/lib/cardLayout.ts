@@ -164,6 +164,22 @@ function mediaFileAspectRatio(block: CardLayoutBlock): number | null {
     ?? aspectRatioFromDimensions(block.width, block.height);
 }
 
+/// Ratio an image card renders its graphic at.
+///
+/// Deliberately the same source order as `explicitImageAspectRatio` in
+/// `cardHeight.ts`: per-file dimensions, then the preview manifest, then block
+/// dimensions. The two must agree — the height reserved by the layout and the
+/// ratio painted into it are the same card. When they disagreed, the graphic
+/// no longer fit the slot the layout had reserved for it.
+function imageSurfaceAspectRatio(
+  block: CardLayoutBlock,
+  previewManifest: ReturnType<typeof parsePreviewManifest>,
+): number | null {
+  return parseAspectRatio(parseMediaDimensions(block), block.media_file)
+    ?? aspectRatioFromDimensions(previewManifest?.width, previewManifest?.height)
+    ?? aspectRatioFromDimensions(block.width, block.height);
+}
+
 function mediaItemsFromMediaMetadata(
   previewManifest: ReturnType<typeof parsePreviewManifest>,
 ): CardLayoutMediaItem[] {
@@ -229,10 +245,7 @@ function deriveMediaCardLayoutDescriptor(
       titleText,
       previewText: "",
       authorText: "",
-      primaryAspectRatio:
-        mediaFileAspectRatio(block) ??
-        aspectRatioFromDimensions(previewManifest?.width, previewManifest?.height) ??
-        1,
+      primaryAspectRatio: imageSurfaceAspectRatio(block, previewManifest) ?? 1,
       mediaItems,
       visibleMediaCount: mediaItems.length,
       totalMediaCount: mediaItems.length,
