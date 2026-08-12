@@ -293,6 +293,16 @@ local-arena/
 
 - `origin` — https://github.com/i-iii4/Mine.git (private)
 - Main branch: `main`
+- Аккаунт репозитория — `i-iii4`, привязан локально:
+  `git config credential.username i-iii4` в `.git/config`. Он покрывает и все
+  worktree, потому что конфиг общий. Привязка нужна, когда в связке ключей
+  живёт несколько GitHub-аккаунтов: helper `gh` игнорирует запрошенное имя и
+  отдаёт токен активного аккаунта, поэтому push падает с
+  `Permission to i-iii4/Mine.git denied to <другой аккаунт>`. Имя выбирает
+  нужную запись из osxkeychain, который стоит в глобальной цепочке следом за
+  `gh`. Не переключайте активный аккаунт `gh` ради пуша и не изобретайте
+  локальные credential-helper'ы: при этой ошибке проверьте
+  `git config --local --get-regexp credential`.
 
 ## Environment
 
