@@ -2744,7 +2744,10 @@ function ArticleBody({
                 autoPlay
                 muted
                 loop
-                className="rounded-0"
+                // Height must follow the shrunken width, or the element keeps
+                // its intrinsic height and letterboxes the frame — dark bars
+                // that read as extra spacing under the video.
+                className="h-auto max-w-full rounded-0"
               />
             </MediaAssetActionFrame>
           );
@@ -2814,7 +2817,7 @@ function ArticleBody({
       ref={articleRef}
       onMouseUp={scheduleTextSelectionHandleUpdate}
       onKeyUp={scheduleTextSelectionHandleUpdate}
-      className="prose prose-sm max-w-none [&>:first-child]:mt-0 [&_li]:leading-5 [&_p]:leading-5"
+      className="prose prose-sm max-w-none [&>:first-child]:mt-0 [&>:last-child]:mb-0 [&_li]:leading-5 [&_p]:leading-5"
       data-article-body
     >
       <ReactMarkdown

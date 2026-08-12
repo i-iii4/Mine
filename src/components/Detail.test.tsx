@@ -790,6 +790,7 @@ describe("Detail", () => {
       "prose-sm",
       "max-w-none",
       "[&>:first-child]:mt-0",
+      "[&>:last-child]:mb-0",
       "[&_p]:leading-5",
       "[&_li]:leading-5",
     );

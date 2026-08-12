@@ -1166,6 +1166,14 @@ Article media-only paragraphs:
   last item.
 - This prevents several Obsidian embeds on one physical markdown line from
   behaving as inline media and wrapping into accidental rows.
+- Inline `<video>` carries `h-auto max-w-full`, exactly like inline `<img>`.
+  Without it the element keeps its intrinsic height while the flex frame
+  shrinks its width, and `object-fit: contain` letterboxes the frame — dark
+  bars that read as extra space under the video, not as a video border.
+- The article body zeroes the trailing margin of its last block
+  (`[&>:last-child]:mb-0`). The distance from the end of the body to whatever
+  follows it belongs to the surrounding layout token, not to the last
+  paragraph's own rhythm.
 
 CollectionPicker membership rows:
 - Search uses the shared `SearchMenuInput` contract: `border-b border-border
