@@ -87,7 +87,9 @@ import {
   isPositionVisibleInViewport,
   isSameFeedPointerPosition,
   isStationaryFeedPointerMove,
+  layoutPointFromClientPoint,
   layoutPointFromPointerEvent,
+  marqueeAutoScrollVelocity,
   marqueeIsActive,
   rectFromPoints,
   scrollPositionIntoView,
@@ -447,6 +449,9 @@ export function Grid({
   const [selectedSlugs, setSelectedSlugs] = useState<Set<string>>(() => new Set());
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
   const [marqueeSelection, setMarqueeSelection] = useState<MarqueeSelection | null>(null);
+  // Last pointer position of the held marquee drag, in client coordinates. The
+  // autoscroll loop needs it every frame while the pointer itself stays still.
+  const marqueePointerClientRef = useRef<{ x: number; y: number } | null>(null);
   const [feedInteractionMode, setFeedInteractionMode] = useState<FeedInteractionMode>("pointer");
   const [actionMenuRequest, setActionMenuRequest] = useState<{
     slug: string;
@@ -1406,6 +1411,7 @@ export function Grid({
 
     event.preventDefault();
     event.currentTarget.setPointerCapture?.(event.pointerId);
+    marqueePointerClientRef.current = { x: event.clientX, y: event.clientY };
     setMarqueeSelection({
       pointerId: event.pointerId,
       start,
@@ -1422,6 +1428,7 @@ export function Grid({
     if (!current) return;
 
     event.preventDefault();
+    marqueePointerClientRef.current = { x: event.clientX, y: event.clientY };
     const next = {
       ...marqueeSelection,
       current,
@@ -1444,8 +1451,68 @@ export function Grid({
     if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
+    marqueePointerClientRef.current = null;
     setMarqueeSelection(null);
   }, [applyMarqueeSelection, clearSelection, marqueeSelection]);
+
+  // A held marquee drag at the scrollport edge pulls the feed. Pointer events
+  // stop arriving once the pointer stops moving, so the rectangle has to grow
+  // from the scroll itself: each frame scrolls, then recomputes the layout
+  // point from the unchanged client position and reselects. Selection is
+  // recomputed inside the frame through refs, so the loop is not restarted by
+  // the layout and readiness changes it causes.
+  const applyMarqueeSelectionRef = useRef(applyMarqueeSelection);
+  applyMarqueeSelectionRef.current = applyMarqueeSelection;
+  const marqueeSelectionRef = useRef(marqueeSelection);
+  marqueeSelectionRef.current = marqueeSelection;
+
+  const marqueeAutoScrollActive = marqueeSelection?.active === true;
+
+  useEffect(() => {
+    if (!marqueeAutoScrollActive) return;
+    const scrollElement = parentRef.current;
+    if (!scrollElement) return;
+
+    let frame = 0;
+    let previousTimestamp: number | null = null;
+
+    const step = (timestamp: number) => {
+      frame = requestAnimationFrame(step);
+      const elapsedMs = previousTimestamp === null ? 0 : timestamp - previousTimestamp;
+      previousTimestamp = timestamp;
+      if (elapsedMs <= 0) return;
+
+      const pointer = marqueePointerClientRef.current;
+      if (!pointer) return;
+
+      const viewport = scrollElement.getBoundingClientRect();
+      const velocity = marqueeAutoScrollVelocity(pointer.y, viewport.top, viewport.bottom);
+      if (velocity === 0) return;
+
+      const maxScrollTop = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
+      const previousScrollTop = scrollElement.scrollTop;
+      const nextScrollTop = Math.min(
+        maxScrollTop,
+        Math.max(0, previousScrollTop + (velocity * elapsedMs) / 1000),
+      );
+      if (nextScrollTop === previousScrollTop) return;
+
+      scrollElement.scrollTop = nextScrollTop;
+
+      const current = layoutPointFromClientPoint(scrollElement, pointer.x, pointer.y);
+      if (!current) return;
+
+      const selection = marqueeSelectionRef.current;
+      if (!selection?.active) return;
+      const next = { ...selection, current };
+      marqueeSelectionRef.current = next;
+      setMarqueeSelection(next);
+      applyMarqueeSelectionRef.current(next);
+    };
+
+    frame = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frame);
+  }, [marqueeAutoScrollActive]);
 
   useEffect(() => {
     if (keyboardNavigationDisabled) return;

@@ -8,6 +8,15 @@ const GRID_BOTTOM_INSET_PX = 32;
 const MARQUEE_DRAG_THRESHOLD_PX = 4;
 const SCROLL_ANCHOR_REFERENCE_OFFSET_PX = 32;
 
+/// Edge band of the scrollport that pulls the feed while a marquee drag is
+/// held there. Deep enough to reach without precision, shallow enough that a
+/// drag ending near the edge does not scroll by accident.
+const MARQUEE_AUTOSCROLL_ZONE_PX = 56;
+/// Speed at the outer boundary of the zone — slow enough to aim at a card.
+const MARQUEE_AUTOSCROLL_MIN_SPEED_PX_PER_S = 160;
+/// Speed once the pointer reaches the scrollport edge or leaves it entirely.
+const MARQUEE_AUTOSCROLL_MAX_SPEED_PX_PER_S = 1800;
+
 export type GridArrowKey = "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown";
 export type FeedInteractionMode = "keyboard" | "pointer";
 export type FeedPointerPosition = {
@@ -331,17 +340,56 @@ export function findMarqueeSelectionSlugs(
   return selected;
 }
 
-export function layoutPointFromPointerEvent(
+export function layoutPointFromClientPoint(
   scrollElement: HTMLElement,
-  event: ReactPointerEvent<HTMLElement>,
+  clientX: number,
+  clientY: number,
 ): LayoutPoint | null {
   const layoutElement = scrollElement.querySelector("[data-grid-layout]");
   if (!(layoutElement instanceof HTMLElement)) return null;
   const rect = layoutElement.getBoundingClientRect();
   return {
-    x: event.clientX - rect.left,
-    y: event.clientY - rect.top,
+    x: clientX - rect.left,
+    y: clientY - rect.top,
   };
+}
+
+export function layoutPointFromPointerEvent(
+  scrollElement: HTMLElement,
+  event: ReactPointerEvent<HTMLElement>,
+): LayoutPoint | null {
+  return layoutPointFromClientPoint(scrollElement, event.clientX, event.clientY);
+}
+
+/// Vertical autoscroll speed for a held marquee drag, in CSS pixels per second.
+///
+/// Negative pulls the feed up, positive pulls it down, zero means the pointer
+/// is away from both edges. Speed ramps from the outer boundary of the edge
+/// band to the scrollport edge; past the edge the pointer keeps the maximum
+/// instead of losing the pull, so a drag beyond the window still scrolls.
+export function marqueeAutoScrollVelocity(
+  clientY: number,
+  viewportTop: number,
+  viewportBottom: number,
+): number {
+  if (viewportBottom - viewportTop <= 0) return 0;
+
+  const speedAt = (depth: number) =>
+    MARQUEE_AUTOSCROLL_MIN_SPEED_PX_PER_S +
+    (MARQUEE_AUTOSCROLL_MAX_SPEED_PX_PER_S - MARQUEE_AUTOSCROLL_MIN_SPEED_PX_PER_S) *
+      Math.min(1, Math.max(0, depth));
+
+  const topBoundary = viewportTop + MARQUEE_AUTOSCROLL_ZONE_PX;
+  if (clientY < topBoundary) {
+    return -speedAt((topBoundary - clientY) / MARQUEE_AUTOSCROLL_ZONE_PX);
+  }
+
+  const bottomBoundary = viewportBottom - MARQUEE_AUTOSCROLL_ZONE_PX;
+  if (clientY > bottomBoundary) {
+    return speedAt((clientY - bottomBoundary) / MARQUEE_AUTOSCROLL_ZONE_PX);
+  }
+
+  return 0;
 }
 
 export function isEmptyGridPointerTarget(target: EventTarget | null): boolean {

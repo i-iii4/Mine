@@ -99,6 +99,29 @@ While dragging:
 
 Cards are selected by rectangle intersection, not by center point containment.
 
+### Marquee Edge Autoscroll
+
+Selection is not limited to what is on screen when the drag starts. Holding an
+active marquee drag inside the top or bottom edge band of the Grid scrollport
+pulls the feed in that direction and keeps extending the rectangle.
+
+- The edge band is `56px` deep, measured from the scrollport edge.
+- Speed ramps from `160px/s` at the outer boundary of the band to `1800px/s` at
+  the scrollport edge, by depth into the band.
+- A pointer past the scrollport edge keeps the maximum speed instead of losing
+  the pull, so a drag that leaves the window still scrolls.
+- Autoscroll runs only while the marquee is `active`; a drag below the
+  threshold never scrolls.
+- Pointer events stop arriving while the pointer is held still, so each frame
+  scrolls the port, recomputes the marquee point from the unchanged client
+  position, and reselects. The rectangle therefore grows by exactly the
+  scrolled distance.
+- Scrolling stops at the ends of the feed; it never extends beyond
+  `scrollHeight - clientHeight` or above zero.
+- Selection during autoscroll obeys the same rule as during pointer movement:
+  every committed card intersecting the rectangle is selected, and cards that
+  become render-ready as they scroll into the runway participate.
+
 ## State Reset
 
 Selection is cleared when:
@@ -553,6 +576,10 @@ Frontend tests must cover:
 - empty-area marquee drag renders `data-feed-grid-marquee-selection`;
 - marquee selection selects every committed card whose `layout.positions`
   rectangle intersects the marquee rectangle;
+- a marquee drag held inside the bottom edge band scrolls the feed while the
+  pointer stays still, and the rectangle grows by the scrolled distance;
+- autoscroll speed is zero away from the edge bands, ramps with depth, and
+  keeps its maximum past the scrollport edge;
 - changing channel clears selection;
 - disappearing selected blocks are removed from selection;
 - `Escape` clears selection before other Grid escape behavior;
@@ -590,6 +617,9 @@ Manual QA must cover:
 
 - marquee selection across uneven masonry card heights;
 - marquee selection on empty spaces between columns and rows;
+- edge autoscroll over a feed longer than several screens, including selection
+  of cards that were not rendered when the drag started;
+- edge autoscroll stopping cleanly at the top and bottom of the feed;
 - dark and light theme selected frames;
 - selection frame on image, video, article and mixed media cards;
 - bottom island does not overlap open popovers/menus;

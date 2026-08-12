@@ -1999,6 +1999,90 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(screen.getByText("2 карточки")).toBeInTheDocument();
   });
 
+  it("scrolls the feed and keeps selecting while a marquee drag is held at the edge", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [
+      makeBlock(9741),
+      makeBlock(9742),
+      makeBlock(9743),
+      makeBlock(9744),
+    ];
+    for (const block of blocks) {
+      setBlockHeight(block.id, 200);
+    }
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} />);
+    await flushAsync();
+
+    const scrollEl = document.querySelector("[data-grid-scroll]") as HTMLElement;
+    const layoutEl = document.querySelector("[data-grid-layout]") as HTMLElement;
+
+    Object.defineProperty(scrollEl, "clientHeight", { value: 400, configurable: true });
+    Object.defineProperty(scrollEl, "scrollHeight", { value: 2000, configurable: true });
+    scrollEl.getBoundingClientRect = vi.fn(() => ({
+      width: 1200,
+      height: 400,
+      top: 0,
+      left: 0,
+      right: 1200,
+      bottom: 400,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }) as DOMRect);
+    // The layout scrolls under a still pointer: its top follows scrollTop, so a
+    // fixed client position maps to a growing layout coordinate.
+    layoutEl.getBoundingClientRect = vi.fn(() => ({
+      width: 1200,
+      height: 2000,
+      top: -scrollEl.scrollTop,
+      left: 0,
+      right: 1200,
+      bottom: 2000 - scrollEl.scrollTop,
+      x: 0,
+      y: -scrollEl.scrollTop,
+      toJSON: () => ({}),
+    }) as DOMRect);
+
+    fireEvent.pointerDown(scrollEl, {
+      pointerId: 7,
+      button: 0,
+      clientX: 300,
+      clientY: 10,
+    });
+    // Held inside the bottom edge band, and never moved again.
+    fireEvent.pointerMove(scrollEl, {
+      pointerId: 7,
+      clientX: 700,
+      clientY: 390,
+    });
+    await flushMicrotasks();
+
+    expect(scrollEl.scrollTop).toBe(0);
+
+    await act(async () => {
+      vi.advanceTimersByTime(200);
+      await Promise.resolve();
+    });
+
+    expect(scrollEl.scrollTop).toBeGreaterThan(0);
+
+    const marquee = document.querySelector("[data-feed-grid-marquee-selection]") as HTMLElement;
+    // The rectangle grew past the original pointer position by exactly the
+    // distance the feed scrolled underneath it.
+    expect(Number.parseFloat(marquee.style.height)).toBeCloseTo(380 + scrollEl.scrollTop, 1);
+
+    fireEvent.pointerUp(scrollEl, {
+      pointerId: 7,
+      clientX: 700,
+      clientY: 390,
+    });
+    await flushMicrotasks();
+
+    expect(document.querySelector("[data-feed-grid-marquee-selection]")).toBeNull();
+  });
+
   it("runs the collection-scoped Disconnect action against the selected slugs", async () => {
     vi.useFakeTimers();
 
