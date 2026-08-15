@@ -31,6 +31,7 @@ import { CardHoverMenu } from "./CardHoverMenu";
 import { FeedVideoSurface } from "./FeedVideoSurface";
 import { FeedVideoPoster } from "./FeedVideoPoster";
 import { PlayBadge } from "./PlayBadge";
+import { CloudBadge } from "./CloudBadge";
 
 const PriorityContext = createContext(false);
 const usePriority = () => useContext(PriorityContext);
@@ -826,6 +827,7 @@ const ImageCard = memo(function ImageCard({
         style={surfaceStyle}
         data-card-preview-geometry={geometryPending ? "pending" : undefined}
       >
+        <CloudBadge active={block.content_in_cloud} />
         <div className="text-center">
           <ImageOff className="mx-auto size-6 text-muted-foreground/50" />
           <p className="mt-1 text-sm text-foreground">
@@ -850,6 +852,7 @@ const ImageCard = memo(function ImageCard({
       style={surfaceStyle}
       data-card-preview-geometry={geometryPending ? "pending" : undefined}
     >
+      <CloudBadge active={block.content_in_cloud} />
       {!measurementMode && (
         <img
           // Keyed by src so React remounts the element when we fall through to

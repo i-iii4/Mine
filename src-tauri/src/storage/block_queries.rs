@@ -21,7 +21,8 @@ pub fn list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>> {
     let mut stmt = conn.prepare(
         "SELECT id, slug, block_type, card_kind, title, content_heading, display_title, COALESCE(fallback_label, slug), url, media_file,
                 thumbnail, saved_at, width, height, author,
-                SUBSTR(body, 1, ?1), preview_text, first_image, media_urls, media_dimensions, preview_manifest, feed_playback
+                SUBSTR(body, 1, ?1), preview_text, first_image, media_urls, media_dimensions, preview_manifest, feed_playback,
+                CASE WHEN preview_state != 'ready' THEN preview_error_kind END
          FROM blocks
          ORDER BY saved_at DESC, slug COLLATE NOCASE ASC, slug ASC",
     )?;
@@ -66,7 +67,8 @@ pub fn list_grid_blocks(
                          THEN b.preview_manifest END,
                     CASE WHEN b.preview_state = 'ready'
                               OR (b.preview_state = 'stale' AND b.preview_source_stamp IS NOT NULL)
-                         THEN b.feed_playback END
+                         THEN b.feed_playback END,
+                    CASE WHEN b.preview_state != 'ready' THEN b.preview_error_kind END
              FROM blocks b
              INNER JOIN block_tags bt ON bt.block_id = b.id
              WHERE b.card_kind != 'channel' AND bt.tag = ?2
@@ -83,7 +85,8 @@ pub fn list_grid_blocks(
                          THEN preview_manifest END,
                     CASE WHEN preview_state = 'ready'
                               OR (preview_state = 'stale' AND preview_source_stamp IS NOT NULL)
-                         THEN feed_playback END
+                         THEN feed_playback END,
+                    CASE WHEN preview_state != 'ready' THEN preview_error_kind END
              FROM blocks
              WHERE card_kind != 'channel'
              ORDER BY saved_at DESC, slug COLLATE NOCASE ASC, slug ASC
@@ -440,6 +443,11 @@ pub(crate) fn light_block_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<
         media_dimensions: row.get(19)?,
         preview_manifest: row.get(20)?,
         feed_playback: row.get(21)?,
+        content_in_cloud: row
+            .get::<_, Option<String>>(22)
+            .unwrap_or(None)
+            .as_deref()
+            == Some("content_in_cloud"),
         search_match: None,
     })
 }

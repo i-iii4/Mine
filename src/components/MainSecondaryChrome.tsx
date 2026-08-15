@@ -2,6 +2,7 @@ import { useDraggable } from "@dnd-kit/core";
 import { cn } from "@/lib/utils";
 import { useChromeDragGesture } from "@/hooks/useChromeDragGesture";
 import type { IndexedBlock, LightBlock, TagCount, VaultStats } from "@/types";
+import { ActivityIndicators } from "./ActivityIndicators";
 import { CardMoreMenu } from "./CardHoverMenu";
 import { ChromeCloseButton } from "./ChromeCloseButton";
 import {
@@ -61,9 +62,15 @@ function formatStorageBytes(bytes: number): string {
 function MainSecondaryStatsLeft({
   stats,
   sidebarCollapsed,
+  cloudPending,
+  indexing,
+  onRevealSpace,
 }: {
   stats: VaultStats | null;
   sidebarCollapsed: boolean;
+  cloudPending: number;
+  indexing: boolean;
+  onRevealSpace?: () => void;
 }) {
   if (sidebarCollapsed) return null;
 
@@ -86,6 +93,11 @@ function MainSecondaryStatsLeft({
           <span data-main-secondary-stat-atom="storage" className="shrink-0">
             {formatStorageBytes(stats.sourceBytes)}
           </span>
+          <ActivityIndicators
+            cloudPending={cloudPending}
+            indexing={indexing}
+            onRevealSpace={onRevealSpace}
+          />
         </div>
       )}
     </div>
@@ -144,10 +156,19 @@ export function MainSecondaryTopBar({
   onRequestDelete,
   onDetailClose,
   detailMenuOpenRequestSequence,
+  cloudPending = 0,
+  indexing = false,
+  onRevealSpace,
 }: {
   sidebarCollapsed: boolean;
   sidebarResizing: boolean;
   stats: VaultStats | null;
+  /// Cards whose content iCloud is currently holding.
+  cloudPending?: number;
+  /// Whether the space is being indexed right now.
+  indexing?: boolean;
+  /// Reveal the space folder so the user can mark it Keep Downloaded.
+  onRevealSpace?: () => void;
   detailBlock?: LightBlock | IndexedBlock | null;
   detailTitle?: string;
   detailEntered?: boolean;
@@ -205,7 +226,13 @@ export function MainSecondaryTopBar({
           data-entered={mainLayerEntered ? "true" : "false"}
           data-main-secondary-main-layer=""
         >
-          <MainSecondaryStatsLeft stats={stats} sidebarCollapsed={sidebarCollapsed} />
+          <MainSecondaryStatsLeft
+            stats={stats}
+            sidebarCollapsed={sidebarCollapsed}
+            cloudPending={cloudPending}
+            indexing={indexing}
+            onRevealSpace={onRevealSpace}
+          />
         </div>
         {detailBlock && !sidebarCollapsed && (
           <div

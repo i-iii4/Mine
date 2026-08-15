@@ -79,6 +79,40 @@ pub fn extract_image_dimensions(path: &Path) -> Option<(u32, u32)> {
     ImageReader::open(path).ok()?.into_dimensions().ok()
 }
 
+/// Whether a file exists but its contents are not on this Mac.
+///
+/// iCloud evicts file contents when the disk fills up, leaving the name, size
+/// and attributes in place with no data behind them. Verified against a real
+/// evicted file: the name is unchanged (no `.icloud` suffix), the reported size
+/// is the full size, and no blocks are allocated. Reading even one byte
+/// materializes the whole file, so this check exists precisely to avoid
+/// touching contents. See SPEC_CLOUD_STORAGE.md Х3.
+pub fn is_content_offloaded(path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    // Only files iCloud actually manages can be evicted. Without this check a
+    // sparse file — same signature: full logical size, no allocated blocks —
+    // would be reported as offloaded and silently lose its autoplay.
+    if !is_icloud_managed(path) {
+        return false;
+    }
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    meta.len() > 0 && meta.blocks() == 0
+}
+
+/// Whether the path lives in the iCloud Drive container.
+///
+/// Everything synced by iCloud Drive — including Desktop and Documents when
+/// those are enabled — sits under `~/Library/Mobile Documents`.
+fn is_icloud_managed(path: &Path) -> bool {
+    path.components().any(|component| {
+        component.as_os_str().to_str() == Some(ICLOUD_CONTAINER_DIR)
+    })
+}
+
+const ICLOUD_CONTAINER_DIR: &str = "Mobile Documents";
+
 /// Extract the pixel size of a derived preview artifact. Header-only read, same
 /// cost as [`extract_image_dimensions`], but typed as preview geometry so it
 /// cannot be mistaken for source geometry.

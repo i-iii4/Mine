@@ -132,7 +132,15 @@ export type InlineMediaExtractError = { kind: "no_vault" } | { kind: "source_not
  * A lightweight block for list/grid views. Body is truncated (max 500 chars),
  * description is omitted, source is omitted.
  */
-export type LightBlock = { id: number; slug: string; block_type: BlockType; card_kind: CardKind; title: string | null; content_heading: string | null; display_title: string | null; fallback_label: string; url: string | null; media_file: string | null; thumbnail: string | null; saved_at: string; width: number | null; height: number | null; author: string | null; body: string; preview_text: string | null; first_image: string | null; media_urls: string | null; media_dimensions: string | null; preview_manifest: string | null; feed_playback: string | null; search_match: SearchMatch | null }
+export type LightBlock = { id: number; slug: string; block_type: BlockType; card_kind: CardKind; title: string | null; content_heading: string | null; display_title: string | null; fallback_label: string; url: string | null; media_file: string | null; thumbnail: string | null; saved_at: string; width: number | null; height: number | null; author: string | null; body: string; preview_text: string | null; first_image: string | null; media_urls: string | null; media_dimensions: string | null; preview_manifest: string | null; feed_playback: string | null;
+/**
+ * The card's own media exists, but iCloud is holding its contents.
+ *
+ * Only ever true while a preview could not be built: once a preview
+ * exists the card draws from it and no longer cares where the original
+ * lives. See SPEC_CLOUD_STORAGE.md Х5–Х6.
+ */
+content_in_cloud?: boolean; search_match: SearchMatch | null }
 
 export type MediaAssetActionError = { kind: "no_vault" } | { kind: "invalid_media_ref"; reason: string } | { kind: "media_not_found"; media_ref: string } | { kind: "unsupported_media_kind"; media_ref: string } | { kind: "name_taken"; target: string } | { kind: "invalid_filename"; reason: string } | { kind: "clipboard_unsupported"; media_ref: string } | { kind: "internal"; message: string }
 

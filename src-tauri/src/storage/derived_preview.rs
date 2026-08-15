@@ -46,6 +46,12 @@ pub enum PreviewErrorKind {
     InvalidManifest,
     UnsafePreviewPath,
     BrowserDecodeRequired,
+    /// The source file exists but its contents live in iCloud right now.
+    ///
+    /// Not a failure of the file or of Mine: the card simply cannot be drawn
+    /// until the contents come back. Kept apart from every other kind so the
+    /// interface can say so plainly. See SPEC_CLOUD_STORAGE.md Х6.
+    ContentInCloud,
     Generation,
 }
 
@@ -57,6 +63,7 @@ impl PreviewErrorKind {
             Self::InvalidManifest => "invalid_manifest",
             Self::UnsafePreviewPath => "unsafe_preview_path",
             Self::BrowserDecodeRequired => "browser_decode_required",
+            Self::ContentInCloud => "content_in_cloud",
             Self::Generation => "generation",
         }
     }
@@ -402,12 +409,16 @@ pub fn reconcile_preview_for_slug(
                 // it here". Reporting a missing file as a decoding problem sent
                 // the reader looking for a format issue that does not exist.
                 // See SPEC_VAULT_LIFECYCLE.md П23.
-                generation_failure = Some(match missing_primary_source(vault, &block) {
-                    Some(reference) => (
+                generation_failure = Some(match primary_source_state(vault, &block) {
+                    PrimarySourceState::Missing(reference) => (
                         PreviewErrorKind::MissingSource,
                         format!("media file is missing from the vault: {reference}"),
                     ),
-                    None => (
+                    PrimarySourceState::InCloud(reference) => (
+                        PreviewErrorKind::ContentInCloud,
+                        format!("media contents are in iCloud: {reference}"),
+                    ),
+                    PrimarySourceState::Present => (
                         PreviewErrorKind::BrowserDecodeRequired,
                         "primary preview requires browser decoding".to_string(),
                     ),
@@ -734,16 +745,31 @@ fn is_ready_preview(path: &Path) -> bool {
     )
 }
 
-/// The block's own media reference when that file cannot be found in the vault.
+enum PrimarySourceState {
+    /// No owned media, or the file is on disk with contents available.
+    Present,
+    /// The file is not in the vault at all.
+    Missing(String),
+    /// The file exists, but iCloud is holding its contents.
+    InCloud(String),
+}
+
+/// Why a block's own media could not be turned into a preview.
 ///
-/// Returns `None` when the block has no owned media at all, or when the file is
-/// present — in which case a failed preview really is a decoding matter.
-fn missing_primary_source(vault: &VaultLayout, block: &Block) -> Option<String> {
-    let reference = block.frontmatter.file.as_deref()?;
-    if media_refs::resolve_indexed_media(vault, &block.slug, reference).is_some() {
-        return None;
+/// Three outcomes that used to be reported as one: a deleted file, contents
+/// parked in iCloud, and a format this build cannot decode all sent the reader
+/// looking for the wrong problem.
+fn primary_source_state(vault: &VaultLayout, block: &Block) -> PrimarySourceState {
+    let Some(reference) = block.frontmatter.file.as_deref() else {
+        return PrimarySourceState::Present;
+    };
+    let Some(path) = media_refs::resolve_indexed_media(vault, &block.slug, reference) else {
+        return PrimarySourceState::Missing(reference.to_string());
+    };
+    if media_dimensions::is_content_offloaded(&path) {
+        return PrimarySourceState::InCloud(reference.to_string());
     }
-    Some(reference.to_string())
+    PrimarySourceState::Present
 }
 
 /// Persist a manifest that now carries artifact geometry.

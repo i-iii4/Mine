@@ -173,6 +173,7 @@ import type {
   VaultStats,
 } from "@/types";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import {
   getVaultPath,
   getUnavailableVault,
@@ -2989,6 +2990,9 @@ export function AppWithVault({
           sidebarCollapsed={sidebarCollapsed}
           sidebarResizing={sidebarResizing}
           stats={vaultStats}
+          cloudPending={blocks.filter((item) => item.content_in_cloud).length}
+          indexing={isSyncing}
+          onRevealSpace={() => void revealItemInDir(vaultPath)}
           detailBlock={renderedDetailBlock}
           detailTitle={compactDetailCardTitle}
           detailEntered={compactDetailChromeEntered}

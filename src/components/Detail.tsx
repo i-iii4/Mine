@@ -217,7 +217,9 @@ function collectCardImages(origin: HTMLElement | null): ImagePreviewSibling[] {
   const found: ImagePreviewSibling[] = [];
   for (const frame of column.querySelectorAll<HTMLElement>("[data-media-asset-ref]")) {
     const mediaRef = frame.dataset.mediaAssetRef;
-    const src = frame.querySelector("img")?.getAttribute("src");
+    const src = frame
+      .querySelector("img:not([data-detail-preview-backing])")
+      ?.getAttribute("src");
     if (mediaRef && src) found.push({ src, mediaRef });
   }
   return found;
@@ -1113,6 +1115,27 @@ function detailPreviewImageSource({
     ?? thumbnailUrl(thumbsRootPath, block.slug);
 }
 
+/// The local preview to show while the original is still arriving.
+///
+/// The original may be on a slow disk or held in iCloud, where a read blocks
+/// until the file is fetched in full. The preview is derived, local and
+/// permanent, so the card can be complete from the first frame and swap in the
+/// original when it lands. See SPEC_CLOUD_STORAGE.md Х8.
+function detailBackingPreviewSource({
+  block,
+  previewManifest,
+  thumbsRootPath,
+}: {
+  block: LightBlock | IndexedBlock;
+  previewManifest: ReturnType<typeof normalizeDetailPreviewManifest>;
+  thumbsRootPath: string;
+}): string | null {
+  if (previewManifest?.primaryPreviewPath) {
+    return previewAssetUrl(thumbsRootPath, previewManifest.primaryPreviewPath);
+  }
+  return thumbnailUrl(thumbsRootPath, block.slug);
+}
+
 // ─── Block content renderers ────────────────────────────────────────────────
 
 function BlockContent({
@@ -1336,11 +1359,15 @@ function BlockContent({
               imageSrc={src}
               fullSizeImageSrc={src}
             >
-              <img
+              <DetailImage
                 src={src}
+                previewSrc={detailBackingPreviewSource({
+                  block,
+                  previewManifest,
+                  thumbsRootPath: resolvedThumbsRoot,
+                })}
                 alt={navigationLabel}
                 className="block max-h-[85vh] max-w-full object-contain"
-                draggable={false}
               />
             </MediaAssetActionFrame>
           </div>
@@ -3088,6 +3115,7 @@ function DetailImage({
           loading="eager"
           draggable={false}
           aria-hidden="true"
+          data-detail-preview-backing=""
         />
       )}
       <img

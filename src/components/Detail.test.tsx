@@ -1219,8 +1219,12 @@ describe("Detail", () => {
       />,
     );
 
-    const image = container.querySelector("img");
-    expect(image).toHaveAttribute("src", "asset://localhost//tmp/test-vault/photo.jpg");
+    // The card draws its local preview first and swaps in the original when it
+    // arrives, so both are present: the original is the one that matters.
+    const sources = Array.from(container.querySelectorAll("img")).map((img) =>
+      img.getAttribute("src"),
+    );
+    expect(sources).toContain("asset://localhost//tmp/test-vault/photo.jpg");
     expect(container.querySelector("[data-article-body]")).toBeNull();
   });
 
@@ -1386,7 +1390,9 @@ describe("Detail", () => {
       />,
     );
 
-    const image = container.querySelector("img");
+    // The preview is drawn behind the original, so the original is the last img.
+    const images = Array.from(container.querySelectorAll("img"));
+    const image = images[images.length - 1];
     expect(image).toHaveAttribute("src", "asset://localhost//tmp/test-vault/photo.jpg");
 
     // A click that never moved is a click: the drag sensor needs 8px to engage.
