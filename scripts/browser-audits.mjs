@@ -203,6 +203,9 @@ async function main() {
     await runAudit("scripts/sidebar-reorder-audit.mjs", {
       MINE_SIDEBAR_REORDER_AUDIT_URL: `${origin}/__sidebar-reorder-audit`,
     }, onAuditChildChange);
+    await runAudit("scripts/edge-states-audit.mjs", {
+      MINE_EDGE_STATES_AUDIT_URL: `${origin}/edge-states.html`,
+    }, onAuditChildChange);
   } finally {
     process.removeListener("SIGINT", interrupt);
     process.removeListener("SIGTERM", terminate);

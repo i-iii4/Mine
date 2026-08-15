@@ -16,6 +16,7 @@ import {
 import { ActionButton } from "@/components/ActionButton";
 import { ChromeCloseButton } from "@/components/ChromeCloseButton";
 import { CollectionPicker } from "@/components/CollectionPicker";
+import { EdgeStatesSection } from "@/components/EdgeStatesSection";
 import { GroupSelectionActionBar } from "@/components/GroupSelectionActionBar";
 import { GraphCollectionLabel } from "@/components/GraphCollectionLabel";
 import { MenuTextTrigger } from "@/components/MenuTextTrigger";
@@ -256,6 +257,7 @@ export function ComponentTestBench() {
           <DialogPrimitivesSection />
           <ShellAndSelectionSection />
           <CardPatternSection />
+          <EdgeStatesSection />
           <ClipperParitySection />
           <AppIconTemplateBench />
         </div>

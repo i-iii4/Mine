@@ -80,7 +80,7 @@ export function SpaceUnavailable({ path, onReopened, onForgotten }: SpaceUnavail
           <Button onClick={() => void locate()} disabled={busy}>
             Locate folder…
           </Button>
-          <Button variant="secondary" onClick={() => void locate()} disabled={busy}>
+          <Button variant="ghost" onClick={() => void locate()} disabled={busy}>
             Create new space
           </Button>
           <Button variant="ghost" onClick={() => void forget()} disabled={busy}>

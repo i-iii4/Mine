@@ -10,8 +10,9 @@ import { CLOUD_BADGE_DELAY_MS, CLOUD_STATE_LABEL } from "@/lib/cloudContent";
 import { cn } from "@/lib/utils";
 
 interface CloudBadgeProps {
-  /// Whether this card's content is known to be in iCloud.
-  active: boolean;
+  /// Whether this card's content is known to be in iCloud. Absent means
+  /// nothing says so — the wire shape omits the flag when it is false.
+  active: boolean | undefined;
   className?: string;
 }
 

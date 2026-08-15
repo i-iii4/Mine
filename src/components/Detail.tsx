@@ -195,6 +195,13 @@ function isIndexedBlock(block: LightBlock | IndexedBlock): block is IndexedBlock
   return "tags" in block;
 }
 
+/// Only the feed's light shape carries this: a block fetched by slug does not
+/// know where its media currently lives, and absence means nothing claims it
+/// is in the cloud. See SPEC_CLOUD_STORAGE.md Х5.
+function isContentInCloud(block: LightBlock | IndexedBlock): boolean {
+  return "content_in_cloud" in block && block.content_in_cloud === true;
+}
+
 type HoverPreviewPosition = {
   top: number;
   left: number;
@@ -1372,7 +1379,7 @@ function BlockContent({
                   previewManifest,
                   thumbsRootPath: resolvedThumbsRoot,
                 })}
-                contentInCloud={block.content_in_cloud}
+                contentInCloud={isContentInCloud(block)}
                 alt={navigationLabel}
                 className="block max-h-[85vh] max-w-full object-contain"
               />

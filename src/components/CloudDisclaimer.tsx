@@ -46,7 +46,7 @@ export function CloudDisclaimer({ offloadedCount, onRevealSpace }: CloudDisclaim
 
       {onRevealSpace && (
         <div>
-          <Button variant="secondary" size="sm" onClick={onRevealSpace}>
+          <Button size="sm" onClick={onRevealSpace}>
             Show space in Finder
           </Button>
         </div>

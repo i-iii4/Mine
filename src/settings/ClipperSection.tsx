@@ -61,7 +61,7 @@ export function ClipperSection() {
         label="1. Install the extension"
         caption="From the Chrome Web Store; works in Chrome, Dia, Arc, Edge and Brave"
       >
-        <Button variant="secondary" onClick={() => void openUrl(STORE_URL)}>
+        <Button onClick={() => void openUrl(STORE_URL)}>
           <Download className="size-4" />
           Open store
         </Button>

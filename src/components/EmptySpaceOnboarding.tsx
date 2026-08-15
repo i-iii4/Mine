@@ -62,7 +62,7 @@ export function EmptySpaceOnboarding({
             title="Save from the web"
             description="The browser clipper saves pages, images and videos straight into this space."
             action={
-              <Button variant="secondary" onClick={onInstallClipper}>
+              <Button onClick={onInstallClipper}>
                 Install the clipper
               </Button>
             }
@@ -77,7 +77,7 @@ export function EmptySpaceOnboarding({
             title="Bring a collection"
             description="Import your Are.na channels — each one becomes a collection here."
             action={
-              <Button variant="secondary" onClick={onImportFromArena}>
+              <Button variant="ghost" onClick={onImportFromArena}>
                 Import from Are.na
               </Button>
             }

@@ -162,7 +162,7 @@ export function LayoutSection() {
           label="Organize into folders"
           caption="Create Cards, Media and Collections and write into them from now on"
         >
-          <Button variant="secondary" disabled={busy} onClick={() => void organize()}>
+          <Button disabled={busy} onClick={() => void organize()}>
             <FolderTree className="size-4" />
             Organize
           </Button>
