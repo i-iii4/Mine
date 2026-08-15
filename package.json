@@ -26,7 +26,8 @@
     "clipper:install-host": "bash extension/install-native-host.sh mfmocklgopobknfgeedgdlnchfohicii",
     "pack:extension": "bun run build:extension && rm -f build/mine-clipper.zip && mkdir -p build && cd extension && zip -r ../build/mine-clipper.zip manifest.json background.js content.js dist/ lib/ icons/ -x '*.DS_Store'",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "fetch:ytdlp": "node scripts/fetch-ytdlp.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

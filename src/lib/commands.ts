@@ -26,6 +26,8 @@ import type {
   VaultOpenResult,
   VaultWriteLayoutDto,
   UnavailableVault,
+  ClipperSetupStatus,
+  FolderPreview,
   CreateBlockParams,
   ArenaChannelInfo,
   ImportChannelRequest,
@@ -422,6 +424,20 @@ export const sweepVaultThumbnails = () =>
 
 export const listPendingThumbUpgrades = () =>
   invoke<ThumbUpgradeRequest[]>("list_pending_thumb_upgrades");
+
+/** Count what a folder holds before it becomes a space, so the app can say what
+ *  is about to happen instead of just doing it. See SPEC_ONBOARDING.md О12. */
+export const previewVaultFolder = (path: string) =>
+  invoke<FolderPreview>("preview_vault_folder", { path });
+
+/** What the clipper setup looks like right now: helper version and which
+ *  browsers are registered. See SPEC_ONBOARDING.md О7. */
+export const getClipperSetupStatus = () =>
+  invoke<ClipperSetupStatus>("get_clipper_setup_status");
+
+/** Install the helper and register it with every browser found. */
+export const installClipperHost = (extensionId: string) =>
+  invoke<ClipperSetupStatus>("install_clipper_host", { extensionId });
 
 /** The saved space that could not be opened, if any.
  *  `null` means either no space was ever chosen or the saved one is reachable —

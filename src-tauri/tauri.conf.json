@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "bun run dev",
-    "beforeBuildCommand": "bun run build"
+    "beforeDevCommand": "bun run fetch:ytdlp && bun run dev",
+    "beforeBuildCommand": "bun run fetch:ytdlp && bun run build"
   },
   "app": {
     "windows": [
@@ -46,6 +46,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "resources": [
+      "binaries/yt-dlp"
     ]
   }
 }

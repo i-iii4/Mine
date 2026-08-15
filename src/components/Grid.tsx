@@ -18,6 +18,7 @@ import { TopFadeScrim } from "./TopFadeScrim";
 import { useDensity } from "@/lib/density";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { Card, CardSkeleton } from "./Card";
+import { EmptySpaceOnboarding } from "./EmptySpaceOnboarding";
 import { MeasureCard } from "./MeasureCard";
 import { CardTagMenu } from "./CardContextMenu";
 import { GroupSelectionActionBar } from "./GroupSelectionActionBar";
@@ -166,6 +167,10 @@ interface GridProps {
   blocks: LightBlock[];
   vaultPath: string;
   thumbsRootPath?: string;
+  /// Start the clipper setup flow from the empty-space onboarding.
+  onInstallClipper?: () => void;
+  /// Open the Are.na import from the empty-space onboarding.
+  onImportFromArena?: () => void;
   /**
    * Per-slug thumbnail cache-buster. Bumped by App on a `thumb:updated` event
    * so the affected card re-renders and refetches its regenerated
@@ -394,6 +399,8 @@ export function Grid({
   blocks,
   vaultPath,
   thumbsRootPath,
+  onInstallClipper,
+  onImportFromArena,
   thumbVersions,
   tags,
   currentTag,
@@ -990,6 +997,16 @@ export function Grid({
     currentTag &&
     routeSnapshotReady &&
     blocks.length === 0,
+  );
+  // Everything with nothing in it is a new space, not an empty filter: it is
+  // the first screen a new user sees and the only place the clipper can be
+  // introduced. See SPEC_ONBOARDING.md О14.
+  const showEmptySpaceOnboarding = Boolean(
+    !currentTag &&
+    routeSnapshotReady &&
+    blocks.length === 0 &&
+    onInstallClipper &&
+    onImportFromArena,
   );
 
   useLayoutEffect(() => {
@@ -1990,6 +2007,13 @@ export function Grid({
           )}
           {parentWidth > 0 && showEmptyChannelPlaceholder && (
             <EmptyChannelPlaceholder viewportHeight={viewportHeight} />
+          )}
+          {parentWidth > 0 && showEmptySpaceOnboarding && (
+            <EmptySpaceOnboarding
+              viewportHeight={viewportHeight}
+              onInstallClipper={onInstallClipper!}
+              onImportFromArena={onImportFromArena!}
+            />
           )}
           {parentWidth > 0 && heightDriftAuditBatch.length > 0 && (
             <MeasurementPass

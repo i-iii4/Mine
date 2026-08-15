@@ -31,9 +31,29 @@ block_count: number }
 
 export type ChannelPreviewsSnapshot = { generation: ProjectionRevision; previews: Partial<{ [key in string]: PreviewItem[] }> }
 
+export type ClipperBrowserStatus = { label: string;
+/**
+ * The browser's own directory exists, so the browser is installed.
+ */
+detected: boolean;
+/**
+ * A manifest for this host is present in it.
+ */
+connected: boolean }
+
 export type ClipperRecoveryItem = { id: string; kind: ClipperRecoveryKind; fileName: string; mediaPath: string | null; size: number; createdAt: string }
 
 export type ClipperRecoveryKind = "pending_upload"
+
+export type ClipperSetupStatus = {
+/**
+ * The host binary is installed where browsers can launch it.
+ */
+host_installed: boolean;
+/**
+ * The installed host matches the running app's version.
+ */
+host_current: boolean; app_version: string; browsers: ClipperBrowserStatus[] }
 
 export type CommandError = { kind: "no_vault" } | { kind: "internal"; message: string }
 
@@ -88,6 +108,11 @@ export type FeedPreviewManifest = { kind: FeedPreviewKind; primary_preview_path:
  * cropped to fixed slots. See `SPEC_CARD_MEDIA_GEOMETRY.md`.
  */
 export type FeedPreviewTile = { source_path: string; preview_path: string | null; width: number | null; height: number | null; preview_width?: number | null; preview_height?: number | null; is_video: boolean; is_video_poster: boolean }
+
+/**
+ * What a folder holds, before it becomes a space.
+ */
+export type FolderPreview = { markdown_files: number; media_files: number; other_files: number }
 
 export type GraphLink = { id: string; kind: GraphLinkKind; source: string; target: string; directed: boolean; count: number; target_ref: string | null }
 

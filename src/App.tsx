@@ -3149,6 +3149,8 @@ export function AppWithVault({
                 hoverPreviewFrozen={cardActionsMenuTarget !== null}
                 onNavigateCollection={handleTopCollectionNavigate}
                 acceptGraphRevision={acceptGraphRevision}
+                onInstallClipper={() => void openSettingsWindow()}
+                onImportFromArena={() => setImportOpen(true)}
               />
             }
           >
@@ -3422,6 +3424,10 @@ interface RouteContext {
   hoverPreviewFrozen: boolean;
   onNavigateCollection: (collectionRef?: string) => void;
   acceptGraphRevision: (revision: ProjectionRevision) => boolean;
+  /// Offered by the empty-space onboarding, which is the only place in the app
+  /// that can introduce the clipper to someone who has never seen it.
+  onInstallClipper: () => void;
+  onImportFromArena: () => void;
 }
 
 function PageShell(props: RouteContext) {

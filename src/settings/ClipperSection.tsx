@@ -1,0 +1,123 @@
+// Setting up the browser clipper without a terminal.
+//
+// Two things have to happen: the extension goes in from the Chrome Web Store,
+// and the app registers a small helper the browser is allowed to launch. The
+// second used to be a bash script that compiled the helper with cargo and asked
+// for an extension id by hand. Here it is a button, and the status below says
+// plainly what is connected and what is not — "it silently does not work" was
+// the worst part of the old flow. See SPEC_ONBOARDING.md О5–О7.
+
+import { useCallback, useEffect, useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { Check, CircleAlert, Download } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { getClipperSetupStatus, installClipperHost } from "@/lib/commands";
+import { SettingRow } from "./SettingRow";
+import type { ClipperSetupStatus } from "@/types";
+
+/// Where the extension lives once published.
+const STORE_URL = "https://chrome.google.com/webstore/";
+
+export function ClipperSection() {
+  const [status, setStatus] = useState<ClipperSetupStatus | null>(null);
+  const [extensionId, setExtensionId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      setStatus(await getClipperSetupStatus());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const install = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setStatus(await installClipperHost(extensionId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [extensionId]);
+
+  const connectedBrowsers = status?.browsers.filter((b) => b.connected) ?? [];
+  const availableBrowsers = status?.browsers.filter((b) => b.detected) ?? [];
+
+  return (
+    <section className="grid gap-s3" data-settings-section="clipper">
+      <p className="text-sm text-muted-foreground">
+        The clipper saves pages, images and videos from your browser straight
+        into the current space — as files, the same as everything else.
+      </p>
+
+      <SettingRow
+        label="1. Install the extension"
+        caption="From the Chrome Web Store; works in Chrome, Dia, Arc, Edge and Brave"
+      >
+        <Button variant="secondary" onClick={() => void openUrl(STORE_URL)}>
+          <Download className="size-4" />
+          Open store
+        </Button>
+      </SettingRow>
+
+      <SettingRow
+        label="2. Connect it to Mine"
+        caption="Paste the extension id from its page in the browser, then connect"
+      >
+        <div className="flex items-center gap-2">
+          <Input
+            value={extensionId}
+            placeholder="extension id"
+            aria-label="Extension id"
+            className="w-56 font-mono"
+            disabled={busy}
+            onChange={(event) => setExtensionId(event.target.value)}
+          />
+          <Button disabled={busy || extensionId.trim().length === 0} onClick={() => void install()}>
+            Connect
+          </Button>
+        </div>
+      </SettingRow>
+
+      {status && (
+        <div className="grid gap-1 rounded-1 bg-accent p-3" data-clipper-status="">
+          <p className="text-base text-foreground">
+            {status.host_installed ? (
+              status.host_current ? (
+                <span className="flex items-center gap-1.5">
+                  <Check className="size-4" aria-hidden="true" />
+                  Connected — version {status.app_version}
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5">
+                  <CircleAlert className="size-4" aria-hidden="true" />
+                  Connected, but an older version — reconnect to update
+                </span>
+              )
+            ) : (
+              "Not connected yet"
+            )}
+          </p>
+          <p className="text-sm text-muted-foreground">
+            {connectedBrowsers.length > 0
+              ? `Registered in ${connectedBrowsers.map((b) => b.label).join(", ")}.`
+              : "No browser is registered yet."}
+            {availableBrowsers.length > 0 &&
+              ` Found on this Mac: ${availableBrowsers.map((b) => b.label).join(", ")}.`}
+          </p>
+        </div>
+      )}
+
+      {error && <p className="text-sm text-destructive">{error}</p>}
+    </section>
+  );
+}

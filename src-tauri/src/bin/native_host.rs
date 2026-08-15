@@ -1991,11 +1991,21 @@ fn fetch_tweet_media_previews(tweet_id: &str) -> anyhow::Result<Vec<TwitterMedia
 /// path fails with "No such file or directory" even on a machine where the tool
 /// works fine in a terminal.
 fn locate_ytdlp() -> Option<std::path::PathBuf> {
-    let mut candidates: Vec<std::path::PathBuf> = vec![
+    let mut candidates: Vec<std::path::PathBuf> = vec![];
+    // The copy that ships with the app, installed next to this host. Checked
+    // first so a person who never opened a terminal still gets restricted
+    // video. See SPEC_ONBOARDING.md О8.
+    if let Some(beside) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("yt-dlp")))
+    {
+        candidates.push(beside);
+    }
+    candidates.extend::<Vec<std::path::PathBuf>>(vec![
         "/opt/homebrew/bin/yt-dlp".into(), // Homebrew, Apple silicon
         "/usr/local/bin/yt-dlp".into(),    // Homebrew, Intel; manual installs
         "/opt/local/bin/yt-dlp".into(),    // MacPorts
-    ];
+    ]);
     if let Ok(home) = std::env::var("HOME") {
         candidates.push(std::path::PathBuf::from(&home).join(".local/bin/yt-dlp"));
         candidates.push(std::path::PathBuf::from(&home).join("bin/yt-dlp"));

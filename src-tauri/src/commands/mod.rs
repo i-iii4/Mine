@@ -9,6 +9,7 @@ mod article_audio_desktop;
 pub mod blocks;
 pub mod channels;
 pub mod clipper_recovery;
+pub mod clipper_setup;
 pub mod conflicts;
 mod freshness;
 pub mod graph;

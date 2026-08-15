@@ -85,6 +85,77 @@ pub fn select_vault(
     Ok(result)
 }
 
+/// What a folder holds, before it becomes a space.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct FolderPreview {
+    pub markdown_files: usize,
+    pub media_files: usize,
+    pub other_files: usize,
+}
+
+/// Look inside a folder without touching it.
+///
+/// Choosing a folder turns everything in it into cards, recursively — pick the
+/// wrong one and a whole document archive becomes a space. Counting first lets
+/// the app say what is about to happen instead of just doing it.
+/// See SPEC_ONBOARDING.md О12.
+#[tauri::command]
+pub fn preview_vault_folder(path: String) -> Result<FolderPreview, CommandError> {
+    let root = PathBuf::from(&path);
+    if !root.is_dir() {
+        return Err(CommandError::Internal(format!("not a folder: {path}")));
+    }
+
+    let mut preview = FolderPreview {
+        markdown_files: 0,
+        media_files: 0,
+        other_files: 0,
+    };
+    count_folder(&root, &mut preview, 0);
+    Ok(preview)
+}
+
+/// Depth is bounded: this runs before the user has committed to anything, and a
+/// deep tree must not make the confirmation itself feel slow.
+const FOLDER_PREVIEW_MAX_DEPTH: usize = 8;
+
+fn count_folder(dir: &Path, preview: &mut FolderPreview, depth: usize) {
+    if depth > FOLDER_PREVIEW_MAX_DEPTH {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(kind) = entry.file_type() else { continue };
+        if kind.is_dir() {
+            if !files::is_ignored_vault_dir(&path) {
+                count_folder(&path, preview, depth + 1);
+            }
+            continue;
+        }
+        if !kind.is_file() {
+            continue;
+        }
+        match path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(str::to_lowercase)
+            .as_deref()
+        {
+            Some("md") => preview.markdown_files += 1,
+            Some(ext) if crate::storage::preview_plan::is_image_ext(ext) => {
+                preview.media_files += 1
+            }
+            Some(ext) if crate::storage::preview_plan::is_video_ext(ext) => {
+                preview.media_files += 1
+            }
+            _ => preview.other_files += 1,
+        }
+    }
+}
+
 /// A space that is bound but not reachable right now.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct UnavailableVault {

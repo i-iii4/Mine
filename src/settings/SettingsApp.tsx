@@ -6,14 +6,16 @@ import { GraphSection } from "./GraphSection";
 import { SpacesSection } from "./SpacesSection";
 import { OrphansSection } from "./OrphansSection";
 import { LayoutSection } from "./LayoutSection";
+import { ClipperSection } from "./ClipperSection";
 
-type SettingsSection = "appearance" | "graph" | "spaces" | "layout" | "orphans";
+type SettingsSection = "appearance" | "graph" | "spaces" | "layout" | "clipper" | "orphans";
 
 const SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: "appearance", label: "Appearance" },
   { id: "graph", label: "Graph" },
   { id: "spaces", label: "Spaces" },
   { id: "layout", label: "Folders" },
+  { id: "clipper", label: "Clipper" },
   { id: "orphans", label: "Orphans" },
 ];
 
@@ -64,6 +66,7 @@ export function SettingsApp() {
           {section === "graph" && <GraphSection />}
           {section === "spaces" && <SpacesSection />}
           {section === "layout" && <LayoutSection />}
+          {section === "clipper" && <ClipperSection />}
           {section === "orphans" && <OrphansSection />}
         </main>
       </div>
