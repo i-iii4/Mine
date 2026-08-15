@@ -18,6 +18,7 @@ use crate::commands::state::{
     VaultState,
 };
 use crate::domain::vault::VaultLayout;
+use crate::storage::clipper_uploads;
 use crate::storage::index;
 use crate::storage::search_engine;
 use crate::storage::{db, files, reconcile};
@@ -677,6 +678,29 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
                     return;
                 }
             };
+            // One-time cleanup of staging directories left by earlier versions,
+            // which kept a full copy of every clipped file forever. Failure is
+            // never fatal: this only reclaims disk space.
+            match clipper_uploads::sweep_committed_pending_uploads(&vault) {
+                Ok(0) => {}
+                Ok(removed) => {
+                    log::info!(
+                        "removed {} committed clipper staging directories for {}",
+                        removed,
+                        path_for_thread
+                    );
+                    append_startup_trace(
+                        &app_for_thread,
+                        "clipper_upload_sweep",
+                        &format!("removed={} path={}", removed, path_for_thread),
+                    );
+                }
+                Err(err) => log::warn!(
+                    "clipper staging sweep failed for {}: {:#}",
+                    path_for_thread,
+                    err
+                ),
+            }
             let preview_updated = match index::backfill_missing_preview_manifest(&conn) {
                 Ok(updated) => updated,
                 Err(err) => {

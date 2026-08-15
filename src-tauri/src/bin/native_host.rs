@@ -968,19 +968,12 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
     }
 
     if let Some(ref upload_id) = pending_upload_to_commit {
-        if let Some(filename) = block
-            .frontmatter
-            .file
-            .as_deref()
-            .or(block.frontmatter.thumbnail.as_deref())
-        {
-            if let Err(e) =
-                clipper_uploads::mark_pending_upload_committed(vault, upload_id, &slug, filename)
-            {
-                warning = Some(format!(
-                    "saved block, but failed to mark upload committed: {e:#}"
-                ));
-            }
+        // The card and its media are on disk now, so the staging copy is pure
+        // duplication — remove it rather than marking it kept.
+        if let Err(e) = clipper_uploads::complete_pending_upload(vault, upload_id) {
+            warning = Some(format!(
+                "saved block, but failed to clean up the staged upload: {e:#}"
+            ));
         }
     }
 

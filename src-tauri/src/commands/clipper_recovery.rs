@@ -106,13 +106,8 @@ pub fn recover_clipper_pending_upload(
         )));
     }
 
-    if let Err(e) = clipper_uploads::mark_pending_upload_committed(
-        &vault,
-        &upload_id,
-        &slug,
-        &finalized.filename,
-    ) {
-        log::warn!("failed to mark pending upload as committed: {e:#}");
+    if let Err(e) = clipper_uploads::complete_pending_upload(&vault, &upload_id) {
+        log::warn!("failed to clean up the recovered staged upload: {e:#}");
     }
     let _ = thumbnails::generate_for_block(&block, &vault);
     index_recovered_block(&app, &vault, &slug)?;
