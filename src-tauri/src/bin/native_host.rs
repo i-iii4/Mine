@@ -769,10 +769,15 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
         Ok(existing) => existing,
         Err(e) => return send_error(&format!("failed to inspect existing vault files: {e}")),
     };
-    let slug = match resolve_slug_conflict(&raw_slug, &existing) {
+    // `name` is the card's display-level file name and the stem every media
+    // file is named after; `slug` is its vault-relative path, which carries the
+    // configured cards folder. Keeping them apart is what lets media stay a
+    // bare wikilink while the card lives in `Cards/`.
+    let name = match resolve_slug_conflict(&raw_slug, &existing) {
         Ok(s) => s,
         Err(e) => return send_error(&format!("{e}")),
     };
+    let slug = vault.new_card_slug(&name);
 
     // Resolve media: pre-uploaded file, data URL, or HTTP download
     let mut media_file = None;
@@ -781,7 +786,7 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
     let mut pending_upload_to_commit = None;
 
     if let Some(ref upload_id) = pending_upload_id {
-        match clipper_uploads::finalize_pending_upload(vault, upload_id, &slug) {
+        match clipper_uploads::finalize_pending_upload(vault, upload_id, &name) {
             Ok(finalized) => {
                 media_file = Some(finalized.filename);
                 pending_upload_to_commit = Some(upload_id.clone());
@@ -798,7 +803,7 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
         // `<slug>.<ext>` here so that the media file basename always matches
         // the resolved block slug — consistent with screenshot and HTTP
         // download paths below.
-        match finalize_uploaded_filename(vault.root(), uploaded, &slug) {
+        match finalize_uploaded_filename(vault, uploaded, &name) {
             Ok(final_name) => {
                 media_file = Some(final_name);
             }
@@ -871,7 +876,7 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
 
         if !raw.trim().is_empty() {
             let page_url = p.url.as_deref().unwrap_or("");
-            localize_body_images(&raw, vault, &slug, page_url)
+            localize_body_images(&raw, vault, &name, page_url)
         } else {
             (raw, Vec::new(), Vec::new())
         }
@@ -1170,10 +1175,11 @@ fn channel_to_block(channel: &Channel) -> Block {
 ///
 /// Phase 18.E: backend is authoritative for the final media filename.
 fn finalize_uploaded_filename(
-    vault_root: &std::path::Path,
+    vault: &VaultLayout,
     uploaded: &str,
     final_stem: &str,
 ) -> Result<String, String> {
+    let vault_root = vault.root();
     let uploaded_normalized = uploaded.replace('\\', "/");
     let uploaded = std::path::Path::new(&uploaded_normalized)
         .file_name()
@@ -1218,12 +1224,19 @@ fn finalize_uploaded_filename(
             .ok_or_else(|| "ran out of collision suffixes".to_string())?;
     }
 
-    if uploaded == candidate {
+    if uploaded == candidate && src == vault.new_media_path(&candidate) {
         return Ok(candidate);
     }
 
-    std::fs::rename(&src, vault_root.join(&candidate))
-        .map_err(|e| format!("failed to rename staged upload to {candidate}: {e}"))?;
+    // The staged file lands at the vault root; its final home is the configured
+    // media folder, so this both renames and relocates in one move.
+    let dest = vault.new_media_path(&candidate);
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create media directory: {e}"))?;
+    }
+    std::fs::rename(&src, &dest)
+        .map_err(|e| format!("failed to move staged upload to {candidate}: {e}"))?;
 
     Ok(candidate)
 }
@@ -2708,7 +2721,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         make_staging(tmp.path(), "upload.jpg", b"image-bytes");
 
-        let result = finalize_uploaded_filename(tmp.path(), "upload.jpg", "Hello World");
+        let result = finalize_uploaded_filename(&VaultLayout::new(tmp.path().to_path_buf()), "upload.jpg", "Hello World");
 
         assert_eq!(result, Ok("Hello World.jpg".to_string()));
         assert!(!tmp.path().join("upload.jpg").exists());
@@ -2719,7 +2732,7 @@ mod tests {
     fn finalize_preserves_extension_including_multi_char() {
         let tmp = TempDir::new().unwrap();
         make_staging(tmp.path(), "upload.webp", b"x");
-        let result = finalize_uploaded_filename(tmp.path(), "upload.webp", "Photo");
+        let result = finalize_uploaded_filename(&VaultLayout::new(tmp.path().to_path_buf()), "upload.webp", "Photo");
         assert_eq!(result, Ok("Photo.webp".to_string()));
     }
 
@@ -2727,7 +2740,7 @@ mod tests {
     fn finalize_preserves_unicode_slug() {
         let tmp = TempDir::new().unwrap();
         make_staging(tmp.path(), "upload.jpg", b"x");
-        let result = finalize_uploaded_filename(tmp.path(), "upload.jpg", "Закат в Токио");
+        let result = finalize_uploaded_filename(&VaultLayout::new(tmp.path().to_path_buf()), "upload.jpg", "Закат в Токио");
         assert_eq!(result, Ok("Закат в Токио.jpg".to_string()));
         assert!(tmp.path().join("Закат в Токио.jpg").exists());
     }
@@ -2736,7 +2749,7 @@ mod tests {
     fn finalize_noop_when_names_already_match() {
         let tmp = TempDir::new().unwrap();
         make_staging(tmp.path(), "Hello.jpg", b"x");
-        let result = finalize_uploaded_filename(tmp.path(), "Hello.jpg", "Hello");
+        let result = finalize_uploaded_filename(&VaultLayout::new(tmp.path().to_path_buf()), "Hello.jpg", "Hello");
         assert_eq!(result, Ok("Hello.jpg".to_string()));
         // Source still exists, not renamed to anything else.
         assert!(tmp.path().join("Hello.jpg").exists());
@@ -2745,7 +2758,7 @@ mod tests {
     #[test]
     fn finalize_errors_when_source_missing() {
         let tmp = TempDir::new().unwrap();
-        let result = finalize_uploaded_filename(tmp.path(), "missing.jpg", "Slug");
+        let result = finalize_uploaded_filename(&VaultLayout::new(tmp.path().to_path_buf()), "missing.jpg", "Slug");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not found"));
     }
@@ -2759,7 +2772,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         make_staging(tmp.path(), "upload.jpg", b"new");
         make_staging(tmp.path(), "Hello.jpg", b"existing");
-        let result = finalize_uploaded_filename(tmp.path(), "upload.jpg", "Hello");
+        let result = finalize_uploaded_filename(&VaultLayout::new(tmp.path().to_path_buf()), "upload.jpg", "Hello");
         assert_eq!(result, Ok("Hello (2).jpg".to_string()));
         // Original is left intact.
         assert_eq!(
@@ -2781,7 +2794,7 @@ mod tests {
         make_staging(tmp.path(), "Hello.jpg", b"x");
         make_staging(tmp.path(), "Hello (2).jpg", b"x");
         make_staging(tmp.path(), "Hello (3).jpg", b"x");
-        let result = finalize_uploaded_filename(tmp.path(), "upload.jpg", "Hello");
+        let result = finalize_uploaded_filename(&VaultLayout::new(tmp.path().to_path_buf()), "upload.jpg", "Hello");
         assert_eq!(result, Ok("Hello (4).jpg".to_string()));
     }
 
@@ -2789,7 +2802,7 @@ mod tests {
     fn finalize_handles_file_without_extension() {
         let tmp = TempDir::new().unwrap();
         make_staging(tmp.path(), "upload", b"x");
-        let result = finalize_uploaded_filename(tmp.path(), "upload", "Plain");
+        let result = finalize_uploaded_filename(&VaultLayout::new(tmp.path().to_path_buf()), "upload", "Plain");
         assert_eq!(result, Ok("Plain".to_string()));
         assert!(tmp.path().join("Plain").exists());
     }

@@ -17,7 +17,7 @@ use crate::commands::state::{
     current_vault_layout, schedule_preview_reconcile, AppState, CommandError, SweepGuard,
     VaultState,
 };
-use crate::domain::vault::VaultLayout;
+use crate::domain::vault::{VaultLayout, VaultWriteLayout};
 use crate::storage::clipper_uploads;
 use crate::storage::index;
 use crate::storage::search_engine;
@@ -83,6 +83,88 @@ pub fn select_vault(
         &format!("done path={} indexed={}", path, result.indexed),
     );
     Ok(result)
+}
+
+/// The write layout of the currently open space.
+#[tauri::command]
+pub fn get_vault_write_layout(
+    state: State<'_, AppState>,
+) -> Result<VaultWriteLayoutDto, CommandError> {
+    let vault_state = state
+        .vault_state
+        .lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+    Ok(VaultWriteLayoutDto::from(vs.vault.write_layout()))
+}
+
+/// Choose which folders new cards, media and collections are written into.
+///
+/// Existing files are never moved: this governs writes from here on. Reading
+/// stays recursive, so whatever is already on disk keeps working.
+#[tauri::command]
+pub fn set_vault_write_layout(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    layout: VaultWriteLayoutDto,
+) -> Result<VaultWriteLayoutDto, CommandError> {
+    let requested = VaultWriteLayout {
+        cards: layout.cards,
+        media: layout.media,
+        collections: layout.collections,
+    }
+    .validate()
+    .map_err(|e| CommandError::Internal(e.to_string()))?;
+
+    let mut vault_state = state
+        .vault_state
+        .lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+    let vs = vault_state.as_mut().ok_or(CommandError::NoVault)?;
+    save_write_layout(&vs.vault, &requested)?;
+    vs.vault = vs.vault.clone().with_write_layout(requested.clone());
+    let dto = VaultWriteLayoutDto::from(&requested);
+    let _ = app.emit("vault-write-layout-changed", dto.clone());
+    Ok(dto)
+}
+
+/// Create the standard folders in the current space and adopt them for writes.
+#[tauri::command]
+pub fn organize_vault_layout(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<VaultWriteLayoutDto, CommandError> {
+    let standard = VaultWriteLayout::standard();
+    {
+        let vault_state = state
+            .vault_state
+            .lock()
+            .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+        let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+        for folder in [&standard.cards, &standard.media, &standard.collections] {
+            std::fs::create_dir_all(vs.vault.root().join(folder)).map_err(|e| {
+                CommandError::Internal(format!("failed to create {folder}: {e}"))
+            })?;
+        }
+    }
+    set_vault_write_layout(app, state, VaultWriteLayoutDto::from(&standard))
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct VaultWriteLayoutDto {
+    pub cards: String,
+    pub media: String,
+    pub collections: String,
+}
+
+impl From<&VaultWriteLayout> for VaultWriteLayoutDto {
+    fn from(value: &VaultWriteLayout) -> Self {
+        Self {
+            cards: value.cards.clone(),
+            media: value.media.clone(),
+            collections: value.collections.clone(),
+        }
+    }
 }
 
 /// Open a vault snapshot without mutating persisted config.
@@ -1090,10 +1172,53 @@ fn resolve_runtime_vault_layout(app: &AppHandle, root: &Path) -> Result<VaultLay
         .map_err(|e| CommandError::Internal(format!("failed to create Mine metadata dir: {e}")))?;
     let vault_id = ensure_vault_id(&base)?;
     let derived_root = derived_store_root(app, &vault_id)?;
-    Ok(VaultLayout::with_derived_root(
-        root.to_path_buf(),
-        derived_root,
-    ))
+    let write_layout = load_write_layout(&base);
+    Ok(VaultLayout::with_derived_root(root.to_path_buf(), derived_root)
+        .with_write_layout(write_layout))
+}
+
+/// Read the vault's saved write layout, falling back to what the folder
+/// already looks like. A vault that was never configured keeps behaving
+/// exactly as before: standard folders if it has them, flat otherwise.
+fn load_write_layout(vault: &VaultLayout) -> VaultWriteLayout {
+    let Ok(raw) = std::fs::read_to_string(vault.write_layout_path()) else {
+        return VaultWriteLayout::detect(vault.root());
+    };
+    let Ok(stored) = serde_json::from_str::<StoredWriteLayout>(&raw) else {
+        log::warn!("ignoring unreadable write layout in {}", vault.root().display());
+        return VaultWriteLayout::detect(vault.root());
+    };
+    VaultWriteLayout {
+        cards: stored.cards,
+        media: stored.media,
+        collections: stored.collections,
+    }
+    .validate()
+    .unwrap_or_else(|error| {
+        log::warn!("ignoring invalid write layout: {error}");
+        VaultWriteLayout::detect(vault.root())
+    })
+}
+
+fn save_write_layout(vault: &VaultLayout, layout: &VaultWriteLayout) -> Result<(), CommandError> {
+    let stored = StoredWriteLayout {
+        cards: layout.cards.clone(),
+        media: layout.media.clone(),
+        collections: layout.collections.clone(),
+    };
+    let raw = serde_json::to_vec_pretty(&stored)
+        .map_err(|e| CommandError::Internal(format!("failed to serialize write layout: {e}")))?;
+    std::fs::create_dir_all(vault.mine_dir())
+        .map_err(|e| CommandError::Internal(format!("failed to create Mine metadata dir: {e}")))?;
+    files::write_atomically(&vault.write_layout_path(), &raw)
+        .map_err(|e| CommandError::Internal(format!("failed to save write layout: {e:#}")))
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct StoredWriteLayout {
+    cards: String,
+    media: String,
+    collections: String,
 }
 
 fn ensure_vault_id(vault: &VaultLayout) -> Result<String, CommandError> {

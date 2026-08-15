@@ -5,13 +5,15 @@ import { AppearanceSection } from "./AppearanceSection";
 import { GraphSection } from "./GraphSection";
 import { SpacesSection } from "./SpacesSection";
 import { OrphansSection } from "./OrphansSection";
+import { LayoutSection } from "./LayoutSection";
 
-type SettingsSection = "appearance" | "graph" | "spaces" | "orphans";
+type SettingsSection = "appearance" | "graph" | "spaces" | "layout" | "orphans";
 
 const SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: "appearance", label: "Appearance" },
   { id: "graph", label: "Graph" },
   { id: "spaces", label: "Spaces" },
+  { id: "layout", label: "Folders" },
   { id: "orphans", label: "Orphans" },
 ];
 
@@ -61,6 +63,7 @@ export function SettingsApp() {
           {section === "appearance" && <AppearanceSection />}
           {section === "graph" && <GraphSection />}
           {section === "spaces" && <SpacesSection />}
+          {section === "layout" && <LayoutSection />}
           {section === "orphans" && <OrphansSection />}
         </main>
       </div>

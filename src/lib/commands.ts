@@ -24,6 +24,7 @@ import type {
   TaxonomySnapshot,
   VaultStats,
   VaultOpenResult,
+  VaultWriteLayoutDto,
   CreateBlockParams,
   ArenaChannelInfo,
   ImportChannelRequest,
@@ -420,6 +421,19 @@ export const sweepVaultThumbnails = () =>
 
 export const listPendingThumbUpgrades = () =>
   invoke<ThumbUpgradeRequest[]>("list_pending_thumb_upgrades");
+
+/** Folders new cards, media and collections are written into.
+ *  Reading is always recursive; this governs writes only.
+ *  See SPEC_VAULT_LIFECYCLE.md П1–П4. */
+export const getVaultWriteLayout = () =>
+  invoke<VaultWriteLayoutDto>("get_vault_write_layout");
+
+export const setVaultWriteLayout = (layout: VaultWriteLayoutDto) =>
+  invoke<VaultWriteLayoutDto>("set_vault_write_layout", { layout });
+
+/** Create the standard folders in this space and write into them from now on. */
+export const organizeVaultLayout = () =>
+  invoke<VaultWriteLayoutDto>("organize_vault_layout");
 
 // Vault conflicts (Phase 18.G.4 — see SPEC_IDENTITY_ROBUSTNESS.md)
 export interface VaultConflictItem {

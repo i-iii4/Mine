@@ -20,9 +20,119 @@ pub enum VaultError {
 
     #[error("invalid slug: {reason}")]
     InvalidSlug { reason: String },
+
+    #[error("invalid write layout: {reason}")]
+    InvalidWriteLayout { reason: String },
+}
+
+fn join_slug(dir: &str, name: &str) -> String {
+    if dir.is_empty() {
+        name.to_string()
+    } else {
+        format!("{dir}/{name}")
+    }
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────────
+
+/// Folders new files are written into, relative to the vault root.
+///
+/// Reading never depends on this: the scanner walks the whole vault and a
+/// card's identity is its path, wherever it sits. This governs writes only —
+/// where the clipper, the app and new collection documents put new files.
+///
+/// An empty string means the vault root, which is both the historical layout
+/// and a legitimate configuration: a user may point all three at the root and
+/// keep everything flat. See SPEC_VAULT_LIFECYCLE.md П1–П4.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VaultWriteLayout {
+    pub cards: String,
+    pub media: String,
+    pub collections: String,
+}
+
+pub const DEFAULT_CARDS_DIR: &str = "Cards";
+pub const DEFAULT_MEDIA_DIR: &str = "Media";
+pub const DEFAULT_COLLECTIONS_DIR: &str = "Collections";
+
+impl VaultWriteLayout {
+    /// The standard layout for a new vault: three folders by role.
+    pub fn standard() -> Self {
+        Self {
+            cards: DEFAULT_CARDS_DIR.to_string(),
+            media: DEFAULT_MEDIA_DIR.to_string(),
+            collections: DEFAULT_COLLECTIONS_DIR.to_string(),
+        }
+    }
+
+    /// Everything at the vault root — how every vault behaved before this
+    /// contract, and the fallback for a flat vault that was never migrated.
+    pub fn flat() -> Self {
+        Self {
+            cards: String::new(),
+            media: String::new(),
+            collections: String::new(),
+        }
+    }
+
+    /// Pick the layout an existing vault already follows.
+    ///
+    /// A vault that has the standard folders keeps using them; anything else
+    /// stays flat, so opening someone's plain Obsidian vault never starts
+    /// scattering files into folders it does not have.
+    pub fn detect(root: &Path) -> Self {
+        let standard = Self::standard();
+        let has_all = root.join(&standard.cards).is_dir()
+            && root.join(&standard.media).is_dir()
+            && root.join(&standard.collections).is_dir();
+        if has_all {
+            standard
+        } else {
+            Self::flat()
+        }
+    }
+
+    fn normalize_segment(value: &str) -> String {
+        let trimmed = value.trim();
+        // A bare slash means the vault root. Anything else keeps its leading
+        // slash so `validate` can reject it as absolute instead of silently
+        // turning `/etc` into a relative folder inside the vault.
+        if trimmed.chars().all(|c| c == '/') {
+            return String::new();
+        }
+        trimmed.trim_end_matches('/').to_string()
+    }
+
+    /// Reject anything that could escape the vault or hide from the scanner.
+    pub fn validate(&self) -> Result<Self, VaultError> {
+        let mut normalized = Self {
+            cards: Self::normalize_segment(&self.cards),
+            media: Self::normalize_segment(&self.media),
+            collections: Self::normalize_segment(&self.collections),
+        };
+        for value in [&mut normalized.cards, &mut normalized.media, &mut normalized.collections] {
+            if value.is_empty() {
+                continue;
+            }
+            let path = Path::new(value.as_str());
+            if path.is_absolute()
+                || path
+                    .components()
+                    .any(|component| !matches!(component, Component::Normal(_)))
+            {
+                return Err(VaultError::InvalidWriteLayout {
+                    reason: format!("write folder must stay inside the vault: {value}"),
+                });
+            }
+            if value.starts_with('.') {
+                return Err(VaultError::InvalidWriteLayout {
+                    reason: format!("write folder must not be hidden: {value}"),
+                });
+            }
+        }
+        Ok(normalized)
+    }
+}
 
 /// Computes paths within a vault based on its root directory.
 /// Does NOT access the filesystem.
@@ -30,21 +140,85 @@ pub enum VaultError {
 pub struct VaultLayout {
     root: PathBuf,
     derived_root: PathBuf,
+    write_layout: VaultWriteLayout,
 }
 
 impl VaultLayout {
     pub fn new(root: PathBuf) -> Self {
         let derived_root = root.join(".mine");
-        Self { root, derived_root }
+        let write_layout = VaultWriteLayout::detect(&root);
+        Self {
+            root,
+            derived_root,
+            write_layout,
+        }
     }
 
     pub fn with_derived_root(root: PathBuf, derived_root: PathBuf) -> Self {
-        Self { root, derived_root }
+        let write_layout = VaultWriteLayout::detect(&root);
+        Self {
+            root,
+            derived_root,
+            write_layout,
+        }
+    }
+
+    /// Replace the write layout, e.g. from the vault's saved configuration.
+    pub fn with_write_layout(mut self, write_layout: VaultWriteLayout) -> Self {
+        self.write_layout = write_layout;
+        self
+    }
+
+    pub fn write_layout(&self) -> &VaultWriteLayout {
+        &self.write_layout
+    }
+
+    fn write_dir(&self, segment: &str) -> PathBuf {
+        if segment.is_empty() {
+            self.root.clone()
+        } else {
+            self.root.join(segment)
+        }
+    }
+
+    /// Directory new cards are written into.
+    pub fn cards_dir(&self) -> PathBuf {
+        self.write_dir(&self.write_layout.cards)
+    }
+
+    /// Directory new media files are written into.
+    pub fn media_dir(&self) -> PathBuf {
+        self.write_dir(&self.write_layout.media)
+    }
+
+    /// Directory new collection documents are written into.
+    pub fn collections_dir(&self) -> PathBuf {
+        self.write_dir(&self.write_layout.collections)
     }
 
     /// The vault root directory.
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Slug for a newly created card with the given base name.
+    ///
+    /// A card's identity is its vault-relative path, so the write layout is
+    /// applied here rather than at write time: `Cards/Note` under the standard
+    /// layout, plain `Note` on a flat vault. Everything downstream — writing,
+    /// indexing, resolving — keeps treating the slug as the path it always was.
+    pub fn new_card_slug(&self, name: &str) -> String {
+        join_slug(&self.write_layout.cards, name)
+    }
+
+    /// Slug for a newly created collection document.
+    pub fn new_collection_slug(&self, name: &str) -> String {
+        join_slug(&self.write_layout.collections, name)
+    }
+
+    /// Path for a newly written media file with the given file name.
+    pub fn new_media_path(&self, file_name: &str) -> PathBuf {
+        self.media_dir().join(file_name)
     }
 
     /// Path to a block's .md file: `root/<slug>.md`.
@@ -64,7 +238,13 @@ impl VaultLayout {
         self.root.join(format!("{}.md", slug))
     }
 
-    /// Path to a block's media file: `root/<slug>.<ext>`.
+    /// Path to a block's media file, named after the block and placed in the
+    /// configured media folder.
+    ///
+    /// The file name is the block's base name, never its folder path: media is
+    /// referenced from frontmatter as a bare wikilink, so `Cards/Note` owns
+    /// `Media/Note.jpg`, not `Media/Cards/Note.jpg`. On a flat vault the media
+    /// folder is the root and this is the historical `root/<slug>.<ext>`.
     ///
     /// Panics in debug builds if slug fails validation.
     /// Call `validate_slug()` at IPC boundaries before using this.
@@ -74,13 +254,22 @@ impl VaultLayout {
             "invalid slug passed to media_path: {:?}",
             slug
         );
+        let base = slug.rsplit('/').next().unwrap_or(slug);
         let ext = ext.strip_prefix('.').unwrap_or(ext);
-        self.root.join(format!("{}.{}", slug, ext))
+        self.media_dir().join(format!("{}.{}", base, ext))
     }
 
     /// Path to the synced Mine metadata directory.
     pub fn mine_dir(&self) -> PathBuf {
         self.root.join(".mine")
+    }
+
+    /// Path to the saved write-layout configuration.
+    ///
+    /// Lives inside the vault so it travels with the folder: the same space
+    /// opened on another machine keeps writing into the same folders.
+    pub fn write_layout_path(&self) -> PathBuf {
+        self.mine_dir().join("layout.json")
     }
 
     /// Path to the legacy `.arena/` directory.
@@ -620,6 +809,105 @@ mod tests {
         // A single dot is also suspicious but currently only ".." is blocked.
         // "." is blocked explicitly.
         assert!(validate_slug(".").is_err());
+    }
+
+    // ── write layout ────────────────────────────────────────────────────
+
+    #[test]
+    fn detects_the_standard_layout_only_when_all_three_folders_exist() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            VaultWriteLayout::detect(dir.path()),
+            VaultWriteLayout::flat()
+        );
+
+        std::fs::create_dir_all(dir.path().join("Cards")).unwrap();
+        std::fs::create_dir_all(dir.path().join("Media")).unwrap();
+        // Two of three is not the standard layout: a vault that merely happens
+        // to have a `Cards` folder must not start scattering files.
+        assert_eq!(
+            VaultWriteLayout::detect(dir.path()),
+            VaultWriteLayout::flat()
+        );
+
+        std::fs::create_dir_all(dir.path().join("Collections")).unwrap();
+        assert_eq!(
+            VaultWriteLayout::detect(dir.path()),
+            VaultWriteLayout::standard()
+        );
+    }
+
+    #[test]
+    fn new_slugs_carry_the_configured_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let layout = VaultLayout::new(dir.path().to_path_buf())
+            .with_write_layout(VaultWriteLayout::standard());
+
+        assert_eq!(layout.new_card_slug("Note"), "Cards/Note");
+        assert_eq!(layout.new_collection_slug("Каталоги"), "Collections/Каталоги");
+        assert_eq!(layout.new_media_path("Note.jpg"), dir.path().join("Media/Note.jpg"));
+    }
+
+    #[test]
+    fn a_flat_layout_keeps_the_historical_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let layout = VaultLayout::new(dir.path().to_path_buf())
+            .with_write_layout(VaultWriteLayout::flat());
+
+        assert_eq!(layout.new_card_slug("Note"), "Note");
+        assert_eq!(layout.new_media_path("Note.jpg"), dir.path().join("Note.jpg"));
+        assert_eq!(layout.media_path("Note", "jpg"), dir.path().join("Note.jpg"));
+    }
+
+    #[test]
+    fn media_is_named_after_the_card_not_its_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let layout = VaultLayout::new(dir.path().to_path_buf())
+            .with_write_layout(VaultWriteLayout::standard());
+
+        // A card at `Cards/Note` owns `Media/Note.jpg`: the frontmatter
+        // reference is a bare wikilink, so nesting must not leak into it.
+        assert_eq!(
+            layout.media_path("Cards/Note", "jpg"),
+            dir.path().join("Media/Note.jpg")
+        );
+    }
+
+    #[test]
+    fn all_three_may_point_at_the_root() {
+        let layout = VaultWriteLayout {
+            cards: String::new(),
+            media: "  ".to_string(),
+            collections: "/".to_string(),
+        }
+        .validate()
+        .unwrap();
+        assert_eq!(layout, VaultWriteLayout::flat());
+    }
+
+    #[test]
+    fn write_layout_cannot_escape_the_vault_or_hide() {
+        for bad in ["../outside", "/etc", "Cards/../..", ".hidden"] {
+            let result = VaultWriteLayout {
+                cards: bad.to_string(),
+                media: "Media".to_string(),
+                collections: "Collections".to_string(),
+            }
+            .validate();
+            assert!(result.is_err(), "expected rejection for {bad}");
+        }
+    }
+
+    #[test]
+    fn nested_write_folders_are_allowed() {
+        let layout = VaultWriteLayout {
+            cards: "Mine/Cards".to_string(),
+            media: "Mine/Media".to_string(),
+            collections: "Mine/Collections".to_string(),
+        }
+        .validate()
+        .unwrap();
+        assert_eq!(layout.cards, "Mine/Cards");
     }
 
     // ── resolve_slug_conflict ───────────────────────────────────────────

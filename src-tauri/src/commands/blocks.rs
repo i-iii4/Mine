@@ -492,10 +492,11 @@ pub fn create_block(
 
     // Generate unique slug across both the index and existing vault files.
     let raw_slug = crate::domain::block::suggest_slug(title.as_deref(), url.as_deref());
-    let slug = resolve_unique_block_slug(&vs.conn, &vs.vault, &raw_slug, media_ext.as_deref())?;
-
-    // Determine media file name
-    let media_file = media_ext.as_ref().map(|ext| format!("{}.{}", slug, ext));
+    // `name` is the free file name; `slug` adds the configured cards folder.
+    // Media keeps the bare name so its frontmatter reference stays a wikilink.
+    let name = resolve_unique_block_slug(&vs.conn, &vs.vault, &raw_slug, media_ext.as_deref())?;
+    let media_file = media_ext.as_ref().map(|ext| format!("{}.{}", name, ext));
+    let slug = vs.vault.new_card_slug(&name);
 
     let now = crate::commands::state::now_iso8601();
     let saved_at = DateTime::new(&now).map_err(|e| CommandError::Internal(e.to_string()))?;

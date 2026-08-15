@@ -634,5 +634,8 @@ fn collections_home(conn: &rusqlite::Connection, vault: &VaultLayout) -> std::pa
             }
         }
     }
-    vault.root().to_path_buf()
+    // No collections yet: fall back to the vault's configured collections
+    // folder, which is `Collections/` for a standard layout and the root for a
+    // flat vault. See SPEC_VAULT_LIFECYCLE.md П1–П4.
+    vault.collections_dir()
 }

@@ -122,7 +122,7 @@ pub fn finalize_pending_upload(
 ) -> Result<FinalizedPendingUpload> {
     let manifest = load_pending_upload(vault, upload_id)?;
     if let (Some(slug), Some(file)) = (&manifest.committed_slug, &manifest.committed_file) {
-        if slug == final_stem && vault.root().join(file).exists() {
+        if slug == final_stem && media_exists_in_vault(vault, file) {
             return Ok(FinalizedPendingUpload {
                 filename: file.clone(),
             });
@@ -138,8 +138,16 @@ pub fn finalize_pending_upload(
         ));
     }
 
-    let filename = dedupe_final_filename(vault.root(), &manifest.payload_filename, final_stem)?;
-    let dest = vault.root().join(&filename);
+    // Names are deduplicated against the whole vault, but the file is written
+    // into the configured media folder: the frontmatter reference is a bare
+    // name either way, exactly like an Obsidian wikilink.
+    let filename = dedupe_final_filename(vault, &manifest.payload_filename, final_stem)?;
+    let dest = vault.new_media_path(&filename);
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!("failed to create media directory: {}", parent.display())
+        })?;
+    }
     copy_create_new(&payload_path, &dest)
         .with_context(|| format!("failed to copy pending upload to {}", dest.display()))?;
 
@@ -290,7 +298,12 @@ fn sanitize_payload_filename(requested: &str) -> Result<String> {
     Ok(file_name.to_string())
 }
 
-fn dedupe_final_filename(vault_root: &Path, uploaded: &str, final_stem: &str) -> Result<String> {
+/// A free file name for the finalized media.
+///
+/// Collisions are checked across the whole vault, not just the destination
+/// folder: references are bare names resolved by basename, so two files with
+/// the same name in different folders would make every link to them ambiguous.
+fn dedupe_final_filename(vault: &VaultLayout, uploaded: &str, final_stem: &str) -> Result<String> {
     let sanitized = sanitize_payload_filename(uploaded)?;
     let ext = Path::new(&sanitized)
         .extension()
@@ -306,7 +319,7 @@ fn dedupe_final_filename(vault_root: &Path, uploaded: &str, final_stem: &str) ->
 
     let mut candidate = build_name(final_stem);
     let mut counter: u32 = 2;
-    while vault_root.join(&candidate).exists() {
+    while media_exists_in_vault(vault, &candidate) {
         candidate = build_name(&format!("{final_stem} ({counter})"));
         counter = counter
             .checked_add(1)
