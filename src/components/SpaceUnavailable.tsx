@@ -56,7 +56,9 @@ export function SpaceUnavailable({ path, onReopened, onForgotten }: SpaceUnavail
 
   return (
     <div
-      className="flex h-screen w-screen items-center justify-center bg-background"
+      // Fills its container rather than the viewport: the app gives it the
+      // whole window, the design-system showcase gives it a box.
+      className="flex size-full min-h-80 items-center justify-center bg-background"
       data-space-unavailable=""
     >
       <div className="flex max-w-md flex-col items-center gap-6 text-center">

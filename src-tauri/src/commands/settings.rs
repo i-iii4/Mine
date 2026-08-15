@@ -18,7 +18,7 @@ use crate::commands::state::{AppState, CommandError, VaultState};
 use crate::commands::vault::{derived_store_root, load_config, write_config};
 use crate::domain::block::{Block, BlockType, DateTime, Frontmatter};
 use crate::domain::vault::VaultLayout;
-use crate::storage::{files, index, media_refs, preview_plan, thumbnails};
+use crate::storage::{files, index, media_dimensions, media_refs, preview_plan, thumbnails};
 
 const SETTINGS_WINDOW_LABEL: &str = "settings";
 
@@ -197,11 +197,19 @@ pub struct SpaceStats {
     /// From the space's local derived index; `None` when the space has never
     /// been opened (no vault-id / no index) or the index predates `card_kind`.
     pub element_count: Option<u64>,
+    /// Files whose contents iCloud is currently holding rather than keeping on
+    /// this Mac. The number behind the settings explanation (SPEC_CLOUD_STORAGE.md Х20).
+    pub offloaded_count: u64,
 }
 
-/// Stat-only top-level scan: counts and sizes come from directory metadata,
-/// file contents are never read — an iCloud vault with dataless files must
-/// not be forced to download anything (SPEC_SETTINGS_WINDOW.md Р-3/Р-8).
+/// Stat-only scan of the whole space: counts and sizes come from directory
+/// metadata, file contents are never read — an iCloud vault with dataless
+/// files must not be forced to download anything
+/// (SPEC_SETTINGS_WINDOW.md Р-3/Р-8).
+///
+/// The walk goes into subfolders because a space is no longer flat: with the
+/// standard layout every card is under `Cards/` and every media file under
+/// `Media/`, so a top-level scan would report a space full of files as empty.
 pub(crate) fn scan_space_files(root: &Path) -> Result<SpaceStats, CommandError> {
     let mut stats = SpaceStats {
         file_count: 0,
@@ -209,12 +217,34 @@ pub(crate) fn scan_space_files(root: &Path) -> Result<SpaceStats, CommandError> 
         media_count: 0,
         total_bytes: 0,
         element_count: None,
+        offloaded_count: 0,
     };
+    // Fails loudly for the root only: an unreadable subfolder degrades its own
+    // numbers, an unreadable space is an error worth showing.
     let entries = std::fs::read_dir(root).map_err(|e| CommandError::Internal(e.to_string()))?;
+    scan_space_dir(entries, &mut stats, 0);
+    Ok(stats)
+}
+
+/// Deep enough for any sane arrangement of folders, shallow enough that a
+/// symlink loop or a mounted archive cannot hang the settings window.
+const SPACE_SCAN_MAX_DEPTH: usize = 8;
+
+fn scan_space_dir(entries: std::fs::ReadDir, stats: &mut SpaceStats, depth: usize) {
     for entry in entries.flatten() {
         let Ok(file_type) = entry.file_type() else {
             continue;
         };
+        let path = entry.path();
+        if file_type.is_dir() {
+            if depth >= SPACE_SCAN_MAX_DEPTH || files::is_ignored_vault_dir(&path) {
+                continue;
+            }
+            if let Ok(nested) = std::fs::read_dir(&path) {
+                scan_space_dir(nested, stats, depth + 1);
+            }
+            continue;
+        }
         if !file_type.is_file() {
             continue;
         }
@@ -234,8 +264,10 @@ pub(crate) fn scan_space_files(root: &Path) -> Result<SpaceStats, CommandError> 
             stats.media_count += 1;
         }
         stats.total_bytes += entry.metadata().ok().map(|m| m.len()).unwrap_or(0);
+        if media_dimensions::is_content_offloaded(&path) {
+            stats.offloaded_count += 1;
+        }
     }
-    Ok(stats)
 }
 
 /// Element count from a space's local index, opened read-only. Channels are
@@ -345,24 +377,40 @@ fn is_media_ext(ext: &str) -> bool {
     preview_plan::is_image_ext(ext) || preview_plan::is_video_ext(ext)
 }
 
-fn scan_orphans(vs: &VaultState) -> Result<Vec<OrphanMedia>, CommandError> {
-    let referenced = referenced_media_file_names(vs)?;
-
-    let mut orphans = Vec::new();
-    let entries =
-        std::fs::read_dir(vs.vault.root()).map_err(|e| CommandError::Internal(e.to_string()))?;
-    for entry in entries.flatten() {
+/// Every media file in the space, as a vault-relative path plus its metadata.
+///
+/// Stat-only, like the space scan: an orphan listing must never pull a file
+/// down from iCloud just to say it is unreferenced.
+fn collect_media_files(
+    root: &Path,
+    relative: &Path,
+    depth: usize,
+) -> std::io::Result<Vec<(String, std::fs::Metadata)>> {
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(root.join(relative))?.flatten() {
         let Ok(file_type) = entry.file_type() else {
             continue;
         };
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') {
+            continue;
+        }
+        let child = relative.join(&name);
+        if file_type.is_dir() {
+            if depth >= SPACE_SCAN_MAX_DEPTH || files::is_ignored_vault_dir(&entry.path()) {
+                continue;
+            }
+            // An unreadable subfolder contributes nothing rather than failing
+            // the whole listing.
+            if let Ok(nested) = collect_media_files(root, &child, depth + 1) {
+                found.extend(nested);
+            }
+            continue;
+        }
         if !file_type.is_file() {
             continue;
         }
-        let file_name = entry.file_name().to_string_lossy().to_string();
-        if file_name.starts_with('.') {
-            continue;
-        }
-        let ext = Path::new(&file_name)
+        let ext = Path::new(&name)
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("")
@@ -370,10 +418,34 @@ fn scan_orphans(vs: &VaultState) -> Result<Vec<OrphanMedia>, CommandError> {
         if !is_media_ext(&ext) {
             continue;
         }
-        if referenced.contains(&nfc(&file_name)) {
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        found.push((child.to_string_lossy().to_string(), metadata));
+    }
+    Ok(found)
+}
+
+/// Media references are accounted for by file name, wherever the file sits.
+fn basename_of(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
+fn scan_orphans(vs: &VaultState) -> Result<Vec<OrphanMedia>, CommandError> {
+    let referenced = referenced_media_file_names(vs)?;
+
+    let mut orphans = Vec::new();
+    // Subfolders included: with the standard layout every media file lives
+    // under `Media/`, so a root-only scan reported no orphans at all and the
+    // whole section quietly stopped working. Names are vault-relative for the
+    // same reason — a bare basename cannot address a file in a folder.
+    let entries = collect_media_files(vs.vault.root(), Path::new(""), 0)
+        .map_err(|e| CommandError::Internal(e.to_string()))?;
+    for (file_name, metadata) in entries {
+        if referenced.contains(&nfc(basename_of(&file_name))) {
             continue;
         }
-        let metadata = entry.metadata().ok();
+        let metadata = Some(metadata);
         orphans.push(OrphanMedia {
             size_bytes: metadata.as_ref().map(|m| m.len()).unwrap_or(0),
             modified_secs: metadata
@@ -398,20 +470,36 @@ pub fn list_orphan_media(state: State<'_, AppState>) -> Result<Vec<OrphanMedia>,
     scan_orphans(vs)
 }
 
-/// A safe orphan operand: a plain top-level file name, currently an orphan.
+/// A safe orphan operand: a vault-relative media path, currently an orphan.
+///
+/// The operand crosses the IPC boundary and ends in a delete, so it is checked
+/// as untrusted input: no absolute paths, no `..`, no hidden segments, nothing
+/// that is not media, nothing a block still references.
 fn validate_orphan_operand(
     file_name: &str,
     referenced: &BTreeSet<String>,
     vault_root: &Path,
 ) -> bool {
-    if file_name.is_empty()
-        || file_name.starts_with('.')
-        || file_name.contains('/')
-        || file_name.contains('\\')
-    {
+    if file_name.is_empty() || file_name.contains('\\') {
         return false;
     }
-    let ext = Path::new(file_name)
+    let candidate = Path::new(file_name);
+    if candidate.is_absolute() {
+        return false;
+    }
+    for component in candidate.components() {
+        match component {
+            std::path::Component::Normal(segment) => {
+                if segment.to_string_lossy().starts_with('.') {
+                    return false;
+                }
+            }
+            // CurDir, ParentDir, RootDir, Prefix — none of them belong in a
+            // path the webview handed us.
+            _ => return false,
+        }
+    }
+    let ext = candidate
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
@@ -419,7 +507,7 @@ fn validate_orphan_operand(
     if !is_media_ext(&ext) {
         return false;
     }
-    if referenced.contains(&nfc(file_name)) {
+    if referenced.contains(&nfc(basename_of(file_name))) {
         return false;
     }
     vault_root.join(file_name).is_file()
@@ -719,23 +807,86 @@ mod tests {
     }
 
     #[test]
-    fn space_scan_counts_top_level_files_by_kind() {
+    fn orphan_scan_reaches_media_folder_and_addresses_it_by_path() {
+        let (root, _derived, vs) = make_vault();
+        // Standard layout: nothing the user made sits at the root.
+        std::fs::create_dir_all(root.path().join("Media")).unwrap();
+        std::fs::write(root.path().join("Media").join("loose.jpg"), b"x").unwrap();
+        std::fs::write(root.path().join("Media").join("used.jpg"), b"x").unwrap();
+        write_block_with_media(&vs, "owner", "used.jpg");
+
+        let orphans = scan_orphans(&vs).expect("scan");
+        let names: Vec<_> = orphans.iter().map(|o| o.file_name.as_str()).collect();
+        assert_eq!(names, vec!["Media/loose.jpg"]);
+
+        // And that path is a usable operand, not just a label.
+        let result = delete_orphan_media_inner(&vs, vec!["Media/loose.jpg".into()]).expect("delete");
+        assert_eq!(result.deleted, vec!["Media/loose.jpg".to_string()]);
+        assert!(!root.path().join("Media").join("loose.jpg").exists());
+    }
+
+    #[test]
+    fn orphan_operand_rejects_escapes_and_hidden_segments() {
+        let (root, _derived, vs) = make_vault();
+        std::fs::create_dir_all(root.path().join(".mine")).unwrap();
+        std::fs::write(root.path().join(".mine").join("secret.jpg"), b"x").unwrap();
+        std::fs::write(root.path().join("plain.jpg"), b"x").unwrap();
+
+        let result = delete_orphan_media_inner(
+            &vs,
+            vec![
+                "Media/../../escape.jpg".into(),
+                "/etc/passwd.jpg".into(),
+                ".mine/secret.jpg".into(),
+                "./plain.jpg".into(),
+            ],
+        )
+        .expect("delete");
+
+        assert!(result.deleted.is_empty());
+        assert_eq!(result.skipped.len(), 4);
+        assert!(root.path().join(".mine").join("secret.jpg").exists());
+        assert!(root.path().join("plain.jpg").exists());
+    }
+
+    #[test]
+    fn space_scan_counts_files_by_kind_across_folders() {
         let (root, _derived, _vs) = make_vault();
         std::fs::write(root.path().join("note.md"), b"12345").unwrap();
-        std::fs::write(root.path().join("photo.jpg"), b"123").unwrap();
-        std::fs::write(root.path().join("clip.mp4"), b"1234").unwrap();
         std::fs::write(root.path().join("misc.txt"), b"12").unwrap();
         std::fs::write(root.path().join(".DS_Store"), b"x").unwrap();
-        std::fs::create_dir(root.path().join("subdir")).unwrap();
-        std::fs::write(root.path().join("subdir").join("inner.md"), b"y").unwrap();
+        // The standard layout puts nothing at the root: a scan that stopped
+        // there would report a full space as empty.
+        std::fs::create_dir(root.path().join("Cards")).unwrap();
+        std::fs::write(root.path().join("Cards").join("inner.md"), b"1").unwrap();
+        std::fs::create_dir(root.path().join("Media")).unwrap();
+        std::fs::write(root.path().join("Media").join("photo.jpg"), b"123").unwrap();
+        std::fs::write(root.path().join("Media").join("clip.mp4"), b"1234").unwrap();
 
         let stats = scan_space_files(root.path()).expect("scan");
-        // Hidden files, directories and their contents are not counted.
-        assert_eq!(stats.file_count, 4);
-        assert_eq!(stats.markdown_count, 1);
+        assert_eq!(stats.file_count, 5);
+        assert_eq!(stats.markdown_count, 2);
         assert_eq!(stats.media_count, 2);
-        assert_eq!(stats.total_bytes, 5 + 3 + 4 + 2);
+        assert_eq!(stats.total_bytes, 5 + 2 + 1 + 3 + 4);
         assert_eq!(stats.element_count, None);
+        // Nothing here lives in iCloud, so nothing is reported as held there.
+        assert_eq!(stats.offloaded_count, 0);
+    }
+
+    #[test]
+    fn space_scan_skips_hidden_and_derived_folders() {
+        let (root, _derived, _vs) = make_vault();
+        // `.mine` holds the derived index and `node_modules` is somebody
+        // else's tree: neither is the user's material.
+        for dir in [".mine", "node_modules"] {
+            std::fs::create_dir_all(root.path().join(dir)).unwrap();
+            std::fs::write(root.path().join(dir).join("inner.md"), b"x").unwrap();
+        }
+        std::fs::write(root.path().join("real.md"), b"y").unwrap();
+
+        let stats = scan_space_files(root.path()).expect("scan");
+        assert_eq!(stats.file_count, 1);
+        assert_eq!(stats.markdown_count, 1);
     }
 
     #[test]

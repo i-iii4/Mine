@@ -9,10 +9,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Check, CircleAlert, Download } from "lucide-react";
+import { Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { getClipperSetupStatus, installClipperHost } from "@/lib/commands";
+import { ClipperStatus } from "./ClipperStatus";
 import { SettingRow } from "./SettingRow";
 import type { ClipperSetupStatus } from "@/types";
 
@@ -48,9 +49,6 @@ export function ClipperSection() {
       setBusy(false);
     }
   }, [extensionId]);
-
-  const connectedBrowsers = status?.browsers.filter((b) => b.connected) ?? [];
-  const availableBrowsers = status?.browsers.filter((b) => b.detected) ?? [];
 
   return (
     <section className="grid gap-s3" data-settings-section="clipper">
@@ -88,34 +86,7 @@ export function ClipperSection() {
         </div>
       </SettingRow>
 
-      {status && (
-        <div className="grid gap-1 rounded-1 bg-accent p-3" data-clipper-status="">
-          <p className="text-base text-foreground">
-            {status.host_installed ? (
-              status.host_current ? (
-                <span className="flex items-center gap-1.5">
-                  <Check className="size-4" aria-hidden="true" />
-                  Connected — version {status.app_version}
-                </span>
-              ) : (
-                <span className="flex items-center gap-1.5">
-                  <CircleAlert className="size-4" aria-hidden="true" />
-                  Connected, but an older version — reconnect to update
-                </span>
-              )
-            ) : (
-              "Not connected yet"
-            )}
-          </p>
-          <p className="text-sm text-muted-foreground">
-            {connectedBrowsers.length > 0
-              ? `Registered in ${connectedBrowsers.map((b) => b.label).join(", ")}.`
-              : "No browser is registered yet."}
-            {availableBrowsers.length > 0 &&
-              ` Found on this Mac: ${availableBrowsers.map((b) => b.label).join(", ")}.`}
-          </p>
-        </div>
-      )}
+      {status && <ClipperStatus status={status} />}
 
       {error && <p className="text-sm text-destructive">{error}</p>}
     </section>

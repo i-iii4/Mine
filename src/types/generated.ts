@@ -255,7 +255,12 @@ export type SpaceStats = { file_count: number; markdown_count: number; media_cou
  * From the space's local derived index; `None` when the space has never
  * been opened (no vault-id / no index) or the index predates `card_kind`.
  */
-element_count: number | null }
+element_count: number | null;
+/**
+ * Files whose contents iCloud is currently holding rather than keeping on
+ * this Mac. The number behind the settings explanation (SPEC_CLOUD_STORAGE.md Х20).
+ */
+offloaded_count: number }
 
 /**
  * A tag with its usage count across blocks.

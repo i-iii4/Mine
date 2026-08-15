@@ -405,14 +405,16 @@ export function App() {
 
   if (!vaultPath && unavailablePath) {
     return (
-      <SpaceUnavailable
-        path={unavailablePath}
-        onReopened={(path) => {
-          setUnavailablePath(null);
-          setVaultPath(path);
-        }}
-        onForgotten={() => setUnavailablePath(null)}
-      />
+      <div className="h-screen w-screen">
+        <SpaceUnavailable
+          path={unavailablePath}
+          onReopened={(path) => {
+            setUnavailablePath(null);
+            setVaultPath(path);
+          }}
+          onForgotten={() => setUnavailablePath(null)}
+        />
+      </div>
     );
   }
 
