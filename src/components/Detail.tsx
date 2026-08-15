@@ -15,6 +15,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
 import {
+  CloudDownload,
   Expand,
   ExternalLink,
   GripVertical,
@@ -81,6 +82,11 @@ import {
   fallbackThumbsRoot,
 } from "@/lib/assets";
 import { safeMarkdownUrl } from "@/lib/markdownUrl";
+import {
+  CLOUD_BADGE_DELAY_MS,
+  CLOUD_DOWNLOADING_LABEL,
+  CLOUD_OFFLINE_LABEL,
+} from "@/lib/cloudContent";
 import { cn } from "@/lib/utils";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { TopFadeScrim } from "./TopFadeScrim";
@@ -1366,6 +1372,7 @@ function BlockContent({
                   previewManifest,
                   thumbsRootPath: resolvedThumbsRoot,
                 })}
+                contentInCloud={block.content_in_cloud}
                 alt={navigationLabel}
                 className="block max-h-[85vh] max-w-full object-contain"
               />
@@ -3088,25 +3095,53 @@ function TextSelectionActionBar({
   return createPortal(actionBar, document.body);
 }
 
+/// Force a fresh request for the same file: a retry that reuses the cached
+/// failure is not a retry.
+function withRetryToken(src: string, attempt: number): string {
+  if (attempt === 0) return src;
+  return `${src}${src.includes("?") ? "&" : "?"}retry=${attempt}`;
+}
+
 function DetailImage({
   src,
   previewSrc,
+  contentInCloud = false,
   alt,
   className,
   ...imgProps
 }: {
   src: string;
   previewSrc: string | null;
+  /// Whether this file's contents are held in iCloud rather than on this Mac.
+  contentInCloud?: boolean;
   alt: string;
 } & React.ImgHTMLAttributes<HTMLImageElement>) {
   const [originalReady, setOriginalReady] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  // Late like the card badge: a file that arrives quickly must not flash a
+  // notice about waiting. See SPEC_CLOUD_STORAGE.md Х6, Х9.
+  const [waited, setWaited] = useState(false);
 
   useEffect(() => {
     setOriginalReady(false);
+    setFailed(false);
+    setAttempt(0);
   }, [src]);
 
+  useEffect(() => {
+    setWaited(false);
+    if (originalReady || !contentInCloud) return;
+    const timer = window.setTimeout(() => setWaited(true), CLOUD_BADGE_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [contentInCloud, originalReady, attempt, src]);
+
+  const requestedSrc = withRetryToken(src, attempt);
+  const showDownloading = contentInCloud && !originalReady && !failed && waited;
+  const showOffline = contentInCloud && failed;
+
   return (
-    <div className="relative overflow-hidden leading-none">
+    <div className="relative overflow-hidden leading-none" data-detail-image="">
       {previewSrc && !originalReady && (
         <img
           src={previewSrc}
@@ -3119,7 +3154,8 @@ function DetailImage({
         />
       )}
       <img
-        src={src}
+        key={requestedSrc}
+        src={requestedSrc}
         alt={alt}
         className={cn(
           "block max-w-full rounded-0",
@@ -3129,14 +3165,52 @@ function DetailImage({
         loading="lazy"
         draggable={false}
         {...imgProps}
-        onLoad={() => setOriginalReady(true)}
+        onLoad={() => {
+          setOriginalReady(true);
+          setFailed(false);
+        }}
         onError={(e) => {
+          // Contents held in iCloud is a state of the file, not a broken card:
+          // it keeps its preview and says what happened.
+          if (contentInCloud) {
+            setFailed(true);
+            return;
+          }
           if (!previewSrc) {
             (e.target as HTMLImageElement).style.display = "none";
           }
         }}
         style={previewSrc && !originalReady ? { opacity: 0 } : undefined}
       />
+
+      {showDownloading && (
+        <div
+          className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-card/90 px-3 py-2"
+          data-detail-cloud-state="downloading"
+        >
+          <CloudDownload className="size-3.5 text-muted-foreground" aria-hidden="true" />
+          <span className="text-sm text-muted-foreground">{CLOUD_DOWNLOADING_LABEL}</span>
+        </div>
+      )}
+
+      {showOffline && (
+        <div
+          className="absolute inset-x-0 bottom-0 grid gap-1 bg-card/90 px-3 py-2"
+          data-detail-cloud-state="offline"
+        >
+          <span className="text-sm text-muted-foreground">{CLOUD_OFFLINE_LABEL}</span>
+          <button
+            type="button"
+            className="text-left text-sm text-foreground underline"
+            onClick={() => {
+              setFailed(false);
+              setAttempt((previous) => previous + 1);
+            }}
+          >
+            Try again
+          </button>
+        </div>
+      )}
     </div>
   );
 }

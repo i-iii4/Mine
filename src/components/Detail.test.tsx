@@ -2068,4 +2068,90 @@ describe("Detail", () => {
     });
     expect(screen.queryByText("First line from note body")).not.toBeInTheDocument();
   });
+
+  // A file whose contents iCloud is holding is a state of the file, not a
+  // broken card. See SPEC_CLOUD_STORAGE.md Х9, Х11.
+  function cloudImageProps(contentInCloud: boolean) {
+    return {
+      block: block({
+        card_kind: "media" as const,
+        block_type: "image" as const,
+        title: "Photo",
+        url: null,
+        media_file: "photo.jpg",
+        content_in_cloud: contentInCloud,
+      }),
+      vaultPath: "/tmp/test-vault",
+      thumbsRootPath: "/tmp/thumbs",
+      onClose: vi.fn(),
+      onNavigate: vi.fn(),
+      tags: [],
+      onToggleTag: vi.fn(),
+      onCreateAndAssign: vi.fn(),
+      onTagsChanged: vi.fn(),
+      onRequestRename: vi.fn(),
+      onRequestDelete: vi.fn(),
+    };
+  }
+
+  it("names the file's state when its contents cannot be fetched from iCloud", () => {
+    const { container } = render(<Detail {...cloudImageProps(true)} />);
+
+    const original = container.querySelector(
+      '[data-detail-image] img:not([data-detail-preview-backing])',
+    ) as HTMLImageElement;
+    expect(container.querySelector('[data-detail-cloud-state="offline"]')).toBeNull();
+
+    fireEvent.error(original);
+
+    const offline = container.querySelector('[data-detail-cloud-state="offline"]');
+    expect(offline).not.toBeNull();
+    expect(offline).toHaveTextContent("Original is in iCloud, not available offline");
+    // The image is not hidden: whatever is already showing keeps showing.
+    expect(original.style.display).not.toBe("none");
+  });
+
+  it("re-requests the original when the reader tries again", () => {
+    const { container } = render(<Detail {...cloudImageProps(true)} />);
+
+    const imageSelector = '[data-detail-image] img:not([data-detail-preview-backing])';
+    const before = (container.querySelector(imageSelector) as HTMLImageElement).getAttribute("src");
+    fireEvent.error(container.querySelector(imageSelector) as HTMLImageElement);
+
+    fireEvent.click(screen.getByText("Try again"));
+
+    const after = (container.querySelector(imageSelector) as HTMLImageElement).getAttribute("src");
+    // A retry that reuses the cached failure is not a retry.
+    expect(after).not.toBe(before);
+    expect(after).toContain("retry=1");
+    expect(container.querySelector('[data-detail-cloud-state="offline"]')).toBeNull();
+  });
+
+  it("keeps a local file's failure silent about the cloud", () => {
+    const { container } = render(<Detail {...cloudImageProps(false)} />);
+
+    fireEvent.error(
+      container.querySelector(
+        '[data-detail-image] img:not([data-detail-preview-backing])',
+      ) as HTMLImageElement,
+    );
+
+    expect(container.querySelector("[data-detail-cloud-state]")).toBeNull();
+  });
+
+  it("waits before saying anything about a download in progress", () => {
+    vi.useFakeTimers();
+    const { container } = render(<Detail {...cloudImageProps(true)} />);
+
+    // Nothing yet: a file that arrives quickly must not flash a notice.
+    expect(container.querySelector('[data-detail-cloud-state="downloading"]')).toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+
+    const downloading = container.querySelector('[data-detail-cloud-state="downloading"]');
+    expect(downloading).not.toBeNull();
+    expect(downloading).toHaveTextContent("Downloading from iCloud");
+  });
 });
