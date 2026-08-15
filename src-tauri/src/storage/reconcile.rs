@@ -249,6 +249,15 @@ pub fn reconcile_vault(
         .into_iter()
         .collect::<Vec<_>>();
 
+    // A file moved between folders while the app was closed looks like one slug
+    // vanishing and another appearing. Treating that as delete-and-create
+    // throws away everything keyed by slug — the preview, the audio progress —
+    // and the card visibly re-renders itself for no reason the user caused.
+    // Match the pair by body hash and carry the derived artifacts across, the
+    // same way the watcher already recognises an external rename.
+    // See SPEC_VAULT_LIFECYCLE.md П10–П11.
+    let moved = detect_moved_sources(conn, &removed, &prepared);
+
     let tx = conn
         .unchecked_transaction()
         .map_err(|error| ReconcileError::Commit(error.into()))?;
@@ -279,6 +288,12 @@ pub fn reconcile_vault(
                 kind: ReconcileFileErrorKind::Index,
                 message: format!("{error:#}"),
             }),
+        }
+    }
+
+    for (old_slug, new_slug) in &moved {
+        if let Err(error) = files::rename_derived_artifacts(vault, old_slug, new_slug) {
+            log::warn!("failed to carry derived artifacts {old_slug} -> {new_slug}: {error:#}");
         }
     }
 
@@ -426,6 +441,57 @@ fn prepare_source(
         stamp,
         dependency_changed,
     })
+}
+
+/// Pair vanished slugs with newly appeared ones that carry the same content.
+///
+/// Only unambiguous pairs count: one gone, one arrived, same body hash. Two
+/// identical files moving at once, or a copy left behind, leave everything to
+/// the ordinary delete-and-create path rather than guessing.
+fn detect_moved_sources(
+    conn: &Connection,
+    removed: &[String],
+    prepared: &[PreparedSource],
+) -> Vec<(String, String)> {
+    if removed.is_empty() || prepared.is_empty() {
+        return Vec::new();
+    }
+
+    let mut arrivals: BTreeMap<String, Vec<&str>> = BTreeMap::new();
+    for source in prepared {
+        if source.kind != SourceKind::Block {
+            continue;
+        }
+        // An empty body hashes to a constant, which would pair unrelated
+        // metadata-only cards; only content can identify a move.
+        if source.block.body.trim().is_empty() {
+            continue;
+        }
+        let hash = crate::domain::block::compute_body_hash(&source.block.body);
+        arrivals.entry(hash).or_default().push(&source.slug);
+    }
+    if arrivals.is_empty() {
+        return Vec::new();
+    }
+
+    let mut departures: BTreeMap<String, Vec<&str>> = BTreeMap::new();
+    for slug in removed {
+        let Ok(Some(hash)) = index::lookup_body_hash(conn, slug) else {
+            continue;
+        };
+        departures.entry(hash).or_default().push(slug);
+    }
+
+    let mut moves = Vec::new();
+    for (hash, gone) in departures {
+        let Some(arrived) = arrivals.get(&hash) else {
+            continue;
+        };
+        if gone.len() == 1 && arrived.len() == 1 {
+            moves.push((gone[0].to_string(), arrived[0].to_string()));
+        }
+    }
+    moves
 }
 
 fn apply_prepared_source(
@@ -642,6 +708,69 @@ mod tests {
             format!("---\ntype: article\nsaved_at: 2026-07-10T00:00:00Z\n---\n{body}"),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn moving_a_card_between_folders_carries_its_preview_across() {
+        let (_dir, vault, conn) = setup();
+        std::fs::create_dir_all(vault.thumbs_dir()).unwrap();
+        std::fs::create_dir_all(vault.root().join("Cards")).unwrap();
+        write_note(&vault, "Note", "the very same words");
+        reconcile_vault(&conn, &vault).unwrap();
+
+        // Stand in for whatever the derived store keyed by this slug.
+        std::fs::write(vault.thumb_path("Note"), b"preview").unwrap();
+
+        std::fs::rename(vault.block_path("Note"), vault.block_path("Cards/Note")).unwrap();
+        let report = reconcile_vault(&conn, &vault).unwrap();
+
+        assert_eq!(report.upserted, vec!["Cards/Note"]);
+        assert_eq!(report.removed, vec!["Note"]);
+        // One card that moved, so its preview moved with it instead of being
+        // thrown away and regenerated.
+        assert!(!vault.thumb_path("Note").exists());
+        assert_eq!(
+            std::fs::read(vault.thumb_path("Cards/Note")).unwrap(),
+            b"preview"
+        );
+    }
+
+    #[test]
+    fn two_identical_bodies_moving_at_once_are_left_alone() {
+        let (_dir, vault, conn) = setup();
+        std::fs::create_dir_all(vault.thumbs_dir()).unwrap();
+        std::fs::create_dir_all(vault.root().join("Cards")).unwrap();
+        write_note(&vault, "First", "identical");
+        write_note(&vault, "Second", "identical");
+        reconcile_vault(&conn, &vault).unwrap();
+        std::fs::write(vault.thumb_path("First"), b"first").unwrap();
+
+        std::fs::rename(vault.block_path("First"), vault.block_path("Cards/First")).unwrap();
+        std::fs::rename(vault.block_path("Second"), vault.block_path("Cards/Second")).unwrap();
+        reconcile_vault(&conn, &vault).unwrap();
+
+        // Ambiguous: guessing could hand one card another's preview, so neither
+        // is carried and both rebuild normally.
+        assert!(!vault.thumb_path("Cards/First").exists());
+        assert!(!vault.thumb_path("Cards/Second").exists());
+    }
+
+    #[test]
+    fn an_edited_card_is_not_mistaken_for_a_move() {
+        let (_dir, vault, conn) = setup();
+        std::fs::create_dir_all(vault.thumbs_dir()).unwrap();
+        std::fs::create_dir_all(vault.root().join("Cards")).unwrap();
+        write_note(&vault, "Note", "original body");
+        reconcile_vault(&conn, &vault).unwrap();
+        std::fs::write(vault.thumb_path("Note"), b"preview").unwrap();
+
+        std::fs::remove_file(vault.block_path("Note")).unwrap();
+        write_note(&vault, "Cards/Note", "different body entirely");
+        reconcile_vault(&conn, &vault).unwrap();
+
+        // Same name, different content: a new card, and inheriting the old
+        // preview would show the wrong picture.
+        assert!(!vault.thumb_path("Cards/Note").exists());
     }
 
     #[test]

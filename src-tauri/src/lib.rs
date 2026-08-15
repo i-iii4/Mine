@@ -55,6 +55,8 @@ pub fn run() {
             commands::vault::start_vault_sync,
             commands::vault::rebuild_index,
             commands::vault::sweep_vault_thumbnails,
+            commands::vault::get_unavailable_vault,
+            commands::vault::forget_unavailable_vault,
             commands::vault::get_vault_write_layout,
             commands::vault::set_vault_write_layout,
             commands::vault::organize_vault_layout,

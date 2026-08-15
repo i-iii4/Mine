@@ -175,6 +175,7 @@ import type {
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   getVaultPath,
+  getUnavailableVault,
   openVault,
   selectVault,
   startVaultSync,
@@ -225,6 +226,7 @@ import { useChannelPreviewsEvents } from "@/hooks/useChannelPreviewsEvents";
 import { useChromeDragGesture } from "@/hooks/useChromeDragGesture";
 import { useProjectionRevisionOwner } from "@/hooks/useProjectionRevisionOwner";
 import { VaultPicker } from "@/components/VaultPicker";
+import { SpaceUnavailable } from "@/components/SpaceUnavailable";
 import { VaultSwitcher } from "@/components/VaultSwitcher";
 import { TopCollectionSwitcher } from "@/components/TopCollectionSwitcher";
 import { Sidebar, SidebarTagRowDragPreview } from "@/components/Sidebar";
@@ -349,18 +351,26 @@ interface ThumbUpdatedEvent {
 
 export function App() {
   const [vaultPath, setVaultPath] = useState<string | null>(null);
+  const [unavailablePath, setUnavailablePath] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const started = performance.now();
     console.info("[startup] getVaultPath:start");
     getVaultPath()
-      .then((path) => {
+      .then(async (path) => {
         console.info("[startup] getVaultPath:done", {
           path,
           elapsedMs: Math.round(performance.now() - started),
         });
         setVaultPath(path);
+        // No path may mean two very different things: nothing was ever chosen,
+        // or the chosen folder is unreachable at the moment. Only the second
+        // deserves an explanation instead of a first-run screen.
+        if (!path) {
+          const unavailable = await getUnavailableVault().catch(() => null);
+          setUnavailablePath(unavailable?.path ?? null);
+        }
       })
       .catch((err) => {
         console.error("[startup] getVaultPath:failed", err);
@@ -389,6 +399,19 @@ export function App() {
       <div className="flex h-screen w-screen items-center justify-center bg-background">
         <p className="text-base text-muted-foreground">Loading...</p>
       </div>
+    );
+  }
+
+  if (!vaultPath && unavailablePath) {
+    return (
+      <SpaceUnavailable
+        path={unavailablePath}
+        onReopened={(path) => {
+          setUnavailablePath(null);
+          setVaultPath(path);
+        }}
+        onForgotten={() => setUnavailablePath(null)}
+      />
     );
   }
 

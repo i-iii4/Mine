@@ -25,6 +25,7 @@ import type {
   VaultStats,
   VaultOpenResult,
   VaultWriteLayoutDto,
+  UnavailableVault,
   CreateBlockParams,
   ArenaChannelInfo,
   ImportChannelRequest,
@@ -421,6 +422,17 @@ export const sweepVaultThumbnails = () =>
 
 export const listPendingThumbUpgrades = () =>
   invoke<ThumbUpgradeRequest[]>("list_pending_thumb_upgrades");
+
+/** The saved space that could not be opened, if any.
+ *  `null` means either no space was ever chosen or the saved one is reachable —
+ *  a missing folder must never look like a fresh install.
+ *  See SPEC_VAULT_LIFECYCLE.md П12–П13. */
+export const getUnavailableVault = () =>
+  invoke<UnavailableVault | null>("get_unavailable_vault");
+
+/** Discard the binding to an unavailable space. User action only. */
+export const forgetUnavailableVault = () =>
+  invoke<void>("forget_unavailable_vault");
 
 /** Folders new cards, media and collections are written into.
  *  Reading is always recursive; this governs writes only.

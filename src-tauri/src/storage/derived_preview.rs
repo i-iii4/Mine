@@ -398,10 +398,20 @@ pub fn reconcile_preview_for_slug(
                 thumbnails::ThumbSource::Image | thumbnails::ThumbSource::Video
             );
             if !is_ready_preview(&primary) {
-                generation_failure = Some((
-                    PreviewErrorKind::BrowserDecodeRequired,
-                    "primary preview requires browser decoding".to_string(),
-                ));
+                // Distinguish "the file is not there" from "we cannot decode
+                // it here". Reporting a missing file as a decoding problem sent
+                // the reader looking for a format issue that does not exist.
+                // See SPEC_VAULT_LIFECYCLE.md П23.
+                generation_failure = Some(match missing_primary_source(vault, &block) {
+                    Some(reference) => (
+                        PreviewErrorKind::MissingSource,
+                        format!("media file is missing from the vault: {reference}"),
+                    ),
+                    None => (
+                        PreviewErrorKind::BrowserDecodeRequired,
+                        "primary preview requires browser decoding".to_string(),
+                    ),
+                });
             }
         }
     }
@@ -722,6 +732,18 @@ fn is_ready_preview(path: &Path) -> bool {
         thumbnails::thumb_disk_state(path),
         thumbnails::ThumbDiskState::Jpeg
     )
+}
+
+/// The block's own media reference when that file cannot be found in the vault.
+///
+/// Returns `None` when the block has no owned media at all, or when the file is
+/// present — in which case a failed preview really is a decoding matter.
+fn missing_primary_source(vault: &VaultLayout, block: &Block) -> Option<String> {
+    let reference = block.frontmatter.file.as_deref()?;
+    if media_refs::resolve_indexed_media(vault, &block.slug, reference).is_some() {
+        return None;
+    }
+    Some(reference.to_string())
 }
 
 /// Persist a manifest that now carries artifact geometry.
@@ -1247,6 +1269,34 @@ mod tests {
 
         assert_eq!(outcome.state, DerivedPreviewState::Failed);
         assert!(!vault.derived_root().join("escape.jpg").exists());
+    }
+
+    #[test]
+    fn a_vanished_media_file_is_reported_as_missing_not_as_a_format_problem() {
+        let (_source, vault, conn) = setup();
+        let block = image_block("Gone", "gone.png");
+        image::RgbImage::from_pixel(8, 8, image::Rgb([1, 2, 3]))
+            .save(vault.root().join("gone.png"))
+            .unwrap();
+        files::write_block_file(&vault, &block).unwrap();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+        reconcile_preview_for_slug(&conn, &vault, "Gone").unwrap();
+
+        // The user deletes the image in Finder but keeps the card.
+        std::fs::remove_file(vault.root().join("gone.png")).unwrap();
+        std::fs::remove_file(vault.thumb_path("Gone")).ok();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+        let outcome = reconcile_preview_for_slug(&conn, &vault, "Gone")
+            .unwrap()
+            .expect("a failing preview reports an outcome");
+
+        let failure = outcome.failure.expect("missing media must fail the preview");
+        assert_eq!(failure.error_kind, PreviewErrorKind::MissingSource);
+        assert!(
+            failure.message.contains("gone.png"),
+            "the message must name the file: {}",
+            failure.message
+        );
     }
 
     #[test]

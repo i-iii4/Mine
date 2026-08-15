@@ -85,6 +85,51 @@ pub fn select_vault(
     Ok(result)
 }
 
+/// A space that is bound but not reachable right now.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct UnavailableVault {
+    pub path: String,
+}
+
+/// The saved space that could not be opened, if any.
+///
+/// Returns `None` when there is no binding at all (a genuinely first run) or
+/// when the saved space is reachable. The distinction matters: a missing folder
+/// must never look like a fresh install.
+#[tauri::command]
+pub fn get_unavailable_vault(app: AppHandle) -> Result<Option<UnavailableVault>, CommandError> {
+    let Some(saved_path) = load_saved_vault_path(&app) else {
+        return Ok(None);
+    };
+    if PathBuf::from(&saved_path).is_dir() {
+        return Ok(None);
+    }
+    Ok(Some(UnavailableVault { path: saved_path }))
+}
+
+/// Discard the binding to a space that is no longer wanted.
+///
+/// Explicit user action only: this is the single place the saved path is
+/// dropped, so a folder that is merely offline is never forgotten silently.
+#[tauri::command]
+pub fn forget_unavailable_vault(app: AppHandle) -> Result<(), CommandError> {
+    if let Some(path) = load_saved_vault_path(&app) {
+        let mut cfg = load_config(&app);
+        if let Some(known) = cfg.get("known_vaults").and_then(|v| v.as_array()) {
+            let remaining: Vec<String> = known
+                .iter()
+                .filter_map(|value| value.as_str())
+                .filter(|existing| *existing != path)
+                .map(str::to_string)
+                .collect();
+            cfg["known_vaults"] = serde_json::json!(remaining);
+            write_config(&app, &cfg);
+        }
+    }
+    clear_saved_vault_path(&app);
+    Ok(())
+}
+
 /// The write layout of the currently open space.
 #[tauri::command]
 pub fn get_vault_write_layout(
@@ -237,15 +282,20 @@ pub fn get_vault_path(
                 &format!("from_config path={saved_path}"),
             );
             return Ok(Some(saved_path));
-        } else {
-            log::info!("saved vault no longer exists: {}", saved_path);
-            append_startup_trace(
-                &app,
-                "get_vault_path",
-                &format!("stale_config path={saved_path}"),
-            );
-            clear_saved_vault_path(&app);
         }
+        // The folder is not there *right now* — renamed, moved, on an
+        // unplugged drive, not yet synced. Forgetting it here is what made a
+        // temporarily missing space indistinguishable from lost data: the app
+        // came up as if it had never been opened. The binding is kept and the
+        // frontend shows an explicit unavailable state instead; only the user
+        // may discard it. See SPEC_VAULT_LIFECYCLE.md П12–П13.
+        log::info!("saved vault is currently unavailable: {}", saved_path);
+        append_startup_trace(
+            &app,
+            "get_vault_path",
+            &format!("unavailable path={saved_path}"),
+        );
+        return Ok(None);
     }
 
     append_startup_trace(&app, "get_vault_path", "none");

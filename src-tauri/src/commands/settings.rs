@@ -124,7 +124,36 @@ pub fn forget_known_vault(
         .collect();
     cfg["known_vaults"] = serde_json::json!(known);
     write_config(&app, &cfg);
+
+    // Removing a space means removing it: the derived store holds only an index
+    // and previews, both rebuilt from the files if the space is added back
+    // later. Leaving it behind quietly accumulated hundreds of megabytes for
+    // spaces the user had already dismissed. See SPEC_VAULT_LIFECYCLE.md P17.
+    discard_derived_store(&app, &path);
     Ok(known)
+}
+
+/// Delete the local cache of a space that is no longer known.
+///
+/// Best effort by design: failing to reclaim disk space must never block the
+/// user's request to forget a space.
+fn discard_derived_store(app: &AppHandle, vault_path: &str) {
+    let vault = VaultLayout::new(std::path::PathBuf::from(vault_path));
+    let Ok(raw_id) = std::fs::read_to_string(vault.vault_id_path()) else {
+        return;
+    };
+    let vault_id = raw_id.trim();
+    if vault_id.is_empty() {
+        return;
+    }
+    let Ok(root) = crate::commands::vault::derived_store_root(app, vault_id) else {
+        return;
+    };
+    if let Err(error) = std::fs::remove_dir_all(&root) {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            log::warn!("failed to remove derived store for {vault_path}: {error}");
+        }
+    }
 }
 
 /// Pure reorder rule: the new order must be exactly the same set of paths the

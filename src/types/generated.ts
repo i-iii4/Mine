@@ -235,6 +235,11 @@ export type TextSelectionExtractError = { kind: "no_vault" } | { kind: "source_n
 
 export type ThumbFormat = "jpeg" | "png"
 
+/**
+ * A space that is bound but not reachable right now.
+ */
+export type UnavailableVault = { path: string }
+
 export type VaultOpenResult = { indexed: number; errors: number; sync_in_progress: boolean; derived_store_ready: boolean; bootstrapped_from_legacy: boolean; migration_required: boolean; thumbs_root: string }
 
 export type VaultStats = { totalFileCount: number; markdownFileCount: number; mediaFileCount: number; sourceBytes: number; currentCollectionCardCount: number; currentCollection: string | null; updatedAtMs: number }

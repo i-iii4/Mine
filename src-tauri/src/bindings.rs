@@ -26,7 +26,7 @@ use crate::commands::settings::{
     DeleteOrphanResult, OrphanMedia, OrphanMediaBatchRequest, PromoteOrphanResult, SpaceStats,
 };
 use crate::commands::state::CommandError;
-use crate::commands::vault::{VaultOpenResult, VaultWriteLayoutDto};
+use crate::commands::vault::{UnavailableVault, VaultOpenResult, VaultWriteLayoutDto};
 use crate::import::importer::{ImportChannelResult, ImportProgress};
 use crate::storage::article_audio::{ArticleAudioState, ArticleAudioStatus};
 use crate::storage::graph::{
@@ -106,6 +106,7 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<ScanResult>()
         .register::<VaultOpenResult>()
         .register::<VaultWriteLayoutDto>()
+        .register::<UnavailableVault>()
         .register::<ClipperRecoveryKind>()
         .register::<ClipperRecoveryItem>()
         .register::<RecoveredClipperBlock>()
