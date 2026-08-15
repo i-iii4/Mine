@@ -10,6 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Instant, UNIX_EPOCH};
 
+use crate::domain::collection::collection_ref_from_slug;
 use crate::domain::vault::{detect_icloud_conflict, VaultLayout};
 use crate::storage::derived_preview::PreviewReconcileReport;
 use crate::storage::reconcile::ReconcileReport;
@@ -43,6 +44,9 @@ pub struct ColdSpaceSnapshot {
     pub unsupported_sources: Vec<UnsupportedSource>,
     pub content_rows: usize,
     pub collection_rows: usize,
+    /// Collection documents that share a name with a canonical one and are
+    /// therefore not projected. Diagnostic only.
+    pub duplicate_collection_documents: usize,
     pub grid_order: Vec<String>,
     pub visible_preview_manifests: usize,
     pub preview_states: BTreeMap<String, usize>,
@@ -80,6 +84,9 @@ pub struct ColdSpaceAuditSummary {
     pub source_markdown: usize,
     pub content_sources: usize,
     pub collection_sources: usize,
+    /// Documents sharing a collection name with a canonical one. Diagnostic:
+    /// duplicates are expected to be skipped, never to fail the audit.
+    pub duplicate_collection_documents: usize,
     pub unsupported_sources: usize,
     pub metadata_only_links: usize,
     pub first_preview_states: BTreeMap<String, usize>,
@@ -118,6 +125,7 @@ impl ColdSpaceAuditReport {
             source_markdown: first_cycle.first.source_markdown,
             content_sources: first_cycle.first.content_sources,
             collection_sources: first_cycle.first.collection_sources,
+            duplicate_collection_documents: first_cycle.first.duplicate_collection_documents,
             unsupported_sources: first_cycle.first.unsupported_sources.len(),
             metadata_only_links: first_cycle.first.metadata_only_links.len(),
             first_preview_states: first_cycle.first.preview_states.clone(),
@@ -381,10 +389,25 @@ fn capture_snapshot(
         .iter()
         .filter_map(|(slug, kind)| (kind == "block").then_some(slug.clone()))
         .collect::<BTreeSet<_>>();
+    // Collections are identified by document name, not by path: a document in
+    // `Collections/` registers the channel `Каталоги`, because membership is a
+    // wikilink that Obsidian resolves by name anywhere in the vault. Comparing
+    // raw source slugs made this audit reject every foldered layout — that is,
+    // the canonical one. See SPEC_VAULT_LIFECYCLE.md.
     let expected_collections = source_kinds
         .iter()
-        .filter_map(|(slug, kind)| (kind == "channel").then_some(slug.clone()))
+        .filter_map(|(slug, kind)| {
+            (kind == "channel").then(|| collection_ref_from_slug(slug))
+        })
         .collect::<BTreeSet<_>>();
+    // Several documents may share a name across folders; only the canonical one
+    // becomes a channel, so the number of source documents legitimately exceeds
+    // the projection. Reported, never treated as a mismatch.
+    let duplicate_collection_documents = source_kinds
+        .iter()
+        .filter(|(_, kind)| kind.as_str() == "channel")
+        .count()
+        .saturating_sub(expected_collections.len());
     if content_slugs != expected_content {
         bail!(
             "content source/projection mismatch: source_only={:?}, projection_only={:?}",
@@ -540,6 +563,7 @@ fn capture_snapshot(
         unsupported_sources,
         content_rows: content_slugs.len(),
         collection_rows: collection_slugs.len(),
+        duplicate_collection_documents,
         grid_order: grid_snapshot
             .blocks
             .iter()
@@ -696,6 +720,47 @@ mod tests {
         );
         write(&source.path().join("empty-note.md"), "");
         (source, derived)
+    }
+
+    /// The canonical layout — collections in their own folder — must pass. This
+    /// audit used to reject it outright by comparing path-qualified source
+    /// slugs against name-keyed channels, so the acceptance gate covered only
+    /// flat vaults. A duplicate name in a subfolder is reported, not failed:
+    /// only the canonical document projects a channel.
+    #[test]
+    fn foldered_collections_pass_and_duplicates_are_reported() {
+        let source = tempfile::tempdir().unwrap();
+        let derived = tempfile::tempdir().unwrap();
+        fs::create_dir_all(source.path().join("Cards")).unwrap();
+        fs::create_dir_all(source.path().join("Collections/Sub")).unwrap();
+
+        write(
+            &source.path().join("Cards/note.md"),
+            "---\ntype: article\nsaved_at: 2026-03-10T00:00:00Z\nMine Collections:\n  - \"[[Каталоги]]\"\n---\n\n# Карточка\n\nтекст\n",
+        );
+        write(
+            &source.path().join("Collections/Каталоги.md"),
+            "---\ntype: channel\nposition: 1\n---\n",
+        );
+        write(
+            &source.path().join("Collections/Sub/Каталоги.md"),
+            "---\ntype: channel\nposition: 2\n---\n",
+        );
+        write(
+            &source.path().join("Collections/Другой.md"),
+            "---\ntype: channel\nposition: 3\n---\n",
+        );
+
+        let report = run_cold_space_audit(source.path(), derived.path(), 2).unwrap();
+        let summary = report.summary();
+
+        assert_eq!(summary.source_markdown, 4);
+        assert_eq!(summary.content_sources, 1);
+        // Three channel documents, two distinct names.
+        assert_eq!(summary.collection_sources, 2);
+        assert_eq!(summary.duplicate_collection_documents, 1);
+        assert!(summary.stable_after_reopen);
+        assert!(summary.source_unchanged);
     }
 
     #[test]
