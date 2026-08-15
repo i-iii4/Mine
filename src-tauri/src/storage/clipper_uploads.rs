@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use crate::domain::vault::VaultLayout;
 use crate::storage::files;
+use crate::storage::media_refs;
 
 const PENDING_UPLOADS_DIR: &str = "pending_uploads";
 const MANIFEST_FILE: &str = "manifest.json";
@@ -213,7 +214,12 @@ pub fn sweep_committed_pending_uploads(vault: &VaultLayout) -> Result<usize> {
         let Some(committed_file) = manifest.committed_file.as_deref() else {
             continue;
         };
-        if !vault.root().join(committed_file).exists() {
+        // The card's media may sit in `Media/` rather than at the vault root:
+        // the manifest stores a bare filename, exactly like an Obsidian
+        // wikilink. Checking the root path alone left 111 of 113 stale
+        // directories in place on a foldered vault — the same name-versus-path
+        // trap the asset protocol hit on 11.08.2026.
+        if !media_exists_in_vault(vault, committed_file) {
             continue;
         }
         if complete_pending_upload(vault, &upload_id).is_ok() {
@@ -307,6 +313,17 @@ fn dedupe_final_filename(vault_root: &Path, uploaded: &str, final_stem: &str) ->
             .ok_or_else(|| anyhow!("ran out of collision suffixes"))?;
     }
     Ok(candidate)
+}
+
+/// Whether a committed media file is present anywhere in the vault.
+///
+/// Tries the direct path first — the common case for flat vaults — then falls
+/// back to a basename lookup, which is how every other reader resolves media.
+fn media_exists_in_vault(vault: &VaultLayout, file_name: &str) -> bool {
+    if vault.root().join(file_name).exists() {
+        return true;
+    }
+    media_refs::resolve_basename_under(vault.root(), file_name).is_some()
 }
 
 fn write_manifest(dir: &Path, manifest: &PendingUploadManifest) -> Result<()> {
@@ -414,6 +431,29 @@ mod tests {
             .unwrap()
             .exists());
         assert!(pending_upload_dir(&vault, &vanished.upload_id)
+            .unwrap()
+            .exists());
+    }
+
+    #[test]
+    fn sweep_finds_media_that_lives_in_a_subfolder() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = vault_for(&dir);
+        std::fs::create_dir_all(vault.root().join("Media")).unwrap();
+
+        let manifest = write_pending_upload(&vault, "shot.jpg", None, b"bytes").unwrap();
+        finalize_pending_upload(&vault, &manifest.upload_id, "Card").unwrap();
+        mark_pending_upload_committed(&vault, &manifest.upload_id, "Card", "Card.jpg").unwrap();
+        // A migrated vault keeps media in `Media/`, while the manifest records
+        // the bare filename.
+        std::fs::rename(
+            vault.root().join("Card.jpg"),
+            vault.root().join("Media/Card.jpg"),
+        )
+        .unwrap();
+
+        assert_eq!(sweep_committed_pending_uploads(&vault).unwrap(), 1);
+        assert!(!pending_upload_dir(&vault, &manifest.upload_id)
             .unwrap()
             .exists());
     }
