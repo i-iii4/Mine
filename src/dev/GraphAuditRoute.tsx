@@ -21,6 +21,16 @@ declare global {
   }
 }
 
+function freshGraphAudit(): NonNullable<Window["__MINE_GRAPH_AUDIT__"]> {
+  return {
+    loadCount: 0,
+    mountedAtMs: performance.now(),
+    lastScope: null,
+    lastOptions: null,
+    activatedSlug: null,
+  };
+}
+
 const AUDIT_CARD_COUNT = 48;
 const AUDIT_COLLECTIONS = [
   "Design",
@@ -211,13 +221,25 @@ export function GraphAuditRoute() {
   const [currentCollection, setCurrentCollection] = useState<string | undefined>(undefined);
   const [activatedSlug, setActivatedSlug] = useState<string | null>(null);
 
+  // Installed during render, not in a mount effect: child effects run before
+  // parent effects, so GraphView's first snapshot load fires before a mount
+  // effect here could create the counter — which is why every failure
+  // diagnostic used to report `loadCount: 0` regardless of what actually
+  // happened. A probe that lies in exactly the interesting case is worse than
+  // no probe.
+  useState(() => {
+    window.__MINE_GRAPH_AUDIT__ = freshGraphAudit();
+    return null;
+  });
+
   const loadSnapshot = useCallback(async (scope: GraphScope, options: GraphOptions) => {
-    const audit = window.__MINE_GRAPH_AUDIT__;
-    if (audit) {
-      audit.loadCount += 1;
-      audit.lastScope = scope;
-      audit.lastOptions = options;
-    }
+    // Lazily reinstalled rather than assumed: StrictMode mounts, cleans up and
+    // remounts effects, and the cleanup below deletes the object installed at
+    // render time — a load arriving after that cycle must still be counted.
+    const audit = (window.__MINE_GRAPH_AUDIT__ ??= freshGraphAudit());
+    audit.loadCount += 1;
+    audit.lastScope = scope;
+    audit.lastOptions = options;
     return graphAuditSnapshot(blocks, scope, options);
   }, [blocks]);
 
@@ -226,13 +248,6 @@ export function GraphAuditRoute() {
     if (requestedTheme === "dark" || requestedTheme === "light") {
       document.documentElement.setAttribute("data-theme", requestedTheme);
     }
-    window.__MINE_GRAPH_AUDIT__ = {
-      loadCount: 0,
-      mountedAtMs: performance.now(),
-      lastScope: null,
-      lastOptions: null,
-      activatedSlug: null,
-    };
     return () => {
       delete window.__MINE_GRAPH_AUDIT__;
     };

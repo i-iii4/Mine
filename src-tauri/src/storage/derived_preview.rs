@@ -351,53 +351,15 @@ pub fn reconcile_preview_for_slug(
         // measurable. This is where previews written before the manifest
         // carried artifact geometry get their dimensions: they reach this
         // branch and no other, because their source has not changed since.
-        let stamp = publish_stamped_dimensions(conn, vault, slug, &record, &manifest)?;
-        if stamp.unmeasurable {
-            return mark_non_ready(
-                conn,
-                slug,
-                &record,
-                DerivedPreviewState::Failed,
-                Some(&source_stamp),
-                PreviewErrorKind::UnreadableArtifact,
-                true,
-                "preview artifact is present but its dimensions cannot be read",
-            )
+        return publish_ready(conn, vault, slug, &record, &manifest, &source_stamp, false)
             .map(Some);
-        }
-        let changed = update_preview_state(
-            conn,
-            slug,
-            DerivedPreviewState::Ready,
-            Some(&source_stamp),
-            None,
-            stamp.manifest.as_deref(),
-        )?;
-        return Ok(Some(PreviewReconcileOutcome {
-            slug: slug.to_string(),
-            state: DerivedPreviewState::Ready,
-            regenerated: false,
-            state_changed: changed,
-            failure: None,
-        }));
     }
 
     if expected.is_empty() {
-        let changed = update_preview_state(
-            conn,
-            slug,
-            DerivedPreviewState::Ready,
-            Some(&source_stamp),
-            None,
-            record.manifest.as_deref(),
-        )?;
-        return Ok(Some(PreviewReconcileOutcome {
-            slug: slug.to_string(),
-            state: DerivedPreviewState::Ready,
-            regenerated: false,
-            state_changed: changed,
-            failure: None,
-        }));
+        // No artifacts to measure (text previews); the shared path degrades to
+        // a plain state write by construction.
+        return publish_ready(conn, vault, slug, &record, &manifest, &source_stamp, false)
+            .map(Some);
     }
 
     let block = match read_source_block(vault, slug) {
@@ -529,39 +491,8 @@ pub fn reconcile_preview_for_slug(
 
     let all_ready = expected.iter().all(|path| is_ready_preview(path));
     if all_ready && (!source_changed || generation_failure.is_none()) {
-        // The artifacts exist now, so their geometry is knowable and belongs in
-        // the manifest. Reading it here — rather than returning it up from every
-        // generator branch — covers tiles that were already ready and skipped
-        // above.
-        let stamp = publish_stamped_dimensions(conn, vault, slug, &record, &manifest)?;
-        if stamp.unmeasurable {
-            return mark_non_ready(
-                conn,
-                slug,
-                &record,
-                DerivedPreviewState::Failed,
-                Some(&source_stamp),
-                PreviewErrorKind::UnreadableArtifact,
-                true,
-                "preview artifact was written but its dimensions cannot be read",
-            )
+        return publish_ready(conn, vault, slug, &record, &manifest, &source_stamp, regenerated)
             .map(Some);
-        }
-        let changed = update_preview_state(
-            conn,
-            slug,
-            DerivedPreviewState::Ready,
-            Some(&source_stamp),
-            None,
-            stamp.manifest.as_deref(),
-        )?;
-        return Ok(Some(PreviewReconcileOutcome {
-            slug: slug.to_string(),
-            state: DerivedPreviewState::Ready,
-            regenerated,
-            state_changed: changed,
-            failure: None,
-        }));
     }
 
     let (kind, message) = generation_failure.unwrap_or((
@@ -805,6 +736,59 @@ fn primary_source_state(vault: &VaultLayout, block: &Block) -> PrimarySourceStat
 /// value: publishing a rewritten manifest through it would look like a stale
 /// worker and be rejected. If another writer changed the manifest first, this
 /// pass keeps the old one and the next reconcile stamps it.
+/// The one way a block becomes `ready`.
+///
+/// Reconciliation reaches "everything this block needs exists" from three
+/// places — the fast path, the no-artifacts path, and the path after
+/// generation — and every one of them must do the same four things: measure
+/// the artifacts, refuse a block whose artifacts cannot be measured, write the
+/// state, and report the outcome. While these lived as three near-copies they
+/// agreed by discipline, and the unmeasured-manifest defect was exactly the
+/// discipline slipping: one copy measured, another did not. A copy cannot
+/// drift from itself.
+fn publish_ready(
+    conn: &Connection,
+    vault: &VaultLayout,
+    slug: &str,
+    record: &PreviewRecord,
+    manifest: &FeedPreviewManifest,
+    source_stamp: &str,
+    regenerated: bool,
+) -> Result<PreviewReconcileOutcome> {
+    let stamp = publish_stamped_dimensions(conn, vault, slug, record, manifest)?;
+    if stamp.unmeasurable {
+        return mark_non_ready(
+            conn,
+            slug,
+            record,
+            DerivedPreviewState::Failed,
+            Some(source_stamp),
+            PreviewErrorKind::UnreadableArtifact,
+            true,
+            "preview artifact exists but its dimensions cannot be read",
+        )
+        .map(|mut outcome| {
+            outcome.regenerated = regenerated;
+            outcome
+        });
+    }
+    let changed = update_preview_state(
+        conn,
+        slug,
+        DerivedPreviewState::Ready,
+        Some(source_stamp),
+        None,
+        stamp.manifest.as_deref(),
+    )?;
+    Ok(PreviewReconcileOutcome {
+        slug: slug.to_string(),
+        state: DerivedPreviewState::Ready,
+        regenerated,
+        state_changed: changed,
+        failure: None,
+    })
+}
+
 struct StampOutcome {
     /// The manifest now current for this block.
     manifest: Option<String>,
