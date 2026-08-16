@@ -111,8 +111,69 @@ function makeRatioMismatchBlock(index: number): LightBlock {
   };
 }
 
+/// An article card carrying a single image whose source geometry contradicts
+/// its artifact geometry.
+///
+/// The media card above covers the same disagreement for `card_kind: media`.
+/// This one covers the path that used to read the source instead: an article
+/// laid out from a 1200×800 original while painting a 400×600 preview is
+/// cropped by its own card, and the crop looks deliberate.
+function makeArticleRatioMismatchBlock(index: number): LightBlock {
+  const id = 300_000 + index;
+  const asset = AUDIT_MEDIA_ASSETS[index % AUDIT_MEDIA_ASSETS.length]!;
+  const source = AUDIT_SOURCE_ASSETS[index % AUDIT_SOURCE_ASSETS.length]!;
+  return {
+    id,
+    slug: `feed-scroll-audit-article-ratio-${id}`,
+    card_kind: "article",
+    block_type: "article",
+    title: `Article ratio mismatch ${index + 1}`,
+    content_heading: null,
+    display_title: null,
+    fallback_label: `Article ratio mismatch ${index + 1}`,
+    url: `https://example.test/feed-scroll-audit/article-ratio/${id}`,
+    media_file: null,
+    thumbnail: null,
+    saved_at: AUDIT_SAVED_AT,
+    width: null,
+    height: null,
+    author: null,
+    body: "An article whose preview is a different shape than its original.",
+    preview_text: "An article whose preview is a different shape than its original.",
+    first_image: source,
+    media_urls: JSON.stringify([source]),
+    media_dimensions: JSON.stringify({ [source]: [1200, 800] }),
+    preview_manifest: JSON.stringify({
+      kind: "image",
+      primary_preview_path: asset,
+      // Source claims one shape...
+      width: 1200,
+      height: 800,
+      // ...the artifact on disk is another. The card follows the artifact.
+      preview_width: 400,
+      preview_height: 600,
+      tiles: [
+        {
+          source_path: source,
+          preview_path: asset,
+          width: 1200,
+          height: 800,
+          preview_width: 400,
+          preview_height: 600,
+          is_video: false,
+          is_video_poster: false,
+        },
+      ],
+      overflow_count: 0,
+    }),
+    feed_playback: null,
+    search_match: null,
+  };
+}
+
 function makeAuditBlock(index: number): LightBlock {
   if (index % 37 === 5) return makeRatioMismatchBlock(index);
+  if (index % 37 === 11) return makeArticleRatioMismatchBlock(index);
   const id = 100_000 + index;
   const metadataOnlyLink = index % 23 === 0;
   const body = metadataOnlyLink ? "" : auditBodies[index % auditBodies.length];

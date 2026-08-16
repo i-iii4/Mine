@@ -238,12 +238,16 @@ describe("computeFeedPlaybackSurfaceEnvelope", () => {
         primary_preview_path: "test.jpg",
         width: 1144,
         height: 720,
+        preview_width: 572,
+        preview_height: 360,
         tiles: [
           {
             source_path: "clip.mp4",
             preview_path: "clip.jpg",
             width: 1144,
             height: 720,
+            preview_width: 572,
+            preview_height: 360,
             is_video: true,
             is_video_poster: false,
           },

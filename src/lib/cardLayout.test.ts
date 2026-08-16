@@ -321,7 +321,9 @@ describe("deriveCardLayoutDescriptor", () => {
           primary_preview_path: "test.jpg",
           width: 1200,
           height: 800,
-          tiles: [{ source_path: "photo.jpg", preview_path: "test.preview-1.jpg", width: 1200, height: 800, is_video: false, is_video_poster: false }],
+          preview_width: 600,
+          preview_height: 400,
+          tiles: [{ source_path: "photo.jpg", preview_path: "test.preview-1.jpg", width: 1200, height: 800, preview_width: 600, preview_height: 400, is_video: false, is_video_poster: false }],
           overflow_count: 0,
         }),
       }),
@@ -422,8 +424,10 @@ describe("deriveCardLayoutDescriptor", () => {
           primary_preview_path: "tweet.jpg",
           width: 1920,
           height: 1080,
+          preview_width: 640,
+          preview_height: 360,
           tiles: [
-            { source_path: "clip.mp4", preview_path: "tweet.jpg", width: 1920, height: 1080, is_video: true, is_video_poster: true },
+            { source_path: "clip.mp4", preview_path: "tweet.jpg", width: 1920, height: 1080, preview_width: 640, preview_height: 360, is_video: true, is_video_poster: true },
           ],
           overflow_count: 0,
         }),
@@ -445,8 +449,10 @@ describe("deriveCardLayoutDescriptor", () => {
           primary_preview_path: "article-video.jpg",
           width: 1280,
           height: 720,
+          preview_width: 640,
+          preview_height: 360,
           tiles: [
-            { source_path: "clip.mp4", preview_path: "article-video.jpg", width: 1280, height: 720, is_video: true, is_video_poster: true },
+            { source_path: "clip.mp4", preview_path: "article-video.jpg", width: 1280, height: 720, preview_width: 640, preview_height: 360, is_video: true, is_video_poster: true },
           ],
           overflow_count: 0,
         }),
@@ -537,5 +543,125 @@ describe("deriveCardLayoutDescriptor", () => {
     );
     expect(descriptor.variant).toBe("article-text");
     expect(descriptor.titleText).toBe("References");
+  });
+});
+
+// Card shape follows the artifact the card paints, never the source file.
+// A preview is downscaled and may be clamped, so the two shapes differ — and
+// laying out from the source crops what is actually drawn.
+// See SPEC_CARD_MEDIA_GEOMETRY.md.
+describe("card shape comes from the artifact, not the source", () => {
+  /// Source and artifact disagree on purpose: 1000×500 is landscape 2.0,
+  /// 320×640 is portrait 0.5. Anything reading the source lands on 2.0.
+  function disagreeingManifest() {
+    return JSON.stringify({
+      kind: "image",
+      primary_preview_path: "preview.jpg",
+      width: 1000,
+      height: 500,
+      preview_width: 320,
+      preview_height: 640,
+      tiles: [
+        {
+          source_path: "photo.jpg",
+          preview_path: "preview.jpg",
+          width: 1000,
+          height: 500,
+          preview_width: 320,
+          preview_height: 640,
+          is_video: false,
+          is_video_poster: false,
+        },
+      ],
+      overflow_count: 0,
+    });
+  }
+
+  /// Same manifest with the artifact never measured — the state every preview
+  /// written before the geometry fields existed was in.
+  function unmeasuredManifest() {
+    return JSON.stringify({
+      kind: "image",
+      primary_preview_path: "preview.jpg",
+      width: 1000,
+      height: 500,
+      tiles: [
+        {
+          source_path: "photo.jpg",
+          preview_path: "preview.jpg",
+          width: 1000,
+          height: 500,
+          is_video: false,
+          is_video_poster: false,
+        },
+      ],
+      overflow_count: 0,
+    });
+  }
+
+  it("shapes an article card with one image from the artifact", () => {
+    const descriptor = deriveCardLayoutDescriptor(
+      makeBlock({
+        card_kind: "article",
+        block_type: "article",
+        title: "Piece",
+        url: "https://example.com/piece",
+        preview_manifest: disagreeingManifest(),
+      }),
+    );
+
+    expect(descriptor.variant).toBe("article-media");
+    expect(descriptor.primaryAspectRatio).toBeCloseTo(0.5);
+    expect(descriptor.mediaItems[0]?.aspectRatio).toBeCloseTo(0.5);
+  });
+
+  it("shapes a social card with one image from the artifact", () => {
+    const descriptor = deriveCardLayoutDescriptor(
+      makeBlock({
+        card_kind: "article",
+        block_type: "article",
+        title: null,
+        url: "https://x.com/someone/status/123",
+        body: "A post",
+        preview_manifest: disagreeingManifest(),
+      }),
+    );
+
+    expect(descriptor.variant).toBe("social-single-media");
+    expect(descriptor.primaryAspectRatio).toBeCloseTo(0.5);
+  });
+
+  it("leaves a social card's shape unknown rather than calling it square", () => {
+    const descriptor = deriveCardLayoutDescriptor(
+      makeBlock({
+        card_kind: "article",
+        block_type: "article",
+        title: null,
+        url: "https://x.com/someone/status/123",
+        body: "A post",
+        preview_manifest: unmeasuredManifest(),
+      }),
+    );
+
+    expect(descriptor.variant).toBe("social-single-media");
+    // Not 1: a square is a plausible-looking proportion, which is exactly what
+    // makes substituting it a lie rather than a placeholder.
+    expect(descriptor.primaryAspectRatio).toBeNull();
+    expect(descriptor.mediaItems[0]?.aspectRatio).toBeNull();
+  });
+
+  it("leaves an article card's shape unknown rather than guessing from the source", () => {
+    const descriptor = deriveCardLayoutDescriptor(
+      makeBlock({
+        card_kind: "article",
+        block_type: "article",
+        title: "Piece",
+        url: "https://example.com/piece",
+        preview_manifest: unmeasuredManifest(),
+      }),
+    );
+
+    expect(descriptor.variant).toBe("article-media");
+    expect(descriptor.primaryAspectRatio).toBeNull();
   });
 });

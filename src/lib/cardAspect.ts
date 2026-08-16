@@ -9,6 +9,15 @@
 //
 // Contract: SPEC_CARD_MEDIA_GEOMETRY.md.
 
+/// The envelope a media slot takes while its artifact's geometry is unknown.
+///
+/// Deterministic, and marked in the markup as provisional so it reads as a
+/// state rather than a measurement. Deliberately not square: a square is a
+/// plausible-looking proportion, so using it here would pass off ignorance as
+/// a fact — exactly what `SPEC_CARD_MEDIA_GEOMETRY.md` forbids. A slot this
+/// shape is visibly a placeholder, and one `thumb:updated` replaces it.
+export const PROVISIONAL_MEDIA_ASPECT = 9 / 16;
+
 /// Tallest shape a card may take: height at most twice its width.
 export const MIN_CARD_ASPECT = 1 / 2;
 /// Widest shape a card may take: width at most twice its height.

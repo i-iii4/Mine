@@ -16,7 +16,7 @@ import type { WordWidths } from "@/types/fontMetrics";
 import { countLines } from "./wordWrap";
 import { deriveCardLayoutDescriptor, deriveContentCardSlots, getRuntimeCardKind, parsePreviewManifest } from "./cardLayout";
 import { CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX } from "./cardTypography";
-import { clampCardAspect } from "./cardAspect";
+import { PROVISIONAL_MEDIA_ASPECT, clampCardAspect } from "./cardAspect";
 
 export interface FeedPlaybackSurfaceEnvelope {
   topOffsetPx: number;
@@ -140,7 +140,6 @@ const ARTICLE_PREVIEW_MAX_LINES_NO_IMAGE = 8;
  * Fixed aspect ratio for article first_image. Card.tsx forces aspect-video
  * (16:9) on the image so height is deterministic without metadata.
  */
-const ARTICLE_IMAGE_ASPECT = 9 / 16;
 
 // ─── Image-card fallback when no width/height metadata ──────────────────────
 
@@ -234,7 +233,7 @@ function computeArticleHeight(
     // Image width = card inner width - article padding on both sides.
     // Height = that width × aspect-video ratio (9/16).
     const imageH = descriptor.variant === "article-media"
-      ? Math.round(contentWidth / Math.max(descriptor.primaryAspectRatio ?? ARTICLE_IMAGE_ASPECT, 0.01))
+      ? Math.round(contentWidth / Math.max(descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT, 0.01))
       : 0;
     const authorH = descriptor.authorText ? ARTICLE_AUTHOR_LINE_HEIGHT : 0;
 
@@ -273,7 +272,7 @@ function computeArticleHeight(
       : ARTICLE_PREVIEW_MAX_LINES_NO_IMAGE)
     : 0;
   const imageH = descriptor.variant === "article-media"
-    ? Math.round(contentWidth / Math.max(descriptor.primaryAspectRatio ?? ARTICLE_IMAGE_ASPECT, 0.01))
+    ? Math.round(contentWidth / Math.max(descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT, 0.01))
     : 0;
   const authorH = descriptor.authorText ? ARTICLE_AUTHOR_LINE_HEIGHT : 0;
   const hasTitle = descriptor.titleText.length > 0;
@@ -321,7 +320,9 @@ function computeSocialHeight(
 
   let mediaH = 0;
   if (descriptor.variant === "social-single-media") {
-    mediaH = Math.round(contentWidth / Math.max(descriptor.primaryAspectRatio ?? 1, 0.01));
+    mediaH = Math.round(
+      contentWidth / Math.max(descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT, 0.01),
+    );
   } else if (descriptor.variant === "social-media-grid") {
     const rows = Math.ceil(descriptor.visibleMediaCount / 2);
     const cell = Math.max(1, Math.round((contentWidth - SOCIAL_GRID_GAP) / 2));
@@ -383,7 +384,7 @@ export function computeFeedPlaybackSurfaceEnvelope(
           topOffsetPx: CARD_BORDER_TOP + ARTICLE_PADDING_TOP,
           heightPx: Math.round(
             contentWidth /
-              Math.max(descriptor.primaryAspectRatio ?? ARTICLE_IMAGE_ASPECT, 0.01),
+              Math.max(descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT, 0.01),
           ),
         };
       }
@@ -397,7 +398,7 @@ export function computeFeedPlaybackSurfaceEnvelope(
           topOffsetPx: CARD_BORDER_TOP + SOCIAL_PADDING_TOP,
           heightPx: Math.round(
             contentWidth /
-              Math.max(descriptor.primaryAspectRatio ?? 1, 0.01),
+              Math.max(descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT, 0.01),
           ),
         };
       }

@@ -66,12 +66,16 @@ function makeVideoBlock(id: number, overrides: Partial<LightBlock> = {}): LightB
       primary_preview_path: `block-${id}.jpg`,
       width: 1280,
       height: 720,
+      preview_width: 640,
+      preview_height: 360,
       tiles: [
         {
           source_path: `clip-${id}.mp4`,
           preview_path: `block-${id}.jpg`,
           width: 1280,
           height: 720,
+          preview_width: 640,
+          preview_height: 360,
           is_video: true,
           is_video_poster: true,
         },
@@ -152,12 +156,16 @@ function makeArticleVideoBlock(
       primary_preview_path: `block-${id}.jpg`,
       width: 1144,
       height: 720,
+      preview_width: 572,
+      preview_height: 360,
       tiles: [
         {
           source_path: `clip-${id}.mp4`,
           preview_path: `clip-${id}.jpg`,
           width: 1144,
           height: 720,
+          preview_width: 572,
+          preview_height: 360,
           is_video: true,
           is_video_poster: false,
         },

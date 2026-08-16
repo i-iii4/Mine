@@ -417,6 +417,69 @@ async function runViewportAudit(browser, viewport) {
     failures.push("metadata-only link did not render its link title");
   }
 
+  // A ready card must be drawn at the shape of the artifact it paints.
+  //
+  // Both ratio fixtures state a source of 1200x800 and an artifact of 400x600,
+  // so a card laid out from the source lands on 1.5 and a card laid out from
+  // the artifact on 0.667 — far enough apart that no tolerance hides the
+  // difference. The fallback envelope is checked separately: a ready card that
+  // still calls its geometry pending has no shape at all, which is the state
+  // that reads as an arbitrary crop rather than as a missing measurement.
+  const artifactShapes = await page.evaluate(() => {
+    const EXPECTED_ARTIFACT_RATIO = 400 / 600;
+    const wrong = [];
+    const pending = [];
+    let measured = 0;
+    for (const item of document.querySelectorAll("[data-feed-grid-item-slug]")) {
+      const slug = item.getAttribute("data-feed-grid-item-slug") ?? "";
+      if (!slug.includes("audit-ratio-") && !slug.includes("audit-article-ratio-")) continue;
+      const surface = item.querySelector("[data-card-graphic-surface]");
+      if (!(surface instanceof HTMLElement)) continue;
+      if (surface.getAttribute("data-card-preview-geometry") === "pending") {
+        pending.push(slug);
+        measured += 1;
+        continue;
+      }
+      const rect = surface.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      measured += 1;
+      const ratio = rect.width / rect.height;
+      const drift = Math.abs(ratio - EXPECTED_ARTIFACT_RATIO) / EXPECTED_ARTIFACT_RATIO;
+      if (drift > 0.02) {
+        wrong.push({ slug, ratio: Number(ratio.toFixed(3)), drift: Number((drift * 100).toFixed(1)) });
+      }
+    }
+    return { wrong, pending, checked: measured };
+  });
+  if (artifactShapes.wrong.length > 0) {
+    const sample = artifactShapes.wrong
+      .slice(0, 3)
+      .map((entry) => `${entry.slug} drawn at ${entry.ratio} (${entry.drift}% off)`)
+      .join(", ");
+    failures.push(
+      `card drawn at a shape other than its artifact on ${artifactShapes.wrong.length} card(s): ${sample}`,
+    );
+  }
+  if (artifactShapes.pending.length > 0) {
+    failures.push(
+      `ready card left on the placeholder envelope: ${artifactShapes.pending.slice(0, 3).join(", ")}`,
+    );
+  }
+  {
+    // Printed rather than only counted: a check that inspected nothing passes
+    // silently, and a silent pass is indistinguishable from coverage.
+    const inspected = artifactShapes.checked;
+    const ok = artifactShapes.wrong.length === 0 && artifactShapes.pending.length === 0;
+    if (inspected === 0) {
+      failures.push("artifact-shape check inspected no cards");
+    }
+    console.log(
+      `${ok && inspected > 0 ? "PASS" : "FAIL"} ${viewport.name}: every ready card drawn at its artifact's shape`
+      + ` — ${inspected} card(s) inspected, ${artifactShapes.wrong.length} mis-shaped,`
+      + ` ${artifactShapes.pending.length} on the placeholder envelope`,
+    );
+  }
+
   // Collage tiles are cropped into fixed slots and must keep the layout they
   // had before card geometry moved to artifact dimensions: their own ratios are
   // deliberately not the source ratios, and nothing about this change may
@@ -611,6 +674,7 @@ async function main() {
     if (failures.length > 0) {
       throw new Error(`Feed scroll audit failed:\n${failures.join("\n")}`);
     }
+    console.log("\nAll feed scroll audit checks passed.");
   } finally {
     await browser.close();
   }

@@ -15,6 +15,7 @@ import {
   parsePreviewManifest,
   type CardLayoutDescriptor,
 } from "@/lib/cardLayout";
+import { PROVISIONAL_MEDIA_ASPECT } from "@/lib/cardAspect";
 import { normalizeFeedPlayback } from "@/lib/feedPlayback";
 import { CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX } from "@/lib/cardTypography";
 import { CARD_HOVER_ACTION_MIN_HEIGHT } from "@/lib/cardHeight";
@@ -1021,9 +1022,11 @@ const SocialCard = memo(function SocialCard({
   return (
     <div className="p-4">
       {descriptor.variant === "social-single-media" && media.length === 1 && (() => {
-        // Exact aspect-ratio from the indexer when available, aspect-square
-        // fallback otherwise. Feed cards use object-cover here to avoid
-        // visible gray letterboxing inside the slot while scrolling.
+        // Shape comes from the artifact this slot paints. When it has not been
+        // measured the slot takes the provisional envelope and says so in the
+        // markup, the same state an image card uses — a square here would be a
+        // proportion nobody knows. Feed cards use object-cover to avoid visible
+        // letterboxing inside the slot while scrolling.
         const m = media[0]!;
         const absClass = "absolute inset-0 h-full w-full object-cover";
         const shouldAutoplay =
@@ -1037,7 +1040,8 @@ const SocialCard = memo(function SocialCard({
         return (
           <GraphicSurface
             className="w-full"
-            style={{ aspectRatio: `${m.aspectRatio ?? 1}` }}
+            style={{ aspectRatio: `${m.aspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
+            data-card-preview-geometry={m.aspectRatio === null ? "pending" : undefined}
           >
             {shouldAutoplay ? (
               <FeedVideoSurface

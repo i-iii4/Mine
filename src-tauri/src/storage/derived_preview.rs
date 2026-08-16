@@ -52,6 +52,15 @@ pub enum PreviewErrorKind {
     /// until the contents come back. Kept apart from every other kind so the
     /// interface can say so plainly. See SPEC_CLOUD_STORAGE.md Х6.
     ContentInCloud,
+    /// The artifact is on disk and passes the readiness check, but its
+    /// dimensions cannot be read out of it.
+    ///
+    /// Readiness looks at the first bytes only, so a truncated or corrupt file
+    /// with an intact header counts as present. Without a kind of its own such
+    /// a preview reported `ready` while carrying no geometry, and a card with
+    /// no geometry silently falls back to a placeholder envelope — a defect
+    /// that looks like a design decision. See SPEC_CARD_MEDIA_GEOMETRY.md.
+    UnreadableArtifact,
     Generation,
 }
 
@@ -64,6 +73,7 @@ impl PreviewErrorKind {
             Self::UnsafePreviewPath => "unsafe_preview_path",
             Self::BrowserDecodeRequired => "browser_decode_required",
             Self::ContentInCloud => "content_in_cloud",
+            Self::UnreadableArtifact => "unreadable_artifact",
             Self::Generation => "generation",
         }
     }
@@ -341,15 +351,27 @@ pub fn reconcile_preview_for_slug(
         // measurable. This is where previews written before the manifest
         // carried artifact geometry get their dimensions: they reach this
         // branch and no other, because their source has not changed since.
-        let expected_manifest =
-            publish_stamped_dimensions(conn, vault, slug, &record, &manifest)?;
+        let stamp = publish_stamped_dimensions(conn, vault, slug, &record, &manifest)?;
+        if stamp.unmeasurable {
+            return mark_non_ready(
+                conn,
+                slug,
+                &record,
+                DerivedPreviewState::Failed,
+                Some(&source_stamp),
+                PreviewErrorKind::UnreadableArtifact,
+                true,
+                "preview artifact is present but its dimensions cannot be read",
+            )
+            .map(Some);
+        }
         let changed = update_preview_state(
             conn,
             slug,
             DerivedPreviewState::Ready,
             Some(&source_stamp),
             None,
-            expected_manifest.as_deref(),
+            stamp.manifest.as_deref(),
         )?;
         return Ok(Some(PreviewReconcileOutcome {
             slug: slug.to_string(),
@@ -511,15 +533,27 @@ pub fn reconcile_preview_for_slug(
         // the manifest. Reading it here — rather than returning it up from every
         // generator branch — covers tiles that were already ready and skipped
         // above.
-        let expected_manifest =
-            publish_stamped_dimensions(conn, vault, slug, &record, &manifest)?;
+        let stamp = publish_stamped_dimensions(conn, vault, slug, &record, &manifest)?;
+        if stamp.unmeasurable {
+            return mark_non_ready(
+                conn,
+                slug,
+                &record,
+                DerivedPreviewState::Failed,
+                Some(&source_stamp),
+                PreviewErrorKind::UnreadableArtifact,
+                true,
+                "preview artifact was written but its dimensions cannot be read",
+            )
+            .map(Some);
+        }
         let changed = update_preview_state(
             conn,
             slug,
             DerivedPreviewState::Ready,
             Some(&source_stamp),
             None,
-            expected_manifest.as_deref(),
+            stamp.manifest.as_deref(),
         )?;
         return Ok(Some(PreviewReconcileOutcome {
             slug: slug.to_string(),
@@ -771,25 +805,54 @@ fn primary_source_state(vault: &VaultLayout, block: &Block) -> PrimarySourceStat
 /// value: publishing a rewritten manifest through it would look like a stale
 /// worker and be rejected. If another writer changed the manifest first, this
 /// pass keeps the old one and the next reconcile stamps it.
+struct StampOutcome {
+    /// The manifest now current for this block.
+    manifest: Option<String>,
+    /// An artifact exists but could not be measured, so this block's geometry
+    /// stays unknown however many times the sweep runs.
+    unmeasurable: bool,
+}
+
 fn publish_stamped_dimensions(
     conn: &Connection,
     vault: &VaultLayout,
     slug: &str,
     record: &PreviewRecord,
     manifest: &FeedPreviewManifest,
-) -> Result<Option<String>> {
+) -> Result<StampOutcome> {
     // Measuring opens every artifact. Once a manifest carries its geometry
     // there is nothing to learn, so a settled vault costs nothing per sweep.
     if !manifest_needs_dimensions(manifest) {
-        return Ok(record.manifest.clone());
+        return Ok(StampOutcome {
+            manifest: record.manifest.clone(),
+            unmeasurable: false,
+        });
     }
-    let Some(stamped) = stamp_preview_dimensions(vault, manifest)? else {
-        return Ok(record.manifest.clone());
+
+    let stamped = stamp_preview_dimensions(vault, manifest)?;
+    let Some(stamped) = stamped else {
+        // Every artifact was opened and none gave up its size: the files are
+        // present but unusable. Reporting `ready` here is what turned a broken
+        // artifact into a card that merely looked oddly shaped.
+        return Ok(StampOutcome {
+            manifest: record.manifest.clone(),
+            unmeasurable: true,
+        });
     };
+
+    let unmeasurable = serde_json::from_str::<FeedPreviewManifest>(&stamped)
+        .map(|parsed| manifest_needs_dimensions(&parsed))
+        .unwrap_or(false);
     if store_stamped_manifest(conn, slug, record.manifest.as_deref(), &stamped)? {
-        return Ok(Some(stamped));
+        return Ok(StampOutcome {
+            manifest: Some(stamped),
+            unmeasurable,
+        });
     }
-    Ok(record.manifest.clone())
+    Ok(StampOutcome {
+        manifest: record.manifest.clone(),
+        unmeasurable,
+    })
 }
 
 /// Whether any artifact this manifest describes is still unmeasured.
@@ -1457,6 +1520,85 @@ mod tests {
 
         // And the settled manifest is left alone on the next pass.
         assert!(!manifest_needs_dimensions(&stamped));
+    }
+
+    /// An artifact that passes the readiness check and yields no geometry.
+    ///
+    /// Readiness reads the first bytes only, so a file with an intact JPEG
+    /// header and garbage behind it counts as present. Before this had a kind
+    /// of its own, such a block reported `ready` while carrying no dimensions,
+    /// and a card with no dimensions quietly takes a placeholder envelope —
+    /// which looks like a layout decision rather than a broken file.
+    #[test]
+    fn artifact_that_cannot_be_measured_is_reported_not_called_ready() {
+        let (_source, vault, conn) = setup();
+        let block = image_block("Corrupt", "corrupt.png");
+        let image = image::RgbImage::from_pixel(500, 1000, image::Rgb([10, 20, 30]));
+        image.save(vault.root().join("corrupt.png")).unwrap();
+        files::write_block_file(&vault, &block).unwrap();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+        reconcile_preview_for_slug(&conn, &vault, "Corrupt").unwrap();
+
+        // Overwrite every artifact with a JPEG header followed by nothing
+        // usable, and forget the geometry the first pass recorded.
+        let raw: String = conn
+            .query_row(
+                "SELECT preview_manifest FROM blocks WHERE slug = 'Corrupt'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let mut manifest: FeedPreviewManifest = serde_json::from_str(&raw).unwrap();
+        manifest.preview_width = None;
+        manifest.preview_height = None;
+        for tile in &mut manifest.tiles {
+            tile.preview_width = None;
+            tile.preview_height = None;
+        }
+        let mut artifacts: Vec<String> = manifest
+            .tiles
+            .iter()
+            .filter_map(|tile| tile.preview_path.clone())
+            .collect();
+        if let Some(primary) = manifest.primary_preview_path.clone() {
+            artifacts.push(primary);
+        }
+        assert!(!artifacts.is_empty(), "the fixture must have artifacts");
+        for relative in &artifacts {
+            let path = vault.thumbs_dir().join(relative);
+            std::fs::write(&path, b"\xff\xd8\xffnot really a jpeg at all").unwrap();
+            assert!(
+                is_ready_preview(&path),
+                "the readiness check must still accept this file — that is the point"
+            );
+        }
+        conn.execute(
+            "UPDATE blocks SET preview_manifest = ?2 WHERE slug = ?1",
+            params!["Corrupt", serde_json::to_string(&manifest).unwrap()],
+        )
+        .unwrap();
+
+        let outcome = reconcile_preview_for_slug(&conn, &vault, "Corrupt")
+            .unwrap()
+            .expect("the block is known");
+
+        assert_eq!(outcome.state, DerivedPreviewState::Failed);
+        let failure = outcome.failure.expect("an unmeasurable artifact is reported");
+        assert_eq!(failure.error_kind, PreviewErrorKind::UnreadableArtifact);
+        // Distinct from the kinds that describe the source rather than the
+        // artifact, so the interface can say which of them happened.
+        assert_ne!(failure.error_kind, PreviewErrorKind::MissingSource);
+        assert_ne!(failure.error_kind, PreviewErrorKind::ContentInCloud);
+
+        let (state, kind): (String, Option<String>) = conn
+            .query_row(
+                "SELECT preview_state, preview_error_kind FROM blocks WHERE slug = 'Corrupt'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(state, "failed");
+        assert_eq!(kind.as_deref(), Some("unreadable_artifact"));
     }
 
     #[test]

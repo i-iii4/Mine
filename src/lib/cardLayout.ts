@@ -145,7 +145,12 @@ function mediaItemsFromManifestTiles(
   return tiles.map((tile) => ({
     sourcePath: tile.sourcePath,
     previewPath: tile.previewPath,
-    aspectRatio: aspectRatioFromDimensions(tile.width, tile.height),
+    // The artifact the card paints, never the source file. A preview may be
+    // downscaled or clamped to a different shape than its original, and laying
+    // out from the original then crops what is actually drawn. Null stays null:
+    // an unmeasured tile is a state, not a shape.
+    // See SPEC_CARD_MEDIA_GEOMETRY.md.
+    aspectRatio: aspectRatioFromDimensions(tile.previewWidth, tile.previewHeight),
     isVideo: tile.isVideo,
     isVideoPoster: tile.isVideoPoster,
   }));
@@ -322,9 +327,10 @@ function deriveArticleCardLayoutDescriptor(
         titleText: "",
         previewText,
         authorText,
-        primaryAspectRatio: mediaItems[0]?.aspectRatio
-          ?? aspectRatioFromDimensions(previewManifest?.width, previewManifest?.height)
-          ?? 1,
+        // Null when the artifact has not been measured yet, and stays null.
+        // Substituting the source's shape would lay the card out from a file
+        // it never paints; substituting 1 would state a square nobody knows.
+        primaryAspectRatio: mediaItems[0]?.aspectRatio ?? null,
         mediaItems,
         visibleMediaCount: 1,
         totalMediaCount: 1,
@@ -348,9 +354,16 @@ function deriveArticleCardLayoutDescriptor(
     ? mediaItems.length + previewManifest.overflowCount
     : 0;
   const hasVisualPreview = previewManifest?.kind !== undefined && previewManifest.kind !== "text";
+  // Collages keep their own arrangement; a single image is shaped by the
+  // artifact that is painted, and by nothing else. Null when that artifact has
+  // not been measured — the consumer picks a provisional envelope rather than
+  // this function inventing one from the source file.
+  const singleArtifactAspect = imageSurfaceAspectRatio(previewManifest) ?? mediaItems[0]?.aspectRatio ?? null;
   const primaryAspectRatio = previewManifest?.kind === "composite"
     ? galleryAspectRatio(Math.min(4, totalMediaCount))
-    : aspectRatioFromDimensions(previewManifest?.width, previewManifest?.height) ?? (16 / 9);
+    : singleArtifactAspect === null
+      ? null
+      : clampCardAspect(singleArtifactAspect);
   return {
     variant: hasVisualPreview ? "article-media" : "article-text",
     titleText,
