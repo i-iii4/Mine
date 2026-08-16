@@ -16,7 +16,13 @@
 /// plausible-looking proportion, so using it here would pass off ignorance as
 /// a fact — exactly what `SPEC_CARD_MEDIA_GEOMETRY.md` forbids. A slot this
 /// shape is visibly a placeholder, and one `thumb:updated` replaces it.
-export const PROVISIONAL_MEDIA_ASPECT = 9 / 16;
+///
+/// Width over height, like every other ratio here: `16 / 9` is the landscape
+/// slot, `9 / 16` would be its portrait mirror. Both the height reserved by
+/// the layout and the ratio painted on the surface read this one constant,
+/// because the whole point of a provisional envelope is that the two agree —
+/// they did not, and disagreed by a factor of three.
+export const PROVISIONAL_MEDIA_ASPECT = 16 / 9;
 
 /// Tallest shape a card may take: height at most twice its width.
 export const MIN_CARD_ASPECT = 1 / 2;

@@ -171,9 +171,66 @@ function makeArticleRatioMismatchBlock(index: number): LightBlock {
   };
 }
 
+/// An article card whose artifact exists but has never been measured.
+///
+/// The state every preview written before the manifest carried geometry was
+/// in, and the one branch no other fixture reaches — all of them are measured.
+/// It is here to hold the layout and the surface to the same placeholder: the
+/// height the grid reserves and the ratio the surface paints must be the same
+/// shape, or the card is cropped or padded by its own frame.
+function makeUnmeasuredArticleBlock(index: number): LightBlock {
+  const id = 400_000 + index;
+  const asset = AUDIT_MEDIA_ASSETS[index % AUDIT_MEDIA_ASSETS.length]!;
+  const source = AUDIT_SOURCE_ASSETS[index % AUDIT_SOURCE_ASSETS.length]!;
+  return {
+    id,
+    slug: `feed-scroll-audit-unmeasured-${id}`,
+    card_kind: "article",
+    block_type: "article",
+    title: `Unmeasured artifact ${index + 1}`,
+    content_heading: null,
+    display_title: null,
+    fallback_label: `Unmeasured artifact ${index + 1}`,
+    url: `https://example.test/feed-scroll-audit/unmeasured/${id}`,
+    media_file: null,
+    thumbnail: null,
+    saved_at: AUDIT_SAVED_AT,
+    width: null,
+    height: null,
+    author: null,
+    body: "An article whose preview exists but was never measured.",
+    preview_text: "An article whose preview exists but was never measured.",
+    first_image: source,
+    media_urls: JSON.stringify([source]),
+    media_dimensions: null,
+    preview_manifest: JSON.stringify({
+      kind: "image",
+      primary_preview_path: asset,
+      width: 1200,
+      height: 800,
+      // No preview_width / preview_height anywhere: the artifact is on disk
+      // and its shape is unrecorded.
+      tiles: [
+        {
+          source_path: source,
+          preview_path: asset,
+          width: 1200,
+          height: 800,
+          is_video: false,
+          is_video_poster: false,
+        },
+      ],
+      overflow_count: 0,
+    }),
+    feed_playback: null,
+    search_match: null,
+  };
+}
+
 function makeAuditBlock(index: number): LightBlock {
   if (index % 37 === 5) return makeRatioMismatchBlock(index);
   if (index % 37 === 11) return makeArticleRatioMismatchBlock(index);
+  if (index % 37 === 17) return makeUnmeasuredArticleBlock(index);
   const id = 100_000 + index;
   const metadataOnlyLink = index % 23 === 0;
   const body = metadataOnlyLink ? "" : auditBodies[index % auditBodies.length];

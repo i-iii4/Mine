@@ -4,7 +4,6 @@ import {
   type NormalizedFeedPreviewTile,
 } from "@/lib/feedPreview";
 import { getDisplayTitle } from "@/lib/displayTitle";
-import { parseMediaDimensions } from "@/lib/mediaDimensions";
 import { clampCardAspect } from "@/lib/cardAspect";
 
 export type CardLayoutVariant =
@@ -128,17 +127,6 @@ function aspectRatioFromDimensions(width: number | null | undefined, height: num
   return width / height;
 }
 
-function parseAspectRatio(
-  dims: ReturnType<typeof parseMediaDimensions>,
-  filename: string | null | undefined,
-): number | null {
-  if (!dims || !filename) return null;
-  const entry = dims[filename];
-  if (!entry) return null;
-  const [w, h] = entry;
-  return w > 0 && h > 0 ? w / h : null;
-}
-
 function mediaItemsFromManifestTiles(
   tiles: NormalizedFeedPreviewTile[],
 ): CardLayoutMediaItem[] {
@@ -163,11 +151,6 @@ function galleryAspectRatio(itemCount: number): number {
 function isEmbeddableVideoUrl(url: string | null): boolean {
   if (!url) return false;
   return /(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/.test(url);
-}
-
-function mediaFileAspectRatio(block: CardLayoutBlock): number | null {
-  return parseAspectRatio(parseMediaDimensions(block), block.media_file)
-    ?? aspectRatioFromDimensions(block.width, block.height);
 }
 
 /// Ratio an image card renders its graphic at.
@@ -234,11 +217,12 @@ function deriveMediaCardLayoutDescriptor(
       titleText,
       previewText: "",
       authorText: "",
-      primaryAspectRatio:
-        mediaItems[0]?.aspectRatio ??
-        aspectRatioFromDimensions(previewManifest?.width, previewManifest?.height) ??
-        mediaFileAspectRatio(block) ??
-        (16 / 9),
+      // Same rule as every other variant: the artifact, or nothing. Nothing
+      // currently reads this — a video card's surface is a fixed `aspect-video`
+      // slot and its height comes from a constant — but a value computed the
+      // forbidden way is an invitation to wire it up and inherit the
+      // violation. See SPEC_CARD_MEDIA_GEOMETRY.md.
+      primaryAspectRatio: mediaItems[0]?.aspectRatio ?? null,
       mediaItems,
       visibleMediaCount: mediaItems.length,
       totalMediaCount: mediaItems.length,

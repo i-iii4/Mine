@@ -582,7 +582,7 @@ export const CardSkeleton = memo(function CardSkeleton({
         {hasMedia && (
           <div
             className="mt-3 w-full rounded-[2px] bg-accent"
-            style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? 1}` }}
+            style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
           />
         )}
         {descriptor.authorText && (
@@ -1081,7 +1081,7 @@ const SocialCard = memo(function SocialCard({
       {descriptor.variant === "social-media-grid" && media.length >= 2 && (
         <GraphicSurface
           className="w-full"
-          style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? 1}` }}
+          style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
         >
           <GalleryTiles
             items={media}
@@ -1171,7 +1171,8 @@ const ArticleCard = memo(function ArticleCard({
         // previews use object-cover to avoid letterboxing in feed cards.
         <GraphicSurface
           className="w-full"
-          style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? (16 / 9)}` }}
+          style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
+          data-card-preview-geometry={descriptor.primaryAspectRatio === null ? "pending" : undefined}
         >
           {descriptor.totalMediaCount > 1 ? (
             <GalleryTiles
