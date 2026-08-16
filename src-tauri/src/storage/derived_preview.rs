@@ -337,13 +337,19 @@ pub fn reconcile_preview_for_slug(
         .as_deref()
         .is_some_and(|stamp| stamp != source_stamp);
     if !source_changed && expected.iter().all(|path| is_ready_preview(path)) {
+        // Nothing to generate, but the artifacts are on disk and therefore
+        // measurable. This is where previews written before the manifest
+        // carried artifact geometry get their dimensions: they reach this
+        // branch and no other, because their source has not changed since.
+        let expected_manifest =
+            publish_stamped_dimensions(conn, vault, slug, &record, &manifest)?;
         let changed = update_preview_state(
             conn,
             slug,
             DerivedPreviewState::Ready,
             Some(&source_stamp),
             None,
-            record.manifest.as_deref(),
+            expected_manifest.as_deref(),
         )?;
         return Ok(Some(PreviewReconcileOutcome {
             slug: slug.to_string(),
@@ -503,36 +509,17 @@ pub fn reconcile_preview_for_slug(
     if all_ready && (!source_changed || generation_failure.is_none()) {
         // The artifacts exist now, so their geometry is knowable and belongs in
         // the manifest. Reading it here — rather than returning it up from every
-        // generator branch — also backfills previews written before this field
-        // existed, and covers tiles that were already ready and skipped above.
-        //
-        // Written as its own guarded update: the manifest passed to
-        // `update_preview_state` is an optimistic-locking condition, not a
-        // value, so publishing a rewritten manifest through it would look like
-        // a stale worker and be rejected. If another writer changed the
-        // manifest first, this pass keeps the old one and the next reconcile
-        // stamps it.
-        let stamped = stamp_preview_dimensions(vault, &manifest)?;
-        let expected_manifest = match stamped.as_deref() {
-            Some(stamped_manifest)
-                if store_stamped_manifest(
-                    conn,
-                    slug,
-                    record.manifest.as_deref(),
-                    stamped_manifest,
-                )? =>
-            {
-                Some(stamped_manifest)
-            }
-            _ => record.manifest.as_deref(),
-        };
+        // generator branch — covers tiles that were already ready and skipped
+        // above.
+        let expected_manifest =
+            publish_stamped_dimensions(conn, vault, slug, &record, &manifest)?;
         let changed = update_preview_state(
             conn,
             slug,
             DerivedPreviewState::Ready,
             Some(&source_stamp),
             None,
-            expected_manifest,
+            expected_manifest.as_deref(),
         )?;
         return Ok(Some(PreviewReconcileOutcome {
             slug: slug.to_string(),
@@ -776,6 +763,46 @@ fn primary_source_state(vault: &VaultLayout, block: &Block) -> PrimarySourceStat
 ///
 /// Guarded by the manifest it replaces, so a concurrent writer that changed the
 /// plan wins and this pass leaves the row alone.
+/// Measure every existing preview artifact and publish the result, returning
+/// the manifest that is now current for this block.
+///
+/// The returned value is what the caller must pass to `update_preview_state`,
+/// which takes the manifest as an optimistic-locking condition rather than a
+/// value: publishing a rewritten manifest through it would look like a stale
+/// worker and be rejected. If another writer changed the manifest first, this
+/// pass keeps the old one and the next reconcile stamps it.
+fn publish_stamped_dimensions(
+    conn: &Connection,
+    vault: &VaultLayout,
+    slug: &str,
+    record: &PreviewRecord,
+    manifest: &FeedPreviewManifest,
+) -> Result<Option<String>> {
+    // Measuring opens every artifact. Once a manifest carries its geometry
+    // there is nothing to learn, so a settled vault costs nothing per sweep.
+    if !manifest_needs_dimensions(manifest) {
+        return Ok(record.manifest.clone());
+    }
+    let Some(stamped) = stamp_preview_dimensions(vault, manifest)? else {
+        return Ok(record.manifest.clone());
+    };
+    if store_stamped_manifest(conn, slug, record.manifest.as_deref(), &stamped)? {
+        return Ok(Some(stamped));
+    }
+    Ok(record.manifest.clone())
+}
+
+/// Whether any artifact this manifest describes is still unmeasured.
+fn manifest_needs_dimensions(manifest: &FeedPreviewManifest) -> bool {
+    if manifest.primary_preview_path.is_some() && manifest.preview_dimensions().is_none() {
+        return true;
+    }
+    manifest
+        .tiles
+        .iter()
+        .any(|tile| tile.preview_path.is_some() && tile.preview_dimensions().is_none())
+}
+
 fn store_stamped_manifest(
     conn: &Connection,
     slug: &str,
@@ -1362,6 +1389,74 @@ mod tests {
             .preview_dimensions()
             .expect("tile must record artifact geometry");
         assert_eq!((tile_preview.width, tile_preview.height), (320, 640));
+    }
+
+    /// A preview written before the manifest carried artifact geometry.
+    ///
+    /// This is the whole installed base at the moment the field is introduced:
+    /// artifacts on disk, source untouched, manifest silent about geometry. It
+    /// reaches only the "nothing to generate" branch, so if that branch does
+    /// not measure, the dimensions never arrive — and a card with no
+    /// proportion falls back to a fixed height, which reads as a square.
+    #[test]
+    fn ready_preview_written_before_dimensions_existed_is_measured() {
+        let (_source, vault, conn) = setup();
+        let block = image_block("Legacy", "legacy.png");
+        let image = image::RgbImage::from_pixel(500, 1000, image::Rgb([10, 20, 30]));
+        image.save(vault.root().join("legacy.png")).unwrap();
+        files::write_block_file(&vault, &block).unwrap();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+        reconcile_preview_for_slug(&conn, &vault, "Legacy").unwrap();
+
+        let read_manifest = |conn: &Connection| -> FeedPreviewManifest {
+            let raw: String = conn
+                .query_row(
+                    "SELECT preview_manifest FROM blocks WHERE slug = 'Legacy'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            serde_json::from_str(&raw).unwrap()
+        };
+
+        // Roll the manifest back to what an older version wrote, leaving the
+        // artifacts and the source stamp exactly as they are.
+        let mut legacy = read_manifest(&conn);
+        legacy.preview_width = None;
+        legacy.preview_height = None;
+        for tile in &mut legacy.tiles {
+            tile.preview_width = None;
+            tile.preview_height = None;
+        }
+        conn.execute(
+            "UPDATE blocks SET preview_manifest = ?2 WHERE slug = ?1",
+            params!["Legacy", serde_json::to_string(&legacy).unwrap()],
+        )
+        .unwrap();
+        assert!(manifest_needs_dimensions(&read_manifest(&conn)));
+
+        let outcome = reconcile_preview_for_slug(&conn, &vault, "Legacy")
+            .unwrap()
+            .expect("the block is known");
+        assert_eq!(outcome.state, DerivedPreviewState::Ready);
+        assert!(
+            !outcome.regenerated,
+            "measuring an existing artifact must not redecode it"
+        );
+
+        let stamped = read_manifest(&conn);
+        let preview = stamped
+            .preview_dimensions()
+            .expect("a ready preview must know the geometry of the artifact it paints");
+        assert_eq!((preview.width, preview.height), (320, 640));
+        let tile = stamped.tiles.first().expect("single media tile");
+        let tile_preview = tile
+            .preview_dimensions()
+            .expect("every tile must know its artifact geometry");
+        assert_eq!((tile_preview.width, tile_preview.height), (320, 640));
+
+        // And the settled manifest is left alone on the next pass.
+        assert!(!manifest_needs_dimensions(&stamped));
     }
 
     #[test]
