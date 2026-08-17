@@ -1119,8 +1119,8 @@ function ClipperStandaloneRowFrame() {
       <div className="w-[360px] overflow-hidden rounded-1 border border-border bg-background shadow-md">
         <StandaloneFolderRow folderName="Mine" onClose={() => {}} />
         <div className="p-4 text-sm text-muted-foreground">
-          Клипы пишутся файлами прямо в выбранную папку. Приложение подхватит их
-          при первом запуске обычным сканированием.
+          Сохранения ложатся файлами прямо в выбранную папку. Приложение
+          подхватит их при первом запуске обычным сканированием.
         </div>
       </div>
       <p className="mt-2 mb-2 font-mono text-sm text-muted-foreground">
