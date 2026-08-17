@@ -295,6 +295,12 @@ interface VaultSyncStartedEvent {
   path: string;
 }
 
+interface VaultSyncProgressEvent {
+  path: string;
+  processed: number;
+  total: number;
+}
+
 interface VaultSyncFinishedEvent {
   path: string;
   indexed: number;
@@ -577,6 +583,8 @@ export function AppWithVault({
   // Bumped when a sync pass lands: cloud waits may have just repeated, and the
   // Keep Downloaded card re-evaluates on it.
   const [cloudAdviceToken, setCloudAdviceToken] = useState(0);
+  // The first index counted out loud (О13); null once the pass lands.
+  const [syncProgress, setSyncProgress] = useState<{ processed: number; total: number } | null>(null);
   const [vaultReady, setVaultReady] = useState(false);
   const [migrationRequired, setMigrationRequired] = useState(false);
   const [thumbsRootPath, setThumbsRootPath] = useState<string | null>(null);
@@ -1528,11 +1536,17 @@ export function AppWithVault({
       }
     }));
 
+    unlistenFns.push(listen<VaultSyncProgressEvent>("vault-sync-progress", (event) => {
+      if (event.payload.path !== vaultPathRef.current) return;
+      setSyncProgress({ processed: event.payload.processed, total: event.payload.total });
+    }));
+
     unlistenFns.push(listen<VaultSyncFinishedEvent>("vault-sync-finished", (event) => {
       if (event.payload.path !== vaultPathRef.current) {
         return;
       }
       setIsSyncing(false);
+      setSyncProgress(null);
       setCloudAdviceToken((token) => token + 1);
       if (event.payload.error) {
         setLoadError(event.payload.error);
@@ -3151,6 +3165,7 @@ export function AppWithVault({
                 onNavigateCollection={handleTopCollectionNavigate}
                 acceptGraphRevision={acceptGraphRevision}
                 onInstallClipper={() => void openSettingsWindow()}
+                firstIndexProgress={isSyncing ? syncProgress : null}
               />
             }
           >
@@ -3419,6 +3434,7 @@ interface RouteContext {
   /// Offered by the empty-space onboarding, which is the only place in the app
   /// that can introduce the clipper to someone who has never seen it.
   onInstallClipper: () => void;
+  firstIndexProgress: { processed: number; total: number } | null;
 }
 
 function PageShell(props: RouteContext) {

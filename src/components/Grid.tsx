@@ -19,6 +19,7 @@ import { useDensity } from "@/lib/density";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { Card, CardSkeleton } from "./Card";
 import { EmptySpaceOnboarding } from "./EmptySpaceOnboarding";
+import { IndexingProgress } from "./IndexingProgress";
 import { MeasureCard } from "./MeasureCard";
 import { CardTagMenu } from "./CardContextMenu";
 import { GroupSelectionActionBar } from "./GroupSelectionActionBar";
@@ -169,6 +170,10 @@ interface GridProps {
   thumbsRootPath?: string;
   /// Start the clipper setup flow from the empty-space onboarding.
   onInstallClipper?: () => void;
+  /// The first index in flight: numbers shown instead of the empty-space
+  /// onboarding, because "this space is empty" is a falsehood about a space
+  /// that is still being read. See SPEC_ONBOARDING.md О13.
+  firstIndexProgress?: { processed: number; total: number } | null;
   /// Open the Are.na import from the empty-space onboarding.
   /**
    * Per-slug thumbnail cache-buster. Bumped by App on a `thumb:updated` event
@@ -399,6 +404,7 @@ export function Grid({
   vaultPath,
   thumbsRootPath,
   onInstallClipper,
+  firstIndexProgress = null,
   thumbVersions,
   tags,
   currentTag,
@@ -1003,7 +1009,11 @@ export function Grid({
     !currentTag &&
     routeSnapshotReady &&
     blocks.length === 0 &&
+    !firstIndexProgress &&
     onInstallClipper,
+  );
+  const showFirstIndexProgress = Boolean(
+    !currentTag && blocks.length === 0 && firstIndexProgress,
   );
 
   useLayoutEffect(() => {
@@ -2009,6 +2019,13 @@ export function Grid({
             <EmptySpaceOnboarding
               viewportHeight={viewportHeight}
               onInstallClipper={onInstallClipper!}
+            />
+          )}
+          {parentWidth > 0 && showFirstIndexProgress && firstIndexProgress && (
+            <IndexingProgress
+              spaceName={vaultPath.replace(/\/+$/, "").split("/").pop() ?? vaultPath}
+              processed={firstIndexProgress.processed}
+              total={firstIndexProgress.total}
             />
           )}
           {parentWidth > 0 && heightDriftAuditBatch.length > 0 && (

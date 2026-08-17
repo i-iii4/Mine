@@ -16,6 +16,7 @@ import { ActivityIndicators } from "@/components/ActivityIndicators";
 import { CloudBadge } from "@/components/CloudBadge";
 import { CloudDisclaimer } from "@/components/CloudDisclaimer";
 import { CloudRecommendationCard } from "@/components/CloudRecommendation";
+import { IndexingProgress } from "@/components/IndexingProgress";
 import { EmptySpaceOnboarding } from "@/components/EmptySpaceOnboarding";
 import { FolderConfirmation } from "@/components/FolderConfirmation";
 import { SpaceUnavailable } from "@/components/SpaceUnavailable";
@@ -224,17 +225,10 @@ export function EdgeStatesSection() {
 
         <StateCase
           name="Прогресс первичной индексации"
-          when="Первое подключение большого пространства: числа вместо бесконечного индикатора. Требует счётчика из индексатора, которого пока нет."
-          pending
+          when="Первое подключение большого пространства: числа вместо бесконечного индикатора, показывается вместо онбординга пустой ленты — «пространство пусто» было бы неправдой."
         >
-          <div className="grid w-80 gap-2">
-            <div className="flex items-baseline justify-between">
-              <p className="text-base text-foreground">Indexing “Mine”</p>
-              <p className="font-mono text-sm text-muted-foreground">1284 / 3000</p>
-            </div>
-            <div className="h-1 overflow-hidden rounded-full bg-component-fill">
-              <div className="h-full w-[43%] bg-foreground" />
-            </div>
+          <div className="h-64">
+            <IndexingProgress spaceName="Mine" processed={1284} total={3000} />
           </div>
         </StateCase>
 

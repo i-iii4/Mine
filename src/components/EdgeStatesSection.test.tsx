@@ -46,11 +46,12 @@ describe("EdgeStatesSection", () => {
     expect(screen.getByText("Downloading from iCloud")).toBeInTheDocument();
   });
 
-  it("marks the states that are drawn rather than shipped", () => {
+  it("carries no unimplemented mocks any more", () => {
     render(<EdgeStatesSection />);
 
-    // A mock that reads as finished work is worse than no mock: indexing
-    // progress remains specified and not implemented.
-    expect(screen.getAllByText("нет в продукте")).toHaveLength(1);
+    // Every state that was once a labelled mock is production code now; a
+    // label reappearing here means scope quietly slipped again.
+    expect(screen.queryByText("нет в продукте")).not.toBeInTheDocument();
+    expect(screen.getByText(/Indexing “Mine”/)).toBeInTheDocument();
   });
 });

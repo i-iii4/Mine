@@ -48,6 +48,13 @@ struct VaultSyncStartedPayload {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct VaultSyncProgressPayload {
+    path: String,
+    processed: usize,
+    total: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct VaultSyncFinishedPayload {
     path: String,
     indexed: usize,
@@ -1164,7 +1171,29 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
                 if let Err(err) = sync_state.begin_sync_pass(&path_for_thread) {
                     break Err(err);
                 }
-                let result = match sync_state.freshness.reconcile(&vault).result {
+                // Numbers instead of an endless spinner (О13): every 25th
+                // file and the final one — enough for a live bar, cheap
+                // enough to be free on small spaces.
+                let app_for_progress = app_for_thread.clone();
+                let progress_path = path_for_thread.clone();
+                let emit_progress = move |processed: usize, total: usize| {
+                    if processed % 25 != 0 && processed != total && processed != 1 {
+                        return;
+                    }
+                    let _ = app_for_progress.emit(
+                        "vault-sync-progress",
+                        VaultSyncProgressPayload {
+                            path: progress_path.clone(),
+                            processed,
+                            total,
+                        },
+                    );
+                };
+                let result = match sync_state
+                    .freshness
+                    .reconcile_with_progress(&vault, &emit_progress)
+                    .result
+                {
                     Ok(report) => Ok(ScanResult {
                         indexed: report.upserted.len(),
                         errors: report.errors.len(),

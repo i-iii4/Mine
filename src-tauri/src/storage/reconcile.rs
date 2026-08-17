@@ -150,11 +150,25 @@ pub fn reconcile_vault(
     conn: &Connection,
     vault: &VaultLayout,
 ) -> std::result::Result<ReconcileReport, ReconcileError> {
+    reconcile_vault_with_progress(conn, vault, &|_, _| {})
+}
+
+/// Reconcile with a progress callback: `(processed, total)` over the markdown
+/// inventory. The first index of a large space is minutes of silence without
+/// this — and silence reads as "hung", not "working". See SPEC_ONBOARDING.md
+/// О13. The callback is called once per file; throttling is the caller's
+/// business, because only the caller knows what a UI update costs.
+pub fn reconcile_vault_with_progress(
+    conn: &Connection,
+    vault: &VaultLayout,
+    on_progress: &(dyn Fn(usize, usize) + Sync),
+) -> std::result::Result<ReconcileReport, ReconcileError> {
     let started = Instant::now();
     let paths = files::scan_md_files(vault).map_err(|source| ReconcileError::Inventory {
         path: vault.root().to_path_buf(),
         source,
     })?;
+    let total_paths = paths.len();
     let stored = load_source_states(conn).map_err(ReconcileError::State)?;
     let indexed_kinds = load_indexed_kinds(conn).map_err(ReconcileError::State)?;
 
@@ -168,7 +182,8 @@ pub fn reconcile_vault(
     let mut content_reads = 0usize;
     let mut conflicts = Vec::new();
 
-    for path in &paths {
+    for (path_index, path) in paths.iter().enumerate() {
+        on_progress(path_index + 1, total_paths);
         let Some(file_stem) = path.file_stem().and_then(|value| value.to_str()) else {
             errors.push(file_error(
                 path,
@@ -700,6 +715,29 @@ mod tests {
         let vault = VaultLayout::new(dir.path().to_path_buf());
         let conn = db::open_or_create(&vault.index_db_path()).unwrap();
         (dir, vault, conn)
+    }
+
+    /// The first index of a large space must speak in numbers (О13): the
+    /// callback walks every file, ends exactly on the total, and never runs
+    /// backwards.
+    #[test]
+    fn reconcile_reports_monotonic_progress_over_the_inventory() {
+        let (_dir, vault, conn) = setup();
+        for index in 0..7 {
+            write_note(&vault, &format!("note-{index}"), "body");
+        }
+
+        let seen = std::sync::Mutex::new(Vec::new());
+        reconcile_vault_with_progress(&conn, &vault, &|processed, total| {
+            seen.lock().unwrap().push((processed, total));
+        })
+        .unwrap();
+
+        let seen = seen.into_inner().unwrap();
+        assert_eq!(seen.len(), 7, "one report per file");
+        assert!(seen.windows(2).all(|pair| pair[0].0 < pair[1].0));
+        assert!(seen.iter().all(|(_, total)| *total == 7));
+        assert_eq!(seen.last(), Some(&(7, 7)));
     }
 
     fn write_note(vault: &VaultLayout, slug: &str, body: &str) {

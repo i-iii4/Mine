@@ -108,12 +108,23 @@ impl FreshnessCoordinator {
     }
 
     pub fn reconcile(&self, vault: &VaultLayout) -> FreshnessOutcome {
+        self.reconcile_with_progress(vault, &|_, _| {})
+    }
+
+    /// Reconcile while reporting `(processed, total)` to the caller — the
+    /// startup sync thread turns these into events the first-index screen
+    /// consumes (SPEC_ONBOARDING.md О13).
+    pub fn reconcile_with_progress(
+        &self,
+        vault: &VaultLayout,
+        on_progress: &(dyn Fn(usize, usize) + Sync),
+    ) -> FreshnessOutcome {
         let vault_path = vault.root().to_string_lossy().into_owned();
         self.run(vault_path, || {
             db::open_or_create(&vault.index_db_path())
                 .map_err(|error| format!("failed to open freshness database: {error:#}"))
                 .and_then(|conn| {
-                    reconcile::reconcile_vault(&conn, vault)
+                    reconcile::reconcile_vault_with_progress(&conn, vault, on_progress)
                         .map_err(|error| format!("filesystem reconciliation failed: {error:#}"))
                 })
         })
