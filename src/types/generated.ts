@@ -134,6 +134,35 @@ export type GraphTruncationReason = "large_library"
 
 export type GridSnapshot = { generation: ProjectionRevision; blocks: LightBlock[]; total_blocks: number; has_more: boolean }
 
+export type IcloudDownloadProgress = { status: IcloudDownloadStatus;
+/**
+ * 0–100 when the metadata reports one. Never invented.
+ */
+percent: number | null }
+
+export type IcloudDownloadStatus =
+/**
+ * Contents are on this Mac; the percent is trivially 100.
+ */
+"current" |
+/**
+ * The system is bringing the contents down right now.
+ */
+"downloading" |
+/**
+ * Evicted and no download in flight.
+ */
+"not_downloaded" |
+/**
+ * The file is not managed by iCloud at all.
+ */
+"not_managed" |
+/**
+ * The metadata gave no answer within the helper's deadline. The caller
+ * keeps its numberless indicator — an honest "unknown" over a stale bar.
+ */
+"unknown"
+
 export type ImportChannelRequest = { slug: string; tag: string }
 
 /**

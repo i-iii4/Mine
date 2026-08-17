@@ -135,16 +135,25 @@ export function EdgeStatesSection() {
 
         <StateCase
           name="Разворот: оригинал едет"
-          when="Превью показывается сразу, оригинал подменяет его без скачка вёрстки."
+          when="Превью показывается сразу, оригинал подменяет его. Число появляется, только когда система публикует прогресс, — иначе строка без числа."
           drawn
         >
           <CardFrame>
             <div className="absolute inset-0 bg-component-fill" />
             <div className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-card/90 px-3 py-2">
               <CloudDownload className="size-3.5 text-muted-foreground" aria-hidden="true" />
-              <span className="text-sm text-muted-foreground">{CLOUD_DOWNLOADING_LABEL}</span>
+              <span className="text-sm text-muted-foreground">{CLOUD_DOWNLOADING_LABEL} · 42%</span>
             </div>
           </CardFrame>
+          <div className="mt-2">
+            <CardFrame>
+              <div className="absolute inset-0 bg-component-fill" />
+              <div className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-card/90 px-3 py-2">
+                <CloudDownload className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                <span className="text-sm text-muted-foreground">{CLOUD_DOWNLOADING_LABEL}</span>
+              </div>
+            </CardFrame>
+          </div>
         </StateCase>
 
         <StateCase

@@ -55,6 +55,7 @@ import type {
   SpaceStats,
   NativeShellSmokeReport,
   CommandError,
+  IcloudDownloadProgress,
 } from "@/types";
 
 function isCommandError(error: unknown): error is CommandError {
@@ -438,6 +439,12 @@ export const getClipperSetupStatus = () =>
 /** Install the helper and register it with every browser found. */
 export const installClipperHost = (extensionId: string) =>
   invoke<ClipperSetupStatus>("install_clipper_host", { extensionId });
+
+/** The system's own download state for a card's media file.
+ *  The percent exists only when macOS publishes one — it is never derived.
+ *  See SPEC_CLOUD_STORAGE.md Х4, Х9. */
+export const icloudDownloadProgress = (mediaRef: string) =>
+  invoke<IcloudDownloadProgress>("icloud_download_progress", { mediaRef });
 
 /** The saved space that could not be opened, if any.
  *  `null` means either no space was ever chosen or the saved one is reachable —

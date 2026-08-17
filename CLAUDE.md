@@ -315,6 +315,9 @@ local-arena/
 - Node.js: не требуется (используем Bun)
 - Bun: >= 1.2
 - Tauri CLI: `cargo install tauri-cli`
+- Xcode Command Line Tools (`swiftc`): обязательны — сборка компилирует
+  iCloud-progress helper (`src-tauri/native/icloud_progress_helper.swift`)
+  безусловно; без них не пройдёт даже `cargo check`
 - yt-dlp: `brew install yt-dlp` — нужен клипперу, чтобы забирать видео из постов
   X с возрастным ограничением. Без него остальное сохранение работает как
   прежде, а этот шаг завершается понятной ошибкой

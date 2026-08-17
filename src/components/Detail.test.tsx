@@ -9,7 +9,7 @@ import {
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { COLLECTION_PICKER_CONTENT_CLASS } from "./CollectionPicker";
-import { copyMediaAssetToClipboard, getBlock, prepareDeleteMediaAsset } from "@/lib/commands";
+import { copyMediaAssetToClipboard, getBlock, icloudDownloadProgress, prepareDeleteMediaAsset } from "@/lib/commands";
 import {
   HOVER_PREVIEW_COLD_OPEN_DELAY_MS,
   HOVER_PREVIEW_WARM_WINDOW_MS,
@@ -53,6 +53,7 @@ vi.mock("@/lib/commands", () => ({
   getBlock: vi.fn(),
   copyMediaAssetToClipboard: vi.fn(),
   prepareDeleteMediaAsset: vi.fn(),
+  icloudDownloadProgress: vi.fn(),
 }));
 
 function cardKindForBlockType(blockType: IndexedBlock["block_type"]): IndexedBlock["card_kind"] {
@@ -119,6 +120,8 @@ describe("Detail", () => {
     getBlockMock.mockResolvedValue(null);
     copyMediaAssetToClipboardMock.mockReset();
     copyMediaAssetToClipboardMock.mockResolvedValue(undefined);
+    vi.mocked(icloudDownloadProgress).mockReset();
+    vi.mocked(icloudDownloadProgress).mockResolvedValue({ status: "unknown", percent: null });
     prepareDeleteMediaAssetMock.mockReset();
     prepareDeleteMediaAssetMock.mockResolvedValue({
       media_ref: "photo.jpg",
@@ -2153,5 +2156,61 @@ describe("Detail", () => {
     const downloading = container.querySelector('[data-detail-cloud-state="downloading"]');
     expect(downloading).not.toBeNull();
     expect(downloading).toHaveTextContent("Downloading from iCloud");
+  });
+
+  it("shows the system's percent when macOS publishes one, and never invents it", async () => {
+    vi.useFakeTimers();
+    const progressMock = vi.mocked(icloudDownloadProgress);
+    progressMock.mockResolvedValue({ status: "downloading", percent: 41.7 });
+
+    const { container } = render(<Detail {...cloudImageProps(true)} />);
+    await act(async () => {
+      vi.advanceTimersByTime(2000);
+    });
+
+    expect(progressMock).toHaveBeenCalledWith("photo.jpg");
+    const downloading = container.querySelector('[data-detail-cloud-state="downloading"]');
+    expect(downloading).toHaveTextContent("Downloading from iCloud · 42%");
+  });
+
+  it("keeps the numberless indicator when the system publishes no percent", async () => {
+    vi.useFakeTimers();
+    const progressMock = vi.mocked(icloudDownloadProgress);
+    progressMock.mockResolvedValue({ status: "not_downloaded", percent: null });
+
+    const { container } = render(<Detail {...cloudImageProps(true)} />);
+    await act(async () => {
+      vi.advanceTimersByTime(2000);
+    });
+
+    const downloading = container.querySelector('[data-detail-cloud-state="downloading"]');
+    expect(downloading).toHaveTextContent("Downloading from iCloud");
+    expect(downloading!.textContent).not.toContain("%");
+  });
+
+  it("stops asking once the original arrived", async () => {
+    vi.useFakeTimers();
+    const progressMock = vi.mocked(icloudDownloadProgress);
+    progressMock.mockResolvedValue({ status: "downloading", percent: 10 });
+
+    const { container } = render(<Detail {...cloudImageProps(true)} />);
+    await act(async () => {
+      vi.advanceTimersByTime(2500);
+    });
+    const callsWhileWaiting = progressMock.mock.calls.length;
+    expect(callsWhileWaiting).toBeGreaterThan(0);
+
+    const original = container.querySelector(
+      '[data-detail-image] img:not([data-detail-preview-backing])',
+    ) as HTMLImageElement;
+    act(() => {
+      fireEvent.load(original);
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+    });
+
+    expect(progressMock.mock.calls.length).toBe(callsWhileWaiting);
+    expect(container.querySelector("[data-detail-cloud-state]")).toBeNull();
   });
 });

@@ -48,7 +48,8 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "binaries/yt-dlp"
+      "binaries/yt-dlp",
+      "binaries/icloud-progress-helper"
     ]
   }
 }

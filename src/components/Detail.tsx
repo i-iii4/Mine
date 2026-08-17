@@ -91,7 +91,7 @@ import { cn } from "@/lib/utils";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { TopFadeScrim } from "./TopFadeScrim";
 import { getDisplayTitle, getFallbackLabel, getNavigationLabel } from "@/lib/displayTitle";
-import { copyMediaAssetToClipboard, getBlock, prepareDeleteMediaAsset } from "@/lib/commands";
+import { copyMediaAssetToClipboard, getBlock, icloudDownloadProgress, prepareDeleteMediaAsset } from "@/lib/commands";
 import { collectionRefLabel } from "@/lib/collections";
 import { getHoverPreviewOpenDelay } from "@/lib/hoverPreviewTiming";
 import {
@@ -1380,6 +1380,7 @@ function BlockContent({
                   thumbsRootPath: resolvedThumbsRoot,
                 })}
                 contentInCloud={isContentInCloud(block)}
+                mediaRef={block.media_file}
                 alt={navigationLabel}
                 className="block max-h-[85vh] max-w-full object-contain"
               />
@@ -3113,6 +3114,7 @@ function DetailImage({
   src,
   previewSrc,
   contentInCloud = false,
+  mediaRef = null,
   alt,
   className,
   ...imgProps
@@ -3121,6 +3123,8 @@ function DetailImage({
   previewSrc: string | null;
   /// Whether this file's contents are held in iCloud rather than on this Mac.
   contentInCloud?: boolean;
+  /// The card's media reference, for asking the system about its download.
+  mediaRef?: string | null;
   alt: string;
 } & React.ImgHTMLAttributes<HTMLImageElement>) {
   const [originalReady, setOriginalReady] = useState(false);
@@ -3129,11 +3133,15 @@ function DetailImage({
   // Late like the card badge: a file that arrives quickly must not flash a
   // notice about waiting. See SPEC_CLOUD_STORAGE.md Х6, Х9.
   const [waited, setWaited] = useState(false);
+  // The system's published download percent. Null until macOS reports one —
+  // the indicator shows a number only when there is a real number to show.
+  const [percent, setPercent] = useState<number | null>(null);
 
   useEffect(() => {
     setOriginalReady(false);
     setFailed(false);
     setAttempt(0);
+    setPercent(null);
   }, [src]);
 
   useEffect(() => {
@@ -3146,6 +3154,29 @@ function DetailImage({
   const requestedSrc = withRetryToken(src, attempt);
   const showDownloading = contentInCloud && !originalReady && !failed && waited;
   const showOffline = contentInCloud && failed;
+
+  // While the waiting notice is visible, ask the system once a second what it
+  // knows about the download. See SPEC_CLOUD_STORAGE.md Х4, Х9.
+  useEffect(() => {
+    if (!showDownloading || !mediaRef) return;
+    let cancelled = false;
+    const poll = () => {
+      icloudDownloadProgress(mediaRef)
+        .then((progress) => {
+          if (cancelled) return;
+          setPercent(progress.percent ?? null);
+        })
+        .catch(() => {
+          // An unreachable probe keeps the numberless indicator.
+        });
+    };
+    poll();
+    const timer = window.setInterval(poll, 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [showDownloading, mediaRef, attempt]);
 
   return (
     <div className="relative overflow-hidden leading-none" data-detail-image="">
@@ -3196,7 +3227,11 @@ function DetailImage({
           data-detail-cloud-state="downloading"
         >
           <CloudDownload className="size-3.5 text-muted-foreground" aria-hidden="true" />
-          <span className="text-sm text-muted-foreground">{CLOUD_DOWNLOADING_LABEL}</span>
+          <span className="text-sm text-muted-foreground">
+            {percent === null
+              ? CLOUD_DOWNLOADING_LABEL
+              : `${CLOUD_DOWNLOADING_LABEL} · ${Math.round(percent)}%`}
+          </span>
         </div>
       )}
 
