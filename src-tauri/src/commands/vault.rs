@@ -1393,11 +1393,102 @@ fn resolve_runtime_vault_layout(app: &AppHandle, root: &Path) -> Result<VaultLay
     let base = VaultLayout::new(root.to_path_buf());
     std::fs::create_dir_all(base.mine_dir())
         .map_err(|e| CommandError::Internal(format!("failed to create Mine metadata dir: {e}")))?;
-    let vault_id = ensure_vault_id(&base)?;
+    let mut vault_id = ensure_vault_id(&base)?;
     let derived_root = derived_store_root(app, &vault_id)?;
-    let write_layout = load_write_layout(&base);
-    Ok(VaultLayout::with_derived_root(root.to_path_buf(), derived_root)
-        .with_write_layout(write_layout))
+
+    // A copied folder carries the original's identity (П22): the id travels
+    // in `.mine/vault-id`, so two folders now claim one derived store, and
+    // both would silently write into one index and one cache. The recorded
+    // owner path settles it: owner alive elsewhere — this is a copy and it
+    // gets its own identity; owner gone — this is the same space after a
+    // move, and it inherits everything.
+    match resolve_identity_claim(root, &derived_root) {
+        IdentityClaim::Owned | IdentityClaim::Adopted => {
+            record_owner_path(&derived_root, root);
+            let write_layout = load_write_layout(&base);
+            Ok(
+                VaultLayout::with_derived_root(root.to_path_buf(), derived_root)
+                    .with_write_layout(write_layout),
+            )
+        }
+        IdentityClaim::Copy { owner } => {
+            let new_id = generate_vault_id()?;
+            files::write_atomically(
+                &base.vault_id_path(),
+                format!("{new_id}
+").as_bytes(),
+            )
+            .map_err(|e| {
+                CommandError::Internal(format!("failed to write the copy's own vault-id: {e:#}"))
+            })?;
+            log::info!(
+                "space at {} is a copy of {} — minted its own identity {}",
+                root.display(),
+                owner.display(),
+                new_id
+            );
+            vault_id = new_id;
+            let fresh_derived = derived_store_root(app, &vault_id)?;
+            record_owner_path(&fresh_derived, root);
+            let write_layout = load_write_layout(&base);
+            Ok(
+                VaultLayout::with_derived_root(root.to_path_buf(), fresh_derived)
+                    .with_write_layout(write_layout),
+            )
+        }
+    }
+}
+
+enum IdentityClaim {
+    /// The recorded owner is this very folder (or nothing was recorded yet).
+    Owned,
+    /// The recorded owner is gone from its old path: a move, not a copy.
+    Adopted,
+    /// The recorded owner is alive at another path: this folder is a copy.
+    Copy { owner: PathBuf },
+}
+
+fn owner_path_file(derived_root: &Path) -> PathBuf {
+    derived_root.join("owner-path.json")
+}
+
+fn resolve_identity_claim(root: &Path, derived_root: &Path) -> IdentityClaim {
+    let Ok(raw) = std::fs::read_to_string(owner_path_file(derived_root)) else {
+        return IdentityClaim::Owned;
+    };
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return IdentityClaim::Owned;
+    };
+    let Some(owner) = parsed.get("path").and_then(|value| value.as_str()) else {
+        return IdentityClaim::Owned;
+    };
+    let owner = PathBuf::from(owner);
+    // Canonical comparison: symlinks and case quirks must not make a folder
+    // look like a copy of itself.
+    let same = match (owner.canonicalize(), root.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => owner == root,
+    };
+    if same {
+        return IdentityClaim::Owned;
+    }
+    if owner.is_dir() {
+        IdentityClaim::Copy { owner }
+    } else {
+        IdentityClaim::Adopted
+    }
+}
+
+/// Best effort: failing to record the owner must not fail the open — the next
+/// open records it again.
+fn record_owner_path(derived_root: &Path, root: &Path) {
+    let payload = serde_json::json!({ "path": root.to_string_lossy() });
+    if std::fs::create_dir_all(derived_root).is_ok() {
+        let _ = files::write_atomically(
+            &owner_path_file(derived_root),
+            payload.to_string().as_bytes(),
+        );
+    }
 }
 
 /// Read the vault's saved write layout, falling back to what the folder
@@ -1949,6 +2040,56 @@ mod tests {
         assert!(!vault.legacy_index_db_path().exists());
         assert!(!vault.legacy_arena_dir().join("cache").exists());
         assert!(vault.legacy_arena_dir().join("conflicts-archive").exists());
+    }
+}
+
+#[cfg(test)]
+mod identity_claim_tests {
+    use super::*;
+
+    #[test]
+    fn a_folder_owns_its_identity_and_a_move_adopts_it() {
+        let derived = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let original = home.path().join("Mine");
+        std::fs::create_dir(&original).unwrap();
+
+        // Nothing recorded yet: the first open owns the identity.
+        assert!(matches!(
+            resolve_identity_claim(&original, derived.path()),
+            IdentityClaim::Owned
+        ));
+        record_owner_path(derived.path(), &original);
+        assert!(matches!(
+            resolve_identity_claim(&original, derived.path()),
+            IdentityClaim::Owned
+        ));
+
+        // The folder moved: the old path is gone, the identity follows it.
+        let moved = home.path().join("Mine (archive)");
+        std::fs::rename(&original, &moved).unwrap();
+        assert!(matches!(
+            resolve_identity_claim(&moved, derived.path()),
+            IdentityClaim::Adopted
+        ));
+    }
+
+    #[test]
+    fn a_live_original_makes_the_second_folder_a_copy() {
+        let derived = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let original = home.path().join("Mine");
+        let copy = home.path().join("Mine copy");
+        std::fs::create_dir(&original).unwrap();
+        std::fs::create_dir(&copy).unwrap();
+        record_owner_path(derived.path(), &original);
+
+        // The original is alive at its recorded path: opening the twin is a
+        // copy, not a move — it must not share the derived store (П22).
+        match resolve_identity_claim(&copy, derived.path()) {
+            IdentityClaim::Copy { owner } => assert_eq!(owner, original),
+            _ => panic!("a live original must make the twin a copy"),
+        }
     }
 }
 
