@@ -10,6 +10,7 @@ import { ChannelList } from "./components/ChannelList";
 import { SaveButton } from "./components/SaveButton";
 import { ScreenshotPreview } from "./components/ScreenshotPreview";
 import { VaultSelect } from "./components/VaultSelect";
+import { StandaloneSetup, StandaloneFolderRow } from "./components/StandaloneSetup";
 import { emptyContentMessage } from "./lib/articleExtractionState";
 import { buildEmbeddedVideoPreviewMap, isVideoUrl, videoPreviewKey } from "./lib/videoPreview";
 
@@ -200,11 +201,26 @@ export function PopupApp() {
     return <ErrorState message={clipper.error ?? "Unknown error"} />;
   }
 
+  if (clipper.saveMode === "unconfigured" && clipper.nativeStatusError) {
+    return (
+      <StandaloneSetup
+        canPickFolder={clipper.canPickFolder}
+        folderName={clipper.standaloneFolder}
+        onChooseFolder={clipper.chooseFolder}
+        onRegrantAccess={clipper.regrantFolder}
+        onClose={closeClipper}
+      />
+    );
+  }
+
   const footerError = saveError ?? clipper.nativeStatusError;
 
   return (
     <div className="flex min-h-0 flex-col">
-      {clipper.selectedVault && (
+      {clipper.saveMode === "standalone" && (
+        <StandaloneFolderRow folderName={clipper.standaloneFolder} onClose={closeClipper} />
+      )}
+      {clipper.saveMode !== "standalone" && clipper.selectedVault && (
         <VaultSelect
           value={clipper.selectedVault}
           options={clipper.knownVaults}

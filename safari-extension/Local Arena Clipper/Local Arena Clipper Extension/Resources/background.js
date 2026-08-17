@@ -17,6 +17,11 @@
 //   - chrome.contextMenus.onClicked (right-click → Save ... to Mine)
 //   - chrome.commands.onCommand (Alt+A shortcut)
 
+// Standalone writing engine (О1–О4): saves clips straight to the granted
+// folder when the native host is not there. Classic script, attaches to
+// globalThis — the same convention every lib/ file follows.
+importScripts("lib/standaloneVault.js");
+
 const HOST_NAME = "com.localarena.clipper";
 // Must match extension/popup/popup-layout.css body { width: 360px }
 // so detached window has no horizontal gap next to the content.
@@ -576,6 +581,40 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse(response);
     });
     return true; // async response
+  }
+
+  // Standalone road (О1–О4): the same requests the native host serves,
+  // answered from the granted folder instead. The popup decides which road a
+  // request takes; background only executes.
+  if (msg.action === "standaloneStatus") {
+    globalThis.MineStandaloneVault.getStandaloneStatus().then(sendResponse);
+    return true;
+  }
+
+  if (msg.action === "standaloneSave") {
+    globalThis.MineStandaloneVault.saveStandaloneBlock(msg.payload ?? {}).then((response) => {
+      if (response?.ok && msg.payload?.tags) {
+        void broadcastChannelsChanged(null);
+      }
+      sendResponse(response);
+    }, (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
+    return true;
+  }
+
+  if (msg.action === "standaloneListChannels") {
+    globalThis.MineStandaloneVault.listStandaloneChannels().then(
+      sendResponse,
+      (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }),
+    );
+    return true;
+  }
+
+  if (msg.action === "standaloneCreateChannel") {
+    globalThis.MineStandaloneVault.createStandaloneChannel(msg.tag).then((response) => {
+      if (response?.ok) void broadcastChannelsChanged(response.tag ?? null);
+      sendResponse(response);
+    }, (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
+    return true;
   }
 
   if (msg.action === "resolveAuthenticatedTweetVideo") {

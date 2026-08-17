@@ -16,7 +16,8 @@
     "http://127.0.0.1/*",
     "https://x.com/*",
     "https://twitter.com/*",
-    "https://public.api.bsky.app/*"
+    "https://public.api.bsky.app/*",
+    "<all_urls>"
   ],
   "action": {
     "default_title": "Mine Clipper",

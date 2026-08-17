@@ -83,6 +83,16 @@ import {
   fetchTweetPhotoByIndex,
   type ResolvedLightboxImage,
 } from "../lib/twitterPhotoLightbox";
+import {
+  canPickFolderHere,
+  chooseStandaloneFolder,
+  getStandaloneStatus,
+  regrantStandaloneAccess,
+  standaloneCreateChannel,
+  standaloneListChannels,
+  standaloneSave,
+  type StandaloneMode,
+} from "../lib/standalone";
 
 export type ClipType = "content" | "link" | "image" | "video" | "screenshot";
 export type PopupState = "loading" | "error" | "main";
@@ -101,6 +111,8 @@ export interface ClipperState {
   nativeStatusError: string | null;
   knownVaults: string[];
   selectedVault: string | null;
+  saveMode: StandaloneMode;
+  standaloneFolder: string | null;
 }
 
 export function useClipperState() {
@@ -121,6 +133,11 @@ export function useClipperState() {
   const [screenshotUploadId, setScreenshotUploadId] = useState<string | null>(null);
   const [cropSupported, setCropSupported] = useState<boolean>(false);
   const [nativeStatusError, setNativeStatusError] = useState<string | null>(null);
+  // Which road a save takes (О2): the app when its host answers, the granted
+  // folder when it does not, and neither until one of them exists.
+  const [saveMode, setSaveMode] = useState<StandaloneMode>("app");
+  const [standaloneFolder, setStandaloneFolder] = useState<string | null>(null);
+  const saveModeRef = useRef<StandaloneMode>("app");
   const uploadPortRef = useRef<number | null>(null);
   const uploadTokenRef = useRef<string | null>(null);
   const supportsPendingUploadsRef = useRef(false);
@@ -281,22 +298,42 @@ export function useClipperState() {
   }, [screenshotDataUrl, captureScreenshot, ensureArticleLoaded]);
 
   const refreshChannels = useCallback(async (vaultPath = vaultRef.current) => {
-    const chResult = await sendToNative({
-      action: "list_channels",
-      vault_path: vaultPath,
-    });
+    const chResult = saveModeRef.current === "standalone"
+      ? await standaloneListChannels()
+      : await sendToNative({ action: "list_channels", vault_path: vaultPath });
     if (chResult.ok && chResult.channels) {
       setChannels(chResult.channels);
     }
   }, []);
+
+  const enterStandaloneMode = useCallback((folderName: string) => {
+    saveModeRef.current = "standalone";
+    setSaveMode("standalone");
+    setStandaloneFolder(folderName);
+    // The folder answers for the app now; the app's absence is a mode, not an
+    // error to wave at the person on every save (О2).
+    nativeStatusErrorRef.current = null;
+    setNativeStatusError(null);
+    void refreshChannels();
+  }, [refreshChannels]);
 
   const ensureNativeStatus = useCallback(async (): Promise<boolean> => {
     if (nativeReadyRef.current) return true;
     if (nativeStatusPromiseRef.current) return nativeStatusPromiseRef.current;
 
     const promise = sendToNative({ action: "get_status" })
-      .then((status) => {
+      .then(async (status) => {
         if (!status.ok) {
+          const standalone = await getStandaloneStatus();
+          if (standalone.configured && standalone.permission === "granted") {
+            enterStandaloneMode(standalone.folderName ?? "Folder");
+            return true;
+          }
+          saveModeRef.current = "unconfigured";
+          setSaveMode("unconfigured");
+          if (standalone.configured) {
+            setStandaloneFolder(standalone.folderName ?? null);
+          }
           const message = status.error ?? "Cannot connect to Mine";
           nativeStatusErrorRef.current = message;
           setNativeStatusError(message);
@@ -333,7 +370,7 @@ export function useClipperState() {
 
     nativeStatusPromiseRef.current = promise;
     return promise;
-  }, [refreshChannels]);
+  }, [enterStandaloneMode, refreshChannels]);
 
   useEffect(() => {
     const onMessage = (msg: { action?: string }) => {
@@ -725,7 +762,9 @@ export function useClipperState() {
   }, []);
 
   const createChannel = useCallback(async (name: string) => {
-    const result = await sendToNative({ action: "create_channel", tag: name, vault_path: vaultRef.current });
+    const result = saveModeRef.current === "standalone"
+      ? await standaloneCreateChannel(name)
+      : await sendToNative({ action: "create_channel", tag: name, vault_path: vaultRef.current });
     if (!result.ok) {
       showError(result.error ?? "Failed to create collection");
       return;
@@ -813,7 +852,13 @@ export function useClipperState() {
       payload.body = buildLinkBody(title);
     }
 
-    if (currentType === "screenshot") {
+    if (currentType === "screenshot" && saveModeRef.current === "standalone") {
+      if (!screenshotDataUrl) {
+        setSaving(false);
+        return { ok: false as const, error: "Screenshot not captured yet" };
+      }
+      payload.screenshot_data_url = screenshotDataUrl;
+    } else if (currentType === "screenshot") {
       // On any screenshot-path failure we return an inline error instead
       // of calling showError: the popup stays in "main" state, the status
       // bar surfaces the message, and the user can press Save again
@@ -914,8 +959,10 @@ export function useClipperState() {
       payload.image_url = saveMetadata.image;
     }
 
-    let result = await sendToNative(payload);
-    if (!result.ok && currentType === "screenshot") {
+    let result = saveModeRef.current === "standalone"
+      ? await standaloneSave(payload)
+      : await sendToNative(payload);
+    if (!result.ok && currentType === "screenshot" && saveModeRef.current !== "standalone") {
       result = await sendToNative(payload);
     }
     setSaving(false);
@@ -965,6 +1012,24 @@ export function useClipperState() {
     await revealVault(vaultPath);
   }, []);
 
+  const chooseFolder = useCallback(async () => {
+    const status = await chooseStandaloneFolder();
+    if (status.configured && status.permission === "granted") {
+      enterStandaloneMode(status.folderName ?? "Folder");
+      return { ok: true as const };
+    }
+    return { ok: false as const, error: status.error ?? null };
+  }, [enterStandaloneMode]);
+
+  const regrantFolder = useCallback(async () => {
+    const status = await regrantStandaloneAccess();
+    if (status.configured && status.permission === "granted") {
+      enterStandaloneMode(status.folderName ?? "Folder");
+      return { ok: true as const };
+    }
+    return { ok: false as const, error: status.error ?? null };
+  }, [enterStandaloneMode]);
+
   return {
     state,
     error,
@@ -991,6 +1056,11 @@ export function useClipperState() {
     switchVault,
     addSpace,
     revealSpace,
+    saveMode,
+    standaloneFolder,
+    canPickFolder: canPickFolderHere(),
+    chooseFolder,
+    regrantFolder,
   };
 }
 
