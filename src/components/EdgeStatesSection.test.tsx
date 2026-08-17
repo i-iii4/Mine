@@ -49,8 +49,8 @@ describe("EdgeStatesSection", () => {
   it("marks the states that are drawn rather than shipped", () => {
     render(<EdgeStatesSection />);
 
-    // A mock that reads as finished work is worse than no mock: these two are
-    // specified and not implemented.
-    expect(screen.getAllByText("нет в продукте")).toHaveLength(2);
+    // A mock that reads as finished work is worse than no mock: indexing
+    // progress remains specified and not implemented.
+    expect(screen.getAllByText("нет в продукте")).toHaveLength(1);
   });
 });

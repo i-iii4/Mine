@@ -55,6 +55,13 @@ host_installed: boolean;
  */
 host_current: boolean; app_version: string; browsers: ClipperBrowserStatus[] }
 
+export type CloudRecommendationState = {
+/**
+ * Show the card now: waits repeated across sessions, nobody dismissed it
+ * here, and the global checkbox was never ticked.
+ */
+due: boolean }
+
 export type CommandError = { kind: "no_vault" } | { kind: "internal"; message: string }
 
 export type CreateBlockParams = { block_type: string; title: string | null; url: string | null; tags: string[]; file_path: string | null }

@@ -70,6 +70,8 @@ vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ writeText: clipboardWri
 const webClipboardWriteText = vi.fn<(text: string) => Promise<void>>();
 
 vi.mock("@/lib/commands", () => ({
+  cloudRecommendationState: vi.fn(async () => ({ due: false })),
+  dismissCloudRecommendation: vi.fn(async () => null),
   getVaultPath: commandMocks.getVaultPath,
   openVault: commandMocks.openVault,
   selectVault: vi.fn(),

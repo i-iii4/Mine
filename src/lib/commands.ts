@@ -56,6 +56,7 @@ import type {
   NativeShellSmokeReport,
   CommandError,
   IcloudDownloadProgress,
+  CloudRecommendationState,
 } from "@/types";
 
 function isCommandError(error: unknown): error is CommandError {
@@ -439,6 +440,15 @@ export const getClipperSetupStatus = () =>
 /** Install the helper and register it with every browser found. */
 export const installClipperHost = (extensionId: string) =>
   invoke<ClipperSetupStatus>("install_clipper_host", { extensionId });
+
+/** Whether the Keep Downloaded recommendation is due for the active space.
+ *  See SPEC_CLOUD_STORAGE.md Х16–Х19. */
+export const cloudRecommendationState = () =>
+  invoke<CloudRecommendationState>("cloud_recommendation_state");
+
+/** Close the recommendation: for this space, or forever everywhere. */
+export const dismissCloudRecommendation = (neverShowAgain: boolean) =>
+  invoke<null>("dismiss_cloud_recommendation", { neverShowAgain });
 
 /** The system's own download state for a card's media file.
  *  The percent exists only when macOS publishes one — it is never derived.

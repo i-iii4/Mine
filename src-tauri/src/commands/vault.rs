@@ -588,6 +588,14 @@ fn initialize_vault(
         ),
     );
     let local_index_existed = vault.index_db_path().exists();
+    // Opening the space starts a new cloud-wait session: Х17 reasons in
+    // sessions, and a quiet one is itself a signal (Х21). Best effort.
+    if let Err(error) = crate::storage::cloud_waits::begin_session(
+        vault.derived_root(),
+        &crate::commands::state::now_iso8601(),
+    ) {
+        log::warn!("failed to open a cloud-wait session: {error:#}");
+    }
     let bootstrapped_thumbs_from_legacy = bootstrap_local_thumbs_from_legacy(&vault)?;
 
     // Create the synced vault metadata dir and the local derived caches.

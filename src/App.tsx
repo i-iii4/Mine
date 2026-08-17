@@ -228,6 +228,7 @@ import { useChromeDragGesture } from "@/hooks/useChromeDragGesture";
 import { useProjectionRevisionOwner } from "@/hooks/useProjectionRevisionOwner";
 import { VaultPicker } from "@/components/VaultPicker";
 import { SpaceUnavailable } from "@/components/SpaceUnavailable";
+import { CloudRecommendation } from "@/components/CloudRecommendation";
 import { VaultSwitcher } from "@/components/VaultSwitcher";
 import { TopCollectionSwitcher } from "@/components/TopCollectionSwitcher";
 import { Sidebar, SidebarTagRowDragPreview } from "@/components/Sidebar";
@@ -573,6 +574,9 @@ export function AppWithVault({
     previews: false,
   });
   const [isSyncing, setIsSyncing] = useState(true);
+  // Bumped when a sync pass lands: cloud waits may have just repeated, and the
+  // Keep Downloaded card re-evaluates on it.
+  const [cloudAdviceToken, setCloudAdviceToken] = useState(0);
   const [vaultReady, setVaultReady] = useState(false);
   const [migrationRequired, setMigrationRequired] = useState(false);
   const [thumbsRootPath, setThumbsRootPath] = useState<string | null>(null);
@@ -1529,6 +1533,7 @@ export function AppWithVault({
         return;
       }
       setIsSyncing(false);
+      setCloudAdviceToken((token) => token + 1);
       if (event.payload.error) {
         setLoadError(event.payload.error);
         return;
@@ -3210,6 +3215,8 @@ export function AppWithVault({
           onDeleteMedia={() => confirmDeleteBlock(Boolean(deletePlan?.unused_media.length))}
         />
       </main>
+
+      <CloudRecommendation vaultPath={vaultPath} refreshToken={cloudAdviceToken} />
 
       <RenameBlockDialog
         open={renamingBlock !== null}

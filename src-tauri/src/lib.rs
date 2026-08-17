@@ -57,6 +57,8 @@ pub fn run() {
             commands::vault::sweep_vault_thumbnails,
             commands::clipper_setup::get_clipper_setup_status,
             commands::icloud_progress::icloud_download_progress,
+            commands::cloud_recommendation::cloud_recommendation_state,
+            commands::cloud_recommendation::dismiss_cloud_recommendation,
             commands::clipper_setup::install_clipper_host,
             commands::vault::preview_vault_folder,
             commands::vault::get_unavailable_vault,

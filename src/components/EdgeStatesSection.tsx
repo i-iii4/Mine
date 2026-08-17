@@ -15,6 +15,7 @@ import { Cloud, CloudDownload, ImageOff, RefreshCw } from "lucide-react";
 import { ActivityIndicators } from "@/components/ActivityIndicators";
 import { CloudBadge } from "@/components/CloudBadge";
 import { CloudDisclaimer } from "@/components/CloudDisclaimer";
+import { CloudRecommendationCard } from "@/components/CloudRecommendation";
 import { EmptySpaceOnboarding } from "@/components/EmptySpaceOnboarding";
 import { FolderConfirmation } from "@/components/FolderConfirmation";
 import { SpaceUnavailable } from "@/components/SpaceUnavailable";
@@ -239,21 +240,14 @@ export function EdgeStatesSection() {
 
         <StateCase
           name="Всплывающая рекомендация"
-          when="Появляется, когда ожидания повторились в разных сессиях. Требует счётчика по пространству, переживающего перезапуск, — его пока нет."
-          pending
+          when="Появляется, когда ожидания повторились в разных сессиях: раз открыть старый архив — нормально, жить так — повод объяснить. Закрытие действует на пространство, галочка — навсегда и везде."
         >
-          <div className="grid w-80 gap-2 rounded-1 border border-border bg-card p-3">
-            <p className="text-base font-semibold text-foreground">Cards keep arriving slowly</p>
-            <p className="text-sm text-muted-foreground">
-              macOS is keeping this space’s files in iCloud. Right-click the
-              folder in Finder and choose Keep Downloaded to keep it on this Mac.
-            </p>
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-foreground underline">Show in Finder</span>
-              <span className="text-sm text-muted-foreground">·</span>
-              <span className="text-sm text-muted-foreground">Don’t show again</span>
-            </div>
-          </div>
+          <CloudRecommendationCard
+            neverAgain={false}
+            onNeverAgainChange={() => {}}
+            onReveal={() => {}}
+            onClose={() => {}}
+          />
         </StateCase>
 
         <StateCase

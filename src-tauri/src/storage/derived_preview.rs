@@ -404,10 +404,21 @@ pub fn reconcile_preview_for_slug(
                         PreviewErrorKind::MissingSource,
                         format!("media file is missing from the vault: {reference}"),
                     ),
-                    PrimarySourceState::InCloud(reference) => (
-                        PreviewErrorKind::ContentInCloud,
-                        format!("media contents are in iCloud: {reference}"),
-                    ),
+                    PrimarySourceState::InCloud(reference) => {
+                        // The standing record behind the Keep Downloaded
+                        // recommendation (Х16): one wait per block per
+                        // session. Best effort — failing to count must not
+                        // fail the reconcile.
+                        if let Err(error) =
+                            crate::storage::cloud_waits::record_wait(vault.derived_root(), slug)
+                        {
+                            log::warn!("failed to record a cloud wait for {slug}: {error:#}");
+                        }
+                        (
+                            PreviewErrorKind::ContentInCloud,
+                            format!("media contents are in iCloud: {reference}"),
+                        )
+                    }
                     PrimarySourceState::Present => (
                         PreviewErrorKind::BrowserDecodeRequired,
                         "primary preview requires browser decoding".to_string(),

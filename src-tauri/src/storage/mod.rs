@@ -4,6 +4,7 @@ pub mod article_audio;
 pub mod block_queries;
 pub mod channel_index;
 pub mod clipper_uploads;
+pub mod cloud_waits;
 pub mod cold_space_audit;
 pub mod db;
 pub mod derived_preview;
