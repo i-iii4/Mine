@@ -1594,6 +1594,13 @@ mod tests {
             .unwrap();
         assert_eq!(state, "failed");
         assert_eq!(kind.as_deref(), Some("unreadable_artifact"));
+
+        // And the card sees it by name: the state rides the wire as its own
+        // flag, distinct from "contents in iCloud".
+        let light = crate::storage::block_queries::list_blocks_light(&conn).unwrap();
+        let block = light.iter().find(|b| b.slug == "Corrupt").unwrap();
+        assert!(block.preview_unreadable);
+        assert!(!block.content_in_cloud);
     }
 
     #[test]

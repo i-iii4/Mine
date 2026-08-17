@@ -204,6 +204,22 @@ export function EdgeStatesSection() {
         </StateCase>
 
         <StateCase
+          name="Превью не читается"
+          when="Файл кэша повреждён: он существует, проходит проверку по заголовку и не отдаёт пиксели. Исходный файл не тронут. Без собственного имени это состояние неотличимо от «ещё не готово»."
+          drawn
+        >
+          <CardFrame>
+            <div className="absolute inset-0 grid place-items-center">
+              <div className="px-4 text-center">
+                <ImageOff className="mx-auto size-6 text-muted-foreground/50" aria-hidden="true" />
+                <p className="mt-1 text-sm text-foreground">Sunset over the bay</p>
+                <p className="mt-1 text-sm text-muted-foreground">Preview file can’t be read</p>
+              </div>
+            </div>
+          </CardFrame>
+        </StateCase>
+
+        <StateCase
           name="Индикаторы в верхней панели"
           when="Две разные работы — две разные иконки. Одна крутилка сказала бы только «занято». Нажмите облако: пояснение настоящее."
         >

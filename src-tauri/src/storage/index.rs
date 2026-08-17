@@ -165,6 +165,14 @@ pub struct LightBlock {
     /// lives. See SPEC_CLOUD_STORAGE.md Х5–Х6.
     #[serde(default)]
     pub content_in_cloud: bool,
+    /// The preview artifact is on disk but cannot be read out of it.
+    ///
+    /// A distinct state, not a flavour of "missing": the file exists, passed
+    /// the readiness check by its header, and gave up no pixels. Without its
+    /// own name on the card, a damaged cache file looks like a design
+    /// decision. See SPEC_CARD_MEDIA_GEOMETRY.md.
+    #[serde(default)]
+    pub preview_unreadable: bool,
     pub search_match: Option<SearchMatch>,
 }
 

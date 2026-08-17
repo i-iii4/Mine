@@ -834,6 +834,14 @@ const ImageCard = memo(function ImageCard({
           <p className="mt-1 text-sm text-foreground">
             {navigationLabel}
           </p>
+          {block.preview_unreadable && (
+            // A damaged cache file, named as such: without its own line this
+            // state is indistinguishable from a preview that just is not
+            // ready yet. The file it derives from is untouched.
+            <p className="mt-1 px-3 text-sm text-muted-foreground" data-card-preview-unreadable="">
+              Preview file can’t be read
+            </p>
+          )}
         </div>
       </GraphicSurface>
     );

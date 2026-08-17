@@ -1232,3 +1232,74 @@ describe("Card", () => {
     expect(screen.getByText("Embedded note")).toBeInTheDocument();
   });
 });
+
+// The damaged-cache state is named on the card, not folded into "not ready".
+describe("unreadable preview artifact", () => {
+  it("names the state when the flag rides the wire", () => {
+    const { container } = render(
+      <Card
+        block={block({
+          block_type: "image",
+          card_kind: "media",
+          media_file: "photo.jpg",
+          title: null,
+          url: null,
+          preview_manifest: JSON.stringify({
+            kind: "image",
+            primary_preview_path: null,
+            width: null,
+            height: null,
+            tiles: [],
+            overflow_count: 0,
+          }),
+          preview_unreadable: true,
+        })}
+        vaultPath="/tmp/vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClick={() => {}}
+        tags={[]}
+        onToggleTag={() => {}}
+        onCreateAndAssign={() => {}}
+        onRequestRename={() => {}}
+        onRequestDelete={() => {}}
+      />,
+    );
+
+    expect(container.querySelector("[data-card-preview-unreadable]")).toHaveTextContent(
+      "Preview file can’t be read",
+    );
+  });
+
+  it("stays silent for an ordinary not-yet-ready preview", () => {
+    const { container } = render(
+      <Card
+        block={block({
+          block_type: "image",
+          card_kind: "media",
+          media_file: "photo.jpg",
+          title: null,
+          url: null,
+          preview_manifest: JSON.stringify({
+            kind: "image",
+            primary_preview_path: null,
+            width: null,
+            height: null,
+            tiles: [],
+            overflow_count: 0,
+          }),
+        })}
+        vaultPath="/tmp/vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClick={() => {}}
+        tags={[]}
+        onToggleTag={() => {}}
+        onCreateAndAssign={() => {}}
+        onRequestRename={() => {}}
+        onRequestDelete={() => {}}
+      />,
+    );
+
+    expect(container.querySelector("[data-card-preview-unreadable]")).toBeNull();
+  });
+});
+

@@ -448,6 +448,11 @@ pub(crate) fn light_block_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<
             .unwrap_or(None)
             .as_deref()
             == Some("content_in_cloud"),
+        preview_unreadable: row
+            .get::<_, Option<String>>(22)
+            .unwrap_or(None)
+            .as_deref()
+            == Some("unreadable_artifact"),
         search_match: None,
     })
 }

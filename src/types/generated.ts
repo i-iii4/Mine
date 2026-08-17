@@ -201,7 +201,16 @@ export type LightBlock = { id: number; slug: string; block_type: BlockType; card
  * exists the card draws from it and no longer cares where the original
  * lives. See SPEC_CLOUD_STORAGE.md Х5–Х6.
  */
-content_in_cloud?: boolean; search_match: SearchMatch | null }
+content_in_cloud?: boolean;
+/**
+ * The preview artifact is on disk but cannot be read out of it.
+ *
+ * A distinct state, not a flavour of "missing": the file exists, passed
+ * the readiness check by its header, and gave up no pixels. Without its
+ * own name on the card, a damaged cache file looks like a design
+ * decision. See SPEC_CARD_MEDIA_GEOMETRY.md.
+ */
+preview_unreadable?: boolean; search_match: SearchMatch | null }
 
 export type MediaAssetActionError = { kind: "no_vault" } | { kind: "invalid_media_ref"; reason: string } | { kind: "media_not_found"; media_ref: string } | { kind: "unsupported_media_kind"; media_ref: string } | { kind: "name_taken"; target: string } | { kind: "invalid_filename"; reason: string } | { kind: "clipboard_unsupported"; media_ref: string } | { kind: "internal"; message: string }
 
