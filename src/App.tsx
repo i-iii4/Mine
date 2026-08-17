@@ -178,6 +178,8 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import {
   getVaultPath,
   getUnavailableVault,
+  firstCardMarkerPending,
+  completeFirstCardMarker,
   openVault,
   selectVault,
   startVaultSync,
@@ -230,6 +232,7 @@ import { useProjectionRevisionOwner } from "@/hooks/useProjectionRevisionOwner";
 import { VaultPicker } from "@/components/VaultPicker";
 import { SpaceUnavailable } from "@/components/SpaceUnavailable";
 import { CloudRecommendation } from "@/components/CloudRecommendation";
+import { FirstCardMarkerCard } from "@/components/FirstCardMarker";
 import { VaultSwitcher } from "@/components/VaultSwitcher";
 import { TopCollectionSwitcher } from "@/components/TopCollectionSwitcher";
 import { Sidebar, SidebarTagRowDragPreview } from "@/components/Sidebar";
@@ -589,6 +592,18 @@ export function AppWithVault({
   const [cloudAdviceToken, setCloudAdviceToken] = useState(0);
   // The first index counted out loud (О13); null once the pass lands.
   const [syncProgress, setSyncProgress] = useState<{ processed: number; total: number } | null>(null);
+  // The first saved card's slug, while its one-time marker is on screen (О19).
+  const [firstCardSlug, setFirstCardSlug] = useState<string | null>(null);
+  const firstCardPendingRef = useRef(false);
+  useEffect(() => {
+    firstCardPendingRef.current = false;
+    setFirstCardSlug(null);
+    firstCardMarkerPending()
+      .then((pending) => {
+        firstCardPendingRef.current = pending;
+      })
+      .catch(() => {});
+  }, [vaultPath]);
   const [vaultReady, setVaultReady] = useState(false);
   const [migrationRequired, setMigrationRequired] = useState(false);
   const [thumbsRootPath, setThumbsRootPath] = useState<string | null>(null);
@@ -1426,6 +1441,13 @@ export function AppWithVault({
     const unlistenFns: Array<Promise<() => void>> = [];
 
     unlistenFns.push(listen<BlockAddedEvent>("block:added", (event) => {
+      // The very first card this space ever saved gets its one sentence about
+      // being a file (О19): the feed was empty, the marker was never shown.
+      if (firstCardPendingRef.current && blocksRef.current.length === 0) {
+        firstCardPendingRef.current = false;
+        setFirstCardSlug(event.payload.slug);
+        void completeFirstCardMarker().catch(() => {});
+      }
       invalidateRoutesForTags(event.payload.tags);
       scheduleRefresh({
         grid: currentTagRef.current === undefined || event.payload.tags.includes(currentTagRef.current),
@@ -3236,6 +3258,19 @@ export function AppWithVault({
       </main>
 
       <CloudRecommendation vaultPath={vaultPath} refreshToken={cloudAdviceToken} />
+
+      {firstCardSlug && (
+        <div className="fixed bottom-4 right-4 z-40" data-first-card-marker-anchor="">
+          <FirstCardMarkerCard
+            fileName={`${firstCardSlug.split("/").pop() ?? firstCardSlug}.md`}
+            onReveal={() => {
+              void revealItemInDir(`${vaultPath}/${firstCardSlug}.md`);
+              setFirstCardSlug(null);
+            }}
+            onClose={() => setFirstCardSlug(null)}
+          />
+        </div>
+      )}
 
       <RenameBlockDialog
         open={renamingBlock !== null}

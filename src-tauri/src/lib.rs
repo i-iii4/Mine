@@ -59,6 +59,8 @@ pub fn run() {
             commands::icloud_progress::icloud_download_progress,
             commands::cloud_recommendation::cloud_recommendation_state,
             commands::cloud_recommendation::dismiss_cloud_recommendation,
+            commands::vault::first_card_marker_pending,
+            commands::vault::complete_first_card_marker,
             commands::clipper_setup::install_clipper_host,
             commands::vault::preview_vault_folder,
             commands::vault::get_unavailable_vault,

@@ -72,6 +72,8 @@ const webClipboardWriteText = vi.fn<(text: string) => Promise<void>>();
 vi.mock("@/lib/commands", () => ({
   cloudRecommendationState: vi.fn(async () => ({ due: false })),
   dismissCloudRecommendation: vi.fn(async () => null),
+  firstCardMarkerPending: vi.fn(async () => false),
+  completeFirstCardMarker: vi.fn(async () => null),
   getVaultPath: commandMocks.getVaultPath,
   openVault: commandMocks.openVault,
   selectVault: vi.fn(),
@@ -2108,6 +2110,52 @@ describe("AppWithVault", () => {
       expect(screen.getByTestId("detail-title")).toHaveTextContent("Renamed Alpha");
       expect(screen.getByTestId("grid-title-Renamed Alpha")).toHaveTextContent("Renamed Alpha");
     });
+  });
+
+  it("marks the first saved card once, and only in a space that never had one", async () => {
+    const commands = await import("@/lib/commands");
+    vi.mocked(commands.firstCardMarkerPending).mockResolvedValue(true);
+    commandMocks.listGridBlocks.mockImplementation(async () => ({
+      generation: 1,
+      blocks: [],
+      total_blocks: 0,
+      has_more: false,
+    }));
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(vi.mocked(commands.firstCardMarkerPending)).toHaveBeenCalled();
+    });
+
+    fireEvent(
+      window,
+      new CustomEvent("block:added", {
+        detail: { payload: { slug: "Cards/First clip", tags: [], is_text: false } },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Saved as a file")).toBeInTheDocument();
+    });
+    expect(screen.getByText(/First clip\.md/)).toBeInTheDocument();
+    expect(vi.mocked(commands.completeFirstCardMarker)).toHaveBeenCalledTimes(1);
+
+    // A second add never re-raises it.
+    fireEvent.click(screen.getByLabelText("Dismiss"));
+    fireEvent(
+      window,
+      new CustomEvent("block:added", {
+        detail: { payload: { slug: "Cards/Second clip", tags: [], is_text: false } },
+      }),
+    );
+    await waitFor(() => {
+      expect(screen.queryByText("Saved as a file")).not.toBeInTheDocument();
+    });
+    expect(vi.mocked(commands.completeFirstCardMarker)).toHaveBeenCalledTimes(1);
   });
 
   it("bumps only the affected card's thumb version on thumb:updated without reloading the feed", async () => {

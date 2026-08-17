@@ -17,6 +17,7 @@ import { CloudBadge } from "@/components/CloudBadge";
 import { CloudDisclaimer } from "@/components/CloudDisclaimer";
 import { CloudRecommendationCard } from "@/components/CloudRecommendation";
 import { IndexingProgress } from "@/components/IndexingProgress";
+import { FirstCardMarkerCard } from "@/components/FirstCardMarker";
 import { EmptySpaceOnboarding } from "@/components/EmptySpaceOnboarding";
 import { FolderConfirmation } from "@/components/FolderConfirmation";
 import { SpaceUnavailable } from "@/components/SpaceUnavailable";
@@ -260,6 +261,17 @@ export function EdgeStatesSection() {
           <div className="h-64">
             <IndexingProgress spaceName="Mine" processed={1284} total={3000} />
           </div>
+        </StateCase>
+
+        <StateCase
+          name="Пометка первой карточки"
+          when="Один раз после первой сохранённой в пространстве карточки: продукт продаёт локальность, и показать её нужно в момент первого результата."
+        >
+          <FirstCardMarkerCard
+            fileName="Sunset over the bay.md"
+            onReveal={() => {}}
+            onClose={() => {}}
+          />
         </StateCase>
 
         <StateCase

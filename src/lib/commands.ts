@@ -441,6 +441,14 @@ export const getClipperSetupStatus = () =>
 export const installClipperHost = (extensionId: string) =>
   invoke<ClipperSetupStatus>("install_clipper_host", { extensionId });
 
+/** Whether the first-card marker has not been shown in this space yet (О19). */
+export const firstCardMarkerPending = () =>
+  invoke<boolean>("first_card_marker_pending");
+
+/** The marker was shown or dismissed; it never returns in this space. */
+export const completeFirstCardMarker = () =>
+  invoke<null>("complete_first_card_marker");
+
 /** Whether the Keep Downloaded recommendation is due for the active space.
  *  See SPEC_CLOUD_STORAGE.md Х16–Х19. */
 export const cloudRecommendationState = () =>

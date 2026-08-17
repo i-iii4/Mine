@@ -219,6 +219,37 @@ pub(crate) fn unavailable_reason(path: &Path) -> Option<UnavailableVaultReason> 
     }
 }
 
+/// The first saved card deserves one sentence about what it is (О19).
+///
+/// The product sells locality, and the moment to show it is the moment the
+/// person just got their first result: the card they saved is a file in the
+/// folder they chose. Shown once per space; the flag is a sidecar in the
+/// derived store, so it survives an index rebuild and dies with the space.
+#[tauri::command]
+pub fn first_card_marker_pending(state: State<'_, AppState>) -> Result<bool, CommandError> {
+    let root = current_derived_root(&state)?;
+    Ok(!root.join("first-card.json").is_file())
+}
+
+/// The marker was shown (or dismissed); it never comes back in this space.
+#[tauri::command]
+pub fn complete_first_card_marker(state: State<'_, AppState>) -> Result<(), CommandError> {
+    let root = current_derived_root(&state)?;
+    std::fs::create_dir_all(&root)
+        .map_err(|e| CommandError::Internal(format!("failed to create derived root: {e}")))?;
+    crate::storage::files::write_atomically(&root.join("first-card.json"), b"{\"shown\":true}")
+        .map_err(|e| CommandError::Internal(format!("failed to record the marker: {e:#}")))
+}
+
+fn current_derived_root(state: &State<'_, AppState>) -> Result<PathBuf, CommandError> {
+    let vault_state = state
+        .vault_state
+        .lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+    Ok(vs.vault.derived_root().to_path_buf())
+}
+
 /// Discard the binding to a space that is no longer wanted.
 ///
 /// Explicit user action only: this is the single place the saved path is

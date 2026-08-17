@@ -142,7 +142,7 @@ Definition of Done фазы: каждое состояние из R8 видно 
 | V5 | Интерфейс нечитаемого артефакта: вид ошибки доезжает до карточки | [SPEC_CARD_MEDIA_GEOMETRY.md](SPEC_CARD_MEDIA_GEOMETRY.md) | **DONE 17.08.2026.** Флаг на проводе из preview_error_kind, отдельная строка на карточке, состояние в витрине |
 | V6 | Индикатор ожидания при копировании изображения из облака | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) Х13 | **DONE 17.08.2026.** Та же строка загрузки с той же задержкой: быстрое копирование не мигает, облачное — показывает ожидание |
 | V7 | Отдельный экран «нет доступа к папке» | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) О11 | **DONE 17.08.2026.** Причина недоступности на проводе (missing / access_denied), экран с кнопкой в System Settings и повтором, оба варианта в витрине |
-| V8 | Пометка первой сохранённой карточки с Reveal in Finder | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) О19 | — |
+| V8 | Пометка первой сохранённой карточки с Reveal in Finder | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) О19 | **DONE 17.08.2026.** Одноразовая карточка при первом добавлении в пустую ленту, отметка в сайдкаре, компонент в витрине |
 | V9 | Копия пространства отличается от переезда | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) П22 | — |
 | V10 | Прогон `verify:release` при закрытом приложении | — | — |
 | V11 | Публикация в Chrome Web Store: регистрация — пользователь, пакет и материалы — по запросу | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) | внешнее |
