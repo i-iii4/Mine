@@ -449,19 +449,20 @@ function CoreComponentSection() {
 
       <ComponentSpec
         title="Button — варианты"
-        summary="Один фон, разные акценты. Hover не заливает кнопку, а рисует обводку."
+        summary="Текстовая кнопка — всегда с телом: заливка у primary, обводка у secondary. Ghost — только иконные контролы; текстовых кнопок без обводки в продукте нет."
         specs={[
-          { prop: "default", value: "bg --component-fill" },
+          { prop: "default", value: "primary · bg --component-fill" },
+          { prop: "secondary", value: "outline 1px --border · bg transparent" },
           { prop: "destructive", value: "text --destructive" },
-          { prop: "ghost", value: "bg transparent" },
-          { prop: "link", value: "underline · hover --hover-foreground" },
+          { prop: "ghost", value: "только иконные контролы" },
+          { prop: "link", value: "underline · инлайн-ссылки" },
           { prop: "Hover", value: "outline 1px · --component-fill-hover" },
           { prop: "SVG", value: "size-4 (16) · xs size-3 (12)" },
         ]}
       >
         <Button variant="default"><Plus />Connect</Button>
+        <Button variant="secondary">Try again</Button>
         <Button variant="destructive">Delete</Button>
-        <Button variant="ghost">Ghost</Button>
         <Button variant="link">Link</Button>
         <Button size="icon" aria-label="More"><MoreHorizontal /></Button>
         <ChromeCloseButton label="Close design preview" />

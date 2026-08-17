@@ -111,7 +111,7 @@ export function RenameBlockDialog({
 
         <DialogFooter>
           <Button
-            variant="ghost"
+            variant="secondary"
             onClick={() => onOpenChange(false)}
             disabled={submitting}
           >

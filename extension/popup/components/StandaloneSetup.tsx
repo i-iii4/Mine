@@ -78,7 +78,7 @@ export function StandaloneSetup({
               Choose folder…
             </Button>
           ) : null}
-          <Button variant="ghost" onClick={() => void chrome.tabs?.create({ url: APP_DOWNLOAD_URL })}>
+          <Button variant="secondary" onClick={() => void chrome.tabs?.create({ url: APP_DOWNLOAD_URL })}>
             Download app
           </Button>
         </div>

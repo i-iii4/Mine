@@ -61,7 +61,7 @@ export function FolderConfirmation({
           <Button disabled={loading} onClick={onConfirm}>
             {loading ? "Opening…" : "Open as space"}
           </Button>
-          <Button variant="ghost" disabled={loading} onClick={onChooseAnother}>
+          <Button variant="secondary" disabled={loading} onClick={onChooseAnother}>
             Choose another
           </Button>
         </div>

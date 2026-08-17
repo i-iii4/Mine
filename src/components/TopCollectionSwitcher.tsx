@@ -356,7 +356,7 @@ export function TopCollectionSwitcher({
             <DialogFooter>
               <Button
                 type="button"
-                variant="ghost"
+                variant="secondary"
                 onClick={() => setCreateDialogOpen(false)}
               >
                 Cancel

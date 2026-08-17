@@ -130,7 +130,7 @@ export function MergeCardsDialog({
         <DialogFooter>
           <Button
             type="button"
-            variant="ghost"
+            variant="secondary"
             disabled={submitting}
             onClick={() => onOpenChange(false)}
           >

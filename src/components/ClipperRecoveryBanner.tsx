@@ -164,7 +164,7 @@ export function ClipperRecoveryBanner({
                     </Button>
                     <Button
                       size="xs"
-                      variant="ghost"
+                      variant="destructive"
                       disabled={busy}
                       onClick={() => discardPending(item)}
                     >
@@ -178,7 +178,7 @@ export function ClipperRecoveryBanner({
           </div>
 
           <div className="mt-4 flex justify-end">
-            <Button variant="ghost" onClick={() => setOpen(false)}>
+            <Button variant="secondary" onClick={() => setOpen(false)}>
               <X className="mr-1 size-3.5" />
               Close
             </Button>

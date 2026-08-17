@@ -124,7 +124,7 @@ export function OrphansSection() {
           Orphans{" "}
           <span className="font-normal text-muted-foreground">{orphans.length}</span>
         </h1>
-        <Button variant="ghost" onClick={() => void reload()}>
+        <Button variant="secondary" onClick={() => void reload()}>
           Refresh
         </Button>
       </div>

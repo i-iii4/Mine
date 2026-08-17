@@ -438,6 +438,7 @@ Mine — десктопное приложение, а не страница в 
 | Элемент | Что меняется | Светлая | Тёмная | Утилита |
 |---|---|---|---|---|
 | Кнопка default/destructive | Обводка 1px inset | `--component-fill-hover` | `--component-fill-hover` | `hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover` |
+| Кнопка secondary | Обводка 1px inset (постоянная) | `--border` → `--component-fill-hover` | `--border` → `--component-fill-hover` | `outline-1 -outline-offset-1 outline-border hover:outline-component-fill-hover` |
 | Кнопка ghost/link | Цвет текста | #333 → #000 | #E4E4E4 → #FFF | `hover:text-hover-foreground` |
 | Карточка | Frame не меняется | — | — | Hover actions only |
 
@@ -545,10 +546,20 @@ base является отдельной миграцией, а не обнов�
 
 | Вариант | Фон | Hover | Отличие |
 |---|---|---|---|
-| `default` | `bg-component-fill` | обводка 1px inset `--component-fill-hover` | — |
+| `default` | `bg-component-fill` | обводка 1px inset `--component-fill-hover` | Primary — одна на группу действий |
+| `secondary` | `bg-transparent` + обводка 1px inset `--border` | обводка `--component-fill-hover` | Все остальные текстовые действия |
 | `destructive` | `bg-component-fill` | обводка 1px inset `--component-fill-hover` | `text-destructive` (красный текст) |
-| `ghost` | `bg-transparent` | `text-hover-foreground` (текст ярчеет) | Невидимая до взаимодействия |
-| `link` | `bg-transparent` | `text-hover-foreground` (текст ярчеет) | `underline` |
+| `ghost` | `bg-transparent` | `text-hover-foreground` (текст ярчеет) | Только иконные контролы |
+| `link` | `bg-transparent` | `text-hover-foreground` (текст ярчеет) | `underline`, инлайн-ссылки |
+
+**Закон текстовой кнопки.** Текстовая кнопка действия всегда имеет тело:
+заливку (`default`/`destructive`) или обводку (`secondary`). Текстовых кнопок
+без обводки не бывает — голый текст не читается как кнопка. `ghost` разрешён
+только иконным контролам (крестики, триггеры меню, инструменты оверлея), где
+рамка вокруг каждой иконки была бы шумом. В группе действий ровно одна
+primary; остальные — `secondary`; группа помещается в одну строку — перенос
+кнопок на вторую строку означает, что действий слишком много или контейнер
+слишком узок.
 
 Размеры (`size`):
 

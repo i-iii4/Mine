@@ -157,7 +157,7 @@ export function VaultConflictsBanner({ vaultReady }: VaultConflictsBannerProps) 
                     </Button>
                     <Button
                       size="xs"
-                      variant="ghost"
+                      variant="secondary"
                       disabled={busy}
                       onClick={() =>
                         handleResolve(item, "dismiss_for_manual_merge")
@@ -173,7 +173,7 @@ export function VaultConflictsBanner({ vaultReady }: VaultConflictsBannerProps) 
           </div>
 
           <div className="mt-4 flex justify-end">
-            <Button variant="ghost" onClick={() => setOpen(false)}>
+            <Button variant="secondary" onClick={() => setOpen(false)}>
               <X className="mr-1 size-3.5" />
               Close
             </Button>

@@ -10,6 +10,9 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default: "bg-component-fill outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover",
+        // Secondary action: transparent body, permanent border. Text action
+        // buttons are never borderless — ghost is reserved for icon controls.
+        secondary: "bg-transparent outline-1 -outline-offset-1 outline-border hover:outline-component-fill-hover",
         destructive: "bg-component-fill text-destructive outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover",
         ghost: "bg-transparent hover:text-hover-foreground",
         link: "bg-transparent underline underline-offset-4 hover:text-hover-foreground",

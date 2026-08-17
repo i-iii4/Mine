@@ -89,7 +89,9 @@ export function SpaceUnavailable({
       className="flex size-full min-h-80 items-center justify-center bg-background"
       data-space-unavailable=""
     >
-      <div className="flex max-w-md flex-col items-start gap-6 text-left">
+      {/* max-w-lg so each variant's action row fits on one line — a wrapped
+          row of buttons reads as two rows of controls, which is not a row. */}
+      <div className="flex max-w-lg flex-col items-start gap-6 text-left">
         <div className="grid gap-2">
           <h1 className="text-lg font-semibold text-foreground">
             {accessDenied ? "No access to the folder" : "Folder unavailable"}
@@ -109,7 +111,10 @@ export function SpaceUnavailable({
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        {/* One primary, the rest secondary, one row per variant. Access denied
+            has one real answer — grant access — so "create new space" is not
+            offered there; forgetting stays as the only way out of the screen. */}
+        <div className="flex items-center gap-2">
           {accessDenied ? (
             <>
               <Button
@@ -119,19 +124,21 @@ export function SpaceUnavailable({
               >
                 Open System Settings
               </Button>
-              <Button variant="ghost" onClick={() => void retry()} disabled={busy}>
+              <Button variant="secondary" onClick={() => void retry()} disabled={busy}>
                 Try again
               </Button>
             </>
           ) : (
-            <Button onClick={() => void locate()} disabled={busy}>
-              Locate folder…
-            </Button>
+            <>
+              <Button onClick={() => void locate()} disabled={busy}>
+                Locate folder…
+              </Button>
+              <Button variant="secondary" onClick={() => void locate()} disabled={busy}>
+                Create new space
+              </Button>
+            </>
           )}
-          <Button variant="ghost" onClick={() => void locate()} disabled={busy}>
-            Create new space
-          </Button>
-          <Button variant="ghost" onClick={() => void forget()} disabled={busy}>
+          <Button variant="secondary" onClick={() => void forget()} disabled={busy}>
             Forget this space
           </Button>
         </div>
