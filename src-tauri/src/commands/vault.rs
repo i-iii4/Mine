@@ -167,6 +167,21 @@ fn count_folder(dir: &Path, preview: &mut FolderPreview, depth: usize) {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct UnavailableVault {
     pub path: String,
+    /// Why the space cannot be opened: the folder is gone from this path, or
+    /// it is right there and macOS refuses to let the app read it. The two
+    /// need different words and different actions — "locate the folder" is
+    /// useless advice when the folder is visible and locked.
+    /// See SPEC_ONBOARDING.md О11.
+    pub reason: UnavailableVaultReason,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum UnavailableVaultReason {
+    /// Renamed, moved, on a disconnected drive, or not yet synced.
+    Missing,
+    /// The folder exists; reading it is what fails.
+    AccessDenied,
 }
 
 /// The saved space that could not be opened, if any.
@@ -179,10 +194,29 @@ pub fn get_unavailable_vault(app: AppHandle) -> Result<Option<UnavailableVault>,
     let Some(saved_path) = load_saved_vault_path(&app) else {
         return Ok(None);
     };
-    if PathBuf::from(&saved_path).is_dir() {
-        return Ok(None);
+    match unavailable_reason(Path::new(&saved_path)) {
+        None => Ok(None),
+        Some(reason) => Ok(Some(UnavailableVault {
+            path: saved_path,
+            reason,
+        })),
     }
-    Ok(Some(UnavailableVault { path: saved_path }))
+}
+
+/// Why a bound folder cannot be opened, or `None` when it can.
+///
+/// Reading the directory is the test that matters — it is the operation the
+/// app is about to perform. A folder that exists but refuses the read is an
+/// access problem, not a missing one, and the two need different words.
+pub(crate) fn unavailable_reason(path: &Path) -> Option<UnavailableVaultReason> {
+    match std::fs::read_dir(path) {
+        Ok(_) => None,
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            Some(UnavailableVaultReason::AccessDenied)
+        }
+        Err(_) if path.is_dir() => Some(UnavailableVaultReason::AccessDenied),
+        Err(_) => Some(UnavailableVaultReason::Missing),
+    }
 }
 
 /// Discard the binding to a space that is no longer wanted.
@@ -1884,5 +1918,35 @@ mod tests {
         assert!(!vault.legacy_index_db_path().exists());
         assert!(!vault.legacy_arena_dir().join("cache").exists());
         assert!(vault.legacy_arena_dir().join("conflicts-archive").exists());
+    }
+}
+
+#[cfg(test)]
+mod unavailable_reason_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn missing_locked_and_fine_are_three_different_answers() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Readable: not unavailable at all.
+        assert_eq!(unavailable_reason(dir.path()), None);
+
+        // Gone: missing.
+        assert_eq!(
+            unavailable_reason(&dir.path().join("nowhere")),
+            Some(UnavailableVaultReason::Missing)
+        );
+
+        // Present but unreadable: an access problem, not a missing folder.
+        let locked = dir.path().join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let reason = unavailable_reason(&locked);
+        // Restore before asserting so a failure does not strand an
+        // undeletable temp dir.
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(reason, Some(UnavailableVaultReason::AccessDenied));
     }
 }

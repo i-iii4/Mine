@@ -162,6 +162,7 @@ function fetchGridBlocks(
 }
 
 import type {
+  UnavailableVaultReason,
   DeleteBlockPlan,
   IndexedBlock,
   LightBlock,
@@ -356,6 +357,7 @@ interface ThumbUpdatedEvent {
 export function App() {
   const [vaultPath, setVaultPath] = useState<string | null>(null);
   const [unavailablePath, setUnavailablePath] = useState<string | null>(null);
+  const [unavailableReason, setUnavailableReason] = useState<UnavailableVaultReason>("missing");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -374,6 +376,7 @@ export function App() {
         if (!path) {
           const unavailable = await getUnavailableVault().catch(() => null);
           setUnavailablePath(unavailable?.path ?? null);
+          setUnavailableReason(unavailable?.reason ?? "missing");
         }
       })
       .catch((err) => {
@@ -411,6 +414,7 @@ export function App() {
       <div className="h-screen w-screen">
         <SpaceUnavailable
           path={unavailablePath}
+          reason={unavailableReason}
           onReopened={(path) => {
             setUnavailablePath(null);
             setVaultPath(path);

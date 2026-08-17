@@ -321,7 +321,25 @@ export type ThumbFormat = "jpeg" | "png"
 /**
  * A space that is bound but not reachable right now.
  */
-export type UnavailableVault = { path: string }
+export type UnavailableVault = { path: string;
+/**
+ * Why the space cannot be opened: the folder is gone from this path, or
+ * it is right there and macOS refuses to let the app read it. The two
+ * need different words and different actions — "locate the folder" is
+ * useless advice when the folder is visible and locked.
+ * See SPEC_ONBOARDING.md О11.
+ */
+reason: UnavailableVaultReason }
+
+export type UnavailableVaultReason =
+/**
+ * Renamed, moved, on a disconnected drive, or not yet synced.
+ */
+"missing" |
+/**
+ * The folder exists; reading it is what fails.
+ */
+"access_denied"
 
 export type VaultOpenResult = { indexed: number; errors: number; sync_in_progress: boolean; derived_store_ready: boolean; bootstrapped_from_legacy: boolean; migration_required: boolean; thumbs_root: string }
 

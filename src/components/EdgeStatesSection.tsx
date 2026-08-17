@@ -342,6 +342,20 @@ export function EdgeStatesSection() {
       </StateCase>
 
       <StateCase
+        name="Нет доступа к папке"
+        when="Папка на месте, но macOS не даёт её читать — «найдите папку» здесь бесполезный совет. Кнопка ведёт в системные настройки приватности."
+      >
+        <ScreenFrame>
+          <SpaceUnavailable
+            path="/Users/you/Documents/Mine"
+            reason="access_denied"
+            onReopened={() => {}}
+            onForgotten={() => {}}
+          />
+        </ScreenFrame>
+      </StateCase>
+
+      <StateCase
         name="Подтверждение непустой папки"
         when="Выбор папки рекурсивен и необратим, а ~/Documents — один промах. Счёт показывается до начала работы."
       >

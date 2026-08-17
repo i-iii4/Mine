@@ -20,8 +20,11 @@ describe("EdgeStatesSection", () => {
   it("draws the states nobody can produce on demand", () => {
     const { container } = render(<EdgeStatesSection />);
 
-    // Screens that need a vault in a particular condition.
-    expect(container.querySelector("[data-space-unavailable]")).not.toBeNull();
+    // Screens that need a vault in a particular condition — including the
+    // locked-folder variant, whose only live trigger is a macOS refusal.
+    expect(container.querySelectorAll("[data-space-unavailable]")).toHaveLength(2);
+    expect(screen.getByText("No access to the folder")).toBeInTheDocument();
+    expect(container.querySelector("[data-space-unavailable-open-settings]")).not.toBeNull();
     expect(container.querySelector("[data-folder-confirmation]")).not.toBeNull();
     expect(container.querySelector("[data-empty-space-onboarding]")).not.toBeNull();
 

@@ -29,7 +29,7 @@ use crate::commands::state::CommandError;
 use crate::commands::clipper_setup::{ClipperBrowserStatus, ClipperSetupStatus};
 use crate::commands::cloud_recommendation::CloudRecommendationState;
 use crate::commands::icloud_progress::{IcloudDownloadProgress, IcloudDownloadStatus};
-use crate::commands::vault::{FolderPreview, UnavailableVault, VaultOpenResult, VaultWriteLayoutDto};
+use crate::commands::vault::{FolderPreview, UnavailableVault, UnavailableVaultReason, VaultOpenResult, VaultWriteLayoutDto};
 use crate::import::importer::{ImportChannelResult, ImportProgress};
 use crate::storage::article_audio::{ArticleAudioState, ArticleAudioStatus};
 use crate::storage::graph::{
@@ -110,6 +110,7 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<VaultOpenResult>()
         .register::<VaultWriteLayoutDto>()
         .register::<UnavailableVault>()
+        .register::<UnavailableVaultReason>()
         .register::<FolderPreview>()
         .register::<ClipperSetupStatus>()
         .register::<CloudRecommendationState>()

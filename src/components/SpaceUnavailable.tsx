@@ -11,22 +11,51 @@ import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FolderSearch } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { forgetUnavailableVault, selectVault } from "@/lib/commands";
+import type { UnavailableVaultReason } from "@/types";
 
 interface SpaceUnavailableProps {
   path: string;
+  /// Missing and locked need different words and different actions: "locate
+  /// the folder" is useless advice when the folder is visible and macOS is
+  /// refusing to open it. See SPEC_ONBOARDING.md О11.
+  reason?: UnavailableVaultReason;
   onReopened: (path: string) => void;
   onForgotten: () => void;
 }
+
+/// Where macOS keeps the files-and-folders permission this app was denied.
+const PRIVACY_SETTINGS_URL =
+  "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders";
 
 function folderName(path: string): string {
   const parts = path.split("/").filter(Boolean);
   return parts[parts.length - 1] ?? path;
 }
 
-export function SpaceUnavailable({ path, onReopened, onForgotten }: SpaceUnavailableProps) {
+export function SpaceUnavailable({
+  path,
+  reason = "missing",
+  onReopened,
+  onForgotten,
+}: SpaceUnavailableProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const accessDenied = reason === "access_denied";
+
+  const retry = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      await selectVault(path);
+      onReopened(path);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const locate = async () => {
     setError(null);
@@ -65,11 +94,13 @@ export function SpaceUnavailable({ path, onReopened, onForgotten }: SpaceUnavail
         <FolderSearch className="size-8 text-muted-foreground" aria-hidden="true" />
 
         <div className="grid gap-2">
-          <h1 className="text-lg font-semibold text-foreground">Space unavailable</h1>
+          <h1 className="text-lg font-semibold text-foreground">
+            {accessDenied ? "No access to the folder" : "Space unavailable"}
+          </h1>
           <p className="text-base text-muted-foreground">
-            Mine cannot reach “{folderName(path)}” right now. It may have been
-            moved or renamed, or its drive may be disconnected. Your files are
-            untouched.
+            {accessDenied
+              ? `“${folderName(path)}” is right here, but macOS is not letting Mine read it. Allow access in System Settings under Privacy & Security, Files and Folders. Your files are untouched.`
+              : `Mine cannot reach “${folderName(path)}” right now. It may have been moved or renamed, or its drive may be disconnected. Your files are untouched.`}
           </p>
           <p className="font-mono text-sm text-muted-foreground" data-space-unavailable-path>
             {path}
@@ -77,9 +108,24 @@ export function SpaceUnavailable({ path, onReopened, onForgotten }: SpaceUnavail
         </div>
 
         <div className="flex flex-wrap items-center justify-center gap-2">
-          <Button onClick={() => void locate()} disabled={busy}>
-            Locate folder…
-          </Button>
+          {accessDenied ? (
+            <>
+              <Button
+                onClick={() => void openUrl(PRIVACY_SETTINGS_URL)}
+                disabled={busy}
+                data-space-unavailable-open-settings=""
+              >
+                Open System Settings
+              </Button>
+              <Button variant="ghost" onClick={() => void retry()} disabled={busy}>
+                Try again
+              </Button>
+            </>
+          ) : (
+            <Button onClick={() => void locate()} disabled={busy}>
+              Locate folder…
+            </Button>
+          )}
           <Button variant="ghost" onClick={() => void locate()} disabled={busy}>
             Create new space
           </Button>
