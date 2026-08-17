@@ -20,6 +20,7 @@ import { QuantizedMenuScrollArea } from "@/components/QuantizedMenuScrollArea";
 import { SearchMenuAction } from "@/components/SearchMenuAction";
 import { SearchMenuInput } from "@/components/SearchMenuInput";
 import { filterAndRankChannelSearch } from "@/lib/channelSearch";
+import { ClipperOverflowMenu } from "./ClipperOverflowMenu";
 
 interface VaultSelectProps {
   value: string | null;
@@ -259,13 +260,12 @@ export function VaultSelect({ value, options, onChange, onReveal, onAddSpace, on
           </div>
         </DropdownMenuContent>
       </DropdownMenu>
-      {onClose && (
-        <ChromeCloseButton
-          className="ml-auto"
-          label="Close clipper"
-          onClick={onClose}
-        />
-      )}
+      <span className="ml-auto flex items-center gap-1">
+        <ClipperOverflowMenu appInstalled />
+        {onClose && (
+          <ChromeCloseButton label="Close clipper" onClick={onClose} />
+        )}
+      </span>
     </div>
   );
 }

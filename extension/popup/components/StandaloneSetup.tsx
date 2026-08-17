@@ -10,6 +10,7 @@ import { useState } from "react";
 import { Download, FolderOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ChromeCloseButton } from "@/components/ChromeCloseButton";
+import { ClipperOverflowMenu } from "./ClipperOverflowMenu";
 
 /** Where "Download app" points until the product has a page of its own. */
 export const APP_DOWNLOAD_URL = "https://github.com/i-iii4/Mine/releases";
@@ -106,7 +107,10 @@ export function StandaloneFolderRow({
         {folderName ?? "Folder"}
       </span>
       <span className="font-mono text-sm text-muted-foreground">no app</span>
-      {onClose && <ChromeCloseButton className="ml-auto" label="Close clipper" onClick={onClose} />}
+      <span className="ml-auto flex items-center gap-1">
+        <ClipperOverflowMenu appInstalled={false} />
+        {onClose && <ChromeCloseButton label="Close clipper" onClick={onClose} />}
+      </span>
     </div>
   );
 }

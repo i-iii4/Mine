@@ -79,6 +79,7 @@ import { SaveButton } from "../../extension/popup/components/SaveButton";
 import { ScreenshotPreview } from "../../extension/popup/components/ScreenshotPreview";
 import { TypeSwitcher } from "../../extension/popup/components/TypeSwitcher";
 import { VaultSelect } from "../../extension/popup/components/VaultSelect";
+import { StandaloneSetup, StandaloneFolderRow } from "../../extension/popup/components/StandaloneSetup";
 import type { ChannelInfo } from "../../extension/popup/lib/messaging";
 
 type ColorToken = { readonly token: string; readonly use: string };
@@ -1054,8 +1055,61 @@ function ClipperParitySection() {
         <ClipperFrame type="screenshot" />
         <ClipperFrame type="link" />
         <ClipperFrame type="image" />
+        <ClipperStandaloneSetupFrame />
+        <ClipperStandaloneRowFrame />
       </div>
     </BenchSection>
+  );
+}
+
+/// The clipper with no app installed (О1–О3): the setup screen a person meets
+/// when the extension is their first contact with the product.
+function ClipperStandaloneSetupFrame() {
+  return (
+    <div>
+      <p className="mb-2 font-mono text-sm text-muted-foreground">
+        Клиппер · приложения нет — выбор папки
+      </p>
+      <div className="w-[360px] overflow-hidden rounded-1 border border-border bg-background shadow-md">
+        <StandaloneSetup
+          canPickFolder
+          folderName={null}
+          onChooseFolder={async () => ({ ok: true })}
+          onRegrantAccess={async () => ({ ok: true })}
+          onClose={() => {}}
+        />
+      </div>
+      <p className="mt-2 mb-2 font-mono text-sm text-muted-foreground">
+        Тот же экран: доступ к папке отозван браузером
+      </p>
+      <div className="w-[360px] overflow-hidden rounded-1 border border-border bg-background shadow-md">
+        <StandaloneSetup
+          canPickFolder
+          folderName="Mine"
+          onChooseFolder={async () => ({ ok: true })}
+          onRegrantAccess={async () => ({ ok: true })}
+          onClose={() => {}}
+        />
+      </div>
+    </div>
+  );
+}
+
+/// The header row while saving straight to disk, with the ellipsis menu (О3).
+function ClipperStandaloneRowFrame() {
+  return (
+    <div>
+      <p className="mb-2 font-mono text-sm text-muted-foreground">
+        Клиппер · автономная запись — папка вместо пространства, меню с Download app
+      </p>
+      <div className="w-[360px] overflow-hidden rounded-1 border border-border bg-background shadow-md">
+        <StandaloneFolderRow folderName="Mine" onClose={() => {}} />
+        <div className="p-4 text-sm text-muted-foreground">
+          Клипы пишутся файлами прямо в выбранную папку. Приложение подхватит их
+          при первом запуске обычным сканированием.
+        </div>
+      </div>
+    </div>
   );
 }
 

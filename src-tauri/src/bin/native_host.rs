@@ -558,6 +558,27 @@ fn handle_pick_vault_folder() {
 /// Reveals a known vault in Finder. Restricted to paths the config already
 /// lists so a compromised page cannot use the clipper bridge to probe or open
 /// arbitrary directories.
+/// Bring the app to the front, launching it if needed (О3, `Open app`).
+///
+/// The host answering at all proves the app is installed, and macOS resolves
+/// the bundle by identifier, so this works regardless of where the app lives.
+/// No space is passed: the app opens on whatever its own binding remembers,
+/// and that binding is the authority.
+fn handle_open_app() {
+    #[derive(serde::Serialize)]
+    struct OpenAppResponse {
+        ok: bool,
+    }
+    let status = std::process::Command::new("open")
+        .args(["-b", "com.mine.app"])
+        .status();
+    match status {
+        Ok(code) if code.success() => send_response(&OpenAppResponse { ok: true }),
+        Ok(code) => send_error(&format!("open exited with {code}")),
+        Err(error) => send_error(&format!("failed to launch the app: {error}")),
+    }
+}
+
 fn handle_reveal_vault(params: serde_json::Value) {
     #[derive(serde::Deserialize)]
     struct RevealVaultParams {
@@ -2542,6 +2563,7 @@ fn main() {
             "list_known_vaults" => handle_list_known_vaults(),
             "pick_vault_folder" => handle_pick_vault_folder(),
             "reveal_vault" => handle_reveal_vault(req.params),
+            "open_app" => handle_open_app(),
             "resolve_twitter_media" => handle_resolve_twitter_media(req.params),
 
             "list_channels" | "save_block" | "create_channel" => {

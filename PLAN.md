@@ -135,7 +135,7 @@ Definition of Done фазы: каждое состояние из R8 видно 
 
 | # | Работа | Контракт | Статус |
 |---|---|---|---|
-| V1 | Автономная запись расширением без установленного приложения | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) О1–О4 | — |
+| V1 | Автономная запись расширением без установленного приложения | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) О1–О4 | **DONE 16.08.2026.** Папка через File System Access, запись из фонового воркера, формат байт-в-байт с хостом, экран настройки, меню Open app / Download app, состояния в витрине |
 | V2 | Процент загрузки из iCloud: нативный помощник, настоящий процент в развороте и пояснении | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) Х4, Х9 | — |
 | V3 | Всплывающая рекомендация Keep Downloaded: счётчик ожиданий по пространству, карточка, Don't show again, самоисчезновение | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) Х16–Х19, Х21–Х22 | — |
 | V4 | Прогресс индексации с числами | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) О13 | — |
