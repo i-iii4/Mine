@@ -159,6 +159,20 @@ export function EdgeStatesSection() {
         </StateCase>
 
         <StateCase
+          name="Разворот: копирование ждёт содержимое"
+          when="Копирование читает файл, а чтение файла из iCloud сначала тянет его. Быстрое копирование индикатора не видит — он появляется только когда ожидание пережило общую задержку."
+          drawn
+        >
+          <CardFrame>
+            <div className="absolute inset-0 bg-component-fill" />
+            <div className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-card/90 px-3 py-2">
+              <CloudDownload className="size-3.5 text-muted-foreground" aria-hidden="true" />
+              <span className="text-sm text-muted-foreground">{CLOUD_DOWNLOADING_LABEL}</span>
+            </div>
+          </CardFrame>
+        </StateCase>
+
+        <StateCase
           name="Разворот: оригинал недоступен"
           when="Нет сети. Это состояние файла, а не ошибка приложения, и превью остаётся на месте."
           drawn

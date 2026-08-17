@@ -43,7 +43,7 @@ describe("EdgeStatesSection", () => {
     expect(
       screen.getByText("Original is in iCloud, not available offline"),
     ).toBeInTheDocument();
-    expect(screen.getByText("Downloading from iCloud")).toBeInTheDocument();
+    expect(screen.getAllByText("Downloading from iCloud").length).toBeGreaterThan(0);
   });
 
   it("carries no unimplemented mocks any more", () => {

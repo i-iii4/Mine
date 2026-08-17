@@ -1561,6 +1561,24 @@ function MediaAssetActionFrame({
   children: ReactNode;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  // Copying reads the file, and reading a file iCloud is holding downloads it
+  // first. A local copy finishes instantly; only a copy that outlives the
+  // shared badge delay earns an indicator, so fast copies never flash one.
+  // See SPEC_CLOUD_STORAGE.md Х13.
+  const [copyWaiting, setCopyWaiting] = useState(false);
+  const copyTimerRef = useRef<number | null>(null);
+  const beginCopyIndicator = useCallback(() => {
+    if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = window.setTimeout(() => setCopyWaiting(true), CLOUD_BADGE_DELAY_MS);
+  }, []);
+  const endCopyIndicator = useCallback(() => {
+    if (copyTimerRef.current !== null) {
+      window.clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = null;
+    }
+    setCopyWaiting(false);
+  }, []);
+  useEffect(() => endCopyIndicator, [endCopyIndicator]);
   const {
     attributes: dragAttributes,
     listeners: dragListeners,
@@ -1653,6 +1671,15 @@ function MediaAssetActionFrame({
       }}
     >
       {children}
+      {copyWaiting && (
+        <div
+          className="absolute inset-x-0 bottom-0 z-10 flex items-center gap-2 bg-card/90 px-3 py-2"
+          data-detail-copy-waiting=""
+        >
+          <CloudDownload className="size-3.5 text-muted-foreground" aria-hidden="true" />
+          <span className="text-sm text-muted-foreground">{CLOUD_DOWNLOADING_LABEL}</span>
+        </div>
+      )}
       <div
         className={cn(
           "absolute right-2 top-2 z-10 flex gap-1 transition-opacity duration-[160ms]",
@@ -1684,6 +1711,8 @@ function MediaAssetActionFrame({
           </Button>
         )}
         <MediaAssetMoreMenu
+            onCopyStarted={beginCopyIndicator}
+            onCopySettled={endCopyIndicator}
           asset={asset}
           vaultPath={vaultPath}
           tags={tags}
@@ -1703,6 +1732,8 @@ function MediaAssetActionFrame({
 }
 
 function MediaAssetMoreMenu({
+  onCopyStarted,
+  onCopySettled,
   asset,
   vaultPath,
   tags,
@@ -1717,6 +1748,8 @@ function MediaAssetMoreMenu({
   onOpenChange,
   className,
 }: {
+  onCopyStarted: () => void;
+  onCopySettled: () => void;
   asset: MediaAssetRef;
   vaultPath: string;
   tags: TagCount[];
@@ -1791,8 +1824,10 @@ function MediaAssetMoreMenu({
             onSelect={(event) => {
               event.preventDefault();
               setActionError(null);
+              onCopyStarted();
               void copyMediaAssetToClipboard(asset.media_ref)
-                .catch((error) => setActionError(mediaAssetErrorMessage(error)));
+                .catch((error) => setActionError(mediaAssetErrorMessage(error)))
+                .finally(onCopySettled);
             }}
           >
             <MenuIconSlot />

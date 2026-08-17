@@ -2188,6 +2188,43 @@ describe("Detail", () => {
     expect(downloading!.textContent).not.toContain("%");
   });
 
+  it("shows the copy-wait indicator only when a copy outlives the delay", async () => {
+    vi.useFakeTimers();
+    let settle: () => void = () => {};
+    copyMediaAssetToClipboardMock.mockImplementation(
+      () => new Promise<void>((resolve) => {
+        settle = resolve;
+      }),
+    );
+
+    const { container } = render(<Detail {...cloudImageProps(true)} />);
+    const trigger = container.querySelector("[data-detail-media-more-button]")!;
+    fireEvent.pointerDown(trigger, { button: 0 });
+    fireEvent.click(trigger);
+    // findBy* waits on real time, which fake timers freeze; the menu mounts
+    // within a tick, so advance the fake clock and query directly.
+    await act(async () => {
+      vi.advanceTimersByTime(50);
+    });
+    const menu = screen.getByRole("menu");
+    fireEvent.click(within(menu).getByText("Copy Media"));
+
+    // A fast copy never flashes anything.
+    expect(container.querySelector("[data-detail-copy-waiting]")).toBeNull();
+
+    await act(async () => {
+      vi.advanceTimersByTime(2000);
+    });
+    expect(container.querySelector("[data-detail-copy-waiting]")).toHaveTextContent(
+      "Downloading from iCloud",
+    );
+
+    await act(async () => {
+      settle();
+    });
+    expect(container.querySelector("[data-detail-copy-waiting]")).toBeNull();
+  });
+
   it("stops asking once the original arrived", async () => {
     vi.useFakeTimers();
     const progressMock = vi.mocked(icloudDownloadProgress);
