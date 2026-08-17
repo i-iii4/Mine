@@ -79,21 +79,21 @@ export function CloudRecommendationCard({
   return (
     <div data-cloud-recommendation-card="">
       <NotificationCard
-        title="Cards keep arriving slowly"
+        title="Cards are loading slowly"
         onClose={onClose}
         closeLabel="Dismiss recommendation"
       >
         <p className="text-sm text-muted-foreground">
-          macOS keeps this space’s files in iCloud and downloads them on
-          demand. To keep them on this Mac: right-click the space’s folder in
-          Finder and choose <span className="text-popover-foreground">Keep
-          Downloaded</span>. This is a system setting — Mine cannot turn it on
+          macOS keeps this space’s files in iCloud and downloads each one when
+          it’s needed. To keep the folder on this Mac, right-click it in Finder
+          and choose <span className="text-popover-foreground">Keep
+          Downloaded</span>. This is a macOS setting — Mine cannot turn it on
           for you.
         </p>
         <p className="text-sm text-muted-foreground">
-          Turning off <span className="text-popover-foreground">Optimise Mac
-          Storage</span> in System Settings does the same for all of iCloud
-          Drive, not just this space.
+          Another way: turn off <span className="text-popover-foreground">Optimize
+          Mac Storage</span> in System Settings. That affects all of iCloud
+          Drive, not just this folder.
         </p>
         <div>
           <Button size="sm" onClick={onReveal}>

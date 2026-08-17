@@ -53,7 +53,7 @@ export function ClipperSection() {
   return (
     <section className="grid gap-s3" data-settings-section="clipper">
       <p className="text-sm text-muted-foreground">
-        The clipper saves pages, images and videos from your browser straight
+        The extension saves pages, images and videos from your browser straight
         into the current space — as files, the same as everything else.
       </p>
 

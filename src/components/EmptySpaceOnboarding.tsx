@@ -32,29 +32,29 @@ export function EmptySpaceOnboarding({
       data-empty-space-onboarding=""
     >
       <div className="w-full max-w-2xl px-8 text-left">
-        <p className="text-lg font-semibold text-foreground">This space is empty</p>
+        <p className="text-lg font-semibold text-foreground">Nothing here yet</p>
         <p className="mt-1 text-base text-muted-foreground">
-          Everything you save lands here as ordinary files in your folder.
+          Everything you save becomes plain files in your folder.
         </p>
 
         <div className="mt-8 grid gap-10 sm:grid-cols-2">
           <div>
-            <p className="text-base font-semibold text-foreground">Save from the web</p>
+            <p className="text-base font-semibold text-foreground">Save from your browser</p>
             <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-              The browser clipper saves pages, images and videos straight into
-              this space.
+              The extension brings pages, images and videos straight into this
+              space.
             </p>
             <div className="mt-3">
               <Button onClick={onInstallClipper}>
                 <Download className="size-4" />
-                Install the clipper
+                Install the extension
               </Button>
             </div>
           </div>
           <div>
             <p className="text-base font-semibold text-foreground">Drag files in</p>
             <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-              Drop images, videos or documents anywhere in this window.
+              Images, videos and documents — straight into this window.
             </p>
           </div>
         </div>

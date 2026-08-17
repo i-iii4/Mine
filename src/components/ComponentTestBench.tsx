@@ -166,7 +166,7 @@ const RADIUS_TOKENS = [
   { token: "--radius-0", label: "0px / контент, изображения, текст" },
   { token: "--radius-1", label: "3px / кнопки, меню, контролы, диалоги" },
   { token: "--radius-2", label: "5px / стопка превью каналов" },
-  { token: "--radius-round", label: "50% / круглые контролы клиппера" },
+  { token: "--radius-round", label: "50% / круглые контролы расширения" },
   { token: "--radius-card", label: "алиас рамки карточки (= 0)" },
   { token: "--radius-media", label: "алиас медиа карточки (= 0)" },
 ] as const;
@@ -244,7 +244,7 @@ export function ComponentTestBench() {
           <p className="font-mono text-sm text-muted-foreground">Аудит дизайн-системы Mine</p>
           <h1 className="mt-2 text-lg font-semibold">Токены и компоненты продакшена</h1>
           <p className="mt-2 max-w-3xl text-base text-muted-foreground">
-            Страница импортирует реальные примитивы приложения и веб-клиппера. Если
+            Страница импортирует реальные примитивы приложения и веб-расширения. Если
             продакшен-состояние отсутствует здесь — страница устарела. Если состояние
             есть здесь, но нет прод-примитива — реализация дрейфует. Значения токенов
             читаются вживую из текущей темы.
@@ -295,7 +295,7 @@ function IdeologyPanel() {
       <div className="grid gap-2 md:grid-cols-3">
         <ContractCard title="Требования по токенам">
           На странице — только CSS-переменные, реально используемые в desktop UI или
-          веб-клиппере. Неиспользуемые shadcn-дефолты и историческая шкала сюда не
+          веб-расширении. Неиспользуемые shadcn-дефолты и историческая шкала сюда не
           попадают. Значения читаются вживую через computed CSS, а не хардкодятся.
         </ContractCard>
         <ContractCard title="Компоненты">
@@ -303,7 +303,7 @@ function IdeologyPanel() {
           размерами, токенами и состояниями — таблица характеристик рядом с живым
           примером.
         </ContractCard>
-        <ContractCard title="Клиппер">
+        <ContractCard title="Расширение">
           Представлен полными состояниями popup на реальной ширине 360px и обязан
           переиспользовать примитивы приложения: триггеры, сегментный контрол, пикер
           каналов, кнопки, поле поиска.
@@ -1049,7 +1049,7 @@ function CardPatternSection() {
 function ClipperParitySection() {
   return (
     <BenchSection
-      title="Веб-клиппер"
+      title="Веб-расширение"
       description="Полные состояния popup на реальной ширине 360px. Компоненты импортированы из extension/popup."
     >
       <div className="grid gap-6 xl:grid-cols-2">
@@ -1070,7 +1070,7 @@ function ClipperStandaloneSetupFrame() {
   return (
     <div>
       <p className="mb-2 font-mono text-sm text-muted-foreground">
-        Клиппер · приложения нет — выбор папки
+        Расширение · приложения нет — выбор папки
       </p>
       <div className="w-[360px] overflow-hidden rounded-1 border border-border bg-background shadow-md">
         <StandaloneSetup
@@ -1114,12 +1114,12 @@ function ClipperStandaloneRowFrame() {
   return (
     <div>
       <p className="mb-2 font-mono text-sm text-muted-foreground">
-        Клиппер · автономная запись — папка вместо пространства, меню с Download app
+        Расширение · автономная запись — папка вместо пространства, меню с Download app
       </p>
       <div className="w-[360px] overflow-hidden rounded-1 border border-border bg-background shadow-md">
         <StandaloneFolderRow folderName="Mine" onClose={() => {}} />
         <div className="p-4 text-sm text-muted-foreground">
-          Сохранения ложатся файлами прямо в выбранную папку. Приложение
+          Сохранённое лежит обычными файлами в выбранной папке. Приложение
           подхватит их при первом запуске обычным сканированием.
         </div>
       </div>
@@ -1146,7 +1146,7 @@ function ClipperStandaloneRowFrame() {
 
 function ClipperFrame({ type }: { type: ClipPreviewType }) {
   const hasTypeRow = type !== "image";
-  const title = type === "image" ? "Клиппер · изображение — без строки Type" : `Клиппер · ${type} — ширина 360`;
+  const title = type === "image" ? "Расширение · изображение — без строки Type" : `Расширение · ${type} — ширина 360`;
 
   return (
     <div>

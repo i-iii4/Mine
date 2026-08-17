@@ -333,7 +333,7 @@ bun install                    # Установка JS-зависимостей
 cargo tauri dev                # Запуск в режиме разработки (Rust + Vite)
 cargo tauri build              # Сборка .dmg/.app
 cargo tauri build --features article-audio # Сборка с включённым article audio (по умолчанию выключен)
-bun run build:extension        # Обязательная отдельная сборка Mine Clipper → extension/dist
+bun run build:extension        # Обязательная отдельная сборка расширения → extension/dist
 bun run pack:extension         # Упаковка расширения в архив
 bun run clipper:install-host   # Установка/обновление native host бинарника
 bun run lint                   # Линтинг фронтенда

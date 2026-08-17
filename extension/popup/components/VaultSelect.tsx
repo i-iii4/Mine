@@ -263,7 +263,7 @@ export function VaultSelect({ value, options, onChange, onReveal, onAddSpace, on
       <span className="ml-auto flex items-center gap-1">
         <ClipperOverflowMenu appInstalled />
         {onClose && (
-          <ChromeCloseButton label="Close clipper" onClick={onClose} />
+          <ChromeCloseButton label="Close" onClick={onClose} />
         )}
       </span>
     </div>

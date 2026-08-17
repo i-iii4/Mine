@@ -17,10 +17,10 @@ interface FirstCardMarkerCardProps {
 
 export function FirstCardMarkerCard({ fileName, onReveal, onClose }: FirstCardMarkerCardProps) {
   return (
-    <NotificationCard title="Saved as a file" onClose={onClose}>
+    <NotificationCard title="This card is a file" onClose={onClose}>
       <p className="text-sm text-muted-foreground">
-        “{fileName}” now lives in your folder — a plain file you can open, move
-        or back up with any tool. Everything you save works this way.
+        “{fileName}” is already in your folder. Open it, move it or copy it
+        with any app — same as everything you save from now on.
       </p>
       <div data-first-card-marker="">
         <Button size="sm" onClick={onReveal}>

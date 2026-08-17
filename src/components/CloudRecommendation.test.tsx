@@ -35,7 +35,7 @@ describe("CloudRecommendation", () => {
   it("shows once due and closes for this space only", async () => {
     stateMock.mockResolvedValue({ due: true });
     render(<CloudRecommendation vaultPath="/v" />);
-    await screen.findByText("Cards keep arriving slowly");
+    await screen.findByText("Cards are loading slowly");
 
     // Honest about agency: the setting belongs to the system.
     expect(screen.getByText(/Mine cannot turn it on for you/)).toBeInTheDocument();
@@ -44,13 +44,13 @@ describe("CloudRecommendation", () => {
 
     fireEvent.click(screen.getByLabelText("Dismiss recommendation"));
     await waitFor(() => expect(dismissMock).toHaveBeenCalledWith(false));
-    expect(screen.queryByText("Cards keep arriving slowly")).not.toBeInTheDocument();
+    expect(screen.queryByText("Cards are loading slowly")).not.toBeInTheDocument();
   });
 
   it("passes the checkbox through as the global no", async () => {
     stateMock.mockResolvedValue({ due: true });
     render(<CloudRecommendation vaultPath="/v" />);
-    await screen.findByText("Cards keep arriving slowly");
+    await screen.findByText("Cards are loading slowly");
 
     fireEvent.click(screen.getByText("Don’t show again"));
     fireEvent.click(screen.getByLabelText("Dismiss recommendation"));
@@ -64,7 +64,7 @@ describe("CloudRecommendation", () => {
 
     stateMock.mockResolvedValue({ due: true });
     rerender(<CloudRecommendation vaultPath="/v" refreshToken={1} />);
-    await screen.findByText("Cards keep arriving slowly");
+    await screen.findByText("Cards are loading slowly");
     expect(stateMock).toHaveBeenCalledTimes(2);
   });
 });

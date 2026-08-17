@@ -31,7 +31,7 @@ describe("EdgeStatesSection", () => {
     // The standing iCloud explanation, in both the "held" and "all local"
     // readings — the second is the one nobody would think to check.
     expect(container.querySelectorAll("[data-cloud-disclaimer]")).toHaveLength(2);
-    expect(screen.getByText(/holding the contents of 12 files/)).toBeInTheDocument();
+    expect(screen.getByText(/contents of 12 files are in iCloud/)).toBeInTheDocument();
     expect(screen.getByText(/Every file of this space is on this Mac/)).toBeInTheDocument();
 
     // Every clipper variant, including the one that used to break saving in

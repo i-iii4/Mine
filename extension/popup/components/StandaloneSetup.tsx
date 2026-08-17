@@ -45,33 +45,33 @@ export function StandaloneSetup({
   return (
     <div className="flex min-h-0 flex-col" data-clipper-standalone-setup="">
       <div className="flex h-10 shrink-0 items-center border-b border-border bg-accent px-3">
-        <span className="text-base font-semibold text-foreground">Mine Clipper</span>
-        {onClose && <ChromeCloseButton className="ml-auto" label="Close clipper" onClick={onClose} />}
+        <span className="text-base font-semibold text-foreground">Mine</span>
+        {onClose && <ChromeCloseButton className="ml-auto" label="Close" onClick={onClose} />}
       </div>
 
       <div className="flex flex-col items-start gap-3 p-4 text-left">
         <p className="text-sm text-muted-foreground">
-          Clips are saved as plain files into a folder you choose — no account,
-          no cloud. The Mine app adds previews and a feed on top of the same
-          folder whenever you install it.
+          What you save is stored as plain files in a folder you choose. No
+          account, nothing goes to the cloud. Install the Mine app later and it
+          opens this same folder — with a feed and previews.
         </p>
 
         {folderName && (
           <p className="text-sm text-muted-foreground">
-            The browser dropped access to “{folderName}”.
+            The browser revoked access to “{folderName}”. Allow it again to
+            keep saving.
           </p>
         )}
         {!folderName && !canPickFolder && (
           <p className="text-sm text-muted-foreground">
-            Open the clipper from the toolbar icon to choose the folder — a page
-            overlay cannot ask for folder access.
+            To choose a folder, click the Mine icon in the browser toolbar.
           </p>
         )}
 
         <div className="flex flex-wrap items-center gap-2">
           {folderName ? (
             <Button disabled={busy} onClick={() => void run(onRegrantAccess)}>
-              Allow access to {folderName}
+              Allow access
             </Button>
           ) : canPickFolder ? (
             <Button disabled={busy} onClick={() => void run(onChooseFolder)}>
@@ -109,7 +109,7 @@ export function StandaloneFolderRow({
       <span className="font-mono text-sm text-muted-foreground">no app</span>
       <span className="ml-auto flex items-center gap-1">
         <ClipperOverflowMenu appInstalled={false} />
-        {onClose && <ChromeCloseButton label="Close clipper" onClick={onClose} />}
+        {onClose && <ChromeCloseButton label="Close" onClick={onClose} />}
       </span>
     </div>
   );

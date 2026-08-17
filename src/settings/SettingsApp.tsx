@@ -15,7 +15,7 @@ const SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: "graph", label: "Graph" },
   { id: "spaces", label: "Spaces" },
   { id: "layout", label: "Folders" },
-  { id: "clipper", label: "Clipper" },
+  { id: "clipper", label: "Extension" },
   { id: "orphans", label: "Orphans" },
 ];
 

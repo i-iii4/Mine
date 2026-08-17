@@ -19,7 +19,7 @@ export function TypeSwitcher({ current, onChange }: TypeSwitcherProps) {
       options={TYPES}
       onChange={onChange}
       size="clipper"
-      aria-label="Clip type"
+      aria-label="Save type"
       className="w-fit max-w-full"
       data-clipper-type-switcher=""
     />

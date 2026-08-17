@@ -92,12 +92,17 @@ export function SpaceUnavailable({
       <div className="flex max-w-md flex-col items-start gap-6 text-left">
         <div className="grid gap-2">
           <h1 className="text-lg font-semibold text-foreground">
-            {accessDenied ? "No access to the folder" : "Space unavailable"}
+            {accessDenied ? "No access to the folder" : "Folder unavailable"}
           </h1>
           <p className="text-base text-muted-foreground">
+            {/* Only provable claims: "no folder at the path" is the read result,
+                "Mine did not move or delete anything" is a property of the code,
+                and the denial is quoted as the system's, not asserted as state —
+                a PermissionDenied can come from a parent while the folder itself
+                is gone, so "the folder is right here" was never knowledge. */}
             {accessDenied
-              ? `“${folderName(path)}” is right here, but macOS is not letting Mine read it. Allow access in System Settings under Privacy & Security, Files and Folders. Your files are untouched.`
-              : `Mine cannot reach “${folderName(path)}” right now. It may have been moved or renamed, or its drive may be disconnected. Your files are untouched.`}
+              ? `macOS is not letting Mine read the “${folderName(path)}” folder. Open System Settings, go to Privacy & Security, Files and Folders, and allow access for Mine.`
+              : `There is no “${folderName(path)}” folder at the saved path. This happens when it is renamed, moved or its drive is disconnected. Mine did not move or delete anything.`}
           </p>
           <p className="font-mono text-sm text-muted-foreground" data-space-unavailable-path>
             {path}
@@ -131,10 +136,16 @@ export function SpaceUnavailable({
           </Button>
         </div>
 
-        <p className="text-sm text-muted-foreground">
-          Finding the folder again keeps everything — collections, previews and
-          reading positions all survive the move.
-        </p>
+        {/* Missing only: telling someone whose folder is visible but locked to
+            "find it" would be noise. "Reading positions" used to be promised
+            here — no such feature exists, the line now claims only what the
+            storage model guarantees. */}
+        {!accessDenied && (
+          <p className="text-sm text-muted-foreground">
+            Everything in this space lives in the folder itself. Find it, and
+            Mine picks up where it left off.
+          </p>
+        )}
 
         {error && <p className="text-sm text-destructive">{error}</p>}
       </div>

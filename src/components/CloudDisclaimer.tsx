@@ -6,7 +6,6 @@
 // to pin a folder, and pretending otherwise would be a lie the user discovers
 // on their own. See SPEC_CLOUD_STORAGE.md Х20, Х22.
 
-import { Cloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface CloudDisclaimerProps {
@@ -20,28 +19,30 @@ interface CloudDisclaimerProps {
 export function CloudDisclaimer({ offloadedCount, onRevealSpace }: CloudDisclaimerProps) {
   return (
     <div className="grid gap-2 rounded-1 border border-border p-3" data-cloud-disclaimer="">
-      <p className="flex items-center gap-1.5 text-base text-foreground">
-        <Cloud className="size-4" aria-hidden="true" />
-        Files kept in iCloud
-      </p>
+      <p className="text-base text-foreground">Files in iCloud</p>
 
       <p className="text-sm text-muted-foreground">
         {offloadedCount === null
           ? "Counting the files iCloud is currently holding…"
           : offloadedCount === 0
             ? "Every file of this space is on this Mac right now."
-            : `iCloud is currently holding the contents of ${offloadedCount} ${
+            : `The contents of ${offloadedCount} ${
                 offloadedCount === 1 ? "file" : "files"
-              } to save disk space. Those cards fill in as their contents arrive — the files themselves are safe.`}
+              } are in iCloud right now, not on this Mac.`}
       </p>
 
       <p className="text-sm text-muted-foreground">
-        To keep a space on this Mac, right-click its folder in Finder and choose
-        <span className="text-foreground"> Keep Downloaded</span>. This is a
-        macOS setting: Mine cannot turn it on for you. Turning off
-        <span className="text-foreground"> Optimise Mac Storage</span> in System
-        Settings does the same for every folder in iCloud Drive, not just this
-        one.
+        macOS keeps this space’s files in iCloud and downloads each one when
+        it’s needed. To keep the folder on this Mac, right-click it in Finder
+        and choose <span className="text-foreground">Keep Downloaded</span>.
+        This is a macOS setting — Mine cannot turn it on for you.
+      </p>
+
+      <p className="text-sm text-muted-foreground">
+        Another way: turn off
+        <span className="text-foreground"> Optimize Mac Storage</span> in
+        System Settings. That affects all of iCloud Drive, not just this
+        folder.
       </p>
 
       {onRevealSpace && (

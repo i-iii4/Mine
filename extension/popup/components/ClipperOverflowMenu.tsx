@@ -31,7 +31,7 @@ export function ClipperOverflowMenu({ appInstalled }: ClipperOverflowMenuProps) 
         <Button
           variant="ghost"
           size="icon-xs"
-          aria-label="Clipper menu"
+          aria-label="More"
           data-clipper-overflow-trigger=""
         >
           <MoreHorizontal className="size-3.5" />

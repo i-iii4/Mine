@@ -98,7 +98,7 @@ export function EdgeStatesSection() {
         <h2 className="text-lg font-semibold text-foreground">Состояния и края</h2>
         <p className="mt-1 max-w-3xl text-base text-muted-foreground">
           То, что нельзя увидеть по требованию: пропавшая папка, выгруженный из
-          iCloud файл, новое пространство, неподключённый клиппер. Состояние
+          iCloud файл, новое пространство, неподключённое расширение. Состояние
           считается сделанным только когда оно появилось здесь. Пометка
           «перерисовано» означает, что оригинал живёт внутри приватной части
           карточки; «нет в продукте» — что состояние описано, но не реализовано.
@@ -304,7 +304,7 @@ export function EdgeStatesSection() {
 
         <StateCase
           name="Статус связи — где он живёт"
-          when="Это не всплывающее уведомление, а постоянный блок в настройках, раздел Clipper, под шагами установки."
+          when="Это не всплывающее уведомление, а постоянный блок в настройках, раздел Extension, под шагами установки."
           drawn
         >
           <div className="overflow-hidden rounded-1 border border-border">
@@ -314,11 +314,11 @@ export function EdgeStatesSection() {
             </div>
             <div className="flex">
               <div className="w-36 shrink-0 border-r border-border bg-sidebar p-2">
-                {["Appearance", "Spaces", "Folders", "Clipper", "Orphans"].map((item) => (
+                {["Appearance", "Spaces", "Folders", "Extension", "Orphans"].map((item) => (
                   <div
                     key={item}
                     className={
-                      item === "Clipper"
+                      item === "Extension"
                         ? "rounded-1 bg-active px-2 py-1 text-base text-foreground"
                         : "px-2 py-1 text-base text-muted-foreground"
                     }
@@ -338,14 +338,14 @@ export function EdgeStatesSection() {
         </StateCase>
 
         <StateCase
-          name="Клиппер: не подключён"
+          name="Расширение: не подключено"
           when="Первый запуск. Расширение ещё не связано с приложением."
         >
           <ClipperStatus status={clipperStatus({})} />
         </StateCase>
 
         <StateCase
-          name="Клиппер: подключён"
+          name="Расширение: подключено"
           when="Звено установлено, версия совпадает с приложением."
         >
           <ClipperStatus
@@ -358,7 +358,7 @@ export function EdgeStatesSection() {
         </StateCase>
 
         <StateCase
-          name="Клиппер: версия разошлась"
+          name="Расширение: версия разошлась"
           when="Приложение обновилось, звено осталось прежним. Без этой строки сохранение просто перестало бы работать."
         >
           <ClipperStatus
@@ -374,7 +374,7 @@ export function EdgeStatesSection() {
         </StateCase>
 
         <StateCase
-          name="Клиппер: ни одного браузера"
+          name="Расширение: ни одного браузера"
           when="Ставить некуда — приложение не делает вид, что нашло Chrome."
         >
           <ClipperStatus status={clipperStatus({ browsers: [] })} />

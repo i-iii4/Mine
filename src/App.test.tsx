@@ -2139,7 +2139,7 @@ describe("AppWithVault", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Saved as a file")).toBeInTheDocument();
+      expect(screen.getByText("This card is a file")).toBeInTheDocument();
     });
     expect(screen.getByText(/First clip\.md/)).toBeInTheDocument();
     expect(vi.mocked(commands.completeFirstCardMarker)).toHaveBeenCalledTimes(1);
@@ -2153,7 +2153,7 @@ describe("AppWithVault", () => {
       }),
     );
     await waitFor(() => {
-      expect(screen.queryByText("Saved as a file")).not.toBeInTheDocument();
+      expect(screen.queryByText("This card is a file")).not.toBeInTheDocument();
     });
     expect(vi.mocked(commands.completeFirstCardMarker)).toHaveBeenCalledTimes(1);
   });
