@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Mine Clipper",
+  "name": "Mine",
   "version": "0.1.0",
   "description": "Save links, articles, and images to Mine",
   "permissions": [
@@ -20,7 +20,7 @@
     "<all_urls>"
   ],
   "action": {
-    "default_title": "Mine Clipper",
+    "default_title": "Mine",
     "default_icon": {
       "16": "icons/icon-16.png",
       "24": "icons/icon-24.png",
@@ -64,7 +64,7 @@
         "default": "Alt+A",
         "mac": "Alt+A"
       },
-      "description": "Open Mine Clipper"
+      "description": "Open Mine"
     }
   },
   "icons": {
