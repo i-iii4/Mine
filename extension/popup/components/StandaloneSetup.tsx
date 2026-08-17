@@ -1,10 +1,12 @@
 // First contact without the app (О1–О3).
 //
 // The extension is published openly, so for many people this screen is the
-// product's front door: no native host answered, and the clipper must offer a
+// product's front door: no native host answered, and the screen must offer a
 // complete path — choose a folder, save straight into it — rather than an
-// error about software they never installed. The app is an upgrade, not a
-// prerequisite, and the copy holds that order.
+// error about software they never installed. The primary road is still the
+// app: the first value of the product (the feed with previews) lives there,
+// so Download app leads and the standalone path stands beside it as a full,
+// never-required alternative. Decided 17.08.2026.
 
 import { useState } from "react";
 import { FolderOpen } from "lucide-react";
@@ -51,9 +53,10 @@ export function StandaloneSetup({
 
       <div className="flex flex-col items-start gap-3 p-4 text-left">
         <p className="text-sm text-muted-foreground">
-          What you save is stored as plain files in a folder you choose. No
-          account, nothing goes to the cloud. Install the Mine app later and it
-          opens this same folder — with a feed and previews.
+          Get the Mine app to see what you save as a feed with previews. Or
+          save without it: plain files in a folder you choose — no account,
+          nothing goes to the cloud. The app opens this same folder whenever
+          you install it.
         </p>
 
         {folderName && (
@@ -68,19 +71,38 @@ export function StandaloneSetup({
           </p>
         )}
 
-        <div className="flex flex-wrap items-center gap-2">
+        {/* The app is the primary road everywhere except when a chosen folder
+            lost access — there the person is already saving standalone, and
+            restoring their flow outranks the upsell. */}
+        <div className="flex items-center gap-2">
           {folderName ? (
-            <Button disabled={busy} onClick={() => void run(onRegrantAccess)}>
-              Allow access
-            </Button>
-          ) : canPickFolder ? (
-            <Button disabled={busy} onClick={() => void run(onChooseFolder)}>
-              Choose folder…
-            </Button>
-          ) : null}
-          <Button variant="secondary" onClick={() => void chrome.tabs?.create({ url: APP_DOWNLOAD_URL })}>
-            Download app
-          </Button>
+            <>
+              <Button disabled={busy} onClick={() => void run(onRegrantAccess)}>
+                Allow access
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => void chrome.tabs?.create({ url: APP_DOWNLOAD_URL })}
+              >
+                Download app
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button onClick={() => void chrome.tabs?.create({ url: APP_DOWNLOAD_URL })}>
+                Download app
+              </Button>
+              {canPickFolder && (
+                <Button
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => void run(onChooseFolder)}
+                >
+                  Choose folder…
+                </Button>
+              )}
+            </>
+          )}
         </div>
 
         {error && <p className="text-sm text-destructive">{error}</p>}

@@ -1071,7 +1071,7 @@ function ClipperStandaloneSetupFrame() {
   return (
     <div>
       <p className="mb-2 font-mono text-sm text-muted-foreground">
-        Расширение · приложения нет — выбор папки
+        Расширение · приложения нет — primary ведёт к приложению, выбор папки рядом
       </p>
       <div className="w-[360px] overflow-hidden rounded-1 border border-border bg-background shadow-md">
         <StandaloneSetup
