@@ -271,10 +271,6 @@ const Detail = lazy(async () => {
   return { default: mod.Detail };
 });
 
-const ImportDialog = lazy(async () => {
-  const mod = await import("@/components/ImportDialog");
-  return { default: mod.ImportDialog };
-});
 
 const DropZone = lazy(async () => {
   const mod = await import("@/components/DropZone");
@@ -486,7 +482,6 @@ export function AppWithVault({
   const [tags, setTags] = useState<TagCount[]>([]);
   const [channels, setChannels] = useState<ChannelDto[]>([]);
   const [designSystemOpen, setDesignSystemOpen] = useState(false);
-  const [importOpen, setImportOpen] = useState(false);
   const [compactDetailTopMenuEnabled, setCompactDetailTopMenuEnabled] = useState(
     getStoredCompactDetailTopMenu,
   );
@@ -704,7 +699,6 @@ export function AppWithVault({
     : "";
   const gridKeyboardNavigationDisabled = Boolean(renderedDetailBlock)
     || designSystemOpen
-    || importOpen
     || renamingBlock !== null
     || deleteTargetSlug !== null
     || isCreatingChannel;
@@ -3152,7 +3146,6 @@ export function AppWithVault({
                 onNavigateCollection={handleTopCollectionNavigate}
                 acceptGraphRevision={acceptGraphRevision}
                 onInstallClipper={() => void openSettingsWindow()}
-                onImportFromArena={() => setImportOpen(true)}
               />
             }
           >
@@ -3217,16 +3210,6 @@ export function AppWithVault({
           onDeleteMedia={() => confirmDeleteBlock(Boolean(deletePlan?.unused_media.length))}
         />
       </main>
-
-      <Suspense fallback={null}>
-        <ImportDialog
-          open={importOpen}
-          onClose={() => setImportOpen(false)}
-          onImportComplete={() => {
-            void reloadAllSnapshots();
-          }}
-        />
-      </Suspense>
 
       <RenameBlockDialog
         open={renamingBlock !== null}
@@ -3429,7 +3412,6 @@ interface RouteContext {
   /// Offered by the empty-space onboarding, which is the only place in the app
   /// that can introduce the clipper to someone who has never seen it.
   onInstallClipper: () => void;
-  onImportFromArena: () => void;
 }
 
 function PageShell(props: RouteContext) {

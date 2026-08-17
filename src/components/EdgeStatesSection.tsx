@@ -330,13 +330,12 @@ export function EdgeStatesSection() {
 
       <StateCase
         name="Пустое пространство"
-        when="Первый экран после выбора папки: три пути наполнения вместо пустоты."
+        when="Первый экран после выбора папки: два пути наполнения вместо пустоты."
       >
         <ScreenFrame>
           <EmptySpaceOnboarding
             viewportHeight={320}
             onInstallClipper={() => {}}
-            onImportFromArena={() => {}}
           />
         </ScreenFrame>
       </StateCase>

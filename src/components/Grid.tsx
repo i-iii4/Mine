@@ -170,7 +170,6 @@ interface GridProps {
   /// Start the clipper setup flow from the empty-space onboarding.
   onInstallClipper?: () => void;
   /// Open the Are.na import from the empty-space onboarding.
-  onImportFromArena?: () => void;
   /**
    * Per-slug thumbnail cache-buster. Bumped by App on a `thumb:updated` event
    * so the affected card re-renders and refetches its regenerated
@@ -400,7 +399,6 @@ export function Grid({
   vaultPath,
   thumbsRootPath,
   onInstallClipper,
-  onImportFromArena,
   thumbVersions,
   tags,
   currentTag,
@@ -1005,8 +1003,7 @@ export function Grid({
     !currentTag &&
     routeSnapshotReady &&
     blocks.length === 0 &&
-    onInstallClipper &&
-    onImportFromArena,
+    onInstallClipper,
   );
 
   useLayoutEffect(() => {
@@ -2012,7 +2009,6 @@ export function Grid({
             <EmptySpaceOnboarding
               viewportHeight={viewportHeight}
               onInstallClipper={onInstallClipper!}
-              onImportFromArena={onImportFromArena!}
             />
           )}
           {parentWidth > 0 && heightDriftAuditBatch.length > 0 && (

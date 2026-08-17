@@ -1,18 +1,21 @@
 // What a brand-new space says instead of nothing.
 //
 // An empty Everything route used to render an empty area: no hint that a
-// clipper exists, no mention of dragging files in, no way to reach the Are.na
-// import. The three ways to fill a space are the three things worth saying, and
-// they are said once — the state disappears with the first card and does not
-// come back. See SPEC_ONBOARDING.md О14–О16.
+// clipper exists, no mention of dragging files in. The two ways to fill a
+// space are the two things worth saying, and they are said once — the state
+// disappears with the first card and does not come back.
+//
+// The Are.na import is deliberately not offered: it was cancelled for this
+// version (16.08.2026), with no promise of a later one. The dialog code stays
+// dormant, exactly as it lived before it briefly had an entry point.
+// See SPEC_ONBOARDING.md О14–О18.
 
-import { Download, FolderInput, MousePointerSquareDashed } from "lucide-react";
+import { Download, MousePointerSquareDashed } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface EmptySpaceOnboardingProps {
   viewportHeight: number;
   onInstallClipper: () => void;
-  onImportFromArena: () => void;
 }
 
 interface PathProps {
@@ -38,7 +41,6 @@ function FillPath({ icon, title, description, action }: PathProps) {
 export function EmptySpaceOnboarding({
   viewportHeight,
   onInstallClipper,
-  onImportFromArena,
 }: EmptySpaceOnboardingProps) {
   return (
     <div
@@ -71,16 +73,6 @@ export function EmptySpaceOnboarding({
             icon={<MousePointerSquareDashed className="size-5" />}
             title="Drag files in"
             description="Drop images, videos or documents anywhere in this window."
-          />
-          <FillPath
-            icon={<FolderInput className="size-5" />}
-            title="Bring a collection"
-            description="Import your Are.na channels — each one becomes a collection here."
-            action={
-              <Button variant="ghost" onClick={onImportFromArena}>
-                Import from Are.na
-              </Button>
-            }
           />
         </div>
       </div>
