@@ -5,6 +5,8 @@ import {
   type ReactNode,
 } from "react";
 import {
+  AppWindow,
+  Download,
   ExternalLink,
   GripVertical,
   Info,
@@ -1091,6 +1093,18 @@ function ClipperStandaloneSetupFrame() {
           onClose={() => {}}
         />
       </div>
+      <p className="mt-2 mb-2 font-mono text-sm text-muted-foreground">
+        Тот же экран в оверлее: выбор папки недоступен, подсказка вместо кнопки
+      </p>
+      <div className="w-[360px] overflow-hidden rounded-1 border border-border bg-background shadow-md">
+        <StandaloneSetup
+          canPickFolder={false}
+          folderName={null}
+          onChooseFolder={async () => ({ ok: true })}
+          onRegrantAccess={async () => ({ ok: true })}
+          onClose={() => {}}
+        />
+      </div>
     </div>
   );
 }
@@ -1107,6 +1121,23 @@ function ClipperStandaloneRowFrame() {
         <div className="p-4 text-sm text-muted-foreground">
           Клипы пишутся файлами прямо в выбранную папку. Приложение подхватит их
           при первом запуске обычным сканированием.
+        </div>
+      </div>
+      <p className="mt-2 mb-2 font-mono text-sm text-muted-foreground">
+        Меню под многоточием, оба режима — какой пункт виден, тот и режим
+      </p>
+      <div className="flex gap-3">
+        <div className="w-40 rounded-1 border border-border bg-popover p-1 text-popover-foreground shadow-md">
+          <div className="flex h-7 items-center gap-2 rounded-[2px] px-2 text-base">
+            <AppWindow className="size-3 text-muted-foreground" aria-hidden="true" />
+            Open app
+          </div>
+        </div>
+        <div className="w-40 rounded-1 border border-border bg-popover p-1 text-popover-foreground shadow-md">
+          <div className="flex h-7 items-center gap-2 rounded-[2px] px-2 text-base">
+            <Download className="size-3 text-muted-foreground" aria-hidden="true" />
+            Download app
+          </div>
         </div>
       </div>
     </div>
