@@ -1,7 +1,6 @@
 import {
   useEffect,
   useState,
-  type CSSProperties,
   type ReactNode,
 } from "react";
 import {
@@ -83,6 +82,7 @@ import { TypeSwitcher } from "../../extension/popup/components/TypeSwitcher";
 import { VaultSelect } from "../../extension/popup/components/VaultSelect";
 import { StandaloneSetup, StandaloneFolderRow } from "../../extension/popup/components/StandaloneSetup";
 import type { ChannelInfo } from "../../extension/popup/lib/messaging";
+import appIcon1024 from "../../src-tauri/icons/app-icon-1024.png";
 
 type ColorToken = { readonly token: string; readonly use: string };
 
@@ -1457,51 +1457,36 @@ function RedactionIconCard({ variant }: { variant: RedactionIconVariant }) {
           <p className="truncate font-mono text-sm text-foreground">{variant.label}</p>
           <p className="font-mono text-sm text-muted-foreground">строчная m</p>
         </div>
-        <div
-          className="text-lg leading-6 text-foreground"
-          style={redactionGlyphStyle(variant, 24)}
-        >
-          {variant.glyph}
-        </div>
+        <img src={appIcon1024} alt="" className="size-6" draggable={false} />
       </div>
 
       <div className="flex items-end gap-3">
-        <AppIconSourceTemplate variant={variant} />
+        <AppIconSourceTemplate />
         <div className="flex items-end gap-2">
-          <AppIconMaskedPreview variant={variant} size={96} label="крупно" />
-          <AppIconMaskedPreview variant={variant} size={56} label="средне" />
-          <AppIconMaskedPreview variant={variant} size={32} label="мелко" />
+          <AppIconMaskedPreview size={96} label="крупно" />
+          <AppIconMaskedPreview size={56} label="средне" />
+          <AppIconMaskedPreview size={32} label="мелко" />
         </div>
       </div>
     </div>
   );
 }
 
-function AppIconSourceTemplate({ variant }: { variant: RedactionIconVariant }) {
+/// The shipped 1024px asset itself, not a redraw: a live-font copy of the
+/// glyph substituted a generic serif the moment the font was absent — wrong
+/// shape, wrong placement — while the real Dock icon stayed correct. The
+/// showcase's whole point is that this cannot happen.
+function AppIconSourceTemplate() {
   const size = 112;
-  const grid = Math.max(1, Math.round(size / 8));
-
   return (
     <div className="flex flex-col gap-2">
-      <div
-        className="relative border border-border bg-white"
-        style={{
-          width: size,
-          height: size,
-        }}
-      >
-        <div
-          className="absolute inset-0 opacity-[0.05]"
-          style={{
-            backgroundImage:
-              "linear-gradient(to right, #000 1px, transparent 1px), linear-gradient(to bottom, #000 1px, transparent 1px)",
-            backgroundSize: `${grid}px ${grid}px`,
-          }}
-        />
-        <div className="absolute inset-0 flex items-center justify-center">
-          <RedactionGlyph variant={variant} size={size * 0.72} />
-        </div>
-      </div>
+      <img
+        src={appIcon1024}
+        alt="Иконка приложения, исходник 1024"
+        className="border border-border bg-white"
+        style={{ width: size, height: size }}
+        draggable={false}
+      />
       <div className="flex items-center justify-between gap-2 font-mono text-sm text-muted-foreground">
         <span>исходник</span>
         <span>1024</span>
@@ -1510,66 +1495,25 @@ function AppIconSourceTemplate({ variant }: { variant: RedactionIconVariant }) {
   );
 }
 
-function AppIconMaskedPreview({
-  variant,
-  size,
-  label,
-}: {
-  variant: RedactionIconVariant;
-  size: number;
-  label: string;
-}) {
-  const grid = Math.max(1, Math.round(size / 8));
-
+function AppIconMaskedPreview({ size, label }: { size: number; label: string }) {
   return (
     <div className="flex flex-col gap-2">
-      <div
-        className="relative overflow-hidden border border-border bg-white shadow-[0_8px_24px_rgba(0,0,0,0.12)]"
+      <img
+        src={appIcon1024}
+        alt={`Иконка приложения, ${label}`}
+        className="border border-border bg-white shadow-[0_8px_24px_rgba(0,0,0,0.12)]"
         style={{
           width: size,
           height: size,
           borderRadius: `${size * 0.2237}px`,
         }}
-      >
-        <div
-          className="absolute inset-0 opacity-[0.05]"
-          style={{
-            backgroundImage:
-              "linear-gradient(to right, #000 1px, transparent 1px), linear-gradient(to bottom, #000 1px, transparent 1px)",
-            backgroundSize: `${grid}px ${grid}px`,
-          }}
-        />
-        <div className="absolute inset-0 flex items-center justify-center">
-          <RedactionGlyph variant={variant} size={size * 0.72} />
-        </div>
-      </div>
+        draggable={false}
+      />
       <div className="flex items-center justify-between gap-2 font-mono text-sm text-muted-foreground">
         <span>{label}</span>
       </div>
     </div>
   );
-}
-
-function RedactionGlyph({ variant, size }: { variant: RedactionIconVariant; size: number }) {
-  return (
-    <div
-      className="select-none text-black"
-      style={redactionGlyphStyle(variant, size)}
-    >
-      {variant.glyph}
-    </div>
-  );
-}
-
-function redactionGlyphStyle(variant: RedactionIconVariant, size: number): CSSProperties {
-  return {
-    fontFamily: `"${variant.family}", "Redaction", serif`,
-    fontSize: size,
-    fontStyle: variant.style === "italic" ? "italic" : "normal",
-    fontWeight: 400,
-    lineHeight: 1,
-    letterSpacing: 0,
-  };
 }
 
 function sampleBlock(slug: string, title: string, blockType: LightBlock["block_type"]): LightBlock {
