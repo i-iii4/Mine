@@ -7,7 +7,7 @@
 // prerequisite, and the copy holds that order.
 
 import { useState } from "react";
-import { Download, FolderOpen } from "lucide-react";
+import { FolderOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ChromeCloseButton } from "@/components/ChromeCloseButton";
 import { ClipperOverflowMenu } from "./ClipperOverflowMenu";
@@ -49,39 +49,39 @@ export function StandaloneSetup({
         {onClose && <ChromeCloseButton className="ml-auto" label="Close clipper" onClick={onClose} />}
       </div>
 
-      <div className="flex flex-col gap-4 p-4">
+      <div className="flex flex-col items-start gap-3 p-4 text-left">
         <p className="text-sm text-muted-foreground">
           Clips are saved as plain files into a folder you choose — no account,
           no cloud. The Mine app adds previews and a feed on top of the same
           folder whenever you install it.
         </p>
 
-        {folderName ? (
-          <div className="flex flex-col gap-2">
-            <p className="text-sm text-muted-foreground">
-              The browser dropped access to “{folderName}”.
-            </p>
-            <Button disabled={busy} onClick={() => void run(onRegrantAccess)}>
-              <FolderOpen className="size-4" />
-              Allow access to {folderName}
-            </Button>
-          </div>
-        ) : canPickFolder ? (
-          <Button disabled={busy} onClick={() => void run(onChooseFolder)}>
-            <FolderOpen className="size-4" />
-            Choose folder…
-          </Button>
-        ) : (
+        {folderName && (
+          <p className="text-sm text-muted-foreground">
+            The browser dropped access to “{folderName}”.
+          </p>
+        )}
+        {!folderName && !canPickFolder && (
           <p className="text-sm text-muted-foreground">
             Open the clipper from the toolbar icon to choose the folder — a page
             overlay cannot ask for folder access.
           </p>
         )}
 
-        <Button variant="ghost" onClick={() => void chrome.tabs?.create({ url: APP_DOWNLOAD_URL })}>
-          <Download className="size-4" />
-          Download app
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {folderName ? (
+            <Button disabled={busy} onClick={() => void run(onRegrantAccess)}>
+              Allow access to {folderName}
+            </Button>
+          ) : canPickFolder ? (
+            <Button disabled={busy} onClick={() => void run(onChooseFolder)}>
+              Choose folder…
+            </Button>
+          ) : null}
+          <Button variant="ghost" onClick={() => void chrome.tabs?.create({ url: APP_DOWNLOAD_URL })}>
+            Download app
+          </Button>
+        </div>
 
         {error && <p className="text-sm text-destructive">{error}</p>}
       </div>

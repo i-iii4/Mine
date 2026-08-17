@@ -5,37 +5,20 @@
 // space are the two things worth saying, and they are said once — the state
 // disappears with the first card and does not come back.
 //
+// Icon economy: the one icon lives inside the install button, where it names
+// the action; the paths themselves are words. Content is left-aligned in two
+// columns, per the review of 17.08.2026.
+//
 // The Are.na import is deliberately not offered: it was cancelled for this
-// version (16.08.2026), with no promise of a later one. The dialog code stays
-// dormant, exactly as it lived before it briefly had an entry point.
+// version (16.08.2026), with no promise of a later one.
 // See SPEC_ONBOARDING.md О14–О18.
 
-import { Download, MousePointerSquareDashed } from "lucide-react";
+import { Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface EmptySpaceOnboardingProps {
   viewportHeight: number;
   onInstallClipper: () => void;
-}
-
-interface PathProps {
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-  action?: React.ReactNode;
-}
-
-function FillPath({ icon, title, description, action }: PathProps) {
-  return (
-    <div className="flex max-w-xs flex-col items-center gap-2 text-center">
-      <span className="text-muted-foreground" aria-hidden="true">
-        {icon}
-      </span>
-      <p className="text-base font-semibold text-foreground">{title}</p>
-      <p className="text-sm leading-relaxed text-muted-foreground">{description}</p>
-      {action}
-    </div>
-  );
 }
 
 export function EmptySpaceOnboarding({
@@ -48,32 +31,32 @@ export function EmptySpaceOnboarding({
       style={{ minHeight: Math.max(320, viewportHeight) }}
       data-empty-space-onboarding=""
     >
-      <div className="flex flex-col items-center gap-8 px-8">
-        <div className="max-w-md text-center">
-          <p className="text-lg font-semibold text-foreground">
-            This space is empty
-          </p>
-          <p className="mt-1 text-base text-muted-foreground">
-            Everything you save lands here as ordinary files in your folder.
-          </p>
-        </div>
+      <div className="w-full max-w-2xl px-8 text-left">
+        <p className="text-lg font-semibold text-foreground">This space is empty</p>
+        <p className="mt-1 text-base text-muted-foreground">
+          Everything you save lands here as ordinary files in your folder.
+        </p>
 
-        <div className="flex flex-wrap items-start justify-center gap-10">
-          <FillPath
-            icon={<Download className="size-5" />}
-            title="Save from the web"
-            description="The browser clipper saves pages, images and videos straight into this space."
-            action={
+        <div className="mt-8 grid gap-10 sm:grid-cols-2">
+          <div>
+            <p className="text-base font-semibold text-foreground">Save from the web</p>
+            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+              The browser clipper saves pages, images and videos straight into
+              this space.
+            </p>
+            <div className="mt-3">
               <Button onClick={onInstallClipper}>
+                <Download className="size-4" />
                 Install the clipper
               </Button>
-            }
-          />
-          <FillPath
-            icon={<MousePointerSquareDashed className="size-5" />}
-            title="Drag files in"
-            description="Drop images, videos or documents anywhere in this window."
-          />
+            </div>
+          </div>
+          <div>
+            <p className="text-base font-semibold text-foreground">Drag files in</p>
+            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+              Drop images, videos or documents anywhere in this window.
+            </p>
+          </div>
         </div>
       </div>
     </div>

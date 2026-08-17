@@ -233,6 +233,7 @@ import { VaultPicker } from "@/components/VaultPicker";
 import { SpaceUnavailable } from "@/components/SpaceUnavailable";
 import { CloudRecommendation } from "@/components/CloudRecommendation";
 import { FirstCardMarkerCard } from "@/components/FirstCardMarker";
+import { NotificationAnchor } from "@/components/NotificationCard";
 import { VaultSwitcher } from "@/components/VaultSwitcher";
 import { TopCollectionSwitcher } from "@/components/TopCollectionSwitcher";
 import { Sidebar, SidebarTagRowDragPreview } from "@/components/Sidebar";
@@ -3260,7 +3261,7 @@ export function AppWithVault({
       <CloudRecommendation vaultPath={vaultPath} refreshToken={cloudAdviceToken} />
 
       {firstCardSlug && (
-        <div className="fixed bottom-4 right-4 z-40" data-first-card-marker-anchor="">
+        <NotificationAnchor>
           <FirstCardMarkerCard
             fileName={`${firstCardSlug.split("/").pop() ?? firstCardSlug}.md`}
             onReveal={() => {
@@ -3269,7 +3270,7 @@ export function AppWithVault({
             }}
             onClose={() => setFirstCardSlug(null)}
           />
-        </div>
+        </NotificationAnchor>
       )}
 
       <RenameBlockDialog

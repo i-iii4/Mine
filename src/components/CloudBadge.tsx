@@ -33,7 +33,9 @@ export function CloudBadge({ active, className }: CloudBadgeProps) {
   return (
     <span
       className={cn(
-        "pointer-events-none absolute right-2 top-2 flex items-center gap-1 rounded-1",
+        // Top-left: the top-right corner is reserved for the card's hover
+        // actions, and a badge there hides under them.
+        "pointer-events-none absolute left-2 top-2 flex items-center gap-1 rounded-1",
         "bg-card/80 px-1.5 py-0.5 text-sm text-muted-foreground backdrop-blur-sm",
         className,
       )}

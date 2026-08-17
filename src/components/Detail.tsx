@@ -3276,16 +3276,17 @@ function DetailImage({
           data-detail-cloud-state="offline"
         >
           <span className="text-sm text-muted-foreground">{CLOUD_OFFLINE_LABEL}</span>
-          <button
-            type="button"
-            className="text-left text-sm text-foreground underline"
-            onClick={() => {
-              setFailed(false);
-              setAttempt((previous) => previous + 1);
-            }}
-          >
-            Try again
-          </button>
+          <div>
+            <Button
+              size="sm"
+              onClick={() => {
+                setFailed(false);
+                setAttempt((previous) => previous + 1);
+              }}
+            >
+              Try again
+            </Button>
+          </div>
         </div>
       )}
     </div>

@@ -9,9 +9,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { Cloud, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { NotificationAnchor, NotificationCard } from "@/components/NotificationCard";
 import {
   cloudRecommendationState,
   dismissCloudRecommendation,
@@ -50,14 +50,16 @@ export function CloudRecommendation({ vaultPath, refreshToken = 0 }: CloudRecomm
   if (!due) return null;
 
   return (
-    <div className="fixed bottom-4 right-4 z-40" data-cloud-recommendation="">
-      <CloudRecommendationCard
-        neverAgain={neverAgain}
-        onNeverAgainChange={setNeverAgain}
-        onReveal={() => void revealItemInDir(vaultPath)}
-        onClose={close}
-      />
-    </div>
+    <NotificationAnchor>
+      <div data-cloud-recommendation="">
+        <CloudRecommendationCard
+          neverAgain={neverAgain}
+          onNeverAgainChange={setNeverAgain}
+          onReveal={() => void revealItemInDir(vaultPath)}
+          onClose={close}
+        />
+      </div>
+    </NotificationAnchor>
   );
 }
 
@@ -75,51 +77,37 @@ export function CloudRecommendationCard({
   onClose: () => void;
 }) {
   return (
-    <div
-      className="w-80 rounded-1 border border-border bg-card p-3 shadow-md"
-      data-cloud-recommendation-card=""
-    >
-      <div className="flex items-start gap-2">
-        <Cloud className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-        <div className="min-w-0">
-          <p className="text-base font-semibold text-foreground">
-            Cards keep arriving slowly
-          </p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            macOS keeps this space’s files in iCloud and downloads them on
-            demand. To keep them on this Mac: right-click the space’s folder in
-            Finder and choose <span className="text-foreground">Keep
-            Downloaded</span>. This is a system setting — Mine cannot turn it on
-            for you.
-          </p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Turning off <span className="text-foreground">Optimise Mac
-            Storage</span> in System Settings does the same for all of iCloud
-            Drive, not just this space.
-          </p>
-          <div className="mt-2 flex items-center gap-2">
-            <Button size="sm" onClick={onReveal}>
-              Show folder in Finder
-            </Button>
-          </div>
-          <label className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
-            <Checkbox
-              checked={neverAgain}
-              onCheckedChange={(value) => onNeverAgainChange(value === true)}
-            />
-            Don’t show again
-          </label>
+    <div data-cloud-recommendation-card="">
+      <NotificationCard
+        title="Cards keep arriving slowly"
+        onClose={onClose}
+        closeLabel="Dismiss recommendation"
+      >
+        <p className="text-sm text-muted-foreground">
+          macOS keeps this space’s files in iCloud and downloads them on
+          demand. To keep them on this Mac: right-click the space’s folder in
+          Finder and choose <span className="text-popover-foreground">Keep
+          Downloaded</span>. This is a system setting — Mine cannot turn it on
+          for you.
+        </p>
+        <p className="text-sm text-muted-foreground">
+          Turning off <span className="text-popover-foreground">Optimise Mac
+          Storage</span> in System Settings does the same for all of iCloud
+          Drive, not just this space.
+        </p>
+        <div>
+          <Button size="sm" onClick={onReveal}>
+            Show folder in Finder
+          </Button>
         </div>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          aria-label="Dismiss recommendation"
-          className="shrink-0"
-          onClick={onClose}
-        >
-          <X className="size-3.5" />
-        </Button>
-      </div>
+        <label className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Checkbox
+            checked={neverAgain}
+            onCheckedChange={(value) => onNeverAgainChange(value === true)}
+          />
+          Don’t show again
+        </label>
+      </NotificationCard>
     </div>
   );
 }

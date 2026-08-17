@@ -11,7 +11,7 @@
 // inside private card internals are redrawn, and they say so.
 
 import type { ReactNode } from "react";
-import { Cloud, CloudDownload, ImageOff, RefreshCw } from "lucide-react";
+import { CloudDownload, ImageOff, Play, RefreshCw } from "lucide-react";
 import { ActivityIndicators } from "@/components/ActivityIndicators";
 import { CloudBadge } from "@/components/CloudBadge";
 import { CloudDisclaimer } from "@/components/CloudDisclaimer";
@@ -108,30 +108,20 @@ export function EdgeStatesSection() {
       <div className="grid gap-4 xl:grid-cols-2">
         <StateCase
           name="Карточка ждёт содержимое"
-          when="Превью ещё не построено. Обычная заглушка без объяснений — это норма, а не ошибка."
+          when="Превью ещё не построено. Пустая поверхность без иконок и слов — это норма, а не ошибка, и продакшен рисует именно её."
           drawn
         >
           <CardFrame>
-            <div className="absolute inset-0 grid place-items-center">
-              <div className="text-center">
-                <ImageOff className="mx-auto size-6 text-muted-foreground/50" aria-hidden="true" />
-                <p className="mt-1 text-sm text-foreground">Sunset over the bay</p>
-              </div>
-            </div>
+            <div className="absolute inset-0 bg-component-fill/40" />
           </CardFrame>
         </StateCase>
 
         <StateCase
           name="Та же карточка, содержимое в iCloud"
-          when={`Метка появляется только после ${CLOUD_BADGE_DELAY_MS / 1000} с ожидания — быстрый файл не должен ею мигать. Здесь настоящий компонент, поэтому она проявится сама.`}
+          when={`Метка в левом верхнем углу — правый занят hover-действиями карточки. Появляется после ${CLOUD_BADGE_DELAY_MS / 1000} с ожидания; здесь настоящий компонент, она проявится сама.`}
         >
           <CardFrame>
-            <div className="absolute inset-0 grid place-items-center">
-              <div className="text-center">
-                <ImageOff className="mx-auto size-6 text-muted-foreground/50" aria-hidden="true" />
-                <p className="mt-1 text-sm text-foreground">Sunset over the bay</p>
-              </div>
-            </div>
+            <div className="absolute inset-0 bg-component-fill/40" />
             <CloudBadge active />
           </CardFrame>
         </StateCase>
@@ -195,10 +185,7 @@ export function EdgeStatesSection() {
           <CardFrame>
             <div className="absolute inset-0 bg-component-fill" />
             <span className="absolute left-1/2 top-1/2 flex size-9 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-card/80">
-              <span className="ml-0.5 border-y-[6px] border-l-[10px] border-y-transparent border-l-foreground" />
-            </span>
-            <span className="absolute right-2 top-2 flex items-center rounded-1 bg-card/80 px-1.5 py-0.5 backdrop-blur-sm">
-              <Cloud className="size-3 text-muted-foreground" aria-hidden="true" />
+              <Play className="ml-0.5 size-4 fill-foreground text-foreground" aria-hidden="true" />
             </span>
           </CardFrame>
         </StateCase>
@@ -235,7 +222,26 @@ export function EdgeStatesSection() {
         </StateCase>
 
         <StateCase
-          name="Индикаторы в верхней панели"
+          name="Индикаторы в верхней панели — на целом экране"
+          when="Место индикаторов: правый край верхней панели, рядом со сведениями пространства. Ниже — те же индикаторы крупно."
+        >
+          <div className="overflow-hidden rounded-1 border border-border">
+            <div className="flex h-8 items-center gap-3 border-b border-border bg-chrome px-3">
+              <span className="w-20 shrink-0" aria-hidden="true" />
+              <span className="text-base font-semibold text-foreground">Mine</span>
+              <span className="font-mono text-sm text-tertiary-foreground">
+                566 elements · 1.2 GB
+              </span>
+              <span className="ml-auto">
+                <ActivityIndicators cloudPending={12} indexing onRevealSpace={() => {}} />
+              </span>
+            </div>
+            <div className="h-24 bg-background" />
+          </div>
+        </StateCase>
+
+        <StateCase
+          name="Индикаторы крупно"
           when="Две разные работы — две разные иконки. Одна крутилка сказала бы только «занято». Нажмите облако: пояснение настоящее."
         >
           <div className="flex items-center gap-4">
@@ -293,6 +299,41 @@ export function EdgeStatesSection() {
           <CloudDisclaimer offloadedCount={12} onRevealSpace={() => {}} />
           <div className="mt-3">
             <CloudDisclaimer offloadedCount={0} />
+          </div>
+        </StateCase>
+
+        <StateCase
+          name="Статус связи — где он живёт"
+          when="Это не всплывающее уведомление, а постоянный блок в настройках, раздел Clipper, под шагами установки."
+          drawn
+        >
+          <div className="overflow-hidden rounded-1 border border-border">
+            <div className="flex h-8 items-center border-b border-border bg-chrome px-3">
+              <span className="w-16 shrink-0" aria-hidden="true" />
+              <span className="text-base font-semibold text-foreground">Settings</span>
+            </div>
+            <div className="flex">
+              <div className="w-36 shrink-0 border-r border-border bg-sidebar p-2">
+                {["Appearance", "Spaces", "Folders", "Clipper", "Orphans"].map((item) => (
+                  <div
+                    key={item}
+                    className={
+                      item === "Clipper"
+                        ? "rounded-1 bg-active px-2 py-1 text-base text-foreground"
+                        : "px-2 py-1 text-base text-muted-foreground"
+                    }
+                  >
+                    {item}
+                  </div>
+                ))}
+              </div>
+              <div className="grid flex-1 gap-3 p-4">
+                <p className="text-sm text-muted-foreground">
+                  1. Install the extension · 2. Connect it to Mine
+                </p>
+                <ClipperStatus status={clipperStatus({})} />
+              </div>
+            </div>
           </div>
         </StateCase>
 

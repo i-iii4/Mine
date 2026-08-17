@@ -9,7 +9,6 @@
 
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { FolderSearch } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { forgetUnavailableVault, selectVault } from "@/lib/commands";
@@ -90,9 +89,7 @@ export function SpaceUnavailable({
       className="flex size-full min-h-80 items-center justify-center bg-background"
       data-space-unavailable=""
     >
-      <div className="flex max-w-md flex-col items-center gap-6 text-center">
-        <FolderSearch className="size-8 text-muted-foreground" aria-hidden="true" />
-
+      <div className="flex max-w-md flex-col items-start gap-6 text-left">
         <div className="grid gap-2">
           <h1 className="text-lg font-semibold text-foreground">
             {accessDenied ? "No access to the folder" : "Space unavailable"}
@@ -107,7 +104,7 @@ export function SpaceUnavailable({
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center justify-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {accessDenied ? (
             <>
               <Button

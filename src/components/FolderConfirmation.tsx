@@ -48,7 +48,7 @@ export function FolderConfirmation({
       className="flex size-full min-h-80 items-center justify-center bg-background"
       data-folder-confirmation=""
     >
-      <div className="flex max-w-md flex-col items-center gap-6 text-center">
+      <div className="flex max-w-md flex-col items-start gap-6 text-left">
         <h1 className="text-lg font-semibold text-foreground">
           Open “{folderName(path)}” as a space?
         </h1>
