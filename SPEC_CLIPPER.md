@@ -125,7 +125,7 @@ Popup и save() используют одну чистую функцию — `r
 
 Правила (в порядке проверки):
 
-1. **`detectedType === "video"`** → `articleData.content`, source=`"video"`. Selection игнорируется: video-клип представляет транскрипт YouTube / длинные субтитры, и выделение на странице видео почти всегда не то, что нужно.
+1. **`detectedType === "video"`** → `articleData.content`, source=`"video"`. Selection игнорируется: в режиме video сохраняется транскрипт YouTube / длинные субтитры, и выделение на странице видео почти всегда не то, что нужно.
 2. **`metadata.selection` непусто** (и не video) → `metadata.selection`, source=`"selection"`.
 3. **`articleData.content` присутствует** (и нет selection) → `articleData.content`, source=`"article"`, `byline` пропагируется как `author` блока.
 4. **Иначе** → `text=""`, source=`"empty"`.
@@ -228,7 +228,7 @@ sidebars как body.
 
 Если long-form surface не найден, extractor возвращает `null`, и управление
 переходит в обычный tweet/thread extractor. Если long-form surface найден, но
-body не извлечён, результатом является `empty/failed` extraction state; клиппер
+body не извлечён, результатом является `empty/failed` extraction state; расширение
 не имеет права сохранять cover-only / image-only карточку как статью. Это не
 запрещает обычные media-only tweets: они остаются валидным fallback только
 когда long-form article surface не был обнаружен.
@@ -396,7 +396,7 @@ generated `title:` frontmatter.
 
 Пользователь вручную переключается в режим Screenshot из TypeSwitcher. Расширение захватывает видимую область вкладки через background-owned `captureForCrop` pipeline, показывает превью в popup и загружает файл в vault через background-owned upload bridge к локальному HTTP-серверу native host (см. Upload Server).
 
-Перед каждым реальным `chrome.tabs.captureVisibleTab(...)` background отправляет content script сообщение `prepareViewportCapture`. Content script скрывает все Mine-owned UI layers (`__mineOverlay`, crop overlay, crop toast) и отвечает только после clean-paint handshake (`requestAnimationFrame` ×2 + timeout fallback). Это обязательный инвариант: ни обычный Screenshot, ни Crop Area не должны вызывать `captureVisibleTab` сразу после `display:none` / DOM removal, потому что браузер может вернуть предыдущий compositor frame с видимым клиппером.
+Перед каждым реальным `chrome.tabs.captureVisibleTab(...)` background отправляет content script сообщение `prepareViewportCapture`. Content script скрывает все Mine-owned UI layers (`__mineOverlay`, crop overlay, crop toast) и отвечает только после clean-paint handshake (`requestAnimationFrame` ×2 + timeout fallback). Это обязательный инвариант: ни обычный Screenshot, ни Crop Area не должны вызывать `captureVisibleTab` сразу после `display:none` / DOM removal, потому что браузер может вернуть предыдущий compositor frame с видимым интерфейсом расширения.
 
 Повторный клик по extension icon при уже открытом overlay не должен заново инжектить `overlay.js`. Background сначала отправляет `showClipperOverlay` существующему listener'у и ждёт `{ok:true}`; новая инъекция разрешена только если listener не отвечает. Иначе в одной вкладке появляются два независимых module scope, и старый overlay host может остаться видимым во время capture.
 
@@ -543,7 +543,7 @@ target article не найден, extractor сохраняет не больше
 
 `useClipperState` обязан применять async extraction result, если пришёл `content` **или** `embeddedVideos.length > 0`. Preview-only media не должна отбрасываться только потому, что body text пустой или уже был показан раньше.
 
-Инвариант: предпросмотр видео в клиппере — чисто визуальный affordance, не playback surface. Он не должен запускать playback и не должен менять save payload. Любой frame capture должен быть bounded по времени/размеру, работать только как улучшение poster, и иметь fallback на metadata poster без ошибки для пользователя.
+Инвариант: предпросмотр видео в расширении — чисто визуальный affordance, не playback surface. Он не должен запускать playback и не должен менять save payload. Любой frame capture должен быть bounded по времени/размеру, работать только как улучшение poster, и иметь fallback на metadata poster без ошибки для пользователя.
 
 Пользователь переключает тип через TypeSwitcher кликом. Tab/Shift+Tab циклит Content → Screenshot → Link **только** когда keyboard focus уже внутри overlay (после клика по overlay) — это known limitation, см. DEVLOG `24.04.2026 — Clipper: Tab-cycling` и решение не дорабатывать. Основной сценарий переключения — клик по табам.
 
@@ -558,7 +558,7 @@ browser zoom. Shadow DOM защищает от page CSS selectors, но не о�
 которые попали в popup bundle в `rem` (`--spacing`, `--container-*`,
 `--text-xs/sm/base`) на px-значения внутри `:host`/`#root`. Иначе сайты с
 `html { font-size: ... }` меняют размер `p-*`, `gap-*`, `h-*`, `top-*` и
-типографику клиппера.
+типографику расширения.
 
 Dropdown/Popup primitives inside in-page overlay must portal into the overlay's
 Shadow DOM, not into page `document.body`. `overlay-entry.tsx` creates a
@@ -582,7 +582,7 @@ Entry point: `extension/popup/main.tsx` → output: `extension/dist/index.html` 
 `extension/dist/` — обязательный runtime bundle, но не source artifact: он
 исключён из Git общим правилом `dist/` и всегда воспроизводится из исходников.
 Обычные `bun run build`, `cargo tauri dev` и `cargo tauri build` собирают
-desktop-приложение и **не** создают bundle клиппера. Поэтому перед первым
+desktop-приложение и **не** создают bundle расширения. Поэтому перед первым
 `Load unpacked`, после clean checkout/clone или после удаления build outputs
 обязательно выполнить `bun run build:extension`.
 
@@ -666,10 +666,10 @@ Clipper не имеет собственной визуальной компон
 переиспользовать app primitives (`Button`, `Input`, `DropdownMenu`,
 `SearchMenuAction`, `CollectionPicker`, `MenuTextTrigger`,
 `SegmentedControl`, `QuantizedMenuScrollArea`) или тонкий adapter над ними.
-Компонент, который существует только в клиппере и визуально не имеет аналога в
+Компонент, который существует только в расширении и визуально не имеет аналога в
 приложении, считается нарушением контракта.
 
-Space selector в клиппере живёт на отдельной строке первого уровня:
+Space selector в расширении живёт на отдельной строке первого уровня:
 `h-10 border-b border-border bg-accent px-2`. Это тот же surface, что нижнее
 меню основного приложения. Реальный Radix trigger — не вся строка, а
 `MenuTextTrigger surface="clipperHeader"` как compact pill `h-6 rounded-1 px-2`
@@ -679,7 +679,7 @@ Space selector в клиппере живёт на отдельной строк
 после имени, стартует как right chevron и при `data-state=open` поворачивается
 вниз (`rotate-90`). Текст
 bright `text-foreground`; hover/open state пули использует `bg-active`.
-Шрифт клиппера остаётся обычным sans `text-base` до отдельного решения о mono.
+Шрифт расширения остаётся обычным sans `text-base` до отдельного решения о mono.
 Справа в этой же строке находится close action через shared
 `ChromeCloseButton`, тот же primitive, который используется в chrome
 развернутой карточки. Нажатие закрывает текущий popup или in-page overlay тем
@@ -699,23 +699,23 @@ dropdown рендерится через `QuantizedMenuScrollArea` с clipper ro
 строки пространств и placeholder несут тот же слот пустым. `Add space`
 делегирует выбор папки native host'у (`pick_vault_folder`): системный диалог
 показывает host — у расширения нет файлового UI — выбранная папка дописывается
-в общий `config.json` (`known_vaults`) и клиппер сразу переключается на неё.
+в общий `config.json` (`known_vaults`) и расширение сразу переключается на неё.
 `Reveal in Finder` идёт через `reveal_vault` и ограничен известными
 пространствами. Стрелочная навигация из поиска проходит список и оба pinned
 action.
 
 Type row — отдельная строка `h-10 border-b border-border bg-chrome px-4`. Это
-второй уровень клиппера и он использует тот же half-step surface, что верхний
+второй уровень расширения, и оно использует тот же half-step surface, что верхний
 chrome основного приложения. Слева текст
 `Type:` (`text-base text-muted-foreground`), справа общий
 `SegmentedControl size="clipper"`. Он использует тот же state model, что
-`All/Connected`, но с клипперными значениями: outer shell `h-8 w-fit p-[2px]
+`All/Connected`, но со значениями расширения: outer shell `h-8 w-fit p-[2px]
 rounded-1`, selected inner segment `h-7 rounded-[2px] bg-component-fill-inner
 text-foreground`. Это даёт ровный 2px inset по вертикали и горизонтали.
 Сегменты shrink-to-content: ширина контрола определяется текстом, а не
 растягивается на всю ширину popup.
 
-Ниже Type row клиппер сохраняет простой body через единый spacing contract в
+Ниже Type row расширение сохраняет простой body через единый spacing contract в
 `popup-layout.css`: `.mine-clipper-body` задаёт
 `--mine-clipper-after-type-gap: 16px` и `--mine-clipper-section-gap: 8px`.
 После Type row до первой preview-карточки остаётся 16px; все дальнейшие
@@ -733,9 +733,9 @@ preview — локальная карточка `rounded-1 border border-border 
 Channel picker не имеет собственной clipper-разметки. `ChannelList` является
 только adapter `ChannelInfo[] -> TagCount[]` и рендерит общий
 `CollectionPicker`. **Порядок коллекций канонический** — ровно тот, что отдал
-backend (`list_channels`: sidebar positions, затем positionless-теги): клиппер
+backend (`list_channels`: sidebar positions, затем positionless-теги): расширение
 не пересортировывает список (бывшая recent/count-приоритезация удалена — во
-всех списках коллекций приложения и клиппера один ручной порядок сайдбара).
+всех списках коллекций приложения и расширения один ручной порядок сайдбара).
 Используется тот же `SearchMenuInput`
 menu-header search row, row/action slot, active state, conditional create row
 и keyboard/pointer arbitration, что card Connect menus в основном приложении:
@@ -746,7 +746,7 @@ clipper surface и floating app picker используют один scroll-heig
 Surface class живёт в `CollectionPicker`
 как `COLLECTION_PICKER_CONTENT_CLASS` для Radix floating content и
 `COLLECTION_PICKER_INLINE_SURFACE_CLASS` для inline clipper surface. Checkbox
-list в клиппере запрещён. Save-футер — отдельный закреплённый блок
+list в расширении запрещён. Save-футер — отдельный закреплённый блок
 `.mine-clipper-section-stack shrink-0` без separator line. Отдельного
 статус-компонента нет: успех живёт на самой кнопке (`Saved`, disabled,
 автозакрытие ~1.2s), ошибка — строка `text-sm text-destructive`
@@ -814,7 +814,7 @@ Background service worker регистрирует 4 пункта:
 |---|---|---|
 | `Option+A` | Глобальный (настраиваемый через chrome://extensions/shortcuts) | Открыть popup |
 | `Cmd+Enter` | Popup | Сохранить (best-effort — из overlay срабатывает не всегда) |
-| `Escape` | Popup | Слоями, изнутри наружу: непустой поиск очищает запрос; открытый dropdown закрывается сам; и только свободный Escape закрывает клиппер без сохранения |
+| `Escape` | Popup | Слоями, изнутри наружу: непустой поиск очищает запрос; открытый dropdown закрывается сам; и только свободный Escape закрывает окно расширения без сохранения |
 | `Up/Down` | Popup, фокус на ChannelPicker | Навигация по каналам |
 | `Enter` | Popup, фокус на ChannelPicker | Выбрать/снять канал |
 
@@ -842,7 +842,7 @@ Content script извлекает метаданные из DOM текущей �
 (bundled, не CDN), но не грузится как global content script на `<all_urls>`.
 Content script запрашивает `ensureDefuddle` у background только перед реальным
 Article/YouTube extraction. Это сохраняет быстрый старт popup и не создаёт
-vendor warning/error noise на страницах, где пользователь клипер не открывал.
+vendor warning/error noise на страницах, где пользователь расширение не открывал.
 
 `background.js` инжектит `lib/defuddle.js` через `chrome.scripting` в frame,
 из которого пришёл запрос. На время загрузки suppress'ится только известный
@@ -1041,7 +1041,7 @@ vault от битых media-карточек без `file:`.
 
 Архитектурный инвариант: `.md` записывается **одним атомарным write** после Phase C — Obsidian видит либо ничего, либо полностью локализованную статью. Промежуточного состояния «.md существует, но картинки ещё качаются» **нет**.
 
-Потолок на размер файла — `MAX_MEDIA_BYTES = 500 МиБ`. Он рассчитан на то, что люди реально сохраняют: прежние 50 МиБ отсекали обычный ролик 1080p, и заметка молча оставалась со ссылкой на чужой сервер — то есть переставала быть самодостаточной и ломалась насовсем, стоило источнику удалить файл. Если видео всё же не помещается, клиппер передаёт в `video_posters` постер, хост сохраняет его как `thumbnail` блока, а лента строит карточку из постера (ветка `CardKind::Article` без локальных плиток). Видео при этом остаётся удалённой ссылкой и играет только при наличии сети — это осознанная деградация, а не норма.
+Потолок на размер файла — `MAX_MEDIA_BYTES = 500 МиБ`. Он рассчитан на то, что люди реально сохраняют: прежние 50 МиБ отсекали обычный ролик 1080p, и заметка молча оставалась со ссылкой на чужой сервер — то есть переставала быть самодостаточной и ломалась насовсем, стоило источнику удалить файл. Если видео всё же не помещается, расширение передаёт в `video_posters` постер, хост сохраняет его как `thumbnail` блока, а лента строит карточку из постера (ветка `CardKind::Article` без локальных плиток). Видео при этом остаётся удалённой ссылкой и играет только при наличии сети — это осознанная деградация, а не норма.
 
 Заметки, испорченные прежним потолком, чинятся разово: `cargo run -p mine --bin localize-remote-media -- --dry-run <vault>` показывает, что осталось удалённым, `--apply` докачивает и переписывает ссылки на wikilink. Перед загрузкой выполняется HEAD: тело статьи содержит и ссылки-сокращалки (`t.co`), которые ведут на страницу, а не на медиа, и скачивать их нельзя.
 
@@ -1095,7 +1095,7 @@ Response:
 #### `reveal_vault`
 
 Показ пространства в Finder (`open -R`). Путь обязан входить в
-`known_vaults`/current — клиппер не может открывать произвольные каталоги.
+`known_vaults`/current — расширение не может открывать произвольные каталоги.
 
 ```json
 {
@@ -1168,7 +1168,7 @@ Pending manifest помечается committed только после успе
 thumbnail и пишет thumbnail metadata в SQLite. Если SQLite занят запущенным
 приложением, сохранение не откатывается: `.md` и media уже являются source of
 truth, а watcher/startup scan догонят индекс и thumb metadata. При выключенном
-desktop app этот upsert должен проходить сразу, поэтому новый клип появляется
+desktop app этот upsert должен проходить сразу, поэтому новое сохранение появляется
 в ленте после запуска без ручного rebuild.
 
 Legacy `pre_uploaded_file` продолжает поддерживаться: если значение начинается
@@ -1184,7 +1184,7 @@ popup один раз повторяет `save_block` с тем же `pre_upload
 
 ### Browser-origin boundary
 
-В overlay-режиме UI клиппера выполняется внутри content-script context текущей страницы. Поэтому popup/overlay **не делает** `fetch("http://127.0.0.1:...")` напрямую: в Safari такой запрос считается loopback-доступом со стороны origin страницы (`store.epicgames.com`, `example.com`, и т.д.) и вызывает per-site prompt `Allow <site> to access your loopback network?`.
+В overlay-режиме UI расширения выполняется внутри content-script context текущей страницы. Поэтому popup/overlay **не делает** `fetch("http://127.0.0.1:...")` напрямую: в Safari такой запрос считается loopback-доступом со стороны origin страницы (`store.epicgames.com`, `example.com`, и т.д.) и вызывает per-site prompt `Allow <site> to access your loopback network?`.
 
 Правильный contract:
 
@@ -1233,7 +1233,7 @@ not infer cards from user media that lacks Markdown.
 | macOS | `~/Library/Application Support/com.mine.app/clipper/native-host` |
 
 `~/Library/Application Support/LocalArena/native-host` — legacy path. Chrome
-manifest для актуального клиппера не должен ссылаться на него: при обновлении
+manifest для актуального расширения не должен ссылаться на него: при обновлении
 native host source of truth — `com.mine.app/clipper/native-host`.
 
 ### Manifest (Chromium)

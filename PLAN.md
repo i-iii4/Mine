@@ -118,7 +118,7 @@ Status vocabulary:
 | R3 | Идентичность | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) П5–П11, П22 | **DONE 15.08.2026**; П22 закрыт 17.08.2026 (см. V9). Каноническая коллекция уже выбиралась ранжированием по глубине; добавлено распознавание перемещений по хэшу содержимого с переносом производных |
 | R4 | Состояния пространства | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) П12–П18, П23 | **DONE 15.08.2026.** Привязка переживает недоступность, экран `Space unavailable`, удаление пространства сносит кэш, отсутствующее медиа названо своим именем |
 | R5 | Облако | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) | **DONE 15.08.2026** (кроме Х4 процента, Х13 индикатора копирования и Х16–Х19, Х21 всплывающей рекомендации). Определение выгруженного содержимого, запрет автовоспроизведения, превью-подложка в развороте, метка облака с задержкой, две иконки состояния, состояния загрузки и недоступности в развороте, постоянное объяснение в настройках |
-| R6 | Клиппер | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) О1–О8 | **DONE 15.08.2026** (кроме О1–О4, автономная запись). Установка связующего звена кнопкой из настроек с манифестами для пяти браузеров, статус связи и версии, yt-dlp в бандле. Публикация в стор — внешний процесс |
+| R6 | Расширение | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) О1–О8 | **DONE 15.08.2026** (кроме О1–О4, автономная запись). Установка связующего звена кнопкой из настроек с манифестами для пяти браузеров, статус связи и версии, yt-dlp в бандле. Публикация в стор — внешний процесс |
 | R7 | Первая сессия | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) О9–О19 | **DONE 15.08.2026** (кроме О13 прогресса и О19 первой карточки). Первый экран с тремя тезисами, подтверждение непустой папки с подсчётом, онбординг пустого пространства, возврат импорта Are.na |
 | R8 | Витрина | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), раздел «Витрина состояний и краёв» | **DONE 15.08.2026.** Раздел «Состояния и края» в дизайн-системе: четырнадцать состояний, из них двенадцать — настоящими компонентами с фиксированными входными данными. Два нереализованных помечены «нет в продукте». Раздел проверяется браузерным аудитом на обрезку, невидимый текст и исключения |
 
@@ -172,7 +172,7 @@ Definition of Done фазы: каждое состояние из R8 видно 
 кодом или живым прогоном.
 
 - [AUDIT_ACTIVATION.md](AUDIT_ACTIVATION.md) — путь первой сессии до первой
-  ценности. P0-блокеры: установка клиппера и native host невыполнима для
+  ценности. P0-блокеры: установка расширения и native host невыполнима для
   обычного пользователя; пустая лента Everything без единой подсказки;
   импорт Are.na недостижим из UI при готовом бэкенде.
 - [AUDIT_VAULT_RESILIENCE.md](AUDIT_VAULT_RESILIENCE.md) — устойчивость
@@ -202,7 +202,7 @@ A5 не меняется: остаётся `MANUAL QA` (финальное ви�
   сортировка коллекций в сайдбаре переписана по контракту дизайн-системы и
   закреплена browser gate `bun run test:sidebar-reorder`; фантомные записи
   каналов выметаются в `reconcile_vault` (09.08.2026).
-- Клиппер: эластичный высотный каркас панели с жёстким save-футером, статусы
+- Расширение: эластичный высотный каркас панели с жёстким save-футером, статусы
   на кнопке вместо StatusBar, слоистый Escape, host-команды `pick_vault_folder`
   / `reveal_vault` (10.08.2026).
 - SIGABRT-гонка asset-протокола с WKWebView закрыта: `responder.respond`
@@ -963,7 +963,7 @@ Goal: продакшен-готовность. Профилирование, edg
 | 7.14 | Багфиксы drop-зоны: тег текущего канала при file drop, защита от дублирования, isCardDragging для синего кольца, удаление канала при удалении тега, Unicode в slugifyTag | [x] |
 | 7.15 | Качество thumbnail: 240→480px (Retina 2x), JPEG quality 80→85, единая константа DEFAULT_MAX_SIZE | [x] |
 | 7.16 | DragOverlay: курсор «держит» карточку за левый верхний угол вместо центра; block overlay рендерит feed-card preview, а не текстовую плашку | [x] |
-| 7.17 | Меню каналов: скрытие Delete при поиске, создание канала при отсутствии совпадений, MRU-ранжирование (localStorage), единообразие с клиппером | [x] |
+| 7.17 | Меню каналов: скрытие Delete при поиске, создание канала при отсутствии совпадений, MRU-ранжирование (localStorage), единообразие с расширением | [x] |
 | 7.18 | Дизайн-система: shadcn/ui (токены, `cn()`, ThemeProvider, миграция оболочки App+Sidebar на семантические токены) | [x] |
 | 7.19 | Миграция всех компонентов на семантические токены: замена neutral-*/dark: на bg-card/text-foreground/border-border/bg-muted и т.д. | [x] |
 | 7.20 | shadcn/ui компонентная миграция: 14 примитивов (Button, Input, Badge, Checkbox, Progress, Separator, Dialog, Command, ContextMenu, DropdownMenu, AlertDialog, ScrollArea, Tooltip), glass-токены, lucide-react иконки | [x] |
@@ -986,13 +986,13 @@ Goal: продакшен-готовность. Профилирование, edg
 | 7.28 | Sidebar resize handle: suppress native WebKit text selection from `pointerdown`, before drag threshold | [x] |
 | 7.29 | Sidebar ordinary rows: remove hover ellipsis action that replaced counts; keep Rename/Delete in row ContextMenu | [x] |
 
-### Phase 8 — Веб-клиппер (браузерное расширение) [COMPLETED]
+### Phase 8 — Браузерное расширение [COMPLETED]
 
 Goal: расширение для Chrome и Safari — сохранение ссылок, статей, изображений и видео прямо из браузера в vault.
 
 | # | Task | Status |
 |---|------|--------|
-| 8.1 | SPEC_CLIPPER.md — спецификация: типы клипов, popup UI, native messaging, извлечение метаданных | [x] |
+| 8.1 | SPEC_CLIPPER.md — спецификация: типы сохранений, popup UI, native messaging, извлечение метаданных | [x] |
 | 8.2 | Native messaging host (Rust-бинарник): чтение vault, запись блоков, индексация, thumbnails | [x] |
 | 8.3 | WebExtension: content script (метаданные, Readability.js), popup UI (сегментированный контрол типа, каналы, предпросмотр) | [x] |
 | 8.4 | Контекстное меню: Save page / Save image / Save selection / Save link | [x] |
@@ -1000,7 +1000,7 @@ Goal: расширение для Chrome и Safari — сохранение сс
 | 8.6 | Safari-обёртка: xcrun safari-web-extension-converter → Xcode-проект | [x] |
 | 8.7 | Тестирование с реальными данными (native host дымовой тест пройден) | [x] |
 | 8.8 | Ремонт форматирования (tweetTextToMarkdown, убран .textContent) и логики типов (переключатель всегда виден, жадная загрузка статьи, перезапрос выделения) | [x] |
-| 8.9 | Переделка UX клиппера: Content/Link, недавние каналы, встроенный список, HTTP-заголовки для загрузки картинок, async контекстное меню | [x] |
+| 8.9 | Переделка UX расширения: Content/Link, недавние каналы, встроенный список, HTTP-заголовки для загрузки картинок, async контекстное меню | [x] |
 | 8.10 | Багфикс: Referer на URL страницы (не картинки), реалистичный User-Agent, windows.create() вместо openPopup(), адаптивный размер окна | [x] |
 
 ### Phase 9 — Аудит и укрепление кодовой базы [PARTIAL]
@@ -1098,7 +1098,7 @@ Goal: довести проект до продакшен-качества по 
 | 9.7.11 | `PRAGMA busy_timeout = 5000` в apply_pragmas | MED-31 | DONE |
 | 9.7.12 | Индекс на `block_type` | MED-37 | DONE |
 
-#### 9.8 — Веб-клиппер: надёжность [PENDING]
+#### 9.8 — Расширение: надёжность [PENDING]
 
 | # | Task | Ref | Status |
 |---|------|-----|--------|
@@ -1179,7 +1179,7 @@ Goal: довести проект до продакшен-качества по 
      |
 9.6 (транзакции)  ←→  9.7 (производительность) — параллельно
      |
-9.8 (клиппер)  ←→  9.9 (ошибки)               — параллельно
+9.8 (расширение) ←→ 9.9 (ошибки)               — параллельно
      |
 9.10 (рефакторинг)
      |
@@ -1336,12 +1336,12 @@ Goal: расширение собирается через Vite, использ�
 
 ### Phase 13 — Видео-блоки: YouTube embed + транскрипт [IN PROGRESS]
 
-Goal: полноценная поддержка видео-страниц в клиппере и основном приложении. YouTube iframe в Detail, транскрипт через Defuddle.
+Goal: полноценная поддержка видео-страниц в расширении и основном приложении. YouTube iframe в Detail, транскрипт через Defuddle.
 
 | # | Task | Status |
 |---|------|--------|
-| 13.1 | Клиппер: TypeSwitcher на видео-страницах, play-кнопка в превью | [x] |
-| 13.2 | Клиппер: видео-Content сохраняется как block_type=video с URL | [x] |
+| 13.1 | Расширение: TypeSwitcher на видео-страницах, play-кнопка в превью | [x] |
+| 13.2 | Расширение: видео-Content сохраняется как block_type=video с URL | [x] |
 | 13.3 | Detail.tsx: YouTube iframe embed для видео-блоков с URL | [x] |
 | 13.4 | Detail.tsx: body ниже видео (подготовка к транскрипту) | [x] |
 | 13.5 | Замена Readability+Turndown на Defuddle в content.js | [x] |
@@ -1443,11 +1443,11 @@ SPEC: [SPEC_GRID.md](SPEC_GRID.md) — детальное описание ар�
 
 ### Phase 12 — Thumbnail pipeline: two-phase through WebView decoder [IN PROGRESS]
 
-Goal: удовлетворить четыре продуктовых инварианта для sidebar thumbs (мгновенное появление, корректность для всех форматов клиппера, baked text для pure-text / real image для articles с media, плавный скролл 100+ каналов × 10 thumbs) без компромиссов. Устранить зависимость от Rust crate stack для decode экзотических форматов (VP8X WebP, HEIC, AVIF, HEVC, fragmented MP4).
+Goal: удовлетворить четыре продуктовых инварианта для sidebar thumbs (мгновенное появление, корректность для всех форматов расширения, baked text для pure-text / real image для articles с media, плавный скролл 100+ каналов × 10 thumbs) без компромиссов. Устранить зависимость от Rust crate stack для decode экзотических форматов (VP8X WebP, HEIC, AVIF, HEVC, fragmented MP4).
 
 SPEC: [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) — полная архитектура, протоколы событий, worker contract, failure modes, testing plan.
 
-Корневое решение: two-phase pipeline. **Phase 1** — Rust синхронно пишет thumb при save (JPEG/PNG через content sniff → real thumb; всё остальное → text placeholder, всегда успешно, <150ms latency). **Phase 2** — main app в фоне upgradeит placeholders через Web Worker (`createImageBitmap` + `OffscreenCanvas.convertToBlob`), WebView native decoder покрывает весь набор форматов которые клиппер может сохранить. Sidebar обновляется через Tauri events (block:added, thumb:updated) вместо polling.
+Корневое решение: two-phase pipeline. **Phase 1** — Rust синхронно пишет thumb при save (JPEG/PNG через content sniff → real thumb; всё остальное → text placeholder, всегда успешно, <150ms latency). **Phase 2** — main app в фоне upgradeит placeholders через Web Worker (`createImageBitmap` + `OffscreenCanvas.convertToBlob`), WebView native decoder покрывает весь набор форматов которые расширение может сохранить. Sidebar обновляется через Tauri events (block:added, thumb:updated) вместо polling.
 
 | # | Task | Status |
 |---|------|--------|
@@ -1471,7 +1471,7 @@ Goal: перейти на human-readable filenames без повторения �
 
 Корневая архитектурная установка: identity блока остаётся filename-derived (`.md` stem). Никаких служебных `id` / `uuid` во frontmatter — это нарушение Markdown First. Стабильность identity против rename/conflict обеспечивается через runtime mitigations (content hash rename detection, iCloud conflict UX), не через добавление мусора в source of truth.
 
-Контекст: предыдущая попытка (`stash@{0}: WIP 21-22.04 Phase 16+17 clipper work`) объединила 7 разных slice'ов в один refactor без промежуточных коммитов, что привело к полной неработоспособности клиппера и невозможности локализовать регрессию. Эта Phase разбивает ту же работу на изолированные шаги.
+Контекст: предыдущая попытка (`stash@{0}: WIP 21-22.04 Phase 16+17 clipper work`) объединила 7 разных slice'ов в один refactor без промежуточных коммитов, что привело к полной неработоспособности расширения и невозможности локализовать регрессию. Эта Phase разбивает ту же работу на изолированные шаги.
 
 | # | Sub-phase | Status | Scope |
 |---|-----------|--------|-------|
@@ -1517,7 +1517,7 @@ SPEC: [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md).
 **Migration:**
 - One-time script проходит по всем `.md` файлам vault, преобразует `![](percent-encoded)` → `![[decoded-name]]`
 - Opt-in (команда `migrate_to_wikilinks`), не автомат
-- Documented как recovery для блоков, склипанных между 18.F и 18.H
+- Documented как recovery для блоков, сохранённых между 18.F и 18.H
 
 ### Sub-phases
 
@@ -1574,7 +1574,7 @@ Goal: довести filename-first rename до законченного про�
 
 ### Phase 20 — Clipper inline-media parallelization [COMPLETE]
 
-Goal: убрать `Native host timeout` на статьях с многими inline-картинками (apple.com/ipad-mini etc.). Сохранить инвариант синхронного клиппера — `.md` записывается одним атомарным write с уже локализованной body, Obsidian видит готовое состояние, Mine-приложение не требуется.
+Goal: убрать `Native host timeout` на статьях с многими inline-картинками (apple.com/ipad-mini etc.). Сохранить инвариант синхронного расширения — `.md` записывается одним атомарным write с уже локализованной body, Obsidian видит готовое состояние, Mine-приложение не требуется.
 
 | # | Slice | Status | Scope |
 |---|-------|--------|-------|

@@ -209,8 +209,8 @@ Grep "normalize_filename_stem|\.nfc\(\)" src-tauri/src/
 
 **Новое поведение:**
 
-1. Клиппер при повторном сохранении того же URL (detected via `block.url` DB match) **не создаёт** новый блок, показывает: `Already saved: [Open in Mine]`.
-2. Клиппер при разных URL but identical H1/readable slug seed — суффикс ` — YYYY-MM-DD` вместо `(2)`:
+1. Расширение при повторном сохранении того же URL (detected via `block.url` DB match) **не создаёт** новый блок, показывает: `Already saved: [Open in Mine]`.
+2. Расширение при разных URL but identical H1/readable slug seed — суффикс ` — YYYY-MM-DD` вместо `(2)`:
    - `sunset-tokyo.md` (первый)
    - `sunset-tokyo — 2026-04-22.md` (второй)
    - filename остаётся осмысленным, пользователь видит дату сохранения как differentiator.
@@ -293,7 +293,7 @@ Grep "normalize_filename_stem|\.nfc\(\)" src-tauri/src/
 3. iCloud conflict file: появляется в `vault_conflicts`, не создаёт второй блок в `blocks`, UI показывает banner с вариантами разрешения.
 4. Rename с одновременным edit body (same debounce window): content hash не совпадает, treated как delete + create — documented edge case, acceptable.
 5. NFC/NFD mismatch между устройствами: при первом scan после sync filename нормализуется в NFC, identity сохраняется.
-6. Повторный clip того же URL: клиппер детектит via DB match, показывает `Already saved`, не создаёт дубликат.
+6. Повторное сохранение того же URL: расширение детектит via DB match, показывает `Already saved`, не создаёт дубликат.
 7. Повторный clip разных URL с одинаковым H1/readable slug seed: filename получает `— YYYY-MM-DD` suffix вместо `-2`.
 
 ## Known residuals

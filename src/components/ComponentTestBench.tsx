@@ -1117,12 +1117,11 @@ function ClipperStandaloneRowFrame() {
       <p className="mb-2 font-mono text-sm text-muted-foreground">
         Расширение · автономная запись — папка вместо пространства, меню с Download app
       </p>
+      {/* The row alone: below it the popup shows its ordinary save body, and a
+          written-here stand-in would be text that exists nowhere in the
+          product — inside the frame, only the real thing. */}
       <div className="w-[360px] overflow-hidden rounded-1 border border-border bg-background shadow-md">
         <StandaloneFolderRow folderName="Mine" onClose={() => {}} />
-        <div className="p-4 text-sm text-muted-foreground">
-          Сохранённое лежит обычными файлами в выбранной папке. Приложение
-          подхватит их при первом запуске обычным сканированием.
-        </div>
       </div>
       <p className="mt-2 mb-2 font-mono text-sm text-muted-foreground">
         Меню под многоточием, оба режима — какой пункт виден, тот и режим

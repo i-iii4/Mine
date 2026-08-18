@@ -123,7 +123,7 @@ type FeedPlaybackDescriptor = {
     потолок нужен, чтобы `<video src>` к dataless multi-gigabyte iCloud-файлу не
     форсил полную загрузку ради проскролла
 - above hard limits (пиксельные лимиты или source bytes > 512 MiB) =>
-  `feed_playback = null`: клип остаётся poster-only в ленте, играбелен только в
+  `feed_playback = null`: карточка остаётся poster-only в ленте, играбелен только в
   Detail
 
 Все пороги этого раздела — утверждения об **исходном файле**, а не о превью.
@@ -213,7 +213,7 @@ Autoplay semantics в descriptor не кодируются.
 - `FEED_VIDEO_DIRECT_TIMEOUT_MS = 1200`
 - `FEED_VIDEO_BLOB_TIMEOUT_MS = 1800` — покрывает только decode + play: таймер
   стартует с момента получения blob (после `fetch`, перед decode/play), чтобы
-  крупный, но валидный клип не был прерван мид-download бюджетом, предназначенным
+  крупная, но валидная загрузка не была прервана мид-download бюджетом, предназначенным
   для декодирования
 - `FEED_VIDEO_FETCH_TIMEOUT_MS = 20000` — отдельный таймаут на сам `fetch` стадии
   `loading_blob` (только standard, у heavy blob-пути нет): по истечении fetch

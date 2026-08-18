@@ -20,15 +20,15 @@ hot-path preview metadata for sidebar queries.
 
 История отказов задокументирована в DEVLOG: `32d452e`, `f726854`, и последний инцидент с VP8X webp от Meduza (`sem-altman-...`) где Rust decode упал, hotfix pipeline свалился в text placeholder.
 
-Фундаментальная причина всех этих инцидентов — **попытка поддержать в Rust полный набор форматов, который поддерживает browser**. Browser (WKWebView на macOS через ImageIO/AVFoundation) декодирует всё что нужно клипперу по определению — если Detail view может показать media, значит codec доступен в системе. Цель этого spec'а — сделать WebView **единственным** decoder для thumbnail pipeline, устранив зависимость от Rust crate stack для форматов.
+Фундаментальная причина всех этих инцидентов — **попытка поддержать в Rust полный набор форматов, который поддерживает browser**. Browser (WKWebView на macOS через ImageIO/AVFoundation) декодирует всё что нужно расширению по определению — если Detail view может показать media, значит codec доступен в системе. Цель этого spec'а — сделать WebView **единственным** decoder для thumbnail pipeline, устранив зависимость от Rust crate stack для форматов.
 
 ## Invariants (что должно быть true всегда)
 
 Pipeline обязан удовлетворять **каждому** из этих требований без компромиссов. Нарушение любого — bug, не feature request.
 
-**I1. Мгновенное появление.** С момента когда клиппер сохранил блок до момента когда thumb виден в sidebar проходит не более **150ms**. Включает: native host write, file watcher, event dispatch, React re-render.
+**I1. Мгновенное появление.** С момента когда расширение сохранило блок до момента когда thumb виден в sidebar проходит не более **150ms**. Включает: native host write, file watcher, event dispatch, React re-render.
 
-**I2. Корректность для всех форматов клиппера.** Любой формат media который клиппер сохраняет в vault через `localize_body_images` (текущие форматы: JPEG, PNG, GIF, WebP во всех вариантах, HEIC, AVIF, MP4 H.264/HEVC, WebM VP8/VP9) получает валидную визуальную миниатюру — либо сам кадр изображения/видео, либо baked text fallback для pure-text блоков.
+**I2. Корректность для всех форматов расширения.** Любой формат media который расширение сохраняет в vault через `localize_body_images` (текущие форматы: JPEG, PNG, GIF, WebP во всех вариантах, HEIC, AVIF, MP4 H.264/HEVC, WebM VP8/VP9) получает валидную визуальную миниатюру — либо сам кадр изображения/видео, либо baked text fallback для pure-text блоков.
 
 **I3. Нет «пустых» sidebar карточек.** Блок, у которого есть preview в
 `list_channel_previews`, **всегда** рендерится визуально непустым.
@@ -44,7 +44,7 @@ Pipeline обязан удовлетворять **каждому** из эти�
 
 **I7. Text articles показывают запечённый текст, articles с media показывают media.** `list_channel_previews` корректно различает text и media блоки через `is_text` флаг, frontend применяет `dark:invert` только для text.
 
-**I8. Нет явного блокирующего I/O на hot path.** Save операция возвращает управление клипперу не дольше чем за 150ms включая write thumb. Полноценная генерация image thumb (через WebView) может занимать больше, но не блокирует save response.
+**I8. Нет явного блокирующего I/O на hot path.** Save операция возвращает управление расширению не дольше чем за 150ms включая write thumb. Полноценная генерация image thumb (через WebView) может занимать больше, но не блокирует save response.
 
 **I9. Генератор записывает геометрию того, что создал.** Каждая функция
 генерации возвращает `PreviewDimensions` записанного файла, и эти размеры
@@ -64,12 +64,12 @@ Pipeline обязан удовлетворять **каждому** из эти�
 
 Чего pipeline явно **не** делает:
 
-- **N1.** Не поддерживает форматы media которых нет в клиппере. Если клиппер когда-то начнёт сохранять SVG — это расширение pipeline, не automatic.
+- **N1.** Не поддерживает форматы media которых нет в расширении. Если расширение когда-то начнёт сохранять SVG — это расширение pipeline, не automatic.
 - **N2.** Не пытается валидировать content thumb файла beyond magic bytes check (JPEG/PNG prefix). Глубокая валидация image integrity — out of scope.
 - **N3.** Не делает reactive update thumbs если пользователь руками заменил media file в vault (watcher detects и перегенерирует — это отдельный flow через `VaultEvent::MediaChanged`, специфицирован в SPEC_INTEGRATION.md).
 - **N4.** Не оптимизирует качество thumb (quality 85 JPEG, fixed 640×640 max). Tuning качества — отдельная задача.
 - **N5.** Не делает real-media WebView upgrade для блоков, сохранённых из
-  клиппера **пока main app закрыт**. Native host всё равно создаёт `.md`,
+  расширения **пока main app закрыт**. Native host всё равно создаёт `.md`,
   media-файл, Phase 1 thumb и синхронизирует thumb metadata; upgrade до real
   image/video preview происходит при следующем открытии main app.
 
@@ -147,7 +147,7 @@ storm во время Phase-2 backlog. Вместо этого введена pe
 только у затронутой карточки, не трогая остальные.
 
 Полный рефетч ленты — и вместе с ним height re-fit по `preview_manifest` /
-`media_dimensions` для свежего клипа, впервые проиндексированного до того, как его
+`media_dimensions` для свежей карточки, впервые проиндексированной до того, как его
 изображение стало декодируемым (квадратный fallback-аспект даёт серый хвост под
 `computeCardHeight`, см. `SPEC_GRID.md`), — остаётся только для реальных событий
 изменения ленты: `vault-changed`, `block:added`, `block:removed` и навигации.

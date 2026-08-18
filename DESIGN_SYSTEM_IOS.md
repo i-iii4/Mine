@@ -159,7 +159,7 @@ System font (SF Pro) — не кастомные шрифты. Размеры а
 | ESC to close | Кастомная кнопка назад (шеврон в полупрозрачном круге) |
 | ReactMarkdown body | `Text()` с plain text (markdown-рендер — будущее) |
 
-### Share Extension (аналог popup клиппера)
+### Share Extension (аналог popup расширения)
 
 | Popup (десктоп) | Share Extension (iOS) |
 |---|---|

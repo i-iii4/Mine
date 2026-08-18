@@ -16,10 +16,10 @@
 - `SPEC_STORAGE.md` — спецификации storage/db, index, files, thumbnails
 - `SPEC_INTEGRATION.md` — спецификации watcher/events, handler, commands
 - `SPEC_FRONTEND.md` — спецификация фронтенда: компоненты, типы, IPC, роутинг
-- `SPEC_CLIPPER.md` — спецификация веб-клиппера: типы клипов, popup, native messaging
+- `SPEC_CLIPPER.md` — спецификация расширения браузера: типы сохранений, popup, native messaging
 - `SPEC_MOBILE.md` — спецификация iOS-приложения: SwiftUI + Rust UniFFI, iCloud sync, Share Extension
 - `SPEC_GRID.md` — спецификация zero-jank masonry grid: Canvas measureText precomputation, dual-path (native grid-lanes + virtualized JS), детерминистические высоты
-- `SPEC_THUMBNAILS.md` — спецификация thumbnail pipeline: two-phase (Rust instant placeholder + WebView async upgrade), event-driven sidebar, виртуализация, поддержка всех форматов клиппера через native decoder
+- `SPEC_THUMBNAILS.md` — спецификация thumbnail pipeline: two-phase (Rust instant placeholder + WebView async upgrade), event-driven sidebar, виртуализация, поддержка всех форматов расширения через native decoder
 - `SPEC_DISPLAY_MODES.md` — спецификация display modes: архитектура переключения между masonry/grid/table/columns, принцип изоляции (display mode = только рендеринг), единый интерфейс `DisplayModeProps`
 - `SPEC_FEED_SCROLL_PERFORMANCE.md` — контракт canvas-feel бесконечной ленты: velocity-aware render runway, media preload/decode windows, лимиты, диагностика
 - `SPEC_GRID_LAYOUT_READINESS.md` — deterministic live geometry: render-ready gate, committed prefix, skeleton envelope, deep fast-scroll acceptance
@@ -42,7 +42,7 @@
 - `SPEC_SCROLL_EDGE_FADE.md` — растворение верхней кромки прокручиваемых поверхностей: общая кривая маски, порог активации, настройка `mine.scrollEdgeFade`
 - `SPEC_DISTRIBUTION.md` — production-контракт подписи, доставки, обновлений, диагностики; статус DEFERRED по явному продуктовому решению
 - `DESIGN_SYSTEM_IOS.md` — дизайн-система iOS: цвета, типографика, компоненты, жесты
-- `SPEC_ONBOARDING.md` — онбординг: расширение как самостоятельная точка входа, установка клиппера без терминала, первый запуск, пустая лента, импорт Are.na
+- `SPEC_ONBOARDING.md` — онбординг: расширение как самостоятельная точка входа, установка расширения без терминала, первый запуск, пустая лента, импорт Are.na
 - `SPEC_VAULT_LIFECYCLE.md` — жизненный цикл пространства: раскладка трёх папок и настраиваемые целевые папки, детерминированное правило дублей, перемещения, недоступное пространство, удаление и уборка
 - `SPEC_CLOUD_STORAGE.md` — хранилище в iCloud: неблокирующий интерфейс, честный прогресс, индикаторы загрузки и индексации, встроенная рекомендация вместо форума
 - `AUDIT_ACTIVATION.md` — аудит активации: юзер-джорни первой сессии до первой ценности, работы пользователя, вердикты и рекомендации (12.08.2026)
@@ -99,7 +99,7 @@ local-arena/
 ├── src-tauri/                  # Rust-бэкенд (Tauri)
 │   ├── src/
 │   │   ├── bin/
-│   │   │   ├── native_host.rs  # Native messaging host для веб-клиппера (stdin/stdout JSON)
+│   │   │   ├── native_host.rs  # Native messaging host для расширения (stdin/stdout JSON)
 │   │   │   ├── cold_space_audit.rs # Read-only source + disposable derived acceptance CLI
 │   │   │   ├── export_bindings.rs # Rust/Specta → committed TypeScript bindings
 │   │   │   ├── localize_remote_media.rs # CLI: найти медиа, оставшееся удалённой ссылкой
@@ -217,13 +217,13 @@ local-arena/
 │   ├── native-shell-smoke.mjs  # Packaged macOS WKWebView + Tauri IPC smoke
 │   ├── build-ios.sh            # Сборка Rust core + xcframework для iOS
 │   └── seed-vault.ts, import-arena.ts, fetch-link-thumbs.ts # Утилиты наполнения vault
-├── extension/                  # Chrome/Safari веб-клиппер
+├── extension/                  # Chrome/Safari расширение
 │   ├── background.js           # Service worker: контекстное меню, native messaging
 │   ├── content.js              # Content script: метаданные, Defuddle, Twitter/Instagram парсеры
 │   ├── popup/                  # React popup (исходники, собирается Vite)
 │   │   ├── index.html          # HTML entry point
 │   │   ├── main.tsx            # React entry
-│   │   ├── overlay-entry.tsx / OverlayShell.tsx # Overlay-вариант клиппера
+│   │   ├── overlay-entry.tsx / OverlayShell.tsx # Overlay-вариант расширения
 │   │   ├── popup-layout.css    # Импорт global.css + popup-размеры
 │   │   ├── PopupApp.tsx        # Корневой компонент
 │   │   ├── components/         # VaultSelect, TypeSwitcher, ChannelList, SaveButton, ScreenshotPreview
@@ -253,7 +253,7 @@ local-arena/
 │   │   └── TestData/           # Тестовые .md файлы (копируются в Documents при первом запуске)
 │   └── MineCore.xcframework # Скомпилированный Rust core (device + simulator)
 ├── vite.extension.config.ts    # Vite-конфигурация для сборки расширения
-├── vite.overlay.config.ts      # Vite-конфигурация overlay-варианта клиппера
+├── vite.overlay.config.ts      # Vite-конфигурация overlay-варианта расширения
 ├── public/                     # Статические ассеты
 ├── index.html
 ├── components.json             # Конфигурация shadcn/ui
@@ -318,13 +318,13 @@ local-arena/
 - Xcode Command Line Tools (`swiftc`): обязательны — сборка компилирует
   iCloud-progress helper (`src-tauri/native/icloud_progress_helper.swift`)
   безусловно; без них не пройдёт даже `cargo check`
-- yt-dlp: `brew install yt-dlp` — нужен клипперу, чтобы забирать видео из постов
+- yt-dlp: `brew install yt-dlp` — нужен расширению, чтобы забирать видео из постов
   X с возрастным ограничением. Без него остальное сохранение работает как
   прежде, а этот шаг завершается понятной ошибкой
 
 ## Test data
 
-Тестовый vault: `~/Desktop/Тест/` — сохранённые блоки из веб-клиппера (статьи, Twitter, Instagram, YouTube).
+Тестовый vault: `~/Desktop/Тест/` — сохранённые блоки из расширения (статьи, Twitter, Instagram, YouTube).
 
 ## Development
 
@@ -360,7 +360,7 @@ cargo +1.88.0 check --workspace --all-targets --locked # MSRV gate
 cargo clippy                   # Линтинг Rust
 ```
 
-`extension/dist/` не хранится в Git. Desktop-команды не собирают клиппер:
+`extension/dist/` не хранится в Git. Desktop-команды не собирают расширение:
 перед `Load unpacked` в Chrome/Dia и после очистки build outputs всегда
 запускайте `bun run build:extension`.
 
@@ -369,7 +369,7 @@ Native host — отдельный установленный бинарник, 
 clipper:install-host`; сборка приложения его не обновляет. Особенно при
 изменении `CURRENT_SCHEMA_VERSION`: приложение поднимет базу до новой версии, а
 старый хост откажется её открывать с ошибкой «database schema version N is newer
-than supported version M», и сохранение из клиппера перестанет работать целиком.
+than supported version M», и сохранение из расширения перестанет работать целиком.
 
 ## Operational launch rule
 

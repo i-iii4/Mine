@@ -106,7 +106,7 @@ downloaded inline media в body.
 
 Правила:
 
-1. Новые клипы всегда используют wikilink для local downloaded media.
+1. Новые карточки всегда используют wikilink для local downloaded media.
 2. Internal URLs (http://, https://), которые не download'ятся (fail
    или skipped), остаются в `![alt](url)` форме.
 3. Alt text preserved через pipe separator; пустой alt даёт `![[name]]`.
@@ -254,7 +254,7 @@ kind. New inline-media extraction creates an empty-body media-card with
 
 ### Manual QA
 
-1. Новый twitter-клип с видео — `.md` содержит `![[name (video 1).mp4]]`,
+1. Новая twitter-карточка с видео — `.md` содержит `![[name (video 1).mp4]]`,
    видео рендерится в Detail.
 2. Новая статья с embedded images — wikilinks для всех embed'ов.
 3. Existing block (pre-18.H.1) — продолжает рендериться корректно.

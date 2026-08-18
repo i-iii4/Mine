@@ -192,7 +192,7 @@ Masonry-сетка блоков, как на десктопе. Pull-to-refresh. 
 
 ### 5. Save (Share Extension)
 
-Компактный UI: preview карточка + tag picker + save button. Аналог popup'а десктопного клиппера.
+Компактный UI: preview карточка + tag picker + save button. Аналог popup'а десктопного расширения.
 
 ## Структура проекта
 
