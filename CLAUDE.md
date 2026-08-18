@@ -141,8 +141,9 @@ local-arena/
 │   │   │   ├── preview_plan.rs # Общий contract preview_manifest + thumbnail pipeline
 │   │   │   ├── media_refs.rs   # Резолв media-ссылок (wikilinks, basename lookup)
 │   │   │   ├── media_dimensions.rs # Извлечение размеров медиа
-│   │   │   ├── clipper_uploads.rs # Pending clipper uploads
+│   │   │   ├── clipper_uploads.rs # Pending uploads расширения
 │   │   │   ├── article_audio.rs # Article audio sidecar persistence
+│   │   │   ├── cloud_waits.rs  # Журнал ожиданий iCloud по сессиям (рекомендация Keep Downloaded)
 │   │   │   ├── vault_stats.rs  # Read model статистики хранилища
 │   │   │   ├── files.rs        # File operations (copy, move, delete)
 │   │   │   ├── graph.rs        # GraphSnapshot projection for Graph View
@@ -168,7 +169,10 @@ local-arena/
 │   │       ├── blocks.rs       # → вызывает domain + storage
 │   │       ├── channels.rs     # list/create/delete/reorder channels
 │   │       ├── conflicts.rs    # Vault conflict resolution
-│   │       ├── clipper_recovery.rs # Recovery pending clipper uploads
+│   │       ├── clipper_recovery.rs # Recovery pending uploads расширения
+│   │       ├── clipper_setup.rs # Установка native host из настроек, статус связи
+│   │       ├── icloud_progress.rs # Процент загрузки файла из iCloud (Swift-помощник)
+│   │       ├── cloud_recommendation.rs # Состояние и закрытие рекомендации Keep Downloaded
 │   │       ├── article_audio.rs # Article audio state/generate/delete
 │   │       ├── article_audio_desktop.rs # Desktop synthesis через Swift helper
 │   │       ├── vault_stats.rs  # Statistics bar read model
@@ -178,6 +182,10 @@ local-arena/
 │   │       ├── vault.rs        # select_vault, get_vault_path, rebuild_index
 │   │       ├── settings.rs     # Окно настроек: spaces list, orphan media (scan/promote/delete)
 │   │       └── import.rs       # list_arena_channels, import_arena_channels
+│   ├── native/                 # Нативные помощники, собираются build.rs
+│   │   ├── icloud_progress_helper.swift # Честные сигналы iCloud: dataless-флаг + Progress
+│   │   └── article_audio_helper.swift   # AVSpeechSynthesizer (feature article-audio)
+│   ├── build.rs                # Сборка Swift-помощников, ресурсы бандла
 │   ├── Cargo.toml
 │   └── tauri.conf.json
 ├── src/                        # React-фронтенд
@@ -186,7 +194,7 @@ local-arena/
 │   ├── settings/               # Окно настроек (второй Vite-entry: settings.html)
 │   │   ├── main.tsx            # Bootstrap: тема до первого рендера
 │   │   ├── SettingsApp.tsx     # Хром + навигация разделов
-│   │   └── *Section.tsx        # AppearanceSection, GraphSection, SpacesSection, OrphansSection
+│   │   └── *Section.tsx        # AppearanceSection, GraphSection, SpacesSection, ClipperSection (раздел Extension), OrphansSection
 │   ├── components/
 │   │   ├── Grid.tsx            # Virtualized masonry grid — scroll-based windowing, direction-aware overscan, priority loading
 │   │   ├── GraphView.tsx       # Graph M1: Canvas nodes/edges, route-derived scope, selection/a11y
@@ -200,7 +208,19 @@ local-arena/
 │   │   ├── DropZone.tsx        # Drag-and-drop файлов для создания блоков
 │   │   ├── ImportDialog.tsx    # 4-шаговый импорт из Are.na
 │   │   ├── CardContextMenu.tsx # Контекстное меню карточки: коллекции, удаление
-│   │   └── SidebarResizeHandle.tsx # Ресайз-ручка сайдбара (pill-стиль)
+│   │   ├── SidebarResizeHandle.tsx # Ресайз-ручка сайдбара (pill-стиль)
+│   │   ├── NotificationCard.tsx # Единый вид уведомления: правый нижний угол, bg-popover
+│   │   ├── FirstCardMarker.tsx # Одноразовая пометка первой карточки (О19)
+│   │   ├── CloudRecommendation.tsx # Рекомендация Keep Downloaded по журналу ожиданий
+│   │   ├── CloudDisclaimer.tsx # Постоянное объяснение «Files in iCloud» в настройках
+│   │   ├── CloudBadge.tsx      # Метка «содержимое в iCloud» в левом верхнем углу карточки
+│   │   ├── ActivityIndicators.tsx # Загрузка из iCloud и индексация в верхней панели
+│   │   ├── IndexingProgress.tsx # Числа первого индексирования вместо пустой ленты
+│   │   ├── SpaceUnavailable.tsx # Экран недоступной папки: missing и access_denied
+│   │   ├── FolderConfirmation.tsx # Подтверждение непустой папки при выборе пространства
+│   │   ├── EmptySpaceOnboarding.tsx # Два пути наполнения пустого пространства
+│   │   ├── ComponentTestBench.tsx # Витрина дизайн-системы: примитивы и токены вживую
+│   │   └── EdgeStatesSection.tsx # Витрина краевых состояний (гейт test:edge-states)
 │   ├── hooks/                  # useSidebarResize, useGridScroll, useChannelPreviewsEvents, useProjectionRevisionOwner, useThumbnailUpgrade и др.
 │   ├── types/                  # generated.ts from Rust/Specta + frontend-owned index.ts
 │   ├── lib/                    # commands.ts (IPC), masonryLayout.ts, cardLayout.ts, cardHeight.ts, cardAspect.ts (политика обрезки), assets.ts, clipboard.ts, utils.ts (cn()) и др.
@@ -214,6 +234,8 @@ local-arena/
 │   ├── sidebar-reorder-audit.mjs # Playwright sidebar collection reorder gesture acceptance
 │   ├── graph-view-audit.mjs    # Dark/light Canvas pixel/interaction/performance acceptance
 │   ├── cold-space-browser-audit.mjs # First/settled/deep cold Grid acceptance
+│   ├── edge-states-audit.mjs   # Витрина краевых состояний: варианты, контексты, обрезка, невидимый текст
+│   ├── fetch-ytdlp.mjs         # Загрузка бинарника yt-dlp в ресурсы бандла
 │   ├── native-shell-smoke.mjs  # Packaged macOS WKWebView + Tauri IPC smoke
 │   ├── build-ios.sh            # Сборка Rust core + xcframework для iOS
 │   └── seed-vault.ts, import-arena.ts, fetch-link-thumbs.ts # Утилиты наполнения vault
@@ -273,20 +295,31 @@ local-arena/
 ## Vault structure (пользовательские данные)
 
 ```
-~/Mine/                       # Vault — выбирается пользователем
+~/Mine/                             # Пространство — выбирается пользователем
 ├── .mine/
-│   └── vault-id                    # Sync'ed идентификатор vault
-├── sunset-tokyo.md                 # Метаданные (frontmatter + wikilinks)
-├── sunset-tokyo.jpg                # Медиафайл
-├── stripe-homepage.md              # Ссылка (frontmatter, тело пустое)
-├── stripe-og.png                   # Миниатюра ссылки
-├── crdt-article.md                 # Статья (frontmatter + текст)
-└── ...                             # Всё плоско в корне vault
+│   ├── vault-id                    # Sync'ed идентификатор пространства
+│   └── layout.json                 # Целевые папки записи (читают и приложение, и расширение)
+├── Collections/
+│   └── Красивый веб.md             # Коллекция (frontmatter type: channel)
+├── Cards/
+│   ├── sunset-tokyo.md             # Метаданные (frontmatter + wikilinks)
+│   ├── stripe-homepage.md          # Ссылка (frontmatter, тело пустое)
+│   └── crdt-article.md             # Статья (frontmatter + текст)
+└── Media/
+    ├── sunset-tokyo.jpg            # Медиафайл
+    └── stripe-og.png               # Миниатюра ссылки
 ```
+
+Раскладка трёх папок — стандарт для новых пространств; существующее плоское
+хранилище остаётся плоским и не переписывается (`SPEC_VAULT_LIFECYCLE.md`),
+разложить его можно CLI `migrate-vault-layout`.
 
 ```
 ~/Library/Application Support/com.mine.app/vaults/<vault-id>/  # Local derived store
 ├── index.db
+├── cloud-waits.json                # Журнал ожиданий iCloud по сессиям
+├── first-card.json                 # Пометка первой карточки показана
+├── owner-path.json                 # Владелец папки: копия пространства vs переезд
 └── cache/
     ├── thumbs/
     └── audio/
@@ -343,6 +376,7 @@ bun run test:rust              # Только Rust workspace tests
 bun run test:feed-scroll       # Browser Grid acceptance (requires running dev server)
 bun run test:graph             # Browser Graph Canvas acceptance (requires running dev server)
 bun run test:cold-space        # Browser cold first/settled/deep Grid acceptance (requires running dev server)
+bun run test:edge-states       # Browser edge-states showcase acceptance (requires running dev server)
 bun run test:sidebar-reorder   # Browser sidebar collection reorder gesture acceptance (requires running dev server)
 bun run test:browser           # Сам поднимает Vite и запускает все browser gates
 bun run test:native-shell      # Packaged macOS WKWebView + real Tauri invoke smoke
