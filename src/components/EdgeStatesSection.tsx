@@ -225,7 +225,10 @@ export function EdgeStatesSection() {
           name="Индикаторы в верхней панели — на целом экране"
           when="Место индикаторов: правый край верхней панели, рядом со сведениями пространства. Ниже — те же индикаторы крупно."
         >
-          <div className="overflow-hidden rounded-1 border border-border">
+          {/* Marked as context: this draws where a component lives, not one of
+              its variants, so the variant counters in the browser audit skip
+              it instead of being bumped every time a context is added. */}
+          <div className="overflow-hidden rounded-1 border border-border" data-showcase-context="">
             <div className="flex h-8 items-center gap-3 border-b border-border bg-chrome px-3">
               <span className="w-20 shrink-0" aria-hidden="true" />
               <span className="text-base font-semibold text-foreground">Mine</span>
@@ -307,7 +310,7 @@ export function EdgeStatesSection() {
           when="Это не всплывающее уведомление, а постоянный блок в настройках, раздел Extension, под шагами установки."
           drawn
         >
-          <div className="overflow-hidden rounded-1 border border-border">
+          <div className="overflow-hidden rounded-1 border border-border" data-showcase-context="">
             <div className="flex h-8 items-center border-b border-border bg-chrome px-3">
               <span className="w-16 shrink-0" aria-hidden="true" />
               <span className="text-base font-semibold text-foreground">Settings</span>

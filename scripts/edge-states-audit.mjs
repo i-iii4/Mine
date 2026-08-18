@@ -60,12 +60,21 @@ async function main() {
       const out = {
         height: Math.round(section.getBoundingClientRect().height),
         badgeVisible: !!document.querySelector("[data-card-cloud-badge]"),
-        clipperStatuses: document.querySelectorAll("[data-clipper-status]").length,
+        // Variants are counted outside the context frames: a case that draws
+        // where a component lives (a settings page, a window top bar) is not
+        // another variant of it, and counting the two together would turn
+        // these numbers into a running total nobody can reason about.
+        clipperStatuses: document.querySelectorAll(
+          "[data-clipper-status]:not([data-showcase-context] *)",
+        ).length,
         disclaimers: document.querySelectorAll("[data-cloud-disclaimer]").length,
         spaceUnavailable: !!document.querySelector("[data-space-unavailable]"),
         folderConfirmation: !!document.querySelector("[data-folder-confirmation]"),
         onboarding: !!document.querySelector("[data-empty-space-onboarding]"),
-        activityIndicators: document.querySelectorAll("[data-main-secondary-activity]").length,
+        activityIndicators: document.querySelectorAll(
+          "[data-main-secondary-activity]:not([data-showcase-context] *)",
+        ).length,
+        contexts: document.querySelectorAll("[data-showcase-context]").length,
         overflowX:
           document.documentElement.scrollWidth > document.documentElement.clientWidth,
         clipped: [],
@@ -126,6 +135,11 @@ async function main() {
       "all three indicator combinations are drawn",
       report.activityIndicators === 3,
       `${report.activityIndicators} of 3`,
+    );
+    check(
+      "both components are also drawn in their real context",
+      report.contexts === 2,
+      `${report.contexts} of 2`,
     );
     check(
       "no boxed screen is cut off by its frame",
