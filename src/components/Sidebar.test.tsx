@@ -1026,7 +1026,11 @@ describe("Sidebar", () => {
     expect(title).not.toHaveClass("truncate");
     expect(rail).toHaveStyle({ paddingLeft: "4px" });
     expect(rightDivider).toHaveClass("bg-sidebar-border");
-    expect(rightDivider).toHaveStyle({ right: "88px" });
+    // The column that holds the Connect button follows the row's own inset:
+    // the button is placed from it, and a guideline measured from the panel
+    // edge alone let the button cross into the next column wherever that inset
+    // is not zero — which is every alt design.
+    expect(rightDivider).toHaveStyle({ right: "calc(var(--sidebar-row-pad-x) + 88px)" });
     expect(strip).toHaveAttribute("data-sidebar-preview-fade-width", "24");
     expect(strip).toHaveAttribute("data-sidebar-preview-protected-width", "92");
   });

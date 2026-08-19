@@ -63,10 +63,23 @@ const SIDEBAR_ROW_ACTION_BUTTON_WIDTH = 80;
 const SIDEBAR_ROW_ACTION_BUTTON_GAP = 8;
 const SIDEBAR_ROW_RIGHT_GUIDELINE_OFFSET =
   SIDEBAR_ROW_ACTION_BUTTON_WIDTH + SIDEBAR_ROW_ACTION_BUTTON_GAP;
+/// The strip along the right edge that the Connect button occupies, measured
+/// from the panel edge. The button is positioned from the row's inner padding,
+/// so everything that has to line up with it — the guideline that closes the
+/// column, the protected tail of the thumbnail strip — must count that padding
+/// in too. It is zero in the primary design and 16px in the alt designs, where
+/// the row carries its inset itself; leaving it out is what pushed the button
+/// across its own column there.
+const SIDEBAR_ROW_ACTION_ZONE = `calc(var(--sidebar-row-pad-x) + ${SIDEBAR_ROW_RIGHT_GUIDELINE_OFFSET}px)`;
 const SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH = EDGE_FADE_WIDTH;
 const SIDEBAR_PREVIEW_MASK_FADE_WIDTH = EDGE_FADE_WIDTH;
 const SIDEBAR_PREVIEW_MASK_CLEAR_TAIL_WIDTH =
   SIDEBAR_ROW_RIGHT_GUIDELINE_OFFSET + SIDEBAR_PREVIEW_DIVIDER_GAP;
+/// The same tail, expressed against the action zone so it follows the row's
+/// inner padding: the thumbnails must stop clear of the button, not clear of
+/// where the button would be if the row had no inset.
+const SIDEBAR_PREVIEW_MASK_CLEAR_TAIL =
+  `calc(var(--sidebar-row-pad-x) + ${SIDEBAR_PREVIEW_MASK_CLEAR_TAIL_WIDTH}px)`;
 const SIDEBAR_ROW_ACTION_BUTTON_CLASS =
   "inline-flex h-6 items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover";
 const SIDEBAR_ROW_TEXT_MASK_STYLE = createRightFadeMaskStyle(
@@ -75,7 +88,7 @@ const SIDEBAR_ROW_TEXT_MASK_STYLE = createRightFadeMaskStyle(
 );
 const SIDEBAR_PREVIEW_MASK_STYLE = createRightFadeMaskStyle(
   SIDEBAR_PREVIEW_MASK_FADE_WIDTH,
-  SIDEBAR_PREVIEW_MASK_CLEAR_TAIL_WIDTH,
+  SIDEBAR_PREVIEW_MASK_CLEAR_TAIL,
 );
 
 type SidebarPreviewTarget = {
@@ -707,7 +720,7 @@ const SidebarCore = memo(function SidebarCore({
                 aria-hidden="true"
                 data-sidebar-guideline="right"
                 className="absolute inset-y-0 w-px bg-sidebar-border"
-                style={{ right: `${SIDEBAR_ROW_RIGHT_GUIDELINE_OFFSET}px` }}
+                style={{ right: SIDEBAR_ROW_ACTION_ZONE }}
               />
             </div>
           )}

@@ -47,19 +47,28 @@ const rampOffset = (fadeWidth: number, progress: number) =>
 /// Build a mask that fades content out toward the right edge.
 ///
 /// `clearTailWidth` reserves fully transparent space at the right edge, used by
-/// sidebar rows to clear the action-button column before the ramp begins.
+/// sidebar rows to clear the action-button column before the ramp begins. It
+/// takes a CSS length as well as a number, because that column's width depends
+/// on a variable the design variant sets — a mask baked from pixels alone
+/// would keep clearing the wrong strip there.
 export function createRightFadeMaskStyle(
   fadeWidth: number,
-  clearTailWidth: number,
+  clearTailWidth: number | string,
 ): CSSProperties {
+  const tail = (extra: number): string =>
+    typeof clearTailWidth === "number"
+      ? `${clearTailWidth + extra}px`
+      : extra === 0
+        ? clearTailWidth
+        : `calc(${clearTailWidth} + ${extra}px)`;
   const stops = [
     "rgba(0, 0, 0, 1) 0%",
-    `rgba(0, 0, 0, 1) calc(100% - ${clearTailWidth + fadeWidth}px)`,
+    `rgba(0, 0, 0, 1) calc(100% - ${tail(fadeWidth)})`,
     ...EDGE_FADE_STOPS.map(
       ({ alpha, progress }) =>
-        `rgba(0, 0, 0, ${alpha}) calc(100% - ${clearTailWidth + rampOffset(fadeWidth, progress)}px)`,
+        `rgba(0, 0, 0, ${alpha}) calc(100% - ${tail(rampOffset(fadeWidth, progress))})`,
     ),
-    `rgba(0, 0, 0, 0) calc(100% - ${clearTailWidth}px)`,
+    `rgba(0, 0, 0, 0) calc(100% - ${tail(0)})`,
     "rgba(0, 0, 0, 0) 100%",
   ].join(", ");
   const gradient = `linear-gradient(to right, ${stops})`;

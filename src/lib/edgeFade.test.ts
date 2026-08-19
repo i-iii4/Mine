@@ -37,6 +37,18 @@ describe("createRightFadeMaskStyle", () => {
     expect(style.maskImage).toBe(style.WebkitMaskImage);
   });
 
+  it("takes a CSS length for the tail so a variable width can drive it", () => {
+    // The sidebar's action column is as wide as the row's own inset plus the
+    // button, and that inset is set per design variant. Baking pixels here
+    // cleared the wrong strip in every variant whose inset is not zero.
+    const style = createRightFadeMaskStyle(24, "calc(var(--sidebar-row-pad-x) + 92px)");
+    const gradient = String(style.maskImage);
+
+    expect(gradient).toContain("calc(100% - calc(var(--sidebar-row-pad-x) + 92px))");
+    expect(gradient).toContain("calc(100% - calc(calc(var(--sidebar-row-pad-x) + 92px) + 24px))");
+    expect(style.maskImage).toBe(style.WebkitMaskImage);
+  });
+
   it("offsets the whole ramp by the clear tail", () => {
     const withoutTail = String(createRightFadeMaskStyle(24, 0).maskImage);
     const withTail = String(createRightFadeMaskStyle(24, 12).maskImage);
