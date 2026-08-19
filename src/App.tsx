@@ -3009,7 +3009,10 @@ export function AppWithVault({
                       <X aria-hidden="true" className="size-3" />
                     </button>
                   )}
-                  {compactDetailTopMenuActive && renderedDetailBlock && (
+                  {/* Only when the metadata row is not carrying it already:
+                      at the foot of the window the collections switch lives
+                      there, and two of them are one too many. */}
+                  {compactDetailTopMenuActive && renderedDetailBlock && !metadataRowAtBottom && (
                     <CompactDetailLinkModeSwitch
                       value={detailLinkMode}
                       onChange={setDetailLinkMode}
