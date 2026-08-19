@@ -77,7 +77,10 @@ function MainSecondaryStatsLeft({
   return (
     <div
       data-main-secondary-stats-left=""
-      className="flex h-full min-w-0 items-center overflow-hidden px-[var(--main-secondary-pad-x)] font-mono text-sm leading-none text-tertiary-foreground"
+      // Over the sidebar column: same edge pad as the rows below it and the
+      // bottom bar. The right half of this row keeps the app-wide rhythm — it
+      // stands over the feed and lines up with the cards instead.
+      className="flex h-full min-w-0 items-center overflow-hidden px-[var(--chrome-edge-pad)] font-mono text-sm leading-none text-tertiary-foreground"
     >
       {stats && (
         <div className="flex min-w-0 items-center gap-5 overflow-hidden whitespace-nowrap">
@@ -236,7 +239,7 @@ export function MainSecondaryTopBar({
         </div>
         {detailBlock && !sidebarCollapsed && (
           <div
-            className="main-secondary-bar-layer absolute inset-0 flex h-full min-w-0 items-center gap-2 px-[var(--main-secondary-pad-x)]"
+            className="main-secondary-bar-layer absolute inset-0 flex h-full min-w-0 items-center gap-2 px-[var(--chrome-edge-pad)]"
             data-entered={detailLayerEntered ? "true" : "false"}
             data-secondary-sidebar-link-mode-bar=""
           >

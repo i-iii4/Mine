@@ -3334,7 +3334,12 @@ export function AppWithVault({
 
       {!bottomActionBarHidden && (
         <div
-          className="flex h-8 shrink-0 items-center gap-2 border-t border-border bg-accent px-[var(--edge-rhythm,32px)]"
+          // Stands under the sidebar column, so it follows the chrome edge pad:
+          // the app-wide rhythm in the primary design, 16px in alt, where the
+          // sidebar rows are already on 16 and these buttons must line up under
+          // them. Symmetric on both sides — a bar whose two ends obey different
+          // rules reads as a layout mistake.
+          className="flex h-8 shrink-0 items-center gap-2 border-t border-border bg-accent px-[var(--chrome-edge-pad)]"
           data-bottom-action-bar=""
         >
           <ActionButton hotkey="⌘⇧N" onClick={() => setIsCreatingChannel(true)}>

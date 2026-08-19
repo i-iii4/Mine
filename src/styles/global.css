@@ -826,11 +826,19 @@ body {
   --top-collection-pad-x: calc(var(--edge-rhythm, 32px) - 8px);
   /* second chrome row: vault meta (left) and collection count (right) */
   --main-secondary-pad-x: var(--edge-rhythm, 32px);
+  /* Edge inset of the chrome standing over the sidebar column — the bottom
+     action bar and the sidebar half of the second chrome row. In the primary
+     design it is the app-wide rhythm, so nothing moves there; the alt design
+     pins it to the same 16px its sidebar rows already use, so the column reads
+     as one vertical from the counter at the top down to the buttons at the
+     bottom. One name, one place to change it. */
+  --chrome-edge-pad: var(--edge-rhythm, 32px);
 }
 :root[data-design="alt"] {
   --sidebar-nav-pad-x: 0px;
   --sidebar-nav-pad-top: 0px;
   --sidebar-row-pad-x: 16px;
+  --chrome-edge-pad: 16px;
   /* alt: meta 88 + row-pad 16 + divider-gap 4 = 108 */
   --sidebar-reserved: 108px;
   --sidebar-min-width: 284px;
