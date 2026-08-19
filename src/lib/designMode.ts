@@ -6,7 +6,10 @@
 
 import { useSyncExternalStore } from "react";
 
-export type DesignMode = "default" | "alt";
+/// Two alternative layouts live beside the primary one. Alt 2 starts as an
+/// exact copy of Alt 1 — a place to try changes without disturbing a variant
+/// that is already in use.
+export type DesignMode = "default" | "alt" | "alt2";
 
 export const DESIGN_STORAGE_KEY = "mine.design";
 
@@ -16,23 +19,23 @@ export function getStoredDesignMode(): DesignMode {
     localStorage.setItem("theme", "system");
     localStorage.setItem(DESIGN_STORAGE_KEY, "alt");
   }
-  return localStorage.getItem(DESIGN_STORAGE_KEY) === "alt" ? "alt" : "default";
+  const stored = localStorage.getItem(DESIGN_STORAGE_KEY);
+  return stored === "alt" || stored === "alt2" ? stored : "default";
 }
 
 export function applyDesign(mode: DesignMode) {
   localStorage.setItem(DESIGN_STORAGE_KEY, mode);
   const root = document.documentElement;
-  if (mode === "alt") {
-    root.setAttribute("data-design", "alt");
-  } else {
+  if (mode === "default") {
     root.removeAttribute("data-design");
+  } else {
+    root.setAttribute("data-design", mode);
   }
 }
 
 export function getDesignMode(): DesignMode {
-  return document.documentElement.getAttribute("data-design") === "alt"
-    ? "alt"
-    : "default";
+  const attr = document.documentElement.getAttribute("data-design");
+  return attr === "alt" || attr === "alt2" ? attr : "default";
 }
 
 function subscribe(onChange: () => void): () => void {

@@ -75,7 +75,8 @@ const ACTION_BUTTON_OPTIONS = [
 
 const DESIGN_OPTIONS = [
   { value: "default", label: "Default" },
-  { value: "alt", label: "Alt" },
+  { value: "alt", label: "Alt 1" },
+  { value: "alt2", label: "Alt 2" },
 ] as const;
 
 export function AppearanceSection() {
@@ -160,7 +161,7 @@ export function AppearanceSection() {
 
       <SettingRow
         label="Design"
-        caption="Experimental layout variant — combines with any theme"
+        caption="Experimental layout variants — combine with any theme. Alt 2 starts as a copy of Alt 1"
       >
         <SegmentedControl
           aria-label="Design"

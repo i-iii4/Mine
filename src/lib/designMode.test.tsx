@@ -26,6 +26,19 @@ describe("designMode", () => {
     expect(getDesignMode()).toBe("alt");
   });
 
+  it("keeps the second alternative apart from the first", () => {
+    applyDesign("alt2");
+    expect(localStorage.getItem("mine.design")).toBe("alt2");
+    expect(document.documentElement.getAttribute("data-design")).toBe("alt2");
+    expect(getDesignMode()).toBe("alt2");
+    expect(getStoredDesignMode()).toBe("alt2");
+
+    // An unknown value is not a variant: it falls back to the primary design
+    // rather than leaving a stray attribute no stylesheet answers to.
+    localStorage.setItem("mine.design", "alt9");
+    expect(getStoredDesignMode()).toBe("default");
+  });
+
   it("persists and applies the design variant independently of the theme", () => {
     applyDesign("alt");
     expect(localStorage.getItem("mine.design")).toBe("alt");

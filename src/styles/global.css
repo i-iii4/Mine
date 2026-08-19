@@ -795,10 +795,12 @@ body {
 }
 
 /* ── Design variants: layout metrics ──────────────────────────────────────────
-   The alternative design ("Alt" in Theme, root attribute data-design="alt")
-   changes layout metrics only — colors follow the system scheme. Defaults
-   reproduce the primary design; the alt block overrides them. JS-computed
-   layout (masonry grid) reads the same attribute via src/lib/designMode.ts. */
+   Two alternative designs ("Alt 1" and "Alt 2" in Appearance, root attribute
+   data-design="alt" / "alt2") change layout metrics only — colors follow the
+   system scheme. Defaults reproduce the primary design; the shared alt block
+   overrides them for both variants, and the alt2 block below it holds whatever
+   makes Alt 2 differ. JS-computed layout (masonry grid) reads the same
+   attribute via src/lib/designMode.ts. */
 :root {
   /* Edge rhythm — one value behind every inset from a window edge or the
      chrome. Settings publish --edge-rhythm on the root; the fallback keeps the
@@ -834,7 +836,8 @@ body {
      bottom. One name, one place to change it. */
   --chrome-edge-pad: var(--edge-rhythm, 32px);
 }
-:root[data-design="alt"] {
+:root[data-design="alt"],
+:root[data-design="alt2"] {
   --sidebar-nav-pad-x: 0px;
   --sidebar-nav-pad-top: 0px;
   --sidebar-row-pad-x: 16px;
@@ -842,6 +845,13 @@ body {
   /* alt: meta 88 + row-pad 16 + divider-gap 4 = 108 */
   --sidebar-reserved: 108px;
   --sidebar-min-width: 284px;
+}
+
+/* Alt 2 — a copy of Alt 1 to experiment in. Everything above applies to it;
+   this block is where the two start to diverge, and it is empty on purpose
+   until they do. */
+:root[data-design="alt2"] {
+  /* no overrides yet */
 }
 
 /* ── Relative elevation (color architecture, category 3) ─────────────────────

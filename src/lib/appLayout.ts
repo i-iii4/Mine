@@ -16,9 +16,12 @@ export const SIDEBAR_NAME_MAX_PX = 150;
 // (88) plus the fixed paddings/gap, which differ by design variant.
 //   default: meta 88 + nav-pad 32×2 + divider-gap 4 = 156
 //   alt:     meta 88 + row-pad 16    + divider-gap 4 = 108
+// Alt 2 is a copy of Alt 1 for now; it gets its own number the moment its
+// row padding stops matching.
 const SIDEBAR_RESERVED_PX: Record<DesignMode, number> = {
   default: 156,
   alt: 108,
+  alt2: 108,
 };
 
 /** Minimum panel width: the point where name = icons = meta = SIDEBAR_COLUMN_MIN. */

@@ -33,7 +33,7 @@ describe("AppearanceSection", () => {
   it("switches the design variant independently of the theme", () => {
     render(<AppearanceSection />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Alt" }));
+    fireEvent.click(screen.getByRole("button", { name: "Alt 1" }));
 
     expect(localStorage.getItem("mine.design")).toBe("alt");
     expect(document.documentElement.getAttribute("data-design")).toBe("alt");
@@ -44,6 +44,20 @@ describe("AppearanceSection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Light" }));
     expect(document.documentElement.getAttribute("data-design")).toBe("alt");
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+  });
+
+  it("switches to the second alternative and back to the primary design", () => {
+    render(<AppearanceSection />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Alt 2" }));
+    expect(localStorage.getItem("mine.design")).toBe("alt2");
+    expect(document.documentElement.getAttribute("data-design")).toBe("alt2");
+
+    fireEvent.click(screen.getByRole("button", { name: "Default" }));
+    expect(localStorage.getItem("mine.design")).toBe("default");
+    // The primary design carries no attribute at all, so no stylesheet rule
+    // keyed on a variant can match it.
+    expect(document.documentElement.getAttribute("data-design")).toBeNull();
   });
 
   it("persists the Compact Detail top menu flag and broadcasts its key", () => {
