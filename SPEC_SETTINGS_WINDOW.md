@@ -80,8 +80,17 @@ Related documents: [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [SPEC_FRONTEND.md](SPE
 | Настройка | Контрол | Ключ |
 |---|---|---|
 | Theme: System / Light / Dark | `SegmentedControl` (size default) | `theme` |
+| Design: Default / Alt 1 / Alt 2 | `SegmentedControl` (size default) | `mine.design` |
 | Compact Detail top menu | `Checkbox` + подпись | `mine.compactDetailTopMenu` |
+| Spacing: 32 / 24 / 16 | `SegmentedControl` | `mine.spacing` |
+| Bottom bar buttons: Pill / Standard | `SegmentedControl` | `mine.actionButtonStyle` |
+| Card corners | `SegmentedControl` | `mine.cardRadius` |
+| Fade content under the chrome | `Checkbox` + подпись | `mine.scrollEdgeFade` |
 | Hide bottom menu | `Checkbox` + подпись | `mine.bottomActionBarHidden` |
+
+Ось оформления (`Design`) ортогональна теме: любой вариант сочетается с любой
+темой, значения хранятся раздельно. Что именно меняет каждый вариант —
+`DESIGN_SYSTEM.md`, раздел «Варианты оформления».
 
 Каждая строка настройки: лейбл слева (`text-base`), контрол справа; подпись
 вторичным текстом (`text-sm text-muted-foreground`) под лейблом, если нужна.
