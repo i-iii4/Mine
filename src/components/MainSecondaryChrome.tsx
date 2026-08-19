@@ -139,6 +139,70 @@ function MainSecondaryStatsRight({
   );
 }
 
+/// What the open note is, in the same voice the space statistics use.
+///
+/// At the foot of the window this replaces the space's own numbers while a
+/// card is open: the row describes whatever the content area is showing, and
+/// the content area is showing one note. The title and the close control are
+/// not repeated here — in this layout they live in the top toolbar.
+function MainSecondaryNoteMeta({
+  block,
+}: {
+  /// Either shape the row is handed: the feed's light row or a freshly
+  /// indexed block. Only the fields common to both are read.
+  block: Pick<
+    LightBlock,
+    "block_type" | "saved_at" | "width" | "height" | "media_urls" | "author"
+  >;
+}) {
+  const atoms: string[] = [block.block_type];
+
+  const saved = new Date(block.saved_at);
+  if (!Number.isNaN(saved.getTime())) {
+    atoms.push(
+      saved.toLocaleDateString("ru-RU", { day: "numeric", month: "short", year: "numeric" }),
+    );
+  }
+
+  if (block.width && block.height && block.width > 0 && block.height > 0) {
+    atoms.push(`${block.width}×${block.height}`);
+  }
+
+  const mediaCount = countMediaUrls(block.media_urls);
+  if (mediaCount > 1) {
+    atoms.push(formatPluralCount(mediaCount, "media", "media"));
+  }
+
+  if (block.author) {
+    atoms.push(block.author);
+  }
+
+  return (
+    <div
+      data-main-secondary-note-meta=""
+      className="flex h-full min-w-0 items-center gap-5 overflow-hidden px-[var(--main-secondary-pad-x)] font-mono text-sm leading-none text-tertiary-foreground"
+    >
+      {atoms.map((atom) => (
+        <span key={atom} className="min-w-0 shrink-0 truncate whitespace-nowrap">
+          {atom}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/// `media_urls` is a JSON array when the indexer found inline media, and
+/// absent otherwise. A malformed value is worth no crash and no guess.
+function countMediaUrls(raw: string | null): number {
+  if (!raw) return 0;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
 export function MainSecondaryTopBar({
   sidebarCollapsed,
   sidebarResizing,
@@ -162,6 +226,7 @@ export function MainSecondaryTopBar({
   cloudPending = 0,
   indexing = false,
   onRevealSpace,
+  placement = "top",
 }: {
   sidebarCollapsed: boolean;
   sidebarResizing: boolean;
@@ -188,6 +253,10 @@ export function MainSecondaryTopBar({
   onRequestDelete: (slug: string) => void;
   onDetailClose: () => void;
   detailMenuOpenRequestSequence: number;
+  /// Where the row sits in the shell. At the foot of the window it takes the
+  /// button bar's surface and closes with a border on top instead of below —
+  /// the seam always faces the content.
+  placement?: "top" | "bottom";
 }) {
   const detailLayerEntered = Boolean(detailBlock && detailEntered);
   const mainLayerEntered = !detailLayerEntered;
@@ -210,9 +279,11 @@ export function MainSecondaryTopBar({
       data-tauri-drag-region
       data-main-secondary-top-bar=""
       className={cn(
-        "flex h-8 shrink-0 items-center border-b border-border transition-colors duration-[170ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
-        detailLayerEntered ? "bg-accent" : "bg-background",
+        "flex h-8 shrink-0 items-center transition-colors duration-[170ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
+        placement === "bottom" ? "border-t border-border bg-accent" : "border-b border-border",
+        placement === "top" && (detailLayerEntered ? "bg-accent" : "bg-background"),
       )}
+      data-main-secondary-placement={placement}
     >
       <div
         data-tauri-drag-region
@@ -269,7 +340,19 @@ export function MainSecondaryTopBar({
             onViewModeChange={onViewModeChange}
           />
         </div>
-        {detailBlock && (
+        {/* At the foot of the window the title, the card menu and the close
+            control belong to the top toolbar, so this half shows what the note
+            is instead of repeating its name. */}
+        {detailBlock && placement === "bottom" && (
+          <div
+            className="main-secondary-bar-layer absolute inset-0"
+            data-entered={detailLayerEntered ? "true" : "false"}
+            data-secondary-detail-note-meta=""
+          >
+            <MainSecondaryNoteMeta block={detailBlock} />
+          </div>
+        )}
+        {detailBlock && placement === "top" && (
           <div
             className="main-secondary-bar-layer absolute inset-0 flex h-full min-w-0 flex-1 items-center gap-3 px-[var(--edge-rhythm,32px)]"
             data-entered={detailLayerEntered ? "true" : "false"}

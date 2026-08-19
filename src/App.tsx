@@ -248,6 +248,7 @@ import { applyTheme, getStoredTheme, THEME_STORAGE_KEY } from "@/lib/themeMode";
 import {
   applyDesign,
   getStoredDesignMode,
+  useDesignMode,
   DESIGN_STORAGE_KEY,
 } from "@/lib/designMode";
 import {
@@ -716,8 +717,16 @@ export function AppWithVault({
   const renderedLinkedTags = selectedBlock
     ? selectedBlockTags
     : (detailChromeClosing ? closingDetailTags : []);
-  const compactDetailTopMenuActive = compactDetailTopMenuEnabled && renderedDetailBlock !== null;
-  const mainSecondaryTopBarVisible = !compactDetailTopMenuActive;
+  // Alt 2 moves the metadata row to the foot of the window and drops the button
+  // bar entirely: one strip along the bottom instead of two, with the row that
+  // describes what you are looking at nearest to the content it describes.
+  const design = useDesignMode();
+  const metadataRowAtBottom = design === "alt2";
+  const compactDetailTopMenuActive =
+    (compactDetailTopMenuEnabled || metadataRowAtBottom) && renderedDetailBlock !== null;
+  // At the bottom the row survives an open card — that is where its collections
+  // and note metadata now live, so hiding it would take them away.
+  const mainSecondaryTopBarVisible = metadataRowAtBottom || !compactDetailTopMenuActive;
   const detailChromeCloseDuration = compactDetailTopMenuActive
     ? DETAIL_COMPACT_CHROME_EXIT_MS
     : DETAIL_SECONDARY_CHROME_EXIT_MS;
@@ -2869,6 +2878,34 @@ export function AppWithVault({
     && !loadError
     && (isSyncing || (blocks.length === 0 && tags.length === 0 && channels.length === 0));
 
+  const metadataRow = mainSecondaryTopBarVisible ? (
+    <MainSecondaryTopBar
+          sidebarCollapsed={sidebarCollapsed}
+          sidebarResizing={sidebarResizing}
+          stats={vaultStats}
+          cloudPending={blocks.filter((item) => item.content_in_cloud).length}
+          indexing={isSyncing}
+          onRevealSpace={() => void revealItemInDir(vaultPath)}
+          detailBlock={renderedDetailBlock}
+          detailTitle={compactDetailCardTitle}
+          detailEntered={compactDetailChromeEntered}
+          detailLinkMode={detailLinkMode}
+          onDetailLinkModeChange={setDetailLinkMode}
+          viewMode={mainViewMode}
+          onViewModeChange={handleMainViewModeChange}
+          vaultPath={vaultPath}
+          tags={orderedTags}
+          currentTag={currentTag}
+          onToggleTag={handleToggleTag}
+          onCreateAndAssign={handleCreateTagFromMenu}
+          onRequestRename={setRenamingBlock}
+          onRequestDelete={requestDeleteBlock}
+          onDetailClose={handleDetailClose}
+          detailMenuOpenRequestSequence={compactDetailTopMenuRequestSequence}
+          placement={metadataRowAtBottom ? "bottom" : "top"}
+        />
+  ) : null;
+
   return (
     <DndContext
       sensors={sensors}
@@ -3027,32 +3064,7 @@ export function AppWithVault({
         </div>
       </header>
 
-      {mainSecondaryTopBarVisible && (
-        <MainSecondaryTopBar
-          sidebarCollapsed={sidebarCollapsed}
-          sidebarResizing={sidebarResizing}
-          stats={vaultStats}
-          cloudPending={blocks.filter((item) => item.content_in_cloud).length}
-          indexing={isSyncing}
-          onRevealSpace={() => void revealItemInDir(vaultPath)}
-          detailBlock={renderedDetailBlock}
-          detailTitle={compactDetailCardTitle}
-          detailEntered={compactDetailChromeEntered}
-          detailLinkMode={detailLinkMode}
-          onDetailLinkModeChange={setDetailLinkMode}
-          viewMode={mainViewMode}
-          onViewModeChange={handleMainViewModeChange}
-          vaultPath={vaultPath}
-          tags={orderedTags}
-          currentTag={currentTag}
-          onToggleTag={handleToggleTag}
-          onCreateAndAssign={handleCreateTagFromMenu}
-          onRequestRename={setRenamingBlock}
-          onRequestDelete={requestDeleteBlock}
-          onDetailClose={handleDetailClose}
-          detailMenuOpenRequestSequence={compactDetailTopMenuRequestSequence}
-        />
-      )}
+      {!metadataRowAtBottom && metadataRow}
 
       {/* Body: sidebar + main */}
       <div className="flex min-h-0 flex-1">
@@ -3332,7 +3344,12 @@ export function AppWithVault({
       ) : null}
     </div>{/* end body */}
 
-      {!bottomActionBarHidden && (
+      {/* Alt 2: the metadata row lands here, directly under the content it
+          describes, and takes the place of the button bar rather than sitting
+          above it. */}
+      {metadataRowAtBottom && metadataRow}
+
+      {!bottomActionBarHidden && !metadataRowAtBottom && (
         <div
           // Stands under the sidebar column, so it follows the chrome edge pad:
           // the app-wide rhythm in the primary design, 16px in alt, where the
