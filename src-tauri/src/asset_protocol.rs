@@ -376,6 +376,29 @@ fn mime_type_for_path(path: &Path) -> &'static str {
 mod tests {
     use super::*;
 
+    /// A clipped tweet whose title was itself a markdown link produced a
+    /// filename holding square brackets. Those are legal on disk but reserved
+    /// in a URI path, so the round trip through the asset URL is the part that
+    /// has to hold. `encodeURIComponent` escapes them; this proves the decoder
+    /// puts the exact name back together.
+    #[test]
+    fn decodes_a_path_whose_filename_holds_square_brackets() {
+        let name = "[https escobedosoliz.net casa-nogal-esp.html\u{2026}](https t.co z2hN1sQXGq) (image 1).jpg";
+        let full = format!("/Users/i/Mine/{name}");
+        let encoded: String = percent_encoding::utf8_percent_encode(
+            &full,
+            percent_encoding::NON_ALPHANUMERIC,
+        )
+        .to_string();
+        let request = Request::builder()
+            .uri(format!("asset://localhost/{encoded}"))
+            .body(Vec::new())
+            .unwrap();
+
+        let decoded = decode_request_path(&request).expect("path decodes");
+        assert_eq!(decoded, PathBuf::from(full));
+    }
+
     #[test]
     fn mime_type_sniffs_png_saved_under_jpg_extension() {
         let dir = tempfile::tempdir().unwrap();

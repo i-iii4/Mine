@@ -62,6 +62,26 @@ describe("preprocessWikilinks", () => {
     const input = "plain paragraph\n\nwith **bold** and `code`";
     expect(preprocessWikilinks(input)).toBe(input);
   });
+
+  it("keeps an embed whose filename contains a bracket", () => {
+    // A tweet whose title was itself a markdown link produced this filename.
+    // The old pattern forbade `]` inside the name, so it matched nothing and
+    // the article rendered without a single image.
+    const name = "[https escobedosoliz.net casa-nogal-esp.html…](https t.co z2hN1sQXGq) (image 1).jpg";
+    const out = preprocessWikilinks(`![[${name}]]`);
+    // Square brackets need no escape inside a markdown destination; the round
+    // brackets do, and they are the ones that would close it early.
+    expect(out).toBe(
+      "![]([https%20escobedosoliz.net%20casa-nogal-esp.html…]%28https%20t.co%20z2hN1sQXGq%29%20%28image%201%29.jpg)",
+    );
+    expect(decodeLocalMarkdownUrl(out.slice(out.indexOf("](") + 2, -1))).toBe(name);
+  });
+
+  it("does not let an unclosed embed swallow the rest of the body", () => {
+    const out = preprocessWikilinks("![[broken\nNogal House");
+    expect(out).toBe("![[broken\nNogal House");
+  });
+
 });
 
 describe("decodeLocalMarkdownUrl", () => {

@@ -10,8 +10,15 @@
 // rest. Encoding is isolated to the render boundary; the `.md` file on
 // disk stays human-readable in Obsidian and Finder.
 
-const WIKILINK_EMBED = /!\[\[([^\]]*)\]\]/g;
-const WIKILINK_LINK = /(?<!!)\[\[([^\]]*)\]\]/g;
+// Lazy up to the first `]]`, and never across a line break. Barring `]`
+// outright looked equivalent — filenames rarely hold one — until the clipper
+// saved a tweet whose title was itself a markdown link:
+// `[https example.com page…](https t.co abc) (image 1).jpg`. That `]` made the
+// pattern fail to match at all, so the embed was left as raw text and the
+// article rendered without any of its images. The closing `]]` is the real
+// delimiter; the line bound keeps an unclosed link from swallowing the body.
+const WIKILINK_EMBED = /!\[\[([^\n]*?)\]\]/g;
+const WIKILINK_LINK = /(?<!!)\[\[([^\n]*?)\]\]/g;
 
 function isRemoteMarkdownUrl(src: string): boolean {
   return src.startsWith("http://") || src.startsWith("https://");
