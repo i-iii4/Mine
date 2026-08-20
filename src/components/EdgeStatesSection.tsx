@@ -6,13 +6,16 @@
 // only when it appears in this section. See DESIGN_SYSTEM.md, «Витрина
 // состояний и краёв».
 //
-// Production components wherever a state has one — a redrawn copy would drift
-// away from the real screen and nobody would notice. Only states that live
-// inside private card internals are redrawn, and they say so.
+// Production components only. A copy drifts away from the real screen and
+// nobody notices — which is exactly what happened, and why the "redrawn" label
+// that used to excuse it is gone: a state either shows the product's own
+// component or does not belong on this page. Anything still assembled here is
+// a frame around a real component, never a substitute for one.
 
 import type { ReactNode } from "react";
-import { CloudDownload, ImageOff, Play, RefreshCw } from "lucide-react";
+import { CloudDownload, Play, RefreshCw } from "lucide-react";
 import { ActivityIndicators } from "@/components/ActivityIndicators";
+import { CardSourcelessSurface } from "@/components/Card";
 import { CloudBadge } from "@/components/CloudBadge";
 import { CloudDisclaimer } from "@/components/CloudDisclaimer";
 import { CloudRecommendationCard } from "@/components/CloudRecommendation";
@@ -33,14 +36,11 @@ import type { ClipperSetupStatus } from "@/types";
 function StateCase({
   name,
   when,
-  drawn = false,
   pending = false,
   children,
 }: {
   name: string;
   when: string;
-  /// The state lives inside a private card internal and is redrawn here.
-  drawn?: boolean;
   /// The state is specified but not in the product yet.
   pending?: boolean;
   children: ReactNode;
@@ -50,9 +50,6 @@ function StateCase({
       <div>
         <div className="flex items-baseline gap-2">
           <p className="text-base font-semibold text-foreground">{name}</p>
-          {drawn && (
-            <span className="font-mono text-sm text-muted-foreground">перерисовано</span>
-          )}
           {pending && (
             <span className="font-mono text-sm text-destructive">нет в продукте</span>
           )}
@@ -109,7 +106,6 @@ export function EdgeStatesSection() {
         <StateCase
           name="Карточка ждёт содержимое"
           when="Превью ещё не построено. Пустая поверхность без иконок и слов — это норма, а не ошибка, и продакшен рисует именно её."
-          drawn
         >
           <CardFrame>
             <div className="absolute inset-0 bg-component-fill/40" />
@@ -129,7 +125,6 @@ export function EdgeStatesSection() {
         <StateCase
           name="Разворот: оригинал едет"
           when="Превью показывается сразу, оригинал подменяет его. Число появляется, только когда система публикует прогресс, — иначе строка без числа."
-          drawn
         >
           <CardFrame>
             <div className="absolute inset-0 bg-component-fill" />
@@ -152,7 +147,6 @@ export function EdgeStatesSection() {
         <StateCase
           name="Разворот: копирование ждёт содержимое"
           when="Копирование читает файл, а чтение файла из iCloud сначала тянет его. Быстрое копирование индикатора не видит — он появляется только когда ожидание пережило общую задержку."
-          drawn
         >
           <CardFrame>
             <div className="absolute inset-0 bg-component-fill" />
@@ -166,7 +160,6 @@ export function EdgeStatesSection() {
         <StateCase
           name="Разворот: оригинал недоступен"
           when="Нет сети. Это состояние файла, а не ошибка приложения, и превью остаётся на месте."
-          drawn
         >
           <CardFrame>
             <div className="absolute inset-0 bg-component-fill" />
@@ -180,7 +173,6 @@ export function EdgeStatesSection() {
         <StateCase
           name="Видео, содержимого нет на диске"
           when="Автовоспроизведение не запускается никогда: показывается локальный постер."
-          drawn
         >
           <CardFrame>
             <div className="absolute inset-0 bg-component-fill" />
@@ -192,32 +184,23 @@ export function EdgeStatesSection() {
 
         <StateCase
           name="Медиафайл пропал"
-          when="Файл удалён вне приложения. Причина названа прямо, без разговоров про форматы."
-          drawn
+          when="Файл удалён вне приложения. Карточка называет своё имя и имя файла, который искать на диске."
         >
           <CardFrame>
-            <div className="absolute inset-0 grid place-items-center">
-              <div className="px-4 text-center">
-                <ImageOff className="mx-auto size-6 text-muted-foreground/50" aria-hidden="true" />
-                <p className="mt-1 text-sm text-foreground">Media file is missing</p>
-              </div>
-            </div>
+            <CardSourcelessSurface label="Sunset over the bay" mediaFile="sunset-over-the-bay.jpg" />
           </CardFrame>
         </StateCase>
 
         <StateCase
           name="Превью не читается"
           when="Файл кэша повреждён: он существует, проходит проверку по заголовку и не отдаёт пиксели. Исходный файл не тронут. Без собственного имени это состояние неотличимо от «ещё не готово»."
-          drawn
         >
           <CardFrame>
-            <div className="absolute inset-0 grid place-items-center">
-              <div className="px-4 text-center">
-                <ImageOff className="mx-auto size-6 text-muted-foreground/50" aria-hidden="true" />
-                <p className="mt-1 text-sm text-foreground">Sunset over the bay</p>
-                <p className="mt-1 text-sm text-muted-foreground">Preview file can’t be read</p>
-              </div>
-            </div>
+            <CardSourcelessSurface
+              label="Sunset over the bay"
+              mediaFile="sunset-over-the-bay.jpg"
+              previewUnreadable
+            />
           </CardFrame>
         </StateCase>
 
@@ -308,7 +291,6 @@ export function EdgeStatesSection() {
         <StateCase
           name="Статус связи — где он живёт"
           when="Это не всплывающее уведомление, а постоянный блок в настройках, раздел Extension, под шагами установки."
-          drawn
         >
           <div className="overflow-hidden rounded-1 border border-border" data-showcase-context="">
             <div className="flex h-8 items-center border-b border-border bg-chrome px-3">

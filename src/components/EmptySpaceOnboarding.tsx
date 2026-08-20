@@ -31,33 +31,26 @@ export function EmptySpaceOnboarding({
       style={{ minHeight: Math.max(320, viewportHeight) }}
       data-empty-space-onboarding=""
     >
-      <div className="w-full max-w-2xl px-8 text-left">
+      {/* One column, one accent. The two-column arrangement gave the second
+          half no action, so it read as an unfinished half of the first; the
+          way that needs no button is a line of text, not a column. */}
+      <div className="w-full max-w-md px-8 text-left">
         <p className="text-lg font-semibold text-foreground">Nothing here yet</p>
         <p className="mt-1 text-base text-muted-foreground">
-          Everything you save becomes plain files in your folder.
+          Everything you save becomes plain files in your folder. The extension
+          brings pages, images and videos straight into this space.
         </p>
 
-        <div className="mt-8 grid gap-10 sm:grid-cols-2">
-          <div>
-            <p className="text-base font-semibold text-foreground">Save from your browser</p>
-            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-              The extension brings pages, images and videos straight into this
-              space.
-            </p>
-            <div className="mt-3">
-              <Button onClick={onInstallClipper}>
-                <Download className="size-4" />
-                Install the extension
-              </Button>
-            </div>
-          </div>
-          <div>
-            <p className="text-base font-semibold text-foreground">Drag files in</p>
-            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-              Images, videos and documents — straight into this window.
-            </p>
-          </div>
+        <div className="mt-6">
+          <Button onClick={onInstallClipper}>
+            <Download className="size-4" />
+            Install the extension
+          </Button>
         </div>
+
+        <p className="mt-4 text-sm text-muted-foreground">
+          Or drag images, videos and documents straight into this window.
+        </p>
       </div>
     </div>
   );

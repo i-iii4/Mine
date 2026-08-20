@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useNativeWindowChromeSurface } from "@/lib/nativeWindowChromeSurface";
 import { AppearanceSection } from "./AppearanceSection";
@@ -8,7 +8,21 @@ import { OrphansSection } from "./OrphansSection";
 import { LayoutSection } from "./LayoutSection";
 import { ClipperSection } from "./ClipperSection";
 
-type SettingsSection = "appearance" | "graph" | "spaces" | "layout" | "clipper" | "orphans";
+/// Loaded on demand: the showcase pulls in every production primitive and has
+/// no business weighing down a window opened to change a checkbox.
+const ComponentTestBench = lazy(async () => {
+  const mod = await import("@/components/ComponentTestBench");
+  return { default: mod.ComponentTestBench };
+});
+
+type SettingsSection =
+  | "appearance"
+  | "graph"
+  | "spaces"
+  | "layout"
+  | "clipper"
+  | "orphans"
+  | "design-system";
 
 const SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: "appearance", label: "Appearance" },
@@ -17,6 +31,9 @@ const SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: "layout", label: "Folders" },
   { id: "clipper", label: "Extension" },
   { id: "orphans", label: "Orphans" },
+  // The design-system showcase: a working surface, not a user setting, which
+  // is why it sits last and used to hang off the main window's button bar.
+  { id: "design-system", label: "Design system" },
 ];
 
 export function SettingsApp() {
@@ -61,7 +78,19 @@ export function SettingsApp() {
           ))}
         </nav>
 
-        <main className="min-w-0 flex-1 overflow-y-auto p-s4">
+        <main
+          className={cn(
+            "min-w-0 flex-1 overflow-y-auto",
+            // The showcase brings its own page padding and needs the full
+            // width; every other section keeps the settings inset.
+            section === "design-system" ? "p-0" : "p-s4",
+          )}
+        >
+          {section === "design-system" && (
+            <Suspense fallback={null}>
+              <ComponentTestBench />
+            </Suspense>
+          )}
           {section === "appearance" && <AppearanceSection />}
           {section === "graph" && <GraphSection />}
           {section === "spaces" && <SpacesSection />}

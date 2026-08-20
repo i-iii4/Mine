@@ -12,10 +12,12 @@ describe("EmptySpaceOnboarding", () => {
       />,
     );
 
-    // An empty Everything route used to say nothing at all, leaving the clipper
-    // — the main way anything gets in — undiscoverable.
-    expect(screen.getByText(/Save from your browser/)).toBeInTheDocument();
-    expect(screen.getByText(/Drag files in/)).toBeInTheDocument();
+    // An empty Everything route used to say nothing at all, leaving the
+    // extension — the main way anything gets in — undiscoverable. One column
+    // now: the way that needs no button is a line of text, not a half-empty
+    // second column.
+    expect(screen.getByText(/The extension brings pages/)).toBeInTheDocument();
+    expect(screen.getByText(/drag images, videos and documents/i)).toBeInTheDocument();
     // The Are.na import was cancelled for this version and must not be offered.
     expect(screen.queryByText(/Are\.na/)).not.toBeInTheDocument();
   });

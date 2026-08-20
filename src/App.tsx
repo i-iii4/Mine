@@ -284,10 +284,6 @@ const DropZone = lazy(async () => {
   return { default: mod.DropZone };
 });
 
-const ComponentTestBench = lazy(async () => {
-  const mod = await import("@/components/ComponentTestBench");
-  return { default: mod.ComponentTestBench };
-});
 
 const GRID_PAGE_SIZE = 200;
 const DETAIL_SECONDARY_CHROME_EXIT_MS = 190;
@@ -497,7 +493,6 @@ export function AppWithVault({
   const [loadingMoreBlocks, setLoadingMoreBlocks] = useState(false);
   const [tags, setTags] = useState<TagCount[]>([]);
   const [channels, setChannels] = useState<ChannelDto[]>([]);
-  const [designSystemOpen, setDesignSystemOpen] = useState(false);
   const [compactDetailTopMenuEnabled, setCompactDetailTopMenuEnabled] = useState(
     getStoredCompactDetailTopMenu,
   );
@@ -739,7 +734,6 @@ export function AppWithVault({
     ? renderedDetailBlock.title ?? renderedDetailBlock.media_file ?? `${renderedDetailBlock.slug}.md`
     : "";
   const gridKeyboardNavigationDisabled = Boolean(renderedDetailBlock)
-    || designSystemOpen
     || renamingBlock !== null
     || deleteTargetSlug !== null
     || isCreatingChannel;
@@ -3216,14 +3210,6 @@ export function AppWithVault({
           </Route>
         </Routes>
 
-        {designSystemOpen && (
-          <div className="absolute inset-0 z-40 overflow-y-auto bg-background" data-design-scroll>
-            <Suspense fallback={null}>
-              <ComponentTestBench />
-            </Suspense>
-          </div>
-        )}
-
         {renderedDetailBlock && (
           <Suspense fallback={null}>
             <Detail
@@ -3367,12 +3353,6 @@ export function AppWithVault({
           </ActionButton>
           <ActionButton hotkey="⌘," onClick={handleOpenSettings}>
             Settings
-          </ActionButton>
-          <ActionButton
-            onClick={() => setDesignSystemOpen((v) => !v)}
-            isSelected={designSystemOpen}
-          >
-            Design
           </ActionButton>
           <div className="flex-1" />
           {isSyncing && (

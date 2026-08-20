@@ -1,6 +1,5 @@
-import { useState, useEffect, useMemo, memo, createContext, useContext, forwardRef, type MouseEvent as ReactMouseEvent } from "react";
+import { useState, useEffect, useMemo, memo, createContext, useContext, forwardRef, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
 import { useDraggable } from "@dnd-kit/core";
-import { ImageOff } from "lucide-react";
 import type { IndexedBlock, LightBlock } from "@/types";
 import {
   previewAssetUrl,
@@ -114,6 +113,55 @@ const CardFrame = forwardRef<HTMLDivElement, CardFrameProps>(function CardFrame(
     </div>
   );
 });
+
+/// The card's surface when there is no image to paint: the media file is gone,
+/// or its preview cannot be read. Exported so the design-system showcase draws
+/// this state from the product rather than from a copy of it — a copy is what
+/// let the showcase drift out of date unnoticed.
+export function CardSourcelessSurface({
+  label,
+  mediaFile,
+  previewUnreadable,
+  contentInCloud,
+  style,
+  geometryPending,
+}: {
+  label: string;
+  mediaFile?: string | null;
+  previewUnreadable?: boolean;
+  contentInCloud?: boolean;
+  style?: CSSProperties;
+  geometryPending?: boolean;
+}) {
+  return (
+    <GraphicSurface
+      className="flex h-full w-full items-center justify-center"
+      style={style}
+      data-card-preview-geometry={geometryPending ? "pending" : undefined}
+    >
+      <CloudBadge active={contentInCloud} />
+      {/* No icon: a crossed-out picture says nothing the sentence below does
+          not, and this is the state where a name is worth more than a symbol —
+          it is what the person will look for on disk. */}
+      <div className="px-3 text-center">
+        <p className="text-sm text-foreground">{label}</p>
+        {mediaFile && (
+          <p className="mt-1 truncate font-mono text-sm text-muted-foreground" data-card-missing-media="">
+            {mediaFile}
+          </p>
+        )}
+        {previewUnreadable && (
+          // A damaged cache file, named as such: without its own line this
+          // state is indistinguishable from a preview that just is not ready
+          // yet. The file it derives from is untouched.
+          <p className="mt-1 px-3 text-sm text-muted-foreground" data-card-preview-unreadable="">
+            Preview file can’t be read
+          </p>
+        )}
+      </div>
+    </GraphicSurface>
+  );
+}
 
 function GraphicSurface({
   children,
@@ -823,27 +871,14 @@ const ImageCard = memo(function ImageCard({
 
   if (currentSrc === null) {
     return (
-      <GraphicSurface
-        className="flex h-full w-full items-center justify-center"
+      <CardSourcelessSurface
+        label={navigationLabel}
+        mediaFile={block.media_file}
+        previewUnreadable={block.preview_unreadable}
+        contentInCloud={block.content_in_cloud}
         style={surfaceStyle}
-        data-card-preview-geometry={geometryPending ? "pending" : undefined}
-      >
-        <CloudBadge active={block.content_in_cloud} />
-        <div className="text-center">
-          <ImageOff className="mx-auto size-6 text-muted-foreground/50" />
-          <p className="mt-1 text-sm text-foreground">
-            {navigationLabel}
-          </p>
-          {block.preview_unreadable && (
-            // A damaged cache file, named as such: without its own line this
-            // state is indistinguishable from a preview that just is not
-            // ready yet. The file it derives from is untouched.
-            <p className="mt-1 px-3 text-sm text-muted-foreground" data-card-preview-unreadable="">
-              Preview file can’t be read
-            </p>
-          )}
-        </div>
-      </GraphicSurface>
+        geometryPending={geometryPending}
+      />
     );
   }
 
