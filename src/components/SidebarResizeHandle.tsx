@@ -15,7 +15,10 @@ const SECONDARY_BAR_HEIGHT = 32;
 // Both zone edges therefore land off the visible line — the natural aim point —
 // which kills the boundary flicker, and gives real catch area on the left.
 const LEFT_CATCH = 8;
-const PILL_GAP = 6;
+// Centred in the gap between the divider and the feed's first card: the feed
+// insets by the edge rhythm, the pill is PILL_WIDTH wide, so half of what is
+// left puts it in the middle of that free strip rather than against the line.
+const PILL_GAP = 5;
 const PILL_WIDTH = 6; // w-1.5
 const HANDLE_WIDTH = LEFT_CATCH + PILL_GAP + PILL_WIDTH + 2; // 22px, 2px right slack
 const PILL_MARGIN_LEFT = LEFT_CATCH + PILL_GAP; // keep pill at line + PILL_GAP
@@ -24,6 +27,9 @@ interface SidebarResizeHandleProps {
   isResizing: boolean;
   /** Whether the secondary (stats) bar is shown — its band is skipped. */
   secondaryBarVisible: boolean;
+  /** With the panel closed the pill is the only thing to grab, so it stays
+   *  visible instead of waiting for a hover nobody knows to attempt. */
+  collapsed?: boolean;
   disabled: boolean;
   onResizeStart: (startX: number, startWidth: number) => void;
   onResizeUpdate: (clientX: number) => void;
@@ -44,6 +50,7 @@ function clearNativeSelection(): void {
 export function SidebarResizeHandle({
   isResizing,
   secondaryBarVisible,
+  collapsed = false,
   disabled,
   onResizeStart,
   onResizeUpdate,
@@ -127,7 +134,7 @@ export function SidebarResizeHandle({
     [onResizeEnd],
   );
 
-  const showPill = !disabled && (hovered || isResizing);
+  const showPill = !disabled && (hovered || isResizing || collapsed);
   const bodyTop = secondaryBarVisible ? TOP_MENU_HEIGHT + SECONDARY_BAR_HEIGHT : TOP_MENU_HEIGHT;
 
   const stripClassName = cn(

@@ -107,7 +107,36 @@ describe("CardHoverMenu", () => {
     });
   });
 
-  it("keeps every hover layer on its own compositing layer", () => {
+  const HOVER_LAYERS = [
+    "[data-card-hover-overlay]",
+    "[data-card-hover-more-action]",
+    "[data-card-hover-bottom-actions]",
+  ];
+
+  it("lifts every hover layer onto its own compositing layer over video", () => {
+    const { container } = render(
+      <CardHoverMenu
+        block={makeBlock()}
+        vaultPath="/vault"
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        videoUnderneath
+      />,
+    );
+
+    // WKWebView promotes <video> into its own compositing layer, and a plain
+    // positioned sibling loses to it in paint order despite the higher
+    // z-index — the ⋯ button drew underneath feed videos. transform-gpu forces
+    // a compositing layer per hover surface so z-order is honoured again.
+    for (const selector of HOVER_LAYERS) {
+      expect(container.querySelector(selector), selector).toHaveClass("transform-gpu");
+    }
+  });
+
+  it("asks for no layer of its own without video underneath", () => {
     const { container } = render(
       <CardHoverMenu
         block={makeBlock()}
@@ -120,16 +149,11 @@ describe("CardHoverMenu", () => {
       />,
     );
 
-    // WKWebView promotes <video> into its own compositing layer, and a plain
-    // positioned sibling loses to it in paint order despite the higher
-    // z-index — the ⋯ button drew underneath feed videos. transform-gpu forces
-    // a compositing layer per hover surface so z-order is honoured again.
-    for (const selector of [
-      "[data-card-hover-overlay]",
-      "[data-card-hover-more-action]",
-      "[data-card-hover-bottom-actions]",
-    ]) {
-      expect(container.querySelector(selector), selector).toHaveClass("transform-gpu");
+    // A layer per hover surface on every card cost four times the memory and
+    // five times the rendering load at rest (measured 20.08.2026). A card
+    // without video has no paint-order fight to win, so it asks for nothing.
+    for (const selector of HOVER_LAYERS) {
+      expect(container.querySelector(selector), selector).not.toHaveClass("transform-gpu");
     }
   });
 

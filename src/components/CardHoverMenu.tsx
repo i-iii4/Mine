@@ -71,6 +71,9 @@ type CardHoverMenuProps = CardMenuActionsProps<LightBlock>;
 type CardHoverMenuPropsWithState = CardHoverMenuProps & {
   openMoreMenuRequestSequence?: number;
   hoverEnabled?: boolean;
+  /// Whether a <video> sits under these controls. Only then do they need a
+  /// compositing layer of their own — see the comment at the More button.
+  videoUnderneath?: boolean;
   onKeyboardMoreMenuOpenChange?: (open: boolean) => void;
   onInteractiveOpenChange?: (open: boolean) => void;
   onInteractionStart?: () => void;
@@ -395,6 +398,7 @@ export const CardHoverMenu = memo(function CardHoverMenu({
   onRequestDelete,
   openMoreMenuRequestSequence = 0,
   hoverEnabled = true,
+  videoUnderneath = false,
   onKeyboardMoreMenuOpenChange,
   onInteractiveOpenChange,
   onInteractionStart,
@@ -440,7 +444,8 @@ export const CardHoverMenu = memo(function CardHoverMenu({
       {/* Overlay — затенение при hover */}
       <div
         className={cn(
-          "pointer-events-none absolute inset-0 z-[4] transform-gpu bg-[var(--card-hover-overlay)] transition-opacity",
+          "pointer-events-none absolute inset-0 z-[4] bg-[var(--card-hover-overlay)] transition-opacity",
+          videoUnderneath && "transform-gpu",
           hoverEnabled && "group-hover:opacity-100",
           hoverActionsPinned ? "opacity-100" : "opacity-0",
         )}
@@ -448,14 +453,19 @@ export const CardHoverMenu = memo(function CardHoverMenu({
         data-card-hover-enabled={hoverEnabled ? "true" : undefined}
       />
 
-      {/* More (···) — верхний правый. transform-gpu on this and the layers
-          below is load-bearing: WKWebView promotes <video> to its own
-          compositing layer, and a plain positioned sibling loses to it in
-          paint order despite the higher z-index — the button drew underneath
-          feed videos. A compositing layer of its own restores the contract. */}
+      {/* More (···) — верхний правый. A layer of its own is load-bearing over
+          video: WKWebView promotes <video> to its own compositing layer, and a
+          plain positioned sibling loses to it in paint order despite the higher
+          z-index — the button drew underneath feed videos.
+          It is asked for only where that fight exists. Promoting these three
+          layers on every card cost four times the memory and five times the
+          rendering load, measured 20.08.2026: 1.3 GB and a third of a core at
+          rest, against 320 MB and five per cent with them off. A card without
+          video has nothing to lose the fight to. */}
       <div
         className={cn(
-          "pointer-events-none absolute right-2 top-2 z-[5] transform-gpu transition-opacity",
+          "pointer-events-none absolute right-2 top-2 z-[5] transition-opacity",
+          videoUnderneath && "transform-gpu",
           hoverEnabled && "group-hover:pointer-events-auto group-hover:opacity-100",
           anyMenuOpen ? "pointer-events-auto opacity-100" : "opacity-0",
         )}
@@ -495,7 +505,8 @@ export const CardHoverMenu = memo(function CardHoverMenu({
       {/* Нижний ряд: Source (лево) + Connect (право) */}
       <div
         className={cn(
-          "pointer-events-none absolute bottom-2 left-2 right-2 z-[5] transform-gpu flex gap-2 transition-opacity",
+          "pointer-events-none absolute bottom-2 left-2 right-2 z-[5] flex gap-2 transition-opacity",
+          videoUnderneath && "transform-gpu",
           hoverEnabled && "group-hover:pointer-events-auto group-hover:opacity-100",
           hoverActionsPinned ? "pointer-events-auto opacity-100" : "opacity-0",
         )}

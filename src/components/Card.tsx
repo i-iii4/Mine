@@ -260,6 +260,9 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
           onRequestDelete={onRequestDelete}
           openMoreMenuRequestSequence={openMoreMenuRequestSequence}
           hoverEnabled={hoverEnabled}
+          // Only a card that actually plays video needs its controls lifted
+          // into layers of their own.
+          videoUnderneath={allowPlayback && block.feed_playback !== null}
           onKeyboardMoreMenuOpenChange={onKeyboardMoreMenuOpenChange}
           onInteractiveOpenChange={onMenuOpenChange}
         />

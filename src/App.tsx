@@ -3123,6 +3123,7 @@ export function AppWithVault({
       <SidebarResizeHandle
         isResizing={sidebarResizing}
         secondaryBarVisible={mainSecondaryTopBarVisible}
+        collapsed={sidebarCollapsed}
         disabled={
           activeDragBlock !== null
           || activeDragMediaAsset !== null
