@@ -225,6 +225,7 @@ import {
   type MineTextSelectionDragPayload,
 } from "@/lib/textSelectionDrag";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
+import { useSidebarSwipe } from "@/hooks/useSidebarSwipe";
 import { useThumbnailUpgrade } from "@/hooks/useThumbnailUpgrade";
 import { useChannelPreviewsEvents } from "@/hooks/useChannelPreviewsEvents";
 import { useChromeDragGesture } from "@/hooks/useChromeDragGesture";
@@ -1694,6 +1695,14 @@ export function AppWithVault({
       unlisten.then((fn) => fn());
     };
   }, [handleSurfaceSearchShortcut]);
+
+  // A two-finger swipe does what the keyboard shortcut does. Disabled while a
+  // card is open: there the gesture belongs to the card, not the shell.
+  useSidebarSwipe({
+    collapsed: sidebarCollapsed,
+    onToggle: toggleCollapsed,
+    disabled: renderedDetailBlock !== null,
+  });
 
   useEffect(() => {
     let cancelled = false;
