@@ -555,9 +555,17 @@ describe("Sidebar", () => {
       expect(alphaAction).toHaveClass("opacity-100");
     });
     expect(alphaAction).toHaveTextContent("Connected");
-    expect(alphaAction).toHaveClass("w-[10ch]");
+    // A fixed pixel width, not ten zero-widths of the current font: the column
+    // that frames this button is measured in pixels, and a size that follows
+    // the typeface cannot stay centred in it.
+    expect(alphaAction).toHaveStyle({ width: "84px" });
     expect(alphaAction).toHaveClass("absolute");
-    expect(alphaAction).toHaveClass("right-[var(--sidebar-row-pad-x)]");
+    // Eight less than the row's inset: the button's own padding puts its label
+    // back on the vertical the counts use, while the body overhangs. Clamped
+    // at zero, so the primary design keeps the button where it always was.
+    expect(alphaAction).toHaveStyle({
+      right: "max(calc(var(--sidebar-row-pad-x) - 8px), 0px)",
+    });
     expect(alphaAction.closest("a")).toBeNull();
     expect(screen.getByText("5")).not.toHaveClass("opacity-0");
     expect(betaAction).toHaveClass("opacity-0");
@@ -1024,15 +1032,21 @@ describe("Sidebar", () => {
     expect(title).toHaveClass("w-[var(--sidebar-name-col)]");
     expect(title).toHaveClass("shrink-0");
     expect(title).not.toHaveClass("truncate");
-    expect(rail).toHaveStyle({ paddingLeft: "4px" });
+    // Four clear pixels after the guideline, which owns the pixel before them.
+    expect(rail).toHaveStyle({ paddingLeft: "5px" });
     expect(rightDivider).toHaveClass("bg-sidebar-border");
     // The column that holds the Connect button follows the row's own inset:
     // the button is placed from it, and a guideline measured from the panel
     // edge alone let the button cross into the next column wherever that inset
     // is not zero — which is every alt design.
-    expect(rightDivider).toHaveStyle({ right: "calc(var(--sidebar-row-pad-x) + 88px)" });
+    // The cell is the button plus an equal field of 8 on either side, which
+    // matches the 8 above and below it inside a 40px row.
+    expect(rightDivider).toHaveStyle({
+      right: "calc(max(calc(var(--sidebar-row-pad-x) - 8px), 0px) + 84px + 8px)",
+    });
     expect(strip).toHaveAttribute("data-sidebar-preview-fade-width", "24");
-    expect(strip).toHaveAttribute("data-sidebar-preview-protected-width", "92");
+    // Button (84) + its gap (8) + the guideline's own pixel + the divider gap (4).
+    expect(strip).toHaveAttribute("data-sidebar-preview-protected-width", "97");
   });
 
   it("filters link editor to linked channels", () => {

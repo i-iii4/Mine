@@ -47,6 +47,10 @@ import {
   sidebarRowDomId,
 } from "@/lib/sidebarSearch";
 import { cn } from "@/lib/utils";
+import {
+  SIDEBAR_ROW_ACTION_BUTTON_PX,
+  SIDEBAR_ROW_ACTION_GAP_PX,
+} from "@/lib/appLayout";
 import { EDGE_FADE_WIDTH, createRightFadeMaskStyle } from "@/lib/edgeFade";
 import { TopFadeScrim } from "./TopFadeScrim";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
@@ -59,27 +63,45 @@ const SIDEBAR_PREVIEW_FALLBACK_HEIGHT = 320;
 const SIDEBAR_PREVIEW_GAP = 8;
 const SIDEBAR_PREVIEW_VIEWPORT_MARGIN = 16;
 const SIDEBAR_PREVIEW_DIVIDER_GAP = 4;
-const SIDEBAR_ROW_ACTION_BUTTON_WIDTH = 80;
-const SIDEBAR_ROW_ACTION_BUTTON_GAP = 8;
+/// The row's box: 40 tall, with the last pixel reserved for the divider that
+/// closes it. Content centres in what is left, so the space above and below it
+/// comes out equal — the rule the chrome already follows through `border-box`,
+/// which subtracts its border before centring. Written as padding rather than
+/// as height, because the row's size belongs to the modular scale and a
+/// hairline must not push it off.
+const SIDEBAR_ROW_BOX_CLASS = "relative flex min-h-10 w-full items-center pb-px";
+const SIDEBAR_ROW_ACTION_BUTTON_WIDTH = SIDEBAR_ROW_ACTION_BUTTON_PX;
+const SIDEBAR_ROW_ACTION_BUTTON_GAP = SIDEBAR_ROW_ACTION_GAP_PX;
 const SIDEBAR_ROW_RIGHT_GUIDELINE_OFFSET =
   SIDEBAR_ROW_ACTION_BUTTON_WIDTH + SIDEBAR_ROW_ACTION_BUTTON_GAP;
-/// The strip along the right edge that the Connect button occupies, measured
-/// from the panel edge. The button is positioned from the row's inner padding,
-/// so everything that has to line up with it — the guideline that closes the
-/// column, the protected tail of the thumbnail strip — must count that padding
-/// in too. It is zero in the primary design and 16px in the alt designs, where
-/// the row carries its inset itself; leaving it out is what pushed the button
-/// across its own column there.
-const SIDEBAR_ROW_ACTION_ZONE = `calc(var(--sidebar-row-pad-x) + ${SIDEBAR_ROW_RIGHT_GUIDELINE_OFFSET}px)`;
+/// How far the button's body sits from the right edge of the row.
+///
+/// Eight less than the row's own inset, because the button carries an inner
+/// padding of that size: the body overhangs the text column by 8 and its
+/// label lands back on the exact vertical the counts use. Optical
+/// compensation, the ordinary treatment for a filled control beside plain
+/// text. Clamped at zero so the primary design, whose rows have no inset of
+/// their own, keeps the button exactly where it has always been.
+const SIDEBAR_ROW_ACTION_BUTTON_INSET =
+  `max(calc(var(--sidebar-row-pad-x) - ${SIDEBAR_ROW_ACTION_BUTTON_GAP}px), 0px)`;
+/// The column that holds the button, measured from the panel edge: the button
+/// with an equal field on either side. With the row 40 tall and the button 24,
+/// the vertical fields are already 8 — matching them sideways makes the cell a
+/// frame of even 8 all round.
+const SIDEBAR_ROW_ACTION_ZONE =
+  `calc(${SIDEBAR_ROW_ACTION_BUTTON_INSET} + ${SIDEBAR_ROW_ACTION_BUTTON_WIDTH}px + ${SIDEBAR_ROW_ACTION_BUTTON_GAP}px)`;
 const SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH = EDGE_FADE_WIDTH;
 const SIDEBAR_PREVIEW_MASK_FADE_WIDTH = EDGE_FADE_WIDTH;
+/// Declared width of the strip the thumbnails keep clear: the action column,
+/// the guideline's pixel, and the divider gap after it.
 const SIDEBAR_PREVIEW_MASK_CLEAR_TAIL_WIDTH =
-  SIDEBAR_ROW_RIGHT_GUIDELINE_OFFSET + SIDEBAR_PREVIEW_DIVIDER_GAP;
-/// The same tail, expressed against the action zone so it follows the row's
-/// inner padding: the thumbnails must stop clear of the button, not clear of
-/// where the button would be if the row had no inset.
+  SIDEBAR_ROW_RIGHT_GUIDELINE_OFFSET + 1 + SIDEBAR_PREVIEW_DIVIDER_GAP;
+/// Where the thumbnails stop: the action column, the guideline's own pixel,
+/// and then the four clear ones the divider gap asks for. Counting from the
+/// guideline's position rather than its far edge left three — the same pixel
+/// the row used to lose to its horizontal line.
 const SIDEBAR_PREVIEW_MASK_CLEAR_TAIL =
-  `calc(var(--sidebar-row-pad-x) + ${SIDEBAR_PREVIEW_MASK_CLEAR_TAIL_WIDTH}px)`;
+  `calc(${SIDEBAR_ROW_ACTION_ZONE} + 1px + ${SIDEBAR_PREVIEW_DIVIDER_GAP}px)`;
 const SIDEBAR_ROW_ACTION_BUTTON_CLASS =
   "inline-flex h-6 items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover";
 const SIDEBAR_ROW_TEXT_MASK_STYLE = createRightFadeMaskStyle(
@@ -1049,7 +1071,9 @@ function SidebarPreviewRail({ children }: { children: ReactNode }) {
     <div
       className="relative min-w-0 flex-1"
       data-sidebar-preview-rail
-      style={{ paddingLeft: `${SIDEBAR_PREVIEW_DIVIDER_GAP}px` }}
+      // Measured from the far edge of the guideline, not from the column it
+      // closes: the line owns its pixel, the gap follows it.
+      style={{ paddingLeft: `${SIDEBAR_PREVIEW_DIVIDER_GAP + 1}px` }}
     >
       {children}
     </div>
@@ -1139,7 +1163,8 @@ function SidebarRowBody({
                 "text-muted-foreground",
               )
             : cn(
-                "relative flex items-center py-1 font-sans text-base text-muted-foreground",
+                SIDEBAR_ROW_BOX_CLASS,
+                "font-sans text-base text-muted-foreground",
                 // Inner row padding is a design-variant metric (alt: 16px so
                 // text and count do not touch the divider and screen edge).
                 "pl-[var(--sidebar-row-pad-x)]",
@@ -1236,12 +1261,15 @@ function SidebarRowBody({
           }}
           className={cn(
             SIDEBAR_ROW_ACTION_BUTTON_CLASS,
-            "absolute top-1/2 z-10 w-[10ch] -translate-y-1/2 transition-opacity duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
-            "right-[var(--sidebar-row-pad-x)]",
+            "absolute top-1/2 z-10 -translate-y-1/2 transition-opacity duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
             linkEditor.checked
               ? "opacity-100"
               : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
           )}
+          style={{
+            right: SIDEBAR_ROW_ACTION_BUTTON_INSET,
+            width: SIDEBAR_ROW_ACTION_BUTTON_WIDTH,
+          }}
           aria-label={`${linkEditor.checked ? "Disconnect" : "Connect"} ${label}`}
         >
           {linkEditor.checked ? (
@@ -1287,7 +1315,7 @@ function SidebarEditableRowBody({
               "rounded-1 p-2",
               "text-muted-foreground",
             )
-          : cn("relative flex min-h-10 w-full items-center py-1 pl-[var(--sidebar-row-pad-x)] font-sans text-base text-muted-foreground")
+          : cn(SIDEBAR_ROW_BOX_CLASS, "pl-[var(--sidebar-row-pad-x)] font-sans text-base text-muted-foreground")
       }
       data-sidebar-editable-row-body
       data-sidebar-editable-row-full-width
@@ -1654,7 +1682,8 @@ function SidebarCreateChannelRowBody({
               !isEditing && "group-hover:text-foreground group-focus-within:text-foreground",
             )
           : cn(
-              "relative flex min-h-10 w-full items-center py-1 pl-[var(--sidebar-row-pad-x)] font-sans text-base text-muted-foreground",
+              SIDEBAR_ROW_BOX_CLASS,
+              "pl-[var(--sidebar-row-pad-x)] font-sans text-base text-muted-foreground",
               !isEditing && "group-hover:text-foreground group-focus-within:text-foreground",
             )
       }

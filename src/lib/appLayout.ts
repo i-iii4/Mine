@@ -12,6 +12,20 @@ export const SIDEBAR_COLUMN_MIN_PX = 88;
 // Name column caps here on wide panels; the surplus goes to the icon strip.
 export const SIDEBAR_NAME_MAX_PX = 150;
 
+/// Fixed width for the Connect / Connected / Disconnect control, wide enough
+/// for the longest of the three so its cell does not twitch as it switches.
+///
+/// Pixels, not `ch`. It used to read `10ch` — ten zero-widths of the current
+/// font — which tied a control's size to the typeface: Geist at 14px happened
+/// to give 81.95, while the column framing it was measured in pixels, so the
+/// button sat about 2px off centre and any change of face or size would have
+/// moved it again. A control has a size; it does not take one from its text.
+/// Lives here because both the sidebar row and the collection picker draw this
+/// control and must not drift apart.
+export const SIDEBAR_ROW_ACTION_BUTTON_PX = 84;
+/// The breathing space between that control and the column that frames it.
+export const SIDEBAR_ROW_ACTION_GAP_PX = 8;
+
 // Everything in the row that is NOT the name+icons flex region: the meta column
 // (88) plus the fixed paddings/gap, which differ by design variant.
 //   default: meta 88 + nav-pad 32×2 + divider-gap 4 = 156

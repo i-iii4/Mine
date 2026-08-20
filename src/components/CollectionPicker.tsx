@@ -10,6 +10,7 @@ import { Plus } from "lucide-react";
 import { QuantizedMenuScrollArea } from "@/components/QuantizedMenuScrollArea";
 import { SearchMenuInput } from "@/components/SearchMenuInput";
 import type { TagCount } from "@/types";
+import { SIDEBAR_ROW_ACTION_BUTTON_PX } from "@/lib/appLayout";
 import { collectionRefLabel } from "@/lib/collections";
 import { cn } from "@/lib/utils";
 
@@ -406,7 +407,10 @@ export function CollectionPicker({
               <span className="flex-1 truncate text-left text-foreground">
                 {title}
               </span>
-              <div className="relative flex h-6 w-[10ch] shrink-0 items-center justify-end">
+              <div
+                className="relative flex h-6 shrink-0 items-center justify-end"
+                style={{ width: SIDEBAR_ROW_ACTION_BUTTON_PX }}
+              >
                 <span
                   className={cn(
                     "absolute right-0 text-sm text-muted-foreground",
@@ -430,10 +434,11 @@ export function CollectionPicker({
                     event.stopPropagation();
                   }}
                   className={cn(
-                    "absolute right-0 inline-flex h-6 w-[10ch] items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
+                    "absolute right-0 inline-flex h-6 items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
                     buttonVisible ? "opacity-100" : "pointer-events-none opacity-0",
                     hasTag && isActive && "text-detach",
                   )}
+                  style={{ width: SIDEBAR_ROW_ACTION_BUTTON_PX }}
                   aria-label={`${actionLabel} ${title}`}
                 >
                   {hasTag ? (isActive ? "Disconnect" : "Connected") : "Connect"}
@@ -700,7 +705,10 @@ export function BatchCollectionPicker({
               <span className="flex-1 truncate text-left text-foreground">
                 {title}
               </span>
-              <div className="relative flex h-6 w-[10ch] shrink-0 items-center justify-end">
+              <div
+                className="relative flex h-6 shrink-0 items-center justify-end"
+                style={{ width: SIDEBAR_ROW_ACTION_BUTTON_PX }}
+              >
                 <span
                   className={cn(
                     "absolute right-0 text-sm text-muted-foreground",
@@ -724,10 +732,11 @@ export function BatchCollectionPicker({
                     event.stopPropagation();
                   }}
                   className={cn(
-                    "absolute right-0 inline-flex h-6 w-[10ch] items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
+                    "absolute right-0 inline-flex h-6 items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
                     buttonVisible ? "opacity-100" : "pointer-events-none opacity-0",
                     membership === "all" && isActive && "text-detach",
                   )}
+                  style={{ width: SIDEBAR_ROW_ACTION_BUTTON_PX }}
                   aria-label={`${actionLabel} ${title}`}
                 >
                   {membership === "all" ? (isActive ? "Disconnect" : "Connected") : "Connect"}
