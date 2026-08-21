@@ -3,6 +3,7 @@ import {
   frameFillSize,
   graphNodeScreenSize,
   nearestNeighbourSpacing,
+  sizeChangeIsWorthIt,
   visibleNodeCount,
 } from "./nodeSize";
 import { CARD_THUMBNAIL_SIZE, GRAPH_NODE_MAX_PX, type GraphCanvasNode } from "./contracts";
@@ -72,6 +73,24 @@ describe("frameFillSize", () => {
   it("measures nothing when there is no frame or nothing in it", () => {
     expect(frameFillSize({ width: 0, height: 0 }, 10)).toBeNull();
     expect(frameFillSize({ width: 800, height: 600 }, 0)).toBeNull();
+  });
+});
+
+describe("sizeChangeIsWorthIt", () => {
+  it("adopts the first measurement", () => {
+    expect(sizeChangeIsWorthIt(null, 70)).toBe(true);
+  });
+
+  it("ignores the drift a settling layout produces", () => {
+    // Nodes nudge each other constantly; taking every measurement made cards
+    // swell and shrink while the user was doing nothing.
+    expect(sizeChangeIsWorthIt(70, 73)).toBe(false);
+    expect(sizeChangeIsWorthIt(70, 67)).toBe(false);
+  });
+
+  it("adopts a change large enough to be worth seeing", () => {
+    expect(sizeChangeIsWorthIt(70, 90)).toBe(true);
+    expect(sizeChangeIsWorthIt(70, 50)).toBe(true);
   });
 });
 

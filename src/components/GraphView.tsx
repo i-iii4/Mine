@@ -76,6 +76,7 @@ import {
 import {
   frameFillSize,
   graphNodeScreenSize,
+  sizeChangeIsWorthIt,
   nearestNeighbourSpacing,
   visibleNodeCount,
 } from "./graph/nodeSize";
@@ -436,7 +437,11 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     const center = graph.centerAt();
     if (!center) return;
     const count = visibleNodeCount(graphData.nodes, center, size, graphScaleRef.current);
-    frameFillRef.current = frameFillSize(size, count);
+    const measured = frameFillSize(size, count);
+    if (measured === null) return;
+    if (sizeChangeIsWorthIt(frameFillRef.current, measured)) {
+      frameFillRef.current = measured;
+    }
   }, [graphData.nodes, size]);
 
   const currentNodeScreenSize = useCallback(
@@ -561,9 +566,6 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     spacingTickRef.current += 1;
     if (spacingTickRef.current % SPACING_RECOMPUTE_TICKS === 0) {
       nodeSpacingRef.current = nearestNeighbourSpacing(graphData.nodes);
-      // Nodes move while the layout settles, so what the frame holds changes
-      // with them, not only when the camera does.
-      syncFrameFill();
     }
 
     const positions = nodePositionsRef.current;
@@ -1051,13 +1053,26 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
               setHoveredCollectionId(null);
               schedulePreviewOpen(node);
             }}
-            onNodeDrag={suppressCollectionClickAfterDrag}
+            onNodeDrag={(node) => {
+              suppressCollectionClickAfterDrag(node);
+              // Without this the neighbours stay where they were and the links
+              // stretch across the screen: a settled simulation exerts almost
+              // no force, so dragging a node drags only that node.
+              graphRef.current?.d3ReheatSimulation();
+            }}
             onNodeDragEnd={suppressCollectionClickAfterDrag}
             d3AlphaDecay={physics.alphaDecay}
             d3VelocityDecay={physics.velocityDecay}
             warmupTicks={nodePositionsRef.current.size > 0 ? 0 : physics.warmupTicks}
             cooldownTime={physics.cooldownTime}
             onEngineTick={handleEngineTick}
+            onEngineStop={() => {
+              // Sizing waits for the layout to stop moving. Recomputing while
+              // it settles made cards shrink and swell as their neighbours
+              // drifted in and out of the frame — visible whenever a node was
+              // dragged.
+              syncFrameFill();
+            }}
             onZoom={(transform) => {
               syncGraphScale(transform.k);
               syncFrameFill();

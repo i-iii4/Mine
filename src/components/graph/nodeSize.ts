@@ -1,6 +1,7 @@
 import {
   CARD_COLLISION_RADIUS,
   GRAPH_NODE_FILL_RATIO,
+  GRAPH_NODE_SIZE_HYSTERESIS,
   GRAPH_NODE_MAX_PX,
   type GraphCanvasNode,
 } from "./contracts";
@@ -38,6 +39,18 @@ export function graphNodeScreenSize(
   }
   // Never below the base: a card smaller than 32 pixels is not a picture.
   return Math.max(base, Math.min(...candidates));
+}
+
+/**
+ * Whether a newly measured size is different enough to adopt.
+ *
+ * The frame's contents shift with every nudge of the layout, and adopting each
+ * measurement made cards visibly swell and shrink while nothing was happening.
+ * A card only changes size when the change is worth seeing.
+ */
+export function sizeChangeIsWorthIt(current: number | null, next: number): boolean {
+  if (current === null) return true;
+  return Math.abs(next - current) / current > GRAPH_NODE_SIZE_HYSTERESIS;
 }
 
 /**

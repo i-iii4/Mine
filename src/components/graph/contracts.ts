@@ -75,6 +75,10 @@ export const GRAPH_NODE_MAX_PX = 100;
 // neighbours: at 1.0 the cards would tile the frame edge to edge.
 export const GRAPH_NODE_FILL_RATIO = 0.55;
 
+// Relative change a new measurement must exceed before a node takes it. Below
+// this the layout's ordinary drift would keep resizing every card.
+export const GRAPH_NODE_SIZE_HYSTERESIS = 0.12;
+
 // How often the layout's actual spacing is remeasured, in engine ticks. It
 // changes only as the simulation settles, so a per-frame pass would be waste.
 export const SPACING_RECOMPUTE_TICKS = 15;
