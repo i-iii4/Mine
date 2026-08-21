@@ -17,9 +17,6 @@ use crate::commands::blocks::{
 use crate::commands::channels::{
     ChannelDto, ChannelPreviewsSnapshot, PreviewItem, TaxonomySnapshot,
 };
-use crate::commands::clipper_recovery::{
-    ClipperRecoveryItem, ClipperRecoveryKind, RecoveredClipperBlock,
-};
 use crate::commands::import::{ArenaChannelInfo, ImportChannelRequest};
 use crate::commands::native_shell_smoke::NativeShellSmokeReport;
 use crate::commands::settings::{
@@ -117,9 +114,6 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<IcloudDownloadProgress>()
         .register::<IcloudDownloadStatus>()
         .register::<ClipperBrowserStatus>()
-        .register::<ClipperRecoveryKind>()
-        .register::<ClipperRecoveryItem>()
-        .register::<RecoveredClipperBlock>()
         .register::<ArenaChannelInfo>()
         .register::<ImportChannelRequest>()
         .register::<ImportChannelResult>()

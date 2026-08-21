@@ -41,10 +41,6 @@ detected: boolean;
  */
 connected: boolean }
 
-export type ClipperRecoveryItem = { id: string; kind: ClipperRecoveryKind; fileName: string; mediaPath: string | null; size: number; createdAt: string }
-
-export type ClipperRecoveryKind = "pending_upload"
-
 export type ClipperSetupStatus = {
 /**
  * The host binary is installed where browsers can launch it.
@@ -257,8 +253,6 @@ has_thumb: boolean }
 export type ProjectionRevision = number
 
 export type PromoteOrphanResult = { created: IndexedBlock[]; skipped: string[] }
-
-export type RecoveredClipperBlock = { slug: string }
 
 export type RemoveMediaAssetFromCardParams = { media_ref: string; source_slug: string; reference_kind: MediaAssetReferenceKind; occurrence_index: number | null }
 

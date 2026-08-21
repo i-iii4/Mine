@@ -239,7 +239,6 @@ import { VaultSwitcher } from "@/components/VaultSwitcher";
 import { TopCollectionSwitcher } from "@/components/TopCollectionSwitcher";
 import { Sidebar, SidebarTagRowDragPreview } from "@/components/Sidebar";
 import { SidebarResizeHandle } from "@/components/SidebarResizeHandle";
-import { ClipperRecoveryBanner } from "@/components/ClipperRecoveryBanner";
 import { VaultConflictsBanner } from "@/components/VaultConflictsBanner";
 import { Grid } from "@/components/Grid";
 import { GraphView } from "@/components/GraphView";
@@ -3106,13 +3105,7 @@ export function AppWithVault({
         keyboardNavigationFocusPersistent={sidebarSearchKeyboardNavigationFocus !== null}
         searchQuery={sidebarSearchQuery}
         headerSlot={
-          <>
-            <ClipperRecoveryBanner
-              vaultReady={vaultReady}
-              onRecovered={() => void reloadAllSnapshots()}
-            />
-            <VaultConflictsBanner vaultReady={vaultReady} />
-          </>
+          <VaultConflictsBanner vaultReady={vaultReady} />
         }
         linkedBlockSlug={renderedLinkedBlockSlug}
         linkedTags={renderedLinkedTags}

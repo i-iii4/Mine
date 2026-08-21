@@ -25,10 +25,6 @@ pub struct PendingUploadManifest {
     pub content_type: Option<String>,
     pub size: u64,
     pub created_at: String,
-    #[serde(default)]
-    pub committed_slug: Option<String>,
-    #[serde(default)]
-    pub committed_file: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -72,8 +68,6 @@ pub fn write_pending_upload(
         content_type,
         size: body.len() as u64,
         created_at: crate::util::now_iso8601(),
-        committed_slug: None,
-        committed_file: None,
     };
     write_manifest(&dir, &manifest)?;
     Ok(manifest)
@@ -88,47 +82,12 @@ pub fn load_pending_upload(vault: &VaultLayout, upload_id: &str) -> Result<Pendi
         .with_context(|| format!("failed to parse pending upload {}", manifest_path.display()))
 }
 
-pub fn list_uncommitted_pending_uploads(vault: &VaultLayout) -> Result<Vec<PendingUploadManifest>> {
-    let base_dir = pending_uploads_dir(vault);
-    if !base_dir.exists() {
-        return Ok(Vec::new());
-    }
-    let mut rows = Vec::new();
-    for entry in std::fs::read_dir(&base_dir)
-        .with_context(|| format!("failed to read pending uploads {}", base_dir.display()))?
-    {
-        let entry = entry?;
-        if !entry.file_type()?.is_dir() {
-            continue;
-        }
-        let Some(upload_id) = entry.file_name().to_str().map(str::to_string) else {
-            continue;
-        };
-        let Ok(manifest) = load_pending_upload(vault, &upload_id) else {
-            continue;
-        };
-        if manifest.committed_slug.is_none() {
-            rows.push(manifest);
-        }
-    }
-    rows.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-    Ok(rows)
-}
-
 pub fn finalize_pending_upload(
     vault: &VaultLayout,
     upload_id: &str,
     final_stem: &str,
 ) -> Result<FinalizedPendingUpload> {
     let manifest = load_pending_upload(vault, upload_id)?;
-    if let (Some(slug), Some(file)) = (&manifest.committed_slug, &manifest.committed_file) {
-        if slug == final_stem && media_exists_in_vault(vault, file) {
-            return Ok(FinalizedPendingUpload {
-                filename: file.clone(),
-            });
-        }
-    }
-
     let dir = pending_upload_dir(vault, upload_id)?;
     let payload_path = dir.join(&manifest.payload_filename);
     if !payload_path.is_file() {
@@ -166,45 +125,60 @@ pub fn finalize_pending_upload(
 /// The extension never retries a save with the same upload id — a failed save
 /// re-uploads and gets a fresh id — so removing the payload cannot strand a
 /// legitimate retry.
-pub fn complete_pending_upload(vault: &VaultLayout, upload_id: &str) -> Result<()> {
-    let dir = pending_upload_dir(vault, upload_id)?;
-    if dir.exists() {
-        std::fs::remove_dir_all(&dir).with_context(|| {
-            format!("failed to remove committed pending upload {}", dir.display())
-        })?;
+/// Removes a staging directory when the save that created it ends — however it
+/// ends.
+///
+/// The save routine has eleven exits that report an error and one that
+/// succeeds. Deleting on the successful one only, which is what the code used
+/// to do, is why a failed clip left its file behind for ever: a journal of one
+/// operation was being used as a store with no lifetime. A guard puts the
+/// cleanup out of reach of the branching — a new exit cannot forget it, because
+/// leaving the scope is the cleanup.
+///
+/// Nothing is lost by clearing a staged file after a failure. The card was
+/// never created, and the payload is a copy of something the browser can clip
+/// again in one press.
+pub struct PendingUploadGuard<'a> {
+    vault: &'a VaultLayout,
+    upload_id: String,
+}
+
+impl<'a> PendingUploadGuard<'a> {
+    pub fn new(vault: &'a VaultLayout, upload_id: String) -> Self {
+        Self { vault, upload_id }
     }
-    Ok(())
 }
 
-/// Record the commit without removing the staging directory.
+impl Drop for PendingUploadGuard<'_> {
+    fn drop(&mut self) {
+        if let Err(e) = discard_pending_upload(self.vault, &self.upload_id) {
+            log::warn!("failed to clear staged upload {}: {e:#}", self.upload_id);
+        }
+    }
+}
+
+/// How long a staging directory may live before it is treated as debris.
 ///
-/// Retained for the sweep below, which needs to distinguish a committed upload
-/// from an interrupted one while cleaning up directories written by older
-/// versions.
-pub fn mark_pending_upload_committed(
+/// A save is a single press: upload, then card, within one exchange. An hour is
+/// far beyond any of that, and short enough that nothing accumulates.
+pub const STALE_UPLOAD_AGE: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
+/// Remove staging directories older than `max_age`.
+///
+/// The only staging directory that may legitimately exist belongs to a save
+/// happening right now, so age is the whole test. The previous sweep asked
+/// instead whether the card's media still sat in the vault, which made the
+/// cache keep copies of files the user had deleted, for ever — 11 of 15
+/// directories here were exactly that.
+pub fn sweep_stale_pending_uploads(
     vault: &VaultLayout,
-    upload_id: &str,
-    slug: &str,
-    filename: &str,
-) -> Result<()> {
-    let mut manifest = load_pending_upload(vault, upload_id)?;
-    manifest.committed_slug = Some(slug.to_string());
-    manifest.committed_file = Some(filename.to_string());
-    let dir = pending_upload_dir(vault, upload_id)?;
-    write_manifest(&dir, &manifest)
-}
-
-/// Remove staging directories left behind by earlier versions.
-///
-/// A directory is removed when its manifest records a commit and that card's
-/// media actually exists in the vault. Anything else — an interrupted upload,
-/// or a commit whose file has since been deleted — is left for recovery.
-/// Returns how many directories were removed.
-pub fn sweep_committed_pending_uploads(vault: &VaultLayout) -> Result<usize> {
+    max_age: std::time::Duration,
+) -> Result<usize> {
     let root = pending_uploads_dir(vault);
     if !root.is_dir() {
         return Ok(0);
     }
+    let now = std::time::SystemTime::now();
     let mut removed = 0usize;
     for entry in std::fs::read_dir(&root)
         .with_context(|| format!("failed to read pending uploads: {}", root.display()))?
@@ -213,24 +187,17 @@ pub fn sweep_committed_pending_uploads(vault: &VaultLayout) -> Result<usize> {
         if !entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
             continue;
         }
-        let Some(upload_id) = entry.file_name().to_str().map(str::to_string) else {
+        let Ok(age) = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .map(|modified| now.duration_since(modified).unwrap_or_default())
+        else {
             continue;
         };
-        let Ok(manifest) = load_pending_upload(vault, &upload_id) else {
-            continue;
-        };
-        let Some(committed_file) = manifest.committed_file.as_deref() else {
-            continue;
-        };
-        // The card's media may sit in `Media/` rather than at the vault root:
-        // the manifest stores a bare filename, exactly like an Obsidian
-        // wikilink. Checking the root path alone left 111 of 113 stale
-        // directories in place on a foldered vault — the same name-versus-path
-        // trap the asset protocol hit on 11.08.2026.
-        if !media_exists_in_vault(vault, committed_file) {
+        if age < max_age {
             continue;
         }
-        if complete_pending_upload(vault, &upload_id).is_ok() {
+        if std::fs::remove_dir_all(entry.path()).is_ok() {
             removed += 1;
         }
     }
@@ -396,7 +363,7 @@ mod tests {
     }
 
     #[test]
-    fn completing_an_upload_removes_its_staged_copy() {
+    fn the_guard_clears_the_staged_copy_when_the_save_ends() {
         let dir = tempfile::tempdir().unwrap();
         let vault = vault_for(&dir);
         std::fs::create_dir_all(vault.root()).unwrap();
@@ -406,7 +373,10 @@ mod tests {
         let staged = pending_upload_dir(&vault, &manifest.upload_id).unwrap();
         assert!(staged.exists());
 
-        complete_pending_upload(&vault, &manifest.upload_id).unwrap();
+        {
+            let _guard = PendingUploadGuard::new(&vault, manifest.upload_id.clone());
+            assert!(staged.exists(), "the staged copy lives while the save runs");
+        }
 
         // The vault copy survives; the duplicate in staging does not.
         assert!(vault.root().join("Card.jpg").exists());
@@ -414,79 +384,66 @@ mod tests {
     }
 
     #[test]
-    fn sweep_removes_committed_leftovers_and_keeps_unfinished_ones() {
+    fn the_guard_clears_the_staged_copy_when_the_save_fails() {
         let dir = tempfile::tempdir().unwrap();
         let vault = vault_for(&dir);
         std::fs::create_dir_all(vault.root()).unwrap();
 
-        // Committed by an older version: marked, card present, directory kept.
-        let committed = write_pending_upload(&vault, "done.jpg", None, b"done").unwrap();
-        finalize_pending_upload(&vault, &committed.upload_id, "Done").unwrap();
-        mark_pending_upload_committed(&vault, &committed.upload_id, "Done", "Done.jpg").unwrap();
-
-        // Interrupted: no card was ever written.
-        let unfinished = write_pending_upload(&vault, "half.jpg", None, b"half").unwrap();
-
-        // Committed, but the media has since been deleted from the vault.
-        let vanished = write_pending_upload(&vault, "gone.jpg", None, b"gone").unwrap();
-        finalize_pending_upload(&vault, &vanished.upload_id, "Gone").unwrap();
-        mark_pending_upload_committed(&vault, &vanished.upload_id, "Gone", "Gone.jpg").unwrap();
-        std::fs::remove_file(vault.root().join("Gone.jpg")).unwrap();
-
-        let removed = sweep_committed_pending_uploads(&vault).unwrap();
-
-        assert_eq!(removed, 1);
-        assert!(!pending_upload_dir(&vault, &committed.upload_id)
-            .unwrap()
-            .exists());
-        // Recoverable work is never swept.
-        assert!(pending_upload_dir(&vault, &unfinished.upload_id)
-            .unwrap()
-            .exists());
-        assert!(pending_upload_dir(&vault, &vanished.upload_id)
-            .unwrap()
-            .exists());
-    }
-
-    #[test]
-    fn sweep_finds_media_that_lives_in_a_subfolder() {
-        let dir = tempfile::tempdir().unwrap();
-        let vault = vault_for(&dir);
-        std::fs::create_dir_all(vault.root().join("Media")).unwrap();
-
         let manifest = write_pending_upload(&vault, "shot.jpg", None, b"bytes").unwrap();
-        finalize_pending_upload(&vault, &manifest.upload_id, "Card").unwrap();
-        mark_pending_upload_committed(&vault, &manifest.upload_id, "Card", "Card.jpg").unwrap();
-        // A migrated vault keeps media in `Media/`, while the manifest records
-        // the bare filename.
-        std::fs::rename(
-            vault.root().join("Card.jpg"),
-            vault.root().join("Media/Card.jpg"),
-        )
-        .unwrap();
+        let staged = pending_upload_dir(&vault, &manifest.upload_id).unwrap();
 
-        assert_eq!(sweep_committed_pending_uploads(&vault).unwrap(), 1);
-        assert!(!pending_upload_dir(&vault, &manifest.upload_id)
-            .unwrap()
-            .exists());
+        // No card was ever written — the case that used to leave a file behind
+        // for ever and surface as a recovery prompt.
+        {
+            let _guard = PendingUploadGuard::new(&vault, manifest.upload_id.clone());
+        }
+
+        assert!(!staged.exists());
     }
 
     #[test]
-    fn sweep_is_idempotent_and_survives_a_missing_directory() {
+    fn the_sweep_removes_debris_by_age_and_spares_a_save_in_flight() {
         let dir = tempfile::tempdir().unwrap();
         let vault = vault_for(&dir);
         std::fs::create_dir_all(vault.root()).unwrap();
 
-        assert_eq!(sweep_committed_pending_uploads(&vault).unwrap(), 0);
+        let fresh = write_pending_upload(&vault, "now.jpg", None, b"now").unwrap();
+        let stale = write_pending_upload(&vault, "old.jpg", None, b"old").unwrap();
 
-        let manifest = write_pending_upload(&vault, "shot.jpg", None, b"bytes").unwrap();
-        finalize_pending_upload(&vault, &manifest.upload_id, "Card").unwrap();
-        mark_pending_upload_committed(&vault, &manifest.upload_id, "Card", "Card.jpg").unwrap();
+        // Zero age sweeps everything; the point is that the test is age, and
+        // nothing about what the vault does or does not still contain.
+        let removed = sweep_stale_pending_uploads(&vault, std::time::Duration::ZERO).unwrap();
+        assert_eq!(removed, 2);
+        assert!(!pending_upload_dir(&vault, &fresh.upload_id).unwrap().exists());
+        assert!(!pending_upload_dir(&vault, &stale.upload_id).unwrap().exists());
 
-        assert_eq!(sweep_committed_pending_uploads(&vault).unwrap(), 1);
-        assert_eq!(sweep_committed_pending_uploads(&vault).unwrap(), 0);
-        // Completing an already-removed upload is not an error.
-        complete_pending_upload(&vault, &manifest.upload_id).unwrap();
+        let running = write_pending_upload(&vault, "live.jpg", None, b"live").unwrap();
+        let removed = sweep_stale_pending_uploads(&vault, STALE_UPLOAD_AGE).unwrap();
+        assert_eq!(removed, 0, "a save in flight must not be swept");
+        assert!(pending_upload_dir(&vault, &running.upload_id).unwrap().exists());
+    }
+
+    #[test]
+    fn the_sweep_is_idempotent_and_survives_a_missing_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = vault_for(&dir);
+        std::fs::create_dir_all(vault.root()).unwrap();
+
+        // Nothing staged yet: the directory itself does not exist.
+        assert_eq!(
+            sweep_stale_pending_uploads(&vault, std::time::Duration::ZERO).unwrap(),
+            0
+        );
+
+        write_pending_upload(&vault, "shot.jpg", None, b"bytes").unwrap();
+        assert_eq!(
+            sweep_stale_pending_uploads(&vault, std::time::Duration::ZERO).unwrap(),
+            1
+        );
+        assert_eq!(
+            sweep_stale_pending_uploads(&vault, std::time::Duration::ZERO).unwrap(),
+            0
+        );
     }
 
     #[test]
@@ -504,18 +461,5 @@ mod tests {
             std::fs::read(vault.root().join("Door (2).jpg")).unwrap(),
             b"new"
         );
-    }
-
-    #[test]
-    fn committed_pending_uploads_are_hidden_from_recovery_list() {
-        let dir = tempfile::tempdir().unwrap();
-        let vault = vault_for(&dir);
-        std::fs::create_dir_all(vault.root()).unwrap();
-
-        let manifest = write_pending_upload(&vault, "screenshot.jpg", None, b"jpeg").unwrap();
-        assert_eq!(list_uncommitted_pending_uploads(&vault).unwrap().len(), 1);
-
-        mark_pending_upload_committed(&vault, &manifest.upload_id, "Door", "Door.jpg").unwrap();
-        assert!(list_uncommitted_pending_uploads(&vault).unwrap().is_empty());
     }
 }

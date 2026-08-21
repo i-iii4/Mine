@@ -961,10 +961,16 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
                     return;
                 }
             };
-            // One-time cleanup of staging directories left by earlier versions,
-            // which kept a full copy of every clipped file forever. Failure is
-            // never fatal: this only reclaims disk space.
-            match clipper_uploads::sweep_committed_pending_uploads(&vault) {
+            // A staging directory may only belong to a save happening right
+            // now, so anything older is a leftover from a crash between the
+            // upload and the card. Age is the whole test: the previous sweep
+            // asked whether the card's media still existed in the vault, which
+            // made the cache keep copies of files the user had deleted, for
+            // ever. Failure is never fatal — this only reclaims disk space.
+            match clipper_uploads::sweep_stale_pending_uploads(
+                &vault,
+                clipper_uploads::STALE_UPLOAD_AGE,
+            ) {
                 Ok(0) => {}
                 Ok(removed) => {
                     log::info!(

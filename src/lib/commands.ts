@@ -33,8 +33,6 @@ import type {
   ImportChannelRequest,
   ImportChannelResult,
   ArticleAudioState,
-  ClipperRecoveryItem,
-  RecoveredClipperBlock,
   CreateMediaAssetCardParams,
   DeleteMediaAssetPlan,
   ExtractInlineMediaParams,
@@ -515,15 +513,6 @@ export const resolveVaultConflict = (
   });
 
 // Clipper recovery
-export const listClipperRecoveryItems = () =>
-  invoke<ClipperRecoveryItem[]>("list_clipper_recovery_items");
-
-export const recoverClipperPendingUpload = (upload_id: string) =>
-  invoke<RecoveredClipperBlock>("recover_clipper_pending_upload", { upload_id });
-
-export const discardClipperPendingUpload = (upload_id: string) =>
-  invoke<void>("discard_clipper_pending_upload", { upload_id });
-
 // Settings window
 export const openSettingsWindow = () =>
   invoke<void>("open_settings_window");

@@ -764,23 +764,17 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
         Err(e) => return send_error(&format!("failed to open database: {e}")),
     };
 
+    // Whatever happens below, the staged copy goes with this save. Held here
+    // rather than cleaned up at each exit: the routine has eleven ways to fail
+    // and one to succeed, and the old code cleaned up on the successful one
+    // only — which is how a failed clip left its file behind for ever.
+    let _staged = pending_upload_id
+        .as_ref()
+        .map(|upload_id| clipper_uploads::PendingUploadGuard::new(vault, upload_id.clone()));
+
     if let Some(ref upload_id) = pending_upload_id {
-        match clipper_uploads::load_pending_upload(vault, upload_id) {
-            Ok(manifest) => {
-                if let Some(slug) = manifest.committed_slug {
-                    if vault.block_path(&slug).exists() {
-                        return send_response(&SaveResponse {
-                            ok: true,
-                            slug,
-                            block_type: p.block_type,
-                            warning: None,
-                        });
-                    }
-                }
-            }
-            Err(e) => {
-                return send_error(&format!("failed to read pending upload: {e:#}"));
-            }
+        if let Err(e) = clipper_uploads::load_pending_upload(vault, upload_id) {
+            return send_error(&format!("failed to read pending upload: {e:#}"));
         }
     }
 
@@ -804,13 +798,11 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
     let mut media_file = None;
     let mut thumbnail_file = None;
     let mut warning = None;
-    let mut pending_upload_to_commit = None;
 
     if let Some(ref upload_id) = pending_upload_id {
         match clipper_uploads::finalize_pending_upload(vault, upload_id, &name) {
             Ok(finalized) => {
                 media_file = Some(finalized.filename);
-                pending_upload_to_commit = Some(upload_id.clone());
             }
             Err(e) => {
                 warning = Some(format!("failed to finalize pending upload: {e:#}"));
@@ -991,16 +983,6 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
         cleanup_new_block_media(vault, &block);
         cleanup_inline_files(&inline_files);
         return send_error(&format!("failed to write block file: {e}"));
-    }
-
-    if let Some(ref upload_id) = pending_upload_to_commit {
-        // The card and its media are on disk now, so the staging copy is pure
-        // duplication — remove it rather than marking it kept.
-        if let Err(e) = clipper_uploads::complete_pending_upload(vault, upload_id) {
-            warning = Some(format!(
-                "saved block, but failed to clean up the staged upload: {e:#}"
-            ));
-        }
     }
 
     // Best-effort index catch-up. The source vault is still the durable

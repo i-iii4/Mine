@@ -1147,9 +1147,10 @@ Chrome ограничивает отдельное native messaging-сообще
 
 Файл сохраняется не в source vault, а в local derived store:
 `<derived_root>/pending_uploads/<upload_id>/`. Upload endpoint не создаёт
-пользовательский media-файл до успешного `save_block`. Это закрывает отказ
-между HTTP upload и native-message commit: если вторая фаза не дошла до
-создания `.md`, Mine показывает pending upload в recovery surface.
+пользовательский media-файл до успешного `save_block`, поэтому незавершённое
+сохранение никогда не оставляет мусор в хранилище пользователя. Если вторая
+фаза не дошла до создания `.md`, промежуточная запись удаляется вместе с
+неудавшимся сохранением — см. «Время жизни промежуточной записи».
 
 Поле `filename: "pending:<id>"` оставлено как compatibility bridge для старых
 popup build'ов, которые ещё передают только `pre_uploaded_file`.
@@ -1204,17 +1205,27 @@ popup один раз повторяет `save_block` с тем же `pre_upload
 }
 ```
 
-### Recovery surface
+### Время жизни промежуточной записи
 
-Desktop app exposes unfinished clipper work through `list_clipper_recovery_items`.
-The list contains:
+Промежуточная область — журнал одной операции, а не хранилище. Запись живёт
+ровно от начала сохранения до его конца **любым** исходом, и это обеспечено
+стражем (`PendingUploadGuard`), который удаляет каталог при выходе из области
+видимости. У процедуры сохранения одиннадцать выходов с ошибкой и один
+успешный; уборка, поставленная только на успешный, и превращала журнал в
+свалку.
 
-- `pending_upload` — binary payload exists in derived store, no committed block.
+Записи, пережившие падение процесса между загрузкой и созданием карточки,
+удаляются при следующем запуске приложения по возрасту — `STALE_UPLOAD_AGE`,
+один час. Критерий именно возраст: прежняя уборка спрашивала, лежит ли ещё
+медиафайл карточки в хранилище, и потому держала копии удалённых пользователем
+файлов бессрочно — 11 из 15 каталогов в хранилище пользователя были ровно этим.
 
-`recover_clipper_pending_upload` creates an empty-body media card from the
-pending payload. `discard_clipper_pending_upload` removes only a pending
-derived-store payload. Recovery does not scan source-vault media files and does
-not infer cards from user media that lacks Markdown.
+**Поверхности восстановления нет и не должно быть.** Ошибка сообщается там, где
+произошла — в попапе, в момент нажатия. Отдельный экран, показывающий те же
+ошибки позже и в другом месте, работает как ширма: систематический сбой
+именования (21.08.2026) прожил за ним месяцы, накапливая файлы вместо того,
+чтобы быть замеченным. Цена отказа — повторный клип после случайного сбоя, одно
+нажатие.
 
 ### Безопасность
 
@@ -1339,7 +1350,7 @@ Native host читает путь к vault из файла конфигурац�
 | Media download/finalize failed | Response: `{"ok": false, "error": "..."}`. `.md` не создаётся, чтобы не получить битую media card без `file:` |
 | Link/video thumbnail download failed | Блок может быть создан без thumbnail; media failure для preview не ломает сохранение самой ссылки/видео |
 | Screenshot upload failed | Popup показывает inline error в `StatusBar` и сохраняет preview/tags/display heading для retry |
-| Screenshot upload succeeded but `save_block` failed | Popup делает один retry. Если retry не помог, pending upload остаётся в recovery surface; source vault не получает незакреплённый media-файл |
+| Screenshot upload succeeded but `save_block` failed | Popup показывает ошибку в момент нажатия. Промежуточная запись удаляется вместе с неудавшимся сохранением; source vault не получает незакреплённый media-файл. Повторить — значит нажать Save ещё раз |
 | SQLite locked | Retry через 100мс, до 3 попыток. Затем ошибка |
 | Disk full | Ошибка записи файла. Response: `{"ok": false, "error": "Failed to write file: ..."}` |
 | Invalid URL | Блок создаётся, URL сохраняется as-is |
