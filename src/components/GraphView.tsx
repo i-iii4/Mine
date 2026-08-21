@@ -381,6 +381,14 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     }
   }, [graphData.nodes, renderThumbnails, resolvedThumbsRoot, thumbVersions]);
 
+  const aimCenterForce = useCallback((
+    graph: ForceGraphMethods<GraphCanvasNode, GraphCanvasLink>,
+    target: { x: number; y: number } | null,
+  ) => {
+    const centerForce = graph.d3Force("center") as unknown as GraphCenterForce | undefined;
+    centerForce?.x(target?.x ?? 0).y(target?.y ?? 0);
+  }, []);
+
   const syncGraphScale = useCallback((scale: number) => {
     graphScaleRef.current = Number.isFinite(scale) && scale > 0 ? scale : 1;
   }, []);
@@ -405,6 +413,14 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
 
       const centerForce = graph.d3Force("center") as unknown as GraphCenterForce | undefined;
       centerForce?.strength(physics.centerStrength);
+      // The centring force pulls the graph's centre of mass to a point. With
+      // the opened collection pinned somewhere else, that pull can never be
+      // satisfied: every tick shifts all the free nodes toward the point, the
+      // pinned one snaps back, and the mismatch repeats — a steady drift that
+      // drags a collection's cards off screen and stretches its links. Aiming
+      // the force at the pinned node removes the contradiction: the anchor and
+      // the target are the same place, so the layout spreads around it evenly.
+      aimCenterForce(graph, focusPositionRef.current);
 
       const linkForce = graph.d3Force("link") as unknown as GraphLinkDistanceForce | undefined;
       linkForce?.distance((link) => {
@@ -457,6 +473,11 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       if (node.id === focusNodeId && node.fx === undefined) {
         node.fx = node.x;
         node.fy = node.y;
+        // Aimed the moment the anchor exists, not only when the snapshot
+        // carried a position for it: a collection opened from the sidebar is
+        // pinned here, and until the force follows it the drift is back.
+        focusPositionRef.current = { x: node.x, y: node.y };
+        if (graphRef.current) aimCenterForce(graphRef.current, focusPositionRef.current);
       }
     }
     const graph = graphRef.current;
@@ -486,7 +507,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       return;
     }
     graph.zoomToFit(GRAPH_INITIAL_FIT_DURATION_MS, 40);
-  }, [focusNodeId, graphData.nodes, size]);
+  }, [aimCenterForce, focusNodeId, graphData.nodes, size]);
 
   const clearPreviewOpenTimer = useCallback(() => {
     if (previewOpenTimerRef.current === null) return;

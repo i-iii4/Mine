@@ -49,6 +49,8 @@ export interface GraphChargeForce {
 
 export interface GraphCenterForce {
   strength(strength: number): GraphCenterForce;
+  x(x: number): GraphCenterForce;
+  y(y: number): GraphCenterForce;
 }
 
 export interface GraphLinkDistanceForce {

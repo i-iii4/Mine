@@ -501,6 +501,14 @@ holds**. A pin at any invented point — the origin, the viewport centre —
 teleports the pill on click. When no position is remembered yet the node is left
 free and the next snapshot pins it.
 
+The centring force is aimed at the pinned collection, never at the origin. The
+force pulls the graph's centre of mass toward a point; with the anchor somewhere
+else that pull can never be satisfied, so every tick shifts all the free nodes
+toward the point while the pinned one snaps back, and the mismatch repeats. The
+result is a steady drift that carries a collection's cards off screen and
+stretches its links — measured at 140 px of drift over four seconds against 18
+px once the force follows the anchor.
+
 Nodes the previous snapshot did not contain enter on a phyllotaxis spiral around
 the focus: one golden-angle step per entrant. Sharing a point would explode the
 repulsion between them, and a random scatter would lay the same click out

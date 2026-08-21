@@ -50,6 +50,8 @@ type MockForceAccessor = {
   strength: (_accessor: unknown) => MockForceAccessor;
   distanceMax: (_distance: number) => MockForceAccessor;
   distance: (_accessor: unknown) => MockForceAccessor;
+  x: (_value: number) => MockForceAccessor;
+  y: (_value: number) => MockForceAccessor;
 };
 
 const commandMocks = vi.hoisted(() => ({
@@ -75,6 +77,8 @@ const graphDataSpy = vi.hoisted(() => ({ current: null as { nodes: Array<Record<
 // rather than trusting a flag that claims it was highlighted.
 const paintSpy = vi.hoisted(() => ({ current: null as MockGraphProps["nodeCanvasObject"] }));
 
+const centerAimSpy = vi.hoisted(() => ({ current: { x: 0, y: 0 } }));
+
 vi.mock("@/lib/commands", () => ({
   listGraphSnapshot: commandMocks.listGraphSnapshot,
   getBlock: commandMocks.getBlock,
@@ -96,6 +100,10 @@ vi.mock("react-force-graph-2d", async () => {
     strength: () => forceAccessor,
     distanceMax: () => forceAccessor,
     distance: () => forceAccessor,
+    // Records where the centring force is aimed. Aiming it anywhere but the
+    // pinned collection is what dragged that collection's cards off screen.
+    x: (value: number) => { centerAimSpy.current.x = value; return forceAccessor; },
+    y: (value: number) => { centerAimSpy.current.y = value; return forceAccessor; },
   };
 
   const MockForceGraph2D = React.forwardRef<MockGraphHandle, MockGraphProps>(
@@ -921,6 +929,43 @@ describe("GraphView", () => {
     // Wider content, smaller scale. Equal values would mean the camera kept
     // whatever the previous collection left behind.
     expect(largeZoom).toBeLessThan(smallZoom);
+  });
+
+  it("aims the centring force at the pinned collection, not at the origin", async () => {
+    const card = graphCardNode("alpha-card", "Alpha card");
+    const collection: GraphNode = {
+      id: "collection:Design",
+      kind: "collection",
+      label: "Design",
+      slug: null,
+      collection_ref: "Design",
+      card_kind: null,
+      block_type: null,
+      thumbnail: null,
+      preview_manifest: null,
+      degree: 1,
+    };
+    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes([card, collection]));
+
+    const { rerenderGraph } = renderGraph();
+    await screen.findByRole("button", { name: "Alpha card" });
+    const tick = screen.getByTestId("graph-engine-tick");
+    fireEvent.click(tick);
+    const resting = graphDataSpy.current?.nodes.find((node) => node.id === "collection:Design");
+    const restingX = resting?.x as number;
+    const restingY = resting?.y as number;
+    expect(restingX).not.toBe(0);
+
+    rerenderGraph({ currentCollection: "Design" });
+    await waitFor(() => expect(graphMethodMocks.d3ReheatSimulation).toHaveBeenCalled());
+    fireEvent.click(tick);
+
+    // Anchored in one place and pulled toward another, the free nodes drift in
+    // that direction for as long as the simulation runs.
+    await waitFor(() => {
+      expect(centerAimSpy.current.x).toBe(restingX);
+      expect(centerAimSpy.current.y).toBe(restingY);
+    });
   });
 
   it("pins the opened collection where it already stands and never teleports it", async () => {
