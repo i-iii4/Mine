@@ -512,7 +512,12 @@ Rules:
 - hovered card nodes do not change stroke, opacity, label visibility, size, or
   link styling;
 - hovered collection labels keep the same shape and fill but switch text to
-  `text-foreground`;
+  `text-foreground` and the outline to `--component-fill-hover`;
+- the opened collection, the keyboard-selected one and the hovered one share
+  that single highlight — same colour, same one-pixel weight. A heavier outline
+  for the opened pill is a third look the interface does not have, and the
+  highlight must not be the only sign a collection is open: the camera holds it
+  and the graph settles around it;
 - collection labels use a graph-space rectangular collision d3-force sized from
   screen-space typography (`h-7`, measured label width, `2px` gap divided by
   current zoom). It must resolve overlap inside the same simulation as the graph,

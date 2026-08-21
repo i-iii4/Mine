@@ -70,6 +70,10 @@ const graphMethodMocks = vi.hoisted(() => ({
 // test asserting where a node is pinned has to read the very objects d3 would.
 const graphDataSpy = vi.hoisted(() => ({ current: null as { nodes: Array<Record<string, unknown>> } | null }));
 
+// The painter itself, so a test can ask what a pill is actually drawn with
+// rather than trusting a flag that claims it was highlighted.
+const paintSpy = vi.hoisted(() => ({ current: null as MockGraphProps["nodeCanvasObject"] }));
+
 vi.mock("@/lib/commands", () => ({
   listGraphSnapshot: commandMocks.listGraphSnapshot,
   getBlock: commandMocks.getBlock,
@@ -121,6 +125,7 @@ vi.mock("react-force-graph-2d", async () => {
         node.y ??= 120;
       });
       graphDataSpy.current = graphData as never;
+      paintSpy.current = nodeCanvasObject;
       const membershipLink = graphData?.links.find(
         (link) => link.kind === "collection_membership",
       );
@@ -201,6 +206,36 @@ vi.mock("react-force-graph-2d", async () => {
 
   return { default: MockForceGraph2D };
 });
+
+// Records the stroke a pill is drawn with. The outline is the whole question:
+// hover and the opened collection must produce the same one.
+function paintPill(node: MockGraphNode): { stroke: string; lineWidth: number; text: string } {
+  const strokes: Array<{ stroke: string; lineWidth: number }> = [];
+  const fills: string[] = [];
+  const context = {
+    globalAlpha: 1,
+    filter: "none",
+    fillStyle: "",
+    strokeStyle: "",
+    lineWidth: 1,
+    font: "",
+    textAlign: "start",
+    textBaseline: "alphabetic",
+    save() {}, restore() {}, beginPath() {}, rect() {}, moveTo() {}, lineTo() {},
+    arcTo() {}, arc() {}, closePath() {}, clip() {}, translate() {}, scale() {},
+    drawImage() {}, fillRect() {}, strokeRect() {}, setLineDash() {},
+    measureText: () => ({ width: 40 }),
+    fill() { fills.push(String(this.fillStyle)); },
+    stroke() { strokes.push({ stroke: String(this.strokeStyle), lineWidth: this.lineWidth }); },
+    fillText() { fills.push(String(this.fillStyle)); },
+  };
+  paintSpy.current?.(node as never, context as never, 1);
+  return {
+    stroke: strokes.at(-1)?.stroke ?? "",
+    lineWidth: strokes.at(-1)?.lineWidth ?? 0,
+    text: fills.at(-1) ?? "",
+  };
+}
 
 function paintNodeAlpha(
   node: MockGraphNode,
@@ -790,6 +825,45 @@ describe("GraphView", () => {
         materialize_large_library: false,
       },
     );
+  });
+
+  it("draws the opened collection exactly as hover draws it, with no outline of its own", async () => {
+    const card = graphCardNode("alpha-card", "Alpha card");
+    const collection: GraphNode = {
+      id: "collection:Design",
+      kind: "collection",
+      label: "Design",
+      slug: null,
+      collection_ref: "Design",
+      card_kind: null,
+      block_type: null,
+      thumbnail: null,
+      preview_manifest: null,
+      degree: 1,
+    };
+    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes([card, collection]));
+
+    const { rerenderGraph } = renderGraph();
+    await screen.findByRole("button", { name: "Alpha card" });
+    const pill = () => graphDataSpy.current?.nodes.find(
+      (node) => node.id === "collection:Design",
+    ) as MockGraphNode;
+
+    const resting = paintPill(pill());
+    fireEvent.mouseOver(screen.getByRole("button", { name: "Design" }));
+    const hovered = paintPill(pill());
+    expect(hovered.stroke).not.toBe(resting.stroke);
+
+    fireEvent.mouseOut(screen.getByRole("button", { name: "Design" }));
+    rerenderGraph({ currentCollection: "Design" });
+    await waitFor(() => {
+      const opened = paintPill(pill());
+      expect(opened.stroke).toBe(hovered.stroke);
+      expect(opened.text).toBe(hovered.text);
+      // A heavier line was the invented third look; the opened pill wears the
+      // hover outline at hover weight.
+      expect(opened.lineWidth).toBe(hovered.lineWidth);
+    });
   });
 
   it("pins the opened collection where it already stands and never teleports it", async () => {

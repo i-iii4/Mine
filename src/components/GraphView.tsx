@@ -736,8 +736,11 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
         paintCollectionNode(ctx, node, {
           globalScale,
           theme: canvasTheme,
-          hovered: hoveredCollectionId === node.id,
-          selected,
+          // The opened collection reads as hovered: it is the one the view is
+          // held on, and that is the same message hover carries.
+          highlighted: hoveredCollectionId === node.id
+            || selected
+            || node.id === focusNodeId,
         });
         ctx.restore();
         return;
@@ -757,6 +760,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     },
     [
       canvasTheme,
+      focusNodeId,
       hoveredCollectionId,
       imageVersion,
       renderThumbnails,

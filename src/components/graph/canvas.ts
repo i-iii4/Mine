@@ -69,8 +69,11 @@ export function paintCollectionNode(
   options: {
     globalScale: number;
     theme: GraphCanvasTheme;
-    hovered: boolean;
-    selected: boolean;
+    // One highlight, not two. Hover, keyboard selection and the opened
+    // collection are the same state to the eye — a pill that stands out — and
+    // giving the opened one its own heavier outline invented a third look
+    // nobody asked for.
+    highlighted: boolean;
   },
 ) {
   const label = collectionLabel(node);
@@ -84,16 +87,14 @@ export function paintCollectionNode(
   roundedRectPath(ctx, x, y, width, COLLECTION_HEIGHT, COLLECTION_HEIGHT / 2);
   ctx.fillStyle = options.theme.chromeFill;
   ctx.fill();
-  ctx.lineWidth = options.selected ? 2 : 1;
-  ctx.strokeStyle = options.hovered || options.selected
-    ? options.theme.hoverOutline
-    : options.theme.border;
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = options.highlighted ? options.theme.hoverOutline : options.theme.border;
   ctx.stroke();
 
   ctx.font = `400 ${COLLECTION_FONT_SIZE}px system-ui, -apple-system, BlinkMacSystemFont, sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillStyle = options.hovered ? options.theme.foregroundText : options.theme.mutedText;
+  ctx.fillStyle = options.highlighted ? options.theme.foregroundText : options.theme.mutedText;
   ctx.fillText(label, 0, 0, width - COLLECTION_PAD_X * 2);
   ctx.restore();
 }
