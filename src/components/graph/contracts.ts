@@ -71,6 +71,10 @@ export const CARD_COLLISION_RADIUS = 22;
 // 100 leaves a fifth of the size as air. See SPEC_GRAPH_VIEW.md, «Размер узла».
 export const GRAPH_NODE_MAX_PX = 100;
 
+// Side of the frame-share a card occupies. The rest is the air between
+// neighbours: at 1.0 the cards would tile the frame edge to edge.
+export const GRAPH_NODE_FILL_RATIO = 0.55;
+
 // How often the layout's actual spacing is remeasured, in engine ticks. It
 // changes only as the simulation settles, so a per-frame pass would be waste.
 export const SPACING_RECOMPUTE_TICKS = 15;

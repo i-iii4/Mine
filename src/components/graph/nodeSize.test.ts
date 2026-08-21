@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { graphNodeScreenSize, nearestNeighbourSpacing } from "./nodeSize";
+import {
+  frameFillSize,
+  graphNodeScreenSize,
+  nearestNeighbourSpacing,
+  visibleNodeCount,
+} from "./nodeSize";
 import { CARD_THUMBNAIL_SIZE, GRAPH_NODE_MAX_PX, type GraphCanvasNode } from "./contracts";
 
 const BASE = CARD_THUMBNAIL_SIZE;
@@ -13,31 +18,83 @@ function node(id: string, x: number, y: number): GraphCanvasNode {
 }
 
 describe("graphNodeScreenSize", () => {
-  it("grows with the zoom instead of staying the same size for ever", () => {
-    // The defect this replaces: approaching spread the links and showed the
-    // picture at exactly 32 pixels no matter how close you came.
-    expect(graphNodeScreenSize(1, BASE)).toBe(BASE);
-    expect(graphNodeScreenSize(2, BASE)).toBe(BASE * 2);
-    expect(graphNodeScreenSize(2.5, BASE)).toBeGreaterThan(graphNodeScreenSize(2, BASE));
+  it("takes the size the frame can afford, not the zoom", () => {
+    // The defect this replaces: size grew as base × zoom while the distances
+    // between nodes grew by the same factor, so the picture never took up any
+    // more of the screen than before.
+    expect(graphNodeScreenSize(BASE, { fillLimit: 70 })).toBe(70);
+    expect(graphNodeScreenSize(BASE, { fillLimit: 45 })).toBe(45);
   });
 
-  it("stops at the ceiling rather than growing without end", () => {
-    expect(graphNodeScreenSize(50, BASE)).toBe(GRAPH_NODE_MAX_PX);
-    expect(graphNodeScreenSize(1000, BASE)).toBe(GRAPH_NODE_MAX_PX);
+  it("stops at the ceiling however empty the frame is", () => {
+    expect(graphNodeScreenSize(BASE, { fillLimit: 400 })).toBe(GRAPH_NODE_MAX_PX);
   });
 
-  it("never shrinks below the base when zoomed out", () => {
-    // At zoom 0.2 the overview is already dense; shrinking further turns it
-    // into dust.
-    expect(graphNodeScreenSize(0.2, BASE)).toBe(BASE);
-    expect(graphNodeScreenSize(0, BASE)).toBe(BASE);
+  it("never shrinks below the base however full the frame is", () => {
+    expect(graphNodeScreenSize(BASE, { fillLimit: 4 })).toBe(BASE);
   });
 
-  it("obeys the room the layout actually has, below the ceiling", () => {
-    // 60px of spacing means 60px is all a card may occupy, ceiling or not.
-    expect(graphNodeScreenSize(10, BASE, 60)).toBe(60);
-    // And a spacing tighter than the base still leaves the card readable.
-    expect(graphNodeScreenSize(10, BASE, 10)).toBe(BASE);
+  it("yields to the room the layout actually has", () => {
+    // A crowded layout overrides a generous frame share: neighbours must not
+    // be covered.
+    expect(graphNodeScreenSize(BASE, { fillLimit: 90, spacingLimit: 50 })).toBe(50);
+    expect(graphNodeScreenSize(BASE, { fillLimit: 50, spacingLimit: 90 })).toBe(50);
+  });
+
+  it("falls back to the ceiling when nothing has been measured yet", () => {
+    expect(graphNodeScreenSize(BASE, {})).toBe(GRAPH_NODE_MAX_PX);
+  });
+});
+
+describe("frameFillSize", () => {
+  it("gives every node a share of the frame, so fewer nodes means larger ones", () => {
+    const viewport = { width: 1280, height: 800 };
+    const crowded = frameFillSize(viewport, 60) as number;
+    const sparse = frameFillSize(viewport, 20) as number;
+    const nearlyEmpty = frameFillSize(viewport, 3) as number;
+
+    expect(crowded).toBeLessThan(sparse);
+    expect(sparse).toBeLessThan(nearlyEmpty);
+    // Sixty cards in this frame is the first screenshot the user reported as
+    // "still tiny": the share is around seventy pixels, not thirty-two.
+    expect(crowded).toBeGreaterThan(60);
+    expect(crowded).toBeLessThan(80);
+  });
+
+  it("leaves air between neighbours rather than tiling the frame", () => {
+    const viewport = { width: 1000, height: 1000 };
+    const size = frameFillSize(viewport, 100) as number;
+    // A hundred nodes over a hundred slots of 100px: a full tiling would be
+    // exactly 100, so the share has to be visibly less.
+    expect(size).toBeLessThan(100);
+  });
+
+  it("measures nothing when there is no frame or nothing in it", () => {
+    expect(frameFillSize({ width: 0, height: 0 }, 10)).toBeNull();
+    expect(frameFillSize({ width: 800, height: 600 }, 0)).toBeNull();
+  });
+});
+
+describe("visibleNodeCount", () => {
+  const viewport = { width: 400, height: 400 };
+
+  it("counts what the camera holds and ignores the rest", () => {
+    const nodes = [node("in", 0, 0), node("edge", 190, 190), node("out", 500, 500)];
+    expect(visibleNodeCount(nodes, { x: 0, y: 0 }, viewport, 1)).toBe(2);
+  });
+
+  it("holds fewer nodes as the view comes closer", () => {
+    const nodes = Array.from({ length: 9 }, (_, i) =>
+      node(`n${i}`, ((i % 3) - 1) * 150, (Math.floor(i / 3) - 1) * 150));
+    const far = visibleNodeCount(nodes, { x: 0, y: 0 }, viewport, 1);
+    const near = visibleNodeCount(nodes, { x: 0, y: 0 }, viewport, 4);
+    expect(near).toBeLessThan(far);
+  });
+
+  it("ignores nodes the simulation has not placed", () => {
+    const unplaced = { ...node("ghost", 0, 0) } as GraphCanvasNode & { x?: number };
+    delete unplaced.x;
+    expect(visibleNodeCount([unplaced], { x: 0, y: 0 }, viewport, 1)).toBe(0);
   });
 });
 

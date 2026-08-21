@@ -73,7 +73,12 @@ import {
   hasNodePosition,
   isGraphArrowKey,
 } from "./graph/interaction";
-import { graphNodeScreenSize, nearestNeighbourSpacing } from "./graph/nodeSize";
+import {
+  frameFillSize,
+  graphNodeScreenSize,
+  nearestNeighbourSpacing,
+  visibleNodeCount,
+} from "./graph/nodeSize";
 import { graphLinkCurvature, graphLinkLineDash } from "./graph/linkStyle";
 import { collectionLabelCollisionForce, graphPhysics } from "./graph/physics";
 
@@ -143,6 +148,8 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   // cadence rather than per frame: it changes only as the simulation settles,
   // and it is what stops a growing node from covering its neighbour.
   const nodeSpacingRef = useRef<number | null>(null);
+  // Size the frame's area allows each node inside it. Null until measured.
+  const frameFillRef = useRef<number | null>(null);
   const spacingTickRef = useRef(0);
   const collectionDragClickSuppressionRef = useRef<{ nodeId: string; until: number } | null>(null);
   const previousHoverPreviewFrozenRef = useRef(hoverPreviewFrozen);
@@ -411,9 +418,26 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   /// somewhere the eye is not.
   const nodeScreenSizeAt = useCallback((zoom: number) => {
     const spacing = nodeSpacingRef.current;
-    const limit = spacing !== null ? spacing * zoom : undefined;
-    return graphNodeScreenSize(zoom, CARD_THUMBNAIL_SIZE, limit);
+    return graphNodeScreenSize(CARD_THUMBNAIL_SIZE, {
+      fillLimit: frameFillRef.current ?? undefined,
+      spacingLimit: spacing !== null ? spacing * zoom : undefined,
+    });
   }, []);
+
+  /// Recompute how full the frame is. Cheap enough to run on every zoom step,
+  /// which is what keeps the growth continuous instead of arriving in one jump
+  /// when the gesture ends.
+  const syncFrameFill = useCallback(() => {
+    const graph = graphRef.current;
+    if (!graph || size.width <= 0 || size.height <= 0) {
+      frameFillRef.current = null;
+      return;
+    }
+    const center = graph.centerAt();
+    if (!center) return;
+    const count = visibleNodeCount(graphData.nodes, center, size, graphScaleRef.current);
+    frameFillRef.current = frameFillSize(size, count);
+  }, [graphData.nodes, size]);
 
   const currentNodeScreenSize = useCallback(
     () => nodeScreenSizeAt(graphScaleRef.current),
@@ -537,6 +561,9 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     spacingTickRef.current += 1;
     if (spacingTickRef.current % SPACING_RECOMPUTE_TICKS === 0) {
       nodeSpacingRef.current = nearestNeighbourSpacing(graphData.nodes);
+      // Nodes move while the layout settles, so what the frame holds changes
+      // with them, not only when the camera does.
+      syncFrameFill();
     }
 
     const positions = nodePositionsRef.current;
@@ -583,7 +610,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       return;
     }
     graph.zoomToFit(GRAPH_INITIAL_FIT_DURATION_MS, 40);
-  }, [aimCenterForce, focusNodeId, graphData.nodes, size]);
+  }, [aimCenterForce, focusNodeId, graphData.nodes, size, syncFrameFill]);
 
   const clearPreviewOpenTimer = useCallback(() => {
     if (previewOpenTimerRef.current === null) return;
@@ -1031,9 +1058,13 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
             warmupTicks={nodePositionsRef.current.size > 0 ? 0 : physics.warmupTicks}
             cooldownTime={physics.cooldownTime}
             onEngineTick={handleEngineTick}
-            onZoom={(transform) => syncGraphScale(transform.k)}
+            onZoom={(transform) => {
+              syncGraphScale(transform.k);
+              syncFrameFill();
+            }}
             onZoomEnd={(transform) => {
               syncGraphScale(transform.k);
+              syncFrameFill();
               // Settling on a close view is the moment the heavier level is
               // worth fetching — and the only one, since a settled simulation
               // stops ticking.

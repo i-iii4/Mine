@@ -1,5 +1,6 @@
 import {
   CARD_COLLISION_RADIUS,
+  GRAPH_NODE_FILL_RATIO,
   GRAPH_NODE_MAX_PX,
   type GraphCanvasNode,
 } from "./contracts";
@@ -20,18 +21,65 @@ import { hasNodePosition } from "./interaction";
  * from the constant.
  */
 export function graphNodeScreenSize(
-  zoom: number,
   base: number,
-  spacingLimit?: number,
+  limits: { fillLimit?: number; spacingLimit?: number },
+): number {
+  // Sizing by zoom alone was the mistake this replaces: distances between nodes
+  // are multiplied by the zoom too, so a card and the gap beside it grew at the
+  // same rate and the picture never occupied any more of the screen than
+  // before. What the eye reads as "closer" is the share of the frame the cards
+  // take, and that is what `fillLimit` carries.
+  const candidates = [GRAPH_NODE_MAX_PX];
+  if (limits.fillLimit !== undefined && Number.isFinite(limits.fillLimit)) {
+    candidates.push(limits.fillLimit);
+  }
+  if (limits.spacingLimit !== undefined && Number.isFinite(limits.spacingLimit)) {
+    candidates.push(limits.spacingLimit);
+  }
+  // Never below the base: a card smaller than 32 pixels is not a picture.
+  return Math.max(base, Math.min(...candidates));
+}
+
+/**
+ * The size each node may take if the frame's area is shared out between the
+ * nodes currently inside it.
+ *
+ * `GRAPH_NODE_FILL_RATIO` is the side of that share a card actually occupies;
+ * the rest stays as air between neighbours.
+ */
+export function frameFillSize(
+  viewport: { width: number; height: number },
+  visibleCount: number,
+): number | null {
+  if (viewport.width <= 0 || viewport.height <= 0 || visibleCount <= 0) return null;
+  const areaPerNode = (viewport.width * viewport.height) / visibleCount;
+  return Math.sqrt(areaPerNode) * GRAPH_NODE_FILL_RATIO;
+}
+
+/**
+ * How many nodes the frame currently holds.
+ *
+ * Counted from positions and the camera rather than by asking the canvas to
+ * project every node: this runs on each zoom step, and a projection call per
+ * node per step is work the frame budget does not have.
+ */
+export function visibleNodeCount(
+  nodes: readonly GraphCanvasNode[],
+  center: { x: number; y: number },
+  viewport: { width: number; height: number },
+  zoom: number,
 ): number {
   const safeZoom = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
-  const grown = base * safeZoom;
-  const ceiling = spacingLimit !== undefined && Number.isFinite(spacingLimit)
-    ? Math.min(GRAPH_NODE_MAX_PX, spacingLimit)
-    : GRAPH_NODE_MAX_PX;
-  // Never below the base: at zoom < 1 the graph is already dense, and shrinking
-  // the cards further would turn the overview into dust.
-  return Math.max(base, Math.min(grown, Math.max(base, ceiling)));
+  const halfWidth = viewport.width / (2 * safeZoom);
+  const halfHeight = viewport.height / (2 * safeZoom);
+  let count = 0;
+  for (const node of nodes) {
+    if (!hasNodePosition(node)) continue;
+    if (Math.abs(node.x - center.x) > halfWidth) continue;
+    if (Math.abs(node.y - center.y) > halfHeight) continue;
+    count += 1;
+  }
+  return count;
 }
 
 /**
