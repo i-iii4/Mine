@@ -24,7 +24,6 @@ export function paintCardNode(
     thumbVersion: number;
     renderThumbnail: boolean;
     selected: boolean;
-    showLabel: boolean;
   },
 ) {
   const palette = GRAPH_PALETTE[options.theme];
@@ -57,9 +56,6 @@ export function paintCardNode(
     ctx.lineWidth = 2 / options.globalScale;
     ctx.strokeStyle = options.canvasTheme.hoverOutline;
     ctx.strokeRect(x, y, size, size);
-  }
-  if (options.showLabel) {
-    paintScreenFixedLabel(ctx, node, options.globalScale, options.canvasTheme.foregroundText, size);
   }
 }
 
@@ -96,24 +92,6 @@ export function paintCollectionNode(
   ctx.textBaseline = "middle";
   ctx.fillStyle = options.highlighted ? options.theme.foregroundText : options.theme.mutedText;
   ctx.fillText(label, 0, 0, width - COLLECTION_PAD_X * 2);
-  ctx.restore();
-}
-
-function paintScreenFixedLabel(
-  ctx: CanvasRenderingContext2D,
-  node: PositionedGraphCanvasNode,
-  globalScale: number,
-  color: string,
-  nodeSize: number,
-) {
-  ctx.save();
-  ctx.translate(node.x, node.y + nodeSize / 2);
-  ctx.scale(1 / globalScale, 1 / globalScale);
-  ctx.font = `400 ${COLLECTION_FONT_SIZE}px system-ui, -apple-system, BlinkMacSystemFont, sans-serif`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "top";
-  ctx.fillStyle = color;
-  ctx.fillText(node.label, 0, 4, 180);
   ctx.restore();
 }
 

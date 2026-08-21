@@ -931,6 +931,32 @@ describe("GraphView", () => {
     expect(largeZoom).toBeLessThan(smallZoom);
   });
 
+  it("draws no text under a card, selected or not", async () => {
+    commandMocks.listGraphSnapshot.mockResolvedValue(
+      makeSnapshot(graphCardNode("alpha-card", "Alpha card")),
+    );
+    renderGraph();
+    const card = await screen.findByRole("button", { name: "Alpha card" });
+    fireEvent.click(card);
+
+    const texts: string[] = [];
+    const context = {
+      globalAlpha: 1, filter: "none", fillStyle: "", strokeStyle: "", lineWidth: 1,
+      font: "", textAlign: "start", textBaseline: "alphabetic",
+      save() {}, restore() {}, beginPath() {}, rect() {}, moveTo() {}, lineTo() {},
+      arcTo() {}, arc() {}, closePath() {}, clip() {}, translate() {}, scale() {},
+      drawImage() {}, fillRect() {}, strokeRect() {}, setLineDash() {}, fill() {}, stroke() {},
+      measureText: () => ({ width: 40 }),
+      fillText: (value: string) => { texts.push(value); },
+    };
+    const node = graphDataSpy.current?.nodes.find((n) => n.id === "card:alpha-card");
+    paintSpy.current?.(node as never, context as never, 1);
+
+    // The selection outline says which node is selected; a caption repeated it a
+    // second time, in text squeezed to 180px until it was unreadable.
+    expect(texts).toEqual([]);
+  });
+
   it("aims the centring force at the pinned collection, not at the origin", async () => {
     const card = graphCardNode("alpha-card", "Alpha card");
     const collection: GraphNode = {

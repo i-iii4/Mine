@@ -583,8 +583,13 @@ Labels:
 
 - collection labels: always visible as canvas-native `GraphCollectionLabel`
   equivalents;
-- card labels: visible for search matches and the selected node; otherwise the
-  hover preview carries card title/text;
+- card labels: none. A card node is never captioned. The rule used to name two
+  cases and both were wrong: there are no search matches to label, because Graph
+  View has no graph-local search, and the selected node already carries a
+  selection outline — a caption said the same thing a second time. It was also
+  unreadable: `fillText` with a `maxWidth` does not truncate, it compresses, so
+  a card named after a page title was squeezed into 180 px of micro-type. A
+  card's title and text belong to the hover preview, which has room for them;
 - no graph-local label backgrounds, custom rgba fills, custom radii, custom
   typography or custom paddings outside the design-system label contract;
 - collection labels preserve at least `2px` visual gap through the canvas/d3

@@ -770,7 +770,6 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     (node: GraphCanvasNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
       if (!hasNodePosition(node)) return;
       const selected = selectedNodeId === node.id;
-      const showLabel = selected;
       ctx.save();
       if (node.kind === "collection") {
         paintCollectionNode(ctx, node, {
@@ -794,7 +793,6 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
         thumbVersion: node.slug ? thumbVersions.get(node.slug) ?? 0 : 0,
         renderThumbnail: renderThumbnails,
         selected,
-        showLabel,
       });
       ctx.restore();
     },
