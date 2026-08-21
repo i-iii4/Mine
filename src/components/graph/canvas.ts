@@ -1,6 +1,6 @@
 import { collectionRefLabel } from "@/lib/collections";
 import { parsePreviewManifest } from "@/lib/cardLayout";
-import { graphThumbnailUrl } from "./interaction";
+import { graphThumbLevelFor, graphThumbnailUrl } from "./interaction";
 import {
   COLLECTION_FONT_SIZE,
   COLLECTION_HEIGHT,
@@ -35,7 +35,12 @@ export function paintCardNode(
   const y = node.y - size / 2;
 
   const imageUrl = node.slug
-    ? graphThumbnailUrl(options.thumbsRootPath, node.slug, options.thumbVersion)
+    ? graphThumbnailUrl(
+      options.thumbsRootPath,
+      node.slug,
+      options.thumbVersion,
+      graphThumbLevelFor(options.screenSize),
+    )
     : null;
   const image = options.renderThumbnail && imageUrl ? options.imageCache.get(imageUrl) : null;
 

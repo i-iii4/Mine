@@ -8,8 +8,23 @@ export function fallbackThumbsRoot(vaultPath: string): string {
   return `${vaultPath}/.mine/cache/thumbs`;
 }
 
+/// A reduced level of a thumbnail, for surfaces that draw it small.
+///
+/// `micro` covers a 32-logical-pixel node or sidebar cell at double density;
+/// `zoom` covers the graph's 100-pixel ceiling. Reading the full 640px file for
+/// a 32px square costs four hundred times the decoded memory it needs.
+export type ThumbLevel = "micro" | "zoom";
+
 export function thumbnailUrl(thumbsRootPath: string, slug: string): string {
   return convertFileSrc(`${thumbsRootPath}/${slug}.jpg`);
+}
+
+export function thumbnailLevelUrl(
+  thumbsRootPath: string,
+  slug: string,
+  level: ThumbLevel,
+): string {
+  return convertFileSrc(`${thumbsRootPath}/${slug}.${level}.jpg`);
 }
 
 export function previewAssetUrl(thumbsRootPath: string, previewPath: string): string {

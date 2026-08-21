@@ -1,8 +1,9 @@
 import type { ForceGraphMethods } from "react-force-graph-2d";
-import { thumbnailUrl } from "@/lib/assets";
+import { thumbnailLevelUrl, type ThumbLevel } from "@/lib/assets";
 import {
   GRAPH_PREVIEW_GAP,
   GRAPH_PREVIEW_VIEWPORT_MARGIN,
+  GRAPH_MICRO_LEVEL_MAX_PX,
   GRAPH_PREVIEW_WIDTH,
   GRAPH_ZOOM_MAX,
   GRAPH_ZOOM_MIN,
@@ -166,11 +167,24 @@ export function graphClientPointFromEvent(event: Event): GraphCardMenuPoint | nu
   return { x: event.clientX, y: event.clientY };
 }
 
+/// The graph reads a reduced level, never the full thumbnail.
+///
+/// A node is drawn between 32 and 100 pixels; the full file is 640 on its long
+/// side, and the engine keeps it decoded at that size whatever we draw it at.
+/// `micro` serves the overview, `zoom` the approached view.
 export function graphThumbnailUrl(
   thumbsRootPath: string,
   slug: string,
   thumbVersion: number,
+  level: ThumbLevel,
 ): string {
   const cacheBuster = thumbVersion > 0 ? `?v=${thumbVersion}` : "";
-  return `${thumbnailUrl(thumbsRootPath, slug)}${cacheBuster}`;
+  return `${thumbnailLevelUrl(thumbsRootPath, slug, level)}${cacheBuster}`;
+}
+
+/// Which level a node needs at this size. The step is the micro level's own
+/// resolution: past 32 logical pixels at double density it has nothing left to
+/// show, and holding the line there keeps the heavy level out of the overview.
+export function graphThumbLevelFor(nodeScreenSize: number): ThumbLevel {
+  return nodeScreenSize > GRAPH_MICRO_LEVEL_MAX_PX ? "zoom" : "micro";
 }

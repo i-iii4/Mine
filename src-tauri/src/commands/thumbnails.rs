@@ -113,6 +113,11 @@ pub fn save_thumb(
     files::write_atomically(&thumb_path, &bytes)
         .map_err(|e| CommandError::Internal(format!("write decoded thumb: {e:#}")))?;
 
+    // The WebView upgrade replaces the full thumbnail, so the reduced levels
+    // beside it now describe the old picture. Rewriting them here keeps every
+    // surface on the same image, whichever level it reads.
+    thumbnails::generate_thumb_levels(&vault, &slug);
+
     let conn = db::open_or_create(&vault.index_db_path())
         .map_err(|e| CommandError::Internal(format!("open thumb metadata db: {e:#}")))?;
     index::sync_thumb_metadata(&conn, &slug, &thumb_path, Some(vault.root()))

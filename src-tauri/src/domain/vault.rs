@@ -51,6 +51,37 @@ pub struct VaultWriteLayout {
     pub collections: String,
 }
 
+/// A reduced size of a block's thumbnail.
+///
+/// `Micro` covers a 32-logical-pixel node or sidebar cell at double density;
+/// `Zoom` covers the graph's 100-pixel ceiling on the same screens. Both are
+/// produced from the full thumbnail, never from the original media: shrinking a
+/// ready 640px JPEG costs nothing next to decoding a source that may weigh tens
+/// of megabytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThumbLevel {
+    Micro,
+    Zoom,
+}
+
+impl ThumbLevel {
+    pub const ALL: [ThumbLevel; 2] = [ThumbLevel::Micro, ThumbLevel::Zoom];
+
+    pub fn suffix(self) -> &'static str {
+        match self {
+            ThumbLevel::Micro => "micro",
+            ThumbLevel::Zoom => "zoom",
+        }
+    }
+
+    pub fn max_size(self) -> u32 {
+        match self {
+            ThumbLevel::Micro => 64,
+            ThumbLevel::Zoom => 256,
+        }
+    }
+}
+
 pub const DEFAULT_CARDS_DIR: &str = "Cards";
 pub const DEFAULT_MEDIA_DIR: &str = "Media";
 pub const DEFAULT_COLLECTIONS_DIR: &str = "Collections";
@@ -332,6 +363,21 @@ impl VaultLayout {
     ///
     /// Panics in debug builds if slug fails validation.
     /// Call `validate_slug()` at IPC boundaries before using this.
+    /// Path to a reduced level of a block's thumbnail.
+    ///
+    /// One 640px file used to serve the feed at 220px and both the graph and
+    /// the sidebar at 32 — twenty times over by side, four hundred by decoded
+    /// area. Levels let the small surfaces read a small file.
+    pub fn thumb_level_path(&self, slug: &str, level: ThumbLevel) -> PathBuf {
+        debug_assert!(
+            validate_slug(slug).is_ok(),
+            "invalid slug passed to thumb_level_path: {:?}",
+            slug
+        );
+        self.thumbs_dir()
+            .join(format!("{}.{}.jpg", slug, level.suffix()))
+    }
+
     pub fn thumb_path(&self, slug: &str) -> PathBuf {
         debug_assert!(
             validate_slug(slug).is_ok(),

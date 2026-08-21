@@ -14,7 +14,7 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 use crate::domain::block::{derive_title_fields, strip_first_markdown_h1, Block};
-use crate::domain::vault::VaultLayout;
+use crate::domain::vault::{ThumbLevel, VaultLayout};
 use crate::storage::preview_plan::{
     self, media_ext_lower, PreviewMediaKind, MICRO_PREVIEW_IMAGE_LIMIT, PREVIEW_TILE_LIMIT,
 };
@@ -997,7 +997,91 @@ pub enum ThumbSource {
 /// the native host (at clip time) and the watcher handler (at full_scan
 /// and on file change) call this function. Previously each had its own
 /// copy of the dispatch logic and they drifted.
+/// Produce the reduced levels beside a freshly written full thumbnail.
+///
+/// Wrapped around the cascade rather than repeated inside it: the cascade has a
+/// dozen ways to finish, and levels must exist after every one of them that
+/// leaves a file on disk.
 pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
+    let source = generate_for_block_inner(block, vault);
+    generate_thumb_levels(vault, &block.slug);
+    source
+}
+
+/// Write `micro` and `zoom` from the full thumbnail, replacing whatever was
+/// there. Failure is never fatal: a missing level means a surface falls back to
+/// its waiting state, not that the card disappears.
+pub fn generate_thumb_levels(vault: &VaultLayout, slug: &str) {
+    let full = vault.thumb_path(slug);
+    if !full.is_file() {
+        return;
+    }
+    for level in ThumbLevel::ALL {
+        let dest = vault.thumb_level_path(slug, level);
+        if let Err(e) = generate_thumbnail(&full, &dest, level.max_size()) {
+            log::warn!(
+                "failed to write {} thumb level for {}: {e:#}",
+                level.suffix(),
+                slug
+            );
+        }
+    }
+}
+
+/// Write missing levels for thumbnails that predate them.
+///
+/// Existing vaults hold full thumbnails and nothing else, and the surfaces that
+/// now read `micro` would show their waiting state for every card until the
+/// file was touched. One pass on startup fixes that; it skips whatever is
+/// already there, so the second launch costs a directory walk.
+///
+/// Returns how many thumbnails gained levels.
+pub fn backfill_thumb_levels(vault: &VaultLayout) -> usize {
+    let root = vault.thumbs_dir();
+    if !root.is_dir() {
+        return 0;
+    }
+    let mut written = 0usize;
+    let mut stack = vec![root];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
+            let Some(stem) = name.strip_suffix(".jpg") else { continue };
+            // Levels and multi-tile previews are not sources for levels.
+            if ThumbLevel::ALL.iter().any(|l| stem.ends_with(&format!(".{}", l.suffix())))
+                || stem.contains(".preview-")
+            {
+                continue;
+            }
+            let Ok(relative) = path.strip_prefix(vault.thumbs_dir()) else { continue };
+            let Some(slug) = relative.to_str().and_then(|p| p.strip_suffix(".jpg")) else { continue };
+            if vault.thumb_level_path(slug, ThumbLevel::Micro).is_file() {
+                continue;
+            }
+            generate_thumb_levels(vault, slug);
+            written += 1;
+        }
+    }
+    written
+}
+
+/// Remove the reduced levels for a slug, for when its thumbnail is discarded.
+pub fn remove_thumb_levels(vault: &VaultLayout, slug: &str) {
+    for level in ThumbLevel::ALL {
+        let path = vault.thumb_level_path(slug, level);
+        if path.exists() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+fn generate_for_block_inner(block: &Block, vault: &VaultLayout) -> ThumbSource {
     let slug = &block.slug;
     let thumb_path = vault.thumb_path(slug);
     let title_fields = derive_title_fields(slug, block.frontmatter.title.as_deref(), &block.body);
@@ -1342,6 +1426,128 @@ mod tests {
         let (w, h) = img.dimensions();
         assert_eq!(w, 240);
         assert_eq!(h, 144); // 500x300 → 240x144
+    }
+
+    // ─── Tests for reduced thumbnail levels ────────────────────────────────
+
+    fn write_source_jpeg(path: &Path, width: u32, height: u32) {
+        let mut img = image::RgbImage::new(width, height);
+        for (x, y, pixel) in img.enumerate_pixels_mut() {
+            *pixel = image::Rgb([(x % 256) as u8, (y % 256) as u8, 128]);
+        }
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        img.save(path).unwrap();
+    }
+
+    #[test]
+    fn levels_are_written_beside_the_full_thumbnail_at_their_own_sizes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault = make_vault(tmp.path());
+        write_source_jpeg(&vault.thumb_path("Card"), 640, 480);
+
+        generate_thumb_levels(&vault, "Card");
+
+        for (level, expected_long_side) in [(ThumbLevel::Micro, 64), (ThumbLevel::Zoom, 256)] {
+            let path = vault.thumb_level_path("Card", level);
+            assert!(path.is_file(), "{} level missing", level.suffix());
+            let (w, h) = image::image_dimensions(&path).unwrap();
+            assert_eq!(
+                w.max(h),
+                expected_long_side,
+                "{} level has the wrong long side",
+                level.suffix(),
+            );
+        }
+    }
+
+    #[test]
+    fn levels_are_smaller_on_disk_than_the_full_thumbnail() {
+        // The whole point is bytes: a level that weighs the same as the source
+        // would move the cost around instead of removing it.
+        let tmp = tempfile::tempdir().unwrap();
+        let vault = make_vault(tmp.path());
+        write_source_jpeg(&vault.thumb_path("Card"), 640, 480);
+
+        generate_thumb_levels(&vault, "Card");
+
+        let full = std::fs::metadata(vault.thumb_path("Card")).unwrap().len();
+        let micro = std::fs::metadata(vault.thumb_level_path("Card", ThumbLevel::Micro))
+            .unwrap()
+            .len();
+        assert!(micro * 4 < full, "micro {micro} is not much smaller than full {full}");
+    }
+
+    #[test]
+    fn regenerating_levels_replaces_the_previous_picture() {
+        // A WebView upgrade rewrites the full thumbnail; levels left from the
+        // old picture would leave the graph and the sidebar showing something
+        // the feed no longer shows.
+        let tmp = tempfile::tempdir().unwrap();
+        let vault = make_vault(tmp.path());
+        write_source_jpeg(&vault.thumb_path("Card"), 640, 480);
+        generate_thumb_levels(&vault, "Card");
+        let first = std::fs::read(vault.thumb_level_path("Card", ThumbLevel::Micro)).unwrap();
+
+        write_source_jpeg(&vault.thumb_path("Card"), 400, 400);
+        generate_thumb_levels(&vault, "Card");
+        let second = std::fs::read(vault.thumb_level_path("Card", ThumbLevel::Micro)).unwrap();
+
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn no_full_thumbnail_means_no_levels_and_no_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault = make_vault(tmp.path());
+
+        generate_thumb_levels(&vault, "Missing");
+
+        assert!(!vault.thumb_level_path("Missing", ThumbLevel::Micro).exists());
+    }
+
+    #[test]
+    fn backfill_writes_levels_for_old_thumbnails_and_skips_the_rest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault = make_vault(tmp.path());
+        write_source_jpeg(&vault.thumb_path("Old"), 640, 480);
+        write_source_jpeg(&vault.thumb_path("Fresh"), 640, 480);
+        generate_thumb_levels(&vault, "Fresh");
+        // A multi-tile preview file is not a card thumbnail and must not gain
+        // levels of its own.
+        write_source_jpeg(&vault.thumbs_dir().join("Old.preview-2.jpg"), 640, 480);
+
+        let written = backfill_thumb_levels(&vault);
+
+        assert_eq!(written, 1, "only the thumbnail without levels is processed");
+        assert!(vault.thumb_level_path("Old", ThumbLevel::Micro).is_file());
+        assert!(!vault
+            .thumbs_dir()
+            .join("Old.preview-2.micro.jpg")
+            .exists());
+    }
+
+    #[test]
+    fn backfill_is_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault = make_vault(tmp.path());
+        write_source_jpeg(&vault.thumb_path("Card"), 640, 480);
+
+        assert_eq!(backfill_thumb_levels(&vault), 1);
+        assert_eq!(backfill_thumb_levels(&vault), 0, "second launch does no work");
+    }
+
+    #[test]
+    fn removing_levels_leaves_the_full_thumbnail_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault = make_vault(tmp.path());
+        write_source_jpeg(&vault.thumb_path("Card"), 640, 480);
+        generate_thumb_levels(&vault, "Card");
+
+        remove_thumb_levels(&vault, "Card");
+
+        assert!(!vault.thumb_level_path("Card", ThumbLevel::Micro).exists());
+        assert!(!vault.thumb_level_path("Card", ThumbLevel::Zoom).exists());
+        assert!(vault.thumb_path("Card").is_file());
     }
 
     // ─── Tests for generate_for_block cascade ──────────────────────────────

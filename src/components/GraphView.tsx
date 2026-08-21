@@ -37,6 +37,7 @@ import {
   GRAPH_ENTRY_ANGLE,
   GRAPH_ENTRY_SPREAD,
   GRAPH_INITIAL_FIT_TICKS,
+  GRAPH_ZOOM_LEVEL_MARGIN_PX,
   SPACING_RECOMPUTE_TICKS,
   type GraphCameraPlan,
   GRAPH_PREVIEW_FALLBACK_HEIGHT,
@@ -66,6 +67,7 @@ import {
   directionalGraphNode,
   endpointNode,
   graphClientPointFromEvent,
+  graphThumbLevelFor,
   graphThumbnailUrl,
   graphZoomForExtent,
   hasNodePosition,
@@ -375,7 +377,14 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     const cache = imageCacheRef.current;
     for (const node of graphData.nodes) {
       if (node.kind !== "card" || !node.slug) continue;
-      const url = graphThumbnailUrl(resolvedThumbsRoot, node.slug, thumbVersions.get(node.slug) ?? 0);
+      // Every node gets the micro level; the heavy zoom level is fetched only
+      // for what the frame actually holds, in `ensureZoomLevelInFrame`.
+      const url = graphThumbnailUrl(
+        resolvedThumbsRoot,
+        node.slug,
+        thumbVersions.get(node.slug) ?? 0,
+        "micro",
+      );
       if (cache.has(url)) continue;
 
       const image = new Image();
@@ -410,6 +419,46 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     () => nodeScreenSizeAt(graphScaleRef.current),
     [nodeScreenSizeAt],
   );
+
+  /// Fetch the zoom level for nodes the frame actually holds.
+  ///
+  /// Never for the whole snapshot: the zoom level is sixteen times the decoded
+  /// weight of the micro level, and a thousand of them would undo the levels
+  /// entirely. When the view is close enough for it, only a few dozen nodes are
+  /// on screen.
+  const ensureZoomLevelInFrame = useCallback(() => {
+    if (!renderThumbnails) return;
+    const graph = graphRef.current;
+    if (!graph || size.width <= 0 || size.height <= 0) return;
+    const zoom = graphScaleRef.current;
+    if (graphThumbLevelFor(nodeScreenSizeAt(zoom)) !== "zoom") return;
+
+    const cache = imageCacheRef.current;
+    for (const node of graphData.nodes) {
+      if (node.kind !== "card" || !node.slug || !hasNodePosition(node)) continue;
+      const point = graph.graph2ScreenCoords(node.x, node.y);
+      const margin = GRAPH_ZOOM_LEVEL_MARGIN_PX;
+      if (
+        point.x < -margin || point.x > size.width + margin
+        || point.y < -margin || point.y > size.height + margin
+      ) continue;
+
+      const url = graphThumbnailUrl(
+        resolvedThumbsRoot,
+        node.slug,
+        thumbVersions.get(node.slug) ?? 0,
+        "zoom",
+      );
+      if (cache.has(url)) continue;
+      const image = new Image();
+      image.onload = () => {
+        cache.set(url, image);
+        setImageVersion((value) => value + 1);
+      };
+      image.onerror = () => {};
+      image.src = url;
+    }
+  }, [graphData.nodes, nodeScreenSizeAt, renderThumbnails, resolvedThumbsRoot, size, thumbVersions]);
 
   const syncGraphScale = useCallback((scale: number) => {
     graphScaleRef.current = Number.isFinite(scale) && scale > 0 ? scale : 1;
@@ -983,7 +1032,13 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
             cooldownTime={physics.cooldownTime}
             onEngineTick={handleEngineTick}
             onZoom={(transform) => syncGraphScale(transform.k)}
-            onZoomEnd={(transform) => syncGraphScale(transform.k)}
+            onZoomEnd={(transform) => {
+              syncGraphScale(transform.k);
+              // Settling on a close view is the moment the heavier level is
+              // worth fetching — and the only one, since a settled simulation
+              // stops ticking.
+              ensureZoomLevelInFrame();
+            }}
             backgroundColor="transparent"
             linkDirectionalArrowLength={(link) => link.directed ? 3 : 0}
             linkColor={linkColor}

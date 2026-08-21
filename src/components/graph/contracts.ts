@@ -74,6 +74,15 @@ export const GRAPH_NODE_MAX_PX = 100;
 // How often the layout's actual spacing is remeasured, in engine ticks. It
 // changes only as the simulation settles, so a per-frame pass would be waste.
 export const SPACING_RECOMPUTE_TICKS = 15;
+
+// Above this on-screen size the micro level has no detail left to give and the
+// node switches to the zoom level. Only nodes in the frame ever cross it, so
+// the heavy level stays out of the overview.
+export const GRAPH_MICRO_LEVEL_MAX_PX = 32;
+
+// How far outside the viewport a node still counts as worth the zoom level, so
+// a small pan does not arrive at an empty square.
+export const GRAPH_ZOOM_LEVEL_MARGIN_PX = 200;
 export const COLLECTION_FONT_SIZE = 14;
 export const COLLECTION_PAD_X = 12;
 export const COLLECTION_HEIGHT = 28;

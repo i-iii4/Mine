@@ -21,7 +21,7 @@ use crate::domain::vault::{VaultLayout, VaultWriteLayout};
 use crate::storage::clipper_uploads;
 use crate::storage::index;
 use crate::storage::search_engine;
-use crate::storage::{db, files, reconcile};
+use crate::storage::{db, files, reconcile, thumbnails};
 use crate::util::{append_startup_trace, reset_startup_trace};
 use crate::watcher::handler::{self, ScanResult};
 use crate::watcher::watch;
@@ -967,6 +967,19 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
             // asked whether the card's media still existed in the vault, which
             // made the cache keep copies of files the user had deleted, for
             // ever. Failure is never fatal — this only reclaims disk space.
+            // Existing vaults have full thumbnails and no levels; the graph
+            // and the sidebar read levels now. One pass writes what is
+            // missing, and later launches only walk the directory.
+            let filled = thumbnails::backfill_thumb_levels(&vault);
+            if filled > 0 {
+                log::info!("wrote thumbnail levels for {} cards in {}", filled, path_for_thread);
+                append_startup_trace(
+                    &app_for_thread,
+                    "thumb_level_backfill",
+                    &format!("written={} path={}", filled, path_for_thread),
+                );
+            }
+
             match clipper_uploads::sweep_stale_pending_uploads(
                 &vault,
                 clipper_uploads::STALE_UPLOAD_AGE,

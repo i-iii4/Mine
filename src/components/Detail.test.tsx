@@ -1915,7 +1915,12 @@ describe("Detail", () => {
     );
 
     const img = row.querySelector("img");
-    expect(img).toHaveAttribute("src", "asset://localhost//tmp/thumbs/related-note.jpg?m=123");
+    // A related-note row is 32 pixels like the sidebar strip, so it reads the
+    // micro level rather than the 640px thumbnail behind it.
+    expect(img).toHaveAttribute(
+      "src",
+      "asset://localhost//tmp/thumbs/related-note.micro.jpg?m=123",
+    );
     expect(img).toHaveClass("dark:invert");
     expect(row.querySelector("div.flex.h-8.w-full.items-center.gap-2.overflow-hidden")).not.toBeNull();
 
