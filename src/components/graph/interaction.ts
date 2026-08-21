@@ -1,5 +1,5 @@
 import type { ForceGraphMethods } from "react-force-graph-2d";
-import { thumbnailLevelUrl, type ThumbLevel } from "@/lib/assets";
+import { thumbnailLevelUrl, thumbnailUrl, type ThumbLevel } from "@/lib/assets";
 import {
   GRAPH_PREVIEW_GAP,
   GRAPH_PREVIEW_VIEWPORT_MARGIN,
@@ -180,6 +180,16 @@ export function graphThumbnailUrl(
 ): string {
   const cacheBuster = thumbVersion > 0 ? `?v=${thumbVersion}` : "";
   return `${thumbnailLevelUrl(thumbsRootPath, slug, level)}${cacheBuster}`;
+}
+
+/// The full thumbnail, for a card whose levels are missing entirely.
+export function graphFullThumbnailUrl(
+  thumbsRootPath: string,
+  slug: string,
+  thumbVersion: number,
+): string {
+  const cacheBuster = thumbVersion > 0 ? `?v=${thumbVersion}` : "";
+  return `${thumbnailUrl(thumbsRootPath, slug)}${cacheBuster}`;
 }
 
 /// Which level a node needs at this size. The step is the micro level's own

@@ -1,6 +1,10 @@
 import { collectionRefLabel } from "@/lib/collections";
 import { parsePreviewManifest } from "@/lib/cardLayout";
-import { graphThumbLevelFor, graphThumbnailUrl } from "./interaction";
+import {
+  graphFullThumbnailUrl,
+  graphThumbLevelFor,
+  graphThumbnailUrl,
+} from "./interaction";
 import {
   COLLECTION_FONT_SIZE,
   COLLECTION_HEIGHT,
@@ -34,15 +38,28 @@ export function paintCardNode(
   const x = node.x - size / 2;
   const y = node.y - size / 2;
 
-  const imageUrl = node.slug
-    ? graphThumbnailUrl(
-      options.thumbsRootPath,
-      node.slug,
-      options.thumbVersion,
-      graphThumbLevelFor(options.screenSize),
-    )
-    : null;
-  const image = options.renderThumbnail && imageUrl ? options.imageCache.get(imageUrl) : null;
+  // Levels in order of preference for this size, then whatever else is
+  // already decoded. Falling back down a level is free; falling back to the
+  // full thumbnail is the last resort, and it exists because a card whose
+  // levels are missing entirely used to draw as a dark square.
+  const level = graphThumbLevelFor(options.screenSize);
+  const candidates = node.slug && options.renderThumbnail
+    ? [
+      graphThumbnailUrl(options.thumbsRootPath, node.slug, options.thumbVersion, level),
+      ...(level === "zoom"
+        ? [graphThumbnailUrl(options.thumbsRootPath, node.slug, options.thumbVersion, "micro")]
+        : []),
+      graphFullThumbnailUrl(options.thumbsRootPath, node.slug, options.thumbVersion),
+    ]
+    : [];
+  let image: HTMLImageElement | null = null;
+  for (const candidate of candidates) {
+    const found = options.imageCache.get(candidate);
+    if (found) {
+      image = found;
+      break;
+    }
+  }
 
   ctx.beginPath();
   ctx.rect(x, y, size, size);

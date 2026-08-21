@@ -37,6 +37,8 @@ import {
   GRAPH_ENTRY_ANGLE,
   GRAPH_ENTRY_SPREAD,
   GRAPH_INITIAL_FIT_TICKS,
+  GRAPH_MAX_ZOOM,
+  GRAPH_MIN_ZOOM,
   GRAPH_ZOOM_LEVEL_MARGIN_PX,
   SPACING_RECOMPUTE_TICKS,
   type GraphCameraPlan,
@@ -139,6 +141,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     undefined,
   );
   const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
+  const imageVersionFrameRef = useRef<number | null>(null);
   const loadSequenceRef = useRef(0);
   const acceptedRevisionRef = useRef<ProjectionRevision | null>(null);
   const previewOpenTimerRef = useRef<number | null>(null);
@@ -274,6 +277,20 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     return node?.id ?? null;
   }, [currentCollection, snapshot]);
 
+  /// What the layout actually depends on. Regaining window focus refreshes the
+  /// vault, which hands the graph an equal snapshot as a fresh object; keying
+  /// the physics on the object alone made every focus change reheat the
+  /// simulation, and the graph visibly breathed out and back in.
+  const layoutIdentity = useMemo(() => {
+    if (!snapshot) return "empty";
+    return [
+      snapshot.current_collection ?? "__library__",
+      snapshot.nodes.length,
+      snapshot.links.length,
+      snapshot.nodes.map((node) => node.id).join("\u0000"),
+    ].join("|");
+  }, [snapshot]);
+
   const graphData = useMemo<GraphCanvasData>(() => {
     if (!snapshot) return { nodes: [], links: [] };
     const carried = nodePositionsRef.current;
@@ -398,7 +415,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       const image = new Image();
       image.onload = () => {
         cache.set(url, image);
-        setImageVersion((value) => value + 1);
+        noteImageArrived();
       };
       image.onerror = () => {};
       image.src = url;
@@ -482,12 +499,23 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       const image = new Image();
       image.onload = () => {
         cache.set(url, image);
-        setImageVersion((value) => value + 1);
+        noteImageArrived();
       };
       image.onerror = () => {};
       image.src = url;
     }
   }, [graphData.nodes, nodeScreenSizeAt, renderThumbnails, resolvedThumbsRoot, size, thumbVersions]);
+
+  /// One repaint per frame however many images arrive in it. Bumping the
+  /// version per image made a burst of loads a burst of renders, which is the
+  /// visible churn when a closer view swaps in the heavier level.
+  const noteImageArrived = useCallback(() => {
+    if (imageVersionFrameRef.current !== null) return;
+    imageVersionFrameRef.current = window.requestAnimationFrame(() => {
+      imageVersionFrameRef.current = null;
+      setImageVersion((value) => value + 1);
+    });
+  }, []);
 
   const syncGraphScale = useCallback((scale: number) => {
     graphScaleRef.current = Number.isFinite(scale) && scale > 0 ? scale : 1;
@@ -560,7 +588,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     };
     frame = requestAnimationFrame(applyForces);
     return () => cancelAnimationFrame(frame);
-  }, [currentCollection, graphViewportReady, snapshot, syncGraphScale]);
+  }, [currentCollection, graphViewportReady, layoutIdentity, syncGraphScale]);
 
   const handleEngineTick = useCallback(() => {
     spacingTickRef.current += 1;
@@ -1061,6 +1089,8 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
               graphRef.current?.d3ReheatSimulation();
             }}
             onNodeDragEnd={suppressCollectionClickAfterDrag}
+            minZoom={GRAPH_MIN_ZOOM}
+            maxZoom={GRAPH_MAX_ZOOM}
             d3AlphaDecay={physics.alphaDecay}
             d3VelocityDecay={physics.velocityDecay}
             warmupTicks={nodePositionsRef.current.size > 0 ? 0 : physics.warmupTicks}

@@ -79,6 +79,11 @@ export const GRAPH_NODE_FILL_RATIO = 0.55;
 // this the layout's ordinary drift would keep resizing every card.
 export const GRAPH_NODE_SIZE_HYSTERESIS = 0.12;
 
+// Past this the cards are already at their ceiling and further zoom only pushes
+// them apart — scrolling into an empty field with one picture in it.
+export const GRAPH_MAX_ZOOM = 8;
+export const GRAPH_MIN_ZOOM = 0.05;
+
 // How often the layout's actual spacing is remeasured, in engine ticks. It
 // changes only as the simulation settles, so a per-frame pass would be waste.
 export const SPACING_RECOMPUTE_TICKS = 15;

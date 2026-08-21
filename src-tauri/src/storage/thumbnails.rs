@@ -412,8 +412,16 @@ fn read_thumb_magic(thumb_path: &Path) -> Option<[u8; 3]> {
 /// - Creates destination directories if needed
 /// - Returns (width, height) of the result
 pub fn generate_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Result<PreviewDimensions> {
-    let img = image::open(source)
-        .with_context(|| format!("failed to open image: {}", source.display()))?;
+    // Guessed from the bytes, not from the extension. Text placeholders are
+    // PNGs written as `<slug>.jpg`, and `image::open` picks its decoder by
+    // extension — it handed those files to the JPEG decoder and failed, which
+    // is why 38 cards had no levels and drew as dark squares.
+    let img = image::ImageReader::open(source)
+        .with_context(|| format!("failed to open image: {}", source.display()))?
+        .with_guessed_format()
+        .with_context(|| format!("failed to read image header: {}", source.display()))?
+        .decode()
+        .with_context(|| format!("failed to decode image: {}", source.display()))?;
 
     let (w, h) = img.dimensions();
 
@@ -1524,6 +1532,27 @@ mod tests {
             .thumbs_dir()
             .join("Old.preview-2.micro.jpg")
             .exists());
+    }
+
+    #[test]
+    fn levels_are_written_for_a_png_saved_under_a_jpg_name() {
+        // Text placeholders are PNGs written as `<slug>.jpg`. Choosing the
+        // decoder by extension handed them to the JPEG decoder, which failed,
+        // and the card drew as a dark square with no levels at all.
+        let tmp = tempfile::tempdir().unwrap();
+        let vault = make_vault(tmp.path());
+        let path = vault.thumb_path("Placeholder");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut png = image::RgbaImage::new(480, 480);
+        for (x, y, pixel) in png.enumerate_pixels_mut() {
+            *pixel = image::Rgba([(x % 256) as u8, (y % 256) as u8, 90, 255]);
+        }
+        png.save_with_format(&path, image::ImageFormat::Png).unwrap();
+
+        generate_thumb_levels(&vault, "Placeholder");
+
+        assert!(vault.thumb_level_path("Placeholder", ThumbLevel::Micro).is_file());
+        assert!(vault.thumb_level_path("Placeholder", ThumbLevel::Zoom).is_file());
     }
 
     #[test]
