@@ -11,7 +11,7 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::commands::state::{current_vault_layout, AppState, CommandError};
 use crate::domain::block::{suggest_slug, Block, BlockType, DateTime, Frontmatter};
-use crate::domain::vault::{resolve_slug_conflict, VaultLayout};
+use crate::domain::vault::{resolve_card_name_conflict, VaultLayout};
 use crate::storage::{clipper_uploads, db, files, index, thumbnails};
 use crate::util::now_iso8601;
 use crate::watcher::handler;
@@ -139,7 +139,7 @@ fn next_recovery_slug(vault: &VaultLayout, title: &str) -> Result<String, Comman
     collect_vault_file_stems(vault, vault.root(), &mut existing)?;
 
     let raw_slug = suggest_slug(Some(title), None);
-    resolve_slug_conflict(&raw_slug, &existing)
+    resolve_card_name_conflict(vault, &raw_slug, &existing)
         .map_err(|e| CommandError::Internal(format!("failed to resolve recovered filename: {e}")))
 }
 

@@ -211,6 +211,15 @@ impl VaultLayout {
         join_slug(&self.write_layout.cards, name)
     }
 
+    /// Vault-relative stem a media file for `name` would occupy.
+    ///
+    /// Media keeps a bare file name even when the card sits in a folder, so
+    /// this is the media folder joined to the name, not to the card's slug.
+    pub fn new_media_stem(&self, name: &str) -> String {
+        let base = name.rsplit('/').next().unwrap_or(name);
+        join_slug(&self.write_layout.media, base)
+    }
+
     /// Slug for a newly created collection document.
     pub fn new_collection_slug(&self, name: &str) -> String {
         join_slug(&self.write_layout.collections, name)
@@ -577,6 +586,39 @@ fn normalize_join(base: &Path, relative: &Path) -> Option<PathBuf> {
 /// introduced in Phase 18.C: e.g. `Hello World (2).md` instead of
 /// `Hello World-2.md`. Obsidian uses the same convention for filename
 /// deduplication, so the output stays native to both environments.
+/// Pick a free display name for a new card, given everything the vault already
+/// holds as vault-relative stems.
+///
+/// The distinction from `resolve_slug_conflict` is the whole point: a card's
+/// name is bare (`Inspora`) while the stem it occupies carries the configured
+/// folder (`Cards/Inspora`). Comparing the bare name against a set of stems
+/// finds nothing, so every clip of an already-clipped page kept the taken name
+/// and then failed to create the file. Both places the name lands are checked —
+/// the card's own path and the media file named after it.
+pub fn resolve_card_name_conflict(
+    layout: &VaultLayout,
+    raw_name: &str,
+    existing: &HashSet<String>,
+) -> Result<String, VaultError> {
+    let free = |candidate: &str| {
+        !existing.contains(candidate)
+            && !existing.contains(&layout.new_card_slug(candidate))
+            && !existing.contains(&layout.new_media_stem(candidate))
+    };
+    if free(raw_name) {
+        return Ok(raw_name.to_string());
+    }
+    for n in 2..=1000 {
+        let candidate = format!("{} ({})", raw_name, n);
+        if free(&candidate) {
+            return Ok(candidate);
+        }
+    }
+    Err(VaultError::SlugConflictExhausted {
+        slug: raw_name.to_string(),
+    })
+}
+
 pub fn resolve_slug_conflict(slug: &str, existing: &HashSet<String>) -> Result<String, VaultError> {
     if !existing.contains(slug) {
         return Ok(slug.to_string());
@@ -908,6 +950,64 @@ mod tests {
         .validate()
         .unwrap();
         assert_eq!(layout.cards, "Mine/Cards");
+    }
+
+    // ── resolve_card_name_conflict ──────────────────────────────────────
+
+    fn standard_layout() -> VaultLayout {
+        VaultLayout::new(PathBuf::from("/vault")).with_write_layout(VaultWriteLayout::standard())
+    }
+
+    #[test]
+    fn card_name_conflict_sees_a_card_that_lives_in_the_cards_folder() {
+        // The bug this exists for: the vault holds `Cards/Inspora`, the name
+        // asked for is `Inspora`, and a bare comparison finds nothing — so the
+        // clipper kept the taken name and failed to create the file.
+        let existing: HashSet<String> = ["Cards/Inspora".to_string()].into_iter().collect();
+        assert_eq!(
+            resolve_card_name_conflict(&standard_layout(), "Inspora", &existing).unwrap(),
+            "Inspora (2)",
+        );
+    }
+
+    #[test]
+    fn card_name_conflict_sees_the_media_file_named_after_the_card() {
+        // Media keeps a bare name in its own folder, so a free card path is not
+        // enough: the image would collide instead.
+        let existing: HashSet<String> = ["Media/Inspora".to_string()].into_iter().collect();
+        assert_eq!(
+            resolve_card_name_conflict(&standard_layout(), "Inspora", &existing).unwrap(),
+            "Inspora (2)",
+        );
+    }
+
+    #[test]
+    fn card_name_conflict_keeps_counting_until_both_paths_are_free() {
+        let existing: HashSet<String> = [
+            "Cards/Shot".to_string(),
+            "Cards/Shot (2)".to_string(),
+            "Media/Shot (3)".to_string(),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            resolve_card_name_conflict(&standard_layout(), "Shot", &existing).unwrap(),
+            "Shot (4)",
+        );
+    }
+
+    #[test]
+    fn card_name_conflict_still_works_when_everything_sits_at_the_root() {
+        let flat = VaultLayout::new(PathBuf::from("/vault")).with_write_layout(VaultWriteLayout::flat());
+        let existing: HashSet<String> = ["Note".to_string()].into_iter().collect();
+        assert_eq!(
+            resolve_card_name_conflict(&flat, "Note", &existing).unwrap(),
+            "Note (2)",
+        );
+        assert_eq!(
+            resolve_card_name_conflict(&flat, "Fresh", &existing).unwrap(),
+            "Fresh",
+        );
     }
 
     // ── resolve_slug_conflict ───────────────────────────────────────────

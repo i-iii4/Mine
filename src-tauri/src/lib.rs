@@ -164,6 +164,10 @@ pub fn run() {
             // describes its phases, and reaches the interface as a decision.
             swipe_gesture::install(app.handle().clone());
 
+            // An installed clipper must run this build's host, not the one it
+            // was installed from.
+            commands::clipper_setup::refresh_installed_host(app.handle());
+
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()

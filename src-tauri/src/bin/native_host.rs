@@ -23,7 +23,7 @@ use std::time::Duration;
 use mine_lib::domain::block::{Block, BlockType, DateTime, Frontmatter};
 use mine_lib::domain::channel::Channel;
 use mine_lib::domain::collection::{normalize_collection_ref, validate_collection_ref};
-use mine_lib::domain::vault::{resolve_slug_conflict, VaultLayout};
+use mine_lib::domain::vault::{resolve_card_name_conflict, VaultLayout};
 use mine_lib::net;
 use mine_lib::storage::{clipper_uploads, db, files, index, thumbnails};
 use mine_lib::util::now_iso8601;
@@ -794,7 +794,7 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
     // file is named after; `slug` is its vault-relative path, which carries the
     // configured cards folder. Keeping them apart is what lets media stay a
     // bare wikilink while the card lives in `Cards/`.
-    let name = match resolve_slug_conflict(&raw_slug, &existing) {
+    let name = match resolve_card_name_conflict(vault, &raw_slug, &existing) {
         Ok(s) => s,
         Err(e) => return send_error(&format!("{e}")),
     };
@@ -2840,7 +2840,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn ytdlp_is_found_outside_the_browser_launch_path() {
         // The browser hands the host a minimal PATH, so a bare command name
         // resolves to nothing even where the tool is installed. Locating it by
@@ -2899,6 +2898,7 @@ mod tests {
         assert_eq!(before.len(), after.len(), "cookie jar left behind");
     }
 
+    #[test]
     fn existing_vault_stems_includes_disk_only_markdown_and_media() {
         let tmp = TempDir::new().unwrap();
         let vault = VaultLayout::new(tmp.path().to_path_buf());
@@ -2952,6 +2952,57 @@ mod tests {
         assert_eq!(media_file, "Door Link.jpg");
         assert!(vault.block_path("Door Link").exists());
         assert!(vault.root().join("Door Link.jpg").exists());
+    }
+
+    #[test]
+    fn clipping_the_same_page_twice_into_a_cards_folder_makes_a_second_card() {
+        // The reported failure, end to end: the first clip creates
+        // `Cards/Inspora`, and the second used to keep the name `Inspora`,
+        // resolve it to the same taken path and die on "failed to create block
+        // file". Both clips must land.
+        let tmp = TempDir::new().unwrap();
+        let vault =
+            VaultLayout::with_derived_root(tmp.path().join("vault"), tmp.path().join("derived"))
+                .with_write_layout(mine_lib::domain::vault::VaultWriteLayout::standard());
+        std::fs::create_dir_all(vault.cards_dir()).unwrap();
+        std::fs::create_dir_all(vault.media_dir()).unwrap();
+
+        for _ in 0..2 {
+            let upload = clipper_uploads::write_pending_upload(
+                &vault,
+                "inspora.jpg",
+                Some("image/jpeg".into()),
+                b"jpg",
+            )
+            .unwrap();
+            handle_save_block(
+                &vault,
+                serde_json::json!({
+                    "block_type": "image",
+                    "title": "Inspora",
+                    "url": "https://www.inspora.design/posts/4-3",
+                    "pre_uploaded_id": upload.upload_id,
+                    "body": "",
+                    "tags": []
+                }),
+            );
+        }
+
+        assert!(vault.block_path("Cards/Inspora").exists(), "first clip missing");
+        assert!(
+            vault.block_path("Cards/Inspora (2)").exists(),
+            "second clip did not get its own card",
+        );
+
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM blocks WHERE slug LIKE 'Cards/Inspora%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2, "both clips must be indexed");
     }
 
     #[test]

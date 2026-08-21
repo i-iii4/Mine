@@ -20,6 +20,70 @@ use crate::commands::state::CommandError;
 const HOST_NAME: &str = "com.localarena.clipper";
 
 /// Where the installed host binary lives, alongside the app's other data.
+/// Refresh an already-installed clipper host from the one inside this bundle.
+///
+/// Installing is a copy, and until now the copy was made only when someone
+/// pressed the button in Settings. So the browser kept launching whatever
+/// binary was installed months ago, and every fix shipped in the app since
+/// then simply never reached the clipper — a whole class of "but I updated it"
+/// bugs. Nothing is installed here that was not installed before: an untouched
+/// clipper stays untouched.
+///
+/// What the bundle held at the last copy is recorded beside the binary, so the
+/// check costs two `stat` calls rather than reading seven megabytes on every
+/// launch.
+pub fn refresh_installed_host(app: &AppHandle) {
+    let Ok(destination) = host_binary_path(app) else {
+        return;
+    };
+    if !destination.is_file() {
+        return;
+    }
+    let Some(bundled) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("native-host")))
+        .filter(|path| path.is_file())
+    else {
+        return;
+    };
+    let Some(fingerprint) = file_fingerprint(&bundled) else {
+        return;
+    };
+
+    let stamp = destination.with_extension("source");
+    if std::fs::read_to_string(&stamp).ok().as_deref() == Some(fingerprint.as_str()) {
+        return;
+    }
+
+    if let Err(e) = std::fs::copy(&bundled, &destination) {
+        log::warn!("failed to refresh clipper host: {e}");
+        return;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(metadata) = std::fs::metadata(&destination) {
+            let mut perms = metadata.permissions();
+            perms.set_mode(0o755);
+            let _ = std::fs::set_permissions(&destination, perms);
+        }
+    }
+    let _ = std::fs::write(&stamp, fingerprint);
+    log::info!("clipper host refreshed from the app bundle");
+}
+
+/// Size and modification time of a file, as one comparable string.
+fn file_fingerprint(path: &Path) -> Option<String> {
+    let metadata = std::fs::metadata(path).ok()?;
+    let modified = metadata
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    Some(format!("{}:{}", metadata.len(), modified))
+}
+
 fn host_binary_path(app: &AppHandle) -> Result<PathBuf, CommandError> {
     let dir = app
         .path()
@@ -242,4 +306,43 @@ pub fn install_clipper_host(
     let _ = std::fs::write(version_marker_path(&app)?, version);
 
     get_clipper_setup_status(app)
+}
+
+// ─── Tests ──────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn fingerprint_changes_when_the_bundled_host_is_rebuilt() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("native-host");
+        std::fs::write(&path, b"first build").unwrap();
+        let first = file_fingerprint(&path).unwrap();
+
+        // A rebuild changes length, and a same-length rebuild changes the
+        // timestamp — either one must make the stamp differ, or the refresh
+        // silently keeps serving the old binary.
+        std::fs::write(&path, b"a considerably longer second build").unwrap();
+        let second = file_fingerprint(&path).unwrap();
+
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn fingerprint_is_stable_for_an_untouched_file() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("native-host");
+        std::fs::write(&path, b"build").unwrap();
+
+        assert_eq!(file_fingerprint(&path), file_fingerprint(&path));
+    }
+
+    #[test]
+    fn fingerprint_is_absent_for_a_missing_file() {
+        let tmp = TempDir::new().unwrap();
+        assert!(file_fingerprint(&tmp.path().join("nothing")).is_none());
+    }
 }
