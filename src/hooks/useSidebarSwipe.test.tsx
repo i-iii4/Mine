@@ -1,106 +1,72 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render } from "@testing-library/react";
 import { useSidebarSwipe } from "./useSidebarSwipe";
 
-function Probe({
-  collapsed,
-  onToggle,
-  disabled,
-}: {
-  collapsed: boolean;
-  onToggle: () => void;
-  disabled?: boolean;
-}) {
-  useSidebarSwipe({ collapsed, onToggle, disabled });
+const listeners = new Map<string, (event: { payload: string }) => void>();
+const unlisten = vi.fn();
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn((name: string, handler: (event: { payload: string }) => void) => {
+    listeners.set(name, handler);
+    return Promise.resolve(unlisten);
+  }),
+}));
+
+function Probe({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+  useSidebarSwipe({ collapsed, onToggle });
   return null;
 }
 
-/// One wheel event, as a trackpad delivers them: a stream of small deltas.
-function wheel(deltaX: number, deltaY: number, timeStamp: number) {
-  const event = new WheelEvent("wheel", { deltaX, deltaY });
-  Object.defineProperty(event, "timeStamp", { value: timeStamp });
-  window.dispatchEvent(event);
+/// The shell recognises the gesture and emits a direction; this is that event.
+function swipe(direction: "left" | "right") {
+  listeners.get("sidebar-swipe")?.({ payload: direction });
 }
 
-/// A gesture is many small events, not one big one.
-function swipe(totalX: number, startAt = 0, deltaY = 0) {
-  const steps = 8;
-  for (let i = 0; i < steps; i += 1) {
-    wheel(totalX / steps, deltaY, startAt + i * 16);
-  }
-}
+beforeEach(() => {
+  listeners.clear();
+  unlisten.mockClear();
+});
 
 describe("useSidebarSwipe", () => {
-  it("opens the panel on a swipe right and closes it on a swipe left", () => {
+  it("opens the panel on a swipe right", async () => {
     const onToggle = vi.fn();
-    const { rerender } = render(<Probe collapsed onToggle={onToggle} />);
+    render(<Probe collapsed onToggle={onToggle} />);
+    await Promise.resolve();
 
-    // Natural scrolling reports negative deltaX for fingers moving right.
-    swipe(-120);
+    swipe("right");
     expect(onToggle).toHaveBeenCalledTimes(1);
-
-    rerender(<Probe collapsed={false} onToggle={onToggle} />);
-    swipe(120, 1000);
-    expect(onToggle).toHaveBeenCalledTimes(2);
   });
 
-  it("does nothing when the panel is already in the wanted state", () => {
+  it("closes the panel on a swipe left", async () => {
     const onToggle = vi.fn();
     render(<Probe collapsed={false} onToggle={onToggle} />);
+    await Promise.resolve();
 
-    // Swiping right with the panel already open asks for what it has.
-    swipe(-120);
-    expect(onToggle).not.toHaveBeenCalled();
-  });
-
-  it("ignores a short nudge", () => {
-    const onToggle = vi.fn();
-    render(<Probe collapsed onToggle={onToggle} />);
-
-    swipe(-40);
-    expect(onToggle).not.toHaveBeenCalled();
-  });
-
-  it("ignores the sideways noise of a vertical scroll", () => {
-    const onToggle = vi.fn();
-    render(<Probe collapsed onToggle={onToggle} />);
-
-    // A finger never travels straight: every scroll carries some deltaX. Left
-    // unguarded, it accumulates into a swipe over a long page.
-    for (let i = 0; i < 60; i += 1) {
-      wheel(-6, 40, i * 16);
-    }
-    expect(onToggle).not.toHaveBeenCalled();
-  });
-
-  it("fires once per flick, not once per inertia event", () => {
-    const onToggle = vi.fn();
-    render(<Probe collapsed onToggle={onToggle} />);
-
-    // Inertia keeps events coming after the fingers lift.
-    swipe(-120);
-    for (let i = 0; i < 30; i += 1) {
-      wheel(-20, 0, 200 + i * 16);
-    }
+    swipe("left");
     expect(onToggle).toHaveBeenCalledTimes(1);
   });
 
-  it("re-arms after the trackpad goes quiet", () => {
+  it("does nothing when the panel is already in the wanted state", async () => {
     const onToggle = vi.fn();
-    const { rerender } = render(<Probe collapsed onToggle={onToggle} />);
+    render(<Probe collapsed={false} onToggle={onToggle} />);
+    await Promise.resolve();
 
-    swipe(-120);
-    rerender(<Probe collapsed={false} onToggle={onToggle} />);
-    // A pause longer than the rest window, then the opposite swipe.
-    swipe(120, 5000);
-    expect(onToggle).toHaveBeenCalledTimes(2);
+    swipe("right");
+    expect(onToggle).not.toHaveBeenCalled();
   });
 
-  it("stays out of the way while a card is open", () => {
+  it("sees the current state without resubscribing", async () => {
     const onToggle = vi.fn();
-    render(<Probe collapsed onToggle={onToggle} disabled />);
+    const { rerender } = render(<Probe collapsed onToggle={onToggle} />);
+    await Promise.resolve();
 
-    swipe(-200);
-    expect(onToggle).not.toHaveBeenCalled();
+    swipe("right");
+    rerender(<Probe collapsed={false} onToggle={onToggle} />);
+    swipe("left");
+
+    // One subscription, two decisions: the handler reads state through a ref,
+    // so a change of panel state never drops the listener.
+    expect(onToggle).toHaveBeenCalledTimes(2);
+    expect(listeners.size).toBe(1);
   });
 });

@@ -91,6 +91,17 @@ trash = "5"
 openh264 = "0.6"
 fastembed = "5"
 
+# Native scroll phases. A two-finger swipe reaches the web layer as an
+# undifferentiated stream of wheel events — no start, no end, no way to tell a
+# deliberate flick from the sideways drift of a vertical scroll. AppKit knows
+# all three, so the gesture is recognised here and handed to the interface as a
+# decision rather than as numbers to guess from.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSEvent", "NSResponder"] }
+objc2-foundation = "0.3"
+block2 = "0.6"
+
 [[bin]]
 name = "native-host"
 path = "src/bin/native_host.rs"

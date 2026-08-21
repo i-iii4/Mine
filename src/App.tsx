@@ -1696,13 +1696,8 @@ export function AppWithVault({
     };
   }, [handleSurfaceSearchShortcut]);
 
-  // A two-finger swipe does what the keyboard shortcut does. Disabled while a
-  // card is open: there the gesture belongs to the card, not the shell.
-  useSidebarSwipe({
-    collapsed: sidebarCollapsed,
-    onToggle: toggleCollapsed,
-    disabled: renderedDetailBlock !== null,
-  });
+  // A two-finger swipe does what the keyboard shortcut does, on every screen.
+  useSidebarSwipe({ collapsed: sidebarCollapsed, onToggle: toggleCollapsed });
 
   useEffect(() => {
     let cancelled = false;
@@ -3358,6 +3353,11 @@ export function AppWithVault({
           className="flex h-8 shrink-0 items-center gap-2 border-t border-border bg-accent px-[var(--chrome-edge-pad)]"
           data-bottom-action-bar=""
         >
+          {/* Same command as the View menu item and the two-finger swipe. It
+              leads because it changes the shape of the window itself. */}
+          <ActionButton hotkey="⌃⌘S" onClick={toggleCollapsed}>
+            {sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar"}
+          </ActionButton>
           <ActionButton hotkey="⌘⇧N" onClick={() => setIsCreatingChannel(true)}>
             New Collection
           </ActionButton>

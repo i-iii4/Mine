@@ -1,5 +1,6 @@
 #[cfg(feature = "desktop")]
 mod asset_protocol;
+mod swipe_gesture;
 #[cfg(feature = "desktop")]
 pub mod bindings;
 #[cfg(feature = "desktop")]
@@ -158,6 +159,10 @@ pub fn run() {
                     std::process::exit(0);
                 }
             }
+
+            // The two-finger swipe is recognised here, where the system
+            // describes its phases, and reaches the interface as a decision.
+            swipe_gesture::install(app.handle().clone());
 
             if cfg!(debug_assertions) {
                 app.handle().plugin(

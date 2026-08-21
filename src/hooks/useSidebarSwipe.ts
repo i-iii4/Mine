@@ -1,79 +1,40 @@
-// Two-finger horizontal swipe opens and closes the sidebar.
+// Two-finger swipe: the decision arrives from the system, not from guesswork.
 //
-// On macOS a trackpad swipe arrives as `wheel` events carrying `deltaX`; there
-// is no separate gesture event for it. That makes the whole problem one of
-// telling a deliberate sideways swipe from the sideways noise every vertical
-// scroll produces — a finger never travels in a perfectly straight line.
+// The gesture used to be recognised here, from the stream of wheel events the
+// web layer receives. That stream has no beginning and no end, and looks exactly
+// like an ordinary scroll, so recognition meant thresholds on distance and
+// silence — which fired late, dropped slow movements and ignored diagonals.
 //
-// Three guards do that, and all three are needed:
-//
-//  1. Direction. The run only counts while horizontal travel dominates the
-//     vertical one; a diagonal flick through the feed is not a swipe.
-//  2. Distance. A short nudge does nothing. The threshold is the whole
-//     protection against the panel flapping while someone scrolls.
-//  3. Rest. After firing, the gesture is spent until the trackpad goes quiet —
-//     inertia keeps delivering events long after the fingers lift, and without
-//     this one flick would toggle the panel several times over.
+// AppKit knows the gesture's phases, so the shell recognises it there and emits
+// `sidebar-swipe` with a direction. All that is left here is deciding whether
+// that direction asks for something the panel is not already doing.
 
 import { useEffect, useRef } from "react";
-
-/// Horizontal travel that makes a swipe, in wheel units (≈ pixels).
-const SWIPE_DISTANCE = 80;
-/// How much the horizontal component must beat the vertical one.
-const DIRECTION_RATIO = 1.5;
-/// Silence that ends a gesture, in milliseconds. Trackpad inertia arrives in a
-/// steady stream, so anything shorter re-arms mid-flick.
-const REST_MS = 220;
+import { listen } from "@tauri-apps/api/event";
 
 export function useSidebarSwipe({
   collapsed,
   onToggle,
-  disabled = false,
 }: {
   collapsed: boolean;
   onToggle: () => void;
-  disabled?: boolean;
 }): void {
-  // Refs, not state: a gesture must not re-render anything while it runs.
-  const travelRef = useRef(0);
-  const spentRef = useRef(false);
-  const lastEventRef = useRef(0);
+  // A ref, so the subscription survives every change of panel state.
   const collapsedRef = useRef(collapsed);
   collapsedRef.current = collapsed;
+  const toggleRef = useRef(onToggle);
+  toggleRef.current = onToggle;
 
   useEffect(() => {
-    if (disabled) return;
-
-    const onWheel = (event: WheelEvent) => {
-      const now = event.timeStamp;
-      if (now - lastEventRef.current > REST_MS) {
-        travelRef.current = 0;
-        spentRef.current = false;
-      }
-      lastEventRef.current = now;
-
-      if (spentRef.current) return;
-
-      const { deltaX, deltaY } = event;
-      if (Math.abs(deltaX) < Math.abs(deltaY) * DIRECTION_RATIO) {
-        // Vertical scrolling with sideways noise: not this gesture, and the run
-        // resets so the noise cannot accumulate into one.
-        travelRef.current = 0;
-        return;
-      }
-
-      travelRef.current += deltaX;
-      if (Math.abs(travelRef.current) < SWIPE_DISTANCE) return;
-
-      // Natural scrolling: fingers moving right report negative deltaX. Right
-      // opens the panel, left closes it — the panel follows the fingers.
-      const wantsOpen = travelRef.current < 0;
-      spentRef.current = true;
-      travelRef.current = 0;
-      if (wantsOpen === collapsedRef.current) onToggle();
+    let cancelled = false;
+    const unlisten = listen<string>("sidebar-swipe", (event) => {
+      if (cancelled) return;
+      const wantsOpen = event.payload === "right";
+      if (wantsOpen === collapsedRef.current) toggleRef.current();
+    });
+    return () => {
+      cancelled = true;
+      void unlisten.then((fn) => fn());
     };
-
-    window.addEventListener("wheel", onWheel, { passive: true });
-    return () => window.removeEventListener("wheel", onWheel);
-  }, [disabled, onToggle]);
+  }, []);
 }
