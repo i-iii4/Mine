@@ -64,6 +64,7 @@ const graphMethodMocks = vi.hoisted(() => ({
   zoomToFit: vi.fn(),
   d3ReheatSimulation: vi.fn(),
   centerAt: vi.fn(),
+  zoom: vi.fn(),
 }));
 
 // The nodes the canvas was last handed. Positions live on these objects, so a
@@ -114,7 +115,11 @@ vi.mock("react-force-graph-2d", async () => {
       React.useImperativeHandle(ref, () => ({
         d3Force: () => forceAccessor,
         zoomToFit: graphMethodMocks.zoomToFit,
-        zoom: () => 1,
+        zoom: (k?: number, ms?: number) => {
+          if (k === undefined) return 1;
+          graphMethodMocks.zoom(k, ms);
+          return undefined as never;
+        },
         d3ReheatSimulation: graphMethodMocks.d3ReheatSimulation,
         graph2ScreenCoords: (x: number, y: number) => ({ x, y }),
         centerAt: graphMethodMocks.centerAt,
@@ -467,6 +472,7 @@ describe("GraphView", () => {
     graphMethodMocks.zoomToFit.mockReset();
     graphMethodMocks.d3ReheatSimulation.mockReset();
     graphMethodMocks.centerAt.mockReset();
+    graphMethodMocks.zoom.mockReset();
   });
 
   it("does not publish a graph snapshot rejected by the projection owner", async () => {
@@ -864,6 +870,57 @@ describe("GraphView", () => {
       // hover outline at hover weight.
       expect(opened.lineWidth).toBe(hovered.lineWidth);
     });
+  });
+
+  it("recomputes zoom on every navigation instead of inheriting the previous screen's", async () => {
+    const collection = (ref: string): GraphNode => ({
+      id: `collection:${ref}`,
+      kind: "collection",
+      label: ref,
+      slug: null,
+      collection_ref: ref,
+      card_kind: null,
+      block_type: null,
+      thumbnail: null,
+      preview_manifest: null,
+      degree: 1,
+    });
+    // The mock lays nodes out at 40px intervals, so a bigger collection has a
+    // genuinely wider extent — the thing the zoom is supposed to answer to.
+    const small = [graphCardNode("a-card", "A card"), collection("Small")];
+    const large = [
+      ...Array.from({ length: 60 }, (_, index) => graphCardNode(`c${index}`, `Card ${index}`)),
+      collection("Small"),
+      collection("Large"),
+    ];
+
+    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes(small));
+    const { rerenderGraph } = renderGraph();
+    await screen.findByRole("button", { name: "A card" });
+    const tick = screen.getByTestId("graph-engine-tick");
+    fireEvent.click(tick);
+
+    rerenderGraph({ currentCollection: "Small" });
+    await waitFor(() => expect(graphMethodMocks.d3ReheatSimulation).toHaveBeenCalled());
+    for (let index = 0; index < 20; index += 1) fireEvent.click(tick);
+    const smallZoom = graphMethodMocks.zoom.mock.calls.at(-1)?.[0] as number;
+    expect(smallZoom).toBeGreaterThan(0);
+
+    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes(large));
+    graphMethodMocks.zoom.mockReset();
+    graphMethodMocks.d3ReheatSimulation.mockReset();
+    rerenderGraph({ currentCollection: "Large" });
+    await screen.findByRole("button", { name: "Card 59" });
+    // The forces are installed inside an animation frame, and the camera plan
+    // with them; ticking before that lands would measure the previous plan.
+    await waitFor(() => expect(graphMethodMocks.d3ReheatSimulation).toHaveBeenCalled());
+    for (let index = 0; index < 20; index += 1) fireEvent.click(tick);
+
+    const largeZoom = graphMethodMocks.zoom.mock.calls.at(-1)?.[0] as number;
+    expect(largeZoom).toBeGreaterThan(0);
+    // Wider content, smaller scale. Equal values would mean the camera kept
+    // whatever the previous collection left behind.
+    expect(largeZoom).toBeLessThan(smallZoom);
   });
 
   it("pins the opened collection where it already stands and never teleports it", async () => {

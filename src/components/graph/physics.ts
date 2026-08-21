@@ -11,10 +11,16 @@ import {
 export function graphPhysics(nodeCount: number) {
   const scale = Math.max(1, Math.sqrt(nodeCount / 90));
   return {
-    alphaDecay: 0.02,
+    // Decay and stop have to agree. At 0.02 the simulation needs 5.7s to reach
+    // d3's resting threshold while the timer killed it at 3.5s, with the motion
+    // still 14x above that threshold — so every rearrangement was cut off mid
+    // stride rather than settling. At 0.045 it comes to rest on its own in
+    // ~2.5s; the timer below is only a backstop for a slow machine, never the
+    // reason the graph stops.
+    alphaDecay: 0.045,
     velocityDecay: 0.36,
     warmupTicks: 80,
-    cooldownTime: 3500,
+    cooldownTime: 8000,
     chargeDistanceMax: 220 * scale,
     centerStrength: 0.035 / scale,
     cardCharge: -72 * scale,

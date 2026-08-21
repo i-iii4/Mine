@@ -66,6 +66,7 @@ import {
   endpointNode,
   graphClientPointFromEvent,
   graphThumbnailUrl,
+  graphZoomForExtent,
   hasNodePosition,
   isGraphArrowKey,
 } from "./graph/interaction";
@@ -433,41 +434,59 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       // One camera per snapshot. With a focus the view glides to the pill and
       // holds it; without one it fits the whole graph. Running both is what
       // made the graph appear to fly apart on every click.
-      if (focusPositionRef.current) {
-        cameraPlanRef.current = { kind: "focus" };
-        pendingFitTicksRef.current = 0;
-      } else {
-        cameraPlanRef.current = { kind: "fit" };
-        pendingFitTicksRef.current = GRAPH_INITIAL_FIT_TICKS;
-      }
+      // Decided by the route, not by whether the snapshot for it has arrived
+      // yet. Keying this on the node meant that during the load the plan was
+      // briefly a fit — which then consumed the tick budget, and the glide to
+      // the collection never ran. A collection route always glides.
+      cameraPlanRef.current = currentCollection ? { kind: "focus" } : { kind: "fit" };
+      pendingFitTicksRef.current = GRAPH_INITIAL_FIT_TICKS;
       graph.d3ReheatSimulation();
     };
     frame = requestAnimationFrame(applyForces);
     return () => cancelAnimationFrame(frame);
-  }, [graphViewportReady, snapshot, syncGraphScale]);
+  }, [currentCollection, graphViewportReady, snapshot, syncGraphScale]);
 
   const handleEngineTick = useCallback(() => {
     const positions = nodePositionsRef.current;
     for (const node of graphData.nodes) {
       if (!hasNodePosition(node)) continue;
       positions.set(node.id, { x: node.x, y: node.y });
+      // Pinning the focus here as well as in the data covers the collection the
+      // previous screen never held: the simulation places it on this tick, and
+      // it stops moving from the next one.
+      if (node.id === focusNodeId && node.fx === undefined) {
+        node.fx = node.x;
+        node.fy = node.y;
+      }
     }
     const graph = graphRef.current;
     if (!graph) return;
     const plan = cameraPlanRef.current;
-    if (plan?.kind === "focus") {
-      const focus = focusNodeId ? positions.get(focusNodeId) : null;
-      if (!focus) return;
-      cameraPlanRef.current = null;
-      graph.centerAt(focus.x, focus.y, GRAPH_CENTER_DURATION_MS);
-      return;
-    }
-    if (pendingFitTicksRef.current <= 0) return;
+    if (!plan || pendingFitTicksRef.current <= 0) return;
+    // Waiting, not spending: until the collection has a position there is
+    // nothing to glide to, and burning the budget here would leave the camera
+    // wherever the previous screen left it.
+    if (plan.kind === "focus" && (!focusNodeId || !positions.has(focusNodeId))) return;
+    // The extent is read once the layout has taken shape rather than on the
+    // first tick, where every entrant still sits on top of the focus and the
+    // measured extent would be a fraction of the real one.
     pendingFitTicksRef.current -= 1;
     if (pendingFitTicksRef.current > 0) return;
     cameraPlanRef.current = null;
+
+    if (plan.kind === "focus") {
+      const focus = focusNodeId ? positions.get(focusNodeId) : null;
+      if (!focus) return;
+      // Centre and scale move together, over the same duration. Zoom is
+      // recomputed here on every navigation: inheriting it from the previous
+      // screen is what left one collection cramped and the next one tiny.
+      const zoom = graphZoomForExtent(graphData.nodes, size);
+      graph.centerAt(focus.x, focus.y, GRAPH_CENTER_DURATION_MS);
+      if (zoom !== null) graph.zoom(zoom, GRAPH_CENTER_DURATION_MS);
+      return;
+    }
     graph.zoomToFit(GRAPH_INITIAL_FIT_DURATION_MS, 40);
-  }, [focusNodeId, graphData.nodes]);
+  }, [focusNodeId, graphData.nodes, size]);
 
   const clearPreviewOpenTimer = useCallback(() => {
     if (previewOpenTimerRef.current === null) return;

@@ -81,6 +81,14 @@ export const GRAPH_INITIAL_FIT_TICKS = 18;
 export const GRAPH_ENTRY_SPREAD = 26;
 export const GRAPH_ENTRY_ANGLE = Math.PI * (3 - Math.sqrt(5));
 
+// Zoom is recomputed on every navigation, never inherited from the screen
+// before it. The extent is read once the layout has taken shape and then
+// allowed room to keep spreading, so the graph does not grow out of frame.
+export const GRAPH_ZOOM_PADDING_PX = 56;
+export const GRAPH_ZOOM_SPREAD_ALLOWANCE = 1.25;
+export const GRAPH_ZOOM_MIN = 0.05;
+export const GRAPH_ZOOM_MAX = 1.4;
+
 // A snapshot moves the camera once: to the opened collection, or to a fit of
 // the whole graph when nothing is opened. Never both.
 export type GraphCameraPlan = { kind: "focus" | "fit" } | null;

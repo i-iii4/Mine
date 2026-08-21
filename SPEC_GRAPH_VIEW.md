@@ -470,8 +470,20 @@ camera.
 A snapshot moves the camera **once**, and the two moves are exclusive:
 
 - a collection route glides to that collection's node with `centerAt(x, y, 400)`
-  and does not fit;
+  and sets the scale over the same 400 ms;
 - `library` fits, on the 18-tick cycle above.
+
+Which of the two runs is decided by the **route**, never by whether the snapshot
+has arrived. Keying it on the node meant that during a load the plan was briefly
+a fit, and the fit spent the tick budget before the collection's own move could
+run.
+
+Zoom is recomputed on every navigation and never inherited from the previous
+screen — an inherited scale leaves one collection cramped and the next one lost
+in empty space. The extent is read after the layout has taken shape, not on the
+first tick, where every entrant still sits on the focus and the measured extent
+would be a fraction of the real one; the scale then leaves room for the spread
+still to come.
 
 Running both on one navigation is the defect this rule exists to prevent. It was
 measured on the audit route: the drawn content's width changed by 390, 264 and
@@ -493,6 +505,14 @@ Nodes the previous snapshot did not contain enter on a phyllotaxis spiral around
 the focus: one golden-angle step per entrant. Sharing a point would explode the
 repulsion between them, and a random scatter would lay the same click out
 differently twice.
+
+Decay and stop must agree. The simulation has to come to rest **on its own**,
+with the cooldown timer acting as a backstop for a slow machine and never as the
+reason the graph stops. At `alphaDecay: 0.02` against a 3.5 s timer it did the
+opposite: rest needed 5.7 s, so every rearrangement was cut off with the motion
+still 14 times above d3's resting threshold — read as the graph freezing
+mid-stride, and only on the collections large enough not to settle in time.
+`alphaDecay: 0.045` comes to rest in about 2.5 s, inside a timer of 8 s.
 
 `warmupTicks` applies only before anything has been drawn. Once positions are
 remembered the ticks run at 0, because a warmup runs the whole rearrangement

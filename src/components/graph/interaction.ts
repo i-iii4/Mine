@@ -5,6 +5,10 @@ import {
   GRAPH_PREVIEW_GAP,
   GRAPH_PREVIEW_VIEWPORT_MARGIN,
   GRAPH_PREVIEW_WIDTH,
+  GRAPH_ZOOM_MAX,
+  GRAPH_ZOOM_MIN,
+  GRAPH_ZOOM_PADDING_PX,
+  GRAPH_ZOOM_SPREAD_ALLOWANCE,
   type GraphCanvasLink,
   type GraphCanvasNode,
   type GraphCardMenuPoint,
@@ -78,6 +82,39 @@ function graphDirectionVector(direction: GraphArrowKey): { x: number; y: number 
 
 export function hasNodePosition(node: GraphCanvasNode): node is PositionedGraphCanvasNode {
   return Number.isFinite(node.x) && Number.isFinite(node.y);
+}
+
+/**
+ * The zoom a viewport needs to hold every node, with room left for the layout
+ * to keep spreading after the extent is read. Returns null when there is
+ * nothing positioned to measure — the caller must then leave the camera alone
+ * rather than guess a scale.
+ */
+export function graphZoomForExtent(
+  nodes: readonly GraphCanvasNode[],
+  viewport: { width: number; height: number },
+): number | null {
+  if (viewport.width <= 0 || viewport.height <= 0) return null;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const node of nodes) {
+    if (!hasNodePosition(node)) continue;
+    if (node.x < minX) minX = node.x;
+    if (node.x > maxX) maxX = node.x;
+    if (node.y < minY) minY = node.y;
+    if (node.y > maxY) maxY = node.y;
+  }
+  if (!Number.isFinite(minX) || !Number.isFinite(minY)) return null;
+
+  const usableWidth = Math.max(1, viewport.width - GRAPH_ZOOM_PADDING_PX * 2);
+  const usableHeight = Math.max(1, viewport.height - GRAPH_ZOOM_PADDING_PX * 2);
+  // A single node has no extent; without a floor the scale would be infinite.
+  const spanX = Math.max(maxX - minX, 1) * GRAPH_ZOOM_SPREAD_ALLOWANCE;
+  const spanY = Math.max(maxY - minY, 1) * GRAPH_ZOOM_SPREAD_ALLOWANCE;
+  const zoom = Math.min(usableWidth / spanX, usableHeight / spanY);
+  return Math.min(GRAPH_ZOOM_MAX, Math.max(GRAPH_ZOOM_MIN, zoom));
 }
 
 export function compareGraphNodePaintOrder(a: GraphCanvasNode, b: GraphCanvasNode): number {
