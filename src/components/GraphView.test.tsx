@@ -991,6 +991,27 @@ describe("GraphView", () => {
     expect(texts).toEqual([]);
   });
 
+  it("hands the canvas the same nodes when an identical snapshot arrives", async () => {
+    // Regaining window focus refreshes the vault and the graph receives an
+    // equal snapshot as a fresh object. The canvas restarts its simulation
+    // whenever the node array changes identity, which is the twitch the user
+    // saw on every switch back to the window.
+    const card = graphCardNode("alpha-card", "Alpha card");
+    commandMocks.listGraphSnapshot.mockImplementation(async () =>
+      makeSnapshot(graphCardNode("alpha-card", "Alpha card")));
+
+    renderGraph();
+    await screen.findByRole("button", { name: "Alpha card" });
+    const before = graphDataSpy.current?.nodes;
+
+    // A refresh identical in content, exactly what a focus change produces.
+    window.dispatchEvent(new Event("vault-refreshed"));
+    await waitFor(() => expect(commandMocks.listGraphSnapshot).toHaveBeenCalledTimes(2));
+
+    expect(graphDataSpy.current?.nodes).toBe(before);
+    void card;
+  });
+
   it("aims the centring force at the pinned collection, not at the origin", async () => {
     const card = graphCardNode("alpha-card", "Alpha card");
     const collection: GraphNode = {

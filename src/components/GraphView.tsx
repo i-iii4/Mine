@@ -289,13 +289,20 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     if (!snapshot) return "empty";
     return [
       snapshot.current_collection ?? "__library__",
-      snapshot.nodes.length,
       snapshot.links.length,
-      snapshot.nodes.map((node) => node.id).join("\u0000"),
+      snapshot.nodes.map((node) => `${node.id}:${node.label}`).join("\u0000"),
     ].join("|");
   }, [snapshot]);
 
+  // Read inside the memo below without being one of its dependencies: the
+  // canvas restarts its simulation whenever it is handed a new node array, so
+  // rebuilding that array for an identical snapshot is what made the graph
+  // twitch on every return to the window.
+  const snapshotRef = useRef(snapshot);
+  snapshotRef.current = snapshot;
+
   const graphData = useMemo<GraphCanvasData>(() => {
+    const snapshot = snapshotRef.current;
     if (!snapshot) return { nodes: [], links: [] };
     const carried = nodePositionsRef.current;
     // Pinning happens only where the node already stands. Inventing a position
@@ -327,7 +334,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       return { ...node };
     }).sort(compareGraphNodePaintOrder);
     return { nodes, links: snapshot.links.map((link) => ({ ...link })) };
-  }, [focusNodeId, snapshot]);
+  }, [focusNodeId, layoutIdentity]);
 
   const selectedNode = useMemo(
     () => graphData.nodes.find((node) => node.id === selectedNodeId) ?? null,
