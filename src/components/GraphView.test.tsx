@@ -66,6 +66,10 @@ const graphMethodMocks = vi.hoisted(() => ({
   centerAt: vi.fn(),
 }));
 
+// The nodes the canvas was last handed. Positions live on these objects, so a
+// test asserting where a node is pinned has to read the very objects d3 would.
+const graphDataSpy = vi.hoisted(() => ({ current: null as { nodes: Array<Record<string, unknown>> } | null }));
+
 vi.mock("@/lib/commands", () => ({
   listGraphSnapshot: commandMocks.listGraphSnapshot,
   getBlock: commandMocks.getBlock,
@@ -116,6 +120,7 @@ vi.mock("react-force-graph-2d", async () => {
         node.x ??= 100 + index * 40;
         node.y ??= 120;
       });
+      graphDataSpy.current = graphData as never;
       const membershipLink = graphData?.links.find(
         (link) => link.kind === "collection_membership",
       );
@@ -785,6 +790,79 @@ describe("GraphView", () => {
         materialize_large_library: false,
       },
     );
+  });
+
+  it("pins the opened collection where it already stands and never teleports it", async () => {
+    const card = graphCardNode("alpha-card", "Alpha card");
+    const collection: GraphNode = {
+      id: "collection:Design",
+      kind: "collection",
+      label: "Design",
+      slug: null,
+      collection_ref: "Design",
+      card_kind: null,
+      block_type: null,
+      thumbnail: null,
+      preview_manifest: null,
+      degree: 1,
+    };
+    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes([card, collection]));
+
+    const { rerenderGraph } = renderGraph();
+    await screen.findByRole("button", { name: "Alpha card" });
+    // One tick is what gives the nodes their resting places; without it there
+    // is nothing to pin to, and the old code invented the origin instead.
+    fireEvent.click(screen.getByTestId("graph-engine-tick"));
+
+    const resting = graphDataSpy.current?.nodes.find((node) => node.id === "collection:Design");
+    const restingX = resting?.x as number;
+    const restingY = resting?.y as number;
+    expect(Number.isFinite(restingX)).toBe(true);
+
+    rerenderGraph({ currentCollection: "Design" });
+    await waitFor(() => {
+      const focused = graphDataSpy.current?.nodes.find((node) => node.id === "collection:Design");
+      expect(focused?.fx).toBe(restingX);
+      expect(focused?.fy).toBe(restingY);
+    });
+  });
+
+  it("moves the camera once to the opened collection instead of refitting the graph", async () => {
+    const card = graphCardNode("alpha-card", "Alpha card");
+    const collection: GraphNode = {
+      id: "collection:Design",
+      kind: "collection",
+      label: "Design",
+      slug: null,
+      collection_ref: "Design",
+      card_kind: null,
+      block_type: null,
+      thumbnail: null,
+      preview_manifest: null,
+      degree: 1,
+    };
+    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes([card, collection]));
+
+    const { rerenderGraph } = renderGraph();
+    await screen.findByRole("button", { name: "Alpha card" });
+    const tick = screen.getByTestId("graph-engine-tick");
+    fireEvent.click(tick);
+    const resting = graphDataSpy.current?.nodes.find((node) => node.id === "collection:Design");
+    const restingX = resting?.x as number;
+    const restingY = resting?.y as number;
+
+    graphMethodMocks.zoomToFit.mockReset();
+    graphMethodMocks.centerAt.mockReset();
+    rerenderGraph({ currentCollection: "Design" });
+    await waitFor(() => expect(graphMethodMocks.d3ReheatSimulation).toHaveBeenCalled());
+
+    for (let index = 0; index < 25; index += 1) fireEvent.click(tick);
+
+    expect(graphMethodMocks.centerAt).toHaveBeenCalledWith(restingX, restingY, 400);
+    expect(graphMethodMocks.centerAt).toHaveBeenCalledTimes(1);
+    // Two cameras on one navigation is what made the graph look like it flew
+    // apart: the fit rescaled the view while the glide was still running.
+    expect(graphMethodMocks.zoomToFit).not.toHaveBeenCalled();
   });
 
   it("derives current-route scope from the active collection without a mode switch", async () => {

@@ -34,7 +34,10 @@ import {
   GRAPH_CENTER_DURATION_MS,
   GRAPH_CENTER_MARGIN,
   GRAPH_INITIAL_FIT_DURATION_MS,
+  GRAPH_ENTRY_ANGLE,
+  GRAPH_ENTRY_SPREAD,
   GRAPH_INITIAL_FIT_TICKS,
+  type GraphCameraPlan,
   GRAPH_PREVIEW_FALLBACK_HEIGHT,
   GRAPH_PREVIEW_WIDTH,
   type GraphCanvasData,
@@ -136,6 +139,13 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   const previousDetailOpenRef = useRef(detailOpen);
   const pendingCenterNodeIdRef = useRef<string | null>(null);
   const pendingFitTicksRef = useRef(0);
+  // d3 keeps a node's position on the node object itself, and every snapshot
+  // hands us fresh objects. Without carrying the coordinates across, opening a
+  // collection restarts the whole layout from nothing — which is why the graph
+  // used to be replaced rather than rearranged.
+  const nodePositionsRef = useRef(new Map<string, { x: number; y: number }>());
+  const focusPositionRef = useRef<{ x: number; y: number } | null>(null);
+  const cameraPlanRef = useRef<GraphCameraPlan>(null);
 
   const loadedBlocksBySlug = useMemo(() => {
     return new Map(loadedBlocks.map((block) => [block.slug, block]));
@@ -237,15 +247,48 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     };
   }, []);
 
+  const focusNodeId = useMemo(() => {
+    if (!currentCollection || !snapshot) return null;
+    const node = snapshot.nodes.find(
+      (candidate) => candidate.kind === "collection"
+        && candidate.collection_ref === currentCollection,
+    );
+    return node?.id ?? null;
+  }, [currentCollection, snapshot]);
+
   const graphData = useMemo<GraphCanvasData>(() => {
     if (!snapshot) return { nodes: [], links: [] };
-    return {
-      nodes: snapshot.nodes
-        .map((node) => ({ ...node }))
-        .sort(compareGraphNodePaintOrder),
-      links: snapshot.links.map((link) => ({ ...link })),
-    };
-  }, [snapshot]);
+    const carried = nodePositionsRef.current;
+    // Pinning happens only where the node already stands. Inventing a position
+    // for it — the origin, the viewport centre — teleports the pill on click.
+    const focus = focusNodeId ? carried.get(focusNodeId) ?? null : null;
+    focusPositionRef.current = focus;
+    let entering = 0;
+    const nodes = snapshot.nodes.map((node) => {
+      const previous = carried.get(node.id);
+      if (focus && node.id === focusNodeId) {
+        return { ...node, x: focus.x, y: focus.y, fx: focus.x, fy: focus.y };
+      }
+      if (previous) return { ...node, x: previous.x, y: previous.y };
+      // A node the previous snapshot never had enters beside the focus, so the
+      // rearrangement reads as growth out of the opened collection.
+      if (focus) {
+        // Placed on a phyllotaxis spiral rather than at random: entrants must
+        // not share a point, or the repulsion between them explodes, and the
+        // same click must lay the graph out the same way twice.
+        const angle = entering * GRAPH_ENTRY_ANGLE;
+        const radius = Math.sqrt(entering + 1) * GRAPH_ENTRY_SPREAD;
+        entering += 1;
+        return {
+          ...node,
+          x: focus.x + Math.cos(angle) * radius,
+          y: focus.y + Math.sin(angle) * radius,
+        };
+      }
+      return { ...node };
+    }).sort(compareGraphNodePaintOrder);
+    return { nodes, links: snapshot.links.map((link) => ({ ...link })) };
+  }, [focusNodeId, snapshot]);
 
   const selectedNode = useMemo(
     () => graphData.nodes.find((node) => node.id === selectedNodeId) ?? null,
@@ -387,21 +430,44 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       );
 
       syncGraphScale(graph.zoom());
-      pendingFitTicksRef.current = GRAPH_INITIAL_FIT_TICKS;
+      // One camera per snapshot. With a focus the view glides to the pill and
+      // holds it; without one it fits the whole graph. Running both is what
+      // made the graph appear to fly apart on every click.
+      if (focusPositionRef.current) {
+        cameraPlanRef.current = { kind: "focus" };
+        pendingFitTicksRef.current = 0;
+      } else {
+        cameraPlanRef.current = { kind: "fit" };
+        pendingFitTicksRef.current = GRAPH_INITIAL_FIT_TICKS;
+      }
       graph.d3ReheatSimulation();
     };
     frame = requestAnimationFrame(applyForces);
     return () => cancelAnimationFrame(frame);
-  }, [graphData, graphViewportReady, syncGraphScale]);
+  }, [graphViewportReady, snapshot, syncGraphScale]);
 
   const handleEngineTick = useCallback(() => {
+    const positions = nodePositionsRef.current;
+    for (const node of graphData.nodes) {
+      if (!hasNodePosition(node)) continue;
+      positions.set(node.id, { x: node.x, y: node.y });
+    }
+    const graph = graphRef.current;
+    if (!graph) return;
+    const plan = cameraPlanRef.current;
+    if (plan?.kind === "focus") {
+      const focus = focusNodeId ? positions.get(focusNodeId) : null;
+      if (!focus) return;
+      cameraPlanRef.current = null;
+      graph.centerAt(focus.x, focus.y, GRAPH_CENTER_DURATION_MS);
+      return;
+    }
     if (pendingFitTicksRef.current <= 0) return;
     pendingFitTicksRef.current -= 1;
     if (pendingFitTicksRef.current > 0) return;
-    const graph = graphRef.current;
-    if (!graph) return;
+    cameraPlanRef.current = null;
     graph.zoomToFit(GRAPH_INITIAL_FIT_DURATION_MS, 40);
-  }, []);
+  }, [focusNodeId, graphData.nodes]);
 
   const clearPreviewOpenTimer = useCallback(() => {
     if (previewOpenTimerRef.current === null) return;
@@ -837,7 +903,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
             onNodeDragEnd={suppressCollectionClickAfterDrag}
             d3AlphaDecay={physics.alphaDecay}
             d3VelocityDecay={physics.velocityDecay}
-            warmupTicks={physics.warmupTicks}
+            warmupTicks={nodePositionsRef.current.size > 0 ? 0 : physics.warmupTicks}
             cooldownTime={physics.cooldownTime}
             onEngineTick={handleEngineTick}
             onZoom={(transform) => syncGraphScale(transform.k)}

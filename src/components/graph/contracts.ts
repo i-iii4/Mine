@@ -76,6 +76,14 @@ export const GRAPH_PREVIEW_VIEWPORT_MARGIN = 16;
 export const GRAPH_CENTER_MARGIN = 48;
 export const GRAPH_CENTER_DURATION_MS = 400;
 export const GRAPH_INITIAL_FIT_TICKS = 18;
+// Where a node the previous snapshot did not have enters from: a phyllotaxis
+// spiral around the focus, one ring step per entrant, at the golden angle.
+export const GRAPH_ENTRY_SPREAD = 26;
+export const GRAPH_ENTRY_ANGLE = Math.PI * (3 - Math.sqrt(5));
+
+// A snapshot moves the camera once: to the opened collection, or to a fit of
+// the whole graph when nothing is opened. Never both.
+export type GraphCameraPlan = { kind: "focus" | "fit" } | null;
 export const GRAPH_INITIAL_FIT_DURATION_MS = 250;
 
 export const GRAPH_PALETTE: Record<"light" | "dark", GraphPalette> = {

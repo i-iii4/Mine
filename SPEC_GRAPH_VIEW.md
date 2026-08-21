@@ -463,7 +463,40 @@ corner.
 Initial fit is delayed until the measured graph has completed 18 engine ticks,
 then runs once with a 250 ms transition. A later container resize updates Canvas
 dimensions only: it must not recreate forces, reheat the simulation or refit the
-camera. Route/scope snapshot changes may establish a new one-shot fit cycle.
+camera.
+
+### Rearranging Around An Opened Collection
+
+A snapshot moves the camera **once**, and the two moves are exclusive:
+
+- a collection route glides to that collection's node with `centerAt(x, y, 400)`
+  and does not fit;
+- `library` fits, on the 18-tick cycle above.
+
+Running both on one navigation is the defect this rule exists to prevent. It was
+measured on the audit route: the drawn content's width changed by 390, 264 and
+216 px inside single 100 ms frames while the glide was still running, which
+reads as the graph flying apart rather than settling.
+
+Node positions carry across snapshots. d3 stores a node's position on the node
+object, and every snapshot hands the Canvas fresh objects, so without a carried
+map opening a collection restarts the entire layout from nothing — the graph is
+replaced rather than rearranged. Positions are recorded on every engine tick and
+reapplied by id.
+
+The opened collection is pinned with `fx`/`fy` **at the position it already
+holds**. A pin at any invented point — the origin, the viewport centre —
+teleports the pill on click. When no position is remembered yet the node is left
+free and the next snapshot pins it.
+
+Nodes the previous snapshot did not contain enter on a phyllotaxis spiral around
+the focus: one golden-angle step per entrant. Sharing a point would explode the
+repulsion between them, and a random scatter would lay the same click out
+differently twice.
+
+`warmupTicks` applies only before anything has been drawn. Once positions are
+remembered the ticks run at 0, because a warmup runs the whole rearrangement
+invisibly and the user sees a substituted picture instead of a graph moving.
 
 Canvas-native collection labels still follow the design-system
 `GraphCollectionLabel` contract from `src/components/GraphCollectionLabel.tsx`
