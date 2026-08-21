@@ -73,15 +73,23 @@ export const GRAPH_NODE_MAX_PX = 100;
 
 // Side of the frame-share a card occupies. The rest is the air between
 // neighbours: at 1.0 the cards would tile the frame edge to edge.
-export const GRAPH_NODE_FILL_RATIO = 0.55;
+//
+// 0.75 rather than something smaller because the floor decides where growth
+// begins: at 0.55 a full overview computed 24px, below the 32px floor, so the
+// first half of every approach changed nothing at all — the cards sat on the
+// floor from 550 nodes in frame down to 194.
+export const GRAPH_NODE_FILL_RATIO = 0.75;
 
 // Relative change a new measurement must exceed before a node takes it. Below
 // this the layout's ordinary drift would keep resizing every card.
 export const GRAPH_NODE_SIZE_HYSTERESIS = 0.12;
 
-// Past this the cards are already at their ceiling and further zoom only pushes
-// them apart — scrolling into an empty field with one picture in it.
-export const GRAPH_MAX_ZOOM = 8;
+// Room to overshoot the point where cards reach their ceiling, so a close look
+// at one card is still possible.
+export const GRAPH_ZOOM_HEADROOM = 1.5;
+// Floor for the computed limit: a graph so sparse that the formula asks for
+// almost no zoom must still be approachable.
+export const GRAPH_MAX_ZOOM_FLOOR = 2;
 export const GRAPH_MIN_ZOOM = 0.05;
 
 // How often the layout's actual spacing is remeasured, in engine ticks. It

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   frameFillSize,
   graphNodeScreenSize,
+  maxUsefulZoom,
   nearestNeighbourSpacing,
   sizeChangeIsWorthIt,
   visibleNodeCount,
@@ -57,9 +58,8 @@ describe("frameFillSize", () => {
     expect(crowded).toBeLessThan(sparse);
     expect(sparse).toBeLessThan(nearlyEmpty);
     // Sixty cards in this frame is the first screenshot the user reported as
-    // "still tiny": the share is around seventy pixels, not thirty-two.
-    expect(crowded).toBeGreaterThan(60);
-    expect(crowded).toBeLessThan(80);
+    // "still tiny": the share is around a hundred pixels now, not thirty-two.
+    expect(crowded).toBeGreaterThan(90);
   });
 
   it("leaves air between neighbours rather than tiling the frame", () => {
@@ -73,6 +73,32 @@ describe("frameFillSize", () => {
   it("measures nothing when there is no frame or nothing in it", () => {
     expect(frameFillSize({ width: 0, height: 0 }, 10)).toBeNull();
     expect(frameFillSize({ width: 800, height: 600 }, 0)).toBeNull();
+  });
+});
+
+describe("maxUsefulZoom", () => {
+  it("stops where cards have already reached their ceiling", () => {
+    // A dense patch reaches the ceiling sooner, so its limit is lower than a
+    // graph spread thin across the same node count.
+    const dense = Array.from({ length: 100 }, (_, i) =>
+      node(`d${i}`, (i % 10) * 40, Math.floor(i / 10) * 40));
+    const sparse = Array.from({ length: 100 }, (_, i) =>
+      node(`s${i}`, (i % 10) * 400, Math.floor(i / 10) * 400));
+
+    const denseLimit = maxUsefulZoom(dense) as number;
+    const sparseLimit = maxUsefulZoom(sparse) as number;
+
+    expect(denseLimit).toBeGreaterThan(sparseLimit);
+  });
+
+  it("never forbids approaching, however thin the graph", () => {
+    const scattered = [node("a", 0, 0), node("b", 100_000, 100_000)];
+    expect(maxUsefulZoom(scattered) as number).toBeGreaterThanOrEqual(2);
+  });
+
+  it("declines to guess with nothing laid out", () => {
+    expect(maxUsefulZoom([])).toBeNull();
+    expect(maxUsefulZoom([node("only", 0, 0)])).toBeNull();
   });
 });
 

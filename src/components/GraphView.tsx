@@ -37,7 +37,7 @@ import {
   GRAPH_ENTRY_ANGLE,
   GRAPH_ENTRY_SPREAD,
   GRAPH_INITIAL_FIT_TICKS,
-  GRAPH_MAX_ZOOM,
+  GRAPH_MAX_ZOOM_FLOOR,
   GRAPH_MIN_ZOOM,
   GRAPH_ZOOM_LEVEL_MARGIN_PX,
   SPACING_RECOMPUTE_TICKS,
@@ -78,6 +78,7 @@ import {
 import {
   frameFillSize,
   graphNodeScreenSize,
+  maxUsefulZoom,
   sizeChangeIsWorthIt,
   nearestNeighbourSpacing,
   visibleNodeCount,
@@ -129,6 +130,9 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [theme, setTheme] = useState<"light" | "dark">(() => readGraphTheme());
   const [materializedRouteKey, setMaterializedRouteKey] = useState<string | null>(null);
+  // Recomputed when the layout stops moving: where approaching stops meaning
+  // anything depends on how densely this particular graph sits.
+  const [maxZoom, setMaxZoom] = useState<number>(GRAPH_MAX_ZOOM_FLOOR);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [hoverPreviewTarget, setHoverPreviewTarget] = useState<GraphPreviewTarget | null>(null);
   const [hoverPreviewBlock, setHoverPreviewBlock] = useState<LightBlock | IndexedBlock | null>(null);
@@ -1090,7 +1094,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
             }}
             onNodeDragEnd={suppressCollectionClickAfterDrag}
             minZoom={GRAPH_MIN_ZOOM}
-            maxZoom={GRAPH_MAX_ZOOM}
+            maxZoom={maxZoom}
             d3AlphaDecay={physics.alphaDecay}
             d3VelocityDecay={physics.velocityDecay}
             warmupTicks={nodePositionsRef.current.size > 0 ? 0 : physics.warmupTicks}
@@ -1102,6 +1106,8 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
               // drifted in and out of the frame — visible whenever a node was
               // dragged.
               syncFrameFill();
+              const limit = maxUsefulZoom(graphData.nodes);
+              if (limit !== null) setMaxZoom(limit);
             }}
             onZoom={(transform) => {
               syncGraphScale(transform.k);

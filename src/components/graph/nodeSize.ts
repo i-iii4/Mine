@@ -1,7 +1,9 @@
 import {
   CARD_COLLISION_RADIUS,
+  GRAPH_MAX_ZOOM_FLOOR,
   GRAPH_NODE_FILL_RATIO,
   GRAPH_NODE_SIZE_HYSTERESIS,
+  GRAPH_ZOOM_HEADROOM,
   GRAPH_NODE_MAX_PX,
   type GraphCanvasNode,
 } from "./contracts";
@@ -39,6 +41,38 @@ export function graphNodeScreenSize(
   }
   // Never below the base: a card smaller than 32 pixels is not a picture.
   return Math.max(base, Math.min(...candidates));
+}
+
+/**
+ * The zoom past which approaching stops meaning anything.
+ *
+ * Cards reach their ceiling once the frame holds few enough of them; beyond
+ * that point further zoom only pushes them apart, and the scroll runs into an
+ * empty field with one picture in it. Derived rather than fixed, because where
+ * that point falls depends on how densely the layout sits.
+ *
+ * `(ceiling / ratio) × sqrt(density)` is the zoom at which the frame holds
+ * exactly the count that reaches the ceiling; the headroom above it leaves room
+ * to look closely at a single card.
+ */
+export function maxUsefulZoom(nodes: readonly GraphCanvasNode[]): number | null {
+  const placed = nodes.filter(hasNodePosition);
+  if (placed.length < 2) return null;
+
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const node of placed) {
+    if (node.x < minX) minX = node.x;
+    if (node.x > maxX) maxX = node.x;
+    if (node.y < minY) minY = node.y;
+    if (node.y > maxY) maxY = node.y;
+  }
+  const spread = Math.max(maxX - minX, 1) * Math.max(maxY - minY, 1);
+  const density = placed.length / spread;
+  const atCeiling = (GRAPH_NODE_MAX_PX / GRAPH_NODE_FILL_RATIO) * Math.sqrt(density);
+  return Math.max(GRAPH_MAX_ZOOM_FLOOR, atCeiling * GRAPH_ZOOM_HEADROOM);
 }
 
 /**
