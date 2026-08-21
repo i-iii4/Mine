@@ -2,7 +2,6 @@ import { collectionRefLabel } from "@/lib/collections";
 import { parsePreviewManifest } from "@/lib/cardLayout";
 import { graphThumbnailUrl } from "./interaction";
 import {
-  CARD_THUMBNAIL_SIZE,
   COLLECTION_FONT_SIZE,
   COLLECTION_HEIGHT,
   COLLECTION_PAD_X,
@@ -24,10 +23,14 @@ export function paintCardNode(
     thumbVersion: number;
     renderThumbnail: boolean;
     selected: boolean;
+    /// Screen size of the node, from `graphNodeScreenSize`. Passed in rather
+    /// than computed here so that painting, the pointer hit area, the card menu
+    /// and the hover preview cannot disagree about where a node ends.
+    screenSize: number;
   },
 ) {
   const palette = GRAPH_PALETTE[options.theme];
-  const size = CARD_THUMBNAIL_SIZE / options.globalScale;
+  const size = options.screenSize / options.globalScale;
   const x = node.x - size / 2;
   const y = node.y - size / 2;
 

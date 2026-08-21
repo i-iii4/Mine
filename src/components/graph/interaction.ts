@@ -1,7 +1,6 @@
 import type { ForceGraphMethods } from "react-force-graph-2d";
 import { thumbnailUrl } from "@/lib/assets";
 import {
-  CARD_THUMBNAIL_SIZE,
   GRAPH_PREVIEW_GAP,
   GRAPH_PREVIEW_VIEWPORT_MARGIN,
   GRAPH_PREVIEW_WIDTH,
@@ -130,14 +129,15 @@ export function computeGraphPreviewPosition(
   container: HTMLElement | null,
   node: GraphCanvasNode | undefined,
   previewHeight: number,
+  nodeScreenSize: number,
 ): GraphPreviewPosition | null {
   if (!graph || !container || !node || !hasNodePosition(node)) return null;
 
   const containerRect = container.getBoundingClientRect();
   const screenPoint = graph.graph2ScreenCoords(node.x, node.y);
-  const triggerLeft = containerRect.left + screenPoint.x - CARD_THUMBNAIL_SIZE / 2;
-  const triggerTop = containerRect.top + screenPoint.y - CARD_THUMBNAIL_SIZE / 2;
-  const triggerBottom = triggerTop + CARD_THUMBNAIL_SIZE;
+  const triggerLeft = containerRect.left + screenPoint.x - nodeScreenSize / 2;
+  const triggerTop = containerRect.top + screenPoint.y - nodeScreenSize / 2;
+  const triggerBottom = triggerTop + nodeScreenSize;
   const viewportWidth = window.innerWidth;
   const viewportHeight = window.innerHeight;
 

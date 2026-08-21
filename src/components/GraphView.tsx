@@ -37,6 +37,7 @@ import {
   GRAPH_ENTRY_ANGLE,
   GRAPH_ENTRY_SPREAD,
   GRAPH_INITIAL_FIT_TICKS,
+  SPACING_RECOMPUTE_TICKS,
   type GraphCameraPlan,
   GRAPH_PREVIEW_FALLBACK_HEIGHT,
   GRAPH_PREVIEW_WIDTH,
@@ -70,6 +71,7 @@ import {
   hasNodePosition,
   isGraphArrowKey,
 } from "./graph/interaction";
+import { graphNodeScreenSize, nearestNeighbourSpacing } from "./graph/nodeSize";
 import { graphLinkCurvature, graphLinkLineDash } from "./graph/linkStyle";
 import { collectionLabelCollisionForce, graphPhysics } from "./graph/physics";
 
@@ -135,6 +137,11 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   const lastPreviewOpenedAtRef = useRef<number | null>(null);
   const lastPointerPointRef = useRef<GraphCardMenuPoint | null>(null);
   const graphScaleRef = useRef(1);
+  // Spacing of the current layout, in graph units. Recomputed on a slow tick
+  // cadence rather than per frame: it changes only as the simulation settles,
+  // and it is what stops a growing node from covering its neighbour.
+  const nodeSpacingRef = useRef<number | null>(null);
+  const spacingTickRef = useRef(0);
   const collectionDragClickSuppressionRef = useRef<{ nodeId: string; until: number } | null>(null);
   const previousHoverPreviewFrozenRef = useRef(hoverPreviewFrozen);
   const previousDetailOpenRef = useRef(detailOpen);
@@ -389,6 +396,21 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     centerForce?.x(target?.x ?? 0).y(target?.y ?? 0);
   }, []);
 
+  /// The one place a node's on-screen size is decided. Painting, the pointer
+  /// hit area, the card menu and the hover preview all read it, because a
+  /// growing node that four call sites size differently puts the cursor
+  /// somewhere the eye is not.
+  const nodeScreenSizeAt = useCallback((zoom: number) => {
+    const spacing = nodeSpacingRef.current;
+    const limit = spacing !== null ? spacing * zoom : undefined;
+    return graphNodeScreenSize(zoom, CARD_THUMBNAIL_SIZE, limit);
+  }, []);
+
+  const currentNodeScreenSize = useCallback(
+    () => nodeScreenSizeAt(graphScaleRef.current),
+    [nodeScreenSizeAt],
+  );
+
   const syncGraphScale = useCallback((scale: number) => {
     graphScaleRef.current = Number.isFinite(scale) && scale > 0 ? scale : 1;
   }, []);
@@ -463,6 +485,11 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   }, [currentCollection, graphViewportReady, snapshot, syncGraphScale]);
 
   const handleEngineTick = useCallback(() => {
+    spacingTickRef.current += 1;
+    if (spacingTickRef.current % SPACING_RECOMPUTE_TICKS === 0) {
+      nodeSpacingRef.current = nearestNeighbourSpacing(graphData.nodes);
+    }
+
     const positions = nodePositionsRef.current;
     for (const node of graphData.nodes) {
       if (!hasNodePosition(node)) continue;
@@ -573,12 +600,13 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
 
     const containerRect = container.getBoundingClientRect();
     const screenPoint = graph.graph2ScreenCoords(node.x, node.y);
-    const left = containerRect.left + screenPoint.x - CARD_THUMBNAIL_SIZE / 2;
-    const top = containerRect.top + screenPoint.y - CARD_THUMBNAIL_SIZE / 2;
+    const nodeSize = currentNodeScreenSize();
+    const left = containerRect.left + screenPoint.x - nodeSize / 2;
+    const top = containerRect.top + screenPoint.y - nodeSize / 2;
     return point.x >= left
-      && point.x <= left + CARD_THUMBNAIL_SIZE
+      && point.x <= left + nodeSize
       && point.y >= top
-      && point.y <= top + CARD_THUMBNAIL_SIZE;
+      && point.y <= top + nodeSize;
   }, [graphData.nodes]);
 
   useEffect(() => {
@@ -609,6 +637,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       containerRef.current,
       graphData.nodes.find((node) => node.id === hoverPreviewTarget.nodeId),
       previewRef.current?.getBoundingClientRect().height ?? GRAPH_PREVIEW_FALLBACK_HEIGHT,
+      currentNodeScreenSize(),
     ));
 
     const loaded = loadedBlocksBySlug.get(hoverPreviewTarget.slug);
@@ -650,6 +679,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
         containerRef.current,
         graphData.nodes.find((node) => node.id === hoverPreviewTarget.nodeId),
         previewRef.current?.getBoundingClientRect().height ?? GRAPH_PREVIEW_FALLBACK_HEIGHT,
+        currentNodeScreenSize(),
       );
       setHoverPreviewPosition((current) => {
         if (!nextPosition) return null;
@@ -786,6 +816,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       }
       paintCardNode(ctx, node, {
         globalScale,
+        screenSize: nodeScreenSizeAt(globalScale),
         theme,
         canvasTheme,
         imageCache: imageCacheRef.current,
@@ -819,10 +850,13 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
         ctx.fill();
         return;
       }
-      const size = CARD_THUMBNAIL_SIZE / globalScale;
+
+      // The clickable square must be the drawn square: a node that grows while
+      // its hit area stays put is a node the cursor misses.
+      const size = nodeScreenSizeAt(globalScale) / globalScale;
       ctx.fillRect(node.x - size / 2, node.y - size / 2, size, size);
     },
-    [],
+    [nodeScreenSizeAt],
   );
 
   const linkColor = useCallback(() => canvasTheme.linkDefault, [canvasTheme.linkDefault]);

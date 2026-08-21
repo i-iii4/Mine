@@ -931,6 +931,43 @@ describe("GraphView", () => {
     expect(largeZoom).toBeLessThan(smallZoom);
   });
 
+  it("draws a card larger as the view zooms in, up to the ceiling", async () => {
+    commandMocks.listGraphSnapshot.mockResolvedValue(
+      makeSnapshot(graphCardNode("alpha-card", "Alpha card")),
+    );
+    renderGraph();
+    await screen.findByRole("button", { name: "Alpha card" });
+
+    const drawnSize = (zoom: number): number => {
+      let painted = 0;
+      const context = {
+        globalAlpha: 1, filter: "none", fillStyle: "", strokeStyle: "", lineWidth: 1,
+        font: "", textAlign: "start", textBaseline: "alphabetic",
+        save() {}, restore() {}, beginPath() {}, rect() {}, moveTo() {}, lineTo() {},
+        arcTo() {}, arc() {}, closePath() {}, clip() {}, translate() {}, scale() {},
+        setLineDash() {}, fill() {}, stroke() {}, fillText() {},
+        measureText: () => ({ width: 40 }),
+        drawImage() {},
+        // The node is a square: whichever way it is filled, the width is the size.
+        fillRect: (_x: number, _y: number, w: number) => { painted = w; },
+        strokeRect: (_x: number, _y: number, w: number) => { painted = painted || w; },
+      };
+      const node = graphDataSpy.current?.nodes.find((n) => n.id === "card:alpha-card");
+      paintSpy.current?.(node as never, context as never, zoom);
+      // Painting happens in graph units, so multiply back to screen pixels.
+      return painted * zoom;
+    };
+
+    const atRest = drawnSize(1);
+    const closer = drawnSize(2);
+    const veryClose = drawnSize(40);
+
+    expect(atRest).toBeCloseTo(32, 5);
+    expect(closer).toBeCloseTo(64, 5);
+    // Growth stops rather than running away with the zoom.
+    expect(veryClose).toBeCloseTo(100, 5);
+  });
+
   it("draws no text under a card, selected or not", async () => {
     commandMocks.listGraphSnapshot.mockResolvedValue(
       makeSnapshot(graphCardNode("alpha-card", "Alpha card")),

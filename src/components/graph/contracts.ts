@@ -64,6 +64,16 @@ export interface GraphForce {
 
 export const CARD_THUMBNAIL_SIZE = 32;
 export const CARD_COLLISION_RADIUS = 22;
+
+// A card node grows with the zoom and stops here. Not a taste: the collision
+// force holds card centres 2 * CARD_COLLISION_RADIUS apart, so at the zoom
+// where a card reaches 120 screen pixels its neighbours are exactly touching.
+// 100 leaves a fifth of the size as air. See SPEC_GRAPH_VIEW.md, «Размер узла».
+export const GRAPH_NODE_MAX_PX = 100;
+
+// How often the layout's actual spacing is remeasured, in engine ticks. It
+// changes only as the simulation settles, so a per-frame pass would be waste.
+export const SPACING_RECOMPUTE_TICKS = 15;
 export const COLLECTION_FONT_SIZE = 14;
 export const COLLECTION_PAD_X = 12;
 export const COLLECTION_HEIGHT = 28;
