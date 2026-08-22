@@ -1473,8 +1473,8 @@ SPEC: [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) — полная архитект
 | 12.12 | Startup safety: `list_pending_thumb_upgrades` через SQLite + `spawn_blocking`, без file peek'ов на UI thread | [x] |
 | 12.13 | Legacy vault compatibility: backfill `thumb_format/thumb_mtime` из существующих `.jpg` при `open_vault()` | [x] |
 | 12.14 | Подложка текстовой миниатюры принадлежит выводу: `bg-card` внутри `MicroPreviewThumbnail`, `textPreviewFill` из `--card` на холсте графа. Инвариант I10 | [x] |
-| 12.15 | Кодек уровня по содержимому (правило П6): проход по пикселям, `alpha < 255` → PNG, иначе JPEG. Чинит чёрный фон `micro`/`zoom` у текстовых карточек | [ ] |
-| 12.16 | Однократная миграция уровней, записанных без альфы: `full` с PNG-сигнатурой + `micro` без неё → перегенерировать оба уровня. `backfill_thumb_levels` их пропускает | [ ] |
+| 12.15 | Кодек уровня по содержимому (правило П6): проход по пикселям, `alpha < 255` → PNG, иначе JPEG. Чинит чёрный фон `micro`/`zoom` у текстовых карточек | [x] |
+| 12.16 | Однократная миграция уровней, записанных без альфы: `full` с PNG-сигнатурой + `micro` без неё → перегенерировать оба уровня. `backfill_thumb_levels` их пропускает | [x] |
 
 ### Phase 18 — Filename Identity Refactor [COMPLETE]
 

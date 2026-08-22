@@ -969,7 +969,9 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
             // ever. Failure is never fatal — this only reclaims disk space.
             // Existing vaults have full thumbnails and no levels; the graph
             // and the sidebar read levels now. One pass writes what is
-            // missing, and later launches only walk the directory.
+            // missing, and later launches only walk the directory. The same
+            // pass rewrites levels that predate rule П6 and lost the alpha of
+            // a text placeholder — those exist, so nothing else would.
             let filled = thumbnails::backfill_thumb_levels(&vault);
             if filled > 0 {
                 log::info!("wrote thumbnail levels for {} cards in {}", filled, path_for_thread);

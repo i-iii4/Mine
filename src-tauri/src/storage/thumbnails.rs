@@ -408,7 +408,8 @@ fn read_thumb_magic(thumb_path: &Path) -> Option<[u8; 3]> {
 /// - Reads source image (JPEG, PNG, WebP, GIF)
 /// - Resizes with aspect ratio preserved: max side = `max_size`
 /// - If image is smaller than max_size, saves as-is (no upscaling)
-/// - Saves as JPEG (quality 80) to `dest`
+/// - Saves as PNG when the source actually uses alpha, JPEG (quality 85)
+///   otherwise (SPEC_THUMBNAILS.md, rule П6)
 /// - Creates destination directories if needed
 /// - Returns (width, height) of the result
 pub fn generate_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Result<PreviewDimensions> {
@@ -432,16 +433,45 @@ pub fn generate_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Result<P
     };
 
     let (rw, rh) = resized.dimensions();
-    let rgb = resized.to_rgb8();
 
-    write_thumb_atomically(dest, |writer| {
-        let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(writer, JPEG_QUALITY);
-        rgb.write_with_encoder(encoder)
-            .with_context(|| format!("failed to encode thumbnail: {}", dest.display()))
-    })?;
+    // The output codec is picked by content, like the decoder above it
+    // (SPEC_THUMBNAILS.md, rule П6). A text placeholder is ink on a
+    // transparent background and the surface underneath supplies the fill, so
+    // a level that drops alpha is not a smaller copy of it — it is a black
+    // square. `to_rgb8` collapses RGBA(0,0,0,0) into RGB(0,0,0), which is what
+    // the sidebar and the graph were drawing.
+    if has_transparency(&resized) {
+        let rgba = resized.to_rgba8();
+        write_thumb_atomically(dest, |writer| {
+            let encoder = image::codecs::png::PngEncoder::new(writer);
+            rgba.write_with_encoder(encoder)
+                .with_context(|| format!("failed to encode thumbnail: {}", dest.display()))
+        })?;
+    } else {
+        let rgb = resized.to_rgb8();
+        write_thumb_atomically(dest, |writer| {
+            let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(writer, JPEG_QUALITY);
+            rgb.write_with_encoder(encoder)
+                .with_context(|| format!("failed to encode thumbnail: {}", dest.display()))
+        })?;
+    }
 
     PreviewDimensions::new(rw, rh)
         .with_context(|| format!("generated thumbnail has a zero dimension: {}", dest.display()))
+}
+
+/// Whether the image actually uses its alpha channel.
+///
+/// Carrying an alpha channel is not the same as needing one: a PNG screenshot
+/// arrives as RGBA with every pixel opaque, and routing those into the PNG
+/// branch would inflate media levels for nothing. The channel check is the
+/// cheap gate; the pixel scan only runs behind it, and at level sizes
+/// (64 and 256 on the long side) it costs nothing.
+fn has_transparency(img: &DynamicImage) -> bool {
+    if !img.color().has_alpha() {
+        return false;
+    }
+    img.to_rgba8().pixels().any(|p| p.0[3] < u8::MAX)
 }
 
 fn composite_layout_slots(count: usize, size: u32) -> Vec<(u32, u32, u32, u32)> {
@@ -1043,6 +1073,12 @@ pub fn generate_thumb_levels(vault: &VaultLayout, slug: &str) {
 /// file was touched. One pass on startup fixes that; it skips whatever is
 /// already there, so the second launch costs a directory walk.
 ///
+/// The same pass repairs levels written before rule П6, which dropped the
+/// alpha of a text placeholder and left a black square where the sidebar and
+/// the graph read it. Those levels exist, so the skip above would keep them
+/// forever; `levels_dropped_alpha` is what tells them apart from levels that
+/// are merely already done.
+///
 /// Returns how many thumbnails gained levels.
 pub fn backfill_thumb_levels(vault: &VaultLayout) -> usize {
     let root = vault.thumbs_dir();
@@ -1069,7 +1105,8 @@ pub fn backfill_thumb_levels(vault: &VaultLayout) -> usize {
             }
             let Ok(relative) = path.strip_prefix(vault.thumbs_dir()) else { continue };
             let Some(slug) = relative.to_str().and_then(|p| p.strip_suffix(".jpg")) else { continue };
-            if vault.thumb_level_path(slug, ThumbLevel::Micro).is_file() {
+            let micro = vault.thumb_level_path(slug, ThumbLevel::Micro);
+            if micro.is_file() && !levels_dropped_alpha(&path, &micro) {
                 continue;
             }
             generate_thumb_levels(vault, slug);
@@ -1077,6 +1114,25 @@ pub fn backfill_thumb_levels(vault: &VaultLayout) -> usize {
         }
     }
     written
+}
+
+/// Whether a slug's levels predate rule П6 and were written without alpha.
+///
+/// Levels used to go through `to_rgb8` and a JPEG encoder whatever the source
+/// was, so a transparent text placeholder came back as a black square. The
+/// full thumbnail was never touched by that path, which makes the pair its own
+/// evidence: a PNG source beside a non-PNG level is a level written by the old
+/// encoder, and the fix is to write it again.
+///
+/// Costs one 3-byte read per thumbnail on startup, and a second one only for
+/// the text placeholders — media thumbnails fail the first check and stop
+/// there. Both reads sit inside a directory walk that already stats every
+/// file.
+fn levels_dropped_alpha(full: &Path, micro: &Path) -> bool {
+    if read_thumb_magic(full) != Some(PNG_MAGIC) {
+        return false;
+    }
+    read_thumb_magic(micro) != Some(PNG_MAGIC)
 }
 
 /// Remove the reduced levels for a slug, for when its thumbnail is discarded.
@@ -1553,6 +1609,101 @@ mod tests {
 
         assert!(vault.thumb_level_path("Placeholder", ThumbLevel::Micro).is_file());
         assert!(vault.thumb_level_path("Placeholder", ThumbLevel::Zoom).is_file());
+    }
+
+    #[test]
+    fn a_transparent_source_keeps_its_alpha_through_a_level() {
+        // The whole point of a text placeholder is that the surface under it
+        // supplies the background. A level that drops alpha cannot sit on any
+        // background: RGBA(0,0,0,0) becomes RGB(0,0,0) and the card draws as a
+        // black square wherever the level is read — the sidebar and the graph.
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("text.png");
+        let mut png = image::RgbaImage::from_pixel(480, 480, image::Rgba([0, 0, 0, 0]));
+        png.put_pixel(10, 10, image::Rgba([80, 80, 80, 255]));
+        png.save_with_format(&source, image::ImageFormat::Png).unwrap();
+
+        let dest = tmp.path().join("text.micro.jpg");
+        generate_thumbnail(&source, &dest, 64).unwrap();
+
+        assert_eq!(
+            read_thumb_magic(&dest),
+            Some(PNG_MAGIC),
+            "a transparent source must not be encoded as JPEG"
+        );
+        let level = image::ImageReader::open(&dest)
+            .unwrap()
+            .with_guessed_format()
+            .unwrap()
+            .decode()
+            .unwrap();
+        assert!(has_transparency(&level), "the level lost its transparency");
+    }
+
+    #[test]
+    fn an_opaque_rgba_source_still_encodes_as_jpeg() {
+        // Carrying an alpha channel is not the same as using one. A PNG
+        // screenshot is RGBA with every pixel opaque, and sending those down
+        // the PNG branch would inflate media levels for no gain.
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("screenshot.png");
+        let png = image::RgbaImage::from_pixel(480, 480, image::Rgba([10, 20, 30, 255]));
+        png.save_with_format(&source, image::ImageFormat::Png).unwrap();
+
+        let dest = tmp.path().join("screenshot.micro.jpg");
+        generate_thumbnail(&source, &dest, 64).unwrap();
+
+        assert_eq!(read_thumb_magic(&dest), Some(JPEG_MAGIC));
+    }
+
+    #[test]
+    fn backfill_rewrites_a_level_that_lost_its_alpha() {
+        // Levels written before rule П6 exist on disk, so the "already there"
+        // skip would keep them black forever. The pair is its own evidence: a
+        // PNG full thumbnail beside a non-PNG level.
+        let tmp = tempfile::tempdir().unwrap();
+        let vault = make_vault(tmp.path());
+        let full = vault.thumb_path("Text");
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+        let mut png = image::RgbaImage::from_pixel(480, 480, image::Rgba([0, 0, 0, 0]));
+        png.put_pixel(10, 10, image::Rgba([80, 80, 80, 255]));
+        png.save_with_format(&full, image::ImageFormat::Png).unwrap();
+
+        // What the old encoder produced: alpha collapsed, JPEG on disk.
+        for level in ThumbLevel::ALL {
+            let dest = vault.thumb_level_path("Text", level);
+            std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+            image::RgbImage::from_pixel(level.max_size(), level.max_size(), image::Rgb([0, 0, 0]))
+                .save_with_format(&dest, image::ImageFormat::Jpeg)
+                .unwrap();
+        }
+
+        assert_eq!(backfill_thumb_levels(&vault), 1, "the black level is repaired");
+        assert_eq!(
+            read_thumb_magic(&vault.thumb_level_path("Text", ThumbLevel::Micro)),
+            Some(PNG_MAGIC)
+        );
+
+        assert_eq!(
+            backfill_thumb_levels(&vault),
+            0,
+            "a repaired level is not repaired again"
+        );
+    }
+
+    #[test]
+    fn backfill_leaves_media_levels_alone() {
+        // A media card has a JPEG full thumbnail, so the alpha check must stop
+        // at the first read and never touch its levels.
+        let tmp = tempfile::tempdir().unwrap();
+        let vault = make_vault(tmp.path());
+        write_source_jpeg(&vault.thumb_path("Photo"), 640, 480);
+        generate_thumb_levels(&vault, "Photo");
+        let micro = vault.thumb_level_path("Photo", ThumbLevel::Micro);
+        let before = std::fs::metadata(&micro).unwrap().len();
+
+        assert_eq!(backfill_thumb_levels(&vault), 0);
+        assert_eq!(std::fs::metadata(&micro).unwrap().len(), before);
     }
 
     #[test]
