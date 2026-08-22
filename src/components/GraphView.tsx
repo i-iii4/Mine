@@ -161,6 +161,9 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   // what keeps the gesture exact while a collection change still glides.
   const currentDensityRef = useRef<number | null>(null);
   const targetDensityRef = useRef<number | null>(null);
+  // Whether this layout has had its first density measurement, which is taken
+  // as soon as the shape is recognisable and applied without easing.
+  const densityMeasuredForRef = useRef(false);
   const lastSizeFrameAtRef = useRef<number | null>(null);
   // Dragging a node reheats the simulation, and the engine stops between mouse
   // moves; recomputing on each stop made the whole screen pulse under the hand.
@@ -307,6 +310,15 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   // twitch on every return to the window.
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
+
+  // A new layout invalidates the density measured for the previous one: sizing
+  // a fresh collection by the old graph's density is what showed small cards
+  // first and enlarged them afterwards.
+  useEffect(() => {
+    currentDensityRef.current = null;
+    targetDensityRef.current = null;
+    densityMeasuredForRef.current = false;
+  }, [layoutIdentity]);
 
   const graphData = useMemo<GraphCanvasData>(() => {
     const snapshot = snapshotRef.current;
@@ -621,6 +633,14 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     spacingTickRef.current += 1;
     if (spacingTickRef.current % SPACING_RECOMPUTE_TICKS === 0) {
       nodeSpacingRef.current = nearestNeighbourSpacing(graphData.nodes);
+      // The first measurement for a layout arrives here rather than at the
+      // engine stop, so a collection opens at the right size instead of
+      // starting small and growing into it. Later measurements wait for the
+      // stop, or the cards would resize all the way through settling.
+      if (!densityMeasuredForRef.current) {
+        syncLayoutDensity();
+        densityMeasuredForRef.current = currentDensityRef.current !== null;
+      }
     }
 
     const positions = nodePositionsRef.current;

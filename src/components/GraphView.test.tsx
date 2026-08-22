@@ -10,6 +10,7 @@ import type {
   LightBlock,
 } from "@/types";
 import { GraphView } from "./GraphView";
+import { SPACING_RECOMPUTE_TICKS } from "./graph/contracts";
 
 type MockGraphNode = GraphNode & {
   x?: number;
@@ -1048,29 +1049,56 @@ describe("GraphView", () => {
     expect(drawnCardSize()).toBe(duringDrag);
   });
 
-  it("eases a density change instead of applying it in one frame", async () => {
-    // Smoothing belongs here and only here: density changes without the user's
-    // hand on it — a collection opens, a layout settles — so easing reads as
-    // the graph adjusting itself. The zoom path is deliberately unsmoothed.
-    const tight = Array.from({ length: 6 }, (_, index) =>
-      graphCardNode(`c${index}`, `Card ${index}`));
-    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes(tight));
-
+  it("opens a collection at its own size, without growing into it", async () => {
+    // The density of the previous layout says nothing about this one. Carrying
+    // it over is what showed small cards first and enlarged them in steps.
+    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes(
+      Array.from({ length: 6 }, (_, index) => graphCardNode(`c${index}`, `Card ${index}`)),
+    ));
     const { rerenderGraph } = renderGraph();
     await screen.findByRole("button", { name: "Card 5" });
-    fireEvent.click(screen.getByTestId("graph-engine-stop"));
-    for (let index = 0; index < 60; index += 1) {
-      fireEvent.click(screen.getByTestId("graph-render-frame"));
-    }
-    const before = drawnCardSize(10);
+    const tick = screen.getByTestId("graph-engine-tick");
+    for (let index = 0; index < SPACING_RECOMPUTE_TICKS; index += 1) fireEvent.click(tick);
+    const beforeSwitch = drawnCardSize(10);
 
-    // A different collection: fewer nodes over the same spread, so a different
-    // density and a different size.
+    // A different collection, laid out far more densely.
     commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes(
-      Array.from({ length: 24 }, (_, index) => graphCardNode(`d${index}`, `Other ${index}`)),
+      Array.from({ length: 30 }, (_, index) => graphCardNode(`d${index}`, `Other ${index}`)),
     ));
     rerenderGraph({ currentCollection: "Design" });
-    await screen.findByRole("button", { name: "Other 23" });
+    await screen.findByRole("button", { name: "Other 29" });
+
+    for (let index = 0; index < SPACING_RECOMPUTE_TICKS; index += 1) {
+      fireEvent.click(screen.getByTestId("graph-engine-tick"));
+    }
+    const atOpen = drawnCardSize(10);
+    for (let index = 0; index < 80; index += 1) {
+      fireEvent.click(screen.getByTestId("graph-render-frame"));
+    }
+
+    // The new layout has its own size — carrying the old density over would
+    // leave this unchanged...
+    expect(atOpen).not.toBe(beforeSwitch);
+    // ...and there is nothing left to grow into: the size on arrival is kept.
+    expect(drawnCardSize(10)).toBe(atOpen);
+  });
+
+  it("eases a density change within a settled layout", async () => {
+    // Smoothing survives where it belongs: the layout drifting on its own.
+    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes(
+      Array.from({ length: 6 }, (_, index) => graphCardNode(`c${index}`, `Card ${index}`)),
+    ));
+    renderGraph();
+    await screen.findByRole("button", { name: "Card 5" });
+    const tick = screen.getByTestId("graph-engine-tick");
+    for (let index = 0; index < SPACING_RECOMPUTE_TICKS; index += 1) fireEvent.click(tick);
+    const before = drawnCardSize(10);
+
+    // The same nodes, spread further apart — a thinner layout, not a new one.
+    for (const node of graphDataSpy.current?.nodes ?? []) {
+      if (typeof node.x === "number") node.x *= 4;
+      if (typeof node.y === "number") node.y = (node.y as number) + 400;
+    }
     fireEvent.click(screen.getByTestId("graph-engine-stop"));
 
     fireEvent.click(screen.getByTestId("graph-render-frame"));
@@ -1081,8 +1109,43 @@ describe("GraphView", () => {
     const settled = drawnCardSize(10);
 
     expect(settled).not.toBe(before);
-    // One frame must carry part of the change, not all of it.
     expect(Math.abs(afterOneFrame - before)).toBeLessThan(Math.abs(settled - before));
+  });
+
+  it("applies a zoom change in the same frame, with nothing in between", async () => {
+    // The property the rework exists for. Size is read from the zoom at paint
+    // time, so a gesture maps straight onto it: no discrete input to smooth
+    // over, and therefore no lag behind the trackpad.
+    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes(
+      Array.from({ length: 6 }, (_, index) => graphCardNode(`c${index}`, `Card ${index}`)),
+    ));
+    renderGraph();
+    await screen.findByRole("button", { name: "Card 5" });
+    // The density the size depends on is measured when the layout settles.
+    fireEvent.click(screen.getByTestId("graph-engine-stop"));
+
+    const near = drawnCardSize(10);
+    const twice = drawnCardSize(20);
+
+    expect(near).toBeGreaterThan(32);
+    expect(twice / near).toBeCloseTo(2, 1);
+  });
+
+  it("holds the card size still while a node is being dragged", async () => {
+    commandMocks.listGraphSnapshot.mockResolvedValue(
+      makeSnapshot(graphCardNode("alpha-card", "Alpha card")),
+    );
+    renderGraph();
+    await screen.findByRole("button", { name: "Alpha card" });
+
+    fireEvent.click(screen.getByTestId("graph-node-drag"));
+    const duringDrag = drawnCardSize();
+    // Dragging reheats the simulation and the engine stops between mouse
+    // moves; each stop used to resize every card on screen.
+    fireEvent.click(screen.getByTestId("graph-engine-stop"));
+    fireEvent.click(screen.getByTestId("graph-render-frame"));
+
+    expect(drawnCardSize()).toBe(duringDrag);
   });
 
   it("draws a card at the size the one source decides, never the bare constant", async () => {
