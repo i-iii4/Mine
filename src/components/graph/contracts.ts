@@ -80,9 +80,11 @@ export const GRAPH_NODE_MAX_PX = 100;
 // floor from 550 nodes in frame down to 194.
 export const GRAPH_NODE_FILL_RATIO = 0.75;
 
-// Relative change a new measurement must exceed before a node takes it. Below
-// this the layout's ordinary drift would keep resizing every card.
-export const GRAPH_NODE_SIZE_HYSTERESIS = 0.12;
+// How quickly a node's size follows a new target. Roughly the camera's own
+// pace, so a size change and a camera move read as one movement.
+export const GRAPH_NODE_SIZE_TIME_CONSTANT_MS = 120;
+// Below this the remaining difference is invisible and the animation ends.
+export const GRAPH_NODE_SIZE_SETTLE_PX = 0.5;
 
 // Room to overshoot the point where cards reach their ceiling, so a close look
 // at one card is still possible.

@@ -2,7 +2,8 @@ import {
   CARD_COLLISION_RADIUS,
   GRAPH_MAX_ZOOM_FLOOR,
   GRAPH_NODE_FILL_RATIO,
-  GRAPH_NODE_SIZE_HYSTERESIS,
+  GRAPH_NODE_SIZE_SETTLE_PX,
+  GRAPH_NODE_SIZE_TIME_CONSTANT_MS,
   GRAPH_ZOOM_HEADROOM,
   GRAPH_NODE_MAX_PX,
   type GraphCanvasNode,
@@ -76,15 +77,29 @@ export function maxUsefulZoom(nodes: readonly GraphCanvasNode[]): number | null 
 }
 
 /**
- * Whether a newly measured size is different enough to adopt.
+ * One step of the current size towards the target.
  *
- * The frame's contents shift with every nudge of the layout, and adopting each
- * measurement made cards visibly swell and shrink while nothing was happening.
- * A card only changes size when the change is worth seeing.
+ * Replaces a hysteresis threshold, which answered the wrong question. The
+ * problem was never whether to change size but how: adopting a measurement
+ * only once it differed by twelve percent turned every real change into a
+ * staircase — the visible three or four pulses when a collection was opened.
+ * Smoothing lets small drift dissolve on its own and real changes arrive as one
+ * movement.
+ *
+ * Framerate-independent: the fraction covered depends on elapsed time, not on
+ * how many frames happened to fit into it.
  */
-export function sizeChangeIsWorthIt(current: number | null, next: number): boolean {
-  if (current === null) return true;
-  return Math.abs(next - current) / current > GRAPH_NODE_SIZE_HYSTERESIS;
+export function approachSize(
+  current: number,
+  target: number,
+  elapsedMs: number,
+): number {
+  if (!Number.isFinite(current)) return target;
+  const step = 1 - Math.exp(-Math.max(0, elapsedMs) / GRAPH_NODE_SIZE_TIME_CONSTANT_MS);
+  const next = current + (target - current) * step;
+  // Landing rather than approaching for ever: below a pixel the difference is
+  // not visible and the animation should end so the canvas can pause again.
+  return Math.abs(target - next) < GRAPH_NODE_SIZE_SETTLE_PX ? target : next;
 }
 
 /**

@@ -28,6 +28,10 @@ type MockGraphProps = {
   onNodeHover?: (node: MockGraphNode | null) => void;
   onBackgroundClick?: () => void;
   onEngineTick?: () => void;
+  onEngineStop?: () => void;
+  onNodeDrag?: (node: MockGraphNode) => void;
+  onNodeDragEnd?: (node: MockGraphNode) => void;
+  onRenderFramePost?: (context: CanvasRenderingContext2D, globalScale: number) => void;
   nodeCanvasObject?: (
     node: MockGraphNode,
     context: CanvasRenderingContext2D,
@@ -116,6 +120,10 @@ vi.mock("react-force-graph-2d", async () => {
       onNodeHover,
       onBackgroundClick,
       onEngineTick,
+      onEngineStop,
+      onNodeDrag,
+      onNodeDragEnd,
+      onRenderFramePost,
       nodeCanvasObject,
       linkCurvature,
       linkLineDash,
@@ -182,6 +190,42 @@ vi.mock("react-force-graph-2d", async () => {
             onClick: () => onEngineTick?.(),
           },
           "tick engine",
+        ),
+        React.createElement(
+          "button",
+          {
+            type: "button",
+            "data-testid": "graph-engine-stop",
+            onClick: () => onEngineStop?.(),
+          },
+          "stop engine",
+        ),
+        React.createElement(
+          "button",
+          {
+            type: "button",
+            "data-testid": "graph-node-drag",
+            onClick: () => onNodeDrag?.((graphData?.nodes ?? [])[0] as never),
+          },
+          "drag node",
+        ),
+        React.createElement(
+          "button",
+          {
+            type: "button",
+            "data-testid": "graph-node-drag-end",
+            onClick: () => onNodeDragEnd?.((graphData?.nodes ?? [])[0] as never),
+          },
+          "drop node",
+        ),
+        React.createElement(
+          "button",
+          {
+            type: "button",
+            "data-testid": "graph-render-frame",
+            onClick: () => onRenderFramePost?.(null as never, 1),
+          },
+          "render frame",
         ),
         (graphData?.nodes ?? []).map((node) => {
           const paintAlpha = paintNodeAlpha(node, nodeCanvasObject);
@@ -963,6 +1007,65 @@ describe("GraphView", () => {
     // which is how the hit area and the drawn square used to drift apart.
     expect(painted).toBeGreaterThanOrEqual(32);
     expect(painted).toBeLessThanOrEqual(100);
+  });
+
+  function drawnCardSize(zoom = 1): number {
+    let painted = 0;
+    const context = {
+      globalAlpha: 1, filter: "none", fillStyle: "", strokeStyle: "", lineWidth: 1,
+      font: "", textAlign: "start", textBaseline: "alphabetic",
+      save() {}, restore() {}, beginPath() {}, rect() {}, moveTo() {}, lineTo() {},
+      arcTo() {}, arc() {}, closePath() {}, clip() {}, translate() {}, scale() {},
+      setLineDash() {}, fill() {}, stroke() {}, fillText() {}, drawImage() {},
+      measureText: () => ({ width: 40 }),
+      fillRect: (_x: number, _y: number, w: number) => { painted = w; },
+      strokeRect: (_x: number, _y: number, w: number) => { painted = painted || w; },
+    };
+    const node = graphDataSpy.current?.nodes.find((n) => n.kind === "card");
+    paintSpy.current?.(node as never, context as never, zoom);
+    return painted * zoom;
+  }
+
+  it("holds the card size still while a node is being dragged", async () => {
+    commandMocks.listGraphSnapshot.mockResolvedValue(
+      makeSnapshot(graphCardNode("alpha-card", "Alpha card")),
+    );
+    renderGraph();
+    await screen.findByRole("button", { name: "Alpha card" });
+
+    fireEvent.click(screen.getByTestId("graph-node-drag"));
+    const duringDrag = drawnCardSize();
+    // Dragging reheats the simulation and the engine stops between mouse
+    // moves; each stop used to resize every card on screen.
+    fireEvent.click(screen.getByTestId("graph-engine-stop"));
+    fireEvent.click(screen.getByTestId("graph-render-frame"));
+
+    expect(drawnCardSize()).toBe(duringDrag);
+  });
+
+  it("moves the size gradually rather than in one jump", async () => {
+    commandMocks.listGraphSnapshot.mockResolvedValue(
+      makeSnapshot(graphCardNode("alpha-card", "Alpha card")),
+    );
+    renderGraph();
+    await screen.findByRole("button", { name: "Alpha card" });
+
+    const start = drawnCardSize();
+    fireEvent.click(screen.getByTestId("graph-engine-stop"));
+    const afterOneFrame = (() => {
+      fireEvent.click(screen.getByTestId("graph-render-frame"));
+      return drawnCardSize();
+    })();
+    for (let index = 0; index < 40; index += 1) {
+      fireEvent.click(screen.getByTestId("graph-render-frame"));
+    }
+    const settled = drawnCardSize();
+
+    // A single frame must not deliver the whole change — that jump is what the
+    // user saw as three or four pulses per transition.
+    if (settled !== start) {
+      expect(Math.abs(afterOneFrame - start)).toBeLessThan(Math.abs(settled - start));
+    }
   });
 
   it("draws no text under a card, selected or not", async () => {

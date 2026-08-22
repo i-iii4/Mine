@@ -31,6 +31,8 @@ export function paintCardNode(
     /// than computed here so that painting, the pointer hit area, the card menu
     /// and the hover preview cannot disagree about where a node ends.
     screenSize: number;
+    /// Where that size is heading. Only the thumbnail level reads it.
+    targetScreenSize: number;
   },
 ) {
   const palette = GRAPH_PALETTE[options.theme];
@@ -42,7 +44,10 @@ export function paintCardNode(
   // already decoded. Falling back down a level is free; falling back to the
   // full thumbnail is the last resort, and it exists because a card whose
   // levels are missing entirely used to draw as a dark square.
-  const level = graphThumbLevelFor(options.screenSize);
+  // Chosen from where the size is heading, not from where it is: an animated
+  // size crosses the level threshold on its way, and picking by the current
+  // value would swap the picture back and forth during the transition.
+  const level = graphThumbLevelFor(options.targetScreenSize);
   const candidates = node.slug && options.renderThumbnail
     ? [
       graphThumbnailUrl(options.thumbsRootPath, node.slug, options.thumbVersion, level),

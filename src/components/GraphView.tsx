@@ -79,7 +79,7 @@ import {
   frameFillSize,
   graphNodeScreenSize,
   maxUsefulZoom,
-  sizeChangeIsWorthIt,
+  approachSize,
   nearestNeighbourSpacing,
   visibleNodeCount,
 } from "./graph/nodeSize";
@@ -133,6 +133,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   // Recomputed when the layout stops moving: where approaching stops meaning
   // anything depends on how densely this particular graph sits.
   const [maxZoom, setMaxZoom] = useState<number>(GRAPH_MAX_ZOOM_FLOOR);
+  const [sizeAnimating, setSizeAnimating] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [hoverPreviewTarget, setHoverPreviewTarget] = useState<GraphPreviewTarget | null>(null);
   const [hoverPreviewBlock, setHoverPreviewBlock] = useState<LightBlock | IndexedBlock | null>(null);
@@ -158,6 +159,14 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   const nodeSpacingRef = useRef<number | null>(null);
   // Size the frame's area allows each node inside it. Null until measured.
   const frameFillRef = useRef<number | null>(null);
+  // What the size is heading for, and where it is now. The gap between them is
+  // the animation; without it every change arrived as a jump.
+  const targetNodeSizeRef = useRef<number>(CARD_THUMBNAIL_SIZE);
+  const currentNodeSizeRef = useRef<number>(CARD_THUMBNAIL_SIZE);
+  const lastSizeFrameAtRef = useRef<number | null>(null);
+  // Dragging a node reheats the simulation, and the engine stops between mouse
+  // moves; recomputing on each stop made the whole screen pulse under the hand.
+  const draggingRef = useRef(false);
   const spacingTickRef = useRef(0);
   const collectionDragClickSuppressionRef = useRef<{ nodeId: string; until: number } | null>(null);
   const previousHoverPreviewFrozenRef = useRef(hoverPreviewFrozen);
@@ -445,7 +454,10 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   /// hit area, the card menu and the hover preview all read it, because a
   /// growing node that four call sites size differently puts the cursor
   /// somewhere the eye is not.
-  const nodeScreenSizeAt = useCallback((zoom: number) => {
+  /// Where the size is heading. Recomputed only when the view genuinely
+  /// changes — a finished zoom, a new snapshot — never while the layout is
+  /// settling or a node is under the hand.
+  const computeTargetSize = useCallback((zoom: number) => {
     const spacing = nodeSpacingRef.current;
     return graphNodeScreenSize(CARD_THUMBNAIL_SIZE, {
       fillLimit: frameFillRef.current ?? undefined,
@@ -453,10 +465,14 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     });
   }, []);
 
+  /// The size everything draws and hit-tests with, mid-animation included.
+  const nodeScreenSizeAt = useCallback((_zoom: number) => currentNodeSizeRef.current, []);
+
   /// Recompute how full the frame is. Cheap enough to run on every zoom step,
   /// which is what keeps the growth continuous instead of arriving in one jump
   /// when the gesture ends.
   const syncFrameFill = useCallback(() => {
+    if (draggingRef.current) return;
     const graph = graphRef.current;
     if (!graph || size.width <= 0 || size.height <= 0) {
       frameFillRef.current = null;
@@ -467,10 +483,17 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     const count = visibleNodeCount(graphData.nodes, center, size, graphScaleRef.current);
     const measured = frameFillSize(size, count);
     if (measured === null) return;
-    if (sizeChangeIsWorthIt(frameFillRef.current, measured)) {
-      frameFillRef.current = measured;
-    }
-  }, [graphData.nodes, size]);
+    frameFillRef.current = measured;
+
+    const target = computeTargetSize(graphScaleRef.current);
+    if (target === targetNodeSizeRef.current) return;
+    targetNodeSizeRef.current = target;
+    lastSizeFrameAtRef.current = null;
+    // Frames are what an animation needs, and a settled canvas has stopped
+    // producing them. Redraw is forced on for the length of the transition and
+    // released the moment the size lands.
+    setSizeAnimating(true);
+  }, [computeTargetSize, graphData.nodes, size]);
 
   const currentNodeScreenSize = useCallback(
     () => nodeScreenSizeAt(graphScaleRef.current),
@@ -934,6 +957,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       paintCardNode(ctx, node, {
         globalScale,
         screenSize: nodeScreenSizeAt(globalScale),
+        targetScreenSize: targetNodeSizeRef.current,
         theme,
         canvasTheme,
         imageCache: imageCacheRef.current,
@@ -1093,19 +1117,39 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
               schedulePreviewOpen(node);
             }}
             onNodeDrag={(node) => {
+              draggingRef.current = true;
               suppressCollectionClickAfterDrag(node);
               // Without this the neighbours stay where they were and the links
               // stretch across the screen: a settled simulation exerts almost
               // no force, so dragging a node drags only that node.
               graphRef.current?.d3ReheatSimulation();
             }}
-            onNodeDragEnd={suppressCollectionClickAfterDrag}
+            onNodeDragEnd={(node) => {
+              draggingRef.current = false;
+              suppressCollectionClickAfterDrag(node);
+            }}
             minZoom={GRAPH_MIN_ZOOM}
             maxZoom={maxZoom}
             d3AlphaDecay={physics.alphaDecay}
             d3VelocityDecay={physics.velocityDecay}
             warmupTicks={nodePositionsRef.current.size > 0 ? 0 : physics.warmupTicks}
             cooldownTime={physics.cooldownTime}
+            onRenderFramePost={() => {
+              const target = targetNodeSizeRef.current;
+              const now = performance.now();
+              const last = lastSizeFrameAtRef.current;
+              lastSizeFrameAtRef.current = now;
+              if (currentNodeSizeRef.current === target) {
+                if (sizeAnimating) setSizeAnimating(false);
+                return;
+              }
+              currentNodeSizeRef.current = approachSize(
+                currentNodeSizeRef.current,
+                target,
+                last === null ? 16 : now - last,
+              );
+            }}
+            autoPauseRedraw={!sizeAnimating}
             onEngineTick={handleEngineTick}
             onEngineStop={() => {
               // Sizing waits for the layout to stop moving. Recomputing while

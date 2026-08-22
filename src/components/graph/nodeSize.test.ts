@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   frameFillSize,
   graphNodeScreenSize,
+  approachSize,
   maxUsefulZoom,
   nearestNeighbourSpacing,
-  sizeChangeIsWorthIt,
   visibleNodeCount,
 } from "./nodeSize";
 import { CARD_THUMBNAIL_SIZE, GRAPH_NODE_MAX_PX, type GraphCanvasNode } from "./contracts";
@@ -102,21 +102,39 @@ describe("maxUsefulZoom", () => {
   });
 });
 
-describe("sizeChangeIsWorthIt", () => {
-  it("adopts the first measurement", () => {
-    expect(sizeChangeIsWorthIt(null, 70)).toBe(true);
+describe("approachSize", () => {
+  it("covers part of the distance, not all of it, in one step", () => {
+    const next = approachSize(32, 100, 16);
+    expect(next).toBeGreaterThan(32);
+    expect(next).toBeLessThan(100);
   });
 
-  it("ignores the drift a settling layout produces", () => {
-    // Nodes nudge each other constantly; taking every measurement made cards
-    // swell and shrink while the user was doing nothing.
-    expect(sizeChangeIsWorthIt(70, 73)).toBe(false);
-    expect(sizeChangeIsWorthIt(70, 67)).toBe(false);
+  it("covers the same ground in the same time whatever the framerate", () => {
+    // Sixty small steps and six large ones over the same 96ms must land in the
+    // same place, or the transition speeds up on a fast machine.
+    let fine = 32;
+    for (let i = 0; i < 12; i += 1) fine = approachSize(fine, 100, 8);
+    let coarse = 32;
+    for (let i = 0; i < 3; i += 1) coarse = approachSize(coarse, 100, 32);
+    expect(fine).toBeCloseTo(coarse, 1);
   });
 
-  it("adopts a change large enough to be worth seeing", () => {
-    expect(sizeChangeIsWorthIt(70, 90)).toBe(true);
-    expect(sizeChangeIsWorthIt(70, 50)).toBe(true);
+  it("lands on the target instead of approaching it for ever", () => {
+    // The animation has to end, or the canvas can never pause its redraw.
+    let size = 32;
+    for (let i = 0; i < 40; i += 1) size = approachSize(size, 100, 16);
+    expect(size).toBe(100);
+  });
+
+  it("dissolves the drift a settling layout produces", () => {
+    // What the old hysteresis threshold was for: a 3px wobble must not read as
+    // a change. One frame moves it by a fraction of that.
+    const next = approachSize(70, 73, 16);
+    expect(next - 70).toBeLessThan(1);
+  });
+
+  it("takes the target when the current size is not a number yet", () => {
+    expect(approachSize(Number.NaN, 64, 16)).toBe(64);
   });
 });
 
