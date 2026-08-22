@@ -11,6 +11,15 @@ import {
 /// How much of a linked card's repulsion an unlinked one carries.
 const UNLINKED_CHARGE_RATIO = 0.4;
 
+/// Velocity damping while a node is under the hand.
+///
+/// At the resting 0.36 a node keeps 64% of its speed each tick and overshoots
+/// its balance point, so the layout swings around the dragged card. At 0.7 it
+/// keeps 30% — the movement is about half as long and settles without
+/// oscillating. Higher still and neighbours stop following at all, which brings
+/// back the stretched links this was introduced to fix.
+export const DRAG_VELOCITY_DECAY = 0.7;
+
 export function graphPhysics(nodeCount: number) {
   const scale = Math.max(1, Math.sqrt(nodeCount / 90));
   return {

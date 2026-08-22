@@ -73,7 +73,12 @@ import {
 } from "./graph/interaction";
 import { graphNodeScreenSize, graphZoomBounds } from "./graph/nodeSize";
 import { graphLinkCurvature, graphLinkLineDash } from "./graph/linkStyle";
-import { cardChargeFor, collectionLabelCollisionForce, graphPhysics } from "./graph/physics";
+import {
+  cardChargeFor,
+  collectionLabelCollisionForce,
+  graphPhysics,
+  DRAG_VELOCITY_DECAY,
+} from "./graph/physics";
 
 export interface GraphViewProps {
   currentCollection?: string;
@@ -128,6 +133,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   const [hoverPreviewPosition, setHoverPreviewPosition] = useState<GraphPreviewPosition | null>(null);
   const [hoveredCollectionId, setHoveredCollectionId] = useState<string | null>(null);
   const [hoveredCardId, setHoveredCardId] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
   const [imageVersion, setImageVersion] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
@@ -146,6 +152,10 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   // Dragging a node reheats the simulation, and the engine stops between mouse
   // moves; recomputing on each stop made the whole screen pulse under the hand.
   const draggingRef = useRef(false);
+  // Whether the simulation has come to rest. A drag only needs reviving when it
+  // has: while the layout is still settling the library's own alpha target is
+  // already carrying the neighbours.
+  const engineStoppedRef = useRef(false);
   const collectionDragClickSuppressionRef = useRef<{ nodeId: string; until: number } | null>(null);
   const previousHoverPreviewFrozenRef = useRef(hoverPreviewFrozen);
   const previousDetailOpenRef = useRef(detailOpen);
@@ -1070,25 +1080,35 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
               suppressCollectionClickAfterDrag(node);
               if (draggingRef.current) return;
               draggingRef.current = true;
-              // Once, to revive a settled simulation — the neighbours would
-              // otherwise stay put and the links stretch across the screen.
-              // Only once: the library already holds the engine at a low
-              // alpha target for the length of the drag, and reheating on every
-              // mouse move put full energy into the graph on each of them,
-              // which is the thrashing that made it behave like a 3D editor.
-              graphRef.current?.d3ReheatSimulation();
+              setDragging(true);
+              // Reviving costs a full alpha of 1 — the same jolt as a first
+              // layout — so it happens only when the engine has actually
+              // stopped. While it is still running the library's own
+              // alphaTarget(0.3) is already carrying the neighbours, and a
+              // reheat on top of that is what made the graph thrash.
+              if (engineStoppedRef.current) {
+                engineStoppedRef.current = false;
+                graphRef.current?.d3ReheatSimulation();
+              }
             }}
             onNodeDragEnd={(node) => {
               draggingRef.current = false;
+              setDragging(false);
               suppressCollectionClickAfterDrag(node);
             }}
             minZoom={zoomBounds.min}
             maxZoom={zoomBounds.max}
             d3AlphaDecay={physics.alphaDecay}
-            d3VelocityDecay={physics.velocityDecay}
+            d3VelocityDecay={dragging ? DRAG_VELOCITY_DECAY : physics.velocityDecay}
             warmupTicks={nodePositionsRef.current.size > 0 ? 0 : physics.warmupTicks}
             cooldownTime={physics.cooldownTime}
-            onEngineTick={handleEngineTick}
+            onEngineTick={() => {
+              engineStoppedRef.current = false;
+              handleEngineTick();
+            }}
+            onEngineStop={() => {
+              engineStoppedRef.current = true;
+            }}
             onZoom={(transform) => {
               // Scale only. Density does not depend on the zoom, and touching
               // it here would start an animation in the middle of a gesture —

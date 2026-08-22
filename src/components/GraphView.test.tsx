@@ -29,6 +29,7 @@ type MockGraphProps = {
   onBackgroundClick?: () => void;
   onEngineTick?: () => void;
   onEngineStop?: () => void;
+  d3VelocityDecay?: number;
   onNodeDrag?: (node: MockGraphNode) => void;
   onNodeDragEnd?: (node: MockGraphNode) => void;
   onRenderFramePost?: (context: CanvasRenderingContext2D, globalScale: number) => void;
@@ -121,6 +122,7 @@ vi.mock("react-force-graph-2d", async () => {
       onBackgroundClick,
       onEngineTick,
       onEngineStop,
+      d3VelocityDecay,
       onNodeDrag,
       onNodeDragEnd,
       onRenderFramePost,
@@ -164,6 +166,7 @@ vi.mock("react-force-graph-2d", async () => {
         "div",
         {
           "data-testid": "force-graph",
+          "data-velocity-decay": String(d3VelocityDecay ?? ""),
           "data-width": String(width),
           "data-height": String(height),
           "data-membership-curvature": membershipLink && linkCurvature
@@ -1012,6 +1015,51 @@ describe("GraphView", () => {
     return (maxX - minX) * zoom;
   }
 
+  it("thickens the simulation while a node is under the hand", async () => {
+    // Damping is what stops the layout swinging around a dragged card: at rest
+    // a node keeps 64% of its speed per tick and overshoots, under the hand it
+    // keeps 30% and settles.
+    commandMocks.listGraphSnapshot.mockResolvedValue(
+      makeSnapshot(graphCardNode("alpha-card", "Alpha card")),
+    );
+    renderGraph();
+    const graph = await screen.findByTestId("force-graph");
+    const atRest = graph.getAttribute("data-velocity-decay");
+
+    fireEvent.click(screen.getByTestId("graph-node-drag"));
+    const dragging = screen.getByTestId("force-graph").getAttribute("data-velocity-decay");
+    expect(Number(dragging)).toBeGreaterThan(Number(atRest));
+
+    fireEvent.click(screen.getByTestId("graph-node-drag-end"));
+    expect(screen.getByTestId("force-graph").getAttribute("data-velocity-decay")).toBe(atRest);
+  });
+
+  it("revives the simulation only when it has actually stopped", async () => {
+    // Reviving costs a full alpha of 1 — the same jolt as a first layout. While
+    // the engine is still running the library's own alpha target already
+    // carries the neighbours, and the jolt on top of it is what made the graph
+    // thrash under the hand.
+    commandMocks.listGraphSnapshot.mockResolvedValue(
+      makeSnapshot(graphCardNode("alpha-card", "Alpha card")),
+    );
+    renderGraph();
+    await screen.findByRole("button", { name: "Alpha card" });
+    await waitFor(() => expect(graphMethodMocks.d3ReheatSimulation).toHaveBeenCalled());
+    graphMethodMocks.d3ReheatSimulation.mockReset();
+
+    // Engine running: dragging must not add anything.
+    fireEvent.click(screen.getByTestId("graph-engine-tick"));
+    fireEvent.click(screen.getByTestId("graph-node-drag"));
+    expect(graphMethodMocks.d3ReheatSimulation).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("graph-node-drag-end"));
+
+    // Engine stopped: now it needs reviving, once.
+    fireEvent.click(screen.getByTestId("graph-engine-stop"));
+    fireEvent.click(screen.getByTestId("graph-node-drag"));
+    fireEvent.click(screen.getByTestId("graph-node-drag"));
+    expect(graphMethodMocks.d3ReheatSimulation).toHaveBeenCalledTimes(1);
+  });
+
   it("reheats once per drag, not on every movement", async () => {
     // The library already holds the engine at a low alpha target for the
     // length of a drag. Reheating on each mouse move put full energy into the
@@ -1023,6 +1071,7 @@ describe("GraphView", () => {
     await screen.findByRole("button", { name: "Alpha card" });
     await waitFor(() => expect(graphMethodMocks.d3ReheatSimulation).toHaveBeenCalled());
     graphMethodMocks.d3ReheatSimulation.mockReset();
+    fireEvent.click(screen.getByTestId("graph-engine-stop"));
 
     const drag = screen.getByTestId("graph-node-drag");
     fireEvent.click(drag);
@@ -1031,8 +1080,9 @@ describe("GraphView", () => {
 
     expect(graphMethodMocks.d3ReheatSimulation).toHaveBeenCalledTimes(1);
 
-    // A new drag revives the simulation again.
+    // A new drag revives it again only if it stopped again in between.
     fireEvent.click(screen.getByTestId("graph-node-drag-end"));
+    fireEvent.click(screen.getByTestId("graph-engine-stop"));
     fireEvent.click(drag);
     expect(graphMethodMocks.d3ReheatSimulation).toHaveBeenCalledTimes(2);
   });
