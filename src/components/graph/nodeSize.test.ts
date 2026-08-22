@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { graphNodeScreenSize, graphZoomBounds } from "./nodeSize";
+import { graphNodeScreenSize, graphZoomBounds, overlapBeginsAtZoom } from "./nodeSize";
 import { CARD_GRAPH_SIZE, GRAPH_NODE_MAX_PX, GRAPH_NODE_MIN_PX } from "./contracts";
 
 describe("graphNodeScreenSize", () => {
@@ -24,17 +24,23 @@ describe("graphNodeScreenSize", () => {
 });
 
 describe("graphZoomBounds", () => {
-  it("holds the minimum size by refusing the zoom, not by clamping", () => {
-    // Clamping is what lets distances keep shrinking past a card that has
-    // stopped, closing the graph into a carpet. At the lower bound the card is
-    // exactly at its minimum, so it can never be clamped in practice.
-    const bounds = graphZoomBounds();
-    expect(graphNodeScreenSize(bounds.min)).toBeCloseTo(GRAPH_NODE_MIN_PX, 5);
-    expect(graphNodeScreenSize(bounds.max)).toBeCloseTo(GRAPH_NODE_MAX_PX, 5);
+  it("caps approaching where one card would fill the view", () => {
+    expect(graphNodeScreenSize(graphZoomBounds().max)).toBeCloseTo(GRAPH_NODE_MAX_PX, 5);
   });
 
-  it("leaves room to approach", () => {
+  it("leaves zooming out open, so a whole library still fits on screen", () => {
+    // Past the point where cards stop shrinking they begin to overlap. That is
+    // the accepted trade: the alternative is a large graph that can only be
+    // panned.
     const bounds = graphZoomBounds();
-    expect(bounds.max).toBeGreaterThan(bounds.min);
+    expect(bounds.min).toBeLessThan(overlapBeginsAtZoom());
+    expect(graphNodeScreenSize(bounds.min)).toBe(GRAPH_NODE_MIN_PX);
+  });
+
+  it("names where the overlap begins", () => {
+    const zoom = overlapBeginsAtZoom();
+    expect(graphNodeScreenSize(zoom)).toBeCloseTo(GRAPH_NODE_MIN_PX, 5);
+    // Just above it the card is still scaling with the camera.
+    expect(graphNodeScreenSize(zoom * 1.5)).toBeGreaterThan(GRAPH_NODE_MIN_PX);
   });
 });

@@ -1,5 +1,6 @@
 import {
   CARD_GRAPH_SIZE,
+  GRAPH_ZOOM_OUT_LIMIT,
   GRAPH_NODE_MAX_PX,
   GRAPH_NODE_MIN_PX,
 } from "./contracts";
@@ -25,20 +26,26 @@ export function graphNodeScreenSize(zoom: number): number {
 }
 
 /**
- * Zoom bounds that keep a card between its minimum and maximum on screen.
+ * Zoom bounds for the camera.
  *
- * The minimum is held by refusing to zoom out further, not by clamping the
- * size. Clamping is what produces overlap: the card stops shrinking while the
- * distances around it keep going, and the graph closes into a carpet. Refusing
- * the zoom keeps card and gap on the same scale at every moment, so overlap
- * cannot arise from the camera at all.
+ * Only the upper one follows from the card: past it a single card would fill
+ * the viewport. Zooming out is left open deliberately.
  *
- * The cost is named and deliberate: a graph large enough that its own extent
- * exceeds the viewport at this zoom is panned rather than shown whole.
+ * Below `GRAPH_NODE_MIN_PX / CARD_GRAPH_SIZE` the card stops shrinking while
+ * the distances around it keep going, so cards begin to overlap — the carpet
+ * visible on a full library today. That is the accepted trade: seeing the whole
+ * graph at once matters more than keeping it uncluttered at the far end, and
+ * the alternative is a large graph that can only be panned.
  */
 export function graphZoomBounds(): { min: number; max: number } {
   return {
-    min: GRAPH_NODE_MIN_PX / CARD_GRAPH_SIZE,
+    min: GRAPH_ZOOM_OUT_LIMIT,
     max: GRAPH_NODE_MAX_PX / CARD_GRAPH_SIZE,
   };
+}
+
+/// The zoom at which cards stop shrinking and start overlapping. Not a limit —
+/// a description of where the trade takes effect.
+export function overlapBeginsAtZoom(): number {
+  return GRAPH_NODE_MIN_PX / CARD_GRAPH_SIZE;
 }

@@ -74,12 +74,16 @@ export const CARD_COLLISION_RADIUS = 22;
 // at every zoom.
 export const CARD_GRAPH_SIZE = 40;
 
-// Bounds on what that becomes on screen. The minimum is enforced by limiting
-// how far the camera may zoom out, never by clamping the size: clamping is what
-// lets distances keep shrinking past a card that has stopped, which closes the
-// graph into a carpet.
+// Bounds on what that becomes on screen. Below the minimum a card would be
+// unreadable, so it stops shrinking there — and from that point on the
+// distances around it keep shrinking, so cards overlap. That is deliberate:
+// seeing a whole library at once is worth more than keeping it uncluttered at
+// the far end of the zoom.
 export const GRAPH_NODE_MIN_PX = 32;
 export const GRAPH_NODE_MAX_PX = 200;
+
+// How far out the camera may go. Low enough that any library fits on screen.
+export const GRAPH_ZOOM_OUT_LIMIT = 0.05;
 
 
 
