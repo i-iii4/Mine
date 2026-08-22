@@ -1012,6 +1012,31 @@ describe("GraphView", () => {
     return (maxX - minX) * zoom;
   }
 
+  it("reheats once per drag, not on every movement", async () => {
+    // The library already holds the engine at a low alpha target for the
+    // length of a drag. Reheating on each mouse move put full energy into the
+    // graph on every one of them, and the whole layout thrashed.
+    commandMocks.listGraphSnapshot.mockResolvedValue(
+      makeSnapshot(graphCardNode("alpha-card", "Alpha card")),
+    );
+    renderGraph();
+    await screen.findByRole("button", { name: "Alpha card" });
+    await waitFor(() => expect(graphMethodMocks.d3ReheatSimulation).toHaveBeenCalled());
+    graphMethodMocks.d3ReheatSimulation.mockReset();
+
+    const drag = screen.getByTestId("graph-node-drag");
+    fireEvent.click(drag);
+    fireEvent.click(drag);
+    fireEvent.click(drag);
+
+    expect(graphMethodMocks.d3ReheatSimulation).toHaveBeenCalledTimes(1);
+
+    // A new drag revives the simulation again.
+    fireEvent.click(screen.getByTestId("graph-node-drag-end"));
+    fireEvent.click(drag);
+    expect(graphMethodMocks.d3ReheatSimulation).toHaveBeenCalledTimes(2);
+  });
+
   it("holds the card size still while a node is being dragged", async () => {
     commandMocks.listGraphSnapshot.mockResolvedValue(
       makeSnapshot(graphCardNode("alpha-card", "Alpha card")),

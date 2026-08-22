@@ -73,7 +73,7 @@ import {
 } from "./graph/interaction";
 import { graphNodeScreenSize, graphZoomBounds } from "./graph/nodeSize";
 import { graphLinkCurvature, graphLinkLineDash } from "./graph/linkStyle";
-import { collectionLabelCollisionForce, graphPhysics } from "./graph/physics";
+import { cardChargeFor, collectionLabelCollisionForce, graphPhysics } from "./graph/physics";
 
 export interface GraphViewProps {
   currentCollection?: string;
@@ -518,7 +518,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       const chargeForce = graph.d3Force("charge") as unknown as GraphChargeForce | undefined;
       chargeForce
         ?.strength((node) =>
-          node.kind === "collection" ? physics.collectionCharge : physics.cardCharge,
+          cardChargeFor(node, physics),
         )
         ?.distanceMax(physics.chargeDistanceMax);
 
@@ -1067,11 +1067,15 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
               schedulePreviewOpen(node);
             }}
             onNodeDrag={(node) => {
-              draggingRef.current = true;
               suppressCollectionClickAfterDrag(node);
-              // Without this the neighbours stay where they were and the links
-              // stretch across the screen: a settled simulation exerts almost
-              // no force, so dragging a node drags only that node.
+              if (draggingRef.current) return;
+              draggingRef.current = true;
+              // Once, to revive a settled simulation — the neighbours would
+              // otherwise stay put and the links stretch across the screen.
+              // Only once: the library already holds the engine at a low
+              // alpha target for the length of the drag, and reheating on every
+              // mouse move put full energy into the graph on each of them,
+              // which is the thrashing that made it behave like a 3D editor.
               graphRef.current?.d3ReheatSimulation();
             }}
             onNodeDragEnd={(node) => {

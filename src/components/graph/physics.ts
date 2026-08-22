@@ -8,6 +8,9 @@ import {
   type PositionedGraphCanvasNode,
 } from "./contracts";
 
+/// How much of a linked card's repulsion an unlinked one carries.
+const UNLINKED_CHARGE_RATIO = 0.4;
+
 export function graphPhysics(nodeCount: number) {
   const scale = Math.max(1, Math.sqrt(nodeCount / 90));
   return {
@@ -28,6 +31,24 @@ export function graphPhysics(nodeCount: number) {
     cardLinkDistance: 56 * scale,
     collectionLinkDistance: 76 * scale,
   };
+}
+
+/**
+ * Repulsion for a single node.
+ *
+ * A card tied to a collection is pulled towards it by the link force, which is
+ * what packs those clusters. A card with no links has nothing pulling it back —
+ * only repulsion pushing it out and a very weak centring force returning it — so
+ * it settles far from its neighbours and the free area of the library reads as
+ * empty. Unlinked cards therefore repel less; the collision radius still keeps
+ * them from touching, exactly as it does inside a cluster.
+ */
+export function cardChargeFor(
+  node: GraphCanvasNode,
+  physics: ReturnType<typeof graphPhysics>,
+): number {
+  if (node.kind === "collection") return physics.collectionCharge;
+  return node.degree > 0 ? physics.cardCharge : physics.cardCharge * UNLINKED_CHARGE_RATIO;
 }
 
 export function collectionLabelCollisionForce(getScale: () => number): GraphForce {
