@@ -54,6 +54,20 @@ video {
   border-radius: var(--radius-card);
 }
 
+/* Graph cursor policy. The force-graph stylesheet marks nodes `.clickable`
+   (pointer) and `.grabbable` (grab), which are web conventions: in Mine the
+   pointing hand means only "this leaves the app", and grab before a drag has
+   begun says nothing the arrow does not. Only `grabbing`, during the drag
+   itself, survives. See DESIGN_SYSTEM.md, «Курсор». */
+[data-graph-view] .force-graph-container .clickable,
+[data-graph-view] .force-graph-container .grabbable {
+  cursor: default;
+}
+
+[data-graph-view] .force-graph-container .grabbable:active {
+  cursor: grabbing;
+}
+
 /* Native selection policy: app chrome is non-selectable; article prose opts in. */
 body,
 button,
