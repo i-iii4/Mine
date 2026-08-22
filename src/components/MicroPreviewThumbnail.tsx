@@ -73,15 +73,24 @@ export function MicroPreviewThumbnail({
     return null;
   }
 
+  // Text thumbs are dark-ink PNGs on a transparent background, so whatever
+  // sits behind them shows through. That background belongs here rather than
+  // to each caller: every consumer used to pick its own, and they drifted
+  // apart. A text thumb reads as a small feed card, so it gets the feed's
+  // `bg-card`. The fill lives on the wrapper, not on the image, because
+  // `dark:invert` applies to the element it is on — a fill on the image would
+  // invert along with the ink and turn white.
   return (
-    <img
-      {...imgProps}
-      src={preview.url}
-      className={cn(
-        "size-8 object-cover",
-        preview.text ? "dark:invert" : "rounded-none",
-        className,
-      )}
-    />
+    <span className={cn("block size-8 overflow-hidden", preview.text && "bg-card")}>
+      <img
+        {...imgProps}
+        src={preview.url}
+        className={cn(
+          "size-8 object-cover",
+          preview.text ? "dark:invert" : "rounded-none",
+          className,
+        )}
+      />
+    </span>
   );
 }

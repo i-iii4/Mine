@@ -79,8 +79,16 @@ export function paintCardNode(
   if (image) {
     ctx.save();
     ctx.clip();
-    if (isTextPreview(node) && options.theme === "dark") {
-      ctx.filter = "invert(1)";
+    if (isTextPreview(node)) {
+      // A text thumb is a transparent PNG; with no fill it draws straight onto
+      // the graph background, which is darker than a card. Fill first, then
+      // set the filter: `invert(1)` applies to everything drawn after it, so a
+      // fill on the wrong side of this line would invert into white.
+      ctx.fillStyle = options.canvasTheme.textPreviewFill;
+      ctx.fill();
+      if (options.theme === "dark") {
+        ctx.filter = "invert(1)";
+      }
     }
     drawImageCover(ctx, image, x, y, size, size);
     ctx.restore();
@@ -270,6 +278,12 @@ export function readGraphCanvasTheme(mode: "light" | "dark"): GraphCanvasTheme {
   const mutedText = resolvedCanvasColor(mutedStyle.color, fallback.mutedText);
   const hoverOutline = resolvedCanvasColor(mutedStyle.outlineColor, fallback.hoverOutline);
 
+  probe.style.backgroundColor = "var(--card)";
+  const textPreviewFill = resolvedCanvasColor(
+    getComputedStyle(probe).backgroundColor,
+    fallback.textPreviewFill,
+  );
+
   probe.style.color = "var(--foreground)";
   const foregroundText = resolvedCanvasColor(
     getComputedStyle(probe).color,
@@ -279,6 +293,7 @@ export function readGraphCanvasTheme(mode: "light" | "dark"): GraphCanvasTheme {
 
   return {
     ...GRAPH_PALETTE[mode],
+    textPreviewFill,
     chromeFill,
     border,
     mutedText,
@@ -291,6 +306,7 @@ function graphCanvasThemeFallback(mode: "light" | "dark"): GraphCanvasTheme {
   return mode === "dark"
     ? {
         ...GRAPH_PALETTE.dark,
+        textPreviewFill: "#0f0f0f",
         chromeFill: "#1a1a1a",
         border: "#2a2a2a",
         mutedText: "#9a9a9a",
@@ -299,6 +315,7 @@ function graphCanvasThemeFallback(mode: "light" | "dark"): GraphCanvasTheme {
       }
     : {
         ...GRAPH_PALETTE.light,
+        textPreviewFill: "#fcfcfc",
         chromeFill: "#fcfcfc",
         border: "#eeeeee",
         mutedText: "#777777",

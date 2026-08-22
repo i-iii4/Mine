@@ -1659,7 +1659,9 @@ describe("Detail", () => {
     const scrollArea = dialog.querySelector("[data-delete-media-connected-cards-scroll]");
     const section = row.closest("[data-related-notes-block]");
     const list = row.closest("[data-related-notes-list]");
-    const label = row.querySelector("span");
+    // The row also holds the thumbnail wrapper span, so match the label class
+    // rather than the first span in document order.
+    const label = row.querySelector("span.flex-1");
 
     expect(dialog).toHaveClass("min-w-0", "overflow-hidden");
     expect(scrollArea).toHaveClass("min-w-0", "overflow-y-auto");

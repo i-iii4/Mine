@@ -35,6 +35,10 @@ export type GraphPalette = {
 };
 
 export type GraphCanvasTheme = GraphPalette & {
+  /// Background for a text thumbnail, read from the `--card` token so the
+  /// graph matches the feed. Distinct from `cardFill`, which paints a node
+  /// that has no thumbnail at all.
+  textPreviewFill: string;
   chromeFill: string;
   border: string;
   mutedText: string;
