@@ -1012,6 +1012,25 @@ describe("GraphView", () => {
     return (maxX - minX) * zoom;
   }
 
+  it("applies a zoom change in the same frame, with nothing in between", async () => {
+    // The property the rework exists for. Size is read from the zoom at paint
+    // time, so a gesture maps straight onto it: no discrete input to smooth
+    // over, and therefore no lag behind the trackpad.
+    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes(
+      Array.from({ length: 6 }, (_, index) => graphCardNode(`c${index}`, `Card ${index}`)),
+    ));
+    renderGraph();
+    await screen.findByRole("button", { name: "Card 5" });
+    // The density the size depends on is measured when the layout settles.
+    fireEvent.click(screen.getByTestId("graph-engine-stop"));
+
+    const near = drawnCardSize(10);
+    const twice = drawnCardSize(20);
+
+    expect(near).toBeGreaterThan(32);
+    expect(twice / near).toBeCloseTo(2, 1);
+  });
+
   it("holds the card size still while a node is being dragged", async () => {
     commandMocks.listGraphSnapshot.mockResolvedValue(
       makeSnapshot(graphCardNode("alpha-card", "Alpha card")),
@@ -1029,27 +1048,41 @@ describe("GraphView", () => {
     expect(drawnCardSize()).toBe(duringDrag);
   });
 
-  it("moves the size gradually rather than in one jump", async () => {
-    commandMocks.listGraphSnapshot.mockResolvedValue(
-      makeSnapshot(graphCardNode("alpha-card", "Alpha card")),
-    );
-    renderGraph();
-    await screen.findByRole("button", { name: "Alpha card" });
+  it("eases a density change instead of applying it in one frame", async () => {
+    // Smoothing belongs here and only here: density changes without the user's
+    // hand on it — a collection opens, a layout settles — so easing reads as
+    // the graph adjusting itself. The zoom path is deliberately unsmoothed.
+    const tight = Array.from({ length: 6 }, (_, index) =>
+      graphCardNode(`c${index}`, `Card ${index}`));
+    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes(tight));
 
-    const start = drawnCardSize();
+    const { rerenderGraph } = renderGraph();
+    await screen.findByRole("button", { name: "Card 5" });
     fireEvent.click(screen.getByTestId("graph-engine-stop"));
-    fireEvent.click(screen.getByTestId("graph-render-frame"));
-    const afterOneFrame = drawnCardSize();
-    for (let index = 0; index < 40; index += 1) {
+    for (let index = 0; index < 60; index += 1) {
       fireEvent.click(screen.getByTestId("graph-render-frame"));
     }
-    const settled = drawnCardSize();
+    const before = drawnCardSize(10);
 
-    // A single frame must not deliver the whole change — that jump is what the
-    // user saw as three or four pulses per transition.
-    if (settled !== start) {
-      expect(Math.abs(afterOneFrame - start)).toBeLessThan(Math.abs(settled - start));
+    // A different collection: fewer nodes over the same spread, so a different
+    // density and a different size.
+    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes(
+      Array.from({ length: 24 }, (_, index) => graphCardNode(`d${index}`, `Other ${index}`)),
+    ));
+    rerenderGraph({ currentCollection: "Design" });
+    await screen.findByRole("button", { name: "Other 23" });
+    fireEvent.click(screen.getByTestId("graph-engine-stop"));
+
+    fireEvent.click(screen.getByTestId("graph-render-frame"));
+    const afterOneFrame = drawnCardSize(10);
+    for (let index = 0; index < 80; index += 1) {
+      fireEvent.click(screen.getByTestId("graph-render-frame"));
     }
+    const settled = drawnCardSize(10);
+
+    expect(settled).not.toBe(before);
+    // One frame must carry part of the change, not all of it.
+    expect(Math.abs(afterOneFrame - before)).toBeLessThan(Math.abs(settled - before));
   });
 
   it("draws a card at the size the one source decides, never the bare constant", async () => {

@@ -80,11 +80,13 @@ export const GRAPH_NODE_MAX_PX = 100;
 // floor from 550 nodes in frame down to 194.
 export const GRAPH_NODE_FILL_RATIO = 0.75;
 
-// How quickly a node's size follows a new target. Roughly the camera's own
-// pace, so a size change and a camera move read as one movement.
+// How quickly the layout's measured density is adopted. Roughly the camera's
+// own pace, so a collection change and its camera move read as one movement.
+// Zoom never passes through this: the hand leads there, and easing would be lag.
 export const GRAPH_NODE_SIZE_TIME_CONSTANT_MS = 120;
-// Below this the remaining difference is invisible and the animation ends.
-export const GRAPH_NODE_SIZE_SETTLE_PX = 0.5;
+// Relative distance at which a density transition lands, ending the animation
+// so the canvas can pause its redraw again.
+export const GRAPH_DENSITY_SETTLE_RATIO = 0.005;
 
 // Corner radius per pixel of growth above the floor size, capped at the radius
 // the rest of the interface uses. Measured from the floor so that a card at 32

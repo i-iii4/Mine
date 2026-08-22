@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  frameFillSize,
+  approachDensity,
   graphNodeScreenSize,
-  approachSize,
+  layoutDensity,
   maxUsefulZoom,
   nearestNeighbourSpacing,
-  visibleNodeCount,
+  zoomForNodeSize,
 } from "./nodeSize";
 import { CARD_THUMBNAIL_SIZE, GRAPH_NODE_MAX_PX, type GraphCanvasNode } from "./contracts";
 
@@ -20,144 +20,112 @@ function node(id: string, x: number, y: number): GraphCanvasNode {
 }
 
 describe("graphNodeScreenSize", () => {
-  it("takes the size the frame can afford, not the zoom", () => {
-    // The defect this replaces: size grew as base × zoom while the distances
-    // between nodes grew by the same factor, so the picture never took up any
-    // more of the screen than before.
-    expect(graphNodeScreenSize(BASE, { fillLimit: 70 })).toBe(70);
-    expect(graphNodeScreenSize(BASE, { fillLimit: 45 })).toBe(45);
+  const density = layoutDensity([
+    node("a", 0, 0), node("b", 100, 0), node("c", 0, 100), node("d", 100, 100),
+  ]);
+
+  it("follows the zoom proportionally at a fixed density", () => {
+    // The property the whole rework exists for: the gesture maps straight onto
+    // the size, with nothing discrete or eased between them.
+    // Zooms chosen inside the range where neither the floor nor the ceiling
+    // clamps, so the proportion is the only thing under test.
+    const near = graphNodeScreenSize(1, density);
+    const twice = graphNodeScreenSize(2, density);
+    expect(twice / near).toBeCloseTo(2, 5);
   });
 
-  it("stops at the ceiling however empty the frame is", () => {
-    expect(graphNodeScreenSize(BASE, { fillLimit: 400 })).toBe(GRAPH_NODE_MAX_PX);
+  it("draws smaller cards in a denser graph at the same zoom", () => {
+    // What sizing by zoom alone could not do: a crowded layout has less room
+    // per card, whatever the zoom.
+    const sparse = layoutDensity([node("a", 0, 0), node("b", 1000, 1000)]) as number;
+    const crowded = layoutDensity(
+      Array.from({ length: 50 }, (_, i) => node(`n${i}`, (i % 10) * 20, Math.floor(i / 10) * 20)),
+    ) as number;
+    expect(graphNodeScreenSize(3, crowded)).toBeLessThan(graphNodeScreenSize(3, sparse));
   });
 
-  it("never shrinks below the base however full the frame is", () => {
-    expect(graphNodeScreenSize(BASE, { fillLimit: 4 })).toBe(BASE);
+  it("stops at the ceiling and never falls below the floor", () => {
+    expect(graphNodeScreenSize(10_000, density)).toBe(GRAPH_NODE_MAX_PX);
+    expect(graphNodeScreenSize(0.0001, density)).toBe(BASE);
   });
 
   it("yields to the room the layout actually has", () => {
-    // A crowded layout overrides a generous frame share: neighbours must not
-    // be covered.
-    expect(graphNodeScreenSize(BASE, { fillLimit: 90, spacingLimit: 50 })).toBe(50);
-    expect(graphNodeScreenSize(BASE, { fillLimit: 50, spacingLimit: 90 })).toBe(50);
+    // A crowded patch overrides the zoom: neighbours must not be covered.
+    expect(graphNodeScreenSize(1000, density, 50)).toBe(50);
+    // But the floor still wins over a spacing tighter than a readable card.
+    expect(graphNodeScreenSize(1000, density, 10)).toBe(BASE);
   });
 
-  it("falls back to the ceiling when nothing has been measured yet", () => {
-    expect(graphNodeScreenSize(BASE, {})).toBe(GRAPH_NODE_MAX_PX);
-  });
-});
-
-describe("frameFillSize", () => {
-  it("gives every node a share of the frame, so fewer nodes means larger ones", () => {
-    const viewport = { width: 1280, height: 800 };
-    const crowded = frameFillSize(viewport, 60) as number;
-    const sparse = frameFillSize(viewport, 20) as number;
-    const nearlyEmpty = frameFillSize(viewport, 3) as number;
-
-    expect(crowded).toBeLessThan(sparse);
-    expect(sparse).toBeLessThan(nearlyEmpty);
-    // Sixty cards in this frame is the first screenshot the user reported as
-    // "still tiny": the share is around a hundred pixels now, not thirty-two.
-    expect(crowded).toBeGreaterThan(90);
-  });
-
-  it("leaves air between neighbours rather than tiling the frame", () => {
-    const viewport = { width: 1000, height: 1000 };
-    const size = frameFillSize(viewport, 100) as number;
-    // A hundred nodes over a hundred slots of 100px: a full tiling would be
-    // exactly 100, so the share has to be visibly less.
-    expect(size).toBeLessThan(100);
-  });
-
-  it("measures nothing when there is no frame or nothing in it", () => {
-    expect(frameFillSize({ width: 0, height: 0 }, 10)).toBeNull();
-    expect(frameFillSize({ width: 800, height: 600 }, 0)).toBeNull();
+  it("falls back to the ceiling when density has not been measured", () => {
+    expect(graphNodeScreenSize(1000, null)).toBe(GRAPH_NODE_MAX_PX);
   });
 });
 
-describe("maxUsefulZoom", () => {
-  it("stops where cards have already reached their ceiling", () => {
-    // A dense patch reaches the ceiling sooner, so its limit is lower than a
-    // graph spread thin across the same node count.
-    const dense = Array.from({ length: 100 }, (_, i) =>
-      node(`d${i}`, (i % 10) * 40, Math.floor(i / 10) * 40));
-    const sparse = Array.from({ length: 100 }, (_, i) =>
-      node(`s${i}`, (i % 10) * 400, Math.floor(i / 10) * 400));
+describe("zoomForNodeSize and maxUsefulZoom", () => {
+  const density = layoutDensity([
+    node("a", 0, 0), node("b", 100, 0), node("c", 0, 100), node("d", 100, 100),
+  ]);
 
-    const denseLimit = maxUsefulZoom(dense) as number;
-    const sparseLimit = maxUsefulZoom(sparse) as number;
-
-    expect(denseLimit).toBeGreaterThan(sparseLimit);
+  it("inverts the sizing exactly", () => {
+    // One formula, read in both directions. A separate one for the limit is
+    // how the approach ends up stopping where cards no longer stop growing.
+    const zoom = zoomForNodeSize(GRAPH_NODE_MAX_PX, density) as number;
+    expect(graphNodeScreenSize(zoom, density)).toBeCloseTo(GRAPH_NODE_MAX_PX, 5);
   });
 
-  it("never forbids approaching, however thin the graph", () => {
-    const scattered = [node("a", 0, 0), node("b", 100_000, 100_000)];
-    expect(maxUsefulZoom(scattered) as number).toBeGreaterThanOrEqual(2);
+  it("puts the limit at or past the zoom where cards reach the ceiling", () => {
+    const atCeiling = zoomForNodeSize(GRAPH_NODE_MAX_PX, density) as number;
+    expect(maxUsefulZoom(density)).toBeGreaterThanOrEqual(atCeiling);
   });
 
-  it("declines to guess with nothing laid out", () => {
-    expect(maxUsefulZoom([])).toBeNull();
-    expect(maxUsefulZoom([node("only", 0, 0)])).toBeNull();
+  it("keeps a sparse graph approachable", () => {
+    const thin = layoutDensity([node("a", 0, 0), node("b", 100_000, 100_000)]);
+    expect(maxUsefulZoom(thin)).toBeGreaterThanOrEqual(2);
+  });
+
+  it("declines to guess without a density", () => {
+    expect(zoomForNodeSize(GRAPH_NODE_MAX_PX, null)).toBeNull();
+    expect(maxUsefulZoom(null)).toBeGreaterThanOrEqual(2);
   });
 });
 
-describe("approachSize", () => {
+describe("layoutDensity", () => {
+  it("reports more nodes per area for a crowded layout", () => {
+    const crowded = layoutDensity(
+      Array.from({ length: 25 }, (_, i) => node(`c${i}`, (i % 5) * 10, Math.floor(i / 5) * 10)),
+    ) as number;
+    const spread = layoutDensity(
+      Array.from({ length: 25 }, (_, i) => node(`s${i}`, (i % 5) * 200, Math.floor(i / 5) * 200)),
+    ) as number;
+    expect(crowded).toBeGreaterThan(spread);
+  });
+
+  it("declines to measure fewer than two placed nodes", () => {
+    expect(layoutDensity([])).toBeNull();
+    expect(layoutDensity([node("only", 0, 0)])).toBeNull();
+  });
+});
+
+describe("approachDensity", () => {
   it("covers part of the distance, not all of it, in one step", () => {
-    const next = approachSize(32, 100, 16);
-    expect(next).toBeGreaterThan(32);
-    expect(next).toBeLessThan(100);
+    const next = approachDensity(0.001, 0.01, 16);
+    expect(next).toBeGreaterThan(0.001);
+    expect(next).toBeLessThan(0.01);
   });
 
   it("covers the same ground in the same time whatever the framerate", () => {
-    // Sixty small steps and six large ones over the same 96ms must land in the
-    // same place, or the transition speeds up on a fast machine.
-    let fine = 32;
-    for (let i = 0; i < 12; i += 1) fine = approachSize(fine, 100, 8);
-    let coarse = 32;
-    for (let i = 0; i < 3; i += 1) coarse = approachSize(coarse, 100, 32);
-    expect(fine).toBeCloseTo(coarse, 1);
+    let fine = 0.001;
+    for (let i = 0; i < 12; i += 1) fine = approachDensity(fine, 0.01, 8);
+    let coarse = 0.001;
+    for (let i = 0; i < 3; i += 1) coarse = approachDensity(coarse, 0.01, 32);
+    expect(fine).toBeCloseTo(coarse, 6);
   });
 
   it("lands on the target instead of approaching it for ever", () => {
     // The animation has to end, or the canvas can never pause its redraw.
-    let size = 32;
-    for (let i = 0; i < 40; i += 1) size = approachSize(size, 100, 16);
-    expect(size).toBe(100);
-  });
-
-  it("dissolves the drift a settling layout produces", () => {
-    // What the old hysteresis threshold was for: a 3px wobble must not read as
-    // a change. One frame moves it by a fraction of that.
-    const next = approachSize(70, 73, 16);
-    expect(next - 70).toBeLessThan(1);
-  });
-
-  it("takes the target when the current size is not a number yet", () => {
-    expect(approachSize(Number.NaN, 64, 16)).toBe(64);
-  });
-});
-
-describe("visibleNodeCount", () => {
-  const viewport = { width: 400, height: 400 };
-
-  it("counts what the camera holds and ignores the rest", () => {
-    const nodes = [node("in", 0, 0), node("edge", 190, 190), node("out", 500, 500)];
-    expect(visibleNodeCount(nodes, { x: 0, y: 0 }, viewport, 1)).toBe(2);
-  });
-
-  it("holds fewer nodes as the view comes closer", () => {
-    const nodes = Array.from({ length: 9 }, (_, i) =>
-      node(`n${i}`, ((i % 3) - 1) * 150, (Math.floor(i / 3) - 1) * 150));
-    const far = visibleNodeCount(nodes, { x: 0, y: 0 }, viewport, 1);
-    const near = visibleNodeCount(nodes, { x: 0, y: 0 }, viewport, 4);
-    expect(near).toBeLessThan(far);
-  });
-
-  it("ignores nodes the simulation has not placed", () => {
-    const unplaced = { ...node("ghost", 0, 0) } as GraphCanvasNode & { x?: number };
-    delete unplaced.x;
-    expect(visibleNodeCount([unplaced], { x: 0, y: 0 }, viewport, 1)).toBe(0);
+    let value = 0.001;
+    for (let i = 0; i < 60; i += 1) value = approachDensity(value, 0.01, 16);
+    expect(value).toBe(0.01);
   });
 });
 

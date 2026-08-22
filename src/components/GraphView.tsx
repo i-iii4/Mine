@@ -28,7 +28,6 @@ import type {
 } from "@/types";
 import {
   CARD_COLLISION_RADIUS,
-  CARD_THUMBNAIL_SIZE,
   COLLECTION_COLLISION_RADIUS,
   COLLECTION_LABEL_CLICK_SUPPRESS_MS,
   GRAPH_CENTER_DURATION_MS,
@@ -76,12 +75,11 @@ import {
   isGraphArrowKey,
 } from "./graph/interaction";
 import {
-  frameFillSize,
+  approachDensity,
   graphNodeScreenSize,
+  layoutDensity,
   maxUsefulZoom,
-  approachSize,
   nearestNeighbourSpacing,
-  visibleNodeCount,
 } from "./graph/nodeSize";
 import { graphLinkCurvature, graphLinkLineDash } from "./graph/linkStyle";
 import { collectionLabelCollisionForce, graphPhysics } from "./graph/physics";
@@ -158,12 +156,11 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   // cadence rather than per frame: it changes only as the simulation settles,
   // and it is what stops a growing node from covering its neighbour.
   const nodeSpacingRef = useRef<number | null>(null);
-  // Size the frame's area allows each node inside it. Null until measured.
-  const frameFillRef = useRef<number | null>(null);
-  // What the size is heading for, and where it is now. The gap between them is
-  // the animation; without it every change arrived as a jump.
-  const targetNodeSizeRef = useRef<number>(CARD_THUMBNAIL_SIZE);
-  const currentNodeSizeRef = useRef<number>(CARD_THUMBNAIL_SIZE);
+  // How densely the layout sits, and what it is easing towards. Size is a
+  // function of this and the zoom; easing the density rather than the size is
+  // what keeps the gesture exact while a collection change still glides.
+  const currentDensityRef = useRef<number | null>(null);
+  const targetDensityRef = useRef<number | null>(null);
   const lastSizeFrameAtRef = useRef<number | null>(null);
   // Dragging a node reheats the simulation, and the engine stops between mouse
   // moves; recomputing on each stop made the whole screen pulse under the hand.
@@ -455,46 +452,41 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   /// hit area, the card menu and the hover preview all read it, because a
   /// growing node that four call sites size differently puts the cursor
   /// somewhere the eye is not.
-  /// Where the size is heading. Recomputed only when the view genuinely
-  /// changes — a finished zoom, a new snapshot — never while the layout is
-  /// settling or a node is under the hand.
-  const computeTargetSize = useCallback((zoom: number) => {
+  ///
+  /// Computed from the zoom every time it is asked, so the gesture is followed
+  /// exactly. Nothing is eased here — what eases is the density below, which
+  /// changes without the user's hand on it.
+  const nodeScreenSizeAt = useCallback((zoom: number) => {
     const spacing = nodeSpacingRef.current;
-    return graphNodeScreenSize(CARD_THUMBNAIL_SIZE, {
-      fillLimit: frameFillRef.current ?? undefined,
-      spacingLimit: spacing !== null ? spacing * zoom : undefined,
-    });
+    return graphNodeScreenSize(
+      zoom,
+      currentDensityRef.current,
+      spacing !== null ? spacing * zoom : undefined,
+    );
   }, []);
 
-  /// The size everything draws and hit-tests with, mid-animation included.
-  const nodeScreenSizeAt = useCallback((_zoom: number) => currentNodeSizeRef.current, []);
-
-  /// Recompute how full the frame is. Cheap enough to run on every zoom step,
-  /// which is what keeps the growth continuous instead of arriving in one jump
-  /// when the gesture ends.
-  const syncFrameFill = useCallback(() => {
+  /// Measure the layout's density and start easing towards it.
+  ///
+  /// Called when the layout stops moving and when a snapshot arrives — not on
+  /// zoom, which needs no measurement at all now, and not while a node is under
+  /// the hand, where reheating produces a stream of engine stops.
+  const syncLayoutDensity = useCallback(() => {
     if (draggingRef.current) return;
-    const graph = graphRef.current;
-    if (!graph || size.width <= 0 || size.height <= 0) {
-      frameFillRef.current = null;
+    const measured = layoutDensity(graphData.nodes);
+    if (measured === null) return;
+    if (currentDensityRef.current === null) {
+      currentDensityRef.current = measured;
+      targetDensityRef.current = measured;
       return;
     }
-    const center = graph.centerAt();
-    if (!center) return;
-    const count = visibleNodeCount(graphData.nodes, center, size, graphScaleRef.current);
-    const measured = frameFillSize(size, count);
-    if (measured === null) return;
-    frameFillRef.current = measured;
-
-    const target = computeTargetSize(graphScaleRef.current);
-    if (target === targetNodeSizeRef.current) return;
-    targetNodeSizeRef.current = target;
+    if (measured === targetDensityRef.current) return;
+    targetDensityRef.current = measured;
     lastSizeFrameAtRef.current = null;
     // Frames are what an animation needs, and a settled canvas has stopped
     // producing them. Redraw is forced on for the length of the transition and
-    // released the moment the size lands.
+    // released the moment the density lands.
     setSizeAnimating(true);
-  }, [computeTargetSize, graphData.nodes, size]);
+  }, [graphData.nodes]);
 
   const currentNodeScreenSize = useCallback(
     () => nodeScreenSizeAt(graphScaleRef.current),
@@ -675,7 +667,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       return;
     }
     graph.zoomToFit(GRAPH_INITIAL_FIT_DURATION_MS, 40);
-  }, [aimCenterForce, focusNodeId, graphData.nodes, size, syncFrameFill]);
+  }, [aimCenterForce, focusNodeId, graphData.nodes, size, syncLayoutDensity]);
 
   const clearPreviewOpenTimer = useCallback(() => {
     if (previewOpenTimerRef.current === null) return;
@@ -958,7 +950,12 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       paintCardNode(ctx, node, {
         globalScale,
         screenSize: nodeScreenSizeAt(globalScale),
-        targetScreenSize: targetNodeSizeRef.current,
+        // The thumbnail level follows where the density is heading, so the
+        // picture is not swapped back and forth while a transition runs.
+        targetScreenSize: graphNodeScreenSize(
+          globalScale,
+          targetDensityRef.current,
+        ),
         hovered: hoveredCardId === node.id,
         theme,
         canvasTheme,
@@ -1141,16 +1138,19 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
             warmupTicks={nodePositionsRef.current.size > 0 ? 0 : physics.warmupTicks}
             cooldownTime={physics.cooldownTime}
             onRenderFramePost={() => {
-              const target = targetNodeSizeRef.current;
+              const target = targetDensityRef.current;
+              const current = currentDensityRef.current;
               const now = performance.now();
               const last = lastSizeFrameAtRef.current;
               lastSizeFrameAtRef.current = now;
-              if (currentNodeSizeRef.current === target) {
+              if (target === null || current === null || current === target) {
                 if (sizeAnimating) setSizeAnimating(false);
                 return;
               }
-              currentNodeSizeRef.current = approachSize(
-                currentNodeSizeRef.current,
+              // Only density eases. Size is read from the zoom at paint time,
+              // so the gesture is never routed through an animation.
+              currentDensityRef.current = approachDensity(
+                current,
                 target,
                 last === null ? 16 : now - last,
               );
@@ -1162,17 +1162,19 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
               // it settles made cards shrink and swell as their neighbours
               // drifted in and out of the frame — visible whenever a node was
               // dragged.
-              syncFrameFill();
-              const limit = maxUsefulZoom(graphData.nodes);
-              if (limit !== null) setMaxZoom(limit);
+              syncLayoutDensity();
+              // From where the density is heading, not from where the easing
+              // currently is: the limit belongs to the settled layout.
+              setMaxZoom(maxUsefulZoom(targetDensityRef.current));
             }}
             onZoom={(transform) => {
+              // Scale only. Density does not depend on the zoom, and touching
+              // it here would start an animation in the middle of a gesture —
+              // the very lag this model removes.
               syncGraphScale(transform.k);
-              syncFrameFill();
             }}
             onZoomEnd={(transform) => {
               syncGraphScale(transform.k);
-              syncFrameFill();
               // Settling on a close view is the moment the heavier level is
               // worth fetching — and the only one, since a settled simulation
               // stops ticking.

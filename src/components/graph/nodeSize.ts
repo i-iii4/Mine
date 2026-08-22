@@ -1,8 +1,9 @@
 import {
   CARD_COLLISION_RADIUS,
+  CARD_THUMBNAIL_SIZE,
   GRAPH_MAX_ZOOM_FLOOR,
   GRAPH_NODE_FILL_RATIO,
-  GRAPH_NODE_SIZE_SETTLE_PX,
+  GRAPH_DENSITY_SETTLE_RATIO,
   GRAPH_NODE_SIZE_TIME_CONSTANT_MS,
   GRAPH_ZOOM_HEADROOM,
   GRAPH_NODE_MAX_PX,
@@ -11,52 +12,13 @@ import {
 import { hasNodePosition } from "./interaction";
 
 /**
- * On-screen size of a card node, in CSS pixels.
+ * How densely the layout sits: nodes per unit of graph area.
  *
- * The node used to be a constant 32 divided by the zoom, which kept it exactly
- * 32 pixels wide however far you approached: zooming spread the links and never
- * showed the picture any larger. It saturates instead — growing with the zoom
- * until it reaches a ceiling.
- *
- * `spacingLimit` is the ceiling the current layout can actually afford, in
- * screen pixels. Growing past the distance to the nearest neighbour makes cards
- * overlap, and the collision force is soft enough that dense areas sit closer
- * than its nominal radius, so the limit has to come from the layout rather than
- * from the constant.
+ * Changes only when the layout does, so it is measured when the simulation
+ * stops rather than per frame — which is what lets the size below follow the
+ * trackpad exactly.
  */
-export function graphNodeScreenSize(
-  base: number,
-  limits: { fillLimit?: number; spacingLimit?: number },
-): number {
-  // Sizing by zoom alone was the mistake this replaces: distances between nodes
-  // are multiplied by the zoom too, so a card and the gap beside it grew at the
-  // same rate and the picture never occupied any more of the screen than
-  // before. What the eye reads as "closer" is the share of the frame the cards
-  // take, and that is what `fillLimit` carries.
-  const candidates = [GRAPH_NODE_MAX_PX];
-  if (limits.fillLimit !== undefined && Number.isFinite(limits.fillLimit)) {
-    candidates.push(limits.fillLimit);
-  }
-  if (limits.spacingLimit !== undefined && Number.isFinite(limits.spacingLimit)) {
-    candidates.push(limits.spacingLimit);
-  }
-  // Never below the base: a card smaller than 32 pixels is not a picture.
-  return Math.max(base, Math.min(...candidates));
-}
-
-/**
- * The zoom past which approaching stops meaning anything.
- *
- * Cards reach their ceiling once the frame holds few enough of them; beyond
- * that point further zoom only pushes them apart, and the scroll runs into an
- * empty field with one picture in it. Derived rather than fixed, because where
- * that point falls depends on how densely the layout sits.
- *
- * `(ceiling / ratio) × sqrt(density)` is the zoom at which the frame holds
- * exactly the count that reaches the ceiling; the headroom above it leaves room
- * to look closely at a single card.
- */
-export function maxUsefulZoom(nodes: readonly GraphCanvasNode[]): number | null {
+export function layoutDensity(nodes: readonly GraphCanvasNode[]): number | null {
   const placed = nodes.filter(hasNodePosition);
   if (placed.length < 2) return null;
 
@@ -71,25 +33,82 @@ export function maxUsefulZoom(nodes: readonly GraphCanvasNode[]): number | null 
     if (node.y > maxY) maxY = node.y;
   }
   const spread = Math.max(maxX - minX, 1) * Math.max(maxY - minY, 1);
-  const density = placed.length / spread;
-  const atCeiling = (GRAPH_NODE_MAX_PX / GRAPH_NODE_FILL_RATIO) * Math.sqrt(density);
+  return placed.length / spread;
+}
+
+/**
+ * On-screen size of a card, in CSS pixels, from the zoom and the layout's
+ * density.
+ *
+ * Two earlier models failed here and the reasons are worth keeping. Tying size
+ * to zoom alone made the cards and the gaps between them grow by the same
+ * factor, so the share of the screen under pictures never changed. Tying it to
+ * the count of nodes in the frame fixed that but made the input discrete — one
+ * node leaving the frame moved every card — and the smoothing that hid those
+ * steps turned into lag behind the trackpad.
+ *
+ * The count in a frame is density times frame area, and frame area is the
+ * viewport divided by the zoom squared; put that through the same share-of-the
+ * frame arithmetic and the size comes out proportional to the zoom, with a
+ * coefficient set by density. Continuous in the zoom, so the gesture is
+ * followed exactly; dependent on density, so a crowded graph still draws
+ * smaller cards than a sparse one at the same zoom.
+ *
+ * `spacingLimit` is what the layout can actually afford in screen pixels:
+ * growing past the distance to the nearest neighbour would cover it.
+ */
+export function graphNodeScreenSize(
+  zoom: number,
+  density: number | null,
+  spacingLimit?: number,
+): number {
+  const safeZoom = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+  const candidates = [GRAPH_NODE_MAX_PX];
+  if (density !== null && Number.isFinite(density) && density > 0) {
+    candidates.push((safeZoom * GRAPH_NODE_FILL_RATIO) / Math.sqrt(density));
+  }
+  if (spacingLimit !== undefined && Number.isFinite(spacingLimit)) {
+    candidates.push(spacingLimit);
+  }
+  // Never below the base: a card smaller than 32 pixels is not a picture.
+  return Math.max(CARD_THUMBNAIL_SIZE, Math.min(...candidates));
+}
+
+/**
+ * The zoom at which a card reaches a given size — the inverse of
+ * `graphNodeScreenSize`, and the only way the zoom limit is derived.
+ *
+ * Keeping a separate formula for the limit is how it drifts: change the sizing
+ * and the approach would keep stopping where cards used to stop growing.
+ */
+export function zoomForNodeSize(size: number, density: number | null): number | null {
+  if (density === null || !Number.isFinite(density) || density <= 0) return null;
+  return (size * Math.sqrt(density)) / GRAPH_NODE_FILL_RATIO;
+}
+
+/**
+ * The zoom past which approaching stops meaning anything: cards are already at
+ * their ceiling and further zoom only pushes them apart.
+ */
+export function maxUsefulZoom(density: number | null): number {
+  const atCeiling = zoomForNodeSize(GRAPH_NODE_MAX_PX, density);
+  if (atCeiling === null) return GRAPH_MAX_ZOOM_FLOOR;
   return Math.max(GRAPH_MAX_ZOOM_FLOOR, atCeiling * GRAPH_ZOOM_HEADROOM);
 }
 
 /**
- * One step of the current size towards the target.
+ * One step of the current density towards a newly measured one.
  *
- * Replaces a hysteresis threshold, which answered the wrong question. The
- * problem was never whether to change size but how: adopting a measurement
- * only once it differed by twelve percent turned every real change into a
- * staircase — the visible three or four pulses when a collection was opened.
- * Smoothing lets small drift dissolve on its own and real changes arrive as one
- * movement.
+ * Density is what smoothing belongs to. It changes without the user's hand on
+ * it — a collection opens, a layout settles — so easing it reads as the graph
+ * adjusting itself. Zoom is the opposite: the hand is leading, and anything
+ * between the gesture and the size is felt as lag. Smoothing the size directly
+ * is what made the cards trail the trackpad.
  *
  * Framerate-independent: the fraction covered depends on elapsed time, not on
  * how many frames happened to fit into it.
  */
-export function approachSize(
+export function approachDensity(
   current: number,
   target: number,
   elapsedMs: number,
@@ -99,49 +118,7 @@ export function approachSize(
   const next = current + (target - current) * step;
   // Landing rather than approaching for ever: below a pixel the difference is
   // not visible and the animation should end so the canvas can pause again.
-  return Math.abs(target - next) < GRAPH_NODE_SIZE_SETTLE_PX ? target : next;
-}
-
-/**
- * The size each node may take if the frame's area is shared out between the
- * nodes currently inside it.
- *
- * `GRAPH_NODE_FILL_RATIO` is the side of that share a card actually occupies;
- * the rest stays as air between neighbours.
- */
-export function frameFillSize(
-  viewport: { width: number; height: number },
-  visibleCount: number,
-): number | null {
-  if (viewport.width <= 0 || viewport.height <= 0 || visibleCount <= 0) return null;
-  const areaPerNode = (viewport.width * viewport.height) / visibleCount;
-  return Math.sqrt(areaPerNode) * GRAPH_NODE_FILL_RATIO;
-}
-
-/**
- * How many nodes the frame currently holds.
- *
- * Counted from positions and the camera rather than by asking the canvas to
- * project every node: this runs on each zoom step, and a projection call per
- * node per step is work the frame budget does not have.
- */
-export function visibleNodeCount(
-  nodes: readonly GraphCanvasNode[],
-  center: { x: number; y: number },
-  viewport: { width: number; height: number },
-  zoom: number,
-): number {
-  const safeZoom = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
-  const halfWidth = viewport.width / (2 * safeZoom);
-  const halfHeight = viewport.height / (2 * safeZoom);
-  let count = 0;
-  for (const node of nodes) {
-    if (!hasNodePosition(node)) continue;
-    if (Math.abs(node.x - center.x) > halfWidth) continue;
-    if (Math.abs(node.y - center.y) > halfHeight) continue;
-    count += 1;
-  }
-  return count;
+  return Math.abs(target - next) < target * GRAPH_DENSITY_SETTLE_RATIO ? target : next;
 }
 
 /**
