@@ -14,8 +14,10 @@ describe("cardCornerRadius", () => {
     expect(cardCornerRadius(CARD_THUMBNAIL_SIZE - 10)).toBe(0);
   });
 
-  it("rounds a card at the ceiling", () => {
-    expect(cardCornerRadius(GRAPH_NODE_MAX_PX)).toBeGreaterThanOrEqual(4);
+  it("rounds a card at the ceiling to the radius the design system gives cards", () => {
+    // --radius-1, not --radius-2: a fully approached card must not be rounder
+    // than a card anywhere else in the interface.
+    expect(cardCornerRadius(GRAPH_NODE_MAX_PX)).toBe(GRAPH_CARD_RADIUS_MAX_PX);
   });
 
   it("appears and disappears continuously, never at a step", () => {

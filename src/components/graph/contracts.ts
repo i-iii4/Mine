@@ -97,7 +97,10 @@ export const GRAPH_ZOOM_OUT_LIMIT = 0.05;
 // pixels has square corners: a radius there is three physical pixels on a
 // retina screen, which reads as a blurred edge, not as rounding.
 export const GRAPH_CARD_RADIUS_RATIO = 0.075;
-export const GRAPH_CARD_RADIUS_MAX_PX = 5;
+// --radius-1 = 3px, the radius the design system gives cards. 5 is --radius-2,
+// which belongs to other components; taking it made a fully approached card
+// visibly rounder than a card anywhere else in the interface.
+export const GRAPH_CARD_RADIUS_MAX_PX = 3;
 
 
 // How often the layout's actual spacing is remeasured, in engine ticks. It
