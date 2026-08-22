@@ -9,6 +9,8 @@ import {
   COLLECTION_FONT_SIZE,
   COLLECTION_HEIGHT,
   COLLECTION_PAD_X,
+  GRAPH_CARD_RADIUS_MAX_PX,
+  GRAPH_CARD_RADIUS_RATIO,
   GRAPH_PALETTE,
   type GraphCanvasNode,
   type GraphCanvasTheme,
@@ -27,6 +29,7 @@ export function paintCardNode(
     thumbVersion: number;
     renderThumbnail: boolean;
     selected: boolean;
+    hovered: boolean;
     /// Screen size of the node, from `graphNodeScreenSize`. Passed in rather
     /// than computed here so that painting, the pointer hit area, the card menu
     /// and the hover preview cannot disagree about where a node ends.
@@ -66,8 +69,12 @@ export function paintCardNode(
     }
   }
 
+  // Corners round as the card grows. At 32 pixels a radius is noise; at the
+  // ceiling a square corner reads as sharp against everything else in the
+  // interface, which is rounded.
+  const radius = cardCornerRadius(options.screenSize) / options.globalScale;
   ctx.beginPath();
-  ctx.rect(x, y, size, size);
+  roundedRectPath(ctx, x, y, size, size, radius);
   if (image) {
     ctx.save();
     ctx.clip();
@@ -79,14 +86,27 @@ export function paintCardNode(
     ctx.filter = "none";
   } else {
     ctx.fillStyle = palette.cardFill;
-    ctx.fillRect(x, y, size, size);
+    ctx.fill();
   }
 
-  if (options.selected) {
-    ctx.lineWidth = 2 / options.globalScale;
+  // Hover and selection are one highlight, as they are on the collection
+  // pills: the same outline at the same weight.
+  if (options.selected || options.hovered) {
+    ctx.beginPath();
+    roundedRectPath(ctx, x, y, size, size, radius);
+    ctx.lineWidth = 1 / options.globalScale;
     ctx.strokeStyle = options.canvasTheme.hoverOutline;
-    ctx.strokeRect(x, y, size, size);
+    ctx.stroke();
   }
+}
+
+/// Corner radius for a card drawn at this on-screen size, in screen pixels.
+///
+/// Proportional rather than fixed, so the corner keeps its relationship to the
+/// card at every size, and capped at the interface's own radius so a large card
+/// never turns into a lozenge.
+export function cardCornerRadius(screenSize: number): number {
+  return Math.min(GRAPH_CARD_RADIUS_MAX_PX, screenSize * GRAPH_CARD_RADIUS_RATIO);
 }
 
 export function paintCollectionNode(

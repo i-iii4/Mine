@@ -981,49 +981,35 @@ describe("GraphView", () => {
     expect(largeZoom).toBeLessThan(smallZoom);
   });
 
-  it("draws a card at the size the one source decides, never the bare constant", async () => {
-    commandMocks.listGraphSnapshot.mockResolvedValue(
-      makeSnapshot(graphCardNode("alpha-card", "Alpha card")),
-    );
-    renderGraph();
-    await screen.findByRole("button", { name: "Alpha card" });
-
-    let painted = 0;
-    const context = {
-      globalAlpha: 1, filter: "none", fillStyle: "", strokeStyle: "", lineWidth: 1,
-      font: "", textAlign: "start", textBaseline: "alphabetic",
-      save() {}, restore() {}, beginPath() {}, rect() {}, moveTo() {}, lineTo() {},
-      arcTo() {}, arc() {}, closePath() {}, clip() {}, translate() {}, scale() {},
-      setLineDash() {}, fill() {}, stroke() {}, fillText() {}, drawImage() {},
-      measureText: () => ({ width: 40 }),
-      fillRect: (_x: number, _y: number, w: number) => { painted = w; },
-      strokeRect: (_x: number, _y: number, w: number) => { painted = painted || w; },
-    };
-    const node = graphDataSpy.current?.nodes.find((n) => n.id === "card:alpha-card");
-    paintSpy.current?.(node as never, context as never, 1);
-
-    // Sizing lives in `graphNodeScreenSize` and is unit-tested there; what this
-    // guards is that painting asks it rather than reaching for the constant,
-    // which is how the hit area and the drawn square used to drift apart.
-    expect(painted).toBeGreaterThanOrEqual(32);
-    expect(painted).toBeLessThanOrEqual(100);
-  });
-
+  /// Width of the square a card paints, read from the path it traces. The card
+  /// is drawn as a rounded rectangle now, so there is no `rect` call to watch.
   function drawnCardSize(zoom = 1): number {
-    let painted = 0;
+    let minX = Infinity;
+    let maxX = -Infinity;
+    const seeX = (x: number) => {
+      if (!Number.isFinite(x)) return;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+    };
     const context = {
       globalAlpha: 1, filter: "none", fillStyle: "", strokeStyle: "", lineWidth: 1,
       font: "", textAlign: "start", textBaseline: "alphabetic",
-      save() {}, restore() {}, beginPath() {}, rect() {}, moveTo() {}, lineTo() {},
-      arcTo() {}, arc() {}, closePath() {}, clip() {}, translate() {}, scale() {},
-      setLineDash() {}, fill() {}, stroke() {}, fillText() {}, drawImage() {},
+      save() {}, restore() {}, beginPath() {}, closePath() {}, clip() {},
+      translate() {}, scale() {}, setLineDash() {}, fill() {}, stroke() {},
+      fillText() {}, drawImage() {},
       measureText: () => ({ width: 40 }),
-      fillRect: (_x: number, _y: number, w: number) => { painted = w; },
-      strokeRect: (_x: number, _y: number, w: number) => { painted = painted || w; },
+      moveTo: (x: number) => seeX(x),
+      lineTo: (x: number) => seeX(x),
+      arcTo: (x1: number, _y1: number, x2: number) => { seeX(x1); seeX(x2); },
+      arc: (x: number) => seeX(x),
+      rect: (x: number, _y: number, w: number) => { seeX(x); seeX(x + w); },
+      fillRect: (x: number, _y: number, w: number) => { seeX(x); seeX(x + w); },
+      strokeRect: (x: number, _y: number, w: number) => { seeX(x); seeX(x + w); },
     };
     const node = graphDataSpy.current?.nodes.find((n) => n.kind === "card");
     paintSpy.current?.(node as never, context as never, zoom);
-    return painted * zoom;
+    if (!Number.isFinite(minX) || !Number.isFinite(maxX)) return 0;
+    return (maxX - minX) * zoom;
   }
 
   it("holds the card size still while a node is being dragged", async () => {
@@ -1052,10 +1038,8 @@ describe("GraphView", () => {
 
     const start = drawnCardSize();
     fireEvent.click(screen.getByTestId("graph-engine-stop"));
-    const afterOneFrame = (() => {
-      fireEvent.click(screen.getByTestId("graph-render-frame"));
-      return drawnCardSize();
-    })();
+    fireEvent.click(screen.getByTestId("graph-render-frame"));
+    const afterOneFrame = drawnCardSize();
     for (let index = 0; index < 40; index += 1) {
       fireEvent.click(screen.getByTestId("graph-render-frame"));
     }
@@ -1066,6 +1050,52 @@ describe("GraphView", () => {
     if (settled !== start) {
       expect(Math.abs(afterOneFrame - start)).toBeLessThan(Math.abs(settled - start));
     }
+  });
+
+  it("draws a card at the size the one source decides, never the bare constant", async () => {
+    commandMocks.listGraphSnapshot.mockResolvedValue(
+      makeSnapshot(graphCardNode("alpha-card", "Alpha card")),
+    );
+    renderGraph();
+    await screen.findByRole("button", { name: "Alpha card" });
+
+    // Sizing lives in `graphNodeScreenSize` and is unit-tested there; what this
+    // guards is that painting asks it rather than reaching for the constant,
+    // which is how the hit area and the drawn square used to drift apart.
+    const painted = drawnCardSize();
+    expect(painted).toBeGreaterThanOrEqual(32);
+    expect(painted).toBeLessThanOrEqual(100);
+  });
+
+  it("outlines a card on hover, in the same highlight the pills use", async () => {
+    commandMocks.listGraphSnapshot.mockResolvedValue(
+      makeSnapshot(graphCardNode("alpha-card", "Alpha card")),
+    );
+    // Hovering a card also schedules its preview, which asks for the block.
+    commandMocks.getBlock.mockResolvedValue(null);
+    renderGraph();
+    const card = await screen.findByRole("button", { name: "Alpha card" });
+
+    const strokes = (): string[] => {
+      const drawn: string[] = [];
+      const context = {
+        globalAlpha: 1, filter: "none", fillStyle: "", strokeStyle: "", lineWidth: 1,
+        font: "", textAlign: "start", textBaseline: "alphabetic",
+        save() {}, restore() {}, beginPath() {}, closePath() {}, clip() {},
+        translate() {}, scale() {}, setLineDash() {}, fill() {}, fillText() {},
+        moveTo() {}, lineTo() {}, arcTo() {}, arc() {}, rect() {},
+        fillRect() {}, strokeRect() {}, drawImage() {},
+        measureText: () => ({ width: 40 }),
+        stroke() { drawn.push(String(this.strokeStyle)); },
+      };
+      const node = graphDataSpy.current?.nodes.find((n) => n.id === "card:alpha-card");
+      paintSpy.current?.(node as never, context as never, 1);
+      return drawn;
+    };
+
+    expect(strokes()).toEqual([]);
+    fireEvent.mouseEnter(card);
+    expect(strokes()).toHaveLength(1);
   });
 
   it("draws no text under a card, selected or not", async () => {

@@ -86,6 +86,12 @@ export const GRAPH_NODE_SIZE_TIME_CONSTANT_MS = 120;
 // Below this the remaining difference is invisible and the animation ends.
 export const GRAPH_NODE_SIZE_SETTLE_PX = 0.5;
 
+// Corner radius as a share of the card's on-screen size, capped at the radius
+// the rest of the interface uses. At the 32px floor this leaves under two
+// pixels — invisible, as it should be — and grows with the card from there.
+export const GRAPH_CARD_RADIUS_RATIO = 0.05;
+export const GRAPH_CARD_RADIUS_MAX_PX = 5;
+
 // Room to overshoot the point where cards reach their ceiling, so a close look
 // at one card is still possible.
 export const GRAPH_ZOOM_HEADROOM = 1.5;

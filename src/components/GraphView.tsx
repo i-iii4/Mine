@@ -139,6 +139,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   const [hoverPreviewBlock, setHoverPreviewBlock] = useState<LightBlock | IndexedBlock | null>(null);
   const [hoverPreviewPosition, setHoverPreviewPosition] = useState<GraphPreviewPosition | null>(null);
   const [hoveredCollectionId, setHoveredCollectionId] = useState<string | null>(null);
+  const [hoveredCardId, setHoveredCardId] = useState<string | null>(null);
   const [imageVersion, setImageVersion] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
@@ -958,6 +959,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
         globalScale,
         screenSize: nodeScreenSizeAt(globalScale),
         targetScreenSize: targetNodeSizeRef.current,
+        hovered: hoveredCardId === node.id,
         theme,
         canvasTheme,
         imageCache: imageCacheRef.current,
@@ -971,6 +973,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     [
       canvasTheme,
       focusNodeId,
+      hoveredCardId,
       hoveredCollectionId,
       imageVersion,
       renderThumbnails,
@@ -1105,15 +1108,18 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
               if (hoverPreviewFrozen) return;
               if (!node) {
                 setHoveredCollectionId(null);
+                setHoveredCardId(null);
                 closePreview();
                 return;
               }
               if (node.kind === "collection") {
                 setHoveredCollectionId(node.id);
+                setHoveredCardId(null);
                 closePreview();
                 return;
               }
               setHoveredCollectionId(null);
+              setHoveredCardId(node.id);
               schedulePreviewOpen(node);
             }}
             onNodeDrag={(node) => {
