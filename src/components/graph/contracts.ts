@@ -80,7 +80,10 @@ export const CARD_GRAPH_SIZE = 40;
 // seeing a whole library at once is worth more than keeping it uncluttered at
 // the far end of the zoom.
 export const GRAPH_NODE_MIN_PX = 32;
-export const GRAPH_NODE_MAX_PX = 200;
+// 100, not more: the zoom thumbnail level is 256 px, which covers exactly this
+// at double density. A larger ceiling upscales the picture instead of showing
+// more of it.
+export const GRAPH_NODE_MAX_PX = 100;
 
 // How far out the camera may go. Low enough that any library fits on screen.
 export const GRAPH_ZOOM_OUT_LIMIT = 0.05;

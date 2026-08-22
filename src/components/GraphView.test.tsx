@@ -1041,7 +1041,7 @@ describe("GraphView", () => {
     const { rerenderGraph } = renderGraph();
     await screen.findByRole("button", { name: "Card 5" });
 
-    const atOpen = drawnCardSize(2);
+    const atOpen = drawnCardSize(1);
 
     // Everything that used to move the size: ticks, an engine stop, a drag,
     // and a different collection entirely.
@@ -1050,7 +1050,7 @@ describe("GraphView", () => {
     fireEvent.click(screen.getByTestId("graph-engine-stop"));
     fireEvent.click(screen.getByTestId("graph-node-drag"));
     fireEvent.click(screen.getByTestId("graph-node-drag-end"));
-    expect(drawnCardSize(2)).toBe(atOpen);
+    expect(drawnCardSize(1)).toBe(atOpen);
 
     commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes(
       Array.from({ length: 30 }, (_, index) => graphCardNode(`d${index}`, `Other ${index}`)),
@@ -1058,9 +1058,10 @@ describe("GraphView", () => {
     rerenderGraph({ currentCollection: "Design" });
     await screen.findByRole("button", { name: "Other 29" });
 
-    expect(drawnCardSize(2)).toBe(atOpen);
-    // And it does follow the zoom, proportionally.
-    expect(drawnCardSize(4) / atOpen).toBeCloseTo(2, 5);
+    expect(drawnCardSize(1)).toBe(atOpen);
+    // And it does follow the zoom, proportionally — measured below the
+    // ceiling, where the proportion is the only thing acting.
+    expect(drawnCardSize(2) / atOpen).toBeCloseTo(2, 5);
   });
 
   it("holds the card size still while a node is being dragged", async () => {
