@@ -1013,25 +1013,6 @@ describe("GraphView", () => {
     return (maxX - minX) * zoom;
   }
 
-  it("applies a zoom change in the same frame, with nothing in between", async () => {
-    // The property the rework exists for. Size is read from the zoom at paint
-    // time, so a gesture maps straight onto it: no discrete input to smooth
-    // over, and therefore no lag behind the trackpad.
-    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes(
-      Array.from({ length: 6 }, (_, index) => graphCardNode(`c${index}`, `Card ${index}`)),
-    ));
-    renderGraph();
-    await screen.findByRole("button", { name: "Card 5" });
-    // The density the size depends on is measured when the layout settles.
-    fireEvent.click(screen.getByTestId("graph-engine-stop"));
-
-    const near = drawnCardSize(10);
-    const twice = drawnCardSize(20);
-
-    expect(near).toBeGreaterThan(32);
-    expect(twice / near).toBeCloseTo(2, 1);
-  });
-
   it("holds the card size still while a node is being dragged", async () => {
     commandMocks.listGraphSnapshot.mockResolvedValue(
       makeSnapshot(graphCardNode("alpha-card", "Alpha card")),
@@ -1083,6 +1064,31 @@ describe("GraphView", () => {
     expect(drawnCardSize(10)).toBe(atOpen);
   });
 
+  it("ignores the small density drift a settling layout produces", async () => {
+    // A layout emits a stream of slightly different densities as it settles.
+    // Starting a transition for each is the series of jerks a collection used
+    // to open with.
+    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes(
+      Array.from({ length: 6 }, (_, index) => graphCardNode(`c${index}`, `Card ${index}`)),
+    ));
+    renderGraph();
+    await screen.findByRole("button", { name: "Card 5" });
+    const tick = screen.getByTestId("graph-engine-tick");
+    for (let index = 0; index < SPACING_RECOMPUTE_TICKS; index += 1) fireEvent.click(tick);
+    const settled = drawnCardSize(10);
+
+    // A few percent of drift, well under the threshold.
+    for (const node of graphDataSpy.current?.nodes ?? []) {
+      if (typeof node.x === "number") node.x *= 1.02;
+    }
+    fireEvent.click(screen.getByTestId("graph-engine-stop"));
+    for (let index = 0; index < 40; index += 1) {
+      fireEvent.click(screen.getByTestId("graph-render-frame"));
+    }
+
+    expect(drawnCardSize(10)).toBe(settled);
+  });
+
   it("eases a density change within a settled layout", async () => {
     // Smoothing survives where it belongs: the layout drifting on its own.
     commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes(
@@ -1121,8 +1127,9 @@ describe("GraphView", () => {
     ));
     renderGraph();
     await screen.findByRole("button", { name: "Card 5" });
-    // The density the size depends on is measured when the layout settles.
-    fireEvent.click(screen.getByTestId("graph-engine-stop"));
+    // The density the size depends on is measured once the layout has shape.
+    const tick = screen.getByTestId("graph-engine-tick");
+    for (let index = 0; index < SPACING_RECOMPUTE_TICKS; index += 1) fireEvent.click(tick);
 
     const near = drawnCardSize(10);
     const twice = drawnCardSize(20);

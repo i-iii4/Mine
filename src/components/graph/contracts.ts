@@ -88,6 +88,11 @@ export const GRAPH_NODE_SIZE_TIME_CONSTANT_MS = 120;
 // so the canvas can pause its redraw again.
 export const GRAPH_DENSITY_SETTLE_RATIO = 0.005;
 
+// Relative change a new measurement must exceed to be worth a transition. A
+// settling layout emits a stream of slightly different densities, and animating
+// each of them is what a collection used to open with — a series of jerks.
+export const GRAPH_DENSITY_CHANGE_THRESHOLD = 0.15;
+
 // Corner radius per pixel of growth above the floor size, capped at the radius
 // the rest of the interface uses. Measured from the floor so that a card at 32
 // pixels has square corners: a radius there is three physical pixels on a

@@ -77,6 +77,8 @@ import {
 import {
   approachDensity,
   graphNodeScreenSize,
+  densityChangeIsWorthIt,
+  expectedLayoutDensity,
   layoutDensity,
   maxUsefulZoom,
   nearestNeighbourSpacing,
@@ -161,9 +163,11 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   // what keeps the gesture exact while a collection change still glides.
   const currentDensityRef = useRef<number | null>(null);
   const targetDensityRef = useRef<number | null>(null);
-  // Whether this layout has had its first density measurement, which is taken
-  // as soon as the shape is recognisable and applied without easing.
+  // Whether this layout has been measured yet. Until it has, sizing runs on the
+  // density the collision force implies — closer to the settled truth than a
+  // measurement taken while the nodes are still flying apart.
   const densityMeasuredForRef = useRef(false);
+
   const lastSizeFrameAtRef = useRef<number | null>(null);
   // Dragging a node reheats the simulation, and the engine stops between mouse
   // moves; recomputing on each stop made the whole screen pulse under the hand.
@@ -315,9 +319,13 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   // a fresh collection by the old graph's density is what showed small cards
   // first and enlarged them afterwards.
   useEffect(() => {
-    currentDensityRef.current = null;
-    targetDensityRef.current = null;
-    densityMeasuredForRef.current = false;
+    // Starting from what the collision force implies rather than from the
+    // previous layout's measurement, or from nothing: an early measurement is
+    // taken while nodes are still flying apart and is further from the settled
+    // truth than the arithmetic is.
+    const expected = expectedLayoutDensity();
+    currentDensityRef.current = expected;
+    targetDensityRef.current = expected;
   }, [layoutIdentity]);
 
   const graphData = useMemo<GraphCanvasData>(() => {
@@ -486,12 +494,16 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     if (draggingRef.current) return;
     const measured = layoutDensity(graphData.nodes);
     if (measured === null) return;
-    if (currentDensityRef.current === null) {
+    const target = targetDensityRef.current;
+    if (target === null) {
       currentDensityRef.current = measured;
       targetDensityRef.current = measured;
       return;
     }
-    if (measured === targetDensityRef.current) return;
+    // A settling layout emits a stream of slightly different measurements;
+    // animating towards each of them is the series of jerks a collection used
+    // to open with.
+    if (!densityChangeIsWorthIt(target, measured)) return;
     targetDensityRef.current = measured;
     lastSizeFrameAtRef.current = null;
     // Frames are what an animation needs, and a settled canvas has stopped
@@ -633,13 +645,17 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     spacingTickRef.current += 1;
     if (spacingTickRef.current % SPACING_RECOMPUTE_TICKS === 0) {
       nodeSpacingRef.current = nearestNeighbourSpacing(graphData.nodes);
-      // The first measurement for a layout arrives here rather than at the
-      // engine stop, so a collection opens at the right size instead of
-      // starting small and growing into it. Later measurements wait for the
-      // stop, or the cards would resize all the way through settling.
+      // The first measurement replaces the estimate outright — arriving at the
+      // right size is not a transition. Everything after it waits for the
+      // engine to stop and must pass the change threshold, so a settling layout
+      // cannot produce a series of them.
       if (!densityMeasuredForRef.current) {
-        syncLayoutDensity();
-        densityMeasuredForRef.current = currentDensityRef.current !== null;
+        const measured = layoutDensity(graphData.nodes);
+        if (measured !== null) {
+          currentDensityRef.current = measured;
+          targetDensityRef.current = measured;
+          densityMeasuredForRef.current = true;
+        }
       }
     }
 

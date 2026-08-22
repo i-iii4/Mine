@@ -3,6 +3,7 @@ import {
   CARD_THUMBNAIL_SIZE,
   GRAPH_MAX_ZOOM_FLOOR,
   GRAPH_NODE_FILL_RATIO,
+  GRAPH_DENSITY_CHANGE_THRESHOLD,
   GRAPH_DENSITY_SETTLE_RATIO,
   GRAPH_NODE_SIZE_TIME_CONSTANT_MS,
   GRAPH_ZOOM_HEADROOM,
@@ -10,6 +11,32 @@ import {
   type GraphCanvasNode,
 } from "./contracts";
 import { hasNodePosition } from "./interaction";
+
+/**
+ * The density a settled layout will have, before one has been measured.
+ *
+ * The collision force holds card centres two radii apart, so a settled graph
+ * sits at roughly one node per that distance squared. Starting from this rather
+ * than from nothing is what stops a collection from opening at one size and
+ * correcting itself afterwards: an early measurement, taken while the nodes are
+ * still flying apart, is further from the truth than the arithmetic is.
+ */
+export function expectedLayoutDensity(): number {
+  const spacing = CARD_COLLISION_RADIUS * 2;
+  return 1 / (spacing * spacing);
+}
+
+/**
+ * Whether a newly measured density is far enough from the current one to be
+ * worth a transition.
+ *
+ * A settling layout produces a stream of slightly different measurements, and
+ * starting an animation for each is the series of jerks a collection used to
+ * open with.
+ */
+export function densityChangeIsWorthIt(current: number, next: number): boolean {
+  return Math.abs(next - current) / current > GRAPH_DENSITY_CHANGE_THRESHOLD;
+}
 
 /**
  * How densely the layout sits: nodes per unit of graph area.
