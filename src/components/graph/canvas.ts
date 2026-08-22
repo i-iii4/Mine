@@ -6,6 +6,7 @@ import {
   graphThumbnailUrl,
 } from "./interaction";
 import {
+  CARD_THUMBNAIL_SIZE,
   COLLECTION_FONT_SIZE,
   COLLECTION_HEIGHT,
   COLLECTION_PAD_X,
@@ -102,11 +103,14 @@ export function paintCardNode(
 
 /// Corner radius for a card drawn at this on-screen size, in screen pixels.
 ///
-/// Proportional rather than fixed, so the corner keeps its relationship to the
-/// card at every size, and capped at the interface's own radius so a large card
-/// never turns into a lozenge.
+/// Measured from the floor size, not from zero: a card at 32 pixels takes a
+/// square corner, because a radius there is three physical pixels on a retina
+/// screen and reads as a blur rather than as rounding. Growth from that point
+/// is proportional and capped at the radius the rest of the interface uses, so
+/// the corner arrives gradually instead of appearing at a threshold.
 export function cardCornerRadius(screenSize: number): number {
-  return Math.min(GRAPH_CARD_RADIUS_MAX_PX, screenSize * GRAPH_CARD_RADIUS_RATIO);
+  const grown = Math.max(0, screenSize - CARD_THUMBNAIL_SIZE);
+  return Math.min(GRAPH_CARD_RADIUS_MAX_PX, grown * GRAPH_CARD_RADIUS_RATIO);
 }
 
 export function paintCollectionNode(

@@ -7,20 +7,33 @@ import {
 } from "./contracts";
 
 describe("cardCornerRadius", () => {
-  it("is invisible on a small card and present on a large one", () => {
-    // At the 32px floor a corner radius is noise; at the ceiling a square
-    // corner reads as sharp against an interface that is rounded everywhere
-    // else.
-    expect(cardCornerRadius(CARD_THUMBNAIL_SIZE)).toBeLessThan(2);
+  it("leaves a card at the floor size perfectly square", () => {
+    // A radius here is three physical pixels on a retina screen: it reads as a
+    // blurred edge, not as rounding.
+    expect(cardCornerRadius(CARD_THUMBNAIL_SIZE)).toBe(0);
+    expect(cardCornerRadius(CARD_THUMBNAIL_SIZE - 10)).toBe(0);
+  });
+
+  it("rounds a card at the ceiling", () => {
     expect(cardCornerRadius(GRAPH_NODE_MAX_PX)).toBeGreaterThanOrEqual(4);
   });
 
-  it("grows with the card rather than jumping at a threshold", () => {
-    const small = cardCornerRadius(40);
-    const middle = cardCornerRadius(60);
-    const large = cardCornerRadius(90);
-    expect(small).toBeLessThan(middle);
-    expect(middle).toBeLessThan(large);
+  it("appears and disappears continuously, never at a step", () => {
+    // Measured across the whole range: the largest change between neighbouring
+    // sizes must stay small, or the corner would pop somewhere along the way.
+    let previous = cardCornerRadius(CARD_THUMBNAIL_SIZE);
+    let largestStep = 0;
+    for (let size = CARD_THUMBNAIL_SIZE; size <= GRAPH_NODE_MAX_PX; size += 1) {
+      const radius = cardCornerRadius(size);
+      largestStep = Math.max(largestStep, Math.abs(radius - previous));
+      previous = radius;
+    }
+    expect(largestStep).toBeLessThan(0.2);
+  });
+
+  it("grows with the card", () => {
+    expect(cardCornerRadius(40)).toBeLessThan(cardCornerRadius(60));
+    expect(cardCornerRadius(60)).toBeLessThan(cardCornerRadius(90));
   });
 
   it("never exceeds the radius the rest of the interface uses", () => {
