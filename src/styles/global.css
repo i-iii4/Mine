@@ -64,7 +64,8 @@ video {
   cursor: default;
 }
 
-[data-graph-view] .force-graph-container .grabbable:active {
+[data-graph-view] .force-graph-container .grabbable:active,
+[data-graph-view][data-graph-panning] .force-graph-container canvas {
   cursor: grabbing;
 }
 

@@ -1034,6 +1034,31 @@ describe("GraphView", () => {
     expect(screen.getByTestId("force-graph").getAttribute("data-velocity-decay")).toBe(atRest);
   });
 
+  it("marks the view as panning only once the pointer actually moves", async () => {
+    // macOS shows a closed hand while a view is dragged — Preview and Maps
+    // both do — and the library marks the canvas only for node drags. Marking
+    // on press rather than on movement would flash the cursor on every click.
+    commandMocks.listGraphSnapshot.mockResolvedValue(
+      makeSnapshot(graphCardNode("alpha-card", "Alpha card")),
+    );
+    const { container } = renderGraph();
+    await screen.findByRole("button", { name: "Alpha card" });
+    const view = container.querySelector("[data-graph-view]") as HTMLElement;
+
+    // Moving the pointer without holding anything is not panning.
+    fireEvent.pointerMove(window);
+    expect(view.hasAttribute("data-graph-panning")).toBe(false);
+
+    fireEvent.pointerDown(view);
+    expect(view.hasAttribute("data-graph-panning")).toBe(false);
+
+    fireEvent.pointerMove(window);
+    expect(view.hasAttribute("data-graph-panning")).toBe(true);
+
+    fireEvent.pointerUp(window);
+    expect(view.hasAttribute("data-graph-panning")).toBe(false);
+  });
+
   it("revives the simulation only when it has actually stopped", async () => {
     // Reviving costs a full alpha of 1 — the same jolt as a first layout. While
     // the engine is still running the library's own alpha target already

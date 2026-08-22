@@ -433,6 +433,39 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     }
   }, [graphData.nodes, renderThumbnails, resolvedThumbsRoot, thumbVersions]);
 
+  // Panning the view is a drag like any other, and macOS shows a closed hand for
+  // it — Preview and Maps both do. The library marks the canvas only while a
+  // node is being dragged, so the background case is marked here.
+  //
+  // Set on movement rather than on press: a plain click would otherwise flash
+  // the cursor for the length of the click.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return undefined;
+
+    let pressed = false;
+    const onDown = () => { pressed = true; };
+    const onMove = () => {
+      if (!pressed) return;
+      container.setAttribute("data-graph-panning", "");
+    };
+    const onUp = () => {
+      pressed = false;
+      container.removeAttribute("data-graph-panning");
+    };
+
+    container.addEventListener("pointerdown", onDown);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      container.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, []);
+
   const aimCenterForce = useCallback((
     graph: ForceGraphMethods<GraphCanvasNode, GraphCanvasLink>,
     target: { x: number; y: number } | null,
