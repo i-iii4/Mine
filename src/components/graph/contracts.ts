@@ -69,34 +69,21 @@ export const CARD_COLLISION_RADIUS = 22;
 // force holds card centres 2 * CARD_COLLISION_RADIUS apart, so at the zoom
 // where a card reaches 120 screen pixels its neighbours are exactly touching.
 // 100 leaves a fifth of the size as air. See SPEC_GRAPH_VIEW.md, «Размер узла».
-export const GRAPH_NODE_MAX_PX = 100;
+// A card's size in graph coordinates — the same system link lengths live in,
+// which is what keeps the ratio between a card and the gap beside it constant
+// at every zoom.
+export const CARD_GRAPH_SIZE = 40;
 
-// Side of the frame-share a card occupies. The rest is the air between
-// neighbours: at 1.0 the cards would tile the frame edge to edge.
-//
-// 0.75 rather than something smaller because the floor decides where growth
-// begins: at 0.55 a full overview computed 24px, below the 32px floor, so the
-// first half of every approach changed nothing at all — the cards sat on the
-// floor from 550 nodes in frame down to 194.
-export const GRAPH_NODE_FILL_RATIO = 0.75;
+// Bounds on what that becomes on screen. The minimum is enforced by limiting
+// how far the camera may zoom out, never by clamping the size: clamping is what
+// lets distances keep shrinking past a card that has stopped, which closes the
+// graph into a carpet.
+export const GRAPH_NODE_MIN_PX = 32;
+export const GRAPH_NODE_MAX_PX = 200;
 
-// How quickly the layout's measured density is adopted. Roughly the camera's
-// own pace, so a collection change and its camera move read as one movement.
-// Zoom never passes through this: the hand leads there, and easing would be lag.
-export const GRAPH_NODE_SIZE_TIME_CONSTANT_MS = 120;
-// Relative distance at which a density transition lands, ending the animation
-// so the canvas can pause its redraw again.
-export const GRAPH_DENSITY_SETTLE_RATIO = 0.005;
 
-// Relative change a new measurement must exceed to be worth a transition. A
-// settling layout emits a stream of slightly different densities, and animating
-// each of them is what a collection used to open with — a series of jerks.
-export const GRAPH_DENSITY_CHANGE_THRESHOLD = 0.15;
 
-// How much further than the collision radius a settled layout actually spreads.
-// Repulsion pushes neighbours past the nominal 2R; measured at 50.7 units
-// against 44 on the reference graph.
-export const GRAPH_SETTLED_SPREAD = 1.15;
+
 
 // Corner radius per pixel of growth above the floor size, capped at the radius
 // the rest of the interface uses. Measured from the floor so that a card at 32
@@ -105,13 +92,6 @@ export const GRAPH_SETTLED_SPREAD = 1.15;
 export const GRAPH_CARD_RADIUS_RATIO = 0.075;
 export const GRAPH_CARD_RADIUS_MAX_PX = 5;
 
-// Room to overshoot the point where cards reach their ceiling, so a close look
-// at one card is still possible.
-export const GRAPH_ZOOM_HEADROOM = 1.5;
-// Floor for the computed limit: a graph so sparse that the formula asks for
-// almost no zoom must still be approachable.
-export const GRAPH_MAX_ZOOM_FLOOR = 2;
-export const GRAPH_MIN_ZOOM = 0.05;
 
 // How often the layout's actual spacing is remeasured, in engine ticks. It
 // changes only as the simulation settles, so a per-frame pass would be waste.
