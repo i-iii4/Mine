@@ -326,6 +326,10 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     const expected = expectedLayoutDensity();
     currentDensityRef.current = expected;
     targetDensityRef.current = expected;
+    // Without this the layout keeps the previous one's "already measured" flag,
+    // no early measurement is taken, and the size sits on the estimate until
+    // the engine finally stops — seconds later, as one jump.
+    densityMeasuredForRef.current = false;
   }, [layoutIdentity]);
 
   const graphData = useMemo<GraphCanvasData>(() => {

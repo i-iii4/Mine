@@ -93,6 +93,11 @@ export const GRAPH_DENSITY_SETTLE_RATIO = 0.005;
 // each of them is what a collection used to open with — a series of jerks.
 export const GRAPH_DENSITY_CHANGE_THRESHOLD = 0.15;
 
+// How much further than the collision radius a settled layout actually spreads.
+// Repulsion pushes neighbours past the nominal 2R; measured at 50.7 units
+// against 44 on the reference graph.
+export const GRAPH_SETTLED_SPREAD = 1.15;
+
 // Corner radius per pixel of growth above the floor size, capped at the radius
 // the rest of the interface uses. Measured from the floor so that a card at 32
 // pixels has square corners: a radius there is three physical pixels on a

@@ -1060,7 +1060,14 @@ describe("GraphView", () => {
     // The new layout has its own size — carrying the old density over would
     // leave this unchanged...
     expect(atOpen).not.toBe(beforeSwitch);
-    // ...and there is nothing left to grow into: the size on arrival is kept.
+    // ...and there is nothing left to grow into. The engine stop is where the
+    // second measurement lands, and if the first one never happened — the flag
+    // not having been cleared for the new layout — this is where the jump the
+    // user reported appears.
+    fireEvent.click(screen.getByTestId("graph-engine-stop"));
+    for (let index = 0; index < 80; index += 1) {
+      fireEvent.click(screen.getByTestId("graph-render-frame"));
+    }
     expect(drawnCardSize(10)).toBe(atOpen);
   });
 

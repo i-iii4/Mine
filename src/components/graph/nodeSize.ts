@@ -1,5 +1,6 @@
 import {
   CARD_COLLISION_RADIUS,
+  GRAPH_SETTLED_SPREAD,
   CARD_THUMBNAIL_SIZE,
   GRAPH_MAX_ZOOM_FLOOR,
   GRAPH_NODE_FILL_RATIO,
@@ -15,14 +16,15 @@ import { hasNodePosition } from "./interaction";
 /**
  * The density a settled layout will have, before one has been measured.
  *
- * The collision force holds card centres two radii apart, so a settled graph
- * sits at roughly one node per that distance squared. Starting from this rather
- * than from nothing is what stops a collection from opening at one size and
- * correcting itself afterwards: an early measurement, taken while the nodes are
- * still flying apart, is further from the truth than the arithmetic is.
+ * The collision force holds card centres two radii apart, and repulsion pushes
+ * them a little further — measured at 50.7 units against the nominal 44, which
+ * `GRAPH_SETTLED_SPREAD` carries. Starting from this rather than from nothing
+ * is what stops a collection from opening at one size and correcting itself: it
+ * lands within a few percent of the measurement that follows, where the nominal
+ * radius alone was fifteen percent out.
  */
 export function expectedLayoutDensity(): number {
-  const spacing = CARD_COLLISION_RADIUS * 2;
+  const spacing = CARD_COLLISION_RADIUS * 2 * GRAPH_SETTLED_SPREAD;
   return 1 / (spacing * spacing);
 }
 
