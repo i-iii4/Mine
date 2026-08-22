@@ -1472,6 +1472,9 @@ SPEC: [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) — полная архитект
 | 12.11 | Manual QA: visual regression на representative vault | MANUAL QA |
 | 12.12 | Startup safety: `list_pending_thumb_upgrades` через SQLite + `spawn_blocking`, без file peek'ов на UI thread | [x] |
 | 12.13 | Legacy vault compatibility: backfill `thumb_format/thumb_mtime` из существующих `.jpg` при `open_vault()` | [x] |
+| 12.14 | Подложка текстовой миниатюры принадлежит выводу: `bg-card` внутри `MicroPreviewThumbnail`, `textPreviewFill` из `--card` на холсте графа. Инвариант I10 | [x] |
+| 12.15 | Кодек уровня по содержимому (правило П6): проход по пикселям, `alpha < 255` → PNG, иначе JPEG. Чинит чёрный фон `micro`/`zoom` у текстовых карточек | [ ] |
+| 12.16 | Однократная миграция уровней, записанных без альфы: `full` с PNG-сигнатурой + `micro` без неё → перегенерировать оба уровня. `backfill_thumb_levels` их пропускает | [ ] |
 
 ### Phase 18 — Filename Identity Refactor [COMPLETE]
 
@@ -1804,3 +1807,5 @@ Specification: [SPEC_CLIPPER.md](SPEC_CLIPPER.md), decision 031 in
 | Validate vault | Команда проверки целостности vault: валидация frontmatter, осиротевшие медиа, консистентность индекса, автоисправление |
 | Conflict diff view | Опциональный side-by-side diff base ↔ conflict перед `dismiss_for_manual_merge`. См. [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) § Conflict resolution. |
 | Tight per-kind numbering после dedup/failed | После Phase C индексы могут содержать gap'ы (`image 1, image 3`). Renumber + rename файлов на диске для консистентности с пользовательским ожиданием. UX-only, не функционально. |
+| Имя файла миниатюры по содержимому | `.micro.jpg` может содержать PNG — расширение врёт, и из этого корня уже выросли правила П5 (чтение) и П6 (запись). Честное лечение: `.micro.png`, ценой перебора двух расширений в `thumbnailLevelUrl` либо формата уровня в БД. См. [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) § Правила. |
+| Фон композитной миниатюры зависит от темы | `generate_composite_thumbnail` заливает `[24, 24, 27, 255]` — цвет тёмной темы запечён в файл, в светлой теме мозаика остаётся тёмной. Та же болезнь, что I10, но на коллаже. |
