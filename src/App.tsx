@@ -2025,8 +2025,12 @@ export function AppWithVault({
   // route, not a modal that owns the keyboard — it does not even intercept the
   // arrows — so `isDetailShortcutBlockedTarget` lets it through while still
   // blocking menus, listboxes, the image preview and other dialogs.
+  //
+  // A collapsed sidebar takes the command away: stepping through a list nobody
+  // can see moves the feed with no way to tell where it landed in the order.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (sidebarCollapsed) return;
       if (!(e.metaKey && e.altKey)) return;
       if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
       if (
@@ -2072,7 +2076,14 @@ export function AppWithVault({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [currentTag, orderedTags, navigate, selectedBlock, handleDetailClose]);
+  }, [
+    currentTag,
+    orderedTags,
+    navigate,
+    selectedBlock,
+    sidebarCollapsed,
+    handleDetailClose,
+  ]);
 
 
   // ── Channel management ─────────────────────────────────────────────────
@@ -3391,14 +3402,17 @@ export function AppWithVault({
             Settings
           </ActionButton>
           {/* A command appears only while it can be used. Navigation needs
-              something to navigate; Focus needs something focused. Showing
-              either otherwise teaches a shortcut that does nothing. */}
-          {orderedTags.length > 0 && (
+              something to navigate and a feed to navigate it in — an open card
+              answers no arrows, and the feed stops listening while one is open.
+              Stepping between collections needs the list it steps through to be
+              on screen. Focus needs something focused. Showing any of them
+              otherwise teaches a shortcut that does nothing. */}
+          {orderedTags.length > 0 && !sidebarCollapsed && (
             <ActionButton hotkey="⌘⌥ ↕" readOnly>
               Switch collection
             </ActionButton>
           )}
-          {activeBlocks.length > 0 && (
+          {activeBlocks.length > 0 && renderedDetailBlock === null && (
             <ActionButton hotkey="↕ ↔" readOnly>
               Navigate
             </ActionButton>

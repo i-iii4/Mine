@@ -406,6 +406,15 @@ function dragPastChromeThreshold(element: HTMLElement, pointerId = 1) {
   fireEvent.click(element);
 }
 
+// Bottom-bar entries put the keystroke and the label in separate nodes, so a
+// text query does not resolve them; the entry is matched on its full text.
+function bottomBarEntry(label: string): HTMLElement | null {
+  const bar = document.querySelector("[data-bottom-action-bar]");
+  if (!bar) return null;
+  return Array.from(bar.querySelectorAll<HTMLElement>("button"))
+    .find((entry) => entry.textContent?.includes(label)) ?? null;
+}
+
 describe("AppWithVault", () => {
   const startDragging = vi.fn(async () => {});
   const setBackgroundColor = vi.fn(async (_color: string) => {});
@@ -886,6 +895,49 @@ describe("AppWithVault", () => {
     await waitFor(() => {
       expect(screen.queryByTestId("detail-title")).not.toBeInTheDocument();
     });
+  });
+
+  it("stops switching channels while the sidebar is collapsed", async () => {
+    sidebarResizeState.collapsed = true;
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    // Stepping through a list nobody can see moves the feed with no way to tell
+    // where it landed in the order.
+    fireEvent.keyDown(window, { key: "ArrowDown", metaKey: true, altKey: true });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(commandMocks.listGridBlocks).not.toHaveBeenCalledWith("alpha", 0, 200);
+    expect(bottomBarEntry("Switch collection")).toBeNull();
+  });
+
+  it("withdraws Navigate while a card is open, where arrows do nothing", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+    expect(bottomBarEntry("Navigate")).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
+    });
+
+    expect(bottomBarEntry("Navigate")).toBeNull();
   });
 
   it("does not expose or open the removed global Search command", async () => {
