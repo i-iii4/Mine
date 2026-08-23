@@ -167,18 +167,26 @@ When Grid keyboard focus is active:
 - after `selectedSlugs.size > 0`, plain `Enter` also toggles the focused card
   instead of opening Detail;
 - arrow keys continue to move Grid focus by `layout.positions`;
-- `Shift+arrow` extends the selection along the walk: the first `Shift+arrow`
-  selects both the card the focus started on and the card it moves to, so one
-  keystroke yields two selected cards; each further `Shift+arrow` adds the card
-  the focus moves onto;
-- stepping back the way the walk came — a `Shift+arrow` onto the card visited
-  immediately before — deselects the card being left, so the walk can be undone
-  one step at a time;
-- an arrow without `Shift` moves focus and ends the walk without changing
-  `selectedSlugs`: the next `Shift+arrow` starts a new anchor where the focus
-  now is, adding to whatever is already selected;
-- the walk is forgotten whenever the selection is cleared (`Escape`, collection
-  change, opening a card);
+- `Shift+arrow` selects the range between an anchor and the cursor. The anchor
+  is the card focus stood on when the first `Shift+arrow` was pressed; the
+  cursor is the focused card now. One `Shift+arrow` therefore selects two cards;
+- the range is every card whose **centre** falls inside the rectangle spanned by
+  the anchor card and the cursor card (`slugsWithinSelectionSpan`), both ends
+  included. Cards the focus never stepped on are included when they lie inside;
+- the range is geometric, not index-based: arrow navigation moves by
+  `layout.positions`, and masonry fills columns by height, so a range over list
+  order would sweep in cards from columns the focus never crossed;
+- the range is recomputed from the anchor on every step rather than accumulated.
+  Bringing the cursor back onto the anchor leaves that one card selected;
+- what was selected before the anchor was set is kept: the selection is that
+  base plus the current range, so `Shift` extends rather than replaces;
+- an arrow without `Shift` moves focus and drops the anchor without changing
+  `selectedSlugs`: the next `Shift+arrow` measures from where the focus now is,
+  over whatever is selected by then;
+- the anchor is dropped by anything that changes the selection outside the walk:
+  `Escape`, collection change, opening a card, `Shift+Enter`, a modified click,
+  a marquee drag;
+- cards that are not ready to be shown are never part of a range;
 - `Cmd+K` opens a contextual batch menu anchored to the focused card's
   top-right overflow action.
 

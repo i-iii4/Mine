@@ -3219,42 +3219,68 @@ describe("Shift-extended keyboard selection", () => {
     });
   };
 
+  const press = async (key: string, shiftKey = false) => {
+    fireEvent.keyDown(window, { key, shiftKey });
+    await flushAsync();
+  };
+
   it("takes the anchor card with it, so one Shift+arrow selects two", async () => {
     await setUpRow([9801, 9802, 9803]);
     expect(selectedSlugs()).toEqual([]);
 
-    fireEvent.keyDown(window, { key: "ArrowRight", shiftKey: true });
-    await flushAsync();
+    await press("ArrowRight", true);
 
     expect(selectedSlugs()).toHaveLength(2);
   });
 
-  it("gives up the card it leaves when the walk steps back", async () => {
+  it("shrinks back to the anchor alone when the cursor returns to it", async () => {
+    // The range is measured from the anchor on every step, not accumulated, so
+    // walking back undoes the selection instead of stranding cards behind.
     await setUpRow([9811, 9812, 9813]);
 
-    fireEvent.keyDown(window, { key: "ArrowRight", shiftKey: true });
-    await flushAsync();
-    fireEvent.keyDown(window, { key: "ArrowRight", shiftKey: true });
-    await flushAsync();
+    await press("ArrowRight", true);
+    await press("ArrowRight", true);
     expect(selectedSlugs()).toHaveLength(3);
 
-    fireEvent.keyDown(window, { key: "ArrowLeft", shiftKey: true });
-    await flushAsync();
-
+    await press("ArrowLeft", true);
     expect(selectedSlugs()).toHaveLength(2);
+
+    await press("ArrowLeft", true);
+    expect(selectedSlugs()).toHaveLength(1);
+  });
+
+  it("keeps what was already selected when the range starts", async () => {
+    await setUpRow([9821, 9822, 9823]);
+
+    // Shift+Enter selects the focused card, then the focus steps away without
+    // Shift, which drops the anchor but must not drop that card.
+    await press("Enter", true);
+    expect(selectedSlugs()).toHaveLength(1);
+    await press("ArrowRight");
+    await press("ArrowRight", true);
+
+    expect(selectedSlugs()).toHaveLength(3);
   });
 
   it("leaves the selection alone when the arrow carries no Shift", async () => {
-    await setUpRow([9821, 9822, 9823]);
+    await setUpRow([9831, 9832, 9833]);
 
-    fireEvent.keyDown(window, { key: "ArrowRight", shiftKey: true });
-    await flushAsync();
+    await press("ArrowRight", true);
     const afterShift = selectedSlugs();
     expect(afterShift).toHaveLength(2);
 
-    fireEvent.keyDown(window, { key: "ArrowRight" });
-    await flushAsync();
+    await press("ArrowRight");
 
     expect(selectedSlugs()).toEqual(afterShift);
+  });
+
+  it("measures a new range from where the focus stands after a plain arrow", async () => {
+    await setUpRow([9841, 9842, 9843]);
+
+    await press("ArrowRight");
+    await press("ArrowRight", true);
+
+    // Anchored on the second card, not on the first one the feed opened with.
+    expect(selectedSlugs()).toHaveLength(2);
   });
 });
