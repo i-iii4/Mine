@@ -3397,6 +3397,15 @@ export function AppWithVault({
               Focus
             </ActionButton>
           )}
+          {/* The card menu opens where the card is, so there is no position a
+              press on the bar could use — it stays a reference. Available with
+              a card open, and in the feed once something is focused or
+              selected. */}
+          {(renderedDetailBlock !== null || activateFocusedItem !== null) && (
+            <ActionButton hotkey="⌘K" readOnly>
+              Card actions
+            </ActionButton>
+          )}
           <div className="flex-1" />
           {isSyncing && (
             <span className="text-sm text-muted-foreground">Syncing…</span>
