@@ -511,7 +511,7 @@ export function AppWithVault({
   // Whether the active view holds a focus that Enter would open. The bottom bar
   // shows a command only while it can be used, and Focus has nothing to act on
   // until something is focused.
-  const [viewHasKeyboardFocus, setViewHasKeyboardFocus] = useState(false);
+  const [activateFocusedItem, setActivateFocusedItem] = useState<(() => void) | null>(null);
   const [pendingCreateChannelDrop, setPendingCreateChannelDrop] =
     useState<PendingCreateChannelDrop | null>(null);
   const [renamingBlock, setRenamingBlock] = useState<LightBlock | IndexedBlock | null>(null);
@@ -3180,7 +3180,7 @@ export function AppWithVault({
           <Route
             element={
               <PageShell
-                onKeyboardFocusChange={setViewHasKeyboardFocus}
+                onKeyboardFocusChange={(activate) => setActivateFocusedItem(() => activate)}
                 blocks={activeBlocks}
                 vaultPath={vaultPath}
                 thumbsRootPath={thumbsRootPath ?? undefined}
@@ -3382,7 +3382,7 @@ export function AppWithVault({
               either otherwise teaches a shortcut that does nothing. */}
           {orderedTags.length > 0 && (
             <ActionButton hotkey="⌘⌥ ↕" readOnly>
-              Collections
+              Switch collection
             </ActionButton>
           )}
           {activeBlocks.length > 0 && (
@@ -3390,8 +3390,10 @@ export function AppWithVault({
               Navigate
             </ActionButton>
           )}
-          {viewHasKeyboardFocus && (
-            <ActionButton hotkey="↵" readOnly>
+          {/* Pressable, unlike its neighbours: it has an action of its own —
+              open whatever the view has focused. */}
+          {activateFocusedItem && (
+            <ActionButton hotkey="↵" onClick={activateFocusedItem}>
               Focus
             </ActionButton>
           )}
@@ -3523,8 +3525,8 @@ interface RouteContext {
   hoverPreviewFrozen: boolean;
   onNavigateCollection: (collectionRef?: string) => void;
   acceptGraphRevision: (revision: ProjectionRevision) => boolean;
-  /// Whether the active view holds a keyboard focus that Enter would open.
-  onKeyboardFocusChange: (focused: boolean) => void;
+  /// How to open what the active view has focused, or null when nothing is.
+  onKeyboardFocusChange: (activate: (() => void) | null) => void;
   /// Offered by the empty-space onboarding, which is the only place in the app
   /// that can introduce the clipper to someone who has never seen it.
   onInstallClipper: () => void;

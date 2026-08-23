@@ -166,10 +166,10 @@ function EmptyChannelPlaceholder({ viewportHeight }: { viewportHeight: number })
 
 interface GridProps {
   blocks: LightBlock[];
-  /// Reports whether a card currently holds keyboard focus, so the bottom bar
-  /// can offer Focus only when there is something to open. The contract there
-  /// is that a command is shown only while it can be used.
-  onKeyboardFocusChange?: (focused: boolean) => void;
+  /// Reports whether a card currently holds keyboard focus, and how to open
+  /// it, so the bottom bar can offer Focus only when there is something to
+  /// open — and act on it when pressed.
+  onKeyboardFocusChange?: (activate: (() => void) | null) => void;
   vaultPath: string;
   thumbsRootPath?: string;
   /// Start the clipper setup flow from the empty-space onboarding.
@@ -463,11 +463,6 @@ export function Grid({
   const [deleteSelectionDialogOpen, setDeleteSelectionDialogOpen] = useState(false);
   const [focusedSlug, setFocusedSlug] = useState<string | null>(null);
 
-  // Reported upward rather than lifted: the focus belongs to the grid, and the
-  // bar only needs to know whether there is any.
-  useEffect(() => {
-    onKeyboardFocusChange?.(focusedSlug !== null);
-  }, [focusedSlug, onKeyboardFocusChange]);
   const [selectedSlugs, setSelectedSlugs] = useState<Set<string>>(() => new Set());
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
   const [marqueeSelection, setMarqueeSelection] = useState<MarqueeSelection | null>(null);
@@ -1394,6 +1389,18 @@ export function Grid({
     onBlockClick(block);
   }, [clearSelection, onBlockClick]);
 
+  // Reported upward rather than lifted: the focus belongs to the grid, and the
+  // bar receives only the one thing it needs — a way to open what is focused,
+  // or nothing when there is no focus.
+  useEffect(() => {
+    if (!focusedSlug) {
+      onKeyboardFocusChange?.(null);
+      return;
+    }
+    const block = blocks.find((candidate) => candidate.slug === focusedSlug);
+    onKeyboardFocusChange?.(block ? () => handleBlockClick(block) : null);
+  }, [blocks, focusedSlug, handleBlockClick, onKeyboardFocusChange]);
+
   const handleModifiedCardClick = useCallback((
     block: LightBlock,
     event: ReactMouseEvent<HTMLDivElement>,
@@ -1416,6 +1423,19 @@ export function Grid({
       : null,
     [marqueeSelection],
   );
+
+  // Reported upward rather than lifted: the focus belongs to the grid, and the
+  // bar receives only the one thing it needs — a way to open what is focused,
+  // or nothing when there is no focus.
+  useEffect(() => {
+    if (!focusedSlug) {
+      onKeyboardFocusChange?.(null);
+      return;
+    }
+    const block = blocks.find((candidate) => candidate.slug === focusedSlug);
+    onKeyboardFocusChange?.(block ? () => handleBlockClick(block) : null);
+  }, [blocks, focusedSlug, handleBlockClick, onKeyboardFocusChange]);
+
 
   const applyMarqueeSelection = useCallback((selection: MarqueeSelection) => {
     const rect = rectFromPoints(selection.start, selection.current);

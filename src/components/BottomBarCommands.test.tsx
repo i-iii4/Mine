@@ -4,11 +4,11 @@ import { ActionButton } from "./ActionButton";
 
 describe("bottom-bar command entries", () => {
   it("offers a keystroke reference without pretending to be a control", () => {
-    // Navigate and Focus name what the user does on the keyboard. Clicking
-    // them would do nothing, so they are neither focusable nor announced as
-    // buttons — otherwise Tab lands on a dead stop.
-    render(<ActionButton hotkey="↵" readOnly>Focus</ActionButton>);
-    const entry = screen.getByText("Focus").closest("[data-action-button]");
+    // Switch collection and Navigate name what the user does on the keyboard,
+    // and there is no single thing a click could do — stepping has a direction.
+    // Focus is different and stays a button: it opens what is focused.
+    render(<ActionButton hotkey="⌘⌥ ↕" readOnly>Switch collection</ActionButton>);
+    const entry = screen.getByText("Switch collection").closest("[data-action-button]");
 
     expect(entry).not.toBeNull();
     expect(entry?.getAttribute("role")).toBeNull();

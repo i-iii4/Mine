@@ -95,9 +95,9 @@ export interface GraphViewProps {
   onOpenBlock: (block: LightBlock | IndexedBlock) => void;
   onOpenCardMenu: (block: LightBlock | IndexedBlock, point: GraphCardMenuPoint) => void;
   onNavigateCollection: (collectionRef?: string) => void;
-  /// Whether a node is selected, so the bottom bar can offer Focus only when
-  /// there is something to open.
-  onKeyboardFocusChange?: (focused: boolean) => void;
+  /// How to open the selected node, or null when nothing is selected, so the
+  /// bottom bar can offer Focus only when there is something to open.
+  onKeyboardFocusChange?: (activate: (() => void) | null) => void;
 }
 
 export interface GraphViewHandle {
@@ -339,10 +339,6 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     }).sort(compareGraphNodePaintOrder);
     return { nodes, links: snapshot.links.map((link) => ({ ...link })) };
   }, [focusNodeId, layoutIdentity]);
-
-  useEffect(() => {
-    onKeyboardFocusChange?.(selectedNodeId !== null);
-  }, [onKeyboardFocusChange, selectedNodeId]);
 
   const selectedNode = useMemo(
     () => graphData.nodes.find((node) => node.id === selectedNodeId) ?? null,
@@ -890,6 +886,14 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     },
     [loadedBlocksBySlug, onOpenCardMenu],
   );
+
+  useEffect(() => {
+    if (!selectedNode) {
+      onKeyboardFocusChange?.(null);
+      return;
+    }
+    onKeyboardFocusChange?.(() => { void handleNodeClick(selectedNode); });
+  }, [handleNodeClick, onKeyboardFocusChange, selectedNode]);
 
   const handleGraphKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") {
