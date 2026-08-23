@@ -3124,3 +3124,80 @@ describe("selectActiveHeavyPlaybackSlugs", () => {
     expect(selectActiveHeavyPlaybackSlugs([], new Set(["stale"]))).toEqual(new Set());
   });
 });
+
+describe("bottom-bar command availability", () => {
+  it("withdraws Focus and the card menu when the feed goes away", async () => {
+    // The bar shows a command only while it can be used. Without a report on
+    // unmount the last "focus exists" stands forever, and the bar keeps
+    // offering Focus and ⌘K over a graph that has neither.
+    vi.useFakeTimers();
+    const onKeyboardFocusChange = vi.fn();
+    const onCardMenuShortcutChange = vi.fn();
+    const blocks = [makeBlock(9701), makeBlock(9702)];
+    setBlockHeight(9701, 200);
+    setBlockHeight(9702, 220);
+
+    const view = render(
+      <Grid
+        {...BASE_PROPS}
+        blocks={blocks}
+        onKeyboardFocusChange={onKeyboardFocusChange}
+        onCardMenuShortcutChange={onCardMenuShortcutChange}
+      />,
+    );
+    await flushAsync();
+
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onKeyboardFocusChange.mock.calls.at(-1)?.[0]).toBeTypeOf("function");
+    expect(onCardMenuShortcutChange.mock.calls.at(-1)?.[0]).toBe(true);
+
+    view.unmount();
+
+    expect(onKeyboardFocusChange.mock.calls.at(-1)?.[0]).toBeNull();
+    expect(onCardMenuShortcutChange.mock.calls.at(-1)?.[0]).toBe(false);
+  });
+
+  it("withdraws them while a card is open, where neither applies", async () => {
+    vi.useFakeTimers();
+    const onKeyboardFocusChange = vi.fn();
+    const onCardMenuShortcutChange = vi.fn();
+    const blocks = [makeBlock(9711), makeBlock(9712)];
+    setBlockHeight(9711, 200);
+    setBlockHeight(9712, 220);
+
+    const view = render(
+      <Grid
+        {...BASE_PROPS}
+        blocks={blocks}
+        onKeyboardFocusChange={onKeyboardFocusChange}
+        onCardMenuShortcutChange={onCardMenuShortcutChange}
+      />,
+    );
+    await flushAsync();
+
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    view.rerender(
+      <Grid
+        {...BASE_PROPS}
+        blocks={blocks}
+        detailOpen
+        onKeyboardFocusChange={onKeyboardFocusChange}
+        onCardMenuShortcutChange={onCardMenuShortcutChange}
+      />,
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onKeyboardFocusChange.mock.calls.at(-1)?.[0]).toBeNull();
+    expect(onCardMenuShortcutChange.mock.calls.at(-1)?.[0]).toBe(false);
+  });
+});

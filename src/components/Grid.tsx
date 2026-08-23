@@ -170,6 +170,7 @@ interface GridProps {
   /// it, so the bottom bar can offer Focus only when there is something to
   /// open — and act on it when pressed.
   onKeyboardFocusChange?: (activate: (() => void) | null) => void;
+  onCardMenuShortcutChange?: (available: boolean) => void;
   vaultPath: string;
   thumbsRootPath?: string;
   /// Start the clipper setup flow from the empty-space onboarding.
@@ -406,6 +407,7 @@ export function selectActiveHeavyPlaybackSlugs(
 export function Grid({
   blocks,
   onKeyboardFocusChange,
+  onCardMenuShortcutChange,
   vaultPath,
   thumbsRootPath,
   onInstallClipper,
@@ -1393,13 +1395,28 @@ export function Grid({
   // bar receives only the one thing it needs — a way to open what is focused,
   // or nothing when there is no focus.
   useEffect(() => {
-    if (!focusedSlug) {
+    if (detailOpen || !focusedSlug) {
       onKeyboardFocusChange?.(null);
       return;
     }
     const block = blocks.find((candidate) => candidate.slug === focusedSlug);
     onKeyboardFocusChange?.(block ? () => handleBlockClick(block) : null);
-  }, [blocks, focusedSlug, handleBlockClick, onKeyboardFocusChange]);
+  }, [blocks, detailOpen, focusedSlug, handleBlockClick, onKeyboardFocusChange]);
+
+  // The feed card menu answers ⌘K only under keyboard focus, so the bar is told
+  // about that exact condition rather than about focus in general.
+  useEffect(() => {
+    onCardMenuShortcutChange?.(
+      !detailOpen && feedInteractionMode === "keyboard" && focusedSlug !== null,
+    );
+  }, [detailOpen, feedInteractionMode, focusedSlug, onCardMenuShortcutChange]);
+
+  // A grid that goes away takes its commands with it: without this the bar keeps
+  // offering Focus and the card menu after the feed is replaced by the graph.
+  useEffect(() => () => {
+    onKeyboardFocusChange?.(null);
+    onCardMenuShortcutChange?.(false);
+  }, [onCardMenuShortcutChange, onKeyboardFocusChange]);
 
   const handleModifiedCardClick = useCallback((
     block: LightBlock,
@@ -1423,18 +1440,6 @@ export function Grid({
       : null,
     [marqueeSelection],
   );
-
-  // Reported upward rather than lifted: the focus belongs to the grid, and the
-  // bar receives only the one thing it needs — a way to open what is focused,
-  // or nothing when there is no focus.
-  useEffect(() => {
-    if (!focusedSlug) {
-      onKeyboardFocusChange?.(null);
-      return;
-    }
-    const block = blocks.find((candidate) => candidate.slug === focusedSlug);
-    onKeyboardFocusChange?.(block ? () => handleBlockClick(block) : null);
-  }, [blocks, focusedSlug, handleBlockClick, onKeyboardFocusChange]);
 
 
   const applyMarqueeSelection = useCallback((selection: MarqueeSelection) => {

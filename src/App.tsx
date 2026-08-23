@@ -521,6 +521,9 @@ export function AppWithVault({
     activateFocusedRef.current = activate;
     setHasFocusedItem(activate !== null);
   }, []);
+  // Reported separately from focus: the feed answers ⌘K only under keyboard
+  // focus, while Enter also opens a card focused by pointer.
+  const [feedCardMenuAvailable, setFeedCardMenuAvailable] = useState(false);
   const [pendingCreateChannelDrop, setPendingCreateChannelDrop] =
     useState<PendingCreateChannelDrop | null>(null);
   const [renamingBlock, setRenamingBlock] = useState<LightBlock | IndexedBlock | null>(null);
@@ -3190,6 +3193,7 @@ export function AppWithVault({
             element={
               <PageShell
                 onKeyboardFocusChange={reportKeyboardFocus}
+                onCardMenuShortcutChange={setFeedCardMenuAvailable}
                 blocks={activeBlocks}
                 vaultPath={vaultPath}
                 thumbsRootPath={thumbsRootPath ?? undefined}
@@ -3408,11 +3412,18 @@ export function AppWithVault({
           )}
           {/* The card menu opens where the card is, so there is no position a
               press on the bar could use — it stays a reference. Available with
-              a card open, and in the feed once something is focused or
-              selected. */}
-          {(renderedDetailBlock !== null || hasFocusedItem) && (
+              a card open, and in the feed only under keyboard focus, which is
+              the sole condition the feed answers ⌘K under. */}
+          {(renderedDetailBlock !== null || feedCardMenuAvailable) && (
             <ActionButton hotkey="⌘K" readOnly>
-              Card menu
+              Command
+            </ActionButton>
+          )}
+          {/* Closing is the card's own command and exists only while one is
+              open. */}
+          {renderedDetailBlock !== null && (
+            <ActionButton hotkey="esc" readOnly>
+              Close card
             </ActionButton>
           )}
           <div className="flex-1" />
@@ -3545,6 +3556,7 @@ interface RouteContext {
   acceptGraphRevision: (revision: ProjectionRevision) => boolean;
   /// How to open what the active view has focused, or null when nothing is.
   onKeyboardFocusChange: (activate: (() => void) | null) => void;
+  onCardMenuShortcutChange: (available: boolean) => void;
   /// Offered by the empty-space onboarding, which is the only place in the app
   /// that can introduce the clipper to someone who has never seen it.
   onInstallClipper: () => void;

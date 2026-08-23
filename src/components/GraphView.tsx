@@ -895,6 +895,12 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     onKeyboardFocusChange?.(() => { void handleNodeClick(selectedNode); });
   }, [handleNodeClick, onKeyboardFocusChange, selectedNode]);
 
+  // A graph that goes away takes its command with it, so the bar does not keep
+  // offering Focus for a node that is no longer on screen.
+  useEffect(() => () => {
+    onKeyboardFocusChange?.(null);
+  }, [onKeyboardFocusChange]);
+
   const handleGraphKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") {
       if (selectedNodeId) {
