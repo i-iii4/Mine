@@ -170,7 +170,7 @@ interface GridProps {
   /// it, so the bottom bar can offer Focus only when there is something to
   /// open — and act on it when pressed.
   onKeyboardFocusChange?: (activate: (() => void) | null) => void;
-  onCardMenuShortcutChange?: (available: boolean) => void;
+  onKeyboardCommandsChange?: (available: boolean) => void;
   vaultPath: string;
   thumbsRootPath?: string;
   /// Start the clipper setup flow from the empty-space onboarding.
@@ -407,7 +407,7 @@ export function selectActiveHeavyPlaybackSlugs(
 export function Grid({
   blocks,
   onKeyboardFocusChange,
-  onCardMenuShortcutChange,
+  onKeyboardCommandsChange,
   vaultPath,
   thumbsRootPath,
   onInstallClipper,
@@ -1358,9 +1358,44 @@ export function Grid({
     onCardMenuOpenChange?.(slug, open);
   }, [onCardMenuOpenChange]);
 
+  // The walk Shift is currently extending: the cards visited in order, so that
+  // stepping back the way you came gives up the card you are leaving instead of
+  // stranding it selected.
+  const keyboardSelectionWalkRef = useRef<string[] | null>(null);
+
   const clearSelection = useCallback(() => {
+    keyboardSelectionWalkRef.current = null;
     setSelectedSlugs(new Set());
     setMarqueeSelection(null);
+  }, []);
+
+  const extendKeyboardSelection = useCallback((fromSlug: string, toSlug: string) => {
+    const walk = keyboardSelectionWalkRef.current;
+    if (walk && walk.length > 0 && walk[walk.length - 1] === fromSlug) {
+      if (walk.length >= 2 && walk[walk.length - 2] === toSlug) {
+        const leaving = walk.pop();
+        if (leaving) {
+          setSelectedSlugs((current) => {
+            const next = new Set(current);
+            next.delete(leaving);
+            return next;
+          });
+        }
+        return;
+      }
+      walk.push(toSlug);
+      setSelectedSlugs((current) => new Set(current).add(toSlug));
+      return;
+    }
+    // A fresh walk takes the card Shift was pressed on with it: pressing Shift
+    // and one arrow selects two cards, not one.
+    keyboardSelectionWalkRef.current = [fromSlug, toSlug];
+    setSelectedSlugs((current) => {
+      const next = new Set(current);
+      next.add(fromSlug);
+      next.add(toSlug);
+      return next;
+    });
   }, []);
 
   useEffect(() => {
@@ -1403,20 +1438,21 @@ export function Grid({
     onKeyboardFocusChange?.(block ? () => handleBlockClick(block) : null);
   }, [blocks, detailOpen, focusedSlug, handleBlockClick, onKeyboardFocusChange]);
 
-  // The feed card menu answers ⌘K only under keyboard focus, so the bar is told
-  // about that exact condition rather than about focus in general.
+  // Both bar commands that belong to the feed — the card menu and Shift-extended
+  // selection — answer only under keyboard focus, so the bar is told about that
+  // exact condition rather than about focus in general.
   useEffect(() => {
-    onCardMenuShortcutChange?.(
+    onKeyboardCommandsChange?.(
       !detailOpen && feedInteractionMode === "keyboard" && focusedSlug !== null,
     );
-  }, [detailOpen, feedInteractionMode, focusedSlug, onCardMenuShortcutChange]);
+  }, [detailOpen, feedInteractionMode, focusedSlug, onKeyboardCommandsChange]);
 
   // A grid that goes away takes its commands with it: without this the bar keeps
   // offering Focus and the card menu after the feed is replaced by the graph.
   useEffect(() => () => {
     onKeyboardFocusChange?.(null);
-    onCardMenuShortcutChange?.(false);
-  }, [onCardMenuShortcutChange, onKeyboardFocusChange]);
+    onKeyboardCommandsChange?.(false);
+  }, [onKeyboardCommandsChange, onKeyboardFocusChange]);
 
   const handleModifiedCardClick = useCallback((
     block: LightBlock,
@@ -1757,6 +1793,13 @@ export function Grid({
         renderReadyBlockIds,
       );
       if (nextSlug) {
+        if (event.shiftKey) {
+          extendKeyboardSelection(focusedSlug, nextSlug);
+        } else {
+          // An unmodified step ends the walk without touching what is already
+          // selected: the next Shift starts a new anchor where the focus now is.
+          keyboardSelectionWalkRef.current = null;
+        }
         setFocusedSlug(nextSlug);
       }
     };
@@ -1767,6 +1810,7 @@ export function Grid({
     blocks,
     blocksBySlug,
     clearSelection,
+    extendKeyboardSelection,
     feedInteractionMode,
     focusedSlug,
     handleBlockClick,

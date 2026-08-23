@@ -521,9 +521,10 @@ export function AppWithVault({
     activateFocusedRef.current = activate;
     setHasFocusedItem(activate !== null);
   }, []);
-  // Reported separately from focus: the feed answers ⌘K only under keyboard
-  // focus, while Enter also opens a card focused by pointer.
-  const [feedCardMenuAvailable, setFeedCardMenuAvailable] = useState(false);
+  // Reported separately from focus: the feed answers ⌘K and Shift-extended
+  // selection only under keyboard focus, while Enter also opens a card focused
+  // by pointer.
+  const [feedKeyboardCommandsAvailable, setFeedKeyboardCommandsAvailable] = useState(false);
   const [pendingCreateChannelDrop, setPendingCreateChannelDrop] =
     useState<PendingCreateChannelDrop | null>(null);
   const [renamingBlock, setRenamingBlock] = useState<LightBlock | IndexedBlock | null>(null);
@@ -3193,7 +3194,7 @@ export function AppWithVault({
             element={
               <PageShell
                 onKeyboardFocusChange={reportKeyboardFocus}
-                onCardMenuShortcutChange={setFeedCardMenuAvailable}
+                onKeyboardCommandsChange={setFeedKeyboardCommandsAvailable}
                 blocks={activeBlocks}
                 vaultPath={vaultPath}
                 thumbsRootPath={thumbsRootPath ?? undefined}
@@ -3403,6 +3404,13 @@ export function AppWithVault({
               Navigate
             </ActionButton>
           )}
+          {/* Shift holds the card the walk started from, the arrow carries the
+              focus onward, and both end up selected. */}
+          {feedKeyboardCommandsAvailable && (
+            <ActionButton hotkey="⇧ ↕ ↔" readOnly>
+              Select
+            </ActionButton>
+          )}
           {/* Pressable, unlike its neighbours: it has an action of its own —
               open whatever the view has focused. */}
           {hasFocusedItem && (
@@ -3414,7 +3422,7 @@ export function AppWithVault({
               press on the bar could use — it stays a reference. Available with
               a card open, and in the feed only under keyboard focus, which is
               the sole condition the feed answers ⌘K under. */}
-          {(renderedDetailBlock !== null || feedCardMenuAvailable) && (
+          {(renderedDetailBlock !== null || feedKeyboardCommandsAvailable) && (
             <ActionButton hotkey="⌘K" readOnly>
               Command
             </ActionButton>
@@ -3556,7 +3564,7 @@ interface RouteContext {
   acceptGraphRevision: (revision: ProjectionRevision) => boolean;
   /// How to open what the active view has focused, or null when nothing is.
   onKeyboardFocusChange: (activate: (() => void) | null) => void;
-  onCardMenuShortcutChange: (available: boolean) => void;
+  onKeyboardCommandsChange: (available: boolean) => void;
   /// Offered by the empty-space onboarding, which is the only place in the app
   /// that can introduce the clipper to someone who has never seen it.
   onInstallClipper: () => void;

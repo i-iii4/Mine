@@ -167,6 +167,18 @@ When Grid keyboard focus is active:
 - after `selectedSlugs.size > 0`, plain `Enter` also toggles the focused card
   instead of opening Detail;
 - arrow keys continue to move Grid focus by `layout.positions`;
+- `Shift+arrow` extends the selection along the walk: the first `Shift+arrow`
+  selects both the card the focus started on and the card it moves to, so one
+  keystroke yields two selected cards; each further `Shift+arrow` adds the card
+  the focus moves onto;
+- stepping back the way the walk came — a `Shift+arrow` onto the card visited
+  immediately before — deselects the card being left, so the walk can be undone
+  one step at a time;
+- an arrow without `Shift` moves focus and ends the walk without changing
+  `selectedSlugs`: the next `Shift+arrow` starts a new anchor where the focus
+  now is, adding to whatever is already selected;
+- the walk is forgotten whenever the selection is cleared (`Escape`, collection
+  change, opening a card);
 - `Cmd+K` opens a contextual batch menu anchored to the focused card's
   top-right overflow action.
 
