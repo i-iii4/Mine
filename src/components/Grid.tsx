@@ -166,6 +166,10 @@ function EmptyChannelPlaceholder({ viewportHeight }: { viewportHeight: number })
 
 interface GridProps {
   blocks: LightBlock[];
+  /// Reports whether a card currently holds keyboard focus, so the bottom bar
+  /// can offer Focus only when there is something to open. The contract there
+  /// is that a command is shown only while it can be used.
+  onKeyboardFocusChange?: (focused: boolean) => void;
   vaultPath: string;
   thumbsRootPath?: string;
   /// Start the clipper setup flow from the empty-space onboarding.
@@ -401,6 +405,7 @@ export function selectActiveHeavyPlaybackSlugs(
 
 export function Grid({
   blocks,
+  onKeyboardFocusChange,
   vaultPath,
   thumbsRootPath,
   onInstallClipper,
@@ -457,6 +462,12 @@ export function Grid({
   const [contextMenuScope, setContextMenuScope] = useState<"card" | "selection">("card");
   const [deleteSelectionDialogOpen, setDeleteSelectionDialogOpen] = useState(false);
   const [focusedSlug, setFocusedSlug] = useState<string | null>(null);
+
+  // Reported upward rather than lifted: the focus belongs to the grid, and the
+  // bar only needs to know whether there is any.
+  useEffect(() => {
+    onKeyboardFocusChange?.(focusedSlug !== null);
+  }, [focusedSlug, onKeyboardFocusChange]);
   const [selectedSlugs, setSelectedSlugs] = useState<Set<string>>(() => new Set());
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
   const [marqueeSelection, setMarqueeSelection] = useState<MarqueeSelection | null>(null);

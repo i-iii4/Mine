@@ -9,6 +9,10 @@ interface ActionButtonProps {
   children?: React.ReactNode;
   isSelected?: boolean;
   className?: string;
+  /// A reference entry rather than a control: it names a keystroke the user
+  /// performs on the keyboard, and clicking it would do nothing. Such an entry
+  /// is not focusable and is not announced as a button.
+  readOnly?: boolean;
 }
 
 /// Bottom-bar action, in one of two presentations (see lib/actionButtonStyle).
@@ -16,7 +20,7 @@ interface ActionButtonProps {
 /// The variant is read from the root attribute rather than passed as a prop, so
 /// call sites are identical for both and no site can end up on the wrong one.
 export const ActionButton = React.forwardRef<HTMLDivElement, ActionButtonProps>(
-  ({ onClick, hotkey, children, isSelected, className }, ref) => {
+  ({ onClick, hotkey, children, isSelected, className, readOnly }, ref) => {
     const style = useActionButtonStyle();
 
     if (style === "standard") {
@@ -27,6 +31,7 @@ export const ActionButton = React.forwardRef<HTMLDivElement, ActionButtonProps>(
           hotkey={hotkey}
           isSelected={isSelected}
           className={className}
+          readOnly={readOnly}
         >
           {children}
         </StandardActionButton>
@@ -36,11 +41,14 @@ export const ActionButton = React.forwardRef<HTMLDivElement, ActionButtonProps>(
     return (
       <div
         ref={ref}
-        role="button"
-        tabIndex={0}
+        role={readOnly ? undefined : "button"}
+        tabIndex={readOnly ? undefined : 0}
         data-action-button="pill"
-        onClick={onClick}
-        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onClick?.(); }}
+        data-action-button-readonly={readOnly ? "true" : undefined}
+        onClick={readOnly ? undefined : onClick}
+        onKeyDown={readOnly
+          ? undefined
+          : (e) => { if (e.key === "Enter" || e.key === " ") onClick?.(); }}
         className={cn(
           "action-button group inline-flex h-6 shrink-0 items-center rounded-1 p-[2px] font-mono text-sm",
           "select-none overflow-hidden outline-0",
@@ -80,7 +88,7 @@ ActionButton.displayName = "ActionButton";
 /// Without a hotkey there is nothing to put inside the button, so the label
 /// moves in and the pair collapses to a plain labelled button.
 const StandardActionButton = React.forwardRef<HTMLDivElement, ActionButtonProps>(
-  ({ onClick, hotkey, children, isSelected, className }, ref) => {
+  ({ onClick, hotkey, children, isSelected, className, readOnly }, ref) => {
     // One interactive element for the whole pair. The visual button is a span
     // inside it, not a nested <button>: the action name is part of the target,
     // so making the frame the only clickable thing would leave half the control
@@ -108,12 +116,15 @@ const StandardActionButton = React.forwardRef<HTMLDivElement, ActionButtonProps>
     return (
       <div
         ref={ref}
-        role="button"
-        tabIndex={0}
+        role={readOnly ? undefined : "button"}
+        tabIndex={readOnly ? undefined : 0}
         data-action-button="standard"
+        data-action-button-readonly={readOnly ? "true" : undefined}
         data-selected={isSelected ? "true" : undefined}
-        onClick={onClick}
-        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onClick?.(); }}
+        onClick={readOnly ? undefined : onClick}
+        onKeyDown={readOnly
+          ? undefined
+          : (e) => { if (e.key === "Enter" || e.key === " ") onClick?.(); }}
         className={cn(
           "group inline-flex shrink-0 select-none items-center outline-0",
           hotkey && "gap-2",

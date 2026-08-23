@@ -95,6 +95,9 @@ export interface GraphViewProps {
   onOpenBlock: (block: LightBlock | IndexedBlock) => void;
   onOpenCardMenu: (block: LightBlock | IndexedBlock, point: GraphCardMenuPoint) => void;
   onNavigateCollection: (collectionRef?: string) => void;
+  /// Whether a node is selected, so the bottom bar can offer Focus only when
+  /// there is something to open.
+  onKeyboardFocusChange?: (focused: boolean) => void;
 }
 
 export interface GraphViewHandle {
@@ -116,6 +119,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   onOpenBlock,
   onOpenCardMenu,
   onNavigateCollection,
+  onKeyboardFocusChange,
 }: GraphViewProps, ref) {
   const resolvedThumbsRoot = thumbsRootPath ?? fallbackThumbsRoot(vaultPath);
   const [snapshot, setSnapshot] = useState<GraphSnapshot | null>(null);
@@ -335,6 +339,10 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     }).sort(compareGraphNodePaintOrder);
     return { nodes, links: snapshot.links.map((link) => ({ ...link })) };
   }, [focusNodeId, layoutIdentity]);
+
+  useEffect(() => {
+    onKeyboardFocusChange?.(selectedNodeId !== null);
+  }, [onKeyboardFocusChange, selectedNodeId]);
 
   const selectedNode = useMemo(
     () => graphData.nodes.find((node) => node.id === selectedNodeId) ?? null,

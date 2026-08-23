@@ -266,6 +266,7 @@ import {
 } from "@/lib/settingsChanged";
 import { RenameBlockDialog } from "@/components/RenameBlockDialog";
 import { SearchOverlay } from "@/components/SearchOverlay";
+import { CreateCollectionDialog } from "@/components/CreateCollectionDialog";
 import { DeleteBlockDialog } from "@/components/DeleteBlockDialog";
 import {
   ImagePreviewOverlay,
@@ -506,6 +507,11 @@ export function AppWithVault({
   const [mainViewMode, setMainViewMode] = useState<MainViewMode>(getStoredMainViewMode);
   const [imagePreview, setImagePreview] = useState<ImagePreviewRequest | null>(null);
   const [isCreatingChannel, setIsCreatingChannel] = useState(false);
+  const [isNamingCollection, setIsNamingCollection] = useState(false);
+  // Whether the active view holds a focus that Enter would open. The bottom bar
+  // shows a command only while it can be used, and Focus has nothing to act on
+  // until something is focused.
+  const [viewHasKeyboardFocus, setViewHasKeyboardFocus] = useState(false);
   const [pendingCreateChannelDrop, setPendingCreateChannelDrop] =
     useState<PendingCreateChannelDrop | null>(null);
   const [renamingBlock, setRenamingBlock] = useState<LightBlock | IndexedBlock | null>(null);
@@ -1822,7 +1828,7 @@ export function AppWithVault({
         handleSwitchVault();
       } else if (e.shiftKey && e.key === "N") {
         e.preventDefault();
-        setIsCreatingChannel(true);
+        beginCreateCollection();
       }
       // Cmd+, is owned by the native "Settings…" menu item (NSMenu key
       // equivalent) — it never reaches the webview keydown handler.
@@ -2157,6 +2163,19 @@ export function AppWithVault({
     setPendingCreateChannelDrop(null);
     setIsCreatingChannel(creating);
   }, []);
+
+  /// Where a new collection is named depends on whether its future row is
+  /// visible. Open sidebar: in the list, in the row it will occupy. Closed: in
+  /// a dialog, because that row has nowhere to appear and the command used to
+  /// do nothing at all.
+  const beginCreateCollection = useCallback(() => {
+    setPendingCreateChannelDrop(null);
+    if (sidebarCollapsed) {
+      setIsNamingCollection(true);
+      return;
+    }
+    setIsCreatingChannel(true);
+  }, [sidebarCollapsed]);
 
   const sidebarSearchNavigationRows = useMemo(() => (
     buildSidebarSearchNavigationRows(orderedTags, sidebarSearchQuery)
@@ -3161,6 +3180,7 @@ export function AppWithVault({
           <Route
             element={
               <PageShell
+                onKeyboardFocusChange={setViewHasKeyboardFocus}
                 blocks={activeBlocks}
                 vaultPath={vaultPath}
                 thumbsRootPath={thumbsRootPath ?? undefined}
@@ -3351,12 +3371,25 @@ export function AppWithVault({
           <ActionButton hotkey="⌃⌘S" onClick={toggleCollapsed}>
             {sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar"}
           </ActionButton>
-          <ActionButton hotkey="⌘⇧N" onClick={() => setIsCreatingChannel(true)}>
+          <ActionButton hotkey="⌘⇧N" onClick={beginCreateCollection}>
             New Collection
           </ActionButton>
           <ActionButton hotkey="⌘," onClick={handleOpenSettings}>
             Settings
           </ActionButton>
+          {/* A command appears only while it can be used. Navigation needs
+              something to navigate; Focus needs something focused. Showing
+              either otherwise teaches a shortcut that does nothing. */}
+          {activeBlocks.length > 0 && (
+            <ActionButton hotkey="↕ ↔" readOnly>
+              Navigate
+            </ActionButton>
+          )}
+          {viewHasKeyboardFocus && (
+            <ActionButton hotkey="↵" readOnly>
+              Focus
+            </ActionButton>
+          )}
           <div className="flex-1" />
           {isSyncing && (
             <span className="text-sm text-muted-foreground">Syncing…</span>
@@ -3369,6 +3402,12 @@ export function AppWithVault({
           </ActionButton>
         </div>
       )}
+
+      <CreateCollectionDialog
+        open={isNamingCollection}
+        onOpenChange={setIsNamingCollection}
+        onCreate={handleCreateChannel}
+      />
 
       <Suspense fallback={null}>
         <DropZone
@@ -3479,6 +3518,8 @@ interface RouteContext {
   hoverPreviewFrozen: boolean;
   onNavigateCollection: (collectionRef?: string) => void;
   acceptGraphRevision: (revision: ProjectionRevision) => boolean;
+  /// Whether the active view holds a keyboard focus that Enter would open.
+  onKeyboardFocusChange: (focused: boolean) => void;
   /// Offered by the empty-space onboarding, which is the only place in the app
   /// that can introduce the clipper to someone who has never seen it.
   onInstallClipper: () => void;
@@ -3512,6 +3553,7 @@ function AllBlocksPage() {
         onOpenBlock={ctx.onOpenBlock}
         onOpenCardMenu={ctx.onOpenCardMenu}
         onNavigateCollection={ctx.onNavigateCollection}
+        onKeyboardFocusChange={ctx.onKeyboardFocusChange}
         acceptSnapshotRevision={ctx.acceptGraphRevision}
       />
     );
@@ -3536,6 +3578,7 @@ function ChannelPage() {
         onOpenBlock={ctx.onOpenBlock}
         onOpenCardMenu={ctx.onOpenCardMenu}
         onNavigateCollection={ctx.onNavigateCollection}
+        onKeyboardFocusChange={ctx.onKeyboardFocusChange}
         acceptSnapshotRevision={ctx.acceptGraphRevision}
       />
     );
