@@ -54,7 +54,7 @@ export const ActionButton = React.forwardRef<HTMLDivElement, ActionButtonProps>(
           "select-none overflow-hidden outline-0",
           isSelected
             ? "bg-active"
-            : "bg-transparent hover:bg-active",
+            : readOnly ? "bg-transparent" : "bg-transparent hover:bg-active",
           className,
         )}
       >
@@ -103,9 +103,12 @@ const StandardActionButton = React.forwardRef<HTMLDivElement, ActionButtonProps>
           "h-5 font-mono font-normal",
           // The hotkey is reference material at rest and comes forward only
           // when the pointer is anywhere on the pair — hence group-hover, not
-          // hover on the frame itself.
-          "text-muted-foreground group-hover:text-foreground",
-          "group-hover:outline-1 group-hover:-outline-offset-1 group-hover:outline-component-fill-hover",
+          // hover on the frame itself. A read-only entry has nothing to come
+          // forward for: it cannot be pressed, and answering the pointer would
+          // promise that it can.
+          "text-muted-foreground",
+          !readOnly && "group-hover:text-foreground",
+          !readOnly && "group-hover:outline-1 group-hover:-outline-offset-1 group-hover:outline-component-fill-hover",
           isSelected && "bg-active",
         )}
       >

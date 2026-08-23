@@ -3380,6 +3380,11 @@ export function AppWithVault({
           {/* A command appears only while it can be used. Navigation needs
               something to navigate; Focus needs something focused. Showing
               either otherwise teaches a shortcut that does nothing. */}
+          {orderedTags.length > 0 && (
+            <ActionButton hotkey="⌘⌥ ↕" readOnly>
+              Collections
+            </ActionButton>
+          )}
           {activeBlocks.length > 0 && (
             <ActionButton hotkey="↕ ↔" readOnly>
               Navigate
