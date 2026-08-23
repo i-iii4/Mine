@@ -143,48 +143,6 @@ export function findLayoutNeighborSlug(
   return bestSlug;
 }
 
-/**
- * Every card whose centre falls inside the rectangle spanned by the anchor card
- * and the cursor card, the anchor and cursor included.
- *
- * The range is geometric rather than index-based because arrow navigation is
- * geometric: masonry fills columns by height, so a range taken over list order
- * would select cards from columns the focus never crossed. Membership is decided
- * by the card's centre — a card clipped by a few pixels of the span is not in it.
- */
-export function slugsWithinSelectionSpan(
-  positions: readonly MasonryPosition[],
-  blocks: readonly LightBlock[],
-  anchorSlug: string,
-  cursorSlug: string,
-  liveBlockIds: ReadonlySet<number>,
-): string[] {
-  const anchor = findPositionForSlug(positions, blocks, anchorSlug);
-  const cursor = findPositionForSlug(positions, blocks, cursorSlug);
-  if (!anchor || !cursor) return [];
-
-  const left = Math.min(anchor.left, cursor.left);
-  const right = Math.max(anchor.left + anchor.width, cursor.left + cursor.width);
-  const top = Math.min(anchor.top, cursor.top);
-  const bottom = Math.max(anchor.bottom, cursor.bottom);
-
-  const withinSpan: string[] = [];
-  for (const candidate of positions) {
-    const block = blocks[candidate.index];
-    if (!block || !liveBlockIds.has(block.id)) continue;
-    if (candidate.index === anchor.index || candidate.index === cursor.index) {
-      withinSpan.push(block.slug);
-      continue;
-    }
-    const centre = positionCenter(candidate);
-    if (centre.x < left || centre.x > right) continue;
-    if (centre.y < top || centre.y > bottom) continue;
-    withinSpan.push(block.slug);
-  }
-
-  return withinSpan;
-}
-
 export function firstVisibleSlug(
   positions: readonly MasonryPosition[],
   blocks: readonly LightBlock[],

@@ -3132,7 +3132,7 @@ describe("bottom-bar command availability", () => {
     // offering Focus and ⌘K over a graph that has neither.
     vi.useFakeTimers();
     const onKeyboardFocusChange = vi.fn();
-    const onKeyboardCommandsChange = vi.fn();
+    const onCardMenuShortcutChange = vi.fn();
     const blocks = [makeBlock(9701), makeBlock(9702)];
     setBlockHeight(9701, 200);
     setBlockHeight(9702, 220);
@@ -3142,7 +3142,7 @@ describe("bottom-bar command availability", () => {
         {...BASE_PROPS}
         blocks={blocks}
         onKeyboardFocusChange={onKeyboardFocusChange}
-        onKeyboardCommandsChange={onKeyboardCommandsChange}
+        onCardMenuShortcutChange={onCardMenuShortcutChange}
       />,
     );
     await flushAsync();
@@ -3153,18 +3153,18 @@ describe("bottom-bar command availability", () => {
     });
 
     expect(onKeyboardFocusChange.mock.calls.at(-1)?.[0]).toBeTypeOf("function");
-    expect(onKeyboardCommandsChange.mock.calls.at(-1)?.[0]).toBe(true);
+    expect(onCardMenuShortcutChange.mock.calls.at(-1)?.[0]).toBe(true);
 
     view.unmount();
 
     expect(onKeyboardFocusChange.mock.calls.at(-1)?.[0]).toBeNull();
-    expect(onKeyboardCommandsChange.mock.calls.at(-1)?.[0]).toBe(false);
+    expect(onCardMenuShortcutChange.mock.calls.at(-1)?.[0]).toBe(false);
   });
 
   it("withdraws them while a card is open, where neither applies", async () => {
     vi.useFakeTimers();
     const onKeyboardFocusChange = vi.fn();
-    const onKeyboardCommandsChange = vi.fn();
+    const onCardMenuShortcutChange = vi.fn();
     const blocks = [makeBlock(9711), makeBlock(9712)];
     setBlockHeight(9711, 200);
     setBlockHeight(9712, 220);
@@ -3174,7 +3174,7 @@ describe("bottom-bar command availability", () => {
         {...BASE_PROPS}
         blocks={blocks}
         onKeyboardFocusChange={onKeyboardFocusChange}
-        onKeyboardCommandsChange={onKeyboardCommandsChange}
+        onCardMenuShortcutChange={onCardMenuShortcutChange}
       />,
     );
     await flushAsync();
@@ -3190,7 +3190,7 @@ describe("bottom-bar command availability", () => {
         blocks={blocks}
         detailOpen
         onKeyboardFocusChange={onKeyboardFocusChange}
-        onKeyboardCommandsChange={onKeyboardCommandsChange}
+        onCardMenuShortcutChange={onCardMenuShortcutChange}
       />,
     );
     await act(async () => {
@@ -3198,89 +3198,6 @@ describe("bottom-bar command availability", () => {
     });
 
     expect(onKeyboardFocusChange.mock.calls.at(-1)?.[0]).toBeNull();
-    expect(onKeyboardCommandsChange.mock.calls.at(-1)?.[0]).toBe(false);
-  });
-});
-
-describe("Shift-extended keyboard selection", () => {
-  const selectedSlugs = () => Array.from(
-    document.querySelectorAll("[data-feed-grid-item-selected='true']"),
-  ).map((node) => node.getAttribute("data-feed-grid-item-slug"));
-
-  const setUpRow = async (ids: readonly number[]) => {
-    vi.useFakeTimers();
-    const blocks = ids.map((id) => makeBlock(id));
-    ids.forEach((id, index) => setBlockHeight(id, 200 + index * 20));
-    render(<Grid {...BASE_PROPS} blocks={blocks} />);
-    await flushAsync();
-    fireEvent.keyDown(window, { key: "ArrowDown" });
-    await act(async () => {
-      await Promise.resolve();
-    });
-  };
-
-  const press = async (key: string, shiftKey = false) => {
-    fireEvent.keyDown(window, { key, shiftKey });
-    await flushAsync();
-  };
-
-  it("takes the anchor card with it, so one Shift+arrow selects two", async () => {
-    await setUpRow([9801, 9802, 9803]);
-    expect(selectedSlugs()).toEqual([]);
-
-    await press("ArrowRight", true);
-
-    expect(selectedSlugs()).toHaveLength(2);
-  });
-
-  it("shrinks back to the anchor alone when the cursor returns to it", async () => {
-    // The range is measured from the anchor on every step, not accumulated, so
-    // walking back undoes the selection instead of stranding cards behind.
-    await setUpRow([9811, 9812, 9813]);
-
-    await press("ArrowRight", true);
-    await press("ArrowRight", true);
-    expect(selectedSlugs()).toHaveLength(3);
-
-    await press("ArrowLeft", true);
-    expect(selectedSlugs()).toHaveLength(2);
-
-    await press("ArrowLeft", true);
-    expect(selectedSlugs()).toHaveLength(1);
-  });
-
-  it("keeps what was already selected when the range starts", async () => {
-    await setUpRow([9821, 9822, 9823]);
-
-    // Shift+Enter selects the focused card, then the focus steps away without
-    // Shift, which drops the anchor but must not drop that card.
-    await press("Enter", true);
-    expect(selectedSlugs()).toHaveLength(1);
-    await press("ArrowRight");
-    await press("ArrowRight", true);
-
-    expect(selectedSlugs()).toHaveLength(3);
-  });
-
-  it("leaves the selection alone when the arrow carries no Shift", async () => {
-    await setUpRow([9831, 9832, 9833]);
-
-    await press("ArrowRight", true);
-    const afterShift = selectedSlugs();
-    expect(afterShift).toHaveLength(2);
-
-    await press("ArrowRight");
-
-    expect(selectedSlugs()).toEqual(afterShift);
-  });
-
-  it("measures a new range from where the focus stands after a plain arrow", async () => {
-    await setUpRow([9841, 9842, 9843]);
-
-    await press("ArrowRight");
-    await press("ArrowRight", true);
-
-    // Anchored on the second card, not on the first one the feed opened with.
-    expect(selectedSlugs()).toHaveLength(2);
+    expect(onCardMenuShortcutChange.mock.calls.at(-1)?.[0]).toBe(false);
   });
 });

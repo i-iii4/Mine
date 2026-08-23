@@ -78,7 +78,6 @@ import {
   clampedScrollTopForAnchor,
   feedPointerPosition,
   findLayoutNeighborSlug,
-  slugsWithinSelectionSpan,
   findMarqueeSelectionSlugs,
   findPositionForSlug,
   findViewportPreservationAnchor,
@@ -171,7 +170,7 @@ interface GridProps {
   /// it, so the bottom bar can offer Focus only when there is something to
   /// open — and act on it when pressed.
   onKeyboardFocusChange?: (activate: (() => void) | null) => void;
-  onKeyboardCommandsChange?: (available: boolean) => void;
+  onCardMenuShortcutChange?: (available: boolean) => void;
   vaultPath: string;
   thumbsRootPath?: string;
   /// Start the clipper setup flow from the empty-space onboarding.
@@ -408,7 +407,7 @@ export function selectActiveHeavyPlaybackSlugs(
 export function Grid({
   blocks,
   onKeyboardFocusChange,
-  onKeyboardCommandsChange,
+  onCardMenuShortcutChange,
   vaultPath,
   thumbsRootPath,
   onInstallClipper,
@@ -1260,7 +1259,6 @@ export function Grid({
 
   useEffect(() => {
     suppressedFocusedScrollSlugRef.current = null;
-    keyboardSelectionAnchorRef.current = null;
     setFocusedSlug(null);
     setFeedInteractionMode("pointer");
     setPinnedActionMenuSlug(null);
@@ -1360,44 +1358,10 @@ export function Grid({
     onCardMenuOpenChange?.(slug, open);
   }, [onCardMenuOpenChange]);
 
-  // Where a Shift range is measured from, and what was already selected when it
-  // started. The range is recomputed from the anchor on every step rather than
-  // accumulated, so bringing the cursor back to the anchor leaves one card
-  // selected — and the base keeps whatever the pointer had selected before.
-  const keyboardSelectionAnchorRef = useRef<{
-    slug: string;
-    base: ReadonlySet<string>;
-  } | null>(null);
-
   const clearSelection = useCallback(() => {
-    keyboardSelectionAnchorRef.current = null;
     setSelectedSlugs(new Set());
     setMarqueeSelection(null);
   }, []);
-
-  const extendKeyboardSelection = useCallback((
-    fromSlug: string,
-    toSlug: string,
-    positions: readonly MasonryPosition[],
-    liveBlockIds: ReadonlySet<number>,
-  ) => {
-    setSelectedSlugs((current) => {
-      const active = keyboardSelectionAnchorRef.current
-        ?? { slug: fromSlug, base: new Set(current) };
-      keyboardSelectionAnchorRef.current = active;
-
-      const span = slugsWithinSelectionSpan(
-        positions,
-        blocks,
-        active.slug,
-        toSlug,
-        liveBlockIds,
-      );
-      const next = new Set(active.base);
-      for (const slug of span) next.add(slug);
-      return next;
-    });
-  }, [blocks]);
 
   useEffect(() => {
     if (selectedSlugs.size > 0) {
@@ -1411,10 +1375,6 @@ export function Grid({
   }, [clearSelection, detailOpen]);
 
   const toggleSelectedSlug = useCallback((slug: string) => {
-    // Anything that changes the selection outside a Shift walk invalidates the
-    // anchor: the next Shift measures from where the focus stands then, over
-    // whatever is selected by then.
-    keyboardSelectionAnchorRef.current = null;
     setSelectedSlugs((current) => {
       const next = new Set(current);
       if (next.has(slug)) {
@@ -1443,21 +1403,20 @@ export function Grid({
     onKeyboardFocusChange?.(block ? () => handleBlockClick(block) : null);
   }, [blocks, detailOpen, focusedSlug, handleBlockClick, onKeyboardFocusChange]);
 
-  // Both bar commands that belong to the feed — the card menu and Shift-extended
-  // selection — answer only under keyboard focus, so the bar is told about that
-  // exact condition rather than about focus in general.
+  // The feed card menu answers ⌘K only under keyboard focus, so the bar is told
+  // about that exact condition rather than about focus in general.
   useEffect(() => {
-    onKeyboardCommandsChange?.(
+    onCardMenuShortcutChange?.(
       !detailOpen && feedInteractionMode === "keyboard" && focusedSlug !== null,
     );
-  }, [detailOpen, feedInteractionMode, focusedSlug, onKeyboardCommandsChange]);
+  }, [detailOpen, feedInteractionMode, focusedSlug, onCardMenuShortcutChange]);
 
   // A grid that goes away takes its commands with it: without this the bar keeps
   // offering Focus and the card menu after the feed is replaced by the graph.
   useEffect(() => () => {
     onKeyboardFocusChange?.(null);
-    onKeyboardCommandsChange?.(false);
-  }, [onKeyboardCommandsChange, onKeyboardFocusChange]);
+    onCardMenuShortcutChange?.(false);
+  }, [onCardMenuShortcutChange, onKeyboardFocusChange]);
 
   const handleModifiedCardClick = useCallback((
     block: LightBlock,
@@ -1484,7 +1443,6 @@ export function Grid({
 
 
   const applyMarqueeSelection = useCallback((selection: MarqueeSelection) => {
-    keyboardSelectionAnchorRef.current = null;
     const rect = rectFromPoints(selection.start, selection.current);
     setSelectedSlugs(new Set(
       findMarqueeSelectionSlugs(
@@ -1799,18 +1757,6 @@ export function Grid({
         renderReadyBlockIds,
       );
       if (nextSlug) {
-        if (event.shiftKey) {
-          extendKeyboardSelection(
-            focusedSlug,
-            nextSlug,
-            layout.positions,
-            renderReadyBlockIds,
-          );
-        } else {
-          // An unmodified step drops the anchor without touching what is already
-          // selected: the next Shift measures from where the focus now is.
-          keyboardSelectionAnchorRef.current = null;
-        }
         setFocusedSlug(nextSlug);
       }
     };
@@ -1821,7 +1767,6 @@ export function Grid({
     blocks,
     blocksBySlug,
     clearSelection,
-    extendKeyboardSelection,
     feedInteractionMode,
     focusedSlug,
     handleBlockClick,
