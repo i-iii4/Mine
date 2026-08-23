@@ -511,7 +511,16 @@ export function AppWithVault({
   // Whether the active view holds a focus that Enter would open. The bottom bar
   // shows a command only while it can be used, and Focus has nothing to act on
   // until something is focused.
-  const [activateFocusedItem, setActivateFocusedItem] = useState<(() => void) | null>(null);
+  // The action lives in a ref and only its presence is state. Holding the
+  // function itself in state re-rendered the shell on every focus report, which
+  // handed the view a fresh callback, which triggered the next report — a loop
+  // that made stepping between collections stutter with both keys and mouse.
+  const activateFocusedRef = useRef<(() => void) | null>(null);
+  const [hasFocusedItem, setHasFocusedItem] = useState(false);
+  const reportKeyboardFocus = useCallback((activate: (() => void) | null) => {
+    activateFocusedRef.current = activate;
+    setHasFocusedItem(activate !== null);
+  }, []);
   const [pendingCreateChannelDrop, setPendingCreateChannelDrop] =
     useState<PendingCreateChannelDrop | null>(null);
   const [renamingBlock, setRenamingBlock] = useState<LightBlock | IndexedBlock | null>(null);
@@ -3180,7 +3189,7 @@ export function AppWithVault({
           <Route
             element={
               <PageShell
-                onKeyboardFocusChange={(activate) => setActivateFocusedItem(() => activate)}
+                onKeyboardFocusChange={reportKeyboardFocus}
                 blocks={activeBlocks}
                 vaultPath={vaultPath}
                 thumbsRootPath={thumbsRootPath ?? undefined}
@@ -3392,8 +3401,8 @@ export function AppWithVault({
           )}
           {/* Pressable, unlike its neighbours: it has an action of its own —
               open whatever the view has focused. */}
-          {activateFocusedItem && (
-            <ActionButton hotkey="↵" onClick={activateFocusedItem}>
+          {hasFocusedItem && (
+            <ActionButton hotkey="↵" onClick={() => activateFocusedRef.current?.()}>
               Focus
             </ActionButton>
           )}
@@ -3401,9 +3410,9 @@ export function AppWithVault({
               press on the bar could use — it stays a reference. Available with
               a card open, and in the feed once something is focused or
               selected. */}
-          {(renderedDetailBlock !== null || activateFocusedItem !== null) && (
+          {(renderedDetailBlock !== null || hasFocusedItem) && (
             <ActionButton hotkey="⌘K" readOnly>
-              Card actions
+              Card menu
             </ActionButton>
           )}
           <div className="flex-1" />
