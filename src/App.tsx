@@ -43,6 +43,7 @@ import { refreshPageLimit } from "@/lib/gridPaging";
 import { imageCardNeedsGeometryRefresh } from "@/lib/cardHeight";
 import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
 import { cn } from "@/lib/utils";
+import { commandById } from "@/lib/commandRegistry";
 import {
   isDetailShortcutBlockedTarget,
   isEditableKeyboardTarget,
@@ -2017,6 +2018,36 @@ export function AppWithVault({
     await reloadAllSnapshots();
     navigate(`/channel/${encodeURIComponent(channel.tag)}`);
   }, [navigate, reloadAllSnapshots]);
+
+  // ── Tab — the mode of the current surface ─────────────────────────────
+  //
+  // One rule instead of three shortcuts: Tab cycles the mode of whatever the
+  // window is showing. Over the feed and the graph it toggles Grid ↔ Graph;
+  // inside an open element it toggles the connections filter. Inside inputs,
+  // dialogs, menus and overlays Tab stays native — those surfaces keep the
+  // system's focus traversal.
+  useEffect(() => {
+    const toggleView = commandById("toggle-view");
+    const handler = (e: KeyboardEvent) => {
+      if (!toggleView.matches!(e)) return;
+      if (
+        e.defaultPrevented
+        || isEditableKeyboardTarget(e.target)
+        || isOverlayKeyboardTarget(e.target)
+        || isDetailShortcutBlockedTarget(e.target)
+      ) {
+        return;
+      }
+      e.preventDefault();
+      if (renderedDetailBlock) {
+        setDetailLinkMode((current) => (current === "all" ? "linked" : "all"));
+        return;
+      }
+      handleMainViewModeChange(mainViewMode === "grid" ? "graph" : "grid");
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [handleMainViewModeChange, mainViewMode, renderedDetailBlock]);
 
   // ── Opt+Cmd+Up/Down — switch channels ─────────────────────────────────
   //

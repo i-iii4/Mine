@@ -1070,6 +1070,66 @@ describe("AppWithVault", () => {
     expect(await screen.findByTestId("grid")).toHaveTextContent("__all__:2");
   });
 
+  it("cycles Grid and Graph with plain Tab", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    fireEvent.keyDown(window, { key: "Tab" });
+    expect(await screen.findByTestId("graph-view")).toBeInTheDocument();
+    expect(localStorage.getItem("mine.mainViewMode")).toBe("graph");
+
+    fireEvent.keyDown(window, { key: "Tab" });
+    expect(await screen.findByTestId("grid")).toBeInTheDocument();
+    expect(localStorage.getItem("mine.mainViewMode")).toBe("grid");
+  });
+
+  it("leaves Tab native inside an editable target", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+    fireEvent.keyDown(input, { key: "Tab" });
+    input.remove();
+
+    expect(screen.getByTestId("grid")).toBeInTheDocument();
+    expect(localStorage.getItem("mine.mainViewMode")).not.toBe("graph");
+  });
+
+  it("toggles the connections filter with Tab while an element is open", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
+    });
+
+    fireEvent.keyDown(window, { key: "Tab" });
+
+    // The view must not flip underneath the open element.
+    expect(screen.queryByTestId("graph-view")).not.toBeInTheDocument();
+    expect(localStorage.getItem("mine.mainViewMode")).not.toBe("graph");
+  });
+
   it("renders default chrome surfaces", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
