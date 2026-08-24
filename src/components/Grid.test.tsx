@@ -1328,12 +1328,12 @@ describe("Grid — no collapse after add / revisit", () => {
       "backdrop-saturate-150",
     );
     expect(actionBar?.querySelector(".w-px")).toBeNull();
-    expect(screen.getByText("1 карточка")).toHaveClass(
+    expect(screen.getByText("1 element")).toHaveClass(
       "font-mono",
       "text-sm",
       "text-muted-foreground",
     );
-    expect(screen.getByText("1 карточка")).not.toHaveClass("font-semibold");
+    expect(screen.getByText("1 element")).not.toHaveClass("font-semibold");
     expect(screen.getByRole("button", { name: "Clear selection" })).toBeInTheDocument();
     const actionBarQueries = within(actionBar as HTMLElement);
     expect(
@@ -1368,7 +1368,7 @@ describe("Grid — no collapse after add / revisit", () => {
     });
 
     expect(selectedWrapper).not.toHaveAttribute("data-feed-grid-item-selected");
-    expect(screen.queryByText("1 карточка")).not.toBeInTheDocument();
+    expect(screen.queryByText("1 element")).not.toBeInTheDocument();
   });
 
   it("turns plain card clicks into selection toggles while group selection is active", async () => {
@@ -1398,7 +1398,7 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(onBlockClick).not.toHaveBeenCalled();
     expect(gridItemForSlug("block-9511")).toHaveAttribute("data-feed-grid-item-selected", "true");
     expect(gridItemForSlug("block-9512")).toHaveAttribute("data-feed-grid-item-selected", "true");
-    expect(screen.getByText("2 карточки")).toBeInTheDocument();
+    expect(screen.getByText("2 elements")).toBeInTheDocument();
 
     fireEvent.click(firstCard);
     await act(async () => {
@@ -1408,7 +1408,7 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(onBlockClick).not.toHaveBeenCalled();
     expect(gridItemForSlug("block-9511")).not.toHaveAttribute("data-feed-grid-item-selected");
     expect(gridItemForSlug("block-9512")).toHaveAttribute("data-feed-grid-item-selected", "true");
-    expect(screen.getByText("1 карточка")).toBeInTheDocument();
+    expect(screen.getByText("1 element")).toBeInTheDocument();
   });
 
   it("opens the merge dialog from the selection island and submits selected slugs", async () => {
@@ -1492,7 +1492,7 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(onBlockClick).not.toHaveBeenCalled();
     expect(gridItemForSlug("block-9515")).toHaveAttribute("data-feed-grid-item-selected", "true");
     expect(gridItemForSlug("block-9516")).toHaveAttribute("data-feed-grid-item-selected", "true");
-    expect(screen.getByText("2 карточки")).toBeInTheDocument();
+    expect(screen.getByText("2 elements")).toBeInTheDocument();
 
     fireEvent.keyDown(thirdCard, { key: "Enter" });
     await act(async () => {
@@ -1501,7 +1501,7 @@ describe("Grid — no collapse after add / revisit", () => {
 
     expect(onBlockClick).not.toHaveBeenCalled();
     expect(gridItemForSlug("block-9517")).toHaveAttribute("data-feed-grid-item-selected", "true");
-    expect(screen.getByText("3 карточки")).toBeInTheDocument();
+    expect(screen.getByText("3 elements")).toBeInTheDocument();
   });
 
   it("supports keyboard-only group selection with Shift-Enter and Enter", async () => {
@@ -1528,7 +1528,7 @@ describe("Grid — no collapse after add / revisit", () => {
     });
     expect(onBlockClick).not.toHaveBeenCalled();
     expect(gridItemForSlug("block-9521")).toHaveAttribute("data-feed-grid-item-selected", "true");
-    expect(screen.getByText("1 карточка")).toBeInTheDocument();
+    expect(screen.getByText("1 element")).toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: "ArrowRight" });
     await act(async () => {
@@ -1543,7 +1543,7 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(onBlockClick).not.toHaveBeenCalled();
     expect(gridItemForSlug("block-9521")).toHaveAttribute("data-feed-grid-item-selected", "true");
     expect(gridItemForSlug("block-9522")).toHaveAttribute("data-feed-grid-item-selected", "true");
-    expect(screen.getByText("2 карточки")).toBeInTheDocument();
+    expect(screen.getByText("2 elements")).toBeInTheDocument();
   });
 
   it("uses Grid keyboard focus, not stale DOM focus, for Enter in group selection", async () => {
@@ -1581,7 +1581,7 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(onBlockClick).not.toHaveBeenCalled();
     expect(gridItemForSlug("block-9524")).toHaveAttribute("data-feed-grid-item-selected", "true");
     expect(gridItemForSlug("block-9525")).toHaveAttribute("data-feed-grid-item-selected", "true");
-    expect(screen.getByText("2 карточки")).toBeInTheDocument();
+    expect(screen.getByText("2 elements")).toBeInTheDocument();
   });
 
   it("opens a focused-card batch menu with Command-K while group selection is active", async () => {
@@ -1609,7 +1609,7 @@ describe("Grid — no collapse after add / revisit", () => {
     const batchMenu = document.querySelector("[data-feed-grid-batch-menu]") as HTMLElement;
     expect(focusedWrapper?.querySelector("[data-feed-grid-batch-menu-trigger]")).toHaveAttribute("data-state", "open");
     expect(batchMenu).toBeInTheDocument();
-    expect(within(batchMenu).getByText("1 карточка")).toBeInTheDocument();
+    expect(within(batchMenu).getByText("1 element")).toBeInTheDocument();
     const connectItem = within(batchMenu).getByText("Connect").closest("[role='menuitem']");
     const deleteItem = within(batchMenu).getByText("Delete").closest("[role='menuitem']");
     expect(connectItem?.querySelector("svg")).toBeTruthy();
@@ -1664,7 +1664,7 @@ describe("Grid — no collapse after add / revisit", () => {
       "[data-feed-grid-selection-context-menu]",
     ) as HTMLElement;
     expect(menu).toBeInTheDocument();
-    expect(within(menu).getByText("2 карточки")).toBeInTheDocument();
+    expect(within(menu).getByText("2 elements")).toBeInTheDocument();
 
     // Commands that address a single file or URL have no group meaning, so the
     // selection menu does not offer them at all.
@@ -1939,7 +1939,7 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(gridItemForSlug("block-9512")).not.toHaveAttribute("data-feed-grid-item-selected");
     expect(gridItemForSlug("block-9513")).toHaveAttribute("data-feed-grid-item-selected", "true");
     expect(gridItemForSlug("block-9514")).not.toHaveAttribute("data-feed-grid-item-selected");
-    expect(screen.getByText("2 карточки")).toBeInTheDocument();
+    expect(screen.getByText("2 elements")).toBeInTheDocument();
   });
 
   it("selects every card intersecting an empty-area marquee drag", async () => {
@@ -2010,7 +2010,7 @@ describe("Grid — no collapse after add / revisit", () => {
     });
 
     expect(document.querySelector("[data-feed-grid-marquee-selection]")).toBeNull();
-    expect(screen.getByText("2 карточки")).toBeInTheDocument();
+    expect(screen.getByText("2 elements")).toBeInTheDocument();
   });
 
   it("scrolls the feed and keeps selecting while a marquee drag is held at the edge", async () => {
@@ -3153,12 +3153,12 @@ describe("bottom-bar command availability", () => {
     });
 
     expect(onKeyboardFocusChange.mock.calls.at(-1)?.[0]).toBeTypeOf("function");
-    expect(onCardMenuShortcutChange.mock.calls.at(-1)?.[0]).toBe(true);
+    expect(onCardMenuShortcutChange.mock.calls.at(-1)?.[0]).toBeTypeOf("function");
 
     view.unmount();
 
     expect(onKeyboardFocusChange.mock.calls.at(-1)?.[0]).toBeNull();
-    expect(onCardMenuShortcutChange.mock.calls.at(-1)?.[0]).toBe(false);
+    expect(onCardMenuShortcutChange.mock.calls.at(-1)?.[0]).toBeNull();
   });
 
   it("withdraws them while a card is open, where neither applies", async () => {
@@ -3198,6 +3198,6 @@ describe("bottom-bar command availability", () => {
     });
 
     expect(onKeyboardFocusChange.mock.calls.at(-1)?.[0]).toBeNull();
-    expect(onCardMenuShortcutChange.mock.calls.at(-1)?.[0]).toBe(false);
+    expect(onCardMenuShortcutChange.mock.calls.at(-1)?.[0]).toBeNull();
   });
 });

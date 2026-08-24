@@ -14,7 +14,7 @@ import {
 import { MenuIconSlot } from "@/components/ui/menu-icon-slot";
 import { useGroupSelectionMenuActions } from "@/hooks/useGroupSelectionMenuActions";
 import type { LightBlock, TagCount } from "@/types";
-import { selectedCardCountLabel } from "@/lib/groupSelection";
+import { selectedElementCountLabel } from "@/lib/groupSelection";
 import { DeleteSelectedCardsDialog } from "./DeleteSelectedCardsDialog";
 import {
   BatchCollectionPicker,
@@ -118,7 +118,7 @@ export function GroupSelectionCardMenu({
             className="px-2 py-1.5 font-mono text-sm text-muted-foreground"
             data-feed-grid-batch-menu-count=""
           >
-            {selectedCardCountLabel(selectedBlocks.length)}
+            {selectedElementCountLabel(selectedBlocks.length)}
           </div>
           <DropdownMenuSeparator />
           <DropdownMenuSub open={actions.connectOpen} onOpenChange={actions.setConnectOpen}>

@@ -30,7 +30,7 @@ import type { LightBlock, TagCount } from "@/types";
 import {
   patchTagLookup,
   scheduleAfterOptimisticUiUpdate,
-  selectedCardCountLabel,
+  selectedElementCountLabel,
 } from "@/lib/groupSelection";
 
 interface GroupSelectionActionBarProps {
@@ -144,7 +144,7 @@ export function GroupSelectionActionBar({
             className="shrink-0 px-2 font-mono text-sm text-muted-foreground"
             data-feed-selection-count=""
           >
-            {selectedCardCountLabel(selectedBlocks.length)}
+            {selectedElementCountLabel(selectedBlocks.length)}
           </div>
 
           <DropdownMenu open={connectOpen} onOpenChange={setConnectOpen} modal={false}>
@@ -209,9 +209,9 @@ export function GroupSelectionActionBar({
             </AlertDialogTrigger>
             <AlertDialogContent size="sm">
               <AlertDialogHeader className="place-items-start text-left">
-                <AlertDialogTitle>Delete selected cards?</AlertDialogTitle>
+                <AlertDialogTitle>Delete selected elements?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  This will delete {selectedCardCountLabel(selectedBlocks.length)}. Media files stay in the vault.
+                  This will delete {selectedElementCountLabel(selectedBlocks.length)}. Media files stay in the vault.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>

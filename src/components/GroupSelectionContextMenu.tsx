@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/context-menu";
 import { MenuIconSlot } from "@/components/ui/menu-icon-slot";
 import { useGroupSelectionMenuActions } from "@/hooks/useGroupSelectionMenuActions";
-import { selectedCardCountLabel } from "@/lib/groupSelection";
+import { selectedElementCountLabel } from "@/lib/groupSelection";
 import type { LightBlock, TagCount } from "@/types";
 import {
   BatchCollectionPicker,
@@ -70,7 +70,7 @@ export function GroupSelectionContextMenu({
         className="px-2 py-1.5 font-mono text-sm text-muted-foreground"
         data-feed-grid-selection-context-menu-count=""
       >
-        {selectedCardCountLabel(selectedBlocks.length)}
+        {selectedElementCountLabel(selectedBlocks.length)}
       </div>
       <ContextMenuSeparator />
       <ContextMenuSub open={actions.connectOpen} onOpenChange={actions.setConnectOpen}>

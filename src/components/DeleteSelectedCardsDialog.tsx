@@ -9,7 +9,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { selectedCardCountLabel } from "@/lib/groupSelection";
+import { selectedElementCountLabel } from "@/lib/groupSelection";
 
 interface DeleteSelectedCardsDialogProps {
   open: boolean;
@@ -56,9 +56,9 @@ export function DeleteSelectedCardsDialog({
     >
       <AlertDialogContent size="sm">
         <AlertDialogHeader className="place-items-start text-left">
-          <AlertDialogTitle>Delete selected cards?</AlertDialogTitle>
+          <AlertDialogTitle>Delete selected elements?</AlertDialogTitle>
           <AlertDialogDescription>
-            This will delete {selectedCardCountLabel(selectedCount)}. Media files stay in the vault.
+            This will delete {selectedElementCountLabel(selectedCount)}. Media files stay in the vault.
           </AlertDialogDescription>
         </AlertDialogHeader>
         {error && (

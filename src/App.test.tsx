@@ -188,6 +188,8 @@ vi.mock("@/components/Grid", () => ({
     thumbVersions,
     onBlockClick,
     onGroupSelectionStart,
+    onSelectionCommandChange,
+    onCardMenuShortcutChange,
   }: {
     blocks: LightBlock[];
     currentTag?: string;
@@ -199,6 +201,8 @@ vi.mock("@/components/Grid", () => ({
     thumbVersions?: ReadonlyMap<string, number>;
     onBlockClick: (block: LightBlock) => void;
     onGroupSelectionStart?: () => void;
+    onSelectionCommandChange?: (clear: (() => void) | null) => void;
+    onCardMenuShortcutChange?: (activate: (() => void) | null) => void;
   }) => (
     <div>
       <div data-testid="grid">{`${currentTag ?? "__all__"}:${blocks.length}`}</div>
@@ -211,6 +215,15 @@ vi.mock("@/components/Grid", () => ({
       </div>
       <button type="button" onClick={() => onGroupSelectionStart?.()}>
         Start group selection
+      </button>
+      <button
+        type="button"
+        onClick={() => onSelectionCommandChange?.(() => onSelectionCommandChange?.(null))}
+      >
+        Report selection
+      </button>
+      <button type="button" onClick={() => onCardMenuShortcutChange?.(() => {})}>
+        Report card menu
       </button>
       {blocks.map((item) => (
         <div key={`${item.slug}-title`} data-testid={`grid-title-${item.slug}`}>
@@ -979,7 +992,7 @@ describe("AppWithVault", () => {
     expect(spaceSwitcher).toHaveTextContent("vault");
     expect(topSidebarSegment?.querySelector("[data-top-chrome-space-separator]")).toBeInTheDocument();
     expect(topSidebarSegment?.querySelector("[data-top-chrome-search-separator]")).toBeInTheDocument();
-    expect(screen.queryByRole("textbox", { name: "Search elements" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Find elements" })).not.toBeInTheDocument();
     expect(document.querySelector("[data-main-search-top-bar]")).toBeNull();
   });
 
@@ -1068,6 +1081,50 @@ describe("AppWithVault", () => {
 
     expect(localStorage.getItem("mine.mainViewMode")).toBe("grid");
     expect(await screen.findByTestId("grid")).toHaveTextContent("__all__:2");
+  });
+
+  it("narrows the bar to selection commands while a selection exists", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+    expect(bottomBarEntry("Navigate")).not.toBeNull();
+
+    fireEvent.click(screen.getByText("Report selection"));
+
+    // Navigation leaves, the selection's own command arrives.
+    expect(bottomBarEntry("Navigate")).toBeNull();
+    expect(bottomBarEntry("Switch collection")).toBeNull();
+    const clearEntry = bottomBarEntry("Clear selection");
+    expect(clearEntry).not.toBeNull();
+
+    // Pressing it clears the selection, and the bar returns to navigation.
+    fireEvent.click(clearEntry!);
+    expect(bottomBarEntry("Clear selection")).toBeNull();
+    expect(bottomBarEntry("Navigate")).not.toBeNull();
+  });
+
+  it("keeps Settings at the far right edge of the bar", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    const bar = document.querySelector("[data-bottom-action-bar]") as HTMLElement;
+    const labels = Array.from(bar.querySelectorAll("button")).map((b) => b.textContent ?? "");
+    const findIndex = labels.findIndex((label) => label.includes("Find elements"));
+    const settingsIndex = labels.findIndex((label) => label.includes("Settings"));
+    expect(findIndex).toBeGreaterThan(-1);
+    expect(settingsIndex).toBeGreaterThan(findIndex);
+    expect(settingsIndex).toBe(labels.length - 1);
   });
 
   it("cycles Grid and Graph with plain Tab", async () => {
@@ -1323,7 +1380,7 @@ describe("AppWithVault", () => {
       expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
     });
     const gridCallsBeforeSearchToggle = commandMocks.listGridBlocks.mock.calls.length;
-    const searchButton = screen.getByRole("button", { name: /Search elements/ });
+    const searchButton = screen.getByRole("button", { name: /Find elements/ });
 
     fireEvent.click(searchButton);
     expect(searchButton).not.toHaveAttribute("data-action-selected");

@@ -523,8 +523,23 @@ export function AppWithVault({
     setHasFocusedItem(activate !== null);
   }, []);
   // Reported separately from focus: the feed answers ⌘K only under keyboard
-  // focus, while Enter also opens a card focused by pointer.
+  // focus, while Enter also opens an element focused by pointer. The act
+  // itself lives in a ref so a press on the bar's Command entry opens the
+  // same menu the keystroke would — presence alone is state.
+  const cardMenuActivateRef = useRef<(() => void) | null>(null);
   const [feedCardMenuAvailable, setFeedCardMenuAvailable] = useState(false);
+  const reportCardMenuCommand = useCallback((activate: (() => void) | null) => {
+    cardMenuActivateRef.current = activate;
+    setFeedCardMenuAvailable(activate !== null);
+  }, []);
+  // Selection owns one bar command — clearing itself — and reports it the
+  // same way.
+  const selectionClearRef = useRef<(() => void) | null>(null);
+  const [hasSelection, setHasSelection] = useState(false);
+  const reportSelectionCommand = useCallback((clear: (() => void) | null) => {
+    selectionClearRef.current = clear;
+    setHasSelection(clear !== null);
+  }, []);
   const [pendingCreateChannelDrop, setPendingCreateChannelDrop] =
     useState<PendingCreateChannelDrop | null>(null);
   const [renamingBlock, setRenamingBlock] = useState<LightBlock | IndexedBlock | null>(null);
@@ -3235,7 +3250,8 @@ export function AppWithVault({
             element={
               <PageShell
                 onKeyboardFocusChange={reportKeyboardFocus}
-                onCardMenuShortcutChange={setFeedCardMenuAvailable}
+                onCardMenuShortcutChange={reportCardMenuCommand}
+                onSelectionCommandChange={reportSelectionCommand}
                 blocks={activeBlocks}
                 vaultPath={vaultPath}
                 thumbsRootPath={thumbsRootPath ?? undefined}
@@ -3423,52 +3439,65 @@ export function AppWithVault({
         >
           {/* Same command as the View menu item and the two-finger swipe. It
               leads because it changes the shape of the window itself. */}
-          <ActionButton hotkey="⌃⌘S" onClick={toggleCollapsed}>
+          <ActionButton hotkey={commandById("toggle-sidebar").combo} onClick={toggleCollapsed}>
             {sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar"}
           </ActionButton>
-          <ActionButton hotkey="⌘⇧N" onClick={beginCreateCollection}>
-            New Collection
+          <ActionButton hotkey={commandById("new-collection").combo} onClick={beginCreateCollection}>
+            {commandById("new-collection").name}
           </ActionButton>
-          <ActionButton hotkey="⌘," onClick={handleOpenSettings}>
-            Settings
-          </ActionButton>
-          {/* A command appears only while it can be used. Navigation needs
-              something to navigate and a feed to navigate it in — an open card
-              answers no arrows, and the feed stops listening while one is open.
-              Stepping between collections needs the list it steps through to be
-              on screen. Focus needs something focused. Showing any of them
-              otherwise teaches a shortcut that does nothing. */}
-          {orderedTags.length > 0 && !sidebarCollapsed && (
-            <ActionButton hotkey="⌘⌥ ↕" readOnly>
-              Switch collection
+          {/* A command appears only while it can be used, and contextual
+              entries only append at the end of the group — what the user has
+              already seen never shifts. During a selection the bar narrows to
+              the selection's own commands: navigation and Focus leave, esc
+              arrives. */}
+          {orderedTags.length > 0 && !sidebarCollapsed && !hasSelection && (
+            <ActionButton hotkey={commandById("switch-collection").combo} readOnly>
+              {commandById("switch-collection").name}
             </ActionButton>
           )}
-          {activeBlocks.length > 0 && renderedDetailBlock === null && (
-            <ActionButton hotkey="↕ ↔" readOnly>
-              Navigate
+          {activeBlocks.length > 0 && renderedDetailBlock === null && !hasSelection && (
+            <ActionButton hotkey={commandById("navigate").combo} readOnly>
+              {commandById("navigate").name}
             </ActionButton>
           )}
-          {/* Pressable, unlike its neighbours: it has an action of its own —
-              open whatever the view has focused. */}
-          {hasFocusedItem && (
-            <ActionButton hotkey="↵" onClick={() => activateFocusedRef.current?.()}>
-              Focus
+          {hasFocusedItem && !hasSelection && (
+            <ActionButton
+              hotkey={commandById("open-focused").combo}
+              onClick={() => activateFocusedRef.current?.()}
+            >
+              {commandById("open-focused").name}
             </ActionButton>
           )}
-          {/* The card menu opens where the card is, so there is no position a
-              press on the bar could use — it stays a reference. Available with
-              a card open, and in the feed only under keyboard focus, which is
-              the sole condition the feed answers ⌘K under. */}
+          {/* Pressable: the menu opens at the focused element — in the feed at
+              its card, over an open element in its top menu. */}
           {(renderedDetailBlock !== null || feedCardMenuAvailable) && (
-            <ActionButton hotkey="⌘K" readOnly>
-              Command
+            <ActionButton
+              hotkey={commandById("element-menu").combo}
+              onClick={() => {
+                if (renderedDetailBlock) {
+                  setCompactDetailTopMenuRequestSequence((current) => current + 1);
+                  return;
+                }
+                cardMenuActivateRef.current?.();
+              }}
+            >
+              {commandById("element-menu").name}
             </ActionButton>
           )}
-          {/* Closing is the card's own command and exists only while one is
-              open. */}
           {renderedDetailBlock !== null && (
-            <ActionButton hotkey="esc" readOnly>
-              Close card
+            <ActionButton
+              hotkey={commandById("close-element").combo}
+              onClick={handleDetailClose}
+            >
+              {commandById("close-element").name}
+            </ActionButton>
+          )}
+          {hasSelection && renderedDetailBlock === null && (
+            <ActionButton
+              hotkey={commandById("clear-selection").combo}
+              onClick={() => selectionClearRef.current?.()}
+            >
+              {commandById("clear-selection").name}
             </ActionButton>
           )}
           <div className="flex-1" />
@@ -3476,10 +3505,15 @@ export function AppWithVault({
             <span className="text-sm text-muted-foreground">Syncing…</span>
           )}
           <ActionButton
-            hotkey="⌘F"
+            hotkey={commandById("find-elements").combo}
             onClick={toggleSearchOverlay}
           >
-            Search elements
+            {commandById("find-elements").name}
+          </ActionButton>
+          {/* Settings sits at the far edge: the rarest command must not spend
+              the bar's best real estate. */}
+          <ActionButton hotkey={commandById("settings").combo} onClick={handleOpenSettings}>
+            {commandById("settings").name}
           </ActionButton>
         </div>
       )}
@@ -3601,7 +3635,8 @@ interface RouteContext {
   acceptGraphRevision: (revision: ProjectionRevision) => boolean;
   /// How to open what the active view has focused, or null when nothing is.
   onKeyboardFocusChange: (activate: (() => void) | null) => void;
-  onCardMenuShortcutChange: (available: boolean) => void;
+  onCardMenuShortcutChange: (activate: (() => void) | null) => void;
+  onSelectionCommandChange: (clear: (() => void) | null) => void;
   /// Offered by the empty-space onboarding, which is the only place in the app
   /// that can introduce the clipper to someone who has never seen it.
   onInstallClipper: () => void;

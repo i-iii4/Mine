@@ -170,7 +170,8 @@ interface GridProps {
   /// it, so the bottom bar can offer Focus only when there is something to
   /// open — and act on it when pressed.
   onKeyboardFocusChange?: (activate: (() => void) | null) => void;
-  onCardMenuShortcutChange?: (available: boolean) => void;
+  onCardMenuShortcutChange?: (activate: (() => void) | null) => void;
+  onSelectionCommandChange?: (clear: (() => void) | null) => void;
   vaultPath: string;
   thumbsRootPath?: string;
   /// Start the clipper setup flow from the empty-space onboarding.
@@ -408,6 +409,7 @@ export function Grid({
   blocks,
   onKeyboardFocusChange,
   onCardMenuShortcutChange,
+  onSelectionCommandChange,
   vaultPath,
   thumbsRootPath,
   onInstallClipper,
@@ -1403,20 +1405,13 @@ export function Grid({
     onKeyboardFocusChange?.(block ? () => handleBlockClick(block) : null);
   }, [blocks, detailOpen, focusedSlug, handleBlockClick, onKeyboardFocusChange]);
 
-  // The feed card menu answers ⌘K only under keyboard focus, so the bar is told
-  // about that exact condition rather than about focus in general.
-  useEffect(() => {
-    onCardMenuShortcutChange?.(
-      !detailOpen && feedInteractionMode === "keyboard" && focusedSlug !== null,
-    );
-  }, [detailOpen, feedInteractionMode, focusedSlug, onCardMenuShortcutChange]);
-
   // A grid that goes away takes its commands with it: without this the bar keeps
   // offering Focus and the card menu after the feed is replaced by the graph.
   useEffect(() => () => {
     onKeyboardFocusChange?.(null);
-    onCardMenuShortcutChange?.(false);
-  }, [onCardMenuShortcutChange, onKeyboardFocusChange]);
+    onCardMenuShortcutChange?.(null);
+    onSelectionCommandChange?.(null);
+  }, [onCardMenuShortcutChange, onKeyboardFocusChange, onSelectionCommandChange]);
 
   const handleModifiedCardClick = useCallback((
     block: LightBlock,
@@ -1574,6 +1569,69 @@ export function Grid({
     return () => cancelAnimationFrame(frame);
   }, [marqueeAutoScrollActive]);
 
+  // Opens the menu of the focused element — the same act whether it arrives as
+  // ⌘K or as a press on the bar's Command entry. Guards match the keydown path:
+  // the menu opens at the card, so the card must be live and on screen.
+  const openFocusedElementMenu = useCallback((): boolean => {
+    if (keyboardNavigationDisabled) return false;
+    if (feedInteractionMode !== "keyboard" || !focusedSlug) return false;
+    const scrollElement = parentRef.current;
+    const currentScrollTop = scrollElement?.scrollTop ?? scrollTop;
+    const currentViewportHeight = scrollElement?.clientHeight || viewportHeight;
+    const focusedPosition = findPositionForSlug(layout.positions, blocks, focusedSlug);
+    const focusedBlock = focusedPosition ? blocks[focusedPosition.index] : null;
+    if (
+      !focusedPosition
+      || !focusedBlock
+      || !renderReadyBlockIds.has(focusedBlock.id)
+      || !isPositionVisibleInViewport(
+        focusedPosition,
+        currentScrollTop,
+        currentViewportHeight,
+        gridTopInset,
+      )
+    ) {
+      return false;
+    }
+    if (selectedSlugs.size > 0) {
+      setSelectionBatchMenuRequest((current) => ({
+        slug: focusedSlug,
+        sequence: (current?.sequence ?? 0) + 1,
+      }));
+    } else {
+      setActionMenuRequest((current) => ({
+        slug: focusedSlug,
+        sequence: (current?.sequence ?? 0) + 1,
+      }));
+    }
+    return true;
+  }, [
+    blocks,
+    feedInteractionMode,
+    focusedSlug,
+    gridTopInset,
+    keyboardNavigationDisabled,
+    layout.positions,
+    renderReadyBlockIds,
+    scrollTop,
+    selectedSlugs.size,
+    viewportHeight,
+  ]);
+
+  // The feed element menu answers ⌘K only under keyboard focus, so the bar is
+  // told about that exact condition — and handed the act itself, so a press on
+  // the bar's Command entry opens the same menu the keystroke would.
+  useEffect(() => {
+    const available = !detailOpen && feedInteractionMode === "keyboard" && focusedSlug !== null;
+    onCardMenuShortcutChange?.(available ? () => { openFocusedElementMenu(); } : null);
+  }, [detailOpen, feedInteractionMode, focusedSlug, onCardMenuShortcutChange, openFocusedElementMenu]);
+
+  // Selection reports its one bar command — clearing — while it exists.
+  useEffect(() => {
+    onSelectionCommandChange?.(selectedSlugs.size > 0 ? clearSelection : null);
+  }, [clearSelection, onSelectionCommandChange, selectedSlugs.size]);
+
+
   useEffect(() => {
     if (keyboardNavigationDisabled) return;
 
@@ -1590,39 +1648,9 @@ export function Grid({
 
       if (commandK) {
         if (event.defaultPrevented) return;
-        if (feedInteractionMode !== "keyboard") return;
-        if (!focusedSlug) return;
-        const focusedPosition = findPositionForSlug(
-          layout.positions,
-          blocks,
-          focusedSlug,
-        );
-        const focusedBlock = focusedPosition ? blocks[focusedPosition.index] : null;
-        if (
-          !focusedPosition ||
-          !focusedBlock ||
-          !renderReadyBlockIds.has(focusedBlock.id) ||
-          !isPositionVisibleInViewport(
-            focusedPosition,
-            currentScrollTop,
-            currentViewportHeight,
-            gridTopInset,
-          )
-        ) {
-          return;
-        }
-        event.preventDefault();
-        event.stopPropagation();
-        if (selectedSlugs.size > 0) {
-          setSelectionBatchMenuRequest((current) => ({
-            slug: focusedSlug,
-            sequence: (current?.sequence ?? 0) + 1,
-          }));
-        } else {
-          setActionMenuRequest((current) => ({
-            slug: focusedSlug,
-            sequence: (current?.sequence ?? 0) + 1,
-          }));
+        if (openFocusedElementMenu()) {
+          event.preventDefault();
+          event.stopPropagation();
         }
         return;
       }
@@ -1772,6 +1800,7 @@ export function Grid({
     handleBlockClick,
     keyboardNavigationDisabled,
     layout.positions,
+    openFocusedElementMenu,
     renderReadyBlockIds,
     selectedSlugs.size,
     scrollTop,
