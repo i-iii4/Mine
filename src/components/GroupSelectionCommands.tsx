@@ -33,7 +33,7 @@ import {
   selectedElementCountLabel,
 } from "@/lib/groupSelection";
 
-interface GroupSelectionActionBarProps {
+interface GroupSelectionCommandsProps {
   selectedBlocks: LightBlock[];
   tags: TagCount[];
   currentTag?: string;
@@ -45,7 +45,7 @@ interface GroupSelectionActionBarProps {
   onClearSelection: () => void;
 }
 
-export function GroupSelectionActionBar({
+export function GroupSelectionCommands({
   selectedBlocks,
   tags,
   currentTag,
@@ -55,7 +55,7 @@ export function GroupSelectionActionBar({
   onDeleteSelectedBlocks,
   onMergeSelectedBlocks,
   onClearSelection,
-}: GroupSelectionActionBarProps) {
+}: GroupSelectionCommandsProps) {
   const selectedSlugs = useMemo(
     () => selectedBlocks.map((block) => block.slug),
     [selectedBlocks],
@@ -135,16 +135,16 @@ export function GroupSelectionActionBar({
 
   return (
     <div
-      className="pointer-events-none absolute bottom-s3 left-1/2 z-40 max-w-[calc(100%-3rem)] -translate-x-1/2"
+      className="relative h-full w-full text-foreground"
       data-feed-selection-action-bar=""
     >
-      <div className="pointer-events-auto h-8 max-w-full overflow-x-auto overflow-y-hidden rounded-1 border border-border bg-accent px-1 text-foreground shadow-md">
+      <div className="h-full max-w-full overflow-x-auto overflow-y-hidden px-[var(--main-secondary-pad-x,0.5rem)]">
         <div className="flex h-full min-w-max items-center gap-1">
           <div
             className="shrink-0 px-2 font-mono text-sm text-muted-foreground"
             data-feed-selection-count=""
           >
-            {selectedElementCountLabel(selectedBlocks.length)}
+            {`${selectedElementCountLabel(selectedBlocks.length)} selected`}
           </div>
 
           <DropdownMenu open={connectOpen} onOpenChange={setConnectOpen} modal={false}>
@@ -230,12 +230,13 @@ export function GroupSelectionActionBar({
             </AlertDialogContent>
           </AlertDialog>
 
+          <div className="min-w-2 flex-1" />
           <Button
             type="button"
             variant="ghost"
             size="icon"
             aria-label="Clear selection"
-            className="size-8 text-muted-foreground hover:text-foreground"
+            className="size-8 shrink-0 text-muted-foreground hover:text-foreground"
             onClick={onClearSelection}
           >
             <X className="size-4" />
@@ -243,7 +244,7 @@ export function GroupSelectionActionBar({
         </div>
       </div>
       {actionError && (
-        <p className="pointer-events-auto mt-2 rounded-1 border border-destructive bg-background px-3 py-1 text-sm text-destructive">
+        <p className="absolute left-1/2 top-full z-40 mt-2 -translate-x-1/2 rounded-1 border border-destructive bg-background px-3 py-1 text-sm text-destructive">
           {actionError}
         </p>
       )}

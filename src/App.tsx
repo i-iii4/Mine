@@ -542,6 +542,9 @@ export function AppWithVault({
   // Selection owns one bar command — clearing itself — and reports it the
   // same way.
   const selectionClearRef = useRef<(() => void) | null>(null);
+  // The chrome row's slot the feed portals the selection commands into.
+  const [selectionCommandsHost, setSelectionCommandsHost] =
+    useState<HTMLDivElement | null>(null);
   // The bar hides whole entries by decided priority when the window narrows.
   // Widths are cached from the last visible render, so a hidden entry keeps
   // its claim and returns the moment there is room again.
@@ -3059,6 +3062,8 @@ export function AppWithVault({
           onDetailClose={handleDetailClose}
           detailMenuOpenRequestSequence={compactDetailTopMenuRequestSequence}
           placement={metadataRowAtBottom ? "bottom" : "top"}
+          selectionActive={hasSelection}
+          selectionHostRef={setSelectionCommandsHost}
         />
   ) : null;
 
@@ -3323,6 +3328,7 @@ export function AppWithVault({
                 onKeyboardFocusChange={reportKeyboardFocus}
                 onCardMenuShortcutChange={reportCardMenuCommand}
                 onSelectionCommandChange={reportSelectionCommand}
+                selectionCommandsHost={selectionCommandsHost}
                 blocks={activeBlocks}
                 vaultPath={vaultPath}
                 thumbsRootPath={thumbsRootPath ?? undefined}
@@ -3756,6 +3762,7 @@ interface RouteContext {
   onKeyboardFocusChange: (activate: (() => void) | null) => void;
   onCardMenuShortcutChange: (activate: (() => void) | null) => void;
   onSelectionCommandChange: (clear: (() => void) | null) => void;
+  selectionCommandsHost: HTMLElement | null;
   /// Offered by the empty-space onboarding, which is the only place in the app
   /// that can introduce the clipper to someone who has never seen it.
   onInstallClipper: () => void;

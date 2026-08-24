@@ -18,7 +18,7 @@ import { ActionButton } from "@/components/ActionButton";
 import { ChromeCloseButton } from "@/components/ChromeCloseButton";
 import { CollectionPicker } from "@/components/CollectionPicker";
 import { EdgeStatesSection } from "@/components/EdgeStatesSection";
-import { GroupSelectionActionBar } from "@/components/GroupSelectionActionBar";
+import { GroupSelectionCommands } from "@/components/GroupSelectionCommands";
 import { GraphCollectionLabel } from "@/components/GraphCollectionLabel";
 import { MenuTextTrigger } from "@/components/MenuTextTrigger";
 import { QuantizedMenuScrollArea } from "@/components/QuantizedMenuScrollArea";
@@ -909,7 +909,7 @@ function ShellAndSelectionSection() {
       </ComponentSpec>
 
       <ComponentSpec
-        title="GroupSelectionActionBar"
+        title="GroupSelectionCommands"
         summary="Плавающий остров пакетных действий. Кнопки xs, центрирован, отступ снизу по --spacing-s3."
         specs={[
           { prop: "Высота", value: "32 (h-8)" },
@@ -922,7 +922,7 @@ function ShellAndSelectionSection() {
         ]}
       >
         <div className="relative h-32 w-full overflow-hidden rounded-1 border border-border bg-background">
-          <GroupSelectionActionBar
+          <GroupSelectionCommands
             selectedBlocks={GROUP_SELECTION_BLOCKS}
             tags={SAMPLE_TAGS}
             currentTag="beautiful-web"

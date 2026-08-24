@@ -1134,6 +1134,30 @@ describe("AppWithVault", () => {
     }
   });
 
+  it("hands the chrome row to the selection while one exists", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    const selectionLayer = () =>
+      document.querySelector("[data-secondary-selection-bar]") as HTMLElement;
+    expect(selectionLayer()).toHaveAttribute("data-entered", "false");
+
+    fireEvent.click(screen.getByText("Report selection"));
+    expect(selectionLayer()).toHaveAttribute("data-entered", "true");
+    // The ordinary stats layer yields while the selection holds the row.
+    const mainLayer = document.querySelector("[data-main-secondary-main-layer]");
+    expect(mainLayer).toHaveAttribute("data-entered", "false");
+
+    fireEvent.click(bottomBarEntry("Clear selection")!);
+    expect(selectionLayer()).toHaveAttribute("data-entered", "false");
+  });
+
   it("keeps Settings at the far right edge of the bar", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>

@@ -22,7 +22,8 @@ import { EmptySpaceOnboarding } from "./EmptySpaceOnboarding";
 import { IndexingProgress } from "./IndexingProgress";
 import { MeasureCard } from "./MeasureCard";
 import { CardTagMenu } from "./CardContextMenu";
-import { GroupSelectionActionBar } from "./GroupSelectionActionBar";
+import { createPortal } from "react-dom";
+import { GroupSelectionCommands } from "./GroupSelectionCommands";
 import { GroupSelectionCardMenu } from "./GroupSelectionCardMenu";
 import { GroupSelectionContextMenu } from "./GroupSelectionContextMenu";
 import { DeleteSelectedCardsDialog } from "./DeleteSelectedCardsDialog";
@@ -172,6 +173,7 @@ interface GridProps {
   onKeyboardFocusChange?: (activate: (() => void) | null) => void;
   onCardMenuShortcutChange?: (activate: (() => void) | null) => void;
   onSelectionCommandChange?: (clear: (() => void) | null) => void;
+  selectionCommandsHost?: HTMLElement | null;
   vaultPath: string;
   thumbsRootPath?: string;
   /// Start the clipper setup flow from the empty-space onboarding.
@@ -410,6 +412,7 @@ export function Grid({
   onKeyboardFocusChange,
   onCardMenuShortcutChange,
   onSelectionCommandChange,
+  selectionCommandsHost,
   vaultPath,
   thumbsRootPath,
   onInstallClipper,
@@ -2105,19 +2108,27 @@ export function Grid({
         </div>
       </ContextMenuTrigger>
 
-      {!blockDragActive && (
-        <GroupSelectionActionBar
-          selectedBlocks={selectedBlocks}
-          tags={tags}
-          currentTag={currentTag}
-          onLoadBlockTags={onLoadBlockTags}
-          onBatchSetTag={onBatchSetTag}
-          onCreateAndAssignBatch={onCreateAndAssignBatch}
-          onDeleteSelectedBlocks={onDeleteSelectedBlocks}
-          onMergeSelectedBlocks={openMergeDialog}
-          onClearSelection={clearSelection}
-        />
-      )}
+      {/* The selection's commands render in the secondary chrome row — the
+          selection itself stays owned here, presentation moves. Without a host
+          (unit renders) the row mounts in place. */}
+      {!blockDragActive && (() => {
+        const commands = (
+          <GroupSelectionCommands
+            selectedBlocks={selectedBlocks}
+            tags={tags}
+            currentTag={currentTag}
+            onLoadBlockTags={onLoadBlockTags}
+            onBatchSetTag={onBatchSetTag}
+            onCreateAndAssignBatch={onCreateAndAssignBatch}
+            onDeleteSelectedBlocks={onDeleteSelectedBlocks}
+            onMergeSelectedBlocks={openMergeDialog}
+            onClearSelection={clearSelection}
+          />
+        );
+        return selectionCommandsHost
+          ? createPortal(commands, selectionCommandsHost)
+          : commands;
+      })()}
 
       <DeleteSelectedCardsDialog
         open={deleteSelectionDialogOpen}

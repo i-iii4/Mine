@@ -227,6 +227,8 @@ export function MainSecondaryTopBar({
   indexing = false,
   onRevealSpace,
   placement = "top",
+  selectionActive = false,
+  selectionHostRef,
 }: {
   sidebarCollapsed: boolean;
   sidebarResizing: boolean;
@@ -257,9 +259,13 @@ export function MainSecondaryTopBar({
   /// button bar's surface and closes with a border on top instead of below —
   /// the seam always faces the content.
   placement?: "top" | "bottom";
+  /// A group selection exists: its commands take the whole row over.
+  selectionActive?: boolean;
+  /// Where the feed portals the selection's commands into.
+  selectionHostRef?: (element: HTMLDivElement | null) => void;
 }) {
   const detailLayerEntered = Boolean(detailBlock && detailEntered);
-  const mainLayerEntered = !detailLayerEntered;
+  const mainLayerEntered = !detailLayerEntered && !selectionActive;
   const closeChromeGesture = useChromeDragGesture({ disabled: !detailBlock });
   const {
     attributes: dragAttributes,
@@ -279,9 +285,10 @@ export function MainSecondaryTopBar({
       data-tauri-drag-region
       data-main-secondary-top-bar=""
       className={cn(
-        "flex h-8 shrink-0 items-center transition-colors duration-[170ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
+        "relative flex h-8 shrink-0 items-center transition-colors duration-[170ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
         placement === "bottom" ? "border-t border-border bg-accent" : "border-b border-border",
-        placement === "top" && (detailLayerEntered ? "bg-accent" : "bg-background"),
+        placement === "top"
+          && (detailLayerEntered || selectionActive ? "bg-accent" : "bg-background"),
       )}
       data-main-secondary-placement={placement}
     >
@@ -323,6 +330,19 @@ export function MainSecondaryTopBar({
             />
           </div>
         )}
+      </div>
+      {/* Spans both segments: while a selection exists, the whole row belongs
+          to its commands. The host stays mounted so the feed's portal target
+          exists before the first selected card. */}
+      <div
+        className={cn(
+          "main-secondary-bar-layer absolute inset-0 z-10",
+          !selectionActive && "pointer-events-none",
+        )}
+        data-entered={selectionActive ? "true" : "false"}
+        data-secondary-selection-bar=""
+      >
+        <div ref={selectionHostRef} className="h-full w-full" />
       </div>
       <div
         data-tauri-drag-region
