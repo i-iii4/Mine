@@ -1399,14 +1399,26 @@ export function Grid({
   // Reported upward rather than lifted: the focus belongs to the grid, and the
   // bar receives only the one thing it needs — a way to open what is focused,
   // or nothing when there is no focus.
+  //
+  // Keyboard focus only. Moving the pointer across the feed also sets
+  // `focusedSlug` — that is how hover works here — and reporting that put an
+  // Enter entry in the bar for a card the user was merely passing over, with
+  // no keyboard focus ring to explain it.
   useEffect(() => {
-    if (detailOpen || !focusedSlug) {
+    if (detailOpen || feedInteractionMode !== "keyboard" || !focusedSlug) {
       onKeyboardFocusChange?.(null);
       return;
     }
     const block = blocks.find((candidate) => candidate.slug === focusedSlug);
     onKeyboardFocusChange?.(block ? () => handleBlockClick(block) : null);
-  }, [blocks, detailOpen, focusedSlug, handleBlockClick, onKeyboardFocusChange]);
+  }, [
+    blocks,
+    detailOpen,
+    feedInteractionMode,
+    focusedSlug,
+    handleBlockClick,
+    onKeyboardFocusChange,
+  ]);
 
   // A grid that goes away takes its commands with it: without this the bar keeps
   // offering Focus and the card menu after the feed is replaced by the graph.

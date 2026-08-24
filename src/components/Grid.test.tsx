@@ -3154,6 +3154,37 @@ describe("bottom-bar command availability", () => {
     expect(onCardMenuShortcutChange.mock.calls.at(-1)?.[0]).toBeNull();
   });
 
+  it("stays silent while the pointer merely passes over a card", async () => {
+    // Hover sets focusedSlug — that is how the feed tracks the pointer — but a
+    // card under the cursor is not a keyboard focus, and an Enter entry in the
+    // bar for it has nothing on screen to explain it.
+    vi.useFakeTimers();
+    const onKeyboardFocusChange = vi.fn();
+    const blocks = [makeBlock(9721), makeBlock(9722)];
+    setBlockHeight(9721, 200);
+    setBlockHeight(9722, 220);
+
+    render(
+      <Grid
+        {...BASE_PROPS}
+        blocks={blocks}
+        onKeyboardFocusChange={onKeyboardFocusChange}
+      />,
+    );
+    await flushAsync();
+
+    const wrapper = gridItemForSlug("block-9721");
+    fireEvent.pointerMove(wrapper!, { clientX: 120, clientY: 160, pointerId: 1 });
+    await flushAsync();
+
+    expect(onKeyboardFocusChange.mock.calls.at(-1)?.[0]).toBeNull();
+
+    // The same card, reached with the keyboard, does report.
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    await flushAsync();
+    expect(onKeyboardFocusChange.mock.calls.at(-1)?.[0]).toBeTypeOf("function");
+  });
+
   it("withdraws them while a card is open, where neither applies", async () => {
     vi.useFakeTimers();
     const onKeyboardFocusChange = vi.fn();
