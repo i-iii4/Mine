@@ -73,14 +73,17 @@ webview-обработчик уступает, чтобы не переключ�
 
 ## Нижняя панель при сужении окна
 
-Записи скрываются целиком, по ценности: сначала справочные (`Navigate`,
-`Switch collection`) — нажать в них нечего; затем заученные команды
-(`Settings`, `Hide Sidebar`, `New Collection`, `Find elements`, `Commands`) —
-они всегда доступны и продублированы в нативном меню; последними —
-ситуативные (`Command`, `Focus`), которые видно только в их собственном
-состоянии. Esc-записи не скрываются никогда. Порядок и сам замер покрыты
-тестами `src/lib/bottomBarOverflow.test.ts` и `src/App.test.tsx`
-(«hides bar entries by worth when the window is too narrow»).
+Записи скрываются целиком; усечение запрещено. Факт переполнения берётся из
+раскладки (`scrollWidth > clientWidth` на панели), а не вычисляется из ширин.
+
+Порядок: справочные (`Navigate`, `Switch collection`) → esc-записи (`Close`,
+`Clear selection`) → заученные (`Settings`, `Hide Sidebar`, `New Collection`,
+`Find elements`, `Commands`) → ситуативные (`Command`, `Focus`).
+
+Тесты: `src/lib/bottomBarOverflow.test.ts` закрепляет порядок,
+`src/App.test.tsx` («hides bar entries by worth when the window is too narrow»)
+прогоняет настоящий путь измерения и проверяет, что остаток действительно
+помещается.
 
 ## Решения, принятые сознательно
 

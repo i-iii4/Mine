@@ -1113,10 +1113,10 @@ describe("AppWithVault", () => {
   });
 
   it("hides bar entries by worth when the window is too narrow", async () => {
-    // jsdom reports no widths of its own, so the bar's own measuring path is
-    // driven here with real numbers: a 320px bar holding entries that need far
-    // more. Without this the overflow rule was only ever tested as a pure
-    // function, never as the thing the window actually runs.
+    // jsdom lays nothing out, so the bar's own measurement is fed real numbers:
+    // clientWidth is the 320px window, scrollWidth is what the still-visible
+    // entries add up to. This drives the production path — show all, then hide
+    // by priority while the bar still overflows.
     const widths = new Map<string, number>([
       ["toggle-sidebar", 150],
       ["new-collection", 150],
@@ -1126,18 +1126,21 @@ describe("AppWithVault", () => {
       ["commands-overlay", 120],
       ["settings", 100],
     ]);
-    const offsetWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetWidth");
-    Object.defineProperty(HTMLElement.prototype, "offsetWidth", {
-      configurable: true,
-      get(this: HTMLElement) {
-        const id = this.dataset?.barEntry;
-        return id ? (widths.get(id) ?? 100) : 0;
-      },
-    });
+    const client = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+    const scroll = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollWidth");
     Object.defineProperty(HTMLElement.prototype, "clientWidth", {
       configurable: true,
       get(this: HTMLElement) {
         return this.hasAttribute("data-bottom-action-bar") ? 320 : 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollWidth", {
+      configurable: true,
+      get(this: HTMLElement) {
+        if (!this.hasAttribute("data-bottom-action-bar")) return 0;
+        return Array.from(this.querySelectorAll<HTMLElement>("[data-bar-entry]"))
+          .filter((slot) => slot.style.display !== "none")
+          .reduce((sum, slot) => sum + (widths.get(slot.dataset.barEntry!) ?? 100), 0);
       },
     });
 
@@ -1151,24 +1154,27 @@ describe("AppWithVault", () => {
         expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
       });
 
-      const shown = () => {
-        const bar = document.querySelector("[data-bottom-action-bar]") as HTMLElement;
-        return Array.from(bar.querySelectorAll<HTMLElement>("[data-bar-entry]"))
-          .filter((node) => node.style.display !== "none")
-          .map((node) => node.dataset.barEntry!);
-      };
+      const bar = () => document.querySelector("[data-bottom-action-bar]") as HTMLElement;
+      const shown = () => Array.from(bar().querySelectorAll<HTMLElement>("[data-bar-entry]"))
+        .filter((node) => node.style.display !== "none")
+        .map((node) => node.dataset.barEntry!);
 
-      // The measuring pass runs after the commit that adds an entry, so the
-      // settled state is what matters, not the first frame.
       await waitFor(() => {
         expect(shown()).not.toContain("navigate");
       });
       const visible = shown();
+      // Reference entries go first, then the learned commands.
       expect(visible).not.toContain("switch-collection");
       expect(visible).not.toContain("settings");
-      expect(visible.length).toBeLessThan(widths.size);
+      // And what is left actually fits — the whole point of the rule.
+      expect(bar().scrollWidth).toBeLessThanOrEqual(bar().clientWidth);
     } finally {
-      if (offsetWidth) Object.defineProperty(HTMLElement.prototype, "offsetWidth", offsetWidth);
+      // jsdom may not define these at all; leaving a stub behind would make
+      // every later test think the bar overflows.
+      if (client) Object.defineProperty(HTMLElement.prototype, "clientWidth", client);
+      else Reflect.deleteProperty(HTMLElement.prototype, "clientWidth");
+      if (scroll) Object.defineProperty(HTMLElement.prototype, "scrollWidth", scroll);
+      else Reflect.deleteProperty(HTMLElement.prototype, "scrollWidth");
     }
   });
 
@@ -1215,10 +1221,12 @@ describe("AppWithVault", () => {
     for (const id of hideable) {
       expect(BAR_HIDE_PRIORITIES[id], `${id} has no hide priority`).toBeTypeOf("number");
     }
-    // Only the exits stay at any width: a state with no visible way out is
-    // worse than a crowded bar.
-    expect(BAR_HIDE_PRIORITIES["close-element"]).toBeUndefined();
-    expect(BAR_HIDE_PRIORITIES["clear-selection"]).toBeUndefined();
+    // Escape is known everywhere, so its entries hide like any other — before
+    // the commands that can only be learned from this bar.
+    expect(BAR_HIDE_PRIORITIES["close-element"]!)
+      .toBeLessThan(BAR_HIDE_PRIORITIES["open-focused"]!);
+    expect(BAR_HIDE_PRIORITIES["clear-selection"]!)
+      .toBeLessThan(BAR_HIDE_PRIORITIES["element-menu"]!);
   });
 
   it("hands the chrome row to the selection while one exists", async () => {

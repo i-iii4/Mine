@@ -1,70 +1,45 @@
 import { describe, expect, it } from "vitest";
-import { BAR_HIDE_PRIORITIES, computeHiddenBarEntries } from "./bottomBarOverflow";
+import { BAR_HIDE_PRIORITIES } from "./bottomBarOverflow";
 
-const entry = (id: string, width: number) => ({
-  id,
-  priority: BAR_HIDE_PRIORITIES[id]!,
-  width,
-});
+/// The order is a decision about worth; the bar itself decides how much has to
+/// go. These tests pin the decision, not the arithmetic.
+describe("bottom-bar hide order", () => {
+  const before = (a: string, b: string) => {
+    const pa = BAR_HIDE_PRIORITIES[a];
+    const pb = BAR_HIDE_PRIORITIES[b];
+    expect(pa, `${a} has no priority`).toBeTypeOf("number");
+    expect(pb, `${b} has no priority`).toBeTypeOf("number");
+    expect(pa!, `${a} should leave before ${b}`).toBeLessThan(pb!);
+  };
 
-const ALL = [
-  entry("toggle-sidebar", 150),
-  entry("new-collection", 150),
-  entry("switch-collection", 170),
-  entry("navigate", 110),
-  entry("open-focused", 70),
-  entry("element-menu", 100),
-  entry("find-elements", 150),
-  entry("settings", 100),
-];
-// Sum: 1000.
-
-describe("computeHiddenBarEntries", () => {
-  it("hides nothing while everything fits", () => {
-    expect(computeHiddenBarEntries(1000, ALL).size).toBe(0);
+  it("drops what cannot be pressed before anything that can", () => {
+    for (const pressable of [
+      "close-element", "settings", "toggle-sidebar", "new-collection",
+      "find-elements", "commands-overlay", "element-menu", "open-focused",
+    ]) {
+      before("navigate", pressable);
+      before("switch-collection", pressable);
+    }
   });
 
-  it("drops the reference entries first: nothing can be pressed there", () => {
-    expect([...computeHiddenBarEntries(900, ALL)]).toEqual(["navigate"]);
-    expect([...computeHiddenBarEntries(750, ALL)]).toEqual(["navigate", "switch-collection"]);
-  });
-
-  it("then drops the commands the user has already learned", () => {
-    const hidden = computeHiddenBarEntries(400, ALL);
-    expect(hidden.has("settings")).toBe(true);
-    expect(hidden.has("toggle-sidebar")).toBe(true);
-    // Situational commands are still standing at this width.
-    expect(hidden.has("open-focused")).toBe(false);
-    expect(hidden.has("element-menu")).toBe(false);
+  it("drops Escape with the learned commands, not last", () => {
+    // Escape is the most universally known key in any interface: its entry is
+    // a courtesy, not a lifeline.
+    before("close-element", "element-menu");
+    before("clear-selection", "open-focused");
   });
 
   it("keeps the situational commands longest", () => {
-    // The bar is the only place Focus and Command are ever shown; the learned
-    // ones also live in the native menu.
-    const order: string[] = [];
-    for (let width = 1000; width >= 0; width -= 10) {
-      for (const id of computeHiddenBarEntries(width, ALL)) {
-        if (!order.includes(id)) order.push(id);
-      }
+    // The bar is the only place Focus and Command are ever shown; every
+    // learned command also lives in the native menu.
+    for (const learned of ["settings", "toggle-sidebar", "new-collection", "find-elements"]) {
+      before(learned, "element-menu");
+      before(learned, "open-focused");
     }
-    expect(order.indexOf("open-focused")).toBeGreaterThan(order.indexOf("settings"));
-    expect(order.indexOf("element-menu")).toBeGreaterThan(order.indexOf("find-elements"));
-    expect(order.at(-1)).toBe("open-focused");
   });
 
-  it("never drops more than needed", () => {
-    expect(computeHiddenBarEntries(890, ALL)).toEqual(new Set(["navigate"]));
-  });
-
-  it("drops everything hideable when nothing fits", () => {
-    expect(computeHiddenBarEntries(0, ALL).size).toBe(ALL.length);
-  });
-
-  it("hides by decided worth even when a bigger entry would fit better", () => {
-    // Navigate is narrower than Switch collection, yet leaves first: the order
-    // is a decision about worth, not a packing optimisation.
-    const hidden = computeHiddenBarEntries(910, ALL);
-    expect(hidden.has("navigate")).toBe(true);
-    expect(hidden.has("switch-collection")).toBe(false);
+  it("gives every hideable entry a distinct place in the order", () => {
+    const values = Object.values(BAR_HIDE_PRIORITIES);
+    expect(new Set(values).size).toBe(values.length);
   });
 });

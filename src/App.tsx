@@ -45,11 +45,7 @@ import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
 import { cn } from "@/lib/utils";
 import { commandById } from "@/lib/commandRegistry";
 import { createParamsForClipboardPayload } from "@/lib/pasteImport";
-import {
-  BAR_HIDE_PRIORITIES,
-  computeHiddenBarEntries,
-  type BarEntryMeasurement,
-} from "@/lib/bottomBarOverflow";
+import { BAR_HIDE_PRIORITIES } from "@/lib/bottomBarOverflow";
 import {
   isDetailShortcutBlockedTarget,
   isEditableKeyboardTarget,
@@ -552,41 +548,42 @@ export function AppWithVault({
   // Widths are cached from the last visible render, so a hidden entry keeps
   // its claim and returns the moment there is room again.
   const bottomBarRef = useRef<HTMLDivElement | null>(null);
-  const barEntryWidthsRef = useRef<Map<string, number>>(new Map());
   const [hiddenBarEntries, setHiddenBarEntries] = useState<ReadonlySet<string>>(new Set());
+  // Overflow is measured, not computed. An arithmetic guess at the free width
+  // has to model padding, gaps, the spacer and every fixed child correctly, and
+  // one wrong term leaves entries hanging off the edge of the window — which is
+  // exactly what happened. `scrollWidth > clientWidth` asks the layout itself.
   const remeasureBottomBar = useCallback(() => {
     const bar = bottomBarRef.current;
     if (!bar) return;
-    const widths = barEntryWidthsRef.current;
-    let fixedWidth = 0;
-    const present: BarEntryMeasurement[] = [];
-    for (const child of Array.from(bar.children) as HTMLElement[]) {
-      if (child.dataset.barSpacer !== undefined) continue;
-      const gap = 8; // the bar's own gap-2 rhythm
-      const entryId = child.dataset.barEntry;
-      if (entryId === undefined) {
-        fixedWidth += child.offsetWidth + gap;
-        continue;
-      }
-      if (child.offsetWidth > 0) widths.set(entryId, child.offsetWidth + gap);
-      present.push({
-        id: entryId,
-        priority: BAR_HIDE_PRIORITIES[entryId] ?? Number.MAX_SAFE_INTEGER,
-        width: widths.get(entryId) ?? 0,
-      });
+    const slots = Array.from(
+      bar.querySelectorAll<HTMLElement>("[data-bar-entry]"),
+    );
+    if (slots.length === 0) return;
+
+    // Show everything first, so a window that grew gets its entries back.
+    for (const slot of slots) slot.style.display = "";
+    const byPriority = [...slots].sort((a, b) => (
+      (BAR_HIDE_PRIORITIES[a.dataset.barEntry ?? ""] ?? Number.MAX_SAFE_INTEGER)
+      - (BAR_HIDE_PRIORITIES[b.dataset.barEntry ?? ""] ?? Number.MAX_SAFE_INTEGER)
+    ));
+    const hidden = new Set<string>();
+    for (const slot of byPriority) {
+      if (bar.scrollWidth <= bar.clientWidth) break;
+      const id = slot.dataset.barEntry;
+      if (!id) continue;
+      slot.style.display = "none";
+      hidden.add(id);
     }
-    const available = bar.clientWidth
-      - fixedWidth
-      - 2 * parseFloat(getComputedStyle(bar).paddingLeft || "0");
-    const next = computeHiddenBarEntries(available, present);
+
     setHiddenBarEntries((current) => {
-      if (current.size === next.size && [...next].every((id) => current.has(id))) {
+      if (current.size === hidden.size && [...hidden].every((id) => current.has(id))) {
         return current;
       }
-      return next;
+      return hidden;
     });
   }, []);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const bar = bottomBarRef.current;
     if (!bar) return;
     remeasureBottomBar();
@@ -594,9 +591,10 @@ export function AppWithVault({
     observer.observe(bar);
     return () => observer.disconnect();
   }, [remeasureBottomBar, bottomActionBarHidden]);
-  // Entry sets change with state (focus, selection, open element) — remeasure
-  // after every commit; the state setter above ignores no-op results.
-  useEffect(() => {
+  // The set of entries changes with state (focus, selection, open element), so
+  // the bar is measured again after every commit; the setter ignores a result
+  // that did not change.
+  useLayoutEffect(() => {
     remeasureBottomBar();
   });
   const [hasSelection, setHasSelection] = useState(false);
@@ -3643,20 +3641,32 @@ export function AppWithVault({
             </span>
           )}
           {renderedDetailBlock !== null && (
-            <ActionButton
-              hotkey={commandById("close-element").combo}
-              onClick={handleDetailClose}
+            <span
+              data-bar-entry="close-element"
+              className="inline-flex shrink-0 items-center"
+              style={hiddenBarEntries.has("close-element") ? { display: "none" } : undefined}
             >
-              {commandById("close-element").name}
-            </ActionButton>
+              <ActionButton
+                hotkey={commandById("close-element").combo}
+                onClick={handleDetailClose}
+              >
+                {commandById("close-element").name}
+              </ActionButton>
+            </span>
           )}
           {hasSelection && renderedDetailBlock === null && (
-            <ActionButton
-              hotkey={commandById("clear-selection").combo}
-              onClick={() => selectionClearRef.current?.()}
+            <span
+              data-bar-entry="clear-selection"
+              className="inline-flex shrink-0 items-center"
+              style={hiddenBarEntries.has("clear-selection") ? { display: "none" } : undefined}
             >
-              {commandById("clear-selection").name}
-            </ActionButton>
+              <ActionButton
+                hotkey={commandById("clear-selection").combo}
+                onClick={() => selectionClearRef.current?.()}
+              >
+                {commandById("clear-selection").name}
+              </ActionButton>
+            </span>
           )}
           <div className="flex-1" data-bar-spacer="" />
           {isSyncing && (
