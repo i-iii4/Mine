@@ -40,6 +40,59 @@ Status vocabulary:
 | A8. Persistence and read-model contracts | DONE | Versioned SQLite migrations, shared projection revisions, independent search revisions, generated IPC bindings, native-shell smoke and truthful MSRV | Upgrade tests, atomic snapshot tests, binding freshness, browser/native gates and Rust 1.88 locked-workspace CI all pass |
 | A9. Card media geometry | DONE | Artifact-owned preview dimensions, typed source/preview split, aspect clamp as the single cropping decision | Contract in `SPEC_CARD_MEDIA_GEOMETRY.md` accepted; then: generator writes preview dimensions, fallback chain removed, autoplay profile tests stay green unchanged, feed audit covers surface width and collage tile ratios |
 
+### Клавиатурная система команд — план 23.08.2026 (SPEC, ожидает одобрения)
+
+Решения зафиксированы после аудита сочетаний. Источник: аудит 23.08.2026,
+решения пользователя в той же сессии.
+
+**Принятые решения:**
+
+- **Tab переключает режим текущей поверхности.** В ленте и графе — Grid ↔ Graph,
+  в открытом элементе — Collections / All connected. Один жест, одно правило.
+  Охраны: поля ввода, оверлеи, диалоги — Tab в них остаётся нативным.
+- **Граф управляется только курсором.** Клавиатурная навигация из графа
+  удаляется целиком (стрелки, Enter, Escape, отчёт о фокусе в панель).
+- **Нижняя панель становится нажимаемой полностью**, кроме двух справочных
+  записей: `Switch collection` и `Navigate` — у них нет одного действия для
+  клика, но показывать их нужно. `Command ⌘K` открывает меню у сфокусированного
+  элемента, `esc` выполняет свой сброс, `Focus` уже кнопка.
+- **Settings уезжает вправо**, к поиску: правая группа — `Find elements`,
+  `Commands ⌘/`, `Settings` (крайняя правая).
+- **Контекстные записи только дописываются в конец группы**, никогда не
+  вставляются между существующими.
+- **При выделении**: появляется нажимаемая `esc Clear selection`, скрываются
+  `Focus` и вся навигация.
+- **Сужение окна**: записи скрываются по приоритету, целиком, без обрезки.
+  Порядок скрытия (первым прячется): `Navigate` → `Switch collection` →
+  `Command` → `Focus` → `New Collection` → `Hide Sidebar`. Никогда не прячутся:
+  `esc`-записи, `Find elements`, `Settings`, индикатор Syncing.
+- **Список команд по ⌘/** — оверлей со всеми сочетаниями, сгруппированными по
+  контексту (Global / Feed / Element / Selection), из единого реестра.
+- **Вставка из буфера (⌘V)** — файлы, изображение, текст; через существующий
+  конвейер импорта.
+- **Имена**: везде element/elements вместо card; `Close card` → `Close`;
+  `Search elements` → `Find elements` (глагол меню). `Focus` остаётся.
+- Удаление и переименование остаются только в меню `⌘K` — покрытие достаточно.
+
+**Этапы (каждый: тесты, сборка, перезапуск, коммит, пуш):**
+
+| # | Этап | Содержание |
+|---|---|---|
+| K1 | Реестр команд | `src/lib/commandRegistry.ts`: id, сочетание (строка показа + матчер), имя, контекст, условие доступности. Панель и оверлей ⌘/ читают из него; обработчики берут из него матчеры и имена |
+| K2 | Граф без клавиатуры | Удалить `handleGraphKeyDown`, отчёт фокуса, `tabIndex` холста; панель в графе — только глобальные записи. Обновить `SPEC_GRAPH_VIEW.md` |
+| K3 | Tab-правило | Глобальный обработчик с охранами; лента/граф → `viewMode`, открытый элемент → `detailLinkMode` |
+| K4 | Панель: нажимаемость, порядок, имена | Pressable-записи, Settings вправо, переименования, состояние выделения (esc, скрытие Focus/навигации), правило дописывания |
+| K5 | Сужение окна | ResizeObserver на панели, жадное размещение по приоритетам, скрытие целыми записями |
+| K6 | Оверлей ⌘/ | Список команд из реестра, группировка по контексту, esc закрывает. Запись `⌘/ Commands` в правой группе |
+| K7 | Групповые действия наверх | Слой строки secondary chrome: `N elements selected`, Connect / Disconnect / Merge / Delete, крестик справа; ошибка действия строкой под панелью; плавающая панель удаляется. Выделение отдаётся наверх через ref со стабильным колбэком |
+| K8 | Вставка из буфера | Rust-команда чтения NSPasteboard (файлы / PNG / текст), фронтенд ⌘V в ленте, маршрутизация в конвейер импорта, элемент попадает в текущую коллекцию |
+| K9 | Документация | `SPEC_KEYBOARD.md` (карта всех сочетаний из реестра), обновление `DESIGN_SYSTEM.md` (контракт панели), `SPEC_GROUP_SELECTION.md`, `SPEC_GRAPH_VIEW.md`, DEVLOG по этапам |
+
+**Зафиксированные допущения** (изменить — сказать до старта): глагол поиска —
+Find; `Close` без слова element; `Navigate` остаётся справочной записью;
+вставка текста создаёт markdown-элемент, URL в тексте не разворачивается в
+клип (обогащение — вне объёма K8).
+
 ### Tooling maintenance checkpoint — 19.07.2026
 
 - `shadcn` CLI обновлён до 4.13.1; `shadcn info` подтверждает текущий
