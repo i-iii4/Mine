@@ -273,6 +273,7 @@ import {
 import { RenameBlockDialog } from "@/components/RenameBlockDialog";
 import { SearchOverlay } from "@/components/SearchOverlay";
 import { CreateCollectionDialog } from "@/components/CreateCollectionDialog";
+import { CommandsOverlay } from "@/components/CommandsOverlay";
 import { DeleteBlockDialog } from "@/components/DeleteBlockDialog";
 import {
   ImagePreviewOverlay,
@@ -514,6 +515,7 @@ export function AppWithVault({
   const [imagePreview, setImagePreview] = useState<ImagePreviewRequest | null>(null);
   const [isCreatingChannel, setIsCreatingChannel] = useState(false);
   const [isNamingCollection, setIsNamingCollection] = useState(false);
+  const [commandsOverlayOpen, setCommandsOverlayOpen] = useState(false);
   // Whether the active view holds a focus that Enter would open. The bottom bar
   // shows a command only while it can be used, and Focus has nothing to act on
   // until something is focused.
@@ -2120,6 +2122,19 @@ export function AppWithVault({
     return () => window.removeEventListener("keydown", handler);
   }, [handleMainViewModeChange, mainViewMode, renderedDetailBlock]);
 
+  // ── ⌘/ — the full command table ───────────────────────────────────────
+  useEffect(() => {
+    const overlay = commandById("commands-overlay");
+    const handler = (e: KeyboardEvent) => {
+      if (!overlay.matches!(e)) return;
+      if (e.defaultPrevented || isEditableKeyboardTarget(e.target)) return;
+      e.preventDefault();
+      setCommandsOverlayOpen((current) => !current);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
   // ── Opt+Cmd+Up/Down — switch channels ─────────────────────────────────
   //
   // Works with a card open: the card belongs to the channel being left, so it
@@ -3603,6 +3618,12 @@ export function AppWithVault({
           >
             {commandById("find-elements").name}
           </ActionButton>
+          <ActionButton
+            hotkey={commandById("commands-overlay").combo}
+            onClick={() => setCommandsOverlayOpen(true)}
+          >
+            {commandById("commands-overlay").name}
+          </ActionButton>
           {/* Settings sits at the far edge: the rarest command must not spend
               the bar's best real estate. */}
           <ActionButton hotkey={commandById("settings").combo} onClick={handleOpenSettings}>
@@ -3615,6 +3636,11 @@ export function AppWithVault({
         open={isNamingCollection}
         onOpenChange={setIsNamingCollection}
         onCreate={handleCreateChannel}
+      />
+
+      <CommandsOverlay
+        open={commandsOverlayOpen}
+        onOpenChange={setCommandsOverlayOpen}
       />
 
       <Suspense fallback={null}>

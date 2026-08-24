@@ -1153,6 +1153,32 @@ describe("AppWithVault", () => {
     expect(settingsIndex).toBe(labels.length - 1);
   });
 
+  it("opens and closes the command table with Command-slash and the bar entry", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    fireEvent.keyDown(window, { key: "/", metaKey: true });
+    await waitFor(() => {
+      expect(document.querySelector("[data-commands-overlay]")).toBeInTheDocument();
+    });
+    expect(document.querySelector("[data-commands-overlay-section='global']")).toBeInTheDocument();
+    expect(document.querySelector("[data-commands-overlay-section='selection']")).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "/", metaKey: true });
+    await waitFor(() => {
+      expect(document.querySelector("[data-commands-overlay]")).not.toBeInTheDocument();
+    });
+
+    fireEvent.click(bottomBarEntry("Commands")!);
+    expect(await screen.findByText("Contextual commands work on the surface they belong to.")).toBeInTheDocument();
+  });
+
   it("cycles Grid and Graph with plain Tab", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
