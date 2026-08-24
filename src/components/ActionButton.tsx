@@ -62,7 +62,17 @@ export const ActionButton = React.forwardRef<HTMLDivElement, ActionButtonProps>(
             pair, and enclosing it reads as a key cap. The action name is prose
             and stays unenclosed. */}
         {hotkey ? (
-          <span className="inline-flex h-5 shrink-0 items-center rounded-[2px] bg-component-fill-inner px-[1ch] leading-none text-foreground">
+          <span
+            className={cn(
+              "inline-flex h-5 shrink-0 items-center rounded-[2px] px-[1ch] leading-none text-foreground",
+              // A key cap that can be pressed is filled; one that only names a
+              // keystroke is drawn as an outline. The missing body is what
+              // separates a control from a reference at a glance.
+              readOnly
+                ? "bg-transparent outline-1 -outline-offset-1 outline-border"
+                : "bg-component-fill-inner",
+            )}
+          >
             {hotkey}
           </span>
         ) : null}

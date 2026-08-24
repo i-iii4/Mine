@@ -14,10 +14,11 @@ const buttonVariants = cva(
         // buttons are never borderless — ghost is reserved for icon controls.
         secondary: "bg-transparent outline-1 -outline-offset-1 outline-border hover:outline-component-fill-hover",
         destructive: "bg-component-fill text-destructive outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover",
-        // A body with no answer to the pointer: for entries that name a
-        // keystroke and cannot be pressed. Same fill as `default`, no hover —
-        // a hover response promises a press that does not exist.
-        reference: "bg-component-fill outline-0 outline-transparent",
+        // A keystroke that cannot be pressed: `secondary`'s body — transparent,
+        // permanent border — with no hover at all. The outline keeps it a
+        // control by shape; the missing fill and missing hover say it is a
+        // reference, not a button.
+        reference: "bg-transparent outline-1 -outline-offset-1 outline-border",
         ghost: "bg-transparent hover:text-hover-foreground",
         link: "bg-transparent underline underline-offset-4 hover:text-hover-foreground",
       },

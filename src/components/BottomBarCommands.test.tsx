@@ -30,6 +30,20 @@ describe("bottom-bar command entries", () => {
     // the group-hover classes layered on top of it.
     expect(markup).not.toContain("hover:outline");
     expect(markup).not.toMatch(/\bhover:/);
+    // Reference entries wear the secondary body: outline only, no fill. The
+    // fill is what makes a control read as pressable.
+    expect(markup).toContain("outline-border");
+    expect(markup).toContain("bg-transparent");
+    expect(markup).not.toContain("bg-component-fill");
+  });
+
+  it("keeps the fill on a command that can be pressed", () => {
+    // The contrast is the point: pressable entries carry a body, reference
+    // entries only a border.
+    render(<ActionButton hotkey="↵" onClick={() => {}}>Focus</ActionButton>);
+    const entry = screen.getByText("Focus").closest("[data-action-button]");
+
+    expect(entry?.outerHTML ?? "").toContain("bg-component-fill");
   });
 
   it("leaves an ordinary command interactive", () => {
