@@ -995,7 +995,33 @@ pub fn is_rust_decodable(path: &std::path::Path) -> bool {
     if buf[0] == 0x47 && buf[1] == 0x49 && buf[2] == 0x46 && buf[3] == 0x38 {
         return true;
     }
+    // WebP: RIFF????WEBP. The `image` crate decodes still WebP — lossy, lossless
+    // and the extended VP8X form — but not animation. Treating every WebP as
+    // undecodable sent them all through the browser path instead, where gallery
+    // tiles then hit the poster-name guard and were never written at all.
+    if &buf[0..4] == b"RIFF" {
+        let mut header = [0u8; 15];
+        if file.read_exact(&mut header).is_ok() && &header[2..6] == b"WEBP" {
+            return still_webp_chunk(&header[6..15]);
+        }
+    }
     false
+}
+
+/// Whether a WebP's first chunk is a still image the `image` crate can read.
+///
+/// `chunk` starts at the fourcc that follows the `WEBP` tag: four bytes of
+/// fourcc, four of size, then the VP8X flags byte. Animation lives behind bit
+/// 0x02 of those flags and is the one form the crate cannot decode.
+fn still_webp_chunk(chunk: &[u8]) -> bool {
+    if chunk.len() < 4 {
+        return false;
+    }
+    match &chunk[0..4] {
+        b"VP8 " | b"VP8L" => true,
+        b"VP8X" => chunk.len() >= 9 && chunk[8] & 0x02 == 0,
+        _ => false,
+    }
 }
 
 /// Outcome of `generate_for_block` — which source pipeline produced the thumb.
@@ -1295,6 +1321,30 @@ fn resolve_block_media_path(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn treats_webp_as_rust_decodable() {
+        // The `image` crate decodes WebP; leaving it out of this check sent
+        // every WebP down the browser path, where gallery tiles then hit the
+        // poster-name guard and were never written at all.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("photo.webp");
+        let img = image::RgbImage::from_pixel(8, 8, image::Rgb([10, 20, 30]));
+        image::DynamicImage::ImageRgb8(img)
+            .save_with_format(&path, image::ImageFormat::WebP)
+            .unwrap();
+
+        assert!(super::is_rust_decodable(&path));
+    }
+
+    #[test]
+    fn does_not_mistake_a_plain_riff_file_for_webp() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sound.wav");
+        std::fs::write(&path, b"RIFF\x00\x00\x00\x00WAVEfmt ").unwrap();
+
+        assert!(!super::is_rust_decodable(&path));
+    }
+
     use super::*;
     use crate::domain::block::BlockType;
     use ab_glyph::Font;
@@ -2143,13 +2193,28 @@ mod tests {
     }
 
     #[test]
-    fn is_rust_decodable_rejects_webp_heic_avif_and_garbage() {
+    fn is_rust_decodable_rejects_animation_heic_avif_and_garbage() {
         let dir = tempfile::tempdir().unwrap();
 
-        // VP8X WebP: RIFF....WEBP
-        let webp = dir.path().join("anim.webp");
-        std::fs::write(&webp, b"RIFF\x00\x00\x00\x00WEBPVP8X").unwrap();
-        assert!(!is_rust_decodable(&webp));
+        // Animated WebP: VP8X with the animation flag set. The crate reads
+        // still WebP but not animation, so this one still belongs to the
+        // browser path.
+        let animated = dir.path().join("anim.webp");
+        std::fs::write(
+            &animated,
+            b"RIFF\x00\x00\x00\x00WEBPVP8X\x0a\x00\x00\x00\x02\x00\x00\x00\x00\x00",
+        )
+        .unwrap();
+        assert!(!is_rust_decodable(&animated));
+
+        // The same extended form without animation is a still image.
+        let still = dir.path().join("still.webp");
+        std::fs::write(
+            &still,
+            b"RIFF\x00\x00\x00\x00WEBPVP8X\x0a\x00\x00\x00\x08\x00\x00\x00\x00\x00",
+        )
+        .unwrap();
+        assert!(is_rust_decodable(&still));
 
         // HEIC: starts with `\x00\x00\x00\x20ftypheic`
         let heic = dir.path().join("pic.heic");

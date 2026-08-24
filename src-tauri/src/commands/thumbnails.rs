@@ -232,9 +232,12 @@ pub fn save_tile_poster(
         .map_err(|error| CommandError::Internal(format!("open preview metadata db: {error:#}")))?;
     validate_tile_destination(&conn, &slug, &poster_name)?;
 
-    std::fs::create_dir_all(&thumbs_dir)
-        .map_err(|e| CommandError::Internal(format!("create thumbs dir: {e}")))?;
     let dest = thumbs_dir.join(&poster_name);
+    // The destination mirrors the block's own folder, so the parent is not
+    // necessarily the thumbs root.
+    let dest_dir = dest.parent().unwrap_or(&thumbs_dir);
+    std::fs::create_dir_all(dest_dir)
+        .map_err(|e| CommandError::Internal(format!("create thumbs dir: {e}")))?;
 
     files::write_atomically(&dest, &bytes)
         .map_err(|e| CommandError::Internal(format!("write decoded tile poster: {e:#}")))?;
@@ -277,10 +280,16 @@ fn validate_tile_destination(
 }
 
 fn validate_tile_poster_request(poster_name: &str, bytes: &[u8]) -> Result<(), CommandError> {
-    // poster_name is a media-derived filename (spaces and parens allowed), not
-    // a slug. Reject path separators, traversal, NUL, and non-`.jpg` names.
+    // poster_name is a preview destination derived from the block slug, so it
+    // carries the block's folder: `Cards/Note.preview-1.jpg`. Forbidding the
+    // separator outright — as this used to — rejected every card that lives in
+    // a subfolder, which is every card in a vault laid out into Cards/ and
+    // Media/. What must stay forbidden is escaping the thumbs directory:
+    // traversal, absolute paths, backslashes and NUL. Ownership is a separate
+    // gate: `validate_tile_destination` requires the name to be exactly what
+    // the block's own manifest asks for.
     if poster_name.is_empty()
-        || poster_name.contains('/')
+        || poster_name.starts_with('/')
         || poster_name.contains('\\')
         || poster_name.contains('\0')
         || poster_name.contains("..")
@@ -826,7 +835,10 @@ mod tests {
 
     #[test]
     fn validate_tile_poster_request_rejects_unsafe_names_and_non_jpeg() {
-        for name in ["../x.jpg", "a/b.jpg", "a\\b.jpg", "x.png", "", "foo\0.jpg"] {
+        // `a/b.jpg` is no longer here: a nested destination is the normal case
+        // for a card in a subfolder. Escaping the thumbs directory is what
+        // stays refused — see the test below.
+        for name in ["../x.jpg", "a\\b.jpg", "x.png", "", "foo\0.jpg"] {
             assert!(
                 validate_tile_poster_request(name, &[0xFF, 0xD8, 0xFF, 0x00]).is_err(),
                 "should reject {name:?}"
@@ -834,6 +846,34 @@ mod tests {
         }
         // valid name, but not JPEG bytes
         assert!(validate_tile_poster_request("x.jpg", &[0x89, 0x50, 0x4E]).is_err());
+    }
+
+    #[test]
+    fn accepts_a_poster_name_that_carries_the_block_folder() {
+        // Every card in a laid-out vault has a slug like `Cards/Note`, so its
+        // tile destination has a folder in it. Rejecting the separator here
+        // meant a gallery card in a subfolder never got its tiles.
+        let jpeg = [0xFF, 0xD8, 0xFF, 0x00];
+        assert!(validate_tile_poster_request("Cards/Note.preview-1.jpg", &jpeg).is_ok());
+        assert!(validate_tile_poster_request("Note.preview-1.jpg", &jpeg).is_ok());
+    }
+
+    #[test]
+    fn still_refuses_a_poster_name_that_escapes_the_thumbs_directory() {
+        let jpeg = [0xFF, 0xD8, 0xFF, 0x00];
+        for unsafe_name in [
+            "../outside.jpg",
+            "Cards/../../outside.jpg",
+            "/absolute/outside.jpg",
+            "Cards\\Note.preview-1.jpg",
+            "Cards/Note.preview-1.png",
+            "",
+        ] {
+            assert!(
+                validate_tile_poster_request(unsafe_name, &jpeg).is_err(),
+                "{unsafe_name:?} should be refused"
+            );
+        }
     }
 
     #[test]

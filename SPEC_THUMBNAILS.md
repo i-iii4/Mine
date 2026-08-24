@@ -2,6 +2,31 @@
 
 Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [DEVLOG.md](DEVLOG.md)
 
+## Кто декодирует WebP (24.08.2026)
+
+`is_rust_decodable` признаёт статичный WebP — lossy (`VP8 `), lossless (`VP8L`)
+и расширенный (`VP8X` без флага анимации). Крейт `image` их читает, поэтому
+превью и плитки для таких файлов делает Rust.
+
+Анимационный WebP (`VP8X` с битом `0x02`) остаётся за браузером: крейт его не
+декодирует.
+
+Раньше WebP целиком считался недекодируемым и уходил в браузерный путь, где
+плитки галереи упирались в проверку имени назначения и не записывались никогда.
+
+## Имя назначения плитки
+
+`save_tile_poster` принимает вложенное имя — `Cards/Note.preview-1.jpg`, — потому
+что оно выводится из slug блока, а slug содержит папку. Запрет разделителя
+отклонял каждую карточку-галерею в подпапке, то есть каждую карточку в
+размеченном хранилище.
+
+Запрещённым остаётся выход за пределы каталога превью: `..`, ведущий `/`,
+обратный слеш, NUL, расширение не `.jpg`. Принадлежность проверяется отдельно —
+`validate_tile_destination` требует, чтобы имя в точности совпадало с тем, что
+записано в манифесте самого блока. Родительский каталог назначения создаётся при
+записи.
+
 ## Status
 
 Implemented contract. Thumbnail generation is centralized in
