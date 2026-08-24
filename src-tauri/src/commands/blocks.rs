@@ -39,6 +39,9 @@ pub struct CreateBlockParams {
     pub url: Option<String>,
     pub tags: Vec<String>,
     pub file_path: Option<String>,
+    /// Markdown body for cards born from pasted text. Absent everywhere else.
+    #[serde(default)]
+    pub body: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, specta::Type)]
@@ -473,6 +476,7 @@ pub fn create_block(
         url,
         tags,
         file_path,
+        body,
     } = params;
     let vault_state = state
         .vault_state
@@ -534,7 +538,7 @@ pub fn create_block(
             color: None,
             icon: None,
         },
-        body: String::new(),
+        body: body.unwrap_or_default(),
     };
 
     let source = file_path.as_ref().map(|fp| PathBuf::from(fp));

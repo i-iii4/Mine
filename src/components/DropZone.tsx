@@ -1,8 +1,8 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
-import type { BlockType } from "@/types";
 import { createBlock } from "@/lib/commands";
+import { fileNameToTitle, inferBlockType } from "@/lib/pasteImport";
 
 interface DropZoneProps {
   currentTag?: string;
@@ -137,25 +137,3 @@ export function DropZone({ currentTag, onBlocksCreated }: DropZoneProps) {
   );
 }
 
-function inferBlockType(ext: string): BlockType {
-  if (IMAGE_EXTS.has(ext)) return "image";
-  if (VIDEO_EXTS.has(ext)) return "video";
-  return "file";
-}
-
-function fileNameToTitle(path: string): string {
-  const name = path.split("/").pop() ?? path;
-  const stem = name.replace(/\.[^.]+$/, "");
-  return stem
-    .replace(/[-_]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-const IMAGE_EXTS = new Set([
-  "jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "tif", "svg",
-]);
-
-const VIDEO_EXTS = new Set([
-  "mp4", "mov", "avi", "mkv", "webm", "m4v",
-]);

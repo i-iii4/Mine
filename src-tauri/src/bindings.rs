@@ -14,6 +14,7 @@ use crate::commands::blocks::{
     MediaAssetReferenceKind, MergeBlocksError, MergeBlocksResult, RemoveMediaAssetFromCardParams,
     RenameBlockError, RenameBlockResult, RenameMediaAssetParams, TextSelectionExtractError,
 };
+use crate::commands::clipboard::ClipboardPayload;
 use crate::commands::channels::{
     ChannelDto, ChannelPreviewsSnapshot, PreviewItem, TaxonomySnapshot,
 };
@@ -47,6 +48,7 @@ pub fn export_types(check_only: bool) -> Result<()> {
     let mut types = TypeCollection::default();
     types
         .register::<IndexedBlock>()
+        .register::<ClipboardPayload>()
         .register::<LightBlock>()
         .register::<FeedPreviewKind>()
         .register::<FeedPreviewTile>()

@@ -31,6 +31,24 @@ block_count: number }
 
 export type ChannelPreviewsSnapshot = { generation: ProjectionRevision; previews: Partial<{ [key in string]: PreviewItem[] }> }
 
+export type ClipboardPayload =
+/**
+ * Files copied in Finder — their absolute paths.
+ */
+{ kind: "files"; paths: string[] } |
+/**
+ * A bitmap (screenshot, browser image copy), saved to a temporary PNG.
+ */
+{ kind: "image"; path: string } |
+/**
+ * Plain text.
+ */
+{ kind: "text"; text: string } |
+/**
+ * Nothing usable.
+ */
+{ kind: "empty" }
+
 export type ClipperBrowserStatus = { label: string;
 /**
  * The browser's own directory exists, so the browser is installed.
@@ -60,7 +78,11 @@ due: boolean }
 
 export type CommandError = { kind: "no_vault" } | { kind: "internal"; message: string }
 
-export type CreateBlockParams = { block_type: string; title: string | null; url: string | null; tags: string[]; file_path: string | null }
+export type CreateBlockParams = { block_type: string; title: string | null; url: string | null; tags: string[]; file_path: string | null;
+/**
+ * Markdown body for cards born from pasted text. Absent everywhere else.
+ */
+body?: string | null }
 
 export type CreateMediaAssetCardParams = { media_ref: string; target_tag: string; source_slug: string | null }
 

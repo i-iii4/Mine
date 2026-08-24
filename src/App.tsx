@@ -44,6 +44,7 @@ import { imageCardNeedsGeometryRefresh } from "@/lib/cardHeight";
 import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
 import { cn } from "@/lib/utils";
 import { commandById } from "@/lib/commandRegistry";
+import { createParamsForClipboardPayload } from "@/lib/pasteImport";
 import {
   BAR_HIDE_PRIORITIES,
   computeHiddenBarEntries,
@@ -213,6 +214,8 @@ import {
   sweepVaultThumbnails,
   openSettingsWindow,
   setSidebarMenuCollapsed,
+  createBlock,
+  readClipboardPayload
 } from "@/lib/commands";
 import { ArticleAudioGatewayProvider } from "@/lib/articleAudioGateway";
 import { desktopArticleAudioGateway } from "@/lib/articleAudioDesktopGateway";
@@ -2124,6 +2127,47 @@ export function AppWithVault({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [handleMainViewModeChange, mainViewMode, renderedDetailBlock]);
+
+  // ── ⌘V — paste into the feed ──────────────────────────────────────────
+  //
+  // Files import like drops, a bitmap becomes an image element, a lone URL a
+  // link element, other text a markdown element titled by its first line. In
+  // inputs, dialogs and over an open element ⌘V stays native.
+  const pasteBusyRef = useRef(false);
+  useEffect(() => {
+    const paste = commandById("paste");
+    const handler = (e: KeyboardEvent) => {
+      if (!paste.matches!(e)) return;
+      if (
+        e.defaultPrevented
+        || isEditableKeyboardTarget(e.target)
+        || isOverlayKeyboardTarget(e.target)
+        || isDetailShortcutBlockedTarget(e.target)
+        || renderedDetailBlock
+      ) {
+        return;
+      }
+      if (pasteBusyRef.current) return;
+      pasteBusyRef.current = true;
+      void (async () => {
+        try {
+          const payload = await readClipboardPayload();
+          const paramsList = createParamsForClipboardPayload(payload, currentTag);
+          if (paramsList.length === 0) return;
+          for (const params of paramsList) {
+            await createBlock(params);
+          }
+          await reloadAllSnapshots();
+        } catch (err) {
+          console.error("Paste into feed failed:", err);
+        } finally {
+          pasteBusyRef.current = false;
+        }
+      })();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [currentTag, reloadAllSnapshots, renderedDetailBlock]);
 
   // ── ⌘/ — the full command table ───────────────────────────────────────
   useEffect(() => {

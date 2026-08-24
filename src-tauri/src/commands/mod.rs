@@ -8,6 +8,7 @@ pub mod article_audio;
 mod article_audio_desktop;
 pub mod blocks;
 pub mod channels;
+pub mod clipboard;
 pub mod clipper_setup;
 pub mod cloud_recommendation;
 pub mod icloud_progress;

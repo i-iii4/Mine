@@ -28,6 +28,7 @@ import type {
   UnavailableVault,
   ClipperSetupStatus,
   FolderPreview,
+  ClipboardPayload,
   CreateBlockParams,
   ArenaChannelInfo,
   ImportChannelRequest,
@@ -169,6 +170,9 @@ export const getBlock = (slug: string) =>
 
 export const createBlock = (params: CreateBlockParams) =>
   invoke<IndexedBlock>("create_block", { params });
+
+export const readClipboardPayload = () =>
+  invoke<ClipboardPayload>("read_clipboard_payload");
 
 function normalizeInlineMediaExtractError(error: unknown): InlineMediaExtractError {
   if (error && typeof error === "object" && "kind" in error) {

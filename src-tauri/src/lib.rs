@@ -82,6 +82,7 @@ pub fn run() {
             commands::blocks::delete_media_asset,
             commands::blocks::remove_media_asset_from_card,
             commands::blocks::copy_media_asset_to_clipboard,
+            commands::clipboard::read_clipboard_payload,
             commands::blocks::extract_text_selection,
             commands::blocks::delete_text_selection,
             commands::blocks::rename_block_file,
