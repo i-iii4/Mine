@@ -1272,7 +1272,9 @@ describe("AppWithVault", () => {
     expect(settingsIndex).toBe(labels.length - 1);
   });
 
-  it("opens and closes the command table with Command-slash and the bar entry", async () => {
+  it("sends Command-slash to the Shortcuts settings instead of an overlay", async () => {
+    // The list lives where it can also be changed; a second copy as an overlay
+    // would be one more place to keep true.
     render(
       <MemoryRouter initialEntries={["/"]}>
         <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
@@ -1283,68 +1285,12 @@ describe("AppWithVault", () => {
     });
 
     fireEvent.keyDown(window, { key: "/", metaKey: true });
-    await waitFor(() => {
-      expect(document.querySelector("[data-commands-overlay]")).toBeInTheDocument();
-    });
-    expect(document.querySelector("[data-commands-overlay-section='global']")).toBeInTheDocument();
-    expect(document.querySelector("[data-commands-overlay-section='selection']")).toBeInTheDocument();
-
-    fireEvent.keyDown(window, { key: "/", metaKey: true });
-    await waitFor(() => {
-      expect(document.querySelector("[data-commands-overlay]")).not.toBeInTheDocument();
-    });
-
-    fireEvent.click(bottomBarEntry("Commands")!);
-    expect(await screen.findByText("Contextual commands work on the surface they belong to.")).toBeInTheDocument();
-  });
-
-  it("pastes clipboard text into the feed as a markdown element", async () => {
-    commandMocks.readClipboardPayload.mockResolvedValueOnce({
-      kind: "text",
-      text: "First line\nrest of the note",
-    } as never);
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
-      </MemoryRouter>,
-    );
-    await waitFor(() => {
-      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
-    });
-
-    fireEvent.keyDown(window, { key: "v", metaKey: true });
 
     await waitFor(() => {
-      expect(commandMocks.createBlock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          block_type: "article",
-          title: "First line",
-          body: "First line\nrest of the note",
-        }),
-      );
+      expect(commandMocks.openSettingsWindow).toHaveBeenCalledWith("shortcuts");
     });
-  });
-
-  it("leaves paste native inside an editable target", async () => {
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
-      </MemoryRouter>,
-    );
-    await waitFor(() => {
-      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
-    });
-
-    const input = document.createElement("input");
-    document.body.appendChild(input);
-    input.focus();
-    fireEvent.keyDown(input, { key: "v", metaKey: true });
-    input.remove();
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    expect(commandMocks.readClipboardPayload).not.toHaveBeenCalled();
+    expect(document.querySelector("[data-commands-overlay]")).not.toBeInTheDocument();
+    expect(bottomBarEntry("Commands")).toBeNull();
   });
 
   it("cycles Grid and Graph with plain Tab", async () => {

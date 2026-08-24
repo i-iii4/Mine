@@ -11,6 +11,7 @@ import {
 import { applyDensity, getStoredDensity } from "@/lib/density";
 import { SettingsApp } from "./SettingsApp";
 import "@/styles/global.css";
+import { hydrateCommandOverrides, watchCommandOverrides } from "@/lib/shortcutOverrides";
 
 // The settings window applies the stored theme and design itself — it cannot
 // rely on the main window having done so for this webview.
@@ -32,3 +33,6 @@ ReactDOM.createRoot(rootElement).render(
     </TooltipProvider>
   </React.StrictMode>,
 );
+
+void hydrateCommandOverrides();
+watchCommandOverrides();

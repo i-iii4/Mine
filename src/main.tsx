@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { hydrateCommandOverrides, watchCommandOverrides } from "@/lib/shortcutOverrides";
 import { applyTheme, getStoredTheme } from "@/lib/themeMode";
 import { applyDesign, getStoredDesignMode } from "@/lib/designMode";
 import { applyCardRadius, getStoredCardRadius } from "@/lib/cardRadius";
@@ -58,6 +59,10 @@ class ErrorBoundary extends React.Component<
     return this.props.children;
   }
 }
+
+// Shortcut overrides must be in place before the first keydown handler runs.
+void hydrateCommandOverrides();
+watchCommandOverrides();
 
 const rootElement = document.getElementById("root");
 if (!rootElement) {

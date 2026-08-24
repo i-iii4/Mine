@@ -29,6 +29,7 @@ import type {
   ClipperSetupStatus,
   FolderPreview,
   ClipboardPayload,
+  ShortcutBinding,
   CreateBlockParams,
   ArenaChannelInfo,
   ImportChannelRequest,
@@ -173,6 +174,12 @@ export const createBlock = (params: CreateBlockParams) =>
 
 export const readClipboardPayload = () =>
   invoke<ClipboardPayload>("read_clipboard_payload");
+
+export const listShortcutOverrides = () =>
+  invoke<Record<string, ShortcutBinding>>("list_shortcut_overrides");
+
+export const saveShortcutOverrides = (overrides: Record<string, ShortcutBinding>) =>
+  invoke<null>("save_shortcut_overrides", { overrides });
 
 function normalizeInlineMediaExtractError(error: unknown): InlineMediaExtractError {
   if (error && typeof error === "object" && "kind" in error) {
@@ -518,8 +525,8 @@ export const resolveVaultConflict = (
 
 // Clipper recovery
 // Settings window
-export const openSettingsWindow = () =>
-  invoke<void>("open_settings_window");
+export const openSettingsWindow = (section?: string) =>
+  invoke<void>("open_settings_window", { section: section ?? null });
 
 export const setSidebarMenuCollapsed = (collapsed: boolean) =>
   invoke<void>("set_sidebar_menu_collapsed", { collapsed });

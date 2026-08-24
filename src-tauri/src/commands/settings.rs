@@ -10,7 +10,7 @@ use std::path::Path;
 use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::commands::blocks::{collect_delete_media_for_block, resolve_unique_block_slug};
@@ -23,17 +23,30 @@ use crate::storage::{files, index, media_dimensions, media_refs, preview_plan, t
 const SETTINGS_WINDOW_LABEL: &str = "settings";
 
 #[tauri::command]
-pub fn open_settings_window(app: AppHandle) -> Result<(), CommandError> {
+pub fn open_settings_window(
+    app: AppHandle,
+    section: Option<String>,
+) -> Result<(), CommandError> {
     if let Some(existing) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
         let _ = existing.show();
         let _ = existing.set_focus();
+        // Already open: the window itself moves to the asked-for section.
+        if let Some(section) = section {
+            let _ = existing.emit("settings-section", section);
+        }
         return Ok(());
     }
 
+    // A fresh window carries the section in its URL: there is nothing to emit
+    // to yet.
+    let url = match section.as_deref() {
+        Some(section) => format!("settings.html?section={section}"),
+        None => "settings.html".to_string(),
+    };
     let builder = WebviewWindowBuilder::new(
         &app,
         SETTINGS_WINDOW_LABEL,
-        WebviewUrl::App("settings.html".into()),
+        WebviewUrl::App(url.into()),
     )
     .title("Settings")
     .inner_size(760.0, 560.0)

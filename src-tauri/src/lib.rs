@@ -140,7 +140,7 @@ pub fn run() {
                 let _ = app.emit("sidebar-toggle-shortcut", ());
             }
             MENU_ID_SETTINGS => {
-                let _ = commands::settings::open_settings_window(app.clone());
+                let _ = commands::settings::open_settings_window(app.clone(), None);
             }
             _ => {}
         })

@@ -272,7 +272,6 @@ import {
 import { RenameBlockDialog } from "@/components/RenameBlockDialog";
 import { SearchOverlay } from "@/components/SearchOverlay";
 import { CreateCollectionDialog } from "@/components/CreateCollectionDialog";
-import { CommandsOverlay } from "@/components/CommandsOverlay";
 import { DeleteBlockDialog } from "@/components/DeleteBlockDialog";
 import {
   ImagePreviewOverlay,
@@ -514,7 +513,6 @@ export function AppWithVault({
   const [imagePreview, setImagePreview] = useState<ImagePreviewRequest | null>(null);
   const [isCreatingChannel, setIsCreatingChannel] = useState(false);
   const [isNamingCollection, setIsNamingCollection] = useState(false);
-  const [commandsOverlayOpen, setCommandsOverlayOpen] = useState(false);
   // Whether the active view holds a focus that Enter would open. The bottom bar
   // shows a command only while it can be used, and Focus has nothing to act on
   // until something is focused.
@@ -2167,14 +2165,17 @@ export function AppWithVault({
     return () => window.removeEventListener("keydown", handler);
   }, [currentTag, reloadAllSnapshots, renderedDetailBlock]);
 
-  // ── ⌘/ — the full command table ───────────────────────────────────────
+  // ── ⌘/ — the full command table, in Settings ──────────────────────────
+  //
+  // The list lives in the Shortcuts section, where it can also be changed;
+  // a second copy of it as an overlay would be one more place to keep true.
   useEffect(() => {
     const overlay = commandById("commands-overlay");
     const handler = (e: KeyboardEvent) => {
-      if (!overlay.matches!(e)) return;
+      if (!overlay.matches?.(e)) return;
       if (e.defaultPrevented || isEditableKeyboardTarget(e.target)) return;
       e.preventDefault();
-      setCommandsOverlayOpen((current) => !current);
+      void openSettingsWindow("shortcuts");
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -3684,18 +3685,6 @@ export function AppWithVault({
               {commandById("find-elements").name}
             </ActionButton>
           </span>
-          <span
-            data-bar-entry="commands-overlay"
-            className="inline-flex shrink-0 items-center"
-            style={hiddenBarEntries.has("commands-overlay") ? { display: "none" } : undefined}
-          >
-            <ActionButton
-              hotkey={commandById("commands-overlay").combo}
-              onClick={() => setCommandsOverlayOpen(true)}
-            >
-              {commandById("commands-overlay").name}
-            </ActionButton>
-          </span>
           {/* Settings sits at the far edge: the rarest command must not spend
               the bar's best real estate. */}
           <span
@@ -3714,11 +3703,6 @@ export function AppWithVault({
         open={isNamingCollection}
         onOpenChange={setIsNamingCollection}
         onCreate={handleCreateChannel}
-      />
-
-      <CommandsOverlay
-        open={commandsOverlayOpen}
-        onOpenChange={setCommandsOverlayOpen}
       />
 
       <Suspense fallback={null}>

@@ -1,8 +1,10 @@
-import { lazy, Suspense, useState } from "react";
+import { useEffect, lazy, Suspense, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useNativeWindowChromeSurface } from "@/lib/nativeWindowChromeSurface";
 import { AppearanceSection } from "./AppearanceSection";
 import { GraphSection } from "./GraphSection";
+import { listen } from "@tauri-apps/api/event";
+import { ShortcutsSection } from "./ShortcutsSection";
 import { SpacesSection } from "./SpacesSection";
 import { OrphansSection } from "./OrphansSection";
 import { LayoutSection } from "./LayoutSection";
@@ -17,6 +19,7 @@ const ComponentTestBench = lazy(async () => {
 
 type SettingsSection =
   | "appearance"
+  | "shortcuts"
   | "graph"
   | "spaces"
   | "layout"
@@ -26,6 +29,7 @@ type SettingsSection =
 
 const SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: "appearance", label: "Appearance" },
+  { id: "shortcuts", label: "Shortcuts" },
   { id: "graph", label: "Graph" },
   { id: "spaces", label: "Spaces" },
   { id: "layout", label: "Folders" },
@@ -36,8 +40,26 @@ const SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: "design-system", label: "Design system" },
 ];
 
+function initialSection(): SettingsSection {
+  const asked = new URLSearchParams(window.location.search).get("section");
+  return SECTIONS.some((entry) => entry.id === asked)
+    ? (asked as SettingsSection)
+    : "appearance";
+}
+
 export function SettingsApp() {
-  const [section, setSection] = useState<SettingsSection>("appearance");
+  const [section, setSection] = useState<SettingsSection>(initialSection);
+
+  // An already-open window is told which section to show, since its URL was
+  // decided when it was created.
+  useEffect(() => {
+    const unlisten = listen<string>("settings-section", (event) => {
+      if (SECTIONS.some((entry) => entry.id === event.payload)) {
+        setSection(event.payload as SettingsSection);
+      }
+    });
+    return () => { void unlisten.then((stop) => stop()); };
+  }, []);
 
   // Keep the native window background in sync with the chrome token so the
   // titlebar overlay area never flashes a mismatched color (same as main).
@@ -92,6 +114,7 @@ export function SettingsApp() {
             </Suspense>
           )}
           {section === "appearance" && <AppearanceSection />}
+          {section === "shortcuts" && <ShortcutsSection />}
           {section === "graph" && <GraphSection />}
           {section === "spaces" && <SpacesSection />}
           {section === "layout" && <LayoutSection />}
