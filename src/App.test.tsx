@@ -1112,6 +1112,66 @@ describe("AppWithVault", () => {
     expect(bottomBarEntry("Navigate")).not.toBeNull();
   });
 
+  it("hides bar entries by worth when the window is too narrow", async () => {
+    // jsdom reports no widths of its own, so the bar's own measuring path is
+    // driven here with real numbers: a 320px bar holding entries that need far
+    // more. Without this the overflow rule was only ever tested as a pure
+    // function, never as the thing the window actually runs.
+    const widths = new Map<string, number>([
+      ["toggle-sidebar", 150],
+      ["new-collection", 150],
+      ["switch-collection", 170],
+      ["navigate", 110],
+      ["find-elements", 150],
+      ["commands-overlay", 120],
+      ["settings", 100],
+    ]);
+    const offsetWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetWidth");
+    Object.defineProperty(HTMLElement.prototype, "offsetWidth", {
+      configurable: true,
+      get(this: HTMLElement) {
+        const id = this.dataset?.barEntry;
+        return id ? (widths.get(id) ?? 100) : 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.hasAttribute("data-bottom-action-bar") ? 320 : 0;
+      },
+    });
+
+    try {
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      await waitFor(() => {
+        expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+      });
+
+      const shown = () => {
+        const bar = document.querySelector("[data-bottom-action-bar]") as HTMLElement;
+        return Array.from(bar.querySelectorAll<HTMLElement>("[data-bar-entry]"))
+          .filter((node) => node.style.display !== "none")
+          .map((node) => node.dataset.barEntry!);
+      };
+
+      // The measuring pass runs after the commit that adds an entry, so the
+      // settled state is what matters, not the first frame.
+      await waitFor(() => {
+        expect(shown()).not.toContain("navigate");
+      });
+      const visible = shown();
+      expect(visible).not.toContain("switch-collection");
+      expect(visible).not.toContain("settings");
+      expect(visible.length).toBeLessThan(widths.size);
+    } finally {
+      if (offsetWidth) Object.defineProperty(HTMLElement.prototype, "offsetWidth", offsetWidth);
+    }
+  });
+
   it("marks every hideable bar entry with a decided hide priority", async () => {
     const { BAR_HIDE_PRIORITIES } = await import("@/lib/bottomBarOverflow");
     render(
@@ -1130,12 +1190,10 @@ describe("AppWithVault", () => {
     for (const id of hideable) {
       expect(BAR_HIDE_PRIORITIES[id], `${id} has no hide priority`).toBeTypeOf("number");
     }
-    // The exits and the state feedback never carry a priority: esc entries,
-    // Find and Settings stay at any width.
-    for (const label of ["Find elements", "Settings"]) {
-      const entry = bottomBarEntry(label);
-      expect(entry?.closest("[data-bar-entry]")).toBeNull();
-    }
+    // Only the exits stay at any width: a state with no visible way out is
+    // worse than a crowded bar.
+    expect(BAR_HIDE_PRIORITIES["close-element"]).toBeUndefined();
+    expect(BAR_HIDE_PRIORITIES["clear-selection"]).toBeUndefined();
   });
 
   it("hands the chrome row to the selection while one exists", async () => {

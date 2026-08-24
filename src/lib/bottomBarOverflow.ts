@@ -2,12 +2,24 @@
 ///
 /// The bar never truncates an entry: an entry is either whole or absent.
 /// Entries carry a hide priority — the lowest number leaves first — and the
-/// order is fixed by decision, not by measurement: reference entries teach and
-/// go first, commands that act stay longest, and the esc entries, Find and
-/// Settings never leave at all (they carry state feedback and the bar's exits).
+/// order follows what an entry is worth to the person reading the bar:
 ///
-/// Hide order: Navigate → Switch collection → Command → Focus →
-/// New Collection → Hide Sidebar.
+/// 1. **Reference entries first** (`Navigate`, `Switch collection`). They
+///    cannot be pressed, so losing them costs no action at all — only a
+///    reminder.
+/// 2. **Then the commands already learned** (`Hide Sidebar`, `New Collection`,
+///    `Settings`, `Find elements`). They are always available, used constantly,
+///    and their shortcuts live in the native menu too; the bar is not where
+///    anyone rediscovers them.
+/// 3. **Situational commands last** (`Focus`, `Command`, and the esc entries).
+///    They exist only in the state that offers them, so the bar is the only
+///    place they are ever seen — dropping them would hide the one thing the
+///    user could not have learned elsewhere.
+///
+/// Hide order: Navigate → Switch collection → Settings → Hide Sidebar →
+/// New Collection → Find elements → Command → Focus. The esc entries never
+/// leave: they are the exits, and a state with no visible way out is worse
+/// than a crowded bar.
 
 export interface BarEntryMeasurement {
   id: string;
@@ -18,12 +30,18 @@ export interface BarEntryMeasurement {
 }
 
 export const BAR_HIDE_PRIORITIES: Record<string, number> = {
+  // Reference entries — nothing to press, so nothing is lost.
   navigate: 1,
   "switch-collection": 2,
-  "element-menu": 3,
-  "open-focused": 4,
+  // Learned commands — always available, and also in the native menu.
+  settings: 3,
+  "toggle-sidebar": 4,
   "new-collection": 5,
-  "toggle-sidebar": 6,
+  "find-elements": 6,
+  "commands-overlay": 7,
+  // Situational commands — the bar is the only place they are ever shown.
+  "element-menu": 8,
+  "open-focused": 9,
 };
 
 /// Returns the ids to hide so that what remains fits `availableWidth`.

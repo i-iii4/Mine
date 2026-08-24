@@ -3662,23 +3662,41 @@ export function AppWithVault({
           {isSyncing && (
             <span className="text-sm text-muted-foreground">Syncing…</span>
           )}
-          <ActionButton
-            hotkey={commandById("find-elements").combo}
-            onClick={toggleSearchOverlay}
+          <span
+            data-bar-entry="find-elements"
+            className="inline-flex shrink-0 items-center"
+            style={hiddenBarEntries.has("find-elements") ? { display: "none" } : undefined}
           >
-            {commandById("find-elements").name}
-          </ActionButton>
-          <ActionButton
-            hotkey={commandById("commands-overlay").combo}
-            onClick={() => setCommandsOverlayOpen(true)}
+            <ActionButton
+              hotkey={commandById("find-elements").combo}
+              onClick={toggleSearchOverlay}
+            >
+              {commandById("find-elements").name}
+            </ActionButton>
+          </span>
+          <span
+            data-bar-entry="commands-overlay"
+            className="inline-flex shrink-0 items-center"
+            style={hiddenBarEntries.has("commands-overlay") ? { display: "none" } : undefined}
           >
-            {commandById("commands-overlay").name}
-          </ActionButton>
+            <ActionButton
+              hotkey={commandById("commands-overlay").combo}
+              onClick={() => setCommandsOverlayOpen(true)}
+            >
+              {commandById("commands-overlay").name}
+            </ActionButton>
+          </span>
           {/* Settings sits at the far edge: the rarest command must not spend
               the bar's best real estate. */}
-          <ActionButton hotkey={commandById("settings").combo} onClick={handleOpenSettings}>
-            {commandById("settings").name}
-          </ActionButton>
+          <span
+            data-bar-entry="settings"
+            className="inline-flex shrink-0 items-center"
+            style={hiddenBarEntries.has("settings") ? { display: "none" } : undefined}
+          >
+            <ActionButton hotkey={commandById("settings").combo} onClick={handleOpenSettings}>
+              {commandById("settings").name}
+            </ActionButton>
+          </span>
         </div>
       )}
 
