@@ -26,6 +26,10 @@ describe("bottom-bar command entries", () => {
     expect(markup).not.toContain("hover:bg-active");
     expect(markup).not.toContain("group-hover:outline");
     expect(markup).not.toContain("group-hover:text-foreground");
+    // The outline also arrives from the button variant itself, not only from
+    // the group-hover classes layered on top of it.
+    expect(markup).not.toContain("hover:outline");
+    expect(markup).not.toMatch(/\bhover:/);
   });
 
   it("leaves an ordinary command interactive", () => {

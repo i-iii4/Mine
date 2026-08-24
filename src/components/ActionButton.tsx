@@ -97,7 +97,7 @@ const StandardActionButton = React.forwardRef<HTMLDivElement, ActionButtonProps>
       <span
         aria-hidden="true"
         className={cn(
-          buttonVariants({ variant: "default", size: "xs" }),
+          buttonVariants({ variant: readOnly ? "reference" : "default", size: "xs" }),
           // Height matches the inner pill of the other presentation, so the two
           // variants sit on the same baseline in the bar.
           "h-5 font-mono font-normal",
