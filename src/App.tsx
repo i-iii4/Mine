@@ -45,6 +45,11 @@ import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
 import { cn } from "@/lib/utils";
 import { commandById } from "@/lib/commandRegistry";
 import {
+  BAR_HIDE_PRIORITIES,
+  computeHiddenBarEntries,
+  type BarEntryMeasurement,
+} from "@/lib/bottomBarOverflow";
+import {
   isDetailShortcutBlockedTarget,
   isEditableKeyboardTarget,
   isOverlayKeyboardTarget,
@@ -535,6 +540,57 @@ export function AppWithVault({
   // Selection owns one bar command — clearing itself — and reports it the
   // same way.
   const selectionClearRef = useRef<(() => void) | null>(null);
+  // The bar hides whole entries by decided priority when the window narrows.
+  // Widths are cached from the last visible render, so a hidden entry keeps
+  // its claim and returns the moment there is room again.
+  const bottomBarRef = useRef<HTMLDivElement | null>(null);
+  const barEntryWidthsRef = useRef<Map<string, number>>(new Map());
+  const [hiddenBarEntries, setHiddenBarEntries] = useState<ReadonlySet<string>>(new Set());
+  const remeasureBottomBar = useCallback(() => {
+    const bar = bottomBarRef.current;
+    if (!bar) return;
+    const widths = barEntryWidthsRef.current;
+    let fixedWidth = 0;
+    const present: BarEntryMeasurement[] = [];
+    for (const child of Array.from(bar.children) as HTMLElement[]) {
+      if (child.dataset.barSpacer !== undefined) continue;
+      const gap = 8; // the bar's own gap-2 rhythm
+      const entryId = child.dataset.barEntry;
+      if (entryId === undefined) {
+        fixedWidth += child.offsetWidth + gap;
+        continue;
+      }
+      if (child.offsetWidth > 0) widths.set(entryId, child.offsetWidth + gap);
+      present.push({
+        id: entryId,
+        priority: BAR_HIDE_PRIORITIES[entryId] ?? Number.MAX_SAFE_INTEGER,
+        width: widths.get(entryId) ?? 0,
+      });
+    }
+    const available = bar.clientWidth
+      - fixedWidth
+      - 2 * parseFloat(getComputedStyle(bar).paddingLeft || "0");
+    const next = computeHiddenBarEntries(available, present);
+    setHiddenBarEntries((current) => {
+      if (current.size === next.size && [...next].every((id) => current.has(id))) {
+        return current;
+      }
+      return next;
+    });
+  }, []);
+  useEffect(() => {
+    const bar = bottomBarRef.current;
+    if (!bar) return;
+    remeasureBottomBar();
+    const observer = new ResizeObserver(() => remeasureBottomBar());
+    observer.observe(bar);
+    return () => observer.disconnect();
+  }, [remeasureBottomBar, bottomActionBarHidden]);
+  // Entry sets change with state (focus, selection, open element) — remeasure
+  // after every commit; the state setter above ignores no-op results.
+  useEffect(() => {
+    remeasureBottomBar();
+  });
   const [hasSelection, setHasSelection] = useState(false);
   const reportSelectionCommand = useCallback((clear: (() => void) | null) => {
     selectionClearRef.current = clear;
@@ -3434,55 +3490,92 @@ export function AppWithVault({
           // sidebar rows are already on 16 and these buttons must line up under
           // them. Symmetric on both sides — a bar whose two ends obey different
           // rules reads as a layout mistake.
+          ref={bottomBarRef}
           className="flex h-8 shrink-0 items-center gap-2 border-t border-border bg-accent px-[var(--chrome-edge-pad)]"
           data-bottom-action-bar=""
         >
           {/* Same command as the View menu item and the two-finger swipe. It
               leads because it changes the shape of the window itself. */}
-          <ActionButton hotkey={commandById("toggle-sidebar").combo} onClick={toggleCollapsed}>
-            {sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar"}
-          </ActionButton>
-          <ActionButton hotkey={commandById("new-collection").combo} onClick={beginCreateCollection}>
-            {commandById("new-collection").name}
-          </ActionButton>
+          <span
+            data-bar-entry="toggle-sidebar"
+            className="inline-flex shrink-0 items-center"
+            style={hiddenBarEntries.has("toggle-sidebar") ? { display: "none" } : undefined}
+          >
+            <ActionButton hotkey={commandById("toggle-sidebar").combo} onClick={toggleCollapsed}>
+              {sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar"}
+            </ActionButton>
+          </span>
+          <span
+            data-bar-entry="new-collection"
+            className="inline-flex shrink-0 items-center"
+            style={hiddenBarEntries.has("new-collection") ? { display: "none" } : undefined}
+          >
+            <ActionButton hotkey={commandById("new-collection").combo} onClick={beginCreateCollection}>
+              {commandById("new-collection").name}
+            </ActionButton>
+          </span>
           {/* A command appears only while it can be used, and contextual
               entries only append at the end of the group — what the user has
               already seen never shifts. During a selection the bar narrows to
               the selection's own commands: navigation and Focus leave, esc
               arrives. */}
           {orderedTags.length > 0 && !sidebarCollapsed && !hasSelection && (
-            <ActionButton hotkey={commandById("switch-collection").combo} readOnly>
-              {commandById("switch-collection").name}
-            </ActionButton>
+            <span
+              data-bar-entry="switch-collection"
+              className="inline-flex shrink-0 items-center"
+              style={hiddenBarEntries.has("switch-collection") ? { display: "none" } : undefined}
+            >
+              <ActionButton hotkey={commandById("switch-collection").combo} readOnly>
+                {commandById("switch-collection").name}
+              </ActionButton>
+            </span>
           )}
           {activeBlocks.length > 0 && renderedDetailBlock === null && !hasSelection && (
-            <ActionButton hotkey={commandById("navigate").combo} readOnly>
-              {commandById("navigate").name}
-            </ActionButton>
+            <span
+              data-bar-entry="navigate"
+              className="inline-flex shrink-0 items-center"
+              style={hiddenBarEntries.has("navigate") ? { display: "none" } : undefined}
+            >
+              <ActionButton hotkey={commandById("navigate").combo} readOnly>
+                {commandById("navigate").name}
+              </ActionButton>
+            </span>
           )}
           {hasFocusedItem && !hasSelection && (
-            <ActionButton
-              hotkey={commandById("open-focused").combo}
-              onClick={() => activateFocusedRef.current?.()}
+            <span
+              data-bar-entry="open-focused"
+              className="inline-flex shrink-0 items-center"
+              style={hiddenBarEntries.has("open-focused") ? { display: "none" } : undefined}
             >
-              {commandById("open-focused").name}
-            </ActionButton>
+              <ActionButton
+                hotkey={commandById("open-focused").combo}
+                onClick={() => activateFocusedRef.current?.()}
+              >
+                {commandById("open-focused").name}
+              </ActionButton>
+            </span>
           )}
           {/* Pressable: the menu opens at the focused element — in the feed at
               its card, over an open element in its top menu. */}
           {(renderedDetailBlock !== null || feedCardMenuAvailable) && (
-            <ActionButton
-              hotkey={commandById("element-menu").combo}
-              onClick={() => {
-                if (renderedDetailBlock) {
-                  setCompactDetailTopMenuRequestSequence((current) => current + 1);
-                  return;
-                }
-                cardMenuActivateRef.current?.();
-              }}
+            <span
+              data-bar-entry="element-menu"
+              className="inline-flex shrink-0 items-center"
+              style={hiddenBarEntries.has("element-menu") ? { display: "none" } : undefined}
             >
-              {commandById("element-menu").name}
-            </ActionButton>
+              <ActionButton
+                hotkey={commandById("element-menu").combo}
+                onClick={() => {
+                  if (renderedDetailBlock) {
+                    setCompactDetailTopMenuRequestSequence((current) => current + 1);
+                    return;
+                  }
+                  cardMenuActivateRef.current?.();
+                }}
+              >
+                {commandById("element-menu").name}
+              </ActionButton>
+            </span>
           )}
           {renderedDetailBlock !== null && (
             <ActionButton
@@ -3500,7 +3593,7 @@ export function AppWithVault({
               {commandById("clear-selection").name}
             </ActionButton>
           )}
-          <div className="flex-1" />
+          <div className="flex-1" data-bar-spacer="" />
           {isSyncing && (
             <span className="text-sm text-muted-foreground">Syncing…</span>
           )}

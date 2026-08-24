@@ -1108,6 +1108,32 @@ describe("AppWithVault", () => {
     expect(bottomBarEntry("Navigate")).not.toBeNull();
   });
 
+  it("marks every hideable bar entry with a decided hide priority", async () => {
+    const { BAR_HIDE_PRIORITIES } = await import("@/lib/bottomBarOverflow");
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    const bar = document.querySelector("[data-bottom-action-bar]") as HTMLElement;
+    const hideable = Array.from(bar.querySelectorAll<HTMLElement>("[data-bar-entry]"))
+      .map((node) => node.dataset.barEntry!);
+    expect(hideable.length).toBeGreaterThan(0);
+    for (const id of hideable) {
+      expect(BAR_HIDE_PRIORITIES[id], `${id} has no hide priority`).toBeTypeOf("number");
+    }
+    // The exits and the state feedback never carry a priority: esc entries,
+    // Find and Settings stay at any width.
+    for (const label of ["Find elements", "Settings"]) {
+      const entry = bottomBarEntry(label);
+      expect(entry?.closest("[data-bar-entry]")).toBeNull();
+    }
+  });
+
   it("keeps Settings at the far right edge of the bar", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
