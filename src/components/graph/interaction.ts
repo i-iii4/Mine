@@ -23,63 +23,6 @@ export function endpointNode(endpoint: unknown): GraphCanvasNode | null {
   return null;
 }
 
-export type GraphArrowKey = "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight";
-
-export function isGraphArrowKey(key: string): key is GraphArrowKey {
-  return key === "ArrowUp"
-    || key === "ArrowDown"
-    || key === "ArrowLeft"
-    || key === "ArrowRight";
-}
-
-export function directionalGraphNode(
-  nodes: GraphCanvasNode[],
-  current: GraphCanvasNode | null,
-  direction: GraphArrowKey,
-  graph: ForceGraphMethods<GraphCanvasNode, GraphCanvasLink> | undefined,
-): GraphCanvasNode | null {
-  if (!graph) return null;
-  const positioned = nodes.filter(hasNodePosition);
-  if (positioned.length === 0) return null;
-  if (!current || !hasNodePosition(current)) {
-    return positioned
-      .map((node) => ({ node, point: graph.graph2ScreenCoords(node.x, node.y) }))
-      .sort((left, right) => left.point.y - right.point.y || left.point.x - right.point.x)[0]
-      ?.node ?? null;
-  }
-
-  const origin = graph.graph2ScreenCoords(current.x, current.y);
-  const vector = graphDirectionVector(direction);
-  let best: { node: GraphCanvasNode; score: number } | null = null;
-  for (const candidate of positioned) {
-    if (candidate.id === current.id) continue;
-    const point = graph.graph2ScreenCoords(candidate.x, candidate.y);
-    const dx = point.x - origin.x;
-    const dy = point.y - origin.y;
-    const projection = dx * vector.x + dy * vector.y;
-    if (projection <= 0) continue;
-    const perpendicular = Math.abs(dx * vector.y - dy * vector.x);
-    const score = projection + perpendicular * 2;
-    if (!best || score < best.score) {
-      best = { node: candidate, score };
-    }
-  }
-  return best?.node ?? null;
-}
-
-function graphDirectionVector(direction: GraphArrowKey): { x: number; y: number } {
-  switch (direction) {
-    case "ArrowUp":
-      return { x: 0, y: -1 };
-    case "ArrowDown":
-      return { x: 0, y: 1 };
-    case "ArrowLeft":
-      return { x: -1, y: 0 };
-    case "ArrowRight":
-      return { x: 1, y: 0 };
-  }
-}
-
 export function hasNodePosition(node: GraphCanvasNode): node is PositionedGraphCanvasNode {
   return Number.isFinite(node.x) && Number.isFinite(node.y);
 }

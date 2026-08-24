@@ -918,18 +918,16 @@ from `block:<old_slug>` to `block:<new_slug>` without closing Detail.
 
 ## Accessibility And Keyboard
 
-Canvas is not inherently accessible. Graph View must provide a parallel keyboard
-model:
+**The graph is a pointer surface — decided 23.08.2026.** Selection, opening,
+panning and zoom are cursor gestures; the graph installs no keyboard handlers
+and its canvas is not focusable. The earlier parallel keyboard model (arrow
+selection, Enter activation, Escape deselection) is removed: it required DOM
+focus on the canvas, was dead until a click, and duplicated a navigation the
+feed already owns. Global shortcuts (collection switching, view toggle, search)
+keep working over the graph because they are window-level.
 
-- `Tab` reaches `Show all` when present, otherwise the canvas.
-- Arrow keys move selection among currently visible graph nodes using screen
-  coordinates after layout has settled.
-- `Enter` activates the selected node.
-- `Escape` clears the selected node before closing higher-level UI.
-- A textual status region announces selected node label and neighbor count.
-
-Keyboard and pointer navigation share one selected node id. The implemented
-`aria-live` status announces the selected label and neighbor count.
+A textual `aria-live` status region still announces the selected node label and
+neighbor count for assistive technology.
 
 ## Tests
 
@@ -1020,7 +1018,7 @@ verification prerequisite.
   the dragged node until release.
 - Closing menu or Detail restores simulation state without a synthetic drag or
   remount.
-- Keyboard selection and pointer selection share one selected node id.
+- The graph exposes no keyboard surface: no `data-graph-keyboard-surface`, no focusable canvas wrapper.
 
 ## Implementation Slices
 

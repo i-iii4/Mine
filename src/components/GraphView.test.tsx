@@ -1439,25 +1439,18 @@ describe("GraphView", () => {
     });
   });
 
-  it("shares one selected node between arrow navigation, status and Enter activation", async () => {
+  it("has no keyboard surface: the graph is pointer-only", async () => {
+    // Selection, opening and panning are cursor gestures. A keyboard surface
+    // here would promise arrows that the contract deliberately does not offer.
     const alpha = makeBlock({ slug: "alpha-card", title: "Alpha card" });
-    const beta = makeBlock({ id: 2, slug: "beta-card", title: "Beta card" });
     commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes([
       graphCardNode(alpha.slug, "Alpha card", { x: 100, y: 100 }),
-      graphCardNode(beta.slug, "Beta card", { x: 200, y: 100 }),
     ]));
-    const { onOpenBlock } = renderGraph({ loadedBlocks: [alpha, beta] });
+    renderGraph({ loadedBlocks: [alpha] });
     await screen.findByRole("button", { name: "Alpha card" });
-    const surface = document.querySelector<HTMLElement>("[data-graph-keyboard-surface]");
-    expect(surface).not.toBeNull();
 
-    fireEvent.keyDown(surface!, { key: "ArrowRight" });
-    expect(screen.getByText("Alpha card, 1 neighbor")).toBeInTheDocument();
-    fireEvent.keyDown(surface!, { key: "ArrowRight" });
-    expect(screen.getByText("Beta card, 1 neighbor")).toBeInTheDocument();
-    fireEvent.keyDown(surface!, { key: "Enter" });
-
-    await waitFor(() => expect(onOpenBlock).toHaveBeenCalledWith(beta));
+    expect(document.querySelector("[data-graph-keyboard-surface]")).toBeNull();
+    expect(document.querySelector("[aria-label='Graph canvas'][tabindex]")).toBeNull();
   });
 
   it("offers explicit full materialization only when the backend says it is available", async () => {

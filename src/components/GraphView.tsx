@@ -6,7 +6,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { forceCollide } from "d3-force";
 import ForceGraph2D, {
@@ -62,14 +61,12 @@ import {
 import {
   compareGraphNodePaintOrder,
   computeGraphPreviewPosition,
-  directionalGraphNode,
   endpointNode,
   graphClientPointFromEvent,
   graphThumbLevelFor,
   graphThumbnailUrl,
   graphZoomForExtent,
   hasNodePosition,
-  isGraphArrowKey,
 } from "./graph/interaction";
 import { graphNodeScreenSize, graphZoomBounds } from "./graph/nodeSize";
 import { graphLinkCurvature, graphLinkLineDash } from "./graph/linkStyle";
@@ -97,7 +94,6 @@ export interface GraphViewProps {
   onNavigateCollection: (collectionRef?: string) => void;
   /// How to open the selected node, or null when nothing is selected, so the
   /// bottom bar can offer Focus only when there is something to open.
-  onKeyboardFocusChange?: (activate: (() => void) | null) => void;
 }
 
 export interface GraphViewHandle {
@@ -119,7 +115,6 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   onOpenBlock,
   onOpenCardMenu,
   onNavigateCollection,
-  onKeyboardFocusChange,
 }: GraphViewProps, ref) {
   const resolvedThumbsRoot = thumbsRootPath ?? fallbackThumbsRoot(vaultPath);
   const [snapshot, setSnapshot] = useState<GraphSnapshot | null>(null);
@@ -887,51 +882,6 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     [loadedBlocksBySlug, onOpenCardMenu],
   );
 
-  useEffect(() => {
-    if (!selectedNode) {
-      onKeyboardFocusChange?.(null);
-      return;
-    }
-    onKeyboardFocusChange?.(() => { void handleNodeClick(selectedNode); });
-  }, [handleNodeClick, onKeyboardFocusChange, selectedNode]);
-
-  // A graph that goes away takes its command with it, so the bar does not keep
-  // offering Focus for a node that is no longer on screen.
-  useEffect(() => () => {
-    onKeyboardFocusChange?.(null);
-  }, [onKeyboardFocusChange]);
-
-  const handleGraphKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Escape") {
-      if (selectedNodeId) {
-        event.preventDefault();
-        event.stopPropagation();
-        setSelectedNodeId(null);
-      }
-      return;
-    }
-
-    if (event.key === "Enter" && selectedNode) {
-      event.preventDefault();
-      event.stopPropagation();
-      void handleNodeClick(selectedNode);
-      return;
-    }
-
-    if (!isGraphArrowKey(event.key)) return;
-    const next = directionalGraphNode(
-      graphData.nodes,
-      selectedNode,
-      event.key,
-      graphRef.current,
-    );
-    if (!next) return;
-    event.preventDefault();
-    event.stopPropagation();
-    setSelectedNodeId(next.id);
-    pendingCenterNodeIdRef.current = next.id;
-  }, [graphData.nodes, handleNodeClick, selectedNode, selectedNodeId]);
-
   const suppressCollectionClickAfterDrag = useCallback((node: GraphCanvasNode) => {
     if (node.kind !== "collection") return;
     collectionDragClickSuppressionRef.current = {
@@ -1083,13 +1033,12 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
           />
         </div>
       ) : null}
+      {/* The graph is a pointer surface: selection, opening and panning are
+          cursor gestures, and no keyboard handler lives here. */}
       <div
-        className="absolute inset-0 outline-none focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-ring"
-        tabIndex={0}
+        className="absolute inset-0 outline-none"
         role="group"
         aria-label="Graph canvas"
-        data-graph-keyboard-surface=""
-        onKeyDown={handleGraphKeyDown}
       >
         {graphViewportReady ? (
           <ForceGraph2D<GraphCanvasNode, GraphCanvasLink>

@@ -3604,7 +3604,6 @@ function AllBlocksPage() {
         onOpenBlock={ctx.onOpenBlock}
         onOpenCardMenu={ctx.onOpenCardMenu}
         onNavigateCollection={ctx.onNavigateCollection}
-        onKeyboardFocusChange={ctx.onKeyboardFocusChange}
         acceptSnapshotRevision={ctx.acceptGraphRevision}
       />
     );
@@ -3629,7 +3628,6 @@ function ChannelPage() {
         onOpenBlock={ctx.onOpenBlock}
         onOpenCardMenu={ctx.onOpenCardMenu}
         onNavigateCollection={ctx.onNavigateCollection}
-        onKeyboardFocusChange={ctx.onKeyboardFocusChange}
         acceptSnapshotRevision={ctx.acceptGraphRevision}
       />
     );
