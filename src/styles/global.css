@@ -284,6 +284,9 @@ body,
   height: 100%;
   overflow: hidden;
   overscroll-behavior: none;
+  /* The page surface is the theme's, not a literal: anything the app does not
+     paint itself must still be the same colour as what it does. */
+  background: var(--background);
 }
 
 body {
