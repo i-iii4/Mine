@@ -15,6 +15,7 @@ use crate::commands::blocks::{
     RenameBlockError, RenameBlockResult, RenameMediaAssetParams, TextSelectionExtractError,
 };
 use crate::commands::clipboard::ClipboardPayload;
+use crate::commands::shortcuts::ShortcutBinding;
 use crate::commands::channels::{
     ChannelDto, ChannelPreviewsSnapshot, PreviewItem, TaxonomySnapshot,
 };
@@ -49,6 +50,7 @@ pub fn export_types(check_only: bool) -> Result<()> {
     types
         .register::<IndexedBlock>()
         .register::<ClipboardPayload>()
+        .register::<ShortcutBinding>()
         .register::<LightBlock>()
         .register::<FeedPreviewKind>()
         .register::<FeedPreviewTile>()

@@ -1,8 +1,19 @@
-/// The single source for every keyboard command: its combo, its name, and the
-/// context it belongs to. The bottom bar and the ⌘/ overlay render from this
-/// table, and keydown handlers take their matchers from it, so a combo or a
-/// name can never drift between the places that show it and the place that
-/// implements it.
+/// The single source for every keyboard command: its binding, its name, and
+/// the context it belongs to. The bottom bar, the Shortcuts settings section
+/// and the keydown handlers all read from here, so a combo cannot drift
+/// between the place that shows it and the place that implements it.
+///
+/// Bindings are data (`CommandBinding`), not hand-written matchers: the label
+/// and the match derive from the same record, which is what makes rebinding
+/// possible at all.
+
+import {
+  bindingLabel,
+  bindingMatches,
+  gestureLabel,
+  type CommandBinding,
+  type CommandGesture,
+} from "./commandBinding";
 
 export type CommandContext = "global" | "feed" | "element" | "selection";
 
@@ -13,234 +24,245 @@ export const COMMAND_CONTEXT_TITLES: Record<CommandContext, string> = {
   selection: "Selection",
 };
 
-interface ModifierSpec {
-  meta?: boolean;
-  shift?: boolean;
-  alt?: boolean;
-  ctrl?: boolean;
-}
-
-/// Exact modifier match: a combo that asks for ⌘ alone must not fire on ⌘⇧.
-function modifiersMatch(e: KeyboardEvent, spec: ModifierSpec): boolean {
-  return (
-    e.metaKey === Boolean(spec.meta)
-    && e.shiftKey === Boolean(spec.shift)
-    && e.altKey === Boolean(spec.alt)
-    && e.ctrlKey === Boolean(spec.ctrl)
-  );
-}
-
 export interface CommandDefinition {
   id: string;
-  /// Display form for the bar and the overlay, e.g. "⌘⇧N".
-  combo: string;
-  /// The action's name as the interface shows it.
   name: string;
   context: CommandContext;
-  /// Matches the physical keydown. Absent on reference-only rows whose combo
-  /// names a family of keys (arrows) rather than one chord.
-  matches?: (e: KeyboardEvent) => boolean;
+  /// The chord, when the command has one.
+  binding?: CommandBinding;
+  /// A family of keys rather than a chord — shown, never matched, never bound.
+  gesture?: CommandGesture;
+  /// Why a command cannot be rebound, or absent when it can.
+  ///
+  /// - `structural`: arrows, Enter, Escape, Tab. These are the language of the
+  ///   interface rather than shortcuts; rebinding them breaks the model.
+  /// - `system`: macOS owns the combo (⌘, on Settings) and expects it there.
+  fixed?: "structural" | "system";
 }
 
-export const COMMANDS: readonly CommandDefinition[] = [
+export const DEFAULT_COMMANDS: readonly CommandDefinition[] = [
   // ── Global ────────────────────────────────────────────────────────────
   {
     id: "toggle-sidebar",
-    combo: "⌃⌘S",
     name: "Hide Sidebar",
     context: "global",
-    matches: (e) =>
-      modifiersMatch(e, { meta: true, ctrl: true })
-      && (e.code === "KeyS" || e.key.toLowerCase() === "s"),
+    binding: { key: "s", meta: true, ctrl: true },
   },
   {
     id: "new-collection",
-    combo: "⌘⇧N",
     name: "New Collection",
     context: "global",
-    matches: (e) => modifiersMatch(e, { meta: true, shift: true }) && e.key === "N",
+    binding: { key: "n", meta: true, shift: true },
   },
   {
     id: "settings",
-    combo: "⌘,",
     name: "Settings",
     context: "global",
-    matches: (e) => modifiersMatch(e, { meta: true }) && e.key === ",",
+    binding: { key: ",", meta: true },
+    fixed: "system",
   },
   {
     id: "find-elements",
-    combo: "⌘F",
     name: "Find elements",
     context: "global",
-    matches: (e) =>
-      modifiersMatch(e, { meta: true })
-      && (e.code === "KeyF" || e.key.toLowerCase() === "f"),
+    binding: { key: "f", meta: true },
   },
   {
     id: "find-collections",
-    combo: "⌘⇧F",
     name: "Find collections",
     context: "global",
-    matches: (e) =>
-      modifiersMatch(e, { meta: true, shift: true })
-      && (e.code === "KeyF" || e.key.toLowerCase() === "f"),
+    binding: { key: "f", meta: true, shift: true },
   },
   {
     id: "switch-space",
-    combo: "⌘⇧O",
     name: "Switch space",
     context: "global",
-    matches: (e) => modifiersMatch(e, { meta: true, shift: true }) && e.key === "O",
+    binding: { key: "o", meta: true, shift: true },
   },
   {
     id: "history-back",
-    combo: "⌘[",
     name: "Back",
     context: "global",
-    matches: (e) =>
-      modifiersMatch(e, { meta: true })
-      && (e.key === "[" || e.code === "BracketLeft"),
+    binding: { key: "[", meta: true },
   },
   {
     id: "history-forward",
-    combo: "⌘]",
     name: "Forward",
     context: "global",
-    matches: (e) =>
-      modifiersMatch(e, { meta: true })
-      && (e.key === "]" || e.code === "BracketRight"),
+    binding: { key: "]", meta: true },
   },
   {
     id: "commands-overlay",
-    combo: "⌘/",
     name: "Commands",
     context: "global",
-    matches: (e) =>
-      modifiersMatch(e, { meta: true })
-      && (e.key === "/" || e.code === "Slash"),
+    binding: { key: "/", meta: true },
   },
   {
     id: "switch-collection",
-    combo: "⌘⌥ ↕",
     name: "Switch collection",
     context: "global",
-    matches: (e) =>
-      modifiersMatch(e, { meta: true, alt: true })
-      && (e.key === "ArrowUp" || e.key === "ArrowDown"),
+    gesture: "meta-alt-arrows",
+    fixed: "structural",
   },
   {
     id: "toggle-view",
-    combo: "⇥",
     name: "Switch view",
     context: "global",
-    matches: (e) => modifiersMatch(e, {}) && e.key === "Tab",
+    binding: { key: "Tab" },
+    fixed: "structural",
   },
   {
     id: "paste",
-    combo: "⌘V",
     name: "Paste",
     context: "global",
-    matches: (e) =>
-      modifiersMatch(e, { meta: true })
-      && (e.code === "KeyV" || e.key.toLowerCase() === "v"),
+    binding: { key: "v", meta: true },
   },
 
   // ── Feed ──────────────────────────────────────────────────────────────
   {
     id: "navigate",
-    combo: "↕ ↔",
     name: "Navigate",
     context: "feed",
+    gesture: "arrows",
+    fixed: "structural",
   },
   {
     id: "open-focused",
-    combo: "↵",
     name: "Focus",
     context: "feed",
-    matches: (e) => modifiersMatch(e, {}) && e.key === "Enter",
+    binding: { key: "Enter" },
+    fixed: "structural",
   },
   {
     id: "select-focused",
-    combo: "⇧↵",
     name: "Select",
     context: "feed",
-    matches: (e) => modifiersMatch(e, { shift: true }) && e.key === "Enter",
+    binding: { key: "Enter", shift: true },
+    fixed: "structural",
   },
   {
     id: "element-menu",
-    combo: "⌘K",
     name: "Command",
     context: "feed",
-    matches: (e) => modifiersMatch(e, { meta: true }) && e.key.toLowerCase() === "k",
+    binding: { key: "k", meta: true },
   },
   {
     id: "clear-focus",
-    combo: "esc",
     name: "Unfocus",
     context: "feed",
-    matches: (e) => modifiersMatch(e, {}) && e.key === "Escape",
+    binding: { key: "Escape" },
+    fixed: "structural",
   },
 
   // ── Element (open card) ───────────────────────────────────────────────
   {
     id: "close-element",
-    combo: "esc",
     name: "Close",
     context: "element",
-    matches: (e) => modifiersMatch(e, {}) && e.key === "Escape",
+    binding: { key: "Escape" },
+    fixed: "structural",
   },
   {
     id: "element-menu-open",
-    combo: "⌘K",
     name: "Command",
     context: "element",
-    matches: (e) => modifiersMatch(e, { meta: true }) && e.key.toLowerCase() === "k",
+    binding: { key: "k", meta: true },
   },
   {
     id: "copy-path",
-    combo: "⌘L",
     name: "Copy path",
     context: "element",
-    matches: (e) => modifiersMatch(e, { meta: true }) && e.key.toLowerCase() === "l",
+    binding: { key: "l", meta: true },
   },
   {
     id: "toggle-connections",
-    combo: "⇥",
     name: "Connections",
     context: "element",
-    matches: (e) => modifiersMatch(e, {}) && e.key === "Tab",
+    binding: { key: "Tab" },
+    fixed: "structural",
   },
 
   // ── Selection ─────────────────────────────────────────────────────────
   {
     id: "clear-selection",
-    combo: "esc",
     name: "Clear selection",
     context: "selection",
-    matches: (e) => modifiersMatch(e, {}) && e.key === "Escape",
+    binding: { key: "Escape" },
+    fixed: "structural",
   },
   {
     id: "toggle-in-selection",
-    combo: "↵",
     name: "Select",
     context: "selection",
-    matches: (e) => modifiersMatch(e, {}) && e.key === "Enter",
+    binding: { key: "Enter" },
+    fixed: "structural",
   },
   {
     id: "batch-menu",
-    combo: "⌘K",
     name: "Command",
     context: "selection",
-    matches: (e) => modifiersMatch(e, { meta: true }) && e.key.toLowerCase() === "k",
+    binding: { key: "k", meta: true },
   },
 ];
 
-export function commandById(id: string): CommandDefinition {
-  const found = COMMANDS.find((command) => command.id === id);
-  if (!found) throw new Error(`Unknown command id: ${id}`);
-  return found;
+/// Overrides applied on top of the defaults, by command id. Owned by the
+/// Shortcuts settings section; empty until the user rebinds something.
+export type CommandOverrides = Readonly<Record<string, CommandBinding>>;
+
+let overrides: CommandOverrides = {};
+const listeners = new Set<() => void>();
+
+export function setCommandOverrides(next: CommandOverrides) {
+  overrides = next;
+  for (const listener of listeners) listener();
 }
 
-export function commandsForContext(context: CommandContext): CommandDefinition[] {
-  return COMMANDS.filter((command) => command.context === context);
+export function getCommandOverrides(): CommandOverrides {
+  return overrides;
+}
+
+export function subscribeToCommands(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+/// A command with its binding resolved: the user's override when there is one,
+/// the default otherwise.
+export interface ResolvedCommand extends CommandDefinition {
+  /// What the interface shows — chord label or gesture hint.
+  combo: string;
+  /// Whether this command's binding differs from the shipped default.
+  rebound: boolean;
+  /// Matches the physical keydown. Absent for gestures.
+  matches?: (e: KeyboardEvent) => boolean;
+}
+
+function resolve(definition: CommandDefinition): ResolvedCommand {
+  const override = definition.fixed ? undefined : overrides[definition.id];
+  const binding = override ?? definition.binding;
+  return {
+    ...definition,
+    binding,
+    combo: binding
+      ? bindingLabel(binding)
+      : definition.gesture
+        ? gestureLabel(definition.gesture)
+        : "",
+    rebound: override !== undefined,
+    matches: binding ? (e: KeyboardEvent) => bindingMatches(binding, e) : undefined,
+  };
+}
+
+export function allCommands(): ResolvedCommand[] {
+  return DEFAULT_COMMANDS.map(resolve);
+}
+
+export function commandById(id: string): ResolvedCommand {
+  const found = DEFAULT_COMMANDS.find((command) => command.id === id);
+  if (!found) throw new Error(`Unknown command id: ${id}`);
+  return resolve(found);
+}
+
+export function commandsForContext(context: CommandContext): ResolvedCommand[] {
+  return DEFAULT_COMMANDS.filter((command) => command.context === context).map(resolve);
 }

@@ -311,6 +311,11 @@ export type SearchSnapshot = { generation: ProjectionRevision; search_generation
 
 export type SearchTextRange = { start: number; end: number }
 
+/**
+ * One rebound command: which key, which modifiers.
+ */
+export type ShortcutBinding = { key: string; meta?: boolean; shift?: boolean; alt?: boolean; ctrl?: boolean }
+
 export type SpaceStats = { file_count: number; markdown_count: number; media_count: number; total_bytes: number;
 /**
  * From the space's local derived index; `None` when the space has never

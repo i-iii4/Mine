@@ -83,6 +83,8 @@ pub fn run() {
             commands::blocks::remove_media_asset_from_card,
             commands::blocks::copy_media_asset_to_clipboard,
             commands::clipboard::read_clipboard_payload,
+            commands::shortcuts::list_shortcut_overrides,
+            commands::shortcuts::save_shortcut_overrides,
             commands::blocks::extract_text_selection,
             commands::blocks::delete_text_selection,
             commands::blocks::rename_block_file,
@@ -186,75 +188,107 @@ pub fn run() {
             }
 
             // ── Native macOS menu ────────────────────────────────────────
-            let settings_item = MenuItemBuilder::with_id(MENU_ID_SETTINGS, "Settings…")
-                .accelerator("CmdOrCtrl+,")
-                .build(app)?;
-            let app_menu = SubmenuBuilder::new(app, "Mine")
-                .about(Some(AboutMetadata {
-                    name: Some("Mine".into()),
-                    version: Some(env!("CARGO_PKG_VERSION").into()),
-                    copyright: Some("2026".into()),
-                    credits: Some("Local-first visual bookmarking".into()),
-                    ..Default::default()
-                }))
-                .separator()
-                .item(&settings_item)
-                .separator()
-                .services()
-                .separator()
-                .hide()
-                .hide_others()
-                .show_all()
-                .separator()
-                .quit()
-                .build()?;
-
-            let find_cards_item = MenuItemBuilder::with_id(MENU_ID_FIND_CARDS, "Find Elements")
-                .accelerator("CmdOrCtrl+F")
-                .build(app)?;
-            let find_channels_item =
-                MenuItemBuilder::with_id(MENU_ID_FIND_CHANNELS, "Find Collections")
-                    .accelerator("CmdOrCtrl+Shift+F")
-                    .build(app)?;
-
-            let edit_menu = SubmenuBuilder::new(app, "Edit")
-                .undo()
-                .redo()
-                .separator()
-                .cut()
-                .copy()
-                .paste()
-                .select_all()
-                .separator()
-                .item(&find_cards_item)
-                .item(&find_channels_item)
-                .build()?;
-
-            let toggle_sidebar_item =
-                MenuItemBuilder::with_id(MENU_ID_TOGGLE_SIDEBAR, "Hide Sidebar")
-                    .accelerator("Ctrl+Cmd+S")
-                    .build(app)?;
-            let view_menu = SubmenuBuilder::with_id(app, MENU_ID_VIEW, "View")
-                .item(&toggle_sidebar_item)
-                .separator()
-                .fullscreen()
-                .build()?;
-
-            let window_menu = SubmenuBuilder::new(app, "Window")
-                .minimize()
-                .maximize()
-                .separator()
-                .close_window()
-                .build()?;
-
-            let menu = MenuBuilder::new(app)
-                .items(&[&app_menu, &edit_menu, &view_menu, &window_menu])
-                .build()?;
-
+            //
+            // Built from the same shortcut overrides the interface uses, and
+            // rebuilt when they change: in macOS a menu accelerator consumes
+            // the key event before the webview sees it, so a stale menu would
+            // fire the old command or swallow the new one.
+            let menu = build_app_menu(app.handle(), &commands::shortcuts::load_overrides(app.handle()))?;
             app.set_menu(menu)?;
 
             Ok(())
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// The application menu, with accelerators resolved from the user's overrides.
+fn build_app_menu(
+    app: &tauri::AppHandle,
+    overrides: &commands::shortcuts::ShortcutOverrides,
+) -> anyhow::Result<tauri::menu::Menu<tauri::Wry>> {
+    // Menu ids that mirror a command in the registry. A rebound command takes
+    // its accelerator from the override; the rest keep the shipped default.
+    let accelerator = |command_id: &str, fallback: &str| -> String {
+        overrides
+            .get(command_id)
+            .map(|binding| binding.accelerator())
+            .unwrap_or_else(|| fallback.to_string())
+    };
+
+    let settings_item = MenuItemBuilder::with_id(MENU_ID_SETTINGS, "Settings…")
+        .accelerator(accelerator("settings", "CmdOrCtrl+,"))
+        .build(app)?;
+    let app_menu = SubmenuBuilder::new(app, "Mine")
+        .about(Some(AboutMetadata {
+            name: Some("Mine".into()),
+            version: Some(env!("CARGO_PKG_VERSION").into()),
+            copyright: Some("2026".into()),
+            credits: Some("Local-first visual bookmarking".into()),
+            ..Default::default()
+        }))
+        .separator()
+        .item(&settings_item)
+        .separator()
+        .services()
+        .separator()
+        .hide()
+        .hide_others()
+        .show_all()
+        .separator()
+        .quit()
+        .build()?;
+
+    let find_cards_item = MenuItemBuilder::with_id(MENU_ID_FIND_CARDS, "Find Elements")
+        .accelerator(accelerator("find-elements", "CmdOrCtrl+F"))
+        .build(app)?;
+    let find_channels_item = MenuItemBuilder::with_id(MENU_ID_FIND_CHANNELS, "Find Collections")
+        .accelerator(accelerator("find-collections", "CmdOrCtrl+Shift+F"))
+        .build(app)?;
+
+    let edit_menu = SubmenuBuilder::new(app, "Edit")
+        .undo()
+        .redo()
+        .separator()
+        .cut()
+        .copy()
+        .paste()
+        .select_all()
+        .separator()
+        .item(&find_cards_item)
+        .item(&find_channels_item)
+        .build()?;
+
+    let toggle_sidebar_item = MenuItemBuilder::with_id(MENU_ID_TOGGLE_SIDEBAR, "Hide Sidebar")
+        .accelerator(accelerator("toggle-sidebar", "Ctrl+Cmd+S"))
+        .build(app)?;
+    let view_menu = SubmenuBuilder::with_id(app, MENU_ID_VIEW, "View")
+        .item(&toggle_sidebar_item)
+        .separator()
+        .fullscreen()
+        .build()?;
+
+    let window_menu = SubmenuBuilder::new(app, "Window")
+        .minimize()
+        .maximize()
+        .separator()
+        .close_window()
+        .build()?;
+
+    Ok(MenuBuilder::new(app)
+        .items(&[&app_menu, &edit_menu, &view_menu, &window_menu])
+        .build()?)
+}
+
+/// Rebuild the menu after the user rebinds a command.
+pub fn refresh_app_menu(app: &tauri::AppHandle) {
+    let overrides = commands::shortcuts::load_overrides(app);
+    match build_app_menu(app, &overrides) {
+        Ok(menu) => {
+            if let Err(e) = app.set_menu(menu) {
+                log::warn!("failed to apply rebuilt menu: {e}");
+            }
+        }
+        Err(e) => log::warn!("failed to rebuild menu: {e:#}"),
+    }
 }

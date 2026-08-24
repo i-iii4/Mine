@@ -20,6 +20,7 @@ pub mod native_shell_smoke;
 mod preview_reconcile;
 pub mod search;
 pub mod settings;
+pub mod shortcuts;
 pub mod state;
 pub mod tags;
 mod thumbnail_sweeps;
