@@ -1172,6 +1172,31 @@ describe("AppWithVault", () => {
     }
   });
 
+  it("never squeezes an entry: it is whole or it is gone", async () => {
+    // Narrowing must not shrink a control into a clipped stub. Every entry
+    // holds its natural width (shrink-0) and leaves the bar entirely when it
+    // no longer fits.
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    const bar = document.querySelector("[data-bottom-action-bar]") as HTMLElement;
+    const slots = Array.from(bar.querySelectorAll<HTMLElement>("[data-bar-entry]"));
+    expect(slots.length).toBeGreaterThan(0);
+    for (const slot of slots) {
+      expect(slot.className, `${slot.dataset.barEntry} may be squeezed`).toContain("shrink-0");
+      // Hiding is all-or-nothing: the only style the overflow rule applies is
+      // display, never a width or a clip.
+      expect(slot.getAttribute("style") ?? "").not.toMatch(/width|max-width|overflow|clip/);
+    }
+    expect(bar.className).not.toContain("overflow-x-auto");
+  });
+
   it("marks every hideable bar entry with a decided hide priority", async () => {
     const { BAR_HIDE_PRIORITIES } = await import("@/lib/bottomBarOverflow");
     render(
