@@ -93,6 +93,13 @@ Find; `Close` без слова element; `Navigate` остаётся справ�
 вставка текста создаёт markdown-элемент, URL в тексте не разворачивается в
 клип (обогащение — вне объёма K8).
 
+### Доступ AI к материалам — план 25.08.2026 (SPEC, ожидает одобрения)
+
+Требования — [SPEC_AI_ACCESS.md](SPEC_AI_ACCESS.md). Порядок: ядро (read-only
+API поверх derived store) → CLI `mine` (spaces / search / collections / cards /
+card, `--json` со стабильным контрактом) → MCP-сервер как адаптер (этап 2,
+отдельная приёмка). Реализация не начата.
+
 ### Tooling maintenance checkpoint — 19.07.2026
 
 - `shadcn` CLI обновлён до 4.13.1; `shadcn info` подтверждает текущий
