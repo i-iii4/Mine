@@ -1691,19 +1691,82 @@
   }
 
   function getImageInfoBySrc(src) {
+    const img = findImageBySrc(src);
+    if (img) {
+      return {
+        src: img.src,
+        alt: img.alt || null,
+        title: img.title || null,
+        width: img.naturalWidth || null,
+        height: img.naturalHeight || null,
+        postUrl: findPostUrlForImage(img),
+      };
+    }
+    return { src, alt: null, title: null, width: null, height: null, postUrl: null };
+  }
+
+  function findImageBySrc(src) {
     const imgs = document.querySelectorAll("img");
     for (const img of imgs) {
-      if (img.src === src || img.currentSrc === src) {
-        return {
-          src: img.src,
-          alt: img.alt || null,
-          title: img.title || null,
-          width: img.naturalWidth || null,
-          height: img.naturalHeight || null,
-        };
+      if (img.src === src || img.currentSrc === src) return img;
+    }
+    // Lightboxes serve the same picture under a different size variant:
+    // `pbs.twimg.com/media/<id>?name=large` in the overlay against `?name=small`
+    // in the feed, `feed_fullsize/<cid>` against `feed_thumbnail/<cid>`. The
+    // stable id ties them together, and the feed copy is the one that sits
+    // inside the post's own markup.
+    const id = stableImageId(src);
+    if (!id) return null;
+    for (const img of imgs) {
+      const candidate = stableImageId(img.currentSrc || img.src);
+      if (candidate && candidate === id) return img;
+    }
+    return null;
+  }
+
+  function stableImageId(url) {
+    const value = String(url ?? "");
+    const twitter = value.match(/pbs\.twimg\.com\/media\/([\w-]+)/i);
+    if (twitter) return `twimg:${twitter[1]}`;
+    const bsky = value.match(/cdn\.bsky\.app\/img\/[^/]+\/plain\/([^/]+)\/([\w]+)/i);
+    if (bsky) return `bsky:${bsky[1]}/${bsky[2]}`;
+    return null;
+  }
+
+  /// The permalink of the publication the image belongs to, read from the
+  /// markup around it. This is the only place the image→post relation exists:
+  /// neither X nor Bluesky offers a public file→post lookup.
+  function findPostUrlForImage(img) {
+    const isPostHref = (href) =>
+      /\/(?:[\w]+)\/status\/\d+/i.test(href) || /\/profile\/[^/]+\/post\/[\w]+/i.test(href);
+
+    // X wraps a tweet in <article>; the timestamp link is the tweet's own
+    // permalink and survives quoted tweets, which bring a second status link
+    // into the same article.
+    const article = img.closest("article");
+    if (article) {
+      const timestamp = article.querySelector("time");
+      const timestampLink = timestamp ? timestamp.closest("a") : null;
+      if (timestampLink && isPostHref(timestampLink.getAttribute("href") || "")) {
+        return timestampLink.href;
       }
     }
-    return { src, alt: null, title: null, width: null, height: null };
+
+    // Generic walk: the nearest container whose post links all agree. Stops
+    // before a feed-level container, where links to different posts collide.
+    let node = img.parentElement;
+    while (node && node !== document.body) {
+      const links = node.querySelectorAll("a[href]");
+      const hrefs = new Set();
+      for (const link of links) {
+        const href = link.getAttribute("href") || "";
+        if (isPostHref(href)) hrefs.add(link.href.split("?")[0]);
+      }
+      if (hrefs.size === 1) return hrefs.values().next().value;
+      if (hrefs.size > 1) return null;
+      node = node.parentElement;
+    }
+    return null;
   }
 
   // Expose extractors to other scripts running in the same content-script

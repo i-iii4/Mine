@@ -78,6 +78,7 @@ import {
   type ArticleExtractionState,
 } from "../lib/articleExtractionState";
 import { applySaveImageContextMenu } from "../lib/contextMenuMetadata";
+import { pickImageCardUrl } from "../lib/postSourceUrl";
 import {
   parseTwitterPhotoUrl,
   fetchTweetPhotoByIndex,
@@ -684,19 +685,29 @@ export function useClipperState() {
 
   async function applyContextMenu(ctx: ContextMenuData, meta: PageMetadata, tabId: number) {
     switch (ctx.menuItemId) {
-      case "save-image":
+      case "save-image": {
         applySaveImageContextMenu(ctx, meta);
+        let domPostUrl: string | null = null;
         if (ctx.srcUrl) {
           try {
             const info = await getImageInfo(tabId, ctx.srcUrl);
             if (info.alt) meta.imageAlt = info.alt;
             if (info.width) meta.imageWidth = info.width;
             if (info.height) meta.imageHeight = info.height;
+            domPostUrl = info.postUrl ?? null;
           } catch {
             // Optional — ignore
           }
         }
+        // The card links to the publication, not to the image file: the file
+        // is what gets downloaded, the post is what the link is for.
+        meta.url = pickImageCardUrl({
+          domPostUrl,
+          pageUrl: ctx.pageUrl,
+          srcUrl: ctx.srcUrl,
+        });
         break;
+      }
       case "save-selection":
         meta.detectedType = "selection";
         meta.selection = ctx.selectionText ?? meta.selection;
@@ -738,6 +749,20 @@ export function useClipperState() {
               if (lightbox.alt) meta.imageAlt = lightbox.alt;
               if (lightbox.width) meta.imageWidth = lightbox.width;
               if (lightbox.height) meta.imageHeight = lightbox.height;
+              // The lightbox belongs to a publication; the card should link
+              // to it rather than to the profile the lightbox opened over.
+              let domPostUrl: string | null = null;
+              try {
+                domPostUrl = (await getImageInfo(tabId, lightbox.src)).postUrl ?? null;
+              } catch {
+                // Optional — ignore
+              }
+              const postUrl = pickImageCardUrl({
+                domPostUrl,
+                pageUrl,
+                srcUrl: "",
+              });
+              if (postUrl) meta.url = postUrl;
             }
           } catch {
             // Fall through to default page save

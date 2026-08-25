@@ -184,7 +184,7 @@ interface MineContentHelpers {
   extractMetadata: () => PageMetadata;
   extractArticle: () => ArticleData;
   extractArticleAsync: () => Promise<ArticleData>;
-  getImageInfo: (src: string) => { src: string; alt: string | null; title: string | null; width: number | null; height: number | null };
+  getImageInfo: (src: string) => { src: string; alt: string | null; title: string | null; width: number | null; height: number | null; postUrl?: string | null };
   detectTwitterLightboxImage: () => TwitterLightboxResult | null;
 }
 
@@ -297,7 +297,7 @@ export async function cacheScreenshotUpload(dataUrl: string): Promise<string | n
 export async function getImageInfo(
   tabId: number,
   src: string,
-): Promise<{ alt?: string; width?: number; height?: number }> {
+): Promise<{ alt?: string; width?: number; height?: number; postUrl?: string | null }> {
   if (tabId === CONTENT_SCRIPT_CONTEXT) {
     const helpers = contentHelpers();
     if (!helpers) return {};
@@ -306,13 +306,14 @@ export async function getImageInfo(
       alt: info.alt ?? undefined,
       width: info.width ?? undefined,
       height: info.height ?? undefined,
+      postUrl: info.postUrl ?? null,
     };
   }
   return new Promise((resolve) => {
     const timer = setTimeout(() => resolve({}), 3_000);
     chrome.tabs.sendMessage(tabId, { action: "getImageInfo", src }, (resp) => {
       clearTimeout(timer);
-      resolve((resp as { alt?: string; width?: number; height?: number }) ?? {});
+      resolve((resp as { alt?: string; width?: number; height?: number; postUrl?: string | null }) ?? {});
     });
   });
 }
