@@ -15,5 +15,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Rust 1.88
         run: rustup toolchain install 1.88.0 --profile minimal
+      # The tauri build script validates that every bundled resource exists,
+      # and yt-dlp is a downloaded resource (scripts/fetch-ytdlp.mjs, plain
+      # Node, no packages). Without it `cargo check` fails before compiling a
+      # single crate — which is how this gate was red on every push since the
+      # binary joined the bundle.
+      - name: Fetch bundled yt-dlp
+        run: node scripts/fetch-ytdlp.mjs
       - name: Check locked workspace at MSRV
         run: cargo +1.88.0 check --workspace --all-targets --locked
