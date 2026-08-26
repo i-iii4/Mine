@@ -13,15 +13,24 @@ describe("sidebar column contract", () => {
     expect(css).toContain("calc((var(--sidebar-width) - var(--sidebar-reserved)) / 2)");
   });
 
-  it("floors every column at the same value", () => {
+  it("floors the previews at a column box plus the row's edge padding", () => {
+    // The side zones are read WITH their padding, so the middle floor carries
+    // the same padding — otherwise it reads as the narrowest third even when
+    // the boxes are equal.
     expect(css).toContain("--sidebar-col-floor: 88px;");
+    expect(css).toContain(
+      "--sidebar-rail-floor: calc(var(--sidebar-col-floor) + var(--sidebar-row-pad-x));",
+    );
     expect(css).toMatch(/--sidebar-name-col: clamp\(\s*var\(--sidebar-col-floor\)/);
     const sidebar = readFileSync("src/components/Sidebar.tsx", "utf8");
-    expect(sidebar).toContain("min-w-[var(--sidebar-col-floor)]");
+    expect(sidebar).toContain("min-w-[var(--sidebar-rail-floor)]");
   });
 
-  it("keeps the frozen minimum equal to three floors plus the reserved chrome", () => {
-    // 332 = reserved 156 (meta 88 + pads 64 + divider 4) + name 88 + previews 88.
+  it("keeps each frozen minimum equal to its floors plus the reserved chrome", () => {
+    // Primary: 332 = reserved 156 + name 88 + rail 88 (row padding is 0).
     expect(css).toContain("--sidebar-min-width: 332px;");
+    // Alt: 300 = reserved 108 + name 88 + rail (88 + 16) — three equal zones
+    // of 104 at the minimum.
+    expect(css).toContain("--sidebar-min-width: 300px;");
   });
 });

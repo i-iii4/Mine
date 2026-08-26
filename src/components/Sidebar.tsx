@@ -1071,7 +1071,7 @@ function SidebarPreviewRail({ children }: { children: ReactNode }) {
     <div
       // The floor matches the other columns': the previews may not end up the
       // narrowest third of the row, whatever width the panel is dragged to.
-      className="relative min-w-[var(--sidebar-col-floor)] flex-1"
+      className="relative min-w-[var(--sidebar-rail-floor)] flex-1"
       data-sidebar-preview-rail
       // Measured from the far edge of the guideline, not from the column it
       // closes: the line owns its pixel, the gap follows it.

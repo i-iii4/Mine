@@ -836,6 +836,12 @@ body {
      follow the drag synchronously. */
   --sidebar-reserved: 156px;
   --sidebar-col-floor: 88px;
+  /* The previews' own floor: a column box plus the row's edge padding. The
+     side zones are read WITH their padding — the name as pad+88, the meta as
+     88+pad — so a bare 88 in the middle looks like the narrowest third even
+     when the boxes are equal. In the primary design the row padding is 0 and
+     this collapses to the plain floor. */
+  --sidebar-rail-floor: calc(var(--sidebar-col-floor) + var(--sidebar-row-pad-x));
   --sidebar-name-col: clamp(
     var(--sidebar-col-floor),
     calc((var(--sidebar-width) - var(--sidebar-reserved)) / 2),
@@ -867,7 +873,10 @@ body {
   --chrome-edge-pad: 16px;
   /* alt: meta 88 + row-pad 16 + divider-gap 4 = 108 */
   --sidebar-reserved: 108px;
-  --sidebar-min-width: 284px;
+  /* = reserved 108 + name floor 88 + rail floor (88 + row-pad 16) = 300:
+     at the frozen minimum all three ZONES are 104 — pad+88, 88+16, 88+16 —
+     so the middle column is never the narrowest third. */
+  --sidebar-min-width: 300px;
 }
 
 /* Alt 2 — a copy of Alt 1 to experiment in. Everything above applies to it;
