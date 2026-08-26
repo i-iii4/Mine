@@ -827,13 +827,18 @@ body {
   --sidebar-nav-pad-top: var(--edge-rhythm, 32px); /* sidebar table inset from the top chrome */
   --sidebar-row-pad-x: 0px;    /* inner row padding: text left / count right */
   /* Row reserved width = meta column (88) + fixed paddings/gap, per design.
-     default: 88 + nav-pad 32×2 + divider-gap 4 = 156. The name column is then
-     clamp(88, sidebar-width − reserved − icons-min(88), 150); the icon strip
-     takes the rest. Pure CSS so columns follow the drag synchronously. */
+     default: 88 + nav-pad 32×2 + divider-gap 4 = 156. Name and previews split
+     the remaining width EQUALLY until the name reaches its 150px cap, then the
+     previews take the rest. The old formula handed all growth to the name
+     first, so on a narrowing panel the previews sat pinned at their floor
+     while the name still held 150 — the middle column read narrower than its
+     neighbours. At the frozen minimum every column is 88. Pure CSS so columns
+     follow the drag synchronously. */
   --sidebar-reserved: 156px;
+  --sidebar-col-floor: 88px;
   --sidebar-name-col: clamp(
-    88px,
-    calc(var(--sidebar-width) - var(--sidebar-reserved) - 88px),
+    var(--sidebar-col-floor),
+    calc((var(--sidebar-width) - var(--sidebar-reserved)) / 2),
     150px
   );
   /* The frozen "three equal columns" layout width. At/below it the columns stop
