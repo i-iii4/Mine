@@ -26,16 +26,35 @@ export const SIDEBAR_ROW_ACTION_BUTTON_PX = 84;
 /// The breathing space between that control and the column that frames it.
 export const SIDEBAR_ROW_ACTION_GAP_PX = 8;
 
-// Everything in the row that is NOT the name+icons flex region: the meta column
-// (88) plus the fixed paddings/gap, which differ by design variant.
-//   default: meta 88 + nav-pad 32×2 + divider-gap 4 = 156
-//   alt:     meta 88 + row-pad 16    + divider-gap 4 = 108
+/// Clear pixels after the row's guideline, before the thumbnails begin.
+export const SIDEBAR_PREVIEW_DIVIDER_GAP_PX = 4;
+
+/// The strip at the row's right edge that thumbnails may never enter: the
+/// action button with its field on either side, the guideline's own pixel and
+/// the divider gap after it. The button is invisible until hover but its room
+/// is held always, so this is what the meta column actually costs.
+///
+/// It used to be assumed equal to SIDEBAR_COLUMN_MIN (88) while measuring 105,
+/// and the 17px difference came out of the previews: at the minimum width the
+/// visible thumbnail strip was 71 against 104 for the name, which read as a
+/// middle column narrower than both its neighbours.
+export const SIDEBAR_ROW_META_TAIL_PX =
+  SIDEBAR_ROW_ACTION_GAP_PX
+  + SIDEBAR_ROW_ACTION_BUTTON_PX
+  + SIDEBAR_ROW_ACTION_GAP_PX
+  + 1
+  + SIDEBAR_PREVIEW_DIVIDER_GAP_PX;
+
+// Everything in the row that is NOT the name+previews flex region: the meta
+// tail (105) plus the fixed paddings, which differ by design variant.
+//   default: tail 105 + nav-pad 32×2 = 169
+//   alt:     tail 105 + row-pad 16   = 121
 // Alt 2 is a copy of Alt 1 for now; it gets its own number the moment its
 // row padding stops matching.
 const SIDEBAR_RESERVED_PX: Record<DesignMode, number> = {
-  default: 156,
-  alt: 108,
-  alt2: 108,
+  default: SIDEBAR_ROW_META_TAIL_PX + 64,
+  alt: SIDEBAR_ROW_META_TAIL_PX + 16,
+  alt2: SIDEBAR_ROW_META_TAIL_PX + 16,
 };
 
 /** Minimum panel width: the point where name = icons = meta = SIDEBAR_COLUMN_MIN. */

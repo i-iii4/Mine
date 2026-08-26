@@ -826,15 +826,15 @@ body {
   --sidebar-nav-pad-x: var(--edge-rhythm, 32px);   /* sidebar table inset from panel edges */
   --sidebar-nav-pad-top: var(--edge-rhythm, 32px); /* sidebar table inset from the top chrome */
   --sidebar-row-pad-x: 0px;    /* inner row padding: text left / count right */
-  /* Row reserved width = meta column (88) + fixed paddings/gap, per design.
-     default: 88 + nav-pad 32×2 + divider-gap 4 = 156. Name and previews split
-     the remaining width EQUALLY until the name reaches its 150px cap, then the
-     previews take the rest. The old formula handed all growth to the name
-     first, so on a narrowing panel the previews sat pinned at their floor
-     while the name still held 150 — the middle column read narrower than its
-     neighbours. At the frozen minimum every column is 88. Pure CSS so columns
-     follow the drag synchronously. */
-  --sidebar-reserved: 156px;
+  /* Row reserved width = the meta tail + fixed paddings, per design. The tail
+     is what the thumbnails may never enter: action gap 8 + button 84 + gap 8 +
+     guideline 1 + divider gap 4 = 105 (appLayout.ts SIDEBAR_ROW_META_TAIL_PX).
+     It used to be written as the keystone 88, and the missing 17 came out of
+     the previews — the middle column read narrower than both neighbours.
+     default: 105 + nav-pad 32×2 = 169. Name and previews split the remaining
+     width EQUALLY until the name reaches its 150px cap, then the previews take
+     the rest. Pure CSS so columns follow the drag synchronously. */
+  --sidebar-reserved: 169px;
   /* The keystone column size: at the frozen minimum, name, previews and meta
      all equal this (appLayout.ts SIDEBAR_COLUMN_MIN_PX — the two must agree,
      as must --sidebar-min-width with sidebarMinWidth()). */
@@ -846,8 +846,11 @@ body {
   );
   /* The frozen "three equal columns" layout width. At/below it the columns stop
      reflowing: the nav holds this width and the narrowing panel (overflow-hidden)
-     slides its right edge over it like a curtain. = reserved + 2×88. */
-  --sidebar-min-width: 332px;
+     slides its right edge over it like a curtain. = reserved + 2×88. MUST equal
+     sidebarMinWidth("default"): JS clamps the drag and lifts stored widths to
+     it, CSS freezes the nav — one side moving alone leaves the nav wider than
+     the panel and the curtain clips the meta column. */
+  --sidebar-min-width: 345px;
   /* top chrome: collection switcher trigger padding. Its label text lands at
      this value + the 8px inner pill padding, so the text aligns with the card
      edge — hence the rhythm minus that inner padding, not the rhythm itself. */
@@ -868,13 +871,13 @@ body {
   --sidebar-nav-pad-top: 0px;
   --sidebar-row-pad-x: 16px;
   --chrome-edge-pad: 16px;
-  /* alt: meta 88 + row-pad 16 + divider-gap 4 = 108 */
-  --sidebar-reserved: 108px;
+  /* alt: meta tail 105 + row-pad 16 = 121 */
+  --sidebar-reserved: 121px;
   /* = reserved + 2 x col-floor. MUST equal sidebarMinWidth("alt") in
      appLayout.ts: JS clamps the drag and lifts stored widths to this value
      while CSS freezes the nav — one side moving alone leaves the nav wider
      than the panel, and the curtain permanently clips the meta column. */
-  --sidebar-min-width: 284px;
+  --sidebar-min-width: 297px;
 }
 
 /* Alt 2 — a copy of Alt 1 to experiment in. Everything above applies to it;

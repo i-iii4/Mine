@@ -49,6 +49,7 @@ import {
 import { cn } from "@/lib/utils";
 import {
   SIDEBAR_ROW_ACTION_BUTTON_PX,
+  SIDEBAR_PREVIEW_DIVIDER_GAP_PX,
   SIDEBAR_ROW_ACTION_GAP_PX,
 } from "@/lib/appLayout";
 import { EDGE_FADE_WIDTH, createRightFadeMaskStyle } from "@/lib/edgeFade";
@@ -62,7 +63,7 @@ const SIDEBAR_PREVIEW_WIDTH = 240;
 const SIDEBAR_PREVIEW_FALLBACK_HEIGHT = 320;
 const SIDEBAR_PREVIEW_GAP = 8;
 const SIDEBAR_PREVIEW_VIEWPORT_MARGIN = 16;
-const SIDEBAR_PREVIEW_DIVIDER_GAP = 4;
+const SIDEBAR_PREVIEW_DIVIDER_GAP = SIDEBAR_PREVIEW_DIVIDER_GAP_PX;
 /// The row's box: 40 tall, with the last pixel reserved for the divider that
 /// closes it. Content centres in what is left, so the space above and below it
 /// comes out equal — the rule the chrome already follows through `border-box`,

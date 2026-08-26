@@ -30,4 +30,35 @@ describe("sidebar column contract", () => {
     expect(css).toContain(`--sidebar-min-width: ${sidebarMinWidth("default")}px;`);
     expect(css).toContain(`--sidebar-min-width: ${sidebarMinWidth("alt")}px;`);
   });
+
+  it("reserves what the meta tail actually costs, not the keystone", async () => {
+    // The tail is the strip thumbnails may never enter: it holds the action
+    // button whether or not it is visible. Writing the keystone 88 there took
+    // the missing 17px out of the previews.
+    const {
+      SIDEBAR_ROW_META_TAIL_PX,
+      SIDEBAR_ROW_ACTION_BUTTON_PX,
+      SIDEBAR_ROW_ACTION_GAP_PX,
+      SIDEBAR_PREVIEW_DIVIDER_GAP_PX,
+    } = await import("./appLayout");
+
+    expect(SIDEBAR_ROW_META_TAIL_PX).toBe(
+      SIDEBAR_ROW_ACTION_GAP_PX * 2 + SIDEBAR_ROW_ACTION_BUTTON_PX + 1 + SIDEBAR_PREVIEW_DIVIDER_GAP_PX,
+    );
+    // Reserve = tail + the design's own row padding, on both sides of the CSS.
+    expect(css).toContain(`--sidebar-reserved: ${SIDEBAR_ROW_META_TAIL_PX + 64}px;`);
+    expect(css).toContain(`--sidebar-reserved: ${SIDEBAR_ROW_META_TAIL_PX + 16}px;`);
+  });
+
+  it("leaves the previews a full keystone at the frozen minimum", async () => {
+    // The point of the whole contract: at the narrowest panel the visible
+    // thumbnail strip is not the narrowest part of the row.
+    const { sidebarMinWidth, SIDEBAR_ROW_META_TAIL_PX, SIDEBAR_COLUMN_MIN_PX } =
+      await import("./appLayout");
+    for (const [design, rowPad] of [["default", 64], ["alt", 16]] as const) {
+      const width = sidebarMinWidth(design);
+      const visiblePreviews = width - rowPad - SIDEBAR_COLUMN_MIN_PX - SIDEBAR_ROW_META_TAIL_PX;
+      expect(visiblePreviews, `${design} previews`).toBe(SIDEBAR_COLUMN_MIN_PX);
+    }
+  });
 });
