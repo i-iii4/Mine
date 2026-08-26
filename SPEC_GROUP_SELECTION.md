@@ -9,7 +9,7 @@ Status: implemented.
 Add Grid-owned group selection and batch card actions to the desktop feed.
 Selection must feel spatial and visual, not list-like: the user selects cards in
 the masonry surface and acts on the selected set from a bottom floating action
-island.
+commands row.
 
 ## Scope
 
@@ -24,7 +24,7 @@ In scope:
 - Dragging a selected card drags the whole selected set.
 - Dropping selected cards on a channel connects every dragged card to that
   channel.
-- A bottom floating action island appears when one or more cards are selected.
+- The selection commands row takes over the chrome content segment while one or more cards are selected.
 - Batch actions: close selection, `Connect`, collection-scoped `Disconnect`,
   `Merge`, `Delete`.
 
@@ -78,7 +78,7 @@ cleared before Detail becomes interactive.
 Modified click prevents the normal Detail open action.
 
 If toggling removes the last selected card, `selectedSlugs` becomes empty and
-the bottom action island disappears.
+the selection commands row disappears.
 
 `Cmd+Shift+click` is not a separate range mode; it follows the same single-card
 toggle behavior.
@@ -156,7 +156,7 @@ compatible combination of those states.
 While `selectedSlugs.size > 0`, Grid suppresses feed card hover actions for all
 cards: `CardHoverMenu` does not receive CSS `group-hover` affordances and hidden
 action layers stay non-interactive. Batch actions are exposed through the
-bottom batch action island for pointer users and through a focused-card
+selection commands row for pointer users and through a focused-card
 `Cmd+K` batch menu for keyboard users.
 
 ### Keyboard Selection
@@ -385,69 +385,55 @@ Implementation markers:
 - overflow badge for hidden dragged items:
   `data-feed-drag-stack-count-badge`.
 
-## Bottom Action Island
+## Selection Commands Row
 
-When `selectedSlugs.size >= 1`, Grid renders a bottom floating action island.
+**Superseded 23.08.2026, corrected 26.08.2026:** the bottom floating action
+island is removed. The selection's commands live in the secondary chrome row
+(`MainSecondaryTopBar`) as a layer while a selection exists — the same
+layer-swap language the open-element states use. On top placement the row
+takes the `bg-accent` surface.
 
-Position and layer:
+The layer occupies the **content segment only**: it replaces that half's
+ordinary content — the element count and the view switch. The sidebar segment
+keeps its stats; the commands sit over the feed they act on, not over the
+collections list.
 
-- absolutely positioned inside the main content pane and centered
-  horizontally relative to that right-side content area, not the full app
-  viewport;
-- above Grid content and below menu/popover layers;
-- does not participate in Grid layout and does not cause card reflow;
-- uses the same compact floating island language as the image preview bottom
-  controls.
-- bottom offset is `16px` (`bottom-s3`) from the Grid/main pane bottom. The
-  Grid/main pane ends above the `h-8` app bottom bar, so this is the visible
-  16px gap above that bar.
+Ownership and mechanics:
+
+- selection state and every handler stay owned by Grid; only presentation
+  moved. Grid portals `GroupSelectionCommands` into a host slot the row
+  exposes (`createPortal`); without a host (unit renders) the commands mount
+  in place;
+- the host slot stays mounted so the portal target exists before the first
+  selected card;
 - hidden while a block drag is active, so the stack preview/drop operation is
-  the only primary drag affordance.
-
-Visual contract:
-
-- `rounded-1`;
-- `border border-border`;
-- fixed height `32px` (`h-8`);
-- opaque theme surface: `bg-accent text-foreground`;
-- compact horizontal layout with `px-1` and `gap-1`;
-- horizontal scrolling when content does not fit available viewport width;
-- standard menu shadow only; no internal separators, decorative gradients,
-  blur, glow, transparency, or large radius.
+  the only primary drag affordance;
+- the action error renders as a single line anchored under the row;
+- horizontal scrolling inside the row when content does not fit.
 
 Layout order:
 
-- the counter starts the island and uses
-  Detail-top-bar typography: `font-mono text-sm`, regular weight, no
-  `font-semibold`, and `text-muted-foreground` for a secondary gray read:
+- the counter starts the row: `font-mono text-sm text-muted-foreground`,
+  `{n} element(s) selected` (English plural helper
+  `selectedElementCountLabel`, not string concatenation);
+- then the actions; the rightmost control is an icon-only close button (`X`)
+  that clears selection, pinned to the row's far edge.
 
-  - `1 карточка`;
-  - `2 карточки`;
-  - `5 карточек`;
-  - `21 карточка`;
-  - `25 карточек`.
-- implement with a dedicated pluralization helper, not string concatenation.
-- the rightmost control is an icon-only close button (`X`) that clears
-  selection.
-
-Direct action buttons on the island use standard design-system `Button`
-variants. `Connect`, `Disconnect` and `Merge` use `variant="default"`;
-`Delete` uses `variant="destructive"` (`bg-component-fill text-destructive`
-with the standard component hover outline).
-
-Actions are shown directly on the island, not hidden behind an overflow menu in
-the first implementation:
+Direct action buttons use standard design-system `Button` variants, whose
+fills compute from the row's own surface (relative elevation — no hand-picked
+colors). `Connect`, `Disconnect` and `Merge` use `variant="default"`
+(`Disconnect` keeps `text-detach`); `Delete` uses `variant="destructive"`.
 
 | Action | Availability | Behavior |
 |---|---|---|
-| `Connect` | always enabled when at least one card is selected | Opens batch collection picker for selected cards. |
-| `Disconnect` | visible only when `currentTag` is present | Text-only action; removes all selected cards from the current collection. |
-| `Merge` | visible only when at least two cards are selected | Text-only action; opens the merge reorder dialog, then one backend merge command creates one new card and removes the selected source cards. |
-| `Delete` | always enabled when at least one card is selected | Text-only red action; opens batch destructive confirmation before deleting selected cards. |
+| `Connect` | always enabled when at least one element is selected | Opens batch collection picker for selected elements. |
+| `Disconnect` | visible only when `currentTag` is present | Removes all selected elements from the current collection. |
+| `Merge` | visible only when at least two elements are selected | Opens the merge reorder dialog, then one backend merge command creates one new element and removes the selected sources. |
+| `Delete` | always enabled when at least one element is selected | Opens batch destructive confirmation before deleting selected elements. |
 
-`Merge`, `Delete` and collection-scoped `Disconnect` can live directly on the island; an
-ellipsis overflow menu is not required unless the island becomes too crowded in
-future work.
+The bottom action bar narrows to the selection's commands at the same time:
+navigation and `Focus` entries leave, a pressable `Clear selection esc`
+arrives ([SPEC_KEYBOARD.md](SPEC_KEYBOARD.md)).
 
 ## Batch Delete
 
