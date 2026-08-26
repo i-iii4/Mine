@@ -1245,9 +1245,15 @@ describe("AppWithVault", () => {
 
     fireEvent.click(screen.getByText("Report selection"));
     expect(selectionLayer()).toHaveAttribute("data-entered", "true");
-    // The ordinary stats layer yields while the selection holds the row.
-    const mainLayer = document.querySelector("[data-main-secondary-main-layer]");
-    expect(mainLayer).toHaveAttribute("data-entered", "false");
+    // The selection lives in the content half and replaces only its ordinary
+    // content; the stats over the sidebar stay.
+    expect(selectionLayer().closest("[data-main-secondary-top-bar-content-segment]"))
+      .not.toBeNull();
+    const layers = document.querySelectorAll("[data-main-secondary-main-layer]");
+    const sidebarLayer = layers[0]!;
+    const contentLayer = layers[1]!;
+    expect(sidebarLayer).toHaveAttribute("data-entered", "true");
+    expect(contentLayer).toHaveAttribute("data-entered", "false");
 
     fireEvent.click(bottomBarEntry("Clear selection")!);
     expect(selectionLayer()).toHaveAttribute("data-entered", "false");

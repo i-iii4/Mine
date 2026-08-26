@@ -265,7 +265,10 @@ export function MainSecondaryTopBar({
   selectionHostRef?: (element: HTMLDivElement | null) => void;
 }) {
   const detailLayerEntered = Boolean(detailBlock && detailEntered);
-  const mainLayerEntered = !detailLayerEntered && !selectionActive;
+  const mainLayerEntered = !detailLayerEntered;
+  // The selection takes over the content half only: the stats over the sidebar
+  // are not what it replaces, and its commands belong over the feed they act on.
+  const contentMainLayerEntered = mainLayerEntered && !selectionActive;
   const closeChromeGesture = useChromeDragGesture({ disabled: !detailBlock });
   const {
     attributes: dragAttributes,
@@ -331,27 +334,29 @@ export function MainSecondaryTopBar({
           </div>
         )}
       </div>
-      {/* Spans both segments: while a selection exists, the whole row belongs
-          to its commands. The host stays mounted so the feed's portal target
-          exists before the first selected card. */}
-      <div
-        className={cn(
-          "main-secondary-bar-layer absolute inset-0 z-10",
-          !selectionActive && "pointer-events-none",
-        )}
-        data-entered={selectionActive ? "true" : "false"}
-        data-secondary-selection-bar=""
-      >
-        <div ref={selectionHostRef} className="h-full w-full" />
-      </div>
       <div
         data-tauri-drag-region
         data-main-secondary-top-bar-content-segment=""
         className="relative flex h-full min-w-0 flex-1 items-center overflow-hidden"
       >
+        {/* The selection replaces this half's ordinary content — the element
+            count and the view switch — not the whole row: its commands sit
+            over the feed they act on, the sidebar keeps its stats. The host
+            stays mounted so the feed's portal target exists before the first
+            selected card. */}
+        <div
+          className={cn(
+            "main-secondary-bar-layer absolute inset-0 z-10",
+            !selectionActive && "pointer-events-none",
+          )}
+          data-entered={selectionActive ? "true" : "false"}
+          data-secondary-selection-bar=""
+        >
+          <div ref={selectionHostRef} className="h-full w-full" />
+        </div>
         <div
           className="main-secondary-bar-layer absolute inset-0"
-          data-entered={mainLayerEntered ? "true" : "false"}
+          data-entered={contentMainLayerEntered ? "true" : "false"}
           data-main-secondary-main-layer=""
         >
           <MainSecondaryStatsRight
