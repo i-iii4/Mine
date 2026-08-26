@@ -1255,6 +1255,12 @@ describe("AppWithVault", () => {
     expect(sidebarLayer).toHaveAttribute("data-entered", "true");
     expect(contentLayer).toHaveAttribute("data-entered", "false");
 
+    // The ground does not move: a selection swaps the half's content, not the
+    // row's surface — fills compute from the surface, so they stay consistent.
+    const bar = document.querySelector("[data-main-secondary-top-bar]");
+    expect(bar).toHaveClass("bg-background");
+    expect(bar).not.toHaveClass("bg-accent");
+
     fireEvent.click(bottomBarEntry("Clear selection")!);
     expect(selectionLayer()).toHaveAttribute("data-entered", "false");
   });

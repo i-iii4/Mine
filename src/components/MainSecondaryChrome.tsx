@@ -290,8 +290,10 @@ export function MainSecondaryTopBar({
       className={cn(
         "relative flex h-8 shrink-0 items-center transition-colors duration-[170ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
         placement === "bottom" ? "border-t border-border bg-accent" : "border-b border-border",
-        placement === "top"
-          && (detailLayerEntered || selectionActive ? "bg-accent" : "bg-background"),
+        // A selection does not change the row's surface: the components on the
+        // layer compute their fills from whatever the surface is (relative
+        // elevation), so the ground stays put and only the content swaps.
+        placement === "top" && (detailLayerEntered ? "bg-accent" : "bg-background"),
       )}
       data-main-secondary-placement={placement}
     >

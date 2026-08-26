@@ -390,8 +390,10 @@ Implementation markers:
 **Superseded 23.08.2026, corrected 26.08.2026:** the bottom floating action
 island is removed. The selection's commands live in the secondary chrome row
 (`MainSecondaryTopBar`) as a layer while a selection exists — the same
-layer-swap language the open-element states use. On top placement the row
-takes the `bg-accent` surface.
+layer-swap language the open-element states use. The row's surface does not
+change: a selection swaps the half's content, and every control on the layer
+computes its fill from the surface it stands on (relative elevation,
+DESIGN_SYSTEM.md), so nothing shifts colour on activation.
 
 The layer occupies the **content segment only**: it replaces that half's
 ordinary content — the element count and the view switch. The sidebar segment
