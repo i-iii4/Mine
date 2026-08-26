@@ -835,13 +835,10 @@ body {
      neighbours. At the frozen minimum every column is 88. Pure CSS so columns
      follow the drag synchronously. */
   --sidebar-reserved: 156px;
+  /* The keystone column size: at the frozen minimum, name, previews and meta
+     all equal this (appLayout.ts SIDEBAR_COLUMN_MIN_PX — the two must agree,
+     as must --sidebar-min-width with sidebarMinWidth()). */
   --sidebar-col-floor: 88px;
-  /* The previews' own floor: a column box plus the row's edge padding. The
-     side zones are read WITH their padding — the name as pad+88, the meta as
-     88+pad — so a bare 88 in the middle looks like the narrowest third even
-     when the boxes are equal. In the primary design the row padding is 0 and
-     this collapses to the plain floor. */
-  --sidebar-rail-floor: calc(var(--sidebar-col-floor) + var(--sidebar-row-pad-x));
   --sidebar-name-col: clamp(
     var(--sidebar-col-floor),
     calc((var(--sidebar-width) - var(--sidebar-reserved)) / 2),
@@ -873,10 +870,11 @@ body {
   --chrome-edge-pad: 16px;
   /* alt: meta 88 + row-pad 16 + divider-gap 4 = 108 */
   --sidebar-reserved: 108px;
-  /* = reserved 108 + name floor 88 + rail floor (88 + row-pad 16) = 300:
-     at the frozen minimum all three ZONES are 104 — pad+88, 88+16, 88+16 —
-     so the middle column is never the narrowest third. */
-  --sidebar-min-width: 300px;
+  /* = reserved + 2 x col-floor. MUST equal sidebarMinWidth("alt") in
+     appLayout.ts: JS clamps the drag and lifts stored widths to this value
+     while CSS freezes the nav — one side moving alone leaves the nav wider
+     than the panel, and the curtain permanently clips the meta column. */
+  --sidebar-min-width: 284px;
 }
 
 /* Alt 2 — a copy of Alt 1 to experiment in. Everything above applies to it;
