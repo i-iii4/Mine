@@ -1174,6 +1174,121 @@ mod mutation_tests {
     }
 
     #[test]
+    fn restore_resurrects_a_deleted_card() {
+        let (_dir, env, root) = fixture();
+        let before = card_content(&root, "Cards/plain");
+        let out = run(&env, &args(&["card", "delete", "Cards/plain"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        assert!(!root.join("Cards/plain.md").exists());
+
+        let out = run(&env, &args(&["restore", "Cards/plain"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        assert_eq!(card_content(&root, "Cards/plain"), before);
+        // Back in the index too: the read side sees the card again.
+        let out = run(&env, &args(&["card", "Cards/plain"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+    }
+
+    #[test]
+    fn structural_commands_emit_parseable_json() {
+        let (_dir, env, _root) = fixture();
+        let parse = |out: &CliOutput| -> serde_json::Value {
+            assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+            serde_json::from_str(out.stdout.trim()).expect("valid JSON")
+        };
+
+        let v = parse(&run(&env, &args(&["card", "create", "--title", "Json Card", "--json"])));
+        assert_eq!(v["contract"], 1);
+        let created = v["created"].as_str().unwrap().to_string();
+
+        let v = parse(&run(&env, &args(&["card", "rename", &created, "Json Card 2", "--json"])));
+        let renamed_to = v["to"].as_str().unwrap().to_string();
+
+        let v = parse(&run(&env, &args(&["card", "delete", &renamed_to, "--dry-run", "--json"])));
+        assert_eq!(v["applied"], false);
+        let v = parse(&run(&env, &args(&["card", "delete", &renamed_to, "--json"])));
+        assert_eq!(v["deleted"], true);
+
+        let v = parse(&run(&env, &args(&["collection", "create", "Json Shelf", "--json"])));
+        assert_eq!(v["created"], "Json Shelf");
+        let v = parse(&run(&env, &args(&["collection", "rename", "Json Shelf", "Json Shelf 2", "--json"])));
+        assert_eq!(v["to"], "Json Shelf 2");
+        let v = parse(&run(&env, &args(&["collection", "delete", "Json Shelf 2", "--json"])));
+        assert_eq!(v["deleted"], true);
+    }
+
+    #[test]
+    fn structural_error_paths_fail_without_side_effects() {
+        let (_dir, env, root) = fixture();
+        let sunset_before = card_content(&root, "Cards/sunset");
+
+        // Rename onto an occupied name.
+        let out = run(&env, &args(&["card", "rename", "Cards/plain", "sunset"]));
+        assert_ne!(out.code, EXIT_OK, "occupied rename must fail");
+        assert!(root.join("Cards/plain.md").exists());
+
+        // Structural commands aimed at a missing card.
+        let out = run(&env, &args(&["card", "delete", "Cards/ghost"]));
+        assert_ne!(out.code, EXIT_OK);
+        let out = run(&env, &args(&["card", "rename", "Cards/ghost", "anything"]));
+        assert_ne!(out.code, EXIT_OK);
+        let out = run(&env, &args(&["merge", "Cards/sunset", "Cards/ghost"]));
+        assert_ne!(out.code, EXIT_OK);
+        assert_eq!(card_content(&root, "Cards/sunset"), sunset_before, "failed merge left sources alone");
+
+        // Duplicate collection.
+        let out = run(&env, &args(&["collection", "create", "Dup"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        let out = run(&env, &args(&["collection", "create", "Dup"]));
+        assert_ne!(out.code, EXIT_OK, "duplicate collection must fail");
+    }
+
+    #[test]
+    fn space_flag_routes_mutations_to_the_chosen_space() {
+        let (dir, env, root) = fixture();
+        // A second known space with its own card and index.
+        let second_root = dir.path().join("Second");
+        std::fs::create_dir_all(second_root.join(".mine")).unwrap();
+        std::fs::write(second_root.join(".mine/vault-id"), "secondspace").unwrap();
+        std::fs::write(
+            second_root.join("note.md"),
+            "---\nsaved_at: 2026-02-01T00:00:00Z\n---\nSecond space note.",
+        )
+        .unwrap();
+        let derived = env.app_data_dir.join("vaults/secondspace");
+        std::fs::create_dir_all(&derived).unwrap();
+        let vault = VaultLayout::with_derived_root(second_root.clone(), derived);
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        let content = std::fs::read_to_string(second_root.join("note.md")).unwrap();
+        let parsed = crate::domain::block::parse_markdown_document(
+            "note",
+            &content,
+            DateTime::new("2026-02-01T00:00:00Z").unwrap(),
+        )
+        .unwrap();
+        crate::storage::index::upsert_block(&conn, &parsed.block, None).unwrap();
+        drop(conn);
+        std::fs::write(
+            env.app_data_dir.join("config.json"),
+            serde_json::to_string(&json!({
+                "vault_path": root,
+                "known_vaults": [root.clone(), second_root.clone()],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let out = run(&env, &args(&[
+            "card", "set", "note", "title", "Routed",
+            "--space", second_root.to_str().unwrap(),
+        ]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        assert!(std::fs::read_to_string(second_root.join("note.md")).unwrap().contains("title: Routed"));
+        // The active space is untouched.
+        assert!(!card_content(&root, "Cards/plain").contains("Routed"));
+    }
+
+    #[test]
     fn collection_lifecycle_create_rename_delete() {
         let (_dir, env, root) = fixture();
         let out = run(&env, &args(&["collection", "create", "Reading"]));
