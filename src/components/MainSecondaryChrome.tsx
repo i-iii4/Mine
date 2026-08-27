@@ -152,10 +152,12 @@ function MainSecondaryNoteMeta({
   /// indexed block. Only the fields common to both are read.
   block: Pick<
     LightBlock,
-    "block_type" | "saved_at" | "width" | "height" | "media_urls" | "author"
+    "saved_at" | "width" | "height" | "media_urls" | "author"
   >;
 }) {
-  const atoms: string[] = [block.block_type];
+  // No type atom: the type taxonomy is gone (decision 044), and a projection
+  // of it in the meta row would keep the dead concept on screen.
+  const atoms: string[] = [];
 
   const saved = new Date(block.saved_at);
   if (!Number.isNaN(saved.getTime())) {

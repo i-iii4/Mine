@@ -86,7 +86,8 @@ describe("MainSecondaryTopBar placement", () => {
 
     const meta = document.querySelector("[data-main-secondary-note-meta]");
     expect(meta).toBeInTheDocument();
-    expect(meta).toHaveTextContent("article");
+    // The type taxonomy is gone (decision 044): no "article"/"image" atom.
+    expect(meta).not.toHaveTextContent("article");
     expect(meta).toHaveTextContent("2000×1333");
     expect(meta).toHaveTextContent("3 media");
     expect(meta).toHaveTextContent("@kotecinho");
