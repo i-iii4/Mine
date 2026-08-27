@@ -1121,6 +1121,59 @@ mod mutation_tests {
     }
 
     #[test]
+    fn creates_a_media_card_from_a_file() {
+        let (dir, env, root) = fixture();
+        let source = dir.path().join("shot.jpg");
+        std::fs::write(&source, b"\xff\xd8\xff\xdbfake-jpeg-bytes").unwrap();
+        let out = run(&env, &args(&[
+            "card", "create", "--title", "Shot", "--file", source.to_str().unwrap(),
+        ]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        // Flat fixture layout: card and media land in the vault root.
+        let content = card_content(&root, "Shot");
+        assert!(content.contains("file:"), "front matter references the media");
+        assert!(content.contains("Shot.jpg"), "media reference uses the card name");
+        let media = root.join("Shot.jpg");
+        assert!(media.is_file(), "media file copied into the vault");
+        assert_eq!(std::fs::read(&media).unwrap(), std::fs::read(&source).unwrap());
+        let out = run(&env, &args(&["card", "Shot"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+    }
+
+    #[test]
+    fn mutations_survive_a_concurrently_open_writable_index() {
+        let (_dir, env, root) = fixture();
+        let vault = resolve_space(&env, None).map_err(|e| e.message).unwrap();
+
+        // Another process (the app) keeps a writable connection open the whole
+        // time — the everyday scenario for a CLI run.
+        let held = db::open_or_create(&vault.index_db_path()).unwrap();
+
+        let out = run(&env, &args(&["card", "set", "Cards/plain", "title", "Kept open"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        let out = run(&env, &args(&["card", "rename", "Cards/plain", "Busy Rename"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        assert!(root.join("Cards/Busy Rename.md").exists());
+
+        // Now the other side holds an actual write transaction; the CLI must
+        // wait it out (busy_timeout) instead of failing. The lock is released
+        // from a background thread mid-wait.
+        held.execute_batch("BEGIN IMMEDIATE; INSERT INTO channels (tag, title, position, created_at) VALUES ('held', 'held', 999, '2026-01-01T00:00:00Z');").unwrap();
+        let held = std::sync::Mutex::new(held);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                held.lock().unwrap().execute_batch("COMMIT;").unwrap();
+            });
+            let out = run(&env, &args(&[
+                "card", "rename", "Cards/Busy Rename", "After Lock",
+            ]));
+            assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        });
+        assert!(root.join("Cards/After Lock.md").exists());
+    }
+
+    #[test]
     fn collection_lifecycle_create_rename_delete() {
         let (_dir, env, root) = fixture();
         let out = run(&env, &args(&["collection", "create", "Reading"]));

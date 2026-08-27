@@ -370,6 +370,7 @@ cargo tauri build --features article-audio # Сборка с включённы�
 bun run build:extension        # Обязательная отдельная сборка расширения → extension/dist
 bun run pack:extension         # Упаковка расширения в архив
 bun run clipper:install-host   # Установка/обновление native host бинарника
+bun run cli:install            # Сборка release и установка CLI как ~/.local/bin/mine
 bun run lint                   # Линтинг фронтенда
 bun run test                   # Полная проверка: Vitest + Rust workspace tests
 bun run test:frontend          # Только Vitest
