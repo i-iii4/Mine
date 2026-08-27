@@ -44,6 +44,7 @@ import { imageCardNeedsGeometryRefresh } from "@/lib/cardHeight";
 import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
 import { cn } from "@/lib/utils";
 import { commandById } from "@/lib/commandRegistry";
+import { EDGE_FADE_WIDTH, createRightFadeMaskStyle } from "@/lib/edgeFade";
 import { createParamsForClipboardPayload } from "@/lib/pasteImport";
 import { BAR_HIDE_PRIORITIES } from "@/lib/bottomBarOverflow";
 import {
@@ -360,6 +361,10 @@ interface ThumbUpdatedEvent {
 }
 
 // ─── Root ──────────────────────────────────────────────────────────────────
+
+/// The collection filter dissolves its overflow at the panel's right edge, the
+/// same way sidebar row names do, instead of cutting a letter in half.
+const SIDEBAR_SEARCH_MASK_STYLE = createRightFadeMaskStyle(EDGE_FADE_WIDTH, 0);
 
 export function App() {
   const [vaultPath, setVaultPath] = useState<string | null>(null);
@@ -3181,6 +3186,11 @@ export function AppWithVault({
                     sidebarSearchActiveSurfaceClass,
                   ].filter(Boolean).join(" ")}
                   data-sidebar-top-search-surface=""
+                  // Overflowing text at the panel's right edge dissolves, it is
+                  // not cut: a narrow panel used to slice the placeholder
+                  // through the middle of a letter. Same curve the sidebar rows
+                  // use — DESIGN_SYSTEM.md, «Растворение кромок».
+                  style={SIDEBAR_SEARCH_MASK_STYLE}
                 >
                   <Input
                     ref={sidebarSearchInputRef}
