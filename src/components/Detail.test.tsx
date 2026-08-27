@@ -1268,7 +1268,8 @@ describe("Detail", () => {
 
     expect(container.querySelector(".aspect-video")).toBeNull();
     expect(screen.getAllByText("AI 2027").length).toBeGreaterThan(0);
-    expect(screen.getByText("Link")).toBeInTheDocument();
+    // The type taxonomy is gone (decision 044): no Type row in metadata.
+    expect(screen.queryByText("Link")).toBeNull();
   });
 
   it("shows the standard overflow menu trigger on image media surfaces", async () => {
