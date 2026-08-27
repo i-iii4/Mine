@@ -420,6 +420,22 @@
     return window.MineTwitterTweetContent?.composeTweetText?.(mainText, quotes) || String(mainText || "").trim();
   }
 
+  /// The full text of one post, by id. Used for thread parts the page shows
+  /// collapsed: their markup holds only what fits before "Show more".
+  async function fetchTweetText(tweetId) {
+    try {
+      const details = await fetchTweetDetails(tweetId);
+      return details.text || "";
+    } catch {
+      return "";
+    }
+  }
+
+  function preferCompleteTweetText(domText, apiText) {
+    return window.MineTweetTextCompletion?.preferCompleteTweetText?.(domText, apiText)
+      ?? String(domText || "").trim();
+  }
+
   function cleanSyndicationText(text, mediaDetails) {
     let cleaned = String(text || "");
     for (const media of mediaDetails || []) {
@@ -464,7 +480,7 @@
       const resp = await fetch(
         `https://cdn.syndication.twimg.com/tweet-result?id=${tweetId}&token=0`
       );
-      if (!resp.ok) return { mediaDetails: [], quotedTweet: null };
+      if (!resp.ok) return { mediaDetails: [], quotedTweet: null, text: "" };
       const data = await resp.json();
       const media = [];
       for (const m of (data.mediaDetails || [])) {
@@ -489,9 +505,13 @@
         }
       }
 
-      return { mediaDetails: media, quotedTweet };
+      return {
+        mediaDetails: media,
+        quotedTweet,
+        text: cleanSyndicationText(data.text || "", media),
+      };
     } catch {
-      return { mediaDetails: [], quotedTweet: null };
+      return { mediaDetails: [], quotedTweet: null, text: "" };
     }
   }
 
@@ -519,23 +539,35 @@
     // Quote tweets stay inside the parent tweet body; they are not thread items.
     let apiMediaDetails = [];
     let apiQuotedTweet = null;
+    let apiTargetText = "";
     if (tweetId) {
       const tweetDetails = await fetchTweetDetails(tweetId);
       apiMediaDetails = tweetDetails.mediaDetails;
       apiQuotedTweet = tweetDetails.quotedTweet;
+      apiTargetText = tweetDetails.text || "";
     }
     const apiMedia = apiMediaDetails.map((m) => m.url);
 
     const tweets = [];
     for (const article of articles) {
       const contentParts = extractTweetContentParts(article);
+      const partId = threadSelection?.getTweetIdentity?.(article)?.tweetId || null;
       // Target tweet: prefer API media (complete — photos + GIFs + videos).
       // Fallback to DOM media if API returned nothing.
-      const isTargetTweet =
-        threadSelection?.getTweetIdentity?.(article)?.tweetId === tweetId;
+      const isTargetTweet = partId === tweetId;
       const finalMedia = isTargetTweet && apiMedia.length > 0 ? apiMedia : contentParts.media;
       const quotes = isTargetTweet && apiQuotedTweet ? [apiQuotedTweet] : contentParts.quotes;
-      const text = composeTweetText(contentParts.mainText, quotes);
+      // X collapses a long post behind "Show more" and keeps only the visible
+      // half in the markup, so DOM text can stop mid-word. The syndication API
+      // answers with the whole post, per id — asked for every thread part, not
+      // just the one the URL points at, because any part can be the long one.
+      const apiText = isTargetTweet
+        ? apiTargetText
+        : partId
+          ? await fetchTweetText(partId)
+          : "";
+      const mainText = preferCompleteTweetText(contentParts.mainText, apiText);
+      const text = composeTweetText(mainText, quotes);
       if (text || finalMedia.length > 0) {
         tweets.push({ text, media: finalMedia });
       }
@@ -569,7 +601,12 @@
       for (const src of (t.media || [])) {
         parts.push(`![](${src})`);
       }
-      if (i < tweets.length - 1) parts.push("---");
+      // A thread break is written as a rule of asterisks, not `---`. Three
+      // dashes on their own line are also how front matter is delimited, and a
+      // note whose body opens with them can be read as a second front matter
+      // block — Obsidian and our own parser included. `***` renders as the same
+      // horizontal rule with none of that ambiguity.
+      if (i < tweets.length - 1) parts.push("***");
     }
 
     const firstText = (tweets[0]?.text || "").replace(/\n/g, " ").trim();

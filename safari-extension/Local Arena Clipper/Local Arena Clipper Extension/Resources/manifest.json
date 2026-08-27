@@ -44,6 +44,7 @@
         "lib/twitterTweetContent.js",
         "lib/xLongformArticleExtraction.js",
         "lib/extractionDocumentSanitizer.js",
+        "lib/tweetTextCompletion.js",
         "content.js"
       ],
       "run_at": "document_idle"

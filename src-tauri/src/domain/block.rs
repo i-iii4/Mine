@@ -1094,6 +1094,13 @@ fn yaml_quote(s: &str) -> String {
     // `"`, `'` — quotes at start
     // Leading/trailing whitespace
     let needs_quoting = s.contains(": ")
+        // A colon that ends the scalar is a mapping separator too: `title: a b:`
+        // makes the whole line a key with no value, and a standard YAML parser
+        // refuses the document. Posts that introduce the next one end this way
+        // — "turning my notes into a garden:" — and one saved card was already
+        // unreadable because of it.
+        || s.ends_with(':')
+        || s.contains(":\n")
         || s.contains(" #")
         || s.contains('[')
         || s.contains(']')
@@ -2095,6 +2102,19 @@ mod tests {
     }
 
     // ── serialize_frontmatter ───────────────────────────────────────────
+
+    #[test]
+    fn quotes_a_title_that_ends_in_a_colon() {
+        // Unquoted, `title: … garden:` reads as a key with no value and the
+        // whole front matter fails to parse — a real clipped post did this.
+        assert_eq!(
+            super::yaml_quote("turning my notes into a garden:"),
+            "\"turning my notes into a garden:\""
+        );
+        // A colon inside a word still needs no quotes: YAML only breaks on the
+        // separator forms.
+        assert_eq!(super::yaml_quote("ratio 16:9"), "ratio 16:9");
+    }
 
     #[test]
     fn serialize_frontmatter_minimal() {
