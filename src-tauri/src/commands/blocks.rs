@@ -484,7 +484,9 @@ pub fn create_block(
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 
-    let bt = BlockType::from_str(&block_type).map_err(|e| CommandError::Internal(e.to_string()))?;
+    // The caller's declared type is dead (decision 044): content decides. The
+    // parameter survives in the signature until the IPC contract is updated.
+    let _ = block_type;
 
     let media_ext = file_path.as_ref().map(|fp| {
         std::path::Path::new(fp)
@@ -517,10 +519,10 @@ pub fn create_block(
         }
     }
 
-    let block = Block {
+    let mut block = Block {
         slug,
         frontmatter: Frontmatter {
-            block_type: bt,
+            block_type: crate::domain::block::BlockType::Article,
             title: None,
             description: None,
             url,
@@ -540,6 +542,8 @@ pub fn create_block(
         },
         body: body.unwrap_or_default(),
     };
+    block.frontmatter.block_type =
+        crate::domain::block::derive_block_type(&block.frontmatter, &block.body);
 
     let source = file_path.as_ref().map(|fp| PathBuf::from(fp));
     Ok(files::persist_new_block(

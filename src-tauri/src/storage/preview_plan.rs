@@ -50,6 +50,17 @@ pub fn is_article_card(block: &Block) -> bool {
     derive_card_kind(block) == CardKind::Article
 }
 
+/// Whether this card's media lives in its body. This is the gate for every
+/// body-scanning preview path. It used to be `is_article_card`, but since
+/// decision 044 a body of bare embeds is a Media card — and its previews
+/// still come from those embeds, so the gate asks about content shape, not
+/// about the display kind.
+pub fn has_body_media(block: &Block) -> bool {
+    iter_inline_media_references(&block.body)
+        .iter()
+        .any(|reference| !reference.source.is_empty())
+}
+
 pub fn is_remote_media(src: &str) -> bool {
     src.starts_with("http://") || src.starts_with("https://")
 }
@@ -249,7 +260,7 @@ pub fn find_first_existing_article_media(
     block: &Block,
     vault: &VaultLayout,
 ) -> Option<ResolvedPreviewMedia> {
-    if !is_article_card(block) {
+    if !has_body_media(block) {
         return None;
     }
     for reference in iter_inline_media_references(&block.body) {
@@ -281,7 +292,7 @@ pub fn collect_article_preview_images(
     limit: usize,
     is_decodable: fn(&Path) -> bool,
 ) -> Vec<PathBuf> {
-    if !is_article_card(block) || limit == 0 {
+    if !has_body_media(block) || limit == 0 {
         return Vec::new();
     }
 

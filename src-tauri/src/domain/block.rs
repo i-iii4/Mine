@@ -243,13 +243,15 @@ pub fn parse_frontmatter(yaml: &str) -> Result<Frontmatter, BlockError> {
 
     let value: Value = serde_yaml::from_str(yaml)?;
 
-    // type (required)
-    let type_val = value
-        .get("type")
-        .ok_or(BlockError::MissingRequiredField { field: "type" })?;
-    let type_str =
-        yaml_value_to_string(type_val).ok_or(BlockError::MissingRequiredField { field: "type" })?;
-    let block_type = BlockType::from_str(&type_str)?;
+    // `type` is dead for cards (decision 044): the only value still read is
+    // `channel`, the collection-page marker — an empty collection in a flat
+    // vault is recognisable by nothing else. Any other value, or none, is a
+    // placeholder here; the real type is derived from content once the body
+    // is known (`derive_block_type`).
+    let block_type = match value.get("type").and_then(yaml_value_to_string) {
+        Some(ref t) if t == "channel" => BlockType::Channel,
+        _ => BlockType::Article,
+    };
 
     // saved_at (required)
     let saved_val = value
@@ -339,11 +341,13 @@ pub fn parse_block(slug: &str, content: &str) -> Result<Block, BlockError> {
     let body_lines: Vec<&str> = lines.collect();
     let body = body_lines.join("\n");
 
-    Ok(Block {
+    let mut block = Block {
         slug: slug.to_string(),
         frontmatter,
         body,
-    })
+    };
+    block.frontmatter.block_type = derive_block_type(&block.frontmatter, &block.body);
+    Ok(block)
 }
 
 /// Parse Markdown for indexing, accepting ordinary Obsidian files without
@@ -376,10 +380,15 @@ pub fn parse_markdown_document(
 
     match parse_frontmatter_compat(slug, yaml, fallback_saved_at.clone()) {
         Ok((frontmatter, warning)) => Ok(ParsedMarkdownBlock {
-            block: Block {
-                slug: slug.to_string(),
-                frontmatter,
-                body: body.to_string(),
+            block: {
+                let mut block = Block {
+                    slug: slug.to_string(),
+                    frontmatter,
+                    body: body.to_string(),
+                };
+                block.frontmatter.block_type =
+                    derive_block_type(&block.frontmatter, &block.body);
+                block
             },
             origin: "partial_frontmatter".to_string(),
             index_warning: warning,
@@ -392,21 +401,102 @@ pub fn parse_markdown_document(
     }
 }
 
+/// Media extension classes — one source for "is this an image / a video",
+/// shared with the preview planner. `File` is everything else that is still a
+/// real attachment.
+pub const IMAGE_MEDIA_EXTS: &[&str] = &[
+    "jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "tif", "heic", "heif", "avif",
+];
+pub const VIDEO_MEDIA_EXTS: &[&str] = &["mp4", "webm", "m4v", "mov"];
+
+fn media_extension(reference: &str) -> Option<String> {
+    let clean = reference.split(['?', '#']).next().unwrap_or(reference);
+    let ext = std::path::Path::new(clean).extension()?.to_str()?;
+    Some(ext.to_ascii_lowercase())
+}
+
+/// What kind of block a media reference makes, judged by its extension. The
+/// old `type:` field claimed this; the extension states it.
+pub fn media_block_type(reference: &str) -> BlockType {
+    match media_extension(reference).as_deref() {
+        Some(ext) if IMAGE_MEDIA_EXTS.contains(&ext) => BlockType::Image,
+        Some(ext) if VIDEO_MEDIA_EXTS.contains(&ext) => BlockType::Video,
+        _ => BlockType::File,
+    }
+}
+
+/// The body with its media embeds removed: what remains is the card's own
+/// text. Embeds are the content itself, not information about it, so they do
+/// not count when deciding whether the card has anything to say beyond its
+/// pictures (decision 044).
+pub fn body_without_media_embeds(body: &str) -> String {
+    let mut out = String::with_capacity(body.len());
+    let mut rest = body;
+    while !rest.is_empty() {
+        if let Some(stripped) = rest.strip_prefix("![[") {
+            if let Some(end) = stripped.find("]]") {
+                rest = &stripped[end + 2..];
+                continue;
+            }
+        }
+        if rest.starts_with("![") {
+            if let Some(close) = rest.find("](") {
+                if let Some(end) = rest[close + 2..].find(')') {
+                    rest = &rest[close + 2 + end + 1..];
+                    continue;
+                }
+            }
+        }
+        let mut chars = rest.chars();
+        if let Some(c) = chars.next() {
+            out.push(c);
+            rest = chars.as_str();
+        }
+    }
+    out
+}
+
+/// The derived block type: content decides, the `type:` field does not exist
+/// for cards (decision 044). Channel survives as the collection-page marker,
+/// set during parsing.
+pub fn derive_block_type(frontmatter: &Frontmatter, body: &str) -> BlockType {
+    if frontmatter.block_type == BlockType::Channel {
+        return BlockType::Channel;
+    }
+    // Mirrors the display decision (044): a card with its own text is an
+    // article whatever it embeds; a card of bare media takes the media's kind
+    // from its extension; a bare url is a link.
+    if !body_without_media_embeds(body).trim().is_empty() {
+        return BlockType::Article;
+    }
+    if let Some(ref file) = frontmatter.file {
+        return media_block_type(file);
+    }
+    if let Some(first) = iter_inline_media_sources(body).into_iter().next() {
+        return media_block_type(&first);
+    }
+    if frontmatter.url.is_some() {
+        return BlockType::Link;
+    }
+    BlockType::Article
+}
+
 pub fn derive_card_kind(block: &Block) -> CardKind {
     if block.frontmatter.block_type == BlockType::Channel {
-        CardKind::Channel
-    } else if !block.body.trim().is_empty() {
-        CardKind::Article
-    } else if block.frontmatter.file.is_some() {
+        return CardKind::Channel;
+    }
+    // One display decision, one parameter (decision 044): does the card hold
+    // anything beyond its front matter and its own media? Text present —
+    // the card shows information. Only media — the card is the image alone.
+    let own_text = body_without_media_embeds(&block.body);
+    if !own_text.trim().is_empty() {
+        return CardKind::Article;
+    }
+    let has_media = block.frontmatter.file.is_some()
+        || !iter_inline_media_sources(&block.body).is_empty();
+    if has_media {
         CardKind::Media
     } else if block.frontmatter.url.is_some() {
-        CardKind::Link
-    } else if matches!(
-        block.frontmatter.block_type,
-        BlockType::Image | BlockType::Video | BlockType::File
-    ) {
-        CardKind::Media
-    } else if block.frontmatter.block_type == BlockType::Link {
         CardKind::Link
     } else {
         CardKind::Article
@@ -788,10 +878,16 @@ pub fn canonical_attachment_wikilink(raw: &str) -> String {
 pub fn serialize_frontmatter(frontmatter: &Frontmatter) -> String {
     let mut lines = Vec::new();
 
-    // Field order per spec: type, title, description, url, file, thumbnail,
-    // Mine Collections, Mine Related Notes, Mine Source Media, saved_at,
-    // source, width, height, author.
-    lines.push(format!("type: {}", frontmatter.block_type.as_str()));
+    // Field order per spec: type (channel marker only), title, description,
+    // url, file, thumbnail, Mine Collections, Mine Related Notes,
+    // Mine Source Media, saved_at, source, width, height, author.
+    //
+    // Cards carry no `type`: their kind is derived from content, and a field
+    // that duplicates a derivation lies the moment they disagree — the
+    // clipper stamped `article` on every X post regardless of what it held.
+    if frontmatter.block_type == BlockType::Channel {
+        lines.push("type: channel".to_string());
+    }
 
     if let Some(ref v) = frontmatter.title {
         lines.push(format!("title: {}", yaml_quote(v)));
@@ -1273,17 +1369,13 @@ fn parse_frontmatter_compat(
 
     let mut warning = None;
 
-    let block_type = value
-        .get("type")
-        .and_then(yaml_value_to_string)
-        .and_then(|raw| match BlockType::from_str(&raw) {
-            Ok(bt) => Some(bt),
-            Err(_) => {
-                warning.get_or_insert_with(|| "unknown_type".to_string());
-                None
-            }
-        })
-        .unwrap_or(BlockType::Article);
+    // `type` is dead for cards (decision 044); only the channel marker is
+    // read, and an unknown value is no longer a warning — it is ignored the
+    // same way a missing one is.
+    let block_type = match value.get("type").and_then(yaml_value_to_string) {
+        Some(ref t) if t == "channel" => BlockType::Channel,
+        _ => BlockType::Article,
+    };
 
     let saved_at = value
         .get("saved_at")
@@ -1645,7 +1737,9 @@ mod tests {
     #[test]
     fn parse_frontmatter_minimal() {
         let fm = parse_frontmatter(&minimal_yaml()).unwrap();
-        assert_eq!(fm.block_type, BlockType::Image);
+        // The `type` field is dead for cards (decision 044): whatever it says,
+        // the placeholder is Article until content-based derivation runs.
+        assert_eq!(fm.block_type, BlockType::Article);
         assert_eq!(fm.saved_at.as_str(), "2026-02-26T14:30:00Z");
         assert!(fm.title.is_none());
         assert!(fm.tags.is_empty());
@@ -1717,15 +1811,28 @@ mod tests {
         };
         assert_eq!(derive_card_kind(&media), CardKind::Media);
 
-        let article = Block {
-            slug: "article".to_string(),
+        // Decision 044: embeds are the content itself, not information about
+        // it. A body holding nothing but an embed shows as the image alone.
+        let embeds_only = Block {
+            slug: "embeds-only".to_string(),
             frontmatter: Frontmatter {
                 block_type: BlockType::Image,
                 ..media.frontmatter.clone()
             },
             body: "![[photo.png]]".to_string(),
         };
-        assert_eq!(derive_card_kind(&article), CardKind::Article);
+        assert_eq!(derive_card_kind(&embeds_only), CardKind::Media);
+
+        // Text beside the embed is the card's own voice — information shows.
+        let embed_with_text = Block {
+            slug: "embed-with-text".to_string(),
+            frontmatter: Frontmatter {
+                block_type: BlockType::Image,
+                ..media.frontmatter.clone()
+            },
+            body: "![[photo.png]]\n\nwhat this picture is about".to_string(),
+        };
+        assert_eq!(derive_card_kind(&embed_with_text), CardKind::Article);
 
         let link = Block {
             slug: "ai-2027".to_string(),
@@ -1847,10 +1954,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_markdown_document_unknown_type_downgrades_to_article_with_warning() {
+    fn parse_markdown_document_ignores_unknown_type_without_warning() {
+        // Decision 044: `type` is dead for cards, so an unknown value is not
+        // a defect worth warning about — it is simply not read.
         let input = "---\ntype: meeting\nMine Collections: [\"[[Design/Typography]]\"]\n---\nBody";
         let parsed = parse_markdown_document("meeting-note", input, fallback_dt()).unwrap();
-        assert_eq!(parsed.index_warning.as_deref(), Some("unknown_type"));
+        assert_eq!(parsed.index_warning, None);
         assert_eq!(parsed.block.frontmatter.block_type, BlockType::Article);
         assert_eq!(parsed.block.frontmatter.tags, vec!["Design/Typography"]);
     }
@@ -1915,21 +2024,23 @@ mod tests {
 
     #[test]
     fn parse_frontmatter_missing_type() {
-        // E4
+        // Decision 044: `type` is not required — a card without it is simply a
+        // card, and content derivation names it later.
         let yaml = "saved_at: 2026-02-26T14:30:00Z";
-        let err = parse_frontmatter(yaml).unwrap_err();
-        assert!(matches!(
-            err,
-            BlockError::MissingRequiredField { field: "type" }
-        ));
+        let fm = parse_frontmatter(yaml).unwrap();
+        assert_eq!(fm.block_type, BlockType::Article);
     }
 
     #[test]
     fn parse_frontmatter_invalid_type() {
-        // E5
+        // Decision 044: an unknown `type` is ignored, not rejected — the field
+        // is dead for cards and only `channel` is still read.
         let yaml = "type: unknown\nsaved_at: 2026-02-26T14:30:00Z";
-        let err = parse_frontmatter(yaml).unwrap_err();
-        assert!(matches!(err, BlockError::InvalidBlockType { ref value } if value == "unknown"));
+        let fm = parse_frontmatter(yaml).unwrap();
+        assert_eq!(fm.block_type, BlockType::Article);
+
+        let channel = parse_frontmatter("type: channel\nsaved_at: 2026-02-26T14:30:00Z").unwrap();
+        assert_eq!(channel.block_type, BlockType::Channel);
     }
 
     #[test]
@@ -2009,7 +2120,8 @@ mod tests {
         let yaml =
             "type: image\nsaved_at: 2026-02-26T14:30:00Z\ncustom_field: whatever\nanother: 42";
         let fm = parse_frontmatter(yaml).unwrap();
-        assert_eq!(fm.block_type, BlockType::Image);
+        // `type: image` is one more ignored field now (decision 044).
+        assert_eq!(fm.block_type, BlockType::Article);
     }
 
     #[test]
@@ -2035,7 +2147,9 @@ mod tests {
         let content = wrap_md(&minimal_yaml(), "");
         let block = parse_block("test-slug", &content).unwrap();
         assert_eq!(block.slug, "test-slug");
-        assert_eq!(block.frontmatter.block_type, BlockType::Image);
+        // No file, no body, no url: the derived type is an empty article,
+        // whatever the legacy `type:` line used to claim (decision 044).
+        assert_eq!(block.frontmatter.block_type, BlockType::Article);
         assert!(block.body.is_empty());
     }
 
@@ -2138,8 +2252,8 @@ mod tests {
             icon: None,
         };
         let yaml = serialize_frontmatter(&fm);
-        // Must contain type and saved_at.
-        assert!(yaml.contains("type: image"));
+        // Cards carry no `type` line at all (decision 044); saved_at stays.
+        assert!(!yaml.contains("type:"));
         assert!(yaml.contains("saved_at: 2026-02-26T14:30:00Z"));
         // None fields must not appear.
         assert!(!yaml.contains("title:"));
@@ -2171,7 +2285,7 @@ mod tests {
             icon: None,
         };
         let yaml = serialize_frontmatter(&fm);
-        assert!(yaml.contains("type: article"));
+        assert!(!yaml.contains("type:"));
         assert!(yaml.contains("title: My Title"));
         assert!(yaml.contains("Mine Collections:"));
         assert!(!yaml.contains("tags:"));
@@ -2230,7 +2344,8 @@ mod tests {
         // Per spec: type, title, description, url, file, thumbnail,
         // Mine Collections, Mine Related Notes, Mine Source Media, saved_at,
         // source, width, height, author.
-        let pos_type = yaml.find("type:").unwrap();
+        // Cards have no `type` line (decision 044); the order starts at title.
+        assert!(yaml.find("type:").is_none());
         let pos_title = yaml.find("title:").unwrap();
         let pos_desc = yaml.find("description:").unwrap();
         let pos_url = yaml.find("url:").unwrap();
@@ -2244,8 +2359,6 @@ mod tests {
         let pos_width = yaml.find("width:").unwrap();
         let pos_height = yaml.find("height:").unwrap();
         let pos_author = yaml.find("author:").unwrap();
-
-        assert!(pos_type < pos_title);
         assert!(pos_title < pos_desc);
         assert!(pos_desc < pos_url);
         assert!(pos_url < pos_file);

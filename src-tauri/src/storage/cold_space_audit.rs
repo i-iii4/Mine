@@ -799,7 +799,9 @@ mod tests {
             .iter()
             .find(|row| row.slug == "metadata-video")
             .unwrap();
-        assert_eq!(metadata_video.block_type, "video");
+        // Decision 044: `type: video` in the file is dead; with no media and a
+        // bare url the card derives as a link on both axes.
+        assert_eq!(metadata_video.block_type, "link");
         assert_eq!(metadata_video.card_kind, "link");
         assert_eq!(metadata_video.preview_state, "ready");
 

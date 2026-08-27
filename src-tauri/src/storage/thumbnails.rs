@@ -182,7 +182,7 @@ pub fn expected_thumb(block: &Block, vault: &VaultLayout) -> ExpectedThumb {
     // 3. Article body: first embedded media in markdown order. If the
     //    article starts with a video and later includes images, the feed
     //    poster must still be derived from the video source.
-    if preview_plan::is_article_card(block) {
+    if preview_plan::has_body_media(block) {
         if let Some(media) = preview_plan::find_first_existing_article_media(block, vault) {
             if media.kind == PreviewMediaKind::Video {
                 return ExpectedThumb::Either;
@@ -226,7 +226,7 @@ fn preview_dependency_paths(block: &Block, vault: &VaultLayout) -> Vec<std::path
         }
     }
 
-    if preview_plan::is_article_card(block) {
+    if preview_plan::has_body_media(block) {
         if let Some(media) = preview_plan::find_first_existing_article_media(block, vault) {
             if media.kind == PreviewMediaKind::Video {
                 return vec![media.path];
@@ -1219,7 +1219,7 @@ fn generate_for_block_inner(block: &Block, vault: &VaultLayout) -> ThumbSource {
     //      is a micro-preview asset: use one representative media file, never a
     //      baked composite. Rich multi-tile rendering belongs to
     //      `preview_manifest`, not the hot sidebar/related-notes thumbnail.
-    if preview_plan::is_article_card(block) {
+    if preview_plan::has_body_media(block) {
         if let Some(media) = preview_plan::find_first_existing_article_media(block, vault) {
             if media.kind == PreviewMediaKind::Video {
                 match generate_video_thumbnail(&media.path, &thumb_path, DEFAULT_MAX_SIZE) {

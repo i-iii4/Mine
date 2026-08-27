@@ -621,113 +621,11 @@ fn serialize_feed_preview_manifest(
     let dims = parse_media_dimensions_json(media_dimensions);
     let card_kind = derive_card_kind(block);
 
-    let mut manifest = match card_kind {
-        CardKind::Media => {
-            let visual_source = block
-                .frontmatter
-                .file
-                .as_deref()
-                .filter(|source| is_image_media(source) || is_video_media(source))
-                .or_else(|| {
-                    block
-                        .frontmatter
-                        .thumbnail
-                        .as_deref()
-                        .filter(|source| is_image_media(source))
-                });
-            let (preview_width, preview_height) =
-                dimensions_for_src(&dims, visual_source, width, height);
+    // Body-driven planning, shared by articles and by media cards whose
+    // pictures live in the body as embeds (decision 044: such a card shows as
+    // the image alone, but its gallery manifest is built the same way).
+    let plan_from_body = || {
 
-            if let Some(source) = visual_source {
-                let is_video = is_video_media(source);
-                FeedPreviewManifest {
-                    kind: if is_video {
-                        FeedPreviewKind::VideoPoster
-                    } else {
-                        FeedPreviewKind::Image
-                    },
-                    primary_preview_path: Some(primary_preview_path(&block.slug)),
-                    width: preview_width,
-                    height: preview_height,
-                    preview_width: None,
-                    preview_height: None,
-                    tiles: vec![FeedPreviewTile {
-                        preview_width: None,
-                        preview_height: None,
-                        source_path: source.to_string(),
-                        preview_path: None,
-                        width: preview_width,
-                        height: preview_height,
-                        is_video,
-                        is_video_poster: is_video,
-                    }],
-                    overflow_count: 0,
-                }
-            } else {
-                FeedPreviewManifest {
-                    kind: FeedPreviewKind::Text,
-                    primary_preview_path: None,
-                    width: None,
-                    height: None,
-                    preview_width: None,
-                    preview_height: None,
-                    tiles: Vec::new(),
-                    overflow_count: 0,
-                }
-            }
-        }
-        CardKind::Channel => FeedPreviewManifest {
-            kind: FeedPreviewKind::Text,
-            primary_preview_path: None,
-            width: None,
-            height: None,
-            preview_width: None,
-            preview_height: None,
-            tiles: Vec::new(),
-            overflow_count: 0,
-        },
-        CardKind::Link => {
-            let visual_source = block
-                .frontmatter
-                .thumbnail
-                .as_deref()
-                .filter(|source| is_image_media(source));
-            if let Some(source) = visual_source {
-                let (preview_width, preview_height) =
-                    dimensions_for_src(&dims, Some(source), width, height);
-                FeedPreviewManifest {
-                    kind: FeedPreviewKind::Image,
-                    primary_preview_path: Some(primary_preview_path(&block.slug)),
-                    width: preview_width,
-                    height: preview_height,
-                    preview_width: None,
-                    preview_height: None,
-                    tiles: vec![FeedPreviewTile {
-                        source_path: source.to_string(),
-                        preview_path: None,
-                        width: preview_width,
-                        height: preview_height,
-                        preview_width: None,
-                        preview_height: None,
-                        is_video: false,
-                        is_video_poster: false,
-                    }],
-                    overflow_count: 0,
-                }
-            } else {
-                FeedPreviewManifest {
-                    kind: FeedPreviewKind::Text,
-                    primary_preview_path: None,
-                    width: None,
-                    height: None,
-                    preview_width: None,
-                    preview_height: None,
-                    tiles: Vec::new(),
-                    overflow_count: 0,
-                }
-            }
-        }
-        CardKind::Article => {
             if is_social_url(block.frontmatter.url.as_deref()) {
                 let mut tiles = extract_social_preview_tiles(&block.body, &dims, media_urls);
                 if tiles.is_empty() {
@@ -867,7 +765,123 @@ fn serialize_feed_preview_manifest(
                     }
                 }
             }
+        
+    };
+
+    let mut manifest = match card_kind {
+        CardKind::Media => {
+            let visual_source = block
+                .frontmatter
+                .file
+                .as_deref()
+                .filter(|source| is_image_media(source) || is_video_media(source))
+                .or_else(|| {
+                    block
+                        .frontmatter
+                        .thumbnail
+                        .as_deref()
+                        .filter(|source| is_image_media(source))
+                });
+            let (preview_width, preview_height) =
+                dimensions_for_src(&dims, visual_source, width, height);
+
+            if let Some(source) = visual_source {
+                let is_video = is_video_media(source);
+                FeedPreviewManifest {
+                    kind: if is_video {
+                        FeedPreviewKind::VideoPoster
+                    } else {
+                        FeedPreviewKind::Image
+                    },
+                    primary_preview_path: Some(primary_preview_path(&block.slug)),
+                    width: preview_width,
+                    height: preview_height,
+                    preview_width: None,
+                    preview_height: None,
+                    tiles: vec![FeedPreviewTile {
+                        preview_width: None,
+                        preview_height: None,
+                        source_path: source.to_string(),
+                        preview_path: None,
+                        width: preview_width,
+                        height: preview_height,
+                        is_video,
+                        is_video_poster: is_video,
+                    }],
+                    overflow_count: 0,
+                }
+            } else if crate::domain::block::iter_inline_media_sources(&block.body)
+                .iter()
+                .any(|source| !source.is_empty())
+            {
+                // A media card with no frontmatter file: its pictures are body
+                // embeds, and the gallery manifest comes from them.
+                plan_from_body()
+            } else {
+                FeedPreviewManifest {
+                    kind: FeedPreviewKind::Text,
+                    primary_preview_path: None,
+                    width: None,
+                    height: None,
+                    preview_width: None,
+                    preview_height: None,
+                    tiles: Vec::new(),
+                    overflow_count: 0,
+                }
+            }
         }
+        CardKind::Channel => FeedPreviewManifest {
+            kind: FeedPreviewKind::Text,
+            primary_preview_path: None,
+            width: None,
+            height: None,
+            preview_width: None,
+            preview_height: None,
+            tiles: Vec::new(),
+            overflow_count: 0,
+        },
+        CardKind::Link => {
+            let visual_source = block
+                .frontmatter
+                .thumbnail
+                .as_deref()
+                .filter(|source| is_image_media(source));
+            if let Some(source) = visual_source {
+                let (preview_width, preview_height) =
+                    dimensions_for_src(&dims, Some(source), width, height);
+                FeedPreviewManifest {
+                    kind: FeedPreviewKind::Image,
+                    primary_preview_path: Some(primary_preview_path(&block.slug)),
+                    width: preview_width,
+                    height: preview_height,
+                    preview_width: None,
+                    preview_height: None,
+                    tiles: vec![FeedPreviewTile {
+                        source_path: source.to_string(),
+                        preview_path: None,
+                        width: preview_width,
+                        height: preview_height,
+                        preview_width: None,
+                        preview_height: None,
+                        is_video: false,
+                        is_video_poster: false,
+                    }],
+                    overflow_count: 0,
+                }
+            } else {
+                FeedPreviewManifest {
+                    kind: FeedPreviewKind::Text,
+                    primary_preview_path: None,
+                    width: None,
+                    height: None,
+                    preview_width: None,
+                    preview_height: None,
+                    tiles: Vec::new(),
+                    overflow_count: 0,
+                }
+            }
+        }
+        CardKind::Article => plan_from_body(),
     };
 
     for (index, tile) in manifest.tiles.iter_mut().enumerate() {
@@ -2718,7 +2732,9 @@ mod tests {
         let conn = test_conn();
         upsert_block(
             &conn,
-            &make_block_full("img", "image", None, "2026-01-01T00:00:00Z", &[], ""),
+            // Decision 044: kind comes from content, so the media fixture needs
+            // real media — a bare embed — rather than a `type: image` claim.
+            &make_block_full("img", "image", None, "2026-01-01T00:00:00Z", &[], "![[img.jpg]]"),
             None,
         )
         .unwrap();
