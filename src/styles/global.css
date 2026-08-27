@@ -826,22 +826,32 @@ body {
   --sidebar-nav-pad-x: var(--edge-rhythm, 32px);   /* sidebar table inset from panel edges */
   --sidebar-nav-pad-top: var(--edge-rhythm, 32px); /* sidebar table inset from the top chrome */
   --sidebar-row-pad-x: 0px;    /* inner row padding: text left / count right */
-  /* Row reserved width = the meta tail + fixed paddings, per design. The tail
-     is what the thumbnails may never enter: action gap 8 + button 84 + gap 8 +
-     guideline 1 + divider gap 4 = 105 (appLayout.ts SIDEBAR_ROW_META_TAIL_PX).
-     It used to be written as the keystone 88, and the missing 17 came out of
-     the previews — the middle column read narrower than both neighbours.
-     default: 105 + nav-pad 32×2 = 169. Name and previews split the remaining
-     width EQUALLY until the name reaches its 150px cap, then the previews take
-     the rest. Pure CSS so columns follow the drag synchronously. */
-  --sidebar-reserved: 169px;
-  /* The keystone column size: at the frozen minimum, name, previews and meta
-     all equal this (appLayout.ts SIDEBAR_COLUMN_MIN_PX — the two must agree,
-     as must --sidebar-min-width with sidebarMinWidth()). */
+  /* One visual zone — the distance between two guidelines, or between a
+     guideline and the panel edge. That is what the eye compares, so the model
+     measures zones rather than column boxes: a box model left the middle zone
+     visibly narrower even when the boxes agreed, because the row's padding and
+     the gaps around the previews belong to the neighbouring zones.
+     = max(row-pad + keystone, action zone), appLayout.ts sidebarZoneWidth:
+     default max(0 + 88, 0 + 84 + 8) = 92; alt max(16 + 88, 8 + 84 + 8) = 104. */
+  --sidebar-zone: 92px;
+  /* Everything that is not the name+previews flex region: the meta zone, the
+     two guideline pixels and the row's left inset. Pure CSS so the columns
+     follow the drag synchronously. */
+  --sidebar-reserved: calc(var(--sidebar-zone) + 2px + var(--sidebar-row-pad-x));
+  /* The keystone column: 2.5 preview icons (32 + 4 + 32 + 4 + 16), the least
+     the previews may show (appLayout.ts SIDEBAR_COLUMN_MIN_PX). */
   --sidebar-col-floor: 88px;
+  /* The name column bottoms out at its zone without the row's own padding. */
+  --sidebar-name-floor: calc(var(--sidebar-zone) - var(--sidebar-row-pad-x));
+  /* At the minimum the name sits on its floor and the three zones are equal;
+     every extra pixel of panel width is split evenly with the previews, up to
+     the name's cap. */
   --sidebar-name-col: clamp(
-    var(--sidebar-col-floor),
-    calc((var(--sidebar-width) - var(--sidebar-reserved)) / 2),
+    var(--sidebar-name-floor),
+    calc(
+      var(--sidebar-name-floor)
+      + (var(--sidebar-width) - var(--sidebar-min-width)) / 2
+    ),
     150px
   );
   /* The frozen "three equal columns" layout width. At/below it the columns stop
@@ -850,7 +860,7 @@ body {
      sidebarMinWidth("default"): JS clamps the drag and lifts stored widths to
      it, CSS freezes the nav — one side moving alone leaves the nav wider than
      the panel and the curtain clips the meta column. */
-  --sidebar-min-width: 345px;
+  --sidebar-min-width: 342px;
   /* top chrome: collection switcher trigger padding. Its label text lands at
      this value + the 8px inner pill padding, so the text aligns with the card
      edge — hence the rhythm minus that inner padding, not the rhythm itself. */
@@ -871,13 +881,13 @@ body {
   --sidebar-nav-pad-top: 0px;
   --sidebar-row-pad-x: 16px;
   --chrome-edge-pad: 16px;
-  /* alt: meta tail 105 + row-pad 16 = 121 */
-  --sidebar-reserved: 121px;
+  /* alt: zone = max(16 + 88, 8 + 84 + 8) = 104 */
+  --sidebar-zone: 104px;
   /* = reserved + 2 x col-floor. MUST equal sidebarMinWidth("alt") in
      appLayout.ts: JS clamps the drag and lifts stored widths to this value
      while CSS freezes the nav — one side moving alone leaves the nav wider
      than the panel, and the curtain permanently clips the meta column. */
-  --sidebar-min-width: 297px;
+  --sidebar-min-width: 314px;
 }
 
 /* Alt 2 — a copy of Alt 1 to experiment in. Everything above applies to it;

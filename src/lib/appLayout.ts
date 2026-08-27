@@ -29,37 +29,61 @@ export const SIDEBAR_ROW_ACTION_GAP_PX = 8;
 /// Clear pixels after the row's guideline, before the thumbnails begin.
 export const SIDEBAR_PREVIEW_DIVIDER_GAP_PX = 4;
 
-/// The strip at the row's right edge that thumbnails may never enter: the
-/// action button with its field on either side, the guideline's own pixel and
-/// the divider gap after it. The button is invisible until hover but its room
-/// is held always, so this is what the meta column actually costs.
-///
-/// It used to be assumed equal to SIDEBAR_COLUMN_MIN (88) while measuring 105,
-/// and the 17px difference came out of the previews: at the minimum width the
-/// visible thumbnail strip was 71 against 104 for the name, which read as a
-/// middle column narrower than both its neighbours.
-export const SIDEBAR_ROW_META_TAIL_PX =
-  SIDEBAR_ROW_ACTION_GAP_PX
-  + SIDEBAR_ROW_ACTION_BUTTON_PX
-  + SIDEBAR_ROW_ACTION_GAP_PX
-  + 1
-  + SIDEBAR_PREVIEW_DIVIDER_GAP_PX;
-
-// Everything in the row that is NOT the name+previews flex region: the meta
-// tail (105) plus the fixed paddings, which differ by design variant.
-//   default: tail 105 + nav-pad 32×2 = 169
-//   alt:     tail 105 + row-pad 16   = 121
-// Alt 2 is a copy of Alt 1 for now; it gets its own number the moment its
-// row padding stops matching.
-const SIDEBAR_RESERVED_PX: Record<DesignMode, number> = {
-  default: SIDEBAR_ROW_META_TAIL_PX + 64,
-  alt: SIDEBAR_ROW_META_TAIL_PX + 16,
-  alt2: SIDEBAR_ROW_META_TAIL_PX + 16,
+/// The row's edge inset, per design variant: the space before the name and
+/// after the count.
+const SIDEBAR_ROW_PAD_PX: Record<DesignMode, number> = {
+  default: 0,
+  alt: 16,
+  alt2: 16,
 };
 
-/** Minimum panel width: the point where name = icons = meta = SIDEBAR_COLUMN_MIN. */
+/// The nav's own inset from the panel edges, per design variant.
+const SIDEBAR_NAV_PAD_PX: Record<DesignMode, number> = {
+  default: 32,
+  alt: 0,
+  alt2: 0,
+};
+
+/// The zone the meta column occupies, measured from the guideline to the panel
+/// edge: the button's field, the button, and the field between button and
+/// guideline.
+function sidebarActionZone(design: DesignMode): number {
+  const inset = Math.max(SIDEBAR_ROW_PAD_PX[design] - SIDEBAR_ROW_ACTION_GAP_PX, 0);
+  return inset + SIDEBAR_ROW_ACTION_BUTTON_PX + SIDEBAR_ROW_ACTION_GAP_PX;
+}
+
+/// The width of one visual zone — what the eye compares.
+///
+/// A zone is the distance between two guidelines (or between a guideline and
+/// the panel edge), so it carries the row's padding and the gaps around the
+/// previews, not just a column box. Measuring boxes instead left the middle
+/// zone visibly narrower than its neighbours even when the boxes agreed.
+///
+/// It is the larger of what the name needs (its padding plus the keystone
+/// column) and what the action button occupies, so no zone has to shrink below
+/// what it holds.
+export function sidebarZoneWidth(design: DesignMode): number {
+  return Math.max(
+    SIDEBAR_ROW_PAD_PX[design] + SIDEBAR_COLUMN_MIN_PX,
+    sidebarActionZone(design),
+  );
+}
+
+/// Where the name column bottoms out: its zone without the row's own padding.
+export function sidebarNameFloor(design: DesignMode): number {
+  return sidebarZoneWidth(design) - SIDEBAR_ROW_PAD_PX[design];
+}
+
+/// Everything in the row that is not the name+previews flex region: the meta
+/// zone, the two guideline pixels, and the row's left inset.
+export function sidebarReserved(design: DesignMode): number {
+  return sidebarZoneWidth(design) + 2 + SIDEBAR_ROW_PAD_PX[design];
+}
+
+/** Minimum panel width: the point where the three visual zones are equal. */
 export function sidebarMinWidth(design: DesignMode): number {
-  return SIDEBAR_RESERVED_PX[design] + SIDEBAR_COLUMN_MIN_PX * 2;
+  // Three zones, the two guidelines between them, and the nav's own insets.
+  return sidebarZoneWidth(design) * 3 + 2 + SIDEBAR_NAV_PAD_PX[design] * 2;
 }
 
 /**

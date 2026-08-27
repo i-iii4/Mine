@@ -73,8 +73,6 @@ const SIDEBAR_PREVIEW_DIVIDER_GAP = SIDEBAR_PREVIEW_DIVIDER_GAP_PX;
 const SIDEBAR_ROW_BOX_CLASS = "relative flex min-h-10 w-full items-center pb-px";
 const SIDEBAR_ROW_ACTION_BUTTON_WIDTH = SIDEBAR_ROW_ACTION_BUTTON_PX;
 const SIDEBAR_ROW_ACTION_BUTTON_GAP = SIDEBAR_ROW_ACTION_GAP_PX;
-const SIDEBAR_ROW_RIGHT_GUIDELINE_OFFSET =
-  SIDEBAR_ROW_ACTION_BUTTON_WIDTH + SIDEBAR_ROW_ACTION_BUTTON_GAP;
 /// How far the button's body sits from the right edge of the row.
 ///
 /// Eight less than the row's own inset, because the button carries an inner
@@ -85,24 +83,14 @@ const SIDEBAR_ROW_RIGHT_GUIDELINE_OFFSET =
 /// their own, keeps the button exactly where it has always been.
 const SIDEBAR_ROW_ACTION_BUTTON_INSET =
   `max(calc(var(--sidebar-row-pad-x) - ${SIDEBAR_ROW_ACTION_BUTTON_GAP}px), 0px)`;
-/// The column that holds the button, measured from the panel edge: the button
-/// with an equal field on either side. With the row 40 tall and the button 24,
-/// the vertical fields are already 8 — matching them sideways makes the cell a
-/// frame of even 8 all round.
-const SIDEBAR_ROW_ACTION_ZONE =
-  `calc(${SIDEBAR_ROW_ACTION_BUTTON_INSET} + ${SIDEBAR_ROW_ACTION_BUTTON_WIDTH}px + ${SIDEBAR_ROW_ACTION_BUTTON_GAP}px)`;
 const SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH = EDGE_FADE_WIDTH;
 const SIDEBAR_PREVIEW_MASK_FADE_WIDTH = EDGE_FADE_WIDTH;
-/// Declared width of the strip the thumbnails keep clear: the action column,
-/// the guideline's pixel, and the divider gap after it.
-const SIDEBAR_PREVIEW_MASK_CLEAR_TAIL_WIDTH =
-  SIDEBAR_ROW_RIGHT_GUIDELINE_OFFSET + 1 + SIDEBAR_PREVIEW_DIVIDER_GAP;
-/// Where the thumbnails stop: the action column, the guideline's own pixel,
-/// and then the four clear ones the divider gap asks for. Counting from the
-/// guideline's position rather than its far edge left three — the same pixel
-/// the row used to lose to its horizontal line.
+/// Where the thumbnails stop: the meta zone, the guideline's own pixel, and
+/// then the clear ones the divider gap asks for. Measured from the zone
+/// boundary, which is where the guideline now stands — counting from the
+/// button's own field instead left the previews short of their zone.
 const SIDEBAR_PREVIEW_MASK_CLEAR_TAIL =
-  `calc(${SIDEBAR_ROW_ACTION_ZONE} + 1px + ${SIDEBAR_PREVIEW_DIVIDER_GAP}px)`;
+  `calc(var(--sidebar-zone) + 1px + ${SIDEBAR_PREVIEW_DIVIDER_GAP}px)`;
 const SIDEBAR_ROW_ACTION_BUTTON_CLASS =
   "inline-flex h-6 items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover";
 const SIDEBAR_ROW_TEXT_MASK_STYLE = createRightFadeMaskStyle(
@@ -743,7 +731,7 @@ const SidebarCore = memo(function SidebarCore({
                 aria-hidden="true"
                 data-sidebar-guideline="right"
                 className="absolute inset-y-0 w-px bg-sidebar-border"
-                style={{ right: SIDEBAR_ROW_ACTION_ZONE }}
+                style={{ right: "var(--sidebar-zone)" }}
               />
             </div>
           )}
@@ -1738,7 +1726,7 @@ function SidebarPreviewStrip({
     <div
       data-sidebar-thumbnail-strip=""
       data-sidebar-preview-fade-width={String(SIDEBAR_PREVIEW_MASK_FADE_WIDTH)}
-      data-sidebar-preview-protected-width={String(SIDEBAR_PREVIEW_MASK_CLEAR_TAIL_WIDTH)}
+      data-sidebar-preview-protected-tail={SIDEBAR_PREVIEW_MASK_CLEAR_TAIL}
       className="flex h-8 min-w-0 flex-1 items-end gap-1 overflow-hidden"
       style={SIDEBAR_PREVIEW_MASK_STYLE}
     >

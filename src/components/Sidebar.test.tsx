@@ -1041,12 +1041,18 @@ describe("Sidebar", () => {
     // is not zero — which is every alt design.
     // The cell is the button plus an equal field of 8 on either side, which
     // matches the 8 above and below it inside a 40px row.
-    expect(rightDivider).toHaveStyle({
-      right: "calc(max(calc(var(--sidebar-row-pad-x) - 8px), 0px) + 84px + 8px)",
-    });
+    // The right guideline stands on the zone boundary, not on the button's
+    // own field: zones are what the eye compares, and the button lives inside
+    // the meta zone with its fields around it.
+    expect(rightDivider).toHaveStyle({ right: "var(--sidebar-zone)" });
     expect(strip).toHaveAttribute("data-sidebar-preview-fade-width", "24");
     // Button (84) + its gap (8) + the guideline's own pixel + the divider gap (4).
-    expect(strip).toHaveAttribute("data-sidebar-preview-protected-width", "97");
+    // Measured from the zone boundary the guideline stands on: the meta zone,
+    // the guideline pixel, and the divider gap.
+    expect(strip).toHaveAttribute(
+      "data-sidebar-preview-protected-tail",
+      "calc(var(--sidebar-zone) + 1px + 4px)",
+    );
   });
 
   it("filters link editor to linked channels", () => {
