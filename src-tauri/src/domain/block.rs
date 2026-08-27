@@ -1181,6 +1181,12 @@ pub fn suggest_slug(title: Option<&str>, url: Option<&str>) -> String {
 
 /// Quote a YAML string value if it contains characters that need escaping.
 /// Uses double quotes with internal double quotes escaped as \".
+/// Public face of the YAML quoting rule, for surgical field patches (CLI).
+/// One rule for every writer — a second implementation would drift.
+pub fn yaml_quote_public(s: &str) -> String {
+    yaml_quote(s)
+}
+
 fn yaml_quote(s: &str) -> String {
     // Characters/patterns that require quoting in YAML plain scalars:
     // `: ` (colon-space) — mapping separator

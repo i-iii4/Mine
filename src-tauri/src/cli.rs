@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use serde_json::json;
 
 use crate::domain::vault::VaultLayout;
+use crate::cli_mutations::{self, MutationError};
 use crate::storage::{block_queries, db, media_refs, search_engine};
 
 /// Exit codes per SPEC_AI_ACCESS: 0 success, 2 bad arguments, 3 space
@@ -127,6 +128,9 @@ struct Flags {
     offset: usize,
     collection: Option<String>,
     json: bool,
+    dry_run: bool,
+    allow_media_changes: bool,
+    from_file: Option<String>,
     positional: Vec<String>,
 }
 
@@ -137,6 +141,9 @@ fn parse_flags(args: &[String]) -> Result<Flags, CliError> {
         offset: 0,
         collection: None,
         json: false,
+        dry_run: false,
+        allow_media_changes: false,
+        from_file: None,
         positional: Vec::new(),
     };
     let mut i = 0;
@@ -162,6 +169,9 @@ fn parse_flags(args: &[String]) -> Result<Flags, CliError> {
             }
             "--collection" => flags.collection = Some(take_value("--collection")?),
             "--json" => flags.json = true,
+            "--dry-run" => flags.dry_run = true,
+            "--allow-media-changes" => flags.allow_media_changes = true,
+            "--from" => flags.from_file = Some(take_value("--from")?),
             other if other.starts_with("--") => {
                 return Err(CliError::usage(format!("unknown flag {other}")));
             }
@@ -192,7 +202,14 @@ const USAGE: &str = "mine — read access to Mine spaces\n\n\
   mine search <query> [--space P] [--limit N] [--json]\n\
   mine collections [--space P] [--json]\n\
   mine cards --collection C [--space P] [--limit N] [--offset K] [--json]\n\
-  mine card <slug> [--space P] [--json]\n";
+  mine card <slug> [--space P] [--json]\n\
+  mine card body <slug>\n\
+  mine card set <slug> <field> <value> [--dry-run]   (title|description|url|author|source)\n\
+  mine card unset <slug> <field> [--dry-run]\n\
+  mine card set-body <slug> [--from FILE] [--allow-media-changes] [--dry-run]\n\
+  mine connect <slug> <collection> [--dry-run]\n\
+  mine disconnect <slug> <collection> [--dry-run]\n\
+  mine restore <slug>\n";
 
 fn run_inner(env: &CliEnv, args: &[String]) -> Result<String, CliError> {
     let Some((command, rest)) = args.split_first() else {
@@ -204,7 +221,16 @@ fn run_inner(env: &CliEnv, args: &[String]) -> Result<String, CliError> {
         "search" => cmd_search(env, &flags),
         "collections" => cmd_collections(env, &flags),
         "cards" => cmd_cards(env, &flags),
-        "card" => cmd_card(env, &flags),
+        "card" => match flags.positional.first().map(String::as_str) {
+            Some("body") => cmd_card_body(env, &flags),
+            Some("set") => cmd_card_set(env, &flags, true),
+            Some("unset") => cmd_card_set(env, &flags, false),
+            Some("set-body") => cmd_card_set_body(env, &flags),
+            _ => cmd_card(env, &flags),
+        },
+        "connect" => cmd_membership(env, &flags, true),
+        "disconnect" => cmd_membership(env, &flags, false),
+        "restore" => cmd_restore(env, &flags),
         other => Err(CliError::usage(format!("unknown command {other}\n\n{USAGE}"))),
     }
 }
@@ -421,6 +447,122 @@ fn cmd_card(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
     Ok(out)
 }
 
+impl From<MutationError> for CliError {
+    fn from(e: MutationError) -> Self {
+        let message = e.message().to_string();
+        match e {
+            MutationError::Usage(_) => CliError::usage(message),
+            MutationError::NotFound(_) => CliError::not_found(message),
+            MutationError::Refused(_) => CliError { code: EXIT_USAGE, message },
+            MutationError::Internal(_) => CliError::internal(message),
+        }
+    }
+}
+
+fn mutation_report(outcome: cli_mutations::MutationOutcome, json: bool) -> String {
+    if json {
+        format!(
+            "{}\n",
+            json!({
+                "contract": CONTRACT_VERSION,
+                "applied": !outcome.dry_run,
+                "summary": outcome.summary,
+            })
+        )
+    } else {
+        format!("{}\n", outcome.summary)
+    }
+}
+
+fn cmd_card_body(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
+    let Some(slug) = flags.positional.get(1) else {
+        return Err(CliError::usage("card body needs a slug".into()));
+    };
+    let vault = resolve_space(env, flags.space.as_deref())?;
+    let path = vault.block_path(slug);
+    let content = std::fs::read_to_string(&path)
+        .map_err(|_| CliError::not_found(format!("no card {slug}")))?;
+    let body = match content.strip_prefix("---\n").and_then(|rest| rest.find("\n---").map(|i| i + 4)) {
+        Some(close) => {
+            let after = &content[4 + close..];
+            after.split_once('\n').map(|(_, b)| b).unwrap_or("").to_string()
+        }
+        None => content,
+    };
+    Ok(body)
+}
+
+fn cmd_card_set(env: &CliEnv, flags: &Flags, set: bool) -> Result<String, CliError> {
+    let (Some(slug), Some(field)) = (flags.positional.get(1), flags.positional.get(2)) else {
+        return Err(CliError::usage("card set/unset needs <slug> <field>".into()));
+    };
+    let value = if set {
+        Some(
+            flags
+                .positional
+                .get(3)
+                .ok_or_else(|| CliError::usage("card set needs a value".into()))?
+                .as_str(),
+        )
+    } else {
+        None
+    };
+    let vault = resolve_space(env, flags.space.as_deref())?;
+    let outcome = cli_mutations::set_field(&vault, slug, field, value, flags.dry_run)?;
+    Ok(mutation_report(outcome, flags.json))
+}
+
+fn cmd_card_set_body(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
+    let Some(slug) = flags.positional.get(1) else {
+        return Err(CliError::usage("card set-body needs a slug".into()));
+    };
+    let new_body = match flags.from_file.as_deref() {
+        Some(path) => std::fs::read_to_string(path)
+            .map_err(|e| CliError::usage(format!("cannot read {path}: {e}")))?,
+        None => {
+            use std::io::Read;
+            let mut buffer = String::new();
+            std::io::stdin()
+                .read_to_string(&mut buffer)
+                .map_err(|e| CliError::usage(format!("stdin: {e}")))?;
+            buffer
+        }
+    };
+    let vault = resolve_space(env, flags.space.as_deref())?;
+    let outcome = cli_mutations::set_body(
+        &vault,
+        slug,
+        &new_body,
+        flags.allow_media_changes,
+        flags.dry_run,
+    )?;
+    Ok(mutation_report(outcome, flags.json))
+}
+
+fn cmd_membership(env: &CliEnv, flags: &Flags, connected: bool) -> Result<String, CliError> {
+    let (Some(slug), Some(collection)) = (flags.positional.first(), flags.positional.get(1)) else {
+        return Err(CliError::usage("connect/disconnect needs <slug> <collection>".into()));
+    };
+    let vault = resolve_space(env, flags.space.as_deref())?;
+    let outcome = cli_mutations::set_collection_membership(
+        &vault,
+        slug,
+        collection,
+        connected,
+        flags.dry_run,
+    )?;
+    Ok(mutation_report(outcome, flags.json))
+}
+
+fn cmd_restore(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
+    let Some(slug) = flags.positional.first() else {
+        return Err(CliError::usage("restore needs a slug".into()));
+    };
+    let vault = resolve_space(env, flags.space.as_deref())?;
+    let outcome = cli_mutations::restore(&vault, slug)?;
+    Ok(mutation_report(outcome, flags.json))
+}
+
 fn light_block_json(block: &crate::storage::index::LightBlock) -> serde_json::Value {
     json!({
         "slug": block.slug,
@@ -435,13 +577,13 @@ fn light_block_json(block: &crate::storage::index::LightBlock) -> serde_json::Va
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::domain::block::parse_markdown_document;
     use crate::domain::block::DateTime;
 
     /// A disposable app-data dir + one initialized space with two cards.
-    fn fixture() -> (tempfile::TempDir, CliEnv, PathBuf) {
+    pub(crate) fn fixture() -> (tempfile::TempDir, CliEnv, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
         let app_data = dir.path().join("appdata");
         let vault_root = dir.path().join("Space");
@@ -491,7 +633,7 @@ mod tests {
         (dir, CliEnv { app_data_dir: app_data }, vault_root)
     }
 
-    fn args(list: &[&str]) -> Vec<String> {
+    pub(crate) fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
     }
 
@@ -583,5 +725,110 @@ mod tests {
         let after = std::fs::read(&db_path).unwrap();
         assert_eq!(before, after, "a read command changed the index");
         let _ = root;
+    }
+}
+
+#[cfg(test)]
+mod mutation_tests {
+    use super::tests::*;
+    use super::*;
+
+    fn card_content(root: &std::path::Path, slug: &str) -> String {
+        std::fs::read_to_string(root.join(format!("{slug}.md"))).unwrap()
+    }
+
+    #[test]
+    fn sets_and_unsets_a_known_field_surgically() {
+        let (_dir, env, root) = fixture();
+        let before = card_content(&root, "Cards/sunset");
+
+        let out = run(&env, &args(&["card", "set", "Cards/sunset", "title", "Evening: light"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        let after = card_content(&root, "Cards/sunset");
+        // The colon forces quoting; everything else is byte-identical.
+        assert!(after.contains("title: \"Evening: light\""));
+        assert_eq!(after.replace("title: \"Evening: light\"\n", ""), before);
+
+        let out = run(&env, &args(&["card", "unset", "Cards/sunset", "title"]));
+        assert_eq!(out.code, EXIT_OK);
+        assert_eq!(card_content(&root, "Cards/sunset"), before);
+    }
+
+    #[test]
+    fn refuses_unknown_and_managed_fields() {
+        let (_dir, env, _root) = fixture();
+        for field in ["type", "saved_at", "file", "Mine Collections", "custom"] {
+            let out = run(&env, &args(&["card", "set", "Cards/sunset", field, "x"]));
+            assert_eq!(out.code, EXIT_USAGE, "{field} must be refused");
+        }
+    }
+
+    #[test]
+    fn set_body_keeps_front_matter_and_guards_embeds() {
+        let (_dir, env, root) = fixture();
+        std::fs::write(
+            root.join("Cards/gallery.md"),
+            "---\nsaved_at: 2026-01-03T00:00:00Z\n---\nA line.\n\n![[a.jpg]]\n",
+        )
+        .unwrap();
+
+        // Losing the embed is refused…
+        let out = run(&env, &args(&["card", "set-body", "Cards/gallery", "--from", "/dev/null"]));
+        assert_eq!(out.code, EXIT_USAGE);
+        assert!(out.stderr.contains("a.jpg"));
+
+        // …a rewrite that keeps it goes through, front matter untouched.
+        let body = root.join("new-body.md");
+        std::fs::write(&body, "Перевод строки.\n\n![[a.jpg]]\n").unwrap();
+        let out = run(&env, &args(&[
+            "card", "set-body", "Cards/gallery", "--from", body.to_str().unwrap(),
+        ]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        let after = card_content(&root, "Cards/gallery");
+        assert!(after.starts_with("---\nsaved_at: 2026-01-03T00:00:00Z\n---\n"));
+        assert!(after.contains("Перевод строки."));
+        assert!(after.contains("![[a.jpg]]"));
+    }
+
+    #[test]
+    fn dry_run_changes_nothing() {
+        let (_dir, env, root) = fixture();
+        let before = card_content(&root, "Cards/sunset");
+        let out = run(&env, &args(&["card", "set", "Cards/sunset", "title", "X", "--dry-run"]));
+        assert_eq!(out.code, EXIT_OK);
+        assert!(out.stdout.contains("would apply"));
+        assert_eq!(card_content(&root, "Cards/sunset"), before);
+    }
+
+    #[test]
+    fn connect_disconnect_and_restore_round_trip() {
+        let (_dir, env, root) = fixture();
+        let before = card_content(&root, "Cards/plain");
+
+        let out = run(&env, &args(&["connect", "Cards/plain", "Nature"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        let connected = card_content(&root, "Cards/plain");
+        assert!(connected.contains("Mine Collections"));
+        assert!(connected.contains("[[Nature]]"));
+
+        let out = run(&env, &args(&["restore", "Cards/plain"]));
+        assert_eq!(out.code, EXIT_OK);
+        assert_eq!(card_content(&root, "Cards/plain"), before);
+
+        // The swap keeps one level in the other direction too.
+        let out = run(&env, &args(&["restore", "Cards/plain"]));
+        assert_eq!(out.code, EXIT_OK);
+        assert_eq!(card_content(&root, "Cards/plain"), connected);
+    }
+
+    #[test]
+    fn refuses_field_edits_on_a_foreign_note() {
+        // A note without front matter keeps its shape: the CLI does not
+        // invent metadata blocks inside other people's files.
+        let (_dir, env, root) = fixture();
+        std::fs::write(root.join("Cards/foreign.md"), "Just an Obsidian note.\n").unwrap();
+        let out = run(&env, &args(&["card", "set", "Cards/foreign", "title", "X"]));
+        assert_eq!(out.code, EXIT_USAGE);
+        assert!(out.stderr.contains("no front matter"));
     }
 }
