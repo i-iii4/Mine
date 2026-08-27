@@ -24,7 +24,7 @@ adapter в читаемый JavaScript `Error`; feature-specific tagged errors �
 interface IndexedBlock {
   id: number;
   slug: string;
-  block_type: "image" | "article" | "link" | "video" | "file" | "channel"; // legacy frontmatter.type
+  block_type: "image" | "article" | "link" | "video" | "file" | "channel"; // производная проекция содержимого (044); поля в файлах нет
   card_kind: "article" | "media" | "link" | "channel"; // derived runtime/card kind
   title: string | null; // legacy frontmatter.title; not canonical for new writes
   content_heading: string | null; // first body H1, if present
@@ -73,6 +73,7 @@ If `display_title` is null, social/quote/media cards do not invent a title
 slot; utility surfaces can still show `fallback_label`.
 
 `card_kind` is the source of truth for card/detail rendering. `block_type`
+(derived, 044 — remains on the wire until the iOS-touching pass)
 is still delivered for compatibility and diagnostics, but the frontend must
 not branch on legacy source types such as `image`, `link`, `video`, or `file`.
 Media presentation is resolved from `card_kind`, `media_file`, `thumbnail`,

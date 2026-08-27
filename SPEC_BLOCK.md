@@ -60,8 +60,7 @@ native host выводит тип из содержимого. Хранилищ�
 
 **Остаток:** `block_type` ещё присутствует в IPC-типах и iOS-мосте — теперь как
 производная проекция (не врёт), её удаление требует пересборки iOS и вынесено
-отдельным заходом. Разделы ниже, где упоминается обязательность `type`,
-описывают историческое состояние и подлежат переписыванию в том же заходе.
+отдельным заходом. Разделы ниже приведены к реализованному контракту.
 
 ## Назначение
 
@@ -118,15 +117,15 @@ enum CardKind {
 Derivation:
 
 1. `frontmatter.type == channel` → `CardKind::Channel`.
-2. Otherwise non-empty body → `CardKind::Article`.
-3. Otherwise canonical `file` or legacy `image`/`video`/`file` metadata →
-   `CardKind::Media`.
-4. Otherwise URL/link metadata → `CardKind::Link`.
+2. Otherwise body **minus media embeds** non-empty → `CardKind::Article` —
+   the card has its own text and shows information (decision 044).
+3. Otherwise `file:` or a body embed → `CardKind::Media`; image/video/file
+   разделяются расширением.
+4. Otherwise URL → `CardKind::Link`.
 5. Otherwise → `CardKind::Article`; an empty ordinary note is not media.
 
-Legacy `type: image/link/video/file/article` may still guide import/write
-validation and migration, but feed/detail/search must consume the derived
-runtime/card kind.
+Легаси-значения `type:` карточек не читаются вовсе — единственное живое
+значение поля — `channel`.
 
 ### Frontmatter
 
@@ -134,7 +133,9 @@ runtime/card kind.
 
 ```rust
 struct Frontmatter {
-    block_type: BlockType,       // обязательное
+    block_type: BlockType,       // ПРОИЗВОДНОЕ: выводится из содержимого
+                                 // (derive_block_type); из файла читается
+                                 // только маркер `channel`
     title: Option<String>,       // legacy read fallback; new write paths do not synthesize it
     description: Option<String>,
     url: Option<String>,
@@ -151,13 +152,16 @@ struct Frontmatter {
 }
 ```
 
-**Обязательные поля:** `block_type`, `saved_at`.
+**Обязательные поля:** `saved_at`.
 **Поведение при отсутствии обязательного поля:** ошибка `MissingRequiredField`.
+Поле `type` не обязательно и для карточек не читается; `type: channel` —
+маркер страницы коллекции.
 
 Status: this is the strict Mine-authored frontmatter model. Obsidian
 compatibility layers add optional implicit articles, collection membership is
 stored in `Mine Collections` wikilinks, visible titles live in body H1, and
-runtime card kind is derived from body emptiness except for `type: channel`.
+runtime card kind is derived from content (body minus media embeds) except
+for `type: channel`.
 The in-memory field remains `tags` as a legacy physical/API name, but its
 semantic value is `CollectionRef`. See `SPEC_OBSIDIAN_MARKDOWN_COMPAT.md`,
 `SPEC_COLLECTIONS_OBSIDIAN_LINKS.md`, and `SPEC_DISPLAY_TITLE.md`.
@@ -398,7 +402,8 @@ enum BlockError {
 ## Инварианты
 
 1. `Block.slug` — непустая строка, содержит только `[a-z0-9-]`
-2. `Block.frontmatter.block_type` — всегда валидный `BlockType`
+2. `Block.frontmatter.block_type` — всегда производное значение
+   (`derive_block_type`); в файле карточки поля `type` нет
 3. `Block.frontmatter.saved_at` — всегда валидная дата ISO 8601
 4. `Block.frontmatter.tags` — может быть пустым, но каждый элемент — непустой `CollectionRef`
 5. `serialize_block(parse_block(slug, content).unwrap())` воспроизводит семантически эквивалентный content (roundtrip)

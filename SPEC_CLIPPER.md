@@ -64,7 +64,8 @@ Popup UI and native messaging request names still use the existing clip-type
 vocabulary (`link`, `article`, `image`, `video`, `file`, `screenshot`) because
 those are creation modes. Native host may persist `type` as compatibility
 metadata, but feed/detail/search runtime kind is derived by the storage
-contract: non-empty body → `article`, empty body → `media`, `type: channel` →
+contract: body minus media embeds non-empty → `article`, bare media →
+`media`, `type: channel` →
 `channel`. New native-host media writes serialize `file` as
 `file: "[[name.ext]]"` while accepting legacy `file: name.ext` on read.
 
@@ -135,7 +136,7 @@ contract: non-empty body → `article`, empty body → `media`, `type: channel` 
 | thumbnail | Скачивается: `og:image` > `twitter:image` |
 | source | `web-clipper` |
 
-Результат: `.md` (compat `type: link`, body starts with H1 when a real page title exists) + миниатюра (если есть og:image). Runtime card kind derives `article` because body is non-empty. New link clips do not write `title:` frontmatter.
+Результат: `.md` (без поля `type` — решение 044; body starts with H1 when a real page title exists) + миниатюра (если есть og:image). Runtime card kind derives `article` because body is non-empty. New link clips do not write `title:` frontmatter.
 
 ### 2. Article (полная статья)
 
@@ -151,7 +152,7 @@ contract: non-empty body → `article`, empty body → `media`, `type: channel` 
 | thumbnail | `og:image` |
 | source | `web-clipper` |
 
-Результат: `.md` (compat `type: article`, body starts with H1 when a real article title exists, then cleaned article text) + миниатюра. Runtime card kind derives `article`. New article clips do not write `title:` frontmatter.
+Результат: `.md` (без поля `type`; body starts with H1 when a real article title exists, then cleaned article text) + миниатюра. Runtime card kind derives `article`. New article clips do not write `title:` frontmatter.
 
 ### 3. Selection (выделенный текст)
 
@@ -164,7 +165,7 @@ contract: non-empty body → `article`, empty body → `media`, `type: channel` 
 | body | `window.getSelection().toString()` |
 | source | `web-clipper` |
 
-Результат: `.md` (type: article, body = выделенный текст).
+Результат: `.md` (без поля `type`, body = выделенный текст).
 Selection clips do not generate H1 or `title:` from selected text. A one-word
 selection remains a one-word body.
 
@@ -206,6 +207,8 @@ Save-инварианты:
   сохраняться как empty article.
 - `loading` не создаёт `.md`: Save ждёт текущий extraction promise.
 - `empty` / `failed` показывают inline error и оставляют popup открытым.
+- `block_type` в протоколе клипер→host — подсказка режима сохранения, в файл
+  не пишется (044); host выводит персистентный тип из содержимого.
 - Native host дополнительно отказывает `block_type=article` с пустым body, чтобы
   future frontend regression не мог записать media-looking article в vault.
 
@@ -410,7 +413,7 @@ inline-media pipeline» ниже), а превью — по тому, что и�
 | width/height | `img.naturalWidth` / `img.naturalHeight` |
 | source | `web-clipper` |
 
-Результат: `.md` (compat `type: image`, empty body, `file: "[[...]]"`) + скачанный файл + thumbnail. Runtime card kind derives `media`.
+Результат: `.md` (без поля `type`, empty body, `file: "[[...]]"`) + скачанный файл + thumbnail. Runtime card kind derives `media`.
 Image clips do not write generated `title:`. Alt/title attributes may be used
 as filename seeds or future captions, but not as automatic frontmatter title.
 
