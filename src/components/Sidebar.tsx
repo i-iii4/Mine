@@ -667,7 +667,9 @@ const SidebarCore = memo(function SidebarCore({
         // overflow-hidden is always on: below the minimum width the panel keeps
         // narrowing while the nav holds --sidebar-min-width, so the right edge
         // clips the frozen menu like a curtain.
-        "relative flex shrink-0 flex-col overflow-hidden border-r border-sidebar-border",
+        // bg-sidebar also re-bases --surface for the zone, so every fill and
+        // hover inside the panel lifts from the sidebar surface, not the page.
+        "relative flex shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar",
       )}
       style={{
         width: "var(--sidebar-width)",
