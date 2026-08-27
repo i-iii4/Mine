@@ -109,8 +109,12 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_SEARCH.md](SPEC_SE
 
 **Страховка:** `--dry-run` у каждой мутации (дифф без записи); перед каждой
 записью копия прежней версии файла в derived store (не в хранилище — iCloud и
-Obsidian её не видят), `mine restore <slug>` возвращает последнюю; индекс CLI
-не трогает — файлы источник истины, приложение догоняет watcher-ом.
+Obsidian её не видят), `mine restore <slug>` возвращает последнюю; чтение
+индекс не трогает. Мутации обновляют индекс: структурные операции
+(create/rename/delete/merge, коллекции) пишут его транзакционно тем же кодом,
+что и приложение, полевые (set/set-body/connect/disconnect/restore)
+переиндексируют карточку после записи файла. Файлы остаются источником истины,
+watcher приложения видит те же изменения и сходится к тому же состоянию.
 
 **Решение по объёму:** `delete` и `merge` входят в первую очередь — иначе
 «всё то же, что в интерфейсе» не выполняется.
@@ -122,8 +126,27 @@ Obsidian её не видят), `mine restore <slug>` возвращает по�
 `Mine Collections`, через `patch_collections_frontmatter`), `restore`
 (своп с копией в derived store, один уровень в обе стороны), `--dry-run` у
 всех мутаций. Заметка без фронтматтера отклоняет правку полей — CLI не
-изобретает метаданные в чужих файлах. Впереди: `card create`, `rename`,
-`delete`, `merge`, операции коллекций, затем MCP.
+изобретает метаданные в чужих файлах.
+
+Структурные операции тоже реализованы и переиспользуют inner-функции
+приложения (`rename_block_file_inner`, `delete_block_inner`,
+`merge_blocks_inner`, `create/rename/delete_channel_inner`), поэтому
+инварианты и транзакционность индекса совпадают с UI один в один:
+
+- `mine card create [--title] [--url] [--collection] [--file] [--from]` —
+  карточка без поля `type` (решение 044), слаг по правилам приложения,
+  раскладка по `layout.json`;
+- `mine card rename <slug> <new-name>` — файл и индекс вместе;
+- `mine card delete <slug> [--delete-unused-media] [--dry-run]` — тот же план
+  медиа, что в UI (dry-run печатает unused/shared); перед удалением текст
+  карточки копируется в `cli-backups`, так что `mine restore` возвращает его;
+- `mine merge <slug> <slug> […]` — та же композиция, что batch Merge в UI;
+- `mine collection create/rename/delete` — страница коллекции и членство в
+  карточках обновляются как в приложении.
+
+Подавление watcher-а (`suppress_paths`) в inner-функциях выполняется только
+при наличии `AppState` — из CLI-процесса watcher приложения обязан видеть
+внепроцессные изменения. Впереди: MCP (этап 2).
 
 ## Требования: MCP (этап 2, отдельная приёмка)
 

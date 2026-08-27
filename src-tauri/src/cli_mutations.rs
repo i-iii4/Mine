@@ -105,7 +105,7 @@ fn backup_path(vault: &VaultLayout, slug: &str) -> PathBuf {
 fn guarded_write(
     vault: &VaultLayout,
     slug: &str,
-    path: &PathBuf,
+    path: &std::path::Path,
     old_content: &str,
     new_content: &str,
     summary: String,

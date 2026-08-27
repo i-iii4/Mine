@@ -13,6 +13,7 @@ use serde_json::json;
 
 use crate::domain::vault::VaultLayout;
 use crate::cli_mutations::{self, MutationError};
+use crate::domain::block::{Block, DateTime, Frontmatter};
 use crate::storage::{block_queries, db, media_refs, search_engine};
 
 /// Exit codes per SPEC_AI_ACCESS: 0 success, 2 bad arguments, 3 space
@@ -131,6 +132,10 @@ struct Flags {
     dry_run: bool,
     allow_media_changes: bool,
     from_file: Option<String>,
+    title: Option<String>,
+    url: Option<String>,
+    file: Option<String>,
+    delete_unused_media: bool,
     positional: Vec<String>,
 }
 
@@ -144,6 +149,10 @@ fn parse_flags(args: &[String]) -> Result<Flags, CliError> {
         dry_run: false,
         allow_media_changes: false,
         from_file: None,
+        title: None,
+        url: None,
+        file: None,
+        delete_unused_media: false,
         positional: Vec::new(),
     };
     let mut i = 0;
@@ -172,6 +181,10 @@ fn parse_flags(args: &[String]) -> Result<Flags, CliError> {
             "--dry-run" => flags.dry_run = true,
             "--allow-media-changes" => flags.allow_media_changes = true,
             "--from" => flags.from_file = Some(take_value("--from")?),
+            "--title" => flags.title = Some(take_value("--title")?),
+            "--url" => flags.url = Some(take_value("--url")?),
+            "--file" => flags.file = Some(take_value("--file")?),
+            "--delete-unused-media" => flags.delete_unused_media = true,
             other if other.starts_with("--") => {
                 return Err(CliError::usage(format!("unknown flag {other}")));
             }
@@ -209,7 +222,14 @@ const USAGE: &str = "mine — read access to Mine spaces\n\n\
   mine card set-body <slug> [--from FILE] [--allow-media-changes] [--dry-run]\n\
   mine connect <slug> <collection> [--dry-run]\n\
   mine disconnect <slug> <collection> [--dry-run]\n\
-  mine restore <slug>\n";
+  mine restore <slug>\n\
+  mine card create [--title T] [--url U] [--collection C] [--file PATH] [--from BODYFILE]\n\
+  mine card rename <slug> <new-name>\n\
+  mine card delete <slug> [--delete-unused-media] [--dry-run]\n\
+  mine merge <slug> <slug> [...]\n\
+  mine collection create <name>\n\
+  mine collection rename <old> <new>\n\
+  mine collection delete <name>\n";
 
 fn run_inner(env: &CliEnv, args: &[String]) -> Result<String, CliError> {
     let Some((command, rest)) = args.split_first() else {
@@ -226,7 +246,19 @@ fn run_inner(env: &CliEnv, args: &[String]) -> Result<String, CliError> {
             Some("set") => cmd_card_set(env, &flags, true),
             Some("unset") => cmd_card_set(env, &flags, false),
             Some("set-body") => cmd_card_set_body(env, &flags),
+            Some("create") => cmd_card_create(env, &flags),
+            Some("rename") => cmd_card_rename(env, &flags),
+            Some("delete") => cmd_card_delete(env, &flags),
             _ => cmd_card(env, &flags),
+        },
+        "merge" => cmd_merge(env, &flags),
+        "collection" => match flags.positional.first().map(String::as_str) {
+            Some("create") => cmd_collection_create(env, &flags),
+            Some("rename") => cmd_collection_rename(env, &flags),
+            Some("delete") => cmd_collection_delete(env, &flags),
+            _ => Err(CliError::usage(
+                "collection needs a subcommand: create, rename, delete".into(),
+            )),
         },
         "connect" => cmd_membership(env, &flags, true),
         "disconnect" => cmd_membership(env, &flags, false),
@@ -438,7 +470,7 @@ fn cmd_card(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
     }
     out.push_str(&format!("path: {}\n", vault.block_path(&block.slug).display()));
     if !block.body.trim().is_empty() {
-        out.push_str("\n");
+        out.push('\n');
         out.push_str(&block.body);
         if !block.body.ends_with('\n') {
             out.push('\n');
@@ -509,6 +541,9 @@ fn cmd_card_set(env: &CliEnv, flags: &Flags, set: bool) -> Result<String, CliErr
     };
     let vault = resolve_space(env, flags.space.as_deref())?;
     let outcome = cli_mutations::set_field(&vault, slug, field, value, flags.dry_run)?;
+    if !outcome.dry_run {
+        reindex_card(&vault, slug);
+    }
     Ok(mutation_report(outcome, flags.json))
 }
 
@@ -536,6 +571,9 @@ fn cmd_card_set_body(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
         flags.allow_media_changes,
         flags.dry_run,
     )?;
+    if !outcome.dry_run {
+        reindex_card(&vault, slug);
+    }
     Ok(mutation_report(outcome, flags.json))
 }
 
@@ -551,6 +589,9 @@ fn cmd_membership(env: &CliEnv, flags: &Flags, connected: bool) -> Result<String
         connected,
         flags.dry_run,
     )?;
+    if !outcome.dry_run {
+        reindex_card(&vault, slug);
+    }
     Ok(mutation_report(outcome, flags.json))
 }
 
@@ -560,7 +601,277 @@ fn cmd_restore(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
     };
     let vault = resolve_space(env, flags.space.as_deref())?;
     let outcome = cli_mutations::restore(&vault, slug)?;
+    if !outcome.dry_run {
+        reindex_card(&vault, slug);
+    }
     Ok(mutation_report(outcome, flags.json))
+}
+
+/// Re-index one card after an applied file mutation, so structural commands
+/// (collection rename, merge) in the same CLI session see fresh membership.
+/// Best effort: the app's watcher re-indexes the file anyway.
+fn reindex_card(vault: &VaultLayout, slug: &str) {
+    let path = vault.block_path(slug);
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let saved_at = std::fs::metadata(&path)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .map(crate::util::system_time_to_iso8601)
+        .and_then(|iso| crate::domain::block::DateTime::new(&iso).ok())
+        .unwrap_or_else(|| crate::domain::block::DateTime::new("1970-01-01T00:00:00Z").unwrap());
+    let Ok(parsed) = crate::domain::block::parse_markdown_document(slug, &content, saved_at)
+    else {
+        return;
+    };
+    let Ok(conn) = db::open_or_create(&vault.index_db_path()) else {
+        return;
+    };
+    let _ = crate::storage::index::upsert_block(&conn, &parsed.block, Some(vault.root()));
+}
+
+fn open_index_rw(vault: &VaultLayout) -> Result<rusqlite::Connection, CliError> {
+    let path = vault.index_db_path();
+    if !path.is_file() {
+        return Err(CliError::space(format!(
+            "no index at {} — open the space in Mine once to build it",
+            path.display()
+        )));
+    }
+    db::open_or_create(&path).map_err(|e| CliError::internal(format!("open index: {e:#}")))
+}
+
+fn cmd_card_create(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
+    let vault = resolve_space(env, flags.space.as_deref())?;
+    let conn = open_index_rw(&vault)?;
+    let body = match flags.from_file.as_deref() {
+        Some(path) => std::fs::read_to_string(path)
+            .map_err(|e| CliError::usage(format!("cannot read {path}: {e}")))?,
+        None => String::new(),
+    };
+    if flags.title.is_none() && flags.url.is_none() && flags.file.is_none() && body.trim().is_empty()
+    {
+        return Err(CliError::usage(
+            "card create needs at least one of --title, --url, --file, --from".into(),
+        ));
+    }
+    let media_ext = flags.file.as_deref().and_then(|f| {
+        std::path::Path::new(f)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_string)
+    });
+    if let Some(ref f) = flags.file {
+        if !std::path::Path::new(f).is_file() {
+            return Err(CliError::usage(format!("--file {f}: no such file")));
+        }
+    }
+    let raw = crate::domain::block::suggest_slug(flags.title.as_deref(), flags.url.as_deref());
+    let name = crate::commands::blocks::resolve_unique_block_slug(
+        &conn,
+        &vault,
+        &raw,
+        media_ext.as_deref(),
+    )
+    .map_err(|e| CliError::internal(format!("slug: {e:#}")))?;
+    let media_file = media_ext.as_ref().map(|ext| format!("{name}.{ext}"));
+    let slug = vault.new_card_slug(&name);
+    let now = crate::commands::state::now_iso8601();
+    let tags = flags
+        .collection
+        .as_deref()
+        .map(|c| vec![crate::domain::collection::normalize_collection_ref(c)])
+        .unwrap_or_default();
+    let mut block = Block {
+        slug: slug.clone(),
+        frontmatter: Frontmatter {
+            block_type: crate::domain::block::BlockType::Article,
+            title: flags.title.clone(),
+            description: None,
+            url: flags.url.clone(),
+            file: media_file,
+            thumbnail: None,
+            tags,
+            related_notes: Vec::new(),
+            source_media: None,
+            saved_at: DateTime::new(&now)
+                .map_err(|e| CliError::internal(e.to_string()))?,
+            source: Some("mine-cli".to_string()),
+            width: None,
+            height: None,
+            author: None,
+            position: None,
+            color: None,
+            icon: None,
+        },
+        body,
+    };
+    block.frontmatter.block_type =
+        crate::domain::block::derive_block_type(&block.frontmatter, &block.body);
+    let source = flags.file.as_deref().map(std::path::Path::new);
+    let indexed = crate::storage::files::persist_new_block(&conn, &vault, &block, source)
+        .map_err(|e| CliError::internal(format!("create: {e:#}")))?;
+    if flags.json {
+        return Ok(format!(
+            "{}\n",
+            json!({ "contract": CONTRACT_VERSION, "created": indexed.slug })
+        ));
+    }
+    Ok(format!("created {}\n", indexed.slug))
+}
+
+fn cmd_card_rename(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
+    let (Some(slug), Some(new_name)) = (flags.positional.get(1), flags.positional.get(2)) else {
+        return Err(CliError::usage("card rename needs <slug> <new-name>".into()));
+    };
+    let vault = resolve_space(env, flags.space.as_deref())?;
+    let conn = open_index_rw(&vault)?;
+    let result = crate::commands::blocks::rename_block_file_inner(
+        None, None, &conn, &vault, slug, new_name,
+    )
+    .map_err(|e| CliError::internal(format!("rename: {e:?}")))?;
+    if flags.json {
+        return Ok(format!(
+            "{}\n",
+            json!({ "contract": CONTRACT_VERSION, "renamed": slug, "to": result.new_slug })
+        ));
+    }
+    Ok(format!("renamed {slug} -> {}\n", result.new_slug))
+}
+
+fn cmd_card_delete(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
+    let Some(slug) = flags.positional.get(1) else {
+        return Err(CliError::usage("card delete needs a slug".into()));
+    };
+    let vault = resolve_space(env, flags.space.as_deref())?;
+    let conn = open_index_rw(&vault)?;
+    let plan = crate::commands::blocks::build_delete_block_plan(&conn, &vault, slug)
+        .map_err(|e| CliError::not_found(format!("delete plan: {e:?}")))?;
+    if flags.dry_run {
+        let unused: Vec<_> = plan.unused_media.iter().map(|m| m.file_name.clone()).collect();
+        let shared: Vec<_> = plan.shared_media.iter().map(|m| m.file_name.clone()).collect();
+        if flags.json {
+            return Ok(format!(
+                "{}\n",
+                json!({
+                    "contract": CONTRACT_VERSION,
+                    "applied": false,
+                    "would_delete": slug,
+                    "unused_media": unused,
+                    "shared_media": shared,
+                    "delete_unused_media": flags.delete_unused_media,
+                })
+            ));
+        }
+        return Ok(format!(
+            "would delete {slug}; unused media: {}; shared media: {}\n",
+            if unused.is_empty() { "none".to_string() } else { unused.join(", ") },
+            if shared.is_empty() { "none".to_string() } else { shared.join(", ") },
+        ));
+    }
+    // The card file is backed up before the transactional delete runs, so
+    // `mine restore` can bring the text back even after a deletion.
+    let path = vault.block_path(slug);
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        let backup = vault.derived_root().join("cli-backups").join(format!("{slug}.md"));
+        if let Some(parent) = backup.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&backup, content);
+    }
+    let deleted = crate::commands::blocks::delete_block_inner(
+        None,
+        &conn,
+        &vault,
+        slug,
+        Some(flags.delete_unused_media),
+    )
+    .map_err(|e| CliError::internal(format!("delete: {e:?}")))?;
+    if flags.json {
+        return Ok(format!(
+            "{}\n",
+            json!({ "contract": CONTRACT_VERSION, "deleted": deleted, "slug": slug })
+        ));
+    }
+    Ok(format!("deleted {slug}\n"))
+}
+
+fn cmd_merge(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
+    if flags.positional.len() < 2 {
+        return Err(CliError::usage("merge needs at least two slugs".into()));
+    }
+    let vault = resolve_space(env, flags.space.as_deref())?;
+    let conn = open_index_rw(&vault)?;
+    let mutation = crate::commands::blocks::merge_blocks_inner(
+        None,
+        &conn,
+        &vault,
+        flags.positional.clone(),
+    )
+    .map_err(|e| CliError::internal(format!("merge: {e:?}")))?;
+    if flags.json {
+        return Ok(format!(
+            "{}\n",
+            json!({
+                "contract": CONTRACT_VERSION,
+                "merged": mutation.result.merged_slug,
+                "removed": mutation.result.removed_slugs,
+            })
+        ));
+    }
+    Ok(format!("merged into {}\n", mutation.result.merged_slug))
+}
+
+fn cmd_collection_create(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
+    let Some(name) = flags.positional.get(1) else {
+        return Err(CliError::usage("collection create needs a name".into()));
+    };
+    let vault = resolve_space(env, flags.space.as_deref())?;
+    let conn = open_index_rw(&vault)?;
+    let dto = crate::commands::channels::create_channel_inner(&conn, &vault, name)
+        .map_err(|e| CliError::internal(format!("collection create: {e:?}")))?;
+    if flags.json {
+        return Ok(format!(
+            "{}\n",
+            json!({ "contract": CONTRACT_VERSION, "created": dto.tag })
+        ));
+    }
+    Ok(format!("created collection {}\n", dto.tag))
+}
+
+fn cmd_collection_rename(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
+    let (Some(old), Some(new)) = (flags.positional.get(1), flags.positional.get(2)) else {
+        return Err(CliError::usage("collection rename needs <old> <new>".into()));
+    };
+    let vault = resolve_space(env, flags.space.as_deref())?;
+    let conn = open_index_rw(&vault)?;
+    let dto = crate::commands::channels::rename_channel_inner(None, &conn, &vault, old, new)
+        .map_err(|e| CliError::internal(format!("collection rename: {e:?}")))?;
+    if flags.json {
+        return Ok(format!(
+            "{}\n",
+            json!({ "contract": CONTRACT_VERSION, "renamed": old, "to": dto.tag })
+        ));
+    }
+    Ok(format!("renamed collection {old} -> {}\n", dto.tag))
+}
+
+fn cmd_collection_delete(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
+    let Some(name) = flags.positional.get(1) else {
+        return Err(CliError::usage("collection delete needs a name".into()));
+    };
+    let vault = resolve_space(env, flags.space.as_deref())?;
+    let conn = open_index_rw(&vault)?;
+    let deleted = crate::commands::channels::delete_channel_inner(&conn, &vault, name)
+        .map_err(|e| CliError::internal(format!("collection delete: {e:?}")))?;
+    if flags.json {
+        return Ok(format!(
+            "{}\n",
+            json!({ "contract": CONTRACT_VERSION, "deleted": deleted, "collection": name })
+        ));
+    }
+    Ok(format!("deleted collection {name}\n"))
 }
 
 fn light_block_json(block: &crate::storage::index::LightBlock) -> serde_json::Value {
@@ -752,6 +1063,101 @@ mod mutation_tests {
         let out = run(&env, &args(&["card", "unset", "Cards/sunset", "title"]));
         assert_eq!(out.code, EXIT_OK);
         assert_eq!(card_content(&root, "Cards/sunset"), before);
+    }
+
+    #[test]
+    fn creates_a_card_without_a_type_field() {
+        let (dir, env, root) = fixture();
+        let body = dir.path().join("body.md");
+        std::fs::write(&body, "Первый абзац.\n").unwrap();
+        let out = run(&env, &args(&[
+            "card", "create", "--title", "Fresh Note", "--from", body.to_str().unwrap(),
+        ]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        // The fixture has no layout.json, so new cards land in the vault root.
+        let content = card_content(&root, "Fresh Note");
+        assert!(content.starts_with("---\n"), "front matter present");
+        assert!(!content.contains("type:"), "044: no type field on cards");
+        assert!(content.contains("saved_at:"));
+        assert!(content.contains("Первый абзац."));
+        // The new card is visible to the read side immediately.
+        let out = run(&env, &args(&["card", "Fresh Note", "--json"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+    }
+
+    #[test]
+    fn create_requires_some_content() {
+        let (_dir, env, _root) = fixture();
+        let out = run(&env, &args(&["card", "create"]));
+        assert_eq!(out.code, EXIT_USAGE);
+    }
+
+    #[test]
+    fn renames_a_card_on_disk_and_in_the_index() {
+        let (_dir, env, root) = fixture();
+        let out = run(&env, &args(&["card", "rename", "Cards/plain", "Typography Notes"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        assert!(!root.join("Cards/plain.md").exists());
+        assert!(root.join("Cards/Typography Notes.md").exists());
+        let out = run(&env, &args(&["card", "Cards/Typography Notes"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+    }
+
+    #[test]
+    fn delete_dry_run_touches_nothing_and_delete_backs_up() {
+        let (_dir, env, root) = fixture();
+        let before = card_content(&root, "Cards/plain");
+
+        let out = run(&env, &args(&["card", "delete", "Cards/plain", "--dry-run"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        assert_eq!(card_content(&root, "Cards/plain"), before);
+
+        let out = run(&env, &args(&["card", "delete", "Cards/plain"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        assert!(!root.join("Cards/plain.md").exists());
+        let vault = resolve_space(&env, None).map_err(|e| e.message).unwrap();
+        let backup = vault.derived_root().join("cli-backups/Cards/plain.md");
+        assert_eq!(std::fs::read_to_string(backup).unwrap(), before);
+    }
+
+    #[test]
+    fn collection_lifecycle_create_rename_delete() {
+        let (_dir, env, root) = fixture();
+        let out = run(&env, &args(&["collection", "create", "Reading"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        let page = std::fs::read_to_string(root.join("Reading.md")).unwrap();
+        assert!(page.contains("type: channel"), "collection page keeps its type");
+
+        let out = run(&env, &args(&["collection", "rename", "Reading", "Reading List"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        assert!(!root.join("Reading.md").exists());
+        assert!(root.join("Reading List.md").exists());
+
+        // Membership follows the rename inside card front matter.
+        let out = run(&env, &args(&["connect", "Cards/plain", "Reading List"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        let out = run(&env, &args(&["collection", "rename", "Reading List", "Shelf"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        assert!(card_content(&root, "Cards/plain").contains("[[Shelf]]"));
+
+        let out = run(&env, &args(&["collection", "delete", "Shelf"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        assert!(!root.join("Shelf.md").exists());
+    }
+
+    #[test]
+    fn merges_two_cards_into_the_first() {
+        let (_dir, env, root) = fixture();
+        let out = run(&env, &args(&["merge", "Cards/sunset", "Cards/plain", "--json"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        let parsed: serde_json::Value = serde_json::from_str(out.stdout.trim()).unwrap();
+        let merged_slug = parsed["merged"].as_str().unwrap();
+        // Merge composes a new card and removes both sources.
+        assert!(!root.join("Cards/sunset.md").exists());
+        assert!(!root.join("Cards/plain.md").exists());
+        let merged = card_content(&root, merged_slug);
+        assert!(merged.contains("A sunset over the bay."));
+        assert!(merged.contains("Notes about typography."));
     }
 
     #[test]

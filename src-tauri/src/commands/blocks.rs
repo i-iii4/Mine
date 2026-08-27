@@ -328,7 +328,7 @@ struct BlockAddedPayload {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct BlockRemovedPayload {
+pub(crate) struct BlockRemovedPayload {
     slug: String,
     tags: Vec<String>,
 }
@@ -373,9 +373,9 @@ struct MergeReferenceWrite {
 }
 
 #[derive(Debug)]
-struct MergeBlocksMutation {
-    result: MergeBlocksResult,
-    removed_events: Vec<BlockRemovedPayload>,
+pub(crate) struct MergeBlocksMutation {
+    pub(crate) result: MergeBlocksResult,
+    pub(crate) removed_events: Vec<BlockRemovedPayload>,
 }
 
 const IN_APP_RENAME_WATCHER_SUPPRESSION_MS: u64 = 1500;
@@ -1537,7 +1537,7 @@ pub fn rename_block_file(
 
     rename_block_file_inner(
         Some(&app),
-        &state,
+        Some(&state),
         &vs.conn,
         &vs.vault,
         &old_slug,
@@ -1574,11 +1574,11 @@ pub fn delete_block(
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 
-    delete_block_inner(&state, &vs.conn, &vs.vault, &slug, delete_unused_media)
+    delete_block_inner(Some(&state), &vs.conn, &vs.vault, &slug, delete_unused_media)
 }
 
-fn delete_block_inner(
-    state: &AppState,
+pub(crate) fn delete_block_inner(
+    state: Option<&AppState>,
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
     slug: &str,
@@ -1605,10 +1605,14 @@ fn delete_block_inner(
     let markdown_path = vault.block_path(slug);
     let mut source_paths = BTreeSet::from([markdown_path]);
     source_paths.extend(media_paths);
-    state.suppress_paths(
-        source_paths.iter().cloned(),
-        Duration::from_millis(IN_APP_RENAME_WATCHER_SUPPRESSION_MS),
-    )?;
+    // No watcher lives in a CLI process; the app's own watcher must in fact
+    // see an out-of-process mutation, so suppression applies only in-app.
+    if let Some(state) = state {
+        state.suppress_paths(
+            source_paths.iter().cloned(),
+            Duration::from_millis(IN_APP_RENAME_WATCHER_SUPPRESSION_MS),
+        )?;
+    }
 
     let staged = StagedSourceMutation::stage(
         source_paths
@@ -1653,7 +1657,7 @@ pub fn merge_blocks(
         })?;
     let vs = vault_state.as_ref().ok_or(MergeBlocksError::NoVault)?;
 
-    let mutation = merge_blocks_inner(&state, &vs.conn, &vs.vault, ordered_slugs)?;
+    let mutation = merge_blocks_inner(Some(&state), &vs.conn, &vs.vault, ordered_slugs)?;
     let result = mutation.result;
 
     app.emit(
@@ -1688,7 +1692,7 @@ pub fn merge_blocks(
     Ok(result)
 }
 
-fn build_delete_block_plan(
+pub(crate) fn build_delete_block_plan(
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
     slug: &str,
@@ -1732,8 +1736,8 @@ fn build_delete_block_plan(
     })
 }
 
-fn merge_blocks_inner(
-    state: &AppState,
+pub(crate) fn merge_blocks_inner(
+    state: Option<&AppState>,
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
     ordered_slugs: Vec<String>,
@@ -1766,12 +1770,14 @@ fn merge_blocks_inner(
             .iter()
             .flat_map(|write| [write.path.clone(), vault.thumb_path(&write.block.slug)]),
     );
-    state
-        .suppress_paths(
-            suppressed_paths,
-            Duration::from_millis(IN_APP_RENAME_WATCHER_SUPPRESSION_MS),
-        )
-        .map_err(internal_merge_error)?;
+    if let Some(state) = state {
+        state
+            .suppress_paths(
+                suppressed_paths,
+                Duration::from_millis(IN_APP_RENAME_WATCHER_SUPPRESSION_MS),
+            )
+            .map_err(internal_merge_error)?;
+    }
 
     let indexed = apply_merge_blocks(conn, vault, &merged_block, &sources, &reference_writes)?;
     let merged_slug = indexed.slug.clone();
@@ -2936,9 +2942,9 @@ fn same_path(a: &Path, b: &Path) -> bool {
     }
 }
 
-fn rename_block_file_inner(
+pub(crate) fn rename_block_file_inner(
     app: Option<&AppHandle>,
-    state: &AppState,
+    state: Option<&AppState>,
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
     old_slug: &str,
@@ -3024,14 +3030,16 @@ fn rename_block_file_inner(
         suppressed_paths.insert(rename.from.clone());
         suppressed_paths.insert(rename.to.clone());
     }
-    state
-        .suppress_paths(
-            suppressed_paths.into_iter(),
-            Duration::from_millis(IN_APP_RENAME_WATCHER_SUPPRESSION_MS),
-        )
-        .map_err(|e| RenameBlockError::Internal {
-            message: e.to_string(),
-        })?;
+    if let Some(state) = state {
+        state
+            .suppress_paths(
+                suppressed_paths.into_iter(),
+                Duration::from_millis(IN_APP_RENAME_WATCHER_SUPPRESSION_MS),
+            )
+            .map_err(|e| RenameBlockError::Internal {
+                message: e.to_string(),
+            })?;
+    }
 
     staged_source
         .commit_with_index(conn, "rename_block", |index_conn| {
@@ -3858,7 +3866,7 @@ mod tests {
             .unwrap();
 
         let mutation = merge_blocks_inner(
-            &state,
+            Some(&state),
             &conn,
             &vault,
             vec!["First Card".to_string(), "Second Image".to_string()],
@@ -3987,7 +3995,7 @@ mod tests {
             .unwrap();
 
         let mutation = merge_blocks_inner(
-            &state,
+            Some(&state),
             &conn,
             &vault,
             vec!["First Image".to_string(), "Second Image".to_string()],
@@ -4031,7 +4039,7 @@ mod tests {
         persist_block(&conn, &vault, &second);
 
         let mutation = merge_blocks_inner(
-            &state,
+            Some(&state),
             &conn,
             &vault,
             vec!["First Card".to_string(), "Second Card".to_string()],
@@ -4115,7 +4123,7 @@ mod tests {
         persist_block(&conn, &vault, &channel);
 
         let duplicate_error = merge_blocks_inner(
-            &state,
+            Some(&state),
             &conn,
             &vault,
             vec!["First Card".to_string(), "First Card".to_string()],
@@ -4127,7 +4135,7 @@ mod tests {
         ));
 
         let channel_error = merge_blocks_inner(
-            &state,
+            Some(&state),
             &conn,
             &vault,
             vec!["First Card".to_string(), "Channel Card".to_string()],
@@ -4697,7 +4705,7 @@ mod tests {
         assert_eq!(plan.shared_media.len(), 1);
         assert_eq!(plan.shared_media[0].path, "shared.png");
 
-        assert!(delete_block_inner(&state, &conn, &vault, "Source Article", Some(true)).unwrap());
+        assert!(delete_block_inner(Some(&state), &conn, &vault, "Source Article", Some(true)).unwrap());
 
         assert!(!vault.block_path("Source Article").exists());
         assert!(!vault.root().join("unused.png").exists());
@@ -4723,7 +4731,7 @@ mod tests {
         .unwrap();
 
         let error =
-            delete_block_inner(&state, &conn, &vault, "Source Article", Some(true)).unwrap_err();
+            delete_block_inner(Some(&state), &conn, &vault, "Source Article", Some(true)).unwrap_err();
 
         assert!(matches!(error, CommandError::Internal(_)));
         assert_eq!(
@@ -5046,7 +5054,7 @@ mod tests {
         std::fs::write(vault.root().join("Old Name (image 1).jpg"), b"img").unwrap();
 
         let result =
-            rename_block_file_inner(None, &state, &conn, &vault, "Old Name", "Renamed Name")
+            rename_block_file_inner(None, Some(&state), &conn, &vault, "Old Name", "Renamed Name")
                 .unwrap();
         assert_eq!(result.old_slug, "Old Name");
         assert_eq!(result.new_slug, "Renamed Name");
@@ -5104,7 +5112,7 @@ mod tests {
         .unwrap();
 
         let error =
-            rename_block_file_inner(None, &state, &conn, &vault, "Old Name", "Renamed Name")
+            rename_block_file_inner(None, Some(&state), &conn, &vault, "Old Name", "Renamed Name")
                 .unwrap_err();
 
         assert!(matches!(error, RenameBlockError::Internal { .. }));
@@ -5150,7 +5158,7 @@ mod tests {
         )
         .unwrap();
 
-        rename_block_file_inner(None, &state, &conn, &vault, "Old Name", "Renamed Name").unwrap();
+        rename_block_file_inner(None, Some(&state), &conn, &vault, "Old Name", "Renamed Name").unwrap();
 
         let (_, renamed_content) =
             files::read_block_file(&vault, &vault.block_path("Renamed Name")).unwrap();
@@ -5187,7 +5195,7 @@ mod tests {
         persist_block(&conn, &vault, &original);
         std::fs::write(vault.root().join("custom-cover.jpg"), b"img").unwrap();
 
-        rename_block_file_inner(None, &state, &conn, &vault, "Old Name", "Renamed Name").unwrap();
+        rename_block_file_inner(None, Some(&state), &conn, &vault, "Old Name", "Renamed Name").unwrap();
 
         let (_, content) =
             files::read_block_file(&vault, &vault.block_path("Renamed Name")).unwrap();
@@ -5207,7 +5215,7 @@ mod tests {
         persist_block(&conn, &vault, &article("One", "Body"));
         persist_block(&conn, &vault, &article("Taken", "Other"));
 
-        let err = rename_block_file_inner(None, &state, &conn, &vault, "One", "Taken").unwrap_err();
+        let err = rename_block_file_inner(None, Some(&state), &conn, &vault, "One", "Taken").unwrap_err();
         assert!(matches!(err, RenameBlockError::NameTaken { .. }));
     }
 

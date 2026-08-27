@@ -136,41 +136,48 @@ pub fn create_channel(
         .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+    create_channel_inner(&vs.conn, &vs.vault, &tag)
+}
 
+pub(crate) fn create_channel_inner(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    tag: &str,
+) -> Result<ChannelDto, CommandError> {
     let now = crate::commands::state::now_iso8601();
     let dt = DateTime::new(&now).map_err(|e| CommandError::Internal(e.to_string()))?;
 
-    let tag = validate_collection_ref(&tag).map_err(CommandError::Internal)?;
+    let tag = validate_collection_ref(tag).map_err(CommandError::Internal)?;
     let mut channel = Channel::new(&tag, dt).map_err(|e| CommandError::Internal(e.to_string()))?;
 
     // Check uniqueness after collection-ref normalization
-    let existing = index::list_channels(&vs.conn)?;
+    let existing = index::list_channels(conn)?;
     if existing.iter().any(|c| c.tag == channel.tag) {
         return Err(CommandError::Internal(format!(
             "channel '{}' already exists",
             channel.tag
         )));
     }
-    channel.position = index::next_channel_position(&vs.conn)?;
+    channel.position = index::next_channel_position(conn)?;
 
     let block = channel_to_block(&channel);
     // A new collection joins the others. Where that is depends on how the vault
     // is arranged — root in a flat vault, `Collections/` in a sorted one — so it
     // is read from an existing collection rather than assumed.
-    let path = collections_home(&vs.conn, &vs.vault).join(format!("{}.md", channel.tag));
+    let path = collections_home(conn, vault).join(format!("{}.md", channel.tag));
     let staged = StagedSourceMutation::stage(vec![SourceFileWrite::create(
         path,
         serialize_block(&block).into_bytes(),
     )])
     .map_err(source_mutation_command_error)?;
     staged
-        .commit_with_index(&vs.conn, "create_channel", |index_conn| {
+        .commit_with_index(conn, "create_channel", |index_conn| {
             index::upsert_channel(index_conn, &channel)
         })
         .map_err(source_mutation_command_error)?;
 
     // Get block count for this tag
-    let tags = index::get_all_tags(&vs.conn)?;
+    let tags = index::get_all_tags(conn)?;
     let count = tags
         .iter()
         .find(|t| t.tag == channel.tag)
@@ -283,24 +290,33 @@ pub fn rename_channel(
         .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+    rename_channel_inner(Some(&state), &vs.conn, &vs.vault, &old_tag, &new_tag)
+}
 
-    let normalized_new = normalize_collection_ref(&new_tag);
+pub(crate) fn rename_channel_inner(
+    state: Option<&AppState>,
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    old_tag: &str,
+    new_tag: &str,
+) -> Result<ChannelDto, CommandError> {
+    let normalized_new = normalize_collection_ref(new_tag);
     if normalized_new.is_empty() {
         return Err(CommandError::Internal("new collection ref is empty".into()));
     }
     validate_collection_ref(&normalized_new).map_err(CommandError::Internal)?;
 
-    let normalized_old = normalize_collection_ref(&old_tag);
+    let normalized_old = normalize_collection_ref(old_tag);
     validate_collection_ref(&normalized_old).map_err(CommandError::Internal)?;
     if normalized_old == normalized_new {
         // Same tag after normalization — no-op
-        let channels = index::list_channels(&vs.conn)?;
+        let channels = index::list_channels(conn)?;
         let existing = channels
             .iter()
             .find(|c| c.tag == normalized_old)
             .ok_or_else(|| CommandError::Internal(format!("channel '{}' not found", old_tag)))?;
 
-        let tags = index::get_all_tags(&vs.conn)?;
+        let tags = index::get_all_tags(conn)?;
         let count = tags
             .iter()
             .find(|t| t.tag == normalized_old)
@@ -310,7 +326,7 @@ pub fn rename_channel(
     }
 
     // Check that the new tag doesn't conflict with another channel
-    let channels = index::list_channels(&vs.conn)?;
+    let channels = index::list_channels(conn)?;
     if channels.iter().any(|c| c.tag == normalized_new) {
         return Err(CommandError::Internal(format!(
             "channel '{}' already exists",
@@ -324,15 +340,15 @@ pub fn rename_channel(
         .find(|c| c.tag == normalized_old)
         .ok_or_else(|| CommandError::Internal(format!("channel '{}' not found", old_tag)))?;
 
-    let affected_blocks = index::list_blocks_by_tag(&vs.conn, &normalized_old)?;
+    let affected_blocks = index::list_blocks_by_tag(conn, &normalized_old)?;
     let mut writes = Vec::with_capacity(affected_blocks.len() + 1);
     let mut prepared_blocks = Vec::with_capacity(affected_blocks.len());
     for indexed_block in &affected_blocks {
         if indexed_block.slug.is_empty() {
             continue;
         }
-        let path = vs.vault.block_path(&indexed_block.slug);
-        let (_, content) = files::read_block_file(&vs.vault, &path)?;
+        let path = vault.block_path(&indexed_block.slug);
+        let (_, content) = files::read_block_file(vault, &path)?;
         let parsed = parse_markdown_document(&indexed_block.slug, &content, file_saved_at(&path))
             .map_err(|error| CommandError::Internal(error.to_string()))?;
         let mut block = parsed.block;
@@ -342,7 +358,7 @@ pub fn rename_channel(
         if !block.frontmatter.tags.contains(&normalized_new) {
             block.frontmatter.tags.push(normalized_new.clone());
         }
-        files::normalize_block_media_refs_for_index(&vs.vault, &mut block);
+        files::normalize_block_media_refs_for_index(vault, &mut block);
 
         let serialized = patch_collections_frontmatter(&content, &block.frontmatter.tags)
             .map_err(CommandError::Internal)?;
@@ -364,12 +380,12 @@ pub fn rename_channel(
     // Rename in place: a collection that lives in its own folder must stay
     // there, so the new document is written beside the old one rather than in
     // the vault root.
-    let old_path = crate::storage::media_refs::resolve_collection_document(&vs.vault, &normalized_old)
-        .unwrap_or_else(|| vs.vault.block_path(&normalized_old));
+    let old_path = crate::storage::media_refs::resolve_collection_document(vault, &normalized_old)
+        .unwrap_or_else(|| vault.block_path(&normalized_old));
     let new_path = old_path
         .parent()
         .map(|parent| parent.join(format!("{normalized_new}.md")))
-        .unwrap_or_else(|| vs.vault.block_path(&normalized_new));
+        .unwrap_or_else(|| vault.block_path(&normalized_new));
     let page_bytes = serialize_block(&new_block).into_bytes();
     writes.push(if old_path.exists() {
         SourceFileWrite::rename_with_bytes(old_path.clone(), new_path, page_bytes)
@@ -377,18 +393,22 @@ pub fn rename_channel(
         SourceFileWrite::create(new_path, page_bytes)
     });
 
-    state.suppress_paths(
-        std::iter::once(old_path).chain(writes.iter().map(|write| write.path.clone())),
-        Duration::from_millis(SOURCE_MUTATION_WATCHER_SUPPRESSION_MS),
-    )?;
+    // Watcher suppression is only meaningful inside the app process; a CLI
+    // mutation must stay visible to the app's watcher.
+    if let Some(state) = state {
+        state.suppress_paths(
+            std::iter::once(old_path).chain(writes.iter().map(|write| write.path.clone())),
+            Duration::from_millis(SOURCE_MUTATION_WATCHER_SUPPRESSION_MS),
+        )?;
+    }
     let staged = StagedSourceMutation::stage(writes).map_err(source_mutation_command_error)?;
     staged
-        .commit_with_index(&vs.conn, "rename_channel", |index_conn| {
+        .commit_with_index(conn, "rename_channel", |index_conn| {
             for (block, origin, index_warning) in &prepared_blocks {
                 index::upsert_block_with_diagnostics(
                     index_conn,
                     block,
-                    Some(vs.vault.root()),
+                    Some(vault.root()),
                     Some(origin.as_str()),
                     index_warning.as_deref(),
                 )?;
@@ -399,7 +419,7 @@ pub fn rename_channel(
         })
         .map_err(source_mutation_command_error)?;
 
-    let tags = index::get_all_tags(&vs.conn)?;
+    let tags = index::get_all_tags(conn)?;
     let count = tags
         .iter()
         .find(|t| t.tag == normalized_new)
@@ -507,15 +527,22 @@ pub fn delete_channel(state: State<'_, AppState>, tag: String) -> Result<bool, C
         .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+    delete_channel_inner(&vs.conn, &vs.vault, &tag)
+}
 
-    let tag = normalize_collection_ref(&tag);
+pub(crate) fn delete_channel_inner(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    tag: &str,
+) -> Result<bool, CommandError> {
+    let tag = normalize_collection_ref(tag);
     if tag.is_empty() {
         return Err(CommandError::Internal("collection ref is empty".into()));
     }
     validate_collection_ref(&tag).map_err(CommandError::Internal)?;
 
-    let md_path = crate::storage::media_refs::resolve_collection_document(&vs.vault, &tag)
-        .unwrap_or_else(|| vs.vault.block_path(&tag));
+    let md_path = crate::storage::media_refs::resolve_collection_document(vault, &tag)
+        .unwrap_or_else(|| vault.block_path(&tag));
     let writes = if md_path.exists() {
         vec![SourceFileWrite::delete(md_path)]
     } else {
@@ -523,7 +550,7 @@ pub fn delete_channel(state: State<'_, AppState>, tag: String) -> Result<bool, C
     };
     let staged = StagedSourceMutation::stage(writes).map_err(source_mutation_command_error)?;
     staged
-        .commit_with_index(&vs.conn, "delete_channel", |index_conn| {
+        .commit_with_index(conn, "delete_channel", |index_conn| {
             index::remove_channel(index_conn, &tag)
         })
         .map_err(source_mutation_command_error)
