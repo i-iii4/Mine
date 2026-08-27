@@ -564,8 +564,8 @@ describe("SearchOverlay", () => {
       document.querySelector("[data-search-overlay-metadata]") as HTMLElement,
     );
     expect(metadata.getByText("Date")).toBeInTheDocument();
-    expect(metadata.getByText("Type")).toBeInTheDocument();
-    expect(metadata.getByText("Article")).toBeInTheDocument();
+    // The type taxonomy is gone (decision 044): no Type row anywhere.
+    expect(metadata.queryByText("Type")).toBeNull();
     expect(metadata.getByText("example.com")).toBeInTheDocument();
     expect(metadata.getByText("Author")).toBeInTheDocument();
     expect(metadata.getByText("@author")).toBeInTheDocument();

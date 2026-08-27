@@ -28,7 +28,6 @@ import {
 import {
   MetadataRow,
   MetadataLinkValue,
-  formatMetadataCardKind,
   METADATA_VALUE_BASE_CLASSES,
 } from "@/components/MetadataRow";
 import { domainFromUrl, isSafeUrl, fallbackThumbsRoot } from "@/lib/assets";
@@ -587,11 +586,6 @@ export function SearchOverlay({
                         month: "short",
                         year: "numeric",
                       })}
-                    </span>
-                  </MetadataRow>
-                  <MetadataRow label="Type">
-                    <span className={cn(METADATA_VALUE_BASE_CLASSES, "truncate")}>
-                      {formatMetadataCardKind(activeBlock.card_kind)}
                     </span>
                   </MetadataRow>
                   {activeBlock.url && isSafeUrl(activeBlock.url) && domainFromUrl(activeBlock.url) && (

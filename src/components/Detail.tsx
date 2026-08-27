@@ -30,7 +30,6 @@ import { ChromeCloseButton } from "@/components/ChromeCloseButton";
 import {
   MetadataRow,
   MetadataLinkValue,
-  formatMetadataCardKind,
   METADATA_LABEL_CLASSES,
   METADATA_VALUE_BASE_CLASSES,
 } from "@/components/MetadataRow";
@@ -730,7 +729,6 @@ function MetadataPanel({
     }
   }, [hoveredRelatedNote, hoverPreviewPosition, hoveredRelatedNoteBlock]);
 
-  const cardKindValue = formatMetadataCardKind(displayBlock.card_kind);
 
   return (
     <>
@@ -777,7 +775,6 @@ function MetadataPanel({
                   />
                 )}
                 <MetadataField label="Date" value={formattedDate} />
-                <MetadataField label="Type" value={cardKindValue} />
 
                 {indexWarning && (
                   <MetadataField
