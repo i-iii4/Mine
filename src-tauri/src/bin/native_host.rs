@@ -954,7 +954,7 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
         Err(error) => return send_error(&format!("invalid collection ref: {error}")),
     };
 
-    let block = Block {
+    let mut block = Block {
         slug: slug.clone(),
         frontmatter: Frontmatter {
             block_type: bt,
@@ -977,6 +977,11 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
         },
         body,
     };
+    // The clipper's declared type is a save-mode hint, not the card's type:
+    // the persisted kind is derived from content (decision 044), and the
+    // serializer writes no `type:` line for cards either way.
+    block.frontmatter.block_type =
+        mine_lib::domain::block::derive_block_type(&block.frontmatter, &block.body);
 
     // Write .md file
     if let Err(e) = files::write_new_block_file(vault, &block) {
