@@ -103,6 +103,10 @@ objc2-foundation = "0.3"
 block2 = "0.6"
 
 [[bin]]
+name = "mine-cli"
+path = "src/bin/mine_cli.rs"
+
+[[bin]]
 name = "native-host"
 path = "src/bin/native_host.rs"
 

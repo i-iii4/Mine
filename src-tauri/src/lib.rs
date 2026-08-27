@@ -5,6 +5,7 @@ mod swipe_gesture;
 pub mod bindings;
 #[cfg(feature = "desktop")]
 mod commands;
+pub mod cli;
 pub mod domain;
 #[cfg(feature = "desktop")]
 mod import;

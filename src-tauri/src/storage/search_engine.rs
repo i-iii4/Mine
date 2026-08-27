@@ -150,6 +150,27 @@ pub fn search_grid_blocks_with_provider(
     search_grid_blocks_prepared_with_provider(conn, tag, offset, limit, query, semantic_provider)
 }
 
+/// Search without touching the index: no document sync, no writes. The read
+/// may lag whatever the app has not yet synced — the honest-freshness contract
+/// of SPEC_AI_ACCESS. Semantic reranking applies only when the model is warm
+/// in this process; a cold process degrades to the lexical half.
+pub fn search_grid_blocks_read_only(
+    conn: &Connection,
+    tag: Option<&str>,
+    offset: usize,
+    limit: usize,
+    query: &str,
+) -> Result<(Vec<LightBlock>, bool)> {
+    search_grid_blocks_prepared_with_provider(
+        conn,
+        tag,
+        offset,
+        limit,
+        query,
+        production_semantic_provider(),
+    )
+}
+
 pub(crate) fn search_grid_blocks_prepared(
     conn: &Connection,
     tag: Option<&str>,
