@@ -73,7 +73,7 @@ fn load_space_config(env: &CliEnv) -> SpaceConfig {
 
 /// A space the CLI may read: the app's active vault or one of the known ones.
 /// Anything else is refused — the CLI must not wander the file system.
-fn resolve_space(env: &CliEnv, requested: Option<&str>) -> Result<VaultLayout, CliError> {
+pub(crate) fn resolve_space(env: &CliEnv, requested: Option<&str>) -> Result<VaultLayout, CliError> {
     let config = load_space_config(env);
     let root = match requested {
         Some(path) => {
@@ -101,9 +101,9 @@ fn resolve_space(env: &CliEnv, requested: Option<&str>) -> Result<VaultLayout, C
     Ok(VaultLayout::with_derived_root(root, derived))
 }
 
-struct CliError {
-    code: i32,
-    message: String,
+pub(crate) struct CliError {
+    pub(crate) code: i32,
+    pub(crate) message: String,
 }
 
 impl CliError {
@@ -229,7 +229,8 @@ const USAGE: &str = "mine — read access to Mine spaces\n\n\
   mine merge <slug> <slug> [...]\n\
   mine collection create <name>\n\
   mine collection rename <old> <new>\n\
-  mine collection delete <name>\n";
+  mine collection delete <name>\n\
+  mine mcp\n";
 
 fn run_inner(env: &CliEnv, args: &[String]) -> Result<String, CliError> {
     let Some((command, rest)) = args.split_first() else {

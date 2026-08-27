@@ -10,6 +10,10 @@ fn main() -> ExitCode {
         return ExitCode::from(3);
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("mcp") {
+        mine_lib::mcp::serve(&env);
+        return ExitCode::SUCCESS;
+    }
     let output = mine_lib::cli::run(&env, &args);
     print!("{}", output.stdout);
     eprint!("{}", output.stderr);

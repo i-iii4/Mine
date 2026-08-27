@@ -7,6 +7,7 @@ pub mod bindings;
 mod commands;
 pub mod cli;
 pub mod cli_mutations;
+pub mod mcp;
 pub mod domain;
 #[cfg(feature = "desktop")]
 mod import;
