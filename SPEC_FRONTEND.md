@@ -375,6 +375,10 @@ Sidebar uses one table-like row contract in both compact and non-compact
 layouts. The earlier experimental `Cards` display mode was removed; Settings
 must not expose a channel display-mode selector.
 
+Раскладка строки — три равные визуальные зоны (имя, превью, счётчик); модель
+ширины, минимум панели и двусторонний контракт CSS + JS описаны в
+[DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), раздел «Строка боковой панели: три зоны».
+
 Обычный режим:
 1. Пункт `Everything` — навигация на `/`
 2. Список каналов (из `listChannels()`) — навигация на `/channel/:tag`
