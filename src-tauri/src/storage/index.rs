@@ -38,7 +38,7 @@ pub use crate::storage::block_queries::{
     count_grid_blocks, get_all_tags, get_block, get_block_indexed_at_map,
     get_pending_thumb_upgrade_block, list_blocks, list_blocks_by_tag, list_blocks_light,
     list_grid_blocks, list_pending_thumb_upgrade_blocks, list_preview_blocks,
-    list_preview_blocks_by_tag, search_blocks,
+    list_preview_blocks_by_tag, list_slugs_by_media_file, search_blocks,
 };
 #[cfg(test)]
 pub(crate) use crate::storage::block_queries::{get_tags_for_block, list_grid_blocks_with_query};
@@ -392,6 +392,11 @@ pub struct PreviewBlock {
     pub slug: String,
     pub thumb_format: Option<ThumbFormat>,
     pub thumb_mtime: u64,
+    /// Whether the preview is a baked text placeholder. Read from the preview
+    /// manifest, never from the thumbnail's file format: a picture that uses
+    /// its alpha channel is stored as PNG too (rule П6), and calling that text
+    /// inverted real images in dark mode.
+    pub is_text: bool,
 }
 
 /// Extract the first inline media reference from body text.
@@ -1165,11 +1170,18 @@ pub(crate) fn row_to_preview_block(
         .get::<_, Option<i64>>(slug_index + 2)?
         .unwrap_or(0)
         .max(0) as u64;
+    let is_text = row
+        .get::<_, Option<String>>(slug_index + 3)?
+        .and_then(|json| serde_json::from_str::<FeedPreviewManifest>(&json).ok())
+        .map(|manifest| manifest.kind == FeedPreviewKind::Text)
+        // No manifest at all is a legacy row: the format is all that is left.
+        .unwrap_or(thumb_format == Some(ThumbFormat::Png));
 
     Ok(PreviewBlock {
         slug: row.get(slug_index)?,
         thumb_format,
         thumb_mtime,
+        is_text,
     })
 }
 
@@ -2198,6 +2210,55 @@ mod tests {
 
     fn test_conn() -> Connection {
         db::open_memory().unwrap()
+    }
+
+    /// A picture that uses its alpha channel is stored as a PNG thumbnail, and
+    /// the sidebar used to mark it as text and invert it in dark mode. The
+    /// preview manifest is what knows the difference.
+    #[test]
+    fn preview_rows_take_text_ness_from_the_manifest_not_the_format() {
+        fn manifest_json(kind: FeedPreviewKind) -> String {
+            serde_json::to_string(&FeedPreviewManifest {
+                kind,
+                primary_preview_path: None,
+                width: None,
+                height: None,
+                preview_width: None,
+                preview_height: None,
+                tiles: Vec::new(),
+                overflow_count: 0,
+            })
+            .unwrap()
+        }
+
+        let conn = test_conn();
+        let block = make_block("transparent-shot", &[]);
+        upsert_block(&conn, &block, None).unwrap();
+        conn.execute(
+            "UPDATE blocks SET thumb_format = 'png', thumb_mtime = 1, preview_manifest = ?1
+             WHERE slug = 'transparent-shot'",
+            [manifest_json(FeedPreviewKind::Image)],
+        )
+        .unwrap();
+
+        let previews = list_preview_blocks(&conn, 10).unwrap();
+        let row = previews
+            .iter()
+            .find(|preview| preview.slug == "transparent-shot")
+            .expect("the block is previewable");
+        assert_eq!(row.thumb_format, Some(ThumbFormat::Png));
+        assert!(!row.is_text, "a PNG picture is not a text placeholder");
+
+        // A real text placeholder keeps its flag.
+        conn.execute(
+            "UPDATE blocks SET preview_manifest = ?1 WHERE slug = 'transparent-shot'",
+            [manifest_json(FeedPreviewKind::Text)],
+        )
+        .unwrap();
+        let previews = list_preview_blocks(&conn, 10).unwrap();
+        assert!(previews
+            .iter()
+            .any(|preview| preview.slug == "transparent-shot" && preview.is_text));
     }
 
     fn make_block(slug: &str, tags: &[&str]) -> Block {

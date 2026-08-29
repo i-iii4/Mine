@@ -40,7 +40,7 @@ import { applyPendingTagOrder } from "@/lib/collectionOrder";
 import { collectionRefLabel } from "@/lib/collections";
 import { reconcileBlocks } from "@/lib/blockIdentity";
 import { refreshPageLimit } from "@/lib/gridPaging";
-import { imageCardNeedsGeometryRefresh } from "@/lib/cardHeight";
+import { feedRowNeedsPreviewRefresh } from "@/lib/cardHeight";
 import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
 import { cn } from "@/lib/utils";
 import { commandById } from "@/lib/commandRegistry";
@@ -68,6 +68,14 @@ import {
   getStoredScrollEdgeFade,
 } from "@/lib/scrollEdgeFade";
 import { DENSITY_STORAGE_KEY, applyDensity, getStoredDensity } from "@/lib/density";
+import {
+  CONTENT_FONT_STORAGE_KEY,
+  INTERFACE_FONT_STORAGE_KEY,
+  applyContentFont,
+  applyInterfaceFont,
+  getStoredContentFont,
+  getStoredInterfaceFont,
+} from "@/lib/fontChoice";
 import {
   ACTION_BUTTON_STYLE_STORAGE_KEY,
   applyActionButtonStyle,
@@ -1610,8 +1618,8 @@ export function AppWithVault({
       const loadedBlock = blocksRef.current.find(
         (block) => block.slug === event.payload.slug,
       );
-      const needsGeometryRefresh = loadedBlock
-        ? imageCardNeedsGeometryRefresh(loadedBlock)
+      const needsRowRefresh = loadedBlock
+        ? feedRowNeedsPreviewRefresh(loadedBlock, event.payload.is_text)
         : false;
       // Sidebar preview cache-buster (its own version ref, applied on the next
       // previews refresh below).
@@ -1621,20 +1629,20 @@ export function AppWithVault({
       // the block row is byte-identical, so a grid refetch reconciles to a no-op
       // for pixels while streaming the whole scrolled range through IPC — a storm
       // during the Phase-2 thumb backlog. Bumping the per-slug version instead
-      // re-renders and refetches only the affected card. A genuine
-      // preview geometry transition is the exception: a newly added image can
-      // enter the feed before its dimensions are indexed and temporarily use
-      // the 240px fallback. Refresh that loaded route once when the preview
-      // becomes ready so the deterministic masonry envelope adopts the real
-      // aspect ratio. Cards that already have geometry keep the cheap pixel-only
-      // path, preserving the cold-start sweep contract.
+      // re-renders and refetches only the affected card. Rows that predate their
+      // own preview are the exception, and the cache-buster cannot heal them:
+      // their geometry (an image without indexed dimensions) or their whole
+      // media identity (a card still on the file fallback: name plus file name)
+      // lives in the row. Refresh the loaded route once for those; every other
+      // card keeps the cheap pixel-only path, preserving the cold-start sweep
+      // contract. See feedRowNeedsPreviewRefresh.
       bumpFeedThumbVersion(event.payload.slug);
       scheduleRefresh(
-        needsGeometryRefresh
+        needsRowRefresh
           ? { grid: true, previews: true }
           : { previews: true },
-        needsGeometryRefresh ? 0 : 2000,
-        { force: needsGeometryRefresh },
+        needsRowRefresh ? 0 : 2000,
+        { force: needsRowRefresh },
       );
     }));
 
@@ -1849,6 +1857,13 @@ export function AppWithVault({
         applyActionButtonStyle(getStoredActionButtonStyle());
       } else if (key === DENSITY_STORAGE_KEY) {
         applyDensity(getStoredDensity());
+      } else if (key === CONTENT_FONT_STORAGE_KEY) {
+        applyContentFont(getStoredContentFont());
+      } else if (key === INTERFACE_FONT_STORAGE_KEY) {
+        // Card metrics are measured with the interface font and resolved at
+        // module load — a reload re-derives them and drops stale caches.
+        applyInterfaceFont(getStoredInterfaceFont());
+        window.location.reload();
       }
     });
     return () => {
@@ -3268,9 +3283,9 @@ export function AppWithVault({
           )}
           {bottomActionBarHidden && (
             <div
-              // Right-edge inset follows the app-wide edge rhythm (the bottom
-              // action bar, the grid's side insets, the sidebar table).
-              className="ml-2 mr-[var(--edge-rhythm,32px)] flex shrink-0 items-center gap-2"
+              // Right-edge inset follows the fixed chrome pad, not the feed
+              // rhythm: the shell keeps 16px even at the 2px feed step.
+              className="ml-2 mr-[var(--chrome-edge-pad)] flex shrink-0 items-center gap-2"
               data-top-chrome-settings-fallback=""
             >
               <ActionButton hotkey="⌘," onClick={handleOpenSettings}>

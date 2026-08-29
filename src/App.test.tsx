@@ -1018,7 +1018,7 @@ describe("AppWithVault", () => {
     const contentSegment = document.querySelector(
       "[data-main-secondary-top-bar-content-segment]",
     ) as HTMLElement | null;
-    expect(secondaryBar).toHaveClass("h-8", "border-b", "border-border", "bg-background");
+    expect(secondaryBar).toHaveClass("h-8", "border-b", "border-border", "bg-chrome");
     expect(sidebarSegment).toHaveStyle({ width: "var(--sidebar-width)" });
     expect(sidebarSegment).toHaveClass("border-r", "border-sidebar-border");
     expect(contentSegment).toHaveClass("flex-1");
@@ -1258,7 +1258,7 @@ describe("AppWithVault", () => {
     // The ground does not move: a selection swaps the half's content, not the
     // row's surface — fills compute from the surface, so they stay consistent.
     const bar = document.querySelector("[data-main-secondary-top-bar]");
-    expect(bar).toHaveClass("bg-background");
+    expect(bar).toHaveClass("bg-chrome");
     expect(bar).not.toHaveClass("bg-accent");
 
     fireEvent.click(bottomBarEntry("Clear selection")!);
@@ -1381,7 +1381,7 @@ describe("AppWithVault", () => {
     const trafficLightReserve = document.querySelector("[data-traffic-light-reserve]") as HTMLElement;
     expect(topSidebarSegment.parentElement).toHaveClass("bg-chrome");
     expect(trafficLightReserve).toHaveClass("bg-chrome");
-    expect(secondaryBar).toHaveClass("bg-background");
+    expect(secondaryBar).toHaveClass("bg-chrome");
     await waitFor(() => {
       expect(setBackgroundColor).toHaveBeenCalledWith("#fcfcfc");
     });
@@ -1502,7 +1502,7 @@ describe("AppWithVault", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Close detail" }));
 
-    expect(document.querySelector("[data-main-secondary-top-bar]")).toHaveClass("bg-background");
+    expect(document.querySelector("[data-main-secondary-top-bar]")).toHaveClass("bg-chrome");
     expect(secondaryDetailMenu).toHaveAttribute("data-entered", "false");
     expect(secondarySidebarBar).toHaveAttribute("data-entered", "false");
     expect(document.querySelectorAll("[data-main-secondary-main-layer]")[0]).toHaveAttribute(
@@ -1826,9 +1826,18 @@ describe("AppWithVault", () => {
       expect(screen.getByRole("textbox", { name: "Search collections" })).toHaveFocus();
     });
 
-    expect(document.querySelector("[data-top-collection-menu]")).toHaveAttribute(
-      "data-top-collection-menu-align-offset",
-      "24",
+    // The menu is aligned to the trigger's label, so its offset must equal the
+    // trigger's own horizontal padding — a restated number drifted the moment
+    // the chrome inset changed. jsdom reports no padding for a class-only
+    // rule, which is exactly the fallback path.
+    const alignOffset = document
+      .querySelector("[data-top-collection-menu]")
+      ?.getAttribute("data-top-collection-menu-align-offset");
+    const triggerPadding = Number.parseFloat(
+      getComputedStyle(collectionSwitcher).paddingLeft,
+    );
+    expect(alignOffset).toBe(
+      String(Number.isFinite(triggerPadding) && triggerPadding > 0 ? triggerPadding : 24),
     );
     expect(screen.getByRole("menuitem", { name: "Create collection" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Everything" })).not.toBeInTheDocument();

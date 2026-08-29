@@ -1,5 +1,15 @@
 import { useState } from "react";
 import { SegmentedControl } from "@/components/ui/segmented-control";
+import {
+  CONTENT_FONT_STORAGE_KEY,
+  INTERFACE_FONT_STORAGE_KEY,
+  applyContentFont,
+  applyInterfaceFont,
+  getStoredContentFont,
+  getStoredInterfaceFont,
+  type ContentFont,
+  type InterfaceFont,
+} from "@/lib/fontChoice";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   applyTheme,
@@ -63,6 +73,16 @@ const CARD_RADIUS_CONTROL_OPTIONS = CARD_RADIUS_OPTIONS.map((value) => ({
   label: value === 0 ? "Square" : String(value),
 }));
 
+const INTERFACE_FONT_OPTIONS: { value: InterfaceFont; label: string }[] = [
+  { value: "geist", label: "Geist" },
+  { value: "departure", label: "Departure Mono" },
+];
+
+const CONTENT_FONT_OPTIONS: { value: ContentFont; label: string }[] = [
+  { value: "geist-sans", label: "Geist Sans" },
+  { value: "geist-mono", label: "Geist Mono" },
+];
+
 const DENSITY_OPTIONS = DENSITY_STEPS.map((step) => ({
   value: String(step),
   label: String(step),
@@ -94,6 +114,8 @@ export function AppearanceSection() {
     getStoredActionButtonStyle,
   );
   const [density, setDensity] = useState<DensityStep>(getStoredDensity);
+  const [interfaceFont, setInterfaceFont] = useState<InterfaceFont>(getStoredInterfaceFont);
+  const [contentFont, setContentFont] = useState<ContentFont>(getStoredContentFont);
 
   const handleThemeChange = (mode: ThemeMode) => {
     setTheme(mode);
@@ -124,6 +146,18 @@ export function AppearanceSection() {
     setDensity(value);
     applyDensity(value);
     broadcastSettingsChange(DENSITY_STORAGE_KEY);
+  };
+
+  const handleInterfaceFontChange = (value: InterfaceFont) => {
+    setInterfaceFont(value);
+    applyInterfaceFont(value);
+    broadcastSettingsChange(INTERFACE_FONT_STORAGE_KEY);
+  };
+
+  const handleContentFontChange = (value: ContentFont) => {
+    setContentFont(value);
+    applyContentFont(value);
+    broadcastSettingsChange(CONTENT_FONT_STORAGE_KEY);
   };
 
   const handleActionButtonStyleChange = (value: ActionButtonStyle) => {
@@ -193,6 +227,32 @@ export function AppearanceSection() {
           value={String(density)}
           options={DENSITY_OPTIONS}
           onChange={handleDensityChange}
+        />
+      </SettingRow>
+
+      <SettingRow
+        label="Interface font"
+        caption="The whole UI including cards. Switching reloads the main window to remeasure the feed"
+      >
+        <SegmentedControl
+          aria-label="Interface font"
+          size="default"
+          value={interfaceFont}
+          options={INTERFACE_FONT_OPTIONS}
+          onChange={(value) => handleInterfaceFontChange(value as InterfaceFont)}
+        />
+      </SettingRow>
+
+      <SettingRow
+        label="Content font"
+        caption="Reading text of the opened article"
+      >
+        <SegmentedControl
+          aria-label="Content font"
+          size="default"
+          value={contentFont}
+          options={CONTENT_FONT_OPTIONS}
+          onChange={(value) => handleContentFontChange(value as ContentFont)}
         />
       </SettingRow>
 

@@ -295,7 +295,7 @@ export function MainSecondaryTopBar({
         // A selection does not change the row's surface: the components on the
         // layer compute their fills from whatever the surface is (relative
         // elevation), so the ground stays put and only the content swaps.
-        placement === "top" && (detailLayerEntered ? "bg-accent" : "bg-background"),
+        placement === "top" && (detailLayerEntered ? "bg-accent" : "bg-chrome"),
       )}
       data-main-secondary-placement={placement}
     >
@@ -383,7 +383,7 @@ export function MainSecondaryTopBar({
         )}
         {detailBlock && placement === "top" && (
           <div
-            className="main-secondary-bar-layer absolute inset-0 flex h-full min-w-0 flex-1 items-center gap-3 px-[var(--edge-rhythm,32px)]"
+            className="main-secondary-bar-layer absolute inset-0 flex h-full min-w-0 flex-1 items-center gap-3 px-[var(--chrome-edge-pad)]"
             data-entered={detailLayerEntered ? "true" : "false"}
             data-secondary-detail-top-menu=""
           >

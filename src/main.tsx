@@ -10,6 +10,12 @@ import {
   getStoredActionButtonStyle,
 } from "@/lib/actionButtonStyle";
 import { applyDensity, getStoredDensity } from "@/lib/density";
+import {
+  applyContentFont,
+  applyInterfaceFont,
+  getStoredContentFont,
+  getStoredInterfaceFont,
+} from "@/lib/fontChoice";
 import { App } from "./App";
 import { getVaultPath, reportNativeShellSmoke } from "@/lib/commands";
 import "./styles/global.css";
@@ -21,6 +27,8 @@ applyDesign(getStoredDesignMode());
 applyCardRadius(getStoredCardRadius());
 applyActionButtonStyle(getStoredActionButtonStyle());
 applyDensity(getStoredDensity());
+applyInterfaceFont(getStoredInterfaceFont());
+applyContentFont(getStoredContentFont());
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },

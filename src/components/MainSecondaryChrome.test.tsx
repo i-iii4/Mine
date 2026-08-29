@@ -66,7 +66,7 @@ describe("MainSecondaryTopBar placement", () => {
     renderBar("top", null);
 
     const bar = document.querySelector("[data-main-secondary-top-bar]");
-    expect(bar).toHaveClass("border-b", "bg-background");
+    expect(bar).toHaveClass("border-b", "bg-chrome");
     expect(bar).not.toHaveClass("border-t");
     expect(bar).toHaveAttribute("data-main-secondary-placement", "top");
   });

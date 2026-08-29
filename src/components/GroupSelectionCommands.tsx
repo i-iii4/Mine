@@ -138,8 +138,11 @@ export function GroupSelectionCommands({
       className="relative h-full w-full text-foreground"
       data-feed-selection-action-bar=""
     >
-      <div className="h-full max-w-full overflow-x-auto overflow-y-hidden px-[var(--main-secondary-pad-x,0.5rem)]">
-        <div className="flex h-full min-w-max items-center gap-1">
+      {/* The pads live on the scrolled content, not the scrollport: a scroll
+          container's right padding never renders past min-w-max content, which
+          pinned the last button to the edge while the left kept its inset. */}
+      <div className="h-full max-w-full overflow-x-auto overflow-y-hidden">
+        <div className="flex h-full min-w-max items-center gap-1 px-[var(--main-secondary-pad-x,0.5rem)]">
           <div
             className="shrink-0 px-2 font-mono text-sm text-muted-foreground"
             data-feed-selection-count=""

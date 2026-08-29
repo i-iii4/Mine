@@ -12,8 +12,8 @@ describe("density", () => {
     document.documentElement.removeAttribute("style");
   });
 
-  it("offers three steps", () => {
-    expect(DENSITY_STEPS).toEqual([32, 24, 16]);
+  it("offers four steps down to the tight 2px experiment graduate", () => {
+    expect(DENSITY_STEPS).toEqual([32, 24, 16, 2]);
   });
 
   it("defaults to the widest step", () => {
@@ -21,8 +21,8 @@ describe("density", () => {
   });
 
   it("publishes one variable for every spacing to read", () => {
-    // Edges, chrome and the gap between cards all follow this: spacing that
-    // varies per surface reads as inconsistency, not as intent.
+    // Feed edges and the gap between cards follow this; chrome is pinned to
+    // its own 16px pad and stays put.
     applyDensity(24);
     expect(document.documentElement.style.getPropertyValue("--edge-rhythm")).toBe("24px");
   });

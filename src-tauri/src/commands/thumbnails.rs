@@ -395,10 +395,28 @@ fn needs_browser_thumb_upgrade(
     vault: &crate::domain::vault::VaultLayout,
     block: &index::PendingThumbUpgradeBlock,
 ) -> bool {
-    !matches!(
-        thumbnails::thumb_disk_state(&vault.thumb_path(&block.slug)),
-        thumbnails::ThumbDiskState::Jpeg
-    )
+    match thumbnails::thumb_disk_state(&vault.thumb_path(&block.slug)) {
+        thumbnails::ThumbDiskState::Jpeg => false,
+        // A PNG thumbnail is not evidence of an unfinished one. Phase 1 writes
+        // PNG whenever the picture actually uses its alpha channel (rule П6),
+        // and re-encoding that through the browser flattens the transparency
+        // onto white. Phase 2 exists for formats Rust cannot decode, so that —
+        // not the output format — is what decides.
+        thumbnails::ThumbDiskState::Png => !rust_decodable_primary_media(vault, block),
+        _ => true,
+    }
+}
+
+/// Whether the block's own picture is one Rust already decoded successfully.
+/// A block with no media of its own has nothing waiting on a decoder, but it
+/// also has no finished picture, so it stays in the queue.
+fn rust_decodable_primary_media(
+    vault: &crate::domain::vault::VaultLayout,
+    block: &index::PendingThumbUpgradeBlock,
+) -> bool {
+    let reference = block.media_file.as_deref().or(block.thumbnail.as_deref());
+    reference.is_some()
+        && thumbnails::media_reference_is_rust_decodable(vault, &block.slug, reference)
 }
 
 /// Resolve every derived tile still missing for `block`. Rust handles formats
@@ -671,6 +689,61 @@ mod tests {
         };
 
         assert!(!needs_browser_thumb_upgrade(&vault, &block));
+    }
+
+    /// A screenshot with rounded, transparent corners legitimately produces a
+    /// PNG thumbnail (rule П6). Queueing it for the browser upgrade sent that
+    /// picture through a white canvas and put a white frame around it.
+    #[test]
+    fn needs_browser_thumb_upgrade_keeps_a_transparent_png_thumb() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        let media = dir.path().join("shot.png");
+        let transparent =
+            image::RgbaImage::from_pixel(64, 64, image::Rgba([10, 20, 30, 0]));
+        transparent.save(&media).unwrap();
+        thumbnails::generate_thumbnail(&media, &vault.thumb_path("shot"), 240).unwrap();
+        assert!(matches!(
+            thumbnails::thumb_disk_state(&vault.thumb_path("shot")),
+            thumbnails::ThumbDiskState::Png
+        ));
+
+        let block = index::PendingThumbUpgradeBlock {
+            slug: "shot".into(),
+            media_file: Some("shot.png".into()),
+            thumbnail: None,
+            first_image: None,
+            media_urls: None,
+            preview_manifest: None,
+        };
+
+        assert!(!needs_browser_thumb_upgrade(&vault, &block));
+    }
+
+    /// The placeholder case still has to reach Phase 2: a PNG written for
+    /// media Rust cannot decode is unfinished work, not a finished picture.
+    #[test]
+    fn needs_browser_thumb_upgrade_still_queues_a_placeholder_over_undecodable_media() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        std::fs::write(dir.path().join("poster.avif"), b"fake avif").unwrap();
+        thumbnails::generate_text_thumbnail(
+            Some("poster"),
+            "",
+            &vault.thumb_path("poster"),
+        )
+        .unwrap();
+
+        let block = index::PendingThumbUpgradeBlock {
+            slug: "poster".into(),
+            media_file: Some("poster.avif".into()),
+            thumbnail: None,
+            first_image: None,
+            media_urls: None,
+            preview_manifest: None,
+        };
+
+        assert!(needs_browser_thumb_upgrade(&vault, &block));
     }
 
     #[test]

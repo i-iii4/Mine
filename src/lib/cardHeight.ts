@@ -182,6 +182,32 @@ export function imageCardNeedsGeometryRefresh(block: LightBlock): boolean {
   );
 }
 
+/// Whether a `thumb:updated` must replace the feed's copy of the row rather
+/// than only bust the image URL.
+///
+/// Two states qualify, both of them rows that reached the feed before their
+/// own preview existed:
+///
+/// - an image card whose dimensions are not indexed yet — the masonry
+///   envelope has to adopt the real aspect ratio (`imageCardNeedsGeometryRefresh`);
+/// - a row that shows no picture at all. A card can enter the feed before its
+///   media is indexed, and the layout then falls back to the file variant:
+///   the name and the file name instead of the image. A cache-buster cannot
+///   heal that, because `media_file` and the preview manifest live in the row
+///   itself — only a fresh row brings the picture back.
+///
+/// Text thumbnails never qualify for the second case: an article's baked text
+/// thumb is normal traffic, not evidence of a stale row, and treating it as
+/// one would refetch the scrolled range through IPC on every cold-start sweep.
+export function feedRowNeedsPreviewRefresh(
+  block: LightBlock,
+  previewIsText: boolean,
+): boolean {
+  if (imageCardNeedsGeometryRefresh(block)) return true;
+  if (previewIsText) return false;
+  return deriveCardLayoutDescriptor(block).variant === "file";
+}
+
 function computeImageHeight(block: LightBlock, columnWidth: number): number {
   const iw = innerWidth(columnWidth);
   const aspectRatio = explicitImageAspectRatio(block);

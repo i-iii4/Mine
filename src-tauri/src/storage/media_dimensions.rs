@@ -76,7 +76,16 @@ impl PreviewDimensions {
 /// error (missing file, unsupported format, corrupt header). Header-only
 /// read — does not decode the full image.
 pub fn extract_image_dimensions(path: &Path) -> Option<(u32, u32)> {
-    ImageReader::open(path).ok()?.into_dimensions().ok()
+    // The format is sniffed, never taken from the name. Derived artifacts all
+    // live under a `.jpg` path while their contents follow rule П6 — a picture
+    // that uses its alpha channel is PNG inside — and trusting the extension
+    // made those unreadable, which reconciliation reports as a broken preview.
+    ImageReader::open(path)
+        .ok()?
+        .with_guessed_format()
+        .ok()?
+        .into_dimensions()
+        .ok()
 }
 
 /// Whether a file exists but its contents are not on this Mac.

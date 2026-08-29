@@ -12,6 +12,7 @@ use image::{DynamicImage, GenericImageView, RgbImage, Rgba, RgbaImage};
 use imageproc::drawing::draw_text_mut;
 use std::path::Path;
 use std::sync::LazyLock;
+use std::time::{Duration, SystemTime};
 
 use crate::domain::block::{derive_title_fields, strip_first_markdown_h1, Block};
 use crate::domain::vault::{ThumbLevel, VaultLayout};
@@ -1284,7 +1285,7 @@ fn generate_for_block_inner(block: &Block, vault: &VaultLayout) -> ThumbSource {
         || block.frontmatter.thumbnail.is_some()
         || title_fields.display_title.is_some()
         || !preview_body.is_empty();
-    if has_preview_intent {
+    if has_preview_intent && !media_may_still_be_arriving(block, vault) {
         let title = title_fields
             .display_title
             .as_deref()
@@ -1307,6 +1308,71 @@ pub fn find_first_local_media(body: &str, ext_predicate: fn(&str) -> bool) -> Op
 
 pub fn find_first_local_media_any(body: &str) -> Option<(String, &'static str)> {
     preview_plan::find_first_local_media_any(body).map(|(src, kind)| (src, kind.as_str()))
+}
+
+/// How long a card's declared-but-absent media counts as still on its way.
+const MEDIA_ARRIVAL_GRACE: Duration = Duration::from_secs(30);
+
+/// Whether the block names local media that is missing on a card that has
+/// only just appeared on disk.
+///
+/// A card and its media land as two separate filesystem events, so a card is
+/// routinely indexed a moment before its picture exists. Baking the text
+/// placeholder for that instant publishes a lie: the feed paints the card as
+/// text, its own file name standing in for a body, until the real thumbnail
+/// replaces it seconds later. Inside the grace window the picture counts as
+/// arriving and the card waits with an empty tile instead — an absent preview
+/// is not a failed one. Past the window the reference counts as broken and the
+/// placeholder is written as before, so a card whose media is genuinely gone
+/// still shows its name. The existence-backed preview reconciliation
+/// (storage/derived_preview.rs) revisits whatever stays without a thumb.
+fn media_may_still_be_arriving(block: &Block, vault: &VaultLayout) -> bool {
+    let declares_missing = block
+        .frontmatter
+        .file
+        .as_deref()
+        .into_iter()
+        .chain(block.frontmatter.thumbnail.as_deref())
+        .filter(|reference| !preview_plan::is_remote_media(reference))
+        .any(|reference| resolve_block_media_path(block, vault, reference).is_none());
+    if !declares_missing {
+        return false;
+    }
+    // Freshness comes from the card file, not from `saved_at`: a card synced
+    // in from another device carries an old timestamp while its media is only
+    // now downloading.
+    let Ok(modified) = std::fs::metadata(vault.block_path(&block.slug))
+        .and_then(|metadata| metadata.modified())
+    else {
+        return false;
+    };
+    SystemTime::now()
+        .duration_since(modified)
+        .map(|age| age < MEDIA_ARRIVAL_GRACE)
+        .unwrap_or(true)
+}
+
+/// Whether a block's own picture is one the Rust decoder handles.
+///
+/// The pipeline writes PNG for two very different reasons (rule П6): a picture
+/// that uses its alpha channel, and a text placeholder standing in for media
+/// this build cannot decode. The output format therefore says nothing about
+/// whether an artifact is finished — the source does. Callers deciding "is
+/// this preview done" ask here instead of reading the file's magic.
+///
+/// Takes the reference rather than a parsed block so the hot path can answer
+/// without reading the `.md` again. No own media means nothing is waiting on a
+/// decoder, which counts as decodable.
+pub fn media_reference_is_rust_decodable(
+    vault: &VaultLayout,
+    slug: &str,
+    reference: Option<&str>,
+) -> bool {
+    let Some(reference) = reference else {
+        return true;
+    };
+    media_refs::resolve_indexed_media(vault, slug, reference)
+        .is_some_and(|path| is_rust_decodable(&path))
 }
 
 fn resolve_block_media_path(
@@ -1869,6 +1935,74 @@ mod tests {
         let mut f = std::fs::File::open(&thumb_path).unwrap();
         f.read_exact(&mut header).unwrap();
         assert_eq!(header, JPEG_MAGIC);
+    }
+
+    /// A screenshot saved into the vault arrives as two filesystem events: the
+    /// card, then its picture. Indexed in that gap, the card used to get a
+    /// baked text placeholder naming its own file, and the feed showed that
+    /// text image for seconds until the real thumbnail replaced it.
+    /// The real vault keeps cards in `Cards/` and pictures in `Media/`, and a
+    /// frontmatter `file:` is a bare name, not a path. The picture must be
+    /// found from there — anything else bakes a text placeholder over a card
+    /// that has a perfectly good image sitting next to it.
+    #[test]
+    fn media_in_a_sibling_folder_produces_an_image_thumb() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        std::fs::create_dir_all(dir.path().join("Cards")).unwrap();
+        std::fs::create_dir_all(dir.path().join("Media")).unwrap();
+        create_test_image(&dir.path().join("Media/laid-out.jpg"), 640, 480);
+        let block = make_media_block("Cards/laid-out", "laid-out.jpg");
+        std::fs::write(vault.block_path("Cards/laid-out"), "---\n---\n").unwrap();
+
+        assert_eq!(generate_for_block(&block, &vault), ThumbSource::Image);
+    }
+
+    #[test]
+    fn missing_media_on_a_fresh_card_waits_instead_of_baking_a_text_placeholder() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        let block = make_media_block("just-saved", "just-saved.png");
+        std::fs::write(vault.block_path("just-saved"), "---\n---\n").unwrap();
+
+        let source = generate_for_block(&block, &vault);
+
+        assert_eq!(source, ThumbSource::None);
+        assert!(
+            !vault.thumb_path("just-saved").exists(),
+            "no thumb at all beats a text thumb that lies about the card",
+        );
+    }
+
+    #[test]
+    fn missing_media_on_an_old_card_still_gets_its_placeholder() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        let block = make_media_block("long-broken", "long-broken.png");
+        let card_path = vault.block_path("long-broken");
+        std::fs::write(&card_path, "---\n---\n").unwrap();
+        // Past the arrival window the reference is broken, not in flight, and
+        // the card must still show its name rather than vanish into a blank.
+        let file = std::fs::OpenOptions::new().write(true).open(&card_path).unwrap();
+        file.set_modified(SystemTime::now() - Duration::from_secs(600)).unwrap();
+        drop(file);
+
+        let source = generate_for_block(&block, &vault);
+
+        assert_eq!(source, ThumbSource::Text);
+        assert!(vault.thumb_path("long-broken").exists());
+    }
+
+    #[test]
+    fn present_media_is_unaffected_by_the_arrival_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        let media = vault.root().join("with-media.jpg");
+        create_test_image(&media, 640, 480);
+        let block = make_media_block("with-media", "with-media.jpg");
+        std::fs::write(vault.block_path("with-media"), "---\n---\n").unwrap();
+
+        assert_eq!(generate_for_block(&block, &vault), ThumbSource::Image);
     }
 
     #[test]

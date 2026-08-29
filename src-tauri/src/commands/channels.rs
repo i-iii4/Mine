@@ -488,7 +488,10 @@ pub async fn list_channel_previews(
                     let to_item = |preview: &index::PreviewBlock| -> PreviewItem {
                         PreviewItem {
                             slug: preview.slug.clone(),
-                            text: preview.thumb_format == Some(index::ThumbFormat::Png),
+                            // Text-ness comes from the preview manifest, not
+                            // from the thumbnail's format: a transparent
+                            // picture is stored as PNG as well.
+                            text: preview.is_text,
                             mtime: preview.thumb_mtime,
                             has_thumb: preview.thumb_format.is_some(),
                         }

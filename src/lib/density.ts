@@ -1,9 +1,9 @@
 // Interface spacing — one value behind every gap that separates content.
 //
-// It drives the distance from window edges and chrome (top and bottom bars, the
-// sidebar table, the feed's side and top insets, the expanded card's columns and
-// top offset) and the gap between feed cards. One rhythm, applied everywhere:
-// spacing that varies per surface reads as inconsistency, not as intent.
+// It drives the feed's card gap and side/top insets, the expanded card's
+// columns and top offset. Chrome (top bar, metadata row, bottom action bar)
+// is NOT on this rhythm any more: its edge inset is pinned to 16px via
+// --chrome-edge-pad, so tightening the feed to 2px never squeezes the shell.
 //
 // Published as a CSS variable on the root so stylesheets and Tailwind arbitrary
 // values read it directly; the feed also reads the number through a hook,
@@ -11,9 +11,9 @@
 
 import { useSyncExternalStore } from "react";
 
-export type DensityStep = 32 | 24 | 16;
+export type DensityStep = 32 | 24 | 16 | 2;
 
-export const DENSITY_STEPS: readonly DensityStep[] = [32, 24, 16];
+export const DENSITY_STEPS: readonly DensityStep[] = [32, 24, 16, 2];
 
 export const DENSITY_STORAGE_KEY = "mine.spacing";
 

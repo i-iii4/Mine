@@ -155,7 +155,7 @@ describe("Detail", () => {
     const topMenu = container.querySelector('[data-detail-top-menu="classic"]');
     expect(topMenu).not.toBeNull();
     expect(topMenu).toHaveClass("detail-top-bar-enter");
-    expect(topMenu).toHaveClass("h-8", "bg-accent", "px-[var(--edge-rhythm,32px)]");
+    expect(topMenu).toHaveClass("h-8", "bg-accent", "px-[var(--chrome-edge-pad)]");
   });
 
   it("toggles the classic top overflow menu with Command-K", async () => {
@@ -570,14 +570,14 @@ describe("Detail", () => {
     expect(spacer?.parentElement).toHaveClass(
       "w-full",
       "grid",
-      "grid-cols-[minmax(var(--edge-rhythm,32px),1fr)_minmax(400px,48rem)_minmax(var(--edge-rhythm,32px),1fr)_20rem_var(--edge-rhythm,32px)]",
-      "pt-[var(--edge-rhythm,32px)]",
+      "grid-cols-[minmax(var(--card-content-pad),1fr)_minmax(400px,48rem)_minmax(var(--card-content-pad),1fr)_20rem_var(--card-content-pad)]",
+      "pt-[var(--card-content-pad)]",
     );
     expect(rail?.parentElement).toHaveClass(
       "w-full",
       "grid",
-      "grid-cols-[minmax(var(--edge-rhythm,32px),1fr)_minmax(400px,48rem)_minmax(var(--edge-rhythm,32px),1fr)_20rem_var(--edge-rhythm,32px)]",
-      "pt-[var(--edge-rhythm,32px)]",
+      "grid-cols-[minmax(var(--card-content-pad),1fr)_minmax(400px,48rem)_minmax(var(--card-content-pad),1fr)_20rem_var(--card-content-pad)]",
+      "pt-[var(--card-content-pad)]",
     );
   });
 
@@ -613,8 +613,8 @@ describe("Detail", () => {
     const stackedMetadataRow = container.querySelector("[data-detail-stacked-metadata-row]");
 
     expect(scrollGrid).toHaveClass(
-      "grid-cols-[var(--edge-rhythm,32px)_minmax(240px,1fr)_var(--edge-rhythm,32px)]",
-      "pt-[var(--edge-rhythm,32px)]",
+      "grid-cols-[var(--card-content-pad)_minmax(240px,1fr)_var(--card-content-pad)]",
+      "pt-[var(--card-content-pad)]",
       "pb-20",
     );
     expect(articleColumn).toHaveClass(
@@ -625,7 +625,7 @@ describe("Detail", () => {
     );
     expect(stackedMetadataRow).toHaveClass(
       "col-start-2",
-      "mt-[var(--edge-rhythm,32px)]",
+      "mt-[var(--card-content-pad)]",
       "min-w-0",
     );
     expect(container.querySelector("[data-detail-fixed-metadata-layer]")).toBeNull();
@@ -653,8 +653,8 @@ describe("Detail", () => {
     const articleColumn = container.querySelector("[data-detail-article-column]");
     const rail = container.querySelector("[data-metadata-scroll]");
     // Side columns and top offset follow the app-wide edge rhythm setting.
-    expect(articleColumn?.parentElement).toHaveClass("pt-[var(--edge-rhythm,32px)]");
-    expect(rail?.parentElement).toHaveClass("pt-[var(--edge-rhythm,32px)]");
+    expect(articleColumn?.parentElement).toHaveClass("pt-[var(--card-content-pad)]");
+    expect(rail?.parentElement).toHaveClass("pt-[var(--card-content-pad)]");
   });
 
   it("keeps related notes as a separate block below the metadata table", async () => {

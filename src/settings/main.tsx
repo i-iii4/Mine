@@ -9,6 +9,12 @@ import {
   getStoredActionButtonStyle,
 } from "@/lib/actionButtonStyle";
 import { applyDensity, getStoredDensity } from "@/lib/density";
+import {
+  applyContentFont,
+  applyInterfaceFont,
+  getStoredContentFont,
+  getStoredInterfaceFont,
+} from "@/lib/fontChoice";
 import { SettingsApp } from "./SettingsApp";
 import "@/styles/global.css";
 import { hydrateCommandOverrides, watchCommandOverrides } from "@/lib/shortcutOverrides";
@@ -20,6 +26,8 @@ applyDesign(getStoredDesignMode());
 applyCardRadius(getStoredCardRadius());
 applyActionButtonStyle(getStoredActionButtonStyle());
 applyDensity(getStoredDensity());
+applyInterfaceFont(getStoredInterfaceFont());
+applyContentFont(getStoredContentFont());
 
 const rootElement = document.getElementById("root");
 if (!rootElement) {

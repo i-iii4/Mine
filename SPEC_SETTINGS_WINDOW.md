@@ -108,11 +108,21 @@ Element, Selection). В строке — имя команды, текущее �
 | Theme: System / Light / Dark | `SegmentedControl` (size default) | `theme` |
 | Design: Default / Alt 1 / Alt 2 | `SegmentedControl` (size default) | `mine.design` |
 | Compact Detail top menu | `Checkbox` + подпись | `mine.compactDetailTopMenu` |
-| Spacing: 32 / 24 / 16 | `SegmentedControl` | `mine.spacing` |
+| Spacing: 32 / 24 / 16 / 2 | `SegmentedControl` | `mine.spacing` |
+| Interface font: Geist / Departure Mono | `SegmentedControl` | `mine.fontInterface` |
+| Content font: Geist Sans / Geist Mono | `SegmentedControl` | `mine.fontContent` |
 | Bottom bar buttons: Pill / Standard | `SegmentedControl` | `mine.actionButtonStyle` |
 | Card corners | `SegmentedControl` | `mine.cardRadius` |
 | Fade content under the chrome | `Checkbox` + подпись | `mine.scrollEdgeFade` |
 | Hide bottom menu | `Checkbox` + подпись | `mine.bottomActionBarHidden` |
+
+**Шрифты.** Interface font покрывает весь интерфейс, включая карточки ленты;
+высоты карточек измеряются этим шрифтом, поэтому смена значения перезагружает
+главное окно (`fontMetrics` выводит спеки и хэш кэша из сохранённого выбора при
+загрузке модуля, `src/lib/fontChoice.ts`). Content font касается только текста
+открытой статьи (`data-content-font` на prose-контейнере Detail) и применяется
+вживую. Departure Mono вендорен в `public/fonts/DepartureMono-Regular.woff2`
+(OFL). Контракт — `src/lib/fontChoice.test.ts`.
 
 Ось оформления (`Design`) ортогональна теме: любой вариант сочетается с любой
 темой, значения хранятся раздельно. Что именно меняет каждый вариант —

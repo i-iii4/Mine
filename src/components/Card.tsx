@@ -313,9 +313,12 @@ export function ReadOnlyCardPreview({
     const previewWidth = firstTile?.width ?? manifest?.width ?? block.width;
     const previewHeight = firstTile?.height ?? manifest?.height ?? block.height;
     const aspectRatio = previewWidth && previewHeight ? previewWidth / previewHeight : 1;
-    // Text thumbs are dark-ink PNGs that need dark:invert. LightBlock carries
-    // no thumb_format, so the preview manifest is the equal-signal fallback.
-    const isTextThumb = block.thumb_format === "png" || manifest?.kind === "text";
+    // Text thumbs are dark-ink images that need dark:invert. The manifest says
+    // what the preview is; the file format does not — a picture that uses its
+    // alpha channel is stored as PNG too, and reading the format first
+    // inverted real screenshots. Format stays the fallback for legacy rows
+    // that have no manifest at all.
+    const isTextThumb = manifest ? manifest.kind === "text" : block.thumb_format === "png";
     // Active search: the micro preview renders the same row model as the
     // search-result list (title highlight, first-match excerpt as preview).
     const matchRow = block.search_match ? deriveSearchResultRow(block) : null;

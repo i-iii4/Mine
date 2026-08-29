@@ -18,6 +18,14 @@
   font-display: swap;
 }
 
+@font-face {
+  font-family: "Departure Mono";
+  src: url("/fonts/DepartureMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 @plugin "@tailwindcss/typography";
 
 .prose {
@@ -116,7 +124,10 @@ select,
 [data-sidebar-row-surface]::after {
   content: "";
   position: absolute;
-  inset-inline: 0;
+  /* Starts 1px in from the window edge: macOS paints its translucent frame
+     highlight over that pixel, and an opaque divider underneath it reads as a
+     brighter square on the frame. One clear pixel and the overlap is gone. */
+  inset-inline: 1px 0;
   bottom: 0;
   height: 1px;
   background-color: var(--sidebar-border);
@@ -507,6 +518,9 @@ body {
 @theme inline {
   --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  /* Content font — the article body in Detail. Independent of the interface
+     font: switching the UI to Departure Mono leaves reading text alone. */
+  --font-content: "Geist", ui-sans-serif, system-ui, sans-serif;
   --radius-0: 0px;
   --radius-1: 3px;
   --radius-2: 5px;
@@ -575,6 +589,28 @@ body {
   --color-search-mark-foreground: var(--search-mark-foreground);
 }
 
+/* Interface font switch: Departure Mono takes over both UI families. The
+   font utilities are compiled inline (@theme inline), so the switch restates
+   the family on the utilities rather than repointing a variable. */
+:root[data-font-interface="departure"] body,
+:root[data-font-interface="departure"] .font-sans,
+:root[data-font-interface="departure"] .font-mono {
+  --font-sans: "Departure Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-mono: "Departure Mono", ui-monospace, SFMono-Regular, monospace;
+  font-family: "Departure Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* Content font — the reading surface opts in via the attribute; the family
+   follows the stored choice. */
+[data-content-font] {
+  font-family: var(--font-content);
+}
+
+:root[data-font-content="geist-mono"] {
+  --font-content: "Geist Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+
 :root {
   /* bg-page: #FFFFFF */
   --background: oklch(1 0 0);
@@ -630,10 +666,10 @@ body {
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
-  /* sidebar fill: midway between page background (1.0) and chrome (0.99) —
-     a half-quantum step that visually gathers the panel without competing
-     with the top chrome */
-  --sidebar: oklch(0.995 0 0);
+  /* sidebar fill: a third of the way from the page background (1.0) toward
+     chrome (0.99) — gathers the panel while keeping two thirds of the gap to
+     the chrome so the two shells stay distinguishable */
+  --sidebar: oklch(0.997 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.3211 0 0);
   --sidebar-primary-foreground: oklch(0.985 0 0);
@@ -701,8 +737,9 @@ body {
     --chart-3: oklch(0.769 0.188 70.08);
     --chart-4: oklch(0.627 0.265 303.9);
     --chart-5: oklch(0.645 0.246 16.439);
-    /* sidebar fill: midway between page background (0.14) and chrome (0.17) */
-    --sidebar: oklch(0.155 0 0);
+    /* sidebar fill: a third of the way from the page background (0.14) toward
+       chrome (0.17) — distinguishable from both */
+    --sidebar: oklch(0.15 0 0);
     --sidebar-foreground: oklch(0.985 0 0);
     --sidebar-primary: oklch(0.9189 0 0);
     --sidebar-primary-foreground: oklch(0.985 0 0);
@@ -755,8 +792,9 @@ body {
   --search-mark: oklch(0.75 0.14 95);
   --search-mark-foreground: oklch(0.145 0 0);
   --ring: oklch(0.6268 0 0);
-  /* sidebar fill: midway between page background (0.14) and chrome (0.17) */
-  --sidebar: oklch(0.155 0 0);
+  /* sidebar fill: a third of the way from the page background (0.14) toward
+     chrome (0.17) — distinguishable from both */
+  --sidebar: oklch(0.15 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.9189 0 0);
   --sidebar-primary-foreground: oklch(0.985 0 0);
@@ -806,10 +844,10 @@ body {
   --search-mark: oklch(0.92 0.17 100);
   --search-mark-foreground: oklch(0.145 0 0);
   --ring: oklch(0.5693 0 0);
-  /* sidebar fill: midway between page background (1.0) and chrome (0.99) —
-     a half-quantum step that visually gathers the panel without competing
-     with the top chrome */
-  --sidebar: oklch(0.995 0 0);
+  /* sidebar fill: a third of the way from the page background (1.0) toward
+     chrome (0.99) — gathers the panel while keeping two thirds of the gap to
+     the chrome so the two shells stay distinguishable */
+  --sidebar: oklch(0.997 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.3211 0 0);
   --sidebar-primary-foreground: oklch(0.985 0 0);
@@ -831,8 +869,10 @@ body {
   /* Edge rhythm — one value behind every inset from a window edge or the
      chrome. Settings publish --edge-rhythm on the root; the fallback keeps the
      stylesheet standalone. */
-  --sidebar-nav-pad-x: var(--edge-rhythm, 32px);   /* sidebar table inset from panel edges */
-  --sidebar-nav-pad-top: var(--edge-rhythm, 32px); /* sidebar table inset from the top chrome */
+  /* Sidebar table insets follow the rhythm with the same 16px floor as the
+     expanded card: the shell never gets tighter than 16px. */
+  --sidebar-nav-pad-x: max(var(--edge-rhythm, 32px), 16px);   /* sidebar table inset from panel edges */
+  --sidebar-nav-pad-top: max(var(--edge-rhythm, 32px), 16px); /* sidebar table inset from the top chrome */
   --sidebar-row-pad-x: 0px;    /* inner row padding: text left / count right */
   /* One visual zone — the distance between two guidelines, or between a
      guideline and the panel edge. That is what the eye compares, so the model
@@ -870,25 +910,28 @@ body {
      the panel and the curtain clips the meta column. */
   --sidebar-min-width: 342px;
   /* top chrome: collection switcher trigger padding. Its label text lands at
-     this value + the 8px inner pill padding, so the text aligns with the card
-     edge — hence the rhythm minus that inner padding, not the rhythm itself. */
-  --top-collection-pad-x: calc(var(--edge-rhythm, 32px) - 8px);
+     this value + the 8px inner pill padding, so the text sits at the fixed
+     16px chrome inset — the chrome no longer follows the feed rhythm. */
+  --top-collection-pad-x: calc(var(--chrome-edge-pad) - 8px);
   /* second chrome row: vault meta (left) and collection count (right) */
-  --main-secondary-pad-x: var(--edge-rhythm, 32px);
-  /* Edge inset of the chrome standing over the sidebar column — the bottom
-     action bar and the sidebar half of the second chrome row. In the primary
-     design it is the app-wide rhythm, so nothing moves there; the alt design
-     pins it to the same 16px its sidebar rows already use, so the column reads
-     as one vertical from the counter at the top down to the buttons at the
-     bottom. One name, one place to change it. */
-  --chrome-edge-pad: var(--edge-rhythm, 32px);
+  /* The feed half of the metadata row used to follow the feed rhythm to line
+     up with the cards; the whole chrome is now detached — 16px everywhere. */
+  --main-secondary-pad-x: var(--chrome-edge-pad);
+  /* Edge inset of the app chrome: top bar, metadata row, bottom action bar.
+     Pinned to 16px in every design and detached from the feed rhythm — the
+     shell keeps its own breathing room even when the feed is tightened to the
+     2px step. One name, one place to change it. */
+  --chrome-edge-pad: 16px;
+  /* Interior inset of the expanded card (Detail): side columns and the top
+     offset of the content. Follows the feed rhythm but never drops below
+     16px — at the tight 2px feed step the reading surface keeps its air. */
+  --card-content-pad: max(var(--edge-rhythm, 32px), 16px);
 }
 :root[data-design="alt"],
 :root[data-design="alt2"] {
   --sidebar-nav-pad-x: 0px;
   --sidebar-nav-pad-top: 0px;
   --sidebar-row-pad-x: 16px;
-  --chrome-edge-pad: 16px;
   /* alt: zone = max(16 + 88, 8 + 84 + 8) = 104 */
   --sidebar-zone: 104px;
   /* = reserved + 2 x col-floor. MUST equal sidebarMinWidth("alt") in

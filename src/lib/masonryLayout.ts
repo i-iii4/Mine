@@ -53,6 +53,11 @@ export function computeMasonryLayout(
   const columnCount = getMasonryColumnCount(containerWidth, minColumnWidth, gap);
   const safeGap = clampPositive(gap);
   const columnWidth = getMasonryColumnWidth(containerWidth, minColumnWidth, gap);
+  // Column widths are floored, so up to columnCount-1 leftover pixels exist.
+  // Split them between both sides: piling the remainder on the right reads as
+  // an uneven inset once the gap is small enough to compare against it.
+  const usedWidth = columnCount * columnWidth + safeGap * (columnCount - 1);
+  const leftOffset = Math.max(0, Math.floor((clampPositive(containerWidth) - usedWidth) / 2));
 
   const columnHeights = new Array<number>(columnCount).fill(0);
   const positions: MasonryPosition[] = [];
@@ -68,7 +73,7 @@ export function computeMasonryLayout(
     }
 
     const top = columnHeights[targetColumn]!;
-    const left = targetColumn * (columnWidth + safeGap);
+    const left = leftOffset + targetColumn * (columnWidth + safeGap);
     const bottom = top + height;
 
     positions.push({

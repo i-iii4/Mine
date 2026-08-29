@@ -21,27 +21,30 @@ import { FONT_METRICS_PREVIEW_MAX_CHARS } from "@/types/fontMetrics";
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
-/** Path to the Geist font file served by Vite from /public. */
-const FONT_URL = "/fonts/Geist-Variable.woff2";
-const FONT_FAMILY = "Geist";
+import { getStoredInterfaceFont } from "@/lib/fontChoice";
 
 /**
- * Font specs used to measure text widths. MUST match the actual fonts
- * used in Card.tsx for title and preview, otherwise computed line counts
- * will not match rendered line counts.
+ * The interface font also renders the cards, so measurement follows the
+ * stored choice. Resolved once at module load: switching fonts reloads the
+ * main window (see App.tsx), which re-derives these constants.
  *
  * Title: text-sm font-semibold → 12px / 600 weight
  * Preview: text-sm → 12px / 400 weight
  */
-const TITLE_FONT_SPEC = "600 12px 'Geist', system-ui, sans-serif";
-const PREVIEW_FONT_SPEC = "400 12px 'Geist', system-ui, sans-serif";
+const INTERFACE_FONT = getStoredInterfaceFont();
+const FONT_URL = INTERFACE_FONT === "departure"
+  ? "/fonts/DepartureMono-Regular.woff2"
+  : "/fonts/Geist-Variable.woff2";
+const FONT_FAMILY = INTERFACE_FONT === "departure" ? "Departure Mono" : "Geist";
+const TITLE_FONT_SPEC = `600 12px '${FONT_FAMILY}', system-ui, sans-serif`;
+const PREVIEW_FONT_SPEC = `400 12px '${FONT_FAMILY}', system-ui, sans-serif`;
 
 /**
- * Static font hash. Bumped manually when the font file, size, or spec
- * changes in a way that affects measureText output. All cached entries
- * with a different hash are treated as stale and re-computed.
+ * Font hash keyed by the interface font. Bumped manually when the font file,
+ * size, or spec changes in a way that affects measureText output. All cached
+ * entries with a different hash are treated as stale and re-computed.
  */
-const FONT_HASH: FontHash = "descriptor-preview-v2";
+const FONT_HASH: FontHash = `descriptor-preview-v2-${INTERFACE_FONT}`;
 
 const DB_NAME = "mine-font-metrics";
 const DB_VERSION = 2;

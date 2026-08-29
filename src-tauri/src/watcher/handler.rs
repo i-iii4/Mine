@@ -971,13 +971,13 @@ pub fn handle_event(
             }
         }
         VaultEvent::MediaChanged(path) => {
-            if let Some(slug) = path_to_slug(vault, path) {
-                let ext = path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("")
-                    .to_lowercase();
-                if thumbnails::is_image_ext(&ext) {
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            if thumbnails::is_image_ext(&ext) {
+                for slug in media_thumb_targets(conn, vault, path) {
                     let thumb_path = vault.thumb_path(&slug);
                     let path_owned = path.to_path_buf();
                     let app_clone = app.cloned();
@@ -1027,6 +1027,35 @@ pub fn handle_event(
 }
 
 // ─── Private helpers ────────────────────────────────────────────────────────
+
+/// Which slugs a landed media file must refresh the thumbnail of.
+///
+/// Two answers, and both are needed. The media's own path-derived slug is what
+/// a flat vault uses: card and picture sit side by side and share it. A vault
+/// laid out in folders breaks that identity — the picture is `Media/x` while
+/// its card is `Cards/x` — so the owning cards are looked up by the indexed
+/// file name as well. Without that lookup a newly saved card waited for the
+/// slower reconciliation pass to notice its picture had arrived.
+fn media_thumb_targets(conn: &Connection, vault: &VaultLayout, path: &Path) -> Vec<String> {
+    let mut targets: Vec<String> = Vec::new();
+    if let Some(slug) = path_to_slug(vault, path) {
+        targets.push(slug);
+    }
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return targets;
+    };
+    match index::list_slugs_by_media_file(conn, file_name) {
+        Ok(owners) => {
+            for owner in owners {
+                if !targets.contains(&owner) {
+                    targets.push(owner);
+                }
+            }
+        }
+        Err(e) => log::warn!("media owner lookup failed for {file_name}: {e:#}"),
+    }
+    targets
+}
 
 /// Extract path-based slug from a vault file path.
 fn path_to_slug(vault: &VaultLayout, path: &Path) -> Option<String> {
@@ -1539,6 +1568,57 @@ mod tests {
         assert_eq!(conflicts.len(), 1);
         assert_eq!(conflicts[0].base_slug, "Doc");
         assert_eq!(conflicts[0].conflict_slug, "Doc (conflicted copy)");
+    }
+
+    /// A vault laid out in folders keeps the picture in `Media/` and its card
+    /// in `Cards/`, so the media's own slug is not the card's. The landing
+    /// picture must still refresh the card it belongs to.
+    #[test]
+    fn media_thumb_targets_include_the_owning_card_in_a_folder_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let conn = test_conn();
+
+        let mut block = crate::domain::block::Block {
+            slug: "Cards/shot".to_string(),
+            frontmatter: Frontmatter {
+                block_type: BlockType::Image,
+                title: None,
+                description: None,
+                url: None,
+                file: Some("shot.png".to_string()),
+                thumbnail: None,
+                tags: Vec::new(),
+                related_notes: Vec::new(),
+                source_media: None,
+                saved_at: DateTime::new("2026-01-15T12:00:00Z").unwrap(),
+                source: None,
+                width: None,
+                height: None,
+                author: None,
+                position: None,
+                color: None,
+                icon: None,
+            },
+            body: String::new(),
+        };
+        block.frontmatter.block_type =
+            crate::domain::block::derive_block_type(&block.frontmatter, &block.body);
+        index::upsert_block(&conn, &block, None).unwrap();
+
+        let media_path = dir.path().join("Media").join("shot.png");
+        std::fs::create_dir_all(media_path.parent().unwrap()).unwrap();
+        std::fs::write(&media_path, b"not really a png").unwrap();
+
+        let targets = media_thumb_targets(&conn, &vault, &media_path);
+
+        assert!(
+            targets.contains(&"Cards/shot".to_string()),
+            "the owning card must be refreshed, got {targets:?}",
+        );
+        // The media's own slug stays in the list: a flat vault still resolves
+        // card and picture to the same slug, and that path must keep working.
+        assert!(targets.contains(&"Media/shot".to_string()), "{targets:?}");
     }
 
     #[test]

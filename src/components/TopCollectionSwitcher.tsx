@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -76,7 +77,19 @@ export function TopCollectionSwitcher({
     deferPointerOpen: true,
     onPointerOpen: () => setOpen((current) => !current),
   });
-  const menuAlignOffset = compact ? 12 : 24;
+  // The menu lines up with the trigger's label, not with its box, so the
+  // offset has to equal the trigger's own horizontal padding. It is measured
+  // from the trigger instead of restated as a number: the copy was 24 because
+  // the padding once was, and it stayed behind the moment the chrome inset
+  // stopped following the feed rhythm, leaving the menu 16px adrift.
+  const [menuAlignOffset, setMenuAlignOffset] = useState(compact ? 12 : 24);
+  useLayoutEffect(() => {
+    if (!open) return;
+    const node = topChromeTrigger.triggerProps.ref.current;
+    if (!node) return;
+    const padding = Number.parseFloat(getComputedStyle(node).paddingLeft);
+    if (Number.isFinite(padding)) setMenuAlignOffset(padding);
+  }, [compact, open, topChromeTrigger.triggerProps.ref]);
   const currentKey = collectionKey(currentTag);
   const label = currentCollectionLabel(currentTag);
   const trimmedQuery = query.trim().replace(/\s+/g, " ");

@@ -346,7 +346,9 @@ pub fn reconcile_preview_for_slug(
         .source_stamp
         .as_deref()
         .is_some_and(|stamp| stamp != source_stamp);
-    if !source_changed && expected.iter().all(|path| is_ready_preview(path)) {
+    if !source_changed && expected
+        .iter()
+        .all(|path| is_ready_preview(vault, slug, record.media_file.as_deref(), path)) {
         // Nothing to generate, but the artifacts are on disk and therefore
         // measurable. This is where previews written before the manifest
         // carried artifact geometry get their dimensions: they reach this
@@ -388,13 +390,15 @@ pub fn reconcile_preview_for_slug(
         .transpose()?;
     if let Some(primary_path) = manifest.primary_preview_path.as_deref() {
         let primary = preview_disk_path(vault, primary_path)?;
-        if source_changed || !is_ready_preview(&primary) {
+        if source_changed
+            || !is_ready_preview(vault, slug, record.media_file.as_deref(), &primary)
+        {
             let source = thumbnails::generate_for_block(&block, vault);
             regenerated |= matches!(
                 source,
                 thumbnails::ThumbSource::Image | thumbnails::ThumbSource::Video
             );
-            if !is_ready_preview(&primary) {
+            if !is_ready_preview(vault, slug, record.media_file.as_deref(), &primary) {
                 // Distinguish "the file is not there" from "we cannot decode
                 // it here". Reporting a missing file as a decoding problem sent
                 // the reader looking for a format issue that does not exist.
@@ -437,14 +441,20 @@ pub fn reconcile_preview_for_slug(
             continue;
         };
         let destination = preview_disk_path(vault, preview_path)?;
-        if !source_changed && is_ready_preview(&destination) {
+        if !source_changed
+            && is_ready_preview(vault, slug, record.media_file.as_deref(), &destination)
+        {
             continue;
         }
         let can_copy_primary = tile_index == 0
             && !source_changed
             && manifest.kind != FeedPreviewKind::Composite
             && generation_failure.is_none()
-            && primary_disk_path.as_deref().is_some_and(is_ready_preview);
+            && primary_disk_path
+                .as_deref()
+                .is_some_and(|path| {
+                    is_ready_preview(vault, slug, record.media_file.as_deref(), path)
+                });
         if can_copy_primary {
             let primary = primary_disk_path
                 .as_deref()
@@ -500,7 +510,9 @@ pub fn reconcile_preview_for_slug(
         }
     }
 
-    let all_ready = expected.iter().all(|path| is_ready_preview(path));
+    let all_ready = expected
+        .iter()
+        .all(|path| is_ready_preview(vault, slug, record.media_file.as_deref(), path));
     if all_ready && (!source_changed || generation_failure.is_none()) {
         return publish_ready(conn, vault, slug, &record, &manifest, &source_stamp, regenerated)
             .map(Some);
@@ -701,11 +713,28 @@ fn preview_disk_path(vault: &VaultLayout, relative: &str) -> Result<PathBuf> {
     Ok(vault.thumbs_dir().join(path))
 }
 
-fn is_ready_preview(path: &Path) -> bool {
-    matches!(
-        thumbnails::thumb_disk_state(path),
-        thumbnails::ThumbDiskState::Jpeg
-    )
+/// Whether a derived artifact on disk is a finished preview.
+///
+/// Readiness used to mean "the file is JPEG". Rule П6 broke that: a picture
+/// that uses its alpha channel is written as PNG, and calling it unfinished
+/// left the block in `failed / browser_decode_required` forever — the grid
+/// withholds the manifest of such a block, so a perfectly good screenshot
+/// showed up in the feed as its own file name. The format cannot answer this;
+/// the source can. A picture Rust decoded is done, whatever it was encoded as;
+/// a PNG standing in for media Rust cannot decode is still a placeholder.
+fn is_ready_preview(
+    vault: &VaultLayout,
+    slug: &str,
+    media_reference: Option<&str>,
+    path: &Path,
+) -> bool {
+    match thumbnails::thumb_disk_state(path) {
+        thumbnails::ThumbDiskState::Jpeg => true,
+        thumbnails::ThumbDiskState::Png => {
+            thumbnails::media_reference_is_rust_decodable(vault, slug, media_reference)
+        }
+        _ => false,
+    }
 }
 
 enum PrimarySourceState {
@@ -1072,6 +1101,40 @@ mod tests {
         assert_eq!(report.checked, 30);
         assert_eq!(report.ready, 30);
         assert!(!report.cancelled);
+    }
+
+    /// A screenshot with transparent corners produces a PNG artifact by rule
+    /// П6. Readiness used to be "the file is JPEG", so such a block was parked
+    /// in `failed / browser_decode_required`, the grid withheld its manifest,
+    /// and the feed painted the card as its own file name instead of the
+    /// picture.
+    #[test]
+    fn a_transparent_picture_is_ready_even_though_its_artifact_is_png() {
+        let (_source, vault, conn) = setup();
+        let block = image_block("Shot", "shot.png");
+        let transparent = image::RgbaImage::from_pixel(48, 32, image::Rgba([10, 20, 30, 0]));
+        transparent.save(vault.root().join("shot.png")).unwrap();
+        files::write_block_file(&vault, &block).unwrap();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        let outcome = reconcile_preview_for_slug(&conn, &vault, "Shot")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(outcome.state, DerivedPreviewState::Ready, "{outcome:?}");
+        assert!(matches!(
+            thumbnails::thumb_disk_state(&vault.thumb_path("Shot")),
+            thumbnails::ThumbDiskState::Png
+        ));
+        let (state, error_kind): (String, Option<String>) = conn
+            .query_row(
+                "SELECT preview_state, preview_error_kind FROM blocks WHERE slug = 'Shot'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(state, "ready");
+        assert_eq!(error_kind, None);
     }
 
     #[test]
@@ -1563,7 +1626,7 @@ mod tests {
             let path = vault.thumbs_dir().join(relative);
             std::fs::write(&path, b"\xff\xd8\xffnot really a jpeg at all").unwrap();
             assert!(
-                is_ready_preview(&path),
+                is_ready_preview(&vault, "any-slug", None, &path),
                 "the readiness check must still accept this file — that is the point"
             );
         }

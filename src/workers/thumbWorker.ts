@@ -106,7 +106,7 @@ async function runEntry(entry: QueueEntry): Promise<void> {
       req.kind === "image"
         ? await decodeImage(blob)
         : await decodeVideoFrame(blob);
-    const bytes = await encodeJpeg(bitmap, targetSize);
+    const bytes = await encodeThumb(bitmap, targetSize);
     bitmap.close();
     postResponse({ id: req.id, slug: req.slug, ok: true, bytes }, [bytes]);
   } catch (err) {
@@ -162,11 +162,17 @@ async function decodeVideoFrame(_blob: Blob): Promise<ImageBitmap> {
   throw new Error("video thumbnail decode not yet implemented in worker");
 }
 
-/// Resize `bitmap` to fit within `max × max` preserving aspect ratio
-/// and encode as JPEG. The max-side convention matches Rust
-/// `DEFAULT_MAX_SIZE = 640` so sidebar thumb resolution stays
-/// consistent regardless of which decoder path produced it.
-async function encodeJpeg(
+/// Resize `bitmap` to fit within `max × max` preserving aspect ratio and
+/// encode it. The max-side convention matches Rust `DEFAULT_MAX_SIZE = 640`
+/// so sidebar thumb resolution stays consistent regardless of which decoder
+/// path produced it.
+///
+/// The codec follows the content, exactly as Rust does (SPEC_THUMBNAILS.md,
+/// rule П6): a picture that uses its alpha channel is written as PNG and keeps
+/// it, everything else becomes JPEG on an opaque ground. Flattening every
+/// upgrade onto white used to put a white frame around any screenshot with
+/// transparent corners.
+async function encodeThumb(
   bitmap: ImageBitmap,
   maxSize: number,
 ): Promise<ArrayBuffer> {
@@ -175,13 +181,27 @@ async function encodeJpeg(
   const w = Math.max(1, Math.round(w0 * scale));
   const h = Math.max(1, Math.round(h0 * scale));
 
+  // Draw once on a transparent ground: the alpha survives here and is the
+  // only place it can be measured.
+  const probe = new OffscreenCanvas(w, h);
+  const probeCtx = probe.getContext("2d", { willReadFrequently: true });
+  if (!probeCtx) {
+    throw new Error("OffscreenCanvas 2d context unavailable");
+  }
+  probeCtx.drawImage(bitmap, 0, 0, w, h);
+
+  if (usesAlpha(probeCtx, w, h)) {
+    const blob = await probe.convertToBlob({ type: "image/png" });
+    return await blob.arrayBuffer();
+  }
+
   const canvas = new OffscreenCanvas(w, h);
   const ctx = canvas.getContext("2d", { alpha: false });
   if (!ctx) {
     throw new Error("OffscreenCanvas 2d context unavailable");
   }
-  // Opaque background for JPEG — prevents black fringes on transparent
-  // sources (VP8X WebP with alpha, PNG-as-placeholder).
+  // Opaque background for JPEG — prevents black fringes on sources that carry
+  // an alpha channel without actually using it.
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, w, h);
   ctx.drawImage(bitmap, 0, 0, w, h);
@@ -191,6 +211,22 @@ async function encodeJpeg(
     quality: JPEG_QUALITY,
   });
   return await blob.arrayBuffer();
+}
+
+/// Whether any pixel is not fully opaque. Carrying an alpha channel is not the
+/// same as needing one — a PNG screenshot without rounded corners is RGBA with
+/// every pixel opaque, and it belongs in JPEG. One pass over the already
+/// downscaled canvas, so a few hundred kilopixels at most.
+function usesAlpha(
+  ctx: OffscreenCanvasRenderingContext2D,
+  width: number,
+  height: number,
+): boolean {
+  const { data } = ctx.getImageData(0, 0, width, height);
+  for (let i = 3; i < data.length; i += 4) {
+    if (data[i]! < 255) return true;
+  }
+  return false;
 }
 
 // ─── Reply helper ───────────────────────────────────────────────────────────

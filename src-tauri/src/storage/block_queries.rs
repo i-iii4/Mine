@@ -170,7 +170,7 @@ pub fn list_preview_blocks(conn: &Connection, limit: usize) -> Result<Vec<Previe
 
     let limit = i64::try_from(limit).context("preview limit does not fit i64")?;
     let mut stmt = conn.prepare(
-        "SELECT slug, thumb_format, thumb_mtime
+        "SELECT slug, thumb_format, thumb_mtime, preview_manifest
          FROM blocks
          WHERE slug != '' AND card_kind != 'channel' AND thumb_format IS NOT NULL
          ORDER BY saved_at DESC
@@ -180,6 +180,21 @@ pub fn list_preview_blocks(conn: &Connection, limit: usize) -> Result<Vec<Previe
     let rows = stmt.query_map([limit], |row| row_to_preview_block(row, 0))?;
     let previews = rows.collect::<Result<Vec<_>, _>>()?;
     Ok(previews)
+}
+
+/// Slugs of the blocks whose primary media is this file name.
+///
+/// The watcher sees a media file land and has to reach the card that shows
+/// it. In a flat vault the two share a slug, so the path alone was enough;
+/// once a vault is laid out in folders they do not (`Media/x` against
+/// `Cards/x`), and the owner has to be looked up by the indexed file name
+/// instead of guessed from the path.
+pub fn list_slugs_by_media_file(conn: &Connection, media_file: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT slug FROM blocks WHERE media_file = ?1 AND slug != '' ORDER BY slug",
+    )?;
+    let rows = stmt.query_map([media_file], |row| row.get::<_, String>(0))?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
 /// Return the newest previewable blocks per tag.
@@ -193,12 +208,13 @@ pub fn list_preview_blocks_by_tag(
 
     let limit = i64::try_from(limit).context("preview limit does not fit i64")?;
     let mut stmt = conn.prepare(
-        "SELECT tag, slug, thumb_format, thumb_mtime
+        "SELECT tag, slug, thumb_format, thumb_mtime, preview_manifest
          FROM (
              SELECT bt.tag AS tag,
                     b.slug AS slug,
                     b.thumb_format AS thumb_format,
                     b.thumb_mtime AS thumb_mtime,
+                    b.preview_manifest AS preview_manifest,
                     ROW_NUMBER() OVER (
                         PARTITION BY bt.tag
                         ORDER BY b.saved_at DESC
