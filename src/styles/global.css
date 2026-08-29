@@ -175,11 +175,17 @@ select,
 
 [data-feed-grid-selection-frame] {
   position: absolute;
-  inset: -3px;
+  /* The card grows outward by exactly the ring's own thickness, so the ring
+     stands beside the card's edge instead of over its content, and nothing
+     inside the card moves or is covered when it is selected. */
+  inset: calc(-1 * var(--feed-selection-ring));
   z-index: 8;
   box-sizing: border-box;
-  box-shadow: inset 0 0 0 2px var(--feed-selection-frame);
-  border-radius: 0;
+  box-shadow: inset 0 0 0 var(--feed-selection-ring) var(--feed-selection-frame);
+  /* Rounding follows the card's own, widened by the growth: the corner arc is
+     the ring's colour the whole way round instead of cutting a square across
+     a rounded card. */
+  border-radius: calc(var(--radius-card) + var(--feed-selection-ring));
   pointer-events: none;
 }
 
@@ -646,6 +652,9 @@ body {
   --primary-active: oklch(0.2178 0 0);
   --card-hover-overlay: transparent;
   --graphic-card-focus-overlay: oklch(0 0 0 / 14%);
+  /* Selection ring thickness. One value: the ring's width and the amount
+     the selected card grows outward are the same measurement. */
+  --feed-selection-ring: 1px;
   --feed-selection-frame: oklch(0.145 0 0);
   --destructive: oklch(0.577 0.245 27.325);
   /* detach accent: breaks a link, content survives (Disconnect, Remove from Element) */

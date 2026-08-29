@@ -247,21 +247,31 @@ Implementation contract:
 - selected frame is rendered by GridItem as a sibling overlay outside the
   clipped card layer, not by Card;
 - overlay is `pointer-events: none` and does not affect masonry layout;
-- use an inner frame, for example:
+- the ring sits on the card's edge, and one measurement serves twice: its own
+  thickness, and how far the selected card grows outward to make room for it.
+  Nothing inside the card moves or is covered when it is selected:
 
 ```css
 [data-feed-grid-selection-frame] {
   position: absolute;
-  inset: -3px;
-  box-shadow: inset 0 0 0 2px var(--feed-selection-frame);
-  border-radius: 0;
+  inset: calc(-1 * var(--feed-selection-ring));
+  box-shadow: inset 0 0 0 var(--feed-selection-ring) var(--feed-selection-frame);
+  border-radius: calc(var(--radius-card) + var(--feed-selection-ring));
 }
 ```
 
-Theme tokens:
+Rounding follows the card's own, widened by the growth, so the corner arc is
+the ring's colour the whole way round. A fixed `border-radius: 0` used to cut a
+square across a rounded card, and the ring — 2px thick, standing 3px off the
+edge — read as a separate object laid on top of the card rather than as its
+selected state (29.08.2026).
+
+Tokens:
 
 ```css
 :root {
+  /* thickness and outward growth are the same value */
+  --feed-selection-ring: 1px;
   --feed-selection-frame: oklch(0.145 0 0);
 }
 
@@ -271,8 +281,8 @@ Theme tokens:
 ```
 
 The selected frame layer must render above media wash and hover overlays. It may
-render above the `Cmd+K` badge because the frame sits on the outer 2-6px edge
-and does not cover the badge at `left-2 top-2`.
+render above the `Cmd+K` badge because the ring sits on the card's edge and does
+not reach the badge at `left-2 top-2`. Contract — `src/lib/selectionRing.test.ts`.
 
 ## Marquee Visual
 
