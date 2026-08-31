@@ -1,0 +1,109 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Mine SC0 — disposable filesystem probe</title>
+<style>
+  body { font: 16px system-ui; margin: 32px; max-width: 960px; }
+  button { font: inherit; padding: 10px; margin: 8px 8px 8px 0; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
+<h1>Mine SC0: disposable filesystem probe</h1>
+<p>No user vaults. Choose exactly this temporary directory:</p>
+<pre id="fixture"></pre>
+<button id="choose">Choose disposable folder</button>
+<button id="run" disabled>Run B1–B3 once</button>
+<pre id="status">Not connected</pre>
+<script type="module">
+const config = __PROBE_CONFIG__;
+const status = document.querySelector('#status');
+const runButton = document.querySelector('#run');
+document.querySelector('#fixture').textContent = config.vault;
+let directory;
+let started = false;
+const errorData = error => ({ name: error.name, message: error.message });
+async function external(action, id) {
+  const response = await fetch(action, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-SC0-Token': config.token },
+    body: JSON.stringify(typeof id === 'string' ? { id } : id),
+  });
+  const value = await response.json();
+  if (!response.ok) throw new Error(JSON.stringify(value));
+  return value;
+}
+document.querySelector('#choose').onclick = async () => {
+  directory = undefined;
+  runButton.disabled = true;
+  try {
+    const selected = await window.showDirectoryPicker({ mode: 'readwrite' });
+    const marker = await (await selected.getFileHandle('.mine-sc0-probe')).getFile();
+    if (await marker.text() !== config.token) throw new Error('Wrong folder; no probe writes performed');
+    const permission = await selected.queryPermission({ mode: 'readwrite' });
+    if (permission !== 'granted') throw new Error(`Permission: ${permission}`);
+    directory = selected;
+    status.textContent = `Verified disposable directory: ${selected.name}; readwrite granted`;
+    runButton.disabled = started;
+  } catch (error) {
+    status.textContent = JSON.stringify(errorData(error));
+  }
+};
+runButton.onclick = async () => {
+  if (started || !directory) return;
+  started = true;
+  runButton.disabled = true;
+  document.querySelector('#choose').disabled = true;
+  const results = { userAgent: navigator.userAgent, secureContext: isSecureContext, probes: {} };
+  try {
+    results.permission = await directory.queryPermission({ mode: 'readwrite' });
+    if (results.permission !== 'granted') throw new Error(`Permission: ${results.permission}`);
+    const marker = await (await directory.getFileHandle('.mine-sc0-probe')).getFile();
+    if (await marker.text() !== config.token) throw new Error('Fixture identity changed');
+    for (const id of Object.keys(config.files)) {
+      if ((await external('/read', id)).exists) throw new Error(`Fixture not fresh: ${id}`);
+    }
+    // Explicit await barriers: the external process sees each completed API step.
+    const b1 = results.probes.B1 = {};
+    b1.before = await external('/read', 'B1');
+    const first = await directory.getFileHandle(config.files.B1, { create: true });
+    b1.afterHandle = await external('/read', 'B1');
+    const firstWriter = await first.createWritable();
+    await firstWriter.write('BROWSER-B1');
+    b1.beforeClose = await external('/read', 'B1');
+    await firstWriter.close();
+    b1.afterClose = await external('/read', 'B1');
+
+    const b2 = results.probes.B2 = {};
+    try { await directory.getFileHandle(config.files.B2); b2.lookup = 'exists'; }
+    catch (error) { b2.lookup = error.name; if (error.name !== 'NotFoundError') throw error; }
+    if (b2.lookup !== 'NotFoundError') throw new Error('Fixture not fresh: B2');
+    b2.externalCreated = await external('/external-create', 'B2');
+    const raced = await directory.getFileHandle(config.files.B2, { create: true });
+    const racedWriter = await raced.createWritable();
+    await racedWriter.write('BROWSER-B2');
+    await racedWriter.close();
+    b2.afterClose = await external('/read', 'B2');
+
+    const b3 = results.probes.B3 = {};
+    const exclusive = await directory.getFileHandle(config.files.B3, { create: true });
+    const writer = await exclusive.createWritable({ mode: 'exclusive' });
+    await writer.write('BROWSER-B3');
+    let second;
+    try {
+      second = await exclusive.createWritable({ mode: 'exclusive' });
+      b3.secondBrowserWriter = 'opened';
+    } catch (error) { b3.secondBrowserWriter = errorData(error); }
+    if (second) {
+      try { await second.abort(); b3.secondBrowserCleanup = 'aborted'; }
+      catch (error) { b3.secondBrowserCleanup = errorData(error); }
+    }
+    try { b3.externalWrite = await external('/external-write', 'B3'); }
+    catch (error) { b3.externalWrite = errorData(error); }
+    try { await writer.close(); b3.close = 'succeeded'; }
+    catch (error) { b3.close = errorData(error); }
+    b3.afterClose = await external('/read', 'B3');
+  } catch (error) {
+    results.failure = errorData(error);
+  }
+  try { results.report = await external('/report', results); }
+  catch (error) { results.reportError = errorData(error); }
+  status.textContent = JSON.stringify(results, null, 2);
+};
+</script>

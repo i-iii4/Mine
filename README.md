@@ -49,7 +49,8 @@ Active development (v0.1.0). The macOS desktop app is the primary target; the iO
 The shared Rust save core with native and browser executors is an **accepted
 architecture, not an implemented feature**. Its contract and safety boundaries
 are in [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md); the staged work plan is in
-[PLAN.md](PLAN.md#save-core-plan). Implementation awaits a separate go-ahead.
+[PLAN.md](PLAN.md#save-core-plan). Implementation is authorized; SC0 contract
+and disposable filesystem probes are in progress. The core migration has not started.
 
 ## License
 

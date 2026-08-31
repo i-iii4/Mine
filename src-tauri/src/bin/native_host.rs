@@ -218,9 +218,22 @@ fn send_response<T: serde::Serialize>(resp: &T) {
 }
 
 #[cfg(test)]
+std::thread_local! {
+    // Opt-in, thread-local observations keep parallel tests isolated and do
+    // not change the production response writer or its error handling.
+    static SC0_RESPONSE_CAPTURE: std::cell::RefCell<Option<Vec<String>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
 fn send_response<T: serde::Serialize>(resp: &T) {
     // Exercise serialization (and _messageId injection) without touching stdout.
-    let _ = serialize_response(resp);
+    let serialized = serialize_response(resp);
+    SC0_RESPONSE_CAPTURE.with(|capture| {
+        if let Some(responses) = capture.borrow_mut().as_mut() {
+            responses.push(serialized);
+        }
+    });
 }
 
 fn send_error(msg: &str) {
@@ -2600,6 +2613,160 @@ mod tests {
 
     fn test_dt() -> DateTime {
         DateTime::new("2026-04-24T12:00:00Z").unwrap()
+    }
+
+    fn sc0_save_response(vault: &VaultLayout, params: serde_json::Value) -> serde_json::Value {
+        SC0_RESPONSE_CAPTURE.with(|capture| {
+            assert!(capture.borrow().is_none(), "SC0 captures must not nest");
+            *capture.borrow_mut() = Some(Vec::new());
+        });
+        handle_save_block(vault, params);
+        let responses = SC0_RESPONSE_CAPTURE.with(|capture| {
+            capture.borrow_mut().take().expect("SC0 capture was enabled")
+        });
+        assert_eq!(responses.len(), 1, "save emits exactly one response");
+        serde_json::from_str(&responses[0]).expect("host serializes a valid response")
+    }
+
+    fn sc0_image_request(title: &str, upload_id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "block_type": "image",
+            "title": title,
+            "pre_uploaded_id": upload_id,
+            "body": "",
+            "tags": []
+        })
+    }
+
+    #[test]
+    fn sc0_n3_lost_response_characterizes_missing_receipt_after_cleanup() {
+        // Characterization of a defect, not a desired retry contract. Capture
+        // and discard the first response to model client-side acknowledgement
+        // loss; this does not inject a real stdout/pipe failure.
+        let tmp = TempDir::new().expect("create disposable SC0 directory");
+        let vault =
+            VaultLayout::with_derived_root(tmp.path().join("vault"), tmp.path().join("derived"));
+        std::fs::create_dir_all(vault.root()).expect("create disposable vault");
+        let bytes = b"SC0 screenshot payload";
+        let upload = clipper_uploads::write_pending_upload(&vault, "shot.jpg", None, bytes)
+            .expect("stage disposable upload");
+        let request = sc0_image_request("SC0 receipt", &upload.upload_id);
+
+        let lost_response = sc0_save_response(&vault, request.clone());
+        assert_eq!(lost_response["ok"], true);
+        assert_eq!(lost_response["slug"], "SC0 receipt");
+        let original_markdown = std::fs::read(vault.block_path("SC0 receipt"))
+            .expect("first save published Markdown");
+        assert!(!clipper_uploads::pending_upload_dir(&vault, &upload.upload_id)
+            .expect("locate upload")
+            .exists());
+
+        let retry = sc0_save_response(&vault, request);
+        assert_eq!(retry["ok"], false);
+        assert!(retry["error"]
+            .as_str()
+            .expect("failed retry includes error")
+            .contains("failed to read pending upload"));
+        assert_eq!(files::scan_md_files(&vault).expect("count cards").len(), 1);
+        assert_eq!(
+            std::fs::read(vault.block_path("SC0 receipt")).expect("reread first card"),
+            original_markdown
+        );
+        assert_eq!(
+            std::fs::read(vault.new_media_path("SC0 receipt.jpg")).expect("read first media"),
+            bytes
+        );
+
+        let fresh_upload = clipper_uploads::write_pending_upload(&vault, "shot.jpg", None, bytes)
+            .expect("stage same material under a fresh ID");
+        let fresh_response = sc0_save_response(
+            &vault,
+            sc0_image_request("SC0 receipt", &fresh_upload.upload_id),
+        );
+        assert_eq!(fresh_response["ok"], true);
+        assert_eq!(fresh_response["slug"], "SC0 receipt (2)");
+        assert_eq!(files::scan_md_files(&vault).expect("count cards").len(), 2);
+        eprintln!(
+            "SC0 N3 characterization: discarded first success; same-ID retry reports missing staging; original card survives; fresh upload creates a second card"
+        );
+    }
+
+    #[test]
+    fn sc0_n4_reconstructed_post_markdown_state_characterizes_duplicate_retry() {
+        // State reconstruction, NOT a kill test or a power-loss test. These
+        // are the real filesystem operations before PendingUploadGuard drops;
+        // retaining staging reconstructs that crash cut without running the
+        // handler's cleanup. The duplicate is a defect, not a product contract.
+        let tmp = TempDir::new().expect("create disposable SC0 directory");
+        let vault =
+            VaultLayout::with_derived_root(tmp.path().join("vault"), tmp.path().join("derived"));
+        std::fs::create_dir_all(vault.root()).expect("create disposable vault");
+        let bytes = b"SC0 reconstructed payload";
+        let upload = clipper_uploads::write_pending_upload(&vault, "shot.jpg", None, bytes)
+            .expect("stage disposable upload");
+        let finalized =
+            clipper_uploads::finalize_pending_upload(&vault, &upload.upload_id, "SC0 crash")
+                .expect("publish original media");
+        assert_eq!(finalized.filename, "SC0 crash.jpg");
+        let block = mine_lib::domain::block::parse_block(
+            "SC0 crash",
+            "---\nfile: \"[[SC0 crash.jpg]]\"\nsaved_at: 2026-08-31T12:00:00Z\nsource: web-clipper\n---\n",
+        )
+        .expect("parse reconstructed committed card");
+        files::write_new_block_file(&vault, &block).expect("publish original Markdown");
+        let original_markdown = std::fs::read(vault.block_path("SC0 crash"))
+            .expect("read original Markdown");
+        assert!(clipper_uploads::pending_upload_dir(&vault, &upload.upload_id)
+            .expect("locate retained staging")
+            .exists());
+
+        let retry = sc0_save_response(&vault, sc0_image_request("SC0 crash", &upload.upload_id));
+
+        assert_eq!(retry["ok"], true);
+        assert_eq!(retry["slug"], "SC0 crash (2)");
+        assert_eq!(files::scan_md_files(&vault).expect("count cards").len(), 2);
+        assert_eq!(
+            std::fs::read(vault.block_path("SC0 crash")).expect("reread original Markdown"),
+            original_markdown
+        );
+        for filename in ["SC0 crash.jpg", "SC0 crash (2).jpg"] {
+            assert_eq!(
+                std::fs::read(vault.new_media_path(filename)).expect("read media"),
+                bytes
+            );
+        }
+        eprintln!(
+            "SC0 N4 characterization: reconstructed committed Markdown plus retained staging; same-ID retry creates SC0 crash (2) instead of recognizing SC0 crash"
+        );
+    }
+
+    #[test]
+    fn sc0_n5_legacy_upload_characterizes_overwrite_in_configured_media_folder() {
+        // Characterization of a defect: legacy rename checks the vault root,
+        // not the configured Media destination. This is not an accepted
+        // overwrite policy and must change with the new executor contract.
+        let tmp = TempDir::new().expect("create disposable SC0 directory");
+        let vault =
+            VaultLayout::with_derived_root(tmp.path().join("vault"), tmp.path().join("derived"))
+                .with_write_layout(mine_lib::domain::vault::VaultWriteLayout::standard());
+        std::fs::create_dir_all(vault.media_dir()).expect("create disposable media folder");
+        let destination = vault.new_media_path("Door.jpg");
+        std::fs::write(&destination, b"existing media sentinel").expect("seed occupied target");
+        let upload = vault.root().join("upload.jpg");
+        std::fs::write(&upload, b"new upload sentinel").expect("seed legacy upload");
+
+        let filename = finalize_uploaded_filename(&vault, "upload.jpg", "Door")
+            .expect("observe current legacy rename");
+
+        assert_eq!(filename, "Door.jpg");
+        assert_eq!(
+            std::fs::read(&destination).expect("read occupied target"),
+            b"new upload sentinel"
+        );
+        assert!(!upload.exists());
+        eprintln!(
+            "SC0 N5 characterization: legacy upload replaced existing Media/Door.jpg with new upload bytes"
+        );
     }
 
     #[test]

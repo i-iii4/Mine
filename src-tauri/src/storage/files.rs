@@ -605,6 +605,70 @@ mod tests {
     }
 
     #[test]
+    fn sc0_n1_competing_create_new_writers_preserve_the_winner() {
+        use std::sync::{Arc, Barrier};
+
+        // SC0 characterization of the real publication primitive, not a
+        // simulated filesystem. A barrier releases both writers together.
+        let dir = tempfile::tempdir().expect("create disposable SC0 directory");
+        let destination = dir.path().join("note.md");
+        let payloads = [b"complete writer A".to_vec(), b"complete writer B".to_vec()];
+        let barrier = Arc::new(Barrier::new(payloads.len()));
+        let writers: Vec<_> = payloads
+            .into_iter()
+            .map(|payload| {
+                let barrier = Arc::clone(&barrier);
+                let destination = destination.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let result = write_new_atomically(&destination, &payload);
+                    (payload, result)
+                })
+            })
+            .collect();
+        let results: Vec<_> = writers
+            .into_iter()
+            .map(|writer| writer.join().expect("SC0 writer must not panic"))
+            .collect();
+
+        assert_eq!(
+            results.iter().filter(|(_, result)| result.is_ok()).count(),
+            1
+        );
+        let winner = results
+            .iter()
+            .find(|(_, result)| result.is_ok())
+            .expect("exactly one writer published");
+        let loser = results
+            .iter()
+            .find_map(|(_, result)| result.as_ref().err())
+            .expect("one writer encountered the occupied destination");
+        let io_error = loser
+            .chain()
+            .find_map(|source| source.downcast_ref::<std::io::Error>())
+            .expect("publication error retains its underlying IO error");
+        assert_eq!(io_error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&destination).expect("read winner"), winner.0);
+
+        let occupied = write_new_atomically(&destination, b"replacement attempt")
+            .expect_err("an already occupied path must reject another publication");
+        assert!(occupied.chain().any(|source| {
+            source
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::AlreadyExists)
+        }));
+        assert_eq!(std::fs::read(&destination).expect("reread winner"), winner.0);
+        assert!(!std::fs::read_dir(dir.path())
+            .expect("inspect disposable directory")
+            .map(|entry| entry.expect("read directory entry"))
+            .any(|entry| entry.file_name().to_string_lossy().contains(".tmp.")));
+        eprintln!(
+            "SC0 N1: one complete winner; loser=AlreadyExists; occupied bytes unchanged; no temporary files; winner_bytes={:?}",
+            std::str::from_utf8(&winner.0).expect("SC0 payloads are ASCII")
+        );
+    }
+
+    #[test]
     fn failed_temp_write_leaves_no_final_or_partial_file() {
         let dir = tempfile::tempdir().unwrap();
         let destination = dir.path().join("note.md");

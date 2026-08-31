@@ -44,3 +44,6 @@ safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib
 
 # Clipper host staged for bundling; built by build:clipper-host
 src-tauri/binaries/
+
+# Disposable browser probes and their local evidence/profile artifacts
+output/playwright/

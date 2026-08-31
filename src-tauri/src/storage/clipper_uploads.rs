@@ -335,6 +335,44 @@ mod tests {
     }
 
     #[test]
+    fn sc0_n2_repeated_finalization_characterizes_duplicate_media_without_receipt() {
+        // Characterization of a defect, not an accepted product guarantee:
+        // the same upload ID currently publishes a second media file instead
+        // of recognizing the first publication. Revisit with the SC0 contract.
+        let dir = TempDir::new().expect("create disposable SC0 directory");
+        let vault = vault_for(&dir);
+        std::fs::create_dir_all(vault.root()).expect("create disposable vault");
+        let bytes = b"SC0 pending payload";
+        let upload = write_pending_upload(&vault, "shot.jpg", None, bytes)
+            .expect("stage disposable upload");
+        let staged = pending_upload_dir(&vault, &upload.upload_id).expect("locate upload");
+        let manifest_before = std::fs::read(staged.join(MANIFEST_FILE)).expect("read manifest");
+
+        let first = finalize_pending_upload(&vault, &upload.upload_id, "Door")
+            .expect("publish first media file");
+        let repeated = finalize_pending_upload(&vault, &upload.upload_id, "Door")
+            .expect("observe current repeated finalization");
+
+        assert_eq!(first.filename, "Door.jpg");
+        assert_eq!(repeated.filename, "Door (2).jpg");
+        for filename in [&first.filename, &repeated.filename] {
+            assert_eq!(
+                std::fs::read(vault.new_media_path(filename)).expect("read published media"),
+                bytes
+            );
+        }
+        assert_eq!(
+            std::fs::read(staged.join(MANIFEST_FILE)).expect("reread manifest"),
+            manifest_before,
+            "current finalization stores no receipt or final filename"
+        );
+        assert!(staged.join(&upload.payload_filename).exists());
+        eprintln!(
+            "SC0 N2 characterization: same upload ID produced Door.jpg and Door (2).jpg; manifest unchanged; staging remains"
+        );
+    }
+
+    #[test]
     fn pending_upload_does_not_write_source_vault_until_finalize() {
         let dir = tempfile::tempdir().unwrap();
         let vault = vault_for(&dir);
