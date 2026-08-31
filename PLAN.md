@@ -1,6 +1,6 @@
 # Implementation Plan
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_SCROLL_EDGE_FADE.md](SPEC_SCROLL_EDGE_FADE.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_SCROLL_EDGE_FADE.md](SPEC_SCROLL_EDGE_FADE.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md)
 
 ## Goal
 
@@ -18,6 +18,8 @@ for the active critical path.
 Status vocabulary:
 
 - `SPEC` — contract is written and awaiting acceptance; no implementation started;
+- `PLANNED` — architecture/direction accepted; implementation has not started and requires a separate go-ahead;
+- `REOPENED` — a previously completed item has a confirmed regression; the linked active workstream owns its correction;
 - `ACTIVE` — missing contract or test is confirmed in the current code;
 - `DONE` — current code/tests prove the old item was completed;
 - `SUPERSEDED` — the old solution is invalid under the current architecture;
@@ -39,6 +41,74 @@ Status vocabulary:
 | A7. Structural decomposition | DONE | Split App/Grid/Graph, command-state orchestration and storage DB/index responsibilities at existing ownership boundaries | Composition roots retain orchestration; focused owners contain migrations, coordinators, interaction/physics/paint and secondary chrome; behavior gates stay green |
 | A8. Persistence and read-model contracts | DONE | Versioned SQLite migrations, shared projection revisions, independent search revisions, generated IPC bindings, native-shell smoke and truthful MSRV | Upgrade tests, atomic snapshot tests, binding freshness, browser/native gates and Rust 1.88 locked-workspace CI all pass |
 | A9. Card media geometry | DONE | Artifact-owned preview dimensions, typed source/preview split, aspect clamp as the single cropping decision | Contract in `SPEC_CARD_MEDIA_GEOMETRY.md` accepted; then: generator writes preview dimensions, fallback chain removed, autoplay profile tests stay green unchanged, feed audit covers surface width and collage tile ratios |
+
+<a id="save-core-plan"></a>
+
+### Общее ядро сохранения — принято 31.08.2026, реализация ожидает отмашки
+
+Статус направления: **PLANNED**. Контракт:
+[SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md), архитектурное решение 045.
+Приняты одно переносимое Rust-ядро правил и сценариев, нативный и браузерный
+исполнители, тонкие платформенные мосты. Стоимость переноса не является
+основанием сохранять дублирование правил.
+
+**Разрешённый объём текущей работы: документация, план, коммит и пуш.**
+Ни один этап SC0–SC7 не стартовал. Для старта, включая прототипы SC0,
+нужна отдельная отмашка пользователя. Принятие направления не закрывает
+ещё не проверенные файловые гарантии браузерного исполнителя.
+
+| Этап | Статус | Зависит от | Работа | Критерий завершения |
+|---|---|---|---|---|
+| SC0. Контракт и безопасность | PLANNED | Отмашка | Инвентарь владельцев правил и действующих API; конкретные типы запроса/результата; точки commit, повтор и журнал; эксперименты конкурентной записи и остановки на одноразовых папках | Зафиксированы границы native/browser, каждое окно сбоя и восстановления, правила совместимости; явно решён конфликт строгого no-clobber с ограничениями File System Access. Если нужны изменения пользовательской модели — отдельное согласование до продолжения |
+| SC1. Переносимое ядро | PLANNED | SC0 | Выделить `mine-core`: модель, Markdown, имена, коллекции, относительные пути, общий сценарий. Системные факты передавать входами. Подключить native/WASM-сборку и генерацию типов | Одни входы и эталоны исполняются native и настоящим WASM и дают одинаковые байты/решения/ошибки. В ядре нет Tauri, SQLite, файлового/сетевого доступа; старые Rust-правила удалены или делегируют ядру |
+| SC2. Нативный исполнитель | PLANNED | SC1 | Перевести native host на общий сценарий; отделить протокол от IO; перенести подготовку медиа и восстановление; убрать обязательное открытие индекса до source commit | Сохраняются media/security-контракты и `pending_uploads_v1`; занятый путь не меняется; отсутствующий/занятый/несовместимый индекс не мешает записи исходников; потери ответа и сбои каждого шага проходят контракт SC0 |
+| SC3. Браузерный исполнитель | PLANNED | SC1, закрытый browser-контракт SC0 | Подключить WASM в worker; оставить в JS только платформенные операции; очередь сохранений, состояние восстановления, traversal вложенных папок и работа с разрешением | Реальные Chrome/Dia сохраняют канонические примеры без host; пройдены остановка worker, отзыв разрешения, внутренние гонки и тесты внешней конкуренции с честными гарантиями. Независимые JS-правила и сценарий удалены в этом срезе |
+| SC4. Подключение и настройка | PLANNED | SC2, SC3 | Развести связь/совместимость/папку; стабильные dev/production ID; первый запуск и восстановление регистрации; отдельный extension-origin setup; привязка исполнителя к конкретному пространству | Оба порядка установки работают без ручного ID; оверлей не зацикливает выбор; черновик переживает настройку; подтверждены та же папка и неизменность начатой операции; сбой Dia воспроизведён и проверено его исправление |
+| SC5. Клиенты и мосты | PLANNED | SC2 | Перевести затронутые desktop-команды, существующий iOS/UniFFI и CLI/MCP на общих владельцев; убрать доменные решения из мостов; сохранить действующие API/guards | Совместимость типов проверяется сборкой; существующие чтения не пишут и не запускают reconcile/watcher; текущие мутации сохраняют ограничения и dry-run. Новые пользовательские команды и iOS/Safari-функции не добавлены |
+| SC6. Сквозная приёмка | PLANNED | SC4, SC5 | Выполнить матрицу ниже в Chrome/Dia с реально собранными extension/host/app; проверять исходные файлы и их отображение | Для каждой строки есть результат и воспроизводимое доказательство. Успех означает нужные файлы в выбранной папке и корректную карточку; ни двойных сохранений после потери ответа, ни подмены неизвестного исхода успехом |
+| SC7. Завершение перехода | PLANNED | SC6 | Повторный инвентарь, удаление оставшихся переходных вызовов/переключателей, обновление сборки и документов; полный прогон после удаления | Один владелец каждого правила и сценария; нет старого запасного движка. `bun run verify:release` и новые проверки ядра/клиппера проходят; старые vault читаются без автоматической перезаписи; опубликован отчёт о приёмке |
+
+SC2 и SC3 можно выполнять параллельно после SC1 при разделённых файлах.
+SC5 можно выполнять параллельно со SC4 после согласования общих API.
+Изменения одного модуля или общей границы выполняются последовательно.
+Каждый срез проходит SPEC → TEST → CODE → VERIFY и отдельный review.
+
+#### Матрица обязательной приёмки SC6
+
+| Сценарий | Проверяемый результат |
+|---|---|
+| Только расширение, Mine/host отсутствуют | Выбор папки из обычной страницы; Markdown и доступное медиа сохранены без установки приложения |
+| Расширение → автономные сохранения → первый запуск Mine | Подключается явно выбранная та же папка; старые материалы видны; новое сохранение не уходит в другой vault |
+| Mine → первый запуск → установка расширения | Регистрация и handshake без ручного ID; выбор пространства отделён от соединения |
+| Mine закрыт; компонент установлен | Сохранение и последующее чтение работают без открытого окна приложения |
+| Отказ/отмена выбора, затем отзыв доступа | Понятное восстановление, черновик сохранён; отмена не создаёт файлов |
+| Host отсутствует/запрещён/не запускается/несовместим | Разные диагностические состояния; нет ложного «Mine не установлен» и скрытого fallback |
+| Host отвечает, но пространства нет/оно недоступно | Выбор/восстановление пространства без переустановки приложения |
+| Установка второго браузера, обновление, стабильный dev ID после переезда checkout | Чинится нужная регистрация; обновление не ломает другой профиль и не требует нового ручного ID |
+| Два сохранения, внешнее изменение, смена папки во время операции | Свой конфликт обработан; начатая операция остаётся в своей папке; внешние гонки оценены по профилю гарантий SC0 |
+| Остановка до/после каждого шага commit, потерянный ответ, повтор | Результат проверяется по той же операции; подтверждённый commit не дублируется; неопределённый исход не замалчивается |
+| Индекс удалён, заблокирован или более новой версии | Исходники успешно сохранены; ошибка производных данных отдельная; после обычного сканирования материал виден |
+| Ссылка, статья, изображение, скриншот; ошибка/отмена медиа | Канонический формат; обязательное медиа существует; недоступная возможность не выдаётся за загруженный файл |
+| Старые плоские и вложенные vault, Unicode, коллекции, внешние Markdown | Совместимое чтение и корректные целевые пути; нет массовой миграции исходников |
+| Действующие desktop/iOS/CLI/MCP операции | Сохранены данные, API и ограничения полномочий; читающие вызовы не получили побочных записей |
+
+Проверки данных идут на одноразовых хранилищах/профилях. Удаление или
+перезапись пользовательских материалов не является допустимым тестом.
+Browser-тесты запускают оба исполнителя, а не только копии ожидаемых строк;
+мок `canPickFolderHere = true` не заменяет реальную проверку оверлея.
+
+#### Условия остановки
+
+- Без отмашки — документация опубликована, реализация не начинается.
+- Если SC0 требует обязательного helper, новых имён/папки приёма или ослабления
+  сохранности — представить продуктовый выбор до зависимых этапов.
+- Если протокол или миграция могут потерять незавершённые операции — переход
+  не включать до доказанного восстановления и совместимости.
+- Подпись, публичная публикация расширения, Safari rollout и другие отложенные
+  работы не включаются молча; их внешние решения остаются отдельными.
+
+Объединение ядра не расширяет функциональность CLI/MCP и не объявляет
+одинаковую атомарность браузерного и нативного файловых API.
 
 ### Клавиатурная система команд — план 23.08.2026 (SPEC, ожидает одобрения)
 
@@ -206,7 +276,7 @@ Definition of Done фазы: каждое состояние из R8 видно 
 
 | # | Работа | Контракт | Статус |
 |---|---|---|---|
-| V1 | Автономная запись расширением без установленного приложения | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) О1–О4 | **DONE 16.08.2026.** Папка через File System Access, запись из фонового воркера, формат байт-в-байт с хостом, экран настройки, меню Open app / Download app, состояния в витрине |
+| V1 | Автономная запись расширением без установленного приложения | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) О1–О4; [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md) | **REOPENED 31.08.2026.** Первичная реализация от 16.08.2026 существует, но выявлены цикл выбора папки, неверная трактовка сбоя связи и расхождение формата. Исправление и переход на общее ядро — SC0–SC7; реализация ожидает отмашки |
 | V2 | Процент загрузки из iCloud: нативный помощник, настоящий процент в развороте и пояснении | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) Х4, Х9 | **DONE 16.08.2026.** Swift-помощник на честных сигналах: блоки для статуса, системная публикация прогресса для процента; URL-атрибуты и NSMetadataQuery отвергнуты по живому эксперименту — лгут или пусты без привилегий. Ветка downloading ждёт живой проверки на холодном файле (V12) |
 | V3 | Всплывающая рекомендация Keep Downloaded: счётчик ожиданий по пространству, карточка, Don't show again, самоисчезновение | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) Х16–Х19, Х21–Х22 | **DONE 16.08.2026.** Журнал сессий в derived-хранилище, правило «текущая плюс одна из двух предыдущих», закрытие на пространство, галочка глобально, карточка в витрине настоящим компонентом |
 | V4 | Прогресс индексации с числами | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) О13 | **DONE 16.08.2026.** Колбэк прогресса сквозь reconcile и координатор, событие каждый 25-й файл, числа с полосой вместо онбординга пустого пространства; последняя пометка «нет в продукте» снята с витрины |

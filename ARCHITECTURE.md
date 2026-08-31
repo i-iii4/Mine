@@ -1,8 +1,13 @@
 # Architecture: Mine
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md) | [SPEC_SETTINGS_WINDOW.md](SPEC_SETTINGS_WINDOW.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_DISTRIBUTION.md](SPEC_DISTRIBUTION.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_CARD_MEDIA_GEOMETRY.md](SPEC_CARD_MEDIA_GEOMETRY.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_SCROLL_EDGE_FADE.md](SPEC_SCROLL_EDGE_FADE.md) | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) | [SPEC_AI_ACCESS.md](SPEC_AI_ACCESS.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md) | [SPEC_SETTINGS_WINDOW.md](SPEC_SETTINGS_WINDOW.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_DISTRIBUTION.md](SPEC_DISTRIBUTION.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_CARD_MEDIA_GEOMETRY.md](SPEC_CARD_MEDIA_GEOMETRY.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_SCROLL_EDGE_FADE.md](SPEC_SCROLL_EDGE_FADE.md) | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) | [SPEC_AI_ACCESS.md](SPEC_AI_ACCESS.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md)
 
 ## Context
+
+**Принятое изменение, ещё не реализовано:** общее переносимое ядро сохранения
+и нативный/браузерный исполнители — [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md),
+решение 045 и [план SC0–SC7](PLAN.md#save-core-plan). Реализация ожидает
+отдельной отмашки. Существующие схемы ниже не показывают уже выполненный перенос.
 
 Are.na — платформа для визуального букмаркинга и организации идей. Проблемы: данные в облаке, зависимость от сервиса, ограниченный бесплатный план, нет контроля над файлами.
 
@@ -1148,6 +1153,11 @@ now avoid overwriting existing `.md` or media files, roll back copied media when
 the final block write fails, and validate remote fetch hosts through parsed
 HTTP(S) URLs plus DNS/IP checks before `ureq` runs.
 
+This is the current native boundary. Decision 045 moves domain decisions
+into the shared core while keeping trust, filesystem and fetch checks in the
+executor. Native create-new guarantees must not be inferred for the browser
+executor; its contract is a separate SC0 gate.
+
 Article creation is guarded as a content invariant, not a UI hint. The clipper
 popup owns an explicit article extraction state (`idle/loading/ready/empty/failed`)
 and uses one `ensureArticleLoaded()` gateway for initial Content, manual Content
@@ -1678,6 +1688,9 @@ derived store обязан вести себя как новый.
 
 ### 035: Расширение пишет в папку само, когда приложения нет
 
+Статус реализации: первоначальный подход заменяется решением 045; само
+требование работы без установленного Mine сохраняется. Переход не начат.
+
 Расширение публикуется открыто, поэтому первым встречает продукт человек без
 приложения. Ответ «поставьте сначала приложение» превратил бы точку входа в
 тупик, и расширение умеет писать в выбранную папку напрямую: File System
@@ -1685,17 +1698,20 @@ Access выдаёт хэндл, хэндл живёт в IndexedDB и переж
 запись идёт из фонового воркера — файлы ложатся на диск сразу, промежуточного
 хранилища в браузере нет.
 
-Условие, которое делает это безопасным: формат совпадает с нативным хостом
-байт в байт. Раскладка папок читается из `.mine/layout.json`, порядок и кавычки
-полей фронтматтера повторяют Rust-сериализатор, суффиксы при коллизии имён
-считаются тем же правилом; тесты скопированы с Rust-тестов. Иначе приложение,
-установленное позже, увидело бы чужой диалект собственного формата.
+Первоначально формат зеркалился вручную: раскладка из `.mine/layout.json`,
+сериализация и выбор имён повторяли Rust, тесты были скопированы. Аудит
+31.08.2026 подтвердил расхождение формата; эти тесты не сравнивают две
+исполняемые реализации. Совпадение байтов также не доказывает безопасность
+конкурентной файловой записи. Решение 045 заменяет копии правил общим ядром
+и отдельно фиксирует ограничения каждого исполнителя.
 
 Из оверлея внутри страницы выбор папки сознательно запрещён: там разрешение
 привязалось бы к домену страницы, а не к расширению. Активация при этом ведёт
 к приложению — первая ценность продукта живёт в нём, — но автономный путь
-остаётся полноценным, а не заглушкой. Контракт:
-[SPEC_ONBOARDING.md](SPEC_ONBOARDING.md).
+остаётся требованием. Нынешний переход к иконке на обычной странице
+зацикливает выбор; отдельный extension-origin setup запланирован в SC4.
+Контракты: [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md),
+[SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md).
 
 ### 036: Занятость имени проверяется по тем путям, куда файл ляжет
 
@@ -1726,6 +1742,10 @@ native messaging, и путь в манифесте ведёт в `Application S
 Рядом с бинарём лежит отпечаток источника — размер и время правки, — поэтому
 обычный запуск стоит двух `stat`. Тому, кто клипер не устанавливал, ничего не
 появляется: обновляется существующее, а не создаётся новое.
+
+Это описание действующего update-existing механизма. Первичная регистрация,
+стабильный ID и восстановление соединения приняты как целевой SC4 в
+[SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md), но ещё не реализованы.
 
 ### 038: Якорь раскладки и цель центрирующей силы — одна точка
 
@@ -1897,3 +1917,42 @@ Canvas перезапускает симуляцию всякий раз, ког
 и не читается для карточек, вычищается из файлов одной перезаписью;
 `type: channel` остаётся маркером страницы коллекции. Контракт —
 [SPEC_BLOCK.md](SPEC_BLOCK.md). Реализация не начата.
+
+### 045: Общее ядро правил и сценариев, два платформенных исполнителя
+
+Принято пользователем 31.08.2026. Статус: **PLANNED**, реализация ожидает
+отдельной отмашки. Полный контракт — [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md),
+этапы и критерии приёмки — [SC0–SC7](PLAN.md#save-core-plan).
+
+Приоритет решения — долговечность и простота развития, не экономия переноса.
+Одна реализация Markdown, имён, коллекций и сценария сохранения выделяется в
+переносимое Rust-ядро. Нативная сборка и WASM используют один исходный код;
+исполнители выполняют системные и браузерные операции. Tauri IPC, Native
+Messaging, UniFFI и WASM-мост не содержат самостоятельных правил сохранения.
+Общее ядро не означает единственный процесс, глобальную блокировку папки или
+одинаковые возможности файловых API.
+
+| Вариант | Результат выбора |
+|---|---|
+| Общее ядро + нативный и браузерный исполнители | Принято: автономность и единые правила при сохранении платформенных возможностей |
+| Только браузерная запись | Не выбрано: ослабляет нативные гарантии; не объединяет правила остальных клиентов само по себе |
+| Две реализации + общие тесты | Не выбрано как целевая архитектура: обнаруживает расхождения, но оставляет повторение изменений |
+| Только нативная запись | Не выбрано: обязательный установленный компонент нарушает О1 |
+
+Пространство, исполнитель и идентичность повтора закрепляются до записи.
+Таймаут не разрешает скрытое сохранение другим способом. Подтверждённый
+source commit не зависит от успешного обновления SQLite или превью.
+Соединение, совместимость и доступ к папке — отдельные состояния; отсутствие
+ответа не доказывает отсутствие установленного Mine.
+
+SC0 — обязательный барьер: конкретные точки commit, журнал восстановления,
+потеря ответа и внешняя конкурентная запись проверяются до фиксации файлового
+интерфейса. Browser File System Access не предоставляет нативный
+create-if-absent; очередь и WASM этого не исправляют. Изменение имён,
+структуры пользовательских папок, обязательности helper или требований
+сохранности требует отдельного продуктового решения.
+
+Миграция сохраняет действующие API, права и файловый формат. Старые движки
+удаляются по завершении переключённых срезов; постоянный запасной путь с
+копиями правил не сохраняется. Новые функции iOS/Safari, публикация в сторе
+и изменение distribution-scope в это решение не входят.

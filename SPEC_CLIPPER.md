@@ -1,6 +1,6 @@
 # Specification: Web Clipper (Browser Extension)
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md)
 
 ## Полнота текста поста X (27.08.2026)
 
@@ -55,21 +55,36 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 
 ## Overview
 
-Браузерное расширение для сохранения контента из веба в Mine vault. Работает автономно через native messaging — не требует запущенного приложения.
+Браузерное расширение для сохранения контента из веба в Mine vault. Нативный
+путь не требует запущенного приложения, но требует установленного компонента.
+Отдельный браузерный путь предназначен для работы без установленного Mine.
 
-Поддерживаемые браузеры: Chromium/Manifest V3 (Chrome, Dia), Safari (через
-`xcrun safari-web-extension-converter`).
+Первая приёмка — Chromium/Manifest V3 (Chrome, Dia). Safari scaffold существует
+через `xcrun safari-web-extension-converter`; его полноценный выпуск остаётся
+отложенным, не подтверждается этой спецификацией или новым планом.
+
+Целевая архитектура принята 31.08.2026 в
+[SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md): один Rust-код правил и сценариев,
+нативный и браузерный исполнители. **Реализация не начата и ожидает отмашки.**
+Описания API ниже относятся к существующему протоколу; план перехода и
+сквозной приёмки — [SC0–SC7](PLAN.md#save-core-plan).
 
 Popup UI and native messaging request names still use the existing clip-type
 vocabulary (`link`, `article`, `image`, `video`, `file`, `screenshot`) because
-those are creation modes. Native host may persist `type` as compatibility
-metadata, but feed/detail/search runtime kind is derived by the storage
+those are creation modes. New native-host card writes omit `type`; old values
+remain legacy input, while feed/detail/search runtime kind is derived by the storage
 contract: body minus media embeds non-empty → `article`, bare media →
 `media`, `type: channel` →
 `channel`. New native-host media writes serialize `file` as
 `file: "[[name.ext]]"` while accepting legacy `file: name.ext` on read.
 
 ## Architecture
+
+Ниже — существующий нативный путь, не вся целевая архитектура и не автономный
+browser writer. Владение правилами и планом записи переносится по
+[SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md); сетевые и файловые проверки остаются
+на границе исполнителя. Нынешняя схема ещё не подтверждает независимость
+source commit от индекса — это отдельно проверяется в SC2.
 
 ```
 ┌──────────────────────────────────────────┐
@@ -477,7 +492,9 @@ Screenshot clips do not write generated `title:`. If the user explicitly adds a
 caption/heading in a future UI, it should be written to Markdown body. Current
 empty-body screenshot clips derive runtime card kind `media`.
 
-Почему отдельный HTTP-канал, а не native messaging: Chrome ограничивает native messaging-сообщения 1 МБ, а скриншот Retina-viewport легко выходит за этот порог.
+Скриншоты используют существующий HTTP staging; пределы Native Messaging
+различаются по направлению и не объясняются общим порогом 1 MB. Транспорт
+и его сохранение при переносе ядра описаны в разделе Upload Server ниже.
 
 #### Crop Area mode
 
@@ -937,7 +954,11 @@ Readerability эвристика может использоваться тол�
 
 #### `get_status`
 
-Проверка: vault выбран, host работает.
+Действующий запрос смешивает две проверки: доступность host и наличие vault.
+`ok: false` может означать работающий компонент без выбранного пространства;
+это не свидетельство отсутствия приложения. Целевой разделённый handshake и
+совместимость задаются [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md), SC0/SC4.
+Формат ниже оставлен как описание текущего API, не нового протокола.
 
 ```json
 {
@@ -1022,11 +1043,15 @@ index. Legacy normalized tags are migration inputs only.
 
 Сохранение блока в vault.
 
-New clipper writes follow [SPEC_DISPLAY_TITLE.md](./SPEC_DISPLAY_TITLE.md):
+New native-host writes follow [SPEC_DISPLAY_TITLE.md](./SPEC_DISPLAY_TITLE.md):
 the request may carry a real page/article heading in `body` as the first H1,
 but it must not synthesize `title:` frontmatter for tweets, selections, files,
 images, videos, or screenshots. Existing `title` fields in older extension
 builds remain a legacy compatibility input only.
+
+Нынешний standalone JS ещё не соблюдает этот контракт полностью. Его
+сериализатор заменяется общим ядром на SC3; совпадение двух путей будет
+проверяться одним исполняемым набором эталонов, не копиями тестов.
 
 ```json
 {
@@ -1124,11 +1149,14 @@ Response:
 
 #### `pick_vault_folder`
 
-Показ системного диалога выбора папки от имени host-процесса (у расширения нет
-файлового UI) и регистрация выбранной папки в общем `config.json`
+Показ системного диалога выбора папки от имени host-процесса и регистрация
+выбранной папки в общем `config.json`
 (`known_vaults`, атомарная запись tmp+rename). Отмена диалога — штатный
 результат, не ошибка. Таймаут канала — 300s (диалог ждёт человека), зеркально в
 `background.js` и `messaging.ts`.
+
+Это нативный выбор папки. В автономном режиме файловый UI принадлежит
+отдельному окну/странице расширения (О1 онбординга), не content-script оверлею.
 
 ```json
 {
@@ -1171,7 +1199,12 @@ Response: `{ "ok": true }`.
 
 ## Upload Server (HTTP)
 
-Chrome ограничивает отдельное native messaging-сообщение 1 МБ. Скриншот Retina-viewport после JPEG-сжатия легко занимает 1-3 МБ, и данные не помещаются в протокол stdin/stdout. Поэтому native host при старте поднимает локальный HTTP-сервер для бинарных загрузок.
+Пределы Native Messaging различаются по направлению: host → extension —
+1 MB на сообщение, extension → host — 64 MiB.
+[Официальный протокол](https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging).
+Прежнее объяснение, что любой скриншот больше 1 MB не помещается в stdin,
+неверно. Локальный HTTP staging остаётся действующим транспортом бинарных
+загрузок; его замена не входит в перенос ядра без отдельной проверки.
 
 ### Lifecycle
 
@@ -1303,6 +1336,10 @@ native host source of truth — `com.mine.app/clipper/native-host`.
 
 ### Обновление установленного хоста
 
+Этот раздел описывает действующий update-existing. Первичная автоматическая
+регистрация, стабильный ID и восстановление приняты как цель SC4, но ещё не
+реализованы: [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md).
+
 Браузер запускает копию в `Application Support`, а не бинарь внутри `.app`.
 Поэтому **обновление приложения само по себе не обновляет клипер**: пока
 копирование делалось только по нажатию «Install» в настройках, браузер месяцами
@@ -1336,7 +1373,9 @@ native host source of truth — `com.mine.app/clipper/native-host`.
 
 Оба manifest используют один protocol name и один установленный native-host
 binary. `allowed_origins` обязан содержать фактический ID unpacked extension;
-для текущего checkout это `mfmocklgopobknfgeedgdlnchfohicii`.
+ID в примере ниже исторический, не стабильный production ID. У unpacked
+расширения без закреплённого ключа он может измениться после переезда checkout.
+Целевое правило SC4 — стабильные ID из поставки, без ручного ввода пользователем.
 
 ```json
 {
@@ -1379,6 +1418,11 @@ Native host — отдельный Rust-бинарник (не Tauri). Пере�
 
 ### Vault Path Discovery
 
+Ниже — текущий механизм. Целевой SC4 фиксирует явно выбранную папку в
+контексте операции; отсутствие конфигурации не разрешает молча перейти
+в другую папку по умолчанию. Browser standalone и нативный legacy fallback —
+разные вещи.
+
 Native host читает путь к vault из файла конфигурации основного приложения:
 
 ```
@@ -1396,16 +1440,21 @@ Native host читает путь к vault из файла конфигурац�
 
 ## Error Handling
 
+Таблица относится к существующему пути. В целевом SC4 отказ соединения не
+доказывает отсутствие Mine, а исход записи отделён от ошибки производного
+индекса. Неоднозначный ответ `save_block` требует проверки той же операции,
+а не удаления её единственного материала; это обязательный контракт SC0.
+
 | Situation | Behavior |
 |---|---|
 | Vault not configured | Response: `{"ok": false, "error": "Vault not configured"}`. Popup показывает сообщение |
-| Native host not found | Chrome показывает ошибку подключения. Popup показывает «Native host not installed» |
+| Native host not found | Ошибка соединения; текущий setup ошибочно может предложить установку Mine. Целевой SC4 показывает причину регистрации/запуска и восстановление, не выводя отсутствие приложения из отсутствия ответа |
 | Media source missing | media creation request не создаётся. Popup показывает inline error, main UI остаётся открытым |
 | Media download/finalize failed | Response: `{"ok": false, "error": "..."}`. `.md` не создаётся, чтобы не получить битую media card без `file:` |
 | Link/video thumbnail download failed | Блок может быть создан без thumbnail; media failure для preview не ломает сохранение самой ссылки/видео |
 | Screenshot upload failed | Popup показывает inline error в `StatusBar` и сохраняет preview/tags/display heading для retry |
-| Screenshot upload succeeded but `save_block` failed | Popup показывает ошибку в момент нажатия. Промежуточная запись удаляется вместе с неудавшимся сохранением; source vault не получает незакреплённый media-файл. Повторить — значит нажать Save ещё раз |
-| SQLite locked | Retry через 100мс, до 3 попыток. Затем ошибка |
+| Screenshot upload succeeded but `save_block` failed | UI сохраняет материал для восстановления. Нужно различать подтверждённый отказ и потерю ответа после commit; очистка и повтор по прежнему `pre_uploaded_id` сверяются с recoverable staging, а общий контракт фиксируется в SC0 |
+| SQLite locked | Текущее открытие индекса до записи может сорвать save. В целевом SC2 source commit не зависит от SQLite; ошибка последующего индексирования не является отказом сохранения |
 | Disk full | Ошибка записи файла. Response: `{"ok": false, "error": "Failed to write file: ..."}` |
 | Invalid URL | Блок создаётся, URL сохраняется as-is |
 

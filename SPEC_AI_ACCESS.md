@@ -1,6 +1,6 @@
 # SPEC_AI_ACCESS
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md)
 
 Доступ AI-агентов к материалам пространства — чтение и безопасные мутации.
 Статус: **принято 27.08.2026**, реализация начата (первым — читающее ядро).
@@ -21,6 +21,12 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_SEARCH.md](SPEC_SE
 (уточнение 25.08.2026 после возражения пользователя).
 
 ## Решение
+
+Принятое разделение переносимого ядра и нативного исполнителя описано в
+[SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md); реализация SC0–SC7 ожидает отмашки.
+Перенос сохраняет действующие CLI/MCP-вызовы: чтения не получают побочных
+записей, мутации сохраняют существующие guards и dry-run. Новые полномочия
+или команды из самого факта появления общего ядра не следуют.
 
 Ядро → CLI → MCP, в этом порядке (обсуждение 24.08.2026):
 

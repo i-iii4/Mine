@@ -1,9 +1,14 @@
 # SPEC: storage layer
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md)
 
 Персистентный слой: SQLite-индекс, файловые операции, thumbnail-генерация.
 Зависит от domain/ для типов. Не зависит от commands/ и watcher/.
+
+Перенос правил и сценариев в общее ядро принят 31.08.2026:
+[SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md), план SC0–SC7. Реализация не начата.
+Текущие интерфейсы ниже не объявляются уже перенесёнными; нативные гарантии
+публикации не распространяются автоматически на браузерный исполнитель.
 
 ---
 
@@ -570,6 +575,13 @@ fn run_cold_space_audit(
   -> SQLite -> Rust serialization -> frontend DTO -> Grid.
 
 ## storage/source_mutation — atomicity contract
+
+This section describes the existing native storage boundary. It is not a
+cross-platform guarantee for File System Access. The save-core migration must
+preserve these mutation-specific rollback rules; capture/create source commits
+and their derived-index catch-up are specified separately in
+[SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md). SC0 closes each executor's commit and
+recovery contract before the common filesystem interface is implemented.
 
 Compound user mutations are planned and committed through one storage-owned
 boundary. Commands validate IPC and emit events; they do not sequence raw file

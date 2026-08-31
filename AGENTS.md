@@ -21,6 +21,7 @@
 - `SPEC_INTEGRATION.md` — спецификации watcher/events, handler, commands
 - `SPEC_FRONTEND.md` — спецификация фронтенда: компоненты, типы, IPC, роутинг
 - `SPEC_CLIPPER.md` — спецификация расширения браузера: типы сохранений, popup, native messaging
+- `SPEC_SAVE_CORE.md` — принятая целевая архитектура общего Rust-ядра и двух исполнителей; реализация ожидает отдельной отмашки, план SC0–SC7 в PLAN.md
 - `SPEC_MOBILE.md` — спецификация iOS-приложения: SwiftUI + Rust UniFFI, iCloud sync, Share Extension
 - `SPEC_GRID.md` — спецификация zero-jank masonry grid: Canvas measureText precomputation, dual-path (native grid-lanes + virtualized JS), детерминистические высоты
 - `SPEC_THUMBNAILS.md` — спецификация thumbnail pipeline: two-phase (Rust instant placeholder + WebView async upgrade), event-driven sidebar, виртуализация, поддержка всех форматов расширения через native decoder

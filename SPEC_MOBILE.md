@@ -1,6 +1,6 @@
 # Specification: iOS Mobile App
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md)
 
 ## Overview
 
@@ -17,6 +17,12 @@ iOS-приложение Mine — мобильный компаньон к де�
 | Мультиплатформа (позже) | Dropbox API как второй sync-бэкенд | Для Android-пользователей |
 
 ## Архитектура
+
+Целевое разделение общего ядра и нативного исполнителя принято в
+[SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md), но перенос ещё не начат. UniFFI
+остаётся тонким мостом: правила и общий сценарий не копируются в Swift или
+FFI-обёртку. SC5 переносит существующие возможности, не добавляя новые iOS-
+функции и не объявляя отложенные этапы этой спецификации завершёнными.
 
 ```
 ┌─────────────────────────────────────────────────┐
