@@ -14,6 +14,7 @@
     "test:sidebar-reorder": "node scripts/sidebar-reorder-audit.mjs",
     "test:edge-states": "node scripts/edge-states-audit.mjs",
     "test:native-shell": "node scripts/native-shell-smoke.mjs",
+    "test:native-capture": "node scripts/native-capture-smoke.mjs",
     "test:clipper-worker": "bun run build:extension && node scripts/clipper-worker-smoke.mjs",
     "test:browser": "node scripts/browser-audits.mjs",
     "test:rust": "bun run fetch:ytdlp && cargo test --workspace --all-targets --locked",
