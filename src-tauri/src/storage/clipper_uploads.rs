@@ -6,12 +6,14 @@
 // creation leaves untracked media in the user's vault.
 
 use anyhow::{anyhow, Context, Result};
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 use crate::domain::vault::VaultLayout;
 use crate::storage::files;
 use crate::storage::media_refs;
+use crate::storage::save_operations::sha256_file;
 
 const PENDING_UPLOADS_DIR: &str = "pending_uploads";
 const MANIFEST_FILE: &str = "manifest.json";
@@ -25,6 +27,20 @@ pub struct PendingUploadManifest {
     pub content_type: Option<String>,
     pub size: u64,
     pub created_at: String,
+    #[serde(default)]
+    pub vault_binding: Option<String>,
+    #[serde(default)]
+    pub finalization: Option<UploadFinalization>,
+    #[serde(default)]
+    pub committed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadFinalization {
+    pub filename: String,
+    pub sha256: String,
+    pub published: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -47,6 +63,7 @@ pub fn write_pending_upload(
     content_type: Option<String>,
     body: &[u8],
 ) -> Result<PendingUploadManifest> {
+    let vault_binding = crate::storage::save_operations::binding_id(vault)?;
     let base_dir = pending_uploads_dir(vault);
     std::fs::create_dir_all(&base_dir)
         .with_context(|| format!("failed to create pending upload dir {}", base_dir.display()))?;
@@ -68,6 +85,9 @@ pub fn write_pending_upload(
         content_type,
         size: body.len() as u64,
         created_at: crate::util::now_iso8601(),
+        vault_binding: Some(vault_binding),
+        finalization: None,
+        committed: false,
     };
     write_manifest(&dir, &manifest)?;
     Ok(manifest)
@@ -76,10 +96,51 @@ pub fn write_pending_upload(
 pub fn load_pending_upload(vault: &VaultLayout, upload_id: &str) -> Result<PendingUploadManifest> {
     let dir = pending_upload_dir(vault, upload_id)?;
     let manifest_path = dir.join(MANIFEST_FILE);
+    reject_symlink(&dir)?;
+    reject_symlink(&manifest_path)?;
     let raw = std::fs::read_to_string(&manifest_path)
         .with_context(|| format!("failed to read pending upload {}", manifest_path.display()))?;
-    serde_json::from_str(&raw)
-        .with_context(|| format!("failed to parse pending upload {}", manifest_path.display()))
+    let manifest: PendingUploadManifest = serde_json::from_str(&raw)
+        .with_context(|| format!("failed to parse pending upload {}", manifest_path.display()))?;
+    if manifest.upload_id != upload_id
+        || sanitize_payload_filename(&manifest.payload_filename)? != manifest.payload_filename
+    {
+        return Err(anyhow!("pending upload manifest identity/path mismatch"));
+    }
+    if manifest.vault_binding.as_deref().is_some_and(|binding| {
+        !crate::storage::save_operations::binding_id(vault).is_ok_and(|current| current == binding)
+    }) {
+        return Err(anyhow!("pending upload belongs to another folder binding"));
+    }
+    if let Some(finalization) = &manifest.finalization {
+        if sanitize_payload_filename(&finalization.filename)? != finalization.filename {
+            return Err(anyhow!("invalid finalized upload path"));
+        }
+    }
+    Ok(manifest)
+}
+
+fn reject_symlink(path: &Path) -> Result<()> {
+    if std::fs::symlink_metadata(path)?.file_type().is_symlink() {
+        return Err(anyhow!("refusing upload symlink: {}", path.display()));
+    }
+    Ok(())
+}
+
+fn lock_upload(dir: &Path) -> Result<std::fs::File> {
+    reject_symlink(dir)?;
+    let path = dir.join(".lock");
+    if std::fs::symlink_metadata(&path).is_ok() {
+        reject_symlink(&path)?;
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path)?;
+    file.lock_exclusive()?;
+    Ok(file)
 }
 
 pub fn finalize_pending_upload(
@@ -87,9 +148,29 @@ pub fn finalize_pending_upload(
     upload_id: &str,
     final_stem: &str,
 ) -> Result<FinalizedPendingUpload> {
-    let manifest = load_pending_upload(vault, upload_id)?;
     let dir = pending_upload_dir(vault, upload_id)?;
+    let _lock = lock_upload(&dir)?;
+    let mut manifest = load_pending_upload(vault, upload_id)?;
+    if manifest.vault_binding.is_none() {
+        return Err(anyhow!(
+            "legacy pending upload binding is unknown; staging retained"
+        ));
+    }
+    if let Some(finalization) = &manifest.finalization {
+        let dest = vault.new_media_path(&finalization.filename);
+        files::validate_vault_write_target(vault, &dest)?;
+        if !sha256_file(&dest).is_ok_and(|hash| hash == finalization.sha256) {
+            return Err(anyhow!("pending upload publication outcome is unknown"));
+        }
+        std::fs::File::open(&dest)?.sync_all()?;
+        files::sync_parent_directory(&dest)?;
+        let filename = finalization.filename.clone();
+        manifest.finalization.as_mut().unwrap().published = true;
+        write_manifest(&dir, &manifest)?;
+        return Ok(FinalizedPendingUpload { filename });
+    }
     let payload_path = dir.join(&manifest.payload_filename);
+    reject_symlink(&payload_path)?;
     if !payload_path.is_file() {
         return Err(anyhow!(
             "pending upload payload not found: {}",
@@ -102,42 +183,73 @@ pub fn finalize_pending_upload(
     // name either way, exactly like an Obsidian wikilink.
     let filename = dedupe_final_filename(vault, &manifest.payload_filename, final_stem)?;
     let dest = vault.new_media_path(&filename);
+    files::validate_vault_write_target(vault, &dest)?;
+    manifest.finalization = Some(UploadFinalization {
+        filename: filename.clone(),
+        sha256: sha256_file(&payload_path)?,
+        published: false,
+    });
+    // The exact destination and hash survive a crash or a lost acknowledgement.
+    write_manifest(&dir, &manifest)?;
     if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).with_context(|| {
-            format!("failed to create media directory: {}", parent.display())
-        })?;
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create media directory: {}", parent.display()))?;
     }
     copy_create_new(&payload_path, &dest)
         .with_context(|| format!("failed to copy pending upload to {}", dest.display()))?;
+    manifest.finalization.as_mut().unwrap().published = true;
+    write_manifest(&dir, &manifest)?;
 
     Ok(FinalizedPendingUpload { filename })
 }
 
-/// Finish a pending upload whose card now exists in the vault.
-///
-/// The staging directory holds a full copy of the media, so keeping it after a
-/// successful commit doubles every clipped file on disk forever. Marking the
-/// manifest and leaving the directory behind is what produced 113 stale
-/// directories (109 MB of duplicates) on the development machine before this
-/// was fixed; recovery never offered them for deletion either, because it only
-/// lists uploads that were *not* committed. See SPEC_VAULT_LIFECYCLE.md П19.
-///
-/// The extension never retries a save with the same upload id — a failed save
-/// re-uploads and gets a fresh id — so removing the payload cannot strand a
-/// legitimate retry.
-/// Removes a staging directory when the save that created it ends — however it
-/// ends.
-///
-/// The save routine has eleven exits that report an error and one that
-/// succeeds. Deleting on the successful one only, which is what the code used
-/// to do, is why a failed clip left its file behind for ever: a journal of one
-/// operation was being used as a store with no lifetime. A guard puts the
-/// cleanup out of reach of the branching — a new exit cannot forget it, because
-/// leaving the scope is the cleanup.
-///
-/// Nothing is lost by clearing a staged file after a failure. The card was
-/// never created, and the payload is a copy of something the browser can clip
-/// again in one press.
+/// Acquire an upload into operation-owned staging, without touching source.
+/// The original binding and manifest remain authoritative until a source
+/// receipt permits cleanup; a prior finalization is never silently rebound.
+pub fn prepare_pending_upload(
+    vault: &VaultLayout,
+    staging: &VaultLayout,
+    upload_id: &str,
+    final_stem: &str,
+) -> Result<FinalizedPendingUpload> {
+    let dir = pending_upload_dir(vault, upload_id)?;
+    let _lock = lock_upload(&dir)?;
+    let mut manifest = load_pending_upload(vault, upload_id)?;
+    if manifest.vault_binding.is_none() {
+        return Err(anyhow!(
+            "legacy pending upload binding is unknown; staging retained"
+        ));
+    }
+    if manifest.finalization.is_some() {
+        return Err(anyhow!(
+            "upload already belongs to a publication; resume its operation"
+        ));
+    }
+    let payload = dir.join(&manifest.payload_filename);
+    reject_symlink(&payload)?;
+    if !payload.is_file() || std::fs::metadata(&payload)?.len() != manifest.size {
+        return Err(anyhow!("pending upload payload is missing or changed"));
+    }
+    let filename = dedupe_final_filename(vault, &manifest.payload_filename, final_stem)?;
+    let target = staging.new_media_path(&filename);
+    files::validate_vault_write_target(staging, &target)?;
+    manifest.finalization = Some(UploadFinalization {
+        filename: filename.clone(),
+        sha256: sha256_file(&payload)?,
+        published: false,
+    });
+    write_manifest(&dir, &manifest)?;
+    copy_create_new(&payload, &target)?;
+    if sha256_file(&target)? != manifest.finalization.as_ref().unwrap().sha256 {
+        return Err(anyhow!(
+            "pending payload changed during staging; material retained"
+        ));
+    }
+    Ok(FinalizedPendingUpload { filename })
+}
+
+/// Staging is retained on an early return or panic. Only a durable source
+/// receipt authorizes removing its redundant payload, never ordinary Drop.
 pub struct PendingUploadGuard<'a> {
     vault: &'a VaultLayout,
     upload_id: String,
@@ -147,29 +259,66 @@ impl<'a> PendingUploadGuard<'a> {
     pub fn new(vault: &'a VaultLayout, upload_id: String) -> Self {
         Self { vault, upload_id }
     }
-}
-
-impl Drop for PendingUploadGuard<'_> {
-    fn drop(&mut self) {
-        if let Err(e) = discard_pending_upload(self.vault, &self.upload_id) {
-            log::warn!("failed to clear staged upload {}: {e:#}", self.upload_id);
-        }
+    pub fn mark_committed(&self) -> Result<()> {
+        mark_pending_upload_committed(self.vault, &self.upload_id)
     }
 }
 
-/// How long a staging directory may live before it is treated as debris.
-///
-/// A save is a single press: upload, then card, within one exchange. An hour is
-/// far beyond any of that, and short enough that nothing accumulates.
+pub fn mark_pending_upload_committed(vault: &VaultLayout, upload_id: &str) -> Result<()> {
+    let dir = pending_upload_dir(vault, upload_id)?;
+    let _lock = lock_upload(&dir)?;
+    let mut manifest = load_pending_upload(vault, upload_id)?;
+    let finalization = manifest
+        .finalization
+        .as_ref()
+        .ok_or_else(|| anyhow!("cannot clean an upload without known publication"))?;
+    let dest = vault.new_media_path(&finalization.filename);
+    files::validate_vault_write_target(vault, &dest)?;
+    if sha256_file(&dest)? != finalization.sha256 {
+        return Err(anyhow!("cannot clean an upload with changed source media"));
+    }
+    std::fs::File::open(&dest)?.sync_all()?;
+    files::sync_parent_directory(&dest)?;
+    manifest.finalization.as_mut().unwrap().published = true;
+    manifest.committed = true;
+    write_manifest(&dir, &manifest)?;
+    remove_committed_payload(&dir, &manifest)?;
+    Ok(())
+}
+
+fn remove_committed_payload(dir: &Path, manifest: &PendingUploadManifest) -> Result<bool> {
+    if !manifest.committed {
+        return Ok(false);
+    }
+    let finalization = manifest
+        .finalization
+        .as_ref()
+        .filter(|entry| entry.published)
+        .ok_or_else(|| anyhow!("committed upload lacks publication evidence"))?;
+    let payload = dir.join(&manifest.payload_filename);
+    match std::fs::symlink_metadata(&payload) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(anyhow!("refusing staged payload symlink"))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+        _ => {}
+    }
+    if sha256_file(&payload)? != finalization.sha256 {
+        return Err(anyhow!(
+            "staged payload changed after publication; retaining unknown bytes"
+        ));
+    }
+    std::fs::remove_file(&payload)?;
+    files::sync_parent_directory(&payload)?;
+    Ok(true)
+}
+
+/// Retry redundant-payload cleanup after this delay; age alone proves nothing.
 pub const STALE_UPLOAD_AGE: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 
-/// Remove staging directories older than `max_age`.
-///
-/// The only staging directory that may legitimately exist belongs to a save
-/// happening right now, so age is the whole test. The previous sweep asked
-/// instead whether the card's media still sat in the vault, which made the
-/// cache keep copies of files the user had deleted, for ever — 11 of 15
-/// directories here were exactly that.
+/// Remove only payloads already covered by a durable committed marker. Unknown
+/// or legacy staging is retained regardless of age; compact receipts remain.
 pub fn sweep_stale_pending_uploads(
     vault: &VaultLayout,
     max_age: std::time::Duration,
@@ -197,20 +346,20 @@ pub fn sweep_stale_pending_uploads(
         if age < max_age {
             continue;
         }
-        if std::fs::remove_dir_all(entry.path()).is_ok() {
+        let Some(id) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        let Ok(_lock) = lock_upload(&entry.path()) else {
+            continue;
+        };
+        let Ok(manifest) = load_pending_upload(vault, &id) else {
+            continue;
+        };
+        if remove_committed_payload(&entry.path(), &manifest).unwrap_or(false) {
             removed += 1;
         }
     }
     Ok(removed)
-}
-
-pub fn discard_pending_upload(vault: &VaultLayout, upload_id: &str) -> Result<()> {
-    let dir = pending_upload_dir(vault, upload_id)?;
-    if dir.exists() {
-        std::fs::remove_dir_all(&dir)
-            .with_context(|| format!("failed to remove pending upload {}", dir.display()))?;
-    }
-    Ok(())
 }
 
 pub fn upload_id_from_legacy_filename(value: &str) -> Option<&str> {
@@ -255,7 +404,10 @@ fn sanitize_payload_filename(requested: &str) -> Result<String> {
         .filter(|name| !name.is_empty())
         .ok_or_else(|| anyhow!("invalid upload filename"))?;
 
-    if file_name == "." || file_name == ".." || file_name.contains('/') || file_name.contains('\\')
+    if file_name.starts_with('.')
+        || file_name == MANIFEST_FILE
+        || file_name.contains('/')
+        || file_name.contains('\\')
     {
         return Err(anyhow!("invalid upload filename"));
     }
@@ -330,150 +482,176 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    fn vault_for(dir: &TempDir) -> VaultLayout {
-        VaultLayout::with_derived_root(dir.path().join("vault"), dir.path().join("derived"))
-    }
-
     #[test]
-    fn sc0_n2_repeated_finalization_characterizes_duplicate_media_without_receipt() {
-        // Characterization of a defect, not an accepted product guarantee:
-        // the same upload ID currently publishes a second media file instead
-        // of recognizing the first publication. Revisit with the SC0 contract.
-        let dir = TempDir::new().expect("create disposable SC0 directory");
-        let vault = vault_for(&dir);
-        std::fs::create_dir_all(vault.root()).expect("create disposable vault");
-        let bytes = b"SC0 pending payload";
-        let upload = write_pending_upload(&vault, "shot.jpg", None, bytes)
-            .expect("stage disposable upload");
-        let staged = pending_upload_dir(&vault, &upload.upload_id).expect("locate upload");
-        let manifest_before = std::fs::read(staged.join(MANIFEST_FILE)).expect("read manifest");
-
-        let first = finalize_pending_upload(&vault, &upload.upload_id, "Door")
-            .expect("publish first media file");
-        let repeated = finalize_pending_upload(&vault, &upload.upload_id, "Door")
-            .expect("observe current repeated finalization");
-
-        assert_eq!(first.filename, "Door.jpg");
-        assert_eq!(repeated.filename, "Door (2).jpg");
-        for filename in [&first.filename, &repeated.filename] {
-            assert_eq!(
-                std::fs::read(vault.new_media_path(filename)).expect("read published media"),
-                bytes
-            );
-        }
-        assert_eq!(
-            std::fs::read(staged.join(MANIFEST_FILE)).expect("reread manifest"),
-            manifest_before,
-            "current finalization stores no receipt or final filename"
-        );
-        assert!(staged.join(&upload.payload_filename).exists());
-        eprintln!(
-            "SC0 N2 characterization: same upload ID produced Door.jpg and Door (2).jpg; manifest unchanged; staging remains"
-        );
-    }
-
-    #[test]
-    fn pending_upload_does_not_write_source_vault_until_finalize() {
+    fn sc2_pending_preparation_copies_only_into_journal_staging_and_keeps_binding() {
         let dir = tempfile::tempdir().unwrap();
-        let vault = vault_for(&dir);
-        std::fs::create_dir_all(vault.root()).unwrap();
-
-        let manifest = write_pending_upload(
-            &vault,
-            "screenshot.jpg",
-            Some("image/jpeg".to_string()),
-            b"jpeg",
+        let vault =
+            vault_for(&dir).with_write_layout(crate::domain::vault::VaultWriteLayout::standard());
+        let staging = VaultLayout::new(dir.path().join("operations/capture.staging"))
+            .with_write_layout(vault.write_layout().clone());
+        std::fs::create_dir_all(staging.root()).unwrap();
+        let upload = write_pending_upload(&vault, "shot.png", None, b"original bytes").unwrap();
+        let prepared =
+            prepare_pending_upload(&vault, &staging, &upload.upload_id, "Capture").unwrap();
+        assert_eq!(prepared.filename, "Capture.png");
+        assert!(!vault.new_media_path(&prepared.filename).exists());
+        assert_eq!(
+            std::fs::read(staging.new_media_path(&prepared.filename)).unwrap(),
+            b"original bytes"
+        );
+        let manifest = load_pending_upload(&vault, &upload.upload_id).unwrap();
+        assert!(!manifest.finalization.unwrap().published);
+        assert!(!manifest.committed);
+        assert!(prepare_pending_upload(&vault, &staging, &upload.upload_id, "Different").is_err());
+        // Once in the prepared plan, source publication no longer needs the
+        // HTTP-upload cache: copy from durable journal-owned material.
+        std::fs::remove_file(
+            pending_upload_dir(&vault, &upload.upload_id)
+                .unwrap()
+                .join("shot.png"),
         )
         .unwrap();
-
-        assert!(pending_upload_dir(&vault, &manifest.upload_id)
-            .unwrap()
-            .join("screenshot.jpg")
-            .exists());
-        assert!(!vault.root().join("screenshot.jpg").exists());
-
-        let finalized = finalize_pending_upload(&vault, &manifest.upload_id, "Door").unwrap();
-        assert_eq!(finalized.filename, "Door.jpg");
+        files::copy_new_atomically(
+            &staging.new_media_path(&prepared.filename),
+            &vault.new_media_path(&prepared.filename),
+        )
+        .unwrap();
         assert_eq!(
-            std::fs::read(vault.root().join("Door.jpg")).unwrap(),
-            b"jpeg"
+            std::fs::read(vault.new_media_path(&prepared.filename)).unwrap(),
+            b"original bytes"
         );
     }
 
-    #[test]
-    fn the_guard_clears_the_staged_copy_when_the_save_ends() {
-        let dir = tempfile::tempdir().unwrap();
-        let vault = vault_for(&dir);
+    fn vault_for(dir: &TempDir) -> VaultLayout {
+        let vault =
+            VaultLayout::with_derived_root(dir.path().join("vault"), dir.path().join("derived"));
         std::fs::create_dir_all(vault.root()).unwrap();
-
-        let manifest = write_pending_upload(&vault, "shot.jpg", None, b"bytes").unwrap();
-        finalize_pending_upload(&vault, &manifest.upload_id, "Card").unwrap();
-        let staged = pending_upload_dir(&vault, &manifest.upload_id).unwrap();
-        assert!(staged.exists());
-
-        {
-            let _guard = PendingUploadGuard::new(&vault, manifest.upload_id.clone());
-            assert!(staged.exists(), "the staged copy lives while the save runs");
-        }
-
-        // The vault copy survives; the duplicate in staging does not.
-        assert!(vault.root().join("Card.jpg").exists());
-        assert!(!staged.exists());
+        vault
     }
 
     #[test]
-    fn the_guard_clears_the_staged_copy_when_the_save_fails() {
-        let dir = tempfile::tempdir().unwrap();
+    fn pending_upload_is_bound_to_folder_even_when_copied_vaults_share_derived_id() {
+        let dir = TempDir::new().unwrap();
         let vault = vault_for(&dir);
-        std::fs::create_dir_all(vault.root()).unwrap();
-
-        let manifest = write_pending_upload(&vault, "shot.jpg", None, b"bytes").unwrap();
-        let staged = pending_upload_dir(&vault, &manifest.upload_id).unwrap();
-
-        // No card was ever written — the case that used to leave a file behind
-        // for ever and surface as a recovery prompt.
-        {
-            let _guard = PendingUploadGuard::new(&vault, manifest.upload_id.clone());
-        }
-
-        assert!(!staged.exists());
-    }
-
-    #[test]
-    fn the_sweep_removes_debris_by_age_and_spares_a_save_in_flight() {
-        let dir = tempfile::tempdir().unwrap();
-        let vault = vault_for(&dir);
-        std::fs::create_dir_all(vault.root()).unwrap();
-
-        let fresh = write_pending_upload(&vault, "now.jpg", None, b"now").unwrap();
-        let stale = write_pending_upload(&vault, "old.jpg", None, b"old").unwrap();
-
-        // Zero age sweeps everything; the point is that the test is age, and
-        // nothing about what the vault does or does not still contain.
-        let removed = sweep_stale_pending_uploads(&vault, std::time::Duration::ZERO).unwrap();
-        assert_eq!(removed, 2);
-        assert!(!pending_upload_dir(&vault, &fresh.upload_id).unwrap().exists());
-        assert!(!pending_upload_dir(&vault, &stale.upload_id).unwrap().exists());
-
-        let running = write_pending_upload(&vault, "live.jpg", None, b"live").unwrap();
-        let removed = sweep_stale_pending_uploads(&vault, STALE_UPLOAD_AGE).unwrap();
-        assert_eq!(removed, 0, "a save in flight must not be swept");
-        assert!(pending_upload_dir(&vault, &running.upload_id).unwrap().exists());
-    }
-
-    #[test]
-    fn the_sweep_is_idempotent_and_survives_a_missing_directory() {
-        let dir = tempfile::tempdir().unwrap();
-        let vault = vault_for(&dir);
-        std::fs::create_dir_all(vault.root()).unwrap();
-
-        // Nothing staged yet: the directory itself does not exist.
+        let copied = VaultLayout::with_derived_root(
+            dir.path().join("copy"),
+            vault.derived_root().to_path_buf(),
+        );
+        std::fs::create_dir(copied.root()).unwrap();
+        let upload = write_pending_upload(&vault, "shot.jpg", None, b"original upload").unwrap();
+        assert!(load_pending_upload(&copied, &upload.upload_id).is_err());
+        assert!(finalize_pending_upload(&copied, &upload.upload_id, "Card").is_err());
+        assert!(std::fs::read_dir(copied.root()).unwrap().next().is_none());
+        let staged = pending_upload_dir(&vault, &upload.upload_id).unwrap();
+        assert_eq!(
+            std::fs::read(staged.join("shot.jpg")).unwrap(),
+            b"original upload"
+        );
+        let mut old = load_pending_upload(&vault, &upload.upload_id).unwrap();
+        old.vault_binding = None;
+        write_manifest(&staged, &old).unwrap();
+        assert!(finalize_pending_upload(&vault, &upload.upload_id, "Card").is_err());
         assert_eq!(
             sweep_stale_pending_uploads(&vault, std::time::Duration::ZERO).unwrap(),
             0
         );
+        assert_eq!(
+            std::fs::read(staged.join("shot.jpg")).unwrap(),
+            b"original upload"
+        );
+    }
 
-        write_pending_upload(&vault, "shot.jpg", None, b"bytes").unwrap();
+    #[test]
+    fn sc0_n2_repeated_finalization_reuses_verified_publication() {
+        let dir = TempDir::new().unwrap();
+        let vault = vault_for(&dir);
+        let upload =
+            write_pending_upload(&vault, "shot.jpg", None, b"SC0 pending payload").unwrap();
+        let first = finalize_pending_upload(&vault, &upload.upload_id, "Door").unwrap();
+        let repeated = finalize_pending_upload(&vault, &upload.upload_id, "Door").unwrap();
+        assert_eq!(first.filename, "Door.jpg");
+        assert_eq!(repeated.filename, first.filename);
+        assert!(!vault.new_media_path("Door (2).jpg").exists());
+        let manifest = load_pending_upload(&vault, &upload.upload_id).unwrap();
+        assert!(manifest.finalization.as_ref().unwrap().published);
+        assert!(pending_upload_dir(&vault, &upload.upload_id)
+            .unwrap()
+            .join(&manifest.payload_filename)
+            .exists());
+        eprintln!("SC0 N2 regression: same upload ID reuses Door.jpg; finalized receipt and staging retained");
+    }
+
+    #[test]
+    fn pending_upload_does_not_write_source_vault_until_finalize() {
+        let dir = TempDir::new().unwrap();
+        let vault = vault_for(&dir);
+        let upload = write_pending_upload(&vault, "shot.jpg", None, b"bytes").unwrap();
+        assert!(!vault.new_media_path("shot.jpg").exists());
+        finalize_pending_upload(&vault, &upload.upload_id, "Card").unwrap();
+        assert_eq!(
+            std::fs::read(vault.new_media_path("Card.jpg")).unwrap(),
+            b"bytes"
+        );
+    }
+
+    #[test]
+    fn explicit_commit_removes_payload_but_retains_compact_receipt() {
+        let dir = TempDir::new().unwrap();
+        let vault = vault_for(&dir);
+        let upload = write_pending_upload(&vault, "shot.jpg", None, b"bytes").unwrap();
+        finalize_pending_upload(&vault, &upload.upload_id, "Card").unwrap();
+        let staged = pending_upload_dir(&vault, &upload.upload_id).unwrap();
+        PendingUploadGuard::new(&vault, upload.upload_id.clone())
+            .mark_committed()
+            .unwrap();
+        assert!(staged.join(MANIFEST_FILE).exists());
+        assert!(!staged.join("shot.jpg").exists());
+        assert!(
+            load_pending_upload(&vault, &upload.upload_id)
+                .unwrap()
+                .committed
+        );
+        assert_eq!(
+            finalize_pending_upload(&vault, &upload.upload_id, "Card")
+                .unwrap()
+                .filename,
+            "Card.jpg"
+        );
+    }
+
+    #[test]
+    fn failed_save_and_ttl_keep_unknown_staging() {
+        let dir = TempDir::new().unwrap();
+        let vault = vault_for(&dir);
+        let upload = write_pending_upload(&vault, "shot.jpg", None, b"bytes").unwrap();
+        {
+            let _guard = PendingUploadGuard::new(&vault, upload.upload_id.clone());
+        }
+        assert_eq!(
+            sweep_stale_pending_uploads(&vault, std::time::Duration::ZERO).unwrap(),
+            0
+        );
+        let staged = pending_upload_dir(&vault, &upload.upload_id).unwrap();
+        assert_eq!(std::fs::read(staged.join("shot.jpg")).unwrap(), b"bytes");
+        assert!(mark_pending_upload_committed(&vault, &upload.upload_id).is_err());
+    }
+
+    #[test]
+    fn sweep_cleans_only_proven_redundant_payload_and_keeps_receipts() {
+        let dir = TempDir::new().unwrap();
+        let vault = vault_for(&dir);
+        assert_eq!(
+            sweep_stale_pending_uploads(&vault, std::time::Duration::ZERO).unwrap(),
+            0
+        );
+        let upload = write_pending_upload(&vault, "shot.jpg", None, b"bytes").unwrap();
+        finalize_pending_upload(&vault, &upload.upload_id, "Card").unwrap();
+        // State reconstruction: commit marker was persisted, process stopped
+        // before redundant payload removal. This is not a process kill test.
+        let staged = pending_upload_dir(&vault, &upload.upload_id).unwrap();
+        let mut manifest = load_pending_upload(&vault, &upload.upload_id).unwrap();
+        manifest.committed = true;
+        write_manifest(&staged, &manifest).unwrap();
         assert_eq!(
             sweep_stale_pending_uploads(&vault, std::time::Duration::ZERO).unwrap(),
             1
@@ -482,22 +660,84 @@ mod tests {
             sweep_stale_pending_uploads(&vault, std::time::Duration::ZERO).unwrap(),
             0
         );
+        assert!(staged.join(MANIFEST_FILE).exists());
+        assert!(!staged.join("shot.jpg").exists());
+    }
+
+    #[test]
+    fn sweep_does_not_delete_changed_staging_even_with_commit_marker() {
+        let dir = TempDir::new().unwrap();
+        let vault = vault_for(&dir);
+        let upload = write_pending_upload(&vault, "shot.jpg", None, b"bytes").unwrap();
+        finalize_pending_upload(&vault, &upload.upload_id, "Card").unwrap();
+        let staged = pending_upload_dir(&vault, &upload.upload_id).unwrap();
+        let mut manifest = load_pending_upload(&vault, &upload.upload_id).unwrap();
+        manifest.committed = true;
+        write_manifest(&staged, &manifest).unwrap();
+        std::fs::write(staged.join("shot.jpg"), b"unrecognized bytes").unwrap();
+        assert_eq!(
+            sweep_stale_pending_uploads(&vault, std::time::Duration::ZERO).unwrap(),
+            0
+        );
+        assert_eq!(
+            std::fs::read(staged.join("shot.jpg")).unwrap(),
+            b"unrecognized bytes"
+        );
+    }
+
+    #[test]
+    fn changed_or_missing_published_media_is_unknown_and_never_republished() {
+        let dir = TempDir::new().unwrap();
+        let vault = vault_for(&dir);
+        let upload = write_pending_upload(&vault, "shot.jpg", None, b"bytes").unwrap();
+        finalize_pending_upload(&vault, &upload.upload_id, "Card").unwrap();
+        std::fs::write(vault.new_media_path("Card.jpg"), b"user changed").unwrap();
+        assert!(finalize_pending_upload(&vault, &upload.upload_id, "Card").is_err());
+        assert!(mark_pending_upload_committed(&vault, &upload.upload_id).is_err());
+        assert_eq!(
+            std::fs::read(vault.new_media_path("Card.jpg")).unwrap(),
+            b"user changed"
+        );
+        std::fs::remove_file(vault.new_media_path("Card.jpg")).unwrap();
+        assert!(finalize_pending_upload(&vault, &upload.upload_id, "Card").is_err());
+        assert!(!vault.new_media_path("Card (2).jpg").exists());
+        assert!(pending_upload_dir(&vault, &upload.upload_id)
+            .unwrap()
+            .join("shot.jpg")
+            .exists());
     }
 
     #[test]
     fn pending_upload_finalization_dedupes_source_vault_collisions() {
-        let dir = tempfile::tempdir().unwrap();
-        let vault = vault_for(&dir);
-        std::fs::create_dir_all(vault.root()).unwrap();
-        std::fs::write(vault.root().join("Door.jpg"), b"existing").unwrap();
-
-        let manifest = write_pending_upload(&vault, "screenshot.jpg", None, b"new").unwrap();
-        let finalized = finalize_pending_upload(&vault, &manifest.upload_id, "Door").unwrap();
-
-        assert_eq!(finalized.filename, "Door (2).jpg");
+        let dir = TempDir::new().unwrap();
+        let vault =
+            vault_for(&dir).with_write_layout(crate::domain::vault::VaultWriteLayout::standard());
+        std::fs::create_dir_all(vault.media_dir()).unwrap();
+        std::fs::write(vault.new_media_path("Door.jpg"), b"existing").unwrap();
+        let upload = write_pending_upload(&vault, "shot.jpg", None, b"new").unwrap();
         assert_eq!(
-            std::fs::read(vault.root().join("Door (2).jpg")).unwrap(),
-            b"new"
+            finalize_pending_upload(&vault, &upload.upload_id, "Door")
+                .unwrap()
+                .filename,
+            "Door (2).jpg"
         );
+        assert_eq!(
+            std::fs::read(vault.new_media_path("Door.jpg")).unwrap(),
+            b"existing"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_payload_or_media_directory_cannot_escape_vault() {
+        let dir = TempDir::new().unwrap();
+        let vault =
+            vault_for(&dir).with_write_layout(crate::domain::vault::VaultWriteLayout::standard());
+        let outside = dir.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, vault.media_dir()).unwrap();
+        let upload = write_pending_upload(&vault, "shot.jpg", None, b"bytes").unwrap();
+        assert!(finalize_pending_upload(&vault, &upload.upload_id, "Card").is_err());
+        assert_eq!(std::fs::read_dir(outside).unwrap().count(), 0);
     }
 }

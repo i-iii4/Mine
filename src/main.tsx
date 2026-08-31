@@ -111,7 +111,7 @@ function installAuditTauriMocks() {
     if (normalizedPath.startsWith("/feed-scroll-audit/")) {
       return normalizedPath;
     }
-    const graphCardMatch = normalizedPath.match(/\/graph-audit\/thumbs\/graph-card-(\d+)\.jpg$/);
+    const graphCardMatch = normalizedPath.match(/\/graph-audit\/thumbs\/graph-card-(\d+)(?:\.(?:micro|zoom|preview-\d+))?\.jpg$/);
     if (graphCardMatch) {
       const assetIndex = Number(graphCardMatch[1]) % 6;
       return `/feed-scroll-audit/audit-${assetIndex}.svg`;

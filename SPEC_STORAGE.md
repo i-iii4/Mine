@@ -5,11 +5,11 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 Персистентный слой: SQLite-индекс, файловые операции, thumbnail-генерация.
 Зависит от domain/ для типов. Не зависит от commands/ и watcher/.
 
-Перенос правил и сценариев в общее ядро принят 31.08.2026:
-[SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md), план SC0–SC7. Начат SC0 — проверка
-контракта и безопасности; перенос ядра ещё не начат.
-Текущие интерфейсы ниже не объявляются уже перенесёнными; нативные гарантии
-публикации не распространяются автоматически на браузерный исполнитель.
+Общие правила находятся в `mine-core`; `domain/` переэкспортирует их.
+Native capture использует `storage/save_operations`: отдельный durable
+журнал и блокировку по binding, без обязательного SQLite до source commit.
+Desktop/CLI mutation rollback остаётся прежним. Нативные гарантии публикации
+не распространяются на browser; [приёмка](docs/save-core-acceptance.md).
 
 ---
 
@@ -581,8 +581,9 @@ This section describes the existing native storage boundary. It is not a
 cross-platform guarantee for File System Access. The save-core migration must
 preserve these mutation-specific rollback rules; capture/create source commits
 and their derived-index catch-up are specified separately in
-[SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md). SC0 closes each executor's commit and
-recovery contract before the common filesystem interface is implemented.
+[SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md). The reliable operation-ID protocol
+belongs to clipper transport; existing desktop/CLI create calls retain their
+transactional index rollback while reusing the core's capture constructor.
 
 Compound user mutations are planned and committed through one storage-owned
 boundary. Commands validate IPC and emit events; they do not sequence raw file
@@ -897,7 +898,8 @@ rename_derived_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str) ->
 - Создаёт директории при необходимости
 - `slug` должен приходить из `domain::block::suggest_slug`: human-readable Unicode stem, NFC-normalized, bounded by `100` chars и `220` NFD bytes. Storage не должен повторно обрезать имя или строить media path из legacy title: source media references берутся из `frontmatter.file`.
 - New writes serialize `frontmatter.file` as an Obsidian wikilink string
-  (`file: "[[name.ext]]"`). Legacy raw `file: name.ext` remains accepted on
+  (`file: "[[Media/name.ext]]"` for a configured Media folder; basename
+  references are also valid). Legacy raw `file: name.ext` remains accepted on
   read and is normalized in the indexed read model.
 
 ### Поведение scan_md_files

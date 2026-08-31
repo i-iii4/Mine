@@ -82,6 +82,8 @@ function clipperStatus(overrides: Partial<ClipperSetupStatus>): ClipperSetupStat
   return {
     host_installed: false,
     host_current: false,
+    last_connection_check: null,
+    connection_check_error: null,
     app_version: "0.1.0",
     browsers: CLIPPER_BROWSERS,
     ...overrides,

@@ -23,9 +23,9 @@ use std::time::Duration;
 use mine_lib::domain::block::{Block, BlockType, DateTime, Frontmatter};
 use mine_lib::domain::channel::Channel;
 use mine_lib::domain::collection::{normalize_collection_ref, validate_collection_ref};
-use mine_lib::domain::vault::{resolve_card_name_conflict, VaultLayout};
+use mine_lib::domain::vault::VaultLayout;
 use mine_lib::net;
-use mine_lib::storage::{clipper_uploads, db, files, index, thumbnails};
+use mine_lib::storage::{clipper_uploads, db, files, index, save_operations, thumbnails};
 use mine_lib::util::now_iso8601;
 use percent_encoding::percent_decode_str;
 
@@ -45,6 +45,14 @@ struct Request {
 #[derive(serde::Serialize)]
 struct StatusResponse {
     ok: bool,
+    connected: bool,
+    #[serde(rename = "vaultConfigured")]
+    vault_configured: bool,
+    binding_id: Option<String>,
+    executor_id: String,
+    folder_state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
     vault_path: Option<String>,
     version: String,
     host_api_version: u32,
@@ -66,15 +74,6 @@ struct ChannelsResponse {
 }
 
 #[derive(serde::Serialize)]
-struct SaveResponse {
-    ok: bool,
-    slug: String,
-    block_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    warning: Option<String>,
-}
-
-#[derive(serde::Serialize)]
 struct CreateChannelResponse {
     ok: bool,
     tag: String,
@@ -86,9 +85,10 @@ struct ErrorResponse {
     error: String,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, serde::Serialize)]
 struct SaveBlockParams {
     block_type: String,
+    saved_at: Option<String>,
     title: Option<String>,
     description: Option<String>,
     url: Option<String>,
@@ -107,7 +107,7 @@ struct SaveBlockParams {
     video_posters: Option<Vec<VideoPosterRef>>,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, serde::Serialize)]
 struct VideoPosterRef {
     video_url: String,
     poster_url: String,
@@ -245,13 +245,10 @@ fn send_error(msg: &str) {
 
 // ─── Vault path discovery ───────────────────────────────────────────────────
 
-const DEFAULT_VAULT_DIR: &str = "Mine";
-
 /// Read vault path from the main app's config file.
 /// Location: ~/Library/Application Support/com.mine.app/config.json
 ///
-/// Fallback: if config doesn't exist (standalone mode — no desktop app),
-/// uses ~/LocalArena/ and creates the directory if needed.
+/// No implicit fallback: folder selection is an explicit user action.
 fn load_vault_path() -> Option<String> {
     let home = std::env::var("HOME").ok()?;
 
@@ -266,10 +263,7 @@ fn load_vault_path() -> Option<String> {
         }
     }
 
-    // Fallback: ~/LocalArena/ (standalone mode)
-    let default_path = PathBuf::from(&home).join(DEFAULT_VAULT_DIR);
-    let _ = std::fs::create_dir_all(&default_path);
-    Some(default_path.to_string_lossy().to_string())
+    None
 }
 
 /// Load known vaults from config, filter to existing directories.
@@ -306,16 +300,28 @@ fn load_known_vaults() -> Vec<String> {
 }
 
 fn resolve_native_vault_layout(root: PathBuf) -> Result<VaultLayout, String> {
+    resolve_native_vault_layout_at(root, native_app_data_dir()?)
+}
+
+fn resolve_native_vault_layout_at(
+    root: PathBuf,
+    app_state: PathBuf,
+) -> Result<VaultLayout, String> {
     let base = VaultLayout::new(root.clone());
+    files::validate_vault_write_target(&base, &base.mine_dir()).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(base.mine_dir())
         .map_err(|e| format!("failed to create Mine metadata dir: {e}"))?;
 
     let vault_id = ensure_native_vault_id(&base)?;
-    let derived_root = native_app_data_dir()?.join("vaults").join(vault_id);
-    let layout = VaultLayout::with_derived_root(root, derived_root);
+    let derived_root = app_state.join("vaults").join(vault_id);
+    let write_layout = files::load_vault_write_layout(&base).map_err(|error| error.to_string())?;
+    let layout = VaultLayout::with_derived_root(root, derived_root).with_write_layout(write_layout);
 
-    bootstrap_native_index_from_legacy(&layout)?;
-    cleanup_native_legacy_vault_artifacts(&layout)?;
+    if let Err(error) = bootstrap_native_index_from_legacy(&layout) {
+        log::warn!("legacy index bootstrap deferred: {error}");
+    } else if let Err(error) = cleanup_native_legacy_vault_artifacts(&layout) {
+        log::warn!("legacy derived cleanup deferred: {error}");
+    }
     Ok(layout)
 }
 
@@ -326,9 +332,11 @@ fn native_app_data_dir() -> Result<PathBuf, String> {
 
 fn ensure_native_vault_id(vault: &VaultLayout) -> Result<String, String> {
     let path = vault.vault_id_path();
+    files::validate_vault_write_target(vault, &path).map_err(|e| e.to_string())?;
     if let Ok(existing) = std::fs::read_to_string(&path) {
         let trimmed = existing.trim();
         if !trimmed.is_empty() {
+            save_operations::validate_id(trimmed).map_err(|e| e.to_string())?;
             return Ok(trimmed.to_string());
         }
     }
@@ -336,6 +344,7 @@ fn ensure_native_vault_id(vault: &VaultLayout) -> Result<String, String> {
     if let Ok(existing) = std::fs::read_to_string(vault.legacy_vault_id_path()) {
         let trimmed = existing.trim();
         if !trimmed.is_empty() {
+            save_operations::validate_id(trimmed).map_err(|e| e.to_string())?;
             files::write_atomically(&path, format!("{trimmed}\n").as_bytes())
                 .map_err(|e| format!("failed to migrate vault-id to .mine: {e:#}"))?;
             return Ok(trimmed.to_string());
@@ -506,12 +515,11 @@ fn add_known_vault(path: &str) -> Result<Vec<String>, String> {
     }
     json["known_vaults"] = serde_json::json!(vaults);
 
-    let serialized = serde_json::to_string_pretty(&json)
-        .map_err(|e| format!("cannot serialize config: {e}"))?;
+    let serialized =
+        serde_json::to_string_pretty(&json).map_err(|e| format!("cannot serialize config: {e}"))?;
     let tmp_path = config_dir.join("config.json.tmp");
     std::fs::write(&tmp_path, serialized).map_err(|e| format!("cannot write config: {e}"))?;
-    std::fs::rename(&tmp_path, &config_path)
-        .map_err(|e| format!("cannot commit config: {e}"))?;
+    std::fs::rename(&tmp_path, &config_path).map_err(|e| format!("cannot commit config: {e}"))?;
     Ok(vaults)
 }
 
@@ -612,22 +620,53 @@ fn handle_reveal_vault(params: serde_json::Value) {
     if !allowed.iter().any(|vault| vault == &p.path) {
         return send_error("path is not a known vault");
     }
-    match std::process::Command::new("open").arg("-R").arg(&p.path).status() {
+    match std::process::Command::new("open")
+        .arg("-R")
+        .arg(&p.path)
+        .status()
+    {
         Ok(status) if status.success() => send_response(&RevealVaultResponse { ok: true }),
         Ok(status) => send_error(&format!("open -R exited with {status}")),
         Err(e) => return send_error(&format!("cannot run open: {e}")),
     }
 }
 
-fn handle_get_status_with_upload(upload: &Option<UploadServer>) {
-    let vault_path = load_vault_path();
-    let ok = vault_path.is_some();
+fn handle_get_status_with_upload(upload: &Option<UploadServer>, vault_path: Option<String>) {
+    let (binding_id, folder_state, error) = match &vault_path {
+        None => (None, "unconfigured", None),
+        Some(path) => match std::fs::read_dir(path) {
+            Ok(_) => match save_operations::binding_id(&VaultLayout::new(PathBuf::from(path))) {
+                Ok(id) => (Some(id), "ready", None),
+                Err(error) => (None, "unavailable", Some(error.to_string())),
+            },
+            Err(error) => {
+                let state = match error.kind() {
+                    std::io::ErrorKind::NotFound => "missing",
+                    std::io::ErrorKind::PermissionDenied => "access_denied",
+                    _ => "unavailable",
+                };
+                (None, state, Some(error.to_string()))
+            }
+        },
+    };
     send_response(&StatusResponse {
-        ok,
+        ok: true,
+        connected: true,
+        vault_configured: binding_id.is_some(),
+        binding_id,
+        executor_id: "native".into(),
+        folder_state: folder_state.into(),
+        error,
         vault_path,
         version: VERSION.to_string(),
         host_api_version: HOST_API_VERSION,
-        features: vec!["pending_uploads_v1".to_string()],
+        features: vec![
+            "pending_uploads_v1".into(),
+            "save_operation_v1".into(),
+            "operation_lookup_v1".into(),
+            "open_app_v1".into(),
+            "connection_check_v1".into(),
+        ],
         upload_port: upload.as_ref().map(|u| u.port),
         upload_token: upload.as_ref().map(|u| u.token.clone()),
     });
@@ -709,129 +748,330 @@ fn existing_vault_stems(
         .iter()
         .map(|b| b.slug.clone())
         .collect();
-    collect_vault_file_stems(vault, vault.root(), &mut existing)?;
+    existing.extend(files::scan_vault_file_stems(vault).map_err(|error| error.to_string())?);
     Ok(existing)
 }
 
-fn collect_vault_file_stems(
-    vault: &VaultLayout,
-    dir: &Path,
-    existing: &mut HashSet<String>,
-) -> Result<(), String> {
-    for entry in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let path = entry.path();
-        let file_type = entry.file_type().map_err(|e| e.to_string())?;
-        if file_type.is_dir() {
-            if files::is_ignored_vault_dir(&path) {
-                continue;
-            }
-            collect_vault_file_stems(vault, &path, existing)?;
-            continue;
-        }
-        if !file_type.is_file() {
-            continue;
-        }
-        if let Ok(stem) = vault.slug_for_path(&path) {
-            existing.insert(stem);
-        }
-    }
-    Ok(())
+fn operation_store(vault: &VaultLayout) -> anyhow::Result<save_operations::SaveOperationStore> {
+    let parent = vault
+        .derived_root()
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("derived state has no parent"))?;
+    Ok(save_operations::SaveOperationStore::new(
+        parent.join("operations").join("v1"),
+    ))
 }
 
-fn normalize_collection_list(raw_tags: Vec<String>) -> Result<Vec<String>, String> {
-    let mut out = Vec::new();
-    for raw in raw_tags {
-        let normalized = normalize_collection_ref(&raw);
-        if normalized.is_empty() {
-            continue;
-        }
-        let collection_ref = validate_collection_ref(&normalized)?;
-        if !out.contains(&collection_ref) {
-            out.push(collection_ref);
-        }
-    }
-    Ok(out)
+fn operation_failure(
+    id: &str,
+    outcome: &str,
+    code: &str,
+    error: impl ToString,
+) -> serde_json::Value {
+    serde_json::json!({ "ok": false, "outcome": outcome, "operation_id": id,
+        "code": code, "error": error.to_string() })
 }
 
-fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
-    let p: SaveBlockParams = match serde_json::from_value(params) {
-        Ok(p) => p,
-        Err(e) => return send_error(&format!("invalid save_block params: {e}")),
-    };
-
-    let bt = match BlockType::from_str(&p.block_type) {
-        Ok(bt) => bt,
-        Err(e) => return send_error(&format!("invalid block type: {e}")),
-    };
-
-    let pending_upload_id = p.pre_uploaded_id.clone().or_else(|| {
+fn pending_id(p: &SaveBlockParams) -> Option<String> {
+    p.pre_uploaded_id.clone().or_else(|| {
         p.pre_uploaded_file
             .as_deref()
             .and_then(clipper_uploads::upload_id_from_legacy_filename)
             .map(str::to_string)
-    });
+    })
+}
 
-    let conn = match db::open_or_create(&vault.index_db_path()) {
-        Ok(c) => c,
-        Err(e) => return send_error(&format!("failed to open database: {e}")),
-    };
+fn fingerprint_capture(p: &SaveBlockParams, binding: &str) -> String {
+    mine_core::save::request_fingerprint(&serde_json::json!({
+        "capture": p, "binding_id": binding, "executor_id": "native"
+    }))
+}
 
-    // Whatever happens below, the staged copy goes with this save. Held here
-    // rather than cleaned up at each exit: the routine has eleven ways to fail
-    // and one to succeed, and the old code cleaned up on the successful one
-    // only — which is how a failed clip left its file behind for ever.
-    let _staged = pending_upload_id
-        .as_ref()
-        .map(|upload_id| clipper_uploads::PendingUploadGuard::new(vault, upload_id.clone()));
-
-    if let Some(ref upload_id) = pending_upload_id {
-        if let Err(e) = clipper_uploads::load_pending_upload(vault, upload_id) {
-            return send_error(&format!("failed to read pending upload: {e:#}"));
-        }
+fn check_binding(params: &serde_json::Value, binding: &str) -> anyhow::Result<()> {
+    if params
+        .get("binding_id")
+        .and_then(|v| v.as_str())
+        .is_some_and(|id| id != binding)
+    {
+        anyhow::bail!("selected folder differs from the operation binding");
     }
+    if params
+        .get("executor_id")
+        .and_then(|v| v.as_str())
+        .is_some_and(|id| id != "native")
+    {
+        anyhow::bail!("operation belongs to another executor");
+    }
+    Ok(())
+}
 
-    // Generate slug
-    let raw_slug = mine_lib::domain::block::suggest_slug(p.title.as_deref(), p.url.as_deref());
-    let existing = match existing_vault_stems(&conn, vault) {
-        Ok(existing) => existing,
-        Err(e) => return send_error(&format!("failed to inspect existing vault files: {e}")),
+fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
+    let response = match operation_store(vault) {
+        Ok(store) => save_block_with_store(vault, params, &store),
+        Err(error) => operation_failure("", "unknown", "operation_unknown", error),
     };
-    // `name` is the card's display-level file name and the stem every media
-    // file is named after; `slug` is its vault-relative path, which carries the
-    // configured cards folder. Keeping them apart is what lets media stay a
-    // bare wikilink while the card lives in `Cards/`.
-    let name = match resolve_card_name_conflict(vault, &raw_slug, &existing) {
-        Ok(s) => s,
-        Err(e) => return send_error(&format!("{e}")),
+    send_response(&response);
+}
+
+fn save_block_with_store(
+    vault: &VaultLayout,
+    params: serde_json::Value,
+    store: &save_operations::SaveOperationStore,
+) -> serde_json::Value {
+    let mut p: SaveBlockParams = match serde_json::from_value(params.clone()) {
+        Ok(value) => value,
+        Err(error) => return operation_failure("", "not_committed", "invalid_request", error),
     };
+    if params
+        .get("operation_id")
+        .is_some_and(|value| !value.is_string())
+    {
+        return operation_failure(
+            "",
+            "not_committed",
+            "invalid_request",
+            "operation_id must be a string",
+        );
+    }
+    let id = params
+        .get("operation_id")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .or_else(|| pending_id(&p))
+        .unwrap_or_else(|| generate_native_vault_id().unwrap_or_default());
+    if let Err(error) = save_operations::validate_id(&id) {
+        return operation_failure(&id, "not_committed", "invalid_request", error);
+    }
+    let binding = match save_operations::binding_id(vault) {
+        Ok(value) => value,
+        Err(error) => return operation_failure(&id, "unknown", "binding_unavailable", error),
+    };
+    if let Err(error) = check_binding(&params, &binding) {
+        return operation_failure(&id, "not_committed", "binding_mismatch", error);
+    }
+    let mode = match params.get("operation_mode") {
+        None => "start",
+        Some(value) => value.as_str().unwrap_or("invalid"),
+    };
+    if mode != "start" && mode != "resume" {
+        return operation_failure(
+            &id,
+            "not_committed",
+            "invalid_request",
+            "invalid operation mode",
+        );
+    }
+    let collection_error =
+        match mine_core::save::normalize_collections(p.tags.as_deref().unwrap_or_default()) {
+            Ok(tags) => {
+                p.tags = Some(tags);
+                None
+            }
+            Err(error) => Some(error),
+        };
+    let fingerprint = fingerprint_capture(&p, &binding);
+    let locked = match store.lock(&binding) {
+        Ok(value) => value,
+        Err(error) => return operation_failure(&id, "unknown", "operation_unknown", error),
+    };
+    match locked.load(&id) {
+        Ok(Some(mut record)) => {
+            if record.fingerprint != fingerprint {
+                return operation_failure(
+                    &id,
+                    "not_committed",
+                    "operation_conflict",
+                    "operation ID was already used with different content",
+                );
+            }
+            let recovery = if locked.can_resume(&record, vault) {
+                locked.publish_plan(&mut record, vault).map(Some)
+            } else {
+                locked.recovered_response(&mut record, vault)
+            };
+            return match recovery {
+                Ok(Some(response)) => {
+                    if response["ok"] == true && response["durability_warning"].is_null() {
+                        if let Some(upload) = pending_id(&p) {
+                            let _ = clipper_uploads::mark_pending_upload_committed(vault, &upload);
+                        }
+                    }
+                    response
+                }
+                Ok(None) => operation_failure(
+                    &id,
+                    "unknown",
+                    "operation_unknown",
+                    "prior publication cannot be confirmed; original material has been retained",
+                ),
+                Err(error) => operation_failure(&id, "unknown", "operation_unknown", error),
+            };
+        }
+        Ok(None) if mode == "resume" => {
+            return operation_failure(
+                &id,
+                "unknown",
+                "operation_unknown",
+                "operation receipt is unavailable",
+            )
+        }
+        Err(error) => return operation_failure(&id, "unknown", "operation_unknown", error),
+        Ok(None) => {}
+    }
+    let mut record = match locked.begin(&id, fingerprint, &serde_json::to_value(&p).unwrap()) {
+        Ok(record) => record,
+        Err(error) => return operation_failure(&id, "unknown", "operation_unknown", error),
+    };
+    // Validate semantics before acquiring resources or publishing media. Only
+    // this known no-effects boundary produces a durable terminal rejection.
+    let validation = collection_error
+        .map_or_else(
+            || {
+                mine_core::save::validate_capture_input(
+                    mine_core::save::CaptureIntent::WebClip,
+                    &p.block_type,
+                    p.body.as_deref().unwrap_or_default(),
+                    pending_id(&p).is_some()
+                        || p.pre_uploaded_file.is_some()
+                        || p.image_url.is_some(),
+                )
+            },
+            Err,
+        )
+        .map_err(|error| error.to_string())
+        .and_then(|_| {
+            p.saved_at.as_deref().map_or(Ok(()), |value| {
+                DateTime::new(value)
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            })
+        });
+    if let Err(error) = validation {
+        let mut response = operation_failure(&id, "not_committed", "invalid_request", error);
+        response["terminal_rejected"] = serde_json::json!(true);
+        return match locked.reject(&mut record, response.clone()) {
+            Ok(()) => response,
+            Err(error) => operation_failure(&id, "unknown", "operation_unknown", error),
+        };
+    }
+    match perform_save_block(vault, p, &locked, &mut record) {
+        Ok(response) => response,
+        Err(error) if matches!(record.phase, save_operations::OperationPhase::StagingV2) => {
+            let mut response = operation_failure(&id, "not_committed", "preparation_failed", error);
+            response["terminal_rejected"] = serde_json::json!(true);
+            match locked.reject_preparation(&mut record, response.clone()) {
+                Ok(()) => response,
+                Err(error) => operation_failure(&id, "unknown", "operation_unknown", error),
+            }
+        }
+        // Publication intent is not evidence of absence. No automatic rollback
+        // can delete an already published source artifact.
+        Err(error) => operation_failure(&id, "unknown", "operation_unknown", error),
+    }
+}
+
+fn handle_get_save_operation(vault: &VaultLayout, params: serde_json::Value) {
+    let id = params
+        .get("operation_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let result = (|| -> anyhow::Result<Option<serde_json::Value>> {
+        save_operations::validate_id(id)?;
+        let binding = save_operations::binding_id(vault)?;
+        check_binding(&params, &binding)?;
+        let store = operation_store(vault)?;
+        let locked = store.lock(&binding)?;
+        let Some(mut record) = locked.load(id)? else {
+            return Ok(None);
+        };
+        let response = locked.recovered_response(&mut record, vault)?;
+        if response.is_none() && locked.can_resume(&record, vault) {
+            return Ok(Some(serde_json::json!({
+                "ok": false, "operation_id": id, "outcome": "not_committed",
+                "resumable": true,
+            })));
+        }
+        if response
+            .as_ref()
+            .is_some_and(|value| value["ok"] == true && value["durability_warning"].is_null())
+        {
+            if let Some(upload) = &record.pending_upload_id {
+                if let Err(error) = clipper_uploads::mark_pending_upload_committed(vault, upload) {
+                    log::warn!("operation confirmed; staging cleanup deferred: {error:#}");
+                }
+            }
+        }
+        Ok(response)
+    })();
+    send_response(&match result {
+        Ok(Some(response)) => response,
+        Ok(None) => operation_failure(
+            id,
+            "unknown",
+            "operation_unknown",
+            "operation receipt is unavailable",
+        ),
+        Err(error) => operation_failure(id, "unknown", "operation_unknown", error),
+    });
+}
+
+fn perform_save_block(
+    vault: &VaultLayout,
+    p: SaveBlockParams,
+    locked: &save_operations::LockedSaveOperations,
+    record: &mut save_operations::SaveOperationRecord,
+) -> anyhow::Result<serde_json::Value> {
+    perform_save_block_with_publisher(vault, p, locked, record, files::copy_new_atomically)
+}
+
+fn perform_save_block_with_publisher(
+    vault: &VaultLayout,
+    p: SaveBlockParams,
+    locked: &save_operations::LockedSaveOperations,
+    record: &mut save_operations::SaveOperationRecord,
+    publish: impl FnMut(&std::path::Path, &std::path::Path) -> anyhow::Result<()>,
+) -> anyhow::Result<serde_json::Value> {
+    let bt = BlockType::from_str(&p.block_type).map_err(anyhow::Error::msg)?;
+    let pending_upload_id = pending_id(&p);
+    let existing = files::scan_vault_file_stems(vault)?;
+    let name = mine_core::save::select_name(
+        vault.write_layout(),
+        p.title.as_deref(),
+        p.url.as_deref(),
+        &existing.into_iter().collect::<Vec<_>>(),
+    )?;
     let slug = vault.new_card_slug(&name);
-
+    files::validate_vault_write_target(vault, &vault.block_path(&slug))?;
+    record.reserved_name = Some(name.clone());
+    record.pending_upload_id = pending_upload_id.clone();
+    locked.store(record)?;
+    // Acquisition is isolated from source. The same layout yields exact final
+    // relative references, but neither downloads nor inline localization can
+    // mutate the user's vault before the complete plan is durable.
+    let source_vault = vault;
+    let staging = VaultLayout::new(locked.create_staging(&record.operation_id)?)
+        .with_write_layout(source_vault.write_layout().clone());
+    let vault = &staging;
     // Resolve media: pre-uploaded file, data URL, or HTTP download
     let mut media_file = None;
     let mut thumbnail_file = None;
     let mut warning = None;
 
     if let Some(ref upload_id) = pending_upload_id {
-        match clipper_uploads::finalize_pending_upload(vault, upload_id, &name) {
+        match clipper_uploads::prepare_pending_upload(source_vault, vault, upload_id, &name) {
             Ok(finalized) => {
-                media_file = Some(finalized.filename);
+                media_file = Some(vault.new_media_stem(&finalized.filename));
             }
             Err(e) => {
                 warning = Some(format!("failed to finalize pending upload: {e:#}"));
             }
         }
     } else if let Some(ref uploaded) = p.pre_uploaded_file {
-        // File already uploaded via HTTP /upload endpoint.
-        // Phase 18.E: backend is authoritative for the final media filename.
-        // The uploaded file may have arrived under any popup-chosen staging
-        // name (e.g. `screenshot.jpg`, `upload.mp4`). We rename it to
-        // `<slug>.<ext>` here so that the media file basename always matches
-        // the resolved block slug — consistent with screenshot and HTTP
-        // download paths below.
-        match finalize_uploaded_filename(vault, uploaded, &name) {
+        // Compatibility input only. Its bare filename does not prove staging
+        // ownership, so publish a new copy but never remove the original.
+        match prepare_legacy_upload(source_vault, vault, uploaded, &name) {
             Ok(final_name) => {
-                media_file = Some(final_name);
+                media_file = Some(vault.new_media_stem(&final_name));
             }
             Err(e) => {
                 warning = Some(e);
@@ -842,11 +1082,12 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
             // Data URL (screenshot) — decode base64 and write directly
             match decode_data_url(image_url) {
                 Ok((bytes, ext)) => {
-                    let dest_name = format!("{}.{}", slug, ext);
-                    let dest_path = vault.root().join(&dest_name);
+                    let dest_name = format!("{}.{}", name, ext);
+                    let dest_path = vault.new_media_path(&dest_name);
+                    files::validate_vault_write_target(vault, &dest_path)?;
                     match write_new_bytes(&dest_path, &bytes) {
                         Ok(()) => {
-                            media_file = Some(dest_name);
+                            media_file = Some(vault.new_media_stem(&dest_name));
                         }
                         Err(e) => warning = Some(format!("failed to write screenshot: {e}")),
                     }
@@ -856,16 +1097,17 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
         } else {
             // HTTP URL — download file
             let ext = ext_from_url(image_url);
-            let dest_name = format!("{}.{}", slug, ext);
-            let dest_path = vault.root().join(&dest_name);
+            let dest_name = format!("{}.{}", name, ext);
+            let dest_path = vault.new_media_path(&dest_name);
+            files::validate_vault_write_target(vault, &dest_path)?;
 
             let referer = p.url.as_deref().unwrap_or(image_url);
             match download_file(image_url, &dest_path, referer) {
                 Ok(()) => {
                     if bt == BlockType::Video && thumbnails::is_image_ext(&ext) {
-                        thumbnail_file = Some(dest_name);
+                        thumbnail_file = Some(vault.new_media_stem(&dest_name));
                     } else {
-                        media_file = Some(dest_name);
+                        media_file = Some(vault.new_media_stem(&dest_name));
                     }
                 }
                 Err(e) => {
@@ -920,186 +1162,105 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
                 .map(|entry| entry.poster_url.clone())
         }) {
             let ext = ext_from_url(&poster_url);
-            let dest_name = format!("{slug} (poster).{ext}");
-            let dest_path = vault.root().join(&dest_name);
+            let dest_name = format!("{name} (poster).{ext}");
+            let dest_path = vault.new_media_path(&dest_name);
+            files::validate_vault_write_target(vault, &dest_path)?;
             let referer = p.url.as_deref().unwrap_or(&poster_url);
             match download_file(&poster_url, &dest_path, referer) {
-                Ok(()) => thumbnail_file = Some(dest_name),
+                Ok(()) => thumbnail_file = Some(vault.new_media_stem(&dest_name)),
                 Err(e) => log::warn!("inline-media: poster download failed err={e}"),
             }
         }
     }
-    let body = if !body.trim().is_empty() && should_write_body_h1(bt, p.url.as_deref()) {
-        mine_lib::domain::block::ensure_body_starts_with_h1(&body, p.title.as_deref().unwrap_or(""))
-    } else {
-        body
-    };
 
-    if bt == BlockType::Article && body.trim().is_empty() {
-        cleanup_resolved_media(vault, media_file.as_deref(), thumbnail_file.as_deref());
-        cleanup_inline_files(&inline_files);
-        return send_error("article block requires non-empty extracted content");
-    }
-
-    let now = now_iso8601();
-    let saved_at = match DateTime::new(&now) {
-        Ok(dt) => dt,
-        Err(e) => return send_error(&format!("failed to create timestamp: {e}")),
-    };
-
-    // Reject image blocks without a resolved media file. A prior clipper
-    // bug let a user switch type-to-image after uploading a screenshot,
-    // at which point the save path no longer forwarded pre_uploaded_file
-    // or image_url — the native host silently wrote a frontmatter with
-    // neither `file:` nor `thumbnail:`, producing an orphaned .md that
-    // never rendered a card. Fail loudly here so the clipper can show
-    // a retry prompt instead of persisting an inconsistent block.
-    if matches!(bt, BlockType::Image) && media_file.is_none() && thumbnail_file.is_none() {
-        return send_error(
-            warning
-                .as_deref()
-                .unwrap_or("image block requires a media file or thumbnail"),
-        );
-    }
-
-    let tags = match normalize_collection_list(p.tags.unwrap_or_default()) {
-        Ok(tags) => tags,
-        Err(error) => return send_error(&format!("invalid collection ref: {error}")),
-    };
-
-    let mut block = Block {
+    let block = mine_core::save::build_capture(&mine_core::save::CaptureRequest {
+        intent: mine_core::save::CaptureIntent::WebClip,
         slug: slug.clone(),
-        frontmatter: Frontmatter {
-            block_type: bt,
-            title: None,
-            description: p.description,
-            url: p.url,
-            file: media_file,
-            thumbnail: thumbnail_file,
-            tags,
-            related_notes: Vec::new(),
-            source_media: None,
-            saved_at,
-            source: Some("web-clipper".to_string()),
-            width: p.width,
-            height: p.height,
-            author: p.author,
-            position: None,
-            color: None,
-            icon: None,
-        },
+        block_type: p.block_type.clone(),
+        title: p.title,
+        description: p.description,
+        url: p.url,
         body,
-    };
-    // The clipper's declared type is a save-mode hint, not the card's type:
-    // the persisted kind is derived from content (decision 044), and the
-    // serializer writes no `type:` line for cards either way.
-    block.frontmatter.block_type =
-        mine_lib::domain::block::derive_block_type(&block.frontmatter, &block.body);
-
-    // Write .md file
-    if let Err(e) = files::write_new_block_file(vault, &block) {
-        cleanup_new_block_media(vault, &block);
-        cleanup_inline_files(&inline_files);
-        return send_error(&format!("failed to write block file: {e}"));
-    }
-
-    // Best-effort index catch-up. The source vault is still the durable
-    // commit, but the clipper must also work while the desktop UI is closed:
-    // waiting for a future watcher/full-scan makes a successful save look
-    // like "nothing happened". If the desktop app currently owns a write lock,
-    // do not fail the clip; the watcher/startup scan can still reconcile from
-    // the source files.
-    let indexed = if let Err(e) = index::upsert_block_with_diagnostics(
-        &conn,
-        &block,
-        Some(vault.root()),
-        Some("clipper"),
-        None,
-    ) {
-        let message = format!("saved block, but failed to update local index: {e:#}");
-        warning = Some(match warning {
-            Some(existing) => format!("{existing}; {message}"),
-            None => message,
-        });
-        false
-    } else {
-        true
-    };
-
-    // Thumbnail generation is delegated to the shared cascade in
-    // storage::thumbnails::generate_for_block. Single source of truth —
-    // watcher handler calls the same function at full_scan and on file
-    // change. Covers: explicit media file, frontmatter thumbnail field,
-    // first embedded image/video in article body, and text fallback.
-    let thumb_source = thumbnails::generate_for_block(&block, vault);
-
-    if indexed && thumb_source != thumbnails::ThumbSource::None {
-        let thumb_path = vault.thumb_path(&block.slug);
-        if let Err(e) =
-            index::sync_thumb_metadata(&conn, &block.slug, &thumb_path, Some(vault.root()))
-        {
-            let message = format!("saved block, but failed to update thumb metadata: {e:#}");
-            warning = Some(match warning {
-                Some(existing) => format!("{existing}; {message}"),
-                None => message,
-            });
-        }
-    }
-
-    send_response(&SaveResponse {
-        ok: true,
-        slug,
-        block_type: p.block_type,
-        warning,
-    });
-}
-
-fn should_write_body_h1(block_type: BlockType, url: Option<&str>) -> bool {
-    let is_social_status = url.is_some_and(is_social_status_url);
-    match block_type {
-        BlockType::Link => true,
-        BlockType::Article => !is_social_status,
-        BlockType::Video => url.is_some() && !is_social_status,
-        BlockType::Image | BlockType::File | BlockType::Channel => false,
-    }
-}
-
-/// Remove inline body media files written during localization. Rolls back
-/// orphaned `slug (image N).*` files when the block write fails, so a retried
-/// clip does not leave duplicates next to stale orphans.
-fn cleanup_inline_files(inline_files: &[std::path::PathBuf]) {
-    for path in inline_files {
-        let _ = std::fs::remove_file(path);
-    }
-}
-
-fn cleanup_resolved_media(
-    vault: &VaultLayout,
-    media_file: Option<&str>,
-    thumbnail_file: Option<&str>,
-) {
-    for name in [media_file, thumbnail_file].into_iter().flatten() {
-        let path = vault.root().join(name);
-        if path.starts_with(vault.root()) {
-            let _ = std::fs::remove_file(path);
-        }
-    }
-}
-
-fn cleanup_new_block_media(vault: &VaultLayout, block: &Block) {
-    cleanup_resolved_media(
-        vault,
+        file: media_file,
+        thumbnail: thumbnail_file,
+        tags: p.tags.unwrap_or_default(),
+        saved_at: p.saved_at.unwrap_or_else(now_iso8601),
+        source: Some("web-clipper".into()),
+        width: p.width,
+        height: p.height,
+        author: p.author,
+    })?;
+    let mut artifacts = inline_files
+        .iter()
+        .map(|path| save_operations::PlannedArtifact::inspect(vault, path))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    for filename in [
         block.frontmatter.file.as_deref(),
         block.frontmatter.thumbnail.as_deref(),
-    );
-}
-
-fn is_social_status_url(url: &str) -> bool {
-    let lower = url.to_lowercase();
-    ((lower.contains("twitter.com/") || lower.contains("x.com/")) && lower.contains("/status/"))
-        || lower.contains("instagram.com/p/")
-        || lower.contains("instagram.com/reel/")
-        || lower.contains("instagram.com/stories/")
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let path = vault.root().join(filename);
+        if !artifacts
+            .iter()
+            .any(|artifact| artifact.source.relative_path == filename)
+        {
+            artifacts.push(save_operations::PlannedArtifact::inspect(vault, &path)?);
+        }
+    }
+    let response = serde_json::json!({
+        "ok": true, "outcome": "committed", "operation_id": record.operation_id,
+        "slug": slug, "block_type": p.block_type, "warning": warning,
+    });
+    let markdown_path = files::write_new_block_file(vault, &block)?;
+    locked.prepare_plan(
+        record,
+        save_operations::StagedSavePlan {
+            write_layout: Some(vault.write_layout().clone()),
+            markdown: save_operations::PlannedArtifact::inspect(vault, &markdown_path)?,
+            media: artifacts,
+            response: response.clone(),
+        },
+    )?;
+    let vault = source_vault;
+    let committed = locked.publish_plan_with(record, vault, publish)?;
+    if committed["ok"] != true {
+        // A terminal pre-effect name conflict is a valid protocol response,
+        // but is not authority for upload cleanup or disposable-index writes.
+        return Ok(committed);
+    }
+    if let Some(upload) = pending_upload_id.filter(|_| committed["durability_warning"].is_null()) {
+        if let Err(error) = clipper_uploads::mark_pending_upload_committed(vault, &upload) {
+            log::warn!("capture committed; staging cleanup deferred: {error:#}");
+        }
+    }
+    // The source receipt precedes every disposable-index/preview side effect.
+    // Index failures do not change the already confirmed save response.
+    match db::open_or_create(&vault.index_db_path()) {
+        Ok(conn) => {
+            if let Err(error) = index::upsert_block_with_diagnostics(
+                &conn,
+                &block,
+                Some(vault.root()),
+                Some("clipper"),
+                None,
+            ) {
+                log::warn!("capture committed; index catch-up deferred: {error:#}");
+            }
+            let thumb_source = thumbnails::generate_for_block(&block, vault);
+            if thumb_source != thumbnails::ThumbSource::None {
+                let _ = index::sync_thumb_metadata(
+                    &conn,
+                    &block.slug,
+                    &vault.thumb_path(&block.slug),
+                    Some(vault.root()),
+                );
+            }
+        }
+        Err(error) => log::warn!("capture committed; index unavailable: {error:#}"),
+    }
+    Ok(committed)
 }
 
 fn handle_create_channel(vault: &VaultLayout, params: serde_json::Value) {
@@ -1180,34 +1341,31 @@ fn channel_to_block(channel: &Channel) -> Block {
     }
 }
 
-/// Finalize a pre-uploaded staging file by renaming it from whatever name
-/// the popup used (`screenshot.jpg`, `upload.mp4`, ...) to `<final_stem>.<ext>`,
-/// where `final_stem` is the resolved block slug.
-///
-/// Behavior:
-/// - If the staging file does not exist, returns an error describing which
-///   filename was missing.
-/// - If `uploaded` already equals the target filename, no rename is performed.
-/// - If the target filename already exists, returns an error — the caller's
-///   slug-conflict resolution should have produced a unique stem, so a
-///   collision here indicates an untracked media file on disk and we must not
-///   overwrite it silently.
-/// - Otherwise renames the file and returns the new basename.
-///
-/// Phase 18.E: backend is authoritative for the final media filename.
+#[cfg(test)]
 fn finalize_uploaded_filename(
     vault: &VaultLayout,
     uploaded: &str,
     final_stem: &str,
 ) -> Result<String, String> {
+    prepare_legacy_upload(vault, vault, uploaded, final_stem)
+}
+
+/// Copy a legacy bare-name input into operation-owned staging. It has no
+/// ownership token and must remain untouched even after a successful save.
+fn prepare_legacy_upload(
+    vault: &VaultLayout,
+    staging: &VaultLayout,
+    uploaded: &str,
+    final_stem: &str,
+) -> Result<String, String> {
     let vault_root = vault.root();
-    let uploaded_normalized = uploaded.replace('\\', "/");
-    let uploaded = std::path::Path::new(&uploaded_normalized)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| !name.is_empty())
-        .ok_or_else(|| format!("invalid pre-uploaded filename: {uploaded}"))?;
+    if uploaded.is_empty() || uploaded.contains(['/', '\\']) || uploaded == "." || uploaded == ".."
+    {
+        return Err("legacy upload must be a bare filename".into());
+    }
+    mine_core::domain::vault::validate_slug(final_stem).map_err(|e| e.to_string())?;
     let src = vault_root.join(uploaded);
+    files::validate_vault_write_target(vault, &src).map_err(|e| e.to_string())?;
     if !src.exists() {
         return Err(format!("pre-uploaded file not found: {uploaded}"));
     }
@@ -1237,7 +1395,11 @@ fn finalize_uploaded_filename(
     let mut candidate_stem = final_stem.to_string();
     let mut candidate = build_name(&candidate_stem);
     let mut counter: u32 = 2;
-    while uploaded != candidate && vault_root.join(&candidate).exists() {
+    while !(vault.root() == staging.root() && src == vault.new_media_path(&candidate))
+        && (vault.new_media_path(&candidate).exists()
+            || mine_lib::storage::media_refs::resolve_basename_under(vault.root(), &candidate)
+                .is_some())
+    {
         candidate_stem = format!("{final_stem} ({counter})");
         candidate = build_name(&candidate_stem);
         counter = counter
@@ -1245,19 +1407,23 @@ fn finalize_uploaded_filename(
             .ok_or_else(|| "ran out of collision suffixes".to_string())?;
     }
 
-    if uploaded == candidate && src == vault.new_media_path(&candidate) {
+    if vault.root() == staging.root()
+        && uploaded == candidate
+        && src == vault.new_media_path(&candidate)
+    {
         return Ok(candidate);
     }
 
-    // The staged file lands at the vault root; its final home is the configured
-    // media folder, so this both renames and relocates in one move.
-    let dest = vault.new_media_path(&candidate);
+    // Legacy input has no staging ownership token. Publish without replacement
+    // and preserve its source; arbitrary vault files are not disposable uploads.
+    let dest = staging.new_media_path(&candidate);
+    files::validate_vault_write_target(staging, &dest).map_err(|e| e.to_string())?;
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("failed to create media directory: {e}"))?;
     }
-    std::fs::rename(&src, &dest)
-        .map_err(|e| format!("failed to move staged upload to {candidate}: {e}"))?;
+    files::copy_new_atomically(&src, &dest)
+        .map_err(|e| format!("failed to publish legacy upload to {candidate}: {e}"))?;
 
     Ok(candidate)
 }
@@ -1664,8 +1830,9 @@ fn scan_inline_tasks_with(
                 file_idx
             }
         };
-        let dest_name = build_inline_media_name(slug, kind, idx, ext);
-        let dest_path = vault.root().join(&dest_name);
+        let basename = build_inline_media_name(slug, kind, idx, ext);
+        let dest_path = vault.new_media_path(&basename);
+        let dest_name = vault.new_media_stem(&basename);
         let host = host_from_url(url);
         let alt = body[alt_start..bracket_pos].to_string();
 
@@ -1778,9 +1945,8 @@ fn apply_rewrites(
         }
     }
 
-    // Files that physically remain on disk after dedup: successful downloads
-    // not unlinked as duplicates. These are the inline media to roll back if
-    // the block write later fails.
+    // These artifacts are included in publication evidence. They are never
+    // rolled back merely because the Markdown acknowledgement was lost.
     let surviving: Vec<std::path::PathBuf> = tasks
         .iter()
         .enumerate()
@@ -1854,8 +2020,7 @@ fn apply_rewrites(
 }
 
 /// Localize inline body media. Returns the rewritten body and the paths of the
-/// inline files that physically remain on disk, so the caller can roll them
-/// back if the block write fails.
+/// inline files that physically remain on disk for publication verification.
 fn localize_body_images(
     body: &str,
     vault: &VaultLayout,
@@ -1863,6 +2028,13 @@ fn localize_body_images(
     page_url: &str,
 ) -> (String, Vec<std::path::PathBuf>, Vec<String>) {
     let tasks = scan_inline_tasks_with(body, vault, slug, &probe_ext_over_network);
+    if tasks
+        .iter()
+        .any(|task| files::validate_vault_write_target(vault, &task.dest_path).is_err())
+    {
+        log::warn!("inline media targets are unsafe; retaining remote references");
+        return (body.to_string(), Vec::new(), Vec::new());
+    }
     if tasks.is_empty() {
         return (body.to_string(), Vec::new(), Vec::new());
     }
@@ -2152,12 +2324,18 @@ fn resolve_tweet_video_via_ytdlp(
 /// way to see what the extension actually asked for.
 fn host_log(line: &str) {
     use std::io::Write as _;
-    let Ok(home) = std::env::var("HOME") else { return };
+    let Ok(home) = std::env::var("HOME") else {
+        return;
+    };
     let mut path = std::path::PathBuf::from(home);
     path.push("Library/Logs/com.mine.app");
     let _ = std::fs::create_dir_all(&path);
     path.push("native-host.log");
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         let _ = writeln!(file, "{line}");
     }
 }
@@ -2199,7 +2377,10 @@ fn handle_resolve_twitter_media(params: serde_json::Value) {
                 .unwrap_or_else(|| format!("https://x.com/i/status/{tweet_id}"));
             match resolve_tweet_video_via_ytdlp(&tweet_url, cookies) {
                 Ok(urls) => {
-                    host_log(&format!("resolve_twitter_media: yt-dlp resolved {} url(s)", urls.len()));
+                    host_log(&format!(
+                        "resolve_twitter_media: yt-dlp resolved {} url(s)",
+                        urls.len()
+                    ));
                     let mut media = previews.unwrap_or_default();
                     for (src, poster) in urls {
                         media.push(TwitterMediaPreview {
@@ -2513,7 +2694,32 @@ fn handle_upload_request(mut request: tiny_http::Request, token: &str) {
     let _ = request.respond(response);
 }
 
+fn handle_confirm_connection_check(launch_origin: Option<&str>, params: serde_json::Value) {
+    let result = (|| -> anyhow::Result<_> {
+        let check_id = params
+            .get("check_id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("connection-check ID is required"))?;
+        let root = native_app_data_dir().map_err(anyhow::Error::msg)?;
+        mine_lib::storage::clipper_connection::confirm_connection_check(
+            &root,
+            launch_origin.unwrap_or_default(),
+            check_id,
+            VERSION,
+            HOST_API_VERSION,
+        )
+    })();
+    match result {
+        Ok(record) => send_response(&serde_json::json!({"ok": true, "check_id": record.check_id})),
+        Err(error) => send_response(&serde_json::json!({
+            "ok": false, "code": "connection_check_failed", "error": error.to_string(),
+        })),
+    }
+}
+
 fn main() {
+    // Chromium supplies the caller origin. Request fields cannot impersonate it.
+    let launch_origin = std::env::args().nth(1);
     // Start upload HTTP server
     let upload_server = start_upload_server();
 
@@ -2550,6 +2756,12 @@ fn main() {
             CURRENT_MESSAGE_ID.store(id, Ordering::Relaxed);
         }
 
+        // Diagnostic ACK has no vault input or capture side effects.
+        if req.action == "confirm_connection_check" {
+            handle_confirm_connection_check(launch_origin.as_deref(), req.params);
+            continue;
+        }
+
         // Load vault: prefer per-request vault_path, fallback to config
         let vault_path = req.vault_path.clone().or_else(|| load_vault_path());
         if let Some(ref vp) = vault_path {
@@ -2559,25 +2771,24 @@ fn main() {
         }
 
         match req.action.as_str() {
-            "get_status" => handle_get_status_with_upload(&upload_server),
+            "get_status" => handle_get_status_with_upload(&upload_server, vault_path),
             "list_known_vaults" => handle_list_known_vaults(),
             "pick_vault_folder" => handle_pick_vault_folder(),
             "reveal_vault" => handle_reveal_vault(req.params),
             "open_app" => handle_open_app(),
             "resolve_twitter_media" => handle_resolve_twitter_media(req.params),
 
-            "list_channels" | "save_block" | "create_channel" => {
+            "list_channels" | "save_block" | "create_channel" | "get_save_operation" => {
                 let Some(ref vp) = vault_path else {
-                    send_error("Vault not configured and HOME is not set.");
+                    send_error("Choose a vault folder before saving.");
                     continue;
                 };
                 let path = PathBuf::from(vp);
-                // Ensure vault directory exists (standalone mode may have just created it)
+                // An unavailable selected folder is not permission to create
+                // a replacement vault at the same display path.
                 if !path.is_dir() {
-                    if std::fs::create_dir_all(&path).is_err() {
-                        send_error(&format!("Cannot create vault directory: {vp}"));
-                        continue;
-                    }
+                    send_error(&format!("Selected vault is unavailable: {vp}"));
+                    continue;
                 }
                 let vault = match resolve_native_vault_layout(path) {
                     Ok(vault) => vault,
@@ -2590,6 +2801,7 @@ fn main() {
                 match req.action.as_str() {
                     "list_channels" => handle_list_channels(&vault),
                     "save_block" => handle_save_block(&vault, req.params),
+                    "get_save_operation" => handle_get_save_operation(&vault, req.params),
                     "create_channel" => handle_create_channel(&vault, req.params),
                     _ => unreachable!(),
                 }
@@ -2622,7 +2834,10 @@ mod tests {
         });
         handle_save_block(vault, params);
         let responses = SC0_RESPONSE_CAPTURE.with(|capture| {
-            capture.borrow_mut().take().expect("SC0 capture was enabled")
+            capture
+                .borrow_mut()
+                .take()
+                .expect("SC0 capture was enabled")
         });
         assert_eq!(responses.len(), 1, "save emits exactly one response");
         serde_json::from_str(&responses[0]).expect("host serializes a valid response")
@@ -2638,11 +2853,515 @@ mod tests {
         })
     }
 
+    fn sc2_temp_vault() -> (TempDir, VaultLayout) {
+        let tmp = TempDir::new().unwrap();
+        let vault =
+            VaultLayout::with_derived_root(tmp.path().join("vault"), tmp.path().join("derived"));
+        std::fs::create_dir_all(vault.root()).unwrap();
+        (tmp, vault)
+    }
+
     #[test]
-    fn sc0_n3_lost_response_characterizes_missing_receipt_after_cleanup() {
-        // Characterization of a defect, not a desired retry contract. Capture
-        // and discard the first response to model client-side acknowledgement
-        // loss; this does not inject a real stdout/pipe failure.
+    fn sc2_native_capture_keeps_prepared_time_and_canonical_media_reference() {
+        let (_tmp, vault) = sc2_temp_vault();
+        let vault = vault.with_write_layout(mine_lib::domain::vault::VaultWriteLayout::standard());
+        let upload =
+            clipper_uploads::write_pending_upload(&vault, "shot.jpg", None, b"bytes").unwrap();
+        let mut request = sc0_image_request("Canonical", &upload.upload_id);
+        request["saved_at"] = serde_json::json!("2026-08-31T12:34:56Z");
+        assert_eq!(sc0_save_response(&vault, request)["ok"], true);
+        let markdown = std::fs::read_to_string(vault.block_path("Cards/Canonical")).unwrap();
+        let block = mine_lib::domain::block::parse_block("Cards/Canonical", &markdown).unwrap();
+        assert_eq!(
+            block.frontmatter.file.as_deref(),
+            Some("Media/Canonical.jpg")
+        );
+        assert!(markdown.contains("[[Media/Canonical.jpg]]"));
+        assert!(markdown.contains("2026-08-31T12:34:56Z"));
+        let tasks = scan_inline_tasks("![](https://example.com/image.jpg)", &vault, "Inline");
+        assert_eq!(tasks[0].dest_name, "Media/Inline (image 1).jpg");
+        assert_eq!(
+            tasks[0].dest_path,
+            vault.new_media_path("Inline (image 1).jpg")
+        );
+    }
+
+    #[test]
+    fn sc2_no_effects_rejection_is_terminal_durable_and_replayable() {
+        let (_tmp, vault) = sc2_temp_vault();
+        let request = serde_json::json!({"operation_id":"invalid-article", "block_type":"article", "body":"", "tags":[]});
+        let first = sc0_save_response(&vault, request.clone());
+        assert_eq!(first["terminal_rejected"], true);
+        assert_eq!(first["outcome"], "not_committed");
+        let mut resume = request;
+        resume["operation_mode"] = serde_json::json!("resume");
+        assert_eq!(sc0_save_response(&vault, resume)["terminal_rejected"], true);
+        assert!(files::scan_md_files(&vault).unwrap().is_empty());
+        let store = operation_store(&vault).unwrap();
+        let locked = store
+            .lock(&save_operations::binding_id(&vault).unwrap())
+            .unwrap();
+        assert!(matches!(
+            locked.load("invalid-article").unwrap().unwrap().phase,
+            save_operations::OperationPhase::Rejected { .. }
+        ));
+    }
+
+    fn sc2_link_request(id: &str) -> serde_json::Value {
+        serde_json::json!({"operation_id":id,"block_type":"link","title":"Local link",
+            "url":"https://example.com","body":"","tags":[]})
+    }
+
+    #[test]
+    fn sc2_capture_commits_with_unavailable_sqlite_and_replays_without_index() {
+        let (_tmp, vault) = sc2_temp_vault();
+        std::fs::write(vault.derived_root(), b"not a directory").unwrap();
+        let request = sc2_link_request("index-independent");
+        let first = sc0_save_response(&vault, request.clone());
+        assert_eq!(first["outcome"], "committed");
+        assert!(vault.block_path("Local link").exists());
+        let repeated = sc0_save_response(&vault, request);
+        assert_eq!(repeated["slug"], first["slug"]);
+        assert_eq!(repeated["operation_id"], first["operation_id"]);
+        assert_eq!(files::scan_md_files(&vault).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn sc2_operation_conflict_binding_mismatch_and_absent_resume_do_not_save() {
+        let (_tmp, vault) = sc2_temp_vault();
+        let request = sc2_link_request("stable-id");
+        let first = sc0_save_response(&vault, request.clone());
+        assert_eq!(first["ok"], true);
+        let original = std::fs::read(vault.block_path("Local link")).unwrap();
+        let mut changed = request.clone();
+        changed["body"] = serde_json::json!("different semantic content");
+        assert_eq!(
+            sc0_save_response(&vault, changed)["code"],
+            "operation_conflict"
+        );
+        let mut wrong_binding = request;
+        wrong_binding["binding_id"] = serde_json::json!("another-binding");
+        assert_eq!(
+            sc0_save_response(&vault, wrong_binding)["code"],
+            "binding_mismatch"
+        );
+        let mut resume = sc2_link_request("absent");
+        resume["operation_mode"] = serde_json::json!("resume");
+        assert_eq!(sc0_save_response(&vault, resume)["outcome"], "unknown");
+        assert_eq!(
+            std::fs::read(vault.block_path("Local link")).unwrap(),
+            original
+        );
+        assert_eq!(files::scan_md_files(&vault).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn sc2_publication_then_fsync_error_commits_with_warning_and_keeps_recovery_material() {
+        let (_tmp, vault) = sc2_temp_vault();
+        let upload =
+            clipper_uploads::write_pending_upload(&vault, "shot.jpg", None, b"source media")
+                .unwrap();
+        let request = sc0_image_request("Uncertain sync", &upload.upload_id);
+        let p: SaveBlockParams = serde_json::from_value(request.clone()).unwrap();
+        let binding = save_operations::binding_id(&vault).unwrap();
+        {
+            let store = operation_store(&vault).unwrap();
+            let locked = store.lock(&binding).unwrap();
+            let mut record = locked
+                .begin(
+                    &upload.upload_id,
+                    fingerprint_capture(&p, &binding),
+                    &request,
+                )
+                .unwrap();
+            let response = perform_save_block_with_publisher(
+                &vault,
+                p,
+                &locked,
+                &mut record,
+                |staged, path| {
+                    files::copy_new_atomically(staged, path)?;
+                    if path.extension().is_none_or(|ext| ext != "md") {
+                        return Ok(());
+                    }
+                    Err(files::PublicationUncertain {
+                        path: path.to_path_buf(),
+                        source: anyhow::anyhow!("injected directory fsync failure"),
+                    }
+                    .into())
+                },
+            )
+            .unwrap();
+            assert_eq!(response["outcome"], "committed");
+            assert!(response["durability_warning"]
+                .as_str()
+                .unwrap()
+                .contains("fsync"));
+            assert!(locked.staging_root(&upload.upload_id).unwrap().exists());
+            assert!(matches!(
+                locked.load(&upload.upload_id).unwrap().unwrap().phase,
+                save_operations::OperationPhase::Committed { .. }
+            ));
+        }
+        assert_eq!(
+            std::fs::read(vault.new_media_path("Uncertain sync.jpg")).unwrap(),
+            b"source media"
+        );
+        assert!(
+            clipper_uploads::pending_upload_dir(&vault, &upload.upload_id)
+                .unwrap()
+                .join("shot.jpg")
+                .exists()
+        );
+        SC0_RESPONSE_CAPTURE.with(|capture| *capture.borrow_mut() = Some(Vec::new()));
+        handle_get_save_operation(&vault, serde_json::json!({"operation_id":upload.upload_id}));
+        let responses = SC0_RESPONSE_CAPTURE.with(|capture| capture.borrow_mut().take().unwrap());
+        let looked_up: serde_json::Value = serde_json::from_str(&responses[0]).unwrap();
+        assert_eq!(looked_up["outcome"], "committed");
+        assert!(
+            clipper_uploads::pending_upload_dir(&vault, &upload.upload_id)
+                .unwrap()
+                .join("shot.jpg")
+                .exists()
+        );
+        let recovered = sc0_save_response(&vault, request);
+        assert_eq!(recovered["outcome"], "committed");
+        assert_eq!(recovered["slug"], "Uncertain sync");
+        assert_eq!(files::scan_md_files(&vault).unwrap().len(), 1);
+        assert_eq!(
+            std::fs::read(vault.new_media_path("Uncertain sync.jpg")).unwrap(),
+            b"source media"
+        );
+    }
+
+    #[test]
+    fn sc2_preparing_retry_retains_unknown_material_without_another_write() {
+        let (_tmp, vault) = sc2_temp_vault();
+        let request = sc2_link_request("interrupted-preparation");
+        let p: SaveBlockParams = serde_json::from_value(request.clone()).unwrap();
+        let binding = save_operations::binding_id(&vault).unwrap();
+        {
+            let store = operation_store(&vault).unwrap();
+            let locked = store.lock(&binding).unwrap();
+            let mut record = locked
+                .begin(
+                    "interrupted-preparation",
+                    fingerprint_capture(&p, &binding),
+                    &request,
+                )
+                .unwrap();
+            // Persist an actual legacy phase, whose old acquisition could
+            // already have written source. New staging_v2 has different facts.
+            record.phase = save_operations::OperationPhase::Preparing;
+            locked.store(&record).unwrap();
+        }
+        let orphan = vault.root().join("Unconfirmed media.jpg");
+        std::fs::write(&orphan, b"unconfirmed").unwrap();
+        let retry = sc0_save_response(&vault, request);
+        assert_eq!(retry["outcome"], "unknown");
+        assert_eq!(std::fs::read(&orphan).unwrap(), b"unconfirmed");
+        assert!(files::scan_md_files(&vault).unwrap().is_empty());
+    }
+
+    #[test]
+    fn sc2_staging_v2_interruption_is_terminal_without_source_effects_or_material_loss() {
+        let (_tmp, vault) = sc2_temp_vault();
+        let request = sc2_link_request("staging-interrupted");
+        let p: SaveBlockParams = serde_json::from_value(request.clone()).unwrap();
+        let binding = save_operations::binding_id(&vault).unwrap();
+        let staging;
+        {
+            let store = operation_store(&vault).unwrap();
+            let locked = store.lock(&binding).unwrap();
+            locked
+                .begin(
+                    "staging-interrupted",
+                    fingerprint_capture(&p, &binding),
+                    &request,
+                )
+                .unwrap();
+            staging = locked.create_staging("staging-interrupted").unwrap();
+            files::write_new_atomically(&staging.join("partial.jpg"), b"acquired bytes").unwrap();
+        }
+        let response = sc0_save_response(&vault, request.clone());
+        assert_eq!(response["outcome"], "not_committed");
+        assert_eq!(response["terminal_rejected"], true);
+        assert_eq!(response, sc0_save_response(&vault, request.clone()));
+        assert_eq!(
+            std::fs::read(staging.join("partial.jpg")).unwrap(),
+            b"acquired bytes"
+        );
+        let stored: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(
+                staging
+                    .parent()
+                    .unwrap()
+                    .join("staging-interrupted.request.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(stored, request);
+        assert_eq!(std::fs::read_dir(vault.root()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn sc2_prepared_name_conflict_releases_pin_and_lookup_replays_terminal_response() {
+        for lookup_first in [false, true] {
+            let (_tmp, vault) = sc2_temp_vault();
+            let request = sc2_link_request("prepared-conflict");
+            let p: SaveBlockParams = serde_json::from_value(request.clone()).unwrap();
+            let binding = save_operations::binding_id(&vault).unwrap();
+            let staging_root;
+            {
+                let store = operation_store(&vault).unwrap();
+                let locked = store.lock(&binding).unwrap();
+                let mut record = locked
+                    .begin(
+                        "prepared-conflict",
+                        fingerprint_capture(&p, &binding),
+                        &request,
+                    )
+                    .unwrap();
+                staging_root = locked.create_staging("prepared-conflict").unwrap();
+                let staging = VaultLayout::new(staging_root.clone());
+                let path = staging.root().join("Local link.md");
+                files::write_new_atomically(&path, b"prepared capture").unwrap();
+                locked.prepare_plan(&mut record, save_operations::StagedSavePlan {
+                    write_layout: Some(vault.write_layout().clone()),
+                    markdown: save_operations::PlannedArtifact::inspect(&staging, &path).unwrap(),
+                    media: vec![], response: serde_json::json!({"ok":true,"outcome":"committed","slug":"Local link"}),
+                }).unwrap();
+            }
+            files::write_new_atomically(&vault.block_path("Local link"), b"foreign Markdown")
+                .unwrap();
+            let lookup = || {
+                SC0_RESPONSE_CAPTURE.with(|capture| *capture.borrow_mut() = Some(Vec::new()));
+                handle_get_save_operation(
+                    &vault,
+                    serde_json::json!({"operation_id":"prepared-conflict"}),
+                );
+                let captured =
+                    SC0_RESPONSE_CAPTURE.with(|capture| capture.borrow_mut().take().unwrap());
+                serde_json::from_str::<serde_json::Value>(&captured[0]).unwrap()
+            };
+            let response = if lookup_first {
+                lookup()
+            } else {
+                sc0_save_response(&vault, request.clone())
+            };
+            assert_eq!(response["ok"], false);
+            assert_eq!(response["outcome"], "not_committed");
+            assert_eq!(response["terminal_rejected"], true);
+            assert_eq!(response["code"], "name_conflict");
+            assert_eq!(lookup(), response);
+            assert_eq!(sc0_save_response(&vault, request), response);
+            assert_eq!(
+                std::fs::read(vault.block_path("Local link")).unwrap(),
+                b"foreign Markdown"
+            );
+            assert!(staging_root.join("Local link.md").exists());
+            assert!(staging_root
+                .parent()
+                .unwrap()
+                .join("prepared-conflict.request.json")
+                .exists());
+            assert!(!vault.index_db_path().exists());
+            // The terminal flag permits an explicit new Save, not silent
+            // re-publication of the old operation with a different filename.
+            let next = sc0_save_response(&vault, sc2_link_request("explicit-new-save"));
+            assert_eq!(next["outcome"], "committed");
+            assert_eq!(next["slug"], "Local link (2)");
+            assert_eq!(
+                std::fs::read(vault.block_path("Local link")).unwrap(),
+                b"foreign Markdown"
+            );
+        }
+    }
+
+    #[test]
+    fn sc2_failed_resource_preparation_preserves_request_and_never_publishes() {
+        let (_tmp, vault) = sc2_temp_vault();
+        let request = serde_json::json!({
+            "operation_id":"decode-failed", "block_type":"image", "title":"Broken data",
+            "image_url":"data:image/png;base64,NOT-BASE64", "body":"captured original body",
+        });
+        let response = sc0_save_response(&vault, request.clone());
+        assert_eq!(response["outcome"], "not_committed");
+        assert_eq!(response["terminal_rejected"], true);
+        let store = operation_store(&vault).unwrap();
+        let locked = store
+            .lock(&save_operations::binding_id(&vault).unwrap())
+            .unwrap();
+        let staging = locked.staging_root("decode-failed").unwrap();
+        let stored: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(staging.parent().unwrap().join("decode-failed.request.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(stored["body"], request["body"]);
+        assert!(staging.is_dir());
+        assert_eq!(std::fs::read_dir(vault.root()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn sc2_host_stages_pending_bytes_and_prepared_time_before_first_source_effect() {
+        let (_tmp, vault) = sc2_temp_vault();
+        let vault = vault.with_write_layout(mine_lib::domain::vault::VaultWriteLayout::standard());
+        let upload =
+            clipper_uploads::write_pending_upload(&vault, "input.png", None, b"pending bytes")
+                .unwrap();
+        let mut request = sc0_image_request("Prepared capture", &upload.upload_id);
+        request["saved_at"] = serde_json::json!("2026-08-31T12:34:56Z");
+        let p: SaveBlockParams = serde_json::from_value(request.clone()).unwrap();
+        let binding = save_operations::binding_id(&vault).unwrap();
+        let store = operation_store(&vault).unwrap();
+        let locked = store.lock(&binding).unwrap();
+        let mut record = locked
+            .begin(
+                &upload.upload_id,
+                fingerprint_capture(&p, &binding),
+                &request,
+            )
+            .unwrap();
+        let mut observed = false;
+        assert!(
+            perform_save_block_with_publisher(&vault, p, &locked, &mut record, |_, _| {
+                let disk = locked.load(&upload.upload_id)?.unwrap();
+                let save_operations::OperationPhase::PlannedV2 { step, plan } = &disk.phase else {
+                    panic!("plan absent")
+                };
+                assert_eq!(*step, mine_core::save::SavePhase::MediaPublishing);
+                assert_eq!(
+                    plan.markdown.source.relative_path,
+                    "Cards/Prepared capture.md"
+                );
+                assert_eq!(
+                    plan.media[0].source.relative_path,
+                    "Media/Prepared capture.png"
+                );
+                let staging = locked.staging_root(&upload.upload_id)?;
+                let markdown =
+                    std::fs::read_to_string(staging.join(&plan.markdown.staged_resource))?;
+                assert!(markdown.contains("2026-08-31T12:34:56Z"));
+                assert!(markdown.contains("Media/Prepared capture.png"));
+                assert_eq!(
+                    std::fs::read(staging.join(&plan.media[0].staged_resource))?,
+                    b"pending bytes"
+                );
+                assert_eq!(std::fs::read_dir(vault.root())?.count(), 1);
+                assert!(vault.write_layout_path().is_file());
+                observed = true;
+                anyhow::bail!("injected first source effect boundary")
+            })
+            .is_err()
+        );
+        assert!(observed);
+        assert!(
+            clipper_uploads::pending_upload_dir(&vault, &upload.upload_id)
+                .unwrap()
+                .join("input.png")
+                .exists()
+        );
+        assert_eq!(std::fs::read_dir(vault.root()).unwrap().count(), 1);
+        assert!(vault.write_layout_path().is_file());
+    }
+
+    #[test]
+    fn sc2_two_distinct_captures_keep_standard_layout_after_fresh_native_resolution() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("vault");
+        let state = temp.path().join("app-state");
+        std::fs::create_dir(&root).unwrap();
+        for title in ["A", "B"] {
+            let vault = resolve_native_vault_layout_at(root.clone(), state.clone()).unwrap();
+            assert_eq!(
+                vault.write_layout(),
+                &mine_lib::domain::vault::VaultWriteLayout::standard()
+            );
+            let mut request = sc2_link_request(&format!("capture-{title}"));
+            request["title"] = serde_json::json!(title);
+            let response = sc0_save_response(&vault, request);
+            assert_eq!(response["outcome"], "committed");
+            assert_eq!(response["slug"], format!("Cards/{title}"));
+            assert!(root.join(format!("Cards/{title}.md")).is_file());
+            assert!(!root.join(format!("{title}.md")).exists());
+        }
+        assert!(root.join(".mine/layout.json").is_file());
+        // No requirement to create unused role directories just to influence
+        // a heuristic: the saved layout is the authority on the next launch.
+        assert!(!root.join("Collections").exists());
+    }
+
+    #[test]
+    fn sc2_concurrent_same_id_capture_returns_one_receipt_and_one_card() {
+        let (_tmp, vault) = sc2_temp_vault();
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let threads: Vec<_> = (0..2)
+            .map(|_| {
+                let vault = vault.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let store = operation_store(&vault).unwrap();
+                    barrier.wait();
+                    save_block_with_store(&vault, sc2_link_request("concurrent"), &store)
+                })
+            })
+            .collect();
+        let responses: Vec<_> = threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .collect();
+        assert_eq!(responses[0]["outcome"], "committed");
+        assert_eq!(responses[0], responses[1]);
+        assert_eq!(files::scan_md_files(&vault).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn sc2_status_distinguishes_connection_from_folder_and_uses_selected_binding() {
+        let (_tmp, vault) = sc2_temp_vault();
+        for (path, expected) in [
+            (None, "unconfigured"),
+            (
+                Some(vault.root().join("missing").to_string_lossy().into_owned()),
+                "missing",
+            ),
+            (Some(vault.root().to_string_lossy().into_owned()), "ready"),
+        ] {
+            SC0_RESPONSE_CAPTURE.with(|capture| *capture.borrow_mut() = Some(Vec::new()));
+            handle_get_status_with_upload(&None, path);
+            let responses =
+                SC0_RESPONSE_CAPTURE.with(|capture| capture.borrow_mut().take().unwrap());
+            let response: serde_json::Value = serde_json::from_str(&responses[0]).unwrap();
+            assert_eq!(response["ok"], true);
+            assert_eq!(response["connected"], true);
+            assert_eq!(response["folder_state"], expected);
+            assert_eq!(response["vaultConfigured"], expected == "ready");
+            if expected == "ready" {
+                assert_eq!(
+                    response["binding_id"],
+                    save_operations::binding_id(&vault).unwrap()
+                );
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sc2_legacy_symlink_and_traversal_inputs_are_rejected() {
+        let (tmp, vault) = sc2_temp_vault();
+        let sentinel = tmp.path().join("outside.jpg");
+        std::fs::write(&sentinel, b"outside").unwrap();
+        std::os::unix::fs::symlink(&sentinel, vault.root().join("upload.jpg")).unwrap();
+        assert!(finalize_uploaded_filename(&vault, "upload.jpg", "Card").is_err());
+        assert!(finalize_uploaded_filename(&vault, "../outside.jpg", "Card").is_err());
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"outside");
+        assert!(!vault.new_media_path("Card.jpg").exists());
+    }
+
+    #[test]
+    fn sc0_n3_lost_response_replays_receipt_after_payload_cleanup() {
+        // Capture/discard simulates client acknowledgement loss, not a real
+        // stdout/pipe fault. The retry exercises the durable native receipt.
         let tmp = TempDir::new().expect("create disposable SC0 directory");
         let vault =
             VaultLayout::with_derived_root(tmp.path().join("vault"), tmp.path().join("derived"));
@@ -2655,18 +3374,16 @@ mod tests {
         let lost_response = sc0_save_response(&vault, request.clone());
         assert_eq!(lost_response["ok"], true);
         assert_eq!(lost_response["slug"], "SC0 receipt");
-        let original_markdown = std::fs::read(vault.block_path("SC0 receipt"))
-            .expect("first save published Markdown");
-        assert!(!clipper_uploads::pending_upload_dir(&vault, &upload.upload_id)
-            .expect("locate upload")
-            .exists());
+        let original_markdown =
+            std::fs::read(vault.block_path("SC0 receipt")).expect("first save published Markdown");
+        let staged = clipper_uploads::pending_upload_dir(&vault, &upload.upload_id).unwrap();
+        assert!(staged.join("manifest.json").exists());
+        assert!(!staged.join("shot.jpg").exists());
 
         let retry = sc0_save_response(&vault, request);
-        assert_eq!(retry["ok"], false);
-        assert!(retry["error"]
-            .as_str()
-            .expect("failed retry includes error")
-            .contains("failed to read pending upload"));
+        assert_eq!(retry["ok"], true);
+        assert_eq!(retry["slug"], lost_response["slug"]);
+        assert_eq!(retry["operation_id"], lost_response["operation_id"]);
         assert_eq!(files::scan_md_files(&vault).expect("count cards").len(), 1);
         assert_eq!(
             std::fs::read(vault.block_path("SC0 receipt")).expect("reread first card"),
@@ -2687,16 +3404,14 @@ mod tests {
         assert_eq!(fresh_response["slug"], "SC0 receipt (2)");
         assert_eq!(files::scan_md_files(&vault).expect("count cards").len(), 2);
         eprintln!(
-            "SC0 N3 characterization: discarded first success; same-ID retry reports missing staging; original card survives; fresh upload creates a second card"
+            "SC0 N3 regression: lost response replays same receipt after payload cleanup; only a distinct operation creates another card"
         );
     }
 
     #[test]
-    fn sc0_n4_reconstructed_post_markdown_state_characterizes_duplicate_retry() {
-        // State reconstruction, NOT a kill test or a power-loss test. These
-        // are the real filesystem operations before PendingUploadGuard drops;
-        // retaining staging reconstructs that crash cut without running the
-        // handler's cleanup. The duplicate is a defect, not a product contract.
+    fn sc0_n4_reconstructed_post_markdown_state_recovers_same_receipt() {
+        // State reconstruction, NOT a kill or power-loss test. A journaled
+        // publishing intent plus matching source bytes recovers one receipt.
         let tmp = TempDir::new().expect("create disposable SC0 directory");
         let vault =
             VaultLayout::with_derived_root(tmp.path().join("vault"), tmp.path().join("derived"));
@@ -2714,37 +3429,67 @@ mod tests {
         )
         .expect("parse reconstructed committed card");
         files::write_new_block_file(&vault, &block).expect("publish original Markdown");
-        let original_markdown = std::fs::read(vault.block_path("SC0 crash"))
-            .expect("read original Markdown");
-        assert!(clipper_uploads::pending_upload_dir(&vault, &upload.upload_id)
-            .expect("locate retained staging")
-            .exists());
+        let original_markdown =
+            std::fs::read(vault.block_path("SC0 crash")).expect("read original Markdown");
+        assert!(
+            clipper_uploads::pending_upload_dir(&vault, &upload.upload_id)
+                .expect("locate retained staging")
+                .exists()
+        );
 
-        let retry = sc0_save_response(&vault, sc0_image_request("SC0 crash", &upload.upload_id));
+        let request = sc0_image_request("SC0 crash", &upload.upload_id);
+        let p: SaveBlockParams = serde_json::from_value(request.clone()).unwrap();
+        let binding = save_operations::binding_id(&vault).unwrap();
+        let expected = serde_json::json!({"ok": true, "outcome": "committed",
+            "operation_id": upload.upload_id, "slug": "SC0 crash", "block_type": "image", "warning": null});
+        {
+            let store = operation_store(&vault).unwrap();
+            let locked = store.lock(&binding).unwrap();
+            let mut record = locked
+                .begin(
+                    &upload.upload_id,
+                    fingerprint_capture(&p, &binding),
+                    &request,
+                )
+                .unwrap();
+            record.phase = save_operations::OperationPhase::Publishing {
+                markdown: save_operations::SourceArtifact::inspect(
+                    &vault,
+                    &vault.block_path("SC0 crash"),
+                )
+                .unwrap(),
+                media: vec![save_operations::SourceArtifact::inspect(
+                    &vault,
+                    &vault.new_media_path("SC0 crash.jpg"),
+                )
+                .unwrap()],
+                response: expected.clone(),
+            };
+            locked.store(&record).unwrap();
+        }
+
+        let retry = sc0_save_response(&vault, request);
 
         assert_eq!(retry["ok"], true);
-        assert_eq!(retry["slug"], "SC0 crash (2)");
-        assert_eq!(files::scan_md_files(&vault).expect("count cards").len(), 2);
+        assert_eq!(retry["slug"], "SC0 crash");
+        assert_eq!(files::scan_md_files(&vault).expect("count cards").len(), 1);
         assert_eq!(
             std::fs::read(vault.block_path("SC0 crash")).expect("reread original Markdown"),
             original_markdown
         );
-        for filename in ["SC0 crash.jpg", "SC0 crash (2).jpg"] {
+        for filename in ["SC0 crash.jpg"] {
             assert_eq!(
                 std::fs::read(vault.new_media_path(filename)).expect("read media"),
                 bytes
             );
         }
         eprintln!(
-            "SC0 N4 characterization: reconstructed committed Markdown plus retained staging; same-ID retry creates SC0 crash (2) instead of recognizing SC0 crash"
+            "SC0 N4 regression simulation: publishing intent plus matching Markdown/media recovers SC0 crash without a duplicate"
         );
     }
 
     #[test]
-    fn sc0_n5_legacy_upload_characterizes_overwrite_in_configured_media_folder() {
-        // Characterization of a defect: legacy rename checks the vault root,
-        // not the configured Media destination. This is not an accepted
-        // overwrite policy and must change with the new executor contract.
+    fn sc0_n5_legacy_upload_preserves_occupied_configured_media_folder() {
         let tmp = TempDir::new().expect("create disposable SC0 directory");
         let vault =
             VaultLayout::with_derived_root(tmp.path().join("vault"), tmp.path().join("derived"))
@@ -2758,14 +3503,21 @@ mod tests {
         let filename = finalize_uploaded_filename(&vault, "upload.jpg", "Door")
             .expect("observe current legacy rename");
 
-        assert_eq!(filename, "Door.jpg");
+        assert_eq!(filename, "Door (2).jpg");
         assert_eq!(
             std::fs::read(&destination).expect("read occupied target"),
+            b"existing media sentinel"
+        );
+        assert_eq!(
+            std::fs::read(vault.new_media_path(&filename)).unwrap(),
             b"new upload sentinel"
         );
-        assert!(!upload.exists());
+        assert!(
+            upload.exists(),
+            "legacy input has no disposable staging ownership token"
+        );
         eprintln!(
-            "SC0 N5 characterization: legacy upload replaced existing Media/Door.jpg with new upload bytes"
+            "SC0 N5 regression: existing Media/Door.jpg preserved; new bytes published as Door (2).jpg; unowned legacy input retained"
         );
     }
 
@@ -2903,14 +3655,18 @@ mod tests {
     }
 
     #[test]
-    fn finalize_renames_staged_file_to_slug_and_returns_new_name() {
+    fn finalize_copies_legacy_input_to_slug_without_deleting_unowned_source() {
         let tmp = TempDir::new().unwrap();
         make_staging(tmp.path(), "upload.jpg", b"image-bytes");
 
-        let result = finalize_uploaded_filename(&VaultLayout::new(tmp.path().to_path_buf()), "upload.jpg", "Hello World");
+        let result = finalize_uploaded_filename(
+            &VaultLayout::new(tmp.path().to_path_buf()),
+            "upload.jpg",
+            "Hello World",
+        );
 
         assert_eq!(result, Ok("Hello World.jpg".to_string()));
-        assert!(!tmp.path().join("upload.jpg").exists());
+        assert!(tmp.path().join("upload.jpg").exists());
         assert!(tmp.path().join("Hello World.jpg").exists());
     }
 
@@ -2918,7 +3674,11 @@ mod tests {
     fn finalize_preserves_extension_including_multi_char() {
         let tmp = TempDir::new().unwrap();
         make_staging(tmp.path(), "upload.webp", b"x");
-        let result = finalize_uploaded_filename(&VaultLayout::new(tmp.path().to_path_buf()), "upload.webp", "Photo");
+        let result = finalize_uploaded_filename(
+            &VaultLayout::new(tmp.path().to_path_buf()),
+            "upload.webp",
+            "Photo",
+        );
         assert_eq!(result, Ok("Photo.webp".to_string()));
     }
 
@@ -2926,7 +3686,11 @@ mod tests {
     fn finalize_preserves_unicode_slug() {
         let tmp = TempDir::new().unwrap();
         make_staging(tmp.path(), "upload.jpg", b"x");
-        let result = finalize_uploaded_filename(&VaultLayout::new(tmp.path().to_path_buf()), "upload.jpg", "Закат в Токио");
+        let result = finalize_uploaded_filename(
+            &VaultLayout::new(tmp.path().to_path_buf()),
+            "upload.jpg",
+            "Закат в Токио",
+        );
         assert_eq!(result, Ok("Закат в Токио.jpg".to_string()));
         assert!(tmp.path().join("Закат в Токио.jpg").exists());
     }
@@ -2935,7 +3699,11 @@ mod tests {
     fn finalize_noop_when_names_already_match() {
         let tmp = TempDir::new().unwrap();
         make_staging(tmp.path(), "Hello.jpg", b"x");
-        let result = finalize_uploaded_filename(&VaultLayout::new(tmp.path().to_path_buf()), "Hello.jpg", "Hello");
+        let result = finalize_uploaded_filename(
+            &VaultLayout::new(tmp.path().to_path_buf()),
+            "Hello.jpg",
+            "Hello",
+        );
         assert_eq!(result, Ok("Hello.jpg".to_string()));
         // Source still exists, not renamed to anything else.
         assert!(tmp.path().join("Hello.jpg").exists());
@@ -2944,7 +3712,11 @@ mod tests {
     #[test]
     fn finalize_errors_when_source_missing() {
         let tmp = TempDir::new().unwrap();
-        let result = finalize_uploaded_filename(&VaultLayout::new(tmp.path().to_path_buf()), "missing.jpg", "Slug");
+        let result = finalize_uploaded_filename(
+            &VaultLayout::new(tmp.path().to_path_buf()),
+            "missing.jpg",
+            "Slug",
+        );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not found"));
     }
@@ -2958,19 +3730,23 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         make_staging(tmp.path(), "upload.jpg", b"new");
         make_staging(tmp.path(), "Hello.jpg", b"existing");
-        let result = finalize_uploaded_filename(&VaultLayout::new(tmp.path().to_path_buf()), "upload.jpg", "Hello");
+        let result = finalize_uploaded_filename(
+            &VaultLayout::new(tmp.path().to_path_buf()),
+            "upload.jpg",
+            "Hello",
+        );
         assert_eq!(result, Ok("Hello (2).jpg".to_string()));
         // Original is left intact.
         assert_eq!(
             std::fs::read(tmp.path().join("Hello.jpg")).unwrap(),
             b"existing"
         );
-        // Staged upload moved onto the deduped name.
+        // Legacy input copied onto the deduped name.
         assert_eq!(
             std::fs::read(tmp.path().join("Hello (2).jpg")).unwrap(),
             b"new"
         );
-        assert!(!tmp.path().join("upload.jpg").exists());
+        assert!(tmp.path().join("upload.jpg").exists());
     }
 
     #[test]
@@ -2980,7 +3756,11 @@ mod tests {
         make_staging(tmp.path(), "Hello.jpg", b"x");
         make_staging(tmp.path(), "Hello (2).jpg", b"x");
         make_staging(tmp.path(), "Hello (3).jpg", b"x");
-        let result = finalize_uploaded_filename(&VaultLayout::new(tmp.path().to_path_buf()), "upload.jpg", "Hello");
+        let result = finalize_uploaded_filename(
+            &VaultLayout::new(tmp.path().to_path_buf()),
+            "upload.jpg",
+            "Hello",
+        );
         assert_eq!(result, Ok("Hello (4).jpg".to_string()));
     }
 
@@ -2988,7 +3768,11 @@ mod tests {
     fn finalize_handles_file_without_extension() {
         let tmp = TempDir::new().unwrap();
         make_staging(tmp.path(), "upload", b"x");
-        let result = finalize_uploaded_filename(&VaultLayout::new(tmp.path().to_path_buf()), "upload", "Plain");
+        let result = finalize_uploaded_filename(
+            &VaultLayout::new(tmp.path().to_path_buf()),
+            "upload",
+            "Plain",
+        );
         assert_eq!(result, Ok("Plain".to_string()));
         assert!(tmp.path().join("Plain").exists());
     }
@@ -3010,7 +3794,11 @@ mod tests {
         }
 
         if let Some(found) = located {
-            assert!(found.is_file(), "located path must exist: {}", found.display());
+            assert!(
+                found.is_file(),
+                "located path must exist: {}",
+                found.display()
+            );
         }
         // Absence is a valid outcome on a machine without yt-dlp; the contract
         // under test is that a stripped PATH alone does not hide it.
@@ -3142,7 +3930,10 @@ mod tests {
             );
         }
 
-        assert!(vault.block_path("Cards/Inspora").exists(), "first clip missing");
+        assert!(
+            vault.block_path("Cards/Inspora").exists(),
+            "first clip missing"
+        );
         assert!(
             vault.block_path("Cards/Inspora (2)").exists(),
             "second clip did not get its own card",

@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.mine.app",
   "build": {
+    "features": ["desktop"],
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "bun run fetch:ytdlp && bun run dev",

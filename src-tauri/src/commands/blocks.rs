@@ -464,94 +464,59 @@ pub async fn get_block(
     .map_err(|error| CommandError::Internal(format!("get_block task join failed: {error}")))?
 }
 
-/// Create a new block: generate slug, write .md, copy media, index.
+/// Create a new block through the shared capture rules and native transaction.
 #[tauri::command(rename_all = "snake_case")]
 pub fn create_block(
     state: State<'_, AppState>,
     params: CreateBlockParams,
 ) -> Result<IndexedBlock, CommandError> {
-    let CreateBlockParams {
-        block_type,
-        title,
-        url,
-        tags,
-        file_path,
-        body,
-    } = params;
     let vault_state = state
         .vault_state
         .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+    create_block_inner(&vs.conn, &vs.vault, params)
+}
 
-    // The caller's declared type is dead (decision 044): content decides. The
-    // parameter survives in the signature until the IPC contract is updated.
-    let _ = block_type;
-
-    let media_ext = file_path.as_ref().map(|fp| {
-        std::path::Path::new(fp)
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("bin")
-            .to_string()
+/// The desktop create adapter, also exercised without constructing a GUI.
+pub(crate) fn create_block_inner(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    params: CreateBlockParams,
+) -> Result<IndexedBlock, CommandError> {
+    let name = select_capture_name(conn, vault, params.title.as_deref(), params.url.as_deref())?;
+    let media_file = params.file_path.as_deref().map(|source| {
+        let ext = Path::new(source).extension().and_then(|ext| ext.to_str()).unwrap_or("bin");
+        format!("{name}.{ext}")
     });
+    let block = mine_core::save::build_capture(&mine_core::save::CaptureRequest {
+        slug: vault.new_card_slug(&name),
+        intent: mine_core::save::CaptureIntent::Desktop,
+        block_type: params.block_type,
+        title: params.title,
+        url: params.url,
+        tags: params.tags,
+        file: media_file,
+        body: params.body.unwrap_or_default(),
+        saved_at: crate::util::now_iso8601(),
+        ..Default::default()
+    }).map_err(|error| CommandError::Internal(error.to_string()))?;
+    Ok(files::persist_new_block(conn, vault, &block, params.file_path.as_deref().map(Path::new))?)
+}
 
-    // Generate unique slug across both the index and existing vault files.
-    let raw_slug = crate::domain::block::suggest_slug(title.as_deref(), url.as_deref());
-    // `name` is the free file name; `slug` adds the configured cards folder.
-    // Media keeps the bare name so its frontmatter reference stays a wikilink.
-    let name = resolve_unique_block_slug(&vs.conn, &vs.vault, &raw_slug, media_ext.as_deref())?;
-    let media_file = media_ext.as_ref().map(|ext| format!("{}.{}", name, ext));
-    let slug = vs.vault.new_card_slug(&name);
-
-    let now = crate::commands::state::now_iso8601();
-    let saved_at = DateTime::new(&now).map_err(|e| CommandError::Internal(e.to_string()))?;
-    let mut collections = Vec::new();
-    for tag in &tags {
-        let collection_ref = normalize_collection_ref(tag);
-        if collection_ref.is_empty() {
-            continue;
-        }
-        let collection_ref =
-            validate_collection_ref(&collection_ref).map_err(CommandError::Internal)?;
-        if !collections.contains(&collection_ref) {
-            collections.push(collection_ref);
-        }
+/// Collect native facts; the portable core owns the filename decision.
+pub(crate) fn select_capture_name(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    title: Option<&str>,
+    url: Option<&str>,
+) -> anyhow::Result<String> {
+    let mut existing = files::scan_vault_file_stems(vault)?;
+    let mut statement = conn.prepare("SELECT slug FROM blocks")?;
+    for row in statement.query_map([], |row| row.get::<_, String>(0))? {
+        existing.insert(row?);
     }
-
-    let mut block = Block {
-        slug,
-        frontmatter: Frontmatter {
-            block_type: crate::domain::block::BlockType::Article,
-            title: None,
-            description: None,
-            url,
-            file: media_file,
-            thumbnail: None,
-            tags: collections,
-            related_notes: Vec::new(),
-            source_media: None,
-            saved_at,
-            source: None,
-            width: None,
-            height: None,
-            author: None,
-            position: None,
-            color: None,
-            icon: None,
-        },
-        body: body.unwrap_or_default(),
-    };
-    block.frontmatter.block_type =
-        crate::domain::block::derive_block_type(&block.frontmatter, &block.body);
-
-    let source = file_path.as_ref().map(|fp| PathBuf::from(fp));
-    Ok(files::persist_new_block(
-        &vs.conn,
-        &vs.vault,
-        &block,
-        source.as_deref(),
-    )?)
+    Ok(mine_core::save::select_name(vault.write_layout(), title, url, &existing.into_iter().collect::<Vec<_>>())?)
 }
 
 /// Extract a local inline image from an article body into a new image block.
@@ -3842,6 +3807,70 @@ mod tests {
     fn persist_block(conn: &rusqlite::Connection, vault: &VaultLayout, block: &Block) {
         files::write_block_file(vault, block).unwrap();
         index::upsert_block(conn, block, Some(vault.root())).unwrap();
+    }
+
+    #[test]
+    fn desktop_create_uses_shared_names_for_disk_only_card_and_media_conflicts() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let vault = vault.with_write_layout(crate::domain::vault::VaultWriteLayout::standard());
+        std::fs::create_dir_all(vault.cards_dir()).unwrap();
+        std::fs::create_dir_all(vault.media_dir()).unwrap();
+        std::fs::write(vault.block_path("Cards/Note"), b"external card").unwrap();
+        std::fs::write(vault.new_media_path("Note (2).png"), b"external media").unwrap();
+
+        let created = create_block_inner(&conn, &vault, CreateBlockParams {
+            block_type: "obsolete".into(), title: Some("Note".into()),
+            url: None, tags: vec![], file_path: None, body: None,
+        }).unwrap();
+
+        assert_eq!(created.slug, "Cards/Note (3)");
+        assert_eq!(std::fs::read(vault.block_path("Cards/Note")).unwrap(), b"external card");
+        assert_eq!(std::fs::read(vault.new_media_path("Note (2).png")).unwrap(), b"external media");
+        assert!(vault.block_path(&created.slug).is_file());
+    }
+
+    #[test]
+    fn desktop_create_preserves_pasted_body_and_shared_collection_normalization() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let created = create_block_inner(&conn, &vault, CreateBlockParams {
+            block_type: "article".into(), title: Some("A filename seed".into()),
+            url: None, tags: vec![" [[Чтение]] ".into(), "Чтение".into()],
+            file_path: None, body: Some("A one-line quote".into()),
+        }).unwrap();
+        let raw = std::fs::read_to_string(vault.block_path(&created.slug)).unwrap();
+        let block = crate::domain::block::parse_block(&created.slug, &raw).unwrap();
+        assert_eq!(block.body, "A one-line quote");
+        assert_eq!(block.frontmatter.title, None);
+        assert_eq!(block.frontmatter.tags, ["Чтение"]);
+        assert!(!raw.contains("type:"));
+    }
+
+    #[test]
+    fn desktop_create_keeps_source_rollback_when_index_commit_fails() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let source_dir = tempfile::tempdir().unwrap();
+        let source = source_dir.path().join("input.jpg");
+        std::fs::write(&source, b"owned source remains").unwrap();
+        conn.execute_batch("CREATE TRIGGER fail_capture BEFORE INSERT ON blocks BEGIN SELECT RAISE(FAIL, 'injected index failure'); END;").unwrap();
+        let result = create_block_inner(&conn, &vault, CreateBlockParams {
+            block_type: "image".into(), title: Some("Rollback".into()),
+            url: None, tags: vec![], file_path: Some(source.to_string_lossy().into_owned()), body: None,
+        });
+        assert!(result.is_err());
+        assert!(!vault.block_path("Rollback").exists());
+        assert!(!vault.new_media_path("Rollback.jpg").exists());
+        assert_eq!(std::fs::read(&source).unwrap(), b"owned source remains");
+    }
+
+    #[test]
+    fn desktop_create_rejects_collection_traversal_before_source_write() {
+        let (_root, _derived, vault, conn) = make_vault();
+        assert!(create_block_inner(&conn, &vault, CreateBlockParams {
+            block_type: "article".into(), title: Some("Unsafe".into()),
+            url: None, tags: vec!["../outside".into()], file_path: None,
+            body: Some("Body".into()),
+        }).is_err());
+        assert!(!vault.block_path("Unsafe").exists());
     }
 
     #[test]

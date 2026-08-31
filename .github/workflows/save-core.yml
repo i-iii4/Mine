@@ -1,0 +1,39 @@
+name: Portable save core
+
+on:
+  pull_request:
+  push:
+    branches: [main, audit-remediation]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-wasm-parity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RUSTUP_TOOLCHAIN: 1.88.0
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install pinned Rust and WebAssembly target
+        run: rustup toolchain install 1.88.0 --profile minimal --target wasm32-unknown-unknown
+      - name: Install the matching WebAssembly binding tool
+        # The CLI's own lockfile pins its transitive dependencies at this MSRV.
+        # TLS and the test runner are not needed for local binding generation.
+        run: cargo install wasm-bindgen-cli --version 0.2.120 --locked --no-default-features --bin wasm-bindgen
+      - name: Test the portable native crate at MSRV
+        run: cargo test -p mine-core --locked
+      - name: Check the portable crate without default features
+        run: cargo check -p mine-core --lib --no-default-features --locked
+      - name: Check WebAssembly without default features
+        run: cargo check -p mine-core --lib --no-default-features --target wasm32-unknown-unknown --locked
+      - name: Build the real WebAssembly fixture runtime
+        run: node scripts/build-save-core.mjs --test-runtime
+      - name: Compare native and WebAssembly fixture results exactly
+        run: node scripts/test-save-core.mjs

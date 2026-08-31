@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { safeMarkdownUrl } from "@/lib/markdownUrl";
 import { PlayBadge } from "@/components/PlayBadge";
+import { Button } from "@/components/ui/button";
 import { useClipperState } from "./hooks/useClipperState";
 import { resolveContentBody } from "./lib/resolveContentBody";
 import { TypeSwitcher } from "./components/TypeSwitcher";
@@ -60,6 +61,8 @@ export function PopupApp() {
 
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveWarning, setSaveWarning] = useState<string | null>(null);
+  const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null);
 
   // Context-aware close: in the overlay (content-script isolated world)
   // `window.close()` would try to close the whole tab because `window`
@@ -81,7 +84,8 @@ export function PopupApp() {
     if (!result) return;
     if (result.ok) {
       setSaved(true);
-      setTimeout(closeClipper, 1200);
+      setSaveWarning(result.warning ?? null);
+      if (!result.warning) setTimeout(closeClipper, 1200);
     } else {
       setSaveError(result.error ?? "Failed to save");
     }
@@ -192,6 +196,39 @@ export function PopupApp() {
     return buildEmbeddedVideoPreviewMap(embeddedVideoPreviews);
   }, [embeddedVideoPreviews]);
   const hasTypeRow = metadata?.detectedType !== "image";
+  const previous = clipper.previousOperation;
+  const previousSavePanel = previous && (
+    <div className="grid gap-2 border-b border-border p-3" data-clipper-previous-save="">
+      <p className="text-sm font-semibold">A previous clip from this page has an unresolved save.</p>
+      <p className="text-sm text-muted-foreground">This is not the current draft. Checking the previous clip does not save this one.</p>
+      <details className="text-sm">
+        <summary>{typeof previous.payload?.title === "string" ? previous.payload.title : "Previous clip details"}</summary>
+        <p className="break-words">Folder: {previous.folderLabel ?? previous.vaultPath ?? "Original browser folder"}</p>
+        <p className="break-words">Source: {previous.sourceUrl ?? "Unavailable"}</p>
+        <p>Type: {typeof previous.payload?.block_type === "string" ? previous.payload.block_type : "Unavailable"}</p>
+        {Array.isArray(previous.payload?.tags) && <p>Collections: {previous.payload.tags.filter((tag): tag is string => typeof tag === "string").join(", ")}</p>}
+        {typeof previous.payload?.body === "string" && <p className="whitespace-pre-wrap">{previous.payload.body.slice(0, 500)}</p>}
+        {!previous.payload && <p>Original content is unavailable. Only the recorded save outcome can be checked.</p>}
+      </details>
+      <Button variant="secondary" disabled={clipper.saving} onClick={() => {
+        void clipper.recoverPreviousSave().then((result) => {
+          if (!result) return;
+          const message = result.ok || result.outcome === "committed"
+            ? "The previous clip was saved. This new draft has not been saved."
+            : result.terminal_rejected === true
+              ? "The previous clip was rejected before writing files. This new draft has not been saved."
+              : result.error ?? "The previous save outcome is still unknown.";
+          setRecoveryMessage(result.warning ? `${message} ${result.warning}` : message);
+        }).catch((cause) => setRecoveryMessage(cause instanceof Error ? cause.message : String(cause)));
+      }}>Check previous save</Button>
+      {previous.executor === "browser" && <Button variant="secondary" disabled={clipper.saving} onClick={() => {
+        void clipper.restorePreviousFolder().then((result) => {
+          if (result && !result.ok) setRecoveryMessage(result.error ?? "Could not open folder recovery");
+        }).catch((cause) => setRecoveryMessage(cause instanceof Error ? cause.message : String(cause)));
+      }}>Restore previous folder access</Button>}
+      {!clipper.allowDifferentDraft && <Button variant="ghost" disabled={clipper.saving} onClick={clipper.confirmDifferentDraft}>This is a different clip</Button>}
+    </div>
+  );
 
   if (clipper.state === "loading") {
     return <LoadingState />;
@@ -201,15 +238,23 @@ export function PopupApp() {
     return <ErrorState message={clipper.error ?? "Unknown error"} />;
   }
 
-  if (clipper.saveMode === "unconfigured" && clipper.nativeStatusError) {
+  if (clipper.saveMode === "unconfigured" && !clipper.pendingOperation) {
     return (
+      <>
+      {previousSavePanel}
+      {recoveryMessage && <p className="p-3 text-sm" role="status">{recoveryMessage}</p>}
       <StandaloneSetup
         canPickFolder={clipper.canPickFolder}
         folderName={clipper.standaloneFolder}
+        diagnosis={clipper.nativeStatusError}
+        nativeConnected={clipper.nativeConnected}
+        onRetryConnection={clipper.retryConnection}
+        onChooseNativeFolder={clipper.addSpace}
         onChooseFolder={clipper.chooseFolder}
         onRegrantAccess={clipper.regrantFolder}
         onClose={closeClipper}
       />
+      </>
     );
   }
 
@@ -217,8 +262,10 @@ export function PopupApp() {
 
   return (
     <div className="flex min-h-0 flex-col">
+      {previousSavePanel}
+      {recoveryMessage && <p className="p-3 text-sm" role="status">{recoveryMessage}</p>}
       {clipper.saveMode === "standalone" && (
-        <StandaloneFolderRow folderName={clipper.standaloneFolder} onClose={closeClipper} />
+        <StandaloneFolderRow folderName={clipper.standaloneFolder} canOpenApp={clipper.canOpenApp} onRetryConnection={clipper.retryConnection} onChooseNativeFolder={clipper.addSpace} onClose={closeClipper} />
       )}
       {clipper.saveMode !== "standalone" && clipper.selectedVault && (
         <VaultSelect
@@ -228,12 +275,16 @@ export function PopupApp() {
           onReveal={clipper.revealSpace}
           onAddSpace={clipper.addSpace}
           onClose={closeClipper}
+          canOpenApp={clipper.canOpenApp}
+          onRetryConnection={clipper.retryConnection}
         />
       )}
 
+      <fieldset disabled={clipper.pendingOperation || clipper.saving} className="contents">
       {hasTypeRow && (
         <TypeRow current={clipper.currentType} onChange={clipper.setCurrentType} />
       )}
+      </fieldset>
 
       <div className="mine-clipper-body" data-after-type={hasTypeRow ? "true" : "false"}>
         {/* Elastic model: the only elements that compress under a short
@@ -353,13 +404,14 @@ export function PopupApp() {
           )}
         </div>
 
+        <fieldset disabled={clipper.pendingOperation || clipper.saving} className="contents">
         <ChannelList
           channels={clipper.channels}
           selectedTags={clipper.selectedTags}
           onToggle={clipper.toggleTag}
           onCreate={clipper.createChannel}
         />
-
+        </fieldset>
         <div className="mine-clipper-section-stack shrink-0">
           {/* The error sits above the button: below it, a short viewport
               would push the one line that explains the failure off screen. */}
@@ -368,10 +420,18 @@ export function PopupApp() {
               {footerError}
             </p>
           )}
+          {saveWarning && <p className="text-sm text-muted-foreground" role="status">{saveWarning}</p>}
+          {clipper.pendingOperation && !saved && <p className="text-sm text-muted-foreground">The original clip, folder and save ID are kept. Check its result before starting another save.</p>}
+          {clipper.pendingOperation && clipper.saveMode === "standalone" && !saved && (
+            <Button variant="secondary" disabled={clipper.saving} onClick={() => {
+              void clipper.regrantFolder().then((result) => { if (!result.ok && result.error) setSaveError(result.error); });
+            }}>Restore original folder access</Button>
+          )}
           <SaveButton
             count={clipper.selectedTags.length}
             state={saved ? "saved" : clipper.saving ? "saving" : "idle"}
             onClick={handleSave}
+            checkingOutcome={clipper.pendingOperation}
           />
         </div>
       </div>

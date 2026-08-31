@@ -31,6 +31,8 @@ interface VaultSelectProps {
   onReveal: (path: string) => void;
   onAddSpace: () => void;
   onClose?: () => void;
+  canOpenApp?: boolean;
+  onRetryConnection?: () => Promise<unknown>;
 }
 
 function vaultName(path: string): string {
@@ -38,7 +40,7 @@ function vaultName(path: string): string {
   return trimmed.split("/").pop() || path;
 }
 
-export function VaultSelect({ value, options, onChange, onReveal, onAddSpace, onClose }: VaultSelectProps) {
+export function VaultSelect({ value, options, onChange, onReveal, onAddSpace, onClose, canOpenApp = false, onRetryConnection }: VaultSelectProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
@@ -261,7 +263,7 @@ export function VaultSelect({ value, options, onChange, onReveal, onAddSpace, on
         </DropdownMenuContent>
       </DropdownMenu>
       <span className="ml-auto flex items-center gap-1">
-        <ClipperOverflowMenu appInstalled />
+        <ClipperOverflowMenu canOpenApp={canOpenApp} onRetryConnection={onRetryConnection} />
         {onClose && (
           <ChromeCloseButton label="Close" onClick={onClose} />
         )}

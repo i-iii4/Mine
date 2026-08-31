@@ -91,9 +91,11 @@ import {
   regrantStandaloneAccess,
   standaloneCreateChannel,
   standaloneListChannels,
-  standaloneSave,
+  openStandaloneSetup,
+  type StandaloneStatus,
   type StandaloneMode,
 } from "../lib/standalone";
+import { clearPendingSave, executePinnedSave, findPendingSave, persistPendingSave, type PinnedSaveOperation } from "../lib/saveOperation";
 
 export type ClipType = "content" | "link" | "image" | "video" | "screenshot";
 export type PopupState = "loading" | "error" | "main";
@@ -134,6 +136,12 @@ export function useClipperState() {
   const [screenshotUploadId, setScreenshotUploadId] = useState<string | null>(null);
   const [cropSupported, setCropSupported] = useState<boolean>(false);
   const [nativeStatusError, setNativeStatusError] = useState<string | null>(null);
+  const [nativeConnected, setNativeConnected] = useState(false);
+  const [canOpenApp, setCanOpenApp] = useState(false);
+  const [pendingOperation, setPendingOperation] = useState(false);
+  const [previousOperation, setPreviousOperation] = useState<PinnedSaveOperation | null>(null);
+  const [allowDifferentDraft, setAllowDifferentDraft] = useState(false);
+  const [draftId] = useState(() => crypto.randomUUID());
   // Which road a save takes (О2): the app when its host answers, the granted
   // folder when it does not, and neither until one of them exists.
   const [saveMode, setSaveMode] = useState<StandaloneMode>("app");
@@ -142,9 +150,13 @@ export function useClipperState() {
   const uploadPortRef = useRef<number | null>(null);
   const uploadTokenRef = useRef<string | null>(null);
   const supportsPendingUploadsRef = useRef(false);
-  const nativeReadyRef = useRef(false);
   const nativeStatusErrorRef = useRef<string | null>(null);
   const nativeStatusPromiseRef = useRef<Promise<boolean> | null>(null);
+  const bindingIdRef = useRef<string | null>(null);
+  const operationRef = useRef<PinnedSaveOperation | null>(null);
+  const savingRef = useRef(false);
+  const destinationRef = useRef<"native" | "browser" | null>(null);
+  const destinationGenerationRef = useRef(0);
 
   const tabIdRef = useRef<number | null>(null);
   const vaultRef = useRef<string | null>(null);
@@ -233,6 +245,7 @@ export function useClipperState() {
   }, []);
 
   const retakeScreenshot = useCallback(() => {
+    if (operationRef.current || savingRef.current) return;
     captureScreenshot();
   }, [captureScreenshot]);
 
@@ -289,6 +302,7 @@ export function useClipperState() {
   }, [setArticleDataValue, setArticleExtractionStateValue]);
 
   const handleTypeChange = useCallback((type: ClipType) => {
+    if (operationRef.current || savingRef.current) return;
     setCurrentType(type);
     if (type === "screenshot" && !screenshotDataUrl) {
       captureScreenshot();
@@ -307,45 +321,98 @@ export function useClipperState() {
     }
   }, []);
 
-  const enterStandaloneMode = useCallback((folderName: string) => {
+  const enterStandaloneMode = useCallback((status: StandaloneStatus) => {
     saveModeRef.current = "standalone";
     setSaveMode("standalone");
-    setStandaloneFolder(folderName);
-    // The folder answers for the app now; the app's absence is a mode, not an
-    // error to wave at the person on every save (О2).
+    setStandaloneFolder(status.folderName ?? "Folder");
+    bindingIdRef.current = status.bindingId ?? null;
+    destinationRef.current = "browser";
     nativeStatusErrorRef.current = null;
     setNativeStatusError(null);
     void refreshChannels();
   }, [refreshChannels]);
 
-  const ensureNativeStatus = useCallback(async (): Promise<boolean> => {
-    if (nativeReadyRef.current) return true;
-    if (nativeStatusPromiseRef.current) return nativeStatusPromiseRef.current;
+  const ensureNativeStatus = useCallback(async (refresh = false): Promise<boolean> => {
+    if (nativeStatusPromiseRef.current) {
+      if (!refresh) return nativeStatusPromiseRef.current;
+      await nativeStatusPromiseRef.current;
+    }
+    const generation = destinationGenerationRef.current;
 
-    const promise = sendToNative({ action: "get_status" })
-      .then(async (status) => {
-        if (!status.ok) {
-          const standalone = await getStandaloneStatus();
-          if (standalone.configured && standalone.permission === "granted") {
-            enterStandaloneMode(standalone.folderName ?? "Folder");
-            return true;
-          }
-          saveModeRef.current = "unconfigured";
-          setSaveMode("unconfigured");
-          if (standalone.configured) {
-            setStandaloneFolder(standalone.folderName ?? null);
-          }
-          const message = status.error ?? "Cannot connect to Mine";
-          nativeStatusErrorRef.current = message;
-          setNativeStatusError(message);
-          return false;
+    const promise = Promise.all([
+      getStandaloneStatus(),
+      chrome.storage.local.get("mineSaveDestination"),
+    ]).then(async ([standalone, stored]) => {
+        if (generation !== destinationGenerationRef.current) return false;
+        const selected = stored.mineSaveDestination;
+        if (!destinationRef.current && selected && typeof selected === "object"
+          && "executor" in selected && selected.executor === "native"
+          && "vaultPath" in selected && typeof selected.vaultPath === "string") {
+          destinationRef.current = "native";
+          vaultRef.current = selected.vaultPath;
+          bindingIdRef.current = "bindingId" in selected && typeof selected.bindingId === "string" ? selected.bindingId : null;
         }
-
-        uploadPortRef.current = (status.upload_port as number) ?? null;
-        uploadTokenRef.current = (status.upload_token as string) ?? null;
+        if (!destinationRef.current && selected && typeof selected === "object"
+          && "executor" in selected && selected.executor === "browser") {
+          destinationRef.current = "browser";
+        }
+        const status = await sendToNative({ action: "get_status", vault_path: vaultRef.current });
+        if (generation !== destinationGenerationRef.current) return false;
+        setNativeConnected(status.ok && status.connected !== false);
+        setCanOpenApp(status.ok && status.features?.includes("open_app_v1") === true);
+        if (operationRef.current) return true;
+        const compatible = status.ok && Array.isArray(status.features)
+          && status.features.includes("save_operation_v1")
+          && status.features.includes("operation_lookup_v1");
+        uploadPortRef.current = typeof status.upload_port === "number" ? status.upload_port : null;
+        uploadTokenRef.current = typeof status.upload_token === "string" ? status.upload_token : null;
         supportsPendingUploadsRef.current = Array.isArray(status.features)
           && status.features.includes("pending_uploads_v1");
-        nativeReadyRef.current = true;
+
+        // A previously selected browser folder is not replaced when Mine appears.
+        if (destinationRef.current !== "native" && (standalone.configured || destinationRef.current === "browser")) {
+          setStandaloneFolder(standalone.folderName ?? null);
+          if (standalone.configured && standalone.permission === "granted") {
+            enterStandaloneMode(standalone);
+            return true;
+          }
+          destinationRef.current = "browser";
+          const message = standalone.error ?? (standalone.configured
+            ? `Write access to “${standalone.folderName ?? "Folder"}” is ${standalone.permission ?? "unavailable"}. Allow access or choose a folder.`
+            : "The previously selected browser folder is unavailable. Choose it again; the destination has not been changed to Mine.");
+          nativeStatusErrorRef.current = message;
+          setNativeStatusError(message);
+          saveModeRef.current = "unconfigured";
+          setSaveMode("unconfigured");
+          return false;
+        }
+        if (!compatible || !status.vaultConfigured || !status.vault_path || !status.binding_id) {
+          const message = !status.ok
+            ? `Cannot connect to the Mine helper. ${status.error ?? "Open Mine once, then retry."}`
+            : !compatible
+              ? "The Mine helper uses an incompatible save protocol. Open the updated Mine app, then retry."
+              : status.error ?? "The Mine helper is connected. Choose a folder to save your clips.";
+          nativeStatusErrorRef.current = message;
+          setNativeStatusError(message);
+          saveModeRef.current = "unconfigured";
+          setSaveMode("unconfigured");
+          return false;
+        }
+        if (bindingIdRef.current && bindingIdRef.current !== status.binding_id && destinationRef.current === "native") {
+          const message = "The selected folder binding changed. Choose the folder again before saving.";
+          nativeStatusErrorRef.current = message;
+          setNativeStatusError(message);
+          saveModeRef.current = "unconfigured";
+          setSaveMode("unconfigured");
+          return false;
+        }
+        destinationRef.current = "native";
+        bindingIdRef.current = status.binding_id;
+        vaultRef.current = status.vault_path;
+        setSelectedVault(status.vault_path);
+        saveModeRef.current = "app";
+        setSaveMode("app");
+        await chrome.storage.local.set({ mineSaveDestination: { executor: "native", vaultPath: status.vault_path, bindingId: status.binding_id } });
         nativeStatusErrorRef.current = null;
         setNativeStatusError(null);
 
@@ -355,18 +422,22 @@ export function useClipperState() {
         void listKnownVaults().then((vaultsResult) => {
           if (vaultsResult.ok) {
             setKnownVaults(vaultsResult.vaults);
-            setSelectedVault(vaultsResult.current);
-            vaultRef.current = vaultsResult.current;
-            void refreshChannels(vaultsResult.current);
           }
         });
         void refreshChannels();
         return true;
       })
+      .catch((cause) => {
+        if (generation !== destinationGenerationRef.current) return false;
+        const message = cause instanceof Error ? cause.message : String(cause);
+        nativeStatusErrorRef.current = message;
+        setNativeStatusError(message);
+        saveModeRef.current = "unconfigured";
+        setSaveMode("unconfigured");
+        return false;
+      })
       .finally(() => {
-        if (!nativeReadyRef.current) {
-          nativeStatusPromiseRef.current = null;
-        }
+        nativeStatusPromiseRef.current = null;
       });
 
     nativeStatusPromiseRef.current = promise;
@@ -378,12 +449,56 @@ export function useClipperState() {
       if (msg?.action === "mineChannelsChanged") {
         void refreshChannels();
       }
+      if (msg?.action === "mineStandaloneFolderChanged" && !operationRef.current && !savingRef.current) {
+        destinationGenerationRef.current += 1;
+        destinationRef.current = "browser";
+        void ensureNativeStatus(true);
+      }
     };
     chrome.runtime.onMessage.addListener(onMessage);
     return () => chrome.runtime.onMessage.removeListener(onMessage);
-  }, [refreshChannels]);
+  }, [refreshChannels, ensureNativeStatus]);
+
+  useEffect(() => {
+    if (!metadata?.url) return;
+    let current = true;
+    void findPendingSave(metadata.url).then((pending) => {
+      if (!current || operationRef.current || savingRef.current) return;
+      setPreviousOperation(pending);
+    }).catch((cause) => {
+      if (current) setNativeStatusError(`Could not read pending save: ${cause instanceof Error ? cause.message : String(cause)}`);
+    });
+    return () => { current = false; };
+  }, [metadata?.url]);
+
+  const recoverPreviousSave = useCallback(async () => {
+    if (!previousOperation || savingRef.current) return null;
+    savingRef.current = true;
+    setSaving(true);
+    try {
+      const result = await executePinnedSave(previousOperation);
+      if (result.ok || result.outcome === "committed") {
+        await clearPendingSave(previousOperation);
+        setPreviousOperation(null);
+      }
+      if (result.outcome === "not_committed" && result.terminal_rejected === true) {
+        await clearPendingSave(previousOperation);
+        setPreviousOperation(null);
+      }
+      return result;
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  }, [previousOperation]);
+
+  const restorePreviousFolder = useCallback(async () => {
+    if (previousOperation?.executor !== "browser") return;
+    return openStandaloneSetup(previousOperation.bindingId);
+  }, [previousOperation]);
 
   const startCropMode = useCallback(async () => {
+    if (operationRef.current || savingRef.current) return;
     if (!cropSupported || tabIdRef.current === null) return;
 
     if (IS_CONTENT_SCRIPT_CONTEXT) {
@@ -781,12 +896,14 @@ export function useClipperState() {
   // --- Actions ---
 
   const toggleTag = useCallback((tag: string) => {
+    if (operationRef.current || savingRef.current) return;
     setSelectedTags((prev) =>
       prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
     );
   }, []);
 
   const createChannel = useCallback(async (name: string) => {
+    if (operationRef.current || savingRef.current) return;
     const result = saveModeRef.current === "standalone"
       ? await standaloneCreateChannel(name)
       : await sendToNative({ action: "create_channel", tag: name, vault_path: vaultRef.current });
@@ -800,9 +917,33 @@ export function useClipperState() {
   }, [refreshChannels]);
 
   const save = useCallback(async () => {
-    if (!metadata || saving) return;
+    if (!metadata || savingRef.current) return;
 
+    savingRef.current = true;
     setSaving(true);
+    try {
+    const pending = operationRef.current;
+    if (pending) {
+      operationRef.current = pending;
+      setPendingOperation(true);
+      const result = await executePinnedSave(pending);
+      if (result.ok || result.outcome === "committed") {
+        await clearPendingSave(pending);
+        return { ok: true as const, warning: result.warning };
+      }
+      if (result.outcome === "not_committed" && result.terminal_rejected === true) {
+        await clearPendingSave(pending);
+        operationRef.current = null;
+        setPendingOperation(false);
+        return { ok: false as const, error: result.error ?? "This save was rejected before writing any files. You can edit the clip and try again." };
+      }
+      return { ok: false as const, error: `Save outcome is not confirmed. Your original clip and destination are kept; retry checks that operation without creating another. ${result.error ?? ""}` };
+    }
+    const previous = previousOperation ?? await findPendingSave(metadata.url);
+    if (previous && !allowDifferentDraft) {
+      setPreviousOperation(previous);
+      return { ok: false as const, error: "A previous clip from this page has an unresolved save. Review that clip first; checking it does not save this new draft." };
+    }
     if (!(await ensureNativeStatus())) {
       setSaving(false);
       return {
@@ -810,6 +951,12 @@ export function useClipperState() {
         error: nativeStatusErrorRef.current ?? "Cannot connect to Mine",
       };
     }
+    if (!bindingIdRef.current) {
+      return { ok: false as const, error: "The selected folder has no verified save binding. Choose it again before saving." };
+    }
+    const chosenExecutor = saveModeRef.current === "standalone" ? "browser" : "native";
+    const chosenBinding = bindingIdRef.current;
+    const chosenVault = chosenExecutor === "browser" ? null : vaultRef.current;
     let saveMetadata = metadata;
 
     // Re-query selection before saving
@@ -837,7 +984,7 @@ export function useClipperState() {
 
     const payload: NativeRequest = {
       action: "save_block",
-      vault_path: vaultRef.current,
+      vault_path: chosenVault,
       block_type: blockType,
       title: title || null,
       description: null,
@@ -877,7 +1024,7 @@ export function useClipperState() {
       payload.body = buildLinkBody(title);
     }
 
-    if (currentType === "screenshot" && saveModeRef.current === "standalone") {
+    if (currentType === "screenshot" && chosenExecutor === "browser") {
       if (!screenshotDataUrl) {
         setSaving(false);
         return { ok: false as const, error: "Screenshot not captured yet" };
@@ -927,7 +1074,7 @@ export function useClipperState() {
           uploadTokenRef.current,
           filename,
           uploadId,
-          vaultRef.current,
+          chosenVault,
         );
         if (!uploadResult.ok && uploadResult.error === "Screenshot upload expired") {
           const refreshedUploadId = await cacheScreenshotUpload(screenshotDataUrl);
@@ -938,7 +1085,7 @@ export function useClipperState() {
               uploadTokenRef.current,
               filename,
               refreshedUploadId,
-              vaultRef.current,
+              chosenVault,
             );
           }
         }
@@ -984,51 +1131,76 @@ export function useClipperState() {
       payload.image_url = saveMetadata.image;
     }
 
-    let result = saveModeRef.current === "standalone"
-      ? await standaloneSave(payload)
-      : await sendToNative(payload);
-    if (!result.ok && currentType === "screenshot" && saveModeRef.current !== "standalone") {
-      result = await sendToNative(payload);
+    const operation: PinnedSaveOperation = {
+      id: crypto.randomUUID(),
+      draftId,
+      sourceUrl: metadata.url,
+      folderLabel: chosenExecutor === "browser" ? standaloneFolder ?? "Folder" : chosenVault ?? undefined,
+      executor: chosenExecutor,
+      bindingId: chosenBinding,
+      vaultPath: chosenVault,
+      // DateTime's canonical wire format is UTC seconds, shared by both executors.
+      payload: { ...payload, saved_at: new Date().toISOString().replace(/\.\d{3}Z$/, "Z") },
+      attempted: false,
+    };
+    await persistPendingSave(operation);
+    operationRef.current = operation;
+    setPendingOperation(true);
+    const result = await executePinnedSave(operation);
+    if (result.ok || result.outcome === "committed") {
+      await clearPendingSave(operation);
+      return { ok: true as const, warning: result.warning };
     }
-    setSaving(false);
-
-    if (result.ok) {
-      return { ok: true as const };
+    if (result.outcome === "not_committed" && result.terminal_rejected === true) {
+      await clearPendingSave(operation);
+      operationRef.current = null;
+      setPendingOperation(false);
+      return { ok: false as const, error: result.error ?? "This save was rejected before writing any files. You can edit the clip and try again." };
     }
-    if (currentType === "screenshot") {
-      return {
-        ok: false as const,
-        error: `Clip uploaded, but card was not created. Open Mine recovery to restore it. ${result.error ?? "Failed to save"}`,
-      };
+    return { ok: false as const, error: `${result.error ?? "Save outcome is not confirmed."} The original clip and folder are kept. Retry checks this operation; it does not create another copy.` };
+    } catch (cause) {
+      return { ok: false as const, error: cause instanceof Error ? cause.message : String(cause) };
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
-    return { ok: false as const, error: result.error ?? "Failed to save" };
   }, [
     metadata,
     currentType,
     title,
     selectedTags,
-    saving,
     ensureArticleLoaded,
     ensureNativeStatus,
     setMetadataValue,
     screenshotDataUrl,
     screenshotUploadId,
+    previousOperation,
+    allowDifferentDraft,
+    draftId,
+    standaloneFolder,
   ]);
 
   const switchVault = useCallback(async (vaultPath: string) => {
+    if (operationRef.current || savingRef.current) return;
+    destinationRef.current = "native";
+    destinationGenerationRef.current += 1;
+    bindingIdRef.current = null;
     setSelectedVault(vaultPath);
     vaultRef.current = vaultPath;
+    await ensureNativeStatus(true);
     // Reload channels for new vault
     await refreshChannels(vaultPath);
     setSelectedTags([]);
-  }, [refreshChannels]);
+  }, [refreshChannels, ensureNativeStatus]);
 
   /// Desktop parity for the space switcher: the host shows the system folder
   /// chooser, registers the folder in the shared config, and the clipper
   /// switches to it — the same flow Add space runs in the app.
   const addSpace = useCallback(async () => {
+    if (operationRef.current || savingRef.current) return;
     const resp = await pickVaultFolder();
-    if (!resp.ok || resp.cancelled || !resp.path) return;
+    if (!resp.ok) throw new Error(resp.error ?? "The Mine helper could not choose a folder");
+    if (resp.cancelled || !resp.path) return;
     setKnownVaults(resp.vaults);
     await switchVault(resp.path);
   }, [switchVault]);
@@ -1038,18 +1210,23 @@ export function useClipperState() {
   }, []);
 
   const chooseFolder = useCallback(async () => {
+    if (operationRef.current || savingRef.current) return { ok: false as const, error: "Resolve the pending save before changing its folder." };
+    if (!canPickFolderHere()) return openStandaloneSetup();
     const status = await chooseStandaloneFolder();
     if (status.configured && status.permission === "granted") {
-      enterStandaloneMode(status.folderName ?? "Folder");
+      await chrome.storage.local.set({ mineSaveDestination: { executor: "browser", bindingId: status.bindingId } });
+      enterStandaloneMode(status);
       return { ok: true as const };
     }
     return { ok: false as const, error: status.error ?? null };
   }, [enterStandaloneMode]);
 
   const regrantFolder = useCallback(async () => {
-    const status = await regrantStandaloneAccess();
+    const bindingId = operationRef.current?.executor === "browser" ? operationRef.current.bindingId : undefined;
+    if (!canPickFolderHere()) return openStandaloneSetup(bindingId);
+    const status = await regrantStandaloneAccess(bindingId);
     if (status.configured && status.permission === "granted") {
-      enterStandaloneMode(status.folderName ?? "Folder");
+      if (!operationRef.current) enterStandaloneMode(status);
       return { ok: true as const };
     }
     return { ok: false as const, error: status.error ?? null };
@@ -1073,6 +1250,15 @@ export function useClipperState() {
     saving,
     articleExtractionState,
     nativeStatusError,
+    nativeConnected,
+    canOpenApp,
+    pendingOperation,
+    previousOperation,
+    recoverPreviousSave,
+    restorePreviousFolder,
+    allowDifferentDraft,
+    confirmDifferentDraft: () => setAllowDifferentDraft(true),
+    retryConnection: ensureNativeStatus,
     toggleTag,
     createChannel,
     save,

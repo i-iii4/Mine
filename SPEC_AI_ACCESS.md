@@ -23,7 +23,8 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_SEARCH.md](SPEC_SE
 ## Решение
 
 Принятое разделение переносимого ядра и нативного исполнителя описано в
-[SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md); SC0 начат, перенос вызовов ещё не начат.
+[SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md); CLI create уже использует
+`mine_core::save::build_capture` и общие правила имён.
 Перенос сохраняет действующие CLI/MCP-вызовы: чтения не получают побочных
 записей, мутации сохраняют существующие guards и dry-run. Новые полномочия
 или команды из самого факта появления общего ядра не следуют.

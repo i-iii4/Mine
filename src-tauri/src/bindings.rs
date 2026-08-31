@@ -48,6 +48,12 @@ use crate::watcher::handler::ScanResult;
 pub fn export_types(check_only: bool) -> Result<()> {
     let mut types = TypeCollection::default();
     types
+        .register::<mine_core::save::CaptureRequest>()
+        .register::<mine_core::save::CoreCommand>()
+        .register::<mine_core::save::SaveError>()
+        .register::<mine_core::save::SaveAction>()
+        .register::<mine_core::save::SaveOutcome>()
+        .register::<mine_core::save::SaveExecutor>()
         .register::<IndexedBlock>()
         .register::<ClipboardPayload>()
         .register::<ShortcutBinding>()

@@ -20,7 +20,7 @@
 // Standalone writing engine (О1–О4): saves clips straight to the granted
 // folder when the native host is not there. Classic script, attaches to
 // globalThis — the same convention every lib/ file follows.
-importScripts("lib/standaloneVault.js");
+importScripts("generated/save-core/mine_core.js", "lib/mineCore.js", "lib/standaloneVault.js");
 
 const HOST_NAME = "com.localarena.clipper";
 // Must match extension/popup/popup-layout.css body { width: 360px }
@@ -290,8 +290,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 
 // Send a message to the native host and return the response.
 // Uses connectNative for persistent connection within a session.
-// Responses are matched by the messageId the host echoes back; older hosts
-// that don't echo it fall back to FIFO order (resolve oldest pending).
+// Responses must match the echoed messageId; no FIFO acknowledgement of saves.
 let nativePort = null;
 const pendingCallbacks = new Map();
 let messageId = 0;
@@ -331,23 +330,18 @@ function getNativePort() {
     return null;
   }
 
-  nativePort.onMessage.addListener((msg) => {
-    // Native host echoes messageId back; fall back to oldest pending if missing
+  const port = nativePort;
+  port.onMessage.addListener((msg) => {
     const id = msg._messageId;
     if (id !== undefined && pendingCallbacks.has(id)) {
-      const { resolve, timeout } = pendingCallbacks.get(id);
+      const { resolve, timeout, action } = pendingCallbacks.get(id);
       pendingCallbacks.delete(id);
       clearTimeout(timeout);
       resolve(msg);
+      if (action === "get_status") confirmNativeConnection(msg, port);
     } else {
-      // Fallback for hosts that don't echo messageId: resolve oldest
-      const first = pendingCallbacks.keys().next();
-      if (!first.done) {
-        const { resolve, timeout } = pendingCallbacks.get(first.value);
-        pendingCallbacks.delete(first.value);
-        clearTimeout(timeout);
-        resolve(msg);
-      }
+      // An uncorrelated or late response must never acknowledge another save.
+      console.warn("[Mine] Ignored uncorrelated native response");
     }
   });
 
@@ -355,7 +349,7 @@ function getNativePort() {
     const error = chrome.runtime.lastError?.message || "Native host disconnected";
     for (const [, { resolve, timeout }] of pendingCallbacks) {
       clearTimeout(timeout);
-      resolve({ ok: false, error });
+      resolve({ ok: false, error, code: "native_disconnected", outcome: "unknown" });
     }
     pendingCallbacks.clear();
     nativePort = null;
@@ -366,7 +360,7 @@ function getNativePort() {
 
 // save_block может последовательно/параллельно качать до 30 inline-картинок.
 // Worst case: ureq retry × 15s × per-domain ограничения ≈ 150s. 180s — буфер.
-// Остальные actions (get_status, list_channels, …) — мгновенные read-only.
+// Остальные actions короткие; только явный diagnostic ACK сохраняет отметку связи.
 function timeoutForAction(action) {
   if (action === "save_block") return 180_000;
   // The folder chooser waits on a human, not on IPC.
@@ -374,13 +368,30 @@ function timeoutForAction(action) {
   return 30_000;
 }
 
-function sendNativeMessage(message) {
+function confirmNativeConnection(status, port) {
+  if (status.ok !== true || status.connected !== true ||
+      !Array.isArray(status.features) || !status.features.includes("connection_check_v1")) return;
+  // ACK proves receipt of this response on the same connection, not a new host.
+  // Its optional failure never delays or alters the returned status/capture.
+  void sendNativeMessage({
+    action: "confirm_connection_check",
+    check_id: crypto.randomUUID(),
+  }, port).then((result) => {
+    if (!result.ok) console.warn("[Mine] Connection-check acknowledgement was not recorded");
+  });
+}
+
+function sendNativeMessage(message, expectedPort = null) {
   return new Promise((resolve) => {
-    const port = getNativePort();
+    const port = expectedPort
+      ? (nativePort === expectedPort ? expectedPort : null)
+      : getNativePort();
     if (!port) {
       resolve({
         ok: false,
-        error: "Native host not installed. Reinstall Mine.",
+        error: "Cannot start the Mine helper. Open Mine once to register it, then retry the connection.",
+        code: "native_unavailable",
+        outcome: "not_committed",
       });
       return;
     }
@@ -390,21 +401,27 @@ function sendNativeMessage(message) {
     const timeout = setTimeout(() => {
       if (pendingCallbacks.has(id)) {
         pendingCallbacks.delete(id);
-        resolve({ ok: false, error: "Native host timeout" });
+        resolve({ ok: false, error: "Mine helper did not respond in time", code: "native_timeout", outcome: "unknown" });
       }
     }, timeoutForAction(message?.action));
 
-    pendingCallbacks.set(id, { resolve, timeout });
+    pendingCallbacks.set(id, { resolve, timeout, action: message?.action });
 
-    port.postMessage({ ...message, _messageId: id });
+    try {
+      port.postMessage({ ...message, _messageId: id });
+    } catch (error) {
+      clearTimeout(timeout);
+      pendingCallbacks.delete(id);
+      resolve({ ok: false, error: String(error?.message ?? error), code: "native_disconnected", outcome: "unknown" });
+    }
   });
 }
 
 async function broadcastChannelsChanged(tag) {
-  const message = {
-    action: "mineChannelsChanged",
-    tag: tag ?? null,
-  };
+  return broadcastClipperMessage({ action: "mineChannelsChanged", tag: tag ?? null });
+}
+
+async function broadcastClipperMessage(message) {
 
   // Detached popup windows are extension pages, so runtime messaging reaches
   // them. In-page overlays are content scripts; Chrome requires tabs messaging
@@ -571,6 +588,51 @@ async function resolveAuthenticatedTweetVideo({ tweetUrl, tweetId }) {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.target !== "background") return false;
 
+  if (msg.action === "openStandaloneSetup") {
+    const url = new URL(chrome.runtime.getURL("dist/index.html?mode=setup"));
+    if (typeof msg.binding_id === "string") url.searchParams.set("binding_id", msg.binding_id);
+    chrome.windows.create({
+      url: url.href,
+      type: "popup", width: 420, height: 460, focused: true,
+    }).then(() => sendResponse({ ok: true }), (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
+    return true;
+  }
+
+  if (msg.action === "standaloneAccessRestored") {
+    if (sender.url?.split("?")[0] !== chrome.runtime.getURL("dist/index.html") || typeof msg.binding_id !== "string") {
+      sendResponse({ ok: false, error: "Restore access in the Mine extension window" });
+      return false;
+    }
+    // Recovery must not replace the selected folder or an operation's binding.
+    broadcastClipperMessage({ action: "mineStandaloneAccessRestored", binding_id: msg.binding_id })
+      .then(() => sendResponse({ ok: true }));
+    return true;
+  }
+
+  if (msg.action === "standaloneFolderChanged") {
+    // Only our setup page can publish a newly granted extension-origin handle.
+    if (sender.url?.split("?")[0] !== chrome.runtime.getURL("dist/index.html")) {
+      sendResponse({ ok: false, error: "Folder setup must run in the Mine extension window" });
+      return false;
+    }
+    globalThis.MineStandaloneVault.getStandaloneStatus().then(async (status) => {
+      if (!status.configured || status.permission !== "granted" || !status.bindingId) {
+        sendResponse({ ok: false, error: status.error ?? "Folder write access is not confirmed" });
+        return;
+      }
+      await chrome.storage.local.set({ mineSaveDestination: { executor: "browser", bindingId: status.bindingId } });
+      await broadcastClipperMessage({ action: "mineStandaloneFolderChanged" });
+      sendResponse({ ok: true });
+    }).catch((error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
+    return true;
+  }
+
+  if (msg.action === "openDownloadPage") {
+    chrome.tabs.create({ url: "https://github.com/i-iii4/Mine/releases" })
+      .then(() => sendResponse({ ok: true }), (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
+    return true;
+  }
+
   if (msg.action === "nativeMessage") {
     sendNativeMessage(msg.payload).then((response) => {
       if (response?.ok && msg.payload?.action === "create_channel") {
@@ -587,7 +649,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // answered from the granted folder instead. The popup decides which road a
   // request takes; background only executes.
   if (msg.action === "standaloneStatus") {
-    globalThis.MineStandaloneVault.getStandaloneStatus().then(sendResponse);
+    globalThis.MineStandaloneVault.getStandaloneStatus().then(sendResponse,
+      (error) => sendResponse({ configured: false, error: String(error?.message ?? error) }));
+    return true;
+  }
+
+  if (msg.action === "standaloneLookup") {
+    globalThis.MineStandaloneVault.lookupOperation(msg.operation_id, msg.binding_id).then(sendResponse,
+      (error) => sendResponse({ ok: false, outcome: "unknown", error: String(error?.message ?? error) }));
     return true;
   }
 

@@ -37,10 +37,10 @@ describe("EdgeStatesSection", () => {
     // Every clipper variant, including the one that used to break saving in
     // silence — plus the settings-page frame showing where the block lives.
     expect(container.querySelectorAll("[data-clipper-status]")).toHaveLength(5);
-    expect(screen.getByText(/an older version/)).toBeInTheDocument();
+    expect(screen.getByText(/Helper differs from this Mine build/)).toBeInTheDocument();
     // Thrice: the settings-page frame, no host installed, and no browser to
     // install into.
-    expect(screen.getAllByText("Not connected yet")).toHaveLength(3);
+    expect(screen.getAllByText("Helper not registered yet")).toHaveLength(3);
     expect(screen.getAllByText(/Found on this Mac: Chrome, Dia/).length).toBeGreaterThan(0);
 
     // Words that name a file's state rather than an app error.

@@ -5,8 +5,8 @@
 
 uniffi::setup_scaffolding!();
 
-use mine_lib::domain::article_audio::prepare_article_speech;
-use mine_lib::domain::block::{parse_markdown_document, DateTime};
+use mine_core::domain::article_audio::prepare_article_speech;
+use mine_core::domain::block::{parse_markdown_document, BlockType, DateTime};
 use mine_lib::domain::vault::VaultLayout;
 use mine_lib::storage::{db, index};
 use std::path::PathBuf;
@@ -118,16 +118,10 @@ impl ArenaVault {
                 continue;
             }
             if let Ok((slug, content)) = mine_lib::storage::files::read_block_file(&vault, &path) {
-                match mine_lib::domain::block::parse_markdown_document(
-                    &slug,
-                    &content,
-                    file_saved_at(&path),
-                ) {
+                match parse_markdown_document(&slug, &content, file_saved_at(&path)) {
                     Ok(parsed) => {
                         let block = parsed.block;
-                        if block.frontmatter.block_type
-                            == mine_lib::domain::block::BlockType::Channel
-                        {
+                        if block.frontmatter.block_type == BlockType::Channel {
                             let _ = index::upsert_channel_from_block(&conn, &block);
                         } else {
                             let _ = index::upsert_block(
@@ -253,4 +247,32 @@ fn extract_markdown_media_urls(body: &str) -> Vec<String> {
     }
 
     urls
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ffi_parser_preserves_foreign_markdown_without_synthetic_metadata() {
+        let body = "# Existing heading\n\nUser-authored content.\n";
+        let parsed = parse_block_file("Notes/Заметка".into(), body.into())
+            .expect("ordinary Markdown is supported by the shared parser");
+        assert_eq!(parsed.slug, "Notes/Заметка");
+        assert_eq!(parsed.body, body);
+        assert_eq!(parsed.title, None);
+        assert_eq!(parsed.saved_at, "1970-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn ffi_parser_uses_shared_attachment_and_collection_rules() {
+        let parsed = parse_block_file(
+            "Cards/Photo".into(),
+            "---\nfile: \"[[Photo.jpg]]\"\nMine Collections:\n  - \"[[Чтение]]\"\nsaved_at: 2026-08-31T12:00:00Z\n---\n".into(),
+        )
+        .expect("canonical Mine Markdown is accepted");
+        assert_eq!(parsed.media_file.as_deref(), Some("Photo.jpg"));
+        assert_eq!(parsed.tags, ["Чтение"]);
+        assert_eq!(parsed.title, None);
+    }
 }

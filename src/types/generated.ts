@@ -12,6 +12,28 @@ export type ArticleAudioStatus = "absent" | "ready"
 export type BlockType = "image" | "article" | "link" | "video" | "file" | "channel"
 
 /**
+ * The existing client intent, separate from the derived document type.
+ */
+export type CaptureIntent =
+/**
+ * Browser extraction keeps its missing-content and required-media checks.
+ */
+"web_clip" |
+/**
+ * A local paste/import preserves its body; the title is a filename seed.
+ */
+"desktop" |
+/**
+ * An explicit CLI title is content for a text note, not generated metadata.
+ */
+"manual"
+
+/**
+ * A prepared capture. Resource acquisition belongs to the executor.
+ */
+export type CaptureRequest = { slug?: string; block_type: string; intent?: CaptureIntent; title: string | null; description: string | null; url: string | null; body?: string; file: string | null; thumbnail: string | null; tags?: string[]; saved_at: string; source: string | null; width: number | null; height: number | null; author: string | null }
+
+/**
  * Runtime card category derived from the Markdown document shape.
  *
  * `type` remains legacy source metadata in frontmatter. Feed/detail rendering
@@ -55,9 +77,14 @@ export type ClipperBrowserStatus = { label: string;
  */
 detected: boolean;
 /**
- * A manifest for this host is present in it.
+ * The exact bundled helper manifest is registered; not a live handshake.
  */
 connected: boolean }
+
+/**
+ * Historical evidence that the extension received a host status response.
+ */
+export type ClipperConnectionCheck = { schema_version: number; check_id: string; confirmed_at: string; host_version: string; host_api_version: number; extension_id: string }
 
 export type ClipperSetupStatus = {
 /**
@@ -65,9 +92,17 @@ export type ClipperSetupStatus = {
  */
 host_installed: boolean;
 /**
- * The installed host matches the running app's version.
+ * The installed host matches the bundled binary, not just its version marker.
  */
-host_current: boolean; app_version: string; browsers: ClipperBrowserStatus[] }
+host_current: boolean; app_version: string; browsers: ClipperBrowserStatus[];
+/**
+ * Last extension-confirmed handshake, not proof of a current connection.
+ */
+last_connection_check: ClipperConnectionCheck | null;
+/**
+ * A damaged diagnostic record does not make registration or capture fail.
+ */
+connection_check_error: string | null }
 
 export type CloudRecommendationState = {
 /**
@@ -77,6 +112,11 @@ export type CloudRecommendationState = {
 due: boolean }
 
 export type CommandError = { kind: "no_vault" } | { kind: "internal"; message: string }
+
+/**
+ * Commands supported by the JSON/WASM bridge, generated into TypeScript.
+ */
+export type CoreCommand = { op: "capture"; request: CaptureRequest } | { op: "name"; title: string | null; url: string | null; layout: VaultWriteLayout; existing: string[] } | { op: "layout"; layout: VaultWriteLayout } | { op: "detect_layout"; stored: VaultWriteLayout | null; empty: boolean; cards: boolean; media: boolean; collections: boolean } | { op: "collection"; slug: string; saved_at: string } | { op: "inspect"; slug: string; markdown: string } | { op: "advance"; phase: SavePhase; evidence: SaveEvidence } | { op: "fingerprint"; value: string }
 
 export type CreateBlockParams = { block_type: string; title: string | null; url: string | null; tags: string[]; file_path: string | null;
 /**
@@ -276,6 +316,11 @@ export type ProjectionRevision = number
 
 export type PromoteOrphanResult = { created: IndexedBlock[]; skipped: string[] }
 
+/**
+ * What the executor can actually establish about the expected Markdown file.
+ */
+export type PublicationEvidence = "not_required" | "missing" | "matches" | "conflict" | "unreadable"
+
 export type RemoveMediaAssetFromCardParams = { media_ref: string; source_slug: string; reference_kind: MediaAssetReferenceKind; occurrence_index: number | null }
 
 export type RenameBlockError = { kind: "no_vault" } | { kind: "block_not_found"; slug: string } | { kind: "invalid_filename"; reason: string } | { kind: "name_taken"; requested: string } | { kind: "internal"; message: string }
@@ -283,6 +328,41 @@ export type RenameBlockError = { kind: "no_vault" } | { kind: "block_not_found";
 export type RenameBlockResult = { old_slug: string; new_slug: string }
 
 export type RenameMediaAssetParams = { media_ref: string; new_stem: string }
+
+/**
+ * The next domain decision; platform code performs only its concrete effect.
+ */
+export type SaveAction = "publish_media" | "publish_markdown" | "persist_receipt" | "return_committed" | "unknown_outcome" | "name_conflict"
+
+/**
+ * A machine-readable core failure, safe to expose across the native/WASM bridge.
+ */
+export type SaveError = { code: SaveErrorCode; message: string }
+
+/**
+ * Stable failure categories; clients never infer state from error text.
+ */
+export type SaveErrorCode = "invalid_request" | "invalid_path" | "invalid_collection" | "missing_content" | "missing_media" | "name_conflict" | "unknown_outcome"
+
+/**
+ * Filesystem observations, never optimistic predictions.
+ */
+export type SaveEvidence = { markdown: PublicationEvidence; media: PublicationEvidence }
+
+/**
+ * A started operation cannot move between these executors.
+ */
+export type SaveExecutor = "native" | "browser"
+
+/**
+ * Transport outcomes do not confuse an unobserved result with a rejected save.
+ */
+export type SaveOutcome = "committed" | "not_committed" | "unknown"
+
+/**
+ * Durable phases. Publishing intent is recorded before a filesystem side effect.
+ */
+export type SavePhase = "prepared" | "media_publishing" | "media_published" | "markdown_publishing" | "source_committed" | "committed"
 
 /**
  * Result of a full vault scan.
@@ -365,5 +445,18 @@ export type UnavailableVaultReason =
 export type VaultOpenResult = { indexed: number; errors: number; sync_in_progress: boolean; derived_store_ready: boolean; bootstrapped_from_legacy: boolean; migration_required: boolean; thumbs_root: string }
 
 export type VaultStats = { totalFileCount: number; markdownFileCount: number; mediaFileCount: number; sourceBytes: number; currentCollectionCardCount: number; currentCollection: string | null; updatedAtMs: number }
+
+/**
+ * Folders new files are written into, relative to the vault root.
+ *
+ * Reading never depends on this: the scanner walks the whole vault and a
+ * card's identity is its path, wherever it sits. This governs writes only —
+ * where the clipper, the app and new collection documents put new files.
+ *
+ * An empty string means the vault root, which is both the historical layout
+ * and a legitimate configuration: a user may point all three at the root and
+ * keep everything flat. See SPEC_VAULT_LIFECYCLE.md П1–П4.
+ */
+export type VaultWriteLayout = { cards: string; media: string; collections: string }
 
 export type VaultWriteLayoutDto = { cards: string; media: string; collections: string }

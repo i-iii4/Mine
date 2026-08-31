@@ -1,12 +1,15 @@
 #[cfg(feature = "desktop")]
 mod asset_protocol;
+#[cfg(feature = "desktop")]
 mod swipe_gesture;
 #[cfg(feature = "desktop")]
 pub mod bindings;
 #[cfg(feature = "desktop")]
 mod commands;
+#[cfg(feature = "desktop")]
 pub mod cli;
 pub mod cli_mutations;
+#[cfg(feature = "desktop")]
 pub mod mcp;
 pub mod domain;
 #[cfg(feature = "desktop")]
@@ -33,6 +36,7 @@ const MENU_ID_FIND_CARDS: &str = "surface-search-find-cards";
 #[cfg(feature = "desktop")]
 const MENU_ID_FIND_CHANNELS: &str = "surface-search-find-channels";
 /// App menu item opening the standalone settings window (`Cmd+,`).
+#[cfg(feature = "desktop")]
 const MENU_ID_SETTINGS: &str = "open-settings-window";
 
 #[cfg(feature = "desktop")]
@@ -169,7 +173,11 @@ pub fn run() {
 
             // An installed clipper must run this build's host, not the one it
             // was installed from.
-            commands::clipper_setup::refresh_installed_host(app.handle());
+            // The isolated IPC smoke must never re-register the user's browser
+            // or replace their installed helper with a diagnostic build.
+            if !commands::native_shell_smoke::enabled() {
+                commands::clipper_setup::refresh_installed_host(app.handle());
+            }
 
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -206,6 +214,7 @@ pub fn run() {
 }
 
 /// The application menu, with accelerators resolved from the user's overrides.
+#[cfg(feature = "desktop")]
 fn build_app_menu(
     app: &tauri::AppHandle,
     overrides: &commands::shortcuts::ShortcutOverrides,
@@ -284,6 +293,7 @@ fn build_app_menu(
 }
 
 /// Rebuild the menu after the user rebinds a command.
+#[cfg(feature = "desktop")]
 pub fn refresh_app_menu(app: &tauri::AppHandle) {
     let overrides = commands::shortcuts::load_overrides(app);
     match build_app_menu(app, &overrides) {

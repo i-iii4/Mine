@@ -1,294 +1,186 @@
-// The standalone writer's contract is byte-parity with the Rust side: a file
-// written with no app installed must be indistinguishable from one the native
-// host wrote. Format cases here are copied from the Rust tests they mirror
-// (src-tauri/src/domain/block.rs), so a drift shows up as a failing pair.
-
-import { beforeEach, describe, expect, it } from "vitest";
-
+// Real compiled Rust/WASM + deterministic platform adapter. These tests do
+// not claim to model FSA's external-writer or power-loss guarantees.
+import { createRequire } from "node:module";
+import { Blob as NodeBlob } from "node:buffer";
+import { webcrypto } from "node:crypto";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import "./standaloneVault.js";
 
-type StandaloneVault = {
-  sanitizeForFilename: (raw: string) => string;
-  suggestSlug: (title: string | null, url: string | null) => string;
-  resolveNameConflict: (name: string, existing: Set<string>) => string;
-  yamlQuote: (s: string) => string;
-  buildMarkdown: (fm: Record<string, unknown>, body: string) => string;
-  mediaExtension: (contentType: string | null, url: string | null) => string;
-  resolveLayout: (dir: unknown) => Promise<{ cards: string; media: string; collections: string }>;
-  existingStems: (dir: unknown, layout: unknown) => Promise<Set<string>>;
-  saveStandaloneBlock: (
-    request: Record<string, unknown>,
-    options?: { fetch?: typeof fetch },
-  ) => Promise<{ ok: boolean; slug?: string; error?: string }>;
-  loadDirectoryHandle: () => Promise<unknown>;
-  storeDirectoryHandle: (handle: unknown) => Promise<void>;
+const wasm = createRequire(import.meta.url)("../../output/playwright/save-core-node/mine_core.js");
+const call = async (command: unknown) => {
+  const result = JSON.parse(wasm.execute_json(JSON.stringify(command)));
+  if (!result.ok) throw Object.assign(new Error(result.error.message), { code: result.error.code });
+  return result.value;
 };
+type Reply = { ok: boolean; outcome?: string; code?: string; slug?: string; tag?: string; resumable?: boolean; channels?: { tag: string }[] };
+type Options = { directory: FakeDirectory; store: MemoryStore; binding_id?: string;
+  fetch?: unknown; afterEffect?: (effect: string) => void; afterPrepared?: () => void };
+const vault = (globalThis as unknown as { MineStandaloneVault: {
+  saveStandaloneBlock: (request: Record<string, unknown>, options: Options) => Promise<Reply>;
+  lookupOperation: (id: string, binding: string, options: Options) => Promise<Reply>;
+  createStandaloneChannel: (tag: string, options: Options) => Promise<Reply>;
+  listStandaloneChannels: (options: Options) => Promise<Reply>;
+  resolveLayout: (directory: FakeDirectory) => Promise<unknown>;
+  getStandaloneStatus: (options: Options) => Promise<unknown>;
+} }).MineStandaloneVault;
 
-const vault = (globalThis as Record<string, unknown>)
-  .MineStandaloneVault as StandaloneVault;
-
-// ── A faithful in-memory FileSystemDirectoryHandle ─────────────────────────
-
+class MemoryStore {
+  values = new Map<string, unknown>();
+  async get(store: string, key: string) { return structuredClone(this.values.get(`${store}:${key}`)); }
+  async put(store: string, key: string, value: unknown) { this.values.set(`${store}:${key}`, structuredClone(value)); }
+}
 class FakeFile {
-  constructor(public content: Uint8Array | string) {}
-  text(): string {
-    return typeof this.content === "string"
-      ? this.content
-      : new TextDecoder().decode(this.content);
+  blob: NodeBlob;
+  constructor(content = "") { this.blob = new NodeBlob([content]); }
+  async getFile() { return this.blob; }
+  async createWritable() {
+    let pending = new NodeBlob();
+    return {
+      write: async (content: string | NodeBlob) => { pending = new NodeBlob([content]); },
+      close: async () => { this.blob = pending; },
+      abort: async () => undefined,
+    };
   }
 }
-
 class FakeDirectory {
-  kind = "directory" as const;
+  kind = "directory";
   files = new Map<string, FakeFile>();
   directories = new Map<string, FakeDirectory>();
   permission = "granted";
-
   constructor(public name: string) {}
-
-  async queryPermission(): Promise<string> {
-    return this.permission;
-  }
-
+  async queryPermission() { return this.permission; }
   async getDirectoryHandle(name: string, options?: { create?: boolean }): Promise<FakeDirectory> {
-    const existing = this.directories.get(name);
-    if (existing) return existing;
-    if (!options?.create) throw new DOMException("not found", "NotFoundError");
-    const created = new FakeDirectory(name);
-    this.directories.set(name, created);
-    return created;
-  }
-
-  async getFileHandle(name: string, options?: { create?: boolean }) {
-    if (!this.files.has(name)) {
-      if (!options?.create) throw new DOMException("not found", "NotFoundError");
-      this.files.set(name, new FakeFile(""));
+    if (name.includes("/")) throw new TypeError("FSA requires one segment");
+    if (!this.directories.has(name)) {
+      if (!options?.create) throw new DOMException("missing", "NotFoundError");
+      this.directories.set(name, new FakeDirectory(name));
     }
-    const file = this.files.get(name)!;
-    return {
-      kind: "file" as const,
-      name,
-      getFile: async () => ({ text: async () => file.text() }),
-      createWritable: async () => {
-        let buffer: Array<Uint8Array | string> = [];
-        return {
-          write: async (chunk: unknown) => {
-            if (typeof chunk === "string") buffer.push(chunk);
-            else if (chunk instanceof Blob) buffer.push(new Uint8Array(await chunk.arrayBuffer()));
-            else buffer.push(chunk as Uint8Array);
-          },
-          close: async () => {
-            const text = buffer
-              .map((part) => (typeof part === "string" ? part : new TextDecoder().decode(part)))
-              .join("");
-            file.content = text;
-          },
-        };
-      },
-    };
+    return this.directories.get(name)!;
   }
-
+  async getFileHandle(name: string, options?: { create?: boolean }) {
+    if (name.includes("/")) throw new TypeError("FSA requires one segment");
+    if (!this.files.has(name)) {
+      if (!options?.create) throw new DOMException("missing", "NotFoundError");
+      this.files.set(name, new FakeFile());
+    }
+    return this.files.get(name)!;
+  }
   async *entries(): AsyncGenerator<[string, { kind: string }]> {
-    for (const [name] of this.files) yield [name, { kind: "file" }];
+    for (const name of this.files.keys()) yield [name, { kind: "file" }];
     for (const [name, dir] of this.directories) yield [name, dir];
   }
+  async text(path: string): Promise<string> {
+    const parts = path.split("/");
+    let dir: FakeDirectory = this;
+    for (const part of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(part);
+    return (await (await dir.getFileHandle(parts.at(-1)!)).getFile()).text();
+  }
 }
-
-// The engine loads its handle from IndexedDB in life; tests inject a fake.
-let fakeRoot: FakeDirectory;
-const dir = () => ({ directory: fakeRoot });
+let folder: FakeDirectory;
+let store: MemoryStore;
+const options = (): Options => ({ directory: folder, store });
+const request = (extra = {}) => ({ operation_id: "save-1", binding_id: "test-vault", executor_id: "browser",
+  block_type: "article", title: "Article", body: "Content", tags: ["Collections/Reference"],
+  saved_at: "2026-08-31T12:00:00Z", ...extra });
 beforeEach(() => {
-  fakeRoot = new FakeDirectory("Mine");
+  folder = new FakeDirectory("Mine"); store = new MemoryStore();
+  vi.stubGlobal("crypto", webcrypto);
+  vi.stubGlobal("MineCore", { call });
 });
 
-// ── Format parity ──────────────────────────────────────────────────────────
-
-describe("filename rules mirror the Rust side", () => {
-  it("replaces reserved characters with single spaces and trims dots", () => {
-    expect(vault.sanitizeForFilename('a/b\\c:d*e?f"g<h>i|j')).toBe("a b c d e f g h i j");
-    expect(vault.sanitizeForFilename("  name...  ")).toBe("name");
-    expect(vault.sanitizeForFilename("")).toBe("Untitled");
+describe("browser executor backed by actual WASM", () => {
+  it("writes canonical Markdown and shared collection references", async () => {
+    expect(await vault.saveStandaloneBlock(request(), options())).toMatchObject({ ok: true, slug: "Cards/Article" });
+    const markdown = await folder.text("Cards/Article.md");
+    expect(markdown).toContain("# Article\n\nContent");
+    expect(markdown).toContain("[[Collections/Reference]]");
+    expect(markdown).not.toContain("type:"); expect(markdown).not.toContain("title:");
   });
-
-  it("derives a slug from the title, then the url without its scheme", () => {
-    expect(vault.suggestSlug("A Fine Article", null)).toBe("A Fine Article");
-    expect(vault.suggestSlug(null, "https://example.com/path")).toBe("example.com path");
-    expect(vault.suggestSlug(null, null)).toBe("Untitled");
+  it("walks nested configured folders one segment at a time", async () => {
+    const mine = await folder.getDirectoryHandle(".mine", { create: true });
+    mine.files.set("layout.json", new FakeFile(JSON.stringify({ cards: "Mine/Notes", media: "Mine/Files", collections: "Mine/Sets" })));
+    expect(await vault.saveStandaloneBlock(request(), options())).toMatchObject({ ok: true, slug: "Mine/Notes/Article" });
+    expect(await folder.text("Mine/Notes/Article.md")).toContain("Content");
   });
-
-  it("resolves collisions with the host's numbered suffix", () => {
-    const taken = new Set(["photo", "photo (2)"]);
-    expect(vault.resolveNameConflict("Photo", taken)).toBe("Photo (3)");
-    expect(vault.resolveNameConflict("Fresh", taken)).toBe("Fresh");
+  it("does not hide invalid stored layout behind defaults", async () => {
+    const mine = await folder.getDirectoryHandle(".mine", { create: true });
+    mine.files.set("layout.json", new FakeFile('{"cards":"../outside","media":"Media","collections":"Collections"}'));
+    expect(await vault.saveStandaloneBlock(request(), options())).toMatchObject({ ok: false, code: "invalid_path" });
+    expect(folder.directories.size).toBe(1);
   });
-});
-
-describe("yaml quoting mirrors the Rust side", () => {
-  it("quotes exactly what the Rust serializer quotes", () => {
-    expect(vault.yamlQuote("plain title")).toBe("plain title");
-    expect(vault.yamlQuote("a: b")).toBe('"a: b"');
-    expect(vault.yamlQuote("[[wiki]]")).toBe('"[[wiki]]"');
-    expect(vault.yamlQuote('he said "hi"')).toBe('"he said \\"hi\\""');
-    expect(vault.yamlQuote("#lead")).toBe('"#lead"');
-    expect(vault.yamlQuote("")).toBe('""');
+  it("serializes concurrent extension saves and selects a free name", async () => {
+    const replies = await Promise.all([vault.saveStandaloneBlock(request(), options()),
+      vault.saveStandaloneBlock(request({ operation_id: "save-2" }), options())]);
+    expect(replies.map(reply => reply.slug)).toEqual(["Cards/Article", "Cards/Article (2)"]);
   });
-});
-
-describe("markdown output", () => {
-  it("writes the host's field order with wikilinked file and collections", () => {
-    const markdown = vault.buildMarkdown(
-      {
-        type: "image",
-        title: "Sunset",
-        url: "https://example.com/post",
-        file: "Sunset.jpg",
-        tags: ["moods"],
-        saved_at: "2026-08-16T10:00:00Z",
-        author: null,
-      },
-      "",
-    );
-    expect(markdown).toBe(
-      [
-        "---",
-        "type: image",
-        "title: Sunset",
-        "url: https://example.com/post",
-        'file: "[[Sunset.jpg]]"',
-        "Mine Collections:",
-        '  - "[[moods]]"',
-        "saved_at: 2026-08-16T10:00:00Z",
-        "source: web-clipper",
-        "---",
-        "",
-      ].join("\n"),
-    );
+  it("replays compact receipt without rewriting a user-edited document", async () => {
+    const first = await vault.saveStandaloneBlock(request(), options());
+    folder.directories.get("Cards")!.files.set("Article.md", new FakeFile("User edit"));
+    expect(await vault.saveStandaloneBlock(request(), options())).toEqual(first);
+    expect(await folder.text("Cards/Article.md")).toBe("User edit");
+    expect(await store.get("operations", "save-1")).not.toHaveProperty("markdown");
   });
-
-  it("appends the body after the fences when present", () => {
-    const markdown = vault.buildMarkdown(
-      { type: "article", title: null, url: null, file: null, tags: [], saved_at: "2026-08-16T10:00:00Z", author: null },
-      "Body text.",
-    );
-    expect(markdown.endsWith("---\nBody text.")).toBe(true);
+  it("rejects identity reuse with another payload", async () => {
+    await vault.saveStandaloneBlock(request(), options());
+    expect(await vault.saveStandaloneBlock(request({ body: "Other" }), options())).toMatchObject({ ok: false, code: "operation_conflict" });
+    expect(folder.directories.get("Cards")!.files.size).toBe(1);
   });
-});
-
-// ── Vault behaviour ────────────────────────────────────────────────────────
-
-describe("layout resolution mirrors the app", () => {
-  it("creates the standard layout in an empty folder and records it", async () => {
-    const layout = await vault.resolveLayout(fakeRoot);
-    expect(layout).toEqual({ cards: "Cards", media: "Media", collections: "Collections" });
-    const mine = await fakeRoot.getDirectoryHandle(".mine");
-    const recorded = JSON.parse(mine.files.get("layout.json")!.text());
-    expect(recorded.cards).toBe("Cards");
+  it("recovers a closed Markdown file after losing the response", async () => {
+    expect(await vault.saveStandaloneBlock(request(), { ...options(), afterEffect: () => { throw new Error("worker stopped"); } }))
+      .toMatchObject({ ok: false, outcome: "unknown" });
+    expect(await vault.lookupOperation("save-1", "test-vault", options())).toMatchObject({ ok: true, outcome: "committed" });
+    expect(folder.directories.get("Cards")!.files.size).toBe(1);
   });
-
-  it("writes flat into a folder that already has loose files", async () => {
-    fakeRoot.files.set("note.md", new FakeFile("x"));
-    const layout = await vault.resolveLayout(fakeRoot);
-    expect(layout).toEqual({ cards: "", media: "", collections: "" });
+  it("resumes a prepared operation after worker restart", async () => {
+    await vault.saveStandaloneBlock(request(), { ...options(), afterPrepared: () => { throw new Error("worker stopped"); } });
+    expect(await vault.lookupOperation("save-1", "test-vault", options())).toMatchObject({ resumable: true });
+    expect(await vault.saveStandaloneBlock(request({ operation_mode: "resume" }), options())).toMatchObject({ ok: true });
   });
-
-  it("prefers the layout the app recorded over detection", async () => {
-    const mine = new FakeDirectory(".mine");
-    mine.files.set(
-      "layout.json",
-      new FakeFile(JSON.stringify({ cards: "Notes", media: "Files", collections: "Sets" })),
-    );
-    fakeRoot.directories.set(".mine", mine);
-    const layout = await vault.resolveLayout(fakeRoot);
-    expect(layout.cards).toBe("Notes");
+  it("does not recreate a file missing after publication intent", async () => {
+    await vault.saveStandaloneBlock(request(), { ...options(), afterEffect: () => { throw new Error("worker stopped"); } });
+    folder.directories.get("Cards")!.files.delete("Article.md");
+    expect(await vault.saveStandaloneBlock(request({ operation_mode: "resume" }), options())).toMatchObject({ outcome: "unknown" });
+    expect(folder.directories.get("Cards")!.files.size).toBe(0);
   });
-});
-
-describe("saving a clip with no app installed", () => {
-  it("writes the card into Cards and the image into Media, media first", async () => {
-    const fetched: string[] = [];
-    const result = await vault.saveStandaloneBlock(
-      {
-        block_type: "image",
-        title: "Sunset",
-        url: "https://example.com/post",
-        image_url: "https://example.com/sunset.jpg",
-        tags: ["moods"],
-        body: "",
-      },
-      {
-        ...dir(),
-        fetch: (async (url: string) => {
-          fetched.push(url);
-          return {
-            ok: true,
-            headers: { get: () => "image/jpeg" },
-            blob: async () => new Blob([new Uint8Array([1, 2, 3])], { type: "image/jpeg" }),
-          };
-        }) as unknown as typeof fetch,
-      },
-    );
-
-    expect(result).toMatchObject({ ok: true, slug: "Sunset" });
-    expect(fetched).toEqual(["https://example.com/sunset.jpg"]);
-
-    const cards = await fakeRoot.getDirectoryHandle("Cards");
-    const markdown = cards.files.get("Sunset.md")!.text();
-    expect(markdown).toContain('file: "[[Sunset.jpg]]"');
-    expect(markdown).toContain("source: web-clipper");
-    const media = await fakeRoot.getDirectoryHandle("Media");
-    expect(media.files.has("Sunset.jpg")).toBe(true);
+  it("does not start a fresh operation when its journal was lost", async () => {
+    expect(await vault.saveStandaloneBlock(request({ operation_mode: "resume" }), options())).toMatchObject({ outcome: "unknown" });
+    expect(folder.directories.size).toBe(0);
   });
-
-  it("numbers the clip when the stem is already taken anywhere in the vault", async () => {
-    await vault.resolveLayout(fakeRoot);
-    const cards = await fakeRoot.getDirectoryHandle("Cards");
-    cards.files.set("Sunset.md", new FakeFile("existing"));
-
-    const result = await vault.saveStandaloneBlock(
-      {
-        block_type: "link",
-        title: "Sunset",
-        url: "https://example.com",
-        body: "",
-      },
-      dir(),
-    );
-
-    expect(result).toMatchObject({ ok: true, slug: "Sunset (2)" });
-    expect(cards.files.has("Sunset (2).md")).toBe(true);
-    expect(cards.files.get("Sunset.md")!.text()).toBe("existing");
+  it("requires permission without calling another executor", async () => {
+    folder.permission = "prompt";
+    expect(await vault.saveStandaloneBlock(request(), options())).toMatchObject({ code: "permission_required", outcome: "not_committed" });
+    expect(folder.directories.size).toBe(0);
   });
-
-  it("refuses to write when the folder permission expired", async () => {
-    fakeRoot.permission = "prompt";
-    const result = await vault.saveStandaloneBlock(
-      {
-        block_type: "link",
-        title: "Anything",
-        body: "",
-      },
-      dir(),
-    );
-    expect(result.ok).toBe(false);
-    expect(result.error).toContain("choose the folder again");
+  it("does not mistake another same-name folder for the original binding", async () => {
+    await vault.saveStandaloneBlock(request(), { ...options(), afterPrepared: () => { throw new Error("stop"); } });
+    const other = new FakeDirectory("Mine");
+    expect(await vault.saveStandaloneBlock(request({ operation_mode: "resume", binding_id: "other" }),
+      { directory: other, store, binding_id: "other" })).toMatchObject({ code: "binding_mismatch" });
+    expect(other.directories.size).toBe(0);
   });
-
-  it("does not leave a card behind when the image download fails", async () => {
-    const result = await vault.saveStandaloneBlock(
-      {
-        block_type: "image",
-        title: "Broken",
-        image_url: "https://example.com/broken.jpg",
-        body: "",
-      },
-      {
-        ...dir(),
-        fetch: (async () => ({ ok: false, status: 404 })) as unknown as typeof fetch,
-      },
-    );
-
-    expect(result.ok).toBe(false);
-    const cards = await fakeRoot.getDirectoryHandle("Cards");
-    expect(cards.files.has("Broken.md")).toBe(false);
+  it("preserves a known foreign target that appeared after preparation", async () => {
+    await vault.saveStandaloneBlock(request(), { ...options(), afterPrepared: () => { throw new Error("stop"); } });
+    (await folder.getDirectoryHandle("Cards", { create: true })).files.set("Article.md", new FakeFile("Foreign"));
+    expect(await vault.saveStandaloneBlock(request({ operation_mode: "resume" }), options())).toMatchObject({ code: "name_conflict" });
+    expect(await folder.text("Cards/Article.md")).toBe("Foreign");
+  });
+  it("publishes media before its reference and recovers without downloading twice", async () => {
+    const fetcher = vi.fn(async () => ({ ok: true, blob: async () => new NodeBlob(["image"], { type: "image/png" }) }));
+    const image = request({ block_type: "image", body: "", image_url: "https://example.com/image.png" });
+    await vault.saveStandaloneBlock(image, { ...options(), fetch: fetcher, afterEffect: effect => { if (effect === "media") throw new Error("stop"); } });
+    expect(await folder.text("Media/Article.png")).toBe("image");
+    expect(folder.directories.get("Cards")!.files.size).toBe(0);
+    expect(await vault.saveStandaloneBlock({ ...image, operation_mode: "resume" }, options())).toMatchObject({ ok: true });
+    expect(await folder.text("Cards/Article.md")).toContain("[[Media/Article.png]]");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it("lists only parsed collection documents, including a flat vault", async () => {
+    folder.files.set("Note.md", new FakeFile("Plain note"));
+    expect(await vault.createStandaloneChannel("Reference", options())).toMatchObject({ ok: true, tag: "Reference" });
+    expect(await vault.listStandaloneChannels(options())).toMatchObject({ ok: true, channels: [{ tag: "Reference" }] });
+  });
+  it("exposes the real browser guarantee profile", async () => {
+    expect(await vault.getStandaloneStatus(options())).toMatchObject({ configured: true, bindingId: "test-vault",
+      capabilities: { atomic_no_clobber: false, durable_flush: false } });
   });
 });

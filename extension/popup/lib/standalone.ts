@@ -16,13 +16,14 @@ export type StandaloneMode = "app" | "standalone" | "unconfigured";
 export interface StandaloneStatus {
   configured: boolean;
   folderName?: string;
+  bindingId?: string;
   permission?: "granted" | "prompt" | "denied";
   error?: string;
 }
 
 interface StandaloneVaultLib {
   storeDirectoryHandle: (handle: FileSystemDirectoryHandle) => Promise<void>;
-  loadDirectoryHandle: () => Promise<FileSystemDirectoryHandle | null>;
+  loadDirectoryHandle: (bindingId?: string) => Promise<FileSystemDirectoryHandle | null>;
   clearDirectoryHandle: () => Promise<void>;
 }
 
@@ -60,6 +61,36 @@ export function standaloneSave(payload: Record<string, unknown>): Promise<Native
   return toBackground<NativeResponse>({ action: "standaloneSave", payload });
 }
 
+export function standaloneLookup(operationId: string, bindingId: string): Promise<NativeResponse> {
+  return toBackground({ action: "standaloneLookup", operation_id: operationId, binding_id: bindingId });
+}
+
+export function openStandaloneSetup(bindingId?: string): Promise<{ ok: boolean; error?: string }> {
+  return toBackground({ action: "openStandaloneSetup", binding_id: bindingId });
+}
+
+export function openDownloadPage(): Promise<{ ok: boolean; error?: string }> {
+  return toBackground({ action: "openDownloadPage" });
+}
+
+export function notifyStandaloneFolderChanged(bindingId?: string): Promise<{ ok: boolean; error?: string }> {
+  return toBackground({ action: bindingId ? "standaloneAccessRestored" : "standaloneFolderChanged", binding_id: bindingId });
+}
+
+/** Read a pending operation's original handle, never the currently selected one. */
+export async function getBoundFolderStatus(bindingId: string): Promise<StandaloneStatus> {
+  try {
+    const handle = await lib().loadDirectoryHandle(bindingId);
+    if (!handle) return { configured: false, error: "The original folder binding is unavailable. The save will not be moved to another folder." };
+    const permission = await (handle as FileSystemDirectoryHandle & {
+      queryPermission: (options: { mode: string }) => Promise<"granted" | "prompt" | "denied">;
+    }).queryPermission({ mode: "readwrite" });
+    return { configured: true, folderName: handle.name, bindingId, permission };
+  } catch (cause) {
+    return { configured: false, error: cause instanceof Error ? cause.message : String(cause) };
+  }
+}
+
 export function standaloneListChannels(): Promise<{
   ok: boolean;
   channels?: ChannelInfo[];
@@ -92,7 +123,7 @@ export async function chooseStandaloneFolder(): Promise<StandaloneStatus> {
   try {
     const handle = await window.showDirectoryPicker!({ mode: "readwrite", id: "mine-vault" });
     await lib().storeDirectoryHandle(handle);
-    return { configured: true, folderName: handle.name, permission: "granted" };
+    return getStandaloneStatus();
   } catch (error) {
     if ((error as DOMException)?.name === "AbortError") {
       return { configured: false };
@@ -102,13 +133,23 @@ export async function chooseStandaloneFolder(): Promise<StandaloneStatus> {
 }
 
 /** Re-ask for access to the already-chosen folder after the browser dropped it. */
-export async function regrantStandaloneAccess(): Promise<StandaloneStatus> {
-  const handle = await lib().loadDirectoryHandle();
-  if (!handle) return { configured: false };
-  const permission = await (
-    handle as unknown as {
-      requestPermission: (options: { mode: string }) => Promise<"granted" | "prompt" | "denied">;
+export async function regrantStandaloneAccess(bindingId?: string): Promise<StandaloneStatus> {
+  if (!canPickFolderHere()) {
+    return { configured: false, error: "Restore folder access in the Mine extension window" };
+  }
+  try {
+    const handle = await lib().loadDirectoryHandle(bindingId);
+    if (!handle) return { configured: false, error: "No folder is selected. Choose a folder to continue." };
+    const permission = await (
+      handle as FileSystemDirectoryHandle & {
+        requestPermission: (options: { mode: string }) => Promise<"granted" | "prompt" | "denied">;
+      }
+    ).requestPermission({ mode: "readwrite" });
+    if (permission !== "granted") {
+      return { configured: true, folderName: handle.name, permission, error: "Write access was not granted. Allow access or choose another folder." };
     }
-  ).requestPermission({ mode: "readwrite" });
-  return { configured: true, folderName: handle.name, permission };
+    return bindingId ? getBoundFolderStatus(bindingId) : getStandaloneStatus();
+  } catch (error) {
+    return { configured: false, error: error instanceof Error ? error.message : String(error) };
+  }
 }

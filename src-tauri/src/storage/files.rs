@@ -19,6 +19,64 @@ use crate::domain::vault::VaultLayout;
 use crate::storage::source_mutation::{SourceFileWrite, StagedSourceMutation};
 use crate::storage::{article_audio, index, media_refs, thumbnails};
 
+/// Publication completed before its directory durability could be confirmed.
+/// Callers must not interpret this error as proof that no final file exists.
+#[derive(Debug, thiserror::Error)]
+#[error("file was published but durability is unconfirmed at {path}: {source}")]
+pub struct PublicationUncertain {
+    pub path: PathBuf,
+    #[source]
+    pub source: anyhow::Error,
+}
+
+/// Whether an error occurred after publication rather than before it.
+pub fn publication_is_uncertain(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.is::<PublicationUncertain>())
+}
+
+fn sync_published_parent(path: &Path) -> Result<()> {
+    sync_parent_directory(path).map_err(|source| {
+        PublicationUncertain {
+            path: path.to_path_buf(),
+            source,
+        }
+        .into()
+    })
+}
+
+/// Reject known symlink/traversal targets before a source write. The root may
+/// itself be a user-selected symlink; descendants must stay in that root.
+pub fn validate_vault_write_target(vault: &VaultLayout, path: &Path) -> Result<()> {
+    use std::path::Component;
+    let relative = path
+        .strip_prefix(vault.root())
+        .context("target escapes vault root")?;
+    let mut current = vault
+        .root()
+        .canonicalize()
+        .context("vault root is unavailable")?;
+    for component in relative.components() {
+        let Component::Normal(segment) = component else {
+            anyhow::bail!("invalid vault-relative write target: {}", path.display());
+        };
+        current.push(segment);
+        match std::fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                anyhow::bail!(
+                    "refusing symlink in source write target: {}",
+                    current.display()
+                );
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /// Write a block to its .md file in the vault.
@@ -51,7 +109,7 @@ pub fn write_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
         let _ = std::fs::remove_file(&tmp);
         return Err(error);
     }
-    sync_parent_directory(path)?;
+    sync_published_parent(path)?;
     Ok(())
 }
 
@@ -59,6 +117,14 @@ pub fn write_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
 /// The complete fsynced temp inode is linked under the final name in one
 /// operation, preserving create-new semantics without exposing partial bytes.
 pub fn write_new_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
+    write_new_atomically_with_sync(path, bytes, sync_parent_directory)
+}
+
+fn write_new_atomically_with_sync(
+    path: &Path,
+    bytes: &[u8],
+    confirm: impl FnOnce(&Path) -> Result<()>,
+) -> Result<()> {
     let tmp = prepare_temp_file(path, |file| file.write_all(bytes))?;
     if let Err(error) = std::fs::hard_link(&tmp, path).with_context(|| {
         format!(
@@ -71,7 +137,10 @@ pub fn write_new_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
         return Err(error);
     }
     let _ = std::fs::remove_file(&tmp);
-    sync_parent_directory(path)?;
+    confirm(path).map_err(|source| PublicationUncertain {
+        path: path.to_path_buf(),
+        source,
+    })?;
     Ok(())
 }
 
@@ -93,7 +162,7 @@ pub fn copy_new_atomically(source: &Path, destination: &Path) -> Result<()> {
         return Err(error);
     }
     let _ = std::fs::remove_file(&tmp);
-    sync_parent_directory(destination)?;
+    sync_published_parent(destination)?;
     Ok(())
 }
 
@@ -113,7 +182,7 @@ fn copy_atomically(source: &Path, destination: &Path) -> Result<()> {
         let _ = std::fs::remove_file(&tmp);
         return Err(error);
     }
-    sync_parent_directory(destination)?;
+    sync_published_parent(destination)?;
     Ok(())
 }
 
@@ -162,7 +231,7 @@ pub(crate) fn prepare_temp_file(
     Ok(tmp)
 }
 
-pub(crate) fn sync_parent_directory(path: &Path) -> Result<()> {
+pub fn sync_parent_directory(path: &Path) -> Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("file has no parent directory: {}", path.display()))?;
@@ -176,11 +245,115 @@ pub(crate) fn sync_parent_directory(path: &Path) -> Result<()> {
 /// Write a new block file without overwriting an existing user file.
 pub fn write_new_block_file(vault: &VaultLayout, block: &Block) -> Result<PathBuf> {
     let path = vault.block_path(&block.slug);
+    validate_vault_write_target(vault, &path)?;
     let content = serialize_block(block);
     write_new_atomically(&path, content.as_bytes())
         .with_context(|| format!("failed to create block file: {}", path.display()))?;
 
     Ok(path)
+}
+
+/// Filename inventory from source files, independent of SQLite and without
+/// following symlinked directories. Naming policy remains in mine-core.
+pub fn scan_vault_file_stems(vault: &VaultLayout) -> Result<std::collections::HashSet<String>> {
+    fn walk(
+        vault: &VaultLayout,
+        dir: &Path,
+        out: &mut std::collections::HashSet<String>,
+    ) -> Result<()> {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let kind = entry.file_type()?;
+            if kind.is_dir() && !is_ignored_vault_dir(&path) {
+                walk(vault, &path, out)?;
+            } else if kind.is_file() {
+                if let Ok(stem) = vault.slug_for_path(&path) {
+                    out.insert(stem);
+                }
+            }
+        }
+        Ok(())
+    }
+    let mut stems = std::collections::HashSet::new();
+    walk(vault, vault.root(), &mut stems)?;
+    Ok(stems)
+}
+
+/// Read configuration and observe folders; the shared core decides how these
+/// facts map to write paths. An invalid existing marker is never ignored.
+pub fn load_vault_write_layout(
+    vault: &VaultLayout,
+) -> Result<crate::domain::vault::VaultWriteLayout> {
+    let marker = vault.write_layout_path();
+    validate_vault_write_target(vault, &marker)?;
+    let stored = match std::fs::read(&marker) {
+        Ok(raw) => Some(serde_json::from_slice(&raw).context("invalid saved write layout")?),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    let mut empty = true;
+    for entry in std::fs::read_dir(vault.root())? {
+        if !entry?.file_name().to_string_lossy().starts_with('.') {
+            empty = false;
+            break;
+        }
+    }
+    let value = mine_core::save::execute(mine_core::save::CoreCommand::DetectLayout {
+        stored,
+        empty,
+        cards: vault
+            .root()
+            .join(crate::domain::vault::DEFAULT_CARDS_DIR)
+            .is_dir(),
+        media: vault
+            .root()
+            .join(crate::domain::vault::DEFAULT_MEDIA_DIR)
+            .is_dir(),
+        collections: vault
+            .root()
+            .join(crate::domain::vault::DEFAULT_COLLECTIONS_DIR)
+            .is_dir(),
+    })?;
+    Ok(serde_json::from_value(value)?)
+}
+
+/// Anchor the layout agreed by a durable capture plan. This is idempotent
+/// initialization, never permission to replace a user's saved configuration.
+pub fn ensure_vault_write_layout(
+    vault: &VaultLayout,
+    requested: &crate::domain::vault::VaultWriteLayout,
+) -> Result<()> {
+    let expected = requested
+        .validate()
+        .map_err(|error| anyhow::anyhow!(error))?;
+    let marker = vault.write_layout_path();
+    validate_vault_write_target(vault, &marker)?;
+    match std::fs::read(&marker) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // Concurrent initialization may win, but the marker is never
+            // overwritten. Read back and validate the winner in either case.
+            if let Err(error) = write_new_atomically(&marker, &serde_json::to_vec(&expected)?) {
+                if !marker.is_file() {
+                    return Err(error);
+                }
+            }
+        }
+        Err(error) => return Err(error.into()),
+    }
+    validate_vault_write_target(vault, &marker)?;
+    let stored: crate::domain::vault::VaultWriteLayout =
+        serde_json::from_slice(&std::fs::read(&marker)?).context("invalid saved write layout")?;
+    let stored = stored.validate().map_err(|error| anyhow::anyhow!(error))?;
+    if stored != expected {
+        anyhow::bail!("saved write layout differs from prepared capture");
+    }
+    // A new .mine entry must itself be anchored in the vault directory.
+    std::fs::File::open(&marker)?.sync_all()?;
+    sync_parent_directory(&marker)?;
+    sync_parent_directory(&vault.mine_dir())?;
+    Ok(())
 }
 
 /// Read a .md file and return (path-based slug, raw_content).
@@ -530,6 +703,107 @@ fn is_image_ext(ext: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sc2_layout_initialization_never_overwrites_corrupt_or_changed_marker() {
+        let temp = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(temp.path().to_path_buf());
+        let standard = crate::domain::vault::VaultWriteLayout::standard();
+        ensure_vault_write_layout(&vault, &standard).unwrap();
+        let original = std::fs::read(vault.write_layout_path()).unwrap();
+        ensure_vault_write_layout(&vault, &standard).unwrap();
+        assert_eq!(std::fs::read(vault.write_layout_path()).unwrap(), original);
+        assert!(
+            ensure_vault_write_layout(&vault, &crate::domain::vault::VaultWriteLayout::flat())
+                .is_err()
+        );
+        assert_eq!(std::fs::read(vault.write_layout_path()).unwrap(), original);
+        std::fs::write(vault.write_layout_path(), b"broken layout").unwrap();
+        assert!(ensure_vault_write_layout(&vault, &standard).is_err());
+        assert_eq!(
+            std::fs::read(vault.write_layout_path()).unwrap(),
+            b"broken layout"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sc2_layout_initialization_rejects_symlink_without_touching_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(temp.path().join("vault"));
+        std::fs::create_dir_all(vault.mine_dir()).unwrap();
+        let external = temp.path().join("external.json");
+        std::fs::write(&external, b"untouched").unwrap();
+        std::os::unix::fs::symlink(&external, vault.write_layout_path()).unwrap();
+        assert!(ensure_vault_write_layout(
+            &vault,
+            &crate::domain::vault::VaultWriteLayout::standard()
+        )
+        .is_err());
+        assert_eq!(std::fs::read(external).unwrap(), b"untouched");
+    }
+
+    #[test]
+    fn sc2_saved_custom_layout_is_respected_and_invalid_marker_is_not_ignored() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(tmp.path().to_path_buf());
+        assert_eq!(
+            load_vault_write_layout(&vault).unwrap(),
+            crate::domain::vault::VaultWriteLayout::standard()
+        );
+        std::fs::create_dir(vault.mine_dir()).unwrap();
+        std::fs::write(
+            vault.write_layout_path(),
+            br#"{"cards":"Mine/Notes","media":"Mine/Files","collections":"Mine/Sets"}"#,
+        )
+        .unwrap();
+        let selected = load_vault_write_layout(&vault).unwrap();
+        assert_eq!(selected.cards, "Mine/Notes");
+        assert_eq!(selected.media, "Mine/Files");
+        std::fs::write(
+            vault.write_layout_path(),
+            br#"{"cards":"../outside","media":"Files","collections":"Sets"}"#,
+        )
+        .unwrap();
+        assert!(load_vault_write_layout(&vault).is_err());
+        std::fs::write(vault.write_layout_path(), b"truncated").unwrap();
+        assert!(load_vault_write_layout(&vault).is_err());
+    }
+
+    #[test]
+    fn sc2_failed_directory_sync_reports_publication_uncertain_and_retains_complete_bytes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("Card.md");
+        let error = write_new_atomically_with_sync(&path, b"complete Markdown", |_| {
+            anyhow::bail!("injected directory sync failure")
+        })
+        .unwrap_err();
+        assert!(publication_is_uncertain(&error));
+        assert_eq!(std::fs::read(&path).unwrap(), b"complete Markdown");
+        let collision = write_new_atomically(&path, b"must not replace").unwrap_err();
+        assert!(!publication_is_uncertain(&collision));
+        assert_eq!(std::fs::read(&path).unwrap(), b"complete Markdown");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sc2_write_target_and_inventory_reject_symlink_escape() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("vault");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("Foreign.md"), b"foreign").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("Cards")).unwrap();
+        let vault = VaultLayout::new(root.clone());
+        assert!(validate_vault_write_target(&vault, &root.join("Cards/New.md")).is_err());
+        assert!(validate_vault_write_target(&vault, &root.join("../outside/New.md")).is_err());
+        assert!(scan_vault_file_stems(&vault).unwrap().is_empty());
+        assert_eq!(
+            std::fs::read(outside.join("Foreign.md")).unwrap(),
+            b"foreign"
+        );
+    }
     use crate::domain::block::{parse_block, BlockType, DateTime, Frontmatter};
     use crate::storage::db;
 
@@ -657,7 +931,10 @@ mod tests {
                 .downcast_ref::<std::io::Error>()
                 .is_some_and(|error| error.kind() == std::io::ErrorKind::AlreadyExists)
         }));
-        assert_eq!(std::fs::read(&destination).expect("reread winner"), winner.0);
+        assert_eq!(
+            std::fs::read(&destination).expect("reread winner"),
+            winner.0
+        );
         assert!(!std::fs::read_dir(dir.path())
             .expect("inspect disposable directory")
             .map(|entry| entry.expect("read directory entry"))

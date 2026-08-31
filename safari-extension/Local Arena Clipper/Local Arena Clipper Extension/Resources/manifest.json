@@ -2,6 +2,10 @@
   "manifest_version": 3,
   "name": "Mine",
   "version": "0.1.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAx+WqWjeM8ng5zMPqS0R1Zx1u6Zhm67lPun93OqiJ/iHHSU3FH1FM3Cenkf9fh8Mf6eainVbtUXflQ8v9IGM9nsNQRXeQqpVY3USDKXIstctLZpCe4HDypkzTs3vOhox1fTBfr8t/xob6WXJwY+hTeCuZyf1pIhPNOsfgVIgJwB/KiylHx38UWkFJ4YXztJvcgLyDD350iWiy2Fq0J8n3BkFIwYBXZNU4CIUReDr0eASQhv2anol2Rju/uZSNudiXW5KeupesXFhB/3ExyIyXba2l3KJNXuMjWldGVNgXrtIozyyIstD3J9kPZyP+q5P9hm0ON/EE3Nv3BW5L2DmK4QIDAQAB",
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
   "description": "Save links, articles, and images to Mine",
   "permissions": [
     "contextMenus",

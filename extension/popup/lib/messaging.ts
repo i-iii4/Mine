@@ -1,5 +1,6 @@
 // Native messaging adapter — typed wrapper over chrome.runtime.sendMessage.
 // Replaces FIFO queue with Map<id, callback> (fixes CRIT-7 from audit).
+import type { SaveExecutor, SaveOutcome } from "../../../src/types/generated";
 
 export interface NativeRequest {
   action: string;
@@ -12,6 +13,14 @@ export interface NativeResponse {
   channels?: ChannelInfo[];
   features?: string[];
   host_api_version?: number;
+  connected?: boolean;
+  vaultConfigured?: boolean;
+  vault_path?: string | null;
+  binding_id?: string | null;
+  executor_id?: SaveExecutor;
+  outcome?: SaveOutcome;
+  code?: string;
+  warning?: string;
   [key: string]: unknown;
 }
 
@@ -34,7 +43,7 @@ function timeoutForAction(action: string): number {
 export async function sendToNative(payload: NativeRequest): Promise<NativeResponse> {
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
-      resolve({ ok: false, error: "Native host timeout" });
+      resolve({ ok: false, error: "Mine helper did not respond in time", outcome: "unknown", code: "native_timeout" });
     }, timeoutForAction(payload.action));
 
     chrome.runtime.sendMessage(
@@ -42,7 +51,7 @@ export async function sendToNative(payload: NativeRequest): Promise<NativeRespon
       (response) => {
         clearTimeout(timer);
         if (chrome.runtime.lastError) {
-          resolve({ ok: false, error: chrome.runtime.lastError.message });
+          resolve({ ok: false, error: chrome.runtime.lastError.message, outcome: "unknown", code: "native_disconnected" });
         } else {
           resolve((response as NativeResponse) ?? { ok: false, error: "No response" });
         }

@@ -1,5 +1,7 @@
-/// Pure business logic: types, parsing, validation.
-/// No dependencies on Tauri, SQLite, or filesystem.
+//! Native compatibility paths to the shared portable domain rules.
+//!
+//! The vault module additionally adapts filesystem observations and absolute
+//! native paths; it delegates content, naming and validation to mine-core.
 pub mod article_audio;
 pub mod block;
 pub mod channel;

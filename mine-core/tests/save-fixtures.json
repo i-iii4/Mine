@@ -1,0 +1,294 @@
+[
+  {
+    "name": "unicode nested collision",
+    "command": {
+      "op": "name",
+      "title": "Café",
+      "url": null,
+      "layout": {
+        "cards": "Mine/Cards",
+        "media": "Mine/Media",
+        "collections": "Collections"
+      },
+      "existing": [
+        "Mine/Cards/Café"
+      ]
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "name": "Café (2)",
+        "slug": "Mine/Cards/Café (2)"
+      }
+    }
+  },
+  {
+    "name": "article heading and canonical fields",
+    "command": {
+      "op": "capture",
+      "request": {
+        "slug": "Cards/Article",
+        "block_type": "article",
+        "title": "Article",
+        "body": "Content",
+        "saved_at": "2026-08-31T12:00:00Z",
+        "tags": [
+          "Reference"
+        ]
+      }
+    },
+    "markdownIncludes": "# Article\n\nContent",
+    "markdownExcludes": [
+      "type:",
+      "title:"
+    ]
+  },
+  {
+    "name": "image canonical fields",
+    "command": {
+      "op": "capture",
+      "request": {
+        "slug": "Cards/Image",
+        "block_type": "image",
+        "title": "Image",
+        "file": "Image.png",
+        "saved_at": "2026-08-31T12:00:00Z"
+      }
+    },
+    "markdownIncludes": "[[Image.png]]",
+    "markdownExcludes": [
+      "type:",
+      "title:"
+    ]
+  },
+  {
+    "name": "social body unchanged",
+    "command": {
+      "op": "capture",
+      "request": {
+        "slug": "Post",
+        "block_type": "article",
+        "title": "Social title",
+        "url": "https://x.com/example/status/123",
+        "body": "Post content",
+        "saved_at": "2026-08-31T12:00:00Z"
+      }
+    },
+    "markdownExcludes": [
+      "# Social title",
+      "type:",
+      "title:"
+    ]
+  },
+  {
+    "name": "known commit repeats",
+    "command": {
+      "op": "advance",
+      "phase": "committed",
+      "evidence": {
+        "markdown": "matches",
+        "media": "not_required"
+      }
+    },
+    "expected": {
+      "ok": true,
+      "value": "return_committed"
+    }
+  },
+  {
+    "name": "missing receipt recoverable from source",
+    "command": {
+      "op": "advance",
+      "phase": "markdown_publishing",
+      "evidence": {
+        "markdown": "matches",
+        "media": "not_required"
+      }
+    },
+    "expected": {
+      "ok": true,
+      "value": "persist_receipt"
+    }
+  },
+  {
+    "name": "unknown is not failed",
+    "command": {
+      "op": "advance",
+      "phase": "markdown_publishing",
+      "evidence": {
+        "markdown": "missing",
+        "media": "not_required"
+      }
+    },
+    "expected": {
+      "ok": true,
+      "value": "unknown_outcome"
+    }
+  },
+  {
+    "name": "media before markdown",
+    "command": {
+      "op": "advance",
+      "phase": "prepared",
+      "evidence": {
+        "markdown": "missing",
+        "media": "missing"
+      }
+    },
+    "expected": {
+      "ok": true,
+      "value": "publish_media"
+    }
+  },
+  {
+    "name": "foreign existing card conflicts",
+    "command": {
+      "op": "advance",
+      "phase": "prepared",
+      "evidence": {
+        "markdown": "matches",
+        "media": "not_required"
+      }
+    },
+    "expected": {
+      "ok": true,
+      "value": "name_conflict"
+    }
+  },
+  {
+    "name": "invalid traversal layout",
+    "command": {
+      "op": "layout",
+      "layout": {
+        "cards": "../outside",
+        "media": "Media",
+        "collections": "Collections"
+      }
+    }
+  },
+  {
+    "name": "empty article rejected",
+    "command": {
+      "op": "capture",
+      "request": {
+        "slug": "Empty",
+        "block_type": "article",
+        "body": "",
+        "saved_at": "2026-08-31T12:00:00Z"
+      }
+    }
+  },
+  {
+    "name": "missing image rejected",
+    "command": {
+      "op": "capture",
+      "request": {
+        "slug": "Image",
+        "block_type": "image",
+        "saved_at": "2026-08-31T12:00:00Z"
+      }
+    }
+  },
+  {
+    "name": "channel document",
+    "command": {
+      "op": "collection",
+      "slug": "Collections/Reference",
+      "saved_at": "2026-08-31T12:00:00Z"
+    },
+    "markdownIncludes": "type: channel"
+  },
+  {
+    "name": "ordinary Markdown is not collection",
+    "command": {
+      "op": "inspect",
+      "slug": "Note",
+      "markdown": "---\nsaved_at: 2026-08-31T12:00:00Z\n---\nText"
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "collection": false
+      }
+    }
+  },
+  {
+    "name": "receipt survives user edit",
+    "command": {
+      "op": "advance",
+      "phase": "committed",
+      "evidence": {
+        "markdown": "conflict",
+        "media": "missing"
+      }
+    },
+    "expected": {
+      "ok": true,
+      "value": "return_committed"
+    }
+  },
+  {
+    "name": "incomplete media publication is unknown",
+    "command": {
+      "op": "advance",
+      "phase": "media_publishing",
+      "evidence": {
+        "markdown": "missing",
+        "media": "missing"
+      }
+    },
+    "expected": {
+      "ok": true,
+      "value": "unknown_outcome"
+    }
+  },
+  {
+    "name": "empty layout",
+    "command": {
+      "op": "detect_layout",
+      "stored": null,
+      "empty": true,
+      "cards": false,
+      "media": false,
+      "collections": false
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "cards": "Cards",
+        "media": "Media",
+        "collections": "Collections"
+      }
+    }
+  },
+  {
+    "name": "lost published media is not recreated",
+    "command": {
+      "op": "advance",
+      "phase": "media_published",
+      "evidence": {
+        "markdown": "missing",
+        "media": "missing"
+      }
+    },
+    "expected": {
+      "ok": true,
+      "value": "unknown_outcome"
+    }
+  },
+  {
+    "name": "foreign media is a known conflict before publication",
+    "command": {
+      "op": "advance",
+      "phase": "prepared",
+      "evidence": {
+        "markdown": "missing",
+        "media": "conflict"
+      }
+    },
+    "expected": {
+      "ok": true,
+      "value": "name_conflict"
+    }
+  }
+]

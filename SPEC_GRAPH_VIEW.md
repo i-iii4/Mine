@@ -648,8 +648,8 @@ Rules:
 
 - avoid category rainbow as the default visual language;
 - use muted fills and ring/border strokes;
-- hovered card nodes do not change stroke, opacity, label visibility, size, or
-  link styling;
+- hovered card nodes add the one-CSS-pixel `hoverOutline` on the existing
+  rounded contour; opacity, label visibility, size and link styling stay fixed;
 - hovered collection labels keep the same shape and fill but switch text to
   `text-foreground` and the outline to `--component-fill-hover`;
 - the opened collection, the keyboard-selected one and the hovered one share
@@ -772,8 +772,8 @@ contract as Sidebar thumbnail hover:
 Rules:
 
 - do not dim nodes or links;
-- do not change card size, opacity, border, outline, label visibility, or link
-  color on hover;
+- do not change card size, opacity, border, label visibility or link color on
+  hover; the only canvas change is the shared one-CSS-pixel `hoverOutline`;
 - after the configured delay, fetch the full block with `get_block`;
 - render `ReadOnlyCardPreview` with `previewMode="micro"` and width `240`;
   its `CardFrame` keeps the same `bg-card` surface as feed cards and sidebar
@@ -974,7 +974,7 @@ Use Playwright for real Canvas verification:
 - Graph View first paint is nonblank in dark and light themes.
 - Resizing Sidebar/Detail changes canvas dimensions without remounting.
 - Hovering a card for the cold delay shows the sidebar-style micro preview and
-  does not visually mutate the graph canvas.
+  changes only the card's one-CSS-pixel outline, not any other canvas pixels.
 - Large snapshot does not create thousands of image requests.
 - Mobile/narrow window keeps the contextual `Show all` action inside the graph
   viewport when present.
@@ -986,7 +986,9 @@ The executable acceptance is `bun run test:graph` against the dev-only
 `/__graph-audit` route. It runs both dark and light themes and verifies settled
 first paint, raw Canvas pixels, automatic route switching, resize without
 remount, absence of removed Graph controls, bounded image requests, real delayed
-hover without Canvas mutation, and pan/zoom timing.
+hover with a one-CSS-pixel outline and zero pixel changes outside its mask,
+and pan/zoom timing. Hover comparison waits for a settled canvas rather than
+assuming the force simulation has stopped after a fixed delay.
 
 `bun run verify` must include this gate through a self-contained browser-audit
 runner. The runner starts one Vite server on a free localhost port, waits for

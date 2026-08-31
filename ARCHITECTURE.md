@@ -4,10 +4,11 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG
 
 ## Context
 
-**Принятое изменение, ещё не реализовано:** общее переносимое ядро сохранения
-и нативный/браузерный исполнители — [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md),
-решение 045 и [план SC0–SC7](PLAN.md#save-core-plan). Начат SC0 — контракт
-и пробы безопасности. Существующие схемы ниже не показывают выполненный перенос.
+Общие правила реализованы в `mine-core`; native host и browser WASM используют
+одну модель документа, сериализацию, имена и решения восстановления.
+Desktop/CLI сохраняют собственную mutation-транзакцию и прежние guards.
+Решение 045: [контракт](SPEC_SAVE_CORE.md), [план](PLAN.md#save-core-plan),
+[проверенный результат и открытая реальная приёмка](docs/save-core-acceptance.md).
 
 Are.na — платформа для визуального букмаркинга и организации идей. Проблемы: данные в облаке, зависимость от сервиса, ограниченный бесплатный план, нет контроля над файлами.
 
@@ -1153,10 +1154,11 @@ now avoid overwriting existing `.md` or media files, roll back copied media when
 the final block write fails, and validate remote fetch hosts through parsed
 HTTP(S) URLs plus DNS/IP checks before `ureq` runs.
 
-This is the current native boundary. Decision 045 moves domain decisions
-into the shared core while keeping trust, filesystem and fetch checks in the
-executor. Native create-new guarantees must not be inferred for the browser
-executor; its contract is a separate SC0 gate.
+Decision 045 moved document decisions into `mine-core`, keeping trust,
+filesystem and fetch checks in the executor. Capture no longer rolls back
+published media on an uncertain Markdown result: the durable journal records
+the outcome and retains uncertain material. Native create-new guarantees do
+not apply to the browser executor.
 
 Article creation is guarded as a content invariant, not a UI hint. The clipper
 popup owns an explicit article extraction state (`idle/loading/ready/empty/failed`)
@@ -1187,9 +1189,10 @@ binary payloads into the local derived store under `pending_uploads/<upload_id>`
 and returns `pending_uploads_v1` capability data through `get_status`. Only
 `save_block(pre_uploaded_id)` copies that payload into the source vault and
 writes the markdown card. If that second phase fails or the browser loses the
-native-message response, the pending payload remains recoverable in the desktop
-recovery surface; the source vault is not polluted with unreferenced media by
-the happy-path upload step.
+native-message response, the pending payload is retained and the extension
+checks the same operation ID before any retry. There is no desktop recovery
+surface. Unknown outcomes retain their material; the happy-path HTTP upload
+itself does not publish unreferenced media into the source vault.
 
 ### 016: Filesystem-first visibility over SQLite-only route reads
 
@@ -1688,9 +1691,9 @@ derived store обязан вести себя как новый.
 
 ### 035: Расширение пишет в папку само, когда приложения нет
 
-Статус реализации: первоначальный подход заменяется решением 045; само
-требование работы без установленного Mine сохраняется. Начат SC0; перенос
-реализации ещё не начат.
+Статус реализации: JS-копии правил заменены Rust/WASM в решении 045.
+Автономная запись реализована; реальная Chrome/Dia приёмка остаётся открытой.
+Описание ниже фиксирует исходные мотивы решения 035, не текущую схему журнала.
 
 Расширение публикуется открыто, поэтому первым встречает продукт человек без
 приложения. Ответ «поставьте сначала приложение» превратил бы точку входа в
@@ -1921,12 +1924,12 @@ Canvas перезапускает симуляцию всякий раз, ког
 
 ### 045: Общее ядро правил и сценариев, два платформенных исполнителя
 
-Принято пользователем 31.08.2026. Статус: **SC0 IN PROGRESS**, отдельная
-отмашка получена. Полный контракт — [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md),
+Принято пользователем 31.08.2026. Код переноса реализован; реальная приёмка
+SC6 не объявлена завершённой. Полный контракт — [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md),
 этапы и критерии приёмки — [SC0–SC7](PLAN.md#save-core-plan).
 
 Приоритет решения — долговечность и простота развития, не экономия переноса.
-Одна реализация Markdown, имён, коллекций и сценария сохранения выделяется в
+Одна реализация Markdown, имён, коллекций и решений сохранения выделена в
 переносимое Rust-ядро. Нативная сборка и WASM используют один исходный код;
 исполнители выполняют системные и браузерные операции. Tauri IPC, Native
 Messaging, UniFFI и WASM-мост не содержат самостоятельных правил сохранения.

@@ -12,76 +12,97 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
 
 use crate::commands::state::CommandError;
+use crate::storage::clipper_connection::{self, ClipperConnectionCheck, DEV_EXTENSION_ID};
 
 /// Native messaging host name, matched by the extension's manifest.
 const HOST_NAME: &str = "com.localarena.clipper";
 
-/// Where the installed host binary lives, alongside the app's other data.
-/// Refresh an already-installed clipper host from the one inside this bundle.
-///
-/// Installing is a copy, and until now the copy was made only when someone
-/// pressed the button in Settings. So the browser kept launching whatever
-/// binary was installed months ago, and every fix shipped in the app since
-/// then simply never reached the clipper — a whole class of "but I updated it"
-/// bugs. Nothing is installed here that was not installed before: an untouched
-/// clipper stays untouched.
-///
-/// What the bundle held at the last copy is recorded beside the binary, so the
-/// check costs two `stat` calls rather than reading seven megabytes on every
-/// launch.
+/// First launch registers the bundled helper; every later launch repairs its
+/// exact browser allowlist and refreshes the binary without touching vaults.
 pub fn refresh_installed_host(app: &AppHandle) {
-    let Ok(destination) = host_binary_path(app) else {
-        return;
-    };
-    if !destination.is_file() {
-        return;
+    if let Err(error) = install_clipper_host(app.clone(), String::new()) {
+        log::warn!("clipper helper registration needs attention: {error}");
     }
-    let Some(bundled) = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join("native-host")))
-        .filter(|path| path.is_file())
-    else {
-        return;
-    };
-    let Some(fingerprint) = file_fingerprint(&bundled) else {
-        return;
-    };
+}
 
-    let stamp = destination.with_extension("source");
-    if std::fs::read_to_string(&stamp).ok().as_deref() == Some(fingerprint.as_str()) {
-        return;
-    }
+/// Compare actual bytes, not only app version or a stale installation stamp.
+fn file_fingerprint(path: &Path) -> Option<String> {
+    let bytes = std::fs::read(path).ok()?;
+    Some(format!("{:x}", Sha256::digest(bytes)))
+}
 
-    if let Err(e) = std::fs::copy(&bundled, &destination) {
-        log::warn!("failed to refresh clipper host: {e}");
-        return;
+fn installed_binary_matches(source: &Path, destination: &Path) -> bool {
+    let Some(expected) = file_fingerprint(source) else {
+        return false;
+    };
+    if file_fingerprint(destination).as_deref() != Some(expected.as_str()) {
+        return false;
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if let Ok(metadata) = std::fs::metadata(&destination) {
-            let mut perms = metadata.permissions();
-            perms.set_mode(0o755);
-            let _ = std::fs::set_permissions(&destination, perms);
-        }
+        return std::fs::metadata(destination)
+            .is_ok_and(|metadata| metadata.permissions().mode() & 0o100 != 0);
     }
-    let _ = std::fs::write(&stamp, fingerprint);
-    log::info!("clipper host refreshed from the app bundle");
+    #[cfg(not(unix))]
+    true
 }
 
-/// Size and modification time of a file, as one comparable string.
-fn file_fingerprint(path: &Path) -> Option<String> {
-    let metadata = std::fs::metadata(path).ok()?;
-    let modified = metadata
-        .modified()
-        .ok()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?
-        .as_secs();
-    Some(format!("{}:{}", metadata.len(), modified))
+fn bundled_host_path() -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("native-host")))
+        .filter(|path| path.is_file())
+}
+
+fn bundled_ytdlp_path(executable: &Path) -> Option<PathBuf> {
+    let resources = executable.parent()?.parent()?.join("Resources");
+    // Tauri preserves the configured binaries/ resource subdirectory. Older
+    // bundles used a flat Resources layout, which remains a valid fallback.
+    [resources.join("binaries/yt-dlp"), resources.join("yt-dlp")]
+        .into_iter()
+        .find(|path| path.is_file())
+}
+
+fn host_manifest(destination: &Path) -> serde_json::Value {
+    serde_json::json!({
+        "name": HOST_NAME,
+        "description": "Mine web clipper native messaging host",
+        "path": destination.to_string_lossy(),
+        "type": "stdio",
+        "allowed_origins": [format!("chrome-extension://{DEV_EXTENSION_ID}/")],
+    })
+}
+
+fn manifest_is_registered(path: &Path, destination: &Path) -> bool {
+    std::fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .is_some_and(|value| value == host_manifest(destination))
+}
+
+fn install_binary(source: &Path, destination: &Path) -> std::io::Result<()> {
+    let parent = destination
+        .parent()
+        .ok_or_else(|| std::io::Error::other("host directory is missing"))?;
+    std::fs::create_dir_all(parent)?;
+    let mut staged = tempfile::NamedTempFile::new_in(parent)?;
+    std::io::copy(&mut std::fs::File::open(source)?, staged.as_file_mut())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        staged
+            .as_file()
+            .set_permissions(std::fs::Permissions::from_mode(0o755))?;
+    }
+    staged.as_file().sync_all()?;
+    staged.persist(destination).map_err(|error| error.error)?;
+    std::fs::File::open(parent)?.sync_all()?;
+    Ok(())
 }
 
 fn host_binary_path(app: &AppHandle) -> Result<PathBuf, CommandError> {
@@ -129,7 +150,7 @@ pub struct ClipperBrowserStatus {
     pub label: String,
     /// The browser's own directory exists, so the browser is installed.
     pub detected: bool,
-    /// A manifest for this host is present in it.
+    /// The exact bundled helper manifest is registered; not a live handshake.
     pub connected: bool,
 }
 
@@ -137,10 +158,14 @@ pub struct ClipperBrowserStatus {
 pub struct ClipperSetupStatus {
     /// The host binary is installed where browsers can launch it.
     pub host_installed: bool,
-    /// The installed host matches the running app's version.
+    /// The installed host matches the bundled binary, not just its version marker.
     pub host_current: bool,
     pub app_version: String,
     pub browsers: Vec<ClipperBrowserStatus>,
+    /// Last extension-confirmed handshake, not proof of a current connection.
+    pub last_connection_check: Option<ClipperConnectionCheck>,
+    /// A damaged diagnostic record does not make registration or capture fail.
+    pub connection_check_error: Option<String>,
 }
 
 fn library_dir() -> Option<PathBuf> {
@@ -177,25 +202,42 @@ pub fn get_clipper_setup_status(app: AppHandle) -> Result<ClipperSetupStatus, Co
     let app_version = app.package_info().version.to_string();
     let host = host_binary_path(&app)?;
     let host_installed = host.is_file();
-    let installed_version = version_marker_path(&app)
-        .ok()
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .map(|raw| raw.trim().to_string());
+    let host_current =
+        bundled_host_path().is_some_and(|bundled| installed_binary_matches(&bundled, &host));
 
     let browsers = BROWSERS
         .iter()
         .map(|browser| ClipperBrowserStatus {
             label: browser.label.to_string(),
             detected: browser_detected(browser),
-            connected: manifest_path(browser).is_some_and(|path| path.is_file()),
+            connected: manifest_path(browser)
+                .is_some_and(|path| manifest_is_registered(&path, &host)),
         })
         .collect();
 
+    let (last_connection_check, connection_check_error) = match app.path().app_data_dir() {
+        Ok(root) => match clipper_connection::read_last_connection_check(&root) {
+            Ok(record) => (record, None),
+            Err(error) => (
+                None,
+                Some(format!("Last connection check could not be read: {error}")),
+            ),
+        },
+        Err(error) => (
+            None,
+            Some(format!(
+                "Connection-check directory is unavailable: {error}"
+            )),
+        ),
+    };
+
     Ok(ClipperSetupStatus {
         host_installed,
-        host_current: host_installed && installed_version.as_deref() == Some(app_version.as_str()),
+        host_current,
         app_version,
         browsers,
+        last_connection_check,
+        connection_check_error,
     })
 }
 
@@ -210,9 +252,9 @@ pub fn install_clipper_host(
     extension_id: String,
 ) -> Result<ClipperSetupStatus, CommandError> {
     let extension_id = extension_id.trim().to_string();
-    if extension_id.is_empty() || !extension_id.chars().all(|c| c.is_ascii_lowercase()) {
+    if !extension_id.is_empty() && extension_id != DEV_EXTENSION_ID {
         return Err(CommandError::Internal(
-            "extension id must be the lowercase id shown on the extension's page".into(),
+            "only the bundled Mine development extension is supported; the store release is not configured".into(),
         ));
     }
 
@@ -220,13 +262,9 @@ pub fn install_clipper_host(
     // executable, so the host is already inside the .app and installing it is
     // a copy. Declaring it as a bundle resource instead would make the build
     // script depend on its own output.
-    let bundled = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join("native-host")))
-        .filter(|path| path.is_file())
-        .ok_or_else(|| {
-            CommandError::Internal("clipper host is missing from the app bundle".into())
-        })?;
+    let bundled = bundled_host_path().ok_or_else(|| {
+        CommandError::Internal("clipper host is missing from the app bundle".into())
+    })?;
 
     let destination = host_binary_path(&app)?;
     let parent = destination
@@ -234,18 +272,9 @@ pub fn install_clipper_host(
         .ok_or_else(|| CommandError::Internal("clipper directory has no parent".into()))?;
     std::fs::create_dir_all(parent)
         .map_err(|e| CommandError::Internal(format!("failed to create clipper directory: {e}")))?;
-    std::fs::copy(&bundled, &destination)
-        .map_err(|e| CommandError::Internal(format!("failed to install clipper host: {e}")))?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&destination)
-            .map_err(|e| CommandError::Internal(format!("failed to read host metadata: {e}")))?
-            .permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&destination, perms)
-            .map_err(|e| CommandError::Internal(format!("failed to mark host executable: {e}")))?;
+    if !installed_binary_matches(&bundled, &destination) {
+        install_binary(&bundled, &destination)
+            .map_err(|e| CommandError::Internal(format!("failed to install clipper host: {e}")))?;
     }
 
     // The bundled yt-dlp travels with the host: the browser launches the host
@@ -254,36 +283,21 @@ pub fn install_clipper_host(
     // keeps working. See SPEC_ONBOARDING.md О8.
     if let Some(source) = std::env::current_exe()
         .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join("../Resources/yt-dlp")))
-        .filter(|path| path.is_file())
+        .and_then(|exe| bundled_ytdlp_path(&exe))
     {
         let target = parent.join("yt-dlp");
-        match std::fs::copy(&source, &target) {
-            Ok(_) => {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    if let Ok(meta) = std::fs::metadata(&target) {
-                        let mut perms = meta.permissions();
-                        perms.set_mode(0o755);
-                        let _ = std::fs::set_permissions(&target, perms);
-                    }
-                }
+        if !installed_binary_matches(&source, &target) {
+            if let Err(error) = install_binary(&source, &target) {
+                log::warn!("failed to install bundled yt-dlp: {error}");
             }
-            Err(error) => log::warn!("failed to install bundled yt-dlp: {error}"),
         }
     }
 
-    let manifest = serde_json::json!({
-        "name": HOST_NAME,
-        "description": "Mine web clipper native messaging host",
-        "path": destination.to_string_lossy(),
-        "type": "stdio",
-        "allowed_origins": [format!("chrome-extension://{extension_id}/")],
-    });
+    let manifest = host_manifest(&destination);
     let manifest_bytes = serde_json::to_vec_pretty(&manifest)
         .map_err(|e| CommandError::Internal(format!("failed to build manifest: {e}")))?;
 
+    let mut registration_errors = Vec::new();
     for browser in BROWSERS {
         if !browser_detected(browser) {
             continue;
@@ -293,17 +307,29 @@ pub fn install_clipper_host(
         };
         if let Some(dir) = path.parent() {
             if let Err(e) = std::fs::create_dir_all(dir) {
-                log::warn!("failed to prepare {} manifest dir: {e}", browser.label);
+                registration_errors.push(format!("{}: {e}", browser.label));
                 continue;
             }
         }
-        if let Err(e) = crate::storage::files::write_atomically(&path, &manifest_bytes) {
-            log::warn!("failed to register clipper with {}: {e:#}", browser.label);
+        if !manifest_is_registered(&path, &destination) {
+            if let Err(e) = crate::storage::files::write_atomically(&path, &manifest_bytes) {
+                registration_errors.push(format!("{}: {e:#}", browser.label));
+            }
         }
+    }
+    if !registration_errors.is_empty() {
+        return Err(CommandError::Internal(format!(
+            "helper installed; browser registration failed: {}",
+            registration_errors.join("; ")
+        )));
     }
 
     let version = app.package_info().version.to_string();
-    let _ = std::fs::write(version_marker_path(&app)?, version);
+    std::fs::write(version_marker_path(&app)?, version).map_err(|error| {
+        CommandError::Internal(format!(
+            "helper registered but version marker could not be written: {error}"
+        ))
+    })?;
 
     get_clipper_setup_status(app)
 }
@@ -322,9 +348,7 @@ mod tests {
         std::fs::write(&path, b"first build").unwrap();
         let first = file_fingerprint(&path).unwrap();
 
-        // A rebuild changes length, and a same-length rebuild changes the
-        // timestamp — either one must make the stamp differ, or the refresh
-        // silently keeps serving the old binary.
+        // Content changes matter even if version and file length are unchanged.
         std::fs::write(&path, b"a considerably longer second build").unwrap();
         let second = file_fingerprint(&path).unwrap();
 
@@ -344,5 +368,112 @@ mod tests {
     fn fingerprint_is_absent_for_a_missing_file() {
         let tmp = TempDir::new().unwrap();
         assert!(file_fingerprint(&tmp.path().join("nothing")).is_none());
+    }
+
+    #[test]
+    fn ytdlp_resolver_matches_tauri_bundle_resources_and_prefers_current_layout() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../../tauri.conf.json")).unwrap();
+        assert!(config["bundle"]["resources"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("binaries/yt-dlp")));
+        let tmp = TempDir::new().unwrap();
+        let contents = tmp.path().join("Mine.app/Contents");
+        std::fs::create_dir_all(contents.join("MacOS")).unwrap();
+        std::fs::create_dir_all(contents.join("Resources/binaries")).unwrap();
+        let executable = contents.join("MacOS/mine");
+        let resource = contents.join("Resources/binaries/yt-dlp");
+        std::fs::write(&executable, b"app").unwrap();
+        std::fs::write(&resource, b"current bundled helper").unwrap();
+        std::fs::write(contents.join("Resources/yt-dlp"), b"older helper").unwrap();
+        assert_eq!(bundled_ytdlp_path(&executable), Some(resource));
+    }
+
+    #[test]
+    fn ytdlp_resolver_preserves_legacy_flat_bundle_layout() {
+        let tmp = TempDir::new().unwrap();
+        let contents = tmp.path().join("Mine.app/Contents");
+        std::fs::create_dir_all(contents.join("MacOS")).unwrap();
+        std::fs::create_dir_all(contents.join("Resources")).unwrap();
+        let resource = contents.join("Resources/yt-dlp");
+        std::fs::write(&resource, b"legacy bundled helper").unwrap();
+        assert_eq!(
+            bundled_ytdlp_path(&contents.join("MacOS/mine")),
+            Some(resource)
+        );
+    }
+
+    #[test]
+    fn ytdlp_resolver_does_not_treat_a_resource_directory_as_a_binary() {
+        let tmp = TempDir::new().unwrap();
+        let contents = tmp.path().join("Mine.app/Contents");
+        assert!(bundled_ytdlp_path(&contents.join("MacOS/mine")).is_none());
+        std::fs::create_dir_all(contents.join("Resources/binaries/yt-dlp")).unwrap();
+        assert!(bundled_ytdlp_path(&contents.join("MacOS/mine")).is_none());
+    }
+
+    #[test]
+    fn extension_key_derives_the_registered_development_id() {
+        use base64::Engine;
+        let manifest: serde_json::Value =
+            serde_json::from_str(include_str!("../../../extension/manifest.json")).unwrap();
+        let key = base64::engine::general_purpose::STANDARD
+            .decode(manifest["key"].as_str().unwrap())
+            .unwrap();
+        let hash = Sha256::digest(key);
+        let id: String = hash[..16]
+            .iter()
+            .flat_map(|byte| {
+                [
+                    char::from(b'a' + (byte >> 4)),
+                    char::from(b'a' + (byte & 15)),
+                ]
+            })
+            .collect();
+        assert_eq!(id, DEV_EXTENSION_ID);
+    }
+
+    #[test]
+    fn registration_requires_the_exact_bundled_path_and_allowlist() {
+        let tmp = TempDir::new().unwrap();
+        let host = tmp.path().join("native-host");
+        let path = tmp.path().join("manifest.json");
+        let mut manifest = host_manifest(&host);
+        std::fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        assert!(manifest_is_registered(&path, &host));
+        assert!(!manifest_is_registered(
+            &path,
+            &tmp.path().join("other-host")
+        ));
+        manifest["allowed_origins"] = serde_json::json!(["chrome-extension://*/"]);
+        std::fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        assert!(!manifest_is_registered(&path, &host));
+    }
+
+    #[test]
+    fn binary_install_replaces_complete_bytes_without_mutating_existing_inode() {
+        use std::io::Read;
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("bundle");
+        let destination = tmp.path().join("native-host");
+        std::fs::write(&destination, b"old-running-binary").unwrap();
+        let mut running = std::fs::File::open(&destination).unwrap();
+        std::fs::write(&source, b"new-complete-binary").unwrap();
+        install_binary(&source, &destination).unwrap();
+        let mut old = String::new();
+        running.read_to_string(&mut old).unwrap();
+        assert_eq!(old, "old-running-binary");
+        assert_eq!(std::fs::read(&destination).unwrap(), b"new-complete-binary");
+        assert!(installed_binary_matches(&source, &destination));
+    }
+
+    #[test]
+    fn missing_source_and_destination_do_not_match() {
+        let tmp = TempDir::new().unwrap();
+        assert!(!installed_binary_matches(
+            &tmp.path().join("source"),
+            &tmp.path().join("target")
+        ));
     }
 }

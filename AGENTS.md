@@ -21,7 +21,7 @@
 - `SPEC_INTEGRATION.md` — спецификации watcher/events, handler, commands
 - `SPEC_FRONTEND.md` — спецификация фронтенда: компоненты, типы, IPC, роутинг
 - `SPEC_CLIPPER.md` — спецификация расширения браузера: типы сохранений, popup, native messaging
-- `SPEC_SAVE_CORE.md` — принятая целевая архитектура общего Rust-ядра и двух исполнителей; SC0 начат по отмашке, SC1–SC7 зависят от барьера безопасности, план в PLAN.md
+- `SPEC_SAVE_CORE.md` — общее Rust/WASM-ядро реализовано; контракт операций и открытая реальная приёмка в docs/save-core-acceptance.md, статусы SC0–SC7 в PLAN.md
 - `SPEC_MOBILE.md` — спецификация iOS-приложения: SwiftUI + Rust UniFFI, iCloud sync, Share Extension
 - `SPEC_GRID.md` — спецификация zero-jank masonry grid: Canvas measureText precomputation, dual-path (native grid-lanes + virtualized JS), детерминистические высоты
 - `SPEC_THUMBNAILS.md` — спецификация thumbnail pipeline: two-phase (Rust instant placeholder + WebView async upgrade), event-driven sidebar, виртуализация, поддержка всех форматов расширения через native decoder
@@ -350,7 +350,9 @@ local-arena/
 ## Environment
 
 - Rust toolchain: stable (rustup)
-- Node.js: не требуется (используем Bun)
+- Node.js: >= 22 (сборка WASM, упаковка и проверки)
+- wasm32-unknown-unknown: `rustup target add wasm32-unknown-unknown`
+- wasm-bindgen-cli: `cargo install wasm-bindgen-cli --version 0.2.120 --locked`
 - Bun: >= 1.2
 - Tauri CLI: `cargo install tauri-cli`
 - Xcode Command Line Tools (`swiftc`): обязательны — сборка компилирует
@@ -376,7 +378,8 @@ bun run pack:extension         # Упаковка расширения в арх
 bun run clipper:install-host   # Установка/обновление native host бинарника
 bun run lint                   # Линтинг фронтенда
 bun run test                   # Полная проверка: Vitest + Rust workspace tests
-bun run test:frontend          # Только Vitest
+bun run test:frontend          # Сборка actual WASM + Vitest
+bun run test:save-core         # Native/WASM byte/error/recovery parity
 bun run test:rust              # Только Rust workspace tests
 bun run test:feed-scroll       # Browser Grid acceptance (requires running dev server)
 bun run test:graph             # Browser Graph Canvas acceptance (requires running dev server)
@@ -385,11 +388,12 @@ bun run test:edge-states       # Browser edge-states showcase acceptance (requir
 bun run test:sidebar-reorder   # Browser sidebar collection reorder gesture acceptance (requires running dev server)
 bun run test:browser           # Сам поднимает Vite и запускает все browser gates
 bun run test:native-shell      # Packaged macOS WKWebView + real Tauri invoke smoke
+bun run test:clipper-worker    # Собранное расширение/CSP/WASM в отдельном headless Chromium
 bun run bindings:generate      # Обновить committed Rust/Specta TypeScript bindings
 bun run bindings:check         # Проверить bindings на drift
 bun run verify:core            # Bindings + lint + frontend/Rust tests
 bun run verify                 # Полный contract, включая Feed, Graph и cold-space browser gates
-bun run verify:release         # Полный contract + native-shell smoke
+bun run verify:release         # Полный contract + clipper-worker + native-shell smoke
 bunx shadcn info               # Проверить CLI/config/base без изменения файлов
 bunx shadcn add button --diff  # Read-only upstream diff; не перезаписывает компонент
 cargo run -p mine --bin localize-remote-media -- --dry-run <vault> # Найти медиа, оставшееся удалённой ссылкой
@@ -399,16 +403,20 @@ cargo +1.88.0 check --workspace --all-targets --locked # MSRV gate
 cargo clippy                   # Линтинг Rust
 ```
 
-`extension/dist/` не хранится в Git. Desktop-команды не собирают расширение:
+`extension/dist/` и `extension/generated/save-core/` не хранятся в Git. Desktop-команды не собирают расширение:
 перед `Load unpacked` в Chrome/Dia и после очистки build outputs всегда
 запускайте `bun run build:extension`.
 
-Native host — отдельный установленный бинарник, а не часть приложения. Любая
-правка в `src-tauri/`, которая на него влияет, требует `bun run
-clipper:install-host`; сборка приложения его не обновляет. Особенно при
-изменении `CURRENT_SCHEMA_VERSION`: приложение поднимет базу до новой версии, а
-старый хост откажется её открывать с ошибкой «database schema version N is newer
-than supported version M», и сохранение из расширения перестанет работать целиком.
+Native host входит в `.app`; при запуске Mine копирует актуальный helper и
+восстанавливает регистрацию обнаруженных браузеров. Для dev-установки:
+`bun run clipper:install-host`. Сборка без запуска не меняет установленный host.
+Capture больше не требует рабочего SQLite до записи исходников. Dev ID:
+`eioalidaccoahofcggkbinalibpajokh`; старый browser storage другого ID не
+переносится автоматически. При старом ID сначала выяснить исход pending;
+до этого не запускать новую `.app`, `Repair registration` или
+`clipper:install-host`: они заменяют allowlist. При unknown сохранить старые
+расширение, helper и регистрацию. Диагностический native-shell smoke не меняет
+пользовательский host.
 
 ## Operational launch rule
 

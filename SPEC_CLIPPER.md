@@ -63,11 +63,13 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SP
 через `xcrun safari-web-extension-converter`; его полноценный выпуск остаётся
 отложенным, не подтверждается этой спецификацией или новым планом.
 
-Целевая архитектура принята 31.08.2026 в
-[SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md): один Rust-код правил и сценариев,
-нативный и браузерный исполнители. **SC0 начат; перенос ядра ещё не начат.**
-Описания API ниже относятся к существующему протоколу; план перехода и
-сквозной приёмки — [SC0–SC7](PLAN.md#save-core-plan).
+Архитектура SC1–SC5 реализована в коде 31.08.2026:
+[SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md) задаёт общий Rust-код правил и сценариев,
+нативный и браузерный исполнители. `mine-core` компилируется нативно и в WASM;
+одни fixtures выполняются обоими runtime. Это не подтверждает сквозную
+приёмку: системный выбор реальной папки и полный save-flow в Dia/Chrome ещё
+не приняты, поэтому весь SC6 не завершён. Production Web Store ID, подпись
+поставки и Safari остаются отложенными: [SC0–SC7](PLAN.md#save-core-plan).
 
 Popup UI and native messaging request names still use the existing clip-type
 vocabulary (`link`, `article`, `image`, `video`, `file`, `screenshot`) because
@@ -80,11 +82,22 @@ contract: body minus media embeds non-empty → `article`, bare media →
 
 ## Architecture
 
-Ниже — существующий нативный путь, не вся целевая архитектура и не автономный
-browser writer. Владение правилами и планом записи переносится по
-[SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md); сетевые и файловые проверки остаются
-на границе исполнителя. Нынешняя схема ещё не подтверждает независимость
-source commit от индекса — это отдельно проверяется в SC2.
+Общий `mine-core` владеет валидацией, Markdown/коллекциями, именованием,
+раскладкой и переходами сценария сохранения. `native_host` и
+`extension/lib/standaloneVault.js` выполняют сетевые/файловые эффекты и ведут
+журналы своих платформ. Браузерный адаптер вызывает `MineCore.call` →
+`wasm_bindgen.execute_json`; второго JS-сериализатора документа нет.
+Native source commit предшествует best-effort индексации и превью. Ошибка
+SQLite после публикации не превращает сохранённые исходники в отказ Save.
+
+```text
+Popup / overlay → background → выбранный исполнитель
+                               ├─ native_host → mine-core (Rust)
+                               └─ standaloneVault → mine-core (WASM)
+Общие правила → эффекты исполнителя → .md + media → derived index / previews
+```
+
+Подробности нативного ввода-вывода:
 
 ```
 ┌──────────────────────────────────────────┐
@@ -463,7 +476,13 @@ generated `title:` frontmatter.
 
 ### 7. Screenshot (скриншот viewport)
 
-Пользователь вручную переключается в режим Screenshot из TypeSwitcher. Расширение захватывает видимую область вкладки через background-owned `captureForCrop` pipeline, показывает превью в popup и загружает файл в vault через background-owned upload bridge к локальному HTTP-серверу native host (см. Upload Server).
+Режим Screenshot выбирается эвристикой или пользователем через TypeSwitcher.
+Расширение захватывает видимую область вкладки и показывает превью; overlay
+использует background-owned `captureForCrop` pipeline. Нативный исполнитель
+получает файл через background-owned upload bridge к локальному HTTP-серверу
+native host (см. Upload Server). Браузерный исполнитель получает
+`screenshot_data_url` и сохраняет файл без приложения. Оба пути используют
+общий контракт операции и не переключают исполнителя после начала Save.
 
 Перед каждым реальным `chrome.tabs.captureVisibleTab(...)` background отправляет content script сообщение `prepareViewportCapture`. Content script скрывает все Mine-owned UI layers (`__mineOverlay`, crop overlay, crop toast) и отвечает только после clean-paint handshake (`requestAnimationFrame` ×2 + timeout fallback). Это обязательный инвариант: ни обычный Screenshot, ни Crop Area не должны вызывать `captureVisibleTab` сразу после `display:none` / DOM removal, потому что браузер может вернуть предыдущий compositor frame с видимым интерфейсом расширения.
 
@@ -645,7 +664,8 @@ tokens or border fixes.
 Popup собирается через Vite (`vite.extension.config.ts`) как React-приложение, использующее те же компоненты и CSS-токены, что и основное Tauri-приложение. Один источник правды — дрейф дизайна невозможен.
 
 ```bash
-bun run build:extension   # Собирает popup → extension/dist/ + копирует в Safari Resources
+bun run build:extension   # WASM + popup/overlay + generated Safari Resources
+bun run pack:extension   # Та же сборка + build/mine-clipper.zip
 ```
 
 Entry point: `extension/popup/main.tsx` → output: `extension/dist/index.html` + бандл.
@@ -663,18 +683,27 @@ desktop-приложение и **не** создают bundle расширен�
 - `extension/dist/overlay.js` существует, потому что он указан в
   `content_scripts` manifest;
 - `extension/dist/assets/popup.css` и Geist fonts существуют, потому что их
-  загружает Shadow DOM overlay.
+  загружает Shadow DOM overlay;
+- `extension/generated/save-core/mine_core.js`, `mine_core_bg.wasm` и
+  `extension/lib/mineCore.js` существуют; background загружает их до адаптера;
+- CSP extension pages содержит `script-src 'self' 'wasm-unsafe-eval'`.
+
+Сборка проверяет `wasm-bindgen-cli 0.2.120`, закреплённый вместе с зависимостью
+Rust. Копирование ресурсов в Safari scaffold не означает рабочий Safari bridge.
 
 Если `extension/dist/` отсутствует, Chromium не может загрузить unpacked
 extension: запись может перейти в broken state или исчезнуть из списка
 расширений. Повторная сборка возвращает файлы, но не переустанавливает удалённое
 расширение автоматически. Recovery contract:
 
-1. `bun run build:extension`.
-2. Открыть `chrome://extensions/` или `dia://extensions/`.
-3. Включить Developer mode и выбрать `Load unpacked` → каталог `extension/`.
-4. Проверить `Mine Clipper`, version `0.1.0`, enabled state и service worker.
-5. В Dia закрепить Mine Clipper через `Extensions → Pin Extensions…`.
+1. До смены старого ID проверить миграционные ограничения ниже; не удалять
+   установку с невыясненными pending-операциями.
+2. `bun run build:extension`.
+3. Открыть `chrome://extensions/` или `dia://extensions/`.
+4. Включить Developer mode и выбрать `Load unpacked` → каталог `extension/`.
+5. Проверить `Mine`, version `0.1.0`, ID `eioalidaccoahofcggkbinalibpajokh`,
+   enabled state и service worker.
+6. Закрепить Mine в панели расширений браузера.
 
 Алиас `@/` указывает на `src/` основного приложения — все компоненты `@/components/ui/*`, утилиты `@/lib/utils`, токены `@/styles/global.css` импортируются напрямую. Tauri-модули исключены через `optimizeDeps.exclude`.
 
@@ -847,6 +876,8 @@ Instagram save buttons are never valid article input.
 | TypeSwitcher | `components/TypeSwitcher.tsx` | `<SegmentedControl size="clipper">` | Content / Screenshot / Link in the 40px Type row without height jumps |
 | ChannelList | `components/ChannelList.tsx` | `<CollectionPicker>` adapter | Same picker surface and channel-selection component as desktop Connect menus, including quantized scroll list height |
 | ScreenshotPreview | `components/ScreenshotPreview.tsx` | `<Button size="sm">` | Legacy rounded screenshot card with always-visible 28px Crop Area / Retake buttons |
+| FolderSetupPage | `components/FolderSetupPage.tsx` | `<Button>` | Extension-origin `?mode=setup`, хранение handle и возврат к исходному черновику; recovery с `binding_id` запрещает смену папки |
+| StandaloneSetup | `components/StandaloneSetup.tsx` | `<Button>`, `<ChromeCloseButton>` | Выбор папки, восстановление прав и inline-диагностика подключения без вывода об установке приложения |
 | SaveButton | `components/SaveButton.tsx` | `<Button variant="default">` | Полная ширина, три состояния (`idle`/`saving`/`saved`); без kbd-подсказки (Cmd+Enter handler есть, но не всегда срабатывает из overlay — см. DEVLOG `24.04.2026 — Clipper: Tab-cycling`) |
 
 ### Хуки и адаптеры
@@ -855,6 +886,8 @@ Instagram save buttons are never valid article input.
 |---|---|---|
 | useClipperState | `hooks/useClipperState.ts` | Вся бизнес-логика попапа: init, метаданные, каналы, save, недавние каналы |
 | messaging | `lib/messaging.ts` | Типизированный адаптер native messaging с таймаутами на все промисы |
+| standalone | `lib/standalone.ts` | Background bridge, extension-origin picker и восстановление конкретного binding |
+| saveOperation | `lib/saveOperation.ts` | Устойчивая identity/payload операции; lookup, подтверждённый resume и сохранение контекста до отправки |
 
 ### Popup States
 
@@ -864,8 +897,43 @@ Instagram save buttons are never valid article input.
 | Error | Иконка + красное сообщение |
 | Main | Все поля заполнены, кнопка Save активна |
 | Saving | Кнопку заменяет indeterminate progress bar |
-| Saved | Кнопка становится `Saved` (disabled), автозакрытие через ~1.2с |
+| Saved | Кнопка `Saved` (disabled), автозакрытие через ~1.2с; при предупреждении результат остаётся видимым |
 | Save error | Строка `text-destructive` над кнопкой, кнопка снова активна |
+| Pending outcome | `Check save outcome`; исходные id/payload/папка закреплены, новая запись не создаётся |
+| Previous clip | Отдельная карточка исходного payload и `Check previous save`; проверка старого клипа не отмечает текущий draft сохранённым |
+| Permission recovery | `Allow access` / `Restore original folder access`; для pending используется исходный binding, не текущая выбранная папка |
+
+### Настройка из оверлея и восстановление
+
+`Choose folder…` доступна непосредственно из оверлея. Background открывает
+`chrome-extension://<id>/dist/index.html?mode=setup`; permission принадлежит
+расширению, не сайту. Оверлей и его черновик остаются на месте. После
+подтверждённого выбора `mineStandaloneFolderChanged` обновляет открытые UI.
+Страница setup не запускает извлечение контента и не заменяет исходный draft.
+
+Выбор исполнителя хранится в `mineSaveDestination`. Доступный native helper
+не заменяет уже выбранную browser-папку; отказ ранее выбранного native-пути
+не запускает fallback. Native `binding_id` выводится из canonical path;
+browser binding привязан к хэндлу через `isSameEntry`. Совпадение имени папки
+или скопированного `vault-id` не используется как доказательство идентичности.
+`Choose folder with Mine…` требует явного системного выбора. Поколение
+status-запроса защищает новый выбор от запоздалого ответа о старой папке.
+
+До первого Save в `chrome.storage.local` фиксируются `operation_id`,
+`draftId`, `sourceUrl`, payload, executor, binding и vault path. Повтор Save
+не переизвлекает новый контент для старого ID. После потери ответа выполняется
+lookup исходной операции; `resume` разрешён только при `resumable:true` и
+`outcome:not_committed`. `terminal_rejected:true` снимает pin только для
+доказанного отказа до эффектов. Конфликт fingerprint/binding или `unknown`
+такого разрешения не дают.
+
+Совпавший URL не означает тот же draft. При повторном открытии прежняя
+операция показывается отдельной карточкой с исходными title/type/body/tags
+и папкой. `Check previous save` не вызывает успех текущего Save;
+`This is a different clip` явно разрешает новый draft. Повреждённый payload
+при сохранившихся id/binding допускает только lookup. Восстановление прав
+pending-операции идёт через `?mode=setup&binding_id=…`; выбрать другую папку
+на этой странице нельзя.
 
 ## Context Menu
 
@@ -954,11 +1022,12 @@ Readerability эвристика может использоваться тол�
 
 #### `get_status`
 
-Действующий запрос смешивает две проверки: доступность host и наличие vault.
-`ok: false` может означать работающий компонент без выбранного пространства;
-это не свидетельство отсутствия приложения. Целевой разделённый handshake и
-совместимость задаются [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md), SC0/SC4.
-Формат ниже оставлен как описание текущего API, не нового протокола.
+Ответ разделяет живое соединение, возможности протокола и состояние папки.
+Работающий host отвечает `ok:true, connected:true`, даже когда vault не выбран.
+`vaultConfigured:false` не означает отсутствие Mine. `folder_state` принимает
+`unconfigured`, `missing`, `access_denied`, `unavailable`, `ready`; `error`
+содержит причину проблем с выбранной папкой. Проверка статуса не создаёт папку.
+Необязательный `vault_path` позволяет проверить именно явно выбранный путь.
 
 ```json
 {
@@ -970,21 +1039,38 @@ Response:
 ```json
 {
   "ok": true,
+  "connected": true,
+  "vaultConfigured": true,
+  "folder_state": "ready",
+  "binding_id": "canonical-folder-sha256",
+  "executor_id": "native",
   "vault_path": "/Users/user/LocalArena",
   "version": "0.1.0",
   "host_api_version": 2,
-  "features": ["pending_uploads_v1"],
+  "features": ["pending_uploads_v1", "save_operation_v1", "operation_lookup_v1", "open_app_v1", "connection_check_v1"],
   "upload_port": 54231,
   "upload_token": "a1b2c3d4e5f6..."
 }
 ```
 
-`features` — capability contract между popup и native host. Screenshot-save
-требует `pending_uploads_v1`: без него popup не начинает HTTP upload, чтобы не
-создать root-media без recoverable commit state. `upload_port` и
-`upload_token` выдаются попапу один раз при инициализации и используются для
+`features` — capability contract между popup и native host. Любой новый Save
+требует `save_operation_v1` и `operation_lookup_v1`. `Open app` показывается
+только при `open_app_v1`. Screenshot-save дополнительно требует
+`pending_uploads_v1`: без него popup не начинает HTTP upload. `upload_port` и
+`upload_token` обновляются при handshake и используются для
 заливки бинарных файлов через локальный HTTP-сервер native host (см. Upload
 Server).
+
+#### `confirm_connection_check`
+
+Необязательная диагностическая запись после успешного `get_status`, только
+при объявленной capability `connection_check_v1`. Background отправляет
+`{"action":"confirm_connection_check","check_id":"dd830aea-79ae-4b2e-9e09-66c37c70f96c"}`
+по тому же native port. Host проверяет origin аргумента запуска и формат ID;
+время/версию определяет сам. Успех: `{"ok":true,"check_id":"…"}`. Ошибка
+`connection_check_failed`, включая занятый `try_lock`, не меняет уже полученный
+status и не отменяет Save. Запись не имеет параметра vault/path; сохраняется
+один historical result вне исходников, без фонового потока или очереди событий.
 
 #### `list_channels`
 
@@ -1049,13 +1135,21 @@ but it must not synthesize `title:` frontmatter for tweets, selections, files,
 images, videos, or screenshots. Existing `title` fields in older extension
 builds remain a legacy compatibility input only.
 
-Нынешний standalone JS ещё не соблюдает этот контракт полностью. Его
-сериализатор заменяется общим ядром на SC3; совпадение двух путей будет
-проверяться одним исполняемым набором эталонов, не копиями тестов.
+Browser adapter использует Rust/WASM `mine-core::save` для той же сериализации,
+имён, коллекций и layout. Сопоставление native/WASM выполняется через общие
+`mine-core/tests/save-fixtures.json`, а не копию алгоритма на TypeScript.
+Файловые гарантии исполнителей при этом различаются: browser не заявляет
+atomic no-clobber и OS-level durable flush.
 
 ```json
 {
   "action": "save_block",
+  "operation_id": "persisted-operation-id",
+  "operation_mode": "start",
+  "binding_id": "canonical-folder-sha256",
+  "executor_id": "native",
+  "vault_path": "/Users/user/LocalArena",
+  "saved_at": "2026-08-31T12:00:00Z",
   "block_type": "link",
   "description": "Financial infrastructure for the internet",
   "url": "https://stripe.com",
@@ -1070,12 +1164,37 @@ Response:
 ```json
 {
   "ok": true,
+  "outcome": "committed",
+  "operation_id": "persisted-operation-id",
   "slug": "stripe-financial-infrastructure",
   "block_type": "link"
 }
 ```
 
-Для creation mode `image`:
+Новый UI всегда передаёт фиксированные поля операции. Browser transport
+принимает `mode:start|resume` и alias `operation_mode`; executor равен `browser`,
+а файловый handle находится по `binding_id`, не по `vault_path`.
+Legacy native-запросы без явного ID остаются совместимым входом, но не
+рекомендуемым способом нового retry.
+
+#### `get_save_operation`
+
+Native lookup принимает `operation_id`, исходные `vault_path`, `binding_id`
+и `executor_id:native`. Browser bridge `standaloneLookup` передаёт ID и
+binding в `MineStandaloneVault.lookupOperation`. Оба пути возвращают
+`outcome:committed|not_committed|unknown`; отсутствие записи при lookup/resume
+означает `unknown`, не разрешение повторно создать карточку.
+
+Только сохранённый pre-effect отказ имеет `terminal_rejected:true`.
+`operation_conflict` и `binding_mismatch` не доказывают отсутствие commit
+исходной операции. Browser prepared-запись может вернуть `resumable:true`;
+UI повторяет только её исходный payload/ID/binding. Подтверждённая квитанция
+успеха не отменяется из-за последующих пользовательских правок исходников.
+
+#### Media-параметры `save_block`
+
+Для creation mode `image` к обязательным полям операции (`operation_id`,
+`operation_mode`, `binding_id`, `executor_id`, `vault_path`) добавляются:
 ```json
 {
   "action": "save_block",
@@ -1090,7 +1209,8 @@ Response:
 ```
 
 Native host скачивает `image_url`, сохраняет файл, пишет canonical frontmatter
-`file: "[[resolved-name.ext]]"`, upsert'ит local derived index, генерирует
+`file: "[[Media/resolved-name.ext]]"` с путём относительно корня пространства
+(каталог определяется настройкой media layout), upsert'ит local derived index, генерирует
 Phase 1 thumbnail и синхронизирует `thumb_format` / `thumb_mtime`. Для AVIF,
 HEIC, VP8X WebP и других форматов, которые Rust не декодирует, Phase 1 пишет
 PNG placeholder из `fallback_label`; WebView upgrade выполнится при открытом
@@ -1190,12 +1310,21 @@ Response: `{ "ok": true }`.
 
 ### Error Response
 
+Ошибка транспорта или потеря подтверждения Save не доказывают отсутствие
+записи. Пример для проверки исхода операции:
+
 ```json
 {
   "ok": false,
-  "error": "Vault not configured"
+  "outcome": "unknown",
+  "code": "operation_unknown",
+  "operation_id": "8f7e0a91-d9b4-4d0c-b1e6-f52bb612ab8d",
+  "error": "Save outcome is unknown; check the original operation"
 }
 ```
+
+Отсутствие выбранной папки в `get_status` — успешный ответ соединения
+с `vaultConfigured:false`, а не эта ошибка Save.
 
 ## Upload Server (HTTP)
 
@@ -1234,10 +1363,10 @@ Response: `{ "ok": true }`.
 
 Файл сохраняется не в source vault, а в local derived store:
 `<derived_root>/pending_uploads/<upload_id>/`. Upload endpoint не создаёт
-пользовательский media-файл до успешного `save_block`, поэтому незавершённое
-сохранение никогда не оставляет мусор в хранилище пользователя. Если вторая
-фаза не дошла до создания `.md`, промежуточная запись удаляется вместе с
-неудавшимся сохранением — см. «Время жизни промежуточной записи».
+пользовательский media-файл: его публикует `save_block` перед `.md`.
+Сбой между этими публикациями может оставить media без документа и требует
+восстановления исходной операции. Неоднозначный исход не разрешает удалять
+staging или чужой source-файл — см. «Время жизни промежуточной записи».
 
 Поле `filename: "pending:<id>"` оставлено как compatibility bridge для старых
 popup build'ов, которые ещё передают только `pre_uploaded_file`.
@@ -1248,8 +1377,9 @@ popup build'ов, которые ещё передают только `pre_uploa
 `pre_uploaded_id`. Native host копирует pending payload в source vault под
 финальным именем `<slug>.<ext>` с create-new semantics, затем пишет `.md`.
 Pending manifest помечается committed только после успешной записи блока.
-Повторный `save_block` с тем же `pre_uploaded_id` после успешного commit
-идемпотентно возвращает уже созданный slug.
+Проверка или повтор с теми же `operation_id`, payload и binding после
+подтверждённого commit возвращает уже созданный slug. Само совпадение
+`pre_uploaded_id` не разрешает создавать новую операцию.
 
 После source-vault commit native host best-effort обновляет local derived index
 тем же `upsert_block` контрактом, что и desktop watcher, затем создаёт Phase 1
@@ -1265,16 +1395,17 @@ Legacy `pre_uploaded_file` продолжает поддерживаться: е
 
 Если background service worker потерял in-memory cache и upload вернул `Screenshot upload expired`, popup ре-кэширует уже имеющийся `dataUrl` и один раз повторяет upload без нового screenshot capture. Остальные upload-ошибки (`timeout`, PNA/loopback отказ, сервер upload не настроен) показываются inline через `StatusBar`; popup остаётся в основном UI, а превью, выбранные коллекции, display heading/body H1 if present, vault и кнопки `Save` / `Retake` сохраняются. Такие ошибки не переводят popup в full-screen `ErrorState`, потому что пользователь должен иметь возможность повторить сохранение без повторного сбора контекста.
 
-Если HTTP upload успешен, но `save_block` возвращает ошибку или теряет ответ,
-popup один раз повторяет `save_block` с тем же `pre_uploaded_id`. Если retry
-тоже падает, popup показывает inline notice о recoverable media. **Это
-известный дефект, а не подтверждённая сохранность:** текущий guard удаляет
-staging после штатного возврата host, manifest не хранит результат commit,
-а интерфейс восстановления отсутствует. При потере ответа карточка может
-уже существовать. SC0 проверяет оба окна; целевой контракт —
-[SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md#контракт-операции).
+Если HTTP upload успешен, но ответ `save_block` потерян, popup проверяет
+`get_save_operation` с исходным `operation_id`, binding и vault path.
+Screenshot больше не имеет собственного слепого повтора команды Save.
+`unknown` сохраняет материал и контекст; committed receipt возвращает прежний
+slug, а разрешённый resume сохраняет исходный `pre_uploaded_id` в payload.
+Очистка staging не выполняется по самому факту выхода из функции.
 
 ### Browser-origin boundary
+
+Этот раздел описывает нативный HTTP-транспорт. Автономный браузерный Save
+получает `screenshot_data_url` и не обращается к локальному upload-серверу.
 
 В overlay-режиме UI расширения выполняется внутри content-script context текущей страницы. Поэтому popup/overlay **не делает** `fetch("http://127.0.0.1:...")` напрямую: в Safari такой запрос считается loopback-доступом со стороны origin страницы (`store.epicgames.com`, `example.com`, и т.д.) и вызывает per-site prompt `Allow <site> to access your loopback network?`.
 
@@ -1298,31 +1429,17 @@ staging после штатного возврата host, manifest не хра�
 
 ### Время жизни промежуточной записи
 
-Следующее описание фиксирует текущую реализацию, не целевую гарантию SC0.
-Удаление по любому исходу и по возрасту конфликтует с безопасным повтором;
-перенос должен заменить его журналом операции и доказанной очисткой.
-Это не требует отдельного экрана восстановления, но требует не обещать
-сохранённый материал после его удаления.
+Pending upload хранит исходный payload, binding и свидетельство публикации.
+`PendingUploadGuard` больше не удаляет данные при любом выходе. После
+подтверждённого source commit `mark_pending_upload_committed` проверяет
+опубликованное media по SHA-256, сохраняет committed marker и удаляет только
+избыточный payload. Компактная квитанция остаётся для повторного обращения.
 
-Промежуточная область — журнал одной операции, а не хранилище. Запись живёт
-ровно от начала сохранения до его конца **любым** исходом, и это обеспечено
-стражем (`PendingUploadGuard`), который удаляет каталог при выходе из области
-видимости. У процедуры сохранения одиннадцать выходов с ошибкой и один
-успешный; уборка, поставленная только на успешный, и превращала журнал в
-свалку.
-
-Записи, пережившие падение процесса между загрузкой и созданием карточки,
-удаляются при следующем запуске приложения по возрасту — `STALE_UPLOAD_AGE`,
-один час. Критерий именно возраст: прежняя уборка спрашивала, лежит ли ещё
-медиафайл карточки в хранилище, и потому держала копии удалённых пользователем
-файлов бессрочно — 11 из 15 каталогов в хранилище пользователя были ровно этим.
-
-**Поверхности восстановления нет и не должно быть.** Ошибка сообщается там, где
-произошла — в попапе, в момент нажатия. Отдельный экран, показывающий те же
-ошибки позже и в другом месте, работает как ширма: систематический сбой
-именования (21.08.2026) прожил за ним месяцы, накапливая файлы вместо того,
-чтобы быть замеченным. Цена отказа — повторный клип после случайного сбоя, одно
-нажатие.
+`STALE_UPLOAD_AGE` равен одному часу, но возраст только запускает повтор
+доказанной очистки. Незавершённые, неизвестные, повреждённые и legacy-записи
+не удаляются по возрасту. Проверка исхода и восстановление привязки доступны
+в popup; утверждение «материал сохранён» допустимо только при соответствующих
+данных, а не при предположении о работе staging.
 
 ### Безопасность
 
@@ -1346,24 +1463,34 @@ native host source of truth — `com.mine.app/clipper/native-host`.
 
 ### Обновление установленного хоста
 
-Этот раздел описывает действующий update-existing. Первичная автоматическая
-регистрация, стабильный ID и восстановление приняты как цель SC4, но ещё не
-реализованы: [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md).
+Браузер запускает установленную копию в `Application Support`, независимо от
+открытого окна Mine. Первый обычный запуск приложения вызывает
+`refresh_installed_host`: устанавливает отсутствующий host, сверяет SHA-256
+байтов с бандлом и проверяет исполняемость. Обновление готовится во временном
+файле того же каталога с `0755`, `fsync`, atomic rename и синхронизацией
+родительского каталога; уже открытый inode старого процесса не изменяется.
 
-Браузер запускает копию в `Application Support`, а не бинарь внутри `.app`.
-Поэтому **обновление приложения само по себе не обновляет клипер**: пока
-копирование делалось только по нажатию «Install» в настройках, браузер месяцами
-запускал бинарь той давности, когда его установили, и ни одно исправление
-клипера до пользователя не доходило.
+Каждый запуск восстанавливает точный путь и allowlist manifests обнаруженных
+Chrome, Dia, Arc, Edge и Brave. Настройки предлагают `Repair registration`
+и `Check registration`, без ручного ID. Статусы «helper установлен/совпадает
+с бандлом/зарегистрирован» не выдаются за проверенный browser handshake:
+проверку capabilities выполняет само расширение. После успешного `get_status`
+background при `connection_check_v1` отправляет отдельный
+`confirm_connection_check {check_id}` по тому же native port. Это не запись
+внутри read-only `get_status` и не условие успешного Save. Host принимает
+только точный разрешённый extension origin из аргумента запуска, не поля
+origin/path/version из запроса, и проверяет UUID проверки. Одна последняя
+запись атомарно заменяется в app-local `clipper/last-connection-check.json`:
+версия схемы, check ID, host-generated ISO time, версия host/API и extension ID.
+Пользовательская папка не участвует, история событий не накапливается.
+Settings показывает дату ДД.ММ.ГГГГ и местное время с явной пометкой,
+что это историческая проверка, не текущая связь. Старые host без capability
+не получают ACK; отказ ACK не изменяет ответ `get_status` или сохранения.
 
-Приложение при старте обновляет уже установленный хост из своего бандла:
-
-- если копии нет — не создаёт её; клипер, который не ставили, остаётся
-  неустановленным;
-- рядом с бинарём лежит `native-host.source` с отпечатком источника (размер и
-  время правки), поэтому обычный запуск стоит двух `stat`, а не копирования;
-- права выставляются заново (`0o755`), иначе скопированный бинарь не
-  запустится.
+`MINE_NATIVE_SMOKE` исключает автоматическую регистрацию и замену
+пользовательского host диагностическим бинарником. Скачивание/копирование
+`.app` без запуска не регистрирует компонент. Реальная регистрация обновлённой
+сборки в пользовательском Dia этим кодовым прогоном не подтверждена.
 
 ### Имя новой карточки
 
@@ -1381,23 +1508,39 @@ native host source of truth — `com.mine.app/clipper/native-host`.
 - Chrome: `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.localarena.clipper.json`
 - Dia: `~/Library/Application Support/Dia/User Data/NativeMessagingHosts/com.localarena.clipper.json`
 
-Оба manifest используют один protocol name и один установленный native-host
-binary. `allowed_origins` обязан содержать фактический ID unpacked extension;
-ID в примере ниже исторический, не стабильный production ID. У unpacked
-расширения без закреплённого ключа он может измениться после переезда checkout.
-Целевое правило SC4 — стабильные ID из поставки, без ручного ввода пользователем.
+Manifests используют один protocol name и установленный native-host binary.
+Публичный ключ `extension/manifest.json` фиксирует development ID
+`eioalidaccoahofcggkbinalibpajokh`. `allowed_origins` содержит ровно этот origin,
+без wildcard или автоматически доверенного произвольного ID. Production
+Web Store ID пока не задан и не подменяется development ID.
 
 ```json
 {
   "name": "com.localarena.clipper",
-  "description": "Mine Web Clipper",
-  "path": "~/Library/Application Support/com.mine.app/clipper/native-host",
+  "description": "Mine web clipper native messaging host",
+  "path": "/Users/user/Library/Application Support/com.mine.app/clipper/native-host",
   "type": "stdio",
   "allowed_origins": [
-    "chrome-extension://<extension-id>/"
+    "chrome-extension://eioalidaccoahofcggkbinalibpajokh/"
   ]
 }
 ```
+
+При переходе со старой unpacked-установки без этого ключа меняется origin.
+`chrome.storage.local`, IndexedDB handles и receipts старого ID не переносятся
+автоматически. Старое расширение с pending-операциями нельзя удалять или
+сбрасывать до выяснения их исхода; удаление очищает `storage.local`.
+Новая регистрация разрешает только новый ID. **До первого запуска новой
+`.app`, `Repair registration` или `clipper:install-host` выяснить исход всех
+старых pending.** Пока есть unknown, сохранить старые расширение, host и
+регистрацию: уже открытый native port не гарантирует повторное подключение.
+Это управляемый dev-переход, не автоматическая миграция установок.
+Новому origin требуется
+новый пользовательский grant на папку; это не разрешает повторять старые
+сохранения как новые. Основание:
+[manifest key](https://developer.chrome.com/docs/extensions/reference/manifest/key),
+[extension storage](https://developer.chrome.com/docs/extensions/reference/api/storage),
+[origin storage](https://developer.chrome.com/docs/extensions/develop/concepts/storage-and-cookies).
 
 ### Manifest (Safari)
 
@@ -1414,11 +1557,14 @@ Native host — отдельный Rust-бинарник (не Tauri). Пере�
 
 | Crate/Module | Purpose |
 |---|---|
+| `mine-core::save` | Общие validation/capture/naming/layout/recovery rules; тот же код в WASM |
 | `domain::block` | Генерация slug, валидация |
 | `domain::vault` | Чтение vault path из конфигурации |
 | `storage::db` | Открытие SQLite-соединения |
 | `storage::index` | upsert_block, list_channels |
-| `storage::files` | write_block_file |
+| `storage::files` | no-clobber source publication, complete file + parent sync |
+| `storage::save_operations` | Durable operation records/receipts и проверка повторов |
+| `storage::clipper_uploads` | Bound screenshot staging, доказанная финализация и очистка |
 | `storage::thumbnails` | generate_thumbnail |
 | `ureq` | Скачивание медиафайлов и og:image |
 | `url` | Разбор и классификация remote media URL перед fetch |
@@ -1428,10 +1574,9 @@ Native host — отдельный Rust-бинарник (не Tauri). Пере�
 
 ### Vault Path Discovery
 
-Ниже — текущий механизм. Целевой SC4 фиксирует явно выбранную папку в
-контексте операции; отсутствие конфигурации не разрешает молча перейти
-в другую папку по умолчанию. Browser standalone и нативный legacy fallback —
-разные вещи.
+Новая операция использует явно выбранный `vault_path` и проверенный binding.
+Исходные путь и binding остаются неизменными при retry/lookup; отсутствие
+конфигурации не разрешает переход в другую папку по умолчанию.
 
 Native host читает путь к vault из файла конфигурации основного приложения:
 
@@ -1439,7 +1584,11 @@ Native host читает путь к vault из файла конфигурац�
 ~/Library/Application Support/com.mine.app/config.json
 ```
 
-Этот файл создаётся основным приложением при select_vault. Поле `vault_path` содержит абсолютный путь к текущему vault; `known_vaults` используется для выбора vault из popup. Если конфиг отсутствует, standalone fallback — `~/Mine`.
+Этот файл создаётся основным приложением при select_vault. Поле `vault_path`
+содержит текущий vault, `known_vaults` используется для явного выбора из popup.
+При отсутствии конфигурации host сообщает `vaultConfigured:false`; скрытого
+создания или использования `~/Mine` больше нет. Browser standalone использует
+собственный проверенный handle и не является таким native fallback.
 
 ### Конкурентный доступ к SQLite
 
@@ -1450,21 +1599,24 @@ Native host читает путь к vault из файла конфигурац�
 
 ## Error Handling
 
-Таблица относится к существующему пути. В целевом SC4 отказ соединения не
-доказывает отсутствие Mine, а исход записи отделён от ошибки производного
-индекса. Неоднозначный ответ `save_block` требует проверки той же операции,
-а не удаления её единственного материала; это обязательный контракт SC0.
+Отказ соединения не доказывает отсутствие Mine. Исход записи отделён от
+ошибки производного индекса. Неоднозначный ответ `save_block` требует проверки
+той же операции, а не другого ID или удаления её единственного материала.
 
 | Situation | Behavior |
 |---|---|
-| Vault not configured | Response: `{"ok": false, "error": "Vault not configured"}`. Popup показывает сообщение |
-| Native host not found | Ошибка соединения; текущий setup ошибочно может предложить установку Mine. Целевой SC4 показывает причину регистрации/запуска и восстановление, не выводя отсутствие приложения из отсутствия ответа |
+| Vault not configured | Status: `ok:true, connected:true, vaultConfigured:false, folder_state:unconfigured`; UI предлагает выбор папки |
+| Native host not found | Inline-причина регистрации/запуска, инструкция открыть Mine один раз и `Retry connection`; не диагноз «приложение отсутствует» |
+| Incompatible host | Нет обязательных save/lookup capabilities — новый Save не отправляется; предложено открыть обновлённый Mine и повторить handshake |
+| Folder missing / access denied | `folder_state` / browser permission и конкретная причина; выбор папки либо восстановление исходного binding |
 | Media source missing | media creation request не создаётся. Popup показывает inline error, main UI остаётся открытым |
-| Media download/finalize failed | Response: `{"ok": false, "error": "..."}`. `.md` не создаётся, чтобы не получить битую media card без `file:` |
+| Media download/finalize failed | Нет успешной media-карточки без media. Доказанный pre-effect отказ получает terminal receipt; после возможных эффектов исход остаётся unknown до проверки |
 | Link/video thumbnail download failed | Блок может быть создан без thumbnail; media failure для preview не ломает сохранение самой ссылки/видео |
 | Screenshot upload failed | Popup показывает inline error в `StatusBar` и сохраняет preview/tags/display heading для retry |
-| Screenshot upload succeeded but `save_block` failed | UI сохраняет материал для восстановления. Нужно различать подтверждённый отказ и потерю ответа после commit; очистка и повтор по прежнему `pre_uploaded_id` сверяются с recoverable staging, а общий контракт фиксируется в SC0 |
-| SQLite locked | Текущее открытие индекса до записи может сорвать save. В целевом SC2 source commit не зависит от SQLite; ошибка последующего индексирования не является отказом сохранения |
+| Screenshot upload succeeded but `save_block` failed | Pin id/payload/binding, lookup исходного save; нет отдельного слепого screenshot retry и удаления неизвестного staging |
+| SQLite locked | Source `.md`/media commit сохраняется; derived update best-effort, watcher/startup scan догоняют индекс |
+| Previous save at same URL | Отдельный recovery UI; старый receipt никогда не отмечает новый draft Saved |
+| Proven terminal rejection | `not_committed` + durable `terminal_rejected:true` снимает pin и разрешает редактирование; остальные ошибки не трактуются как отсутствие эффектов |
 | Disk full | Ошибка записи файла. Response: `{"ok": false, "error": "Failed to write file: ..."}` |
 | Invalid URL | Блок создаётся, URL сохраняется as-is |
 
@@ -1592,12 +1744,22 @@ surface: данные поста предзагружаются в `chrome.stora
 
 ## Testing
 
+SC1–SC5 проверяются native unit/fault tests, общими native/WASM fixtures и
+браузерным адаптером с настоящим WASM runtime. Это не подмена проверки
+реального системного picker/OS-directory в Dia и Chrome: она остаётся
+непройденной, весь SC6 не отмечен завершённым.
+
+```bash
+bun run test:save-core
+bun run test:frontend -- extension/popup extension/lib/standaloneVault.test.ts
+```
+
 ### Native Host
 
 | # | Test | Description |
 |---|---|---|
-| 1 | get_status без vault | Ответ ok=false, error message |
-| 2 | get_status с vault | Ответ ok=true, путь к vault |
+| 1 | get_status без vault | `ok:true, connected:true, vaultConfigured:false`, folder state unconfigured |
+| 2 | get_status с vault | Путь, canonical binding, folder state и capabilities; отсутствующая/запрещённая папка — отдельная причина |
 | 3 | save_block link | Создаёт .md + загружает thumbnail |
 | 4 | save_block article | Создаёт .md с body |
 | 5 | save_block image | Загружает файл, генерирует thumbnail, синхронизирует thumb metadata |
@@ -1606,18 +1768,30 @@ surface: данные поста предзагружаются в `chrome.stora
 | 8 | create_channel | Создаёт канал, возвращает collection ref |
 | 9 | concurrent access | Блок создаётся при запущенном приложении |
 | 10 | message framing | 4-byte length header, UTF-8 JSON |
+| 11 | Lost save acknowledgement | Тот же operation ID проверяется/возвращает прежний receipt; ни duplicate, ни другой executor |
+| 12 | Source commit without index | Повреждённый/недоступный SQLite не отменяет сохранённые исходники |
+| 13 | Registration | Dev key выводит точный allowlisted ID; wrong path/wildcard не считается регистрацией; binary replacement сохраняет старый inode |
 
 ### Extension (manual)
+
+Список ниже — оставшаяся ручная приёмка, не выполненный отчёт. Проверять на
+отдельной тестовой папке; перенос старой установки сначала проходит через
+миграционные ограничения раздела Manifest. Safari сюда не входит.
 
 | # | Test | Description |
 |---|---|---|
 | 1 | Popup open | Option+A открывает popup |
-| 2 | Auto-detect link | На обычной странице предвыбран Link |
-| 3 | Auto-detect article | На Medium/блоге предвыбрана Article |
-| 4 | Auto-detect video | На YouTube предвыбрано Video |
-| 5 | Selection clip | Выделенный текст → тип Selection |
+| 2 | Auto-detect default | Тип соответствует текущей эвристике и TypeSwitcher Content / Screenshot / Link |
+| 3 | Content | Статья/текст извлекаются без UI Mine; пустой body не сохраняется |
+| 4 | Video | Preview/текст и предупреждения соответствуют фактически доступным media |
+| 5 | Selection clip | Выделенный текст сохраняется через Content |
 | 6 | Context menu image | ПКМ по изображению → popup с Image |
 | 7 | Channel picker | Каналы загружаются из vault |
 | 8 | Create collection | Ввод нового имени → создание канала |
-| 9 | Save + auto-close | Сохранение → зелёная галочка → закрытие |
-| 10 | Error state | Нет vault → сообщение об ошибке |
+| 9 | Save + auto-close | Подтверждённый commit → Saved → закрытие; предупреждение остаётся видимым |
+| 10 | No folder | Host отвечает без vault; доступен выбор, не обязательная установка Mine |
+| 11 | Standalone origin | Оверлей → отдельный extension-origin setup → реальный выбор папки → исходный draft → source files без приложения |
+| 12 | Revoked permission | Восстановление именно исходного pending binding; другая текущая папка не подставляется |
+| 13 | Closed app | Native helper запускается браузером при закрытом Mine; сохранение читается приложением после открытия |
+| 14 | Same URL, different clips | Явное восстановление прежнего клипа не подтверждает сохранение нового |
+| 15 | OS-directory races | SC0: видимость нового файла, внешний writer и browser exclusive lock; не заменять OPFS/FakeDirectory |

@@ -1,18 +1,11 @@
-// First contact without the app (О1–О3).
-//
-// The extension is published openly, so for many people this screen is the
-// product's front door: no native host answered, and the screen must offer a
-// complete path — choose a folder, save straight into it — rather than an
-// error about software they never installed. The primary road is still the
-// app: the first value of the product (the feed with previews) lives there,
-// so Download app leads and the standalone path stands beside it as a full,
-// never-required alternative. Decided 17.08.2026.
+// Connection recovery and folder permission are separate from app installation.
 
 import { useState } from "react";
 import { FolderOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ChromeCloseButton } from "@/components/ChromeCloseButton";
 import { ClipperOverflowMenu } from "./ClipperOverflowMenu";
+import { openDownloadPage } from "../lib/standalone";
 
 /** Where "Download app" points until the product has a page of its own. */
 export const APP_DOWNLOAD_URL = "https://github.com/i-iii4/Mine/releases";
@@ -21,6 +14,11 @@ interface StandaloneSetupProps {
   canPickFolder: boolean;
   /** A folder was chosen before, but the browser dropped write access to it. */
   folderName: string | null;
+  allowFolderChange?: boolean;
+  diagnosis?: string | null;
+  nativeConnected?: boolean;
+  onRetryConnection?: () => Promise<unknown>;
+  onChooseNativeFolder?: () => Promise<unknown>;
   onChooseFolder: () => Promise<{ ok: boolean; error?: string | null }>;
   onRegrantAccess: () => Promise<{ ok: boolean; error?: string | null }>;
   onClose?: () => void;
@@ -29,6 +27,11 @@ interface StandaloneSetupProps {
 export function StandaloneSetup({
   canPickFolder,
   folderName,
+  allowFolderChange = true,
+  diagnosis,
+  nativeConnected = false,
+  onRetryConnection,
+  onChooseNativeFolder,
   onChooseFolder,
   onRegrantAccess,
   onClose,
@@ -39,9 +42,14 @@ export function StandaloneSetup({
   const run = async (action: () => Promise<{ ok: boolean; error?: string | null }>) => {
     setBusy(true);
     setError(null);
-    const result = await action();
-    setBusy(false);
-    if (!result.ok && result.error) setError(result.error);
+    try {
+      const result = await action();
+      if (!result.ok && result.error) setError(result.error);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -53,59 +61,38 @@ export function StandaloneSetup({
 
       <div className="flex flex-col items-start gap-3 p-4 text-left">
         <p className="text-sm text-muted-foreground">
-          Get the Mine app to see what you save as a feed with previews. Or
-          save without it: plain files in a folder you choose — no account,
-          nothing goes to the cloud. The app opens this same folder whenever
-          you install it.
+          Choose where to save your clips. The browser can save plain files
+          in a folder without the Mine app. Your draft stays here while you set it up.
         </p>
 
         {folderName && (
           <p className="text-sm text-muted-foreground">
-            The browser revoked access to “{folderName}”. Allow it again to
-            keep saving.
+            Check write access to “{folderName}” to keep saving in the same folder.
           </p>
         )}
-        {!folderName && !canPickFolder && (
+        {!canPickFolder && (
           <p className="text-sm text-muted-foreground">
-            To choose a folder, click the Mine icon in the browser toolbar.
+            Folder setup opens in a separate Mine window so access belongs to
+            the extension, not this website.
           </p>
         )}
 
-        {/* The app is the primary road everywhere except when a chosen folder
-            lost access — there the person is already saving standalone, and
-            restoring their flow outranks the upsell. */}
-        <div className="flex items-center gap-2">
-          {folderName ? (
-            <>
-              <Button disabled={busy} onClick={() => void run(onRegrantAccess)}>
-                Allow access
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => void chrome.tabs?.create({ url: APP_DOWNLOAD_URL })}
-              >
-                Download app
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button onClick={() => void chrome.tabs?.create({ url: APP_DOWNLOAD_URL })}>
-                Download app
-              </Button>
-              {canPickFolder && (
-                <Button
-                  variant="secondary"
-                  disabled={busy}
-                  onClick={() => void run(onChooseFolder)}
-                >
-                  Choose folder…
-                </Button>
-              )}
-            </>
+        <div className="flex flex-wrap items-center gap-2">
+          {folderName && <Button disabled={busy} onClick={() => void run(onRegrantAccess)}>Allow access</Button>}
+          {allowFolderChange && <Button variant={folderName ? "secondary" : "default"} disabled={busy} onClick={() => void run(onChooseFolder)}>
+            Choose folder…
+          </Button>}
+          {nativeConnected && onChooseNativeFolder && (
+            <Button variant="secondary" disabled={busy} onClick={() => void run(async () => { await onChooseNativeFolder(); return { ok: true }; })}>Choose with Mine…</Button>
           )}
         </div>
-
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {diagnosis && <p className="text-sm text-muted-foreground" role="status">{diagnosis}</p>}
+        {onRetryConnection && <>
+          <p className="text-sm text-muted-foreground">If Mine is already installed, open it once to register its helper, then retry.</p>
+          <Button variant="secondary" disabled={busy} onClick={() => void run(async () => { await onRetryConnection(); return { ok: true }; })}>Retry connection</Button>
+        </>}
+        <Button variant="ghost" disabled={busy} onClick={() => void run(openDownloadPage)}>Get the Mine app (optional)</Button>
+        {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
       </div>
     </div>
   );
@@ -115,9 +102,15 @@ export function StandaloneSetup({
 export function StandaloneFolderRow({
   folderName,
   onClose,
+  canOpenApp = false,
+  onRetryConnection,
+  onChooseNativeFolder,
 }: {
   folderName: string | null;
   onClose?: () => void;
+  canOpenApp?: boolean;
+  onRetryConnection?: () => Promise<unknown>;
+  onChooseNativeFolder?: () => Promise<unknown>;
 }) {
   return (
     <div
@@ -128,9 +121,9 @@ export function StandaloneFolderRow({
       <span className="min-w-0 truncate text-base text-foreground">
         {folderName ?? "Folder"}
       </span>
-      <span className="font-mono text-sm text-muted-foreground">no app</span>
+      <span className="font-mono text-sm text-muted-foreground">browser</span>
       <span className="ml-auto flex items-center gap-1">
-        <ClipperOverflowMenu appInstalled={false} />
+        <ClipperOverflowMenu canOpenApp={canOpenApp} onRetryConnection={onRetryConnection} onChooseNativeFolder={onChooseNativeFolder} />
         {onClose && <ChromeCloseButton label="Close" onClick={onClose} />}
       </span>
     </div>

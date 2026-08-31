@@ -1517,11 +1517,11 @@ fn record_owner_path(derived_root: &Path, root: &Path) {
 /// exactly as before: standard folders if it has them, flat otherwise.
 fn load_write_layout(vault: &VaultLayout) -> VaultWriteLayout {
     let Ok(raw) = std::fs::read_to_string(vault.write_layout_path()) else {
-        return VaultWriteLayout::detect(vault.root());
+        return crate::domain::vault::detect_write_layout(vault.root());
     };
     let Ok(stored) = serde_json::from_str::<StoredWriteLayout>(&raw) else {
         log::warn!("ignoring unreadable write layout in {}", vault.root().display());
-        return VaultWriteLayout::detect(vault.root());
+        return crate::domain::vault::detect_write_layout(vault.root());
     };
     VaultWriteLayout {
         cards: stored.cards,
@@ -1531,7 +1531,7 @@ fn load_write_layout(vault: &VaultLayout) -> VaultWriteLayout {
     .validate()
     .unwrap_or_else(|error| {
         log::warn!("ignoring invalid write layout: {error}");
-        VaultWriteLayout::detect(vault.root())
+        crate::domain::vault::detect_write_layout(vault.root())
     })
 }
 

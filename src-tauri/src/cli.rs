@@ -1,8 +1,8 @@
 //! The `mine` command-line interface — AI and human access to the vault.
 //!
-//! Read layer of SPEC_AI_ACCESS: everything here opens the index read-only,
-//! starts no watcher and runs no reconciliation. Freshness is honest — the
-//! CLI reads what the app has indexed, and says nothing more.
+//! Reads open the index read-only, without watchers or reconciliation. Mutations
+//! keep the known-space guard and delegate to shared capture or native source
+//! transactions; field/body patches retain their surgical backup semantics.
 //!
 //! Lives in the library so the commands are testable against a fixture vault;
 //! the `mine-cli` binary is a thin `main` around [`run`].
@@ -13,7 +13,8 @@ use serde_json::json;
 
 use crate::domain::vault::VaultLayout;
 use crate::cli_mutations::{self, MutationError};
-use crate::domain::block::{Block, DateTime, Frontmatter};
+#[cfg(test)]
+use crate::domain::block::DateTime;
 use crate::storage::{block_queries, db, media_refs, search_engine};
 
 /// Exit codes per SPEC_AI_ACCESS: 0 success, 2 bad arguments, 3 space
@@ -657,59 +658,45 @@ fn cmd_card_create(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
             "card create needs at least one of --title, --url, --file, --from".into(),
         ));
     }
-    let media_ext = flags.file.as_deref().and_then(|f| {
+    let media_ext = flags.file.as_deref().map(|f| {
         std::path::Path::new(f)
             .extension()
             .and_then(|e| e.to_str())
-            .map(str::to_string)
+            .unwrap_or("bin")
+            .to_string()
     });
     if let Some(ref f) = flags.file {
         if !std::path::Path::new(f).is_file() {
             return Err(CliError::usage(format!("--file {f}: no such file")));
         }
     }
-    let raw = crate::domain::block::suggest_slug(flags.title.as_deref(), flags.url.as_deref());
-    let name = crate::commands::blocks::resolve_unique_block_slug(
+    let name = crate::commands::blocks::select_capture_name(
         &conn,
         &vault,
-        &raw,
-        media_ext.as_deref(),
+        flags.title.as_deref(),
+        flags.url.as_deref(),
     )
     .map_err(|e| CliError::internal(format!("slug: {e:#}")))?;
     let media_file = media_ext.as_ref().map(|ext| format!("{name}.{ext}"));
     let slug = vault.new_card_slug(&name);
-    let now = crate::commands::state::now_iso8601();
+    let now = crate::util::now_iso8601();
     let tags = flags
         .collection
         .as_deref()
-        .map(|c| vec![crate::domain::collection::normalize_collection_ref(c)])
+        .map(|c| vec![c.to_owned()])
         .unwrap_or_default();
-    let mut block = Block {
-        slug: slug.clone(),
-        frontmatter: Frontmatter {
-            block_type: crate::domain::block::BlockType::Article,
-            title: flags.title.clone(),
-            description: None,
-            url: flags.url.clone(),
-            file: media_file,
-            thumbnail: None,
-            tags,
-            related_notes: Vec::new(),
-            source_media: None,
-            saved_at: DateTime::new(&now)
-                .map_err(|e| CliError::internal(e.to_string()))?,
-            source: Some("mine-cli".to_string()),
-            width: None,
-            height: None,
-            author: None,
-            position: None,
-            color: None,
-            icon: None,
-        },
+    let block = mine_core::save::build_capture(&mine_core::save::CaptureRequest {
+        slug,
+        intent: mine_core::save::CaptureIntent::Manual,
+        title: flags.title.clone(),
+        url: flags.url.clone(),
+        file: media_file,
+        tags,
+        saved_at: now,
+        source: Some("mine-cli".to_owned()),
         body,
-    };
-    block.frontmatter.block_type =
-        crate::domain::block::derive_block_type(&block.frontmatter, &block.body);
+        ..Default::default()
+    }).map_err(|error| CliError::usage(error.to_string()))?;
     let source = flags.file.as_deref().map(std::path::Path::new);
     let indexed = crate::storage::files::persist_new_block(&conn, &vault, &block, source)
         .map_err(|e| CliError::internal(format!("create: {e:#}")))?;
@@ -1079,6 +1066,8 @@ mod mutation_tests {
         let content = card_content(&root, "Fresh Note");
         assert!(content.starts_with("---\n"), "front matter present");
         assert!(!content.contains("type:"), "044: no type field on cards");
+        assert!(!content.contains("title:"), "explicit title belongs to the body");
+        assert!(content.contains("# Fresh Note"));
         assert!(content.contains("saved_at:"));
         assert!(content.contains("Первый абзац."));
         // The new card is visible to the read side immediately.
@@ -1091,6 +1080,38 @@ mod mutation_tests {
         let (_dir, env, _root) = fixture();
         let out = run(&env, &args(&["card", "create"]));
         assert_eq!(out.code, EXIT_USAGE);
+    }
+
+    #[test]
+    fn title_only_creation_uses_the_shared_manual_heading_policy() {
+        let (_dir, env, root) = fixture();
+        let out = run(&env, &args(&["card", "create", "--title", "Explicit title"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        let content = card_content(&root, "Explicit title");
+        assert!(!content.contains("title:"));
+        assert!(content.ends_with("# Explicit title"));
+    }
+
+    #[test]
+    fn create_rejects_invalid_collection_before_writing_source() {
+        let (_dir, env, root) = fixture();
+        let out = run(&env, &args(&["card", "create", "--title", "Invalid", "--collection", "../outside"]));
+        assert_eq!(out.code, EXIT_USAGE, "{}", out.stderr);
+        assert!(!root.join("Invalid.md").exists());
+    }
+
+    #[test]
+    fn create_without_a_file_extension_keeps_a_reference_to_copied_bytes() {
+        let (dir, env, root) = fixture();
+        let source = dir.path().join("plain-file");
+        std::fs::write(&source, b"local payload").unwrap();
+        let out = run(&env, &args(&["card", "create", "--title", "Attachment", "--file", source.to_str().unwrap()]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        let content = card_content(&root, "Attachment");
+        assert!(content.contains("[[Attachment.bin]]"));
+        assert!(!content.contains("title:"));
+        assert!(!content.contains("# Attachment"));
+        assert_eq!(std::fs::read(root.join("Attachment.bin")).unwrap(), b"local payload");
     }
 
     #[test]

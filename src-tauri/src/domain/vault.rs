@@ -1,55 +1,16 @@
-// Vault: path computation for the vault filesystem layout.
-//
-// Pure path logic: no filesystem access. Computes paths to blocks,
-// media files, Mine metadata directory, index DB, and thumbnails.
-// Also resolves slug conflicts given a set of existing slugs.
-//
-// Contract: SPEC_DOMAIN.md#domain/vault
+//! Native vault paths and filesystem observations.
+//!
+//! Relative naming, validation and layout selection are shared with the
+//! browser in mine-core; only this native adapter inspects directories.
 
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
-use thiserror::Error;
-use unicode_normalization::UnicodeNormalization;
 
-// ─── Errors ─────────────────────────────────────────────────────────────────
-
-#[derive(Debug, Error)]
-pub enum VaultError {
-    #[error("could not resolve slug conflict for '{slug}' after 1000 attempts")]
-    SlugConflictExhausted { slug: String },
-
-    #[error("invalid slug: {reason}")]
-    InvalidSlug { reason: String },
-
-    #[error("invalid write layout: {reason}")]
-    InvalidWriteLayout { reason: String },
-}
-
-fn join_slug(dir: &str, name: &str) -> String {
-    if dir.is_empty() {
-        name.to_string()
-    } else {
-        format!("{dir}/{name}")
-    }
-}
-
-// ─── Types ──────────────────────────────────────────────────────────────────
-
-/// Folders new files are written into, relative to the vault root.
-///
-/// Reading never depends on this: the scanner walks the whole vault and a
-/// card's identity is its path, wherever it sits. This governs writes only —
-/// where the clipper, the app and new collection documents put new files.
-///
-/// An empty string means the vault root, which is both the historical layout
-/// and a legitimate configuration: a user may point all three at the root and
-/// keep everything flat. See SPEC_VAULT_LIFECYCLE.md П1–П4.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VaultWriteLayout {
-    pub cards: String,
-    pub media: String,
-    pub collections: String,
-}
+pub use mine_core::domain::vault::{
+    detect_icloud_conflict, normalize_filename_stem, normalize_path_slug, resolve_slug_conflict,
+    validate_slug, VaultError, VaultLayoutFacts, VaultWriteLayout, DEFAULT_CARDS_DIR,
+    DEFAULT_COLLECTIONS_DIR, DEFAULT_MEDIA_DIR,
+};
 
 /// A reduced size of a block's thumbnail.
 ///
@@ -82,91 +43,16 @@ impl ThumbLevel {
     }
 }
 
-pub const DEFAULT_CARDS_DIR: &str = "Cards";
-pub const DEFAULT_MEDIA_DIR: &str = "Media";
-pub const DEFAULT_COLLECTIONS_DIR: &str = "Collections";
-
-impl VaultWriteLayout {
-    /// The standard layout for a new vault: three folders by role.
-    pub fn standard() -> Self {
-        Self {
-            cards: DEFAULT_CARDS_DIR.to_string(),
-            media: DEFAULT_MEDIA_DIR.to_string(),
-            collections: DEFAULT_COLLECTIONS_DIR.to_string(),
-        }
-    }
-
-    /// Everything at the vault root — how every vault behaved before this
-    /// contract, and the fallback for a flat vault that was never migrated.
-    pub fn flat() -> Self {
-        Self {
-            cards: String::new(),
-            media: String::new(),
-            collections: String::new(),
-        }
-    }
-
-    /// Pick the layout an existing vault already follows.
-    ///
-    /// A vault that has the standard folders keeps using them; anything else
-    /// stays flat, so opening someone's plain Obsidian vault never starts
-    /// scattering files into folders it does not have.
-    pub fn detect(root: &Path) -> Self {
-        let standard = Self::standard();
-        let has_all = root.join(&standard.cards).is_dir()
-            && root.join(&standard.media).is_dir()
-            && root.join(&standard.collections).is_dir();
-        if has_all {
-            standard
-        } else {
-            Self::flat()
-        }
-    }
-
-    fn normalize_segment(value: &str) -> String {
-        let trimmed = value.trim();
-        // A bare slash means the vault root. Anything else keeps its leading
-        // slash so `validate` can reject it as absolute instead of silently
-        // turning `/etc` into a relative folder inside the vault.
-        if trimmed.chars().all(|c| c == '/') {
-            return String::new();
-        }
-        trimmed.trim_end_matches('/').to_string()
-    }
-
-    /// Reject anything that could escape the vault or hide from the scanner.
-    pub fn validate(&self) -> Result<Self, VaultError> {
-        let mut normalized = Self {
-            cards: Self::normalize_segment(&self.cards),
-            media: Self::normalize_segment(&self.media),
-            collections: Self::normalize_segment(&self.collections),
-        };
-        for value in [&mut normalized.cards, &mut normalized.media, &mut normalized.collections] {
-            if value.is_empty() {
-                continue;
-            }
-            let path = Path::new(value.as_str());
-            if path.is_absolute()
-                || path
-                    .components()
-                    .any(|component| !matches!(component, Component::Normal(_)))
-            {
-                return Err(VaultError::InvalidWriteLayout {
-                    reason: format!("write folder must stay inside the vault: {value}"),
-                });
-            }
-            if value.starts_with('.') {
-                return Err(VaultError::InvalidWriteLayout {
-                    reason: format!("write folder must not be hidden: {value}"),
-                });
-            }
-        }
-        Ok(normalized)
-    }
+/// Gather native directory facts and delegate layout selection to the core.
+pub fn detect_write_layout(root: &Path) -> VaultWriteLayout {
+    VaultWriteLayout::detect(VaultLayoutFacts {
+        cards_dir: root.join(DEFAULT_CARDS_DIR).is_dir(),
+        media_dir: root.join(DEFAULT_MEDIA_DIR).is_dir(),
+        collections_dir: root.join(DEFAULT_COLLECTIONS_DIR).is_dir(),
+    })
 }
 
-/// Computes paths within a vault based on its root directory.
-/// Does NOT access the filesystem.
+/// Native paths within a vault; constructors observe its existing directories.
 #[derive(Debug, Clone)]
 pub struct VaultLayout {
     root: PathBuf,
@@ -177,7 +63,7 @@ pub struct VaultLayout {
 impl VaultLayout {
     pub fn new(root: PathBuf) -> Self {
         let derived_root = root.join(".mine");
-        let write_layout = VaultWriteLayout::detect(&root);
+        let write_layout = detect_write_layout(&root);
         Self {
             root,
             derived_root,
@@ -186,7 +72,7 @@ impl VaultLayout {
     }
 
     pub fn with_derived_root(root: PathBuf, derived_root: PathBuf) -> Self {
-        let write_layout = VaultWriteLayout::detect(&root);
+        let write_layout = detect_write_layout(&root);
         Self {
             root,
             derived_root,
@@ -239,7 +125,7 @@ impl VaultLayout {
     /// layout, plain `Note` on a flat vault. Everything downstream — writing,
     /// indexing, resolving — keeps treating the slug as the path it always was.
     pub fn new_card_slug(&self, name: &str) -> String {
-        join_slug(&self.write_layout.cards, name)
+        self.write_layout.new_card_slug(name)
     }
 
     /// Vault-relative stem a media file for `name` would occupy.
@@ -247,13 +133,12 @@ impl VaultLayout {
     /// Media keeps a bare file name even when the card sits in a folder, so
     /// this is the media folder joined to the name, not to the card's slug.
     pub fn new_media_stem(&self, name: &str) -> String {
-        let base = name.rsplit('/').next().unwrap_or(name);
-        join_slug(&self.write_layout.media, base)
+        self.write_layout.new_media_stem(name)
     }
 
     /// Slug for a newly created collection document.
     pub fn new_collection_slug(&self, name: &str) -> String {
-        join_slug(&self.write_layout.collections, name)
+        self.write_layout.new_collection_slug(name)
     }
 
     /// Path for a newly written media file with the given file name.
@@ -471,127 +356,6 @@ impl VaultLayout {
     }
 }
 
-// ─── iCloud conflict detection ──────────────────────────────────────────────
-
-/// Check whether a filename stem looks like an iCloud sync conflict.
-///
-/// iCloud Drive appends one of several conflict markers to the base
-/// filename when it cannot merge concurrent edits:
-///
-/// - `<name> (conflicted copy).md`
-/// - `<name> (conflicted copy 2).md`
-/// - `<name> (user-name's MacBook Pro conflicted copy).md`
-/// - `<name> (conflict).md`
-///
-/// If the stem matches one of those patterns, returns the inferred
-/// `base_slug` (the original name before the conflict suffix). Returns
-/// `None` for ordinary filenames.
-///
-/// Contract: Phase 18.G watcher uses this to divert conflict files into
-/// the `vault_conflicts` surface instead of indexing them as new blocks.
-pub fn detect_icloud_conflict(stem: &str) -> Option<String> {
-    // Patterns are parenthetical and case-insensitive. We match from the end
-    // so the base includes any user-authored parens earlier in the title.
-    // Minimum signal: a parenthetical group ending with "conflict" or
-    // "conflicted copy" (optionally followed by a number).
-    let trimmed = stem.trim_end();
-    let close = trimmed.rfind(')')?;
-    // The closing paren must be at (or very near) the end of the stem.
-    if close + 1 < trimmed.len() {
-        return None;
-    }
-    // Find the matching opening paren (last ' (' before close).
-    let before_close = &trimmed[..close];
-    let open = before_close.rfind(" (")?;
-    let inside = trimmed[open + 2..close].to_lowercase();
-
-    let is_conflict = inside == "conflict"
-        || inside == "conflicted copy"
-        || inside.starts_with("conflicted copy ")
-        || inside.ends_with(" conflicted copy")
-        || inside.contains("conflicted copy");
-
-    if !is_conflict {
-        return None;
-    }
-
-    let base = trimmed[..open].trim_end();
-    if base.is_empty() {
-        None
-    } else {
-        Some(base.to_string())
-    }
-}
-
-// ─── Unicode normalization ──────────────────────────────────────────────────
-
-/// Normalize a filename stem to NFC form.
-///
-/// HFS+ stores filenames in NFD (decomposed) form; APFS stores in NFC
-/// (composed). iCloud Drive and Finder may surface the same filename in
-/// different canonical forms across devices, which makes byte-for-byte
-/// slug matching fragile for non-ASCII names.
-///
-/// This function is idempotent: ASCII strings pass through unchanged,
-/// pre-NFC input is returned unchanged, NFD input is composed into NFC.
-///
-/// Apply at every filesystem boundary where a path enters the runtime:
-/// - `read_block_file` when deriving a slug from `file_stem()`
-/// - watcher events when handling notify paths
-/// - native messaging host when persisting an uploaded file
-/// - IPC command boundaries that accept a slug from external state
-///
-/// Contract: identity of two `.md` files with filenames that differ only
-/// in Unicode normalization form is a single block, not two.
-pub fn normalize_filename_stem(stem: &str) -> String {
-    stem.nfc().collect()
-}
-
-// ─── Slug validation ────────────────────────────────────────────────────────
-
-/// Validate that a slug is safe for use as a vault-relative path.
-///
-/// Slugs may contain `/` to identify files inside subdirectories, but every
-/// segment must be ordinary user content: no empty segments, no `.` / `..`,
-/// no absolute paths, no backslashes, and no NUL bytes.
-pub fn validate_slug(slug: &str) -> Result<(), VaultError> {
-    if slug.is_empty() {
-        return Err(VaultError::InvalidSlug {
-            reason: "slug is empty".to_string(),
-        });
-    }
-    if slug.contains('\0') {
-        return Err(VaultError::InvalidSlug {
-            reason: "slug contains NUL byte".to_string(),
-        });
-    }
-    if slug.contains('\\') {
-        return Err(VaultError::InvalidSlug {
-            reason: "slug contains backslash path separator".to_string(),
-        });
-    }
-    if slug.starts_with('/') || slug.ends_with('/') || slug.contains("//") {
-        return Err(VaultError::InvalidSlug {
-            reason: "slug contains invalid path separator placement".to_string(),
-        });
-    }
-    for segment in slug.split('/') {
-        if segment.is_empty() || segment == "." || segment == ".." {
-            return Err(VaultError::InvalidSlug {
-                reason: "slug contains path traversal".to_string(),
-            });
-        }
-    }
-    Ok(())
-}
-
-pub fn normalize_path_slug(slug: &str) -> String {
-    slug.split('/')
-        .map(normalize_filename_stem)
-        .collect::<Vec<_>>()
-        .join("/")
-}
-
 fn path_to_portable_string(path: &Path) -> Option<String> {
     let mut parts = Vec::new();
     for component in path.components() {
@@ -621,65 +385,13 @@ fn normalize_join(base: &Path, relative: &Path) -> Option<PathBuf> {
     Some(out)
 }
 
-// ─── Public API ─────────────────────────────────────────────────────────────
-
-/// Find the next available slug given a set of existing slugs.
-///
-/// If `slug` is available, returns it unchanged.
-/// If taken, tries `slug (2)`, `slug (3)`, etc. up to `slug (1000)`.
-///
-/// The parenthetical suffix matches the human-readable basename style
-/// introduced in Phase 18.C: e.g. `Hello World (2).md` instead of
-/// `Hello World-2.md`. Obsidian uses the same convention for filename
-/// deduplication, so the output stays native to both environments.
-/// Pick a free display name for a new card, given everything the vault already
-/// holds as vault-relative stems.
-///
-/// The distinction from `resolve_slug_conflict` is the whole point: a card's
-/// name is bare (`Inspora`) while the stem it occupies carries the configured
-/// folder (`Cards/Inspora`). Comparing the bare name against a set of stems
-/// finds nothing, so every clip of an already-clipped page kept the taken name
-/// and then failed to create the file. Both places the name lands are checked —
-/// the card's own path and the media file named after it.
+/// Compatibility adapter for callers that hold a native vault layout.
 pub fn resolve_card_name_conflict(
     layout: &VaultLayout,
     raw_name: &str,
     existing: &HashSet<String>,
 ) -> Result<String, VaultError> {
-    let free = |candidate: &str| {
-        !existing.contains(candidate)
-            && !existing.contains(&layout.new_card_slug(candidate))
-            && !existing.contains(&layout.new_media_stem(candidate))
-    };
-    if free(raw_name) {
-        return Ok(raw_name.to_string());
-    }
-    for n in 2..=1000 {
-        let candidate = format!("{} ({})", raw_name, n);
-        if free(&candidate) {
-            return Ok(candidate);
-        }
-    }
-    Err(VaultError::SlugConflictExhausted {
-        slug: raw_name.to_string(),
-    })
-}
-
-pub fn resolve_slug_conflict(slug: &str, existing: &HashSet<String>) -> Result<String, VaultError> {
-    if !existing.contains(slug) {
-        return Ok(slug.to_string());
-    }
-
-    for n in 2..=1000 {
-        let candidate = format!("{} ({})", slug, n);
-        if !existing.contains(&candidate) {
-            return Ok(candidate);
-        }
-    }
-
-    Err(VaultError::SlugConflictExhausted {
-        slug: slug.to_string(),
-    })
+    mine_core::domain::vault::resolve_card_name_conflict(layout.write_layout(), raw_name, existing)
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -904,23 +616,17 @@ mod tests {
     #[test]
     fn detects_the_standard_layout_only_when_all_three_folders_exist() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(
-            VaultWriteLayout::detect(dir.path()),
-            VaultWriteLayout::flat()
-        );
+        assert_eq!(detect_write_layout(dir.path()), VaultWriteLayout::flat());
 
         std::fs::create_dir_all(dir.path().join("Cards")).unwrap();
         std::fs::create_dir_all(dir.path().join("Media")).unwrap();
         // Two of three is not the standard layout: a vault that merely happens
         // to have a `Cards` folder must not start scattering files.
-        assert_eq!(
-            VaultWriteLayout::detect(dir.path()),
-            VaultWriteLayout::flat()
-        );
+        assert_eq!(detect_write_layout(dir.path()), VaultWriteLayout::flat());
 
         std::fs::create_dir_all(dir.path().join("Collections")).unwrap();
         assert_eq!(
-            VaultWriteLayout::detect(dir.path()),
+            detect_write_layout(dir.path()),
             VaultWriteLayout::standard()
         );
     }
@@ -932,19 +638,31 @@ mod tests {
             .with_write_layout(VaultWriteLayout::standard());
 
         assert_eq!(layout.new_card_slug("Note"), "Cards/Note");
-        assert_eq!(layout.new_collection_slug("Каталоги"), "Collections/Каталоги");
-        assert_eq!(layout.new_media_path("Note.jpg"), dir.path().join("Media/Note.jpg"));
+        assert_eq!(
+            layout.new_collection_slug("Каталоги"),
+            "Collections/Каталоги"
+        );
+        assert_eq!(
+            layout.new_media_path("Note.jpg"),
+            dir.path().join("Media/Note.jpg")
+        );
     }
 
     #[test]
     fn a_flat_layout_keeps_the_historical_paths() {
         let dir = tempfile::tempdir().unwrap();
-        let layout = VaultLayout::new(dir.path().to_path_buf())
-            .with_write_layout(VaultWriteLayout::flat());
+        let layout =
+            VaultLayout::new(dir.path().to_path_buf()).with_write_layout(VaultWriteLayout::flat());
 
         assert_eq!(layout.new_card_slug("Note"), "Note");
-        assert_eq!(layout.new_media_path("Note.jpg"), dir.path().join("Note.jpg"));
-        assert_eq!(layout.media_path("Note", "jpg"), dir.path().join("Note.jpg"));
+        assert_eq!(
+            layout.new_media_path("Note.jpg"),
+            dir.path().join("Note.jpg")
+        );
+        assert_eq!(
+            layout.media_path("Note", "jpg"),
+            dir.path().join("Note.jpg")
+        );
     }
 
     #[test]
@@ -1044,7 +762,8 @@ mod tests {
 
     #[test]
     fn card_name_conflict_still_works_when_everything_sits_at_the_root() {
-        let flat = VaultLayout::new(PathBuf::from("/vault")).with_write_layout(VaultWriteLayout::flat());
+        let flat =
+            VaultLayout::new(PathBuf::from("/vault")).with_write_layout(VaultWriteLayout::flat());
         let existing: HashSet<String> = ["Note".to_string()].into_iter().collect();
         assert_eq!(
             resolve_card_name_conflict(&flat, "Note", &existing).unwrap(),

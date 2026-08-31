@@ -2,7 +2,11 @@
 
 Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
-Модули domain layer, кроме эталонного domain/block. Все чистые — нет зависимостей от Tauri, SQLite, файловой системы.
+Чистые `block/collection/channel/markdown/search/tag/article_audio` находятся
+в `mine-core/src/domain`; прежние native-модули их переэкспортируют.
+Чистая часть `vault` принимает факты о каталогах, а не читает диск.
+Native `VaultLayout` и сканирование остаются в `src-tauri`.
+У переносимого ядра нет Tauri, SQLite, файлового или сетевого доступа.
 
 ---
 

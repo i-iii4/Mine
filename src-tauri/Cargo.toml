@@ -15,7 +15,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
 default = ["desktop"]
-desktop = ["tauri", "tauri-plugin-log", "tauri-plugin-dialog", "tauri-plugin-opener", "tauri-plugin-clipboard-manager", "tauri-build", "notify"]
+desktop = ["tauri", "tauri-plugin-log", "tauri-plugin-dialog", "tauri-plugin-opener", "tauri-plugin-clipboard-manager", "tauri-build", "notify", "specta-typescript"]
 custom-protocol = ["tauri/custom-protocol"]
 # Article audio (spoken article text). Off by default: the IPC commands are not
 # registered and the Swift synthesis helper is not compiled or bundled. The
@@ -27,6 +27,9 @@ article-audio = []
 tauri-build = { version = "2", features = [], optional = true }
 
 [dependencies]
+mine-core = { path = "../mine-core" }
+fs2 = "0.4"
+
 # Tauri (desktop only)
 tauri = { version = "2", features = ["protocol-asset"], optional = true }
 tauri-plugin-log = { version = "2", optional = true }
@@ -83,8 +86,7 @@ log = "0.4"
 
 # Type generation for TypeScript
 specta = { version = "=2.0.0-rc.22", features = ["derive"] }
-tauri-specta = { version = "=2.0.0-rc.21", features = ["typescript"] }
-specta-typescript = "=0.0.9"
+specta-typescript = { version = "=0.0.9", optional = true }
 
 # OS trash (not available on iOS)
 [target.'cfg(not(target_os = "ios"))'.dependencies]
@@ -104,8 +106,14 @@ objc2-foundation = "0.3"
 block2 = "0.6"
 
 [[bin]]
+name = "mine"
+path = "src/main.rs"
+required-features = ["desktop"]
+
+[[bin]]
 name = "mine-cli"
 path = "src/bin/mine_cli.rs"
+required-features = ["desktop"]
 
 [[bin]]
 name = "native-host"
@@ -138,6 +146,7 @@ path = "src/bin/cold_space_audit.rs"
 [[bin]]
 name = "export-bindings"
 path = "src/bin/export_bindings.rs"
+required-features = ["desktop"]
 
 [dev-dependencies]
 indoc = "2"

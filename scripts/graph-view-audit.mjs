@@ -119,11 +119,17 @@ function findAuditCardPixel(buffer) {
   return null;
 }
 
-function changedPixelRatio(beforeBuffer, afterBuffer) {
+function changedPixels(beforeBuffer, afterBuffer, maskBuffer) {
   const before = PNG.sync.read(beforeBuffer);
   const after = PNG.sync.read(afterBuffer);
-  if (before.width !== after.width || before.height !== after.height) return 1;
+  const mask = PNG.sync.read(maskBuffer);
+  if (before.width !== after.width || before.height !== after.height
+    || before.width !== mask.width || before.height !== mask.height) {
+    throw new Error("Card hover changed the canvas dimensions");
+  }
   let changed = 0;
+  let outsideOutline = 0;
+  const outsideSamples = [];
   const pixelCount = before.width * before.height;
   for (let index = 0; index < before.data.length; index += 4) {
     if (
@@ -133,9 +139,16 @@ function changedPixelRatio(beforeBuffer, afterBuffer) {
       || before.data[index + 3] !== after.data[index + 3]
     ) {
       changed += 1;
+      if (mask.data[index + 3] === 0) {
+        outsideOutline += 1;
+        if (outsideSamples.length < 8) outsideSamples.push({
+          x: (index / 4) % before.width, y: Math.floor(index / 4 / before.width),
+          before: [...before.data.slice(index, index + 4)], after: [...after.data.slice(index, index + 4)],
+        });
+      }
     }
   }
-  return pixelCount > 0 ? changed / pixelCount : 0;
+  return { ratio: pixelCount > 0 ? changed / pixelCount : 0, outsideOutline, outsideSamples };
 }
 
 async function canvasScreenshot(page) {
@@ -265,24 +278,168 @@ async function exerciseZoomAndPan(page) {
   return readFrameProbe(page);
 }
 
-async function verifyCardHoverDoesNotMutateCanvas(page) {
-  await page.waitForTimeout(3_700);
+async function waitForGraphRest(page, canvas) {
+  // A fixed delay races the force simulation (its cooldown is eight seconds).
+  // Pixels can look stable while subpixel coordinates still drift. Observe
+  // both exact drawing coordinates and pixels before comparing hover paint.
+  await canvas.evaluate((node) => {
+    const context = node.getContext("2d");
+    const originalClearRect = context.clearRect;
+    const originalDrawImage = context.drawImage;
+    let coordinates = [];
+    const probe = { geometry: null, geometrySince: performance.now() };
+    context.drawImage = function (image, ...args) {
+      coordinates.push(args);
+      return originalDrawImage.call(this, image, ...args);
+    };
+    context.clearRect = function (...args) {
+      if (coordinates.length > 0) {
+        const geometry = JSON.stringify(coordinates);
+        if (probe.geometry !== geometry) {
+          probe.geometry = geometry;
+          probe.geometrySince = performance.now();
+        }
+      }
+      coordinates = [];
+      return originalClearRect.apply(this, args);
+    };
+    probe.finish = () => {
+      context.drawImage = originalDrawImage;
+      context.clearRect = originalClearRect;
+    };
+    window.__MINE_GRAPH_STABLE_GEOMETRY__ = probe;
+  });
+  try {
+    await page.waitForFunction(() => {
+      const geometry = window.__MINE_GRAPH_STABLE_GEOMETRY__;
+      if (!geometry) throw new Error("Graph route reloaded while waiting for the simulation to settle");
+      const canvas = document.querySelector("[data-graph-view] canvas");
+      const frame = canvas.toDataURL("image/png");
+      const previous = window.__MINE_GRAPH_STABLE_FRAME__;
+      if (!previous || previous.frame !== frame) {
+        window.__MINE_GRAPH_STABLE_FRAME__ = { frame, since: performance.now() };
+        return false;
+      }
+      return performance.now() - previous.since >= 500
+        && geometry.geometry !== null && performance.now() - geometry.geometrySince >= 500;
+    }, undefined, { polling: 100, timeout: 10_000 });
+  } finally {
+    await page.evaluate(() => window.__MINE_GRAPH_STABLE_GEOMETRY__?.finish());
+  }
+}
+
+async function installCardHoverProbe(canvas, target) {
+  // Trace the thumbnail's real clipping path, not its hover paint. The only
+  // permitted pixel changes are a one-CSS-pixel stroke of that same path.
+  // This catches enlargement, inner-image changes and changes to other nodes
+  // without allowing an arbitrary percentage of the canvas to change.
+  await canvas.evaluate((node, point) => {
+    const context = node.getContext("2d");
+    const mask = document.createElement("canvas");
+    mask.width = node.width;
+    mask.height = node.height;
+    const maskContext = mask.getContext("2d");
+    const colorProbe = document.createElement("span");
+    colorProbe.className = "bg-chrome";
+    colorProbe.style.outlineColor = "var(--component-fill-hover)";
+    document.body.appendChild(colorProbe);
+    maskContext.strokeStyle = getComputedStyle(colorProbe).outlineColor;
+    const expectedColor = maskContext.strokeStyle;
+    colorProbe.remove();
+
+    const originals = new Map();
+    const replace = (name, wrapper) => {
+      originals.set(name, context[name]);
+      context[name] = wrapper(context[name]);
+    };
+    let commands = [];
+    let thumbnailPath = null;
+    const probe = { strokes: 0, errors: [], finish: null };
+    replace("beginPath", (original) => function (...args) {
+      commands = [];
+      return original.apply(this, args);
+    });
+    for (const name of ["moveTo", "lineTo", "arcTo", "closePath"]) {
+      replace(name, (original) => function (...args) {
+        commands.push([name, ...args]);
+        return original.apply(this, args);
+      });
+    }
+    const pathKey = () => JSON.stringify([commands, context.getTransform().toString()]);
+    replace("drawImage", (original) => function (image, ...args) {
+      if (image instanceof HTMLImageElement && image.src.includes("/audit-2.svg")
+        && this.isPointInPath(point.x, point.y)) {
+        thumbnailPath = pathKey();
+      }
+      return original.call(this, image, ...args);
+    });
+    replace("stroke", (original) => function (...args) {
+      if (thumbnailPath && pathKey() === thumbnailPath) {
+        const transform = this.getTransform();
+        const cssScale = Math.hypot(transform.a, transform.b) / devicePixelRatio;
+        if (Math.abs(this.lineWidth * cssScale - 1) > 1e-6
+          || this.strokeStyle !== expectedColor || this.globalAlpha !== 1
+          || this.getLineDash().length !== 0 || this.shadowBlur !== 0
+          || this.shadowOffsetX !== 0 || this.shadowOffsetY !== 0
+          || this.globalCompositeOperation !== "source-over") {
+          if (probe.errors.length === 0) probe.errors.push({
+            width: this.lineWidth * cssScale, color: this.strokeStyle, expectedColor,
+            alpha: this.globalAlpha, dash: this.getLineDash(), shadow: this.shadowBlur,
+            shadowX: this.shadowOffsetX, shadowY: this.shadowOffsetY,
+            composition: this.globalCompositeOperation,
+          });
+        }
+        maskContext.resetTransform();
+        maskContext.clearRect(0, 0, mask.width, mask.height);
+        maskContext.setTransform(transform);
+        maskContext.lineWidth = 1 / cssScale;
+        maskContext.strokeStyle = "white";
+        maskContext.beginPath();
+        for (const [name, ...values] of commands) maskContext[name](...values);
+        maskContext.stroke();
+        probe.strokes += 1;
+      }
+      return original.apply(this, args);
+    });
+    probe.finish = () => {
+      for (const [name, original] of originals) context[name] = original;
+      return { strokes: probe.strokes, errors: probe.errors, mask: mask.toDataURL("image/png") };
+    };
+    window.__MINE_GRAPH_HOVER_PROBE__ = probe;
+  }, target);
+}
+
+async function verifyCardHoverOutline(page) {
   const canvas = page.locator("[data-graph-view] canvas").first();
+  await waitForGraphRest(page, canvas);
   const box = await canvas.boundingBox();
   if (!box) throw new Error("Graph canvas has no bounding box for hover verification");
   const before = await canvasScreenshot(page);
   const target = findAuditCardPixel(before);
   if (!target) throw new Error("Could not locate the red audit thumbnail in graph pixels");
-
-  await page.mouse.move(box.x + target.x, box.y + target.y);
-  await page.waitForSelector("[data-graph-card-hover-preview]", { timeout: 800 });
-  const after = await canvasScreenshot(page);
-  const changedRatio = changedPixelRatio(before, after);
-  if (changedRatio > 0.0001) {
-    throw new Error(`Card hover mutated ${(changedRatio * 100).toFixed(4)}% of canvas pixels`);
+  await installCardHoverProbe(canvas, target);
+  let probe;
+  let after;
+  try {
+    await page.mouse.move(box.x + target.x, box.y + target.y);
+    await page.waitForSelector("[data-graph-card-hover-preview]", { timeout: 800 });
+    after = await canvasScreenshot(page);
+  } finally {
+    probe = await page.evaluate(() => window.__MINE_GRAPH_HOVER_PROBE__?.finish());
+  }
+  if (!probe) throw new Error("Graph route reloaded during hover verification");
+  if (probe.strokes === 0 || probe.errors.length > 0) {
+    throw new Error(`Card hover must outline its thumbnail path at 1px: ${JSON.stringify({
+      strokes: probe.strokes, errors: probe.errors,
+    })}`);
+  }
+  const mask = Buffer.from(probe.mask.split(",", 2)[1], "base64");
+  const changed = changedPixels(before, after, mask);
+  if (changed.ratio === 0 || changed.outsideOutline !== 0) {
+    throw new Error(`Card hover changed outside its 1px outline: ${JSON.stringify(changed)}`);
   }
   await page.mouse.move(box.x + 8, box.y + 8);
-  return changedRatio;
+  return changed.ratio;
 }
 
 async function runTheme(browser, theme) {
@@ -327,7 +484,7 @@ async function runTheme(browser, theme) {
   await assertControlsFit(page, `${theme} desktop`);
   await installFrameProbe(page);
   const hoverChangedRatio = theme === "dark"
-    ? await verifyCardHoverDoesNotMutateCanvas(page)
+    ? await verifyCardHoverOutline(page)
     : null;
 
   const canvas = page.locator("[data-graph-view] canvas").first();
