@@ -191,6 +191,21 @@ describe("standalone mode decision", () => {
     expect(result.current.nativeStatusError).toBeNull();
   });
 
+  it("does not describe a restarted extension worker as a missing Mine helper", async () => {
+    sendToNative.mockResolvedValue({
+      ok: false,
+      code: "extension_transport",
+      error: "Mine extension background stopped before replying. Retry this action.",
+    });
+    standalone.getStandaloneStatus.mockResolvedValue({ configured: false });
+
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.saveMode).toBe("unconfigured"));
+
+    expect(result.current.nativeStatusError).toBe("Mine extension background stopped before replying. Retry this action.");
+    expect(result.current.nativeStatusError).not.toContain("Mine helper");
+  });
+
   it("keeps the native road untouched when the host answers", async () => {
     sendToNative.mockImplementation(async (payload: { action: string }) => {
       if (payload.action === "get_status") return nativeStatus();

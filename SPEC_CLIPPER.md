@@ -911,6 +911,15 @@ Instagram save buttons are never valid article input.
 подтверждённого выбора `mineStandaloneFolderChanged` обновляет открытые UI.
 Страница setup не запускает извлечение контента и не заменяет исходный draft.
 
+Каждое действие popup/overlay → background отвечает ровно один раз: успешным
+результатом либо структурированной ошибкой. Это относится и к браузерам, где
+`chrome.windows.create` / `chrome.tabs.create` поддерживают только callback,
+и к реализациям с Promise API. Синхронное исключение или перезапуск service
+worker не выдаются за отказ native helper: transport-ошибка имеет отдельный
+код `extension_transport` и предлагает перезагрузить расширение. Реальная
+приёмка обязана нажать `Choose folder…` и `Retry connection` через собранный
+background worker; моки обработчиков не закрывают этот контракт.
+
 Выбор исполнителя хранится в `mineSaveDestination`. Доступный native helper
 не заменяет уже выбранную browser-папку; отказ ранее выбранного native-пути
 не запускает fallback. Native `binding_id` выводится из canonical path;

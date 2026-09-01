@@ -388,7 +388,9 @@ export function useClipperState() {
         }
         if (!compatible || !status.vaultConfigured || !status.vault_path || !status.binding_id) {
           const message = !status.ok
-            ? `Cannot connect to the Mine helper. ${status.error ?? "Open Mine once, then retry."}`
+            ? status.code === "extension_transport" || status.code === "extension_background_error"
+              ? status.error ?? "Mine extension background stopped before replying. Retry this action."
+              : `Cannot connect to the Mine helper. ${status.error ?? "Open Mine once, then retry."}`
             : !compatible
               ? "The Mine helper uses an incompatible save protocol. Open the updated Mine app, then retry."
               : status.error ?? "The Mine helper is connected. Choose a folder to save your clips.";

@@ -1,3 +1,29 @@
+## 01.09.2026 — Клиппер снова работает в Dia: transport, регистрация и живое сохранение
+
+Устранены два независимых дефекта. Background теперь отвечает ровно один раз
+и поддерживает callback-only `windows.create` / `tabs.create` в Dia вместе с
+Promise API Chromium. Закрытый message channel получает отдельный
+`extension_transport` и больше не выдаётся за отсутствие native helper.
+Добавлены VM-тесты полного background worker и регрессии popup-диагностики.
+
+`test:clipper-worker` теперь на фактически собранном MV3-пакете проверяет
+extension-origin setup, структурированный `nativeMessage/get_status`,
+остановку и повторное пробуждение service worker, сохраняя прежние 19 fixtures,
+два browser restart, IDB/OPFS receipt и нажатие React Save.
+
+Свежий release helper установлен через `bun run clipper:install-host`.
+Dia manifest разрешает стабильный ID `eioalidaccoahofcggkbinalibpajokh`;
+SHA-256 установленного helper совпадает с release-бинарём. Новый ID включён и
+перезагружен в Dia, старый оставлен выключенным без удаления данных.
+
+Живая приёмка при незапущенном Mine: overlay открылся на Example Domain без
+`native forbidden` и `message port closed`, Link сохранён в настроенный iCloud Mine vault как
+`Cards/Example Domain.md`; точный URL, frontmatter, размер 131 байт и время
+записи подтверждены на диске. Прошли 1072 frontend-теста, lint, production
+build, packaged worker smoke и native capture 3/3. Полная автономная
+OS-folder/Chrome матрица SC6 остаётся открытой; этот результат закрывает
+установленный native-путь Dia, а не весь релизный чек-лист.
+
 ## 31.08.2026 — Нативная приёмка реальным процессом; переключение Dia ожидает проверки
 
 Добавлена отдельная команда `bun run test:native-capture`: packaged helper

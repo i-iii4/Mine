@@ -9,7 +9,7 @@
 // is refused there rather than attempted.
 
 import "../../lib/standaloneVault.js";
-import type { ChannelInfo, NativeResponse } from "./messaging";
+import { extensionTransportFailure, type ChannelInfo, type NativeResponse } from "./messaging";
 
 export type StandaloneMode = "app" | "standalone" | "unconfigured";
 
@@ -45,7 +45,7 @@ function toBackground<T>(message: Record<string, unknown>): Promise<T> {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage({ target: "background", ...message }, (response) => {
       if (chrome.runtime.lastError) {
-        resolve({ ok: false, error: chrome.runtime.lastError.message } as T);
+        resolve(extensionTransportFailure(chrome.runtime.lastError.message) as T);
       } else {
         resolve((response as T) ?? ({ ok: false, error: "No response" } as T));
       }

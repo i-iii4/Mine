@@ -585,16 +585,53 @@ async function resolveAuthenticatedTweetVideo({ tweetUrl, tweetId }) {
 
 // ── Message handler (from popup) ──────────────────────────────────────────
 
+function extensionBackgroundFailure(error) {
+  return {
+    ok: false,
+    error: String(error?.message ?? error),
+    code: "extension_background_error",
+    outcome: "unknown",
+  };
+}
+
+// Chromium APIs return Promises, while Dia versions of the same APIs may only
+// invoke callbacks. Supplying both completion paths is safe as long as the
+// response channel is settled exactly once.
+function respondToBrowserCreate(sendResponse, invoke) {
+  let answered = false;
+  const answer = (response) => {
+    if (answered) return;
+    answered = true;
+    sendResponse(response);
+  };
+  const callback = () => {
+    const runtimeError = chrome.runtime.lastError;
+    answer(runtimeError ? extensionBackgroundFailure(runtimeError) : { ok: true });
+  };
+
+  try {
+    const pending = invoke(callback);
+    if (pending && typeof pending.then === "function") {
+      pending.then(
+        () => answer({ ok: true }),
+        (error) => answer(extensionBackgroundFailure(error)),
+      );
+    }
+  } catch (error) {
+    answer(extensionBackgroundFailure(error));
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.target !== "background") return false;
 
   if (msg.action === "openStandaloneSetup") {
     const url = new URL(chrome.runtime.getURL("dist/index.html?mode=setup"));
     if (typeof msg.binding_id === "string") url.searchParams.set("binding_id", msg.binding_id);
-    chrome.windows.create({
+    respondToBrowserCreate(sendResponse, (callback) => chrome.windows.create({
       url: url.href,
       type: "popup", width: 420, height: 460, focused: true,
-    }).then(() => sendResponse({ ok: true }), (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
+    }, callback));
     return true;
   }
 
@@ -628,20 +665,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.action === "openDownloadPage") {
-    chrome.tabs.create({ url: "https://github.com/i-iii4/Mine/releases" })
-      .then(() => sendResponse({ ok: true }), (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
+    respondToBrowserCreate(sendResponse, (callback) => chrome.tabs.create(
+      { url: "https://github.com/i-iii4/Mine/releases" },
+      callback,
+    ));
     return true;
   }
 
   if (msg.action === "nativeMessage") {
-    sendNativeMessage(msg.payload).then((response) => {
-      if (response?.ok && msg.payload?.action === "create_channel") {
-        void broadcastChannelsChanged(response.tag ?? msg.payload?.tag ?? null);
-      } else if (response?.ok && msg.payload?.action === "save_block" && msg.payload?.tags) {
-        void broadcastChannelsChanged(null);
-      }
-      sendResponse(response);
-    });
+    try {
+      sendNativeMessage(msg.payload).then((response) => {
+        if (response?.ok && msg.payload?.action === "create_channel") {
+          void broadcastChannelsChanged(response.tag ?? msg.payload?.tag ?? null);
+        } else if (response?.ok && msg.payload?.action === "save_block" && msg.payload?.tags) {
+          void broadcastChannelsChanged(null);
+        }
+        sendResponse(response);
+      }, (error) => sendResponse(extensionBackgroundFailure(error)));
+    } catch (error) {
+      sendResponse(extensionBackgroundFailure(error));
+    }
     return true; // async response
   }
 

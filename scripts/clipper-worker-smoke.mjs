@@ -31,6 +31,27 @@ async function launch() {
   assert.equal(worker.url(), `chrome-extension://${extensionId}/background.js`);
   return worker;
 }
+
+async function sendBackgroundMessage(page, message) {
+  return page.evaluate((payload) => new Promise((resolve) => {
+    chrome.runtime.sendMessage({ target: 'background', ...payload }, (response) => {
+      resolve({
+        response: response ?? null,
+        transportError: chrome.runtime.lastError?.message ?? null,
+      });
+    });
+  }), message);
+}
+
+async function waitForTargetToClose(devtools, targetId) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const { targetInfos } = await devtools.send('Target.getTargets');
+    if (!targetInfos.some((target) => target.targetId === targetId)) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.fail(`CDP target ${targetId} did not close`);
+}
 try {
   let worker = await launch();
   const results = await worker.evaluate(async (commands) => {
@@ -109,6 +130,40 @@ try {
   assert.deepEqual(persistedReceipt.lookup, recovered.reply);
   assert.deepEqual(persistedReceipt.repeated, recovered.reply);
 
+  // Use a quiet extension-origin page for the transport checks. Blocking its
+  // React bundle prevents mount effects from waking the worker behind the
+  // test's back before standaloneStatus does so explicitly below.
+  const transportPage = await context.newPage();
+  await transportPage.route('**/dist/assets/*', (route) => route.abort());
+  await transportPage.goto(`chrome-extension://${extensionId}/dist/index.html`);
+
+  const setupPageOpened = context.waitForEvent('page');
+  const setupReplySent = sendBackgroundMessage(transportPage, {
+    action: 'openStandaloneSetup', binding_id: 'worker-smoke-binding',
+  });
+  const [setupPage, setupTransport] = await Promise.all([setupPageOpened, setupReplySent]);
+  assert.equal(setupTransport.transportError, null);
+  assert.deepEqual(setupTransport.response, { ok: true });
+  await setupPage.waitForLoadState('domcontentloaded');
+  const setupUrl = new URL(setupPage.url());
+  assert.equal(setupUrl.protocol, 'chrome-extension:');
+  assert.equal(setupUrl.host, extensionId);
+  assert.equal(setupUrl.pathname, '/dist/index.html');
+  assert.equal(setupUrl.searchParams.get('mode'), 'setup');
+  assert.equal(setupUrl.searchParams.get('binding_id'), 'worker-smoke-binding');
+  await setupPage.close();
+
+  const nativeTransport = await sendBackgroundMessage(transportPage, {
+    action: 'nativeMessage', payload: { action: 'get_status' },
+  });
+  assert.equal(nativeTransport.transportError, null);
+  assert.equal(typeof nativeTransport.response, 'object');
+  assert.equal(typeof nativeTransport.response?.ok, 'boolean');
+  if (!nativeTransport.response.ok) {
+    assert.equal(typeof nativeTransport.response.code, 'string');
+    assert.doesNotMatch(nativeTransport.response.error ?? '', /message port closed/i);
+  }
+
   // Exercise the shipped React Save button, not a hand-written save request.
   // Seed the existing preloaded-extraction entry point; request construction,
   // timestamp, pinning, messaging, WASM and file publication remain real.
@@ -139,9 +194,30 @@ try {
   assert.ok(uiCapture.markdown.includes('Saved through the real popup button.'));
   assert.ok(uiCapture.markdown.includes('https://example.test/worker-ui-article'));
   assert.deepEqual(uiCapture.pending, []);
+
+  const devtools = await context.newCDPSession(transportPage);
+  const { targetInfos } = await devtools.send('Target.getTargets');
+  const serviceWorkerTarget = targetInfos.find((target) =>
+    target.type === 'service_worker' && target.url === worker.url());
+  assert.ok(serviceWorkerTarget, 'packaged service-worker target is unavailable');
+  const closeResult = await devtools.send('Target.closeTarget', {
+    targetId: serviceWorkerTarget.targetId,
+  });
+  assert.equal(closeResult.success, true);
+  await waitForTargetToClose(devtools, serviceWorkerTarget.targetId);
+  const statusTransport = await sendBackgroundMessage(transportPage, { action: 'standaloneStatus' });
+  assert.equal(statusTransport.transportError, null);
+  assert.equal(typeof statusTransport.response?.configured, 'boolean');
+  const restartedTargets = await devtools.send('Target.getTargets');
+  const restartedWorkerTarget = restartedTargets.targetInfos.find((target) =>
+    target.type === 'service_worker' && target.url === `chrome-extension://${extensionId}/background.js`);
+  assert.ok(restartedWorkerTarget, 'standaloneStatus did not wake the packaged service worker');
+  await devtools.detach();
+  await transportPage.close();
   console.log(JSON.stringify({ ok: true, scope: 'chromium-extension-worker-wasm', extensionId,
     fixtures: fixtures.length, headless: true, temporaryProfile: true,
     persistedHandleBlobReceipt: true, browserRestarts: 2, popupSaveToFile: true,
+    standaloneSetupTransport: true, nativeStatusTransport: true, serviceWorkerRestarts: 1,
     filesystem: 'OPFS-not-OS-folder' }));
 } finally {
   await context?.close();

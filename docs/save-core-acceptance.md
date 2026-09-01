@@ -45,7 +45,7 @@ Native-shell smoke читает настроенный путь через IPC, 
 | Чистое ядро | `cargo +1.88.0 test -p mine-core --locked`: 197 тестов; native/no-default/WASM не зависят от Tauri/SQLite |
 | Browser adapter | `standaloneVault.test.ts` + `standaloneVault.recovery.test.ts`: 26 тестов с actual WASM; подменён только IO |
 | Worker bootstrap | `mineCore.test.ts`: 3 теста настоящих generated JS/WASM; lexical binding, единая загрузка, повтор после сбоя |
-| Собранное расширение | `bun run test:clipper-worker`: настоящий classic worker, CSP и 19 fixtures в отдельном headless Chromium |
+| Собранное расширение | `bun run test:clipper-worker`: настоящий classic worker, CSP, 19 fixtures, открытие setup, структурированный native status и пробуждение после остановки worker в отдельном headless Chromium |
 | Настоящая кнопка Save | Тот же smoke открывает packaged React popup, передаёт extracted article через существующий preloaded entry point и нажимает Save; проверяет Markdown и очистку pending pin. Генерация запроса, время, messaging, WASM и запись — настоящие |
 | Browser persistence | Тот же worker smoke: настоящий IDB хранит directory handle/Blob, два полных перезапуска Chromium, resume без повторной загрузки медиа, один файл и прежний committed receipt после второго перезапуска. Использован OPFS, не выбранная системная папка |
 | Native SC2 | 37 targeted tests: no-clobber, полный план до media, каждый media intent, partial publication, restart, fsync-warning, cleanup, journal/index separation, canonical layout/refs, binding, terminal name conflict и два Save с повторным resolver |
@@ -54,7 +54,7 @@ Native-shell smoke читает настроенный путь через IPC, 
 | Регистрация helper | 10 тестов; exact allowlist, checksum, atomic binary replacement, реальная структура `Resources/binaries/yt-dlp` и legacy fallback |
 | Подтверждение связи | 6 Rust-тестов app-local записи, 6 тестов browser ACK и 3 теста Settings; read-only проверки не пишут |
 | Клиенты | Desktop blocks 44, CLI 29, MCP 6, FFI parser 2 — проходят без изменения действующих guards |
-| Общий frontend | `bun run test:frontend` — 1062 теста в 128 файлах, все проходят |
+| Общий frontend | `bun run test:frontend` — 1072 теста в 130 файлах, все проходят |
 | Общий Rust | `cargo test --workspace --all-targets --locked` — проходит: 639 main lib, 82 native host, 197 core, 2 FFI и тесты вспомогательных binaries |
 | MSRV | `cargo +1.88.0 check --workspace --all-targets --locked` — проходит |
 | iOS bridge | `cargo check -p mine-ffi --lib --target aarch64-apple-ios --locked` — проходит |
@@ -88,7 +88,7 @@ Fixtures проверяют настоящий WASM в Node runtime, не ими
 и существующие vault не меняются. Поэтому это отдельная явная команда,
 не скрытое дополнение `verify:release`. Проверен Node 22.23.1 с `node:sqlite`
 и готовой macOS debug `.app`; JSON-отчёты и тестовые материалы сохраняются.
-Проверенный запуск: `output/playwright/native-capture-oX8Grj/report.json`.
+Последний проверенный запуск: `output/playwright/native-capture-J6swni/report.json`.
 
 ## Границы, которые нельзя выдать за исправленные
 
@@ -110,6 +110,15 @@ Fixtures проверяют настоящий WASM в Node runtime, не ими
 
 Проверить в отдельных профилях Chrome и Dia с собранной папкой `extension/`
 и `.app`; каждую строку подтверждают реальные файлы и карточки, не только UI.
+
+Пройденный срез 01.09.2026: release helper установлен, exact allowlist Dia
+указывает на `eioalidaccoahofcggkbinalibpajokh`, бинарь совпадает с
+`target/release/native-host` по SHA-256. Уже установленное расширение
+перезагружено в Dia; живой overlay открылся без `native forbidden` и
+`message port closed`, затем сохранил Link
+`https://example.com/?mine-acceptance-20260901-1357` в
+`Cards/Example Domain.md` настроенного Mine vault. Проверены точные URL,
+frontmatter и байты файла. Старый ID выключен, но не удалён.
 
 1. Без host: из оверлея открыть setup, выбрать одноразовую папку, сохранить
    ссылку, статью, изображение и screenshot. Отменить выбор и повторить.
@@ -150,19 +159,17 @@ Native-shell smoke не регистрирует диагностический 
 браузере. Сборка и тестирование не означают обновление `/Applications/Mine.app`
 или установленного расширения.
 
-### Проверка установленного helper — 31.08.2026
+### Проверка установленного helper — 01.09.2026
 
-Прямой `get_status` через настоящий native-messaging процесс подтверждает:
-установленный helper объявляет только `pending_uploads_v1`, собранный — также
-`save_operation_v1`, `operation_lookup_v1`, `open_app_v1` и
-`connection_check_v1`. У обоих `version: 0.1.0` и `host_api_version: 2`,
-поэтому совпадение номера версии не доказывает актуальность возможностей.
-Проверка использовала отсутствующий тестовый путь, без сохранений.
+`bun run clipper:install-host` собрал release helper и атомарно обновил его
+developer-установку. SHA-256 установленного бинаря и
+`target/release/native-host` одинаков:
+`927bdff086ca2bd47113e4ca482704db046dc28db89e14ce53708f152833f255`.
+Manifest Dia содержит единственный разрешённый origin
+`chrome-extension://eioalidaccoahofcggkbinalibpajokh/`.
 
-Регистрация Dia пока разрешает только старый origin
-`mphibgcoipknogccbbjoolkjfglmillm`. Состояние его незавершённых сохранений
-ещё не установлено; helper и регистрация не переключены. Доступный Browser
-инструмент не подключён к Dia и блокирует управление расширениями Chrome.
-Этот барьер не обходится другим UI-инструментом или прямой правкой профиля.
-Для финального переключения нужна проверка старых сохранений пользователем
-и ручное подключение подготовленной папки `extension/` в Dia.
+В Dia новый ID включён и перезагружен, старый
+`mphibgcoipknogccbbjoolkjfglmillm` оставлен выключенным без удаления storage.
+Живое сохранение Link прошло при незапущенном Mine; созданный Markdown
+подтверждает работу browser → extension worker → native helper → vault.
+Полная SC6-матрица этим одним сценарием не закрыта.

@@ -29,6 +29,17 @@ export interface ChannelInfo {
   block_count: number;
 }
 
+/** A popup/background channel failure is not evidence about native-host availability. */
+export function extensionTransportFailure(transportError?: string): NativeResponse {
+  return {
+    ok: false,
+    error: "Mine extension background stopped before replying. Retry this action.",
+    code: "extension_transport",
+    outcome: "unknown",
+    transport_error: transportError ?? "The extension runtime did not provide a transport error.",
+  };
+}
+
 // save_block в native_host синхронно качает inline-картинки статьи —
 // must mirror background.js timeoutForAction(). Остальные actions —
 // быстрый read-only IPC через bg.js port.
@@ -51,7 +62,7 @@ export async function sendToNative(payload: NativeRequest): Promise<NativeRespon
       (response) => {
         clearTimeout(timer);
         if (chrome.runtime.lastError) {
-          resolve({ ok: false, error: chrome.runtime.lastError.message, outcome: "unknown", code: "native_disconnected" });
+          resolve(extensionTransportFailure(chrome.runtime.lastError.message));
         } else {
           resolve((response as NativeResponse) ?? { ok: false, error: "No response" });
         }
