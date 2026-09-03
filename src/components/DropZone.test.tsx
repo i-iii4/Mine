@@ -12,14 +12,13 @@ type DragDropPayload =
 const mocks = vi.hoisted(() => ({
   createBlock: vi.fn(),
   dragHandler: null as null | ((event: { payload: DragDropPayload }) => void),
+  onDragDropEvent: vi.fn(),
+  unlisten: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/api/webviewWindow", () => ({
   getCurrentWebviewWindow: () => ({
-    onDragDropEvent: vi.fn(async (handler: (event: { payload: DragDropPayload }) => void) => {
-      mocks.dragHandler = handler;
-      return vi.fn();
-    }),
+    onDragDropEvent: mocks.onDragDropEvent,
   }),
 }));
 
@@ -37,6 +36,12 @@ describe("DropZone", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.dragHandler = null;
+    mocks.onDragDropEvent.mockImplementation(
+      async (handler: (event: { payload: DragDropPayload }) => void) => {
+        mocks.dragHandler = handler;
+        return mocks.unlisten;
+      },
+    );
   });
 
   it("ignores non-file drag over events", async () => {
@@ -78,6 +83,48 @@ describe("DropZone", () => {
       });
     });
     expect(onBlocksCreated).toHaveBeenCalledOnce();
+  });
+
+  it("imports a duplicated native path only once", async () => {
+    mocks.createBlock.mockResolvedValue(undefined);
+    render(<DropZone onBlocksCreated={vi.fn()} />);
+    await waitFor(() => expect(mocks.dragHandler).not.toBeNull());
+
+    emitDrag({
+      type: "drop",
+      paths: ["/tmp/example.png", "/tmp/example.png", "/tmp/example.png"],
+      position: { x: 10, y: 10 },
+    });
+
+    await waitFor(() => expect(mocks.createBlock).toHaveBeenCalledOnce());
+  });
+
+  it("does not resubscribe when its completion callback changes", async () => {
+    const view = render(<DropZone onBlocksCreated={vi.fn()} />);
+    await waitFor(() => expect(mocks.onDragDropEvent).toHaveBeenCalledOnce());
+
+    view.rerender(<DropZone onBlocksCreated={vi.fn()} />);
+
+    expect(mocks.onDragDropEvent).toHaveBeenCalledOnce();
+  });
+
+  it("unsubscribes when registration resolves after unmount", async () => {
+    let finishRegistration!: (unlisten: () => void) => void;
+    mocks.onDragDropEvent.mockImplementation(
+      (handler: (event: { payload: DragDropPayload }) => void) => {
+        mocks.dragHandler = handler;
+        return new Promise<() => void>((resolve) => {
+          finishRegistration = resolve;
+        });
+      },
+    );
+    const view = render(<DropZone onBlocksCreated={vi.fn()} />);
+    await waitFor(() => expect(mocks.onDragDropEvent).toHaveBeenCalledOnce());
+
+    view.unmount();
+    finishRegistration(mocks.unlisten);
+
+    await waitFor(() => expect(mocks.unlisten).toHaveBeenCalledOnce());
   });
 
   it("hides the file overlay on Escape", async () => {

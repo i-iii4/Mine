@@ -17,6 +17,8 @@ export function DropZone({ currentTag, onBlocksCreated }: DropZoneProps) {
   // Refs to avoid re-registering the Tauri listener on navigation
   const currentTagRef = useRef(currentTag);
   currentTagRef.current = currentTag;
+  const onBlocksCreatedRef = useRef(onBlocksCreated);
+  onBlocksCreatedRef.current = onBlocksCreated;
   const importingRef = useRef(false);
   const fileDragActiveRef = useRef(false);
 
@@ -32,7 +34,7 @@ export function DropZone({ currentTag, onBlocksCreated }: DropZoneProps) {
       const tags = currentTagRef.current ? [currentTagRef.current] : [];
 
       try {
-        for (const filePath of paths) {
+        for (const filePath of [...new Set(paths)]) {
           const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
           const blockType = inferBlockType(ext);
           const title = fileNameToTitle(filePath);
@@ -45,7 +47,7 @@ export function DropZone({ currentTag, onBlocksCreated }: DropZoneProps) {
             file_path: filePath,
           });
         }
-        onBlocksCreated();
+        onBlocksCreatedRef.current();
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error("Failed to create block from drop:", msg);
@@ -55,10 +57,11 @@ export function DropZone({ currentTag, onBlocksCreated }: DropZoneProps) {
         setImporting(false);
       }
     },
-    [onBlocksCreated],
+    [],
   );
 
   useEffect(() => {
+    let disposed = false;
     let unlisten: (() => void) | undefined;
 
     getCurrentWebviewWindow()
@@ -83,10 +86,22 @@ export function DropZone({ currentTag, onBlocksCreated }: DropZoneProps) {
         }
       })
       .then((fn) => {
-        unlisten = fn;
+        if (disposed) {
+          fn();
+        } else {
+          unlisten = fn;
+        }
+      })
+      .catch((cause) => {
+        if (!disposed) {
+          setError(cause instanceof Error ? cause.message : String(cause));
+        }
       });
 
-    return () => unlisten?.();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, [handleDrop]);
 
   useEffect(() => {
@@ -136,4 +151,3 @@ export function DropZone({ currentTag, onBlocksCreated }: DropZoneProps) {
     </div>
   );
 }
-

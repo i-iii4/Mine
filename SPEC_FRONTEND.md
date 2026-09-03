@@ -198,6 +198,13 @@ the WebView, including selected text extraction drags, must not show the `Drop
 files to add` overlay. While the overlay is visible, `Escape` cancels the
 overlay state without importing anything.
 
+One mounted `DropZone` owns exactly one Tauri subscription. React rerenders and
+callback identity changes must not resubscribe it. If the asynchronous
+registration resolves after unmount, the returned listener is immediately
+removed. Repeated copies of the same path inside one native `drop` payload are
+collapsed before import. One physical file drop therefore creates one card per
+unique path, including in development Strict Mode and after hot reloads.
+
 ## Native selection policy
 
 Mine runs as a native-feeling WebKit app, so app chrome must not expose random
