@@ -73,6 +73,7 @@ import {
   isEditableKeyboardTarget,
   isOverlayKeyboardTarget,
 } from "@/lib/keyboardTargets";
+import { commandById } from "@/lib/commandRegistry";
 import {
   blockCanRenderFromDeterministicHeight,
   blockSlugFromKeyboardTarget,
@@ -1693,6 +1694,14 @@ export function Grid({
           setFocusedSlug(null);
           setFeedInteractionMode("pointer");
         }
+        return;
+      }
+
+      const deleteSelection = commandById("delete-selection");
+      if (selectedSlugs.size > 0 && deleteSelection.matches?.(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        setDeleteSelectionDialogOpen(true);
         return;
       }
 

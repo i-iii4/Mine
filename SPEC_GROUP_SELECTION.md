@@ -166,6 +166,8 @@ When Grid keyboard focus is active:
 - `Shift+Enter` toggles the focused committed card in `selectedSlugs`;
 - after `selectedSlugs.size > 0`, plain `Enter` also toggles the focused card
   instead of opening Detail;
+- the macOS `Delete` key (`⌫`, DOM `Backspace`) opens the existing batch delete
+  confirmation for the whole selected set; it never deletes without confirmation;
 - arrow keys continue to move Grid focus by `layout.positions`;
 - `Cmd+K` opens a contextual batch menu anchored to the focused card's
   top-right overflow action.

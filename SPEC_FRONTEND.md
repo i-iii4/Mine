@@ -1445,7 +1445,9 @@ Image media expansion:
   focused card instead of opening Detail. Keyboard mode uses Grid `focusedSlug`
   as the source of truth and ignores stale DOM focus on another card. Pointer
   mode can still toggle a committed pointer-hovered or DOM-focused feed card.
-  `Enter` must not fall through to Card activation. `Cmd+K` opens a contextual
+  `Enter` must not fall through to Card activation. The macOS `Delete` key
+  (`⌫`, DOM `Backspace`) opens the shared batch delete confirmation for the
+  selected set. `Cmd+K` opens a contextual
   batch menu anchored to the focused card's top-right overflow action; the menu
   contains a muted selected-count header plus `Connect`, collection-scoped
   `Disconnect` outside Everything, `Merge` when at least two cards are

@@ -203,6 +203,13 @@ export const DEFAULT_COMMANDS: readonly CommandDefinition[] = [
     context: "selection",
     binding: { key: "k", meta: true },
   },
+  {
+    id: "delete-selection",
+    name: "Delete selected",
+    context: "selection",
+    binding: { key: "Backspace" },
+    fixed: "structural",
+  },
 ];
 
 /// Overrides applied on top of the defaults, by command id. Owned by the

@@ -1539,6 +1539,47 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(screen.getByText("2 elements selected")).toBeInTheDocument();
   });
 
+  it("opens the batch delete confirmation with the macOS Delete key", async () => {
+    vi.useFakeTimers();
+
+    const onDeleteSelectedBlocks = vi.fn(async () => undefined);
+    const blocks = [makeBlock(9527), makeBlock(9528)];
+    setBlockHeight(9527, 200);
+    setBlockHeight(9528, 220);
+
+    render(
+      <Grid
+        {...BASE_PROPS}
+        blocks={blocks}
+        onDeleteSelectedBlocks={onDeleteSelectedBlocks}
+      />,
+    );
+    await flushAsync();
+
+    for (const slug of ["block-9527", "block-9528"]) {
+      fireEvent.click(document.querySelector(`[data-block-slug="${slug}"]`)!, {
+        metaKey: true,
+      });
+    }
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    fireEvent.keyDown(window, { key: "Backspace" });
+
+    const dialog = screen.getByRole("alertdialog", {
+      name: "Delete selected elements?",
+    });
+    expect(onDeleteSelectedBlocks).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onDeleteSelectedBlocks).toHaveBeenCalledWith(["block-9527", "block-9528"]);
+  });
+
   it("uses Grid keyboard focus, not stale DOM focus, for Enter in group selection", async () => {
     vi.useFakeTimers();
 

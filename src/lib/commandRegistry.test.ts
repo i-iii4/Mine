@@ -47,6 +47,14 @@ describe("command registry", () => {
     expect(toggleView.matches!(keydown({ key: "Tab", shiftKey: true }))).toBe(false);
   });
 
+  it("exposes the macOS Delete key as the fixed selection delete command", () => {
+    const deleteSelection = commandById("delete-selection");
+    expect(deleteSelection.combo).toBe("⌫");
+    expect(deleteSelection.fixed).toBe("structural");
+    expect(deleteSelection.matches!(keydown({ key: "Backspace" }))).toBe(true);
+    expect(deleteSelection.matches!(keydown({ key: "Backspace", metaKey: true }))).toBe(false);
+  });
+
   it("separates the find pair by shift", () => {
     const elements = commandById("find-elements");
     const collections = commandById("find-collections");
