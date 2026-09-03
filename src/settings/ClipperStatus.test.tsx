@@ -6,6 +6,9 @@ import { ClipperStatus } from "./ClipperStatus";
 const status: ClipperSetupStatus = {
   host_installed: true,
   host_current: true,
+  extension_installed: true,
+  extension_current: true,
+  extension_path: "/Users/test/Library/Application Support/com.mine.app/clipper/extension",
   app_version: "0.1.0",
   browsers: [{ label: "Dia", detected: true, connected: true }],
   last_connection_check: null,

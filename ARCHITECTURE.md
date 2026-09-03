@@ -1055,12 +1055,13 @@ Rationale: расширение — проекция основного прил
 
 `extension/dist/` является воспроизводимым build output и не хранится в Git,
 но входит в runtime contract unpacked extension: manifest ссылается на
-`dist/overlay.js`, а overlay загружает `dist/assets/popup.css` и fonts. Desktop
-pipeline (`bun run build`, `cargo tauri dev/build`) не владеет этим output;
-единственный canonical builder — `bun run build:extension`. Chromium не обязан
-автоматически восстановить unpacked extension после исчезновения bundle:
-сначала bundle пересобирается, затем каталог `extension/` повторно подключается
-через `Load unpacked`.
+`dist/overlay.js`, а overlay загружает `dist/assets/popup.css` и fonts.
+`bun run build:extension` остаётся единственным canonical builder и собирает
+минимальный `build/clipper-extension`; Tauri включает его в `.app`. Приложение
+и developer installer обновляют стабильную установленную копию в
+`Application Support/com.mine.app/clipper/extension`, поэтому browser
+registration больше не зависит от checkout, его перемещения и очистки build
+outputs. Через `Load unpacked` выбирается только этот стабильный каталог.
 
 ### 010: Нормализация тегов на границе чтения
 

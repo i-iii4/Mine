@@ -1,11 +1,9 @@
 // Installing the browser clipper without a terminal.
 //
-// The clipper needs a native messaging host: a small binary the browser is
-// allowed to launch, declared by a manifest in that browser's own directory.
-// Until now this was a bash script that compiled the binary with cargo and
-// asked for an extension id by hand — a path only a developer could walk. The
-// binary already ships inside the app bundle, so installing is copying it into
-// place and writing one manifest per browser found.
+// The clipper needs two installed runtime parts: an extension in a stable
+// Application Support directory and a native messaging host the browser may
+// launch. Both ship in the app bundle and are refreshed without touching a
+// user's vault.
 //
 // See SPEC_ONBOARDING.md О5–О7.
 
@@ -21,8 +19,8 @@ use crate::storage::clipper_connection::{self, ClipperConnectionCheck, DEV_EXTEN
 /// Native messaging host name, matched by the extension's manifest.
 const HOST_NAME: &str = "com.localarena.clipper";
 
-/// First launch registers the bundled helper; every later launch repairs its
-/// exact browser allowlist and refreshes the binary without touching vaults.
+/// First launch installs the bundled runtime; every later launch repairs its
+/// exact browser allowlist and refreshes both parts without touching vaults.
 pub fn refresh_installed_host(app: &AppHandle) {
     if let Err(error) = install_clipper_host(app.clone(), String::new()) {
         log::warn!("clipper helper registration needs attention: {error}");
@@ -52,6 +50,105 @@ fn installed_binary_matches(source: &Path, destination: &Path) -> bool {
     true
 }
 
+fn extension_files(root: &Path) -> std::io::Result<Vec<PathBuf>> {
+    fn collect(root: &Path, directory: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
+        let mut entries = std::fs::read_dir(directory)?.collect::<Result<Vec<_>, _>>()?;
+        entries.sort_by_key(std::fs::DirEntry::file_name);
+        for entry in entries {
+            let file_type = entry.file_type()?;
+            if file_type.is_symlink() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "extension payload contains a symlink: {}",
+                        entry.path().display()
+                    ),
+                ));
+            }
+            if file_type.is_dir() {
+                collect(root, &entry.path(), files)?;
+            } else if file_type.is_file() {
+                let relative = entry
+                    .path()
+                    .strip_prefix(root)
+                    .map_err(std::io::Error::other)?
+                    .to_path_buf();
+                files.push(relative);
+            }
+        }
+        Ok(())
+    }
+
+    let mut files = Vec::new();
+    collect(root, root, &mut files)?;
+    Ok(files)
+}
+
+fn extension_fingerprint(root: &Path) -> Option<String> {
+    let files = extension_files(root).ok()?;
+    if files.is_empty() || !files.iter().any(|path| path == Path::new("manifest.json")) {
+        return None;
+    }
+    let mut hash = Sha256::new();
+    for relative in files {
+        let bytes = std::fs::read(root.join(&relative)).ok()?;
+        hash.update(relative.to_string_lossy().as_bytes());
+        hash.update([0]);
+        hash.update((bytes.len() as u64).to_le_bytes());
+        hash.update(bytes);
+    }
+    Some(format!("{:x}", hash.finalize()))
+}
+
+fn installed_extension_matches(source: &Path, destination: &Path) -> bool {
+    extension_fingerprint(source).is_some_and(|expected| {
+        extension_fingerprint(destination).as_deref() == Some(expected.as_str())
+    })
+}
+
+fn copy_extension_tree(source: &Path, destination: &Path) -> std::io::Result<()> {
+    for relative in extension_files(source)? {
+        let target = destination.join(&relative);
+        let parent = target
+            .parent()
+            .ok_or_else(|| std::io::Error::other("extension file has no parent"))?;
+        std::fs::create_dir_all(parent)?;
+        std::fs::copy(source.join(relative), target)?;
+    }
+    Ok(())
+}
+
+fn install_extension_directory(source: &Path, destination: &Path) -> std::io::Result<()> {
+    let parent = destination
+        .parent()
+        .ok_or_else(|| std::io::Error::other("extension directory has no parent"))?;
+    std::fs::create_dir_all(parent)?;
+    let transaction = tempfile::Builder::new()
+        .prefix(".clipper-extension-")
+        .tempdir_in(parent)?;
+    let staged = transaction.path().join("new");
+    let previous = transaction.path().join("previous");
+    std::fs::create_dir(&staged)?;
+    copy_extension_tree(source, &staged)?;
+    if !installed_extension_matches(source, &staged) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "staged extension payload differs from the bundle",
+        ));
+    }
+    if destination.exists() {
+        std::fs::rename(destination, &previous)?;
+    }
+    if let Err(error) = std::fs::rename(&staged, destination) {
+        if previous.exists() {
+            let _ = std::fs::rename(&previous, destination);
+        }
+        return Err(error);
+    }
+    std::fs::File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
 fn bundled_host_path() -> Option<PathBuf> {
     std::env::current_exe()
         .ok()
@@ -66,6 +163,14 @@ fn bundled_ytdlp_path(executable: &Path) -> Option<PathBuf> {
     [resources.join("binaries/yt-dlp"), resources.join("yt-dlp")]
         .into_iter()
         .find(|path| path.is_file())
+}
+
+fn bundled_extension_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .resource_dir()
+        .ok()
+        .map(|resources| resources.join("clipper-extension"))
+        .filter(|path| path.join("manifest.json").is_file())
 }
 
 fn host_manifest(destination: &Path) -> serde_json::Value {
@@ -114,6 +219,13 @@ fn host_binary_path(app: &AppHandle) -> Result<PathBuf, CommandError> {
     Ok(dir.join("native-host"))
 }
 
+fn installed_extension_path(app: &AppHandle) -> Result<PathBuf, CommandError> {
+    Ok(host_binary_path(app)?
+        .parent()
+        .ok_or_else(|| CommandError::Internal("clipper directory has no parent".into()))?
+        .join("extension"))
+}
+
 /// A Chromium-family browser that supports native messaging.
 struct BrowserTarget {
     /// Shown to the user.
@@ -160,6 +272,12 @@ pub struct ClipperSetupStatus {
     pub host_installed: bool,
     /// The installed host matches the bundled binary, not just its version marker.
     pub host_current: bool,
+    /// The browser extension lives outside the app and outside a source checkout.
+    pub extension_installed: bool,
+    /// The installed extension directory exactly matches the bundled payload.
+    pub extension_current: bool,
+    /// Stable folder that a development browser loads once with Load unpacked.
+    pub extension_path: String,
     pub app_version: String,
     pub browsers: Vec<ClipperBrowserStatus>,
     /// Last extension-confirmed handshake, not proof of a current connection.
@@ -204,6 +322,10 @@ pub fn get_clipper_setup_status(app: AppHandle) -> Result<ClipperSetupStatus, Co
     let host_installed = host.is_file();
     let host_current =
         bundled_host_path().is_some_and(|bundled| installed_binary_matches(&bundled, &host));
+    let extension = installed_extension_path(&app)?;
+    let extension_installed = extension.join("manifest.json").is_file();
+    let extension_current = bundled_extension_path(&app)
+        .is_some_and(|bundled| installed_extension_matches(&bundled, &extension));
 
     let browsers = BROWSERS
         .iter()
@@ -234,6 +356,9 @@ pub fn get_clipper_setup_status(app: AppHandle) -> Result<ClipperSetupStatus, Co
     Ok(ClipperSetupStatus {
         host_installed,
         host_current,
+        extension_installed,
+        extension_current,
+        extension_path: extension.to_string_lossy().into_owned(),
         app_version,
         browsers,
         last_connection_check,
@@ -290,6 +415,15 @@ pub fn install_clipper_host(
             if let Err(error) = install_binary(&source, &target) {
                 log::warn!("failed to install bundled yt-dlp: {error}");
             }
+        }
+    }
+
+    if let Some(source) = bundled_extension_path(&app) {
+        let target = installed_extension_path(&app)?;
+        if !installed_extension_matches(&source, &target) {
+            install_extension_directory(&source, &target).map_err(|error| {
+                CommandError::Internal(format!("failed to install bundled extension: {error}"))
+            })?;
         }
     }
 
@@ -374,10 +508,14 @@ mod tests {
     fn ytdlp_resolver_matches_tauri_bundle_resources_and_prefers_current_layout() {
         let config: serde_json::Value =
             serde_json::from_str(include_str!("../../tauri.conf.json")).unwrap();
-        assert!(config["bundle"]["resources"]
-            .as_array()
-            .unwrap()
-            .contains(&serde_json::json!("binaries/yt-dlp")));
+        assert_eq!(
+            config["bundle"]["resources"]["binaries/yt-dlp"],
+            serde_json::json!("binaries/yt-dlp")
+        );
+        assert_eq!(
+            config["bundle"]["resources"]["../build/clipper-extension/"],
+            serde_json::json!("clipper-extension/")
+        );
         let tmp = TempDir::new().unwrap();
         let contents = tmp.path().join("Mine.app/Contents");
         std::fs::create_dir_all(contents.join("MacOS")).unwrap();
@@ -475,5 +613,43 @@ mod tests {
             &tmp.path().join("source"),
             &tmp.path().join("target")
         ));
+    }
+
+    #[test]
+    fn extension_install_replaces_the_complete_directory_and_removes_stale_files() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("bundle");
+        let destination = tmp.path().join("installed/extension");
+        std::fs::create_dir_all(source.join("dist")).unwrap();
+        std::fs::create_dir_all(&destination).unwrap();
+        std::fs::write(source.join("manifest.json"), b"bundle manifest").unwrap();
+        std::fs::write(source.join("dist/popup.js"), b"bundle script").unwrap();
+        std::fs::write(destination.join("manifest.json"), b"old manifest").unwrap();
+        std::fs::write(destination.join("stale.js"), b"stale").unwrap();
+
+        install_extension_directory(&source, &destination).unwrap();
+
+        assert!(installed_extension_matches(&source, &destination));
+        assert!(!destination.join("stale.js").exists());
+        assert_eq!(
+            std::fs::read(destination.join("dist/popup.js")).unwrap(),
+            b"bundle script"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn extension_install_rejects_symlinks_from_the_bundle() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("bundle");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("manifest.json"), b"manifest").unwrap();
+        symlink(source.join("manifest.json"), source.join("linked.json")).unwrap();
+
+        let error = install_extension_directory(&source, &tmp.path().join("installed/extension"))
+            .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     }
 }

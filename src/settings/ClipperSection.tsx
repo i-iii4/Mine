@@ -50,9 +50,11 @@ export function ClipperSection() {
 
       <SettingRow
         label="Development extension"
-        caption="Use the bundled extension folder with Load unpacked in Chrome, Dia, Arc, Edge or Brave. The store release is not published yet."
+        caption="Load this stable installed folder once in Chrome, Dia, Arc, Edge or Brave. Mine updates its contents without changing the browser registration."
       >
-        <span className="text-sm text-muted-foreground">Stable development ID</span>
+        <code className="max-w-96 break-all text-xs text-muted-foreground">
+          {status?.extension_path ?? "Preparing extension folder…"}
+        </code>
       </SettingRow>
 
       <SettingRow

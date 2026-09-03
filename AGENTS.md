@@ -403,13 +403,16 @@ cargo +1.88.0 check --workspace --all-targets --locked # MSRV gate
 cargo clippy                   # Линтинг Rust
 ```
 
-`extension/dist/` и `extension/generated/save-core/` не хранятся в Git. Desktop-команды не собирают расширение:
-перед `Load unpacked` в Chrome/Dia и после очистки build outputs всегда
-запускайте `bun run build:extension`.
+`extension/dist/` и `extension/generated/save-core/` не хранятся в Git.
+`cargo tauri build` собирает расширение и включает минимальный payload в `.app`;
+для отдельной разработки используйте `bun run build:extension`. Через
+`Load unpacked` подключается стабильная установленная копия в
+`~/Library/Application Support/com.mine.app/clipper/extension`, не checkout.
 
-Native host входит в `.app`; при запуске Mine копирует актуальный helper и
-восстанавливает регистрацию обнаруженных браузеров. Для dev-установки:
-`bun run clipper:install-host`. Сборка без запуска не меняет установленный host.
+Native host и payload расширения входят в `.app`; при запуске Mine копирует
+актуальные runtime-компоненты и восстанавливает регистрацию обнаруженных
+браузеров. Для dev-установки: `bun run clipper:install-host`. Сборка без запуска
+не меняет установленный host или стабильную browser-копию.
 Capture больше не требует рабочего SQLite до записи исходников. Dev ID:
 `eioalidaccoahofcggkbinalibpajokh`; старый browser storage другого ID не
 переносится автоматически. При старом ID сначала выяснить исход pending;

@@ -16,6 +16,7 @@
     "test:native-shell": "node scripts/native-shell-smoke.mjs",
     "test:native-capture": "node scripts/native-capture-smoke.mjs",
     "test:clipper-worker": "bun run build:extension && node scripts/clipper-worker-smoke.mjs",
+    "test:clipper-install": "node --test scripts/clipper-extension-payload.test.mjs",
     "test:browser": "node scripts/browser-audits.mjs",
     "test:rust": "bun run fetch:ytdlp && cargo test --workspace --all-targets --locked",
     "test:watch": "vitest",

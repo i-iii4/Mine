@@ -94,7 +94,19 @@ host_installed: boolean;
 /**
  * The installed host matches the bundled binary, not just its version marker.
  */
-host_current: boolean; app_version: string; browsers: ClipperBrowserStatus[];
+host_current: boolean;
+/**
+ * The browser extension lives outside the app and outside a source checkout.
+ */
+extension_installed: boolean;
+/**
+ * The installed extension directory exactly matches the bundled payload.
+ */
+extension_current: boolean;
+/**
+ * Stable folder that a development browser loads once with Load unpacked.
+ */
+extension_path: string; app_version: string; browsers: ClipperBrowserStatus[];
 /**
  * Last extension-confirmed handshake, not proof of a current connection.
  */

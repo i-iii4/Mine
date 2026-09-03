@@ -626,6 +626,7 @@ fn initialize_vault(
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     if let Some(ref vs) = *vault_state {
         if vs.vault.root() == Path::new(path) {
+            state.freshness.mark_committed_snapshot_available(path);
             let indexed = count_indexed_blocks(&vs.conn)?;
             append_startup_trace(
                 app,
@@ -801,6 +802,9 @@ fn initialize_vault(
     // Switching away can miss watcher events for this vault. Every selection
     // therefore invalidates the in-memory clean generation; the existing local
     // snapshot remains readable while one background pass catches up.
+    if derived_store_ready {
+        state.freshness.mark_committed_snapshot_available(path);
+    }
     state.freshness.mark_dirty(path);
     append_startup_trace(
         app,

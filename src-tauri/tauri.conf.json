@@ -8,7 +8,7 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "bun run fetch:ytdlp && bun run dev",
-    "beforeBuildCommand": "bun run fetch:ytdlp && bun run build"
+    "beforeBuildCommand": "bun run fetch:ytdlp && bun run build && bun run build:extension"
   },
   "app": {
     "windows": [
@@ -48,9 +48,10 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [
-      "binaries/yt-dlp",
-      "binaries/icloud-progress-helper"
-    ]
+    "resources": {
+      "binaries/yt-dlp": "binaries/yt-dlp",
+      "binaries/icloud-progress-helper": "binaries/icloud-progress-helper",
+      "../build/clipper-extension/": "clipper-extension/"
+    }
   }
 }

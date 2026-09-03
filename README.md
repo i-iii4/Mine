@@ -56,8 +56,11 @@ browser adapter has no independent JavaScript save engine. Native capture does
 not require a writable SQLite index. Desktop/CLI mutation rollback remains intact.
 
 The stable development extension ID is `eioalidaccoahofcggkbinalibpajokh`.
-The app registers its bundled helper on launch; `bun run clipper:install-host`
-updates a development installation. A missing helper response does not mean
+The app installs the bundled runtime at
+`~/Library/Application Support/com.mine.app/clipper/extension` and registers
+its bundled helper on launch; load that stable folder once with `Load unpacked`.
+`bun run clipper:install-host` updates both parts of a development installation.
+A missing helper response does not mean
 the app is uninstalled. Standalone setup opens an extension-origin window.
 
 Implementation and verified acceptance are separate: see [acceptance report](docs/save-core-acceptance.md)

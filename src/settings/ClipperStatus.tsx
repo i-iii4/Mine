@@ -17,6 +17,23 @@ export function ClipperStatus({ status }: { status: ClipperSetupStatus }) {
   return (
     <div className="grid gap-1 rounded-1 bg-accent p-3" data-clipper-status="">
       <p className="text-base text-foreground">
+        {status.extension_installed ? (
+          status.extension_current ? (
+            <span className="flex items-center gap-1.5">
+              <Check className="size-4" aria-hidden="true" />
+              Extension folder installed — matches this Mine build
+            </span>
+          ) : (
+            <span className="flex items-center gap-1.5">
+              <CircleAlert className="size-4" aria-hidden="true" />
+              Extension folder differs from this Mine build — repair registration
+            </span>
+          )
+        ) : (
+          "Extension folder is not installed yet"
+        )}
+      </p>
+      <p className="text-base text-foreground">
         {status.host_installed ? (
           status.host_current ? (
             <span className="flex items-center gap-1.5">

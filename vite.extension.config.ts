@@ -30,7 +30,9 @@ export default defineConfig({
     },
   },
   root: "extension/popup",
-  publicDir: path.resolve(__dirname, "public"),
+  // Desktop-only public fixtures must not leak into the installed extension.
+  // Runtime fonts are copied explicitly by scripts/build-extension.mjs.
+  publicDir: false,
   base: "./",
   build: {
     outDir: path.resolve(__dirname, "extension/dist"),

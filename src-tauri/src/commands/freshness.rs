@@ -21,6 +21,7 @@ pub struct FreshnessCoordinator {
 }
 
 struct FreshnessEntry {
+    committed_snapshot_available: bool,
     running: bool,
     scheduled: bool,
     dirty: bool,
@@ -34,6 +35,7 @@ struct FreshnessEntry {
 impl Default for FreshnessEntry {
     fn default() -> Self {
         Self {
+            committed_snapshot_available: false,
             running: false,
             scheduled: false,
             dirty: true,
@@ -87,7 +89,7 @@ impl FreshnessCoordinator {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         let entry = state.entry(vault_path.to_string()).or_default();
 
-        if entry.last_result.is_none() {
+        if entry.last_result.is_none() && !entry.committed_snapshot_available {
             return FreshnessRouteAction::AwaitFirstGeneration;
         }
         if entry.running || entry.scheduled {
@@ -218,6 +220,9 @@ impl FreshnessCoordinator {
         entry.generation = entry.generation.saturating_add(1);
         entry.last_completed_at = Some(Instant::now());
         entry.last_result = Some(result.clone());
+        if result.is_ok() {
+            entry.committed_snapshot_available = true;
+        }
         let outcome = FreshnessOutcome {
             vault_path,
             generation: entry.generation,
@@ -245,6 +250,16 @@ impl FreshnessCoordinator {
     pub fn mark_dirty(&self, vault_path: &str) {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         state.entry(vault_path.to_string()).or_default().dirty = true;
+    }
+
+    /// An existing derived database is a readable last-good snapshot. Its
+    /// first safety reconciliation in this process must not blank the UI.
+    pub fn mark_committed_snapshot_available(&self, vault_path: &str) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state
+            .entry(vault_path.to_string())
+            .or_default()
+            .committed_snapshot_available = true;
     }
 }
 
@@ -561,6 +576,72 @@ mod tests {
             FreshnessRouteAction::SpawnBackground
         );
         assert!(coordinator.reconcile_scheduled(&vault).ran_reconcile);
+    }
+
+    #[test]
+    fn existing_snapshot_never_awaits_first_reconciliation() {
+        let coordinator = FreshnessCoordinator::default();
+        let vault_path = "/tmp/existing-snapshot";
+        coordinator.mark_committed_snapshot_available(vault_path);
+        coordinator.mark_dirty(vault_path);
+
+        assert_eq!(
+            coordinator.route_action(vault_path),
+            FreshnessRouteAction::SpawnBackground
+        );
+        assert_eq!(
+            coordinator.route_action(vault_path),
+            FreshnessRouteAction::ReadCommitted
+        );
+    }
+
+    #[test]
+    fn missing_snapshot_awaits_first_reconciliation() {
+        let coordinator = FreshnessCoordinator::default();
+        assert_eq!(
+            coordinator.route_action("/tmp/new-vault"),
+            FreshnessRouteAction::AwaitFirstGeneration
+        );
+    }
+
+    #[test]
+    fn existing_snapshot_stays_readable_while_first_reconciliation_runs() {
+        let coordinator = Arc::new(FreshnessCoordinator::default());
+        let vault_path = "/tmp/running-existing-snapshot".to_string();
+        coordinator.mark_committed_snapshot_available(&vault_path);
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let worker_coordinator = Arc::clone(&coordinator);
+        let worker_path = vault_path.clone();
+        let worker_gate = Arc::clone(&gate);
+        let worker = std::thread::spawn(move || {
+            worker_coordinator.run(worker_path, || {
+                let (open, changed) = &*worker_gate;
+                let mut open = open.lock().unwrap();
+                while !*open {
+                    open = changed.wait(open).unwrap();
+                }
+                Ok(clean_report(53))
+            })
+        });
+
+        while coordinator
+            .state
+            .lock()
+            .unwrap()
+            .get(&vault_path)
+            .is_none_or(|entry| !entry.running)
+        {
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            coordinator.route_action(&vault_path),
+            FreshnessRouteAction::ReadCommitted
+        );
+
+        let (open, changed) = &*gate;
+        *open.lock().unwrap() = true;
+        changed.notify_all();
+        worker.join().unwrap();
     }
 
     #[test]

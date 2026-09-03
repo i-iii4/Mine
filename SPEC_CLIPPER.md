@@ -672,10 +672,10 @@ Entry point: `extension/popup/main.tsx` → output: `extension/dist/index.html` 
 
 `extension/dist/` — обязательный runtime bundle, но не source artifact: он
 исключён из Git общим правилом `dist/` и всегда воспроизводится из исходников.
-Обычные `bun run build`, `cargo tauri dev` и `cargo tauri build` собирают
-desktop-приложение и **не** создают bundle расширения. Поэтому перед первым
-`Load unpacked`, после clean checkout/clone или после удаления build outputs
-обязательно выполнить `bun run build:extension`.
+Обычные `bun run build` и `cargo tauri dev` не создают runtime расширения.
+`cargo tauri build` вызывает canonical `bun run build:extension` и включает
+готовый payload в `.app`. Developer installer делает ту же сборку перед
+синхронизацией стабильной установленной копии.
 
 Минимальный loadable contract:
 
@@ -698,9 +698,11 @@ extension: запись может перейти в broken state или исч�
 
 1. До смены старого ID проверить миграционные ограничения ниже; не удалять
    установку с невыясненными pending-операциями.
-2. `bun run build:extension`.
+2. `bun run clipper:install-host`: команда собирает payload, устанавливает
+   helper и атомарно синхронизирует стабильную копию расширения.
 3. Открыть `chrome://extensions/` или `dia://extensions/`.
-4. Включить Developer mode и выбрать `Load unpacked` → каталог `extension/`.
+4. Включить Developer mode и выбрать `Load unpacked` → каталог
+   `~/Library/Application Support/com.mine.app/clipper/extension`.
 5. Проверить `Mine`, version `0.1.0`, ID `eioalidaccoahofcggkbinalibpajokh`,
    enabled state и service worker.
 6. Закрепить Mine в панели расширений браузера.
@@ -1522,6 +1524,15 @@ Manifests используют один protocol name и установленн�
 `eioalidaccoahofcggkbinalibpajokh`. `allowed_origins` содержит ровно этот origin,
 без wildcard или автоматически доверенного произвольного ID. Production
 Web Store ID пока не задан и не подменяется development ID.
+
+Unpacked development install использует один канонический runtime-каталог:
+`~/Library/Application Support/com.mine.app/clipper/extension`. Checkout —
+источник сборки, но не browser registration path. `build:extension` создаёт
+минимальный payload без исходников и тестов; `.app` поставляет его ресурсом,
+а первый запуск и `Repair registration` обновляют установленную копию целиком.
+`clipper:install-host` выполняет тот же контракт для разработки. Браузер
+подключается к стабильному каталогу один раз и после обновлений видит тот же ID
+по тому же пути.
 
 ```json
 {
