@@ -42,6 +42,7 @@
 - `SPEC_SETTINGS_WINDOW.md` — отдельное окно настроек: Appearance / Spaces / Orphans (сироты-медиа с batch delete/convert), межоконная синхронизация
 - `SPEC_SCROLL_EDGE_FADE.md` — растворение верхней кромки прокручиваемых поверхностей: общая кривая маски, порог активации, настройка `mine.scrollEdgeFade`
 - `SPEC_DISTRIBUTION.md` — production-контракт подписи, доставки, обновлений, диагностики; статус DEFERRED по явному продуктовому решению
+- `SPEC_STARTUP_PERFORMANCE.md` — принятый контракт мгновенного запуска: окно и local snapshot образуют отдельный critical path, а клиппер/freshness/preview maintenance выполняются после первого интерактивного кадра
 - `DESIGN_SYSTEM_IOS.md` — дизайн-система iOS: цвета, типографика, компоненты, жесты
 - `SPEC_AI_ACCESS.md` — доступ AI-агентов к материалам: ядро → CLI `mine` → MCP, read-only контракт, JSON-вывод как будущие схемы MCP
 - `SPEC_ONBOARDING.md` — онбординг: расширение как самостоятельная точка входа, установка расширения без терминала, первый запуск, пустая лента, импорт Are.na
@@ -394,9 +395,9 @@ bun run verify                 # Полный contract, включая Feed, Gra
 bun run verify:release         # Полный contract + clipper-worker + native-shell smoke
 bunx shadcn info               # Проверить CLI/config/base без изменения файлов
 bunx shadcn add button --diff  # Read-only upstream diff; не перезаписывает компонент
-cargo run -p mine --bin localize-remote-media -- --dry-run <vault> # Найти медиа, оставшееся удалённой ссылкой
-cargo run -p mine --bin migrate-vault-layout -- --dry-run <vault>   # Разложить плоское хранилище по Collections/Cards/Media
-cargo run -p mine --bin cold-space-audit -- <source> <empty-derived-dir> 2
+cargo run -p mine --bin localize-remote-media --features tooling -- --dry-run <vault> # Найти медиа, оставшееся удалённой ссылкой
+cargo run -p mine --bin migrate-vault-layout --features tooling -- --dry-run <vault>   # Разложить плоское хранилище по Collections/Cards/Media
+cargo run -p mine --bin cold-space-audit --features tooling -- <source> <empty-derived-dir> 2
 cargo +1.88.0 check --workspace --all-targets --locked # MSRV gate
 cargo clippy                   # Линтинг Rust
 ```
@@ -407,10 +408,11 @@ cargo clippy                   # Линтинг Rust
 `Load unpacked` подключается стабильная установленная копия в
 `~/Library/Application Support/com.mine.app/clipper/extension`, не checkout.
 
-Native host и payload расширения входят в `.app`; при запуске Mine копирует
-актуальные runtime-компоненты и восстанавливает регистрацию обнаруженных
-браузеров. Для dev-установки: `bun run clipper:install-host`. Сборка без запуска
-не меняет установленный host или стабильную browser-копию.
+Native host и payload расширения входят в `.app`. Runtime maintenance начинается
+после первого интерактивного кадра; build/install manifests убирают полное
+хеширование из обычного startup path.
+Для dev-установки: `bun run clipper:install-host`. Сборка без запуска не меняет
+установленный host или стабильную browser-копию.
 Capture больше не требует рабочего SQLite до записи исходников. Dev ID:
 `eioalidaccoahofcggkbinalibpajokh`; старый browser storage другого ID не
 переносится автоматически. При старом ID сначала выяснить исход pending;

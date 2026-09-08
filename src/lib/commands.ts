@@ -105,6 +105,19 @@ export const listKnownVaults = () =>
 export const startVaultSync = () =>
   invoke<boolean>("start_vault_sync");
 
+export type StartupMilestone =
+  | "frontend_entry"
+  | "window_shell_painted"
+  | "first_route_committed"
+  | "first_cards_painted"
+  | "interactive";
+
+export const recordStartupMilestone = (event: StartupMilestone) =>
+  invoke<void>("record_startup_milestone", { event });
+
+export const startStartupMaintenance = () =>
+  invoke<boolean>("start_startup_maintenance");
+
 export const getVaultStats = (current_collection?: string | null) =>
   invoke<VaultStats>("get_vault_stats", {
     current_collection: current_collection ?? null,

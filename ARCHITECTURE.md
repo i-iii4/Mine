@@ -1,6 +1,6 @@
 # Architecture: Mine
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md) | [SPEC_SETTINGS_WINDOW.md](SPEC_SETTINGS_WINDOW.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_DISTRIBUTION.md](SPEC_DISTRIBUTION.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_CARD_MEDIA_GEOMETRY.md](SPEC_CARD_MEDIA_GEOMETRY.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_SCROLL_EDGE_FADE.md](SPEC_SCROLL_EDGE_FADE.md) | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) | [SPEC_AI_ACCESS.md](SPEC_AI_ACCESS.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md) | [SPEC_SETTINGS_WINDOW.md](SPEC_SETTINGS_WINDOW.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_DISTRIBUTION.md](SPEC_DISTRIBUTION.md) | [SPEC_STARTUP_PERFORMANCE.md](SPEC_STARTUP_PERFORMANCE.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_CARD_MEDIA_GEOMETRY.md](SPEC_CARD_MEDIA_GEOMETRY.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_SCROLL_EDGE_FADE.md](SPEC_SCROLL_EDGE_FADE.md) | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) | [SPEC_AI_ACCESS.md](SPEC_AI_ACCESS.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md)
 
 ## Context
 
@@ -574,7 +574,7 @@ iOS UI contract:
   видео-блоков без размеров, чтобы обычный backfill пересобрал их из индекса.
   Это дешевле полной переиндексации и не трогает уже корректные записи.
 - Backend request/response DTO и все command errors выводятся из Rust/Specta.
-  `src-tauri/src/bin/export_bindings.rs` генерирует committed
+  `src-tauri/src/tooling/export_bindings.rs` генерирует committed
   `src/types/generated.ts`; `bindings:check` является первой частью
   `verify:core`. Общий tagged `CommandError` проходит через один frontend
   invoke-adapter в читаемый `Error`, а feature-specific unions сохраняют
@@ -1736,6 +1736,10 @@ Access выдаёт хэндл, хэндл живёт в IndexedDB и переж
 
 ### 037: Установленный хост клипера обновляется из бандла при старте
 
+Порядок выполнения уточнён решением 046: update-existing сохраняется, но
+начинается после первого интерактивного кадра и не входит в Tauri startup
+critical path.
+
 Клипер работает отдельным бинарём, который браузер запускает по манифесту
 native messaging, и путь в манифесте ведёт в `Application Support`, а не в
 `.app`. Установка — это копирование, и пока копирование делалось только по
@@ -1743,14 +1747,15 @@ native messaging, и путь в манифесте ведёт в `Application S
 запускал бинарь любой давности, а исправления, вышедшие с тех пор, не доезжали
 до пользователя вообще.
 
-Приложение при старте обновляет **уже установленный** хост из своего бандла.
-Рядом с бинарём лежит отпечаток источника — размер и время правки, — поэтому
-обычный запуск стоит двух `stat`. Тому, кто клипер не устанавливал, ничего не
-появляется: обновляется существующее, а не создаётся новое.
+Приложение в post-paint maintenance обновляет установленный хост из своего
+бандла. Build/install manifests определяют необходимость обновления без чтения
+полных байтов на startup critical path; атомарная замена и отдельная integrity
+проверка заданы в `SPEC_STARTUP_PERFORMANCE.md`.
 
-Это описание действующего update-existing механизма. Первичная регистрация,
-стабильный ID и восстановление соединения приняты как целевой SC4 в
-[SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md), но ещё не реализованы.
+Update-existing и первичная регистрация запускаются одним process-wide
+maintenance coordinator после первого committed paint. Стабильный ID и
+восстановление соединения заданы в
+[SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md).
 
 ### 038: Якорь раскладки и цель центрирующей силы — одна точка
 
@@ -1961,3 +1966,33 @@ create-if-absent; очередь и WASM этого не исправляют. �
 удаляются по завершении переключённых срезов; постоянный запасной путь с
 копиями правил не сохраняется. Новые функции iOS/Safari, публикация в сторе
 и изменение distribution-scope в это решение не входят.
+
+### 046: Первый интерактивный кадр не зависит от обслуживания приложения
+
+Принято и реализовано 08.09.2026. Контракт и результаты —
+[SPEC_STARTUP_PERFORMANCE.md](SPEC_STARTUP_PERFORMANCE.md).
+
+Запуск разделён на два контура. Critical path создаёт окно, открывает local
+SQLite snapshot и публикует карточки. Maintenance path только после первого
+интерактивного кадра сверяет Markdown, обновляет клиппер, восстанавливает browser
+manifests, проверяет `yt-dlp` и достраивает previews. Ошибка maintenance не
+лишает пользователя сохранённого snapshot.
+
+Решение 037 сохраняет атомарное обновление установленного helper, но его
+синхронная привязка к Tauri `.setup` отменена. Обычная проверка сравнивает
+маленькие build/install manifests; полное хеширование файлов выполняется в фоне,
+при repair или после ошибки. Первичная установка тоже начинается после первого
+кадра, а не до окна.
+
+GUI release bundle содержит только `mine` и обязательный `native-host`;
+developer/migration binaries находятся вне `src/bin` и собираются только с
+feature `tooling`. В release acceptance shell p95 составил 216 мс, первые
+карточки p95 — 584 мс, до карточек не запускалось ни одной maintenance-задачи.
+
+| Вариант | Результат выбора |
+|---|---|
+| Отдельный critical path + фоновый versioned maintenance | Принято: стабильное время запуска и атомарное обслуживание без двух источников правил |
+| Только release/strip | Не выбрано как архитектура: уменьшает цену запуска, но оставляет неограниченный blocking IO до окна |
+| Постоянно запущенный скрытый процесс | Не выбрано: маскирует cold start расходом ресурсов и усложняет lifecycle |
+| Lazy install при первом Save | Не выбрано: переносит задержку в пользовательское действие |
+| Полная byte-integrity проверка при каждом старте | Не выбрано: корректная диагностика стоит на критическом пути без продуктовой необходимости |

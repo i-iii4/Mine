@@ -13,7 +13,36 @@ fn main() {
     build_icloud_progress_helper();
 
     #[cfg(feature = "desktop")]
-    tauri_build::build();
+    {
+        ensure_clipper_runtime_manifest_placeholder();
+        tauri_build::build();
+    }
+}
+
+/// Tauri validates configured resources before compiling the application,
+/// while the real native-host digest only exists after compilation. Keep an
+/// ignored placeholder available for Cargo builds; `beforeBundleCommand`
+/// replaces it with the verified platform-specific manifest before packaging.
+#[cfg(feature = "desktop")]
+fn ensure_clipper_runtime_manifest_placeholder() {
+    use std::path::PathBuf;
+
+    let manifest_dir =
+        PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("missing CARGO_MANIFEST_DIR"));
+    let path = manifest_dir
+        .parent()
+        .expect("src-tauri has no project parent")
+        .join("build/clipper-runtime-manifest.json");
+    if path.is_file() {
+        return;
+    }
+    std::fs::create_dir_all(path.parent().expect("runtime manifest has no parent"))
+        .expect("failed to create runtime manifest directory");
+    std::fs::write(
+        path,
+        b"{\n  \"schema_version\": 1,\n  \"build_profile\": \"placeholder\",\n  \"app_version\": \"__generated_by_before_bundle__\",\n  \"native_host\": { \"sha256\": \"\", \"bytes\": 0 },\n  \"extension\": { \"sha256\": \"\", \"bytes\": 0 },\n  \"ytdlp\": null\n}\n",
+    )
+    .expect("failed to write runtime manifest placeholder");
 }
 
 /// Compile the iCloud progress helper into `binaries/` under a fixed name, so

@@ -13,7 +13,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEST_DIR="$HOME/.local/bin"
 DEST="$DEST_DIR/mine"
 
-cargo build --manifest-path "$PROJECT_DIR/src-tauri/Cargo.toml" --release --bin mine-cli
+cargo build --manifest-path "$PROJECT_DIR/src-tauri/Cargo.toml" --release --bin mine-cli --features tooling
 
 mkdir -p "$DEST_DIR"
 install -m 755 "$PROJECT_DIR/target/release/mine-cli" "$DEST"

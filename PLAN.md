@@ -1,6 +1,6 @@
 # Implementation Plan
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_SCROLL_EDGE_FADE.md](SPEC_SCROLL_EDGE_FADE.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_SCROLL_EDGE_FADE.md](SPEC_SCROLL_EDGE_FADE.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md) | [SPEC_STARTUP_PERFORMANCE.md](SPEC_STARTUP_PERFORMANCE.md)
 
 ## Goal
 
@@ -41,6 +41,7 @@ Status vocabulary:
 | A7. Structural decomposition | DONE | Split App/Grid/Graph, command-state orchestration and storage DB/index responsibilities at existing ownership boundaries | Composition roots retain orchestration; focused owners contain migrations, coordinators, interaction/physics/paint and secondary chrome; behavior gates stay green |
 | A8. Persistence and read-model contracts | DONE | Versioned SQLite migrations, shared projection revisions, independent search revisions, generated IPC bindings, native-shell smoke and truthful MSRV | Upgrade tests, atomic snapshot tests, binding freshness, browser/native gates and Rust 1.88 locked-workspace CI all pass |
 | A9. Card media geometry | DONE | Artifact-owned preview dimensions, typed source/preview split, aspect clamp as the single cropping decision | Contract in `SPEC_CARD_MEDIA_GEOMETRY.md` accepted; then: generator writes preview dimensions, fallback chain removed, autoplay profile tests stay green unchanged, feed audit covers surface width and collage tile ratios |
+| A10. Instant application startup | MANUAL QA | Independent first-frame critical path, background versioned maintenance, lean release bundle and launch telemetry | Release acceptance: shell p95 216 ms, saved cards p95 584 ms, blocking maintenance 0/10; reboot-cold and remaining clipper-state matrix stay manual |
 
 <a id="save-core-plan"></a>
 
@@ -1960,6 +1961,24 @@ Specification: [SPEC_CLIPPER.md](SPEC_CLIPPER.md), decision 031 in
 | 32.4 | Body write-through | [x] | Resolved links appended to the note body — the host downloads media by reading markdown embeds, so preview-only video is dropped at save |
 | 32.5 | Host log | [x] | `~/Library/Logs/com.mine.app/native-host.log`; the host speaks over stdin/stdout, so printing there corrupts the protocol and stderr is lost |
 | 32.6 | Tests | [x] | Flag decision table, cookie-jar refusal and cleanup, binary lookup under a stripped `PATH` |
+
+### Phase 33 — Instant application startup
+
+Goal: make Mine visibly open and publish a saved library snapshot before any
+clipper, filesystem freshness, preview or update maintenance.
+
+Specification: [SPEC_STARTUP_PERFORMANCE.md](SPEC_STARTUP_PERFORMANCE.md),
+architecture decision 046 in [ARCHITECTURE.md](ARCHITECTURE.md).
+
+| # | Slice | Status | Scope |
+|---|---|---|---|
+| 33.1 | Baseline instrumentation | DONE | One `launch_id`; monotonic process, setup, window, frontend, snapshot, paint, interactive and maintenance timestamps; production logs redact user paths |
+| 33.2 | Critical-path boundary | DONE | Shell and committed local snapshot render before clipper refresh and vault sync; first-run/progress states use the same post-paint boundary |
+| 33.3 | Maintenance coordinator | DONE | One process-wide coordinator starts after two animation frames; independent failures cannot block or replace the published snapshot |
+| 33.4 | Versioned clipper update | DONE | Build/install manifests, fast metadata path, seven-day integrity pass and atomic component replacement implemented |
+| 33.5 | Lean release bundle | DONE | 80 MB release bundle contains only `mine` and `native-host`; tooling sources moved outside Tauri's implicit `src/bin` scan |
+| 33.6 | Automated acceptance | DONE | Pending maintenance, milestone ordering, bundle inventory, manifest changes, atomic replacement, full frontend and Rust suites pass |
+| 33.7 | Real launch acceptance | MANUAL QA | 10 clean-process release launches pass: shell p95 216 ms, cards p95 584 ms, blocking maintenance 0/10; reboot-cold and remaining clipper-state matrix stay open |
 
 ### Backlog
 

@@ -7,6 +7,7 @@
 //
 // See SPEC_ONBOARDING.md О5–О7.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -18,19 +19,75 @@ use crate::storage::clipper_connection::{self, ClipperConnectionCheck, DEV_EXTEN
 
 /// Native messaging host name, matched by the extension's manifest.
 const HOST_NAME: &str = "com.localarena.clipper";
+const RUNTIME_MANIFEST_SCHEMA_VERSION: u32 = 1;
+const INTEGRITY_CHECK_INTERVAL_SECONDS: u64 = 7 * 24 * 60 * 60;
 
-/// First launch installs the bundled runtime; every later launch repairs its
-/// exact browser allowlist and refreshes both parts without touching vaults.
-pub fn refresh_installed_host(app: &AppHandle) {
-    if let Err(error) = install_clipper_host(app.clone(), String::new()) {
-        log::warn!("clipper helper registration needs attention: {error}");
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeComponentManifest {
+    sha256: String,
+    bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeBuildManifest {
+    schema_version: u32,
+    build_profile: String,
+    app_version: String,
+    native_host: RuntimeComponentManifest,
+    extension: RuntimeComponentManifest,
+    ytdlp: Option<RuntimeComponentManifest>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeInstallMarker {
+    manifest: RuntimeBuildManifest,
+    verified_at_unix_seconds: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeMaintenanceMode {
+    FastRegistration,
+    VerifiedInstallation,
+}
+
+impl RuntimeMaintenanceMode {
+    pub fn as_trace_label(self) -> &'static str {
+        match self {
+            Self::FastRegistration => "fast_registration",
+            Self::VerifiedInstallation => "verified_installation",
+        }
     }
+}
+
+fn unix_seconds_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs())
 }
 
 /// Compare actual bytes, not only app version or a stale installation stamp.
 fn file_fingerprint(path: &Path) -> Option<String> {
-    let bytes = std::fs::read(path).ok()?;
-    Some(format!("{:x}", Sha256::digest(bytes)))
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut hash = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer).ok()?;
+        if read == 0 {
+            break;
+        }
+        hash.update(&buffer[..read]);
+    }
+    Some(format!("{:x}", hash.finalize()))
+}
+
+fn file_manifest(path: &Path) -> Option<RuntimeComponentManifest> {
+    Some(RuntimeComponentManifest {
+        sha256: file_fingerprint(path)?,
+        bytes: std::fs::metadata(path).ok()?.len(),
+    })
 }
 
 fn installed_binary_matches(source: &Path, destination: &Path) -> bool {
@@ -98,6 +155,19 @@ fn extension_fingerprint(root: &Path) -> Option<String> {
         hash.update(bytes);
     }
     Some(format!("{:x}", hash.finalize()))
+}
+
+fn extension_manifest(root: &Path) -> Option<RuntimeComponentManifest> {
+    let files = extension_files(root).ok()?;
+    let bytes = files.iter().try_fold(0u64, |total, relative| {
+        std::fs::metadata(root.join(relative))
+            .ok()
+            .and_then(|metadata| total.checked_add(metadata.len()))
+    })?;
+    Some(RuntimeComponentManifest {
+        sha256: extension_fingerprint(root)?,
+        bytes,
+    })
 }
 
 fn installed_extension_matches(source: &Path, destination: &Path) -> bool {
@@ -226,6 +296,168 @@ fn installed_extension_path(app: &AppHandle) -> Result<PathBuf, CommandError> {
         .join("extension"))
 }
 
+fn runtime_build_manifest_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .resource_dir()
+        .ok()
+        .map(|resources| resources.join("clipper-runtime-manifest.json"))
+        .filter(|path| path.is_file())
+}
+
+fn runtime_install_marker_path(app: &AppHandle) -> Result<PathBuf, CommandError> {
+    Ok(host_binary_path(app)?
+        .parent()
+        .ok_or_else(|| CommandError::Internal("clipper directory has no parent".into()))?
+        .join("runtime-install.json"))
+}
+
+fn runtime_build_manifest(app: &AppHandle) -> Result<RuntimeBuildManifest, CommandError> {
+    if let Some(path) = runtime_build_manifest_path(app) {
+        let bundled = std::fs::read(&path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<RuntimeBuildManifest>(&bytes).ok());
+        if let Some(manifest) = bundled {
+            let expected_profile = if cfg!(debug_assertions) {
+                "debug"
+            } else {
+                "release"
+            };
+            let current = manifest.schema_version == RUNTIME_MANIFEST_SCHEMA_VERSION
+                && manifest.build_profile == expected_profile
+                && manifest.app_version == app.package_info().version.to_string();
+            if current {
+                return Ok(manifest);
+            }
+        }
+        if !cfg!(debug_assertions) {
+            return Err(CommandError::Internal(
+                "clipper runtime manifest is invalid or differs from the app".into(),
+            ));
+        }
+        log::info!("using development clipper manifest fallback");
+    }
+
+    // `tauri dev` has no bundle hook. It may hash after first paint, but never
+    // on the startup critical path. Production bundles always ship the file.
+    let native_host_path = bundled_host_path().ok_or_else(|| {
+        CommandError::Internal("clipper host is missing from the app bundle".into())
+    })?;
+    let extension_path = bundled_extension_path(app).ok_or_else(|| {
+        CommandError::Internal("clipper extension is missing from the app bundle".into())
+    })?;
+    let executable = std::env::current_exe()
+        .map_err(|error| CommandError::Internal(format!("no current executable: {error}")))?;
+    Ok(RuntimeBuildManifest {
+        schema_version: RUNTIME_MANIFEST_SCHEMA_VERSION,
+        build_profile: "debug".into(),
+        app_version: app.package_info().version.to_string(),
+        native_host: file_manifest(&native_host_path).ok_or_else(|| {
+            CommandError::Internal("failed to fingerprint bundled clipper host".into())
+        })?,
+        extension: extension_manifest(&extension_path).ok_or_else(|| {
+            CommandError::Internal("failed to fingerprint bundled clipper extension".into())
+        })?,
+        ytdlp: bundled_ytdlp_path(&executable).and_then(|path| file_manifest(&path)),
+    })
+}
+
+fn read_runtime_install_marker(app: &AppHandle) -> Option<RuntimeInstallMarker> {
+    let path = runtime_install_marker_path(app).ok()?;
+    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+}
+
+fn write_runtime_install_marker(
+    app: &AppHandle,
+    manifest: RuntimeBuildManifest,
+) -> Result<(), CommandError> {
+    let path = runtime_install_marker_path(app)?;
+    let bytes = serde_json::to_vec_pretty(&RuntimeInstallMarker {
+        manifest,
+        verified_at_unix_seconds: unix_seconds_now(),
+    })
+    .map_err(|error| CommandError::Internal(format!("failed to encode runtime marker: {error}")))?;
+    crate::storage::files::write_atomically(&path, &bytes).map_err(|error| {
+        CommandError::Internal(format!("failed to write runtime marker: {error:#}"))
+    })
+}
+
+fn executable_with_size(path: &Path, expected_bytes: u64) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() || metadata.len() != expected_bytes {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o100 != 0
+    }
+    #[cfg(not(unix))]
+    true
+}
+
+fn runtime_components_present(app: &AppHandle, manifest: &RuntimeBuildManifest) -> bool {
+    let Ok(host) = host_binary_path(app) else {
+        return false;
+    };
+    if !executable_with_size(&host, manifest.native_host.bytes) {
+        return false;
+    }
+    let Ok(extension) = installed_extension_path(app) else {
+        return false;
+    };
+    let extension_bytes = extension_files(&extension).ok().and_then(|files| {
+        files.iter().try_fold(0u64, |total, relative| {
+            std::fs::metadata(extension.join(relative))
+                .ok()
+                .and_then(|metadata| total.checked_add(metadata.len()))
+        })
+    });
+    if !extension.join("manifest.json").is_file()
+        || extension_bytes != Some(manifest.extension.bytes)
+    {
+        return false;
+    }
+    manifest.ytdlp.as_ref().is_none_or(|component| {
+        host.parent()
+            .is_some_and(|parent| executable_with_size(&parent.join("yt-dlp"), component.bytes))
+    })
+}
+
+fn installed_runtime_matches_manifest(app: &AppHandle, manifest: &RuntimeBuildManifest) -> bool {
+    let Ok(host) = host_binary_path(app) else {
+        return false;
+    };
+    if file_manifest(&host).as_ref() != Some(&manifest.native_host) {
+        return false;
+    }
+    let Ok(extension) = installed_extension_path(app) else {
+        return false;
+    };
+    if extension_manifest(&extension).as_ref() != Some(&manifest.extension) {
+        return false;
+    }
+    manifest.ytdlp.as_ref().is_none_or(|expected| {
+        host.parent()
+            .and_then(|parent| file_manifest(&parent.join("yt-dlp")))
+            .as_ref()
+            == Some(expected)
+    })
+}
+
+fn marker_allows_fast_registration(
+    marker: Option<&RuntimeInstallMarker>,
+    manifest: &RuntimeBuildManifest,
+    now: u64,
+) -> bool {
+    marker.is_some_and(|marker| {
+        marker.manifest == *manifest
+            && now.saturating_sub(marker.verified_at_unix_seconds)
+                <= INTEGRITY_CHECK_INTERVAL_SECONDS
+    })
+}
+
 /// A Chromium-family browser that supports native messaging.
 struct BrowserTarget {
     /// Shown to the user.
@@ -309,6 +541,58 @@ fn browser_detected(browser: &BrowserTarget) -> bool {
     dir.parent().is_some_and(Path::exists)
 }
 
+fn register_browser_manifests(destination: &Path) -> Result<(), CommandError> {
+    let manifest = host_manifest(destination);
+    let manifest_bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|e| CommandError::Internal(format!("failed to build manifest: {e}")))?;
+
+    let mut registration_errors = Vec::new();
+    for browser in BROWSERS {
+        if !browser_detected(browser) {
+            continue;
+        }
+        let Some(path) = manifest_path(browser) else {
+            continue;
+        };
+        if let Some(dir) = path.parent() {
+            if let Err(e) = std::fs::create_dir_all(dir) {
+                registration_errors.push(format!("{}: {e}", browser.label));
+                continue;
+            }
+        }
+        if !manifest_is_registered(&path, destination) {
+            if let Err(e) = crate::storage::files::write_atomically(&path, &manifest_bytes) {
+                registration_errors.push(format!("{}: {e:#}", browser.label));
+            }
+        }
+    }
+    if registration_errors.is_empty() {
+        Ok(())
+    } else {
+        Err(CommandError::Internal(format!(
+            "helper installed; browser registration failed: {}",
+            registration_errors.join("; ")
+        )))
+    }
+}
+
+/// Maintain the installed clipper after first paint. A current installation
+/// reads only its small marker and file metadata; byte verification is bounded
+/// to app changes, missing components, and the weekly integrity pass.
+pub fn maintain_installed_runtime(app: &AppHandle) -> Result<RuntimeMaintenanceMode, CommandError> {
+    let manifest = runtime_build_manifest(app)?;
+    let marker = read_runtime_install_marker(app);
+    if marker_allows_fast_registration(marker.as_ref(), &manifest, unix_seconds_now())
+        && runtime_components_present(app, &manifest)
+    {
+        register_browser_manifests(&host_binary_path(app)?)?;
+        return Ok(RuntimeMaintenanceMode::FastRegistration);
+    }
+
+    install_clipper_host(app.clone(), String::new())?;
+    Ok(RuntimeMaintenanceMode::VerifiedInstallation)
+}
+
 /// Version marker written next to the installed host.
 fn version_marker_path(app: &AppHandle) -> Result<PathBuf, CommandError> {
     Ok(host_binary_path(app)?.with_extension("version"))
@@ -387,6 +671,7 @@ pub fn install_clipper_host(
     // executable, so the host is already inside the .app and installing it is
     // a copy. Declaring it as a bundle resource instead would make the build
     // script depend on its own output.
+    let runtime_manifest = runtime_build_manifest(&app)?;
     let bundled = bundled_host_path().ok_or_else(|| {
         CommandError::Internal("clipper host is missing from the app bundle".into())
     })?;
@@ -427,36 +712,7 @@ pub fn install_clipper_host(
         }
     }
 
-    let manifest = host_manifest(&destination);
-    let manifest_bytes = serde_json::to_vec_pretty(&manifest)
-        .map_err(|e| CommandError::Internal(format!("failed to build manifest: {e}")))?;
-
-    let mut registration_errors = Vec::new();
-    for browser in BROWSERS {
-        if !browser_detected(browser) {
-            continue;
-        }
-        let Some(path) = manifest_path(browser) else {
-            continue;
-        };
-        if let Some(dir) = path.parent() {
-            if let Err(e) = std::fs::create_dir_all(dir) {
-                registration_errors.push(format!("{}: {e}", browser.label));
-                continue;
-            }
-        }
-        if !manifest_is_registered(&path, &destination) {
-            if let Err(e) = crate::storage::files::write_atomically(&path, &manifest_bytes) {
-                registration_errors.push(format!("{}: {e:#}", browser.label));
-            }
-        }
-    }
-    if !registration_errors.is_empty() {
-        return Err(CommandError::Internal(format!(
-            "helper installed; browser registration failed: {}",
-            registration_errors.join("; ")
-        )));
-    }
+    register_browser_manifests(&destination)?;
 
     let version = app.package_info().version.to_string();
     std::fs::write(version_marker_path(&app)?, version).map_err(|error| {
@@ -464,6 +720,19 @@ pub fn install_clipper_host(
             "helper registered but version marker could not be written: {error}"
         ))
     })?;
+    if installed_runtime_matches_manifest(&app, &runtime_manifest) {
+        write_runtime_install_marker(&app, runtime_manifest)?;
+    } else {
+        let marker = runtime_install_marker_path(&app)?;
+        if let Err(error) = std::fs::remove_file(&marker) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                log::warn!("failed to remove stale clipper runtime marker: {error}");
+            }
+        }
+        log::warn!(
+            "clipper runtime installation is incomplete; integrity verification will retry next launch"
+        );
+    }
 
     get_clipper_setup_status(app)
 }
@@ -502,6 +771,62 @@ mod tests {
     fn fingerprint_is_absent_for_a_missing_file() {
         let tmp = TempDir::new().unwrap();
         assert!(file_fingerprint(&tmp.path().join("nothing")).is_none());
+    }
+
+    fn manifest(version: &str) -> RuntimeBuildManifest {
+        RuntimeBuildManifest {
+            schema_version: RUNTIME_MANIFEST_SCHEMA_VERSION,
+            build_profile: "release".into(),
+            app_version: version.into(),
+            native_host: RuntimeComponentManifest {
+                sha256: "host".into(),
+                bytes: 10,
+            },
+            extension: RuntimeComponentManifest {
+                sha256: "extension".into(),
+                bytes: 20,
+            },
+            ytdlp: Some(RuntimeComponentManifest {
+                sha256: "video".into(),
+                bytes: 30,
+            }),
+        }
+    }
+
+    #[test]
+    fn current_recent_marker_uses_metadata_only_fast_path() {
+        let now = 10_000_000;
+        let build = manifest("1.2.3");
+        let marker = RuntimeInstallMarker {
+            manifest: build.clone(),
+            verified_at_unix_seconds: now - 60,
+        };
+        assert!(marker_allows_fast_registration(Some(&marker), &build, now));
+    }
+
+    #[test]
+    fn app_update_requires_verified_installation() {
+        let now = 10_000_000;
+        let marker = RuntimeInstallMarker {
+            manifest: manifest("1.2.2"),
+            verified_at_unix_seconds: now - 60,
+        };
+        assert!(!marker_allows_fast_registration(
+            Some(&marker),
+            &manifest("1.2.3"),
+            now
+        ));
+    }
+
+    #[test]
+    fn expired_marker_requires_bounded_integrity_pass() {
+        let now = 10_000_000;
+        let build = manifest("1.2.3");
+        let marker = RuntimeInstallMarker {
+            manifest: build.clone(),
+            verified_at_unix_seconds: now - INTEGRITY_CHECK_INTERVAL_SECONDS - 1,
+        };
+        assert!(!marker_allows_fast_registration(Some(&marker), &build, now));
     }
 
     #[test]

@@ -5,6 +5,10 @@ use std::io::Write;
 #[cfg(feature = "desktop")]
 use std::path::PathBuf;
 #[cfg(feature = "desktop")]
+use std::sync::Mutex;
+use std::sync::OnceLock;
+use std::time::Instant;
+#[cfg(feature = "desktop")]
 use std::{
     io,
     net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream},
@@ -13,6 +17,36 @@ use std::{
 
 #[cfg(feature = "desktop")]
 use tauri::{AppHandle, Manager};
+
+static PROCESS_STARTED: OnceLock<Instant> = OnceLock::new();
+static LAUNCH_ID: OnceLock<String> = OnceLock::new();
+#[cfg(feature = "desktop")]
+static STARTUP_TRACE_LOCK: Mutex<()> = Mutex::new(());
+
+/// Start the monotonic launch clock before Tauri performs any setup work.
+pub fn mark_process_started() {
+    PROCESS_STARTED.get_or_init(Instant::now);
+    LAUNCH_ID.get_or_init(|| {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        format!("{}-{nanos}", std::process::id())
+    });
+}
+
+#[cfg(feature = "desktop")]
+fn launch_elapsed_ms() -> u128 {
+    PROCESS_STARTED
+        .get_or_init(Instant::now)
+        .elapsed()
+        .as_millis()
+}
+
+#[cfg(feature = "desktop")]
+fn launch_id() -> &'static str {
+    mark_process_started();
+    LAUNCH_ID.get().map_or("unknown", String::as_str)
+}
 
 #[cfg(feature = "desktop")]
 pub enum SingleInstanceAcquire {
@@ -100,6 +134,9 @@ fn startup_trace_path(app: &AppHandle) -> Option<PathBuf> {
 
 #[cfg(feature = "desktop")]
 pub fn reset_startup_trace(app: &AppHandle) {
+    let _guard = STARTUP_TRACE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let Some(path) = startup_trace_path(app) else {
         return;
     };
@@ -111,6 +148,9 @@ pub fn reset_startup_trace(app: &AppHandle) {
 
 #[cfg(feature = "desktop")]
 pub fn append_startup_trace(app: &AppHandle, scope: &str, message: &str) {
+    let _guard = STARTUP_TRACE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let Some(path) = startup_trace_path(app) else {
         return;
     };
@@ -124,7 +164,30 @@ pub fn append_startup_trace(app: &AppHandle, scope: &str, message: &str) {
     else {
         return;
     };
-    let _ = writeln!(file, "{} [{}] {}", now_iso8601(), scope, message);
+    let _ = writeln!(
+        file,
+        "{} launch_id={} launch_elapsed_ms={} [{}] {}",
+        now_iso8601(),
+        launch_id(),
+        launch_elapsed_ms(),
+        scope,
+        startup_trace_message(scope, message, cfg!(debug_assertions))
+    );
+}
+
+#[cfg(feature = "desktop")]
+fn startup_trace_message(scope: &str, message: &str, detailed: bool) -> String {
+    if detailed || matches!(scope, "process" | "setup" | "window" | "startup") {
+        return message.to_string();
+    }
+    if scope == "startup_maintenance" && message.starts_with("done ") {
+        return message.to_string();
+    }
+    message
+        .split_ascii_whitespace()
+        .next()
+        .unwrap_or("event")
+        .to_string()
 }
 
 /// Convert days since Unix epoch to (year, month, day).
@@ -146,7 +209,7 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "desktop")]
-    use super::single_instance_port;
+    use super::{single_instance_port, startup_trace_message};
 
     #[test]
     #[cfg(feature = "desktop")]
@@ -166,5 +229,22 @@ mod tests {
     fn single_instance_port_stays_in_reserved_range() {
         let port = single_instance_port("com.mine.app");
         assert!((43000..44000).contains(&port));
+    }
+
+    #[test]
+    #[cfg(feature = "desktop")]
+    fn production_startup_trace_does_not_publish_vault_paths() {
+        assert_eq!(
+            startup_trace_message(
+                "open_vault",
+                "done path=/Users/example/private-vault indexed=10",
+                false,
+            ),
+            "done"
+        );
+        assert_eq!(
+            startup_trace_message("startup", "milestone=first_cards_painted", false),
+            "milestone=first_cards_painted"
+        );
     }
 }

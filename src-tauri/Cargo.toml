@@ -16,6 +16,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [features]
 default = ["desktop"]
 desktop = ["tauri", "tauri-plugin-log", "tauri-plugin-dialog", "tauri-plugin-opener", "tauri-plugin-clipboard-manager", "tauri-build", "notify", "specta-typescript"]
+tooling = []
 custom-protocol = ["tauri/custom-protocol"]
 # Article audio (spoken article text). Off by default: the IPC commands are not
 # registered and the Swift synthesis helper is not compiled or bundled. The
@@ -112,8 +113,8 @@ required-features = ["desktop"]
 
 [[bin]]
 name = "mine-cli"
-path = "src/bin/mine_cli.rs"
-required-features = ["desktop"]
+path = "src/tooling/mine_cli.rs"
+required-features = ["desktop", "tooling"]
 
 [[bin]]
 name = "native-host"
@@ -121,32 +122,38 @@ path = "src/bin/native_host.rs"
 
 [[bin]]
 name = "migrate-body-to-wikilinks"
-path = "src/bin/migrate_body_to_wikilinks.rs"
+path = "src/tooling/migrate_body_to_wikilinks.rs"
+required-features = ["tooling"]
 
 [[bin]]
 name = "migrate-collections-to-wikilinks"
-path = "src/bin/migrate_collections_to_wikilinks.rs"
+path = "src/tooling/migrate_collections_to_wikilinks.rs"
+required-features = ["tooling"]
 
 [[bin]]
 name = "migrate-primary-file-to-wikilinks"
-path = "src/bin/migrate_primary_file_to_wikilinks.rs"
+path = "src/tooling/migrate_primary_file_to_wikilinks.rs"
+required-features = ["tooling"]
 
 [[bin]]
 name = "localize-remote-media"
-path = "src/bin/localize_remote_media.rs"
+path = "src/tooling/localize_remote_media.rs"
+required-features = ["tooling"]
 
 [[bin]]
 name = "migrate-vault-layout"
-path = "src/bin/migrate_vault_layout.rs"
+path = "src/tooling/migrate_vault_layout.rs"
+required-features = ["tooling"]
 
 [[bin]]
 name = "cold-space-audit"
-path = "src/bin/cold_space_audit.rs"
+path = "src/tooling/cold_space_audit.rs"
+required-features = ["tooling"]
 
 [[bin]]
 name = "export-bindings"
-path = "src/bin/export_bindings.rs"
-required-features = ["desktop"]
+path = "src/tooling/export_bindings.rs"
+required-features = ["desktop", "tooling"]
 
 [dev-dependencies]
 indoc = "2"

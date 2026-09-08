@@ -22,7 +22,7 @@ use crate::storage::clipper_uploads;
 use crate::storage::index;
 use crate::storage::search_engine;
 use crate::storage::{db, files, reconcile, thumbnails};
-use crate::util::{append_startup_trace, reset_startup_trace};
+use crate::util::append_startup_trace;
 use crate::watcher::handler::{self, ScanResult};
 use crate::watcher::watch;
 
@@ -401,7 +401,6 @@ pub fn get_vault_path(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Option<String>, CommandError> {
-    reset_startup_trace(&app);
     append_startup_trace(&app, "get_vault_path", "start");
     // Check in-memory state first
     {
@@ -412,6 +411,7 @@ pub fn get_vault_path(
         if let Some(ref vs) = *vault_state {
             let path = vs.vault.root().to_string_lossy().to_string();
             append_startup_trace(&app, "get_vault_path", &format!("from_memory path={path}"));
+            append_startup_trace(&app, "startup", "milestone=saved_vault_resolved");
             return Ok(Some(path));
         }
     }
@@ -424,6 +424,7 @@ pub fn get_vault_path(
                 "get_vault_path",
                 &format!("from_config path={saved_path}"),
             );
+            append_startup_trace(&app, "startup", "milestone=saved_vault_resolved");
             return Ok(Some(saved_path));
         }
         // The folder is not there *right now* — renamed, moved, on an
@@ -638,6 +639,7 @@ fn initialize_vault(
                     total.elapsed().as_millis()
                 ),
             );
+            append_startup_trace(app, "startup", "milestone=local_snapshot_opened");
             return Ok(VaultOpenResult {
                 indexed,
                 errors: 0,
@@ -763,6 +765,7 @@ fn initialize_vault(
             db_started.elapsed().as_millis()
         ),
     );
+    append_startup_trace(app, "startup", "milestone=local_snapshot_opened");
 
     // Start file watcher
     let db_path = vault.index_db_path();

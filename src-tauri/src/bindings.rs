@@ -153,7 +153,7 @@ pub fn export_types(check_only: bool) -> Result<()> {
             .with_context(|| format!("failed to read {}", output_path.display()))?;
         if current != output {
             bail!(
-                "generated IPC bindings are stale; run `cargo run -p mine --bin export-bindings`"
+                "generated IPC bindings are stale; run `cargo run -p mine --bin export-bindings --features tooling`"
             );
         }
         return Ok(());

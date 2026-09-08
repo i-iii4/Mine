@@ -41,6 +41,8 @@ const commandMocks = vi.hoisted(() => ({
   getVaultPath: vi.fn<() => Promise<string | null>>(),
   openVault: vi.fn<(path: string) => Promise<VaultOpenResult>>(),
   startVaultSync: vi.fn<() => Promise<boolean>>(),
+  recordStartupMilestone: vi.fn<(event: string) => Promise<void>>(),
+  startStartupMaintenance: vi.fn<() => Promise<boolean>>(),
   sweepVaultThumbnails: vi.fn<() => Promise<number>>(),
   listGridBlocks: vi.fn<(tag?: string, offset?: number, limit?: number, query?: string) => Promise<GridSnapshot>>(),
   createBlock: vi.fn(async () => ({}) as IndexedBlock),
@@ -82,6 +84,8 @@ vi.mock("@/lib/commands", () => ({
   openVault: commandMocks.openVault,
   selectVault: vi.fn(),
   startVaultSync: commandMocks.startVaultSync,
+  recordStartupMilestone: commandMocks.recordStartupMilestone,
+  startStartupMaintenance: commandMocks.startStartupMaintenance,
   sweepVaultThumbnails: commandMocks.sweepVaultThumbnails,
   listGridBlocks: commandMocks.listGridBlocks,
   searchGridBlocks: async (tag: string | undefined, query: string, limit: number) => {
@@ -467,6 +471,8 @@ describe("AppWithVault", () => {
     commandMocks.openVault.mockResolvedValue(vaultOpenResult());
     commandMocks.getVaultPath.mockResolvedValue(null);
     commandMocks.startVaultSync.mockResolvedValue(true);
+    commandMocks.recordStartupMilestone.mockResolvedValue(undefined);
+    commandMocks.startStartupMaintenance.mockResolvedValue(true);
     commandMocks.sweepVaultThumbnails.mockResolvedValue(0);
     commandMocks.createChannel.mockImplementation(async (tag: string) => ({
       tag,
@@ -759,6 +765,45 @@ describe("AppWithVault", () => {
     expect(commandMocks.startVaultSync).toHaveBeenCalledTimes(1);
     expect(commandMocks.listTaxonomySnapshot).toHaveBeenCalledTimes(1);
     expect(commandMocks.listGridBlocks).toHaveBeenNthCalledWith(4, undefined, 0, 200);
+  });
+
+  it("starts process maintenance only after the first route is committed", async () => {
+    vi.mocked(isTauri).mockReturnValue(true);
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+    await waitFor(() => {
+      expect(commandMocks.startStartupMaintenance).toHaveBeenCalledTimes(1);
+    });
+    expect(commandMocks.recordStartupMilestone).toHaveBeenCalledWith("first_route_committed");
+    expect(commandMocks.recordStartupMilestone).toHaveBeenCalledWith("first_cards_painted");
+    expect(commandMocks.recordStartupMilestone).toHaveBeenCalledWith("interactive");
+  });
+
+  it("keeps the first route usable while startup maintenance is still pending", async () => {
+    vi.mocked(isTauri).mockReturnValue(true);
+    commandMocks.startStartupMaintenance.mockReturnValue(new Promise(() => {}));
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+    await waitFor(() => {
+      expect(commandMocks.startStartupMaintenance).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    expect(commandMocks.recordStartupMilestone).toHaveBeenCalledWith("interactive");
   });
 
   it("does not start a focus thumbnail sweep while startup sync is running", async () => {

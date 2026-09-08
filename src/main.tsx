@@ -17,7 +17,8 @@ import {
   getStoredInterfaceFont,
 } from "@/lib/fontChoice";
 import { App } from "./App";
-import { getVaultPath, reportNativeShellSmoke } from "@/lib/commands";
+import { getVaultPath, recordStartupMilestone, reportNativeShellSmoke } from "@/lib/commands";
+import { scheduleAfterNextPaint } from "@/lib/startup";
 import "./styles/global.css";
 
 // Apply the stored theme and design variant before first paint (the settings
@@ -29,6 +30,7 @@ applyActionButtonStyle(getStoredActionButtonStyle());
 applyDensity(getStoredDensity());
 applyInterfaceFont(getStoredInterfaceFont());
 applyContentFont(getStoredContentFont());
+void recordStartupMilestone("frontend_entry").catch(() => {});
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -66,6 +68,13 @@ class ErrorBoundary extends React.Component<
     }
     return this.props.children;
   }
+}
+
+function StartupPaintReporter() {
+  React.useEffect(() => scheduleAfterNextPaint(() => {
+    void recordStartupMilestone("window_shell_painted").catch(() => {});
+  }), []);
+  return null;
 }
 
 // Shortcut overrides must be in place before the first keydown handler runs.
@@ -203,6 +212,7 @@ ReactDOM.createRoot(rootElement).render(
   <React.StrictMode>
     <ErrorBoundary>
       <TooltipProvider>
+        <StartupPaintReporter />
         <Root />
       </TooltipProvider>
     </ErrorBoundary>

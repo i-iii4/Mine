@@ -195,6 +195,8 @@ import {
   openVault,
   selectVault,
   startVaultSync,
+  recordStartupMilestone,
+  startStartupMaintenance,
   getVaultStats,
   listGridBlocks,
   listTaxonomySnapshot,
@@ -223,6 +225,7 @@ import {
   readClipboardPayload
 } from "@/lib/commands";
 import { ArticleAudioGatewayProvider } from "@/lib/articleAudioGateway";
+import { scheduleAfterNextPaint } from "@/lib/startup";
 import { desktopArticleAudioGateway } from "@/lib/articleAudioDesktopGateway";
 import { ARTICLE_AUDIO_ENABLED } from "@/lib/featureFlags";
 import { pushRecentTag } from "@/lib/recentTags";
@@ -405,6 +408,16 @@ export function App() {
       })
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (loading || vaultPath || !isTauri()) return;
+    return scheduleAfterNextPaint(() => {
+      void recordStartupMilestone("interactive").catch(() => {});
+      void startStartupMaintenance().catch((error) => {
+        console.warn("Startup maintenance could not begin:", error);
+      });
+    });
+  }, [loading, vaultPath]);
 
   // A space switch may originate in another window (settings). The backend
   // broadcasts every select_vault; key={vaultPath} below re-mounts the app.
@@ -934,6 +947,16 @@ export function AppWithVault({
 
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!loadError || !isTauri()) return;
+    return scheduleAfterNextPaint(() => {
+      void recordStartupMilestone("interactive").catch(() => {});
+      void startStartupMaintenance().catch((error) => {
+        console.warn("Startup maintenance could not begin:", error);
+      });
+    });
+  }, [loadError]);
+
   const invalidateRoutesForTags = useCallback((affectedTags: readonly string[]) => {
     const allRouteKey = routeKeyFor(undefined);
     routeSnapshotCacheRef.current.delete(allRouteKey);
@@ -998,10 +1021,10 @@ export function AppWithVault({
         || vaultPathRef.current !== pathAtStart
         || currentTagRef.current !== tagAtStart
       ) {
-        return;
+        return false;
       }
       if (!applyGridSnapshot(tagAtStart, grid)) {
-        return;
+        return false;
       }
       setLoadError(null);
       window.dispatchEvent(new Event("vault-refreshed"));
@@ -1010,6 +1033,7 @@ export function AppWithVault({
         blocks: grid.blocks.length,
         elapsedMs: Math.round(performance.now() - started),
       });
+      return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (
@@ -1026,6 +1050,7 @@ export function AppWithVault({
         elapsedMs: Math.round(performance.now() - started),
         error: msg,
       });
+      return false;
     }
   }, [applyGridSnapshot, invalidateRouteSnapshots, routeKeyFor]);
 
@@ -1435,13 +1460,13 @@ export function AppWithVault({
       return;
     }
     let cancelled = false;
-    let syncTimer: number | null = null;
+    let cancelPostPaint: (() => void) | null = null;
     const initialTag = currentTag;
 
     setIsSyncing(true);
     initialRouteLoadDoneRef.current = false;
     void (async () => {
-      await Promise.all([
+      const [gridLoaded] = await Promise.all([
         loadGridSnapshotRef.current({ tag: initialTag }),
         loadTaxonomySnapshotRef.current(),
         loadVaultStatsRef.current(initialTag),
@@ -1451,14 +1476,26 @@ export function AppWithVault({
       const activeTag = currentTagRef.current;
       const activeRouteKey = routeKeyFor(activeTag);
       lastRevalidatedRouteKeyRef.current = activeRouteKey;
+      let routeCommitted = gridLoaded;
       if (activeTag !== initialTag) {
-        await loadGridSnapshotRef.current({
+        routeCommitted = await loadGridSnapshotRef.current({
           tag: activeTag,
           preferCachedRoute: true,
         });
         if (cancelled) return;
       }
-      syncTimer = window.setTimeout(() => {
+      if (routeCommitted && isTauri()) {
+        void recordStartupMilestone("first_route_committed").catch(() => {});
+      }
+      cancelPostPaint = scheduleAfterNextPaint(() => {
+        if (cancelled) return;
+        if (routeCommitted && isTauri()) {
+          void recordStartupMilestone("first_cards_painted").catch(() => {});
+          void recordStartupMilestone("interactive").catch(() => {});
+          void startStartupMaintenance().catch((error) => {
+            console.warn("Startup maintenance could not begin:", error);
+          });
+        }
         void startVaultSync()
           .then((started) => {
             if (!started && !cancelled) {
@@ -1469,18 +1506,15 @@ export function AppWithVault({
             if (!cancelled) {
               const msg = err instanceof Error ? err.message : String(err);
               console.error("[SYNC] FAILED TO START:", msg, err);
-              setLoadError(msg);
               setIsSyncing(false);
             }
           });
-      }, 0);
+      });
     })();
 
     return () => {
       cancelled = true;
-      if (syncTimer !== null) {
-        window.clearTimeout(syncTimer);
-      }
+      cancelPostPaint?.();
     };
   }, [routeKeyFor, vaultPath, vaultReady]);
 

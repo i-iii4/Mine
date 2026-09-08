@@ -58,8 +58,11 @@ not require a writable SQLite index. Desktop/CLI mutation rollback remains intac
 The stable development extension ID is `eioalidaccoahofcggkbinalibpajokh`.
 The app installs the bundled runtime at
 `~/Library/Application Support/com.mine.app/clipper/extension` and registers
-its bundled helper on launch; load that stable folder once with `Load unpacked`.
+its bundled helper; load that stable folder once with `Load unpacked`.
 `bun run clipper:install-host` updates both parts of a development installation.
+Automatic runtime maintenance starts after the first committed paint. Normal
+launches compare small build/install metadata; full runtime integrity checks run
+in the background. See [startup performance contract and acceptance](SPEC_STARTUP_PERFORMANCE.md).
 A missing helper response does not mean
 the app is uninstalled. Standalone setup opens an extension-origin window.
 

@@ -1,3 +1,37 @@
+## 08.09.2026 — Мгновенный release-запуск реализован и измерен
+
+Измеренный запуск development `.app` терял около 8,2 секунды до WebKit, тогда
+как local SQLite snapshot открывался за 44 мс, весь `open_vault` — за 99 мс,
+а первые 200 из 604 карточек читались в ту же секунду. Зафиксировано: проблема
+не в Markdown/SQLite local-first архитектуре, а в startup critical path.
+
+Принято решение 046 и `SPEC_STARTUP_PERFORMANCE.md`: окно и сохранённый snapshot
+образуют отдельный критический путь; clipper/freshness/preview maintenance
+начинается после первого интерактивного кадра. Обычная проверка клиппера должна
+сравнивать build/install manifests, полная byte-integrity проверка остаётся
+фоновой. GUI проходит acceptance как lean release bundle, не `target/debug`.
+
+Реализация завершена. Синхронный clipper refresh удалён из Tauri `.setup`;
+первый snapshot, paint и controls образуют отдельный critical path. Clipper и
+vault sync запускаются после двух animation frame. Runtime использует build и
+installation manifests, быстрый metadata path, фоновую семидневную integrity-
+проверку и атомарную замену компонентов.
+
+Tauri 2.10 ошибочно добавлял все файлы из `src/bin` в GUI bundle даже при
+`required-features`, поэтому developer/migration sources перенесены в
+`src/tooling`. Release `.app` уменьшен с 306 до 80 МБ; в `Contents/MacOS`
+остались только `mine` и `native-host`.
+
+Последние 10 запусков отдельного release-процесса: shell p50 163 мс,
+p95 216 мс; первые карточки p50 472 мс, p95 584 мс; blocking maintenance
+до карточек 0/10. Финальный установленный artifact показал карточки за 632 мс
+и только затем за 339 мс проверил и установил runtime; следующий запуск
+показал карточки за 456 мс и выполнил `fast_registration` за 0 мс.
+
+Проверки: frontend 1081/1081, Rust workspace 949 tests, startup/packaging 7/7,
+lint, production build и generated bindings. Reboot-cold и оставшаяся ручная
+матрица состояний клиппера не подменяются clean-process измерением.
+
 ## 03.09.2026 — Delete запускает удаление выделенных карточек
 
 В режиме Grid group selection клавиша macOS `Delete` (`⌫`, DOM `Backspace`)

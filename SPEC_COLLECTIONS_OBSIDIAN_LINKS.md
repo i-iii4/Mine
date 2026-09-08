@@ -8,8 +8,8 @@ Implemented for normal runtime writes and reads. The source migration is handled
 by the reviewable CLI:
 
 ```bash
-cargo run --manifest-path src-tauri/Cargo.toml --bin migrate-collections-to-wikilinks -- --dry-run <vault>
-cargo run --manifest-path src-tauri/Cargo.toml --bin migrate-collections-to-wikilinks -- --apply <vault>
+cargo run --manifest-path src-tauri/Cargo.toml --bin migrate-collections-to-wikilinks --features tooling -- --dry-run <vault>
+cargo run --manifest-path src-tauri/Cargo.toml --bin migrate-collections-to-wikilinks --features tooling -- --apply <vault>
 ```
 
 The SQLite schema still contains legacy physical names (`channels.tag`,

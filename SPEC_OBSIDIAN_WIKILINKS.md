@@ -176,7 +176,7 @@ text link collapse'ится в display text.
 
 ### Migration path
 
-**`src-tauri/src/bin/migrate_body_to_wikilinks.rs`** — opt-in CLI tool.
+**`src-tauri/src/tooling/migrate_body_to_wikilinks.rs`** — opt-in CLI tool.
 
 ```
 migrate-body-to-wikilinks --dry-run <vault-path>

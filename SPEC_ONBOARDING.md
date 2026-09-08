@@ -1,6 +1,6 @@
 # Онбординг: от установки до первой ценности
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) | [AUDIT_ACTIVATION.md](AUDIT_ACTIVATION.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) | [AUDIT_ACTIVATION.md](AUDIT_ACTIVATION.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md) | [SPEC_STARTUP_PERFORMANCE.md](SPEC_STARTUP_PERFORMANCE.md)
 
 Основание: [AUDIT_ACTIVATION.md](AUDIT_ACTIVATION.md). Решения приняты в
 рабочей сессии 13–14.08.2026, зафиксированы здесь как требования.
@@ -109,8 +109,11 @@ SQLite и превью обновляются после исходников и
 production/dev ID и точные разрешённые origin задаются поставкой. Скачивание
 или копирование приложения без первого запуска этого ещё не делает.
 
-В коде первого запуска `refresh_installed_host` устанавливает отсутствующий
-host и восстанавливает точные manifests обнаруженных Chromium-браузеров.
+После первого интерактивного кадра startup maintenance устанавливает
+отсутствующий host и восстанавливает точные manifests обнаруженных
+Chromium-браузеров. Текущий синхронный вызов `refresh_installed_host` в Tauri
+`.setup` должен быть перенесён по `SPEC_STARTUP_PERFORMANCE.md`; до реализации
+это известное несоответствие принятому startup-контракту.
 Ключ `extension/manifest.json` фиксирует development ID
 `eioalidaccoahofcggkbinalibpajokh`; только его origin входит в allowlist.
 Та же поставка атомарно обновляет runtime расширения в стабильном каталоге

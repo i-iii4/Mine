@@ -61,6 +61,8 @@ pub fn run() {
             commands::vault::get_vault_path,
             commands::vault::list_known_vaults,
             commands::vault::start_vault_sync,
+            commands::startup::record_startup_milestone,
+            commands::startup::start_startup_maintenance,
             commands::vault::rebuild_index,
             commands::vault::sweep_vault_thumbnails,
             commands::clipper_setup::get_clipper_setup_status,
@@ -152,6 +154,9 @@ pub fn run() {
             _ => {}
         })
         .setup(|app| {
+            crate::util::reset_startup_trace(app.handle());
+            crate::util::append_startup_trace(app.handle(), "process", "started");
+            crate::util::append_startup_trace(app.handle(), "setup", "start");
             let instance_id = if commands::native_shell_smoke::enabled() {
                 "com.mine.app.native-shell-smoke"
             } else {
@@ -171,12 +176,8 @@ pub fn run() {
             // describes its phases, and reaches the interface as a decision.
             swipe_gesture::install(app.handle().clone());
 
-            // An installed clipper must run this build's host, not the one it
-            // was installed from.
-            // The isolated IPC smoke must never re-register the user's browser
-            // or replace their installed helper with a diagnostic build.
-            if !commands::native_shell_smoke::enabled() {
-                commands::clipper_setup::refresh_installed_host(app.handle());
+            if app.get_webview_window("main").is_some() {
+                crate::util::append_startup_trace(app.handle(), "window", "created");
             }
 
             if cfg!(debug_assertions) {
@@ -206,6 +207,8 @@ pub fn run() {
             // fire the old command or swallow the new one.
             let menu = build_app_menu(app.handle(), &commands::shortcuts::load_overrides(app.handle()))?;
             app.set_menu(menu)?;
+
+            crate::util::append_startup_trace(app.handle(), "setup", "done");
 
             Ok(())
         })

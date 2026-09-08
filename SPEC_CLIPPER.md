@@ -1,6 +1,6 @@
 # Specification: Web Clipper (Browser Extension)
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md) | [SPEC_STARTUP_PERFORMANCE.md](SPEC_STARTUP_PERFORMANCE.md)
 
 ## Полнота текста поста X (27.08.2026)
 
@@ -1253,7 +1253,7 @@ vault от битых media-карточек без `file:`.
 
 Потолок на размер файла — `MAX_MEDIA_BYTES = 500 МиБ`. Он рассчитан на то, что люди реально сохраняют: прежние 50 МиБ отсекали обычный ролик 1080p, и заметка молча оставалась со ссылкой на чужой сервер — то есть переставала быть самодостаточной и ломалась насовсем, стоило источнику удалить файл. Если видео всё же не помещается, расширение передаёт в `video_posters` постер, хост сохраняет его как `thumbnail` блока, а лента строит карточку из постера (ветка `CardKind::Article` без локальных плиток). Видео при этом остаётся удалённой ссылкой и играет только при наличии сети — это осознанная деградация, а не норма.
 
-Заметки, испорченные прежним потолком, чинятся разово: `cargo run -p mine --bin localize-remote-media -- --dry-run <vault>` показывает, что осталось удалённым, `--apply` докачивает и переписывает ссылки на wikilink. Перед загрузкой выполняется HEAD: тело статьи содержит и ссылки-сокращалки (`t.co`), которые ведут на страницу, а не на медиа, и скачивать их нельзя.
+Заметки, испорченные прежним потолком, чинятся разово: `cargo run -p mine --bin localize-remote-media --features tooling -- --dry-run <vault>` показывает, что осталось удалённым, `--apply` докачивает и переписывает ссылки на wikilink. Перед загрузкой выполняется HEAD: тело статьи содержит и ссылки-сокращалки (`t.co`), которые ведут на страницу, а не на медиа, и скачивать их нельзя.
 
 Native messaging timeout — action-aware: `save_block = 180_000ms`, остальные actions = `30_000ms` ([extension/background.js:285](file:///Users/i_iii/Проекты/local-arena/extension/background.js)). Зеркально в [popup/lib/messaging.ts:22](file:///Users/i_iii/Проекты/local-arena/extension/popup/lib/messaging.ts) (`save_block = 180_000`, остальное = `10_000`). Worst case: 30 inline × 15s × 3 retry / 3 параллели ≈ 150s, 180s — буфер.
 
@@ -1475,14 +1475,17 @@ native host source of truth — `com.mine.app/clipper/native-host`.
 ### Обновление установленного хоста
 
 Браузер запускает установленную копию в `Application Support`, независимо от
-открытого окна Mine. Первый обычный запуск приложения вызывает
-`refresh_installed_host`: устанавливает отсутствующий host, сверяет SHA-256
-байтов с бандлом и проверяет исполняемость. Обновление готовится во временном
-файле того же каталога с `0755`, `fsync`, atomic rename и синхронизацией
-родительского каталога; уже открытый inode старого процесса не изменяется.
+открытого окна Mine. После первого интерактивного кадра Mine сравнивает
+маленькие build/install manifests. Отсутствующий или устаревший host
+устанавливается в background maintenance. Обновление готовится во временном
+файле того же каталога, проверяется по build digest, получает `0755`, `fsync`,
+atomic rename и синхронизацию родительского каталога; уже открытый inode старого
+процесса не изменяется. Полный SHA-256 фактических файлов остаётся для фоновой
+integrity-проверки, repair, повреждённого marker и диагностики, а не для
+обычного critical startup path.
 
-Каждый запуск восстанавливает точный путь и allowlist manifests обнаруженных
-Chrome, Dia, Arc, Edge и Brave. Настройки предлагают `Repair registration`
+Тот же background pass восстанавливает точный путь и allowlist manifests
+обнаруженных Chrome, Dia, Arc, Edge и Brave. Настройки предлагают `Repair registration`
 и `Check registration`, без ручного ID. Статусы «helper установлен/совпадает
 с бандлом/зарегистрирован» не выдаются за проверенный browser handshake:
 проверку capabilities выполняет само расширение. После успешного `get_status`
@@ -1502,6 +1505,11 @@ Settings показывает дату ДД.ММ.ГГГГ и местное вр
 пользовательского host диагностическим бинарником. Скачивание/копирование
 `.app` без запуска не регистрирует компонент. Реальная регистрация обновлённой
 сборки в пользовательском Dia этим кодовым прогоном не подтверждена.
+
+Текущая реализация всё ещё вызывает `refresh_installed_host` синхронно из Tauri
+`.setup` и хеширует payload при обычном запуске. Это открытая Phase 33, а не
+целевая архитектура. Полный контракт и performance budgets —
+[SPEC_STARTUP_PERFORMANCE.md](SPEC_STARTUP_PERFORMANCE.md).
 
 ### Имя новой карточки
 
@@ -1681,6 +1689,9 @@ extension/
 
 src-tauri/src/bin/
 └── native_host.rs          # Native messaging host (Rust binary)
+
+src-tauri/src/tooling/
+└── *.rs                    # CLI, migrations and audits; never bundled into Mine.app
 ```
 
 ## Icon Contract
