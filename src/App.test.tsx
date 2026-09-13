@@ -53,6 +53,7 @@ const commandMocks = vi.hoisted(() => ({
   renameBlockFile: vi.fn(),
   prepareDeleteBlock: vi.fn<(slug: string) => Promise<DeleteBlockPlan>>(),
   deleteBlock: vi.fn<(slug: string, deleteUnusedMedia?: boolean) => Promise<boolean>>(),
+  deleteBlocks: vi.fn<(slugs: string[]) => Promise<number>>(),
   mergeBlocks: vi.fn<(orderedSlugs: string[]) => Promise<unknown>>(),
   getBlock: vi.fn(),
   extractInlineMedia: vi.fn(),
@@ -111,6 +112,7 @@ vi.mock("@/lib/commands", () => ({
   removeTag: vi.fn(),
   prepareDeleteBlock: commandMocks.prepareDeleteBlock,
   deleteBlock: commandMocks.deleteBlock,
+  deleteBlocks: commandMocks.deleteBlocks,
   mergeBlocks: commandMocks.mergeBlocks,
   getBlock: commandMocks.getBlock,
   extractInlineMedia: commandMocks.extractInlineMedia,
@@ -491,6 +493,7 @@ describe("AppWithVault", () => {
       shared_media: [],
     });
     commandMocks.deleteBlock.mockResolvedValue(true);
+    commandMocks.deleteBlocks.mockResolvedValue(1);
     commandMocks.mergeBlocks.mockResolvedValue({});
     commandMocks.getBlock.mockImplementation(async (slug: string) => indexedBlock(1, slug, slug));
     commandMocks.listGridBlocks.mockImplementation(async (tag, offset, limit, query) => {

@@ -70,6 +70,43 @@ export function preprocessWikilinks(body: string): string {
     });
 }
 
+/** Map renderer UTF-16 positions back to original Markdown UTF-8 boundaries.
+ * Rewrites are line-local; only unchanged spans and replacement boundaries
+ * are addressable. A selection inside rewritten syntax must not guess offsets.
+ */
+export function markdownSourceByteOffset(body: string, renderedOffset: number): number | null {
+  const lines = body.split("\n");
+  let renderedStart = 0;
+  let sourceStart = 0;
+  for (const line of lines) {
+    const rendered = preprocessWikilinks(line);
+    if (renderedOffset <= renderedStart + rendered.length) {
+      const offset = renderedOffset - renderedStart;
+      if (offset < 0) return null;
+      // Both wikilink forms are replaced by the same renderer used above.
+      const pattern = /!?\[\[([^\n]*?)\]\]/g;
+      let sourceCursor = 0;
+      let renderedCursor = 0;
+      for (const match of line.matchAll(pattern)) {
+        const start = match.index;
+        const unchanged = start - sourceCursor;
+        if (offset <= renderedCursor + unchanged) {
+          return new TextEncoder().encode(body.slice(0, sourceStart + sourceCursor + offset - renderedCursor)).length;
+        }
+        renderedCursor += unchanged;
+        const replacement = preprocessWikilinks(match[0]);
+        if (offset < renderedCursor + replacement.length) return null;
+        renderedCursor += replacement.length;
+        sourceCursor = start + match[0].length;
+      }
+      return new TextEncoder().encode(body.slice(0, sourceStart + sourceCursor + offset - renderedCursor)).length;
+    }
+    renderedStart += rendered.length + 1;
+    sourceStart += line.length + 1;
+  }
+  return null;
+}
+
 /**
  * Decode a local markdown URL back to the real filename on disk.
  *

@@ -210,6 +210,7 @@ import {
   addTag,
   removeTag,
   deleteBlock,
+  deleteBlocks,
   mergeBlocks,
   getBlock,
   createMediaAssetCard,
@@ -725,6 +726,10 @@ export function AppWithVault({
   const [migrationRequired, setMigrationRequired] = useState(false);
   const [thumbsRootPath, setThumbsRootPath] = useState<string | null>(null);
   const activeDragBlock = activeDragBlocks[0] ?? null;
+  const renderedDragBlocks = useMemo(() => {
+    const current = new Map(blocks.map((block) => [block.slug, block]));
+    return activeDragBlocks.map((block) => current.get(block.slug) ?? block);
+  }, [activeDragBlocks, blocks]);
 
   const routeKeyFor = useCallback((tag?: string) => tag ?? "__all__", []);
 
@@ -2676,6 +2681,7 @@ export function AppWithVault({
         }, 0, { force: true });
       } catch (err) {
         console.error("Failed to extract text selection:", err);
+        throw err;
       }
     },
     [invalidateRoutesForTags, scheduleRefresh],
@@ -2713,6 +2719,7 @@ export function AppWithVault({
         window.dispatchEvent(new Event("vault-refreshed"));
       } catch (err) {
         console.error("Failed to delete text selection:", err);
+        throw err;
       }
     },
     [invalidateRouteSnapshots, scheduleRefresh],
@@ -2817,7 +2824,9 @@ export function AppWithVault({
           return;
         }
         if (overId.startsWith("tag:")) {
-          void handleTextSelectionDrop(textSelectionPayload, overId.slice(4));
+          void handleTextSelectionDrop(textSelectionPayload, overId.slice(4)).catch((error) => {
+            setLoadError(error instanceof Error ? error.message : "Could not create an element from this selection.");
+          });
         }
         clearActiveMineTextSelectionDragPayload();
         return;
@@ -3010,9 +3019,7 @@ export function AppWithVault({
       setSelectedBlock(null);
       setSelectedBlockAnchor(null);
       try {
-        for (const slug of slugs) {
-          await deleteBlock(slug, false);
-        }
+        await deleteBlocks(slugs);
       } catch (err) {
         console.error("Failed to delete selected blocks:", err);
         throw err;
@@ -3785,7 +3792,8 @@ export function AppWithVault({
     >
       {activeDragBlocks.length > 0 && (
         <DragCardStackPreview
-          blocks={activeDragBlocks}
+          blocks={renderedDragBlocks}
+          thumbVersions={feedThumbVersions}
           vaultPath={vaultPath}
           thumbsRootPath={thumbsRootPath ?? undefined}
         />

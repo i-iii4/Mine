@@ -1,5 +1,11 @@
 # Media Asset Actions Specification
 
+Медиа-действия разрешают короткие имена через общий storage resolver независимо
+от наличия плитки превью. Неоднозначное имя отклоняется без изменения файлов.
+Подготовка удаления возвращает найденный путь относительно корня хранилища;
+подтверждение использует именно этот путь. Ошибка подготовки не отображается
+как пустой список связанных карточек.
+
 Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md)
 
 ## Goal

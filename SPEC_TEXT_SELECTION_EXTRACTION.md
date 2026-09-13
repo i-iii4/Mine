@@ -1,5 +1,18 @@
 # Text Selection Extraction Specification
 
+## Безопасность выделения
+
+Позиции блока в рендере переводятся через преобразование wikilinks в байтовые
+позиции UTF-8 исходного Markdown. Переданный диапазон приоритетен: подмена
+первым одинаковым абзацем в другом месте запрещена. При отсутствии диапазона
+допустимо только однозначное совпадение.
+
+Удаление проверяет hash тела и сохраняет frontmatter и остальные байты файла.
+Неоднозначные совпадения внутри одного абзаца и неподдерживаемое выделение
+отклоняются без записи; это не универсальный редактор форматированного Markdown.
+Открытое меню сохраняет снимок при смене фокуса и DOM-выделения. При ошибке
+показывается сообщение, при успехе меню закрывается.
+
 Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
 ## Status
@@ -234,8 +247,9 @@ re-read the file and verify the hash/range before writing.
 3. Verify `source_body_hash` still matches the current body. If it does not,
    return a stale-selection error.
 4. Verify `first_block_start..first_block_end` identifies a supported Markdown
-   block; if no range is provided, locate `selected_text` in the current source
-   body and use the block containing it.
+   block; if no range is provided, locate an unambiguous `selected_text` in the
+   current source body and use the block containing it. An invalid supplied
+   range must not fall back to a different matching paragraph.
 5. Reuse an existing block id on that Markdown block, or generate and insert a
    unique block id.
 6. Suppress watcher events for the source file during the in-app source patch.

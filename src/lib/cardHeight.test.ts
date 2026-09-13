@@ -457,6 +457,14 @@ describe("computeCardHeight — determinism", () => {
 });
 
 describe("feedRowNeedsPreviewRefresh", () => {
+  it("refreshes article media geometry after its preview is regenerated", () => {
+    const row = makeBlock({ block_type: "article", card_kind: "article",
+      body: "An article with an image", first_image: "photo.jpg",
+      preview_manifest: JSON.stringify({ kind: "image", primary_preview_path: "preview.jpg",
+        preview_width: null, preview_height: null, overflow_count: 0,
+        tiles: [{ source_path: "photo.jpg", preview_path: "tile.jpg", is_video: false }] }) });
+    expect(feedRowNeedsPreviewRefresh(row, false)).toBe(true);
+  });
   // A screenshot saved into the vault reached the feed before its media was
   // indexed: the row carried no image signal, so the layout fell back to the
   // file variant (name + file name) and the cache-buster could not heal it —

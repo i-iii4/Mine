@@ -7,6 +7,10 @@ use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 
+#[derive(Debug, thiserror::Error)]
+#[error("ambiguous media reference: {0}")]
+pub struct AmbiguousMediaReference(pub String);
+
 use crate::domain::block::{InlineMediaReference, InlineMediaSyntax};
 use crate::domain::vault::VaultLayout;
 
@@ -90,6 +94,15 @@ impl<'a> MediaResolver<'a> {
             collect_all_basename_matches(self.vault.root(), &mut index);
             index
         })
+    }
+
+    /// Destructive actions may resolve a short name only when it is unique.
+    pub fn unique_basename(&mut self, file_name: &str) -> Result<Option<PathBuf>, AmbiguousMediaReference> {
+        match self.basename_index().get(file_name).map(Vec::as_slice) {
+            None | Some([]) => Ok(None),
+            Some([path]) => Ok(Some(path.clone())),
+            Some(_) => Err(AmbiguousMediaReference(file_name.into())),
+        }
     }
 }
 

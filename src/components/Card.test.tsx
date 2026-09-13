@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { Card, DragCardStackPreview, ReadOnlyCardPreview } from "./Card";
 import { CARD_HOVER_ACTION_MIN_HEIGHT } from "@/lib/cardHeight";
 import type { LightBlock } from "@/types";
@@ -22,6 +22,36 @@ function cardKindForBlockType(blockType: LightBlock["block_type"]): LightBlock["
       ? "channel"
       : "media";
 }
+
+it("sizes a dragged portrait from artifact geometry and loads it eagerly", () => {
+  const row = block({ block_type: "image", media_file: "photo.jpg",
+    preview_manifest: JSON.stringify({ kind: "image", primary_preview_path: "preview.jpg",
+      preview_width: 480, preview_height: 640, tiles: [], overflow_count: 0 }) });
+  const { container } = render(<DragCardStackPreview blocks={[row]} vaultPath="/vault"
+    thumbsRootPath="/thumbs" thumbVersions={new Map([[row.slug, 3]])} width={240} />);
+  expect(container.querySelector("[data-feed-card-frame]")).toHaveStyle({ height: "319px" });
+  expect(container.querySelector("img")).toHaveAttribute("loading", "eager");
+  expect(container.querySelector("img")?.getAttribute("src")).toContain("3");
+});
+
+it("retries a transient preview failure with a new URL and stops after two retries", async () => {
+  vi.useFakeTimers();
+  const row = block({ block_type: "image", media_file: "photo.jpg",
+    preview_manifest: JSON.stringify({ kind: "image", primary_preview_path: "preview.jpg",
+      preview_width: 480, preview_height: 640, tiles: [], overflow_count: 0 }) });
+  const { container, unmount } = render(<ReadOnlyCardPreview block={row} vaultPath="/vault" thumbsRootPath="/thumbs" />);
+  try {
+    fireEvent.error(container.querySelector("img")!);
+    await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+    expect(container.querySelector("img")?.getAttribute("src")).toContain("retry=1");
+    fireEvent.error(container.querySelector("img")!);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(container.querySelector("img")?.getAttribute("src")).toContain("retry=2");
+    fireEvent.error(container.querySelector("img")!);
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(container.querySelector("img")).toBeNull();
+  } finally { unmount(); vi.useRealTimers(); }
+});
 
 function block(overrides: Partial<LightBlock> = {}): LightBlock {
   const blockType = overrides.block_type ?? "link";
@@ -1302,4 +1332,3 @@ describe("unreadable preview artifact", () => {
     expect(container.querySelector("[data-card-preview-unreadable]")).toBeNull();
   });
 });
-

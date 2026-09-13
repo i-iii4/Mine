@@ -1376,7 +1376,22 @@ fn upsert_block_inner(
             first_image = excluded.first_image,
             media_urls = excluded.media_urls,
             media_dimensions = excluded.media_dimensions,
-            preview_manifest = excluded.preview_manifest,
+            preview_manifest = CASE
+                WHEN blocks.body = excluded.body
+                 AND blocks.card_kind = excluded.card_kind
+                 AND blocks.media_file IS excluded.media_file
+                 AND blocks.thumbnail IS excluded.thumbnail
+                 AND blocks.url IS excluded.url
+                 AND blocks.title IS excluded.title
+                 AND blocks.description IS excluded.description
+                 AND blocks.author IS excluded.author
+                 AND blocks.media_dimensions IS excluded.media_dimensions
+                 AND blocks.width IS excluded.width
+                 AND blocks.height IS excluded.height
+                 AND blocks.media_urls IS excluded.media_urls
+                 AND blocks.preview_schema_version = excluded.preview_schema_version
+                THEN COALESCE(blocks.preview_manifest, excluded.preview_manifest)
+                ELSE excluded.preview_manifest END,
             preview_state = 'stale',
             preview_source_stamp = blocks.preview_source_stamp,
             preview_error_kind = NULL,
@@ -3031,6 +3046,8 @@ mod tests {
         )
         .unwrap();
 
+        conn.execute("UPDATE blocks SET preview_manifest = json_set(preview_manifest,
+            '$.preview_width', 480, '$.preview_height', 640) WHERE slug = 'stale-but-drawn'", []).unwrap();
         // A tag edit: the block is rewritten, which marks the preview stale
         // while leaving the stamp of the artifact already on disk.
         block.frontmatter.tags.push("Красивый веб".to_string());
@@ -3045,11 +3062,23 @@ mod tests {
             .unwrap();
         assert_eq!(state, "stale");
 
+        let geometry: (i64, i64) = conn.query_row("SELECT
+            json_extract(preview_manifest, '$.preview_width'),
+            json_extract(preview_manifest, '$.preview_height') FROM blocks
+            WHERE slug = 'stale-but-drawn'", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+        assert_eq!(geometry, (480, 640));
+
         let (blocks, _) = list_grid_blocks(&conn, None, 0, 20).unwrap();
         assert!(
             blocks[0].preview_manifest.is_some(),
             "a stale preview that exists on disk must still be drawn",
         );
+        block.frontmatter.file = Some("different-photo.jpg".to_string());
+        upsert_block(&conn, &block, None).unwrap();
+        let old_width: Option<i64> = conn.query_row("SELECT
+            json_extract(preview_manifest, '$.preview_width') FROM blocks
+            WHERE slug = 'stale-but-drawn'", [], |row| row.get(0)).unwrap();
+        assert_eq!(old_width, None, "changed media must not inherit the old artifact geometry");
     }
 
     #[test]

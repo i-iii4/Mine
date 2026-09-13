@@ -21,6 +21,7 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ReadOnlyCardPreview } from "@/components/Card";
 import { CardHoverMenu } from "@/components/CardHoverMenu";
+import { DropdownMenuPortalContainerProvider } from "@/components/ui/dropdown-menu";
 import {
   MicroPreviewThumbnail,
   microPreviewFromLightBlock,
@@ -435,6 +436,7 @@ export function SearchOverlay({
     </div>
   );
 
+  const [menuContainer, setMenuContainer] = useState<HTMLDivElement | null>(null);
   return (
     <Dialog
       open={open}
@@ -443,6 +445,7 @@ export function SearchOverlay({
       }}
     >
       <DialogContent
+        ref={setMenuContainer}
         showCloseButton={false}
         aria-describedby={undefined}
         onOpenAutoFocus={(event) => {
@@ -458,6 +461,7 @@ export function SearchOverlay({
         )}
         data-search-overlay
       >
+        <DropdownMenuPortalContainerProvider container={menuContainer}>
         <DialogTitle className="sr-only">Search elements</DialogTitle>
 
         <div className="flex shrink-0 items-center gap-1 border-b border-border p-1">
@@ -615,6 +619,7 @@ export function SearchOverlay({
             )}
           </div>
         </div>
+        </DropdownMenuPortalContainerProvider>
       </DialogContent>
     </Dialog>
   );

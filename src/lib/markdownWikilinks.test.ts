@@ -1,5 +1,22 @@
 import { describe, it, expect } from "vitest";
-import { decodeLocalMarkdownUrl, preprocessWikilinks } from "./markdownWikilinks";
+import { decodeLocalMarkdownUrl, preprocessWikilinks, markdownSourceByteOffset } from "./markdownWikilinks";
+
+describe("selection source offsets", () => {
+  it.each(["![[Media/Камень (1).jpg]]", "[[Заметка|ссылка]]", "😀 русский текст"])("maps a repeated paragraph after %s to UTF-8 source bytes", (prefix) => {
+    const body = `${prefix}\n\nAuthor: @test\n\nAuthor: @test`;
+    const rendered = preprocessWikilinks(body);
+    const offset = rendered.lastIndexOf("Author:");
+    expect(markdownSourceByteOffset(body, offset)).toBe(new TextEncoder().encode(body.slice(0, body.lastIndexOf("Author:"))).length);
+    expect(markdownSourceByteOffset(body, rendered.length)).toBe(new TextEncoder().encode(body).length);
+  });
+  it("maps text after multiple inline rewrites without accepting a position inside one", () => {
+    const body = "[[один]] and [[два|alias]] **bold**";
+    const rendered = preprocessWikilinks(body);
+    expect(markdownSourceByteOffset(body, rendered.indexOf("**bold**"))).toBe(new TextEncoder().encode(body.slice(0, body.indexOf("**bold**"))).length);
+    expect(markdownSourceByteOffset(body, 2)).toBeNull();
+    expect(markdownSourceByteOffset(body, rendered.length + 1)).toBeNull();
+  });
+});
 
 describe("preprocessWikilinks", () => {
   it("rewrites a bare embed wikilink to markdown image without alt", () => {

@@ -38,6 +38,19 @@ function generationKey(blocks: LightBlock[], parentWidth = 1200): string {
   });
 }
 
+it("invalidates layout for artifact and tile geometry without source-size changes", () => {
+  const manifest = { kind: "image", primary_preview_path: "photo.jpg", width: null,
+    height: null, preview_width: 480, preview_height: 640, overflow_count: 0,
+    tiles: [{ source_path: "photo.jpg", preview_path: "tile.jpg", preview_width: 480,
+      preview_height: 640, is_video: false }] };
+  const original = makeBlock(1, { preview_manifest: JSON.stringify(manifest) });
+  const resized = { ...original, preview_manifest: JSON.stringify({ ...manifest, preview_height: 480 }) };
+  const tileResized = { ...original, preview_manifest: JSON.stringify({ ...manifest,
+    tiles: [{ ...manifest.tiles[0], preview_height: 480 }] }) };
+  expect(generationKey([original])).not.toBe(generationKey([resized]));
+  expect(generationKey([original])).not.toBe(generationKey([tileResized]));
+});
+
 describe("buildBlockLayoutSignature", () => {
   it("changes when preview manifest kind changes", () => {
     const base = makeBlock(1, {

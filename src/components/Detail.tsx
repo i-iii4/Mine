@@ -70,7 +70,7 @@ import type {
   TagCount,
 } from "@/types";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
-import { preprocessWikilinks, inlineMediaOccurrenceIndex } from "@/lib/markdownWikilinks";
+import { preprocessWikilinks, inlineMediaOccurrenceIndex, markdownSourceByteOffset } from "@/lib/markdownWikilinks";
 import { decodeLocalMarkdownUrl } from "@/lib/markdownWikilinks";
 import {
   thumbnailUrl,
@@ -1952,6 +1952,7 @@ function CreateCardCollectionPicker<TPayload>({
 }) {
   const [search, setSearch] = useState("");
   const [pendingTag, setPendingTag] = useState<string | null>(null);
+  const [selectionActionError, setSelectionActionError] = useState<string | null>(null);
   // Canonical sidebar order from props; only the current collection is
   // hoisted to the top (stable sort keeps the rest untouched).
   const sortedTags = useMemo(() => {
@@ -1979,6 +1980,7 @@ function CreateCardCollectionPicker<TPayload>({
 
   const connect = async (tag: string, create: boolean) => {
     setPendingTag(tag);
+    setSelectionActionError(null);
     try {
       if (create) {
         await onCreateAndConnect(payload, tag);
@@ -1986,6 +1988,8 @@ function CreateCardCollectionPicker<TPayload>({
         await onConnect(payload, tag);
       }
       setSearch("");
+    } catch (error) {
+      setSelectionActionError(textSelectionErrorMessage(error));
     } finally {
       setPendingTag(null);
     }
@@ -2014,7 +2018,8 @@ function CreateCardCollectionPicker<TPayload>({
               key={item.tag || "__everything__"}
               className="h-[var(--menu-row-height)] py-0"
               disabled={pendingTag !== null}
-              onSelect={() => {
+              onSelect={(event) => {
+                event.preventDefault();
                 void connect(item.tag, false);
               }}
             >
@@ -2027,7 +2032,8 @@ function CreateCardCollectionPicker<TPayload>({
           <DropdownMenuItem
             className="h-[var(--menu-row-height)] py-0"
             disabled={pendingTag !== null}
-            onSelect={() => {
+            onSelect={(event) => {
+              event.preventDefault();
               void connect(trimmed, true);
             }}
           >
@@ -2042,6 +2048,7 @@ function CreateCardCollectionPicker<TPayload>({
           </p>
         )}
       </QuantizedMenuScrollArea>
+      {selectionActionError && <p role="alert" className="p-2 text-sm text-destructive">{selectionActionError}</p>}
     </>
   );
 }
@@ -2308,7 +2315,7 @@ function DeleteMediaAssetDialog({
               <div className="px-3 py-2 text-sm text-muted-foreground">
                 Checking cards...
               </div>
-            ) : references.length > 0 ? (
+            ) : planError ? null : references.length > 0 ? (
               <MediaAssetReferenceCards
                 references={references}
                 vaultPath={vaultPath}
@@ -2335,7 +2342,8 @@ function DeleteMediaAssetDialog({
                 try {
                   setSubmitting(true);
                   setError(null);
-                  await onDelete(asset);
+                  if (!plan) return;
+                  await onDelete({ ...asset, media_ref: plan.media_ref });
                   onOpenChange(false);
                 } catch (rawError) {
                   setError(mediaAssetErrorMessage(rawError));
@@ -2573,6 +2581,7 @@ function ArticleBody({
   const articleRef = useRef<HTMLDivElement | null>(null);
   const selectionFrameRef = useRef<number | null>(null);
   const selectionHandleLockedRef = useRef(false);
+  const selectionMenuOpenRef = useRef(false);
   const [selectionHandle, setSelectionHandle] = useState<TextSelectionHandleState | null>(null);
   const hasTextSelectionActions = Boolean(onTextSelectionDrop || onTextSelectionDelete);
 
@@ -2592,8 +2601,10 @@ function ArticleBody({
     if (!selectedText) {
       return null;
     }
-    const range = findFirstSelectedMarkdownBlockRange(root, selection)
-      ?? findFirstMarkdownBlockRange(body, selectedText);
+    const renderedRange = findFirstSelectedMarkdownBlockRange(root, selection);
+    const start = renderedRange ? markdownSourceByteOffset(body, renderedRange.start) : null;
+    const end = renderedRange ? markdownSourceByteOffset(body, renderedRange.end) : null;
+    const range = start !== null && end !== null ? { start, end } : null;
     if (!range) {
       return null;
     }
@@ -2608,7 +2619,7 @@ function ArticleBody({
   }, [body, sourceBodyHash, sourceSlug]);
 
   const updateTextSelectionHandle = useCallback(() => {
-    if (selectionHandleLockedRef.current) {
+    if (selectionHandleLockedRef.current || selectionMenuOpenRef.current) {
       return;
     }
     if (!hasTextSelectionActions || !articleRef.current) {
@@ -2658,10 +2669,10 @@ function ArticleBody({
     window.addEventListener("pointercancel", unlockTextSelectionHandle, true);
   }, [unlockTextSelectionHandle]);
 
-  const handleTextSelectionDelete = useCallback((payload: MineTextSelectionDragPayload) => {
+  const handleTextSelectionDelete = useCallback(async (payload: MineTextSelectionDragPayload) => {
+    await onTextSelectionDelete?.(payload);
     setSelectionHandle(null);
     window.getSelection()?.removeAllRanges();
-    return onTextSelectionDelete?.(payload);
   }, [onTextSelectionDelete]);
 
   const dismissTextSelectionHandle = useCallback(() => {
@@ -2914,6 +2925,7 @@ function ArticleBody({
           onCreateChannelAndCard={onCreateChannelAndTextSelectionCard}
           onDelete={onTextSelectionDelete ? handleTextSelectionDelete : undefined}
           onInteractionStart={lockTextSelectionHandle}
+          onMenuOpenChange={(open) => { selectionMenuOpenRef.current = open; }}
           onDismiss={dismissTextSelectionHandle}
         />
       )}
@@ -2958,18 +2970,20 @@ function TextSelectionActionBar({
   onCreateChannelAndCard,
   onDelete,
   onInteractionStart,
+  onMenuOpenChange,
   onDismiss,
 }: {
   state: TextSelectionHandleState;
   tags: TagCount[];
   currentTag?: string;
-  onCreateCard?: (payload: MineTextSelectionDragPayload, tag: string) => void;
+  onCreateCard?: (payload: MineTextSelectionDragPayload, tag: string) => void | Promise<void>;
   onCreateChannelAndCard: (
     payload: MineTextSelectionDragPayload,
     tag: string,
   ) => Promise<void>;
   onDelete?: (payload: MineTextSelectionDragPayload) => void | Promise<void>;
   onInteractionStart: () => void;
+  onMenuOpenChange: (open: boolean) => void;
   onDismiss: () => void;
 }) {
   const {
@@ -2986,6 +3000,12 @@ function TextSelectionActionBar({
     onPointerDown?: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   } | undefined)?.onPointerDown;
   const [connectOpen, setConnectOpen] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const updateConnectOpen = (open: boolean) => {
+    onMenuOpenChange(open);
+    setConnectOpen(open);
+  };
   const barRef = useRef<HTMLDivElement | null>(null);
   const [barSize, setBarSize] = useState({
     width: TEXT_SELECTION_ACTION_BAR_FALLBACK_WIDTH_PX,
@@ -3064,7 +3084,7 @@ function TextSelectionActionBar({
       </Button>
 
       {onCreateCard && (
-        <DropdownMenu open={connectOpen} onOpenChange={setConnectOpen} modal={false}>
+        <DropdownMenu open={connectOpen} onOpenChange={updateConnectOpen} modal={false}>
           <DropdownMenuTrigger asChild>
             <Button
               type="button"
@@ -3087,13 +3107,15 @@ function TextSelectionActionBar({
               payload={state.payload}
               tags={tags}
               currentTag={currentTag}
-              onConnect={(payload, tag) => {
-                onCreateCard(payload, tag);
-                setConnectOpen(false);
+              onConnect={async (payload, tag) => {
+                await onCreateCard(payload, tag);
+                updateConnectOpen(false);
+                onDismiss();
               }}
               onCreateAndConnect={async (payload, tag) => {
                 await onCreateChannelAndCard(payload, tag);
-                setConnectOpen(false);
+                updateConnectOpen(false);
+                onDismiss();
               }}
             />
           </DropdownMenuContent>
@@ -3108,14 +3130,27 @@ function TextSelectionActionBar({
           onMouseDown={(event) => {
             event.preventDefault();
           }}
-          onClick={() => {
-            void onDelete(state.payload);
+          disabled={deleting}
+          onClick={async () => {
+            setDeleting(true);
+            setActionError(null);
+            onMenuOpenChange(true);
+            try {
+              await onDelete(state.payload);
+            } catch (error) {
+              setActionError(textSelectionErrorMessage(error));
+            } finally {
+              setDeleting(false);
+              onMenuOpenChange(false);
+            }
           }}
         >
           <Trash2 className="size-3" aria-hidden="true" />
           Delete Text
         </Button>
       )}
+
+      {actionError && <p role="alert" className="absolute top-full left-0 mt-1 rounded-1 border bg-popover p-2 text-sm text-destructive">{actionError}</p>}
 
       <Button
         type="button"
@@ -3138,6 +3173,15 @@ function TextSelectionActionBar({
 
 /// Force a fresh request for the same file: a retry that reuses the cached
 /// failure is not a retry.
+function textSelectionErrorMessage(error: unknown): string {
+  if (error && typeof error === "object" && "kind" in error) {
+    if (error.kind === "stale_selection") return "The note changed. Select the text again.";
+    if (error.kind === "unsupported_selection_shape") return "This selection cannot be mapped safely to the note. Select a smaller text fragment.";
+    if ("message" in error && typeof error.message === "string") return error.message;
+  }
+  return error instanceof Error ? error.message : "Could not complete this action. Please try again.";
+}
+
 function withRetryToken(src: string, attempt: number): string {
   if (attempt === 0) return src;
   return `${src}${src.includes("?") ? "&" : "?"}retry=${attempt}`;
@@ -3555,70 +3599,4 @@ function markdownBlockPositionProps(
     "data-mine-md-start": String(start),
     "data-mine-md-end": String(end),
   };
-}
-
-function findFirstMarkdownBlockRange(
-  body: string,
-  selectedText: string,
-): { start: number; end: number } | null {
-  const selectionStart = body.indexOf(selectedText);
-  const start = selectionStart >= 0
-    ? selectionStart
-    : findNormalizedSelectionStart(body, selectedText);
-  if (start == null || start < 0) {
-    return null;
-  }
-  return markdownBlockRangeContaining(body, start);
-}
-
-function findNormalizedSelectionStart(body: string, selectedText: string): number | null {
-  const needle = collapseWhitespace(selectedText.trim());
-  if (!needle) return null;
-  const normalized = normalizeWithSourceIndices(body);
-  const index = normalized.text.indexOf(needle);
-  if (index < 0) return null;
-  return normalized.indices[index] ?? null;
-}
-
-function normalizeWithSourceIndices(value: string): { text: string; indices: number[] } {
-  let text = "";
-  const indices: number[] = [];
-  let inSpace = false;
-  for (let offset = 0; offset < value.length;) {
-    const codePoint = value.codePointAt(offset);
-    if (codePoint == null) break;
-    const char = String.fromCodePoint(codePoint);
-    const nextOffset = offset + char.length;
-    if (/\s/.test(char)) {
-      if (!inSpace && text.length > 0) {
-        text += " ";
-        indices.push(offset);
-      }
-      inSpace = true;
-    } else {
-      text += char;
-      indices.push(offset);
-      inSpace = false;
-    }
-    offset = nextOffset;
-  }
-  return { text: text.trimEnd(), indices };
-}
-
-function collapseWhitespace(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
-}
-
-function markdownBlockRangeContaining(body: string, index: number): { start: number; end: number } {
-  let start = body.lastIndexOf("\n\n", index);
-  start = start >= 0 ? start + 2 : 0;
-  let end = body.indexOf("\n\n", index);
-  end = end >= 0 ? end : body.length;
-  while (start < end && (body[start] === "\n" || body[start] === "\r")) {
-    start += 1;
-  }
-  while (end > start && (body[end - 1] === "\n" || body[end - 1] === "\r")) {
-    end -= 1;
-  }
-  return { start, end };
 }

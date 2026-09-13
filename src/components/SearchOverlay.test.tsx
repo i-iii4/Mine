@@ -655,7 +655,9 @@ describe("SearchOverlay", () => {
       button: 0,
       ctrlKey: false,
     });
-    fireEvent.click(await screen.findByTestId("picker-toggle-design"));
+    const picker = await screen.findByTestId("picker-toggle-design");
+    expect(screen.getByRole("dialog").contains(picker)).toBe(true);
+    fireEvent.click(picker);
 
     expect(onToggleTag).toHaveBeenCalledWith("alpha", "design", false);
     await waitFor(() => {

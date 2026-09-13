@@ -135,6 +135,33 @@ describe("Detail", () => {
     setViewportWidth(initialViewportWidth);
   });
 
+  it.each([false, true])("uses the resolved deletion path and never reports empty references after an error (%s)", async (failure) => {
+    if (failure) prepareDeleteMediaAssetMock.mockRejectedValueOnce({ kind: "media_not_found", media_ref: "photo.jpg" });
+    else prepareDeleteMediaAssetMock.mockResolvedValueOnce({ media_ref: "Media/photo.jpg", media_kind: "image", referenced_by: [] });
+    const onDelete = vi.fn().mockResolvedValue(undefined);
+    const { container } = render(<Detail
+      block={block({ card_kind: "media", block_type: "image", media_file: "photo.jpg", url: null })}
+      vaultPath="/tmp/fixture" thumbsRootPath="/tmp/thumbs" tags={[]}
+      onClose={vi.fn()} onNavigate={vi.fn()} onToggleTag={vi.fn()} onCreateAndAssign={vi.fn()}
+      onTagsChanged={vi.fn()} onRequestRename={vi.fn()} onRequestDelete={vi.fn()}
+      onDeleteMediaAsset={onDelete} onOpenRelatedNote={vi.fn()} />);
+    const trigger = container.querySelector("[data-detail-media-more-button]")!;
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    fireEvent.click(trigger);
+    fireEvent.click(within(await screen.findByRole("menu")).getByText("Delete Media"));
+    const dialog = await screen.findByRole("alertdialog");
+    if (failure) {
+      expect(await within(dialog).findByText("Media file was not found.")).toBeInTheDocument();
+      expect(within(dialog).queryByText("No cards currently reference this file.")).not.toBeInTheDocument();
+      expect(within(dialog).getByRole("button", { name: "Delete media" })).toBeDisabled();
+      expect(onDelete).not.toHaveBeenCalled();
+    } else {
+      await waitFor(() => expect(within(dialog).getByRole("button", { name: "Delete media" })).toBeEnabled());
+      fireEvent.click(within(dialog).getByRole("button", { name: "Delete media" }));
+      await waitFor(() => expect(onDelete).toHaveBeenCalledWith(expect.objectContaining({ media_ref: "Media/photo.jpg" })));
+    }
+  });
+
   it("renders the classic top menu", () => {
     const props = {
       block: block(),
@@ -950,13 +977,35 @@ describe("Detail", () => {
 
     expect(onTextSelectionDrop).not.toHaveBeenCalled();
 
-    fireEvent.click(within(actionBar).getByRole("button", { name: "Delete Text" }));
+    fireEvent.pointerDown(createButton, { button: 0, ctrlKey: false });
+    const pickerSearch = await screen.findByPlaceholderText("Search collections...");
+    selection?.removeAllRanges();
+    fireEvent(document, new Event("selectionchange"));
+    fireEvent.focus(pickerSearch);
+    fireEvent.change(pickerSearch, { target: { value: "Every" } });
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Everything" })).toBeInTheDocument());
+    fireEvent.pointerMove(screen.getByRole("menuitem", { name: "Everything" }), { clientX: 80, clientY: 80 });
+    expect(actionBar).toBeInTheDocument();
+    fireEvent.keyDown(pickerSearch, { key: "Escape" });
+
+    selection?.addRange(range);
+    fireEvent(document, new Event("selectionchange"));
+    const retryDeleteButton = await screen.findByRole("button", { name: "Delete Text" });
+
+    onTextSelectionDelete.mockRejectedValueOnce({ kind: "stale_selection" });
+    fireEvent.click(retryDeleteButton);
+    expect(await screen.findByRole("alert")).toHaveTextContent("The note changed");
+    expect(screen.getByRole("button", { name: "Delete Text" })).toBeInTheDocument();
+    onTextSelectionDelete.mockResolvedValueOnce(undefined);
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete Text" }));
     expect(onTextSelectionDelete).toHaveBeenCalledWith(expect.objectContaining({
       type: "text_selection",
       sourceSlug: "test-block",
       selectedText: "beta",
       sourceBodyHash: "body-hash-1",
     }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Delete Text" })).not.toBeInTheDocument());
     Object.defineProperty(document, "elementFromPoint", {
       configurable: true,
       value: originalElementFromPoint,

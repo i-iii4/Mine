@@ -17,7 +17,7 @@ import {
 import { PROVISIONAL_MEDIA_ASPECT } from "@/lib/cardAspect";
 import { normalizeFeedPlayback } from "@/lib/feedPlayback";
 import { CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX } from "@/lib/cardTypography";
-import { CARD_HOVER_ACTION_MIN_HEIGHT } from "@/lib/cardHeight";
+import { CARD_HOVER_ACTION_MIN_HEIGHT, computeCardHeight } from "@/lib/cardHeight";
 import { buildFeedVideoPosterCandidates } from "@/lib/feedVideoPoster";
 import { getDisplayTitle, getNavigationLabel } from "@/lib/displayTitle";
 import { renderSearchHighlightedText, searchExcerptText } from "@/lib/searchHighlight";
@@ -88,6 +88,7 @@ interface CardProps {
 
 const CARD_FRAME_CLASS =
   "group relative overflow-hidden border border-border rounded-[var(--radius-card)] bg-card";
+const PREVIEW_RETRY_DELAYS_MS = [250, 1000] as const;
 
 interface CardFrameProps extends React.HTMLAttributes<HTMLDivElement> {
   children: React.ReactNode;
@@ -280,6 +281,7 @@ export function ReadOnlyCardPreview({
   previewMode = "full",
   shadow = "lg",
   className,
+  thumbVersion,
 }: {
   block: LightBlock | IndexedBlock;
   vaultPath: string;
@@ -288,6 +290,7 @@ export function ReadOnlyCardPreview({
   previewMode?: "full" | "micro";
   shadow?: "none" | "sm" | "md" | "lg";
   className?: string;
+  thumbVersion?: number;
 }) {
   const block: LightBlock & Partial<Pick<IndexedBlock, "thumb_format" | "thumb_mtime">> =
     "search_match" in sourceBlock
@@ -408,13 +411,16 @@ export function ReadOnlyCardPreview({
         shadowClassName,
         className,
       )}
-      style={{ width }}
+      style={{ width, ...(getRuntimeCardKind(block) === "media"
+        ? { height: computeCardHeight(block, width, null) } : {}) }}
     >
       <CardContent
         block={block}
         vaultPath={vaultPath}
         thumbsRootPath={thumbsRootPath}
         allowPlayback={false}
+        thumbVersion={thumbVersion}
+        priority={true}
       />
     </CardFrame>
   );
@@ -425,6 +431,7 @@ export function DragCardPreview(props: {
   vaultPath: string;
   thumbsRootPath?: string;
   width?: number;
+  thumbVersion?: number;
 }) {
   return <ReadOnlyCardPreview {...props} />;
 }
@@ -442,12 +449,14 @@ function DragStackCardPreview({
   thumbsRootPath,
   width,
   shadow,
+  thumbVersion,
 }: {
   block: LightBlock;
   vaultPath: string;
   thumbsRootPath?: string;
   width: number;
   shadow: "sm" | "md" | "lg";
+  thumbVersion?: number;
 }) {
   return (
     <div data-feed-drag-stack-card="">
@@ -457,6 +466,7 @@ function DragStackCardPreview({
         thumbsRootPath={thumbsRootPath}
         width={width}
         shadow={shadow}
+        thumbVersion={thumbVersion}
       />
     </div>
   );
@@ -467,11 +477,13 @@ export function DragCardStackPreview({
   vaultPath,
   thumbsRootPath,
   width = 240,
+  thumbVersions,
 }: {
   blocks: readonly LightBlock[];
   vaultPath: string;
   thumbsRootPath?: string;
   width?: number;
+  thumbVersions?: ReadonlyMap<string, number>;
 }) {
   const visibleBlocks = blocks.slice(0, DRAG_STACK_LAYERS.length);
   const visibleCount = visibleBlocks.length;
@@ -484,6 +496,7 @@ export function DragCardStackPreview({
         vaultPath={vaultPath}
         thumbsRootPath={thumbsRootPath}
         width={width}
+        thumbVersion={thumbVersions?.get(frontBlock.slug)}
       />
     );
   }
@@ -525,6 +538,7 @@ export function DragCardStackPreview({
             thumbsRootPath={thumbsRootPath}
             width={width}
             shadow={layer.shadow}
+            thumbVersion={thumbVersions?.get(block.slug)}
           />
         </div>
       ))}
@@ -830,6 +844,8 @@ const ImageCard = memo(function ImageCard({
   measurementMode?: boolean;
 }) {
   const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
+  const [retryCount, setRetryCount] = useState(0);
+  useEffect(() => { setRetryCount(0); }, [previewManifest?.primaryPreviewPath, thumbVersion]);
 
   const sources = useMemo(() => {
     return uniqueUrls([
@@ -845,6 +861,18 @@ const ImageCard = memo(function ImageCard({
 
   const [sourceIndex, setSourceIndex] = useState(0);
   const sourcesKey = sources.join("|");
+
+  // Retry transient cache misses twice, using a fresh URL. Never loop forever
+  // on a genuinely missing asset, and cancel retries when the card unmounts.
+  useEffect(() => {
+    const delay = PREVIEW_RETRY_DELAYS_MS[retryCount];
+    if (sourceIndex < sources.length || sources.length === 0 || delay === undefined) return;
+    const timer = window.setTimeout(() => {
+      setRetryCount((count) => count + 1);
+      setSourceIndex(0);
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [sourceIndex, sources.length, retryCount]);
 
   // Reset the cascade when the input set changes (new block, vault
   // switch, iCloud refresh). Intentionally does NOT reset on every
@@ -862,7 +890,9 @@ const ImageCard = memo(function ImageCard({
     return () => window.removeEventListener("vault-refreshed", handler);
   }, [sourceIndex, sources.length]);
 
-  const currentSrc = sources[sourceIndex] ?? null;
+  const source = sources[sourceIndex] ?? null;
+  const currentSrc = source && retryCount > 0
+    ? `${source}${source.includes("?") ? "&" : "?"}retry=${retryCount}` : source;
   const navigationLabel = getNavigationLabel(block);
   // A null ratio means the preview artifact does not exist yet, which is a
   // state of its own rather than a shape. Claiming a square here would state a

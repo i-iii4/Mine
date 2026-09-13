@@ -329,6 +329,9 @@ export const renameBlockFile = async (old_slug: string, new_stem: string) => {
 export const prepareDeleteBlock = (slug: string) =>
   invoke<DeleteBlockPlan>("prepare_delete_block", { slug });
 
+/** Delete the selection atomically, retaining all source media. */
+export const deleteBlocks = (slugs: string[]) => invoke<number>("delete_blocks", { slugs });
+
 export const deleteBlock = (slug: string, delete_unused_media?: boolean) =>
   invoke<boolean>(
     "delete_block",

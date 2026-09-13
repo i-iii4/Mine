@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 use std::process::Command;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use thiserror::Error;
 
 use crate::commands::state::{current_vault_layout, ensure_vault_fresh, AppState, CommandError};
@@ -1405,7 +1405,8 @@ fn delete_text_selection_inner(
         selected_text,
     )?;
     let (selection_start, selection_end) =
-        selected_text_source_span(&source_block.body, selected_text).ok_or_else(|| {
+        selected_text_source_span(&source_block.body[block_start..], selected_text)
+        .map(|(start, end)| (block_start + start, block_start + end)).ok_or_else(|| {
             TextSelectionExtractError::UnsupportedSelectionShape {
                 reason: "selected text could not be located in the current source body".to_string(),
             }
@@ -1413,6 +1414,13 @@ fn delete_text_selection_inner(
     if selection_start < block_start || selection_start >= block_end {
         return Err(TextSelectionExtractError::UnsupportedSelectionShape {
             reason: "selected text does not belong to the provided source block range".to_string(),
+        });
+    }
+    if selection_end < block_end
+        && selected_text_source_span(&source_block.body[selection_end..block_end], selected_text).is_some()
+    {
+        return Err(TextSelectionExtractError::UnsupportedSelectionShape {
+            reason: "selection is ambiguous inside the source block".into(),
         });
     }
 
@@ -1542,6 +1550,55 @@ pub fn delete_block(
     delete_block_inner(Some(&state), &vs.conn, &vs.vault, &slug, delete_unused_media)
 }
 
+/// Delete a selection while retaining all media, in one rollback-safe batch.
+#[tauri::command]
+pub async fn delete_blocks(app: AppHandle, slugs: Vec<String>) -> Result<usize, CommandError> {
+    let expected_vault = current_vault_layout(&app.state::<AppState>())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let guard = state.vault_state.lock()
+            .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+        let vs = guard.as_ref().ok_or(CommandError::NoVault)?;
+        if vs.vault.root() != expected_vault.root() {
+            return Err(CommandError::Internal("active space changed before deletion".into()));
+        }
+        delete_blocks_inner(Some(&state), &vs.conn, &vs.vault, slugs)
+    }).await.map_err(|error| CommandError::Internal(error.to_string()))?
+}
+
+pub(crate) fn delete_blocks_inner(
+    state: Option<&AppState>,
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    slugs: Vec<String>,
+) -> Result<usize, CommandError> {
+    let slugs: BTreeSet<String> = slugs.into_iter().collect();
+    for slug in &slugs {
+        validate_slug(slug).map_err(|error| CommandError::Internal(error.to_string()))?;
+    }
+    if slugs.is_empty() { return Ok(0); }
+    let paths: Vec<PathBuf> = slugs.iter().map(|slug| vault.block_path(slug)).collect();
+    if let Some(state) = state {
+        state.suppress_paths(paths.iter().cloned(), Duration::from_millis(IN_APP_RENAME_WATCHER_SUPPRESSION_MS))?;
+    }
+    let staged = StagedSourceMutation::stage(paths.into_iter()
+        .filter(|path| path.exists()).map(SourceFileWrite::delete).collect())
+        .map_err(|error| CommandError::Internal(error.to_string()))?;
+    let removed = staged.commit_with_index(conn, "delete_blocks", |index_conn| {
+        let mut removed = 0;
+        for slug in &slugs { removed += usize::from(index::remove_block(index_conn, slug)?); }
+        Ok(removed)
+    }).map_err(|error| CommandError::Internal(error.to_string()))?;
+    for slug in &slugs {
+        let thumb = vault.thumb_path(slug);
+        if thumb.exists() { let _ = std::fs::remove_file(thumb); }
+        if let Err(error) = article_audio::delete_all_artifacts(vault, slug) {
+            log::warn!("failed to clean deleted card audio for {slug}: {error:#}");
+        }
+    }
+    Ok(removed)
+}
+
 pub(crate) fn delete_block_inner(
     state: Option<&AppState>,
     conn: &rusqlite::Connection,
@@ -1550,6 +1607,11 @@ pub(crate) fn delete_block_inner(
     delete_unused_media: Option<bool>,
 ) -> Result<bool, CommandError> {
     validate_slug(slug).map_err(|e| CommandError::Internal(e.to_string()))?;
+    // Retaining media needs no vault-wide media reference analysis.
+    if delete_unused_media == Some(false) {
+        return delete_blocks_inner(state, conn, vault, vec![slug.to_string()])
+            .map(|removed| removed > 0);
+    }
     let plan = build_delete_block_plan(conn, vault, slug)?;
 
     let media_paths: BTreeSet<PathBuf> = match delete_unused_media {
@@ -2587,7 +2649,14 @@ fn resolve_media_asset_path(
         .root()
         .canonicalize()
         .map_err(internal_media_asset_error)?;
-    let candidate = vault.root().join(media_ref);
+    let candidate = if !media_ref.contains('/') {
+        media_refs::MediaResolver::new(vault)
+            .unique_basename(media_ref)
+            .map_err(|error| MediaAssetActionError::InvalidMediaRef { reason: error.to_string() })?
+            .ok_or_else(|| MediaAssetActionError::MediaNotFound { media_ref: media_ref.into() })?
+    } else {
+        vault.root().join(media_ref)
+    };
     let path = candidate
         .canonicalize()
         .map_err(|_| MediaAssetActionError::MediaNotFound {
@@ -3100,10 +3169,6 @@ fn validated_source_block_range(
     first_block_end: usize,
     selected_text: &str,
 ) -> Result<(usize, usize), TextSelectionExtractError> {
-    if let Some(selection_start) = find_selection_start(body, selected_text) {
-        return Ok(markdown_block_range_containing(body, selection_start));
-    }
-
     if first_block_start < first_block_end
         && first_block_end <= body.len()
         && body.is_char_boundary(first_block_start)
@@ -3115,6 +3180,14 @@ fn validated_source_block_range(
         return Err(TextSelectionExtractError::UnsupportedSelectionShape {
             reason: "selected text does not match the provided source block range".to_string(),
         });
+    }
+
+    if first_block_start == 0 && first_block_end == 0 {
+        if let Some((selection_start, selection_end)) = selected_text_source_span(body, selected_text) {
+            if selected_text_source_span(&body[selection_end..], selected_text).is_none() {
+                return Ok(markdown_block_range_containing(body, selection_start));
+            }
+        }
     }
 
     Err(TextSelectionExtractError::UnsupportedSelectionShape {
@@ -3231,8 +3304,10 @@ fn range_matches_selection_start(
     block_end: usize,
     selected_text: &str,
 ) -> bool {
-    if let Some(selection_start) = find_selection_start(body, selected_text) {
-        return selection_start >= block_start && selection_start < block_end;
+    if let Some(tail) = body.get(block_start..) {
+        if let Some(selection_start) = find_selection_start(tail, selected_text) {
+            return block_start + selection_start < block_end;
+        }
     }
 
     let Some(block) = body.get(block_start..block_end) else {
@@ -3763,6 +3838,38 @@ fn generated_inline_target(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn batch_delete_retains_media_and_deduplicates_slugs() {
+        let (_root, _derived, vault, conn) = make_vault();
+        for slug in ["one", "two", "keep"] {
+            persist_block(&conn, &vault, &article(slug, "![[shared.jpg]]"));
+        }
+        let media = vault.root().join("shared.jpg");
+        std::fs::write(&media, b"source bytes").unwrap();
+        assert_eq!(delete_blocks_inner(None, &conn, &vault,
+            vec!["one".into(), "two".into(), "one".into()]).unwrap(), 2);
+        assert!(!vault.block_path("one").exists());
+        assert!(!vault.block_path("two").exists());
+        assert!(vault.block_path("keep").exists());
+        assert_eq!(std::fs::read(media).unwrap(), b"source bytes");
+        assert_eq!(delete_blocks_inner(None, &conn, &vault, vec!["one".into()]).unwrap(), 0);
+    }
+
+    #[test]
+    fn batch_delete_failure_restores_entire_selection() {
+        let (_root, _derived, vault, conn) = make_vault();
+        for slug in ["one", "two"] {
+            persist_block(&conn, &vault, &article(slug, "Keep me"));
+        }
+        conn.execute_batch("CREATE TRIGGER reject_batch_delete BEFORE DELETE ON blocks
+            WHEN OLD.slug = 'two' BEGIN SELECT RAISE(ABORT, 'injected'); END;").unwrap();
+        assert!(delete_blocks_inner(None, &conn, &vault, vec!["one".into(), "two".into()]).is_err());
+        for slug in ["one", "two"] {
+            assert!(vault.block_path(slug).exists());
+            assert!(index::get_block(&conn, slug).unwrap().is_some());
+        }
+    }
     use crate::domain::article_audio::prepare_article_speech;
     use crate::storage::{article_audio as article_audio_storage, db};
 
@@ -4989,6 +5096,75 @@ mod tests {
     }
 
     #[test]
+    fn selection_actions_target_second_duplicate_and_preserve_frontmatter() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let body = "![[Media/Камень.jpg]]\n\nAuthor: @test\n\nAuthor: @test";
+        let source = article("Source", body);
+        persist_block(&conn, &vault, &source);
+        let path = vault.block_path("Source");
+        let before = std::fs::read_to_string(&path).unwrap();
+        let start = body.rfind("Author:").unwrap();
+        assert_eq!(validated_source_block_range(body, start, body.len(), "Author: @test").unwrap(), (start, body.len()));
+        assert!(validated_source_block_range(body, 0, 0, "Author: @test").is_err());
+        assert!(validated_source_block_range(body, 1, 4, "Author: @test").is_err());
+        let result = delete_text_selection_inner(&conn, &vault, "Source".into(), "Author: @test".into(), start, body.len(), compute_body_hash(body)).unwrap();
+        assert_eq!(result.body.trim_end(), body[..start].trim_end());
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(after, before.replacen(body, &body[..start], 1));
+    }
+
+    #[test]
+    fn selection_delete_rejects_changed_source_without_writing() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let source = article("Source", "Текст **жирный** и [ссылка](https://example.org)");
+        persist_block(&conn, &vault, &source);
+        let path = vault.block_path("Source");
+        let before = std::fs::read(&path).unwrap();
+        let error = delete_text_selection_inner(&conn, &vault, "Source".into(), "жирный".into(), 0, source.body.len(), "old hash".into()).unwrap_err();
+        assert!(matches!(error, TextSelectionExtractError::StaleSelection));
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        let result = delete_text_selection_inner(&conn, &vault, "Source".into(), "ссылка".into(), 0, source.body.len(), compute_body_hash(&source.body)).unwrap();
+        assert_eq!(result.body, "Текст **жирный** и [](https://example.org)");
+    }
+
+    #[test]
+    fn media_actions_resolve_all_six_short_embeds_without_previews() {
+        let (_root, _derived, vault, conn) = make_vault();
+        std::fs::create_dir(vault.root().join("Media")).unwrap();
+        let body = (0..6).map(|i| format!("![[image{i}.jpg]]")).collect::<Vec<_>>().join("\n\n");
+        persist_block(&conn, &vault, &article("Source", &body));
+        for i in 0..6 {
+            let name = format!("image{i}.jpg");
+            std::fs::write(vault.root().join("Media").join(&name), b"image").unwrap();
+            let plan = prepare_delete_media_asset_inner(&vault, name).unwrap();
+            assert_eq!(plan.media_ref, format!("Media/image{i}.jpg"));
+            assert_eq!(plan.referenced_by.len(), 1);
+            assert_eq!(plan.referenced_by[0].slug, "Source");
+            assert_eq!(resolve_media_asset_path(&vault, &plan.media_ref).unwrap(), vault.root().join(&plan.media_ref));
+        }
+        delete_media_asset_inner(&AppState::new(), &conn, &vault, "Media/image5.jpg".into()).unwrap();
+        assert!(!vault.root().join("Media/image5.jpg").exists());
+        for i in 0..5 { assert!(vault.root().join(format!("Media/image{i}.jpg")).exists()); }
+        let remaining = std::fs::read_to_string(vault.block_path("Source")).unwrap();
+        assert!(!remaining.contains("![[image5.jpg]]"));
+        assert!(remaining.contains("![[image4.jpg]]"));
+    }
+
+    #[test]
+    fn media_actions_reject_ambiguous_missing_and_escaping_paths() {
+        let (_root, _derived, vault, _conn) = make_vault();
+        for dir in ["Media", "Other"] {
+            std::fs::create_dir(vault.root().join(dir)).unwrap();
+            std::fs::write(vault.root().join(dir).join("same.jpg"), b"keep").unwrap();
+        }
+        assert!(matches!(resolve_media_asset_path(&vault, "same.jpg"), Err(MediaAssetActionError::InvalidMediaRef { .. })));
+        assert!(matches!(resolve_media_asset_path(&vault, "missing.jpg"), Err(MediaAssetActionError::MediaNotFound { .. })));
+        assert!(resolve_media_asset_path(&vault, "../same.jpg").is_err());
+        assert!(resolve_media_asset_path(&vault, "Media/same.jpg").is_ok());
+        assert_eq!(std::fs::read(vault.root().join("Other/same.jpg")).unwrap(), b"keep");
+    }
+
+    #[test]
     fn delete_text_selection_inner_removes_normalized_multiline_selection() {
         let (_root, _derived, vault, conn) = make_vault();
         let source = article(
@@ -5013,7 +5189,7 @@ mod tests {
     }
 
     #[test]
-    fn extract_text_selection_inner_accepts_japanese_with_utf16_like_range() {
+    fn extract_text_selection_inner_accepts_japanese_with_source_byte_range() {
         let (_root, _derived, vault, conn) = make_vault();
         let source = article(
             "Source Article",
@@ -5022,7 +5198,7 @@ mod tests {
         let body_hash = compute_body_hash(&source.body);
         persist_block(&conn, &vault, &source);
 
-        let utf16_like_first_block_end = "これは日本語の文章です。".chars().count();
+        let source_first_block_end = "これは日本語の文章です。".len();
         let indexed = extract_text_selection_inner(
             &conn,
             &vault,
@@ -5030,7 +5206,7 @@ mod tests {
             "Quotes".to_string(),
             "文章".to_string(),
             0,
-            utf16_like_first_block_end,
+            source_first_block_end,
             body_hash,
         )
         .unwrap();
@@ -5061,7 +5237,7 @@ mod tests {
             "Quotes".to_string(),
             selected_text.to_string(),
             0,
-            selected_text.chars().count(),
+            source.body.find("\n\n").unwrap(),
             body_hash,
         )
         .unwrap();

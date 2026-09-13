@@ -1,5 +1,21 @@
 # Search Overlay — поиск по блокам
 
+Меню Connect размещается через портал внутри границы модального окна поиска.
+Список коллекций прокручивается отдельно, поле поиска остаётся неподвижным.
+Блокировка прокрутки фонового окна сохраняется.
+
+Регрессия: `scripts/selection-menu-audit.mjs` проверяет реальные компоненты
+SearchOverlay/CollectionPicker и меню выделения Detail на вымышленных данных
+(`scripts/fixtures/selection-menu.html`). Проверяются wheel до 24-го канала,
+неподвижность поля поиска и выбор канала после focus/hover со вторым одинаковым
+абзацем. Пользовательские хранилище и профиль браузера не используются.
+
+Запуск из корня проекта: в одном терминале
+`bun run dev -- --host 127.0.0.1 --port 1427 --strictPort`, в другом —
+`node scripts/selection-menu-audit.mjs`. Для установленного Chrome вместо
+браузера Playwright: `MINE_AUDIT_BROWSER_CHANNEL=chrome node scripts/selection-menu-audit.mjs`.
+После проверки остановить тестовый Vite. Команда не запускает установленный Mine.
+
 Related documents: [SPEC_SEARCH.md](SPEC_SEARCH.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_GRID.md](SPEC_GRID.md) | [ARCHITECTURE.md](ARCHITECTURE.md)
 
 ## Goal

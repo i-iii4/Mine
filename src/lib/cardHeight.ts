@@ -204,8 +204,13 @@ export function feedRowNeedsPreviewRefresh(
   previewIsText: boolean,
 ): boolean {
   if (imageCardNeedsGeometryRefresh(block)) return true;
+  const descriptor = deriveCardLayoutDescriptor(block);
+  if ((descriptor.variant === "article-media"
+      || (descriptor.variant.startsWith("social") && descriptor.mediaItems.length > 0))
+    && (descriptor.primaryAspectRatio === null
+      || descriptor.mediaItems.some((item) => item.aspectRatio === null))) return true;
   if (previewIsText) return false;
-  return deriveCardLayoutDescriptor(block).variant === "file";
+  return descriptor.variant === "file";
 }
 
 function computeImageHeight(block: LightBlock, columnWidth: number): number {

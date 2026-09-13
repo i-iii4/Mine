@@ -28,6 +28,12 @@ function previewManifestSignature(raw: string | null): string {
     manifest.width ?? "na",
     manifest.height ?? "na",
     manifest.primaryPreviewPath ? "1" : "0",
+    manifest.previewWidth ?? "na",
+    manifest.previewHeight ?? "na",
+    ...manifest.tiles.map((tile) => [
+      tile.previewWidth ?? "na", tile.previewHeight ?? "na",
+      tile.isVideo, tile.isVideoPoster,
+    ].join(":")),
   ].join(":");
 }
 
