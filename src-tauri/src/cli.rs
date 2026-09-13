@@ -99,7 +99,10 @@ pub(crate) fn resolve_space(env: &CliEnv, requested: Option<&str>) -> Result<Vau
             ))
         })?;
     let derived = env.app_data_dir.join("vaults").join(vault_id);
-    Ok(VaultLayout::with_derived_root(root, derived))
+    let vault = VaultLayout::with_derived_root(root, derived);
+    let layout = crate::storage::files::load_vault_write_layout(&vault)
+        .map_err(|error| CliError::space(format!("invalid write layout: {error:#}")))?;
+    Ok(vault.with_write_layout(layout))
 }
 
 pub(crate) struct CliError {
@@ -942,6 +945,19 @@ pub(crate) mod tests {
         let out = run(&env, &args(&["spaces"]));
         assert_eq!(out.code, EXIT_OK);
         assert!(out.stdout.contains(&format!("* {}", root.display())));
+    }
+
+    #[test]
+    fn cli_layout_uses_saved_paths_and_rejects_invalid_settings() {
+        let (_dir, env, root) = fixture();
+        let marker = root.join(".mine/layout.json");
+        std::fs::write(&marker, r#"{"cards":"Notes/Clips","media":"Assets","collections":"Sets"}"#).unwrap();
+        let vault = resolve_space(&env, None).unwrap_or_else(|error| panic!("{}", error.message));
+        assert_eq!(vault.new_card_slug("New"), "Notes/Clips/New");
+        assert_eq!(vault.new_media_stem("New.png"), "Assets/New.png");
+        assert_eq!(vault.new_collection_slug("New"), "Sets/New");
+        std::fs::write(&marker, "broken json").unwrap();
+        assert!(resolve_space(&env, None).is_err());
     }
 
     #[test]

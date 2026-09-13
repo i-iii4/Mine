@@ -901,7 +901,7 @@ Instagram save buttons are never valid article input.
 | Saving | Кнопку заменяет indeterminate progress bar |
 | Saved | Кнопка `Saved` (disabled), автозакрытие через ~1.2с; при предупреждении результат остаётся видимым |
 | Save error | Строка `text-destructive` над кнопкой, кнопка снова активна |
-| Pending outcome | `Check save outcome`; исходные id/payload/папка закреплены, новая запись не создаётся |
+| Pending outcome | `Could not confirm the save. Please retry.` и `Retry`; исходные id/payload/папка закреплены, новая запись не создаётся |
 | Previous clip | Отдельная карточка исходного payload и `Check previous save`; проверка старого клипа не отмечает текущий draft сохранённым |
 | Permission recovery | `Allow access` / `Restore original folder access`; для pending используется исходный binding, не текущая выбранная папка |
 

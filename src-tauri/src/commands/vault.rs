@@ -1224,8 +1224,8 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
                 &format!("start path={}", path_for_thread),
             );
 
-            let conn = match db::open_or_create(&vault.index_db_path()) {
-                Ok(conn) => conn,
+            match db::open_or_create(&vault.index_db_path()) {
+                Ok(conn) => drop(conn),
                 Err(err) => {
                     log::error!("failed to open db for sync {}: {:#}", path_for_thread, err);
                     append_startup_trace(
@@ -1316,7 +1316,9 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
 
             match final_result {
                 Ok(scan) => {
-                    migrate_channels_to_files(&conn, &vault);
+                    // Reconciliation reads source documents into the index.
+                    // Never recreate documents from cached channel rows here:
+                    // doing so duplicates nested collections and resurrects deletions.
                     // After the DB side is consistent, run a thumb_sweep so
                     // that thumbs are refreshed for blocks whose media was
                     // edited externally (e.g. iCloud sync from another
@@ -1433,7 +1435,7 @@ fn resolve_runtime_vault_layout(app: &AppHandle, root: &Path) -> Result<VaultLay
     match resolve_identity_claim(root, &derived_root) {
         IdentityClaim::Owned | IdentityClaim::Adopted => {
             record_owner_path(&derived_root, root);
-            let write_layout = load_write_layout(&base);
+            let write_layout = load_write_layout(&base)?;
             Ok(
                 VaultLayout::with_derived_root(root.to_path_buf(), derived_root)
                     .with_write_layout(write_layout),
@@ -1458,7 +1460,7 @@ fn resolve_runtime_vault_layout(app: &AppHandle, root: &Path) -> Result<VaultLay
             vault_id = new_id;
             let fresh_derived = derived_store_root(app, &vault_id)?;
             record_owner_path(&fresh_derived, root);
-            let write_layout = load_write_layout(&base);
+            let write_layout = load_write_layout(&base)?;
             Ok(
                 VaultLayout::with_derived_root(root.to_path_buf(), fresh_derived)
                     .with_write_layout(write_layout),
@@ -1519,27 +1521,11 @@ fn record_owner_path(derived_root: &Path, root: &Path) {
     }
 }
 
-/// Read the vault's saved write layout, falling back to what the folder
-/// already looks like. A vault that was never configured keeps behaving
-/// exactly as before: standard folders if it has them, flat otherwise.
-fn load_write_layout(vault: &VaultLayout) -> VaultWriteLayout {
-    let Ok(raw) = std::fs::read_to_string(vault.write_layout_path()) else {
-        return crate::domain::vault::detect_write_layout(vault.root());
-    };
-    let Ok(stored) = serde_json::from_str::<StoredWriteLayout>(&raw) else {
-        log::warn!("ignoring unreadable write layout in {}", vault.root().display());
-        return crate::domain::vault::detect_write_layout(vault.root());
-    };
-    VaultWriteLayout {
-        cards: stored.cards,
-        media: stored.media,
-        collections: stored.collections,
-    }
-    .validate()
-    .unwrap_or_else(|error| {
-        log::warn!("ignoring invalid write layout: {error}");
-        crate::domain::vault::detect_write_layout(vault.root())
-    })
+/// Use the same strict layout reader as capture and CLI; invalid settings
+/// must not silently redirect writes to a different folder.
+fn load_write_layout(vault: &VaultLayout) -> Result<VaultWriteLayout, CommandError> {
+    files::load_vault_write_layout(vault)
+        .map_err(|error| CommandError::Internal(format!("invalid write layout: {error:#}")))
 }
 
 fn save_write_layout(vault: &VaultLayout, layout: &VaultWriteLayout) -> Result<(), CommandError> {
@@ -1775,55 +1761,6 @@ fn remove_empty_dir_if_exists(path: &Path, label: &str) -> Result<(), CommandErr
             "failed to remove empty {label} {}: {error}",
             path.display()
         ))),
-    }
-}
-
-// ─── Channel migration ──────────────────────────────────────────────────────
-
-/// One-time migration: create .md files for channels that only exist in SQLite.
-/// After this, channels are read from .md files (type: channel) during full_scan.
-fn migrate_channels_to_files(conn: &Connection, vault: &VaultLayout) {
-    use crate::domain::block::{Block, BlockType, Frontmatter};
-    use crate::storage::{files, index};
-
-    let channels = match index::list_channels(conn) {
-        Ok(ch) => ch,
-        Err(_) => return,
-    };
-
-    for ch in channels {
-        let md_path = vault.block_path(&ch.tag);
-        if md_path.exists() {
-            continue; // Already migrated
-        }
-
-        let block = Block {
-            slug: ch.tag.clone(),
-            frontmatter: Frontmatter {
-                block_type: BlockType::Channel,
-                title: None,
-                description: ch.description,
-                url: None,
-                file: None,
-                thumbnail: None,
-                tags: Vec::new(),
-                related_notes: Vec::new(),
-                source_media: None,
-                saved_at: ch.created_at,
-                source: None,
-                width: None,
-                height: None,
-                author: None,
-                position: Some(ch.position),
-                color: ch.color,
-                icon: ch.icon,
-            },
-            body: String::new(),
-        };
-
-        if let Err(e) = files::write_new_block_file(vault, &block) {
-            log::warn!("failed to migrate channel '{}' to file: {e:#}", ch.tag);
-        }
     }
 }
 

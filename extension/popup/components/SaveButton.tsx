@@ -16,7 +16,7 @@ export function SaveButton({ count, state, onClick, checkingOutcome = false }: S
     // sliding indicator via mine-progress-indicator keyframe defined
     // in popup-layout.css.
     return (
-      <div className="relative h-10 w-full overflow-hidden rounded-1 bg-component-fill">
+      <div role="status" aria-label="Saving" className="relative h-10 w-full overflow-hidden rounded-1 bg-component-fill">
         <div className="mine-progress-indicator absolute inset-y-0 left-0 w-1/3 bg-component-fill-hover" />
       </div>
     );
@@ -32,7 +32,7 @@ export function SaveButton({ count, state, onClick, checkingOutcome = false }: S
     );
   }
 
-  const label = checkingOutcome ? "Check save outcome" :
+  const label = checkingOutcome ? "Retry" :
     count === 0 ? "Save" : count === 1 ? "Save to 1 collection" : `Save to ${count} collections`;
 
   return (

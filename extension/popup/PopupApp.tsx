@@ -421,8 +421,7 @@ export function PopupApp() {
             </p>
           )}
           {saveWarning && <p className="text-sm text-muted-foreground" role="status">{saveWarning}</p>}
-          {clipper.pendingOperation && !saved && <p className="text-sm text-muted-foreground">The original clip, folder and save ID are kept. Check its result before starting another save.</p>}
-          {clipper.pendingOperation && clipper.saveMode === "standalone" && !saved && (
+          {clipper.pendingOperation && clipper.saveMode === "standalone" && !clipper.saving && !saved && (
             <Button variant="secondary" disabled={clipper.saving} onClick={() => {
               void clipper.regrantFolder().then((result) => { if (!result.ok && result.error) setSaveError(result.error); });
             }}>Restore original folder access</Button>

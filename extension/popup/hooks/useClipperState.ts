@@ -939,7 +939,7 @@ export function useClipperState() {
         setPendingOperation(false);
         return { ok: false as const, error: result.error ?? "This save was rejected before writing any files. You can edit the clip and try again." };
       }
-      return { ok: false as const, error: `Save outcome is not confirmed. Your original clip and destination are kept; retry checks that operation without creating another. ${result.error ?? ""}` };
+      return { ok: false as const, error: "Could not confirm the save. Please retry." };
     }
     const previous = previousOperation ?? await findPendingSave(metadata.url);
     if (previous && !allowDifferentDraft) {
@@ -1159,7 +1159,7 @@ export function useClipperState() {
       setPendingOperation(false);
       return { ok: false as const, error: result.error ?? "This save was rejected before writing any files. You can edit the clip and try again." };
     }
-    return { ok: false as const, error: `${result.error ?? "Save outcome is not confirmed."} The original clip and folder are kept. Retry checks this operation; it does not create another copy.` };
+    return { ok: false as const, error: "Could not confirm the save. Please retry." };
     } catch (cause) {
       return { ok: false as const, error: cause instanceof Error ? cause.message : String(cause) };
     } finally {

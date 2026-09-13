@@ -121,6 +121,41 @@ pub fn resolve_collection_document(vault: &VaultLayout, collection_ref: &str) ->
     candidates.into_iter().next()
 }
 
+/// Enumerate every matching path for destructive collection operations.
+/// Unlike best-effort display lookup, an incomplete directory read is an error.
+/// Callers must check document type before deleting a matching filename.
+pub fn collection_document_candidates(
+    vault: &VaultLayout,
+    collection_ref: &str,
+) -> std::io::Result<Vec<PathBuf>> {
+    fn collect(dir: &Path, name: &str, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let kind = entry.file_type()?;
+            let path = entry.path();
+            if kind.is_dir() && !is_ignored_media_search_dir(&path) {
+                collect(&path, name, out)?;
+            } else if kind.is_file() && entry.file_name() == std::ffi::OsStr::new(name) {
+                out.push(path);
+            }
+        }
+        Ok(())
+    }
+    if has_path_separator(collection_ref) {
+        let path = vault.block_path(collection_ref);
+        return match std::fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.is_file() => Ok(vec![path]),
+            Ok(_) => Ok(Vec::new()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(error) => Err(error),
+        };
+    }
+    let mut paths = Vec::new();
+    collect(vault.root(), &format!("{collection_ref}.md"), &mut paths)?;
+    paths.sort();
+    Ok(paths)
+}
+
 /// Resolve a frontmatter media field as a normal local path.
 pub fn resolve_frontmatter_media(
     vault: &VaultLayout,

@@ -3436,6 +3436,8 @@ fn resolve_unique_text_selection_slug(
     vault: &VaultLayout,
     raw_slug: &str,
 ) -> anyhow::Result<String> {
+    let raw_slug = vault.new_card_slug(raw_slug);
+    let raw_slug = raw_slug.as_str();
     let first = index::resolve_unique_slug(conn, raw_slug)?;
     for candidate in std::iter::once(first).chain((2..=1000).map(|n| format!("{raw_slug} ({n})"))) {
         if index::slug_exists(conn, &candidate)? || vault.block_path(&candidate).exists() {
@@ -3449,12 +3451,36 @@ fn resolve_unique_text_selection_slug(
     )
 }
 
+#[cfg(test)]
+#[test]
+fn derived_card_names_follow_configured_layout() {
+    use crate::domain::vault::VaultWriteLayout;
+    for layout in [VaultWriteLayout::flat(), VaultWriteLayout::standard(), VaultWriteLayout {
+        cards: "Notes/Clips".into(), media: "Assets".into(), collections: "Sets".into(),
+    }] {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf()).with_write_layout(layout);
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        let expected = vault.new_card_slug("Example");
+        assert_eq!(resolve_unique_block_slug(&conn, &vault, "Example", None).unwrap(), expected);
+        assert_eq!(resolve_unique_text_selection_slug(&conn, &vault, "Example").unwrap(), expected);
+        assert_eq!(resolve_unique_extraction_slug(&conn, &vault, "Example", "png").unwrap(), expected);
+        std::fs::create_dir_all(vault.cards_dir()).unwrap();
+        std::fs::write(vault.block_path(&expected), "existing").unwrap();
+        let next = resolve_unique_block_slug(&conn, &vault, "Example", None).unwrap();
+        assert_ne!(next, expected);
+        assert_eq!(vault.block_path(&next).parent().unwrap(), vault.cards_dir());
+    }
+}
+
 pub(crate) fn resolve_unique_block_slug(
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
     raw_slug: &str,
     media_ext: Option<&str>,
 ) -> anyhow::Result<String> {
+    let raw_slug = vault.new_card_slug(raw_slug);
+    let raw_slug = raw_slug.as_str();
     let first = index::resolve_unique_slug(conn, raw_slug)?;
     for candidate in std::iter::once(first).chain((2..=1000).map(|n| format!("{raw_slug} ({n})"))) {
         validate_slug(&candidate)?;
@@ -3484,6 +3510,8 @@ fn resolve_unique_extraction_slug(
     raw_slug: &str,
     ext: &str,
 ) -> anyhow::Result<String> {
+    let raw_slug = vault.new_card_slug(raw_slug);
+    let raw_slug = raw_slug.as_str();
     let first = index::resolve_unique_slug(conn, raw_slug)?;
     for candidate in std::iter::once(first).chain((2..=1000).map(|n| format!("{raw_slug} ({n})"))) {
         if index::slug_exists(conn, &candidate)? {

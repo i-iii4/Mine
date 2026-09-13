@@ -1296,11 +1296,12 @@ fn handle_create_channel(vault: &VaultLayout, params: serde_json::Value) {
         Ok(existing) => existing,
         Err(e) => return send_error(&format!("failed to inspect existing vault files: {e}")),
     };
-    if existing.contains(&channel.tag) {
+    let slug = vault.new_collection_slug(&channel.tag);
+    if existing.contains(&slug) || existing.contains(&channel.tag) {
         return send_error(&format!("channel file already exists: {}", channel.tag));
     }
 
-    let block = channel_to_block(&channel);
+    let block = channel_to_block(vault, &channel);
     if let Err(e) = files::write_new_block_file(vault, &block) {
         return send_error(&format!("failed to write channel file: {e}"));
     }
@@ -1315,9 +1316,9 @@ fn handle_create_channel(vault: &VaultLayout, params: serde_json::Value) {
     });
 }
 
-fn channel_to_block(channel: &Channel) -> Block {
+fn channel_to_block(vault: &VaultLayout, channel: &Channel) -> Block {
     Block {
-        slug: channel.tag.clone(),
+        slug: vault.new_collection_slug(&channel.tag),
         frontmatter: Frontmatter {
             block_type: BlockType::Channel,
             title: None,
@@ -2825,6 +2826,16 @@ mod tests {
 
     fn test_dt() -> DateTime {
         DateTime::new("2026-04-24T12:00:00Z").unwrap()
+    }
+
+    #[test]
+    fn native_collection_document_follows_saved_layout() {
+        let vault = VaultLayout::new(std::path::PathBuf::from("/unused"))
+            .with_write_layout(mine_lib::domain::vault::VaultWriteLayout {
+                cards: "Notes".into(), media: "Assets".into(), collections: "Groups/Sets".into(),
+            });
+        let channel = Channel::new("Reading", test_dt()).unwrap();
+        assert_eq!(channel_to_block(&vault, &channel).slug, "Groups/Sets/Reading");
     }
 
     fn sc0_save_response(vault: &VaultLayout, params: serde_json::Value) -> serde_json::Value {

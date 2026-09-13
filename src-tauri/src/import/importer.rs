@@ -113,7 +113,7 @@ fn import_single_block(
     let url = arena_block.source.as_ref().and_then(|s| s.url.clone());
 
     // Generate unique slug (check DB + session-local set)
-    let raw_slug = suggest_slug(title.as_deref(), url.as_deref());
+    let raw_slug = vault.new_card_slug(&suggest_slug(title.as_deref(), url.as_deref()));
     let slug = {
         if !session_slugs.contains(&raw_slug)
             && !index::slug_exists(conn, &raw_slug)?
@@ -143,15 +143,18 @@ fn import_single_block(
     session_slugs.insert(slug.clone());
 
     // Download media file if applicable
-    let (media_file, media_ext, media_bytes) = download_media(&slug, arena_block)?;
+    let name = slug.rsplit('/').next().unwrap_or(&slug);
+    let (media_file, media_ext, media_bytes) = download_media(name, arena_block)?;
+    let media_file = media_file.map(|name| vault.new_media_stem(&name));
 
     // Download thumbnail for links
     let thumbnail = if block_type == BlockType::Link {
-        download_thumbnail(&slug, arena_block)?
+        download_thumbnail(name, arena_block)?
     } else {
         (None, None)
     };
     let (thumbnail, thumbnail_bytes) = thumbnail;
+    let thumbnail = thumbnail.map(|name| vault.new_media_stem(&name));
 
     // Parse saved_at
     let saved_at_str = normalize_datetime(&arena_block.created_at);
@@ -328,6 +331,23 @@ fn normalize_datetime(dt: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_import_uses_configured_cards_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf()).with_write_layout(
+            crate::domain::vault::VaultWriteLayout {
+                cards: "Notes/Imported".into(), media: "Assets".into(), collections: "Sets".into(),
+            });
+        let conn = crate::storage::db::open_or_create(&vault.index_db_path()).unwrap();
+        let block: ArenaBlock = serde_json::from_value(serde_json::json!({
+            "id": 1, "title": "Example", "content": "Imported text", "class": "Text",
+            "created_at": "2026-04-25T14:00:40Z"
+        })).unwrap();
+        import_single_block(&conn, &vault, &block, "Reading", &mut HashSet::new()).unwrap();
+        assert!(vault.block_path("Notes/Imported/Example").exists());
+        assert!(!vault.block_path("Example").exists());
+    }
 
     #[test]
     fn normalize_datetime_with_millis() {

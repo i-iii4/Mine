@@ -161,10 +161,8 @@ pub(crate) fn create_channel_inner(
     channel.position = index::next_channel_position(conn)?;
 
     let block = channel_to_block(&channel);
-    // A new collection joins the others. Where that is depends on how the vault
-    // is arranged — root in a flat vault, `Collections/` in a sorted one — so it
-    // is read from an existing collection rather than assumed.
-    let path = collections_home(conn, vault).join(format!("{}.md", channel.tag));
+    // Existing documents keep their paths; new ones follow the configured layout.
+    let path = vault.block_path(&vault.new_collection_slug(&channel.tag));
     let staged = StagedSourceMutation::stage(vec![SourceFileWrite::create(
         path,
         serialize_block(&block).into_bytes(),
@@ -235,7 +233,7 @@ pub fn reorder_channels(
         };
         channel.position = item.position;
         let path = crate::storage::media_refs::resolve_collection_document(&vs.vault, &tag)
-            .unwrap_or_else(|| vs.vault.block_path(&tag));
+            .unwrap_or_else(|| vs.vault.block_path(&vs.vault.new_collection_slug(&tag)));
         // A reorder may only write the collection's own document: the file's
         // stem is the collection's name. A tag that resolves to a file with a
         // different stem is a stale index row aimed at another collection's
@@ -381,7 +379,7 @@ pub(crate) fn rename_channel_inner(
     // there, so the new document is written beside the old one rather than in
     // the vault root.
     let old_path = crate::storage::media_refs::resolve_collection_document(vault, &normalized_old)
-        .unwrap_or_else(|| vault.block_path(&normalized_old));
+        .unwrap_or_else(|| vault.block_path(&vault.new_collection_slug(&normalized_old)));
     let new_path = old_path
         .parent()
         .map(|parent| parent.join(format!("{normalized_new}.md")))
@@ -544,17 +542,30 @@ pub(crate) fn delete_channel_inner(
     }
     validate_collection_ref(&tag).map_err(CommandError::Internal)?;
 
-    let md_path = crate::storage::media_refs::resolve_collection_document(vault, &tag)
-        .unwrap_or_else(|| vault.block_path(&tag));
-    let writes = if md_path.exists() {
-        vec![SourceFileWrite::delete(md_path)]
-    } else {
-        Vec::new()
-    };
+    let candidates = crate::storage::media_refs::collection_document_candidates(vault, &tag)
+        .map_err(|error| CommandError::Internal(format!("find collection documents: {error}")))?;
+    let fallback_date = DateTime::new(&crate::commands::state::now_iso8601())
+        .map_err(|error| CommandError::Internal(error.to_string()))?;
+    let mut writes = Vec::new();
+    let mut slugs = Vec::new();
+    for path in candidates {
+        let (slug, content) = files::read_block_file(vault, &path)?;
+        let parsed = parse_markdown_document(&slug, &content, fallback_date.clone())
+            .map_err(|error| CommandError::Internal(error.to_string()))?;
+        // An unrelated article can share a collection's basename.
+        if parsed.block.frontmatter.block_type == BlockType::Channel {
+            writes.push(SourceFileWrite::delete(path));
+            slugs.push(slug);
+        }
+    }
     let staged = StagedSourceMutation::stage(writes).map_err(source_mutation_command_error)?;
     staged
         .commit_with_index(conn, "delete_channel", |index_conn| {
-            index::remove_channel(index_conn, &tag)
+            for slug in &slugs {
+                index::remove_block(index_conn, slug)?;
+            }
+            let removed = index::remove_channel(index_conn, &tag)?;
+            Ok(removed || !slugs.is_empty())
         })
         .map_err(source_mutation_command_error)
 }
@@ -608,6 +619,74 @@ mod tests {
     use super::*;
 
     #[test]
+    fn new_collection_uses_layout_despite_legacy_root_collection() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf()).with_write_layout(
+            crate::domain::vault::VaultWriteLayout {
+                cards: "Notes".into(), media: "Assets".into(), collections: "Groups/Sets".into(),
+            });
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        let legacy = "---\ntype: channel\nsaved_at: 2026-04-25T14:00:40Z\n---\n";
+        std::fs::write(vault.block_path("Legacy"), legacy).unwrap();
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        create_channel_inner(&conn, &vault, "New").unwrap();
+        assert!(vault.block_path("Groups/Sets/New").exists());
+        assert!(!vault.block_path("New").exists());
+        assert_eq!(std::fs::read_to_string(vault.block_path("Legacy")).unwrap(), legacy);
+    }
+
+    #[test]
+    fn collection_delete_removes_duplicates_without_deleting_same_named_articles() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Collections")).unwrap();
+        std::fs::create_dir_all(dir.path().join("Cards")).unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        let channel = "---\ntype: channel\nsaved_at: 2026-04-25T14:00:40Z\n---\n";
+        let article = "---\ntype: article\nsaved_at: 2026-04-25T14:00:40Z\n---\nKeep this note";
+        for name in ["Design", "Collections/Design"] {
+            std::fs::write(vault.block_path(name), channel).unwrap();
+        }
+        std::fs::write(vault.block_path("Cards/Design"), article).unwrap();
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        assert!(delete_channel_inner(&conn, &vault, "Design").unwrap());
+        assert!(!vault.block_path("Design").exists());
+        assert!(!vault.block_path("Collections/Design").exists());
+        assert_eq!(
+            std::fs::read_to_string(vault.block_path("Cards/Design")).unwrap(),
+            article
+        );
+        for _ in 0..2 {
+            crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+            assert!(index::list_channels(&conn).unwrap().is_empty());
+        }
+        assert!(!delete_channel_inner(&conn, &vault, "Design").unwrap());
+    }
+
+    #[test]
+    fn collection_sync_never_materializes_a_root_duplicate() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Collections")).unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        std::fs::write(
+            vault.block_path("Collections/Design"),
+            "---\ntype: channel\nsaved_at: 2026-04-25T14:00:40Z\n---\n",
+        )
+        .unwrap();
+        for _ in 0..2 {
+            crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+            assert!(!vault.block_path("Design").exists());
+            assert_eq!(index::list_channels(&conn).unwrap().len(), 1);
+        }
+        std::fs::remove_file(vault.block_path("Collections/Design")).unwrap();
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        assert!(index::list_channels(&conn).unwrap().is_empty());
+        assert!(!vault.block_path("Design").exists());
+    }
+
+    #[test]
     fn channel_page_rename_never_overwrites_disk_only_target() {
         let dir = tempfile::tempdir().unwrap();
         let old_path = dir.path().join("Old.md");
@@ -648,24 +727,4 @@ mod tests {
         assert_eq!(std::fs::read(&old_path).unwrap(), b"old page");
         assert!(!new_path.exists());
     }
-}
-
-/// The folder collections live in, learned from the ones already there.
-///
-/// Flat vaults answer with the root; a vault sorted into folders answers with
-/// whichever folder holds its collections. Nothing is assumed and nothing is
-/// configured — the existing arrangement is the answer.
-fn collections_home(conn: &rusqlite::Connection, vault: &VaultLayout) -> std::path::PathBuf {
-    let existing = index::list_channels(conn).ok().unwrap_or_default();
-    for channel in existing {
-        if let Some(path) = crate::storage::media_refs::resolve_collection_document(vault, &channel.tag) {
-            if let Some(parent) = path.parent() {
-                return parent.to_path_buf();
-            }
-        }
-    }
-    // No collections yet: fall back to the vault's configured collections
-    // folder, which is `Collections/` for a standard layout and the root for a
-    // flat vault. See SPEC_VAULT_LIFECYCLE.md П1–П4.
-    vault.collections_dir()
 }
