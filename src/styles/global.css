@@ -997,6 +997,14 @@ body {
   --component-fill-hover: oklch(from var(--surface) calc(l + var(--elevation-hover)) 0 0);
 }
 
+/* Every row gets the same free area. Separators live outside it in normal
+   flow; ChromeShell, not individual rows, owns the window-edge boundaries. */
+:root { --chrome-row-content-height: 30px; }
+.chrome-row {
+  position: relative;
+  height: var(--chrome-row-content-height);
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

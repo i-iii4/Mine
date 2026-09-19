@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SettingsApp } from "./SettingsApp";
 
@@ -35,6 +35,31 @@ describe("SettingsApp", () => {
     localStorage.clear();
   });
 
+  afterEach(() => {
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("opens a new window directly on the requested section", () => {
+    window.history.replaceState(null, "", "/settings.html?section=graph");
+    renderSettings();
+    expect(screen.getByRole("heading", { name: "Graph" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Graph" })).toHaveAttribute("aria-current", "true");
+  });
+
+  it("switches an existing window on settings-section and ignores unknown sections", () => {
+    renderSettings();
+    act(() => window.dispatchEvent(new CustomEvent("settings-section", { detail: { payload: "graph" } })));
+    expect(screen.getByRole("heading", { name: "Graph" })).toBeInTheDocument();
+    act(() => window.dispatchEvent(new CustomEvent("settings-section", { detail: { payload: "unknown" } })));
+    expect(screen.getByRole("heading", { name: "Graph" })).toBeInTheDocument();
+  });
+
+  it("falls back to Appearance for an unknown deep link", () => {
+    window.history.replaceState(null, "", "/settings.html?section=unknown");
+    renderSettings();
+    expect(screen.getByRole("heading", { name: "Appearance" })).toBeInTheDocument();
+  });
+
   it("renders the section navigation with Appearance active by default", () => {
     renderSettings();
 
@@ -66,5 +91,9 @@ describe("SettingsApp", () => {
   it("titles the chrome bar Settings", () => {
     renderSettings();
     expect(screen.getByText("Settings")).toBeInTheDocument();
+    const header = screen.getByRole("banner");
+    expect(header).toHaveClass("chrome-row");
+    expect(header).toHaveAttribute("data-chrome-separator", "bottom");
+    expect(header).not.toHaveClass("border-b");
   });
 });

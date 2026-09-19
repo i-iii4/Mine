@@ -24,6 +24,15 @@ Mine решает это: визуальный букмаркинг с лока�
 6. **Thumbnail / preview pipeline.** В feed/grid/sidebar показываются preview-артефакты из локального derived store, не оригиналы
 7. **Wikilinks.** Связи между блоками — через `[[wikilinks]]` в Obsidian-стиле
 
+## Chrome shell
+
+Chrome main/Settings собирается через `ChromeShell` и `ChromeRow`
+(`src/components/ChromeRow.tsx`). Shell владеет внешними границами, Row —
+одинаковой 30px областью содержимого и соседним `Separator`. Линии не
+перекрывают область кнопок; геометрия единая при любом размещении строки.
+Числовой контракт и проверка отступов — `DESIGN_SYSTEM.md`, browser gate —
+`scripts/settings-menu-audit.mjs`.
+
 ## Data model
 
 ### Блок = `.md` source + медиафайл (опционально)

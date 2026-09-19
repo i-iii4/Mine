@@ -1066,7 +1066,13 @@ describe("AppWithVault", () => {
     const contentSegment = document.querySelector(
       "[data-main-secondary-top-bar-content-segment]",
     ) as HTMLElement | null;
-    expect(secondaryBar).toHaveClass("h-8", "border-b", "border-border", "bg-chrome");
+    expect(secondaryBar).toHaveClass("chrome-row", "bg-chrome");
+    expect(secondaryBar).toHaveAttribute("data-chrome-separator", "bottom");
+    expect(secondaryBar).not.toHaveClass("border-b");
+    expect(document.querySelector("header")).toHaveClass("chrome-row");
+    expect(document.querySelector("header")).toHaveAttribute("data-chrome-separator", "bottom");
+    expect(document.querySelector("[data-bottom-action-bar]")).toHaveClass("chrome-row");
+    expect(document.querySelector("[data-bottom-action-bar]")).toHaveAttribute("data-chrome-separator", "top");
     expect(sidebarSegment).toHaveStyle({ width: "var(--sidebar-width)" });
     expect(sidebarSegment).toHaveClass("border-r", "border-sidebar-border");
     expect(contentSegment).toHaveClass("flex-1");
@@ -1474,7 +1480,8 @@ describe("AppWithVault", () => {
     });
 
     expect(document.querySelector("[data-bottom-action-bar]")).toBeInTheDocument();
-    expect(document.querySelector("[data-top-chrome-settings-fallback]")).not.toBeInTheDocument();
+    const settingsMenu = screen.getByRole("button", { name: "Mine settings" });
+    expect(settingsMenu.closest("header")).toBeInTheDocument();
 
     // The settings window writes localStorage and emits settings-changed;
     // the main window re-reads the key (test setup bridges Tauri events
@@ -1492,17 +1499,13 @@ describe("AppWithVault", () => {
       expect(document.querySelector("[data-bottom-action-bar]")).not.toBeInTheDocument();
     });
 
-    const topSettingsFallback = document.querySelector(
-      "[data-top-chrome-settings-fallback]",
-    ) as HTMLElement | null;
-    expect(topSettingsFallback).toBeInTheDocument();
-    expect(within(topSettingsFallback!).queryByRole("button", { name: "Graph" })).not.toBeInTheDocument();
-    expect(within(topSettingsFallback!).queryByRole("button", { name: "Grid" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mine settings" })).toBe(settingsMenu);
+    const menuSlot = settingsMenu.closest("[data-top-chrome-settings-menu]");
+    expect(menuSlot?.nextElementSibling).toBeNull();
     expect(document.querySelector("[data-main-view-mode-switcher]")).toBeInTheDocument();
-    fireEvent.click(
-      within(topSettingsFallback!).getByRole("button", { name: /Settings/ }),
-    );
-    expect(commandMocks.openSettingsWindow).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(settingsMenu, { key: "ArrowDown" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Folders" }));
+    expect(commandMocks.openSettingsWindow).toHaveBeenCalledExactlyOnceWith("layout");
   });
 
   it("uses the secondary top bar for non-compact Detail chrome instead of body overlays", async () => {
@@ -1516,10 +1519,14 @@ describe("AppWithVault", () => {
       expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
     });
 
+    const settingsMenu = screen.getByRole("button", { name: "Mine settings" });
+
     fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
     await waitFor(() => {
       expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
     });
+    expect(screen.getByRole("button", { name: "Mine settings" })).toBe(settingsMenu);
+    expect(settingsMenu.closest("[data-top-chrome-settings-menu]")?.nextElementSibling).toBeNull();
 
     const secondarySidebarBar = document.querySelector(
       "[data-secondary-sidebar-link-mode-bar]",

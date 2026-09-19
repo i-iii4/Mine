@@ -939,14 +939,37 @@ Bottom app bar справа содержит `ActionButton` `Search elements` с
 Settings содержит persisted переключатель `Hide bottom menu`
 (`localStorage` key `mine.bottomActionBarHidden`). Он скрывает весь bottom app
 bar без placeholder-строки и без изменения высоты top chrome/body. Чтобы не
-создавать тупик в UI, Settings в этом состоянии переезжает в permanent top
-chrome и открывает меню вниз; shortcut `Cmd+,` продолжает открывать тот же
-контрол.
+создавать тупик в UI, постоянная кнопка логотипа Mine справа в top chrome
+открывает меню разделов настроек независимо от видимости bottom bar.
+Shortcut `Cmd+,` продолжает открывать то же окно настроек.
+
+Кнопка логотипа: правый inset **видимого знака** `--chrome-edge-pad` (16px),
+из которых 8px — внешний отступ и 8px — padding кнопки. Штатный `MenuTextTrigger`
+с внутренней плашкой `h-6 px-2 rounded-1`; SVG-контур Mine вписан в 16×16px
+без искажения пропорций и залит `currentColor` (`text-foreground`). Белой
+подложки и встроенных боковых полей нет. Hover/open/keyboard focus используют
+`bg-active`, как остальные меню chrome. Dropdown выровнен вправо и использует
+штатную ширину `command`; список разделов общий с окном Settings. Кнопка
+остаётся последней справа при открытой карточке и скрытом bottom bar.
 
 Sidebar search (`Shift+Cmd+F`) живёт в левом сегменте top chrome. Порядок:
 traffic-light spacer, separator `w-px bg-border`, space selector, separator
 `w-px bg-border`, search input, затем штатный `border-r border-sidebar-border`
 между Sidebar и Main.
+
+Все chrome-строки используют один `ChromeRow`: permanent header (включая
+загрузку пространства и Settings), secondary row сверху/снизу и bottom action
+bar. Свободная область содержимого **30px** (`--chrome-row-content-height`),
+hover-плашка **24px**, отступы **3px сверху и снизу**. Это выбранная геометрия
+дизайн-системы, не компенсация размеров AppKit. Для элементов другой высоты
+центрирование остаётся тем же. `Separator` 1px — отдельный соседний элемент
+в потоке, снизу у верхних панелей и сверху у нижних; внутри 30px линий нет.
+Одна граница рисуется один раз. `ChromeShell` владеет внешними верхней/нижней
+границами 1px: системное оформление окна не отнимает место у содержимого
+строк. Эти границы остаются и без native frame, в том числе в fullscreen.
+Оформление нативного окна не меняется; индивидуальные translate/padding
+поправки для строк и кнопок запрещены. При двух верхних строках нижняя линия
+второго уровня поднимается на 1px; положение плашки первого уровня сохраняется.
 
 Permanent top chrome использует `bg-chrome`, промежуточный surface между
 `bg-background` и `bg-accent`. Это оставляет активному search surface следующий

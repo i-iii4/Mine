@@ -1,5 +1,7 @@
 import { useEffect, lazy, Suspense, useState } from "react";
 import { cn } from "@/lib/utils";
+import { ChromeRow, ChromeShell } from "@/components/ChromeRow";
+import { SETTINGS_SECTIONS, isSettingsSection, type SettingsSection } from "@/lib/settingsSections";
 import { useNativeWindowChromeSurface } from "@/lib/nativeWindowChromeSurface";
 import { AppearanceSection } from "./AppearanceSection";
 import { GraphSection } from "./GraphSection";
@@ -17,34 +19,9 @@ const ComponentTestBench = lazy(async () => {
   return { default: mod.ComponentTestBench };
 });
 
-type SettingsSection =
-  | "appearance"
-  | "shortcuts"
-  | "graph"
-  | "spaces"
-  | "layout"
-  | "clipper"
-  | "orphans"
-  | "design-system";
-
-const SECTIONS: { id: SettingsSection; label: string }[] = [
-  { id: "appearance", label: "Appearance" },
-  { id: "shortcuts", label: "Shortcuts" },
-  { id: "graph", label: "Graph" },
-  { id: "spaces", label: "Spaces" },
-  { id: "layout", label: "Folders" },
-  { id: "clipper", label: "Extension" },
-  { id: "orphans", label: "Orphans" },
-  // The design-system showcase: a working surface, not a user setting, which
-  // is why it sits last and used to hang off the main window's button bar.
-  { id: "design-system", label: "Design system" },
-];
-
 function initialSection(): SettingsSection {
   const asked = new URLSearchParams(window.location.search).get("section");
-  return SECTIONS.some((entry) => entry.id === asked)
-    ? (asked as SettingsSection)
-    : "appearance";
+  return isSettingsSection(asked) ? asked : "appearance";
 }
 
 export function SettingsApp() {
@@ -54,8 +31,8 @@ export function SettingsApp() {
   // decided when it was created.
   useEffect(() => {
     const unlisten = listen<string>("settings-section", (event) => {
-      if (SECTIONS.some((entry) => entry.id === event.payload)) {
-        setSection(event.payload as SettingsSection);
+      if (isSettingsSection(event.payload)) {
+        setSection(event.payload);
       }
     });
     return () => { void unlisten.then((stop) => stop()); };
@@ -66,23 +43,23 @@ export function SettingsApp() {
   useNativeWindowChromeSurface("--chrome");
 
   return (
-    <div className="flex h-screen w-screen flex-col bg-background text-foreground">
-      <header
+    <ChromeShell>
+      <ChromeRow as="header" separator="bottom"
         data-tauri-drag-region
-        className="flex h-8 shrink-0 items-center border-b border-border bg-chrome"
+        className="bg-chrome"
       >
         <div data-tauri-drag-region data-traffic-light-reserve="" className="w-20 shrink-0" />
         <div data-tauri-drag-region className="flex flex-1 items-center px-3">
           <span className="font-mono text-sm text-muted-foreground">Settings</span>
         </div>
-      </header>
+      </ChromeRow>
 
       <div className="flex min-h-0 flex-1">
         <nav
           aria-label="Settings sections"
           className="flex w-[176px] shrink-0 flex-col gap-1 border-r border-border p-2"
         >
-          {SECTIONS.map(({ id, label }) => (
+          {SETTINGS_SECTIONS.map(({ id, label }) => (
             <button
               key={id}
               type="button"
@@ -122,6 +99,6 @@ export function SettingsApp() {
           {section === "orphans" && <OrphansSection />}
         </main>
       </div>
-    </div>
+    </ChromeShell>
   );
 }

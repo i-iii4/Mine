@@ -19,6 +19,9 @@ import {
   useLocation,
 } from "react-router";
 import { X } from "lucide-react";
+import { AppSettingsMenu } from "@/components/AppSettingsMenu";
+import { ChromeRow, ChromeShell } from "@/components/ChromeRow";
+import type { SettingsSection } from "@/lib/settingsSections";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -1857,8 +1860,8 @@ export function AppWithVault({
     };
   }, [toggleCollapsed]);
 
-  const handleOpenSettings = useCallback(() => {
-    void openSettingsWindow().catch((error) => {
+  const handleOpenSettings = useCallback((section?: SettingsSection) => {
+    void openSettingsWindow(section).catch((error) => {
       console.error("Failed to open settings window:", error);
     });
   }, []);
@@ -3114,13 +3117,10 @@ export function AppWithVault({
 
   if (!vaultReady && !loadError) {
     return (
-      <div className="flex h-screen w-screen flex-col bg-background text-foreground">
-        <header
+      <ChromeShell>
+        <ChromeRow as="header" separator="bottom"
           data-tauri-drag-region
-          className={cn(
-            "flex h-8 shrink-0 items-center border-b border-border",
-            topChromeSurfaceClass,
-          )}
+          className={topChromeSurfaceClass}
         >
           <div
             data-tauri-drag-region
@@ -3128,11 +3128,12 @@ export function AppWithVault({
             className={cn("w-20 shrink-0", topChromeSurfaceClass)}
           />
           <div data-tauri-drag-region className="flex flex-1 items-center px-3" />
-        </header>
+          <AppSettingsMenu onSelectSection={handleOpenSettings} />
+        </ChromeRow>
         <div className="flex min-h-0 flex-1 items-center justify-center">
           <p className="text-sm text-muted-foreground">Opening vault…</p>
         </div>
-      </div>
+      </ChromeShell>
     );
   }
 
@@ -3180,17 +3181,13 @@ export function AppWithVault({
       onDragEnd={handleDndEnd}
       onDragCancel={handleDndCancel}
     >
-    <div
-      className="flex h-screen w-screen flex-col bg-background text-foreground"
+    <ChromeShell
       style={{ minWidth: APP_MIN_WIDTH_PX }}
     >
       {/* Top toolbar */}
-      <header
+      <ChromeRow as="header" separator="bottom"
         data-tauri-drag-region
-        className={cn(
-          "flex h-8 shrink-0 items-center border-b border-border",
-          topChromeSurfaceClass,
-        )}
+        className={topChromeSurfaceClass}
       >
         <div
           data-tauri-drag-region
@@ -3322,20 +3319,9 @@ export function AppWithVault({
           ) : (
             <div data-tauri-drag-region className="h-full min-w-0 flex-1" />
           )}
-          {bottomActionBarHidden && (
-            <div
-              // Right-edge inset follows the fixed chrome pad, not the feed
-              // rhythm: the shell keeps 16px even at the 2px feed step.
-              className="ml-2 mr-[var(--chrome-edge-pad)] flex shrink-0 items-center gap-2"
-              data-top-chrome-settings-fallback=""
-            >
-              <ActionButton hotkey="⌘," onClick={handleOpenSettings}>
-                Settings
-              </ActionButton>
-            </div>
-          )}
+          <AppSettingsMenu onSelectSection={handleOpenSettings} />
         </div>
-      </header>
+      </ChromeRow>
 
       {!metadataRowAtBottom && metadataRow}
 
@@ -3614,14 +3600,14 @@ export function AppWithVault({
       {metadataRowAtBottom && metadataRow}
 
       {!bottomActionBarHidden && !metadataRowAtBottom && (
-        <div
+        <ChromeRow separator="top"
           // Stands under the sidebar column, so it follows the chrome edge pad:
           // the app-wide rhythm in the primary design, 16px in alt, where the
           // sidebar rows are already on 16 and these buttons must line up under
           // them. Symmetric on both sides — a bar whose two ends obey different
           // rules reads as a layout mistake.
           ref={bottomBarRef}
-          className="flex h-8 shrink-0 items-center gap-2 border-t border-border bg-accent px-[var(--chrome-edge-pad)]"
+          className="gap-2 bg-accent px-[var(--chrome-edge-pad)]"
           data-bottom-action-bar=""
         >
           {/* Same command as the View menu item and the two-finger swipe. It
@@ -3758,11 +3744,11 @@ export function AppWithVault({
             className="inline-flex shrink-0 items-center"
             style={hiddenBarEntries.has("settings") ? { display: "none" } : undefined}
           >
-            <ActionButton hotkey={commandById("settings").combo} onClick={handleOpenSettings}>
+            <ActionButton hotkey={commandById("settings").combo} onClick={() => handleOpenSettings()}>
               {commandById("settings").name}
             </ActionButton>
           </span>
-        </div>
+        </ChromeRow>
       )}
 
       <CreateCollectionDialog
@@ -3783,7 +3769,7 @@ export function AppWithVault({
         preview={imagePreview}
         onClose={() => setImagePreview(null)}
       />
-    </div>{/* end flex-col */}
+    </ChromeShell>
 
     <DragOverlay
       dropAnimation={overlayDressing === "row" ? TAG_ROW_DROP_ANIMATION : null}

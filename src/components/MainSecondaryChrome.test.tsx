@@ -66,8 +66,10 @@ describe("MainSecondaryTopBar placement", () => {
     renderBar("top", null);
 
     const bar = document.querySelector("[data-main-secondary-top-bar]");
-    expect(bar).toHaveClass("border-b", "bg-chrome");
+    expect(bar).toHaveClass("chrome-row", "bg-chrome");
+    expect(bar).toHaveAttribute("data-chrome-separator", "bottom");
     expect(bar).not.toHaveClass("border-t");
+    expect(bar).not.toHaveClass("border-b");
     expect(bar).toHaveAttribute("data-main-secondary-placement", "top");
   });
 
@@ -77,7 +79,9 @@ describe("MainSecondaryTopBar placement", () => {
     const bar = document.querySelector("[data-main-secondary-top-bar]");
     // The seam always faces the content: below the row when it sits on top,
     // above it when it sits at the foot.
-    expect(bar).toHaveClass("border-t", "bg-accent");
+    expect(bar).toHaveClass("chrome-row", "bg-accent");
+    expect(bar).toHaveAttribute("data-chrome-separator", "top");
+    expect(bar).not.toHaveClass("border-t");
     expect(bar).not.toHaveClass("border-b");
   });
 

@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 import { useChromeDragGesture } from "@/hooks/useChromeDragGesture";
 import type { IndexedBlock, LightBlock, TagCount, VaultStats } from "@/types";
 import { ActivityIndicators } from "./ActivityIndicators";
+import { ChromeRow } from "./ChromeRow";
 import { CardMoreMenu } from "./CardHoverMenu";
 import { ChromeCloseButton } from "./ChromeCloseButton";
 import {
@@ -258,7 +259,7 @@ export function MainSecondaryTopBar({
   onDetailClose: () => void;
   detailMenuOpenRequestSequence: number;
   /// Where the row sits in the shell. At the foot of the window it takes the
-  /// button bar's surface and closes with a border on top instead of below —
+  /// button bar's surface and closes with a separator on top instead of below —
   /// the seam always faces the content.
   placement?: "top" | "bottom";
   /// A group selection exists: its commands take the whole row over.
@@ -286,18 +287,19 @@ export function MainSecondaryTopBar({
   });
 
   return (
-    <div
+    <ChromeRow
       data-tauri-drag-region
       data-main-secondary-top-bar=""
       className={cn(
-        "relative flex h-8 shrink-0 items-center transition-colors duration-[170ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
-        placement === "bottom" ? "border-t border-border bg-accent" : "border-b border-border",
+        "transition-colors duration-[170ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
+        placement === "bottom" && "bg-accent",
         // A selection does not change the row's surface: the components on the
         // layer compute their fills from whatever the surface is (relative
         // elevation), so the ground stays put and only the content swaps.
         placement === "top" && (detailLayerEntered ? "bg-accent" : "bg-chrome"),
       )}
       data-main-secondary-placement={placement}
+      separator={placement === "bottom" ? "top" : "bottom"}
     >
       <div
         data-tauri-drag-region
@@ -418,7 +420,7 @@ export function MainSecondaryTopBar({
           </div>
         )}
       </div>
-    </div>
+    </ChromeRow>
   );
 }
 
