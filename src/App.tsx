@@ -43,7 +43,7 @@ import { applyPendingTagOrder } from "@/lib/collectionOrder";
 import { collectionRefLabel } from "@/lib/collections";
 import { reconcileBlocks } from "@/lib/blockIdentity";
 import { refreshPageLimit } from "@/lib/gridPaging";
-import { feedRowNeedsPreviewRefresh } from "@/lib/cardHeight";
+import { createPreviewRowQueue } from "@/lib/previewRowQueue";
 import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
 import { cn } from "@/lib/utils";
 import { commandById } from "@/lib/commandRegistry";
@@ -202,6 +202,7 @@ import {
   startStartupMaintenance,
   getVaultStats,
   listGridBlocks,
+  getGridRows,
   listTaxonomySnapshot,
   createChannel,
   deleteChannel,
@@ -371,6 +372,7 @@ interface BlockRenamedEvent {
 }
 
 interface ThumbUpdatedEvent {
+  path?: string;
   slug: string;
   is_text: boolean;
 }
@@ -784,17 +786,22 @@ export function AppWithVault({
     });
   }, []);
 
+  const previewRowRevisionsRef = useRef(new Map<string, number>());
   const applyGridSnapshot = useCallback((tag: string | undefined, grid: GridSnapshot): boolean => {
     if (!projectionRevisionOwner.accept("grid", grid.generation)) {
       return false;
     }
     gridGenerationRef.current = grid.generation;
     const routeKey = routeKeyFor(tag);
-    routeSnapshotCacheRef.current.set(routeKey, grid);
+    const currentBySlug = new Map(blocksRef.current.map((block) => [block.slug, block]));
+    const incoming = grid.blocks.map((block) =>
+      (previewRowRevisionsRef.current.get(block.slug) ?? -1) > grid.generation
+        ? currentBySlug.get(block.slug) ?? block : block);
+    routeSnapshotCacheRef.current.set(routeKey, { ...grid, blocks: incoming });
     // Preserve object identity for blocks whose content did not change so a
     // no-op refresh does not invalidate the grid's downstream memos or remount
     // any cards.
-    setBlocks((prev) => reconcileBlocks(prev, grid.blocks, heldSlugsRef.current));
+    setBlocks((prev) => reconcileBlocks(prev, incoming, heldSlugsRef.current));
     setGridSnapshotIdentity({ routeKey, generation: grid.generation });
     setTotalBlocks(grid.total_blocks);
     setHasMoreBlocks(grid.has_more);
@@ -807,6 +814,34 @@ export function AppWithVault({
     warmRoutePageBufferRef.current.clear();
     lastRevalidatedRouteKeyRef.current = null;
   }, []);
+
+  const previewRowsRef = useRef<ReturnType<typeof createPreviewRowQueue> | null>(null);
+  useEffect(() => {
+    previewRowRevisionsRef.current.clear();
+    if (!vaultReady) return;
+    const path = vaultPath;
+    const tag = currentTag;
+    const queue = createPreviewRowQueue({
+      fetch: (slugs) => getGridRows(path, slugs),
+      apply: (snapshot) => {
+        if (snapshot.path !== vaultPathRef.current || currentTagRef.current !== tag) return;
+        if (snapshot.generation < (gridGenerationRef.current ?? -1)) return;
+        invalidateRouteSnapshots();
+        const replacements = new Map(snapshot.blocks.filter((block) => {
+          if (snapshot.generation < (previewRowRevisionsRef.current.get(block.slug) ?? -1)) return false;
+          previewRowRevisionsRef.current.set(block.slug, snapshot.generation);
+          return true;
+        }).map((block) => [block.slug, block]));
+        // Keep route membership/order and identities of unchanged cards. A late
+        // response never resurrects a deleted card or truncates loaded pages.
+        setBlocks((current) => reconcileBlocks(current,
+          current.map((block) => replacements.get(block.slug) ?? block)));
+      },
+      onError: (error) => console.error("Failed to refresh preview rows:", error),
+    });
+    previewRowsRef.current = queue;
+    return () => { queue.dispose(); previewRowsRef.current = null; };
+  }, [vaultPath, currentTag, vaultReady, invalidateRouteSnapshots, projectionRevisionOwner]);
 
   // Bump the feed cache-buster for a slug that is currently in the loaded feed.
   // Slugs outside the feed are ignored — their card is not mounted, so there is
@@ -1657,41 +1692,26 @@ export function AppWithVault({
     }));
 
     unlistenFns.push(listen<ThumbUpdatedEvent>("thumb:updated", (event) => {
-      const loadedBlock = blocksRef.current.find(
-        (block) => block.slug === event.payload.slug,
-      );
-      const needsRowRefresh = loadedBlock
-        ? feedRowNeedsPreviewRefresh(loadedBlock, event.payload.is_text)
-        : false;
+      if (event.payload.path && event.payload.path !== vaultPathRef.current) return;
+      invalidateRouteSnapshots();
+      if (blocksRef.current.some((block) => block.slug === event.payload.slug)) {
+        previewRowsRef.current?.add(event.payload.slug);
+      }
       // Sidebar preview cache-buster (its own version ref, applied on the next
       // previews refresh below).
       bumpThumbVersion(event.payload.slug);
-      // Feed cache-buster for the mounted card. save_tile_poster / save_thumb
-      // write the regenerated file (and sometimes rewrite preview_manifest), but
-      // the block row is byte-identical, so a grid refetch reconciles to a no-op
-      // for pixels while streaming the whole scrolled range through IPC — a storm
-      // during the Phase-2 thumb backlog. Bumping the per-slug version instead
-      // re-renders and refetches only the affected card. Rows that predate their
-      // own preview are the exception, and the cache-buster cannot heal them:
-      // their geometry (an image without indexed dimensions) or their whole
-      // media identity (a card still on the file fallback: name plus file name)
-      // lives in the row. Refresh the loaded route once for those; every other
-      // card keeps the cheap pixel-only path, preserving the cold-start sweep
-      // contract. See feedRowNeedsPreviewRefresh.
+      // Also refresh pixels when the file was replaced at the same path.
       bumpFeedThumbVersion(event.payload.slug);
-      scheduleRefresh(
-        needsRowRefresh
-          ? { grid: true, previews: true }
-          : { previews: true },
-        needsRowRefresh ? 0 : 2000,
-        { force: needsRowRefresh },
-      );
+      scheduleRefresh({ previews: true });
     }));
 
-    unlistenFns.push(listen<VaultChangedEvent>("vault-changed", (event) => {
+    unlistenFns.push(listen<VaultChangedEvent & { preview_only?: boolean }>("vault-changed", (event) => {
       if (event.payload.path !== vaultPathRef.current) {
         return;
       }
+      // Preview producers already invalidated individual rows above. Other
+      // surfaces still receive the legacy vault notification.
+      if (event.payload.preview_only) return;
       invalidateRouteSnapshots();
       scheduleRefresh({
         grid: true,

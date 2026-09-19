@@ -40,7 +40,7 @@ use crate::storage::index::{
     FeedPreviewKind, FeedPreviewManifest, FeedPreviewTile, IndexedBlock, LightBlock, SearchMatch,
     SearchMatchField, SearchMatchKind, SearchTextRange, TagCount, ThumbFormat,
 };
-use crate::storage::projection::{GridSnapshot, ProjectionRevision};
+use crate::storage::projection::{GridSnapshot, GridRowsSnapshot, ProjectionRevision};
 use crate::storage::search_projection::{SearchPageToken, SearchRevision, SearchSnapshot};
 use crate::storage::vault_stats::VaultStats;
 use crate::watcher::handler::ScanResult;
@@ -74,6 +74,7 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<TagCount>()
         .register::<ThumbFormat>()
         .register::<GridSnapshot>()
+        .register::<GridRowsSnapshot>()
         .register::<ProjectionRevision>()
         .register::<SearchPageToken>()
         .register::<SearchRevision>()

@@ -55,6 +55,22 @@ pub fn list_grid_blocks(
     offset: usize,
     limit: usize,
 ) -> Result<(Vec<LightBlock>, bool)> {
+    list_grid_blocks_filtered(conn, tag, offset, limit, None)
+}
+
+/// Fetch only requested rows using exactly the feed's preview visibility rules.
+pub fn grid_rows_by_slug(conn: &Connection, slugs: &[String]) -> Result<Vec<LightBlock>> {
+    if slugs.is_empty() { return Ok(Vec::new()); }
+    Ok(list_grid_blocks_filtered(conn, None, 0, slugs.len(), Some(slugs))?.0)
+}
+
+fn list_grid_blocks_filtered(
+    conn: &Connection,
+    tag: Option<&str>,
+    offset: usize,
+    limit: usize,
+    slugs: Option<&[String]>,
+) -> Result<(Vec<LightBlock>, bool)> {
     let fetch_limit = limit.saturating_add(1);
     let sql = match tag {
         Some(_) => {
@@ -73,10 +89,11 @@ pub fn list_grid_blocks(
              INNER JOIN block_tags bt ON bt.block_id = b.id
              WHERE b.card_kind != 'channel' AND bt.tag = ?2
              ORDER BY b.saved_at DESC, b.slug COLLATE NOCASE ASC, b.slug ASC
-             LIMIT ?3 OFFSET ?4"
+             LIMIT ?3 OFFSET ?4".to_string()
         }
         None => {
-            "SELECT id, slug, block_type, card_kind, title, content_heading, display_title, COALESCE(fallback_label, slug), url, media_file,
+            let filter = if slugs.is_some() { "AND slug IN (SELECT value FROM json_each(?4))" } else { "" };
+            format!("SELECT id, slug, block_type, card_kind, title, content_heading, display_title, COALESCE(fallback_label, slug), url, media_file,
                     thumbnail, saved_at, width, height, author,
                     CASE WHEN card_kind = 'article' THEN SUBSTR(body, 1, ?1) ELSE '' END,
                     preview_text, first_image, media_urls, media_dimensions,
@@ -89,12 +106,13 @@ pub fn list_grid_blocks(
                     CASE WHEN preview_state != 'ready' THEN preview_error_kind END
              FROM blocks
              WHERE card_kind != 'channel'
+               {filter}
              ORDER BY saved_at DESC, slug COLLATE NOCASE ASC, slug ASC
-             LIMIT ?2 OFFSET ?3"
+             LIMIT ?2 OFFSET ?3")
         }
     };
 
-    let mut stmt = conn.prepare(sql)?;
+    let mut stmt = conn.prepare(&sql)?;
 
     let mut blocks = match tag {
         Some(tag) => stmt
@@ -103,11 +121,15 @@ pub fn list_grid_blocks(
                 light_block_from_row,
             )?
             .collect::<Result<Vec<_>, _>>()?,
-        None => stmt
+        None if slugs.is_some() => stmt
             .query_map(
-                params![LIGHT_BLOCK_BODY_PREVIEW_CHARS, fetch_limit, offset],
+                params![LIGHT_BLOCK_BODY_PREVIEW_CHARS, fetch_limit, offset,
+                    slugs.map(serde_json::to_string).transpose()?],
                 light_block_from_row,
             )?
+            .collect::<Result<Vec<_>, _>>()?,
+        None => stmt
+            .query_map(params![LIGHT_BLOCK_BODY_PREVIEW_CHARS, fetch_limit, offset], light_block_from_row)?
             .collect::<Result<Vec<_>, _>>()?,
     };
 

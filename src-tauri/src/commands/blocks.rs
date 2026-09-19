@@ -446,6 +446,27 @@ pub async fn list_grid_blocks(
 }
 
 /// Get a single block by slug.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn get_grid_rows(
+    state: State<'_, AppState>,
+    path: String,
+    slugs: Vec<String>,
+) -> Result<projection::GridRowsSnapshot, CommandError> {
+    const MAX_BATCH: usize = 200;
+    if slugs.len() > MAX_BATCH {
+        return Err(CommandError::Internal("preview row batch exceeds 200".into()));
+    }
+    let vault = current_vault_layout(&state)?;
+    if vault.root().to_string_lossy() != path {
+        return Err(CommandError::NoVault);
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = db::open_read_only(&vault.index_db_path())?;
+        Ok(projection::read_grid_rows(&conn, path, &slugs)?)
+    }).await.map_err(|error| CommandError::Internal(format!("get_grid_rows task join failed: {error}")))?
+}
+
+/// Get a single block by slug.
 #[tauri::command]
 pub async fn get_block(
     app: AppHandle,

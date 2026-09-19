@@ -4,10 +4,7 @@ import {
   computeCardHeight,
   computeFeedPlaybackSurfaceEnvelope,
   DEFAULT_CARD_HEIGHT,
-  feedRowNeedsPreviewRefresh,
-  imageCardNeedsGeometryRefresh,
 } from "./cardHeight";
-import { deriveCardLayoutDescriptor } from "./cardLayout";
 import type { LightBlock } from "@/types";
 import type { WordWidths } from "@/types/fontMetrics";
 
@@ -453,63 +450,5 @@ describe("computeCardHeight — determinism", () => {
     const h3 = computeCardHeight(block, 280, null);
     expect(h1).toBe(h2);
     expect(h2).toBe(h3);
-  });
-});
-
-describe("feedRowNeedsPreviewRefresh", () => {
-  it("refreshes article media geometry after its preview is regenerated", () => {
-    const row = makeBlock({ block_type: "article", card_kind: "article",
-      body: "An article with an image", first_image: "photo.jpg",
-      preview_manifest: JSON.stringify({ kind: "image", primary_preview_path: "preview.jpg",
-        preview_width: null, preview_height: null, overflow_count: 0,
-        tiles: [{ source_path: "photo.jpg", preview_path: "tile.jpg", is_video: false }] }) });
-    expect(feedRowNeedsPreviewRefresh(row, false)).toBe(true);
-  });
-  // A screenshot saved into the vault reached the feed before its media was
-  // indexed: the row carried no image signal, so the layout fell back to the
-  // file variant (name + file name) and the cache-buster could not heal it —
-  // the picture only came back minutes later, when an unrelated event forced
-  // a grid refresh. The thumbnail itself had been written in the same second
-  // as the card.
-  const staleRow = makeBlock({
-    block_type: "image",
-    card_kind: "media",
-    slug: "Cards/shot",
-    media_file: "[[shot.png]]",
-  });
-
-  it("replaces a row that shows no picture when a pictorial preview arrives", () => {
-    expect(deriveCardLayoutDescriptor(staleRow).variant).toBe("file");
-    expect(feedRowNeedsPreviewRefresh(staleRow, false)).toBe(true);
-  });
-
-  it("still replaces an image row that has no indexed dimensions", () => {
-    const noGeometry = makeBlock({
-      block_type: "image",
-      card_kind: "media",
-      media_file: "shot.png",
-    });
-    expect(imageCardNeedsGeometryRefresh(noGeometry)).toBe(true);
-    expect(feedRowNeedsPreviewRefresh(noGeometry, false)).toBe(true);
-  });
-
-  it("leaves settled image rows on the cheap pixel-only path", () => {
-    // Settled means the artifact exists: geometry comes from the manifest,
-    // not from the source dimensions (SPEC_CARD_MEDIA_GEOMETRY).
-    const settled = makeBlock({
-      block_type: "image",
-      card_kind: "media",
-      media_file: "shot.png",
-      preview_manifest: artifactManifest(1200, 800),
-    });
-    expect(feedRowNeedsPreviewRefresh(settled, false)).toBe(false);
-  });
-
-  it("ignores text thumbnails, which are ordinary cold-start traffic", () => {
-    // An article row is not stale just because its baked text thumb landed;
-    // forcing a grid refetch here would restore the IPC storm.
-    const article = makeBlock({ block_type: "article", body: "" });
-    expect(feedRowNeedsPreviewRefresh(article, true)).toBe(false);
-    expect(feedRowNeedsPreviewRefresh(staleRow, true)).toBe(false);
   });
 });

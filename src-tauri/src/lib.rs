@@ -81,6 +81,7 @@ pub fn run() {
             commands::vault_stats::get_vault_stats,
             commands::blocks::list_blocks,
             commands::blocks::list_grid_blocks,
+            commands::blocks::get_grid_rows,
             commands::graph::list_graph_snapshot,
             commands::blocks::get_block,
             commands::blocks::create_block,

@@ -50,6 +50,7 @@ struct BlockRemovedPayload {
 /// cache-busts `<img>` elements pointing at `<slug>.jpg`.
 #[derive(Debug, Clone, Serialize)]
 struct ThumbUpdatedPayload {
+    path: String,
     slug: String,
     is_text: bool,
 }
@@ -576,6 +577,7 @@ fn emit_thumb_events(
     let _ = app.emit(
         "thumb:updated",
         ThumbUpdatedPayload {
+            path: vault.root().to_string_lossy().into_owned(),
             slug: block.slug.clone(),
             is_text: source == thumbnails::ThumbSource::Text,
         },
@@ -815,6 +817,7 @@ fn commit_deferred_removal(
         let _ = app.emit(
             "thumb:updated",
             ThumbUpdatedPayload {
+                path: vault.root().to_string_lossy().into_owned(),
                 slug: pending.slug.clone(),
                 is_text: false,
             },
@@ -982,6 +985,7 @@ pub fn handle_event(
                     let path_owned = path.to_path_buf();
                     let app_clone = app.cloned();
                     let event_slug = slug.clone();
+                    let event_path = vault.root().to_string_lossy().into_owned();
                     std::thread::Builder::new()
                         .name(format!("thumb-media-{}", &slug))
                         .spawn(move || {
@@ -1001,6 +1005,7 @@ pub fn handle_event(
                                 let _ = app.emit(
                                     "thumb:updated",
                                     ThumbUpdatedPayload {
+                                        path: event_path,
                                         slug: event_slug,
                                         is_text: false,
                                     },

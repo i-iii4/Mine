@@ -146,6 +146,9 @@ export const setArticleAudioPosition = (
   });
 
 // Blocks
+export const getGridRows = (path: string, slugs: string[]) =>
+  invoke<import("@/types").GridRowsSnapshot>("get_grid_rows", { path, slugs });
+
 export const listBlocks = () =>
   invoke<LightBlock[]>("list_blocks");
 

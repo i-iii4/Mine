@@ -38,6 +38,7 @@ function gridSnapshot(
 }
 
 const commandMocks = vi.hoisted(() => ({
+  getGridRows: vi.fn(),
   getVaultPath: vi.fn<() => Promise<string | null>>(),
   openVault: vi.fn<(path: string) => Promise<VaultOpenResult>>(),
   startVaultSync: vi.fn<() => Promise<boolean>>(),
@@ -89,6 +90,7 @@ vi.mock("@/lib/commands", () => ({
   startStartupMaintenance: commandMocks.startStartupMaintenance,
   sweepVaultThumbnails: commandMocks.sweepVaultThumbnails,
   listGridBlocks: commandMocks.listGridBlocks,
+  getGridRows: commandMocks.getGridRows,
   searchGridBlocks: async (tag: string | undefined, query: string, limit: number) => {
     const grid = await commandMocks.listGridBlocks(tag, 0, limit, query);
     return {
@@ -223,6 +225,7 @@ vi.mock("@/components/Grid", () => ({
       <div data-testid="grid-thumb-versions">
         {blocks.map((item) => `${item.slug}=${thumbVersions?.get(item.slug) ?? 0}`).join(",")}
       </div>
+      <div data-testid="grid-previews">{blocks.map((item) => `${item.slug}:${item.preview_manifest ?? "none"}:${item.width ?? 0}`).join(",")}</div>
       <button type="button" onClick={() => onGroupSelectionStart?.()}>
         Start group selection
       </button>
@@ -444,6 +447,7 @@ describe("AppWithVault", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    commandMocks.getGridRows.mockResolvedValue({ path: "/vault", generation: 1, blocks: [] });
     vi.mocked(isTauri).mockReturnValue(false);
     vi.mocked(getCurrentWindow).mockReturnValue({
       startDragging,
@@ -2647,6 +2651,70 @@ describe("AppWithVault", () => {
     expect(screen.getByTestId("grid-thumb-versions")).toHaveTextContent("visible-card=0");
   });
 
+  it("patches an article that initially had no picture without refetching the feed", async () => {
+    const initial = block(1, "article");
+    commandMocks.listGridBlocks.mockResolvedValue(gridSnapshot([initial, block(2, "unchanged")]));
+    commandMocks.getGridRows.mockResolvedValue({ path: "/vault", generation: 2,
+      blocks: [{ ...initial, preview_manifest: "ready-picture" }, block(3, "deleted")] });
+    render(<MemoryRouter><AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+    const before = commandMocks.listGridBlocks.mock.calls.length;
+    for (let i = 0; i < 10; i++) fireEvent(window, new CustomEvent("thumb:updated", {
+      detail: { payload: { slug: "article", is_text: false } },
+    }));
+    await waitFor(() => expect(screen.getByTestId("grid-previews")).toHaveTextContent("article:ready-picture"));
+    expect(commandMocks.getGridRows).toHaveBeenCalledTimes(1);
+    expect(commandMocks.listGridBlocks).toHaveBeenCalledTimes(before);
+    expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    expect(screen.queryByText("Open deleted")).not.toBeInTheDocument();
+  });
+
+  it("ignores preview rows from another space or an older revision", async () => {
+    const initial = block(1, "article");
+    commandMocks.listGridBlocks.mockResolvedValue(gridSnapshot([initial], 1, false, 5));
+    commandMocks.getGridRows
+      .mockResolvedValueOnce({ path: "/other", generation: 9, blocks: [{ ...initial, preview_manifest: "wrong-space" }] })
+      .mockResolvedValueOnce({ path: "/vault", generation: 4, blocks: [{ ...initial, preview_manifest: "old" }] });
+    render(<MemoryRouter><AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:1"));
+    for (let i = 1; i <= 2; i++) {
+      fireEvent(window, new CustomEvent("thumb:updated", { detail: { payload: { slug: "article", is_text: false } } }));
+      await waitFor(() => expect(commandMocks.getGridRows).toHaveBeenCalledTimes(i));
+    }
+    expect(screen.getByTestId("grid-previews")).toHaveTextContent("article:none");
+  });
+
+  it("keeps a newer preview when an older full-route response completes later", async () => {
+    const initial = block(1, "article");
+    commandMocks.listGridBlocks.mockResolvedValue(gridSnapshot([initial]));
+    render(<MemoryRouter><AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:1"));
+    let resolve!: (value: GridSnapshot) => void;
+    commandMocks.listGridBlocks.mockImplementationOnce(() => new Promise((r) => { resolve = r; }));
+    fireEvent(window, new CustomEvent("vault-changed", { detail: { payload: { path: "/vault" } } }));
+    await waitFor(() => expect(resolve).toBeDefined(), { timeout: 3000 });
+    commandMocks.getGridRows.mockResolvedValue({ path: "/vault", generation: 3,
+      blocks: [{ ...initial, preview_manifest: "new-preview" }] });
+    fireEvent(window, new CustomEvent("thumb:updated", { detail: { payload: { path: "/vault", slug: "article", is_text: false } } }));
+    await waitFor(() => expect(screen.getByTestId("grid-previews")).toHaveTextContent("new-preview"));
+    await act(async () => resolve(gridSnapshot([initial, block(2, "added")], 2, false, 2)));
+    expect(screen.getByTestId("grid-previews")).toHaveTextContent("new-preview");
+    expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+  });
+
+  it("ignores foreign preview events and avoids a full reload for preview-only reports", async () => {
+    commandMocks.listGridBlocks.mockResolvedValue(gridSnapshot([block(1, "article")]));
+    render(<MemoryRouter><AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:1"));
+    const before = commandMocks.listGridBlocks.mock.calls.length;
+    fireEvent(window, new CustomEvent("thumb:updated", { detail: { payload: { path: "/other", slug: "article", is_text: false } } }));
+    fireEvent(window, new CustomEvent("vault-changed", { detail: { payload: { path: "/vault", preview_only: true } } }));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 2100)); });
+    expect(commandMocks.getGridRows).not.toHaveBeenCalled();
+    expect(commandMocks.listGridBlocks).toHaveBeenCalledTimes(before);
+    expect(screen.getByTestId("grid-thumb-versions")).toHaveTextContent("article=0");
+  });
+
   it("refreshes a loaded image once when thumb readiness supplies missing geometry", async () => {
     const initial = {
       ...block(1, "new-image"),
@@ -2661,6 +2729,7 @@ describe("AppWithVault", () => {
       height: 600,
       media_dimensions: "{\"new-image.jpg\":[1586,600]}",
     };
+    commandMocks.getGridRows.mockResolvedValue({ path: "/vault", generation: 10, blocks: [ready] });
     let gridRequest = 0;
     commandMocks.listGridBlocks.mockImplementation(async () => {
       const current = gridRequest === 0 ? initial : ready;
@@ -2692,9 +2761,9 @@ describe("AppWithVault", () => {
     );
 
     await waitFor(() => {
-      expect(commandMocks.listGridBlocks.mock.calls.length).toBeGreaterThan(
-        gridCallsBefore,
-      );
+      expect(commandMocks.getGridRows).toHaveBeenCalledWith("/vault", ["new-image"]);
+      expect(commandMocks.listGridBlocks.mock.calls.length).toBe(gridCallsBefore);
+      expect(screen.getByTestId("grid-previews")).toHaveTextContent("1586");
       expect(screen.getByTestId("grid-thumb-versions")).toHaveTextContent(
         "new-image=1",
       );

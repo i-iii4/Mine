@@ -209,6 +209,11 @@ export type GraphSnapshot = { generation: ProjectionRevision; nodes: GraphNode[]
 
 export type GraphTruncationReason = "large_library"
 
+/**
+ * A bounded row patch, never a replacement for route membership or pagination.
+ */
+export type GridRowsSnapshot = { path: string; generation: ProjectionRevision; blocks: LightBlock[] }
+
 export type GridSnapshot = { generation: ProjectionRevision; blocks: LightBlock[]; total_blocks: number; has_more: boolean }
 
 export type IcloudDownloadProgress = { status: IcloudDownloadStatus;

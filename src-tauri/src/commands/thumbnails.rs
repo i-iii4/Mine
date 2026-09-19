@@ -122,12 +122,13 @@ pub fn save_thumb(
         .map_err(|e| CommandError::Internal(format!("open thumb metadata db: {e:#}")))?;
     index::sync_thumb_metadata(&conn, &slug, &thumb_path, Some(vault.root()))
         .map_err(|e| CommandError::Internal(format!("sync_thumb_metadata: {e:#}")))?;
-    schedule_preview_reconcile(&app, vault, [slug.clone()], false)?;
+    schedule_preview_reconcile(&app, vault.clone(), [slug.clone()], false)?;
 
     // save_thumb always writes JPEG — never a text placeholder.
     let _ = app.emit(
         "thumb:updated",
         ThumbUpdatedPayload {
+            path: vault.root().to_string_lossy().into_owned(),
             slug,
             is_text: false,
         },
@@ -191,6 +192,7 @@ fn request_jpeg_bytes<'a>(request: &'a Request<'_>) -> Result<Cow<'a, [u8]>, Com
 
 #[derive(Debug, Clone, Serialize)]
 struct ThumbUpdatedPayload {
+    path: String,
     slug: String,
     is_text: bool,
 }
@@ -241,12 +243,13 @@ pub fn save_tile_poster(
 
     files::write_atomically(&dest, &bytes)
         .map_err(|e| CommandError::Internal(format!("write decoded tile poster: {e:#}")))?;
-    schedule_preview_reconcile(&app, vault, [slug.clone()], false)?;
+    schedule_preview_reconcile(&app, vault.clone(), [slug.clone()], false)?;
 
     // The tile lives inside the block's card; refresh it.
     let _ = app.emit(
         "thumb:updated",
         ThumbUpdatedPayload {
+            path: vault.root().to_string_lossy().into_owned(),
             slug,
             is_text: false,
         },

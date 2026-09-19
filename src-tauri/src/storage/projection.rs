@@ -29,6 +29,23 @@ pub struct GridSnapshot {
     pub has_more: bool,
 }
 
+/// A bounded row patch, never a replacement for route membership or pagination.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct GridRowsSnapshot {
+    pub path: String,
+    pub generation: ProjectionRevision,
+    pub blocks: Vec<LightBlock>,
+}
+
+/// Read committed rows and their revision atomically, without filesystem work.
+pub fn read_grid_rows(conn: &Connection, path: String, slugs: &[String]) -> Result<GridRowsSnapshot> {
+    read_projection_snapshot(conn, |conn, generation| Ok(GridRowsSnapshot {
+        path,
+        generation,
+        blocks: crate::storage::block_queries::grid_rows_by_slug(conn, slugs)?,
+    }))
+}
+
 /// Return the persisted identity of the currently committed projection.
 pub fn current_generation(conn: &Connection) -> Result<ProjectionRevision> {
     let value: i64 = conn
@@ -150,6 +167,27 @@ mod tests {
 
         index::remove_block(&conn, "one").unwrap();
         assert!(current_generation(&conn).unwrap() > after_preview);
+    }
+
+    #[test]
+    fn grid_row_batch_matches_feed_and_tracks_readiness() {
+        let conn = db::open_memory().unwrap();
+        index::upsert_block(&conn, &block("one"), None).unwrap();
+        index::upsert_block(&conn, &block("other"), None).unwrap();
+        let slugs = vec!["one".into(), "one".into(), "missing".into()];
+        let before = read_grid_rows(&conn, "/vault".into(), &slugs).unwrap();
+        assert_eq!(before.blocks.len(), 1);
+        assert!(before.blocks[0].preview_manifest.is_none());
+        conn.execute("UPDATE blocks SET preview_state = 'ready', preview_manifest = '{}' WHERE slug = 'one'", []).unwrap();
+        let after = read_grid_rows(&conn, "/vault".into(), &slugs).unwrap();
+        assert!(after.generation > before.generation);
+        assert_eq!(after.path, "/vault");
+        let full = read_grid_snapshot(&conn, None, 0, 20).unwrap();
+        assert_eq!(&after.blocks[0], full.blocks.iter().find(|row| row.slug == "one").unwrap());
+        assert_eq!(after.blocks[0].preview_manifest.as_deref(), Some("{}"));
+        index::remove_block(&conn, "one").unwrap();
+        assert!(read_grid_rows(&conn, "/vault".into(), &slugs).unwrap().blocks.is_empty());
+        assert!(read_grid_rows(&conn, "/vault".into(), &[]).unwrap().blocks.is_empty());
     }
 
     #[test]

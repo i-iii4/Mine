@@ -36,6 +36,7 @@ struct DerivedPreviewChangedPayload {
 
 #[derive(Debug, Clone, Serialize)]
 struct DerivedPreviewThumbPayload {
+    path: String,
     slug: String,
     is_text: bool,
 }
@@ -43,6 +44,7 @@ struct DerivedPreviewThumbPayload {
 #[derive(Debug, Clone, Serialize)]
 struct DerivedPreviewVaultChangedPayload {
     path: String,
+    preview_only: bool,
 }
 
 /// Queue one bounded background preview pass. Full work supersedes pending
@@ -208,6 +210,7 @@ fn publish_preview_report(
         let _ = app.emit(
             "thumb:updated",
             DerivedPreviewThumbPayload {
+                path: path.to_string(),
                 slug: slug.clone(),
                 is_text: false,
             },
@@ -231,6 +234,7 @@ fn publish_preview_report(
             "vault-changed",
             DerivedPreviewVaultChangedPayload {
                 path: path.to_string(),
+                preview_only: true,
             },
         );
     }
