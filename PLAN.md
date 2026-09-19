@@ -4,6 +4,14 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTU
 
 ## Goal
 
+### Метаданные при атомарной замене Markdown
+
+- [x] Общая подготовка replacement: creation time, permissions, ACL, xattrs; новая дата изменения.
+- [x] Прямая запись, staged replacement, rename-with-content и rollback используют общий механизм.
+- [x] Пять регрессионных тестов, включая ошибку подготовки и создание нового документа.
+- [x] «Экзопланеты.md» перенесён в Collections без изменения байтов, inode, дат и 11 ссылок.
+- [x] Release-сборка и установка; подпись и совпадение executable проверены.
+
 ### Готовое превью без ожидания обновления ленты
 
 - [x] Удалена эвристика типов карточек; готовность инвалидирует данные строки.

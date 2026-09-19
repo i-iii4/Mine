@@ -19,6 +19,8 @@ use crate::domain::vault::VaultLayout;
 use crate::storage::source_mutation::{SourceFileWrite, StagedSourceMutation};
 use crate::storage::{article_audio, index, media_refs, thumbnails};
 
+mod replacement_metadata;
+
 /// Publication completed before its directory durability could be confirmed.
 /// Callers must not interpret this error as proof that no final file exists.
 #[derive(Debug, thiserror::Error)]
@@ -98,7 +100,13 @@ pub fn write_block_file(vault: &VaultLayout, block: &Block) -> Result<PathBuf> {
 /// be observable (mirrors `thumbnails::write_thumb_atomically` for derived
 /// files).
 pub fn write_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
-    let tmp = prepare_temp_file(path, |file| file.write_all(bytes))?;
+    let tmp = match std::fs::symlink_metadata(path) {
+        Ok(_) => prepare_replacement_temp_file(path, path, |file| file.write_all(bytes))?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            prepare_temp_file(path, |file| file.write_all(bytes))?
+        }
+        Err(error) => return Err(error).with_context(|| format!("stat {}", path.display())),
+    };
     if let Err(error) = std::fs::rename(&tmp, path).with_context(|| {
         format!(
             "failed to rename temp file {} -> {}",
@@ -184,6 +192,18 @@ fn copy_atomically(source: &Path, destination: &Path) -> Result<()> {
     }
     sync_published_parent(destination)?;
     Ok(())
+}
+
+/// Stage replacement bytes with source metadata, before any visible mutation.
+pub(crate) fn prepare_replacement_temp_file(
+    path: &Path,
+    source: &Path,
+    writer: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
+) -> Result<PathBuf> {
+    prepare_temp_file(path, |file| {
+        writer(file)?;
+        replacement_metadata::preserve(source, file)
+    })
 }
 
 pub(crate) fn prepare_temp_file(

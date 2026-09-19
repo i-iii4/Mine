@@ -609,6 +609,12 @@ enum SourceMutationError {
 
 - New/replacement files use same-directory temp + file `fsync` + atomic rename;
   create-new additionally rejects an occupied destination before commit.
+- Replacing an existing source document preserves its creation time, permissions,
+  ACL and extended attributes on macOS. The replacement keeps its new modification
+  time. Metadata is copied to the staged file before publication and fsynced;
+  failure aborts publication, leaving the original intact. The same rule applies
+  to direct writes, staged replacements and rename-with-content. New documents
+  retain their own creation time. File inode identity is not preserved by rename.
 - Multi-file operations stage every new byte sequence before the first visible
   rename and retain byte backups until the SQLite transaction commits.
 - A failure restores old source bytes and the previous index generation. If

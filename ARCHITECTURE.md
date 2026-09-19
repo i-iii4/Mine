@@ -4,6 +4,14 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG
 
 ## Context
 
+Native source replacement stages both new bytes and existing document metadata
+before atomic publication. `storage/files/replacement_metadata.rs` preserves
+macOS permissions, ACL and xattrs with `fcopyfile`, then explicitly restores
+birthtime with `fsetattrlist`; the new modification time remains current.
+Direct writes and `StagedSourceMutation` share this preparation path, including
+rename-with-content and replacement rollback. Metadata errors stop publication;
+new files do not inherit another document's creation time. Contract: `SPEC_STORAGE.md`.
+
 Chrome geometry separates the row, hit target, and visible plate:
 `ChromeRow` owns 30px content plus a sibling 1px divider; `ChromeControl`
 composes the existing interactive element through Radix Slot at the row height;

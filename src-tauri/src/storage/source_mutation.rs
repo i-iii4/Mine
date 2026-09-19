@@ -225,8 +225,8 @@ impl StagedSourceMutation {
                 } => None,
                 SourceFileContent::Rename {
                     replacement: Some(bytes),
-                    ..
-                } => match files::prepare_temp_file(&write.path, |file| {
+                    source,
+                } => match files::prepare_replacement_temp_file(&write.path, source, |file| {
                     std::io::Write::write_all(file, bytes)
                 }) {
                     Ok(temp) => Some(temp),
@@ -240,9 +240,15 @@ impl StagedSourceMutation {
                     }
                 },
                 SourceFileContent::Bytes(bytes) => {
-                    match files::prepare_temp_file(&write.path, |file| {
+                    let writer = |file: &mut std::fs::File| {
                         std::io::Write::write_all(file, bytes)
-                    }) {
+                    };
+                    let prepared = if write.mode == SourceFileMode::Replace {
+                        files::prepare_replacement_temp_file(&write.path, &write.path, writer)
+                    } else {
+                        files::prepare_temp_file(&write.path, writer)
+                    };
+                    match prepared {
                         Ok(temp) => Some(temp),
                         Err(source) => {
                             cleanup_original(&original);
