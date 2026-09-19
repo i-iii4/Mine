@@ -48,7 +48,6 @@ import {
 } from "@/lib/sidebarSearch";
 import { cn } from "@/lib/utils";
 import {
-  SIDEBAR_ROW_ACTION_BUTTON_PX,
   SIDEBAR_PREVIEW_DIVIDER_GAP_PX,
   SIDEBAR_ROW_ACTION_GAP_PX,
 } from "@/lib/appLayout";
@@ -71,18 +70,12 @@ const SIDEBAR_PREVIEW_DIVIDER_GAP = SIDEBAR_PREVIEW_DIVIDER_GAP_PX;
 /// as height, because the row's size belongs to the modular scale and a
 /// hairline must not push it off.
 const SIDEBAR_ROW_BOX_CLASS = "relative flex min-h-10 w-full items-center pb-px";
-const SIDEBAR_ROW_ACTION_BUTTON_WIDTH = SIDEBAR_ROW_ACTION_BUTTON_PX;
+const SIDEBAR_ROW_ACTION_BUTTON_WIDTH = `calc(var(--sidebar-zone) - ${2 * SIDEBAR_ROW_ACTION_GAP_PX}px)`;
 const SIDEBAR_ROW_ACTION_BUTTON_GAP = SIDEBAR_ROW_ACTION_GAP_PX;
 /// How far the button's body sits from the right edge of the row.
 ///
-/// Eight less than the row's own inset, because the button carries an inner
-/// padding of that size: the body overhangs the text column by 8 and its
-/// label lands back on the exact vertical the counts use. Optical
-/// compensation, the ordinary treatment for a filled control beside plain
-/// text. Clamped at zero so the primary design, whose rows have no inset of
-/// their own, keeps the button exactly where it has always been.
-const SIDEBAR_ROW_ACTION_BUTTON_INSET =
-  `max(calc(var(--sidebar-row-pad-x) - ${SIDEBAR_ROW_ACTION_BUTTON_GAP}px), 0px)`;
+/// The plate belongs to the cell, not to the count's text alignment.
+const SIDEBAR_ROW_ACTION_BUTTON_INSET = SIDEBAR_ROW_ACTION_BUTTON_GAP;
 const SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH = EDGE_FADE_WIDTH;
 const SIDEBAR_PREVIEW_MASK_FADE_WIDTH = EDGE_FADE_WIDTH;
 /// Where the thumbnails stop: the meta zone, the guideline's own pixel, and

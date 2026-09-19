@@ -13,6 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { CLOUD_STATE_LABEL } from "@/lib/cloudContent";
+import { ChromeControl } from "./ui/chrome-control";
 
 interface ActivityIndicatorsProps {
   /// Cards whose content is currently held in iCloud.
@@ -48,6 +49,7 @@ export function ActivityIndicators({
       {cloudPending > 0 && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
+            <ChromeControl>
             <button
               type="button"
               className="flex items-center text-tertiary-foreground hover:text-foreground"
@@ -56,6 +58,7 @@ export function ActivityIndicators({
             >
               <CloudDownload className="size-3.5" aria-hidden="true" />
             </button>
+            </ChromeControl>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-80 p-3">
             <p className="text-base font-semibold text-foreground">

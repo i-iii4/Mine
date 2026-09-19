@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 import { useChromeDragGesture } from "@/hooks/useChromeDragGesture";
 import type { IndexedBlock, LightBlock, TagCount, VaultStats } from "@/types";
 import { ActivityIndicators } from "./ActivityIndicators";
-import { ChromeRow } from "./ChromeRow";
+import { ChromeRow, ChromeActions } from "./ChromeRow";
 import { CardMoreMenu } from "./CardHoverMenu";
 import { ChromeCloseButton } from "./ChromeCloseButton";
 import {
@@ -385,7 +385,7 @@ export function MainSecondaryTopBar({
         )}
         {detailBlock && placement === "top" && (
           <div
-            className="main-secondary-bar-layer absolute inset-0 flex h-full min-w-0 flex-1 items-center gap-3 px-[var(--chrome-edge-pad)]"
+            className="main-secondary-bar-layer absolute inset-0 flex h-full min-w-0 flex-1 items-center gap-1 pl-[var(--chrome-edge-pad)]"
             data-entered={detailLayerEntered ? "true" : "false"}
             data-secondary-detail-top-menu=""
           >
@@ -402,6 +402,7 @@ export function MainSecondaryTopBar({
             >
               {detailTitle}
             </div>
+            <ChromeActions>
             <CardMoreMenu
               block={detailBlock}
               vaultPath={vaultPath}
@@ -411,12 +412,12 @@ export function MainSecondaryTopBar({
               onCreateAndAssign={onCreateAndAssign}
               onRequestRename={onRequestRename}
               onRequestDelete={onRequestDelete}
-              triggerVariant="ghost"
-              className="shrink-0 text-muted-foreground hover:text-foreground"
+              triggerVariant="chrome"
               openRequestSequence={detailMenuOpenRequestSequence}
               topChromeInteraction
             />
             <ChromeCloseButton {...closeChromeGesture} onClick={onDetailClose} />
+            </ChromeActions>
           </div>
         )}
       </div>
@@ -441,6 +442,7 @@ export function CompactDetailLinkModeSwitch({
 
   return (
     <SegmentedControl
+      chrome
       {...chromeGesture}
       value={value}
       options={DETAIL_LINK_MODE_OPTIONS}
@@ -466,6 +468,7 @@ function MainViewModeSwitch({
 }) {
   return (
     <SegmentedControl
+      chrome
       value={value}
       options={MAIN_VIEW_MODE_OPTIONS}
       onChange={onChange}
@@ -550,11 +553,12 @@ export function CompactDetailTopMenu({
 
   return (
     <div
-      className="detail-top-bar-enter flex h-full min-w-0 flex-1 items-center pr-3"
+      className="detail-top-bar-enter flex h-full min-w-0 flex-1 items-center"
       data-entered={entered ? "true" : "false"}
       data-compact-detail-top-menu=""
     >
       <CompactDetailCardTitleDragHandle block={block} cardTitle={cardTitle} />
+      <ChromeActions windowEdge={false}>
       <CardMoreMenu
         block={block}
         vaultPath={vaultPath}
@@ -564,12 +568,12 @@ export function CompactDetailTopMenu({
         onCreateAndAssign={onCreateAndAssign}
         onRequestRename={onRequestRename}
         onRequestDelete={onRequestDelete}
-        triggerVariant="ghost"
-        className="shrink-0 text-muted-foreground hover:text-foreground"
+        triggerVariant="chrome"
         openRequestSequence={menuOpenRequestSequence}
         topChromeInteraction
       />
       <ChromeCloseButton {...closeChromeGesture} onClick={onClose} />
+      </ChromeActions>
     </div>
   );
 }

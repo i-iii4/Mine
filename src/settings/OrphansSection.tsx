@@ -109,10 +109,11 @@ export function OrphansSection() {
     try {
       const result = await deleteOrphanMedia(selectedNames);
       setSummary(`Deleted ${result.deleted.length}, skipped ${result.skipped.length}`);
-      await reload();
     } catch (e) {
       setError(String(e));
     } finally {
+      // Trash may move some files before reporting an error.
+      await reload();
       setWorking(null);
     }
   };

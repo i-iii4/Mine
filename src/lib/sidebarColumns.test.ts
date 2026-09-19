@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   SIDEBAR_COLUMN_MIN_PX,
+  SIDEBAR_ROW_ACTION_BUTTON_PX,
+  SIDEBAR_ROW_ACTION_GAP_PX,
   sidebarMinWidth,
   sidebarNameFloor,
   sidebarReserved,
@@ -16,7 +18,15 @@ import {
 /// jsdom lays out no CSS, so the contract is pinned on the numbers themselves.
 describe("sidebar zone contract", () => {
   const css = readFileSync("src/styles/global.css", "utf8");
-  const designs = ["default", "alt"] as const;
+  const designs = ["default", "alt", "alt2"] as const;
+
+  it("fits the longest action state with equal 8px fields in every design", () => {
+    for (const design of designs) {
+      const width = sidebarZoneWidth(design) - 2 * SIDEBAR_ROW_ACTION_GAP_PX;
+      expect(width).toBeGreaterThanOrEqual(SIDEBAR_ROW_ACTION_BUTTON_PX);
+      expect((sidebarZoneWidth(design) - width) / 2).toBe(8);
+    }
+  });
 
   it("makes the three zones equal at the frozen minimum", () => {
     for (const design of designs) {

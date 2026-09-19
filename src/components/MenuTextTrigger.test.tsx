@@ -7,11 +7,11 @@ describe("MenuTextTrigger", () => {
     render(<MenuTextTrigger label="Mine" aria-label="Switch space: Mine" />);
 
     const trigger = screen.getByRole("button", { name: "Switch space: Mine" });
-    expect(trigger).toHaveClass("h-full", "font-mono", "text-sm");
+    expect(trigger).toHaveClass("chrome-control", "font-mono", "text-sm");
     expect(trigger).not.toHaveClass("border");
 
     const label = screen.getByText("Mine").closest("span");
-    expect(label?.parentElement).toHaveClass("h-6", "rounded-1", "px-2");
+    expect(label?.parentElement).toHaveClass("chrome-plate", "rounded-1", "px-2");
   });
 
   it("uses the clipper header trigger as a compact pill with an inline chevron", () => {

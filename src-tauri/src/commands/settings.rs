@@ -14,7 +14,7 @@ use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder
 use unicode_normalization::UnicodeNormalization;
 
 use crate::commands::blocks::{collect_delete_media_for_block, resolve_unique_block_slug};
-use crate::commands::state::{AppState, CommandError, VaultState};
+use crate::commands::state::{current_vault_layout, AppState, CommandError, VaultState};
 use crate::commands::vault::{derived_store_root, load_config, write_config};
 use crate::domain::block::{Block, BlockType, DateTime, Frontmatter};
 use crate::domain::vault::VaultLayout;
@@ -474,13 +474,20 @@ fn scan_orphans(vs: &VaultState) -> Result<Vec<OrphanMedia>, CommandError> {
 }
 
 #[tauri::command]
-pub fn list_orphan_media(state: State<'_, AppState>) -> Result<Vec<OrphanMedia>, CommandError> {
-    let vault_state = state
-        .vault_state
-        .lock()
-        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-    scan_orphans(vs)
+pub async fn list_orphan_media(state: State<'_, AppState>) -> Result<Vec<OrphanMedia>, CommandError> {
+    let vault = current_vault_layout(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let vs = orphan_worker_state(vault)?;
+        scan_orphans(&vs)
+    }).await.map_err(|error| CommandError::Internal(error.to_string()))?
+}
+
+/// An independent read connection: filesystem and Finder waits never own the
+/// UI's vault-state mutex. The selected vault stays bound to the request.
+fn orphan_worker_state(vault: VaultLayout) -> Result<VaultState, CommandError> {
+    let conn = crate::storage::db::open_read_only(&vault.index_db_path())
+        .map_err(|error| CommandError::Internal(error.to_string()))?;
+    Ok(VaultState { conn, vault })
 }
 
 /// A safe orphan operand: a vault-relative media path, currently an orphan.
@@ -651,39 +658,50 @@ pub(crate) fn delete_orphan_media_inner(
     vs: &VaultState,
     file_names: Vec<String>,
 ) -> Result<DeleteOrphanResult, CommandError> {
+    delete_orphan_media_with(vs, file_names, files::delete_user_files)
+}
+
+fn delete_orphan_media_with(
+    vs: &VaultState,
+    file_names: Vec<String>,
+    trash_batch: impl FnOnce(&[std::path::PathBuf]) -> anyhow::Result<()>,
+) -> Result<DeleteOrphanResult, CommandError> {
     let referenced = referenced_media_file_names(vs)?;
     let mut deleted = Vec::new();
     let mut skipped = Vec::new();
+    let mut paths = Vec::new();
+    let mut seen = BTreeSet::new();
 
     for file_name in file_names {
+        if !seen.insert(file_name.clone()) { continue; }
         if !validate_orphan_operand(&file_name, &referenced, vs.vault.root()) {
             skipped.push(file_name);
             continue;
         }
         let path = vs.vault.root().join(&file_name);
-        match files::delete_user_file(&path) {
-            Ok(()) => deleted.push(file_name),
-            Err(error) => {
-                log::warn!("delete_orphan_media: '{file_name}' failed: {error}");
-                skipped.push(file_name);
-            }
-        }
+        paths.push(path);
+        deleted.push(file_name);
+    }
+
+    if !paths.is_empty() {
+        trash_batch(&paths).map_err(|error| CommandError::Internal(format!(
+            "Could not move all selected files to Trash. Remaining files were not permanently deleted: {error}"
+        )))?;
     }
 
     Ok(DeleteOrphanResult { deleted, skipped })
 }
 
 #[tauri::command]
-pub fn delete_orphan_media(
+pub async fn delete_orphan_media(
     state: State<'_, AppState>,
     request: OrphanMediaBatchRequest,
 ) -> Result<DeleteOrphanResult, CommandError> {
-    let vault_state = state
-        .vault_state
-        .lock()
-        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-    delete_orphan_media_inner(vs, request.file_names)
+    let vault = current_vault_layout(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let vs = orphan_worker_state(vault)?;
+        delete_orphan_media_inner(&vs, request.file_names)
+    }).await.map_err(|error| CommandError::Internal(error.to_string()))?
 }
 
 #[cfg(test)]
@@ -795,6 +813,63 @@ mod tests {
         assert!(created.slug.starts_with("clip"));
         assert_eq!(created.media_file.as_deref(), Some("clip.mp4"));
         assert_eq!(created.block_type, BlockType::Video);
+    }
+
+    #[test]
+    fn orphan_batch_uses_one_trash_request_and_deduplicates() {
+        let (_root, _derived, vs) = make_vault();
+        let mut names = Vec::new();
+        for i in 0..105 {
+            let name = format!("image-{i}.jpg");
+            write_media(&vs, &name);
+            names.push(name);
+        }
+        names.push(names[0].clone());
+        let result = delete_orphan_media_with(&vs, names, |paths| {
+            assert_eq!(paths.len(), 105);
+            // Simulate Trash without touching the user's Trash or Finder.
+            for path in paths { std::fs::rename(path, path.with_extension("trashed"))?; }
+            Ok(())
+        }).expect("batch");
+        assert_eq!(result.deleted.len(), 105);
+    }
+
+    #[test]
+    fn orphan_trash_failure_preserves_remaining_files() {
+        let (_root, _derived, vs) = make_vault();
+        write_media(&vs, "first.jpg");
+        write_media(&vs, "second.jpg");
+        let result = delete_orphan_media_with(&vs, vec!["first.jpg".into(), "second.jpg".into()], |paths| {
+            std::fs::rename(&paths[0], paths[0].with_extension("trashed"))?;
+            anyhow::bail!("Finder refused second file")
+        });
+        assert!(result.is_err());
+        assert!(vs.vault.root().join("first.trashed").exists());
+        assert!(vs.vault.root().join("second.jpg").exists());
+    }
+
+    #[test]
+    fn waiting_for_trash_does_not_hold_active_vault_lock() {
+        let (_root, _derived, vs) = make_vault();
+        write_media(&vs, "orphan.jpg");
+        let state = AppState::new();
+        let vault = vs.vault.clone();
+        *state.vault_state.lock().expect("lock") = Some(vs);
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (resume_tx, resume_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let vs = orphan_worker_state(vault).expect("independent connection");
+            delete_orphan_media_with(&vs, vec!["orphan.jpg".into()], |_| {
+                started_tx.send(()).expect("started");
+                resume_rx.recv().expect("resume");
+                Ok(())
+            })
+        });
+        started_rx.recv_timeout(std::time::Duration::from_secs(5)).expect("worker running");
+        let available = state.vault_state.try_lock().is_ok();
+        resume_tx.send(()).expect("resume worker");
+        worker.join().expect("join").expect("delete result");
+        assert!(available, "UI vault lock must remain available while Trash waits");
     }
 
     #[test]

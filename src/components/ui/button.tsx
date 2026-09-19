@@ -3,6 +3,7 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { Slot } from "radix-ui"
 
 import { cn } from "@/lib/utils"
+import { ChromeControl, ChromePlate } from "./chrome-control"
 
 const buttonVariants = cva(
   "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-1 text-base font-semibold select-none text-foreground disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0",
@@ -20,6 +21,7 @@ const buttonVariants = cva(
         // reference, not a button.
         reference: "bg-transparent outline-1 -outline-offset-1 outline-border",
         ghost: "bg-transparent hover:text-hover-foreground",
+        chrome: "group/chrome bg-transparent text-muted-foreground hover:text-foreground data-[state=open]:text-foreground focus-visible:text-foreground focus-visible:outline-none",
         link: "bg-transparent underline underline-offset-4 hover:text-hover-foreground",
       },
       size: {
@@ -29,6 +31,7 @@ const buttonVariants = cva(
         xs: "h-6 gap-1 px-2 text-sm has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3",
         icon: "size-8",
         "icon-xs": "size-6 [&_svg:not([class*='size-'])]:size-3",
+        "chrome-icon": "w-6 p-0 [&_svg]:size-4",
       },
     },
     defaultVariants: {
@@ -43,6 +46,7 @@ function Button({
   variant = "default",
   size = "default",
   asChild = false,
+  children,
   ...props
 }: React.ComponentProps<"button"> &
   VariantProps<typeof buttonVariants> & {
@@ -51,13 +55,21 @@ function Button({
   const Comp = asChild ? Slot.Root : "button"
 
   return (
+    <ChromeControl enabled={size === "chrome-icon"}>
     <Comp
       data-slot="button"
       data-variant={variant}
       data-size={size}
       className={cn(buttonVariants({ variant, size, className }))}
       {...props}
-    />
+    >
+      {size === "chrome-icon" && !asChild ? (
+        <ChromePlate className="w-6 rounded-1 group-hover/chrome:bg-active group-data-[state=open]/chrome:bg-active group-data-[top-chrome-keyboard-focus=true]/chrome:bg-active group-focus-visible/chrome:bg-active">
+          {children}
+        </ChromePlate>
+      ) : children}
+    </Comp>
+    </ChromeControl>
   )
 }
 

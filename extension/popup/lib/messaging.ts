@@ -142,6 +142,8 @@ export interface PageMetadata {
 }
 
 export interface ArticleData {
+  threadWarning?: string;
+  threadPostCount?: number;
   title: string;
   content: string;
   html?: string;

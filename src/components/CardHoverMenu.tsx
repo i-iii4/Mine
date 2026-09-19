@@ -146,11 +146,12 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
       <DropdownMenuTrigger asChild>
         <Button
           variant={triggerVariant}
-          size="icon"
+          size={triggerVariant === "chrome" ? "chrome-icon" : "icon"}
+          aria-label="Card actions"
           className={className}
           {...(topChromeInteraction ? topChromeTrigger.triggerProps : {})}
         >
-          <MoreHorizontal className="size-4" />
+          <MoreHorizontal />
         </Button>
       </DropdownMenuTrigger>
       <CardMenuDropdownContent

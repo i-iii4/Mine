@@ -889,8 +889,8 @@ body {
      visibly narrower even when the boxes agreed, because the row's padding and
      the gaps around the previews belong to the neighbouring zones.
      = max(row-pad + keystone, action zone), appLayout.ts sidebarZoneWidth:
-     default max(0 + 88, 0 + 84 + 8) = 92; alt max(16 + 88, 8 + 84 + 8) = 104. */
-  --sidebar-zone: 92px;
+     default max(0 + 88, 8 + 84 + 8) = 100; alt max(16 + 88, 8 + 84 + 8) = 104. */
+  --sidebar-zone: 100px;
   /* Everything that is not the name+previews flex region: the meta zone, the
      two guideline pixels and the row's left inset. Pure CSS so the columns
      follow the drag synchronously. */
@@ -917,7 +917,7 @@ body {
      sidebarMinWidth("default"): JS clamps the drag and lifts stored widths to
      it, CSS freezes the nav — one side moving alone leaves the nav wider than
      the panel and the curtain clips the meta column. */
-  --sidebar-min-width: 342px;
+  --sidebar-min-width: 366px;
   /* top chrome: collection switcher trigger padding. Its label text lands at
      this value + the 8px inner pill padding, so the text sits at the fixed
      16px chrome inset — the chrome no longer follows the feed rhythm. */
@@ -999,10 +999,20 @@ body {
 
 /* Every row gets the same free area. Separators live outside it in normal
    flow; ChromeShell, not individual rows, owns the window-edge boundaries. */
-:root { --chrome-row-content-height: 30px; }
+:root {
+  --chrome-row-content-height: 30px;
+  --chrome-control-plate-height: 24px;
+  --chrome-icon-edge-pad: calc(var(--chrome-edge-pad) - 4px);
+}
 .chrome-row {
   position: relative;
   height: var(--chrome-row-content-height);
+}
+.chrome-control {
+  height: var(--chrome-row-content-height);
+}
+.chrome-plate {
+  height: var(--chrome-control-plate-height);
 }
 
 @layer base {

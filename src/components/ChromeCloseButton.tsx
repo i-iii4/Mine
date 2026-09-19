@@ -1,7 +1,6 @@
 import { X } from "lucide-react";
 import type { ComponentProps } from "react";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 
 type ChromeCloseButtonProps = Omit<
   ComponentProps<typeof Button>,
@@ -19,13 +18,13 @@ export function ChromeCloseButton({
   return (
     <Button
       type={type}
-      variant="ghost"
-      size="icon"
+      variant="chrome"
+      size="chrome-icon"
       aria-label={label}
-      className={cn("shrink-0 text-muted-foreground hover:text-foreground", className)}
+      className={className}
       {...props}
     >
-      <X className="size-4" />
+      <X />
       <span className="sr-only">{label}</span>
     </Button>
   );

@@ -5,7 +5,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { MenuTextTrigger } from "@/components/MenuTextTrigger";
+import { Button } from "@/components/ui/button";
+import { ChromeActions } from "@/components/ChromeRow";
 import { useTopChromeTriggerInteraction } from "@/hooks/useTopChromeTriggerInteraction";
 import { SETTINGS_SECTIONS, type SettingsSection } from "@/lib/settingsSections";
 
@@ -14,35 +15,33 @@ export function AppSettingsMenu({
 }: {
   onSelectSection: (section: SettingsSection) => void;
 }) {
-  const { keyboardFocus, triggerProps, handleCloseAutoFocus } =
+  const { triggerProps, handleCloseAutoFocus } =
     useTopChromeTriggerInteraction({ dragDisabled: true });
 
   return (
-    <div
+    <ChromeActions
       data-top-chrome-settings-menu=""
-      // Include the trigger's 8px inner padding in the 16px visible-glyph inset.
-      className="ml-2 mr-[calc(var(--chrome-edge-pad)-8px)] flex h-full shrink-0 items-center"
+      className="ml-1"
     >
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <MenuTextTrigger
+          <Button
             {...triggerProps}
             aria-label="Mine settings"
-            keyboardFocus={keyboardFocus}
-            label={
+            variant="chrome"
+            size="chrome-icon"
+          >
               <svg
                 data-mine-logo=""
                 aria-hidden="true"
                 focusable="false"
-                viewBox="0 0 800 500"
+                viewBox="-100 -250 1000 1000"
                 fill="currentColor"
-                className="size-4 text-foreground"
               >
-                {/* Exact m outline from Redaction100-Italic; tight bounds, no icon tile. */}
+                {/* Original outline centered in a padded icon canvas: 12.8×8px at 16px. */}
                 <path d="M800 200V100H700V0H600V100H500V0H300V100H200V0H100V400H0V500H100V400H200V200H300V100H400V300H300V500H400V300H500V200H600V100H700V200ZM600 500H700V300H600Z" />
               </svg>
-            }
-          />
+          </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" onCloseAutoFocus={handleCloseAutoFocus}>
           <DropdownMenuGroup>
@@ -54,6 +53,6 @@ export function AppSettingsMenu({
           </DropdownMenuGroup>
         </DropdownMenuContent>
       </DropdownMenu>
-    </div>
+    </ChromeActions>
   );
 }

@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ChromeCloseButton } from "@/components/ChromeCloseButton";
+import { ChromeRow, ChromeActions } from "@/components/ChromeRow";
 import {
   MetadataRow,
   MetadataLinkValue,
@@ -435,10 +436,11 @@ export function Detail({
       data-detail-root
     >
       {topChromeMode === "classic" && (
-        <header
+        <ChromeRow as="header" separator="bottom"
+          separatorProps={{ className: "detail-top-bar-line-enter", "data-entered": chromeEntered ? "true" : "false" }}
           data-entered={chromeEntered ? "true" : "false"}
           className={cn(
-            "detail-top-bar-enter relative flex h-8 shrink-0 items-center gap-3 px-[var(--chrome-edge-pad)]",
+            "detail-top-bar-enter gap-1 pl-[var(--chrome-edge-pad)]",
             "bg-accent",
           )}
           data-detail-top-menu="classic"
@@ -456,6 +458,7 @@ export function Detail({
           >
             {filename}
           </div>
+          <ChromeActions>
           <CardMoreMenu
             block={displayBlock}
             vaultPath={vaultPath}
@@ -465,18 +468,13 @@ export function Detail({
             onCreateAndAssign={onCreateAndAssign}
             onRequestRename={onRequestRename}
             onRequestDelete={onRequestDelete}
-            triggerVariant="ghost"
-            className="shrink-0 text-muted-foreground hover:text-foreground"
+            triggerVariant="chrome"
             openRequestSequence={topMenuRequestSequence}
             onOpenChange={setTopMenuOpen}
           />
           <ChromeCloseButton label="Close" onClick={onClose} />
-          <span
-            aria-hidden="true"
-            data-entered={chromeEntered ? "true" : "false"}
-            className="detail-top-bar-line-enter pointer-events-none absolute inset-x-0 bottom-0 h-px bg-border"
-          />
-        </header>
+          </ChromeActions>
+        </ChromeRow>
       )}
       <div
         ref={detailLayoutRef}
@@ -1370,7 +1368,10 @@ function BlockContent({
               fullSizeImageSrc={src}
             >
               <DetailImage
+                key={src}
                 src={src}
+                sourceWidth={block.width ?? previewManifest?.width}
+                sourceHeight={block.height ?? previewManifest?.height}
                 previewSrc={detailBackingPreviewSource({
                   block,
                   previewManifest,
@@ -2864,7 +2865,10 @@ function ArticleBody({
             onOpenRelatedNote={onOpenRelatedNote}
           >
             <DetailImage
+              key={originalSrc}
               src={originalSrc}
+              sourceWidth={previewTile?.width}
+              sourceHeight={previewTile?.height}
               previewSrc={previewSrc}
               alt={alt ?? ""}
               className="rounded-0"
@@ -3189,6 +3193,8 @@ function withRetryToken(src: string, attempt: number): string {
 
 function DetailImage({
   src,
+  sourceWidth,
+  sourceHeight,
   previewSrc,
   contentInCloud = false,
   mediaRef = null,
@@ -3197,6 +3203,8 @@ function DetailImage({
   ...imgProps
 }: {
   src: string;
+  sourceWidth?: number | null;
+  sourceHeight?: number | null;
   previewSrc: string | null;
   /// Whether this file's contents are held in iCloud rather than on this Mac.
   contentInCloud?: boolean;
@@ -3207,6 +3215,22 @@ function DetailImage({
   const [originalReady, setOriginalReady] = useState(false);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  // Source geometry owns layout; loading changes pixels, never the box.
+  // Legacy records without dimensions lock the first usable image geometry.
+  const [size, setSize] = useState<{ width: number; height: number } | null>(() =>
+    sourceWidth && sourceHeight && sourceWidth > 0 && sourceHeight > 0
+      && Number.isFinite(sourceWidth) && Number.isFinite(sourceHeight)
+      ? { width: sourceWidth, height: sourceHeight } : null);
+  const frameStyle: CSSProperties | undefined = size ? {
+    width: `min(${size.width}px, ${85 * size.width / size.height}vh)`,
+    maxWidth: "100%",
+    aspectRatio: `${size.width} / ${size.height}`,
+  } : undefined;
+  const rememberSize = (image: HTMLImageElement) => {
+    if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+      setSize(previous => previous ?? { width: image.naturalWidth, height: image.naturalHeight });
+    }
+  };
   // Late like the card badge: a file that arrives quickly must not flash a
   // notice about waiting. See SPEC_CLOUD_STORAGE.md Х6, Х9.
   const [waited, setWaited] = useState(false);
@@ -3256,12 +3280,13 @@ function DetailImage({
   }, [showDownloading, mediaRef, attempt]);
 
   return (
-    <div className="relative overflow-hidden leading-none" data-detail-image="">
+    <div className="relative max-w-full overflow-hidden leading-none" style={frameStyle} data-detail-image="">
       {previewSrc && !originalReady && (
         <img
           src={previewSrc}
           alt=""
-          className={cn("block max-w-full rounded-0", className)}
+          className={cn("block max-w-full rounded-0", className, size && "absolute inset-0 size-full object-contain")}
+          onLoad={event => rememberSize(event.currentTarget)}
           loading="eager"
           draggable={false}
           aria-hidden="true"
@@ -3276,11 +3301,19 @@ function DetailImage({
           "block max-w-full rounded-0",
           className,
           previewSrc && !originalReady && "absolute inset-0",
+          size && "absolute inset-0 size-full object-contain",
         )}
         loading="lazy"
         draggable={false}
         {...imgProps}
-        onLoad={() => {
+        onLoad={async (event) => {
+          const image = event.currentTarget;
+          if (typeof image.decode === "function") {
+            try { await image.decode(); }
+            catch { setFailed(true); return; }
+            if (!image.isConnected) return;
+          }
+          rememberSize(image);
           setOriginalReady(true);
           setFailed(false);
         }}

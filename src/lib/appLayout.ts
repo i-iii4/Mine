@@ -12,8 +12,9 @@ export const SIDEBAR_COLUMN_MIN_PX = 88;
 // Name column caps here on wide panels; the surplus goes to the icon strip.
 export const SIDEBAR_NAME_MAX_PX = 150;
 
-/// Fixed width for the Connect / Connected / Disconnect control, wide enough
+/// Minimum width for the Connect / Connected / Disconnect control, wide enough
 /// for the longest of the three so its cell does not twitch as it switches.
+/// The sidebar fills its cell minus two equal fields; pickers use this width.
 ///
 /// Pixels, not `ch`. It used to read `10ch` — ten zero-widths of the current
 /// font — which tied a control's size to the typeface: Geist at 14px happened
@@ -47,9 +48,8 @@ const SIDEBAR_NAV_PAD_PX: Record<DesignMode, number> = {
 /// The zone the meta column occupies, measured from the guideline to the panel
 /// edge: the button's field, the button, and the field between button and
 /// guideline.
-function sidebarActionZone(design: DesignMode): number {
-  const inset = Math.max(SIDEBAR_ROW_PAD_PX[design] - SIDEBAR_ROW_ACTION_GAP_PX, 0);
-  return inset + SIDEBAR_ROW_ACTION_BUTTON_PX + SIDEBAR_ROW_ACTION_GAP_PX;
+function sidebarActionZone(): number {
+  return SIDEBAR_ROW_ACTION_BUTTON_PX + 2 * SIDEBAR_ROW_ACTION_GAP_PX;
 }
 
 /// The width of one visual zone — what the eye compares.
@@ -65,7 +65,7 @@ function sidebarActionZone(design: DesignMode): number {
 export function sidebarZoneWidth(design: DesignMode): number {
   return Math.max(
     SIDEBAR_ROW_PAD_PX[design] + SIDEBAR_COLUMN_MIN_PX,
-    sidebarActionZone(design),
+    sidebarActionZone(),
   );
 }
 

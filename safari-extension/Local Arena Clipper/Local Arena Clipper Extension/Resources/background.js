@@ -625,6 +625,24 @@ function respondToBrowserCreate(sendResponse, invoke) {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.target !== "background") return false;
 
+  if (msg.action === "collectXThread") {
+    const source = sender.url || sender.tab?.url || "";
+    const match = source.match(/^https:\/\/(?:x\.com|twitter\.com)\/[^/]+\/status\/(\d+)(?:[/?#]|$)/);
+    if (!match || match[1] !== msg.tweetId || sender.tab?.id === undefined || sender.frameId !== 0) {
+      sendResponse({ posts: [], issues: ["Open the original X post to collect its thread."] });
+      return false;
+    }
+    chrome.scripting.executeScript({
+      target: { tabId: sender.tab.id, frameIds: [0] }, world: "MAIN",
+      func: async (id) => globalThis.MineXThreadPage
+        ? globalThis.MineXThreadPage.collect(id)
+        : { posts: [], issues: ["Reload this X page once, then open Mine again to collect the thread."] },
+      args: [msg.tweetId],
+    }).then(results => sendResponse(results[0]?.result || { posts: [], issues: ["No thread data returned."] }))
+      .catch(() => sendResponse({ posts: [], issues: ["Thread extraction failed. Reload the page and retry."] }));
+    return true;
+  }
+
   if (msg.action === "openStandaloneSetup") {
     const url = new URL(chrome.runtime.getURL("dist/index.html?mode=setup"));
     if (typeof msg.binding_id === "string") url.searchParams.set("binding_id", msg.binding_id);

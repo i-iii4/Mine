@@ -771,6 +771,34 @@ describe("Card", () => {
     expect(preview.compareDocumentPosition(author) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it.each([1, 2, 3, 4])("rounds only the enclosing media surface for %i tiles in content cards", (count) => {
+    for (const social of [false, true]) {
+      const sources = Array.from({ length: count }, (_, index) => `photo-${index}.jpg`);
+      const b = block({ block_type: "article", body: sources.map(src => `![](${src})`).join("\n"),
+        url: social ? "https://x.com/a/status/1" : null,
+        media_urls: JSON.stringify(sources),
+      });
+      const { container, unmount } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+      const surface = container.querySelector('[data-card-inset-media]');
+      expect(surface).toHaveClass('overflow-hidden', 'rounded-[var(--radius-card)]');
+      expect(surface?.querySelectorAll('img')).toHaveLength(count);
+      for (const tile of container.querySelectorAll('[data-card-media-tile]')) {
+        expect(tile.className).not.toContain('rounded');
+        expect(surface).toContainElement(tile as HTMLElement);
+      }
+      unmount();
+    }
+  });
+
+  it.each([1, 2])("uses the same rounded outer surface for %i video posters", (count) => {
+    const sources = Array.from({ length: count }, (_, index) => `clip-${index}.mp4`);
+    const b = block({ block_type: "article", url: "https://x.com/a/status/1",
+      body: sources.map(src => `![](${src})`).join("\n"), media_urls: JSON.stringify(sources) });
+    const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    expect(container.querySelector('[data-card-inset-media]')).toHaveClass('overflow-hidden', 'rounded-[var(--radius-card)]');
+    for (const tile of container.querySelectorAll('[data-card-media-tile]')) expect(tile.className).not.toContain('rounded');
+  });
+
   it("renders a single-image article from its derived tile", () => {
     const b = block({
       block_type: "article",

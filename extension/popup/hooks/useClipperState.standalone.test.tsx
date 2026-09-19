@@ -5,8 +5,10 @@
 import { createRequire } from "node:module";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
+import objktVideo from "../lib/fixtures/objkt-video.json";
 
-const { sendToNative, standalone } = vi.hoisted(() => ({
+const { sendToNative, standalone, threadArticle } = vi.hoisted(() => ({
+  threadArticle: { value: null as null | Record<string, unknown> },
   sendToNative: vi.fn(),
   standalone: {
     getStandaloneStatus: vi.fn(),
@@ -27,7 +29,10 @@ vi.mock("../lib/messaging", async (importOriginal) => {
     ...original,
     sendToNative: (...args: unknown[]) => sendToNative(...args),
     getContextMenuData: async () => null,
-    extractMetadata: async () => ({ url: "https://example.com", title: "Page" }),
+    extractMetadata: async () => threadArticle.value
+      ? { url: threadArticle.value.pageUrl ?? "https://x.com/author/status/10", title: "Thread", selection: "", detectedType: "content" }
+      : { url: "https://example.com", title: "Page" },
+    extractArticleAsync: async () => threadArticle.value,
   };
 });
 
@@ -75,6 +80,7 @@ function mockChrome() {
 }
 
 beforeEach(() => {
+  threadArticle.value = null;
   vi.clearAllMocks();
   mockChrome();
   standalone.getStandaloneStatus.mockResolvedValue({ configured: false });
@@ -85,6 +91,54 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("standalone mode decision", () => {
+  it.each([
+    ["browser", "preloaded"], ["native", "preloaded"],
+    ["browser", "async"], ["native", "async"],
+  ])("normalizes HTML video before preview and %s save (%s extraction)", async (executor, extraction) => {
+    if (extraction === "async") threadArticle.value = { ...objktVideo.article, pageUrl: objktVideo.pageUrl };
+    vi.mocked(chrome.storage.session.get).mockImplementation(async (keys) => extraction === "preloaded" && keys === "preloadedClipData" ? {
+      preloadedClipData: {
+        metadata: { url: objktVideo.pageUrl, title: objktVideo.article.title, selection: "", detectedType: "article" },
+        article: objktVideo.article,
+      },
+    } : {});
+    standalone.getStandaloneStatus.mockResolvedValue(executor === "browser"
+      ? { configured: true, folderName: "Mine", permission: "granted", bindingId: "browser-original" }
+      : { configured: false });
+    const save = vi.fn(async () => ({ ok: true, outcome: "committed", slug: "Cards/Objkt" }));
+    standalone.standaloneSave.mockImplementation(save);
+    sendToNative.mockImplementation(async (payload: Record<string, unknown>) => {
+      if (payload.action === "get_status") return executor === "native" ? nativeStatus() : { ok: false, error: "No helper" };
+      if (payload.action === "list_known_vaults") return { ok: true, vaults: ["/v"], current: "/v" };
+      if (payload.action === "list_channels") return { ok: true, channels: [] };
+      if (payload.action === "save_block") return save();
+      return { ok: false, error: "Unexpected native action" };
+    });
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.saveMode).toBe(executor === "native" ? "app" : "standalone"));
+    await waitFor(() => expect(result.current.articleData?.content).toContain(`![](${objktVideo.mediaUrl})`));
+    const previewBody = result.current.articleData?.content;
+    expect(previewBody).not.toContain("<video");
+    expect(result.current.articleData?.embeddedVideos).toHaveLength(1);
+    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+    const payload = executor === "browser"
+      ? standalone.standaloneSave.mock.calls[0][0]
+      : sendToNative.mock.calls.find(([request]) => request.action === "save_block")?.[0];
+    expect(payload).toMatchObject({ body: previewBody });
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it("saves the preview without extra confirmation despite a thread loading warning", async () => {
+    threadArticle.value = { title: "Thread", content: "part one", byline: "author", excerpt: "", threadPostCount: 1, threadWarning: "Thread loading timed out." };
+    sendToNative.mockResolvedValue({ ok: false, error: "No helper" });
+    standalone.getStandaloneStatus.mockResolvedValue({ configured: true, folderName: "Mine", permission: "granted", bindingId: "browser-mine" });
+    standalone.standaloneSave.mockResolvedValue({ ok: true, outcome: "committed", slug: "Thread" });
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.articleData?.threadWarning).toBe("Thread loading timed out."));
+    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+    expect(standalone.standaloneSave).toHaveBeenCalledTimes(1);
+    expect(standalone.standaloneSave.mock.calls[0][0]).toMatchObject({ body: "part one" });
+  });
   it.each(["browser", "native"])("sends a real UI timestamp accepted by shared WASM through %s", async (executor) => {
     // Keep nonzero milliseconds in the clock: hand-written seconds-only requests
     // would miss the UI/core contract failure this regression protects against.

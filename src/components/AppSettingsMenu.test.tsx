@@ -19,8 +19,8 @@ describe("AppSettingsMenu", () => {
     expect(trigger.querySelector("img")).toBeNull();
     const logo = trigger.querySelector("svg");
     expect(logo).toHaveAttribute("fill", "currentColor");
-    expect(logo).toHaveClass("text-foreground");
-    expect(logo).toHaveAttribute("viewBox", "0 0 800 500");
+    expect(logo).not.toHaveClass("text-foreground");
+    expect(logo).toHaveAttribute("viewBox", "-100 -250 1000 1000");
     expect(logo?.querySelector("rect, image, text")).toBeNull();
     await user.click(trigger);
     expect(screen.getAllByRole("menuitem").map((item) => item.textContent))

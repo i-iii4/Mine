@@ -459,29 +459,23 @@ pub fn copy_new_media_file(source: &Path, vault: &VaultLayout, slug: &str) -> Re
 
 /// Delete a user-owned file.
 ///
-/// Moves to OS trash when available, then falls back to permanent delete for
-/// filesystems where trashing fails (notably some iCloud placeholder states).
+/// Moves to OS trash. Failure must never become permanent deletion.
 pub fn delete_user_file(path: &Path) -> Result<()> {
     if !path.exists() {
         return Ok(());
     }
 
-    let trashed = {
-        #[cfg(not(target_os = "ios"))]
-        {
-            trash::delete(path).is_ok()
-        }
-        #[cfg(target_os = "ios")]
-        {
-            false
-        }
-    };
-    if !trashed {
-        std::fs::remove_file(path)
-            .with_context(|| format!("failed to delete: {}", path.display()))?;
-    }
+    delete_user_files(&[path.to_path_buf()])
+}
 
-    Ok(())
+/// One OS trash request for a batch. The OS may partially succeed; callers
+/// must refresh their view after errors. Never remove remaining files here.
+pub fn delete_user_files(paths: &[PathBuf]) -> Result<()> {
+    if paths.is_empty() { return Ok(()); }
+    #[cfg(not(target_os = "ios"))]
+    { trash::delete_all(paths).context("failed to move files to the system Trash") }
+    #[cfg(target_os = "ios")]
+    { anyhow::bail!("system Trash is unavailable; files were not deleted") }
 }
 
 /// Delete a block's .md file and optional media file.
@@ -1071,6 +1065,16 @@ mod tests {
     }
 
     // ── delete_block_files ───────────────────────────────────────────────
+
+    #[test]
+    fn trash_batch_failure_never_permanently_deletes_existing_files() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let keep = root.path().join("keep.jpg");
+        std::fs::write(&keep, b"keep").expect("write");
+        let missing = root.path().join("missing.jpg");
+        assert!(delete_user_files(&[keep.clone(), missing]).is_err());
+        assert_eq!(std::fs::read(keep).expect("file preserved"), b"keep");
+    }
 
     #[test]
     fn delete_md_only() {

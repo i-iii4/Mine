@@ -266,6 +266,7 @@ import { Grid } from "@/components/Grid";
 import { GraphView } from "@/components/GraphView";
 import { DragCardStackPreview } from "@/components/Card";
 import { ActionButton } from "@/components/ActionButton";
+import { ChromeControl, ChromePlate } from "@/components/ui/chrome-control";
 import { applyTheme, getStoredTheme, THEME_STORAGE_KEY } from "@/lib/themeMode";
 import {
   applyDesign,
@@ -3283,18 +3284,22 @@ export function AppWithVault({
                     data-sidebar-top-search=""
                   />
                   {sidebarSearchHasValue && (
+                    <ChromeControl>
                     <button
                       type="button"
                       aria-label="Clear collection search"
                       className={cn(
-                        "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-1 text-muted-foreground hover:bg-component-fill-hover hover:text-foreground focus-visible:bg-component-fill-hover focus-visible:text-foreground focus-visible:outline-none",
+                        "group inline-flex w-6 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground focus-visible:text-foreground focus-visible:outline-none",
                         compactDetailTopMenuActive ? "mr-1" : "mr-3",
                       )}
                       onClick={handleClearSidebarSearch}
                       data-sidebar-top-search-clear=""
                     >
+                      <ChromePlate className="w-6 rounded-1 group-hover:bg-component-fill-hover group-focus-visible:bg-component-fill-hover">
                       <X aria-hidden="true" className="size-3" />
+                      </ChromePlate>
                     </button>
+                    </ChromeControl>
                   )}
                   {/* Only when the metadata row is not carrying it already:
                       at the foot of the window the collections switch lives
@@ -3637,7 +3642,7 @@ export function AppWithVault({
             className="inline-flex shrink-0 items-center"
             style={hiddenBarEntries.has("toggle-sidebar") ? { display: "none" } : undefined}
           >
-            <ActionButton hotkey={commandById("toggle-sidebar").combo} onClick={toggleCollapsed}>
+            <ActionButton chrome hotkey={commandById("toggle-sidebar").combo} onClick={toggleCollapsed}>
               {sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar"}
             </ActionButton>
           </span>
@@ -3646,7 +3651,7 @@ export function AppWithVault({
             className="inline-flex shrink-0 items-center"
             style={hiddenBarEntries.has("new-collection") ? { display: "none" } : undefined}
           >
-            <ActionButton hotkey={commandById("new-collection").combo} onClick={beginCreateCollection}>
+            <ActionButton chrome hotkey={commandById("new-collection").combo} onClick={beginCreateCollection}>
               {commandById("new-collection").name}
             </ActionButton>
           </span>
@@ -3661,7 +3666,7 @@ export function AppWithVault({
               className="inline-flex shrink-0 items-center"
               style={hiddenBarEntries.has("switch-collection") ? { display: "none" } : undefined}
             >
-              <ActionButton hotkey={commandById("switch-collection").combo} readOnly>
+              <ActionButton chrome hotkey={commandById("switch-collection").combo} readOnly>
                 {commandById("switch-collection").name}
               </ActionButton>
             </span>
@@ -3672,7 +3677,7 @@ export function AppWithVault({
               className="inline-flex shrink-0 items-center"
               style={hiddenBarEntries.has("navigate") ? { display: "none" } : undefined}
             >
-              <ActionButton hotkey={commandById("navigate").combo} readOnly>
+              <ActionButton chrome hotkey={commandById("navigate").combo} readOnly>
                 {commandById("navigate").name}
               </ActionButton>
             </span>
@@ -3684,6 +3689,7 @@ export function AppWithVault({
               style={hiddenBarEntries.has("open-focused") ? { display: "none" } : undefined}
             >
               <ActionButton
+                chrome
                 hotkey={commandById("open-focused").combo}
                 onClick={() => activateFocusedRef.current?.()}
               >
@@ -3700,6 +3706,7 @@ export function AppWithVault({
               style={hiddenBarEntries.has("element-menu") ? { display: "none" } : undefined}
             >
               <ActionButton
+                chrome
                 hotkey={commandById("element-menu").combo}
                 onClick={() => {
                   if (renderedDetailBlock) {
@@ -3720,6 +3727,7 @@ export function AppWithVault({
               style={hiddenBarEntries.has("close-element") ? { display: "none" } : undefined}
             >
               <ActionButton
+                chrome
                 hotkey={commandById("close-element").combo}
                 onClick={handleDetailClose}
               >
@@ -3734,6 +3742,7 @@ export function AppWithVault({
               style={hiddenBarEntries.has("clear-selection") ? { display: "none" } : undefined}
             >
               <ActionButton
+                chrome
                 hotkey={commandById("clear-selection").combo}
                 onClick={() => selectionClearRef.current?.()}
               >
@@ -3751,6 +3760,7 @@ export function AppWithVault({
             style={hiddenBarEntries.has("find-elements") ? { display: "none" } : undefined}
           >
             <ActionButton
+              chrome
               hotkey={commandById("find-elements").combo}
               onClick={toggleSearchOverlay}
             >
@@ -3764,7 +3774,7 @@ export function AppWithVault({
             className="inline-flex shrink-0 items-center"
             style={hiddenBarEntries.has("settings") ? { display: "none" } : undefined}
           >
-            <ActionButton hotkey={commandById("settings").combo} onClick={() => handleOpenSettings()}>
+            <ActionButton chrome hotkey={commandById("settings").combo} onClick={() => handleOpenSettings()}>
               {commandById("settings").name}
             </ActionButton>
           </span>

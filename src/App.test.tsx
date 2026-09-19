@@ -1804,7 +1804,11 @@ describe("AppWithVault", () => {
     fireEvent.change(input, { target: { value: "alp" } });
 
     expect(searchSurface).toHaveClass("bg-accent");
-    fireEvent.click(screen.getByRole("button", { name: "Clear collection search" }));
+    const clearSearch = screen.getByRole("button", { name: "Clear collection search" });
+    expect(clearSearch).toHaveAttribute("data-chrome-control");
+    expect(clearSearch.querySelector("[data-chrome-plate]")).not.toBeNull();
+    expect(clearSearch.querySelector("svg")).toHaveClass("size-3");
+    fireEvent.click(clearSearch);
     expect(input).toHaveFocus();
     expect(input).toHaveValue("");
     expect(searchSurface).not.toHaveClass("bg-accent");

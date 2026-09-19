@@ -1,6 +1,7 @@
 import * as React from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ChromeControl, ChromePlate } from "./ui/chrome-control";
 
 type MenuTextTriggerSurface = "topChrome" | "clipperHeader" | "actionBar";
 
@@ -28,16 +29,18 @@ export const MenuTextTrigger = React.forwardRef<HTMLButtonElement, MenuTextTrigg
   ) => {
     const chromeLike = surface === "topChrome" || surface === "clipperHeader";
     const isClipperHeader = surface === "clipperHeader";
+    const Plate = surface === "topChrome" ? ChromePlate : "span";
     const innerTextClass = surface === "clipperHeader" ? "text-foreground" : "text-muted-foreground";
 
     return (
+      <ChromeControl enabled={surface === "topChrome"}>
       <button
         ref={ref}
         type="button"
         className={cn(
           "group select-none bg-transparent outline-0",
           surface === "topChrome" &&
-            "inline-flex h-full min-w-0 flex-none items-center overflow-hidden rounded-0 font-mono text-sm text-muted-foreground focus-visible:outline-none",
+            "inline-flex min-w-0 flex-none items-center overflow-hidden rounded-0 font-mono text-sm text-muted-foreground focus-visible:outline-none",
           surface === "clipperHeader" &&
             "inline-flex h-6 max-w-full items-center gap-1 overflow-hidden rounded-1 px-2 text-base text-foreground hover:bg-active data-[state=open]:bg-active",
           surface === "actionBar" &&
@@ -59,11 +62,11 @@ export const MenuTextTrigger = React.forwardRef<HTMLButtonElement, MenuTextTrigg
           </>
         ) : (
           <>
-            <span
+            <Plate
               className={cn(
                 isClipperHeader
                   ? "min-w-0 max-w-full"
-                  : "inline-flex h-6 min-w-0 max-w-full items-center rounded-1 px-2 group-hover:bg-active group-hover:text-foreground group-data-[state=open]:bg-active group-data-[state=open]:text-foreground",
+                  : "min-w-0 max-w-full rounded-1 px-2 group-hover:bg-active group-hover:text-foreground group-data-[state=open]:bg-active group-data-[state=open]:text-foreground",
                 innerTextClass,
                 keyboardFocus && "bg-active text-foreground",
               )}
@@ -71,7 +74,7 @@ export const MenuTextTrigger = React.forwardRef<HTMLButtonElement, MenuTextTrigg
               <span className="min-w-0 truncate text-left">
                 {label}
               </span>
-            </span>
+            </Plate>
             {showChevron && chromeLike ? (
               isClipperHeader ? (
                 <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform duration-150 group-hover:text-foreground group-data-[state=open]:rotate-90 group-data-[state=open]:text-foreground" />
@@ -82,6 +85,7 @@ export const MenuTextTrigger = React.forwardRef<HTMLButtonElement, MenuTextTrigg
           </>
         )}
       </button>
+      </ChromeControl>
     );
   },
 );

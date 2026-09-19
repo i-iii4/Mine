@@ -182,7 +182,9 @@ describe("Detail", () => {
     const topMenu = container.querySelector('[data-detail-top-menu="classic"]');
     expect(topMenu).not.toBeNull();
     expect(topMenu).toHaveClass("detail-top-bar-enter");
-    expect(topMenu).toHaveClass("h-8", "bg-accent", "px-[var(--chrome-edge-pad)]");
+    expect(topMenu).toHaveClass("chrome-row", "bg-accent", "pl-[var(--chrome-edge-pad)]");
+    expect(topMenu?.nextElementSibling).toHaveAttribute("data-chrome-divider");
+    expect(topMenu?.querySelectorAll('[data-size="chrome-icon"]')).toHaveLength(2);
   });
 
   it("toggles the classic top overflow menu with Command-K", async () => {
@@ -377,7 +379,7 @@ describe("Detail", () => {
     const classicMenu = container.querySelector('[data-detail-top-menu="classic"]');
     expect(classicMenu).toHaveClass("detail-top-bar-enter");
     expect(classicMenu).not.toHaveClass("border-b");
-    const line = classicMenu?.querySelector("span[aria-hidden='true']");
+    const line = classicMenu?.nextElementSibling;
     expect(line).toHaveClass("detail-top-bar-line-enter");
     expect(line).toHaveClass("bg-border");
   });
@@ -404,7 +406,7 @@ describe("Detail", () => {
 
     const classicMenu = container.querySelector('[data-detail-top-menu="classic"]');
     expect(classicMenu).toHaveAttribute("data-entered", "false");
-    expect(classicMenu?.querySelector("span[aria-hidden='true']")).toHaveAttribute(
+    expect(classicMenu?.nextElementSibling).toHaveAttribute(
       "data-entered",
       "false",
     );
@@ -2153,6 +2155,86 @@ describe("Detail", () => {
       onRequestDelete: vi.fn(),
     };
   }
+
+  it("keeps source geometry unchanged when a small preview is replaced by the original", () => {
+    const props = cloudImageProps(false);
+    props.block.width = 1600;
+    props.block.height = 1200;
+    const { container } = render(<Detail {...props} />);
+    const frame = container.querySelector('[data-detail-image]') as HTMLElement;
+    const preview = frame.querySelector('[data-detail-preview-backing]') as HTMLImageElement;
+    const original = frame.querySelector('img:not([data-detail-preview-backing])') as HTMLImageElement;
+    const geometry = frame.getAttribute('style');
+    expect(frame.style.aspectRatio).toBe('1600 / 1200');
+    expect(preview).toHaveClass('absolute', 'size-full', 'object-contain');
+    Object.defineProperties(preview, { naturalWidth: { value: 320 }, naturalHeight: { value: 240 } });
+    fireEvent.load(preview);
+    fireEvent.load(original);
+    expect(frame.getAttribute('style')).toBe(geometry);
+    expect(original).toHaveClass('absolute', 'size-full', 'object-contain');
+    expect(frame.querySelector('[data-detail-preview-backing]')).toBeNull();
+  });
+
+  it("locks legacy preview geometry instead of growing when unknown-size original arrives", () => {
+    const { container } = render(<Detail {...cloudImageProps(false)} />);
+    const frame = container.querySelector('[data-detail-image]') as HTMLElement;
+    const preview = frame.querySelector('[data-detail-preview-backing]') as HTMLImageElement;
+    const original = frame.querySelector('img:not([data-detail-preview-backing])') as HTMLImageElement;
+    Object.defineProperties(preview, { naturalWidth: { value: 320 }, naturalHeight: { value: 240 } });
+    fireEvent.load(preview);
+    const geometry = frame.getAttribute('style');
+    Object.defineProperties(original, { naturalWidth: { value: 1600 }, naturalHeight: { value: 1200 } });
+    fireEvent.load(original);
+    expect(frame.getAttribute('style')).toBe(geometry);
+  });
+
+  it("does not resize a displayed legacy image when metadata arrives later", () => {
+    const props = cloudImageProps(false);
+    const { container, rerender } = render(<Detail {...props} />);
+    const frame = container.querySelector('[data-detail-image]') as HTMLElement;
+    const preview = frame.querySelector('[data-detail-preview-backing]') as HTMLImageElement;
+    Object.defineProperties(preview, { naturalWidth: { value: 320 }, naturalHeight: { value: 240 } });
+    fireEvent.load(preview);
+    const geometry = frame.getAttribute('style');
+    rerender(<Detail {...props} block={{ ...props.block, width: 1600, height: 1200 }} />);
+    expect(frame.getAttribute('style')).toBe(geometry);
+  });
+
+  it("retains the preview and geometry when decoding fails", async () => {
+    const props = cloudImageProps(false);
+    props.block.width = 1600;
+    props.block.height = 1200;
+    const { container } = render(<Detail {...props} />);
+    const frame = container.querySelector('[data-detail-image]') as HTMLElement;
+    const geometry = frame.getAttribute('style');
+    const original = frame.querySelector('img:not([data-detail-preview-backing])') as HTMLImageElement;
+    Object.defineProperty(original, 'decode', { value: () => Promise.reject(new Error('decode')) });
+    await act(async () => fireEvent.load(original));
+    expect(frame.querySelector('[data-detail-preview-backing]')).not.toBeNull();
+    expect(frame.getAttribute('style')).toBe(geometry);
+  });
+
+  it("keeps the preview until the original is decoded", async () => {
+    const { container } = render(<Detail {...cloudImageProps(false)} />);
+    const original = container.querySelector('[data-detail-image] img:not([data-detail-preview-backing])') as HTMLImageElement;
+    let finishDecode!: () => void;
+    Object.defineProperty(original, 'decode', { value: () => new Promise<void>(resolve => { finishDecode = resolve; }) });
+    fireEvent.load(original);
+    expect(container.querySelector('[data-detail-preview-backing]')).not.toBeNull();
+    await act(async () => finishDecode());
+    expect(container.querySelector('[data-detail-preview-backing]')).toBeNull();
+  });
+
+  it("resets the image frame when navigating to a different source", () => {
+    const props = cloudImageProps(false);
+    props.block.width = 1600;
+    props.block.height = 1200;
+    const { container, rerender } = render(<Detail {...props} />);
+    rerender(<Detail {...props} block={{ ...props.block, media_file: 'portrait.jpg', width: 1200, height: 1600 }} />);
+    const frame = container.querySelector('[data-detail-image]') as HTMLElement;
+    expect(frame.style.aspectRatio).toBe('1200 / 1600');
+    expect(frame.querySelector('[data-detail-preview-backing]')).not.toBeNull();
+  });
 
   it("names the file's state when its contents cannot be fetched from iCloud", () => {
     const { container } = render(<Detail {...cloudImageProps(true)} />);

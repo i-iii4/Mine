@@ -555,16 +555,12 @@ describe("Sidebar", () => {
       expect(alphaAction).toHaveClass("opacity-100");
     });
     expect(alphaAction).toHaveTextContent("Connected");
-    // A fixed pixel width, not ten zero-widths of the current font: the column
-    // that frames this button is measured in pixels, and a size that follows
-    // the typeface cannot stay centred in it.
-    expect(alphaAction).toHaveStyle({ width: "84px" });
+    // All states fill the same cell minus two equal 8px fields.
+    expect(alphaAction).toHaveStyle({ width: "calc(var(--sidebar-zone) - 16px)" });
+    expect(betaAction).toHaveStyle({ width: "calc(var(--sidebar-zone) - 16px)", right: "8px" });
     expect(alphaAction).toHaveClass("absolute");
-    // Eight less than the row's inset: the button's own padding puts its label
-    // back on the vertical the counts use, while the body overhangs. Clamped
-    // at zero, so the primary design keeps the button where it always was.
     expect(alphaAction).toHaveStyle({
-      right: "max(calc(var(--sidebar-row-pad-x) - 8px), 0px)",
+      right: "8px",
     });
     expect(alphaAction.closest("a")).toBeNull();
     expect(screen.getByText("5")).not.toHaveClass("opacity-0");

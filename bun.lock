@@ -16,6 +16,8 @@
         "clsx": "^2.1.1",
         "d3-force": "^3.0.0",
         "lucide-react": "^0.575.0",
+        "mdast-util-from-markdown": "^2.0.3",
+        "parse5": "^8.0.0",
         "radix-ui": "^1.4.3",
         "react": "^19.2.4",
         "react-dom": "^19.2.4",

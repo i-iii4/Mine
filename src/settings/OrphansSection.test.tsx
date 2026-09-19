@@ -85,6 +85,18 @@ describe("OrphansSection", () => {
     expect(listOrphanMedia).toHaveBeenCalledTimes(2);
   });
 
+  it("refreshes the list after a partial Trash failure and shows the error", async () => {
+    vi.mocked(deleteOrphanMedia).mockRejectedValue(new Error("Trash refused remaining files"));
+    render(<OrphansSection />);
+    await screen.findByText("clip.mp4");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select clip.mp4" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    expect(await screen.findByText(/Trash refused remaining files/)).toBeInTheDocument();
+    await waitFor(() => expect(listOrphanMedia).toHaveBeenCalledTimes(2));
+  });
+
   it("deletes only after confirmation", async () => {
     vi.mocked(deleteOrphanMedia).mockResolvedValue({
       deleted: ["clip.mp4"],

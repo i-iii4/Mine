@@ -524,13 +524,37 @@
     const authorHandle = urlMatch[1];
     const tweetId = urlMatch[2];
 
+    const snapshot = await new Promise(resolve => {
+      chrome.runtime.sendMessage({ target: "background", action: "collectXThread", tweetId }, result => {
+        resolve(chrome.runtime.lastError ? null : result);
+      });
+    });
+    if (window.location.href !== url) return null;
+    if (snapshot?.posts?.length) {
+      const content = globalThis.MineXThread.compose(snapshot.posts);
+      const embeddedVideos = [];
+      for (const part of snapshot.posts) {
+        for (const media of [...part.media, ...(part.quote?.media || [])]) {
+          if (media.kind === "video") pushVideoUrlPreview(embeddedVideos, media.url, media.poster, "Tweet video preview");
+        }
+      }
+      const title = snapshot.posts[0].text.replace(/\n/g, " ").slice(0, 80) || `@${authorHandle}`;
+      return { title, content, byline: `@${authorHandle}`, excerpt: snapshot.posts[0].text.slice(0, 200),
+        embeddedVideos, threadWarning: snapshot.issues?.join(" ") || undefined,
+        threadPostCount: snapshot.posts.length };
+    }
+    // Keep a single-post preview when a page predates the observer. Never
+    // silently claim that the old DOM window is a complete author thread.
+    const threadWarning = snapshot?.issues?.join(" ") || "Thread data is unavailable. Reload this X page and retry.";
+
     const threadSelection = window.MineTwitterThreadSelection;
-    const articles = threadSelection?.selectTwitterThreadArticles?.({
+    const candidates = threadSelection?.selectTwitterThreadArticles?.({
       document,
       targetTweetId: tweetId,
       authorHandle,
     }) || [];
-    if (articles.length === 0) return null;
+    const articles = candidates.filter(article => threadSelection?.getTweetIdentity?.(article)?.tweetId === tweetId);
+    if (articles.length === 0) return { title: document.title, content: "", byline: null, excerpt: "", threadWarning };
     const targetArticle = articles.find((article) => {
       return threadSelection?.getTweetIdentity?.(article)?.tweetId === tweetId;
     }) || articles[0];
@@ -652,6 +676,8 @@
 
     return {
       title: tweetTitle,
+      threadWarning,
+      threadPostCount: 1,
       content: parts.join("\n\n"),
       byline: `@${authorHandle}`,
       excerpt: firstText.slice(0, 200),
@@ -1648,7 +1674,10 @@
     }
 
     if (msg.action === "extractArticleAsync") {
-      extractArticleAsync().then(sendResponse);
+      extractArticleAsync().then(sendResponse).catch(error => sendResponse({
+        title: document.title, content: "", byline: null, excerpt: "",
+        threadWarning: `Content extraction failed: ${error.message || "unknown error"}`,
+      }));
       return true;
     }
 

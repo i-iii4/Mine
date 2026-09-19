@@ -17,6 +17,7 @@
 - `SPEC_INTEGRATION.md` — спецификации watcher/events, handler, commands
 - `SPEC_FRONTEND.md` — спецификация фронтенда: компоненты, типы, IPC, роутинг
 - `SPEC_CLIPPER.md` — спецификация расширения браузера: типы сохранений, popup, native messaging
+- `SPEC_X_THREADS.md` — реализованный сбор авторской цепочки X, границы полноты и проверки; Save сохраняет превью без дополнительных подтверждений
 - `SPEC_SAVE_CORE.md` — общее Rust/WASM-ядро реализовано; контракт операций и открытая реальная приёмка в docs/save-core-acceptance.md, статусы SC0–SC7 в PLAN.md
 - `SPEC_MOBILE.md` — спецификация iOS-приложения: SwiftUI + Rust UniFFI, iCloud sync, Share Extension
 - `SPEC_GRID.md` — спецификация zero-jank masonry grid: Canvas measureText precomputation, dual-path (native grid-lanes + virtualized JS), детерминистические высоты

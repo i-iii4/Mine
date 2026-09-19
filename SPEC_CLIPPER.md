@@ -265,12 +265,18 @@ readability без якоря может собрать неправильный
 
 #### X tweet/thread and quote tweet extraction
 
+Целевой контракт замены отбора: [SPEC_X_THREADS.md](SPEC_X_THREADS.md).
+Он подготовлен, но не реализован. Описанный ниже contiguous DOM window —
+текущее ограничение: он не доказывает принадлежность поста к треду и может
+обрывать продолжение на служебном блоке. Полнота треда им не гарантируется.
+
 `extractTwitterThread()` состоит из двух независимых шагов:
 
 1. `MineTwitterThreadSelection.selectTwitterThreadArticles()` выбирает только
    top-level timeline cells вокруг target tweet: contiguous tweets того же
-   автора. Nested/quoted tweets не становятся thread items. Replies,
-   recommendations и чужие tweets остаются за пределами selected window.
+   автора. Nested/quoted tweets не становятся thread items. Чужой автор или
+   структурная граница останавливают обход; рекомендации того же автора без
+   такой границы могут попасть в результат.
 2. `MineTwitterTweetContent.extractTweetContentParts()` разбирает каждый
    выбранный tweet article на `mainText`, top-level `media` и `quotes`.
 
@@ -614,14 +620,48 @@ Popup/overlay init не ждёт тяжёлый article extraction. Старто
 Save не имеет права записывать пустую статью ни из `idle`, ни из `loading`, ни
 из `empty/failed`.
 
+### HTML video normalization
+
+На общей границе приёма `ArticleData`, до записи в state/ref popup, HTML-видео
+в извлечённом Markdown преобразуются в `![](https://...)`. Превью и Save читают
+один нормализованный body через `resolveContentBody`; отдельного save-only
+преобразования нет. Правило одинаково для overlay и отдельного popup, sync/async
+результатов. Нормализатор не сканирует исходную страницу и не добавляет в body
+видео из общего DOM/meta preview fallback.
+
+- Markdown-парсер отделяет HTML от fenced/inline code; HTML-парсер определяет
+  video/source и точные диапазоны замены. Остальной Markdown не пересериализуется.
+- `video.src` имеет приоритет; при его отсутствии выбирается первый допустимый
+  `source.src`. Один player с несколькими source даёт одно вложение.
+- Допустимы HTTP(S) direct media URL, включая относительные и URL без расширения.
+  HLS/DASH, blob/data, iframe и небезопасные схемы не становятся file embeds.
+  Неподдерживаемые video сохраняются без изменений; новый загрузчик потоков не
+  входит в эту задачу. Пустые video без источника и содержимого удаляются.
+- Текст, подписи, порядок и существующие Markdown-вложения сохраняются. Повторная
+  нормализация не меняет body и не дублирует preview. Намеренно повторённые позиции
+  одного видео не удаляются.
+- Нормализованный URL добавляется в `embeddedVideos` вместе с poster/title:
+  extensionless video не должен отображаться как сломанное изображение.
+- Native host использует существующий MIME probe/download и записывает локальный
+  wikilink с учётом раскладки vault. Browser-only сохраняет прежнюю семантику
+  удалённых вложений статьи; offline localization в этом executor не добавляется.
+- Не добавляются checkbox, warning и Save gate. Старые заметки не переписываются.
+
+Регрессии: objkt `video + extensionless artifact`, source alternatives, relative
+URL, escaped URL delimiters, code examples, empty/unsupported video, captions,
+idempotence, preview/save agreement, selection and social extraction. Приёмка:
+реальный MP4 objkt в disposable vault, локальный wikilink, ненулевой media-файл и
+проверка воспроизведения без запросов к исходному серверу.
+
 ### Content video preview
 
 Content preview не воспроизводит видео. Content script передаёт в popup `articleData.embeddedVideos` с `src`, `poster`, `title`. Источники, по приоритету: social extractors, которые уже получают media candidates (Twitter/X syndication API, Instagram media API); DOM fallback (`<video>`, YouTube/Vimeo `<iframe>`); meta fallback (`og:video`, `twitter:player:stream`, poster из `og:image` / `twitter:image`). Для YouTube poster вычисляется из video id (`i.ytimg.com/vi/.../maxresdefault.jpg`); для `<video>` берётся `poster` attribute или, если сайт уже держит видимый video frame в памяти, preview-only canvas snapshot с ограниченным размером. DOM `<video>` с runtime-only source (`blob:` / `mediasource:`) не считается canonical video source: такой URL нельзя повторно скачать, сохранить или сопоставить с embed URL, поэтому он не seed'ит отдельный `embeddedVideos` preview и может дать только poster/frame fallback. Если extracted markdown содержит inline video URL (`.mp4`, `.webm`, `.m4v`, `.mov`) в image syntax, popup рендерит lightweight poster preview только если этот `src` ещё не представлен в `embeddedVideos`; одинаковый canonical video `src` должен давать один preview. Poster берётся из `embeddedVideos.poster`, а `metadata.image` / `og:image` используется только как последний fallback для inline video без structured preview. Сам video URL остаётся в markdown/save payload без изменений.
 
 Twitter/X extractor должен считать syndication/API media более авторитетным источником, чем generic DOM video scan. Если API уже дал direct mp4 + `tweet_video_thumb` poster, DOM `<video>` fallback не добавляется в `embeddedVideos`, чтобы blob/player nodes и generic X cards не создавали лишние previews. Поскольку content scripts могут упереться в CORS при чтении syndication API, popup имеет native-host fallback `resolve_twitter_media`: он возвращает тот же direct mp4 / poster contract, который использует save path. Для `animated_gif` popup может заменить API thumbnail на preview-only кадр из direct mp4 с seek к текущему времени DOM video; если frame capture недоступен, используется `tweet_video_thumb`. Это не меняет saved markdown/body и не локализует дополнительный файл.
 
-Twitter/X thread extraction выбирает состав треда до извлечения текста/медиа.
-Selection layer обязан якориться на `tweetId` из URL, читать `tweetId` каждого
+Прежняя DOM-реализация Twitter/X описана ниже как историческое ограничение;
+текущий структурированный сбор задан в [SPEC_X_THREADS.md](SPEC_X_THREADS.md).
+Selection layer якорится на `tweetId` из URL, читает `tweetId` каждого
 видимого tweet article из permalink/timestamp и собирать только contiguous
 timeline cells вокруг target tweet. Сканирование останавливается на
 структурной границе: cell без top-level tweet article, чужой tweet article,

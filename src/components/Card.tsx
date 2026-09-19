@@ -96,6 +96,7 @@ interface CardFrameProps extends React.HTMLAttributes<HTMLDivElement> {
 
 interface GraphicSurfaceProps extends React.HTMLAttributes<HTMLDivElement> {
   children: React.ReactNode;
+  insetMedia?: boolean;
 }
 
 const CardFrame = forwardRef<HTMLDivElement, CardFrameProps>(function CardFrame(
@@ -167,12 +168,14 @@ export function CardSourcelessSurface({
 function GraphicSurface({
   children,
   className,
+  insetMedia = false,
   ...props
 }: GraphicSurfaceProps) {
   return (
     <div
       data-card-graphic-surface=""
-      className={cn("relative overflow-hidden bg-card", className)}
+      data-card-inset-media={insetMedia ? "" : undefined}
+      className={cn("relative overflow-hidden bg-card", insetMedia && "rounded-[var(--radius-card)]", className)}
       {...props}
     >
       {children}
@@ -1118,6 +1121,7 @@ const SocialCard = memo(function SocialCard({
         }).map((url) => withThumbVersion(url, thumbVersion));
         return (
           <GraphicSurface
+            insetMedia
             className="w-full"
             style={{ aspectRatio: `${m.aspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
             data-card-preview-geometry={m.aspectRatio === null ? "pending" : undefined}
@@ -1159,6 +1163,7 @@ const SocialCard = memo(function SocialCard({
       })()}
       {descriptor.variant === "social-media-grid" && media.length >= 2 && (
         <GraphicSurface
+          insetMedia
           className="w-full"
           style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
         >
@@ -1249,6 +1254,7 @@ const ArticleCard = memo(function ArticleCard({
         // article previews reserve a square gallery slot; single-image
         // previews use object-cover to avoid letterboxing in feed cards.
         <GraphicSurface
+          insetMedia
           className="w-full"
           style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
           data-card-preview-geometry={descriptor.primaryAspectRatio === null ? "pending" : undefined}

@@ -38,12 +38,19 @@
   },
   "content_scripts": [
     {
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "js": ["lib/xThread.js", "lib/xThreadPage.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
       "matches": [
         "http://*/*",
         "https://*/*",
         "file:///*"
       ],
       "js": [
+        "lib/xThread.js",
         "lib/twitterThreadSelection.js",
         "lib/twitterTweetContent.js",
         "lib/xLongformArticleExtraction.js",

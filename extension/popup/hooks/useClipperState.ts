@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { normalizeArticleMedia } from "../lib/normalizeArticleMedia";
 
 /** Remove duplicate images from markdown by comparing alt text.
  *  If two images have identical alt text, the second is a duplicate (e.g. OG hero + body image). */
@@ -172,8 +173,9 @@ export function useClipperState() {
   }, []);
 
   const setArticleDataValue = useCallback((value: ArticleData | null) => {
-    articleDataRef.current = value;
-    setArticleData(value);
+    const normalized = value ? normalizeArticleMedia(value, metadataRef.current?.url ?? "") : null;
+    articleDataRef.current = normalized;
+    setArticleData(normalized);
   }, []);
 
   const setArticleExtractionStateValue = useCallback((value: ArticleExtractionState) => {
@@ -255,7 +257,9 @@ export function useClipperState() {
 
   const ensureArticleLoaded = useCallback(async (): Promise<ArticleData | null> => {
     const existing = articleDataRef.current;
-    if (articleHasSaveableContent(metadataRef.current, existing)) {
+    const needsThread = /https:\/\/(?:x\.com|twitter\.com)\/[^/]+\/status\/\d+/.test(metadataRef.current?.url || "")
+      && !existing?.content.trim() && existing?.threadPostCount === undefined;
+    if (!needsThread && articleHasSaveableContent(metadataRef.current, existing)) {
       setArticleExtractionStateValue("ready");
       return existing;
     }
@@ -275,11 +279,11 @@ export function useClipperState() {
     const promise = extractArticleAsync(tabId)
       .then(async (asyncArticle) => {
         const hydrated = await hydrateTwitterVideoPreviews(meta, asyncArticle);
-        if (articleHasText(hydrated)) {
+        if (articleHasText(hydrated) && !hydrated.threadPostCount) {
           hydrated.content = deduplicateImages(hydrated.content);
         }
 
-        if (articleHasText(hydrated) || articleHasPreviewMedia(hydrated)) {
+        if (articleHasText(hydrated) || articleHasPreviewMedia(hydrated) || hydrated.threadWarning) {
           setArticleDataValue(hydrated);
           if (hydrated.title) {
             setTitle(hydrated.title);
