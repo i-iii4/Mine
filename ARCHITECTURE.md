@@ -1209,6 +1209,17 @@ startup, but switching to Content must run Defuddle before Save. The native host
 also rejects `block_type=article` with empty body, so a future frontend
 regression cannot persist a blank article that later derives runtime `media`.
 
+Capture identity is resolved with content, not reconstructed at Save.
+`extension/popup/lib/captureResult.ts` provides the shared preview/save result:
+source URL, selected body and scenario-specific media. Extracted articles carry
+their own `sourceUrl`; selected text and images retain their selected source.
+`content.js` resolves known social-post permalinks before page metadata and
+rejects a homepage canonical replacing an internal page. X photo overlays keep
+the indexed photo and its post permalink. Document URL and extraction epochs
+reject stale asynchronous results after navigation or mode changes. Save does
+not reread selection; pinned operations keep their original immutable payload.
+Contract and compatibility boundaries: `SPEC_CLIPPER.md`.
+
 Clipper UI uses the same design-system primitives as the desktop app. In-page
 overlay lives in Shadow DOM, so shared `DropdownMenu` does not portal to page
 `document.body`; `overlay-entry.tsx` creates a shadow-local floating root and

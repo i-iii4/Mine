@@ -67,7 +67,7 @@ import {
 // fallback (detached popup window) still has them.
 const IS_CONTENT_SCRIPT_CONTEXT = typeof chrome.tabs === "undefined";
 
-import { resolveContentBody } from "../lib/resolveContentBody";
+import { resolveCaptureResult } from "../lib/captureResult";
 import {
   articleExtractionStateForResult,
   articleHasPreviewMedia,
@@ -166,14 +166,20 @@ export function useClipperState() {
   const articleExtractionStateRef = useRef<ArticleExtractionState>("idle");
   const articleExtractionPromiseRef = useRef<Promise<ArticleData | null> | null>(null);
   const deferredArticleRef = useRef<ArticleData | null>(null);
+  const extractionEpochRef = useRef(0);
+  useEffect(() => () => { extractionEpochRef.current += 1; }, []);
 
   const setMetadataValue = useCallback((value: PageMetadata | null) => {
+    if (value !== metadataRef.current) {
+      extractionEpochRef.current += 1;
+      articleExtractionPromiseRef.current = null;
+    }
     metadataRef.current = value;
     setMetadata(value);
   }, []);
 
   const setArticleDataValue = useCallback((value: ArticleData | null) => {
-    const normalized = value ? normalizeArticleMedia(value, metadataRef.current?.url ?? "") : null;
+    const normalized = value ? normalizeArticleMedia(value, value.sourceUrl ?? metadataRef.current?.url ?? "") : null;
     articleDataRef.current = normalized;
     setArticleData(normalized);
   }, []);
@@ -276,9 +282,15 @@ export function useClipperState() {
     }
 
     setArticleExtractionStateValue("loading");
+    const epoch = extractionEpochRef.current;
     const promise = extractArticleAsync(tabId)
       .then(async (asyncArticle) => {
+        if (extractionEpochRef.current !== epoch) return null;
+        if (meta.documentUrl && asyncArticle.documentUrl && meta.documentUrl !== asyncArticle.documentUrl) {
+          throw new Error("Capture document changed");
+        }
         const hydrated = await hydrateTwitterVideoPreviews(meta, asyncArticle);
+        if (extractionEpochRef.current !== epoch) return null;
         if (articleHasText(hydrated) && !hydrated.threadPostCount) {
           hydrated.content = deduplicateImages(hydrated.content);
         }
@@ -286,7 +298,7 @@ export function useClipperState() {
         if (articleHasText(hydrated) || articleHasPreviewMedia(hydrated) || hydrated.threadWarning) {
           setArticleDataValue(hydrated);
           if (hydrated.title) {
-            setTitle(hydrated.title);
+            setTitle((current) => current === meta.title ? hydrated.title : current);
           }
         }
 
@@ -294,11 +306,12 @@ export function useClipperState() {
         return hydrated;
       })
       .catch(() => {
+        if (extractionEpochRef.current !== epoch) return null;
         setArticleExtractionStateValue("failed");
         return null;
       })
       .finally(() => {
-        articleExtractionPromiseRef.current = null;
+        if (extractionEpochRef.current === epoch) articleExtractionPromiseRef.current = null;
       });
 
     articleExtractionPromiseRef.current = promise;
@@ -307,6 +320,8 @@ export function useClipperState() {
 
   const handleTypeChange = useCallback((type: ClipType) => {
     if (operationRef.current || savingRef.current) return;
+    extractionEpochRef.current += 1;
+    articleExtractionPromiseRef.current = null;
     setCurrentType(type);
     if (type === "screenshot" && !screenshotDataUrl) {
       captureScreenshot();
@@ -465,17 +480,18 @@ export function useClipperState() {
     return () => chrome.runtime.onMessage.removeListener(onMessage);
   }, [refreshChannels, ensureNativeStatus]);
 
+  const captureSourceUrl = resolveCaptureResult(currentType, metadata, articleData).sourceUrl;
   useEffect(() => {
-    if (!metadata?.url) return;
+    if (!captureSourceUrl) return;
     let current = true;
-    void findPendingSave(metadata.url).then((pending) => {
+    void findPendingSave(captureSourceUrl).then((pending) => {
       if (!current || operationRef.current || savingRef.current) return;
       setPreviousOperation(pending);
     }).catch((cause) => {
       if (current) setNativeStatusError(`Could not read pending save: ${cause instanceof Error ? cause.message : String(cause)}`);
     });
     return () => { current = false; };
-  }, [metadata?.url]);
+  }, [captureSourceUrl]);
 
   const recoverPreviousSave = useCallback(async () => {
     if (!previousOperation || savingRef.current) return null;
@@ -731,6 +747,7 @@ export function useClipperState() {
         if (photo) {
           meta.detectedType = "image";
           meta.imageToSave = photo.src;
+          meta.url = pickImageCardUrl({ pageUrl: tabUrl, srcUrl: photo.src });
           if (photo.alt) meta.imageAlt = photo.alt;
           if (photo.width) meta.imageWidth = photo.width;
           if (photo.height) meta.imageHeight = photo.height;
@@ -846,7 +863,7 @@ export function useClipperState() {
             try {
               const tweet = await fetchTweetBySyndicationApi(tweetId!, `@${handle}`);
               if (tweet) {
-                deferredArticleRef.current = tweet;
+                deferredArticleRef.current = { ...tweet, sourceUrl: meta.url };
               }
             } catch {
               // Fall through — save as article without media
@@ -945,7 +962,9 @@ export function useClipperState() {
       }
       return { ok: false as const, error: "Could not confirm the save. Please retry." };
     }
-    const previous = previousOperation ?? await findPendingSave(metadata.url);
+    const previous = previousOperation ?? await findPendingSave(
+      resolveCaptureResult(currentType, metadata, articleDataRef.current).sourceUrl,
+    );
     if (previous && !allowDifferentDraft) {
       setPreviousOperation(previous);
       return { ok: false as const, error: "A previous clip from this page has an unresolved save. Review that clip first; checking it does not save this new draft." };
@@ -963,24 +982,12 @@ export function useClipperState() {
     const chosenExecutor = saveModeRef.current === "standalone" ? "browser" : "native";
     const chosenBinding = bindingIdRef.current;
     const chosenVault = chosenExecutor === "browser" ? null : vaultRef.current;
-    let saveMetadata = metadata;
-
-    // Re-query selection before saving
-    if (currentType === "content" && metadata.selection?.length > 0 && tabIdRef.current) {
-      try {
-        const fresh = await extractMetadata(tabIdRef.current);
-        if (fresh.selection?.length > 0) {
-          saveMetadata = { ...metadata, selection: fresh.selection };
-          setMetadataValue(saveMetadata);
-        }
-      } catch {
-        // Use existing selection
-      }
-    }
+    const saveMetadata = metadata;
 
     if (currentType === "content" && contentModeNeedsArticleExtraction(saveMetadata)) {
       await ensureArticleLoaded();
     }
+    const capture = resolveCaptureResult(currentType, saveMetadata, articleDataRef.current);
 
     let blockType: string;
     if (currentType === "content") {
@@ -994,7 +1001,7 @@ export function useClipperState() {
       block_type: blockType,
       title: title || null,
       description: null,
-      url: saveMetadata.url || null,
+      url: capture.sourceUrl || null,
       body: "",
       tags: selectedTags.length > 0 ? selectedTags : null,
       image_url: null,
@@ -1004,7 +1011,7 @@ export function useClipperState() {
     };
 
     if (currentType === "content") {
-      const resolved = resolveContentBody(saveMetadata, articleDataRef.current);
+      const resolved = capture.body;
       if (!resolved.text.trim()) {
         setSaving(false);
         return {
@@ -1122,7 +1129,7 @@ export function useClipperState() {
       // shows, otherwise refuse the save to prevent a frontmatter
       // without `file:` / `image_url` — which previously created an
       // orphaned .md that never rendered in the feed.
-      const imageUrl = saveMetadata.imageToSave ?? saveMetadata.image ?? null;
+      const imageUrl = capture.kind === "image" ? capture.imageUrl : null;
       if (!imageUrl) {
         setSaving(false);
         return {
@@ -1140,7 +1147,7 @@ export function useClipperState() {
     const operation: PinnedSaveOperation = {
       id: crypto.randomUUID(),
       draftId,
-      sourceUrl: metadata.url,
+      sourceUrl: capture.sourceUrl,
       folderLabel: chosenExecutor === "browser" ? standaloneFolder ?? "Folder" : chosenVault ?? undefined,
       executor: chosenExecutor,
       bindingId: chosenBinding,

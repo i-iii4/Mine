@@ -22,6 +22,31 @@
     return link ? link.getAttribute("href") : null;
   }
 
+  // Metadata is only a candidate source, never authority over a concrete post.
+  function capturePageSource(pageUrl) {
+    const page = new URL(pageUrl);
+    if (/^(www\.)?(x\.com|twitter\.com)$/.test(page.hostname)) {
+      const post = page.pathname.match(/^\/([^/]+)\/status\/(\d+)(?:\/|$)/);
+      if (post) return `https://x.com/${post[1]}/status/${post[2]}`;
+    }
+    if (page.hostname === "bsky.app" && /^\/profile\/[^/]+\/post\/[^/]+/.test(page.pathname)) {
+      return `${page.origin}${page.pathname.replace(/\/$/, "")}`;
+    }
+    if (/^(www\.)?instagram\.com$/.test(page.hostname) && /^\/(p|reel)\/[^/]+/.test(page.pathname)) {
+      return `${page.origin}${page.pathname}`;
+    }
+    for (const candidate of [getCanonicalUrl(), getMeta("og:url")]) {
+      if (!candidate?.trim()) continue;
+      try {
+        const source = new URL(candidate, pageUrl);
+        if (!/^https?:$/.test(source.protocol)) continue;
+        if (source.pathname === "/" && page.pathname !== "/") continue;
+        return source.href;
+      } catch { /* Invalid metadata cannot replace the document address. */ }
+    }
+    return pageUrl;
+  }
+
   function getFavicon() {
     const link =
       document.querySelector('link[rel="icon"]') ||
@@ -345,7 +370,8 @@
     }
 
     return {
-      url: getCanonicalUrl() || getMeta("og:url") || pageUrl,
+      url: capturePageSource(pageUrl),
+      documentUrl: pageUrl,
       title,
       description:
         getMeta("og:description") ||
@@ -1218,6 +1244,14 @@
 
   // Async version — custom YouTube fetcher, Defuddle for everything else
   async function extractArticleAsync() {
+    const pageUrl = window.location.href;
+    const sourceUrl = capturePageSource(pageUrl);
+    const article = await extractArticleForCurrentPage();
+    if (window.location.href !== pageUrl) throw new Error("Capture document changed");
+    return { ...article, sourceUrl, documentUrl: pageUrl };
+  }
+
+  async function extractArticleForCurrentPage() {
     if (isTwitterUrl(window.location.href)) {
       const longform = extractXLongformArticle();
       if (longform?.status === "article" || longform?.status === "empty") {
@@ -1805,6 +1839,11 @@
   function findPostUrlForImage(img) {
     const isPostHref = (href) =>
       /\/(?:[\w]+)\/status\/\d+/i.test(href) || /\/profile\/[^/]+\/post\/[\w]+/i.test(href);
+
+    // A quoted image's own photo link is more specific than the outer
+    // article's timestamp, which belongs to the quoting post.
+    const imageLink = img.closest("a[href]");
+    if (imageLink && isPostHref(imageLink.getAttribute("href") || "")) return imageLink.href;
 
     // X wraps a tweet in <article>; the timestamp link is the tweet's own
     // permalink and survives quoted tweets, which bring a second status link

@@ -5,7 +5,7 @@ import { safeMarkdownUrl } from "@/lib/markdownUrl";
 import { PlayBadge } from "@/components/PlayBadge";
 import { Button } from "@/components/ui/button";
 import { useClipperState } from "./hooks/useClipperState";
-import { resolveContentBody } from "./lib/resolveContentBody";
+import { resolveCaptureResult } from "./lib/captureResult";
 import { TypeSwitcher } from "./components/TypeSwitcher";
 import { ChannelList } from "./components/ChannelList";
 import { SaveButton } from "./components/SaveButton";
@@ -187,9 +187,10 @@ export function PopupApp() {
   }, [handleSave, closeClipper, clipper.currentType, clipper.setCurrentType, clipper.metadata?.detectedType]);
 
   const { metadata, articleData } = clipper;
-  const resolvedBody = resolveContentBody(metadata, articleData);
-  const ogImage = clipper.currentType === "image"
-    ? metadata?.imageToSave ?? metadata?.image ?? null
+  const capture = resolveCaptureResult(clipper.currentType, metadata, articleData);
+  const resolvedBody = capture.body;
+  const ogImage = capture.kind === "image"
+    ? capture.imageUrl
     : metadata?.image ?? null;
   const embeddedVideoPreviews = articleData?.embeddedVideos ?? [];
   const embeddedVideoBySrc = useMemo(() => {
@@ -310,7 +311,7 @@ export function PopupApp() {
               {metadata?.description && (
                 <p className="line-clamp-2 text-sm text-muted-foreground">{metadata.description}</p>
               )}
-              <p className="truncate text-sm text-tertiary-foreground">{metadata?.url}</p>
+              <p className="truncate text-sm text-tertiary-foreground">{capture.sourceUrl}</p>
             </div>
           )}
 

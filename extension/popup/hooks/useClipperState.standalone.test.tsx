@@ -41,10 +41,12 @@ vi.mock("../lib/standalone", () => standalone);
 // The hook reads `chrome` at module scope, so the global must exist before the
 // import below evaluates — hoisted, like the mocks.
 vi.hoisted(() => {
-  (globalThis as Record<string, unknown>).chrome = {};
+  (globalThis as Record<string, unknown>).chrome = { tabs: {} };
 });
 
 import { useClipperState } from "./useClipperState";
+import * as messaging from "../lib/messaging";
+import * as photoLightbox from "../lib/twitterPhotoLightbox";
 
 // The generated Node binding executes the same compiled Rust/WASM as the worker.
 const wasm: { execute_json: (command: string) => string } = createRequire(import.meta.url)(
@@ -72,6 +74,7 @@ function mockChrome() {
       lastError: undefined,
     },
     tabs: {
+      captureVisibleTab: vi.fn(),
       query: vi.fn(async () => [{ id: 7, url: "https://example.com", title: "Page" }]),
       sendMessage: vi.fn((_id: number, _msg: unknown, cb?: (r: unknown) => void) => cb?.(null)),
       get: vi.fn(async () => ({ url: "https://example.com" })),
@@ -88,9 +91,85 @@ beforeEach(() => {
   standalone.standaloneLookup.mockResolvedValue({ ok: false, outcome: "unknown", error: "Operation outcome unknown" });
 });
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("standalone mode decision", () => {
+  function browserDestination() {
+    sendToNative.mockResolvedValue({ ok: false, error: "No helper" });
+    standalone.getStandaloneStatus.mockResolvedValue({ configured: true, folderName: "Mine", permission: "granted", bindingId: "browser-original" });
+    standalone.standaloneSave.mockResolvedValue({ ok: true, outcome: "committed", slug: "Cards/Clip" });
+  }
+
+  it("keeps the second X photo as an image with the post source", async () => {
+    browserDestination();
+    const url = "https://x.com/artist/status/123/photo/2";
+    vi.mocked(chrome.tabs.query).mockResolvedValue([{ id: 7, url } as chrome.tabs.Tab]);
+    const photo = vi.spyOn(photoLightbox, "fetchTweetPhotoByIndex").mockResolvedValue({ src: "https://pbs.twimg.com/media/second.jpg", alt: "Second", width: 800, height: 600 });
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.currentType).toBe("image"));
+    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+    expect(photo).toHaveBeenCalledWith("123", 1);
+    expect(standalone.standaloneSave.mock.calls[0][0]).toMatchObject({
+      block_type: "image", url: "https://x.com/artist/status/123", image_url: "https://pbs.twimg.com/media/second.jpg", body: "",
+    });
+  });
+
+  it("saves the preview selection without rereading a changed page selection", async () => {
+    browserDestination();
+    vi.mocked(chrome.storage.session.get).mockImplementation(async (key) => key === "preloadedClipData" ? {
+      preloadedClipData: { metadata: { url: "https://example.com/article", title: "Selection", selection: "Shown selection", detectedType: "selection" }, article: { content: "Full article", title: "Article", byline: null, excerpt: "" } },
+    } : {});
+    const read = vi.spyOn(messaging, "extractMetadata");
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.metadata?.selection).toBe("Shown selection"));
+    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+    expect(read).not.toHaveBeenCalled();
+    expect(standalone.standaloneSave.mock.calls[0][0]).toMatchObject({ body: "Shown selection", url: "https://example.com/article" });
+  });
+
+  it("discards extraction that completes after switching to Link", async () => {
+    browserDestination();
+    threadArticle.value = { pageUrl: "https://bsky.app/profile/author/post/123" };
+    let finish!: (value: messaging.ArticleData) => void;
+    const extract = vi.spyOn(messaging, "extractArticleAsync").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(extract).toHaveBeenCalled());
+    act(() => result.current.setCurrentType("link"));
+    await act(async () => finish({ title: "Late", content: "Late body", byline: null, excerpt: "", sourceUrl: "https://bsky.app/profile/other/post/456" }));
+    expect(result.current.articleData?.content).not.toBe("Late body");
+    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+    expect(standalone.standaloneSave.mock.calls[0][0].url).toBe("https://bsky.app/profile/author/post/123");
+  });
+
+  it.each(["browser", "native"])("saves extracted source and content together through %s", async (executor) => {
+    const sourceUrl = "https://bsky.app/profile/author.bsky.social/post/123";
+    threadArticle.value = { pageUrl: "https://bsky.app", sourceUrl, title: "Post", content: "Exact post", byline: "author", excerpt: "" };
+    standalone.getStandaloneStatus.mockResolvedValue(executor === "browser"
+      ? { configured: true, folderName: "Mine", permission: "granted", bindingId: "browser-original" }
+      : { configured: false });
+    let markdown = "";
+    const execute = async (payload: Record<string, unknown>) => {
+      const reply = JSON.parse(wasm.execute_json(JSON.stringify({ op: "capture", request: {
+        ...payload, slug: "Cards/Post", tags: payload.tags ?? [], source: "web-clipper",
+      } })));
+      markdown = reply.value?.markdown ?? "";
+      return { ok: reply.ok, outcome: "committed", slug: "Cards/Post" };
+    };
+    standalone.standaloneSave.mockImplementation(execute);
+    sendToNative.mockImplementation(async (payload: Record<string, unknown>) => {
+      if (payload.action === "get_status") return executor === "native" ? nativeStatus() : { ok: false, error: "No helper" };
+      if (payload.action === "list_known_vaults") return { ok: true, vaults: ["/v"], current: "/v" };
+      if (payload.action === "list_channels") return { ok: true, channels: [] };
+      if (payload.action === "save_block") return execute(payload);
+      return { ok: false };
+    });
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.articleData?.sourceUrl).toBe(sourceUrl));
+    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+    expect(markdown).toContain(`url: ${sourceUrl}`);
+    expect(markdown).toContain("Exact post");
+  });
+
   it.each([
     ["browser", "preloaded"], ["native", "preloaded"],
     ["browser", "async"], ["native", "async"],

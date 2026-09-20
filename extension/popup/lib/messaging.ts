@@ -124,6 +124,8 @@ export interface ContextMenuData {
 }
 
 export interface PageMetadata {
+  /** Raw document address at capture start; separate from normalized Source. */
+  documentUrl?: string;
   url: string;
   title: string;
   description: string;
@@ -142,6 +144,9 @@ export interface PageMetadata {
 }
 
 export interface ArticleData {
+  documentUrl?: string;
+  /** Source captured with the extracted content, never inferred at save time. */
+  sourceUrl?: string;
   threadWarning?: string;
   threadPostCount?: number;
   title: string;

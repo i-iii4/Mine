@@ -2,6 +2,25 @@
 
 Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md) | [SPEC_STARTUP_PERFORMANCE.md](SPEC_STARTUP_PERFORMANCE.md)
 
+## Согласованный источник захвата
+
+Превью и Save используют один `CaptureResult`: выбранный сценарий, источник,
+контент и медиа. `ArticleData.sourceUrl` связывает извлечённый контент с адресом
+на момент извлечения; метаданные страницы не переопределяют его при Save.
+Для выделения, ссылки, screenshot и image источником остаётся выбранный объект,
+а не результат фонового извлечения статьи. Save не перечитывает выделение.
+
+Посты X/Bluesky/Instagram сохраняют permalink независимо от `canonical`/`og:url`.
+Обычные страницы используют валидный canonical/OG, но не корень сайта вместо
+внутренней страницы. Для X photo-overlay сохраняется выбранное фото и ссылка
+на его пост (без `/photo/N`, как раньше). CDN URL служит скачиванию, не заменяя
+известный permalink. Контекстное меню не меняет выбранное медиа.
+
+Асинхронный результат из прежнего документа/черновика не применяется.
+После создания pinned operation источник и payload неизменны; существующие
+pending operations и сохранённые заметки автоматически не мигрируются.
+Проверяются реальные извлекатели, общий CaptureResult и запросы обоих исполнителей.
+
 ## Полнота текста поста X (27.08.2026)
 
 Текст поста читается из разметки страницы, а X сворачивает длинный пост за
