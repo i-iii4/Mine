@@ -20,6 +20,7 @@ import {
 } from "react-router";
 import { X } from "lucide-react";
 import { AppSettingsMenu } from "@/components/AppSettingsMenu";
+import { useAppOpenRequest } from "@/hooks/useAppOpenRequest";
 import { ChromeRow, ChromeShell } from "@/components/ChromeRow";
 import type { SettingsSection } from "@/lib/settingsSections";
 import { isTauri } from "@tauri-apps/api/core";
@@ -384,11 +385,29 @@ interface ThumbUpdatedEvent {
 /// same way sidebar row names do, instead of cutting a letter in half.
 const SIDEBAR_SEARCH_MASK_STYLE = createRightFadeMaskStyle(EDGE_FADE_WIDTH, 0);
 
+function ExternalSpaceNavigation({ sequence }: { sequence: number }) {
+  const navigate = useNavigate();
+  const handled = useRef(0);
+  useEffect(() => {
+    if (sequence > handled.current) {
+      handled.current = sequence;
+      navigate("/", { replace: true });
+    }
+  }, [sequence, navigate]);
+  return null;
+}
+
 export function App() {
   const [vaultPath, setVaultPath] = useState<string | null>(null);
   const [unavailablePath, setUnavailablePath] = useState<string | null>(null);
   const [unavailableReason, setUnavailableReason] = useState<UnavailableVaultReason>("missing");
   const [loading, setLoading] = useState(true);
+  const [externalOpenSequence, setExternalOpenSequence] = useState(0);
+  const handleExternalOpen = useCallback((path: string) => {
+    setVaultPath(path);
+    setExternalOpenSequence((sequence) => sequence + 1);
+  }, []);
+  const openSpaceError = useAppOpenRequest(!loading, handleExternalOpen);
 
   useEffect(() => {
     const started = performance.now();
@@ -471,6 +490,8 @@ export function App() {
 
   const routedApp = (
     <BrowserRouter>
+      <ExternalSpaceNavigation sequence={externalOpenSequence} />
+      {openSpaceError && <div role="alert" className="fixed bottom-0 z-50 bg-background p-4 text-destructive">{openSpaceError}</div>}
       <AppWithVault
         key={vaultPath}
         vaultPath={vaultPath}

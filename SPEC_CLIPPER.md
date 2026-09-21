@@ -1123,8 +1123,18 @@ Response:
 }
 ```
 
-`features` — capability contract между popup и native host. Любой новый Save
-требует `save_operation_v1` и `operation_lookup_v1`. `Open app` показывается
+`features` — capability contract между popup и native host.
+
+`Open app` передаёт выбранное native-пространство в `open_app.path`.
+Host проверяет существование и регистрацию папки и передаёт её macOS через
+`open -b com.mine.app -- <path>`. Приложение принимает только зарегистрированные
+file URL, удерживает последний запрос до готовности главного интерфейса и
+переключает пространство через существующий `select_vault`, открывая Everything.
+Без выбранной native-папки действие только запускает приложение.
+Меню пространств приложения перечитывает общий список при каждом открытии,
+независимо от способа ввода; поздний ответ закрытого меню не заменяет новый.
+
+Сохранение требует `save_operation_v1` и `operation_lookup_v1`. `Open app` показывается
 только при `open_app_v1`. Screenshot-save дополнительно требует
 `pending_uploads_v1`: без него popup не начинает HTTP upload. `upload_port` и
 `upload_token` обновляются при handshake и используются для

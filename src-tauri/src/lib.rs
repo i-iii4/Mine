@@ -44,10 +44,12 @@ const MENU_ID_SETTINGS: &str = "open-settings-window";
 pub fn run() {
     crate::asset_protocol::register(tauri::Builder::default())
         .manage(AppState::new())
+        .manage(commands::app_open::PendingSpace::default())
         // Article audio commands are registered only with the `article-audio`
         // feature; `generate_handler!` takes a flat list, so the gate lives on
         // this attribute rather than on individual entries.
         .invoke_handler(tauri::generate_handler![
+            commands::app_open::take_open_space_request,
             #[cfg(feature = "article-audio")]
             commands::article_audio::get_article_audio_state,
             #[cfg(feature = "article-audio")]
@@ -214,8 +216,14 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            if let tauri::RunEvent::Opened { urls } = event {
+                commands::app_open::receive(app, &urls);
+            }
+        });
 }
 
 /// The application menu, with accelerators resolved from the user's overrides.

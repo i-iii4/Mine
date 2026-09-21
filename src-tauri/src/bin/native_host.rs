@@ -583,16 +583,25 @@ fn handle_pick_vault_folder() {
 ///
 /// The host answering at all proves the app is installed, and macOS resolves
 /// the bundle by identifier, so this works regardless of where the app lives.
-/// No space is passed: the app opens on whatever its own binding remembers,
-/// and that binding is the authority.
-fn handle_open_app() {
+/// Explicit destinations are limited to known spaces; opening without one
+/// preserves the setup screen's existing launch-only behaviour.
+fn handle_open_app(params: serde_json::Value) {
     #[derive(serde::Serialize)]
     struct OpenAppResponse {
         ok: bool,
     }
-    let status = std::process::Command::new("open")
-        .args(["-b", "com.mine.app"])
-        .status();
+    let mut command = std::process::Command::new("open");
+    command.args(["-b", "com.mine.app"]);
+    if let Some(path) = params.get("path") {
+        let Some(path) = path.as_str() else { return send_error("invalid space path"); };
+        if !load_known_vaults().iter().any(|known| known == path)
+            || !std::path::Path::new(path).is_dir()
+        {
+            return send_error("space is not available or not registered");
+        }
+        command.arg("--").arg(path);
+    }
+    let status = command.status();
     match status {
         Ok(code) if code.success() => send_response(&OpenAppResponse { ok: true }),
         Ok(code) => send_error(&format!("open exited with {code}")),
@@ -2776,7 +2785,7 @@ fn main() {
             "list_known_vaults" => handle_list_known_vaults(),
             "pick_vault_folder" => handle_pick_vault_folder(),
             "reveal_vault" => handle_reveal_vault(req.params),
-            "open_app" => handle_open_app(),
+            "open_app" => handle_open_app(req.params),
             "resolve_twitter_media" => handle_resolve_twitter_media(req.params),
 
             "list_channels" | "save_block" | "create_channel" | "get_save_operation" => {

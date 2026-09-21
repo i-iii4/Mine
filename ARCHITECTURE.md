@@ -4,6 +4,15 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG
 
 ## Context
 
+Clipper `open_app.path` routes a registered space through macOS file-open events.
+`commands/app_open.rs` validates file URLs against the shared space registry and
+retains the latest request until the frontend is ready. `useAppOpenRequest`
+subscribes before draining that request and serializes switches through the
+existing `select_vault` lifecycle; successful selection navigates to Everything.
+Launch without a path remains supported. The desktop space selector refreshes
+the shared registry from its controlled open state, independent of input method.
+Contract: `SPEC_CLIPPER.md`.
+
 Native source replacement stages both new bytes and existing document metadata
 before atomic publication. `storage/files/replacement_metadata.rs` preserves
 macOS permissions, ACL and xattrs with `fcopyfile`, then explicitly restores

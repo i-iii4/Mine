@@ -17,11 +17,12 @@ import { openDownloadPage } from "../lib/standalone";
 
 interface ClipperOverflowMenuProps {
   canOpenApp: boolean;
+  vaultPath?: string | null;
   onRetryConnection?: () => Promise<unknown>;
   onChooseNativeFolder?: () => Promise<unknown>;
 }
 
-export function ClipperOverflowMenu({ canOpenApp, onRetryConnection, onChooseNativeFolder }: ClipperOverflowMenuProps) {
+export function ClipperOverflowMenu({ canOpenApp, vaultPath, onRetryConnection, onChooseNativeFolder }: ClipperOverflowMenuProps) {
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,7 +43,7 @@ export function ClipperOverflowMenu({ canOpenApp, onRetryConnection, onChooseNat
           <DropdownMenuItem
             onSelect={(event) => {
               event.preventDefault();
-              void sendToNative({ action: "open_app" }).then((result) => {
+              void sendToNative({ action: "open_app", ...(vaultPath ? { path: vaultPath } : {}) }).then((result) => {
                 setError(result.ok ? null : result.error ?? "Could not open Mine");
                 if (result.ok) setOpen(false);
               });

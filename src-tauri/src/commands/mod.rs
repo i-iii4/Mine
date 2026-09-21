@@ -7,6 +7,7 @@ pub mod article_audio;
 #[cfg(feature = "article-audio")]
 mod article_audio_desktop;
 pub mod blocks;
+pub mod app_open;
 pub mod channels;
 pub mod clipboard;
 pub mod clipper_setup;

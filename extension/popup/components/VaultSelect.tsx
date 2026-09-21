@@ -263,7 +263,7 @@ export function VaultSelect({ value, options, onChange, onReveal, onAddSpace, on
         </DropdownMenuContent>
       </DropdownMenu>
       <span className="ml-auto flex items-center gap-1">
-        <ClipperOverflowMenu canOpenApp={canOpenApp} onRetryConnection={onRetryConnection} />
+        <ClipperOverflowMenu canOpenApp={canOpenApp} vaultPath={value} onRetryConnection={onRetryConnection} />
         {onClose && (
           <ChromeCloseButton label="Close" onClick={onClose} />
         )}

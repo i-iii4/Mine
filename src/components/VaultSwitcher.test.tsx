@@ -2,6 +2,17 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { VaultSwitcher } from "./VaultSwitcher";
 
+it.each(["pointer", "keyboard"])("refreshes externally added spaces when opened by %s", async (input) => {
+  commandMocks.listKnownVaults.mockResolvedValue(["/tmp/Mine"]);
+  render(<VaultSwitcher currentPath="/tmp/Mine" onVaultSelected={vi.fn()} surface="topChrome" />);
+  await waitFor(() => expect(commandMocks.listKnownVaults).toHaveBeenCalled());
+  commandMocks.listKnownVaults.mockResolvedValue(["/tmp/Mine", "/tmp/From clipper"]);
+  const trigger = screen.getByRole("button", { name: "Switch space: Mine" });
+  if (input === "pointer") fireEvent.click(trigger);
+  else fireEvent.keyDown(trigger, { key: "ArrowDown" });
+  expect(await screen.findByRole("menuitem", { name: "From clipper" })).toBeInTheDocument();
+});
+
 const commandMocks = vi.hoisted(() => ({
   listKnownVaults: vi.fn<() => Promise<string[]>>(),
   selectVault: vi.fn<(path: string) => Promise<void>>(),

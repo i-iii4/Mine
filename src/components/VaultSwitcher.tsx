@@ -88,8 +88,12 @@ export function VaultSwitcher({
   const menuAlignOffset = isTopChrome ? 12 : 0;
 
   useEffect(() => {
-    listKnownVaults().then(setKnownVaults).catch(() => {});
-  }, []);
+    let cancelled = false;
+    listKnownVaults().then((paths) => {
+      if (!cancelled) setKnownVaults(paths);
+    }).catch((error) => console.error("Could not refresh spaces", error));
+    return () => { cancelled = true; };
+  }, [open]);
 
   const resetMenuSearch = useCallback(() => {
     setQuery("");
@@ -264,19 +268,13 @@ export function VaultSwitcher({
   }, [activateIndex, activeIndex, moveActiveIndex, query, resetMenuSearch, restoreSearchFocus]);
 
   const handleOpenChange = useCallback((nextOpen: boolean) => {
-    if (nextOpen) {
-      // The settings window can reorder/add/forget spaces while this menu is
-      // closed — re-read the canonical config order on every open.
-      listKnownVaults().then(setKnownVaults).catch(() => {});
-    }
-    if (!isTopChrome) return;
     setOpen(nextOpen);
-  }, [isTopChrome]);
+  }, []);
 
   return (
     <TooltipProvider>
     <DropdownMenu
-      open={isTopChrome ? open : undefined}
+      open={open}
       onOpenChange={handleOpenChange}
     >
       <DropdownMenuTrigger asChild>
