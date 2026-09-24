@@ -26,7 +26,7 @@ describe("ShortcutsSection", () => {
     saveMock.mockReset().mockResolvedValue(null);
   });
 
-  it("groups editable commands in compact rows with right aligned bindings", () => {
+  it("groups editable commands in compact rows with the shared shortcut button style", () => {
     render(<ShortcutsSection />);
     expect(document.querySelector("[data-shortcuts-section]")).toHaveClass("max-w-[720px]");
     for (const context of ["global", "feed", "element", "selection"]) {
@@ -34,7 +34,11 @@ describe("ShortcutsSection", () => {
     }
     expect(row("find-elements")).toHaveClass("min-h-10", "flex");
     expect(row("find-elements")).not.toHaveClass("grid");
-    expect(shortcut("find-elements")).toHaveClass("h-6");
+    expect(shortcut("find-elements")).toHaveAttribute("data-variant", "default");
+    expect(shortcut("find-elements")).toHaveAttribute("data-size", "xs");
+    expect(shortcut("find-elements")).toHaveClass("h-5", "bg-component-fill", "text-muted-foreground");
+    expect(shortcut("find-elements")).toHaveClass("hover:outline-1", "hover:text-foreground");
+    expect(shortcut("find-elements")).not.toHaveClass("hover:bg-active", "border-border");
     expect(shortcut("find-elements")).not.toHaveClass("w-28");
   });
 
@@ -51,6 +55,7 @@ describe("ShortcutsSection", () => {
     fireEvent.click(shortcut("find-elements"));
     expect(shortcut("find-elements")).toHaveFocus();
     expect(shortcut("find-elements")).toHaveAttribute("aria-pressed", "true");
+    expect(shortcut("find-elements")).toHaveClass("bg-active", "text-foreground");
     expect(shortcut("find-elements")).toHaveTextContent("Press keys");
     expect(row("find-elements").querySelector("[data-shortcut-editor]")).toBeNull();
 

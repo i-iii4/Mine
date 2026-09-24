@@ -233,15 +233,17 @@ export function ShortcutsSection() {
                       </p>
                     )}
                   </div>
-                  <button
+                  <Button
                     data-shortcut-trigger=""
                     ref={isEditing ? captureRef : undefined}
                     type="button"
+                    variant="default"
+                    size="xs"
                     aria-label={`${isEditing ? "Press new shortcut for" : "Change shortcut for"} ${command.name}. Current: ${command.combo}`}
                     aria-pressed={isEditing}
                     aria-busy={pending === command.id || arming === command.id}
                     aria-describedby={rowError ? `shortcut-error-${command.id}` : undefined}
-                    className={`flex h-6 min-w-12 shrink-0 items-center justify-center rounded-1 border px-2 font-mono text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring ${isEditing ? "border-foreground bg-active text-foreground" : "border-border bg-transparent text-foreground hover:bg-active"}`}
+                    className={`h-5 min-w-12 font-mono font-normal text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring ${isEditing ? "bg-active text-foreground" : ""}`}
                     onClick={() => {
                       if (pendingRef.current || arming) return;
                       if (isEditing) cancel();
@@ -281,7 +283,7 @@ export function ShortcutsSection() {
                     }}
                   >
                     {arming === command.id ? "Preparing…" : pending === command.id ? "Saving…" : isEditing ? "Press keys" : command.combo}
-                  </button>
+                  </Button>
                 </div>
               );
             })}
