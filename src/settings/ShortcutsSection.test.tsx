@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { getCommandOverrides, setCommandOverrides } from "@/lib/commandRegistry";
 import { ShortcutsSection } from "./ShortcutsSection";
 
@@ -15,142 +15,165 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() =
 const row = (command: string) =>
   document.querySelector(`[data-shortcut-row="${command}"]`) as HTMLElement;
 
+const shortcut = (command: string) => within(row(command)).getByRole("button", {
+  name: /^(Change|Press new) shortcut for/i,
+});
+
 describe("ShortcutsSection", () => {
   beforeEach(() => {
     setCommandOverrides({});
-    saveMock.mockClear();
+    saveMock.mockReset().mockResolvedValue(null);
   });
 
-  it("groups commands by the surface they belong to", () => {
+  it("groups editable commands in a bounded, stable list", () => {
     render(<ShortcutsSection />);
-
+    expect(document.querySelector("[data-shortcuts-section]")).toHaveClass("max-w-[720px]");
     for (const context of ["global", "feed", "element", "selection"]) {
       expect(document.querySelector(`[data-shortcuts-group="${context}"]`)).toBeInTheDocument();
     }
-    expect(within(row("find-elements")).getByText("Find elements")).toBeInTheDocument();
+    expect(row("find-elements")).toHaveClass("min-h-14");
   });
 
-  it("omits fixed structural and system gestures", () => {
+  it("hides fixed gestures and uses the binding itself as the editor control", () => {
     render(<ShortcutsSection />);
     expect(row("navigate")).toBeNull();
     expect(row("settings")).toBeNull();
-    expect(screen.queryByText(/Escape cancels recording/)).not.toBeInTheDocument();
+    expect(shortcut("find-elements")).toHaveTextContent("⌘F");
+    expect(within(row("find-elements")).queryByText("Change")).not.toBeInTheDocument();
   });
 
-  it("captures a chord, previews it and saves only on confirmation", async () => {
+  it("records a valid combination in the same row and saves it immediately", async () => {
     render(<ShortcutsSection />);
+    fireEvent.click(shortcut("find-elements"));
+    expect(shortcut("find-elements")).toHaveFocus();
+    expect(shortcut("find-elements")).toHaveAttribute("aria-pressed", "true");
+    expect(shortcut("find-elements")).toHaveTextContent("Press keys");
+    expect(row("find-elements").querySelector("[data-shortcut-editor]")).toBeNull();
 
-    fireEvent.click(within(row("find-elements")).getByRole("button", {
-      name: "Change shortcut for Find elements",
+    fireEvent.keyDown(shortcut("find-elements"), {
+      key: "e", code: "KeyE", metaKey: true, altKey: true,
+    });
+
+    await waitFor(() => expect(saveMock).toHaveBeenCalledWith({
+      "find-elements": { key: "e", meta: true, shift: false, alt: true, ctrl: false },
     }));
-    const capture = within(row("find-elements")).getByRole("button", {
-      name: "Enter new shortcut for Find elements",
-    });
-    expect(capture).toHaveFocus();
-
-    fireEvent.keyDown(capture, { key: "e", code: "KeyE", metaKey: true, altKey: true });
-    expect(saveMock).not.toHaveBeenCalled();
-    expect(capture).toHaveTextContent("⌥⌘E");
-    fireEvent.click(within(row("find-elements")).getByRole("button", { name: "Save" }));
-
-    await waitFor(() => {
-      expect(saveMock).toHaveBeenCalledWith({
-        "find-elements": { key: "e", meta: true, shift: false, alt: true, ctrl: false },
-      });
-    });
-    expect(within(row("find-elements")).getByText("⌥⌘E")).toBeInTheDocument();
+    await waitFor(() => expect(shortcut("find-elements")).toHaveTextContent("⌥⌘E"));
+    expect(shortcut("find-elements")).toHaveFocus();
+    expect(shortcut("find-elements")).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("refuses a chord another command already answers, and says which", async () => {
+  it("shows the owner of a conflicting shortcut without changing either command", () => {
     render(<ShortcutsSection />);
+    fireEvent.click(shortcut("copy-path"));
+    fireEvent.keyDown(shortcut("copy-path"), { key: "k", code: "KeyK", metaKey: true });
 
-    fireEvent.click(within(row("copy-path")).getByRole("button", {
-      name: "Change shortcut for Copy path",
-    }));
-    fireEvent.keyDown(within(row("copy-path")).getByRole("button", {
-      name: "Enter new shortcut for Copy path",
-    }), { key: "k", code: "KeyK", metaKey: true });
-    fireEvent.click(within(row("copy-path")).getByRole("button", { name: "Save" }));
-
-    await waitFor(() => {
-      expect(row("copy-path").querySelector("[data-shortcut-error]")).toHaveTextContent("Command");
-    });
+    expect(within(row("copy-path")).getByRole("alert")).toHaveTextContent("Command");
+    expect(shortcut("copy-path")).toHaveAttribute("aria-pressed", "true");
     expect(saveMock).not.toHaveBeenCalled();
   });
 
-  it("refuses a bare key", async () => {
+  it("rejects bare and system keys beside the active command", () => {
     render(<ShortcutsSection />);
+    fireEvent.click(shortcut("copy-path"));
+    fireEvent.keyDown(shortcut("copy-path"), { key: "j", code: "KeyJ" });
+    expect(within(row("copy-path")).getByRole("alert")).toHaveTextContent("Add ⌘");
 
-    fireEvent.click(within(row("copy-path")).getByRole("button", {
-      name: "Change shortcut for Copy path",
-    }));
-    fireEvent.keyDown(within(row("copy-path")).getByRole("button", {
-      name: "Enter new shortcut for Copy path",
-    }), { key: "j", code: "KeyJ" });
-    fireEvent.click(within(row("copy-path")).getByRole("button", { name: "Save" }));
-
-    await waitFor(() => {
-      expect(row("copy-path").querySelector("[data-shortcut-error]"))
-        .toHaveTextContent("swallow typing");
-    });
+    fireEvent.keyDown(shortcut("copy-path"), { key: "q", code: "KeyQ", metaKey: true });
+    expect(within(row("copy-path")).getByRole("alert")).toHaveTextContent("macOS");
     expect(saveMock).not.toHaveBeenCalled();
   });
 
-  it("closes the editor on Escape without binding it", async () => {
+  it("does not dispatch a recorded key to the surrounding settings surface", () => {
+    const onKeyDown = vi.fn();
+    render(<div onKeyDown={onKeyDown}><ShortcutsSection /></div>);
+    fireEvent.click(shortcut("copy-path"));
+    fireEvent.keyDown(shortcut("copy-path"), { key: "Meta", code: "MetaLeft", metaKey: true });
+    fireEvent.keyDown(shortcut("copy-path"), { key: "q", code: "KeyQ", metaKey: true });
+    expect(onKeyDown).not.toHaveBeenCalled();
+  });
+
+  it("cancels with Escape or on focus loss, and lets Tab navigate", () => {
     render(<ShortcutsSection />);
+    fireEvent.click(shortcut("copy-path"));
+    fireEvent.keyDown(shortcut("copy-path"), { key: "Escape" });
+    expect(shortcut("copy-path")).toHaveTextContent("⌘L");
 
-    fireEvent.click(within(row("copy-path")).getByRole("button", {
-      name: "Change shortcut for Copy path",
-    }));
-    fireEvent.keyDown(within(row("copy-path")).getByRole("button", {
-      name: "Enter new shortcut for Copy path",
-    }), { key: "Escape" });
-
-    await waitFor(() => {
-      expect(within(row("copy-path")).getByText("⌘L")).toBeInTheDocument();
-    });
+    fireEvent.click(shortcut("copy-path"));
+    expect(fireEvent.keyDown(shortcut("copy-path"), { key: "Tab" })).toBe(true);
+    fireEvent.blur(shortcut("copy-path"));
+    expect(shortcut("copy-path")).toHaveAttribute("aria-pressed", "false");
     expect(saveMock).not.toHaveBeenCalled();
   });
 
-  it("filters commands and leaves no empty groups", () => {
+  it("edits only one command at a time", () => {
     render(<ShortcutsSection />);
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search shortcuts" }), {
-      target: { value: "Copy path" },
-    });
+    fireEvent.click(shortcut("find-elements"));
+    fireEvent.click(shortcut("copy-path"));
+    expect(shortcut("find-elements")).toHaveAttribute("aria-pressed", "false");
+    expect(shortcut("copy-path")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("searches command names, visible symbols and typed key names", () => {
+    render(<ShortcutsSection />);
+    const search = screen.getByRole("searchbox", { name: "Search shortcuts" });
+    fireEvent.change(search, { target: { value: "Copy path" } });
     expect(row("copy-path")).toBeInTheDocument();
     expect(row("find-elements")).toBeNull();
     expect(document.querySelectorAll("[data-shortcuts-group]")).toHaveLength(1);
+
+    fireEvent.change(search, { target: { value: "cmd+f" } });
+    expect(row("find-elements")).toBeInTheDocument();
+    expect(row("copy-path")).toBeNull();
+
+    fireEvent.change(search, { target: { value: "⌘L" } });
+    expect(row("copy-path")).toBeInTheDocument();
   });
 
-  it("keeps the old binding when saving fails", async () => {
+  it("keeps the old binding and editing focus when persistence fails", async () => {
     saveMock.mockRejectedValueOnce(new Error("disk unavailable"));
     render(<ShortcutsSection />);
-    fireEvent.click(within(row("find-elements")).getByRole("button", {
-      name: "Change shortcut for Find elements",
-    }));
-    fireEvent.keyDown(within(row("find-elements")).getByRole("button", {
-      name: "Enter new shortcut for Find elements",
-    }), { key: "e", code: "KeyE", metaKey: true });
-    fireEvent.click(within(row("find-elements")).getByRole("button", { name: "Save" }));
+    fireEvent.click(shortcut("find-elements"));
+    fireEvent.keyDown(shortcut("find-elements"), { key: "e", code: "KeyE", metaKey: true });
+
     await waitFor(() => expect(within(row("find-elements")).getByRole("alert"))
       .toHaveTextContent("Could not save"));
     expect(getCommandOverrides()).toEqual({});
-    expect(within(row("find-elements")).getByText("⌘F")).toBeInTheDocument();
+    expect(shortcut("find-elements")).toHaveFocus();
+    expect(shortcut("find-elements")).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("resets one command and all of them", async () => {
+  it("restores one default or all defaults without showing reset on unchanged rows", async () => {
     setCommandOverrides({ "find-elements": { key: "e", meta: true, alt: true } });
     render(<ShortcutsSection />);
 
+    expect(within(row("copy-path")).queryByRole("button", { name: /Reset shortcut/ })).toBeNull();
     fireEvent.click(within(row("find-elements")).getByRole("button", {
       name: "Reset shortcut for Find elements",
     }));
     await waitFor(() => expect(saveMock).toHaveBeenCalledWith({}));
 
-    saveMock.mockClear();
-    setCommandOverrides({ "copy-path": { key: "p", meta: true, alt: true } });
+    act(() => setCommandOverrides({ "copy-path": { key: "p", meta: true, alt: true } }));
+    fireEvent.click(screen.getByRole("button", { name: "Reset all" }));
+    await waitFor(() => expect(saveMock).toHaveBeenLastCalledWith({}));
+  });
+
+  it("removes a customization when the default combination is entered again", async () => {
+    setCommandOverrides({ "find-elements": { key: "e", meta: true, alt: true } });
     render(<ShortcutsSection />);
-    fireEvent.click(screen.getAllByRole("button", { name: "Reset all" })[0]!);
+    fireEvent.click(shortcut("find-elements"));
+    fireEvent.keyDown(shortcut("find-elements"), { key: "f", code: "KeyF", metaKey: true });
     await waitFor(() => expect(saveMock).toHaveBeenCalledWith({}));
+    expect(within(row("find-elements")).queryByRole("button", { name: /Reset shortcut/ })).toBeNull();
+  });
+
+  it("records the physical digit for a shifted number key", async () => {
+    render(<ShortcutsSection />);
+    fireEvent.click(shortcut("copy-path"));
+    fireEvent.keyDown(shortcut("copy-path"), {
+      key: "!", code: "Digit1", metaKey: true, shiftKey: true,
+    });
+    await waitFor(() => expect(saveMock).toHaveBeenCalledWith({
+      "copy-path": { key: "1", meta: true, shift: true, alt: false, ctrl: false },
+    }));
   });
 });

@@ -200,6 +200,9 @@ export const listShortcutOverrides = () =>
 export const saveShortcutOverrides = (overrides: Record<string, ShortcutBinding>) =>
   invoke<null>("save_shortcut_overrides", { overrides });
 
+export const setShortcutCaptureActive = (active: boolean) =>
+  invoke<null>("set_shortcut_capture_active", { active });
+
 function normalizeInlineMediaExtractError(error: unknown): InlineMediaExtractError {
   if (error && typeof error === "object" && "kind" in error) {
     return error as InlineMediaExtractError;

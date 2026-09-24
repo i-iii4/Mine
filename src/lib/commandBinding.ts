@@ -67,6 +67,7 @@ function eventKeyMatches(key: string, e: KeyboardEvent): boolean {
   if (/^[a-z]$/.test(key)) {
     return e.code === `Key${key.toUpperCase()}` || e.key.toLowerCase() === key;
   }
+  if (/^[0-9]$/.test(key)) return e.code === `Digit${key}` || e.key === key;
   if (key === ",") return e.key === "," || e.code === "Comma";
   if (key === "/") return e.key === "/" || e.code === "Slash";
   if (key === "[") return e.key === "[" || e.code === "BracketLeft";

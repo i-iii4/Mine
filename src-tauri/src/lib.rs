@@ -30,6 +30,8 @@ use tauri::menu::{AboutMetadata, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::Emitter;
 #[cfg(feature = "desktop")]
 use tauri::Manager;
+#[cfg(feature = "desktop")]
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(feature = "desktop")]
 const MENU_ID_FIND_CARDS: &str = "surface-search-find-cards";
@@ -38,6 +40,8 @@ const MENU_ID_FIND_CHANNELS: &str = "surface-search-find-channels";
 /// App menu item opening the standalone settings window (`Cmd+,`).
 #[cfg(feature = "desktop")]
 const MENU_ID_SETTINGS: &str = "open-settings-window";
+#[cfg(feature = "desktop")]
+static SHORTCUT_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 #[cfg(feature = "desktop")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -98,6 +102,7 @@ pub fn run() {
             commands::clipboard::read_clipboard_payload,
             commands::shortcuts::list_shortcut_overrides,
             commands::shortcuts::save_shortcut_overrides,
+            commands::shortcuts::set_shortcut_capture_active,
             commands::blocks::extract_text_selection,
             commands::blocks::delete_text_selection,
             commands::blocks::rename_block_file,
@@ -157,6 +162,13 @@ pub fn run() {
                 let _ = commands::settings::open_settings_window(app.clone(), None);
             }
             _ => {}
+        })
+        .on_window_event(|window, event| {
+            if window.label() == "settings"
+                && matches!(event, tauri::WindowEvent::Focused(false) | tauri::WindowEvent::Destroyed)
+            {
+                let _ = set_shortcut_capture_menu(window.app_handle(), false);
+            }
         })
         .setup(|app| {
             crate::util::reset_startup_trace(app.handle());
@@ -312,6 +324,9 @@ fn build_app_menu(
 /// Rebuild the menu after the user rebinds a command.
 #[cfg(feature = "desktop")]
 pub fn refresh_app_menu(app: &tauri::AppHandle) {
+    if SHORTCUT_CAPTURE_ACTIVE.load(Ordering::SeqCst) {
+        return;
+    }
     let overrides = commands::shortcuts::load_overrides(app);
     match build_app_menu(app, &overrides) {
         Ok(menu) => {
@@ -321,4 +336,20 @@ pub fn refresh_app_menu(app: &tauri::AppHandle) {
         }
         Err(e) => log::warn!("failed to rebuild menu: {e:#}"),
     }
+}
+
+/// The macOS app menu consumes its accelerators before the settings webview.
+/// Remove it only while recording; rebuild from current overrides on exit.
+#[cfg(feature = "desktop")]
+pub fn set_shortcut_capture_menu(app: &tauri::AppHandle, active: bool) -> tauri::Result<()> {
+    let was_active = SHORTCUT_CAPTURE_ACTIVE.swap(active, Ordering::SeqCst);
+    if active && !was_active {
+        if let Err(error) = app.remove_menu() {
+            SHORTCUT_CAPTURE_ACTIVE.store(false, Ordering::SeqCst);
+            return Err(error);
+        }
+    } else if !active && was_active {
+        refresh_app_menu(app);
+    }
+    Ok(())
 }

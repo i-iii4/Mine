@@ -1831,20 +1831,22 @@ pub(crate) fn load_config(app: &AppHandle) -> serde_json::Value {
 
 /// Write the full config JSON to disk.
 pub(crate) fn write_config(app: &AppHandle, json: &serde_json::Value) {
-    let Some(config) = config_path(app) else {
-        return;
-    };
+    if let Err(error) = try_write_config(app, json) {
+        log::warn!("failed to save config: {error:#}");
+    }
+}
+
+pub(crate) fn try_write_config(app: &AppHandle, json: &serde_json::Value) -> anyhow::Result<()> {
+    let config = config_path(app).ok_or_else(|| anyhow::anyhow!("app data directory is unavailable"))?;
+    write_config_file(&config, json)
+}
+
+fn write_config_file(config: &Path, json: &serde_json::Value) -> anyhow::Result<()> {
     if let Some(parent) = config.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        std::fs::create_dir_all(parent)?;
     }
-    if let Err(e) = files::write_atomically(
-        &config,
-        serde_json::to_string_pretty(json)
-            .unwrap_or_default()
-            .as_bytes(),
-    ) {
-        log::warn!("failed to save config: {e:#}");
-    }
+    files::write_atomically(&config, &serde_json::to_vec_pretty(json)?)?;
+    Ok(())
 }
 
 /// Save the vault path to the config file and add to known_vaults.
@@ -1926,6 +1928,22 @@ fn clear_saved_vault_path(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_write_reports_failure_instead_of_claiming_success() {
+        let root = tempfile::tempdir().unwrap();
+        let valid = root.path().join("config.json");
+        write_config_file(&valid, &serde_json::json!({"shortcut_overrides": {}})).unwrap();
+        assert!(valid.is_file());
+
+        let blocked_parent = root.path().join("not_a_directory");
+        std::fs::write(&blocked_parent, b"file").unwrap();
+        let result = write_config_file(
+            &blocked_parent.join("config.json"),
+            &serde_json::json!({"shortcut_overrides": {}}),
+        );
+        assert!(result.is_err());
+    }
 
     #[test]
     fn first_connection_initializes_only_an_empty_unidentified_space() {

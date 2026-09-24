@@ -72,10 +72,10 @@ export function validateShortcut(
 export function rejectionMessage(rejection: ShortcutRejection): string {
   switch (rejection.reason) {
     case "system":
-      return "macOS keeps this combination for itself.";
+      return "Reserved by macOS.";
     case "bare-key":
-      return "A shortcut needs ⌘, ⌥ or ⌃ — a bare key would swallow typing.";
+      return "Add ⌘, ⌥ or ⌃.";
     case "conflict":
-      return `Already used by ${rejection.command} (${rejection.context}).`;
+      return `Used by ${rejection.command} (${rejection.context}).`;
   }
 }

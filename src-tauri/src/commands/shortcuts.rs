@@ -5,10 +5,10 @@
 //! clearing site data must not silently return every shortcut to default.
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, WebviewWindow};
 
 use super::state::CommandError;
-use super::vault::{load_config, write_config};
+use super::vault::{load_config, try_write_config};
 
 const CONFIG_KEY: &str = "shortcut_overrides";
 
@@ -76,6 +76,19 @@ pub fn list_shortcut_overrides(app: AppHandle) -> Result<ShortcutOverrides, Comm
     Ok(load_overrides(&app))
 }
 
+#[tauri::command]
+pub fn set_shortcut_capture_active(
+    app: AppHandle,
+    window: WebviewWindow,
+    active: bool,
+) -> Result<(), CommandError> {
+    if window.label() != "settings" {
+        return Err(CommandError::Internal("shortcut capture is limited to Settings".into()));
+    }
+    crate::set_shortcut_capture_menu(&app, active)
+        .map_err(|error| CommandError::Internal(error.to_string()))
+}
+
 /// Replace the whole override set. The caller owns validation — conflicts and
 /// reserved combos are decided against the command registry, which lives in
 /// the frontend.
@@ -87,7 +100,8 @@ pub fn save_shortcut_overrides(
     let mut cfg = load_config(&app);
     cfg[CONFIG_KEY] = serde_json::to_value(&overrides)
         .map_err(|e| CommandError::Internal(format!("failed to serialize overrides: {e}")))?;
-    write_config(&app, &cfg);
+    try_write_config(&app, &cfg)
+        .map_err(|error| CommandError::Internal(format!("failed to save shortcuts: {error:#}")))?;
 
     // The menu accelerator consumes the key before the webview sees it, so a
     // stale menu would keep firing the old command.
