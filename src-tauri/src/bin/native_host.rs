@@ -25,7 +25,7 @@ use mine_lib::domain::channel::Channel;
 use mine_lib::domain::collection::{normalize_collection_ref, validate_collection_ref};
 use mine_lib::domain::vault::VaultLayout;
 use mine_lib::net;
-use mine_lib::storage::{clipper_uploads, db, files, index, save_operations, thumbnails};
+use mine_lib::storage::{clipper_uploads, db, file_identity, files, index, save_operations, thumbnails};
 use mine_lib::util::now_iso8601;
 use percent_encoding::percent_decode_str;
 
@@ -266,6 +266,19 @@ fn load_vault_path() -> Option<String> {
     None
 }
 
+fn canonical_native_space_path(path: &str) -> Result<String, String> {
+    std::fs::canonicalize(path)
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|error| format!("cannot access space {path}: {error}"))
+}
+
+fn same_native_space(left: &str, right: &str) -> bool {
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => left == right,
+    }
+}
+
 /// Load known vaults from config, filter to existing directories.
 fn load_known_vaults() -> Vec<String> {
     let home = match std::env::var("HOME") {
@@ -282,7 +295,7 @@ fn load_known_vaults() -> Vec<String> {
         Ok(j) => j,
         Err(_) => return vec![],
     };
-    match json.get("known_vaults").and_then(|v| v.as_array()) {
+    let paths = match json.get("known_vaults").and_then(|v| v.as_array()) {
         Some(arr) => arr
             .iter()
             .filter_map(|v| v.as_str().map(|s| s.to_string()))
@@ -296,7 +309,16 @@ fn load_known_vaults() -> Vec<String> {
                 .map(|s| vec![s.to_string()])
                 .unwrap_or_default()
         }
+    };
+    let mut unique: Vec<String> = Vec::new();
+    for path in paths {
+        if let Ok(canonical) = canonical_native_space_path(&path) {
+            if !unique.contains(&canonical) {
+                unique.push(canonical);
+            }
+        }
     }
+    unique
 }
 
 fn resolve_native_vault_layout(root: PathBuf) -> Result<VaultLayout, String> {
@@ -323,6 +345,32 @@ fn resolve_native_vault_layout_at(
         log::warn!("legacy derived cleanup deferred: {error}");
     }
     Ok(layout)
+}
+
+fn initialize_native_new_space_layout(vault: &VaultLayout) -> Result<(), String> {
+    if vault.vault_id_path().exists()
+        || vault.legacy_vault_id_path().exists()
+        || vault.write_layout_path().exists()
+    {
+        return Ok(());
+    }
+    let entries = std::fs::read_dir(vault.root())
+        .map_err(|error| format!("failed to inspect selected space: {error}"))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if !entry.file_name().to_string_lossy().starts_with('.') {
+            return Ok(());
+        }
+    }
+    let standard = mine_lib::domain::vault::VaultWriteLayout::standard();
+    files::ensure_vault_write_layout(vault, &standard).map_err(|error| error.to_string())?;
+    for folder in [&standard.cards, &standard.media, &standard.collections] {
+        let path = vault.root().join(folder);
+        files::validate_vault_write_target(vault, &path).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(&path)
+            .map_err(|error| format!("failed to create initial folder {folder}: {error}"))?;
+    }
+    Ok(())
 }
 
 fn native_app_data_dir() -> Result<PathBuf, String> {
@@ -491,6 +539,7 @@ fn handle_list_known_vaults() {
 /// the write atomic (tmp + rename) so a concurrently reading desktop app never
 /// sees a torn file. Returns the updated list.
 fn add_known_vault(path: &str) -> Result<Vec<String>, String> {
+    let path = canonical_native_space_path(path)?;
     let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
     let config_dir = PathBuf::from(&home).join("Library/Application Support/com.mine.app");
     std::fs::create_dir_all(&config_dir)
@@ -510,8 +559,22 @@ fn add_known_vault(path: &str) -> Result<Vec<String>, String> {
                 .collect()
         })
         .unwrap_or_default();
-    if !vaults.iter().any(|existing| existing == path) {
-        vaults.push(path.to_string());
+    let mut found = false;
+    vaults.retain_mut(|existing| {
+        if same_native_space(existing, &path) {
+            if found {
+                false
+            } else {
+                *existing = path.clone();
+                found = true;
+                true
+            }
+        } else {
+            true
+        }
+    });
+    if !found {
+        vaults.push(path.clone());
     }
     json["known_vaults"] = serde_json::json!(vaults);
 
@@ -565,6 +628,13 @@ fn handle_pick_vault_folder() {
     if picked.is_empty() || !PathBuf::from(&picked).is_dir() {
         return send_error("folder chooser returned no usable path");
     }
+    let picked = match canonical_native_space_path(&picked) {
+        Ok(path) => path,
+        Err(error) => return send_error(&error),
+    };
+    if let Err(error) = initialize_native_new_space_layout(&VaultLayout::new(PathBuf::from(&picked))) {
+        return send_error(&error);
+    }
     match add_known_vault(&picked) {
         Ok(vaults) => send_response(&PickVaultResponse {
             ok: true,
@@ -594,7 +664,7 @@ fn handle_open_app(params: serde_json::Value) {
     command.args(["-b", "com.mine.app"]);
     if let Some(path) = params.get("path") {
         let Some(path) = path.as_str() else { return send_error("invalid space path"); };
-        if !load_known_vaults().iter().any(|known| known == path)
+        if !load_known_vaults().iter().any(|known| same_native_space(known, path))
             || !std::path::Path::new(path).is_dir()
         {
             return send_error("space is not available or not registered");
@@ -626,7 +696,7 @@ fn handle_reveal_vault(params: serde_json::Value) {
     if let Some(current) = load_vault_path() {
         allowed.push(current);
     }
-    if !allowed.iter().any(|vault| vault == &p.path) {
+    if !allowed.iter().any(|vault| same_native_space(vault, &p.path)) {
         return send_error("path is not a known vault");
     }
     match std::process::Command::new("open")
@@ -1313,6 +1383,9 @@ fn handle_create_channel(vault: &VaultLayout, params: serde_json::Value) {
     let block = channel_to_block(vault, &channel);
     if let Err(e) = files::write_new_block_file(vault, &block) {
         return send_error(&format!("failed to write channel file: {e}"));
+    }
+    if let Err(error) = file_identity::reconcile(vault) {
+        log::warn!("channel file created; identity enrollment deferred: {error:#}");
     }
 
     if let Err(e) = index::upsert_channel(&conn, &channel) {
@@ -2800,6 +2873,12 @@ fn main() {
                     send_error(&format!("Selected vault is unavailable: {vp}"));
                     continue;
                 }
+                if matches!(req.action.as_str(), "save_block" | "create_channel") {
+                    if let Err(error) = initialize_native_new_space_layout(&VaultLayout::new(path.clone())) {
+                        send_error(&error);
+                        continue;
+                    }
+                }
                 let vault = match resolve_native_vault_layout(path) {
                     Ok(vault) => vault,
                     Err(e) => {
@@ -2826,6 +2905,42 @@ fn main() {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn native_first_space_creates_defaults_once() {
+        let root = TempDir::new().unwrap();
+        let vault = VaultLayout::new(root.path().to_path_buf());
+        initialize_native_new_space_layout(&vault).unwrap();
+        assert_eq!(files::load_vault_write_layout(&vault).unwrap(), mine_lib::domain::vault::VaultWriteLayout::standard());
+        for folder in ["Cards", "Media", "Collections"] {
+            assert!(root.path().join(folder).is_dir());
+        }
+        std::fs::remove_dir(root.path().join("Media")).unwrap();
+        initialize_native_new_space_layout(&vault).unwrap();
+        assert!(!root.path().join("Media").exists());
+    }
+
+    #[test]
+    fn native_existing_space_without_layout_writes_to_root() {
+        let root = TempDir::new().unwrap();
+        let vault = VaultLayout::new(root.path().to_path_buf());
+        std::fs::create_dir_all(vault.mine_dir()).unwrap();
+        std::fs::write(vault.vault_id_path(), b"existing-space").unwrap();
+        initialize_native_new_space_layout(&vault).unwrap();
+        assert_eq!(files::load_vault_write_layout(&vault).unwrap(), mine_lib::domain::vault::VaultWriteLayout::flat());
+        assert!(!root.path().join("Cards").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_space_aliases_share_one_identity() {
+        let root = TempDir::new().unwrap();
+        let links = TempDir::new().unwrap();
+        let alias = links.path().join("alias");
+        std::os::unix::fs::symlink(root.path(), &alias).unwrap();
+        assert!(same_native_space(alias.to_str().unwrap(), root.path().to_str().unwrap()));
+        assert_eq!(canonical_native_space_path(alias.to_str().unwrap()).unwrap(), root.path().canonicalize().unwrap().to_string_lossy());
+    }
 
     fn make_staging(dir: &std::path::Path, name: &str, bytes: &[u8]) -> std::path::PathBuf {
         let path = dir.join(name);
@@ -3292,6 +3407,7 @@ mod tests {
         let root = temp.path().join("vault");
         let state = temp.path().join("app-state");
         std::fs::create_dir(&root).unwrap();
+        initialize_native_new_space_layout(&VaultLayout::new(root.clone())).unwrap();
         for title in ["A", "B"] {
             let vault = resolve_native_vault_layout_at(root.clone(), state.clone()).unwrap();
             assert_eq!(
@@ -3307,9 +3423,9 @@ mod tests {
             assert!(!root.join(format!("{title}.md")).exists());
         }
         assert!(root.join(".mine/layout.json").is_file());
-        // No requirement to create unused role directories just to influence
-        // a heuristic: the saved layout is the authority on the next launch.
-        assert!(!root.join("Collections").exists());
+        assert!(root.join("Cards").is_dir());
+        assert!(root.join("Media").is_dir());
+        assert!(root.join("Collections").is_dir());
     }
 
     #[test]

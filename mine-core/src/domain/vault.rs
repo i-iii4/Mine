@@ -39,8 +39,11 @@ fn join_slug(dir: &str, name: &str) -> String {
 /// keep everything flat. See SPEC_VAULT_LIFECYCLE.md П1–П4.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct VaultWriteLayout {
+    #[serde(default)]
     pub cards: String,
+    #[serde(default)]
     pub media: String,
+    #[serde(default)]
     pub collections: String,
 }
 
@@ -82,17 +85,10 @@ impl VaultWriteLayout {
         }
     }
 
-    /// Pick the layout an existing vault already follows.
-    ///
-    /// A vault that has the standard folders keeps using them; anything else
-    /// stays flat, so opening someone's plain Obsidian vault never starts
-    /// scattering files into folders it does not have.
-    pub fn detect(facts: VaultLayoutFacts) -> Self {
-        if facts.cards_dir && facts.media_dir && facts.collections_dir {
-            Self::standard()
-        } else {
-            Self::flat()
-        }
+    /// A space without an explicit setting writes at its root. Directory
+    /// names never imply a destination for new files.
+    pub fn detect(_facts: VaultLayoutFacts) -> Self {
+        Self::flat()
     }
 
     /// Vault-relative stem occupied by a new card.
@@ -147,9 +143,14 @@ impl VaultWriteLayout {
                     reason: format!("write folder must stay inside the vault: {value}"),
                 });
             }
-            if value.starts_with('.') {
+            if value.split('/').any(|segment| segment.is_empty() || segment.starts_with('.')) {
                 return Err(VaultError::InvalidWriteLayout {
-                    reason: format!("write folder must not be hidden: {value}"),
+                    reason: format!("write folder has an invalid path segment: {value}"),
+                });
+            }
+            if value.contains('\\') || value.contains('\0') {
+                return Err(VaultError::InvalidWriteLayout {
+                    reason: format!("write folder contains an invalid separator: {value}"),
                 });
             }
         }
@@ -346,21 +347,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn detects_layout_using_only_supplied_directory_facts() {
+    fn existing_space_defaults_to_root_regardless_of_directory_facts() {
         for bits in 0..8 {
             let facts = VaultLayoutFacts {
                 cards_dir: bits & 1 != 0,
                 media_dir: bits & 2 != 0,
                 collections_dir: bits & 4 != 0,
             };
-            assert_eq!(
-                VaultWriteLayout::detect(facts),
-                if bits == 7 {
-                    VaultWriteLayout::standard()
-                } else {
-                    VaultWriteLayout::flat()
-                }
-            );
+            assert_eq!(VaultWriteLayout::detect(facts), VaultWriteLayout::flat());
         }
     }
 
@@ -425,7 +419,7 @@ mod tests {
             assert!(validate_slug(value).is_err(), "{value:?}");
         }
         assert!(validate_slug("Notes/Заметка").is_ok());
-        for cards in ["../outside", "/outside", ".hidden"] {
+        for cards in ["../outside", "/outside", ".hidden", "Safe/.hidden", "Safe//Other", "Safe\\Other"] {
             assert!(VaultWriteLayout {
                 cards: cards.into(),
                 ..VaultWriteLayout::standard()

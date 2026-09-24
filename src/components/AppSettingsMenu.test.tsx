@@ -5,7 +5,7 @@ import { AppSettingsMenu } from "./AppSettingsMenu";
 
 const sections = [
   ["Appearance", "appearance"], ["Shortcuts", "shortcuts"],
-  ["Graph", "graph"], ["Spaces", "spaces"], ["Folders", "layout"],
+  ["Graph", "graph"], ["Spaces", "spaces"], ["New files", "layout"],
   ["Extension", "clipper"], ["Orphans", "orphans"], ["Design system", "design-system"],
 ];
 

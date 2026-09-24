@@ -1508,7 +1508,7 @@ describe("AppWithVault", () => {
     expect(menuSlot?.nextElementSibling).toBeNull();
     expect(document.querySelector("[data-main-view-mode-switcher]")).toBeInTheDocument();
     fireEvent.keyDown(settingsMenu, { key: "ArrowDown" });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Folders" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "New files" }));
     expect(commandMocks.openSettingsWindow).toHaveBeenCalledExactlyOnceWith("layout");
   });
 

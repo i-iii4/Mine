@@ -4,7 +4,7 @@ export const SETTINGS_SECTIONS = [
   { id: "shortcuts", label: "Shortcuts" },
   { id: "graph", label: "Graph" },
   { id: "spaces", label: "Spaces" },
-  { id: "layout", label: "Folders" },
+  { id: "layout", label: "New files" },
   { id: "clipper", label: "Extension" },
   { id: "orphans", label: "Orphans" },
   { id: "design-system", label: "Design system" },

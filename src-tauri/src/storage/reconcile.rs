@@ -15,7 +15,7 @@ use crate::domain::block::{
     InlineMediaSyntax,
 };
 use crate::domain::vault::{detect_icloud_conflict, VaultLayout};
-use crate::storage::{article_audio, files, index, media_refs};
+use crate::storage::{article_audio, file_identity, files, index, media_refs};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FileStamp {
@@ -164,6 +164,8 @@ pub fn reconcile_vault_with_progress(
     on_progress: &(dyn Fn(usize, usize) + Sync),
 ) -> std::result::Result<ReconcileReport, ReconcileError> {
     let started = Instant::now();
+    let identity = file_identity::reconcile(vault).map_err(ReconcileError::State)?;
+    let identity_affected = identity.affected_markdown.iter().collect::<BTreeSet<_>>();
     let paths = files::scan_md_files(vault).map_err(|source| ReconcileError::Inventory {
         path: vault.root().to_path_buf(),
         source,
@@ -179,6 +181,13 @@ pub fn reconcile_vault_with_progress(
     let mut prepared = Vec::new();
     let mut unchanged = 0usize;
     let mut errors = Vec::new();
+    for (path, message) in &identity.read_errors {
+        errors.push(file_error(
+            path,
+            ReconcileFileErrorKind::Read,
+            message.clone(),
+        ));
+    }
     let mut content_reads = 0usize;
     let mut conflicts = Vec::new();
 
@@ -231,13 +240,10 @@ pub fn reconcile_vault_with_progress(
             previous.is_some_and(|state| indexed_kinds.get(&slug) != Some(&state.kind));
         let source_changed = previous.map_or(true, |state| state.stamp.markdown != markdown_stamp)
             || dependency_changed
-            || projection_stale;
+            || projection_stale
+            || identity_affected.contains(&slug);
         if !source_changed {
             unchanged += 1;
-            if previous.is_some_and(|state| state.kind == SourceKind::Channel) {
-                live_channel_refs
-                    .insert(crate::domain::collection::collection_ref_from_slug(&slug));
-            }
             continue;
         }
 
@@ -248,11 +254,30 @@ pub fn reconcile_vault_with_progress(
         }
     }
 
-    for source in &prepared {
-        if source.kind == SourceKind::Channel {
-            live_channel_refs
-                .insert(crate::domain::collection::collection_ref_from_slug(&source.slug));
-        }
+    let prepared_slugs = prepared
+        .iter()
+        .map(|source| source.slug.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut channel_slugs = stored
+        .iter()
+        .filter(|(slug, state)| {
+            live_slugs.contains(*slug)
+                && state.kind == SourceKind::Channel
+                && !prepared_slugs.contains(slug.as_str())
+        })
+        .map(|(slug, _)| slug.clone())
+        .collect::<BTreeSet<_>>();
+    channel_slugs.extend(
+        prepared
+            .iter()
+            .filter(|source| source.kind == SourceKind::Channel)
+            .map(|source| source.slug.clone()),
+    );
+    for slug in &channel_slugs {
+        live_channel_refs.insert(crate::domain::collection::collection_ref_for_slug(
+            slug,
+            &channel_slugs,
+        ));
     }
 
     let removed = indexed_kinds
@@ -264,14 +289,7 @@ pub fn reconcile_vault_with_progress(
         .into_iter()
         .collect::<Vec<_>>();
 
-    // A file moved between folders while the app was closed looks like one slug
-    // vanishing and another appearing. Treating that as delete-and-create
-    // throws away everything keyed by slug — the preview, the audio progress —
-    // and the card visibly re-renders itself for no reason the user caused.
-    // Match the pair by body hash and carry the derived artifacts across, the
-    // same way the watcher already recognises an external rename.
-    // See SPEC_VAULT_LIFECYCLE.md П10–П11.
-    let moved = detect_moved_sources(conn, &removed, &prepared);
+    let moved = identity.moved_markdown;
 
     let tx = conn
         .unchecked_transaction()
@@ -281,6 +299,16 @@ pub fn reconcile_vault_with_progress(
     let mut database_writes = 0usize;
     let mut committed_sources = Vec::new();
 
+    for (old_slug, new_slug) in &moved {
+        if indexed_kinds.get(old_slug) == Some(&SourceKind::Block)
+            && indexed_kinds.get(new_slug).is_none()
+        {
+            index::rename_slug(&tx, old_slug, new_slug)
+                .with_context(|| format!("preserve moved source identity {old_slug} -> {new_slug}"))
+                .map_err(ReconcileError::Commit)?;
+        }
+    }
+
     for (base_slug, conflict_slug) in conflicts {
         index::record_vault_conflict(&tx, &base_slug, &conflict_slug)
             .with_context(|| format!("record vault conflict {conflict_slug}"))
@@ -289,7 +317,7 @@ pub fn reconcile_vault_with_progress(
     }
 
     for source in prepared {
-        match apply_prepared_source(&tx, vault, &source) {
+        match apply_prepared_source(&tx, vault, &source, &channel_slugs) {
             Ok(()) => {
                 if source.dependency_changed {
                     dependency_changed_slugs.push(source.slug.clone());
@@ -379,7 +407,11 @@ pub fn project_source_path(conn: &Connection, vault: &VaultLayout, path: &Path) 
         .with_context(|| format!("read source metadata for {}", path.display()))?;
     let source = prepare_source(vault, path, markdown_stamp, false)
         .map_err(|error| anyhow::anyhow!("prepare source {}: {}", path.display(), error.message))?;
-    apply_prepared_source(conn, vault, &source)?;
+    let mut channel_slugs = BTreeSet::new();
+    if source.kind == SourceKind::Channel {
+        channel_slugs.insert(source.slug.clone());
+    }
+    apply_prepared_source(conn, vault, &source, &channel_slugs)?;
     Ok(source.block)
 }
 
@@ -392,6 +424,17 @@ pub fn project_source_path(conn: &Connection, vault: &VaultLayout, path: &Path) 
 /// the vanished path would delete the collection that the moved document had
 /// just registered.
 fn remove_channel_if_orphaned(conn: &Connection, vault: &VaultLayout, slug: &str) -> Result<()> {
+    let mut stmt = conn.prepare("SELECT tag FROM channels WHERE source_slug = ?1")?;
+    let tags = stmt
+        .query_map([slug], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let had_exact = !tags.is_empty();
+    for tag in tags {
+        index::remove_channel(conn, &tag)?;
+    }
+    if had_exact {
+        return Ok(());
+    }
     let collection_ref = crate::domain::collection::collection_ref_from_slug(slug);
     if crate::storage::media_refs::resolve_collection_document(vault, &collection_ref).is_some() {
         return Ok(());
@@ -463,56 +506,11 @@ fn prepare_source(
 /// Only unambiguous pairs count: one gone, one arrived, same body hash. Two
 /// identical files moving at once, or a copy left behind, leave everything to
 /// the ordinary delete-and-create path rather than guessing.
-fn detect_moved_sources(
-    conn: &Connection,
-    removed: &[String],
-    prepared: &[PreparedSource],
-) -> Vec<(String, String)> {
-    if removed.is_empty() || prepared.is_empty() {
-        return Vec::new();
-    }
-
-    let mut arrivals: BTreeMap<String, Vec<&str>> = BTreeMap::new();
-    for source in prepared {
-        if source.kind != SourceKind::Block {
-            continue;
-        }
-        // An empty body hashes to a constant, which would pair unrelated
-        // metadata-only cards; only content can identify a move.
-        if source.block.body.trim().is_empty() {
-            continue;
-        }
-        let hash = crate::domain::block::compute_body_hash(&source.block.body);
-        arrivals.entry(hash).or_default().push(&source.slug);
-    }
-    if arrivals.is_empty() {
-        return Vec::new();
-    }
-
-    let mut departures: BTreeMap<String, Vec<&str>> = BTreeMap::new();
-    for slug in removed {
-        let Ok(Some(hash)) = index::lookup_body_hash(conn, slug) else {
-            continue;
-        };
-        departures.entry(hash).or_default().push(slug);
-    }
-
-    let mut moves = Vec::new();
-    for (hash, gone) in departures {
-        let Some(arrived) = arrivals.get(&hash) else {
-            continue;
-        };
-        if gone.len() == 1 && arrived.len() == 1 {
-            moves.push((gone[0].to_string(), arrived[0].to_string()));
-        }
-    }
-    moves
-}
-
 fn apply_prepared_source(
     conn: &Connection,
     vault: &VaultLayout,
     source: &PreparedSource,
+    channel_slugs: &BTreeSet<String>,
 ) -> Result<()> {
     conn.execute_batch("SAVEPOINT reconcile_source")
         .context("begin source reconciliation savepoint")?;
@@ -535,7 +533,9 @@ fn apply_prepared_source(
                 index::remove_block(conn, &source.slug).with_context(|| {
                     format!("remove stale block projection for {}", source.slug)
                 })?;
-                index::upsert_channel_from_block(conn, &source.block)
+                let collection_ref =
+                    crate::domain::collection::collection_ref_for_slug(&source.slug, channel_slugs);
+                index::upsert_channel_from_block_with_ref(conn, &source.block, &collection_ref)
                     .with_context(|| format!("upsert channel {}", source.slug))?;
             }
         }
@@ -649,7 +649,7 @@ fn load_indexed_kinds(conn: &Connection) -> Result<BTreeMap<String, SourceKind>>
     for slug in block_stmt.query_map([], |row| row.get::<_, String>(0))? {
         kinds.insert(slug?, SourceKind::Block);
     }
-    let mut channel_stmt = conn.prepare("SELECT tag FROM channels")?;
+    let mut channel_stmt = conn.prepare("SELECT COALESCE(source_slug, tag) FROM channels")?;
     for slug in channel_stmt.query_map([], |row| row.get::<_, String>(0))? {
         kinds.insert(slug?, SourceKind::Channel);
     }
@@ -774,7 +774,7 @@ mod tests {
     }
 
     #[test]
-    fn two_identical_bodies_moving_at_once_are_left_alone() {
+    fn two_identical_bodies_moving_at_once_keep_separate_source_identities() {
         let (_dir, vault, conn) = setup();
         std::fs::create_dir_all(vault.thumbs_dir()).unwrap();
         std::fs::create_dir_all(vault.root().join("Cards")).unwrap();
@@ -787,9 +787,11 @@ mod tests {
         std::fs::rename(vault.block_path("Second"), vault.block_path("Cards/Second")).unwrap();
         reconcile_vault(&conn, &vault).unwrap();
 
-        // Ambiguous: guessing could hand one card another's preview, so neither
-        // is carried and both rebuild normally.
-        assert!(!vault.thumb_path("Cards/First").exists());
+        // Native file locators distinguish both notes despite identical bodies.
+        assert_eq!(
+            std::fs::read(vault.thumb_path("Cards/First")).unwrap(),
+            b"first"
+        );
         assert!(!vault.thumb_path("Cards/Second").exists());
     }
 
@@ -867,7 +869,10 @@ mod tests {
 
         let channels = index::list_channels(&conn).unwrap();
         assert_eq!(
-            channels.iter().map(|ch| ch.tag.as_str()).collect::<Vec<_>>(),
+            channels
+                .iter()
+                .map(|ch| ch.tag.as_str())
+                .collect::<Vec<_>>(),
             vec!["Видео"],
             "the phantom row goes, the real collection stays",
         );
@@ -882,15 +887,17 @@ mod tests {
             "---\ntype: channel\nsaved_at: 2026-08-05T00:00:00Z\nposition: 1\n---\n",
         )
         .unwrap();
-        let stale =
-            Channel::new("Старый", DateTime::new("2026-08-05T00:00:00Z").unwrap()).unwrap();
+        let stale = Channel::new("Старый", DateTime::new("2026-08-05T00:00:00Z").unwrap()).unwrap();
         index::upsert_channel(&conn, &stale).unwrap();
 
         reconcile_vault(&conn, &vault).unwrap();
 
         let channels = index::list_channels(&conn).unwrap();
         assert_eq!(
-            channels.iter().map(|ch| ch.tag.as_str()).collect::<Vec<_>>(),
+            channels
+                .iter()
+                .map(|ch| ch.tag.as_str())
+                .collect::<Vec<_>>(),
             vec!["Анимация"],
         );
     }

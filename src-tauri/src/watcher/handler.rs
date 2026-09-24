@@ -14,9 +14,10 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::commands::state::{schedule_preview_reconcile, AppState};
+#[cfg(test)]
+use crate::domain::block::parse_block;
 use crate::domain::block::{
-    compute_body_hash, derive_card_kind, parse_block, parse_markdown_document, Block, BlockType,
-    CardKind, DateTime,
+    derive_card_kind, parse_markdown_document, Block, BlockType, CardKind, DateTime,
 };
 use crate::domain::vault::VaultLayout;
 use crate::storage::preview_plan::{resolve_upgrade_media, PreviewUpgradeInput};
@@ -665,7 +666,7 @@ fn index_md_file_inner(
 
     // Channel files → index as channel, no thumbnail
     if block.frontmatter.block_type == BlockType::Channel {
-        index::upsert_channel_from_block(conn, &block)
+        index::upsert_channel_from_block_in_vault(conn, vault, &block)
             .with_context(|| format!("indexing channel {}", path.display()))?;
         let audio_invalidated = article_audio::delete_all_artifacts(vault, &block.slug)?;
         return Ok(IndexMdOutcome {
@@ -704,8 +705,8 @@ fn index_md_file_inner(
 // BlockChanged. Without correlation, this class of events destroys block
 // identity: thumb cache becomes an orphan, audio playback position is lost,
 // wikilinks break. We defer BlockDeleted events briefly and correlate them
-// with an incoming BlockChanged that shares the same content hash. When a
-// match appears within the debounce window, we issue a rename_slug and
+// with an incoming BlockChanged whose durable source locator confirms the
+// move. On a match within the debounce window, we issue a rename_slug and
 // migrate derived-store artifacts (thumb .jpg, audio .wav + sidecar) in
 // place. Entries that time out without a match fall through to a real
 // block removal as if they had been removed immediately.
@@ -718,7 +719,6 @@ const RENAME_MATCH_WINDOW_MS: u64 = 500;
 struct PendingRemove {
     vault_root: PathBuf,
     slug: String,
-    body_hash: Option<String>,
     /// Tags captured before removal so the eventual `block:removed` event
     /// tells the frontend which channels to invalidate.
     tags: Vec<String>,
@@ -736,12 +736,12 @@ fn push_pending_remove(entry: PendingRemove) {
     }
 }
 
-/// Remove and return the first pending entry whose body hash matches.
-fn take_pending_by_hash(vault: &VaultLayout, hash: &str) -> Option<PendingRemove> {
+/// Remove a pending deletion only for a move proven by source metadata.
+fn take_pending_by_slug(vault: &VaultLayout, slug: &str) -> Option<PendingRemove> {
     let mut q = pending_queue().lock().ok()?;
     let pos = q
         .iter()
-        .position(|p| p.vault_root == vault.root() && p.body_hash.as_deref() == Some(hash))?;
+        .position(|p| p.vault_root == vault.root() && p.slug == slug)?;
     Some(q.remove(pos))
 }
 
@@ -837,21 +837,6 @@ struct VaultConflictPayload {
     conflict_slug: String,
 }
 
-/// Read a .md file and compute its body hash for rename-match comparison.
-/// Body is taken after frontmatter parsing so filename or metadata edits
-/// do not break identity for unchanged content.
-fn read_body_hash_from_md(vault: &VaultLayout, path: &Path) -> Result<String> {
-    let (slug, content) = files::read_block_file(vault, path)?;
-    // parse_block peels off frontmatter; if it fails we treat the whole
-    // content as the body, since hashing the raw file still gives a
-    // stable identity for the rename match.
-    let body = match parse_block(&slug, &content) {
-        Ok(block) => block.body,
-        Err(_) => content,
-    };
-    Ok(compute_body_hash(&body))
-}
-
 /// Commit a rename-match: update DB slug, migrate derived artifacts, and
 /// notify the frontend. Runs the regular index_md_file path afterwards
 /// so any metadata changes in the renamed file (title, tags) also land.
@@ -864,7 +849,7 @@ fn perform_rename_match(
     app: Option<&AppHandle>,
 ) -> Result<bool> {
     log::info!(
-        "watcher: rename detected {} -> {} (body hash match)",
+        "watcher: rename detected {} -> {} (source identity match)",
         pending.slug,
         new_slug
     );
@@ -930,17 +915,17 @@ pub fn handle_event(
 
     match event {
         VaultEvent::BlockChanged(path) => {
-            // Rename detection: if this looks like a brand-new slug and its
-            // body matches a recently-deferred removal, migrate identity
-            // instead of creating a second row.
+            let identity = crate::storage::file_identity::reconcile(vault)?;
             if let Some(new_slug) = path_to_slug(vault, path) {
                 let already_indexed = index::get_block(conn, &new_slug).ok().flatten().is_some();
                 if !already_indexed {
-                    if let Ok(body_hash) = read_body_hash_from_md(vault, path) {
-                        if let Some(pending) = take_pending_by_hash(vault, &body_hash) {
-                            return perform_rename_match(
-                                conn, vault, &pending, &new_slug, path, app,
-                            );
+                    for (old_slug, moved_slug) in identity.moved_markdown {
+                        if moved_slug == new_slug {
+                            if let Some(pending) = take_pending_by_slug(vault, &old_slug) {
+                                return perform_rename_match(
+                                    conn, vault, &pending, &new_slug, path, app,
+                                );
+                            }
                         }
                     }
                 }
@@ -950,12 +935,11 @@ pub fn handle_event(
         VaultEvent::BlockDeleted(path) => {
             if let Some(slug) = path_to_slug(vault, path) {
                 // Defer the removal into the rename-detection queue.
-                // Capture body hash and tags now so either a matching Create
+                // Capture tags now so either a matching Create
                 // within the window can rename identity cleanly, or the
                 // expired drain can emit block:removed with the right
                 // channel list. The DB row itself is NOT removed yet —
                 // rename_slug on match would fail if we pre-deleted.
-                let body_hash = index::lookup_body_hash(conn, &slug).ok().flatten();
                 let tags = index::get_block(conn, &slug)
                     .ok()
                     .flatten()
@@ -964,7 +948,6 @@ pub fn handle_event(
                 push_pending_remove(PendingRemove {
                     vault_root: vault.root().to_path_buf(),
                     slug,
-                    body_hash,
                     tags,
                     deadline: Instant::now() + Duration::from_millis(RENAME_MATCH_WINDOW_MS),
                 });
@@ -974,6 +957,7 @@ pub fn handle_event(
             }
         }
         VaultEvent::MediaChanged(path) => {
+            crate::storage::reconcile::reconcile_vault(conn, vault)?;
             let ext = path
                 .extension()
                 .and_then(|e| e.to_str())
@@ -1018,6 +1002,7 @@ pub fn handle_event(
             return Ok(false);
         }
         VaultEvent::MediaDeleted(path) => {
+            crate::storage::reconcile::reconcile_vault(conn, vault)?;
             if let Some(slug) = path_to_slug(vault, path) {
                 let thumb_path = vault.thumb_path(&slug);
                 let had_thumb = thumb_path.exists();
@@ -1371,8 +1356,7 @@ mod tests {
 
     #[test]
     fn handle_block_rename_preserves_identity() {
-        // Remove + Create with identical body inside the match window
-        // should update the slug in place, not delete + insert.
+        // A filesystem move retains its physical locator and index identity.
         let dir = tempfile::tempdir().unwrap();
         let vault = VaultLayout::new(dir.path().to_path_buf());
         let conn = test_conn();
@@ -1385,11 +1369,12 @@ mod tests {
         write_md_file_with_body(&vault, "old-name", "article", &[], &unique_body);
         let old_path = vault.block_path("old-name");
         index_md_file(&conn, &vault, &old_path, None).unwrap();
+        crate::storage::file_identity::reconcile(&vault).unwrap();
         let original = index::get_block(&conn, "old-name").unwrap().unwrap();
         let original_id = original.id;
 
-        // Simulate rename: delete old file, write new with same body
-        std::fs::remove_file(&old_path).unwrap();
+        let new_path = vault.block_path("new-name");
+        std::fs::rename(&old_path, &new_path).unwrap();
         handle_event(
             &conn,
             &vault,
@@ -1398,8 +1383,6 @@ mod tests {
         )
         .unwrap();
 
-        write_md_file_with_body(&vault, "new-name", "article", &[], &unique_body);
-        let new_path = vault.block_path("new-name");
         handle_event(
             &conn,
             &vault,
@@ -1417,7 +1400,7 @@ mod tests {
     }
 
     #[test]
-    fn external_rename_does_not_rewrite_other_markdown_files() {
+    fn external_rename_rewrites_established_markdown_links() {
         let dir = tempfile::tempdir().unwrap();
         let vault = VaultLayout::new(dir.path().to_path_buf());
         let conn = test_conn();
@@ -1438,8 +1421,10 @@ mod tests {
         let reference_path = vault.block_path("reference");
         index_md_file(&conn, &vault, &old_path, None).unwrap();
         index_md_file(&conn, &vault, &reference_path, None).unwrap();
+        crate::storage::file_identity::reconcile(&vault).unwrap();
 
-        std::fs::remove_file(&old_path).unwrap();
+        let new_path = vault.block_path("new-name");
+        std::fs::rename(&old_path, &new_path).unwrap();
         handle_event(
             &conn,
             &vault,
@@ -1448,16 +1433,73 @@ mod tests {
         )
         .unwrap();
 
-        write_md_file_with_body(&vault, "new-name", "article", &[], &unique_body);
-        let new_path = vault.block_path("new-name");
         handle_event(&conn, &vault, &VaultEvent::BlockChanged(new_path), None).unwrap();
 
         let (_, reference_content) = files::read_block_file(&vault, &reference_path).unwrap();
         let reference_block = parse_block("reference", &reference_content).unwrap();
-        assert!(reference_block.body.contains("[[old-name]]"));
-        assert!(reference_block.body.contains("![[old-name]]"));
-        assert!(!reference_block.body.contains("[[new-name]]"));
+        assert!(reference_block.body.contains("[[new-name]]"));
+        assert!(reference_block.body.contains("![[new-name]]"));
+        assert!(!reference_block.body.contains("[[old-name]]"));
 
+        flush_pending_for_test(&conn, &vault, None);
+    }
+
+    #[test]
+    fn media_event_updates_bound_target_after_external_move() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let conn = test_conn();
+        std::fs::create_dir_all(dir.path().join("Media")).unwrap();
+        std::fs::write(dir.path().join("Media/original.jpg"), b"original").unwrap();
+        std::fs::write(
+            dir.path().join("Card.md"),
+            "---\ntype: image\nfile: \"[[original.jpg]]\"\n---\n",
+        )
+        .unwrap();
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        std::fs::create_dir_all(dir.path().join("Other")).unwrap();
+        std::fs::write(dir.path().join("Other/original.jpg"), b"different").unwrap();
+        let moved = dir.path().join("Media/moved.jpg");
+        std::fs::rename(dir.path().join("Media/original.jpg"), &moved).unwrap();
+        handle_event(
+            &conn,
+            &vault,
+            &VaultEvent::MediaChanged(moved.clone()),
+            None,
+        )
+        .unwrap();
+
+        let card = index::get_block(&conn, "Card").unwrap().unwrap();
+        let reference = card.media_file.as_deref().unwrap();
+        assert_eq!(
+            crate::storage::media_refs::resolve_indexed_media(&vault, "Card", reference),
+            Some(moved)
+        );
+    }
+
+    #[test]
+    fn identical_new_note_is_not_a_rename() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let conn = test_conn();
+        write_md_file_with_body(&vault, "old", "article", &[], "identical body");
+        let old_path = vault.block_path("old");
+        index_md_file(&conn, &vault, &old_path, None).unwrap();
+        crate::storage::file_identity::reconcile(&vault).unwrap();
+        let old_id = index::get_block(&conn, "old").unwrap().unwrap().id;
+        std::fs::remove_file(&old_path).unwrap();
+        handle_event(&conn, &vault, &VaultEvent::BlockDeleted(old_path), None).unwrap();
+        write_md_file_with_body(&vault, "new", "article", &[], "identical body");
+        handle_event(
+            &conn,
+            &vault,
+            &VaultEvent::BlockChanged(vault.block_path("new")),
+            None,
+        )
+        .unwrap();
+        let new_id = index::get_block(&conn, "new").unwrap().unwrap().id;
+        assert_ne!(new_id, old_id);
         flush_pending_for_test(&conn, &vault, None);
     }
 

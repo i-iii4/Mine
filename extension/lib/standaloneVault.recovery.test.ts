@@ -108,6 +108,8 @@ beforeEach(() => {
 describe("standalone recovery invariants", () => {
   it.each(["foreign bytes", "image bytes"])("rejects a Prepared media conflict (%s) durably and permits an explicit new save", async foreign => {
     for (const name of ["Cards", "Media", "Collections"]) await folder.getDirectoryHandle(name, { create: true });
+    const mine = await folder.getDirectoryHandle(".mine", { create: true });
+    mine.files.set("layout.json", new FileHandle(JSON.stringify({ cards: "Cards", media: "Media", collections: "Collections" })));
     await adapter.saveStandaloneBlock(image(), { ...options(), afterPrepared: () => { throw new Error("worker stopped"); } });
     const media = await folder.getDirectoryHandle("Media", { create: true });
     media.files.set("Original.png", new FileHandle(foreign));
@@ -124,6 +126,8 @@ describe("standalone recovery invariants", () => {
 
   it("rejects a Prepared Markdown conflict without deleting the body and permits explicit retry", async () => {
     for (const name of ["Cards", "Media", "Collections"]) await folder.getDirectoryHandle(name, { create: true });
+    const mine = await folder.getDirectoryHandle(".mine", { create: true });
+    mine.files.set("layout.json", new FileHandle(JSON.stringify({ cards: "Cards", media: "Media", collections: "Collections" })));
     await adapter.saveStandaloneBlock(request(), { ...options(), afterPrepared: () => { throw new Error("worker stopped"); } });
     folder.directories.get("Cards")!.files.set("Original.md", new FileHandle("Foreign content"));
     const rejected = await adapter.saveStandaloneBlock(request({ operation_mode: "resume" }), options());

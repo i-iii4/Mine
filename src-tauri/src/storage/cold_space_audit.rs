@@ -389,25 +389,25 @@ fn capture_snapshot(
         .iter()
         .filter_map(|(slug, kind)| (kind == "block").then_some(slug.clone()))
         .collect::<BTreeSet<_>>();
-    // Collections are identified by document name, not by path: a document in
-    // `Collections/` registers the channel `Каталоги`, because membership is a
-    // wikilink that Obsidian resolves by name anywhere in the vault. Comparing
-    // raw source slugs made this audit reject every foldered layout — that is,
-    // the canonical one. See SPEC_VAULT_LIFECYCLE.md.
-    let expected_collections = source_kinds
+    let channel_document_slugs = source_kinds
         .iter()
-        .filter_map(|(slug, kind)| {
-            (kind == "channel").then(|| collection_ref_from_slug(slug))
+        .filter_map(|(slug, kind)| (kind == "channel").then_some(slug.clone()))
+        .collect::<BTreeSet<_>>();
+    let expected_collections = channel_document_slugs
+        .iter()
+        .map(|slug| {
+            crate::domain::collection::collection_ref_for_slug(slug, &channel_document_slugs)
         })
         .collect::<BTreeSet<_>>();
-    // Several documents may share a name across folders; only the canonical one
-    // becomes a channel, so the number of source documents legitimately exceeds
-    // the projection. Reported, never treated as a mismatch.
-    let duplicate_collection_documents = source_kinds
+    // Shared filenames remain a useful diagnostic even though every document
+    // now has its own channel projection.
+    let distinct_names = channel_document_slugs
         .iter()
-        .filter(|(_, kind)| kind.as_str() == "channel")
-        .count()
-        .saturating_sub(expected_collections.len());
+        .map(|slug| collection_ref_from_slug(slug))
+        .collect::<BTreeSet<_>>();
+    let duplicate_collection_documents = channel_document_slugs
+        .len()
+        .saturating_sub(distinct_names.len());
     if content_slugs != expected_content {
         bail!(
             "content source/projection mismatch: source_only={:?}, projection_only={:?}",
@@ -633,6 +633,11 @@ fn source_fingerprint(root: &Path) -> Result<Vec<SourceFileFingerprint>> {
             let path = entry.path();
             let file_type = entry.file_type()?;
             if file_type.is_dir() {
+                // The durable identity manifest is app-managed source metadata,
+                // created during the first reconciliation of a fresh space.
+                if path == root.join(".mine") {
+                    continue;
+                }
                 visit(root, &path, result)?;
             } else if file_type.is_file() {
                 let metadata = entry.metadata()?;
@@ -725,8 +730,8 @@ mod tests {
     /// The canonical layout — collections in their own folder — must pass. This
     /// audit used to reject it outright by comparing path-qualified source
     /// slugs against name-keyed channels, so the acceptance gate covered only
-    /// flat vaults. A duplicate name in a subfolder is reported, not failed:
-    /// only the canonical document projects a channel.
+    /// flat vaults. Documents with the same filename remain separate channels
+    /// and are also reported as a filename collision.
     #[test]
     fn foldered_collections_pass_and_duplicates_are_reported() {
         let source = tempfile::tempdir().unwrap();
@@ -756,8 +761,7 @@ mod tests {
 
         assert_eq!(summary.source_markdown, 4);
         assert_eq!(summary.content_sources, 1);
-        // Three channel documents, two distinct names.
-        assert_eq!(summary.collection_sources, 2);
+        assert_eq!(summary.collection_sources, 3);
         assert_eq!(summary.duplicate_collection_documents, 1);
         assert!(summary.stable_after_reopen);
         assert!(summary.source_unchanged);

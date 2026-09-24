@@ -474,6 +474,6 @@ export type VaultStats = { totalFileCount: number; markdownFileCount: number; me
  * and a legitimate configuration: a user may point all three at the root and
  * keep everything flat. See SPEC_VAULT_LIFECYCLE.md П1–П4.
  */
-export type VaultWriteLayout = { cards: string; media: string; collections: string }
+export type VaultWriteLayout = { cards?: string; media?: string; collections?: string }
 
 export type VaultWriteLayoutDto = { cards: string; media: string; collections: string }

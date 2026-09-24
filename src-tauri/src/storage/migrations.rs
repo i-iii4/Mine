@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 3;
+pub const CURRENT_SCHEMA_VERSION: i64 = 4;
 pub const GRAPH_LINK_INDEX_VERSION: i64 = 2;
 
 const BLOCK_COLUMNS: &[(&str, &str)] = &[
@@ -68,6 +68,7 @@ const BLOCK_TAG_COLUMNS: &[(&str, &str)] = &[("block_id", "INTEGER"), ("tag", "T
 const CHANNEL_COLUMNS: &[(&str, &str)] = &[
     ("id", "INTEGER"),
     ("tag", "TEXT"),
+    ("source_slug", "TEXT"),
     ("title", "TEXT"),
     ("description", "TEXT"),
     ("color", "TEXT"),
@@ -181,6 +182,7 @@ pub fn migrate_and_validate(conn: &Connection) -> Result<()> {
                 1 => migrate_v0_to_v1(conn)?,
                 2 => migrate_v1_to_v2(conn)?,
                 3 => migrate_v2_to_v3(conn)?,
+                4 => migrate_v3_to_v4(conn)?,
                 _ => bail!("missing SQLite migration implementation for version {target}"),
             }
             conn.pragma_update(None, "user_version", target)
@@ -598,6 +600,14 @@ fn migrate_v2_to_v3(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Record the source page for each derived collection row. Existing rows are
+/// filled by the next source reconciliation; this index remains rebuildable.
+fn migrate_v3_to_v4(conn: &Connection) -> Result<()> {
+    conn.execute_batch("ALTER TABLE channels ADD COLUMN source_slug TEXT")
+        .context("failed to add channels.source_slug")?;
+    Ok(())
+}
+
 fn add_column_if_missing(conn: &Connection, name: &str, declaration: &str) -> Result<bool> {
     if block_columns(conn)?.contains_key(name) {
         return Ok(false);
@@ -790,6 +800,43 @@ mod tests {
 
         assert_eq!(user_version(&conn).unwrap(), CURRENT_SCHEMA_VERSION);
         validate_schema(&conn).unwrap();
+    }
+
+    #[test]
+    fn version_three_adds_collection_source_without_losing_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON; BEGIN IMMEDIATE")
+            .unwrap();
+        migrate_v0_to_v1(&conn).unwrap();
+        migrate_v1_to_v2(&conn).unwrap();
+        migrate_v2_to_v3(&conn).unwrap();
+        conn.pragma_update(None, "user_version", 3).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+        conn.execute(
+            "INSERT INTO channels (tag, title, created_at) VALUES ('Design', 'Design', '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+
+        migrate_and_validate(&conn).unwrap();
+
+        assert_eq!(user_version(&conn).unwrap(), CURRENT_SCHEMA_VERSION);
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM channels WHERE tag = 'Design'",
+                [],
+                |row| { row.get::<_, i64>(0) }
+            )
+            .unwrap(),
+            1
+        );
+        assert!(conn
+            .query_row(
+                "SELECT source_slug IS NULL FROM channels WHERE tag = 'Design'",
+                [],
+                |row| row.get::<_, bool>(0)
+            )
+            .unwrap());
     }
 
     #[test]

@@ -8,8 +8,7 @@ use std::path::{Component, Path, PathBuf};
 
 pub use mine_core::domain::vault::{
     detect_icloud_conflict, normalize_filename_stem, normalize_path_slug, resolve_slug_conflict,
-    validate_slug, VaultError, VaultLayoutFacts, VaultWriteLayout, DEFAULT_CARDS_DIR,
-    DEFAULT_COLLECTIONS_DIR, DEFAULT_MEDIA_DIR,
+    validate_slug, VaultError, VaultWriteLayout,
 };
 
 /// A reduced size of a block's thumbnail.
@@ -43,15 +42,6 @@ impl ThumbLevel {
     }
 }
 
-/// Gather native directory facts and delegate layout selection to the core.
-pub fn detect_write_layout(root: &Path) -> VaultWriteLayout {
-    VaultWriteLayout::detect(VaultLayoutFacts {
-        cards_dir: root.join(DEFAULT_CARDS_DIR).is_dir(),
-        media_dir: root.join(DEFAULT_MEDIA_DIR).is_dir(),
-        collections_dir: root.join(DEFAULT_COLLECTIONS_DIR).is_dir(),
-    })
-}
-
 /// Native paths within a vault; constructors observe its existing directories.
 #[derive(Debug, Clone)]
 pub struct VaultLayout {
@@ -63,7 +53,7 @@ pub struct VaultLayout {
 impl VaultLayout {
     pub fn new(root: PathBuf) -> Self {
         let derived_root = root.join(".mine");
-        let write_layout = detect_write_layout(&root);
+        let write_layout = VaultWriteLayout::flat();
         Self {
             root,
             derived_root,
@@ -72,7 +62,7 @@ impl VaultLayout {
     }
 
     pub fn with_derived_root(root: PathBuf, derived_root: PathBuf) -> Self {
-        let write_layout = detect_write_layout(&root);
+        let write_layout = VaultWriteLayout::flat();
         Self {
             root,
             derived_root,
@@ -614,21 +604,14 @@ mod tests {
     // ── write layout ────────────────────────────────────────────────────
 
     #[test]
-    fn detects_the_standard_layout_only_when_all_three_folders_exist() {
+    fn folder_names_do_not_choose_write_destinations() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(detect_write_layout(dir.path()), VaultWriteLayout::flat());
+        assert_eq!(VaultLayout::new(dir.path().to_path_buf()).write_layout(), &VaultWriteLayout::flat());
 
         std::fs::create_dir_all(dir.path().join("Cards")).unwrap();
         std::fs::create_dir_all(dir.path().join("Media")).unwrap();
-        // Two of three is not the standard layout: a vault that merely happens
-        // to have a `Cards` folder must not start scattering files.
-        assert_eq!(detect_write_layout(dir.path()), VaultWriteLayout::flat());
-
         std::fs::create_dir_all(dir.path().join("Collections")).unwrap();
-        assert_eq!(
-            detect_write_layout(dir.path()),
-            VaultWriteLayout::standard()
-        );
+        assert_eq!(VaultLayout::new(dir.path().to_path_buf()).write_layout(), &VaultWriteLayout::flat());
     }
 
     #[test]

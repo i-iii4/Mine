@@ -102,6 +102,26 @@ describe("browser executor backed by actual WASM", () => {
     expect(await vault.saveStandaloneBlock(request(), options())).toMatchObject({ ok: true, slug: "Mine/Notes/Article" });
     expect(await folder.text("Mine/Notes/Article.md")).toContain("Content");
   });
+  it("creates all three initial folders but does not restore a deleted one on later saves", async () => {
+    expect(await vault.saveStandaloneBlock(request(), options())).toMatchObject({ ok: true });
+    expect([...folder.directories.keys()].sort()).toEqual([".mine", "Cards", "Collections", "Media"]);
+    folder.directories.delete("Media");
+    expect(await vault.saveStandaloneBlock(request({ operation_id: "save-2" }), options())).toMatchObject({ ok: true });
+    expect(folder.directories.has("Media")).toBe(false);
+  });
+  it("writes into the root when an initialized space has no layout marker", async () => {
+    const mine = await folder.getDirectoryHandle(".mine", { create: true });
+    mine.files.set("vault-id", new FakeFile("existing-space"));
+    expect(await vault.saveStandaloneBlock(request(), options())).toMatchObject({ ok: true, slug: "Article" });
+    expect(await folder.text("Article.md")).toContain("Content");
+    expect(folder.directories.has("Cards")).toBe(false);
+  });
+  it("keeps an empty legacy space at the root when its layout is missing", async () => {
+    const legacy = await folder.getDirectoryHandle(".arena", { create: true });
+    legacy.files.set("vault-id", new FakeFile("legacy-space"));
+    expect(await vault.saveStandaloneBlock(request(), options())).toMatchObject({ ok: true, slug: "Article" });
+    expect(folder.directories.has("Cards")).toBe(false);
+  });
   it("does not hide invalid stored layout behind defaults", async () => {
     const mine = await folder.getDirectoryHandle(".mine", { create: true });
     mine.files.set("layout.json", new FakeFile('{"cards":"../outside","media":"Media","collections":"Collections"}'));

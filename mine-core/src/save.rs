@@ -295,13 +295,11 @@ pub fn execute(command: CoreCommand) -> Result<serde_json::Value, SaveError> {
             let layout = layout.validate().map_err(|e| failure(SaveErrorCode::InvalidPath, e))?;
             Ok(json!({ "cards": layout.cards, "media": layout.media, "collections": layout.collections }))
         }
-        CoreCommand::DetectLayout { stored, empty, cards, media, collections } => {
+        CoreCommand::DetectLayout { stored, empty, cards: _, media: _, collections: _ } => {
             let layout = stored.unwrap_or_else(|| if empty {
                 CoreLayout::standard()
             } else {
-                CoreLayout::detect(crate::domain::vault::VaultLayoutFacts {
-                    cards_dir: cards, media_dir: media, collections_dir: collections,
-                })
+                CoreLayout::flat()
             }).validate().map_err(|e| failure(SaveErrorCode::InvalidPath, e))?;
             Ok(json!(layout))
         }

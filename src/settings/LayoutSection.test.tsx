@@ -4,19 +4,16 @@ import userEvent from "@testing-library/user-event";
 import { LayoutSection } from "./LayoutSection";
 import {
   getVaultWriteLayout,
-  organizeVaultLayout,
   setVaultWriteLayout,
 } from "@/lib/commands";
 
 vi.mock("@/lib/commands", () => ({
   getVaultWriteLayout: vi.fn(),
   setVaultWriteLayout: vi.fn(),
-  organizeVaultLayout: vi.fn(),
 }));
 
 const getMock = vi.mocked(getVaultWriteLayout);
 const setMock = vi.mocked(setVaultWriteLayout);
-const organizeMock = vi.mocked(organizeVaultLayout);
 
 const STANDARD = { cards: "Cards", media: "Media", collections: "Collections" };
 const FLAT = { cards: "", media: "", collections: "" };
@@ -41,7 +38,7 @@ describe("LayoutSection", () => {
 
     // The fields are empty, but each caption says what empty means — one per
     // configurable folder.
-    expect(await screen.findAllByText(/currently Vault root/)).toHaveLength(3);
+    expect(await screen.findAllByText(/currently Space root/)).toHaveLength(3);
   });
 
   it("saves a changed folder on blur", async () => {
@@ -60,21 +57,18 @@ describe("LayoutSection", () => {
     );
   });
 
-  it("offers organizing only while the space is flat", async () => {
-    getMock.mockResolvedValue(FLAT);
-    organizeMock.mockResolvedValue(STANDARD);
+  it("allows one destination to be root while the others stay configured", async () => {
+    getMock.mockResolvedValue(STANDARD);
+    setMock.mockResolvedValue({ ...STANDARD, media: "" });
     const user = userEvent.setup();
     render(<LayoutSection />);
 
-    const organize = await screen.findByRole("button", { name: /organize/i });
-    await user.click(organize);
+    const media = await screen.findByLabelText("Media");
+    await user.clear(media);
+    await user.tab();
 
-    await waitFor(() => expect(organizeMock).toHaveBeenCalled());
-    // The command returns the new layout, so the offer disappears without a
-    // reload — folders now exist.
-    await waitFor(() =>
-      expect(screen.queryByRole("button", { name: /organize/i })).not.toBeInTheDocument(),
-    );
+    await waitFor(() => expect(setMock).toHaveBeenCalledWith({ ...STANDARD, media: "" }));
+    expect(await screen.findByText(/New images and video, currently Space root/)).toBeInTheDocument();
   });
 
   it("surfaces a rejected folder and keeps the saved value", async () => {

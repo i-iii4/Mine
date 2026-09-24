@@ -513,6 +513,8 @@ impl LockedSaveOperations {
                                 unreachable!()
                             };
                             if plan.action(*step, vault) == SaveAction::PersistReceipt {
+                                crate::storage::file_identity::enroll_capture(vault, &destination)
+                                    .context("enroll source identities before uncertain capture receipt")?;
                                 let response = plan.response.clone();
                                 return self
                                     .commit_with_durability_warning(record, response, &error);
@@ -593,12 +595,18 @@ impl LockedSaveOperations {
                         if plan.action(*step, vault) != SaveAction::PersistReceipt {
                             return Ok(None);
                         }
+                        let markdown_path = vault.root().join(&plan.markdown.source.relative_path);
+                        crate::storage::file_identity::enroll_capture(vault, &markdown_path)
+                            .context("enroll source identities before uncertain recovered receipt")?;
                         let response = plan.response.clone();
                         return self
                             .commit_with_durability_warning(record, response, &error)
                             .map(Some);
                     }
                 }
+                let markdown_path = vault.root().join(&plan.markdown.source.relative_path);
+                crate::storage::file_identity::enroll_capture(vault, &markdown_path)
+                    .context("enroll source identities before committing capture")?;
                 let response = plan.response.clone();
                 self.commit(record, response.clone())?;
                 Ok(Some(response))
@@ -644,6 +652,9 @@ impl LockedSaveOperations {
                     let path = vault.root().join(&artifact.relative_path);
                     sync_artifact_tree(vault.root(), &path)?;
                 }
+                let markdown_path = vault.root().join(&markdown.relative_path);
+                crate::storage::file_identity::enroll_capture(vault, &markdown_path)
+                    .context("enroll source identities before committing recovered capture")?;
                 let response = response.clone();
                 self.commit(record, response.clone())?;
                 Ok(Some(response))
@@ -851,7 +862,7 @@ mod tests {
         let markdown = staging.root().join("Cards/Card.md");
         files::write_new_atomically(
             &markdown,
-            b"---\nsaved_at: 2026-08-31T12:00:00Z\n---\nbody\n",
+            b"---\nsaved_at: 2026-08-31T12:00:00Z\n---\nbody ![[Card-0.png]]\n",
         )
         .unwrap();
         let media = (0..media_count)
@@ -868,6 +879,75 @@ mod tests {
             response: json!({"ok":true,"outcome":"committed","operation_id":id,"slug":"Cards/Card"}),
         }).unwrap();
         record
+    }
+
+    #[test]
+    fn identity_enrollment_failure_resumes_same_operation_without_republishing() {
+        let (_tmp, vault, store) = setup();
+        let binding = binding_id(&vault).unwrap();
+        let locked = store.lock(&binding).unwrap();
+        let mut record = staged_plan(&locked, "identity-retry", 1);
+        let manifest_path = vault.mine_dir().join("file-identity.json");
+        std::fs::create_dir_all(&manifest_path).unwrap();
+
+        let mut published = 0;
+        let error = locked
+            .publish_plan_with(&mut record, &vault, |staged, target| {
+                published += 1;
+                files::copy_new_atomically(staged, target)
+            })
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("enroll source identities"));
+        assert_eq!(published, 2);
+        assert!(vault.root().join("Cards/Card.md").is_file());
+        assert!(vault.root().join("Media/Card-0.png").is_file());
+        assert!(locked.staging_root("identity-retry").unwrap().exists());
+        assert!(locked.directory.join("identity-retry.request.json").is_file());
+        let mut disk = locked.load("identity-retry").unwrap().unwrap();
+        assert_eq!(disk.operation_id, "identity-retry");
+        assert!(matches!(disk.phase, OperationPhase::PlannedV2 { .. }));
+
+        std::fs::remove_dir(&manifest_path).unwrap();
+        let response = locked
+            .publish_plan_with(&mut disk, &vault, |_, _| {
+                panic!("recovery must not publish source bytes again")
+            })
+            .unwrap();
+        assert_eq!(response["operation_id"], "identity-retry");
+        assert_eq!(published, 2);
+        assert!(matches!(
+            locked.load("identity-retry").unwrap().unwrap().phase,
+            OperationPhase::Committed { .. }
+        ));
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(manifest_path).unwrap()).unwrap();
+        let files = manifest["files"].as_array().unwrap();
+        let source_id = files
+            .iter()
+            .find(|entry| entry["path"] == "Cards/Card.md")
+            .unwrap()["id"]
+            .as_str()
+            .unwrap();
+        let target_id = files
+            .iter()
+            .find(|entry| entry["path"] == "Media/Card-0.png")
+            .unwrap()["id"]
+            .as_str()
+            .unwrap();
+        assert!(manifest["bindings"].as_array().unwrap().iter().any(|binding| {
+            binding["source_id"] == source_id && binding["target_id"] == target_id
+        }));
+    }
+
+    #[test]
+    fn unrelated_unreadable_markdown_does_not_block_capture_receipt() {
+        let (_tmp, vault, store) = setup();
+        std::fs::write(vault.root().join("Other.md"), [0xff, 0xfe]).unwrap();
+        let locked = store.lock(&binding_id(&vault).unwrap()).unwrap();
+        let mut record = staged_plan(&locked, "unrelated-read-error", 0);
+        let response = locked.publish_plan(&mut record, &vault).unwrap();
+        assert_eq!(response["outcome"], "committed");
+        assert!(matches!(record.phase, OperationPhase::Committed { .. }));
     }
 
     #[test]

@@ -96,17 +96,22 @@
     const parent = await directory(handle, split < 0 ? "" : path.slice(0, split), create);
     return parent.getFileHandle(path.slice(split + 1), { create });
   }
-  async function existsDirectory(handle, path) {
-    try { await directory(handle, path); return true; } catch (failure) { if (missing(failure)) return false; throw failure; }
-  }
   async function resolveLayout(handle) {
     let stored = null;
     try { stored = JSON.parse(await (await (await fileAt(handle, ".mine/layout.json")).getFile()).text()); }
     catch (failure) { if (!missing(failure)) throw failure; }
+    let initialized = false;
+    try { await fileAt(handle, ".mine/vault-id"); initialized = true; }
+    catch (failure) { if (!missing(failure)) throw failure; }
+    if (!initialized) {
+      try { await fileAt(handle, ".arena/vault-id"); initialized = true; }
+      catch (failure) { if (!missing(failure)) throw failure; }
+    }
     let empty = true;
     for await (const [name] of handle.entries()) if (!name.startsWith(".")) { empty = false; break; }
-    const [cards, media, collections] = await Promise.all(["Cards", "Media", "Collections"].map(path => existsDirectory(handle, path)));
-    return core({ op: "detect_layout", stored, empty, cards, media, collections });
+    const newSpace = stored === null && !initialized && empty;
+    const layout = await core({ op: "detect_layout", stored, empty: newSpace, cards: false, media: false, collections: false });
+    return { layout, newSpace };
   }
   async function existingStems(handle, prefix = "", result = []) {
     for await (const [name, entry] of handle.entries()) {
@@ -116,7 +121,7 @@
     }
     return result;
   }
-  async function ensureLayout(handle, layout) {
+  async function ensureLayout(handle, layout, newSpace) {
     let recorded;
     try { recorded = JSON.parse(await (await (await fileAt(handle, ".mine/layout.json")).getFile()).text()); }
     catch (failure) {
@@ -130,7 +135,7 @@
     if (["cards", "media", "collections"].some(key => normalized[key] !== layout[key])) {
       throw error("layout_changed", "Folder layout changed since this operation was prepared");
     }
-    for (const path of [layout.cards, layout.media, layout.collections]) await directory(handle, path, true);
+    if (newSpace) for (const path of [layout.cards, layout.media, layout.collections]) await directory(handle, path, true);
   }
   async function hash(data) {
     const bytes = typeof data === "string" ? new TextEncoder().encode(data) : await data.arrayBuffer();
@@ -179,7 +184,7 @@
     if (record.phase === "committed") return result(record);
     if (record.phase === "rejected") return record.response;
     await requirePermission(binding.handle);
-    if (execute && record.phase === "prepared") await ensureLayout(binding.handle, record.layout);
+    if (execute && record.phase === "prepared") await ensureLayout(binding.handle, record.layout, record.newSpace);
     const md = await evidence(binding.handle, `${record.slug}.md`, record.hash);
     const media = record.media ? await evidence(binding.handle, record.media.path, record.media.hash) : "not_required";
     const action = await core({ op: "advance", phase: record.phase, evidence: { markdown: md, media } });
@@ -259,7 +264,7 @@
       if (!binding) throw error("folder_required", "Choose a folder in the Mine extension window");
       if (request.binding_id && request.binding_id !== binding.id) throw error("binding_mismatch", "The selected folder changed before this save began");
       await requirePermission(binding.handle);
-      const layout = await resolveLayout(binding.handle);
+      const { layout, newSpace } = await resolveLayout(binding.handle);
       const media = kind === "capture" ? await preparedMedia(request, options) : null;
       const namingLayout = kind === "collection" ? { ...layout, cards: layout.collections } : layout;
       const named = await core({ op: "name", title: request.title ?? null, url: request.url ?? null,
@@ -272,7 +277,7 @@
           thumbnail: null, tags: request.tags ?? [], saved_at: request.saved_at ?? now(),
           source: "web-clipper", author: request.author ?? null, description: request.description ?? null,
           width: request.width ?? null, height: request.height ?? null } });
-      record = { id, binding: binding.id, fingerprint, kind, phase: "prepared", layout,
+      record = { id, binding: binding.id, fingerprint, kind, phase: "prepared", layout, newSpace,
         slug: named.slug, block_type: kind === "collection" ? "channel" : request.block_type,
         markdown: document.markdown, hash: await hash(document.markdown), media };
       await store.put("operations", id, record);

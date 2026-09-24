@@ -496,7 +496,8 @@ pub fn create_block(
         .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-    create_block_inner(&vs.conn, &vs.vault, params)
+    let vault = files::layout_for_new_files(&vs.vault)?;
+    create_block_inner(&vs.conn, &vault, params)
 }
 
 /// The desktop create adapter, also exercised without constructing a GUI.
@@ -563,7 +564,7 @@ pub async fn extract_inline_media(
         let vs = vault_state
             .as_ref()
             .ok_or(InlineMediaExtractError::NoVault)?;
-        vs.vault.clone()
+        files::layout_for_new_files(&vs.vault).map_err(internal_extract_error)?
     };
 
     let indexed = tauri::async_runtime::spawn_blocking(move || {
@@ -879,7 +880,7 @@ pub async fn extract_text_selection(
         let vs = vault_state
             .as_ref()
             .ok_or(TextSelectionExtractError::NoVault)?;
-        vs.vault.clone()
+        files::layout_for_new_files(&vs.vault).map_err(internal_text_selection_error)?
     };
     let source_path = vault.block_path(&source_slug);
     state
@@ -1704,8 +1705,8 @@ pub fn merge_blocks(
             message: "vault state mutex poisoned".into(),
         })?;
     let vs = vault_state.as_ref().ok_or(MergeBlocksError::NoVault)?;
-
-    let mutation = merge_blocks_inner(Some(&state), &vs.conn, &vs.vault, ordered_slugs)?;
+    let vault = files::layout_for_new_files(&vs.vault).map_err(internal_merge_error)?;
+    let mutation = merge_blocks_inner(Some(&state), &vs.conn, &vault, ordered_slugs)?;
     let result = mutation.result;
 
     app.emit(
@@ -3107,7 +3108,7 @@ pub(crate) fn rename_block_file_inner(
             }
             for write in &planned_writes {
                 if write.block.frontmatter.block_type == BlockType::Channel {
-                    index::upsert_channel_from_block(index_conn, &write.block)?;
+                    index::upsert_channel_from_block_in_vault(index_conn, vault, &write.block)?;
                 } else {
                     index::upsert_block(index_conn, &write.block, Some(vault.root()))?;
                 }

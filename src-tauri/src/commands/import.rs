@@ -67,7 +67,7 @@ pub fn import_arena_channels(
             .lock()
             .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
         let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-        (vs.vault.clone(), vs.vault.index_db_path())
+        (crate::storage::files::layout_for_new_files(&vs.vault)?, vs.vault.index_db_path())
     };
 
     let conn = db::open_or_create(&db_path)?;

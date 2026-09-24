@@ -7,18 +7,15 @@
 // vault behaved before this contract. See SPEC_VAULT_LIFECYCLE.md П1–П4.
 
 import { useCallback, useEffect, useState } from "react";
-import { FolderTree } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   getVaultWriteLayout,
-  organizeVaultLayout,
   setVaultWriteLayout,
 } from "@/lib/commands";
 import { SettingRow } from "./SettingRow";
 import type { VaultWriteLayoutDto } from "@/types";
 
-const ROOT_LABEL = "Vault root";
+const ROOT_LABEL = "Space root";
 
 function displayValue(folder: string): string {
   return folder.length > 0 ? folder : ROOT_LABEL;
@@ -100,18 +97,6 @@ export function LayoutSection() {
     [refresh],
   );
 
-  const organize = useCallback(async () => {
-    setBusy(true);
-    try {
-      setLayout(await organizeVaultLayout());
-      setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }, []);
-
   if (!layout) {
     return (
       <section className="grid gap-s3" data-settings-section="layout">
@@ -122,52 +107,31 @@ export function LayoutSection() {
     );
   }
 
-  const isFlat =
-    layout.cards.length === 0 &&
-    layout.media.length === 0 &&
-    layout.collections.length === 0;
-
   return (
     <section className="grid gap-s3" data-settings-section="layout">
-      <p className="text-sm text-muted-foreground">
-        New files are written into these folders. Existing files stay where they
-        are, and Mine keeps reading the whole space regardless of how it is
-        arranged. Leave a field empty to write into the space root.
-      </p>
+      <h1 className="text-lg font-semibold">Where to save new files</h1>
 
       <FolderField
         label="Cards"
-        caption={`Markdown files — currently ${displayValue(layout.cards)}`}
+        caption={`New card documents, currently ${displayValue(layout.cards)}`}
         value={layout.cards}
         disabled={busy}
         onCommit={(cards) => void commit({ ...layout, cards })}
       />
       <FolderField
         label="Media"
-        caption={`Images and video — currently ${displayValue(layout.media)}`}
+        caption={`New images and video, currently ${displayValue(layout.media)}`}
         value={layout.media}
         disabled={busy}
         onCommit={(media) => void commit({ ...layout, media })}
       />
       <FolderField
         label="Collections"
-        caption={`Collection documents — currently ${displayValue(layout.collections)}`}
+        caption={`New collection documents, currently ${displayValue(layout.collections)}`}
         value={layout.collections}
         disabled={busy}
         onCommit={(collections) => void commit({ ...layout, collections })}
       />
-
-      {isFlat && (
-        <SettingRow
-          label="Organize into folders"
-          caption="Create Cards, Media and Collections and write into them from now on"
-        >
-          <Button disabled={busy} onClick={() => void organize()}>
-            <FolderTree className="size-4" />
-            Organize
-          </Button>
-        </SettingRow>
-      )}
 
       {error && <p className="text-sm text-destructive">{error}</p>}
     </section>

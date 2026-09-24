@@ -5,6 +5,7 @@
 // target, not a normalized tag.
 
 use crate::domain::vault::validate_slug;
+use std::collections::BTreeSet;
 
 pub const MINE_COLLECTIONS_FIELD: &str = "Mine Collections";
 
@@ -32,6 +33,25 @@ pub fn collection_ref_from_slug(slug: &str) -> String {
         .next()
         .unwrap_or(&normalized)
         .to_string()
+}
+
+/// Choose an unambiguous Obsidian target for a collection document.
+///
+/// A unique filename keeps its historical short target. Documents sharing a
+/// filename require their vault-relative paths so neither page overwrites the
+/// other in the collection index.
+pub fn collection_ref_for_slug(slug: &str, all_channel_slugs: &BTreeSet<String>) -> String {
+    let short = collection_ref_from_slug(slug);
+    let duplicates = all_channel_slugs
+        .iter()
+        .filter(|candidate| collection_ref_from_slug(candidate) == short)
+        .take(2)
+        .count();
+    if duplicates > 1 {
+        normalize_collection_ref(slug)
+    } else {
+        short
+    }
 }
 
 pub fn collection_ref_from_canonical_value(raw: &str) -> Option<String> {
@@ -321,5 +341,26 @@ mod tests {
         assert_eq!(collection_ref_from_slug("Каталоги"), "Каталоги");
         assert_eq!(collection_ref_from_slug("[[Collections/Design]]"), "Design");
         assert_eq!(collection_ref_from_slug(""), "");
+    }
+
+    #[test]
+    fn duplicate_collection_names_keep_distinct_path_targets() {
+        let slugs = BTreeSet::from([
+            "Collections/Design".to_string(),
+            "Archive/Design".to_string(),
+            "Collections/Research".to_string(),
+        ]);
+        assert_eq!(
+            collection_ref_for_slug("Collections/Design", &slugs),
+            "Collections/Design"
+        );
+        assert_eq!(
+            collection_ref_for_slug("Archive/Design", &slugs),
+            "Archive/Design"
+        );
+        assert_eq!(
+            collection_ref_for_slug("Collections/Research", &slugs),
+            "Research"
+        );
     }
 }

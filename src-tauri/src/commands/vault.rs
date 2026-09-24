@@ -78,6 +78,7 @@ pub fn select_vault(
     state: State<'_, AppState>,
     path: String,
 ) -> Result<VaultOpenResult, CommandError> {
+    let path = canonical_space_path(&path)?;
     append_startup_trace(&app, "select_vault", &format!("start path={path}"));
     let result = initialize_vault(&app, &state, &path)?;
     save_vault_path(&app, &path);
@@ -90,6 +91,21 @@ pub fn select_vault(
         &format!("done path={} indexed={}", path, result.indexed),
     );
     Ok(result)
+}
+
+/// Resolve aliases and trailing separators before a folder enters the space
+/// registry. The root directory, not its spelling, identifies a space.
+pub(crate) fn canonical_space_path(path: &str) -> Result<String, CommandError> {
+    std::fs::canonicalize(path)
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|error| CommandError::Internal(format!("cannot access space {path}: {error}")))
+}
+
+fn same_space_path(left: &str, right: &str) -> bool {
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => left == right,
+    }
 }
 
 /// What a folder holds, before it becomes a space.
@@ -283,7 +299,7 @@ pub fn get_vault_write_layout(
         .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-    Ok(VaultWriteLayoutDto::from(vs.vault.write_layout()))
+    Ok(VaultWriteLayoutDto::from(&load_write_layout(&vs.vault)?))
 }
 
 /// Choose which folders new cards, media and collections are written into.
@@ -1421,6 +1437,7 @@ fn count_indexed_blocks(conn: &Connection) -> Result<usize, CommandError> {
 
 fn resolve_runtime_vault_layout(app: &AppHandle, root: &Path) -> Result<VaultLayout, CommandError> {
     let base = VaultLayout::new(root.to_path_buf());
+    initialize_new_space_layout(&base)?;
     std::fs::create_dir_all(base.mine_dir())
         .map_err(|e| CommandError::Internal(format!("failed to create Mine metadata dir: {e}")))?;
     let mut vault_id = ensure_vault_id(&base)?;
@@ -1467,6 +1484,33 @@ fn resolve_runtime_vault_layout(app: &AppHandle, root: &Path) -> Result<VaultLay
             )
         }
     }
+}
+
+/// The first connection of an empty folder creates a new space. A folder with
+/// user content, a vault identity, or a saved layout is an existing space and
+/// never gets a layout inferred from its directory names.
+pub(crate) fn initialize_new_space_layout(vault: &VaultLayout) -> Result<(), CommandError> {
+    if vault.vault_id_path().exists()
+        || vault.legacy_vault_id_path().exists()
+        || vault.write_layout_path().exists()
+    {
+        return Ok(());
+    }
+    let empty = std::fs::read_dir(vault.root())
+        .map_err(|e| CommandError::Internal(format!("failed to inspect space: {e}")))?
+        .try_fold(true, |empty, entry| {
+            let entry = entry.map_err(|e| CommandError::Internal(e.to_string()))?;
+            Ok::<bool, CommandError>(empty && entry.file_name().to_string_lossy().starts_with('.'))
+        })?;
+    if !empty {
+        return Ok(());
+    }
+    let standard = VaultWriteLayout::standard();
+    for folder in [&standard.cards, &standard.media, &standard.collections] {
+        std::fs::create_dir_all(vault.root().join(folder))
+            .map_err(|e| CommandError::Internal(format!("failed to create {folder}: {e}")))?;
+    }
+    save_write_layout(vault, &standard)
 }
 
 enum IdentityClaim {
@@ -1810,16 +1854,33 @@ fn save_vault_path(app: &AppHandle, path: &str) {
 
     // Add to known_vaults if not already there
     let known = cfg["known_vaults"].as_array_mut();
-    let path_val = serde_json::json!(path);
     if let Some(arr) = known {
-        if !arr.contains(&path_val) {
-            arr.push(path_val);
-        }
+        upsert_known_space(arr, path);
     } else {
         cfg["known_vaults"] = serde_json::json!([path]);
     }
 
     write_config(app, &cfg);
+}
+
+fn upsert_known_space(paths: &mut Vec<serde_json::Value>, path: &str) {
+    let mut found = false;
+    paths.retain_mut(|entry| {
+        if entry.as_str().is_some_and(|known| same_space_path(known, path)) {
+            if found {
+                false
+            } else {
+                *entry = serde_json::json!(path);
+                found = true;
+                true
+            }
+        } else {
+            true
+        }
+    });
+    if !found {
+        paths.push(serde_json::json!(path));
+    }
 }
 
 /// Load the saved vault path from the config file.
@@ -1837,13 +1898,22 @@ fn load_known_vaults(app: &AppHandle) -> Vec<String> {
             .get("vault_path")
             .and_then(|v| v.as_str())
             .filter(|p| PathBuf::from(p).is_dir())
-            .map(|s| vec![s.to_string()])
+            .and_then(|s| canonical_space_path(s).ok().map(|path| vec![path]))
             .unwrap_or_default();
     };
-    arr.iter()
+    let paths: Vec<String> = arr.iter()
         .filter_map(|v| v.as_str().map(|s| s.to_string()))
         .filter(|p| PathBuf::from(p).is_dir())
-        .collect()
+        .collect();
+    let mut unique: Vec<String> = Vec::new();
+    for path in paths {
+        if let Ok(canonical) = canonical_space_path(&path) {
+            if !unique.contains(&canonical) {
+                unique.push(canonical);
+            }
+        }
+    }
+    unique
 }
 
 /// Remove the saved vault path (directory no longer valid).
@@ -1856,6 +1926,55 @@ fn clear_saved_vault_path(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn first_connection_initializes_only_an_empty_unidentified_space() {
+        let root = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(root.path().to_path_buf());
+        initialize_new_space_layout(&vault).unwrap();
+        for folder in ["Cards", "Media", "Collections"] {
+            assert!(root.path().join(folder).is_dir());
+        }
+        assert_eq!(load_write_layout(&vault).unwrap(), VaultWriteLayout::standard());
+
+        std::fs::remove_dir_all(root.path().join("Media")).unwrap();
+        initialize_new_space_layout(&vault).unwrap();
+        assert!(!root.path().join("Media").exists());
+    }
+
+    #[test]
+    fn connecting_existing_content_does_not_infer_folders() {
+        let root = tempfile::tempdir().unwrap();
+        for folder in ["Cards", "Media", "Collections"] {
+            std::fs::create_dir(root.path().join(folder)).unwrap();
+        }
+        let vault = VaultLayout::new(root.path().to_path_buf());
+        initialize_new_space_layout(&vault).unwrap();
+        assert!(!vault.write_layout_path().exists());
+        assert_eq!(load_write_layout(&vault).unwrap(), VaultWriteLayout::flat());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn aliases_identify_one_space_root() {
+        let root = tempfile::tempdir().unwrap();
+        let alias_parent = tempfile::tempdir().unwrap();
+        let alias = alias_parent.path().join("alias");
+        std::os::unix::fs::symlink(root.path(), &alias).unwrap();
+        let canonical = canonical_space_path(root.path().to_str().unwrap()).unwrap();
+        assert_eq!(canonical_space_path(alias.to_str().unwrap()).unwrap(), canonical);
+        assert!(same_space_path(alias.to_str().unwrap(), root.path().to_str().unwrap()));
+        let other = tempfile::tempdir().unwrap();
+        let mut registry = vec![
+            serde_json::json!(other.path().to_str().unwrap()),
+            serde_json::json!(alias.to_str().unwrap()),
+        ];
+        upsert_known_space(&mut registry, &canonical);
+        assert_eq!(registry, vec![
+            serde_json::json!(other.path().to_str().unwrap()),
+            serde_json::json!(canonical),
+        ]);
+    }
 
     #[test]
     fn ensure_vault_id_persists_value() {

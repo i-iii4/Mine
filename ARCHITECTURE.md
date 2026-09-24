@@ -44,7 +44,7 @@ Mine решает это: визуальный букмаркинг с лока�
 1. **Файлы — источник правды.** SQLite — только индекс, как Spotlight для macOS
 2. **Всё — Markdown.** Mine-authored blocks используют `.md` с frontmatter; обычные Obsidian `.md` без frontmatter читаются как implicit articles. Медиафайлы рядом. Runtime card kind выводится из Markdown body state и `type: channel`, а не из non-channel `type:` metadata
 3. **Коллекции — это Obsidian-страницы.** Membership хранится в `Mine Collections` как quoted wikilinks на collection pages; `tags` остаётся пользовательским Obsidian-полем
-4. **Плоская структура.** Все файлы в корне vault. Позже — изолированные проекты (отдельные vault'ы)
+4. **Свободная структура.** Новое пространство получает три начальные папки. Чтение охватывает весь корень и вложенные папки
 5. **Индекс восстановим.** Удаление local derived `index.db` не приводит к потере данных
 6. **Thumbnail / preview pipeline.** В feed/grid/sidebar показываются preview-артефакты из локального derived store, не оригиналы
 7. **Wikilinks.** Связи между блоками — через `[[wikilinks]]` в Obsidian-стиле
@@ -196,18 +196,15 @@ fallback only; new write paths do not create it.
 ### Vault — файловая структура
 
 ```
-~/Mine/                        ← source vault (выбирается пользователем)
+~/Mine/                        ← корень пространства
 ├── .mine/
-│   └── vault-id                     ← sync'ed идентификатор vault
-├── sunset-tokyo.md                  ← метаданные изображения
-├── sunset-tokyo.jpg                 ← само изображение
-├── stripe-homepage.md               ← метаданные ссылки
-├── stripe-og.png                    ← миниатюра ссылки
-├── crdt-article.md                  ← статья (метаданные + текст)
-├── crdt-diagram.png                 ← изображение из статьи
-├── demo-reel.md                     ← метаданные видео
-├── demo-reel.mp4                    ← видеофайл
-└── ...                              ← всё плоско
+│   ├── vault-id                     ← идентификатор пространства
+│   ├── layout.json                  ← места создания новых файлов
+│   └── file-identity.json           ← привязки файлов и ссылок
+├── Cards/                           ← начальная папка новых карточек
+├── Media/                           ← начальная папка новых медиа
+├── Collections/                     ← начальная папка новых коллекций
+└── ...                              ← файлы допустимы в любой вложенной папке
 ```
 
 ```
@@ -218,7 +215,9 @@ fallback only; new write paths do not create it.
     └── audio/                       ← article audio renditions (<slug>.json + <slug>.wav)
 ```
 
-Source vault хранит только пользовательские файлы и `vault-id`. Все derived данные живут per-device в app data и могут быть rebuilt локально.
+Источник содержит пользовательские файлы и метаданные `.mine`, необходимые
+для сохранения привязок при перемещении. SQLite и превью находятся в локальном
+производном хранилище и могут быть пересозданы.
 
 ### Filesystem-first visibility contract
 
@@ -241,21 +240,29 @@ watcher пропустил событие или native host сохранял cl
 - Clipper/native-host direct SQLite upsert is only an optimization for faster
   feedback. The main app must still recover visibility from Markdown files alone.
 
-### Filename-first rename contract
+### Идентичность и перенос
 
-- identity блока остаётся равной `file_stem` его `.md` файла
-- hidden `id` / `uuid` во frontmatter не вводятся
-- **in-app rename** — канонический smart path:
-  - переименовывает `.md`
-  - не синтезирует и не переписывает `frontmatter.title` or body H1
-  - переименовывает Mine-owned source media (`slug.ext`, `slug (image N).*`, `slug (video N).*`)
-  - переписывает wikilinks и Mine-owned file references по vault
-  - переносит block-level thumb; article audio инвалидируется только если отдельный body/H1 edit меняет speakable text
-- **external rename** через Finder / Obsidian — resilience path:
-  - watcher через `body_hash` трактует `Remove + Create` как rename
-  - DB slug и derived artifacts сохраняются
-  - `block:renamed` эмитится во frontend
-  - другие `.md` файлы и source media не переписываются silently
+Целевое правило уточнено в [контракте совместимости с Obsidian](</Users/i_iii/Проекты/Личные проекты/local-arena/docs/space-storage-requirements.md#совместимость-с-obsidian>): документы являются достаточным источником действующих связей; реестр служит только историей внешних переименований. Требуются кратчайшие однозначные ссылки, уникальные новые имена и безопасная параллельная работа двух приложений. Это открытая доработка. Ниже описан установленный механизм, а не подтверждение соответствия новому контракту.
+
+Путь остаётся адресом файла. Идентичность для переноса и связи хранятся в
+`.mine/file-identity.json`, который входит в источник пространства. Запись
+содержит идентификатор, путь и физический ключ файла. Привязка ссылки хранит
+идентификаторы документа и цели. При первом чтении ссылка привязывается только
+к единственной цели; неоднозначное имя не разрешается произвольно.
+Нативное сохранение захваченного файла регистрирует источник в той же
+восстанавливаемой операции до подтверждения успеха. Прерванная операция
+возобновляет эту регистрацию без запуска основного приложения.
+Автономный браузерный клиппер не может записать нативный физический ключ;
+его файлы впервые регистрируются при нативном сканировании.
+
+При перемещении внутри тома физический ключ подтверждает тот же файл. После
+подтверждения адреса затронутые ссылки обновляются в Markdown. Переименование
+и изменение путей новых файлов не меняют текст карточки. Производный индекс
+не является источником этой информации. Перенос до первой регистрации и
+перенос с потерей физического ключа без переносимого маркера могут остаться
+неразрешёнными, если несколько целей одинаково подходят. Произвольное
+копирование между устройствами с удалением исходника не подтверждает
+идентичность само по себе.
 
 ## Current Critical Path Reset
 
@@ -271,7 +278,7 @@ watcher пропустил событие или native host сохранял cl
   visual media cannot become preview-ready from a text placeholder.
 - `Detail` остаётся full-fidelity path и может открывать оригиналы;
 - async asset protocol override убирает синхронный `asset://` hotspot с main thread WebView для оставшихся asset-paths; тело ответа строится в `spawn_blocking`, но сам `responder.respond` обязан уходить через `run_on_main_thread`: `WKURLSchemeTask` — состояние главного потока, и ответ из tokio-воркера гоняется с отменой задачи (NSException → Rust-паника в extern "C" → SIGABRT всего приложения, tauri#12338);
-- тот же протокол — единственная точка резолва медиа для WebView: фронтенд строит адрес как `<vault>/<имя>`, потому что в индексе `media_file` хранится так, как его пишет заметка — обсидиановским wikilink'ом, голым именем без папки. Если файла по прямому пути нет, протокол ищет его по имени внутри хранилища (`media_refs::resolve_basename_under`, ближайшая к корню копия), повторяя правило Obsidian и `resolve_indexed_media`. Найденный путь проходит ту же проверку asset scope, что и запрошенный: fallback не расширяет разрешённое. Без этого рассортированное по `Cards/`/`Media/` хранилище ломало полноразмерное изображение во всех карточках, хотя лента жила на миниатюрах;
+- протокол медиа открывает установленную цель ссылки. Явный путь проверяется внутри пространства; неоднозначное голое имя не выбирается по близости к корню или порядку обхода. Это правило одинаково для карточки, превью и исходного файла;
 - копирование в буфер обмена идёт через `tauri-plugin-clipboard-manager` (`src/lib/clipboard.ts`), а не `navigator.clipboard`: WKWebView отклоняет веб-запись, когда документ теряет фокус, а меню Radix забирает его ровно в момент выбора пункта — «Copy Path» молча ничего не делал.
 - multi-image article/social card preview описывается `preview_manifest` как
   rich tile set; hot micro-preview asset `<slug>.jpg` остаётся single

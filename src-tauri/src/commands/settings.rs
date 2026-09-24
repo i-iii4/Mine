@@ -15,7 +15,7 @@ use unicode_normalization::UnicodeNormalization;
 
 use crate::commands::blocks::{collect_delete_media_for_block, resolve_unique_block_slug};
 use crate::commands::state::{current_vault_layout, AppState, CommandError, VaultState};
-use crate::commands::vault::{derived_store_root, load_config, write_config};
+use crate::commands::vault::{canonical_space_path, derived_store_root, initialize_new_space_layout, load_config, write_config};
 use crate::domain::block::{Block, BlockType, DateTime, Frontmatter};
 use crate::domain::vault::VaultLayout;
 use crate::storage::{files, index, media_dimensions, media_refs, preview_plan, thumbnails};
@@ -69,28 +69,38 @@ pub fn open_settings_window(
 // ─── Spaces ─────────────────────────────────────────────────────────────────
 
 fn known_vaults_from_config(cfg: &serde_json::Value) -> Vec<String> {
-    cfg.get("known_vaults")
+    let paths: Vec<String> = cfg.get("known_vaults")
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
                 .filter_map(|v| v.as_str().map(str::to_string))
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    let mut unique = Vec::new();
+    for path in paths {
+        let canonical = canonical_space_path(&path).unwrap_or(path);
+        if !unique.contains(&canonical) {
+            unique.push(canonical);
+        }
+    }
+    unique
 }
 
 /// Add a space to the known list without switching the active one.
 #[tauri::command]
 pub fn add_known_vault(app: AppHandle, path: String) -> Result<Vec<String>, CommandError> {
-    let trimmed = path.trim();
-    if trimmed.is_empty() {
+    if path.trim().is_empty() {
         return Err(CommandError::Internal("space path is empty".into()));
     }
+    let canonical = canonical_space_path(path.trim())?;
+    let trimmed = canonical.as_str();
     if !Path::new(trimmed).is_dir() {
         return Err(CommandError::Internal(format!(
             "not a directory: {trimmed}"
         )));
     }
+    initialize_new_space_layout(&VaultLayout::new(std::path::PathBuf::from(trimmed)))?;
 
     let mut cfg = load_config(&app);
     let mut known = known_vaults_from_config(&cfg);
@@ -550,6 +560,7 @@ pub(crate) fn promote_orphan_media_inner(
     let referenced = referenced_media_file_names(vs)?;
     let mut created = Vec::new();
     let mut skipped = Vec::new();
+    let write_vault = files::layout_for_new_files(&vs.vault)?;
 
     for file_name in file_names {
         if !validate_orphan_operand(&file_name, &referenced, vs.vault.root()) {
@@ -572,7 +583,7 @@ pub(crate) fn promote_orphan_media_inner(
         // The media file already lives in the vault: the markdown is created
         // next to it without copying anything. Only the .md slug needs the
         // identity collision rules.
-        let slug = match resolve_unique_block_slug(&vs.conn, &vs.vault, &stem, None) {
+        let slug = match resolve_unique_block_slug(&vs.conn, &write_vault, &stem, None) {
             Ok(slug) => slug,
             Err(error) => {
                 log::warn!("promote_orphan_media: slug for '{file_name}' failed: {error}");
@@ -610,7 +621,7 @@ pub(crate) fn promote_orphan_media_inner(
             body: String::new(),
         };
 
-        match files::persist_new_block(&vs.conn, &vs.vault, &block, None) {
+        match files::persist_new_block(&vs.conn, &write_vault, &block, None) {
             Ok(indexed) => {
                 // Best-effort sidebar thumb for images; video posters are
                 // produced by the regular thumbnail sweep.

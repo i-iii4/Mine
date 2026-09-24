@@ -300,42 +300,27 @@ pub fn scan_vault_file_stems(vault: &VaultLayout) -> Result<std::collections::Ha
     Ok(stems)
 }
 
-/// Read configuration and observe folders; the shared core decides how these
-/// facts map to write paths. An invalid existing marker is never ignored.
+/// Read explicit write destinations. Missing configuration and missing fields
+/// mean the space root, regardless of directory names on disk.
 pub fn load_vault_write_layout(
     vault: &VaultLayout,
 ) -> Result<crate::domain::vault::VaultWriteLayout> {
     let marker = vault.write_layout_path();
     validate_vault_write_target(vault, &marker)?;
-    let stored = match std::fs::read(&marker) {
-        Ok(raw) => Some(serde_json::from_slice(&raw).context("invalid saved write layout")?),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+    let stored: crate::domain::vault::VaultWriteLayout = match std::fs::read(&marker) {
+        Ok(raw) => serde_json::from_slice(&raw).context("invalid saved write layout")?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            crate::domain::vault::VaultWriteLayout::flat()
+        }
         Err(error) => return Err(error.into()),
     };
-    let mut empty = true;
-    for entry in std::fs::read_dir(vault.root())? {
-        if !entry?.file_name().to_string_lossy().starts_with('.') {
-            empty = false;
-            break;
-        }
-    }
-    let value = mine_core::save::execute(mine_core::save::CoreCommand::DetectLayout {
-        stored,
-        empty,
-        cards: vault
-            .root()
-            .join(crate::domain::vault::DEFAULT_CARDS_DIR)
-            .is_dir(),
-        media: vault
-            .root()
-            .join(crate::domain::vault::DEFAULT_MEDIA_DIR)
-            .is_dir(),
-        collections: vault
-            .root()
-            .join(crate::domain::vault::DEFAULT_COLLECTIONS_DIR)
-            .is_dir(),
-    })?;
-    Ok(serde_json::from_value(value)?)
+    stored.validate().map_err(|error| anyhow::anyhow!(error))
+}
+
+/// Snapshot the latest saved destinations immediately before creating files.
+/// Native host and the desktop app may both change the shared layout marker.
+pub fn layout_for_new_files(vault: &VaultLayout) -> Result<VaultLayout> {
+    Ok(vault.clone().with_write_layout(load_vault_write_layout(vault)?))
 }
 
 /// Anchor the layout agreed by a durable capture plan. This is idempotent
@@ -763,8 +748,12 @@ mod tests {
         let vault = VaultLayout::new(tmp.path().to_path_buf());
         assert_eq!(
             load_vault_write_layout(&vault).unwrap(),
-            crate::domain::vault::VaultWriteLayout::standard()
+            crate::domain::vault::VaultWriteLayout::flat()
         );
+        std::fs::create_dir_all(vault.root().join("Cards")).unwrap();
+        std::fs::create_dir_all(vault.root().join("Media")).unwrap();
+        std::fs::create_dir_all(vault.root().join("Collections")).unwrap();
+        assert_eq!(load_vault_write_layout(&vault).unwrap(), crate::domain::vault::VaultWriteLayout::flat());
         std::fs::create_dir(vault.mine_dir()).unwrap();
         std::fs::write(
             vault.write_layout_path(),
@@ -774,6 +763,11 @@ mod tests {
         let selected = load_vault_write_layout(&vault).unwrap();
         assert_eq!(selected.cards, "Mine/Notes");
         assert_eq!(selected.media, "Mine/Files");
+        std::fs::write(vault.write_layout_path(), br#"{"cards":"Notes"}"#).unwrap();
+        let partial = load_vault_write_layout(&vault).unwrap();
+        assert_eq!(partial.cards, "Notes");
+        assert_eq!(partial.media, "");
+        assert_eq!(partial.collections, "");
         std::fs::write(
             vault.write_layout_path(),
             br#"{"cards":"../outside","media":"Files","collections":"Sets"}"#,

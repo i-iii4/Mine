@@ -13,8 +13,8 @@ use crate::domain::block::{
     parse_markdown_document, serialize_block, Block, BlockType, DateTime, Frontmatter,
 };
 use crate::domain::channel::Channel;
-use crate::domain::vault::VaultLayout;
 use crate::domain::collection::{normalize_collection_ref, validate_collection_ref};
+use crate::domain::vault::VaultLayout;
 use crate::storage::source_mutation::{SourceFileWrite, SourceMutationError, StagedSourceMutation};
 use crate::storage::{db, files, index, projection};
 use crate::util::append_startup_trace;
@@ -136,7 +136,8 @@ pub fn create_channel(
         .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-    create_channel_inner(&vs.conn, &vs.vault, &tag)
+    let vault = files::layout_for_new_files(&vs.vault)?;
+    create_channel_inner(&vs.conn, &vault, &tag)
 }
 
 pub(crate) fn create_channel_inner(
@@ -148,6 +149,11 @@ pub(crate) fn create_channel_inner(
     let dt = DateTime::new(&now).map_err(|e| CommandError::Internal(e.to_string()))?;
 
     let tag = validate_collection_ref(tag).map_err(CommandError::Internal)?;
+    if tag.contains('/') {
+        return Err(CommandError::Internal(
+            "new collection name must not contain a folder path".into(),
+        ));
+    }
     let mut channel = Channel::new(&tag, dt).map_err(|e| CommandError::Internal(e.to_string()))?;
 
     // Check uniqueness after collection-ref normalization
@@ -162,7 +168,8 @@ pub(crate) fn create_channel_inner(
 
     let block = channel_to_block(&channel);
     // Existing documents keep their paths; new ones follow the configured layout.
-    let path = vault.block_path(&vault.new_collection_slug(&channel.tag));
+    let source_slug = vault.new_collection_slug(&channel.tag);
+    let path = vault.block_path(&source_slug);
     let staged = StagedSourceMutation::stage(vec![SourceFileWrite::create(
         path,
         serialize_block(&block).into_bytes(),
@@ -170,7 +177,7 @@ pub(crate) fn create_channel_inner(
     .map_err(source_mutation_command_error)?;
     staged
         .commit_with_index(conn, "create_channel", |index_conn| {
-            index::upsert_channel(index_conn, &channel)
+            index::upsert_channel_with_source(index_conn, &channel, Some(source_slug.as_str()))
         })
         .map_err(source_mutation_command_error)?;
 
@@ -232,8 +239,15 @@ pub fn reorder_channels(
             Channel::new(&tag, dt).map_err(|e| CommandError::Internal(e.to_string()))?
         };
         channel.position = item.position;
-        let path = crate::storage::media_refs::resolve_collection_document(&vs.vault, &tag)
-            .unwrap_or_else(|| vs.vault.block_path(&vs.vault.new_collection_slug(&tag)));
+        let path = match collection_document_for_mutation(&vs.conn, &vs.vault, &tag)? {
+            Some(path) => path,
+            None if !tag.contains('/') => vs.vault.block_path(&vs.vault.new_collection_slug(&tag)),
+            None => {
+                return Err(CommandError::Internal(format!(
+                    "collection document '{tag}' not found"
+                )))
+            }
+        };
         // A reorder may only write the collection's own document: the file's
         // stem is the collection's name. A tag that resolves to a file with a
         // different stem is a stale index row aimed at another collection's
@@ -246,24 +260,28 @@ pub fn reorder_channels(
         let owns_document = path
             .file_stem()
             .and_then(|stem| stem.to_str())
-            .is_some_and(|stem| stem == tag);
+            .is_some_and(|stem| stem == tag.rsplit('/').next().unwrap_or(&tag));
         if !owns_document {
             continue;
         }
+        let source_slug = vs
+            .vault
+            .slug_for_path(&path)
+            .map_err(|error| CommandError::Internal(error.to_string()))?;
         let bytes = serialize_block(&channel_to_block(&channel)).into_bytes();
         writes.push(if path.exists() {
             SourceFileWrite::replace(path, bytes)
         } else {
             SourceFileWrite::create(path, bytes)
         });
-        planned_channels.push(channel);
+        planned_channels.push((channel, source_slug));
     }
 
     let staged = StagedSourceMutation::stage(writes).map_err(source_mutation_command_error)?;
     staged
         .commit_with_index(&vs.conn, "reorder_channels", |index_conn| {
-            for channel in &planned_channels {
-                index::upsert_channel(index_conn, channel)?;
+            for (channel, source_slug) in &planned_channels {
+                index::upsert_channel_with_source(index_conn, channel, Some(source_slug.as_str()))?;
             }
             Ok(())
         })
@@ -298,13 +316,34 @@ pub(crate) fn rename_channel_inner(
     old_tag: &str,
     new_tag: &str,
 ) -> Result<ChannelDto, CommandError> {
-    let normalized_new = normalize_collection_ref(new_tag);
+    let requested_new = normalize_collection_ref(new_tag);
+    let normalized_old = normalize_collection_ref(old_tag);
+    if requested_new.is_empty() {
+        return Err(CommandError::Internal("new collection ref is empty".into()));
+    }
+    if requested_new.contains('/') {
+        let old_parent = normalized_old.rsplit_once('/').map(|(parent, _)| parent);
+        let new_parent = requested_new.rsplit_once('/').map(|(parent, _)| parent);
+        if old_parent != new_parent {
+            return Err(CommandError::Internal(
+                "collection rename cannot change its folder".into(),
+            ));
+        }
+    }
+    let normalized_new = if !requested_new.contains('/') && normalized_old.contains('/') {
+        let parent = normalized_old
+            .rsplit_once('/')
+            .map(|(parent, _)| parent)
+            .unwrap_or("");
+        format!("{parent}/{requested_new}")
+    } else {
+        requested_new
+    };
     if normalized_new.is_empty() {
         return Err(CommandError::Internal("new collection ref is empty".into()));
     }
     validate_collection_ref(&normalized_new).map_err(CommandError::Internal)?;
 
-    let normalized_old = normalize_collection_ref(old_tag);
     validate_collection_ref(&normalized_old).map_err(CommandError::Internal)?;
     if normalized_old == normalized_new {
         // Same tag after normalization — no-op
@@ -378,12 +417,25 @@ pub(crate) fn rename_channel_inner(
     // Rename in place: a collection that lives in its own folder must stay
     // there, so the new document is written beside the old one rather than in
     // the vault root.
-    let old_path = crate::storage::media_refs::resolve_collection_document(vault, &normalized_old)
-        .unwrap_or_else(|| vault.block_path(&vault.new_collection_slug(&normalized_old)));
+    let old_path =
+        collection_document_for_mutation(conn, vault, &normalized_old)?.ok_or_else(|| {
+            CommandError::Internal(format!(
+                "collection document '{}' not found",
+                normalized_old
+            ))
+        })?;
     let new_path = old_path
         .parent()
-        .map(|parent| parent.join(format!("{normalized_new}.md")))
+        .map(|parent| {
+            parent.join(format!(
+                "{}.md",
+                normalized_new.rsplit('/').next().unwrap_or(&normalized_new)
+            ))
+        })
         .unwrap_or_else(|| vault.block_path(&normalized_new));
+    let new_slug = vault
+        .slug_for_path(&new_path)
+        .map_err(|error| CommandError::Internal(error.to_string()))?;
     let page_bytes = serialize_block(&new_block).into_bytes();
     writes.push(if old_path.exists() {
         SourceFileWrite::rename_with_bytes(old_path.clone(), new_path, page_bytes)
@@ -411,7 +463,7 @@ pub(crate) fn rename_channel_inner(
                     index_warning.as_deref(),
                 )?;
             }
-            index::upsert_channel(index_conn, &new_channel)?;
+            index::upsert_channel_with_source(index_conn, &new_channel, Some(new_slug.as_str()))?;
             index::remove_channel(index_conn, &normalized_old)?;
             Ok(())
         })
@@ -542,21 +594,13 @@ pub(crate) fn delete_channel_inner(
     }
     validate_collection_ref(&tag).map_err(CommandError::Internal)?;
 
-    let candidates = crate::storage::media_refs::collection_document_candidates(vault, &tag)
-        .map_err(|error| CommandError::Internal(format!("find collection documents: {error}")))?;
-    let fallback_date = DateTime::new(&crate::commands::state::now_iso8601())
-        .map_err(|error| CommandError::Internal(error.to_string()))?;
+    let candidate = collection_document_for_mutation(conn, vault, &tag)?;
     let mut writes = Vec::new();
     let mut slugs = Vec::new();
-    for path in candidates {
-        let (slug, content) = files::read_block_file(vault, &path)?;
-        let parsed = parse_markdown_document(&slug, &content, fallback_date.clone())
-            .map_err(|error| CommandError::Internal(error.to_string()))?;
-        // An unrelated article can share a collection's basename.
-        if parsed.block.frontmatter.block_type == BlockType::Channel {
-            writes.push(SourceFileWrite::delete(path));
-            slugs.push(slug);
-        }
+    if let Some(path) = candidate {
+        let (slug, _) = files::read_block_file(vault, &path)?;
+        writes.push(SourceFileWrite::delete(path));
+        slugs.push(slug);
     }
     let staged = StagedSourceMutation::stage(writes).map_err(source_mutation_command_error)?;
     staged
@@ -568,6 +612,48 @@ pub(crate) fn delete_channel_inner(
             Ok(removed || !slugs.is_empty())
         })
         .map_err(source_mutation_command_error)
+}
+
+/// Resolve a collection mutation to one source page. A bare name shared by
+/// multiple collection pages is ambiguous and must not mutate either page.
+fn collection_document_for_mutation(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    collection_ref: &str,
+) -> Result<Option<std::path::PathBuf>, CommandError> {
+    let candidates =
+        crate::storage::media_refs::collection_document_candidates(vault, collection_ref).map_err(
+            |error| CommandError::Internal(format!("find collection documents: {error}")),
+        )?;
+    let fallback_date = DateTime::new(&crate::commands::state::now_iso8601())
+        .map_err(|error| CommandError::Internal(error.to_string()))?;
+    let mut pages = Vec::new();
+    for path in candidates {
+        let (slug, content) = files::read_block_file(vault, &path)?;
+        let parsed = parse_markdown_document(&slug, &content, fallback_date.clone())
+            .map_err(|error| CommandError::Internal(error.to_string()))?;
+        if parsed.block.frontmatter.block_type == BlockType::Channel {
+            pages.push((slug, path));
+        }
+    }
+    if let Some(source_slug) = index::channel_source_slug(conn, collection_ref)? {
+        if let Some((_, path)) = pages.iter().find(|(slug, _)| slug == &source_slug) {
+            return Ok(Some(path.clone()));
+        }
+    }
+    let slugs = pages.iter().map(|(slug, _)| slug.clone()).collect();
+    let mut matches = pages.into_iter().filter(|(slug, _)| {
+        crate::domain::collection::collection_ref_for_slug(slug, &slugs) == collection_ref
+    });
+    let result = matches.next().map(|(_, path)| path);
+    if matches.next().is_some()
+        || (result.is_none() && slugs.len() > 1 && !collection_ref.contains('/'))
+    {
+        return Err(CommandError::Internal(format!(
+            "collection reference '{collection_ref}' is ambiguous; use its path"
+        )));
+    }
+    Ok(result)
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -623,8 +709,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let vault = VaultLayout::new(dir.path().to_path_buf()).with_write_layout(
             crate::domain::vault::VaultWriteLayout {
-                cards: "Notes".into(), media: "Assets".into(), collections: "Groups/Sets".into(),
-            });
+                cards: "Notes".into(),
+                media: "Assets".into(),
+                collections: "Groups/Sets".into(),
+            },
+        );
         let conn = db::open_or_create(&vault.index_db_path()).unwrap();
         let legacy = "---\ntype: channel\nsaved_at: 2026-04-25T14:00:40Z\n---\n";
         std::fs::write(vault.block_path("Legacy"), legacy).unwrap();
@@ -632,11 +721,14 @@ mod tests {
         create_channel_inner(&conn, &vault, "New").unwrap();
         assert!(vault.block_path("Groups/Sets/New").exists());
         assert!(!vault.block_path("New").exists());
-        assert_eq!(std::fs::read_to_string(vault.block_path("Legacy")).unwrap(), legacy);
+        assert_eq!(
+            std::fs::read_to_string(vault.block_path("Legacy")).unwrap(),
+            legacy
+        );
     }
 
     #[test]
-    fn collection_delete_removes_duplicates_without_deleting_same_named_articles() {
+    fn collection_delete_requires_exact_ref_when_pages_share_a_name() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("Collections")).unwrap();
         std::fs::create_dir_all(dir.path().join("Cards")).unwrap();
@@ -652,6 +744,8 @@ mod tests {
 
         assert!(delete_channel_inner(&conn, &vault, "Design").unwrap());
         assert!(!vault.block_path("Design").exists());
+        assert!(vault.block_path("Collections/Design").exists());
+        assert!(delete_channel_inner(&conn, &vault, "Collections/Design").unwrap());
         assert!(!vault.block_path("Collections/Design").exists());
         assert_eq!(
             std::fs::read_to_string(vault.block_path("Cards/Design")).unwrap(),
@@ -662,6 +756,24 @@ mod tests {
             assert!(index::list_channels(&conn).unwrap().is_empty());
         }
         assert!(!delete_channel_inner(&conn, &vault, "Design").unwrap());
+    }
+
+    #[test]
+    fn ambiguous_short_ref_never_deletes_nested_collection_pages() {
+        let dir = tempfile::tempdir().unwrap();
+        for folder in ["A", "B"] {
+            std::fs::create_dir_all(dir.path().join(folder)).unwrap();
+            std::fs::write(
+                dir.path().join(folder).join("Design.md"),
+                "---\ntype: channel\nsaved_at: 2026-04-25T14:00:40Z\n---\n",
+            )
+            .unwrap();
+        }
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        assert!(delete_channel_inner(&conn, &vault, "Design").is_err());
+        assert!(vault.block_path("A/Design").exists());
+        assert!(vault.block_path("B/Design").exists());
     }
 
     #[test]
