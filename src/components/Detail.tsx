@@ -760,7 +760,7 @@ function MetadataPanel({
 
         <div className="flex min-w-0 flex-col gap-6" data-metadata-sections>
           <section
-            className="overflow-hidden rounded-1 border border-border bg-accent"
+            className="overflow-hidden rounded-[var(--radius-card)] border border-border bg-accent"
             style={{ minWidth: DETAIL_METADATA_CARD_MIN_WIDTH_PX }}
             data-detail-metadata-card
           >

@@ -3,7 +3,7 @@
 // It drives the feed's card gap and side/top insets, the expanded card's
 // columns and top offset. Chrome (top bar, metadata row, bottom action bar)
 // is NOT on this rhythm any more: its edge inset is pinned to 16px via
-// --chrome-edge-pad, so tightening the feed to 2px never squeezes the shell.
+// --chrome-edge-pad, independently of feed spacing.
 //
 // Published as a CSS variable on the root so stylesheets and Tailwind arbitrary
 // values read it directly; the feed also reads the number through a hook,
@@ -11,9 +11,9 @@
 
 import { useSyncExternalStore } from "react";
 
-export type DensityStep = 32 | 24 | 16 | 2;
+export type DensityStep = 32 | 24 | 16;
 
-export const DENSITY_STEPS: readonly DensityStep[] = [32, 24, 16, 2];
+export const DENSITY_STEPS: readonly DensityStep[] = [32, 24, 16];
 
 export const DENSITY_STORAGE_KEY = "mine.spacing";
 
@@ -28,6 +28,7 @@ function isStep(value: number): value is DensityStep {
 export function getStoredDensity(): DensityStep {
   if (typeof window === "undefined") return DEFAULT_STEP;
   const raw = Number(window.localStorage.getItem(DENSITY_STORAGE_KEY));
+  if (raw === 2) return 16;
   return isStep(raw) ? raw : DEFAULT_STEP;
 }
 

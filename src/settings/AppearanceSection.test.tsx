@@ -30,45 +30,23 @@ describe("AppearanceSection", () => {
     expect(emit).toHaveBeenCalledWith("settings-changed", { key: "theme" });
   });
 
-  it("switches the design variant independently of the theme", () => {
+  it("only offers the retained appearance controls", () => {
     render(<AppearanceSection />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Alt 1" }));
-
-    expect(localStorage.getItem("mine.design")).toBe("alt");
-    expect(document.documentElement.getAttribute("data-design")).toBe("alt");
-    expect(emit).toHaveBeenCalledWith("settings-changed", { key: "mine.design" });
-    // The theme control is untouched: light/dark/system combine with alt.
-    expect(localStorage.getItem("theme")).toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: "Light" }));
-    expect(document.documentElement.getAttribute("data-design")).toBe("alt");
-    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+    for (const label of ["Design", "Compact Detail top menu", "Interface font", "Content font", "Bottom bar buttons"]) {
+      expect(screen.queryByRole("group", { name: label })).not.toBeInTheDocument();
+      expect(screen.queryByRole("checkbox", { name: label })).not.toBeInTheDocument();
+    }
+    expect(screen.getByRole("group", { name: "Spacing" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "2" })).not.toBeInTheDocument();
   });
 
-  it("switches to the second alternative and back to the primary design", () => {
+  it("offers only 32, 24 and 16 pixel spacing", () => {
     render(<AppearanceSection />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Alt 2" }));
-    expect(localStorage.getItem("mine.design")).toBe("alt2");
-    expect(document.documentElement.getAttribute("data-design")).toBe("alt2");
-
-    fireEvent.click(screen.getByRole("button", { name: "Default" }));
-    expect(localStorage.getItem("mine.design")).toBe("default");
-    // The primary design carries no attribute at all, so no stylesheet rule
-    // keyed on a variant can match it.
-    expect(document.documentElement.getAttribute("data-design")).toBeNull();
-  });
-
-  it("persists the Compact Detail top menu flag and broadcasts its key", () => {
-    render(<AppearanceSection />);
-
-    fireEvent.click(screen.getByRole("checkbox", { name: "Compact Detail top menu" }));
-
-    expect(localStorage.getItem("mine.compactDetailTopMenu")).toBe("true");
-    expect(emit).toHaveBeenCalledWith("settings-changed", {
-      key: "mine.compactDetailTopMenu",
-    });
+    expect(screen.getByRole("button", { name: "32" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "24" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "16" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "24" }));
+    expect(localStorage.getItem("mine.spacing")).toBe("24");
   });
 
   it("persists the bottom menu visibility flag and broadcasts its key", () => {
@@ -117,7 +95,6 @@ describe("AppearanceSection", () => {
 
   it("reflects stored values on mount", () => {
     localStorage.setItem("theme", "light");
-    localStorage.setItem("mine.compactDetailTopMenu", "true");
     localStorage.setItem("mine.scrollEdgeFade", "true");
 
     render(<AppearanceSection />);
@@ -130,8 +107,5 @@ describe("AppearanceSection", () => {
       "aria-pressed",
       "true",
     );
-    expect(
-      screen.getByRole("checkbox", { name: "Compact Detail top menu" }),
-    ).toHaveAttribute("data-state", "checked");
   });
 });

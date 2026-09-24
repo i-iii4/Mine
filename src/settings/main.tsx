@@ -4,10 +4,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { applyTheme, getStoredTheme } from "@/lib/themeMode";
 import { applyDesign, getStoredDesignMode } from "@/lib/designMode";
 import { applyCardRadius, getStoredCardRadius } from "@/lib/cardRadius";
-import {
-  applyActionButtonStyle,
-  getStoredActionButtonStyle,
-} from "@/lib/actionButtonStyle";
 import { applyDensity, getStoredDensity } from "@/lib/density";
 import {
   applyContentFont,
@@ -24,7 +20,6 @@ import { hydrateCommandOverrides, watchCommandOverrides } from "@/lib/shortcutOv
 applyTheme(getStoredTheme());
 applyDesign(getStoredDesignMode());
 applyCardRadius(getStoredCardRadius());
-applyActionButtonStyle(getStoredActionButtonStyle());
 applyDensity(getStoredDensity());
 applyInterfaceFont(getStoredInterfaceFont());
 applyContentFont(getStoredContentFont());

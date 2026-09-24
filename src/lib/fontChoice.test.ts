@@ -19,13 +19,15 @@ describe("font choice", () => {
     expect(getStoredContentFont()).toBe("geist-sans");
   });
 
-  it("applies and persists both choices via root attributes", () => {
+  it("normalizes retired font preferences to Geist", () => {
+    localStorage.setItem("mine.fontInterface", "departure");
+    localStorage.setItem("mine.fontContent", "geist-mono");
     applyInterfaceFont("departure");
     applyContentFont("geist-mono");
-    expect(document.documentElement.getAttribute("data-font-interface")).toBe("departure");
-    expect(document.documentElement.getAttribute("data-font-content")).toBe("geist-mono");
-    expect(getStoredInterfaceFont()).toBe("departure");
-    expect(getStoredContentFont()).toBe("geist-mono");
+    expect(document.documentElement.getAttribute("data-font-interface")).toBe("geist");
+    expect(document.documentElement.getAttribute("data-font-content")).toBe("geist-sans");
+    expect(getStoredInterfaceFont()).toBe("geist");
+    expect(getStoredContentFont()).toBe("geist-sans");
   });
 
   it("ships the fonts and the switch rules in the stylesheet", () => {

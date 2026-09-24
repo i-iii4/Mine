@@ -5,7 +5,6 @@ import { ChromeControl } from "./chrome-control";
 import { Button } from "./button";
 import { ActionButton } from "../ActionButton";
 import { SegmentedControl } from "./segmented-control";
-import { applyActionButtonStyle } from "@/lib/actionButtonStyle";
 
 describe("chrome hit targets", () => {
   it("extends the same button and preserves its ref, handler and disabled state", () => {
@@ -33,8 +32,7 @@ describe("chrome hit targets", () => {
     expect(ordinary.querySelector("[data-chrome-plate]")).toBeNull();
   });
 
-  it.each(["pill", "standard"] as const)("extends %s actions but not read-only shortcuts", (style) => {
-    applyActionButtonStyle(style);
+  it("extends actions but not read-only shortcuts", () => {
     const click = vi.fn();
     const { unmount } = render(<><ActionButton chrome onClick={click}>Run</ActionButton><ActionButton chrome readOnly>Reference</ActionButton></>);
     const button = screen.getByRole("button");
@@ -44,7 +42,6 @@ describe("chrome hit targets", () => {
     expect(click).toHaveBeenCalledTimes(2);
     expect(screen.getByText("Reference").closest("[data-chrome-control]")).toBeNull();
     unmount();
-    applyActionButtonStyle("pill");
   });
 
   it("gives each chrome segment its own target without nesting buttons", () => {

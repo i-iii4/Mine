@@ -12,8 +12,8 @@ describe("density", () => {
     document.documentElement.removeAttribute("style");
   });
 
-  it("offers four steps down to the tight 2px experiment graduate", () => {
-    expect(DENSITY_STEPS).toEqual([32, 24, 16, 2]);
+  it("offers only the three retained spacing steps", () => {
+    expect(DENSITY_STEPS).toEqual([32, 24, 16]);
   });
 
   it("defaults to the widest step", () => {
@@ -38,5 +38,10 @@ describe("density", () => {
     expect(getStoredDensity()).toBe(32);
     localStorage.setItem(DENSITY_STORAGE_KEY, "nonsense");
     expect(getStoredDensity()).toBe(32);
+  });
+
+  it("maps a retired 2px preference to 16px", () => {
+    localStorage.setItem(DENSITY_STORAGE_KEY, "2");
+    expect(getStoredDensity()).toBe(16);
   });
 });

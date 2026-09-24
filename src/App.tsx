@@ -81,11 +81,6 @@ import {
   getStoredInterfaceFont,
 } from "@/lib/fontChoice";
 import {
-  ACTION_BUTTON_STYLE_STORAGE_KEY,
-  applyActionButtonStyle,
-  getStoredActionButtonStyle,
-} from "@/lib/actionButtonStyle";
-import {
   CARD_RADIUS_STORAGE_KEY,
   applyCardRadius,
   getStoredCardRadius,
@@ -275,10 +270,6 @@ import {
   useDesignMode,
   DESIGN_STORAGE_KEY,
 } from "@/lib/designMode";
-import {
-  COMPACT_DETAIL_TOP_MENU_STORAGE_KEY,
-  getStoredCompactDetailTopMenu,
-} from "@/lib/compactDetailTopMenuVisibility";
 import {
   getStoredGraphPreferences,
   GRAPH_PREFERENCES_STORAGE_KEY,
@@ -553,9 +544,7 @@ export function AppWithVault({
   const [loadingMoreBlocks, setLoadingMoreBlocks] = useState(false);
   const [tags, setTags] = useState<TagCount[]>([]);
   const [channels, setChannels] = useState<ChannelDto[]>([]);
-  const [compactDetailTopMenuEnabled, setCompactDetailTopMenuEnabled] = useState(
-    getStoredCompactDetailTopMenu,
-  );
+  const compactDetailTopMenuEnabled = false;
   const [bottomActionBarHidden, setBottomActionBarHidden] = useState(
     getStoredBottomActionBarHidden,
   );
@@ -922,13 +911,6 @@ export function AppWithVault({
     || renamingBlock !== null
     || deleteTargetSlug !== null
     || isCreatingChannel;
-  useEffect(() => {
-    window.localStorage.setItem(
-      COMPACT_DETAIL_TOP_MENU_STORAGE_KEY,
-      compactDetailTopMenuEnabled ? "true" : "false",
-    );
-  }, [compactDetailTopMenuEnabled]);
-
   useNativeWindowChromeSurface(topChromeSurfaceToken);
 
   useEffect(() => {
@@ -1927,8 +1909,6 @@ export function AppWithVault({
         applyTheme(getStoredTheme());
       } else if (key === DESIGN_STORAGE_KEY) {
         applyDesign(getStoredDesignMode());
-      } else if (key === COMPACT_DETAIL_TOP_MENU_STORAGE_KEY) {
-        setCompactDetailTopMenuEnabled(getStoredCompactDetailTopMenu());
       } else if (key === BOTTOM_ACTION_BAR_HIDDEN_STORAGE_KEY) {
         setBottomActionBarHidden(getStoredBottomActionBarHidden());
       } else if (key === GRAPH_PREFERENCES_STORAGE_KEY) {
@@ -1937,8 +1917,6 @@ export function AppWithVault({
         setScrollEdgeFade(getStoredScrollEdgeFade());
       } else if (key === CARD_RADIUS_STORAGE_KEY) {
         applyCardRadius(getStoredCardRadius());
-      } else if (key === ACTION_BUTTON_STYLE_STORAGE_KEY) {
-        applyActionButtonStyle(getStoredActionButtonStyle());
       } else if (key === DENSITY_STORAGE_KEY) {
         applyDensity(getStoredDensity());
       } else if (key === CONTENT_FONT_STORAGE_KEY) {

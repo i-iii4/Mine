@@ -7,7 +7,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "@tauri-apps/api/core";
 import type { CommandBinding } from "./commandBinding";
-import { setCommandOverrides, type CommandOverrides } from "./commandRegistry";
+import { getCommandOverrides, setCommandOverrides, type CommandOverrides } from "./commandRegistry";
 import { listShortcutOverrides, saveShortcutOverrides } from "./commands";
 
 export async function hydrateCommandOverrides(): Promise<void> {
@@ -23,8 +23,14 @@ export async function hydrateCommandOverrides(): Promise<void> {
 export async function persistCommandOverrides(
   overrides: Readonly<Record<string, CommandBinding>>,
 ): Promise<void> {
+  const previous = getCommandOverrides();
   setCommandOverrides(overrides as CommandOverrides);
-  await saveShortcutOverrides(overrides);
+  try {
+    await saveShortcutOverrides(overrides);
+  } catch (error) {
+    setCommandOverrides(previous);
+    throw error;
+  }
 }
 
 /// Subscribe to rebinds made in the other window.

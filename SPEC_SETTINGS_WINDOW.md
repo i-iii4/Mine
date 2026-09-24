@@ -7,19 +7,18 @@ Related documents: [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [SPEC_FRONTEND.md](SPE
 Раздел появился 24.08.2026; заменил оверлей `⌘/`, который был вторым местом с тем
 же списком.
 
-Содержимое: все команды из реестра, сгруппированные по контексту (Global, Feed,
-Element, Selection). В строке — имя команды, текущее сочетание, пометка
-`changed` у переназначенных.
+Содержимое: поиск и изменяемые команды из реестра, сгруппированные по
+контексту (Global, Feed, Element, Selection). В строке находятся имя,
+действующее сочетание и кнопка `Change`. Неизменяемые команды скрыты.
 
-Переназначаемая команда показывает сочетание кнопкой: нажатие переводит строку
-в режим записи (`Press keys…`), следующее нажатие клавиш становится новым
-сочетанием. `Escape` отменяет запись. Неизменяемые команды показывают сочетание
-подписью с пояснением в `title` и не имеют кнопки.
+`Change` открывает отдельное поле записи с фокусом. Нажатое сочетание сначала
+показывается в поле, затем применяется кнопкой `Save`. `Cancel` и `Escape`
+закрывают поле без сохранения. `Tab` оставляет клавиатурную навигацию доступной.
 
 Отказ выводится в той же строке и называет причину: системное сочетание macOS,
 голая клавиша, конфликт с конкретной командой.
 
-Сброс — кнопкой в строке для одной команды и `Reset all` в заголовке раздела;
+Сброс доступен кнопкой в строке для одной команды и `Reset all` в заголовке раздела;
 `Reset all` виден только когда есть что сбрасывать.
 
 Окно открывается сразу на разделе: `open_settings_window(section)` кладёт
@@ -132,32 +131,21 @@ Settings и `Cmd+,` сохраняются. Прежняя условная те
 
 ## Appearance
 
-Контролы (persist — те же localStorage-ключи, что сейчас):
+Доступные настройки:
 
 | Настройка | Контрол | Ключ |
 |---|---|---|
 | Theme: System / Light / Dark | `SegmentedControl` (size default) | `theme` |
-| Design: Default / Alt 1 / Alt 2 | `SegmentedControl` (size default) | `mine.design` |
-| Compact Detail top menu | `Checkbox` + подпись | `mine.compactDetailTopMenu` |
-| Spacing: 32 / 24 / 16 / 2 | `SegmentedControl` | `mine.spacing` |
-| Interface font: Geist / Departure Mono | `SegmentedControl` | `mine.fontInterface` |
-| Content font: Geist Sans / Geist Mono | `SegmentedControl` | `mine.fontContent` |
-| Bottom bar buttons: Pill / Standard | `SegmentedControl` | `mine.actionButtonStyle` |
+| Spacing: 32 / 24 / 16 | `SegmentedControl` | `mine.spacing` |
 | Card corners | `SegmentedControl` | `mine.cardRadius` |
 | Fade content under the chrome | `Checkbox` + подпись | `mine.scrollEdgeFade` |
 | Hide bottom menu | `Checkbox` + подпись | `mine.bottomActionBarHidden` |
 
-**Шрифты.** Interface font покрывает весь интерфейс, включая карточки ленты;
-высоты карточек измеряются этим шрифтом, поэтому смена значения перезагружает
-главное окно (`fontMetrics` выводит спеки и хэш кэша из сохранённого выбора при
-загрузке модуля, `src/lib/fontChoice.ts`). Content font касается только текста
-открытой статьи (`data-content-font` на prose-контейнере Detail) и применяется
-вживую. Departure Mono вендорен в `public/fonts/DepartureMono-Regular.woff2`
-(OFL). Контракт — `src/lib/fontChoice.test.ts`.
-
-Ось оформления (`Design`) ортогональна теме: любой вариант сочетается с любой
-темой, значения хранятся раздельно. Что именно меняет каждый вариант —
-`DESIGN_SYSTEM.md`, раздел «Варианты оформления».
+Оформление использует только Alt 1, шрифт интерфейса Geist и шрифт статьи
+Geist Sans. Нижняя панель использует только стандартные кнопки. Сохранённые
+значения удалённых вариантов при запуске заменяются действующими. Значение
+отступа `2` читается как `16`. Карточка метаданных в просмотре статьи
+использует тот же `--radius-card`, что и карточки ленты.
 
 Каждая строка настройки: лейбл слева (`text-base`), контрол справа; подпись
 вторичным текстом (`text-sm text-muted-foreground`) под лейблом, если нужна.
@@ -169,8 +157,8 @@ Settings и `Cmd+,` сохраняются. Прежняя условная те
 **Межоконная синхронизация**: после каждого изменения settings-окно пишет
 localStorage (общий для origin) и эмитит Tauri-событие `settings-changed`
 (`{ key }`). Главное окно слушает событие и перечитывает значения (тема
-применяется через `applyTheme`, compact/bottom — через существующие
-state-сеттеры). Событие выбрано вместо DOM `storage` как гарантированный
+применяется через `applyTheme`, видимость нижней панели через существующий
+сеттер). Событие выбрано вместо DOM `storage` как гарантированный
 канал в Tauri.
 
 ## Graph

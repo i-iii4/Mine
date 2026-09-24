@@ -1,7 +1,7 @@
 // Card corner rounding, driven from one place.
 //
-// Scope is deliberate: the setting rounds the card frame and the images shown in
-// an expanded card, but never the media inside a feed card. Thumbnails sit edge
+// Scope is deliberate: the setting rounds card frames, the detail metadata card
+// and images shown in an expanded card, but never media inside a feed card. Thumbnails sit edge
 // to edge in the grid, where rounded corners read as noise; a single opened
 // image is a standalone object and takes the same corner as the card frame.
 //

@@ -1,8 +1,7 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
-import { useActionButtonStyle } from "@/lib/actionButtonStyle";
-import { ChromeControl, ChromePlate } from "./ui/chrome-control";
+import { ChromeControl } from "./ui/chrome-control";
 
 interface ActionButtonProps {
   onClick?: () => void;
@@ -17,88 +16,21 @@ interface ActionButtonProps {
   readOnly?: boolean;
 }
 
-/// Bottom-bar action, in one of two presentations (see lib/actionButtonStyle).
-///
-/// The variant is read from the root attribute rather than passed as a prop, so
-/// call sites are identical for both and no site can end up on the wrong one.
+/// Bottom bar action with one standard presentation.
 export const ActionButton = React.forwardRef<HTMLDivElement, ActionButtonProps>(
   ({ onClick, hotkey, children, isSelected, className, readOnly, chrome = false }, ref) => {
-    const style = useActionButtonStyle();
-
-    if (style === "standard") {
-      return (
-        <StandardActionButton
-          ref={ref}
-          onClick={onClick}
-          hotkey={hotkey}
-          isSelected={isSelected}
-          className={className}
-          readOnly={readOnly}
-          chrome={chrome}
-        >
-          {children}
-        </StandardActionButton>
-      );
-    }
-
-    const Plate = chrome ? ChromePlate : "span";
     return (
-      <ChromeControl enabled={chrome && !readOnly}>
-      <div
+      <StandardActionButton
         ref={ref}
-        role={readOnly ? undefined : "button"}
-        tabIndex={readOnly ? undefined : 0}
-        data-action-button="pill"
-        data-action-button-readonly={readOnly ? "true" : undefined}
-        onClick={readOnly ? undefined : onClick}
-        onKeyDown={readOnly
-          ? undefined
-          : (e) => { if (e.key === "Enter" || e.key === " ") onClick?.(); }}
-        className={cn(
-          "action-button group inline-flex shrink-0 items-center rounded-1 font-mono text-sm",
-          (!chrome || readOnly) && "h-6",
-          !chrome && "p-[2px]",
-          "select-none overflow-hidden outline-0",
-          !chrome && (isSelected
-            ? "bg-active"
-            : readOnly ? "bg-transparent" : "bg-transparent hover:bg-active"),
-          className,
-        )}
+        onClick={onClick}
+        hotkey={hotkey}
+        isSelected={isSelected}
+        className={className}
+        readOnly={readOnly}
+        chrome={chrome}
       >
-        <Plate className={cn(
-          "inline-flex items-center",
-          chrome && "rounded-1 p-[2px]",
-          chrome && (isSelected ? "bg-active" : !readOnly && "group-hover:bg-active group-focus-visible:bg-active"),
-        )}>
-        {/* The fill sits on the hotkey: it is the fixed, glyph-like half of the
-            pair, and enclosing it reads as a key cap. The action name is prose
-            and stays unenclosed. */}
-        {hotkey ? (
-          <span
-            className={cn(
-              "inline-flex h-5 shrink-0 items-center rounded-[2px] px-[1ch] leading-none text-foreground",
-              // A key cap that can be pressed is filled; one that only names a
-              // keystroke is drawn as an outline. The missing body is what
-              // separates a control from a reference at a glance.
-              readOnly
-                ? "bg-transparent outline-1 -outline-offset-1 outline-border"
-                : "bg-component-fill-inner",
-            )}
-          >
-            {hotkey}
-          </span>
-        ) : null}
-        <span
-          className={cn(
-            "inline-flex h-5 shrink-0 items-center px-[1ch] leading-none",
-            "text-foreground",
-          )}
-        >
-          {children}
-        </span>
-        </Plate>
-      </div>
-      </ChromeControl>
+        {children}
+      </StandardActionButton>
     );
   },
 );
@@ -119,11 +51,10 @@ const StandardActionButton = React.forwardRef<HTMLDivElement, ActionButtonProps>
     // dead to the pointer.
     const frame = (
       <span
-        aria-hidden="true"
+        aria-hidden={Boolean(hotkey)}
         className={cn(
           buttonVariants({ variant: readOnly ? "reference" : "default", size: "xs" }),
-          // Height matches the inner pill of the other presentation, so the two
-          // variants sit on the same baseline in the bar.
+          // The key frame keeps the same 20px baseline across bar entries.
           "h-5 font-mono font-normal",
           // The hotkey is reference material at rest and comes forward only
           // when the pointer is anywhere on the pair — hence group-hover, not

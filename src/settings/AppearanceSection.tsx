@@ -1,15 +1,5 @@
 import { useState } from "react";
 import { SegmentedControl } from "@/components/ui/segmented-control";
-import {
-  CONTENT_FONT_STORAGE_KEY,
-  INTERFACE_FONT_STORAGE_KEY,
-  applyContentFont,
-  applyInterfaceFont,
-  getStoredContentFont,
-  getStoredInterfaceFont,
-  type ContentFont,
-  type InterfaceFont,
-} from "@/lib/fontChoice";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   applyTheme,
@@ -17,16 +7,6 @@ import {
   THEME_STORAGE_KEY,
   type ThemeMode,
 } from "@/lib/themeMode";
-import {
-  applyDesign,
-  getStoredDesignMode,
-  DESIGN_STORAGE_KEY,
-  type DesignMode,
-} from "@/lib/designMode";
-import {
-  COMPACT_DETAIL_TOP_MENU_STORAGE_KEY,
-  getStoredCompactDetailTopMenu,
-} from "@/lib/compactDetailTopMenuVisibility";
 import {
   BOTTOM_ACTION_BAR_HIDDEN_STORAGE_KEY,
   getStoredBottomActionBarHidden,
@@ -42,12 +22,6 @@ import {
   getStoredDensity,
   type DensityStep,
 } from "@/lib/density";
-import {
-  ACTION_BUTTON_STYLE_STORAGE_KEY,
-  applyActionButtonStyle,
-  getStoredActionButtonStyle,
-  type ActionButtonStyle,
-} from "@/lib/actionButtonStyle";
 import {
   CARD_RADIUS_OPTIONS,
   CARD_RADIUS_STORAGE_KEY,
@@ -73,66 +47,24 @@ const CARD_RADIUS_CONTROL_OPTIONS = CARD_RADIUS_OPTIONS.map((value) => ({
   label: value === 0 ? "Square" : String(value),
 }));
 
-const INTERFACE_FONT_OPTIONS: { value: InterfaceFont; label: string }[] = [
-  { value: "geist", label: "Geist" },
-  { value: "departure", label: "Departure Mono" },
-];
-
-const CONTENT_FONT_OPTIONS: { value: ContentFont; label: string }[] = [
-  { value: "geist-sans", label: "Geist Sans" },
-  { value: "geist-mono", label: "Geist Mono" },
-];
-
 const DENSITY_OPTIONS = DENSITY_STEPS.map((step) => ({
   value: String(step),
   label: String(step),
 }));
 
-const ACTION_BUTTON_OPTIONS = [
-  { value: "pill", label: "Pill" },
-  { value: "standard", label: "Standard" },
-] as const;
-
-const DESIGN_OPTIONS = [
-  { value: "default", label: "Default" },
-  { value: "alt", label: "Alt 1" },
-  { value: "alt2", label: "Alt 2" },
-] as const;
-
 export function AppearanceSection() {
   const [theme, setTheme] = useState<ThemeMode>(getStoredTheme);
-  const [design, setDesign] = useState<DesignMode>(getStoredDesignMode);
-  const [compactDetailTopMenu, setCompactDetailTopMenu] = useState(
-    getStoredCompactDetailTopMenu,
-  );
   const [bottomActionBarHidden, setBottomActionBarHidden] = useState(
     getStoredBottomActionBarHidden,
   );
   const [scrollEdgeFade, setScrollEdgeFade] = useState(getStoredScrollEdgeFade);
   const [cardRadius, setCardRadius] = useState<CardRadius>(getStoredCardRadius);
-  const [actionButtonStyle, setActionButtonStyle] = useState<ActionButtonStyle>(
-    getStoredActionButtonStyle,
-  );
   const [density, setDensity] = useState<DensityStep>(getStoredDensity);
-  const [interfaceFont, setInterfaceFont] = useState<InterfaceFont>(getStoredInterfaceFont);
-  const [contentFont, setContentFont] = useState<ContentFont>(getStoredContentFont);
 
   const handleThemeChange = (mode: ThemeMode) => {
     setTheme(mode);
     applyTheme(mode);
     broadcastSettingsChange(THEME_STORAGE_KEY);
-  };
-
-  const handleDesignChange = (mode: DesignMode) => {
-    setDesign(mode);
-    applyDesign(mode);
-    broadcastSettingsChange(DESIGN_STORAGE_KEY);
-  };
-
-  const handleCompactChange = (checked: boolean) => {
-    setCompactDetailTopMenu(checked);
-    localStorage.setItem(COMPACT_DETAIL_TOP_MENU_STORAGE_KEY, checked ? "true" : "false");
-    broadcastSettingsChange(COMPACT_DETAIL_TOP_MENU_STORAGE_KEY);
   };
 
   const handleBottomChange = (checked: boolean) => {
@@ -146,24 +78,6 @@ export function AppearanceSection() {
     setDensity(value);
     applyDensity(value);
     broadcastSettingsChange(DENSITY_STORAGE_KEY);
-  };
-
-  const handleInterfaceFontChange = (value: InterfaceFont) => {
-    setInterfaceFont(value);
-    applyInterfaceFont(value);
-    broadcastSettingsChange(INTERFACE_FONT_STORAGE_KEY);
-  };
-
-  const handleContentFontChange = (value: ContentFont) => {
-    setContentFont(value);
-    applyContentFont(value);
-    broadcastSettingsChange(CONTENT_FONT_STORAGE_KEY);
-  };
-
-  const handleActionButtonStyleChange = (value: ActionButtonStyle) => {
-    setActionButtonStyle(value);
-    applyActionButtonStyle(value);
-    broadcastSettingsChange(ACTION_BUTTON_STYLE_STORAGE_KEY);
   };
 
   const handleCardRadiusChange = (raw: string) => {
@@ -194,30 +108,6 @@ export function AppearanceSection() {
       </SettingRow>
 
       <SettingRow
-        label="Design"
-        caption="Experimental layout variants — combine with any theme. Alt 2 starts as a copy of Alt 1"
-      >
-        <SegmentedControl
-          aria-label="Design"
-          size="default"
-          value={design}
-          options={DESIGN_OPTIONS}
-          onChange={handleDesignChange}
-        />
-      </SettingRow>
-
-      <SettingRow
-        label="Compact Detail top menu"
-        caption="Collapse the Detail view header into the window chrome"
-      >
-        <Checkbox
-          aria-label="Compact Detail top menu"
-          checked={compactDetailTopMenu}
-          onCheckedChange={(checked) => handleCompactChange(checked === true)}
-        />
-      </SettingRow>
-
-      <SettingRow
         label="Spacing"
         caption="Distance from edges and chrome, and between cards: bars, sidebar, feed, expanded card"
       >
@@ -227,45 +117,6 @@ export function AppearanceSection() {
           value={String(density)}
           options={DENSITY_OPTIONS}
           onChange={handleDensityChange}
-        />
-      </SettingRow>
-
-      <SettingRow
-        label="Interface font"
-        caption="The whole UI including cards. Switching reloads the main window to remeasure the feed"
-      >
-        <SegmentedControl
-          aria-label="Interface font"
-          size="default"
-          value={interfaceFont}
-          options={INTERFACE_FONT_OPTIONS}
-          onChange={(value) => handleInterfaceFontChange(value as InterfaceFont)}
-        />
-      </SettingRow>
-
-      <SettingRow
-        label="Content font"
-        caption="Reading text of the opened article"
-      >
-        <SegmentedControl
-          aria-label="Content font"
-          size="default"
-          value={contentFont}
-          options={CONTENT_FONT_OPTIONS}
-          onChange={(value) => handleContentFontChange(value as ContentFont)}
-        />
-      </SettingRow>
-
-      <SettingRow
-        label="Bottom bar buttons"
-        caption="Pill: hotkey and label in one frame. Standard: hotkey in a button, label beside it"
-      >
-        <SegmentedControl
-          aria-label="Bottom bar buttons"
-          size="default"
-          value={actionButtonStyle}
-          options={ACTION_BUTTON_OPTIONS}
-          onChange={handleActionButtonStyleChange}
         />
       </SettingRow>
 

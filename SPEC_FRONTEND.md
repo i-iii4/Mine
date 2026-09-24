@@ -949,9 +949,9 @@ Image media expansion:
   остаётся визуально нажатой при активном search state. Кнопка и повторное
   `Cmd+F` закрывают main search state и очищают query. Закрытие не анимирует
   страницу и не меняет scroll viewport.
-- Bottom app bar actions use `ActionButton`: outer `h-6 p-[2px]`, inner text
-  boxes `h-5 inline-flex items-center leading-none`. Vertical centering is
-  owned by fixed 20px inner boxes, not by vertical padding.
+- Действующие кнопки нижней панели используют только стандартное представление
+  `ActionButton`: рамка сочетания имеет высоту 20 пикселей, название действия
+  стоит рядом. Вся пара является одной областью нажатия.
 - Пока visual component скрыт, `Cmd+F`/`Search elements` не создают input и не
   переносят caret.
 - Если пользователь начинает Grid group selection при активном main search,
@@ -1092,6 +1092,9 @@ Image media expansion:
   `useChromeDragGesture()`. Dropdown triggers use
   `useTopChromeTriggerInteraction()` so pointer drag never opens the dropdown
   and pointer-close does not leave a sticky focus-colored trigger.
+Следующее описание компактного меню сохранено как история проектирования.
+Флаг больше не применяется, а контрол удалён из настроек.
+
 - Compact Detail top menu is an optional Settings flag, persisted in
   `localStorage` as `mine.compactDetailTopMenu`. The setting changes top-chrome
   geometry before Detail opens: the right collection switcher uses compact
