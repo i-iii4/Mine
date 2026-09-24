@@ -118,7 +118,7 @@ try {
   assert.equal(recovered.reply.outcome, 'committed');
   assert.deepEqual(recovered.duplicate, recovered.reply);
   assert.deepEqual(recovered.names, ['Worker image.md']);
-  assert.ok(recovered.markdown.includes('[[Media/Worker image.png]]'));
+  assert.ok(recovered.markdown.includes('[[Worker image.png]]'));
   assert.equal(recovered.media, 'image bytes');
   await context.close();
   context = undefined;

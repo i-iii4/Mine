@@ -9,7 +9,7 @@ import {
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { COLLECTION_PICKER_CONTENT_CLASS } from "./CollectionPicker";
-import { copyMediaAssetToClipboard, getBlock, icloudDownloadProgress, prepareDeleteMediaAsset } from "@/lib/commands";
+import { copyMediaAssetToClipboard, getBlock, icloudDownloadProgress, prepareDeleteMediaAsset, resolveNoteLink } from "@/lib/commands";
 import {
   HOVER_PREVIEW_COLD_OPEN_DELAY_MS,
   HOVER_PREVIEW_WARM_WINDOW_MS,
@@ -53,6 +53,7 @@ vi.mock("@/lib/commands", () => ({
   getBlock: vi.fn(),
   copyMediaAssetToClipboard: vi.fn(),
   prepareDeleteMediaAsset: vi.fn(),
+  resolveNoteLink: vi.fn(),
   icloudDownloadProgress: vi.fn(),
 }));
 
@@ -103,6 +104,7 @@ function block(overrides: Partial<IndexedBlock> = {}): IndexedBlock {
 const getBlockMock = vi.mocked(getBlock);
 const copyMediaAssetToClipboardMock = vi.mocked(copyMediaAssetToClipboard);
 const prepareDeleteMediaAssetMock = vi.mocked(prepareDeleteMediaAsset);
+const resolveNoteLinkMock = vi.mocked(resolveNoteLink);
 
 function setViewportWidth(value: number) {
   Object.defineProperty(window, "innerWidth", {
@@ -118,6 +120,8 @@ describe("Detail", () => {
   beforeEach(() => {
     getBlockMock.mockReset();
     getBlockMock.mockResolvedValue(null);
+    resolveNoteLinkMock.mockReset();
+    resolveNoteLinkMock.mockResolvedValue(null);
     copyMediaAssetToClipboardMock.mockReset();
     copyMediaAssetToClipboardMock.mockResolvedValue(undefined);
     vi.mocked(icloudDownloadProgress).mockReset();
@@ -457,6 +461,59 @@ describe("Detail", () => {
 
     expect(screen.getByText("Author")).toBeInTheDocument();
     expect(screen.getAllByText("Author Name")).toHaveLength(1);
+  });
+
+  it("opens nested note wikilinks through source resolution and leaves external links external", async () => {
+    resolveNoteLinkMock.mockResolvedValue("Notes/Peer");
+    const onOpenRelatedNote = vi.fn();
+    render(
+      <Detail
+        block={block({ slug: "Cards/Source", body: "See [[Peer#Heading|my peer]] and [external](https://example.org)" })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={onOpenRelatedNote}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "my peer" }));
+    await waitFor(() => expect(onOpenRelatedNote).toHaveBeenCalledWith("Notes/Peer"));
+    expect(resolveNoteLinkMock).toHaveBeenCalledWith("Cards/Source", "Peer#Heading");
+    const external = screen.getByRole("link", { name: "external" });
+    expect(external).toHaveAttribute("href", "https://example.org");
+    expect(external).toHaveAttribute("target", "_blank");
+    fireEvent.click(external);
+    expect(resolveNoteLinkMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not navigate an unresolved wikilink", async () => {
+    const onOpenRelatedNote = vi.fn();
+    render(
+      <Detail
+        block={block({ slug: "Cards/Source", body: "[[Missing]]" })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={onOpenRelatedNote}
+      />,
+    );
+    expect(fireEvent.click(screen.getByRole("link", { name: "Missing" }))).toBe(false);
+    await waitFor(() => expect(resolveNoteLinkMock).toHaveBeenCalledWith("Cards/Source", "Missing"));
+    expect(onOpenRelatedNote).not.toHaveBeenCalled();
   });
 
   it("truncates identifier metadata values instead of wrapping them", () => {

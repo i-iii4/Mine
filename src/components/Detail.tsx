@@ -72,7 +72,7 @@ import type {
 } from "@/types";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { preprocessWikilinks, inlineMediaOccurrenceIndex, markdownSourceByteOffset } from "@/lib/markdownWikilinks";
-import { decodeLocalMarkdownUrl } from "@/lib/markdownWikilinks";
+import { decodeLocalMarkdownUrl, decodeWikilinkHref } from "@/lib/markdownWikilinks";
 import {
   thumbnailUrl,
   mediaUrl,
@@ -91,7 +91,7 @@ import { cn } from "@/lib/utils";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { TopFadeScrim } from "./TopFadeScrim";
 import { getDisplayTitle, getFallbackLabel, getNavigationLabel } from "@/lib/displayTitle";
-import { copyMediaAssetToClipboard, getBlock, icloudDownloadProgress, prepareDeleteMediaAsset } from "@/lib/commands";
+import { copyMediaAssetToClipboard, getBlock, icloudDownloadProgress, prepareDeleteMediaAsset, resolveNoteLink } from "@/lib/commands";
 import { collectionRefLabel } from "@/lib/collections";
 import { getHoverPreviewOpenDelay } from "@/lib/hoverPreviewTiming";
 import {
@@ -2877,16 +2877,27 @@ function ArticleBody({
           </MediaAssetActionFrame>
         );
       },
-      a: ({ href, children, ...props }) => (
-        <a
-          href={href}
-          target="_blank"
-          rel="noopener noreferrer"
-          {...props}
-        >
-          {children}
-        </a>
-      ),
+      a: ({ href, children, ...props }) => {
+        const wikilinkTarget = decodeWikilinkHref(href);
+        return (
+          <a
+            href={href}
+            target={wikilinkTarget === null ? "_blank" : undefined}
+            rel={wikilinkTarget === null ? "noopener noreferrer" : undefined}
+            {...props}
+            onClick={(event) => {
+              if (wikilinkTarget === null) return;
+              event.preventDefault();
+              if (!sourceSlug) return;
+              void resolveNoteLink(sourceSlug, wikilinkTarget)
+                .then((slug) => { if (slug) onOpenRelatedNote(slug); })
+                .catch((error) => { console.error("Failed to resolve note link:", error); });
+            }}
+          >
+            {children}
+          </a>
+        );
+      },
     }),
     [
       currentTag,
@@ -2894,6 +2905,7 @@ function ArticleBody({
       onCreateChannelAndMediaAssetCard,
       onDeleteMediaAsset,
       onOpenImagePreview,
+      onOpenRelatedNote,
       onRemoveMediaAssetFromCard,
       onRenameMediaAsset,
       previewManifest,

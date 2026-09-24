@@ -9,11 +9,12 @@ use rusqlite::Connection;
 use serde::Serialize;
 use std::collections::HashSet;
 
-use crate::domain::block::{suggest_slug, Block, BlockType, DateTime, Frontmatter};
+use crate::domain::block::{Block, BlockType, DateTime, Frontmatter};
 use crate::domain::vault::VaultLayout;
 use crate::import::arena_api::{self, ArenaBlock};
 use crate::storage::source_mutation::{SourceFileWrite, StagedSourceMutation};
-use crate::storage::{index, thumbnails};
+use crate::storage::{files, index, thumbnails};
+use mine_core::links::LinkIndex;
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -112,49 +113,53 @@ fn import_single_block(
     let title = arena_block.title.clone();
     let url = arena_block.source.as_ref().and_then(|s| s.url.clone());
 
-    // Generate unique slug (check DB + session-local set)
-    let raw_slug = vault.new_card_slug(&suggest_slug(title.as_deref(), url.as_deref()));
-    let slug = {
-        if !session_slugs.contains(&raw_slug)
-            && !index::slug_exists(conn, &raw_slug)?
-            && !vault.block_path(&raw_slug).exists()
-        {
-            raw_slug
-        } else {
-            let mut found = None;
-            for n in 2..=1000u32 {
-                let candidate = format!("{}-{}", raw_slug, n);
-                if !session_slugs.contains(&candidate)
-                    && !index::slug_exists(conn, &candidate)?
-                    && !vault.block_path(&candidate).exists()
-                {
-                    found = Some(candidate);
-                    break;
-                }
-            }
-            found.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "could not resolve slug conflict for '{}' after 1000 attempts",
-                    raw_slug
-                )
-            })?
-        }
-    };
+    let mut existing = files::scan_vault_file_paths(vault)?;
+    existing.extend(session_slugs.iter().map(|slug| format!("{slug}.md")));
+    let name = mine_core::save::select_name(
+        vault.write_layout(),
+        title.as_deref(),
+        url.as_deref(),
+        &existing,
+    )?;
+    let slug = vault.new_card_slug(&name);
     session_slugs.insert(slug.clone());
 
     // Download media file if applicable
-    let name = slug.rsplit('/').next().unwrap_or(&slug);
-    let (media_file, media_ext, media_bytes) = download_media(name, arena_block)?;
-    let media_file = media_file.map(|name| vault.new_media_stem(&name));
+    let (media_file, media_ext, media_bytes) = download_media(&name, arena_block)?;
+    let media_file = media_file
+        .map(|filename| -> Result<String> {
+            let (stem, ext) = filename.rsplit_once('.').unwrap_or((&filename, ""));
+            let free = mine_core::save::select_unique_file_stem(stem, ext, &existing)?;
+            Ok(vault.new_media_stem(&format!("{free}.{ext}")))
+        })
+        .transpose()?;
 
     // Download thumbnail for links
     let thumbnail = if block_type == BlockType::Link {
-        download_thumbnail(name, arena_block)?
+        download_thumbnail(&name, arena_block)?
     } else {
         (None, None)
     };
     let (thumbnail, thumbnail_bytes) = thumbnail;
-    let thumbnail = thumbnail.map(|name| vault.new_media_stem(&name));
+    let thumbnail = thumbnail
+        .map(|filename| -> Result<String> {
+            let (stem, ext) = filename.rsplit_once('.').unwrap_or((&filename, ""));
+            let mut occupied = existing.clone();
+            occupied.push(format!("{slug}.md"));
+            occupied.extend(media_file.iter().cloned());
+            let free = mine_core::save::select_unique_file_stem(stem, ext, &occupied)?;
+            let filename = if ext.is_empty() {
+                free
+            } else {
+                format!("{free}.{ext}")
+            };
+            Ok(vault.new_media_stem(&filename))
+        })
+        .transpose()?;
+    let mut link_paths = files::scan_vault_file_paths(vault)?;
+    link_paths.push(format!("{slug}.md"));
+    link_paths.extend(media_file.iter().chain(thumbnail.iter()).cloned());
+    let links = LinkIndex::new(link_paths);
 
     // Parse saved_at
     let saved_at_str = normalize_datetime(&arena_block.created_at);
@@ -170,8 +175,12 @@ fn import_single_block(
             title,
             description: arena_block.description.clone(),
             url,
-            file: media_file,
-            thumbnail,
+            file: media_file
+                .as_deref()
+                .and_then(|path| links.shortest_link(path, false)),
+            thumbnail: thumbnail
+                .as_deref()
+                .and_then(|path| links.shortest_link(path, false)),
             tags: vec![tag.to_string()],
             related_notes: Vec::new(),
             source_media: None,
@@ -189,10 +198,10 @@ fn import_single_block(
 
     // Write .md file
     let mut writes = Vec::with_capacity(3);
-    if let (Some(filename), Some(bytes)) = (block.frontmatter.file.as_ref(), media_bytes) {
+    if let (Some(filename), Some(bytes)) = (media_file.as_ref(), media_bytes) {
         writes.push(SourceFileWrite::create(vault.root().join(filename), bytes));
     }
-    if let (Some(filename), Some(bytes)) = (block.frontmatter.thumbnail.as_ref(), thumbnail_bytes) {
+    if let (Some(filename), Some(bytes)) = (thumbnail.as_ref(), thumbnail_bytes) {
         writes.push(SourceFileWrite::create(vault.root().join(filename), bytes));
     }
     writes.push(SourceFileWrite::create(
@@ -337,13 +346,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let vault = VaultLayout::new(dir.path().to_path_buf()).with_write_layout(
             crate::domain::vault::VaultWriteLayout {
-                cards: "Notes/Imported".into(), media: "Assets".into(), collections: "Sets".into(),
-            });
+                cards: "Notes/Imported".into(),
+                media: "Assets".into(),
+                collections: "Sets".into(),
+            },
+        );
         let conn = crate::storage::db::open_or_create(&vault.index_db_path()).unwrap();
         let block: ArenaBlock = serde_json::from_value(serde_json::json!({
             "id": 1, "title": "Example", "content": "Imported text", "class": "Text",
             "created_at": "2026-04-25T14:00:40Z"
-        })).unwrap();
+        }))
+        .unwrap();
         import_single_block(&conn, &vault, &block, "Reading", &mut HashSet::new()).unwrap();
         assert!(vault.block_path("Notes/Imported/Example").exists());
         assert!(!vault.block_path("Example").exists());

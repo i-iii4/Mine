@@ -12,8 +12,9 @@ use crate::domain::block::{
     Block, BlockType, DateTime, Frontmatter,
 };
 use crate::domain::collection::{normalize_collection_ref, validate_collection_ref};
-use crate::domain::vault::{resolve_card_name_conflict, validate_slug, VaultWriteLayout};
 pub use crate::domain::vault::VaultWriteLayout as CoreLayout;
+use crate::domain::vault::{normalize_filename_stem, validate_slug, VaultWriteLayout};
+use crate::links::LinkIndex;
 
 /// A prepared capture. Resource acquisition belongs to the executor.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
@@ -55,12 +56,19 @@ pub enum CaptureIntent {
 /// Transport outcomes do not confuse an unobserved result with a rejected save.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
-pub enum SaveOutcome { Committed, NotCommitted, Unknown }
+pub enum SaveOutcome {
+    Committed,
+    NotCommitted,
+    Unknown,
+}
 
 /// A started operation cannot move between these executors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
-pub enum SaveExecutor { Native, Browser }
+pub enum SaveExecutor {
+    Native,
+    Browser,
+}
 
 /// A machine-readable core failure, safe to expose across the native/WASM bridge.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type, thiserror::Error)]
@@ -90,7 +98,10 @@ impl std::fmt::Display for SaveErrorCode {
 }
 
 fn failure(code: SaveErrorCode, message: impl ToString) -> SaveError {
-    SaveError { code, message: message.to_string() }
+    SaveError {
+        code,
+        message: message.to_string(),
+    }
 }
 
 /// Normalize and validate collection references while preserving their order.
@@ -98,23 +109,34 @@ pub fn normalize_collections(values: &[String]) -> Result<Vec<String>, SaveError
     let mut collections = Vec::new();
     for value in values {
         let normalized = normalize_collection_ref(value);
-        if normalized.is_empty() { continue; }
+        if normalized.is_empty() {
+            continue;
+        }
         let checked = validate_collection_ref(&normalized)
             .map_err(|error| failure(SaveErrorCode::InvalidCollection, error))?;
-        if !collections.contains(&checked) { collections.push(checked); }
+        if !collections.contains(&checked) {
+            collections.push(checked);
+        }
     }
     Ok(collections)
 }
 
 /// Whether the page represents a social post rather than a headed article.
 pub fn is_social_status_url(value: &str) -> bool {
-    let Ok(url) = url::Url::parse(value) else { return false; };
-    let host = url.host_str().unwrap_or_default().trim_start_matches("www.");
+    let Ok(url) = url::Url::parse(value) else {
+        return false;
+    };
+    let host = url
+        .host_str()
+        .unwrap_or_default()
+        .trim_start_matches("www.");
     let path = url.path();
     ((host == "twitter.com" || host == "x.com" || host == "mobile.twitter.com")
         && path.contains("/status/"))
         || (host == "instagram.com"
-            && ["/p/", "/reel/", "/stories/"].iter().any(|prefix| path.starts_with(prefix)))
+            && ["/p/", "/reel/", "/stories/"]
+                .iter()
+                .any(|prefix| path.starts_with(prefix)))
 }
 
 /// Shared heading policy for every capture entry point.
@@ -130,18 +152,32 @@ pub fn should_write_body_h1(kind: BlockType, url: Option<&str>) -> bool {
 
 /// Validate extraction semantics before an executor acquires resources. The
 /// same check runs again on prepared content before source construction.
-pub fn validate_capture_input(intent: CaptureIntent, kind: &str, body: &str, has_media: bool) -> Result<(), SaveError> {
+pub fn validate_capture_input(
+    intent: CaptureIntent,
+    kind: &str,
+    body: &str,
+    has_media: bool,
+) -> Result<(), SaveError> {
     if intent == CaptureIntent::WebClip {
         let kind = BlockType::from_str(kind)
             .map_err(|error| failure(SaveErrorCode::InvalidRequest, error))?;
         if kind == BlockType::Channel {
-            return Err(failure(SaveErrorCode::InvalidRequest, "use collection creation for channels"));
+            return Err(failure(
+                SaveErrorCode::InvalidRequest,
+                "use collection creation for channels",
+            ));
         }
         if kind == BlockType::Article && body.trim().is_empty() {
-        return Err(failure(SaveErrorCode::MissingContent, "article block requires non-empty extracted content"));
+            return Err(failure(
+                SaveErrorCode::MissingContent,
+                "article block requires non-empty extracted content",
+            ));
         }
         if kind == BlockType::Image && !has_media {
-        return Err(failure(SaveErrorCode::MissingMedia, "image block requires a media file or thumbnail"));
+            return Err(failure(
+                SaveErrorCode::MissingMedia,
+                "image block requires a media file or thumbnail",
+            ));
         }
     }
     Ok(())
@@ -150,22 +186,33 @@ pub fn validate_capture_input(intent: CaptureIntent, kind: &str, body: &str, has
 /// Build the canonical document from content prepared by any executor.
 pub fn build_capture(request: &CaptureRequest) -> Result<Block, SaveError> {
     validate_slug(&request.slug).map_err(|error| failure(SaveErrorCode::InvalidPath, error))?;
-    validate_capture_input(request.intent, &request.block_type, &request.body, request.file.is_some() || request.thumbnail.is_some())?;
+    validate_capture_input(
+        request.intent,
+        &request.block_type,
+        &request.body,
+        request.file.is_some() || request.thumbnail.is_some(),
+    )?;
     let kind = if request.intent == CaptureIntent::WebClip {
-        BlockType::from_str(&request.block_type).map_err(|error| failure(SaveErrorCode::InvalidRequest, error))?
-    } else { BlockType::Article };
+        BlockType::from_str(&request.block_type)
+            .map_err(|error| failure(SaveErrorCode::InvalidRequest, error))?
+    } else {
+        BlockType::Article
+    };
     for reference in [&request.file, &request.thumbnail].into_iter().flatten() {
         validate_slug(reference).map_err(|error| failure(SaveErrorCode::InvalidPath, error))?;
     }
     let write_heading = match request.intent {
-        CaptureIntent::WebClip => !request.body.trim().is_empty()
-            && should_write_body_h1(kind, request.url.as_deref()),
+        CaptureIntent::WebClip => {
+            !request.body.trim().is_empty() && should_write_body_h1(kind, request.url.as_deref())
+        }
         CaptureIntent::Desktop => false,
         CaptureIntent::Manual => request.file.is_none() || !request.body.trim().is_empty(),
     };
     let body = if write_heading {
         ensure_body_starts_with_h1(&request.body, request.title.as_deref().unwrap_or_default())
-    } else { request.body.clone() };
+    } else {
+        request.body.clone()
+    };
     let mut block = Block {
         slug: request.slug.clone(),
         frontmatter: Frontmatter {
@@ -184,7 +231,9 @@ pub fn build_capture(request: &CaptureRequest) -> Result<Block, SaveError> {
             width: request.width,
             height: request.height,
             author: request.author.clone(),
-            position: None, color: None, icon: None,
+            position: None,
+            color: None,
+            icon: None,
         },
         body,
     };
@@ -193,31 +242,90 @@ pub fn build_capture(request: &CaptureRequest) -> Result<Block, SaveError> {
 }
 
 /// Select a filename using the same namespace in native and browser clients.
-pub fn select_name(layout: &VaultWriteLayout, title: Option<&str>, url: Option<&str>, existing: &[String]) -> Result<String, SaveError> {
-    let layout = layout.validate().map_err(|error| failure(SaveErrorCode::InvalidPath, error))?;
-    let existing: HashSet<String> = existing.iter().cloned().collect();
-    resolve_card_name_conflict(&layout, &suggest_slug(title, url), &existing)
-        .map_err(|error| failure(SaveErrorCode::NameConflict, error))
+pub fn select_name(
+    layout: &VaultWriteLayout,
+    title: Option<&str>,
+    url: Option<&str>,
+    existing: &[String],
+) -> Result<String, SaveError> {
+    layout.validate().map_err(|error| failure(SaveErrorCode::InvalidPath, error))?;
+    select_unique_file_stem(&suggest_slug(title, url), "md", existing)
+}
+
+/// Select a free filename for one extension across the entire vault.
+pub fn select_unique_file_stem(raw_name: &str, extension: &str, existing_paths: &[String]) -> Result<String, SaveError> {
+    validate_slug(raw_name).map_err(|error| failure(SaveErrorCode::InvalidPath, error))?;
+    if raw_name.contains('/') || raw_name.starts_with('.') || raw_name.contains("]]" ) {
+        return Err(failure(SaveErrorCode::InvalidPath, "filename must be a safe visible basename"));
+    }
+    if extension.is_empty() || !extension.chars().all(|ch| ch.is_ascii_alphanumeric()) {
+        return Err(failure(SaveErrorCode::InvalidRequest, "invalid file extension"));
+    }
+    let raw_name = normalize_filename_stem(raw_name);
+    let occupied: HashSet<String> = existing_paths.iter().filter_map(|path| path.rsplit('/').next())
+        .map(|name| normalize_filename_stem(name).to_lowercase()).collect();
+    let extension = extension.to_lowercase();
+    let free = |candidate: &str| !occupied.contains(&format!("{candidate}.{extension}").to_lowercase());
+    if free(&raw_name) { return Ok(raw_name); }
+    for n in 2..=1000 {
+        let candidate = format!("{raw_name} ({n})");
+        if free(&candidate) { return Ok(candidate); }
+    }
+    Err(failure(SaveErrorCode::NameConflict, "filename suffix exhausted"))
+}
+
+pub fn select_unique_file_bundle_stem(raw_name: &str, extensions: &[&str], existing_paths: &[String]) -> Result<String, SaveError> {
+    let mut candidate = raw_name.to_string();
+    for suffix in 1..=1000 {
+        if extensions.iter().all(|extension| {
+            select_unique_file_stem(&candidate, extension, existing_paths).is_ok_and(|selected| selected == candidate)
+        }) { return Ok(candidate); }
+        candidate = format!("{raw_name} ({})", suffix + 1);
+    }
+    Err(failure(SaveErrorCode::NameConflict, "filename suffix exhausted"))
 }
 
 /// Durable phases. Publishing intent is recorded before a filesystem side effect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
-pub enum SavePhase { Prepared, MediaPublishing, MediaPublished, MarkdownPublishing, SourceCommitted, Committed }
+pub enum SavePhase {
+    Prepared,
+    MediaPublishing,
+    MediaPublished,
+    MarkdownPublishing,
+    SourceCommitted,
+    Committed,
+}
 
 /// What the executor can actually establish about the expected Markdown file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
-pub enum PublicationEvidence { NotRequired, Missing, Matches, Conflict, Unreadable }
+pub enum PublicationEvidence {
+    NotRequired,
+    Missing,
+    Matches,
+    Conflict,
+    Unreadable,
+}
 
 /// Filesystem observations, never optimistic predictions.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-pub struct SaveEvidence { pub markdown: PublicationEvidence, pub media: PublicationEvidence }
+pub struct SaveEvidence {
+    pub markdown: PublicationEvidence,
+    pub media: PublicationEvidence,
+}
 
 /// The next domain decision; platform code performs only its concrete effect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
-pub enum SaveAction { PublishMedia, PublishMarkdown, PersistReceipt, ReturnCommitted, UnknownOutcome, NameConflict }
+pub enum SaveAction {
+    PublishMedia,
+    PublishMarkdown,
+    PersistReceipt,
+    ReturnCommitted,
+    UnknownOutcome,
+    NameConflict,
+}
 
 /// Decide save/recovery without treating a lost acknowledgement as a failed write.
 pub fn next_save_action(phase: SavePhase, evidence: &SaveEvidence) -> SaveAction {
@@ -225,19 +333,46 @@ pub fn next_save_action(phase: SavePhase, evidence: &SaveEvidence) -> SaveAction
     use SaveAction::*;
     // A durable receipt records the completed operation, not ownership of the
     // document forever. Later user edits/deletion must not turn replay into a write.
-    if phase == SavePhase::Committed { return ReturnCommitted; }
+    if phase == SavePhase::Committed {
+        return ReturnCommitted;
+    }
     let media_ready = matches!(evidence.media, Matches | NotRequired);
-    if matches!(phase, SavePhase::MediaPublishing | SavePhase::MediaPublished) && !media_ready { return UnknownOutcome; }
-    if matches!(phase, SavePhase::MarkdownPublishing | SavePhase::SourceCommitted) {
-        if evidence.markdown != Matches || !media_ready { return UnknownOutcome; }
+    if matches!(
+        phase,
+        SavePhase::MediaPublishing | SavePhase::MediaPublished
+    ) && !media_ready
+    {
+        return UnknownOutcome;
+    }
+    if matches!(
+        phase,
+        SavePhase::MarkdownPublishing | SavePhase::SourceCommitted
+    ) {
+        if evidence.markdown != Matches || !media_ready {
+            return UnknownOutcome;
+        }
         return PersistReceipt;
     }
     if evidence.markdown != Missing {
-        return if evidence.markdown == PublicationEvidence::Unreadable { UnknownOutcome } else { NameConflict };
+        return if evidence.markdown == PublicationEvidence::Unreadable {
+            UnknownOutcome
+        } else {
+            NameConflict
+        };
     }
-    if evidence.media == PublicationEvidence::Unreadable { return UnknownOutcome; }
-    if phase == SavePhase::Prepared && matches!(evidence.media, Matches | PublicationEvidence::Conflict) { return NameConflict; }
-    if media_ready { PublishMarkdown } else { PublishMedia }
+    if evidence.media == PublicationEvidence::Unreadable {
+        return UnknownOutcome;
+    }
+    if phase == SavePhase::Prepared
+        && matches!(evidence.media, Matches | PublicationEvidence::Conflict)
+    {
+        return NameConflict;
+    }
+    if media_ready {
+        PublishMarkdown
+    } else {
+        PublishMedia
+    }
 }
 
 /// A stable fingerprint of the semantic request, independent of map-key ordering.
@@ -249,11 +384,23 @@ pub fn request_fingerprint(value: &serde_json::Value) -> String {
             serde_json::Value::Object(map) => {
                 let mut entries: Vec<_> = map.iter().collect();
                 entries.sort_by(|a, b| a.0.cmp(b.0));
-                format!("{{{}}}", entries.into_iter().map(|(key, value)|
-                    format!("{}:{}", serde_json::Value::String(key.clone()), canonical(value))
-                ).collect::<Vec<_>>().join(","))
+                format!(
+                    "{{{}}}",
+                    entries
+                        .into_iter()
+                        .map(|(key, value)| format!(
+                            "{}:{}",
+                            serde_json::Value::String(key.clone()),
+                            canonical(value)
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )
             }
-            serde_json::Value::Array(values) => format!("[{}]", values.iter().map(canonical).collect::<Vec<_>>().join(",")),
+            serde_json::Value::Array(values) => format!(
+                "[{}]",
+                values.iter().map(canonical).collect::<Vec<_>>().join(",")
+            ),
             other => other.to_string(),
         }
     }
@@ -261,20 +408,58 @@ pub fn request_fingerprint(value: &serde_json::Value) -> String {
 }
 
 /// Hash prepared source bytes for recovery verification.
-pub fn content_hash(bytes: &[u8]) -> String { format!("{:x}", Sha256::digest(bytes)) }
+pub fn content_hash(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
 
 /// Commands supported by the JSON/WASM bridge, generated into TypeScript.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum CoreCommand {
-    Capture { request: CaptureRequest },
-    Name { title: Option<String>, url: Option<String>, layout: CoreLayout, existing: Vec<String> },
-    Layout { layout: CoreLayout },
-    DetectLayout { stored: Option<CoreLayout>, empty: bool, cards: bool, media: bool, collections: bool },
-    Collection { slug: String, saved_at: String },
-    Inspect { slug: String, markdown: String },
-    Advance { phase: SavePhase, evidence: SaveEvidence },
-    Fingerprint { value: String },
+    Capture {
+        request: CaptureRequest,
+    },
+    Name {
+        title: Option<String>,
+        url: Option<String>,
+        layout: CoreLayout,
+        existing: Vec<String>,
+    },
+    UniqueFileName {
+        name: String,
+        extension: String,
+        existing: Vec<String>,
+    },
+    ShortestLink {
+        target: String,
+        paths: Vec<String>,
+        omit_md_ext: bool,
+    },
+    Layout {
+        layout: CoreLayout,
+    },
+    DetectLayout {
+        stored: Option<CoreLayout>,
+        empty: bool,
+        cards: bool,
+        media: bool,
+        collections: bool,
+    },
+    Collection {
+        slug: String,
+        saved_at: String,
+    },
+    Inspect {
+        slug: String,
+        markdown: String,
+    },
+    Advance {
+        phase: SavePhase,
+        evidence: SaveEvidence,
+    },
+    Fingerprint {
+        value: String,
+    },
 }
 
 /// Execute a pure bridge command. Native fixtures and WASM use this same entry point.
@@ -284,38 +469,87 @@ pub fn execute(command: CoreCommand) -> Result<serde_json::Value, SaveError> {
         CoreCommand::Capture { request } => {
             let block = build_capture(&request)?;
             let markdown = serialize_block(&block);
-            Ok(json!({ "slug": block.slug, "markdown": markdown, "hash": content_hash(markdown.as_bytes()) }))
+            Ok(
+                json!({ "slug": block.slug, "markdown": markdown, "hash": content_hash(markdown.as_bytes()) }),
+            )
         }
-        CoreCommand::Name { title, url, layout, existing } => {
-            let layout = layout.validate().map_err(|e| failure(SaveErrorCode::InvalidPath, e))?;
+        CoreCommand::Name {
+            title,
+            url,
+            layout,
+            existing,
+        } => {
+            let layout = layout
+                .validate()
+                .map_err(|e| failure(SaveErrorCode::InvalidPath, e))?;
             let name = select_name(&layout, title.as_deref(), url.as_deref(), &existing)?;
             Ok(json!({ "name": name, "slug": layout.new_card_slug(&name) }))
         }
-        CoreCommand::Layout { layout } => {
-            let layout = layout.validate().map_err(|e| failure(SaveErrorCode::InvalidPath, e))?;
-            Ok(json!({ "cards": layout.cards, "media": layout.media, "collections": layout.collections }))
+        CoreCommand::UniqueFileName { name, extension, existing } => {
+            Ok(json!({ "name": select_unique_file_stem(&name, &extension, &existing)? }))
         }
-        CoreCommand::DetectLayout { stored, empty, cards: _, media: _, collections: _ } => {
-            let layout = stored.unwrap_or_else(|| if empty {
-                CoreLayout::standard()
-            } else {
-                CoreLayout::flat()
-            }).validate().map_err(|e| failure(SaveErrorCode::InvalidPath, e))?;
+        CoreCommand::ShortestLink {
+            target,
+            paths,
+            omit_md_ext,
+        } => {
+            let value = LinkIndex::new(paths)
+                .shortest_link(&target, omit_md_ext)
+                .ok_or_else(|| {
+                    failure(
+                        SaveErrorCode::InvalidPath,
+                        "target is missing from link index",
+                    )
+                })?;
+            Ok(json!({ "target": value }))
+        }
+        CoreCommand::Layout { layout } => {
+            let layout = layout
+                .validate()
+                .map_err(|e| failure(SaveErrorCode::InvalidPath, e))?;
+            Ok(
+                json!({ "cards": layout.cards, "media": layout.media, "collections": layout.collections }),
+            )
+        }
+        CoreCommand::DetectLayout {
+            stored,
+            empty,
+            cards: _,
+            media: _,
+            collections: _,
+        } => {
+            let layout = stored
+                .unwrap_or_else(|| {
+                    if empty {
+                        CoreLayout::standard()
+                    } else {
+                        CoreLayout::flat()
+                    }
+                })
+                .validate()
+                .map_err(|e| failure(SaveErrorCode::InvalidPath, e))?;
             Ok(json!(layout))
         }
         CoreCommand::Collection { slug, saved_at } => {
             validate_slug(&slug).map_err(|e| failure(SaveErrorCode::InvalidPath, e))?;
-            let mut block = build_capture(&CaptureRequest { slug, block_type: "link".into(), saved_at, ..Default::default() })?;
+            let mut block = build_capture(&CaptureRequest {
+                slug,
+                block_type: "link".into(),
+                saved_at,
+                ..Default::default()
+            })?;
             block.frontmatter.block_type = BlockType::Channel;
             Ok(json!({ "markdown": serialize_block(&block) }))
         }
         CoreCommand::Inspect { slug, markdown } => {
-            let block = parse_block(&slug, &markdown).map_err(|e| failure(SaveErrorCode::InvalidRequest, e))?;
+            let block = parse_block(&slug, &markdown)
+                .map_err(|e| failure(SaveErrorCode::InvalidRequest, e))?;
             Ok(json!({ "collection": block.frontmatter.block_type == BlockType::Channel }))
         }
         CoreCommand::Advance { phase, evidence } => Ok(json!(next_save_action(phase, &evidence))),
         CoreCommand::Fingerprint { value } => {
-            let value = serde_json::from_str(&value).map_err(|e| failure(SaveErrorCode::InvalidRequest, e))?;
+            let value = serde_json::from_str(&value)
+                .map_err(|e| failure(SaveErrorCode::InvalidRequest, e))?;
             Ok(json!(request_fingerprint(&value)))
         }
     }
@@ -335,10 +569,39 @@ pub fn execute_json(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn new_filename_is_unique_across_unrelated_folders_by_extension() {
+        let layout = VaultWriteLayout::standard();
+        let existing = vec!["Other/Photo.md".into(), "Archive/Photo (2).md".into(), "Images/Photo.jpg".into()];
+        assert_eq!(
+            select_name(&layout, Some("Photo"), None, &existing).unwrap(),
+            "Photo (3)"
+        );
+        assert_eq!(select_unique_file_stem("Photo", "jpg", &existing).unwrap(), "Photo (2)");
+        let result = execute(CoreCommand::UniqueFileName {
+            name: "Photo".into(),
+            extension: "md".into(),
+            existing,
+        })
+        .unwrap();
+        assert_eq!(result["name"], "Photo (3)");
+    }
+    #[test]
+    fn file_namer_rejects_paths_and_matches_unicode_and_case() {
+        assert!(select_unique_file_stem("../outside", "md", &[]).is_err());
+        assert!(select_unique_file_stem("Note", "../md", &[]).is_err());
+        assert_eq!(select_unique_file_stem("Cafe\u{301}", "MD", &["Elsewhere/CAFÉ.md".into()]).unwrap(), "Café (2)");
+    }
     fn request() -> CaptureRequest {
-        CaptureRequest { slug: "Cards/Example".into(), block_type: "article".into(),
-            title: Some("Example".into()), body: "Text".into(),
-            saved_at: "2026-08-31T12:00:00Z".into(), source: Some("web-clipper".into()), ..Default::default() }
+        CaptureRequest {
+            slug: "Cards/Example".into(),
+            block_type: "article".into(),
+            title: Some("Example".into()),
+            body: "Text".into(),
+            saved_at: "2026-08-31T12:00:00Z".into(),
+            source: Some("web-clipper".into()),
+            ..Default::default()
+        }
     }
     #[test]
     fn desktop_capture_preserves_body_and_ignores_the_obsolete_declared_type() {
@@ -351,9 +614,15 @@ mod tests {
         assert_eq!(block.frontmatter.title, None);
         input.body.clear();
         input.url = Some("https://example.com".into());
-        assert!(build_capture(&input).expect("URL-only local capture remains valid").body.is_empty());
+        assert!(build_capture(&input)
+            .expect("URL-only local capture remains valid")
+            .body
+            .is_empty());
         input.url = None;
-        assert!(build_capture(&input).is_ok(), "existing empty local create remains valid");
+        assert!(
+            build_capture(&input).is_ok(),
+            "existing empty local create remains valid"
+        );
     }
     #[test]
     fn manual_title_only_becomes_body_content_without_legacy_title() {
@@ -364,7 +633,10 @@ mod tests {
         assert_eq!(block.body, "# Example");
         assert_eq!(block.frontmatter.title, None);
         input.body = "# Example\n\nText".into();
-        assert_eq!(build_capture(&input).expect("existing H1 is retained").body, input.body);
+        assert_eq!(
+            build_capture(&input).expect("existing H1 is retained").body,
+            input.body
+        );
     }
     #[test]
     fn manual_media_import_does_not_turn_its_filename_seed_into_a_heading() {
@@ -380,41 +652,83 @@ mod tests {
     fn web_clip_still_rejects_missing_extracted_content() {
         let mut input = request();
         input.body.clear();
-        assert_eq!(build_capture(&input).expect_err("missing article body").code, SaveErrorCode::MissingContent);
+        assert_eq!(
+            build_capture(&input)
+                .expect_err("missing article body")
+                .code,
+            SaveErrorCode::MissingContent
+        );
         input.block_type = "image".into();
-        assert_eq!(build_capture(&input).expect_err("missing image").code, SaveErrorCode::MissingMedia);
+        assert_eq!(
+            build_capture(&input).expect_err("missing image").code,
+            SaveErrorCode::MissingMedia
+        );
     }
     #[test]
     fn capture_uses_body_heading_and_no_card_type_or_title_frontmatter() {
         let markdown = serialize_block(&build_capture(&request()).expect("valid fixture"));
         assert!(markdown.contains("# Example\n\nText"));
-        assert!(!markdown.contains("type:")); assert!(!markdown.contains("title:"));
+        assert!(!markdown.contains("type:"));
+        assert!(!markdown.contains("title:"));
     }
     #[test]
     fn missing_article_or_image_material_is_rejected() {
-        let mut input = request(); input.body.clear();
-        assert_eq!(build_capture(&input).expect_err("empty article").code, SaveErrorCode::MissingContent);
+        let mut input = request();
+        input.body.clear();
+        assert_eq!(
+            build_capture(&input).expect_err("empty article").code,
+            SaveErrorCode::MissingContent
+        );
         input.block_type = "image".into();
-        assert_eq!(build_capture(&input).expect_err("missing image").code, SaveErrorCode::MissingMedia);
+        assert_eq!(
+            build_capture(&input).expect_err("missing image").code,
+            SaveErrorCode::MissingMedia
+        );
     }
     #[test]
     fn invalid_paths_and_collections_are_rejected_before_io() {
-        let mut input = request(); input.slug = "../outside".into();
-        assert_eq!(build_capture(&input).expect_err("outside").code, SaveErrorCode::InvalidPath);
-        input.slug = "Safe".into(); input.tags = vec!["../outside".into()];
+        let mut input = request();
+        input.slug = "../outside".into();
+        assert_eq!(
+            build_capture(&input).expect_err("outside").code,
+            SaveErrorCode::InvalidPath
+        );
+        input.slug = "Safe".into();
+        input.tags = vec!["../outside".into()];
         assert!(build_capture(&input).is_err());
     }
     #[test]
     fn interrupted_publication_never_blindly_retries() {
-        let missing = SaveEvidence { markdown: PublicationEvidence::Missing, media: PublicationEvidence::NotRequired };
-        assert_eq!(next_save_action(SavePhase::Prepared, &missing), SaveAction::PublishMarkdown);
-        assert_eq!(next_save_action(SavePhase::MarkdownPublishing, &missing), SaveAction::UnknownOutcome);
-        let present = SaveEvidence { markdown: PublicationEvidence::Matches, media: PublicationEvidence::NotRequired };
-        assert_eq!(next_save_action(SavePhase::MarkdownPublishing, &present), SaveAction::PersistReceipt);
-        assert_eq!(next_save_action(SavePhase::Committed, &present), SaveAction::ReturnCommitted);
+        let missing = SaveEvidence {
+            markdown: PublicationEvidence::Missing,
+            media: PublicationEvidence::NotRequired,
+        };
+        assert_eq!(
+            next_save_action(SavePhase::Prepared, &missing),
+            SaveAction::PublishMarkdown
+        );
+        assert_eq!(
+            next_save_action(SavePhase::MarkdownPublishing, &missing),
+            SaveAction::UnknownOutcome
+        );
+        let present = SaveEvidence {
+            markdown: PublicationEvidence::Matches,
+            media: PublicationEvidence::NotRequired,
+        };
+        assert_eq!(
+            next_save_action(SavePhase::MarkdownPublishing, &present),
+            SaveAction::PersistReceipt
+        );
+        assert_eq!(
+            next_save_action(SavePhase::Committed, &present),
+            SaveAction::ReturnCommitted
+        );
     }
     #[test]
     fn fingerprint_is_independent_of_object_key_order() {
-        assert_eq!(request_fingerprint(&serde_json::json!({"a":1,"b":2})), request_fingerprint(&serde_json::json!({"b":2,"a":1})));
+        assert_eq!(
+            request_fingerprint(&serde_json::json!({"a":1,"b":2})),
+            request_fingerprint(&serde_json::json!({"b":2,"a":1}))
+        );
     }
 }

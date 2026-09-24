@@ -133,6 +133,13 @@ describe("browser executor backed by actual WASM", () => {
       vault.saveStandaloneBlock(request({ operation_id: "save-2" }), options())]);
     expect(replies.map(reply => reply.slug)).toEqual(["Cards/Article", "Cards/Article (2)"]);
   });
+  it("chooses a vault-wide free name when another folder owns the filename", async () => {
+    (await folder.getDirectoryHandle("Archive", { create: true })).files.set("Article.md", new FakeFile("Existing note"));
+    (await folder.getDirectoryHandle("Elsewhere", { create: true })).files.set("Article (2).md", new FakeFile("Existing note"));
+    expect(await vault.saveStandaloneBlock(request(), options())).toMatchObject({ ok: true, slug: "Article (3)" });
+    expect(await folder.text("Archive/Article.md")).toBe("Existing note");
+    expect(await folder.text("Elsewhere/Article (2).md")).toBe("Existing note");
+  });
   it("replays compact receipt without rewriting a user-edited document", async () => {
     const first = await vault.saveStandaloneBlock(request(), options());
     folder.directories.get("Cards")!.files.set("Article.md", new FakeFile("User edit"));
@@ -184,6 +191,14 @@ describe("browser executor backed by actual WASM", () => {
     expect(await vault.saveStandaloneBlock(request({ operation_mode: "resume" }), options())).toMatchObject({ code: "name_conflict" });
     expect(await folder.text("Cards/Article.md")).toBe("Foreign");
   });
+  it("rejects a new same-name file in another folder after the plan was saved", async () => {
+    await vault.saveStandaloneBlock(request(), { ...options(), afterPrepared: () => { throw new Error("stop"); } });
+    (await folder.getDirectoryHandle("Archive", { create: true })).files.set("Article.md", new FakeFile("Foreign"));
+    expect(await vault.saveStandaloneBlock(request({ operation_mode: "resume" }), options()))
+      .toMatchObject({ code: "name_conflict", terminal_rejected: true });
+    expect(await folder.text("Archive/Article.md")).toBe("Foreign");
+    expect(folder.directories.get("Cards")!.files.size).toBe(0);
+  });
   it("publishes media before its reference and recovers without downloading twice", async () => {
     const fetcher = vi.fn(async () => ({ ok: true, blob: async () => new NodeBlob(["image"], { type: "image/png" }) }));
     const image = request({ block_type: "image", body: "", image_url: "https://example.com/image.png" });
@@ -191,7 +206,7 @@ describe("browser executor backed by actual WASM", () => {
     expect(await folder.text("Media/Article.png")).toBe("image");
     expect(folder.directories.get("Cards")!.files.size).toBe(0);
     expect(await vault.saveStandaloneBlock({ ...image, operation_mode: "resume" }, options())).toMatchObject({ ok: true });
-    expect(await folder.text("Cards/Article.md")).toContain("[[Media/Article.png]]");
+    expect(await folder.text("Cards/Article.md")).toContain("[[Article.png]]");
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
   it("lists only parsed collection documents, including a flat vault", async () => {

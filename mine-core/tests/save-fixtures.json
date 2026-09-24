@@ -11,7 +11,7 @@
         "collections": "Collections"
       },
       "existing": [
-        "Mine/Cards/Café"
+        "Mine/Cards/Café.md"
       ]
     },
     "expected": {

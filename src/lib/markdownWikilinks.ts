@@ -19,6 +19,16 @@
 // delimiter; the line bound keeps an unclosed link from swallowing the body.
 const WIKILINK_EMBED = /!\[\[([^\n]*?)\]\]/g;
 const WIKILINK_LINK = /(?<!!)\[\[([^\n]*?)\]\]/g;
+const WIKILINK_HREF_PREFIX = "#mine-wikilink:";
+
+export function decodeWikilinkHref(href: string | undefined): string | null {
+  if (!href?.startsWith(WIKILINK_HREF_PREFIX)) return null;
+  try {
+    return decodeURIComponent(href.slice(WIKILINK_HREF_PREFIX.length));
+  } catch {
+    return null;
+  }
+}
 
 function isRemoteMarkdownUrl(src: string): boolean {
   return src.startsWith("http://") || src.startsWith("https://");
@@ -66,7 +76,7 @@ export function preprocessWikilinks(body: string): string {
       const alt = (altPart ?? "").trim();
       if (!name) return "";
       const display = alt || name;
-      return `[${display}](${encodeMarkdownUrl(name)})`;
+      return `[${display}](${WIKILINK_HREF_PREFIX}${encodeURIComponent(name)})`;
     });
 }
 

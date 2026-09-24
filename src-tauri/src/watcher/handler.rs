@@ -1445,7 +1445,7 @@ mod tests {
     }
 
     #[test]
-    fn media_event_updates_bound_target_after_external_move() {
+    fn media_event_repairs_explicit_target_after_external_move() {
         let dir = tempfile::tempdir().unwrap();
         let vault = VaultLayout::new(dir.path().to_path_buf());
         let conn = test_conn();
@@ -1453,7 +1453,7 @@ mod tests {
         std::fs::write(dir.path().join("Media/original.jpg"), b"original").unwrap();
         std::fs::write(
             dir.path().join("Card.md"),
-            "---\ntype: image\nfile: \"[[original.jpg]]\"\n---\n",
+            "---\ntype: image\nfile: \"[[Media/original.jpg]]\"\n---\n",
         )
         .unwrap();
         crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();

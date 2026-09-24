@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import {
   DndContext,
@@ -26,7 +25,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { MenuIconSlot } from "@/components/ui/menu-icon-slot";
-import { CloudDisclaimer } from "@/components/CloudDisclaimer";
 import {
   addKnownVault,
   forgetKnownVault,
@@ -141,7 +139,10 @@ function SpaceRow({ path, isActive, stats, onSwitch, onRemove }: SpaceRowProps) 
                 <MenuIconSlot>
                   <Unlink className="size-3" />
                 </MenuIconSlot>
-                Remove Space
+                <span className="flex flex-col">
+                  <span>Remove Space</span>
+                  <span className="text-sm text-muted-foreground">Files stay on disk</span>
+                </span>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -274,15 +275,9 @@ export function SpacesSection() {
     }
   };
 
-  const activeStats = activeVault ? statsByPath[activeVault] : undefined;
-
   return (
     <section className="flex flex-col gap-s3">
       <h1 className="text-lg font-semibold">Spaces</h1>
-      <p className="text-sm text-muted-foreground">
-        Click a space to switch to it. Drag to reorder. Remove Space forgets a
-        space from this list — files on disk are not touched.
-      </p>
 
       <DndContext
         sensors={sensors}
@@ -317,13 +312,6 @@ export function SpacesSection() {
           Add Space
         </Button>
       </div>
-
-      {/* Standing explanation rather than a one-off notice: a space in iCloud
-          keeps behaving this way, so the answer has to keep being reachable. */}
-      <CloudDisclaimer
-        offloadedCount={activeStats === undefined || activeStats === "error" ? null : activeStats.offloaded_count}
-        onRevealSpace={activeVault ? () => void revealItemInDir(activeVault) : undefined}
-      />
     </section>
   );
 }

@@ -59,6 +59,8 @@ pub(crate) fn references_in(content: &str) -> Vec<Reference> {
                 result.push(reference);
             } else if link_list && bare.trim_start().starts_with("- ") {
                 scan_inline(bare, offset, &mut result);
+            } else {
+                scan_quoted_yaml_links(bare, offset, &mut result);
             }
             offset += line.len();
             continue;
@@ -215,6 +217,41 @@ fn frontmatter_media(line: &str, offset: usize) -> Option<Reference> {
         start: offset + start,
         end: offset + end,
     })
+}
+
+fn scan_quoted_yaml_links(line: &str, offset: usize, result: &mut Vec<Reference>) {
+    let bytes = line.as_bytes();
+    let mut index = if line.trim_start().starts_with("- ") {
+        line.find("- ").unwrap_or(0) + 2
+    } else if let Some(colon) = line.find(':') {
+        colon + 1
+    } else {
+        return;
+    };
+    while index < bytes.len() {
+        let quote = bytes[index];
+        if quote != b'\'' && quote != b'"' {
+            index += 1;
+            continue;
+        }
+        let start = index + 1;
+        let mut end = start;
+        while end < bytes.len() {
+            if bytes[end] == quote && !escaped(bytes, end) {
+                break;
+            }
+            end += 1;
+        }
+        if end == bytes.len() {
+            break;
+        }
+        if let Some(value) = line.get(start..end) {
+            if (value.starts_with("[[") || value.starts_with("![[")) && value.ends_with("]]") {
+                scan_inline(value, offset + start, result);
+            }
+        }
+        index = end + 1;
+    }
 }
 
 fn scan_inline(line: &str, offset: usize, result: &mut Vec<Reference>) {
@@ -415,7 +452,7 @@ mod tests {
     }
 
     #[test]
-    fn reads_only_supported_frontmatter_media_fields() {
+    fn reads_media_fields_and_quoted_property_links() {
         let text = "---\nfile: \"[[Media/photo.jpg|cover]]\"\nthumbnail: 'thumb.jpg'\nsource_media: clips/video.mp4 # source\ntitle: photo.jpg\nsummary: \"[[not-media]]\"\nMine Collections:\n  - \"[[collection]]\"\n---\n";
         let links = references_in(text);
         assert_eq!(
@@ -429,7 +466,8 @@ mod tests {
         assert_eq!(links[1].raw, "thumb.jpg");
         assert_eq!(links[2].raw, "clips/video.mp4");
         assert_eq!(split_reference(&links[0]), ("Media/photo.jpg", "|cover"));
-        assert_eq!(links[3].raw, "collection");
+        assert_eq!(links[3].raw, "not-media");
+        assert_eq!(links[4].raw, "collection");
     }
 
     #[test]
@@ -461,7 +499,8 @@ mod tests {
                 "Design",
                 "Архив|archive",
                 "Папка/Заметка#часть",
-                "Media/clip.mp4"
+                "Media/clip.mp4",
+                "unrelated"
             ]
         );
         assert_eq!(
@@ -473,10 +512,25 @@ mod tests {
                 ReferenceSyntax::Wikilink,
                 ReferenceSyntax::Wikilink,
                 ReferenceSyntax::Wikilink,
-                ReferenceSyntax::FrontmatterMedia
+                ReferenceSyntax::FrontmatterMedia,
+                ReferenceSyntax::Wikilink
             ]
         );
         assert_eq!(replace_target(text, &references[2], "Другая/Заметка").as_deref(), Some("---\nMine Collections: [\"[[Design]]\", \"[[Архив|archive]]\"]\nMine Related Notes:\n  - \"[[Другая/Заметка#часть]]\"\nMine Source Media: 'Media/clip.mp4'\nsummary: \"[[unrelated]]\"\n---\n"));
+    }
+
+    #[test]
+    fn repairs_quoted_links_in_custom_yaml_properties_without_scanning_prose() {
+        let text = "---\nrelated: \"[[Old/Peer#part|label]]\"\nlinks: [\"[[Old/Peer]]\", '[[Other]]']\nnotes:\n  - \"[[Old/Peer]]\"\nsummary: \"Read [[Old/Peer]] later\"\n---\n`[[literal]]`";
+        let references = references_in(text);
+        assert_eq!(
+            references
+                .iter()
+                .map(|link| link.raw.as_str())
+                .collect::<Vec<_>>(),
+            ["Old/Peer#part|label", "Old/Peer", "Other", "Old/Peer"]
+        );
+        assert_eq!(replace_target(text, &references[0], "New/Peer").as_deref(), Some("---\nrelated: \"[[New/Peer#part|label]]\"\nlinks: [\"[[Old/Peer]]\", '[[Other]]']\nnotes:\n  - \"[[Old/Peer]]\"\nsummary: \"Read [[Old/Peer]] later\"\n---\n`[[literal]]`"));
     }
 
     #[test]

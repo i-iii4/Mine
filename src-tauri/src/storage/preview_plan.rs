@@ -157,6 +157,7 @@ pub fn resolve_upgrade_media(
     }
 
     let mut seen = std::collections::HashSet::new();
+    let mut resolver = media_refs::MediaResolver::new(vault);
     for source in candidates {
         if !seen.insert(source.clone()) || is_remote_media(&source) {
             continue;
@@ -169,7 +170,7 @@ pub fn resolve_upgrade_media(
         } else {
             continue;
         };
-        let Some(path) = media_refs::resolve_indexed_media(vault, input.slug, &source) else {
+        let Some(path) = resolver.resolve_indexed_media(input.slug, &source) else {
             continue;
         };
         return Some(ResolvedPreviewMedia { source, path, kind });
@@ -248,8 +249,9 @@ pub fn find_first_existing_body_media(
     vault: &VaultLayout,
     ext_predicate: fn(&str) -> bool,
 ) -> Option<(String, PathBuf)> {
+    let mut resolver = media_refs::MediaResolver::new(vault);
     for reference in find_local_media_refs(&block.body, ext_predicate, usize::MAX) {
-        if let Some(path) = media_refs::resolve_inline_media(vault, &block.slug, &reference) {
+        if let Some(path) = resolver.resolve_inline_media(&block.slug, &reference) {
             return Some((reference.source, path));
         }
     }
@@ -263,6 +265,7 @@ pub fn find_first_existing_article_media(
     if !has_body_media(block) {
         return None;
     }
+    let mut resolver = media_refs::MediaResolver::new(vault);
     for reference in iter_inline_media_references(&block.body) {
         if reference.source.is_empty() || is_remote_media(&reference.source) {
             continue;
@@ -275,7 +278,7 @@ pub fn find_first_existing_article_media(
         } else {
             continue;
         };
-        if let Some(path) = media_refs::resolve_inline_media(vault, &block.slug, &reference) {
+        if let Some(path) = resolver.resolve_inline_media(&block.slug, &reference) {
             return Some(ResolvedPreviewMedia {
                 source: reference.source,
                 path,
@@ -298,11 +301,12 @@ pub fn collect_article_preview_images(
 
     let mut seen = std::collections::HashSet::<String>::new();
     let mut paths = Vec::new();
+    let mut resolver = media_refs::MediaResolver::new(vault);
     for reference in find_local_media_refs(&block.body, is_image_ext, limit.saturating_mul(3)) {
         if !seen.insert(reference.source.clone()) {
             continue;
         }
-        if let Some(path) = media_refs::resolve_inline_media(vault, &block.slug, &reference) {
+        if let Some(path) = resolver.resolve_inline_media(&block.slug, &reference) {
             if is_decodable(&path) {
                 paths.push(path);
                 if paths.len() >= limit {
@@ -325,6 +329,7 @@ pub fn collect_article_preview_images(
 pub fn collect_gallery_video_posters(block: &Block, vault: &VaultLayout) -> Vec<(String, PathBuf)> {
     let mut out = Vec::new();
     let mut tile_count = 0usize;
+    let mut resolver = media_refs::MediaResolver::new(vault);
     for reference in iter_inline_media_references(&block.body) {
         if tile_count >= PREVIEW_TILE_LIMIT {
             break;
@@ -340,7 +345,7 @@ pub fn collect_gallery_video_posters(block: &Block, vault: &VaultLayout) -> Vec<
         }
         tile_count += 1;
         if is_video {
-            if let Some(path) = media_refs::resolve_inline_media(vault, &block.slug, &reference) {
+            if let Some(path) = resolver.resolve_inline_media(&block.slug, &reference) {
                 out.push((reference.source, path));
             }
         }

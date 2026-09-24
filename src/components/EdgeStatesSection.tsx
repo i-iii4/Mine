@@ -17,7 +17,6 @@ import { CloudDownload, Play, RefreshCw } from "lucide-react";
 import { ActivityIndicators } from "@/components/ActivityIndicators";
 import { CardSourcelessSurface } from "@/components/Card";
 import { CloudBadge } from "@/components/CloudBadge";
-import { CloudDisclaimer } from "@/components/CloudDisclaimer";
 import { CloudRecommendationCard } from "@/components/CloudRecommendation";
 import { IndexingProgress } from "@/components/IndexingProgress";
 import { FirstCardMarkerCard } from "@/components/FirstCardMarker";
@@ -281,16 +280,6 @@ export function EdgeStatesSection() {
             onReveal={() => {}}
             onClose={() => {}}
           />
-        </StateCase>
-
-        <StateCase
-          name="Постоянное объяснение в настройках"
-          when="Раздел Spaces. Живёт всегда, потому что пространство в iCloud продолжает вести себя так же."
-        >
-          <CloudDisclaimer offloadedCount={12} onRevealSpace={() => {}} />
-          <div className="mt-3">
-            <CloudDisclaimer offloadedCount={0} />
-          </div>
         </StateCase>
 
         <StateCase

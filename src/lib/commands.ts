@@ -185,6 +185,9 @@ export const listGraphSnapshot = (scope: GraphScope, options: GraphOptions) =>
 export const getBlock = (slug: string) =>
   invoke<IndexedBlock | null>("get_block", { slug });
 
+export const resolveNoteLink = (sourceSlug: string, rawTarget: string) =>
+  invoke<string | null>("resolve_note_link", { sourceSlug, rawTarget });
+
 export const createBlock = (params: CreateBlockParams) =>
   invoke<IndexedBlock>("create_block", { params });
 

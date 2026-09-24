@@ -454,7 +454,9 @@ pub async fn get_grid_rows(
 ) -> Result<projection::GridRowsSnapshot, CommandError> {
     const MAX_BATCH: usize = 200;
     if slugs.len() > MAX_BATCH {
-        return Err(CommandError::Internal("preview row batch exceeds 200".into()));
+        return Err(CommandError::Internal(
+            "preview row batch exceeds 200".into(),
+        ));
     }
     let vault = current_vault_layout(&state)?;
     if vault.root().to_string_lossy() != path {
@@ -463,7 +465,9 @@ pub async fn get_grid_rows(
     tauri::async_runtime::spawn_blocking(move || {
         let conn = db::open_read_only(&vault.index_db_path())?;
         Ok(projection::read_grid_rows(&conn, path, &slugs)?)
-    }).await.map_err(|error| CommandError::Internal(format!("get_grid_rows task join failed: {error}")))?
+    })
+    .await
+    .map_err(|error| CommandError::Internal(format!("get_grid_rows task join failed: {error}")))?
 }
 
 /// Get a single block by slug.
@@ -483,6 +487,32 @@ pub async fn get_block(
     })
     .await
     .map_err(|error| CommandError::Internal(format!("get_block task join failed: {error}")))?
+}
+
+/// Resolve a note wikilink for navigation using the current indexed sources.
+#[tauri::command]
+pub async fn resolve_note_link(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    source_slug: String,
+    raw_target: String,
+) -> Result<Option<String>, CommandError> {
+    validate_slug(&source_slug).map_err(|error| CommandError::Internal(error.to_string()))?;
+    let vault = current_vault_layout(&state)?;
+    ensure_vault_fresh(&app, vault.clone()).await?;
+    let db_path = vault.index_db_path();
+    tauri::async_runtime::spawn_blocking(move || -> Result<Option<String>, CommandError> {
+        let conn = db::open_read_only(&db_path)?;
+        Ok(crate::storage::block_queries::resolve_note_link(
+            &conn,
+            &source_slug,
+            &raw_target,
+        )?)
+    })
+    .await
+    .map_err(|error| {
+        CommandError::Internal(format!("resolve_note_link task join failed: {error}"))
+    })?
 }
 
 /// Create a new block through the shared capture rules and native transaction.
@@ -506,11 +536,43 @@ pub(crate) fn create_block_inner(
     vault: &VaultLayout,
     params: CreateBlockParams,
 ) -> Result<IndexedBlock, CommandError> {
-    let name = select_capture_name(conn, vault, params.title.as_deref(), params.url.as_deref())?;
-    let media_file = params.file_path.as_deref().map(|source| {
-        let ext = Path::new(source).extension().and_then(|ext| ext.to_str()).unwrap_or("bin");
-        format!("{name}.{ext}")
-    });
+    let name = if let Some(source) = params.file_path.as_deref() {
+        let ext = Path::new(source)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("bin");
+        let mut paths = files::scan_vault_file_paths(vault)?;
+        let mut statement = conn.prepare("SELECT slug FROM blocks")
+            .map_err(|error| CommandError::Internal(error.to_string()))?;
+        for row in statement.query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| CommandError::Internal(error.to_string()))? {
+            paths.push(format!("{}.md", row.map_err(|error| CommandError::Internal(error.to_string()))?));
+        }
+        mine_core::save::select_unique_file_bundle_stem(
+            &suggest_slug(params.title.as_deref(), params.url.as_deref()),
+            &["md", ext],
+            &paths,
+        ).map_err(|error| CommandError::Internal(error.to_string()))?
+    } else {
+        select_capture_name(conn, vault, params.title.as_deref(), params.url.as_deref())?
+    };
+    let media_file = params
+        .file_path
+        .as_deref()
+        .map(|source| {
+            let ext = Path::new(source)
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .unwrap_or("bin");
+            let filename = format!("{name}.{ext}");
+            let target = vault.new_media_stem(&filename);
+            let mut paths = files::scan_vault_file_paths(vault)?;
+            paths.push(target.clone());
+            mine_core::links::LinkIndex::new(paths)
+                .shortest_link(&target, false)
+                .ok_or_else(|| anyhow::anyhow!("new media link target is unavailable"))
+        })
+        .transpose()?;
     let block = mine_core::save::build_capture(&mine_core::save::CaptureRequest {
         slug: vault.new_card_slug(&name),
         intent: mine_core::save::CaptureIntent::Desktop,
@@ -522,8 +584,14 @@ pub(crate) fn create_block_inner(
         body: params.body.unwrap_or_default(),
         saved_at: crate::util::now_iso8601(),
         ..Default::default()
-    }).map_err(|error| CommandError::Internal(error.to_string()))?;
-    Ok(files::persist_new_block(conn, vault, &block, params.file_path.as_deref().map(Path::new))?)
+    })
+    .map_err(|error| CommandError::Internal(error.to_string()))?;
+    Ok(files::persist_new_block(
+        conn,
+        vault,
+        &block,
+        params.file_path.as_deref().map(Path::new),
+    )?)
 }
 
 /// Collect native facts; the portable core owns the filename decision.
@@ -533,12 +601,17 @@ pub(crate) fn select_capture_name(
     title: Option<&str>,
     url: Option<&str>,
 ) -> anyhow::Result<String> {
-    let mut existing = files::scan_vault_file_stems(vault)?;
+    let mut existing = files::scan_vault_file_paths(vault)?;
     let mut statement = conn.prepare("SELECT slug FROM blocks")?;
     for row in statement.query_map([], |row| row.get::<_, String>(0))? {
-        existing.insert(row?);
+        existing.push(format!("{}.md", row?));
     }
-    Ok(mine_core::save::select_name(vault.write_layout(), title, url, &existing.into_iter().collect::<Vec<_>>())?)
+    Ok(mine_core::save::select_name(
+        vault.write_layout(),
+        title,
+        url,
+        &existing,
+    )?)
 }
 
 /// Extract a local inline image from an article body into a new image block.
@@ -1085,6 +1158,10 @@ fn extract_inline_media_inner(
     let media_file = vault
         .root_relative_reference(&source_media_path)
         .unwrap_or_else(|| media_ref.clone());
+    let media_link =
+        files::shortest_vault_link(vault, &media_file, false).map_err(internal_extract_error)?;
+    let source_link = files::shortest_vault_link(vault, &format!("{}.md", source_block.slug), true)
+        .map_err(internal_extract_error)?;
     let now = crate::commands::state::now_iso8601();
     let saved_at = DateTime::new(&now).map_err(|e| InlineMediaExtractError::Internal {
         message: e.to_string(),
@@ -1097,11 +1174,11 @@ fn extract_inline_media_inner(
             title: None,
             description: None,
             url: source_block.frontmatter.url.clone(),
-            file: Some(media_file.clone()),
+            file: Some(media_link.clone()),
             thumbnail: None,
             tags: vec![target_tag.clone()],
-            related_notes: vec![source_block.slug.clone()],
-            source_media: Some(media_file.clone()),
+            related_notes: vec![source_link],
+            source_media: Some(media_link),
             saved_at,
             source: Some("inline-media-extraction".to_string()),
             width: None,
@@ -1156,6 +1233,13 @@ fn create_media_asset_card_inner(
         .unwrap_or("");
     let slug = resolve_unique_extraction_slug(conn, vault, &raw_slug, source_ext)
         .map_err(internal_media_asset_error)?;
+    let media_link =
+        files::shortest_vault_link(vault, &media_ref, false).map_err(internal_media_asset_error)?;
+    let source_link = source_block
+        .as_ref()
+        .map(|block| files::shortest_vault_link(vault, &format!("{}.md", block.slug), true))
+        .transpose()
+        .map_err(internal_media_asset_error)?;
     let now = crate::commands::state::now_iso8601();
     let saved_at = DateTime::new(&now).map_err(|e| MediaAssetActionError::Internal {
         message: e.to_string(),
@@ -1170,18 +1254,15 @@ fn create_media_asset_card_inner(
             url: source_block
                 .as_ref()
                 .and_then(|block| block.frontmatter.url.clone()),
-            file: Some(media_ref.clone()),
+            file: Some(media_link.clone()),
             thumbnail: None,
             tags: if target_tag.is_empty() {
                 Vec::new()
             } else {
                 vec![target_tag]
             },
-            related_notes: source_block
-                .as_ref()
-                .map(|block| vec![block.slug.clone()])
-                .unwrap_or_default(),
-            source_media: Some(media_ref),
+            related_notes: source_link.into_iter().collect(),
+            source_media: Some(media_link),
             saved_at,
             source: Some("media-asset-action".to_string()),
             width: None,
@@ -1297,6 +1378,8 @@ fn extract_text_selection_inner(
     let raw_slug = suggest_slug(Some(&text_selection_slug_seed(selected_text)), None);
     let slug = resolve_unique_text_selection_slug(conn, vault, &raw_slug)
         .map_err(internal_text_selection_error)?;
+    let source_link = files::shortest_vault_link(vault, &format!("{}.md", source_block.slug), true)
+        .map_err(internal_text_selection_error)?;
     let now = crate::commands::state::now_iso8601();
     let saved_at = DateTime::new(&now).map_err(|e| TextSelectionExtractError::Internal {
         message: e.to_string(),
@@ -1316,7 +1399,7 @@ fn extract_text_selection_inner(
             } else {
                 vec![target_tag.clone()]
             },
-            related_notes: vec![format!("{}#^{}", source_block.slug, block_id)],
+            related_notes: vec![format!("{}#^{}", source_link, block_id)],
             source_media: None,
             saved_at,
             source: Some("text-selection-extraction".to_string()),
@@ -1428,18 +1511,18 @@ fn delete_text_selection_inner(
     )?;
     let (selection_start, selection_end) =
         selected_text_source_span(&source_block.body[block_start..], selected_text)
-        .map(|(start, end)| (block_start + start, block_start + end)).ok_or_else(|| {
-            TextSelectionExtractError::UnsupportedSelectionShape {
+            .map(|(start, end)| (block_start + start, block_start + end))
+            .ok_or_else(|| TextSelectionExtractError::UnsupportedSelectionShape {
                 reason: "selected text could not be located in the current source body".to_string(),
-            }
-        })?;
+            })?;
     if selection_start < block_start || selection_start >= block_end {
         return Err(TextSelectionExtractError::UnsupportedSelectionShape {
             reason: "selected text does not belong to the provided source block range".to_string(),
         });
     }
     if selection_end < block_end
-        && selected_text_source_span(&source_block.body[selection_end..block_end], selected_text).is_some()
+        && selected_text_source_span(&source_block.body[selection_end..block_end], selected_text)
+            .is_some()
     {
         return Err(TextSelectionExtractError::UnsupportedSelectionShape {
             reason: "selection is ambiguous inside the source block".into(),
@@ -1569,7 +1652,13 @@ pub fn delete_block(
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
 
-    delete_block_inner(Some(&state), &vs.conn, &vs.vault, &slug, delete_unused_media)
+    delete_block_inner(
+        Some(&state),
+        &vs.conn,
+        &vs.vault,
+        &slug,
+        delete_unused_media,
+    )
 }
 
 /// Delete a selection while retaining all media, in one rollback-safe batch.
@@ -1578,14 +1667,20 @@ pub async fn delete_blocks(app: AppHandle, slugs: Vec<String>) -> Result<usize, 
     let expected_vault = current_vault_layout(&app.state::<AppState>())?;
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let guard = state.vault_state.lock()
+        let guard = state
+            .vault_state
+            .lock()
             .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
         let vs = guard.as_ref().ok_or(CommandError::NoVault)?;
         if vs.vault.root() != expected_vault.root() {
-            return Err(CommandError::Internal("active space changed before deletion".into()));
+            return Err(CommandError::Internal(
+                "active space changed before deletion".into(),
+            ));
         }
         delete_blocks_inner(Some(&state), &vs.conn, &vs.vault, slugs)
-    }).await.map_err(|error| CommandError::Internal(error.to_string()))?
+    })
+    .await
+    .map_err(|error| CommandError::Internal(error.to_string()))?
 }
 
 pub(crate) fn delete_blocks_inner(
@@ -1598,22 +1693,38 @@ pub(crate) fn delete_blocks_inner(
     for slug in &slugs {
         validate_slug(slug).map_err(|error| CommandError::Internal(error.to_string()))?;
     }
-    if slugs.is_empty() { return Ok(0); }
+    if slugs.is_empty() {
+        return Ok(0);
+    }
     let paths: Vec<PathBuf> = slugs.iter().map(|slug| vault.block_path(slug)).collect();
     if let Some(state) = state {
-        state.suppress_paths(paths.iter().cloned(), Duration::from_millis(IN_APP_RENAME_WATCHER_SUPPRESSION_MS))?;
+        state.suppress_paths(
+            paths.iter().cloned(),
+            Duration::from_millis(IN_APP_RENAME_WATCHER_SUPPRESSION_MS),
+        )?;
     }
-    let staged = StagedSourceMutation::stage(paths.into_iter()
-        .filter(|path| path.exists()).map(SourceFileWrite::delete).collect())
+    let staged = StagedSourceMutation::stage(
+        paths
+            .into_iter()
+            .filter(|path| path.exists())
+            .map(SourceFileWrite::delete)
+            .collect(),
+    )
+    .map_err(|error| CommandError::Internal(error.to_string()))?;
+    let removed = staged
+        .commit_with_index(conn, "delete_blocks", |index_conn| {
+            let mut removed = 0;
+            for slug in &slugs {
+                removed += usize::from(index::remove_block(index_conn, slug)?);
+            }
+            Ok(removed)
+        })
         .map_err(|error| CommandError::Internal(error.to_string()))?;
-    let removed = staged.commit_with_index(conn, "delete_blocks", |index_conn| {
-        let mut removed = 0;
-        for slug in &slugs { removed += usize::from(index::remove_block(index_conn, slug)?); }
-        Ok(removed)
-    }).map_err(|error| CommandError::Internal(error.to_string()))?;
     for slug in &slugs {
         let thumb = vault.thumb_path(slug);
-        if thumb.exists() { let _ = std::fs::remove_file(thumb); }
+        if thumb.exists() {
+            let _ = std::fs::remove_file(thumb);
+        }
         if let Err(error) = article_audio::delete_all_artifacts(vault, slug) {
             log::warn!("failed to clean deleted card audio for {slug}: {error:#}");
         }
@@ -2674,8 +2785,12 @@ fn resolve_media_asset_path(
     let candidate = if !media_ref.contains('/') {
         media_refs::MediaResolver::new(vault)
             .unique_basename(media_ref)
-            .map_err(|error| MediaAssetActionError::InvalidMediaRef { reason: error.to_string() })?
-            .ok_or_else(|| MediaAssetActionError::MediaNotFound { media_ref: media_ref.into() })?
+            .map_err(|error| MediaAssetActionError::InvalidMediaRef {
+                reason: error.to_string(),
+            })?
+            .ok_or_else(|| MediaAssetActionError::MediaNotFound {
+                media_ref: media_ref.into(),
+            })?
     } else {
         vault.root().join(media_ref)
     };
@@ -3205,7 +3320,9 @@ fn validated_source_block_range(
     }
 
     if first_block_start == 0 && first_block_end == 0 {
-        if let Some((selection_start, selection_end)) = selected_text_source_span(body, selected_text) {
+        if let Some((selection_start, selection_end)) =
+            selected_text_source_span(body, selected_text)
+        {
             if selected_text_source_span(&body[selection_end..], selected_text).is_none() {
                 return Ok(markdown_block_range_containing(body, selection_start));
             }
@@ -3533,35 +3650,54 @@ fn resolve_unique_text_selection_slug(
     vault: &VaultLayout,
     raw_slug: &str,
 ) -> anyhow::Result<String> {
-    let raw_slug = vault.new_card_slug(raw_slug);
-    let raw_slug = raw_slug.as_str();
-    let first = index::resolve_unique_slug(conn, raw_slug)?;
-    for candidate in std::iter::once(first).chain((2..=1000).map(|n| format!("{raw_slug} ({n})"))) {
-        if index::slug_exists(conn, &candidate)? || vault.block_path(&candidate).exists() {
-            continue;
-        }
-        return Ok(candidate);
+    unique_new_card_slug(conn, vault, raw_slug)
+}
+
+fn unique_new_card_slug(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    raw_name: &str,
+) -> anyhow::Result<String> {
+    let mut existing = files::scan_vault_file_paths(vault)?;
+    let mut statement = conn.prepare("SELECT slug FROM blocks")?;
+    for row in statement.query_map([], |row| row.get::<_, String>(0))? {
+        existing.push(format!("{}.md", row?));
     }
-    anyhow::bail!(
-        "could not resolve text selection filename for '{}'",
-        raw_slug
-    )
+    let name = mine_core::save::select_unique_file_stem(raw_name, "md", &existing)?;
+    let slug = vault.new_card_slug(&name);
+    validate_slug(&slug)?;
+    Ok(slug)
 }
 
 #[cfg(test)]
 #[test]
 fn derived_card_names_follow_configured_layout() {
     use crate::domain::vault::VaultWriteLayout;
-    for layout in [VaultWriteLayout::flat(), VaultWriteLayout::standard(), VaultWriteLayout {
-        cards: "Notes/Clips".into(), media: "Assets".into(), collections: "Sets".into(),
-    }] {
+    for layout in [
+        VaultWriteLayout::flat(),
+        VaultWriteLayout::standard(),
+        VaultWriteLayout {
+            cards: "Notes/Clips".into(),
+            media: "Assets".into(),
+            collections: "Sets".into(),
+        },
+    ] {
         let dir = tempfile::tempdir().unwrap();
         let vault = VaultLayout::new(dir.path().to_path_buf()).with_write_layout(layout);
         let conn = db::open_or_create(&vault.index_db_path()).unwrap();
         let expected = vault.new_card_slug("Example");
-        assert_eq!(resolve_unique_block_slug(&conn, &vault, "Example", None).unwrap(), expected);
-        assert_eq!(resolve_unique_text_selection_slug(&conn, &vault, "Example").unwrap(), expected);
-        assert_eq!(resolve_unique_extraction_slug(&conn, &vault, "Example", "png").unwrap(), expected);
+        assert_eq!(
+            resolve_unique_block_slug(&conn, &vault, "Example", None).unwrap(),
+            expected
+        );
+        assert_eq!(
+            resolve_unique_text_selection_slug(&conn, &vault, "Example").unwrap(),
+            expected
+        );
+        assert_eq!(
+            resolve_unique_extraction_slug(&conn, &vault, "Example", "png").unwrap(),
+            expected
+        );
         std::fs::create_dir_all(vault.cards_dir()).unwrap();
         std::fs::write(vault.block_path(&expected), "existing").unwrap();
         let next = resolve_unique_block_slug(&conn, &vault, "Example", None).unwrap();
@@ -3570,26 +3706,36 @@ fn derived_card_names_follow_configured_layout() {
     }
 }
 
+#[cfg(test)]
+#[test]
+fn extraction_and_merge_names_respect_other_folders() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = VaultLayout::new(dir.path().to_path_buf())
+        .with_write_layout(crate::domain::vault::VaultWriteLayout::standard());
+    let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+    std::fs::create_dir_all(dir.path().join("Elsewhere")).unwrap();
+    std::fs::write(dir.path().join("Elsewhere/Example.md"), b"User note").unwrap();
+    assert_eq!(
+        resolve_unique_extraction_slug(&conn, &vault, "Example", "png").unwrap(),
+        "Cards/Example (2)"
+    );
+    assert_eq!(
+        resolve_unique_text_selection_slug(&conn, &vault, "Example").unwrap(),
+        "Cards/Example (2)"
+    );
+    assert_eq!(
+        resolve_unique_block_slug(&conn, &vault, "Example", None).unwrap(),
+        "Cards/Example (2)"
+    );
+}
+
 pub(crate) fn resolve_unique_block_slug(
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
     raw_slug: &str,
-    media_ext: Option<&str>,
+    _media_ext: Option<&str>,
 ) -> anyhow::Result<String> {
-    let raw_slug = vault.new_card_slug(raw_slug);
-    let raw_slug = raw_slug.as_str();
-    let first = index::resolve_unique_slug(conn, raw_slug)?;
-    for candidate in std::iter::once(first).chain((2..=1000).map(|n| format!("{raw_slug} ({n})"))) {
-        validate_slug(&candidate)?;
-        if index::slug_exists(conn, &candidate)? || vault.block_path(&candidate).exists() {
-            continue;
-        }
-        if media_ext.is_some_and(|ext| vault.media_path(&candidate, ext).exists()) {
-            continue;
-        }
-        return Ok(candidate);
-    }
-    anyhow::bail!("could not resolve block filename for '{}'", raw_slug)
+    unique_new_card_slug(conn, vault, raw_slug)
 }
 
 fn extraction_slug_seed(media_ref: &str) -> String {
@@ -3605,21 +3751,9 @@ fn resolve_unique_extraction_slug(
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
     raw_slug: &str,
-    ext: &str,
+    _ext: &str,
 ) -> anyhow::Result<String> {
-    let raw_slug = vault.new_card_slug(raw_slug);
-    let raw_slug = raw_slug.as_str();
-    let first = index::resolve_unique_slug(conn, raw_slug)?;
-    for candidate in std::iter::once(first).chain((2..=1000).map(|n| format!("{raw_slug} ({n})"))) {
-        if index::slug_exists(conn, &candidate)? {
-            continue;
-        }
-        if vault.block_path(&candidate).exists() || vault.media_path(&candidate, ext).exists() {
-            continue;
-        }
-        return Ok(candidate);
-    }
-    anyhow::bail!("could not resolve extraction filename for '{}'", raw_slug)
+    unique_new_card_slug(conn, vault, raw_slug)
 }
 
 fn file_saved_at(path: &std::path::Path) -> DateTime {
@@ -3869,13 +4003,24 @@ mod tests {
         }
         let media = vault.root().join("shared.jpg");
         std::fs::write(&media, b"source bytes").unwrap();
-        assert_eq!(delete_blocks_inner(None, &conn, &vault,
-            vec!["one".into(), "two".into(), "one".into()]).unwrap(), 2);
+        assert_eq!(
+            delete_blocks_inner(
+                None,
+                &conn,
+                &vault,
+                vec!["one".into(), "two".into(), "one".into()]
+            )
+            .unwrap(),
+            2
+        );
         assert!(!vault.block_path("one").exists());
         assert!(!vault.block_path("two").exists());
         assert!(vault.block_path("keep").exists());
         assert_eq!(std::fs::read(media).unwrap(), b"source bytes");
-        assert_eq!(delete_blocks_inner(None, &conn, &vault, vec!["one".into()]).unwrap(), 0);
+        assert_eq!(
+            delete_blocks_inner(None, &conn, &vault, vec!["one".into()]).unwrap(),
+            0
+        );
     }
 
     #[test]
@@ -3884,9 +4029,14 @@ mod tests {
         for slug in ["one", "two"] {
             persist_block(&conn, &vault, &article(slug, "Keep me"));
         }
-        conn.execute_batch("CREATE TRIGGER reject_batch_delete BEFORE DELETE ON blocks
-            WHEN OLD.slug = 'two' BEGIN SELECT RAISE(ABORT, 'injected'); END;").unwrap();
-        assert!(delete_blocks_inner(None, &conn, &vault, vec!["one".into(), "two".into()]).is_err());
+        conn.execute_batch(
+            "CREATE TRIGGER reject_batch_delete BEFORE DELETE ON blocks
+            WHEN OLD.slug = 'two' BEGIN SELECT RAISE(ABORT, 'injected'); END;",
+        )
+        .unwrap();
+        assert!(
+            delete_blocks_inner(None, &conn, &vault, vec!["one".into(), "two".into()]).is_err()
+        );
         for slug in ["one", "two"] {
             assert!(vault.block_path(slug).exists());
             assert!(index::get_block(&conn, slug).unwrap().is_some());
@@ -3975,25 +4125,48 @@ mod tests {
         std::fs::write(vault.block_path("Cards/Note"), b"external card").unwrap();
         std::fs::write(vault.new_media_path("Note (2).png"), b"external media").unwrap();
 
-        let created = create_block_inner(&conn, &vault, CreateBlockParams {
-            block_type: "obsolete".into(), title: Some("Note".into()),
-            url: None, tags: vec![], file_path: None, body: None,
-        }).unwrap();
+        let created = create_block_inner(
+            &conn,
+            &vault,
+            CreateBlockParams {
+                block_type: "obsolete".into(),
+                title: Some("Note".into()),
+                url: None,
+                tags: vec![],
+                file_path: None,
+                body: None,
+            },
+        )
+        .unwrap();
 
-        assert_eq!(created.slug, "Cards/Note (3)");
-        assert_eq!(std::fs::read(vault.block_path("Cards/Note")).unwrap(), b"external card");
-        assert_eq!(std::fs::read(vault.new_media_path("Note (2).png")).unwrap(), b"external media");
+        assert_eq!(created.slug, "Cards/Note (2)");
+        assert_eq!(
+            std::fs::read(vault.block_path("Cards/Note")).unwrap(),
+            b"external card"
+        );
+        assert_eq!(
+            std::fs::read(vault.new_media_path("Note (2).png")).unwrap(),
+            b"external media"
+        );
         assert!(vault.block_path(&created.slug).is_file());
     }
 
     #[test]
     fn desktop_create_preserves_pasted_body_and_shared_collection_normalization() {
         let (_root, _derived, vault, conn) = make_vault();
-        let created = create_block_inner(&conn, &vault, CreateBlockParams {
-            block_type: "article".into(), title: Some("A filename seed".into()),
-            url: None, tags: vec![" [[Чтение]] ".into(), "Чтение".into()],
-            file_path: None, body: Some("A one-line quote".into()),
-        }).unwrap();
+        let created = create_block_inner(
+            &conn,
+            &vault,
+            CreateBlockParams {
+                block_type: "article".into(),
+                title: Some("A filename seed".into()),
+                url: None,
+                tags: vec![" [[Чтение]] ".into(), "Чтение".into()],
+                file_path: None,
+                body: Some("A one-line quote".into()),
+            },
+        )
+        .unwrap();
         let raw = std::fs::read_to_string(vault.block_path(&created.slug)).unwrap();
         let block = crate::domain::block::parse_block(&created.slug, &raw).unwrap();
         assert_eq!(block.body, "A one-line quote");
@@ -4009,10 +4182,18 @@ mod tests {
         let source = source_dir.path().join("input.jpg");
         std::fs::write(&source, b"owned source remains").unwrap();
         conn.execute_batch("CREATE TRIGGER fail_capture BEFORE INSERT ON blocks BEGIN SELECT RAISE(FAIL, 'injected index failure'); END;").unwrap();
-        let result = create_block_inner(&conn, &vault, CreateBlockParams {
-            block_type: "image".into(), title: Some("Rollback".into()),
-            url: None, tags: vec![], file_path: Some(source.to_string_lossy().into_owned()), body: None,
-        });
+        let result = create_block_inner(
+            &conn,
+            &vault,
+            CreateBlockParams {
+                block_type: "image".into(),
+                title: Some("Rollback".into()),
+                url: None,
+                tags: vec![],
+                file_path: Some(source.to_string_lossy().into_owned()),
+                body: None,
+            },
+        );
         assert!(result.is_err());
         assert!(!vault.block_path("Rollback").exists());
         assert!(!vault.new_media_path("Rollback.jpg").exists());
@@ -4022,11 +4203,19 @@ mod tests {
     #[test]
     fn desktop_create_rejects_collection_traversal_before_source_write() {
         let (_root, _derived, vault, conn) = make_vault();
-        assert!(create_block_inner(&conn, &vault, CreateBlockParams {
-            block_type: "article".into(), title: Some("Unsafe".into()),
-            url: None, tags: vec!["../outside".into()], file_path: None,
-            body: Some("Body".into()),
-        }).is_err());
+        assert!(create_block_inner(
+            &conn,
+            &vault,
+            CreateBlockParams {
+                block_type: "article".into(),
+                title: Some("Unsafe".into()),
+                url: None,
+                tags: vec!["../outside".into()],
+                file_path: None,
+                body: Some("Body".into()),
+            }
+        )
+        .is_err());
         assert!(!vault.block_path("Unsafe").exists());
     }
 
@@ -4349,7 +4538,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(indexed.slug, "photo (2)");
+        assert_eq!(indexed.slug, "photo");
         assert_eq!(indexed.block_type, BlockType::Image);
         assert!(indexed.title.is_none());
         assert_eq!(indexed.url.as_deref(), Some("https://example.com/article"));
@@ -4364,8 +4553,8 @@ mod tests {
         assert!(!vault.root().join("Pulled Frame.png").exists());
 
         let (_, extracted_content) =
-            files::read_block_file(&vault, &vault.block_path("photo (2)")).unwrap();
-        let extracted = crate::domain::block::parse_block("photo (2)", &extracted_content).unwrap();
+            files::read_block_file(&vault, &vault.block_path("photo")).unwrap();
+        let extracted = crate::domain::block::parse_block("photo", &extracted_content).unwrap();
         assert_eq!(
             extracted.frontmatter.related_notes,
             vec!["Source Article".to_string()]
@@ -4398,10 +4587,16 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(indexed.slug, "photo (2)");
+        assert_eq!(indexed.slug, "photo");
         assert_eq!(indexed.media_file.as_deref(), Some("photo.png"));
 
-        files::delete_block_files(&vault, &indexed.slug, Some("png")).unwrap();
+        let plan = build_delete_block_plan(&conn, &vault, &indexed.slug).unwrap();
+        assert!(plan.unused_media.is_empty());
+        assert_eq!(plan.shared_media.len(), 1);
+        assert_eq!(plan.shared_media[0].path, "photo.png");
+        assert_eq!(plan.shared_media[0].referenced_by, vec!["Source Article"]);
+        assert!(delete_block_inner(None, &conn, &vault, &indexed.slug, Some(true)).unwrap());
+        assert!(!vault.block_path(&indexed.slug).exists());
         assert_eq!(
             std::fs::read(vault.root().join("photo.png")).unwrap(),
             b"image-bytes"
@@ -4891,7 +5086,9 @@ mod tests {
         assert_eq!(plan.shared_media.len(), 1);
         assert_eq!(plan.shared_media[0].path, "shared.png");
 
-        assert!(delete_block_inner(Some(&state), &conn, &vault, "Source Article", Some(true)).unwrap());
+        assert!(
+            delete_block_inner(Some(&state), &conn, &vault, "Source Article", Some(true)).unwrap()
+        );
 
         assert!(!vault.block_path("Source Article").exists());
         assert!(!vault.root().join("unused.png").exists());
@@ -4916,8 +5113,8 @@ mod tests {
         )
         .unwrap();
 
-        let error =
-            delete_block_inner(Some(&state), &conn, &vault, "Source Article", Some(true)).unwrap_err();
+        let error = delete_block_inner(Some(&state), &conn, &vault, "Source Article", Some(true))
+            .unwrap_err();
 
         assert!(matches!(error, CommandError::Internal(_)));
         assert_eq!(
@@ -5126,10 +5323,22 @@ mod tests {
         let path = vault.block_path("Source");
         let before = std::fs::read_to_string(&path).unwrap();
         let start = body.rfind("Author:").unwrap();
-        assert_eq!(validated_source_block_range(body, start, body.len(), "Author: @test").unwrap(), (start, body.len()));
+        assert_eq!(
+            validated_source_block_range(body, start, body.len(), "Author: @test").unwrap(),
+            (start, body.len())
+        );
         assert!(validated_source_block_range(body, 0, 0, "Author: @test").is_err());
         assert!(validated_source_block_range(body, 1, 4, "Author: @test").is_err());
-        let result = delete_text_selection_inner(&conn, &vault, "Source".into(), "Author: @test".into(), start, body.len(), compute_body_hash(body)).unwrap();
+        let result = delete_text_selection_inner(
+            &conn,
+            &vault,
+            "Source".into(),
+            "Author: @test".into(),
+            start,
+            body.len(),
+            compute_body_hash(body),
+        )
+        .unwrap();
         assert_eq!(result.body.trim_end(), body[..start].trim_end());
         let after = std::fs::read_to_string(&path).unwrap();
         assert_eq!(after, before.replacen(body, &body[..start], 1));
@@ -5142,10 +5351,28 @@ mod tests {
         persist_block(&conn, &vault, &source);
         let path = vault.block_path("Source");
         let before = std::fs::read(&path).unwrap();
-        let error = delete_text_selection_inner(&conn, &vault, "Source".into(), "жирный".into(), 0, source.body.len(), "old hash".into()).unwrap_err();
+        let error = delete_text_selection_inner(
+            &conn,
+            &vault,
+            "Source".into(),
+            "жирный".into(),
+            0,
+            source.body.len(),
+            "old hash".into(),
+        )
+        .unwrap_err();
         assert!(matches!(error, TextSelectionExtractError::StaleSelection));
         assert_eq!(std::fs::read(&path).unwrap(), before);
-        let result = delete_text_selection_inner(&conn, &vault, "Source".into(), "ссылка".into(), 0, source.body.len(), compute_body_hash(&source.body)).unwrap();
+        let result = delete_text_selection_inner(
+            &conn,
+            &vault,
+            "Source".into(),
+            "ссылка".into(),
+            0,
+            source.body.len(),
+            compute_body_hash(&source.body),
+        )
+        .unwrap();
         assert_eq!(result.body, "Текст **жирный** и [](https://example.org)");
     }
 
@@ -5153,7 +5380,10 @@ mod tests {
     fn media_actions_resolve_all_six_short_embeds_without_previews() {
         let (_root, _derived, vault, conn) = make_vault();
         std::fs::create_dir(vault.root().join("Media")).unwrap();
-        let body = (0..6).map(|i| format!("![[image{i}.jpg]]")).collect::<Vec<_>>().join("\n\n");
+        let body = (0..6)
+            .map(|i| format!("![[image{i}.jpg]]"))
+            .collect::<Vec<_>>()
+            .join("\n\n");
         persist_block(&conn, &vault, &article("Source", &body));
         for i in 0..6 {
             let name = format!("image{i}.jpg");
@@ -5162,11 +5392,17 @@ mod tests {
             assert_eq!(plan.media_ref, format!("Media/image{i}.jpg"));
             assert_eq!(plan.referenced_by.len(), 1);
             assert_eq!(plan.referenced_by[0].slug, "Source");
-            assert_eq!(resolve_media_asset_path(&vault, &plan.media_ref).unwrap(), vault.root().join(&plan.media_ref));
+            assert_eq!(
+                resolve_media_asset_path(&vault, &plan.media_ref).unwrap(),
+                vault.root().join(&plan.media_ref)
+            );
         }
-        delete_media_asset_inner(&AppState::new(), &conn, &vault, "Media/image5.jpg".into()).unwrap();
+        delete_media_asset_inner(&AppState::new(), &conn, &vault, "Media/image5.jpg".into())
+            .unwrap();
         assert!(!vault.root().join("Media/image5.jpg").exists());
-        for i in 0..5 { assert!(vault.root().join(format!("Media/image{i}.jpg")).exists()); }
+        for i in 0..5 {
+            assert!(vault.root().join(format!("Media/image{i}.jpg")).exists());
+        }
         let remaining = std::fs::read_to_string(vault.block_path("Source")).unwrap();
         assert!(!remaining.contains("![[image5.jpg]]"));
         assert!(remaining.contains("![[image4.jpg]]"));
@@ -5179,11 +5415,20 @@ mod tests {
             std::fs::create_dir(vault.root().join(dir)).unwrap();
             std::fs::write(vault.root().join(dir).join("same.jpg"), b"keep").unwrap();
         }
-        assert!(matches!(resolve_media_asset_path(&vault, "same.jpg"), Err(MediaAssetActionError::InvalidMediaRef { .. })));
-        assert!(matches!(resolve_media_asset_path(&vault, "missing.jpg"), Err(MediaAssetActionError::MediaNotFound { .. })));
+        assert!(matches!(
+            resolve_media_asset_path(&vault, "same.jpg"),
+            Err(MediaAssetActionError::InvalidMediaRef { .. })
+        ));
+        assert!(matches!(
+            resolve_media_asset_path(&vault, "missing.jpg"),
+            Err(MediaAssetActionError::MediaNotFound { .. })
+        ));
         assert!(resolve_media_asset_path(&vault, "../same.jpg").is_err());
         assert!(resolve_media_asset_path(&vault, "Media/same.jpg").is_ok());
-        assert_eq!(std::fs::read(vault.root().join("Other/same.jpg")).unwrap(), b"keep");
+        assert_eq!(
+            std::fs::read(vault.root().join("Other/same.jpg")).unwrap(),
+            b"keep"
+        );
     }
 
     #[test]
@@ -5308,9 +5553,15 @@ mod tests {
 
         std::fs::write(vault.root().join("Old Name (image 1).jpg"), b"img").unwrap();
 
-        let result =
-            rename_block_file_inner(None, Some(&state), &conn, &vault, "Old Name", "Renamed Name")
-                .unwrap();
+        let result = rename_block_file_inner(
+            None,
+            Some(&state),
+            &conn,
+            &vault,
+            "Old Name",
+            "Renamed Name",
+        )
+        .unwrap();
         assert_eq!(result.old_slug, "Old Name");
         assert_eq!(result.new_slug, "Renamed Name");
 
@@ -5366,9 +5617,15 @@ mod tests {
         )
         .unwrap();
 
-        let error =
-            rename_block_file_inner(None, Some(&state), &conn, &vault, "Old Name", "Renamed Name")
-                .unwrap_err();
+        let error = rename_block_file_inner(
+            None,
+            Some(&state),
+            &conn,
+            &vault,
+            "Old Name",
+            "Renamed Name",
+        )
+        .unwrap_err();
 
         assert!(matches!(error, RenameBlockError::Internal { .. }));
         assert_eq!(
@@ -5413,7 +5670,15 @@ mod tests {
         )
         .unwrap();
 
-        rename_block_file_inner(None, Some(&state), &conn, &vault, "Old Name", "Renamed Name").unwrap();
+        rename_block_file_inner(
+            None,
+            Some(&state),
+            &conn,
+            &vault,
+            "Old Name",
+            "Renamed Name",
+        )
+        .unwrap();
 
         let (_, renamed_content) =
             files::read_block_file(&vault, &vault.block_path("Renamed Name")).unwrap();
@@ -5450,7 +5715,15 @@ mod tests {
         persist_block(&conn, &vault, &original);
         std::fs::write(vault.root().join("custom-cover.jpg"), b"img").unwrap();
 
-        rename_block_file_inner(None, Some(&state), &conn, &vault, "Old Name", "Renamed Name").unwrap();
+        rename_block_file_inner(
+            None,
+            Some(&state),
+            &conn,
+            &vault,
+            "Old Name",
+            "Renamed Name",
+        )
+        .unwrap();
 
         let (_, content) =
             files::read_block_file(&vault, &vault.block_path("Renamed Name")).unwrap();
@@ -5470,7 +5743,8 @@ mod tests {
         persist_block(&conn, &vault, &article("One", "Body"));
         persist_block(&conn, &vault, &article("Taken", "Other"));
 
-        let err = rename_block_file_inner(None, Some(&state), &conn, &vault, "One", "Taken").unwrap_err();
+        let err =
+            rename_block_file_inner(None, Some(&state), &conn, &vault, "One", "Taken").unwrap_err();
         assert!(matches!(err, RenameBlockError::NameTaken { .. }));
     }
 

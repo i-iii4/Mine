@@ -119,8 +119,8 @@ describe("standalone recovery invariants", () => {
     expect(await journal.get("operations", "recovery-1")).toMatchObject({ phase: "rejected", markdown: expect.any(String), media: { blob: expect.anything() } });
     expect(await folder.text("Media/Original.png")).toBe(foreign);
     expect(folder.directories.get("Cards")?.files.size ?? 0).toBe(0);
-    expect(await adapter.saveStandaloneBlock(image({ operation_id: "explicit-retry" }), options())).toMatchObject({ ok: true, slug: "Cards/Original (2)" });
-    expect(await folder.text("Cards/Original (2).md")).toContain("[[Media/Original (2).png]]");
+    expect(await adapter.saveStandaloneBlock(image({ operation_id: "explicit-retry" }), options())).toMatchObject({ ok: true, slug: "Cards/Original" });
+    expect(await folder.text("Cards/Original.md")).toContain("[[Original (2).png]]");
     expect(await folder.text("Media/Original.png")).toBe(foreign);
   });
 
@@ -171,7 +171,7 @@ describe("standalone recovery invariants", () => {
     expect(await adapter.saveStandaloneBlock(capture, options())).toMatchObject({ ok: true });
     const canonical = await call({ op: "capture", request: {
       slug: "Cards/Original", block_type: "image", title: "Original", description: metadata.description,
-      url: null, body: "", file: "Media/Original.png", thumbnail: null, tags: [], saved_at: timestamp,
+      url: null, body: "", file: "Original.png", thumbnail: null, tags: [], saved_at: timestamp,
       source: "web-clipper", width: metadata.width, height: metadata.height, author: metadata.author,
     } });
     expect(await folder.text("Cards/Original.md")).toBe(canonical.markdown);

@@ -1,21 +1,21 @@
 #[cfg(feature = "desktop")]
 mod asset_protocol;
 #[cfg(feature = "desktop")]
-mod swipe_gesture;
-#[cfg(feature = "desktop")]
 pub mod bindings;
-#[cfg(feature = "desktop")]
-mod commands;
 #[cfg(feature = "desktop")]
 pub mod cli;
 pub mod cli_mutations;
 #[cfg(feature = "desktop")]
-pub mod mcp;
+mod commands;
 pub mod domain;
 #[cfg(feature = "desktop")]
 mod import;
+#[cfg(feature = "desktop")]
+pub mod mcp;
 pub mod net;
 pub mod storage;
+#[cfg(feature = "desktop")]
+mod swipe_gesture;
 pub mod util;
 #[cfg(feature = "desktop")]
 mod watcher;
@@ -86,6 +86,7 @@ pub fn run() {
             commands::blocks::get_grid_rows,
             commands::graph::list_graph_snapshot,
             commands::blocks::get_block,
+            commands::blocks::resolve_note_link,
             commands::blocks::create_block,
             commands::blocks::extract_inline_media,
             commands::blocks::create_media_asset_card,
@@ -209,7 +210,10 @@ pub fn run() {
             // rebuilt when they change: in macOS a menu accelerator consumes
             // the key event before the webview sees it, so a stale menu would
             // fire the old command or swallow the new one.
-            let menu = build_app_menu(app.handle(), &commands::shortcuts::load_overrides(app.handle()))?;
+            let menu = build_app_menu(
+                app.handle(),
+                &commands::shortcuts::load_overrides(app.handle()),
+            )?;
             app.set_menu(menu)?;
 
             crate::util::append_startup_trace(app.handle(), "setup", "done");

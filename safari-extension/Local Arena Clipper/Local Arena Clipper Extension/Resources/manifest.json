@@ -55,6 +55,7 @@
         "lib/twitterTweetContent.js",
         "lib/xLongformArticleExtraction.js",
         "lib/extractionDocumentSanitizer.js",
+        "lib/productExtraction.js",
         "lib/tweetTextCompletion.js",
         "content.js"
       ],

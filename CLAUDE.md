@@ -4,6 +4,8 @@
 
 ## Required reading
 
+- [Извлечение товарных страниц](/Users/i_iii/Проекты/Личные%20проекты/local-arena/SPEC_PRODUCT_EXTRACTION.md): обработчик подтверждённых товаров Shopify, галереи изображений, ограничения и проверки.
+
 - `PRINCIPLES.md` — **читать первым.** Инженерные принципы, антипаттерны, чеклист
 - `ARCHITECTURE.md` — архитектура, компоненты, ключевые решения
 - `PLAN.md` — план реализации по фазам
@@ -216,7 +218,6 @@ local-arena/
 │   │   ├── NotificationCard.tsx # Единый вид уведомления: правый нижний угол, bg-popover
 │   │   ├── FirstCardMarker.tsx # Одноразовая пометка первой карточки (О19)
 │   │   ├── CloudRecommendation.tsx # Рекомендация Keep Downloaded по журналу ожиданий
-│   │   ├── CloudDisclaimer.tsx # Постоянное объяснение «Files in iCloud» в настройках
 │   │   ├── CloudBadge.tsx      # Метка «содержимое в iCloud» в левом верхнем углу карточки
 │   │   ├── ActivityIndicators.tsx # Загрузка из iCloud и индексация в верхней панели
 │   │   ├── IndexingProgress.tsx # Числа первого индексирования вместо пустой ленты

@@ -96,6 +96,17 @@ describe("SpacesSection", () => {
     expect(screen.queryByText("Current")).not.toBeInTheDocument();
   });
 
+  it("shows only space controls, without standing instructions or an iCloud card", async () => {
+    renderSpaces();
+    await screen.findByText("Mine");
+
+    expect(screen.getByRole("heading", { name: "Spaces" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add Space" })).toBeInTheDocument();
+    expect(screen.queryByText(/Click a space to switch/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Files in iCloud")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show space in Finder" })).not.toBeInTheDocument();
+  });
+
   it("shows per-space stats with the size closing the summary line", async () => {
     renderSpaces();
     await screen.findByText("Mine");
@@ -116,6 +127,42 @@ describe("SpacesSection", () => {
           "— elements · 8 markdown · 4 media · 12 files · 52 KB",
         ),
       ).toBeInTheDocument();
+    });
+  });
+
+  it("keeps the space list usable while a filesystem permission request is pending", async () => {
+    const pendingStats = new Promise<SpaceStats>(() => {});
+    vi.mocked(spaceStats).mockImplementation((path: string) =>
+      path === "/Users/me/Mine" ? pendingStats : Promise.resolve(ARCHIVE_STATS),
+    );
+    renderSpaces();
+
+    await screen.findByText("Mine");
+    const mineRow = spaceRowOf("Mine");
+    expect(within(mineRow).getByText("…")).toBeInTheDocument();
+    expect(await screen.findByText("Archive")).toBeInTheDocument();
+
+    fireEvent.click(spaceRowOf("Archive"));
+    await waitFor(() => {
+      expect(selectVault).toHaveBeenCalledWith("/Users/me/Archive");
+      expect(spaceRowOf("Archive")).toHaveAttribute("aria-current", "true");
+    });
+  });
+
+  it("shows a failed scan only in its own row", async () => {
+    vi.mocked(spaceStats).mockImplementation((path: string) =>
+      path === "/Users/me/Mine"
+        ? Promise.reject(new Error("permission denied"))
+        : Promise.resolve(ARCHIVE_STATS),
+    );
+    renderSpaces();
+
+    await screen.findByText("Mine");
+    const mineRow = spaceRowOf("Mine");
+    const archiveRow = spaceRowOf("Archive");
+    await waitFor(() => {
+      expect(within(mineRow).getByText("—")).toBeInTheDocument();
+      expect(within(archiveRow).getByText(/12 files/)).toBeInTheDocument();
     });
   });
 
@@ -158,7 +205,9 @@ describe("SpacesSection", () => {
     await screen.findByText("Archive");
 
     openRowMenu(spaceRowOf("Archive"));
-    fireEvent.click(await screen.findByRole("menuitem", { name: /Remove Space/ }));
+    const remove = await screen.findByRole("menuitem", { name: /Remove Space/ });
+    expect(remove).toHaveTextContent("Files stay on disk");
+    fireEvent.click(remove);
 
     await waitFor(() => {
       expect(forgetKnownVault).toHaveBeenCalledWith("/Users/me/Archive");

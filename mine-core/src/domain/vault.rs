@@ -143,7 +143,10 @@ impl VaultWriteLayout {
                     reason: format!("write folder must stay inside the vault: {value}"),
                 });
             }
-            if value.split('/').any(|segment| segment.is_empty() || segment.starts_with('.')) {
+            if value
+                .split('/')
+                .any(|segment| segment.is_empty() || segment.starts_with('.'))
+            {
                 return Err(VaultError::InvalidWriteLayout {
                     reason: format!("write folder has an invalid path segment: {value}"),
                 });
@@ -306,7 +309,11 @@ pub fn resolve_card_name_conflict(
     existing: &HashSet<String>,
 ) -> Result<String, VaultError> {
     let free = |candidate: &str| {
-        !existing.contains(candidate)
+        // Obsidian resolves a bare wikilink against the entire vault. A file
+        // in an unrelated folder therefore occupies this name as well.
+        !existing
+            .iter()
+            .any(|stem| stem.rsplit('/').next() == Some(candidate))
             && !existing.contains(&layout.new_card_slug(candidate))
             && !existing.contains(&layout.new_media_stem(candidate))
     };
@@ -419,7 +426,14 @@ mod tests {
             assert!(validate_slug(value).is_err(), "{value:?}");
         }
         assert!(validate_slug("Notes/Заметка").is_ok());
-        for cards in ["../outside", "/outside", ".hidden", "Safe/.hidden", "Safe//Other", "Safe\\Other"] {
+        for cards in [
+            "../outside",
+            "/outside",
+            ".hidden",
+            "Safe/.hidden",
+            "Safe//Other",
+            "Safe\\Other",
+        ] {
             assert!(VaultWriteLayout {
                 cards: cards.into(),
                 ..VaultWriteLayout::standard()

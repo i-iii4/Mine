@@ -154,16 +154,18 @@ pub(crate) fn create_channel_inner(
             "new collection name must not contain a folder path".into(),
         ));
     }
-    let mut channel = Channel::new(&tag, dt).map_err(|e| CommandError::Internal(e.to_string()))?;
-
     // Check uniqueness after collection-ref normalization
     let existing = index::list_channels(conn)?;
-    if existing.iter().any(|c| c.tag == channel.tag) {
+    if existing.iter().any(|c| c.tag == tag) {
         return Err(CommandError::Internal(format!(
             "channel '{}' already exists",
-            channel.tag
+            tag
         )));
     }
+    let occupied = files::scan_vault_file_paths(vault)?;
+    let tag = mine_core::save::select_unique_file_stem(&tag, "md", &occupied)
+        .map_err(|error| CommandError::Internal(error.to_string()))?;
+    let mut channel = Channel::new(&tag, dt).map_err(|e| CommandError::Internal(e.to_string()))?;
     channel.position = index::next_channel_position(conn)?;
 
     let block = channel_to_block(&channel);
@@ -641,13 +643,20 @@ fn collection_document_for_mutation(
             return Ok(Some(path.clone()));
         }
     }
-    let slugs = pages.iter().map(|(slug, _)| slug.clone()).collect();
+    let page_count = pages.len();
+    let mut slugs: std::collections::BTreeSet<String> =
+        pages.iter().map(|(slug, _)| slug.clone()).collect();
+    for path in files::scan_vault_file_paths(vault)? {
+        if let Some(slug) = path.strip_suffix(".md") {
+            slugs.insert(slug.to_string());
+        }
+    }
     let mut matches = pages.into_iter().filter(|(slug, _)| {
         crate::domain::collection::collection_ref_for_slug(slug, &slugs) == collection_ref
     });
     let result = matches.next().map(|(_, path)| path);
     if matches.next().is_some()
-        || (result.is_none() && slugs.len() > 1 && !collection_ref.contains('/'))
+        || (result.is_none() && page_count > 1 && !collection_ref.contains('/'))
     {
         return Err(CommandError::Internal(format!(
             "collection reference '{collection_ref}' is ambiguous; use its path"

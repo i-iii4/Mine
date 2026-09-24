@@ -12,10 +12,17 @@ use thiserror::Error;
 
 use crate::domain::block::{
     iter_inline_media_references, parse_markdown_document, Block, BlockType, DateTime,
-    InlineMediaSyntax,
 };
 use crate::domain::vault::{detect_icloud_conflict, VaultLayout};
 use crate::storage::{article_audio, file_identity, files, index, media_refs};
+use mine_core::links::LinkIndex;
+
+fn channel_ref_for_slug(vault: &VaultLayout, slug: &str) -> Result<String> {
+    let index: LinkIndex = media_refs::build_link_index(vault.root());
+    index
+        .shortest_link(&format!("{slug}.md"), true)
+        .ok_or_else(|| anyhow::anyhow!("collection document has no unambiguous link: {slug}"))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FileStamp {
@@ -179,6 +186,7 @@ pub fn reconcile_vault_with_progress(
     // the ground truth the phantom-channel sweep below compares the table to.
     let mut live_channel_refs = BTreeSet::new();
     let mut prepared = Vec::new();
+    let mut media_resolver = media_refs::MediaResolver::new(vault);
     let mut unchanged = 0usize;
     let mut errors = Vec::new();
     for (path, message) in &identity.read_errors {
@@ -248,7 +256,13 @@ pub fn reconcile_vault_with_progress(
         }
 
         content_reads += 1;
-        match prepare_source(vault, path, markdown_stamp, dependency_changed) {
+        match prepare_source(
+            vault,
+            path,
+            markdown_stamp,
+            dependency_changed,
+            &mut media_resolver,
+        ) {
             Ok(source) => prepared.push(source),
             Err(error) => errors.push(error),
         }
@@ -274,10 +288,7 @@ pub fn reconcile_vault_with_progress(
             .map(|source| source.slug.clone()),
     );
     for slug in &channel_slugs {
-        live_channel_refs.insert(crate::domain::collection::collection_ref_for_slug(
-            slug,
-            &channel_slugs,
-        ));
+        live_channel_refs.insert(channel_ref_for_slug(vault, slug).map_err(ReconcileError::State)?);
     }
 
     let removed = indexed_kinds
@@ -317,7 +328,7 @@ pub fn reconcile_vault_with_progress(
     }
 
     for source in prepared {
-        match apply_prepared_source(&tx, vault, &source, &channel_slugs) {
+        match apply_prepared_source(&tx, vault, &source) {
             Ok(()) => {
                 if source.dependency_changed {
                     dependency_changed_slugs.push(source.slug.clone());
@@ -405,13 +416,10 @@ pub fn reconcile_vault_with_progress(
 pub fn project_source_path(conn: &Connection, vault: &VaultLayout, path: &Path) -> Result<Block> {
     let markdown_stamp = FileStamp::read(path)
         .with_context(|| format!("read source metadata for {}", path.display()))?;
-    let source = prepare_source(vault, path, markdown_stamp, false)
+    let mut media_resolver = media_refs::MediaResolver::new(vault);
+    let source = prepare_source(vault, path, markdown_stamp, false, &mut media_resolver)
         .map_err(|error| anyhow::anyhow!("prepare source {}: {}", path.display(), error.message))?;
-    let mut channel_slugs = BTreeSet::new();
-    if source.kind == SourceKind::Channel {
-        channel_slugs.insert(source.slug.clone());
-    }
-    apply_prepared_source(conn, vault, &source, &channel_slugs)?;
+    apply_prepared_source(conn, vault, &source)?;
     Ok(source.block)
 }
 
@@ -460,18 +468,20 @@ fn prepare_source(
     path: &Path,
     markdown_stamp: FileStamp,
     dependency_changed: bool,
+    media_resolver: &mut media_refs::MediaResolver<'_>,
 ) -> std::result::Result<PreparedSource, ReconcileFileError> {
     let (slug, content) = files::read_block_file(vault, path)
         .map_err(|error| file_error(path, ReconcileFileErrorKind::Read, error.to_string()))?;
     let parsed = parse_markdown_document(&slug, &content, file_saved_at(path))
         .map_err(|error| file_error(path, ReconcileFileErrorKind::Parse, error.to_string()))?;
-    let dependency_paths = collect_dependency_paths(vault, &parsed.block).map_err(|message| {
-        file_error(
-            path,
-            ReconcileFileErrorKind::DependencyOutsideVault,
-            message,
-        )
-    })?;
+    let dependency_paths =
+        collect_dependency_paths(vault, &parsed.block, media_resolver).map_err(|message| {
+            file_error(
+                path,
+                ReconcileFileErrorKind::DependencyOutsideVault,
+                message,
+            )
+        })?;
     let stamp = SourceStamp {
         markdown: markdown_stamp,
         dependencies: dependency_paths
@@ -510,7 +520,6 @@ fn apply_prepared_source(
     conn: &Connection,
     vault: &VaultLayout,
     source: &PreparedSource,
-    channel_slugs: &BTreeSet<String>,
 ) -> Result<()> {
     conn.execute_batch("SAVEPOINT reconcile_source")
         .context("begin source reconciliation savepoint")?;
@@ -533,8 +542,7 @@ fn apply_prepared_source(
                 index::remove_block(conn, &source.slug).with_context(|| {
                     format!("remove stale block projection for {}", source.slug)
                 })?;
-                let collection_ref =
-                    crate::domain::collection::collection_ref_for_slug(&source.slug, channel_slugs);
+                let collection_ref = channel_ref_for_slug(vault, &source.slug)?;
                 index::upsert_channel_from_block_with_ref(conn, &source.block, &collection_ref)
                     .with_context(|| format!("upsert channel {}", source.slug))?;
             }
@@ -559,6 +567,7 @@ fn apply_prepared_source(
 fn collect_dependency_paths(
     vault: &VaultLayout,
     block: &Block,
+    media_resolver: &mut media_refs::MediaResolver<'_>,
 ) -> std::result::Result<Vec<(String, PathBuf)>, String> {
     let mut paths = BTreeMap::<String, PathBuf>::new();
     for reference in [
@@ -569,7 +578,9 @@ fn collect_dependency_paths(
     .into_iter()
     .flatten()
     {
-        if let Some(path) = dependency_candidate(vault, &block.slug, reference, None) {
+        if let Some(path) = media_refs::resolve_frontmatter_media(vault, &block.slug, reference)
+            .or_else(|| vault.resolve_local_reference(&block.slug, reference))
+        {
             insert_dependency(vault, &mut paths, path)?;
         }
     }
@@ -577,29 +588,14 @@ fn collect_dependency_paths(
         if reference.source.starts_with("http://") || reference.source.starts_with("https://") {
             continue;
         }
-        let resolved = media_refs::resolve_inline_media(vault, &block.slug, &reference);
-        let fallback = match reference.syntax {
-            InlineMediaSyntax::MarkdownImage | InlineMediaSyntax::ObsidianEmbed => {
-                vault.resolve_local_reference(&block.slug, &reference.source)
-            }
-        };
-        if let Some(path) = resolved.or(fallback) {
+        if let Some(path) = media_resolver
+            .resolve_inline_media(&block.slug, &reference)
+            .or_else(|| vault.resolve_local_reference(&block.slug, &reference.source))
+        {
             insert_dependency(vault, &mut paths, path)?;
         }
     }
     Ok(paths.into_iter().collect())
-}
-
-fn dependency_candidate(
-    vault: &VaultLayout,
-    block_slug: &str,
-    reference: &str,
-    resolved: Option<PathBuf>,
-) -> Option<PathBuf> {
-    if reference.starts_with("http://") || reference.starts_with("https://") {
-        return None;
-    }
-    resolved.or_else(|| vault.resolve_local_reference(block_slug, reference))
 }
 
 fn insert_dependency(

@@ -128,7 +128,7 @@ export type CommandError = { kind: "no_vault" } | { kind: "internal"; message: s
 /**
  * Commands supported by the JSON/WASM bridge, generated into TypeScript.
  */
-export type CoreCommand = { op: "capture"; request: CaptureRequest } | { op: "name"; title: string | null; url: string | null; layout: VaultWriteLayout; existing: string[] } | { op: "layout"; layout: VaultWriteLayout } | { op: "detect_layout"; stored: VaultWriteLayout | null; empty: boolean; cards: boolean; media: boolean; collections: boolean } | { op: "collection"; slug: string; saved_at: string } | { op: "inspect"; slug: string; markdown: string } | { op: "advance"; phase: SavePhase; evidence: SaveEvidence } | { op: "fingerprint"; value: string }
+export type CoreCommand = { op: "capture"; request: CaptureRequest } | { op: "name"; title: string | null; url: string | null; layout: VaultWriteLayout; existing: string[] } | { op: "unique_file_name"; name: string; extension: string; existing: string[] } | { op: "shortest_link"; target: string; paths: string[]; omit_md_ext: boolean } | { op: "layout"; layout: VaultWriteLayout } | { op: "detect_layout"; stored: VaultWriteLayout | null; empty: boolean; cards: boolean; media: boolean; collections: boolean } | { op: "collection"; slug: string; saved_at: string } | { op: "inspect"; slug: string; markdown: string } | { op: "advance"; phase: SavePhase; evidence: SaveEvidence } | { op: "fingerprint"; value: string }
 
 export type CreateBlockParams = { block_type: string; title: string | null; url: string | null; tags: string[]; file_path: string | null;
 /**
@@ -418,12 +418,7 @@ export type SpaceStats = { file_count: number; markdown_count: number; media_cou
  * From the space's local derived index; `None` when the space has never
  * been opened (no vault-id / no index) or the index predates `card_kind`.
  */
-element_count: number | null;
-/**
- * Files whose contents iCloud is currently holding rather than keeping on
- * this Mac. The number behind the settings explanation (SPEC_CLOUD_STORAGE.md Х20).
- */
-offloaded_count: number }
+element_count: number | null }
 
 /**
  * A tag with its usage count across blocks.

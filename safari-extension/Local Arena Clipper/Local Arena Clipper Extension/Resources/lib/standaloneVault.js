@@ -113,14 +113,15 @@
     const layout = await core({ op: "detect_layout", stored, empty: newSpace, cards: false, media: false, collections: false });
     return { layout, newSpace };
   }
-  async function existingStems(handle, prefix = "", result = []) {
+  async function existingPaths(handle, prefix = "", result = []) {
     for await (const [name, entry] of handle.entries()) {
       if (name.startsWith(".")) continue;
-      if (entry.kind === "directory") await existingStems(await handle.getDirectoryHandle(name), join(prefix, name), result);
-      else result.push(join(prefix, name.replace(/\.[^.]+$/, "")));
+      if (entry.kind === "directory") await existingPaths(await handle.getDirectoryHandle(name), join(prefix, name), result);
+      else result.push(join(prefix, name));
     }
     return result;
   }
+  async function existingStems(handle) { return (await existingPaths(handle)).map(path => path.replace(/\.[^.]+$/, "")); }
   async function ensureLayout(handle, layout, newSpace) {
     let recorded;
     try { recorded = JSON.parse(await (await (await fileAt(handle, ".mine/layout.json")).getFile()).text()); }
@@ -187,6 +188,19 @@
     if (execute && record.phase === "prepared") await ensureLayout(binding.handle, record.layout, record.newSpace);
     const md = await evidence(binding.handle, `${record.slug}.md`, record.hash);
     const media = record.media ? await evidence(binding.handle, record.media.path, record.media.hash) : "not_required";
+    if (["prepared", "media_publishing", "media_published"].includes(record.phase)) {
+      const targets = [`${record.slug}.md`, ...(record.media ? [record.media.path] : [])];
+      const owned = new Set(targets);
+      const names = new Set(targets.map(path => path.split("/").at(-1)));
+      const paths = await existingPaths(binding.handle);
+      if (paths.some(path => !owned.has(path) && names.has(path.split("/").at(-1)))) {
+        if (record.phase !== "prepared") return unknown(record.id);
+        const response = { ...failed(record.id, error("name_conflict", "The planned filename became occupied elsewhere in the folder. Save again to choose a free name.")),
+          binding_id: record.binding, terminal_rejected: true };
+        await store.put("operations", record.id, { ...record, phase: "rejected", response });
+        return response;
+      }
+    }
     const action = await core({ op: "advance", phase: record.phase, evidence: { markdown: md, media } });
     if (action === "unknown_outcome") return unknown(record.id);
     if (action === "name_conflict") {
@@ -267,13 +281,20 @@
       const { layout, newSpace } = await resolveLayout(binding.handle);
       const media = kind === "capture" ? await preparedMedia(request, options) : null;
       const namingLayout = kind === "collection" ? { ...layout, cards: layout.collections } : layout;
+      const paths = await existingPaths(binding.handle);
       const named = await core({ op: "name", title: request.title ?? null, url: request.url ?? null,
-        layout: namingLayout, existing: await existingStems(binding.handle) });
-      if (media) media.path = join(layout.media, `${named.name}.${media.extension}`);
+        layout: namingLayout, existing: paths });
+      if (media) {
+        const mediaName = await core({ op: "unique_file_name", name: named.name,
+          extension: media.extension, existing: paths });
+        media.path = join(layout.media, `${mediaName.name}.${media.extension}`);
+      }
+      const file = media ? (await core({ op: "shortest_link", target: media.path,
+        paths: [...paths, media.path], omit_md_ext: false })).target : null;
       const document = kind === "collection"
         ? await core({ op: "collection", slug: named.slug, saved_at: request.saved_at ?? now() })
         : await core({ op: "capture", request: { slug: named.slug, block_type: request.block_type,
-          title: request.title ?? null, url: request.url ?? null, body: request.body ?? "", file: media?.path ?? null,
+          title: request.title ?? null, url: request.url ?? null, body: request.body ?? "", file,
           thumbnail: null, tags: request.tags ?? [], saved_at: request.saved_at ?? now(),
           source: "web-clipper", author: request.author ?? null, description: request.description ?? null,
           width: request.width ?? null, height: request.height ?? null } });

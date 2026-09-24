@@ -1,14 +1,16 @@
-//! Source-owned file identities and reference bindings for within-vault moves.
+//! Auxiliary native file history for repairing external renames.
 //!
 //! The manifest lives in `.mine`, alongside the vault ID. SQLite may be
-//! discarded without losing the identity or the target of an established link.
+//! discarded without changing how a current source link resolves.
 
 use anyhow::{Context, Result};
 use fs2::FileExt;
+use mine_core::links::{LinkIndex, LinkResolution, LinkSyntax};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::domain::vault::VaultLayout;
@@ -98,15 +100,19 @@ fn read_manifest(vault: &VaultLayout) -> Result<Manifest> {
         }
         Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
     };
-    let manifest: Manifest =
-        serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))?;
-    anyhow::ensure!(
-        manifest.version == MANIFEST_VERSION,
-        "unsupported file identity version"
-    );
-    Ok(manifest)
+    match serde_json::from_slice::<Manifest>(&bytes) {
+        Ok(manifest) if manifest.version == MANIFEST_VERSION => Ok(manifest),
+        _ => {
+            eprintln!(
+                "ignoring invalid auxiliary file identity history at {}",
+                path.display()
+            );
+            Ok(Manifest::default())
+        }
+    }
 }
 
+#[cfg(test)]
 fn cached_manifest(vault: &VaultLayout) -> Result<Arc<Manifest>> {
     #[cfg(unix)]
     use std::os::unix::fs::MetadataExt;
@@ -223,6 +229,13 @@ fn new_id() -> Result<String> {
 /// Reconcile the source manifest, then update established Markdown links whose
 /// targets moved. An ambiguous first observation remains unbound.
 pub fn reconcile(vault: &VaultLayout) -> Result<IdentityRefresh> {
+    reconcile_auxiliary(vault).or_else(|error| {
+        eprintln!("file identity history unavailable: {error:#}");
+        Ok(IdentityRefresh::default())
+    })
+}
+
+fn reconcile_auxiliary(vault: &VaultLayout) -> Result<IdentityRefresh> {
     let lock_path = vault.mine_dir().join("file-identity.lock");
     files::validate_vault_write_target(vault, &lock_path)?;
     std::fs::create_dir_all(vault.mine_dir())?;
@@ -239,7 +252,8 @@ pub fn reconcile(vault: &VaultLayout) -> Result<IdentityRefresh> {
 
 /// Enrollment gate for a newly published capture. The same operation may
 /// retry this after a failure without publishing source files again.
-pub fn enroll_capture(vault: &VaultLayout, required_markdown: &Path) -> Result<()> {
+#[cfg(test)]
+fn enroll_capture(vault: &VaultLayout, required_markdown: &Path) -> Result<()> {
     let relative = required_markdown
         .strip_prefix(vault.root())
         .with_context(|| {
@@ -275,6 +289,11 @@ pub fn enroll_capture(vault: &VaultLayout, required_markdown: &Path) -> Result<(
 
 fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
     let mut manifest = read_manifest(vault)?;
+    let replay_pending = manifest
+        .pending_source_ids
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
     let original = manifest.clone();
     let mut observed = Vec::new();
     inventory(vault.root(), vault.root(), &mut observed)?;
@@ -351,6 +370,7 @@ fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
         .map(|entry| (entry.id.as_str(), entry))
         .collect::<BTreeMap<_, _>>();
     let current_files = manifest.files.clone();
+    let current_links = LinkIndex::new(current_files.iter().map(|entry| entry.path.as_str()));
     let current_by_id = current_files
         .iter()
         .map(|entry| (entry.id.as_str(), entry))
@@ -398,7 +418,7 @@ fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
             start: 0,
             end: 0,
         };
-        resolve_first_observation(&manifest.files, &source.path, &reference)
+        resolve_first_observation(&manifest.files, &current_links, &source.path, &reference)
             .is_some_and(|target| new_ids.contains(target.id.as_str()))
     };
     let mut affected_sources = manifest
@@ -414,6 +434,42 @@ fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
         })
         .map(|binding| binding.source_id.clone())
         .collect::<BTreeSet<_>>();
+    let legacy_binding_sources = manifest
+        .bindings
+        .iter()
+        .filter(|binding| {
+            let Some(source) = current_by_id.get(binding.source_id.as_str()) else {
+                return false;
+            };
+            if !current_by_id.contains_key(binding.target_id.as_str()) {
+                return false;
+            }
+            let source_unchanged = old_by_id
+                .get(binding.source_id.as_str())
+                .is_some_and(|old| {
+                    old.key == source.key
+                        && old.size == source.size
+                        && old.mtime_ns == source.mtime_ns
+                });
+            if !source_unchanged {
+                return false;
+            }
+            let syntax = match binding.syntax {
+                ReferenceSyntax::Wikilink | ReferenceSyntax::FrontmatterMedia => {
+                    LinkSyntax::Obsidian
+                }
+                ReferenceSyntax::MarkdownImage | ReferenceSyntax::MarkdownLink => {
+                    LinkSyntax::Markdown
+                }
+            };
+            !matches!(
+                current_links.resolve_strict(&source.path, &binding.reference, syntax),
+                LinkResolution::Resolved(_)
+            )
+        })
+        .map(|binding| binding.source_id.clone())
+        .collect::<BTreeSet<_>>();
+    affected_sources.extend(legacy_binding_sources.iter().cloned());
     affected_sources.extend(
         manifest
             .unresolved
@@ -469,6 +525,11 @@ fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
                 continue;
             }
         };
+        let source_bytes_unchanged = old_by_id.get(source.id.as_str()).is_some_and(|old| {
+            old.size == source.size && old.mtime_ns == source.mtime_ns && old.key == source.key
+        });
+        let replay_source_unchanged =
+            replay_pending.contains(source.id.as_str()) && source_bytes_unchanged;
         let references = references_in(&content);
         let mut edits = Vec::new();
         for reference in references {
@@ -481,7 +542,27 @@ fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
                         && binding.syntax == reference.syntax
                 })
                 .cloned();
-            let target = bound
+            // A link that currently resolves is authoritative even when an
+            // older binding says otherwise. History only repairs a missing
+            // destination after a confirmed native move.
+            let syntax = match reference.syntax {
+                ReferenceSyntax::Wikilink | ReferenceSyntax::FrontmatterMedia => {
+                    LinkSyntax::Obsidian
+                }
+                ReferenceSyntax::MarkdownImage | ReferenceSyntax::MarkdownLink => {
+                    LinkSyntax::Markdown
+                }
+            };
+            let current_resolution = current_links.resolve(&source.path, &reference.raw, syntax);
+            let strict_resolution =
+                current_links.resolve_strict(&source.path, &reference.raw, syntax);
+            let current_target = match &current_resolution {
+                LinkResolution::Resolved(path) => {
+                    manifest.files.iter().find(|entry| &entry.path == path)
+                }
+                LinkResolution::Missing | LinkResolution::Ambiguous(_) => None,
+            };
+            let historic_moved = bound
                 .as_ref()
                 .and_then(|binding| {
                     manifest
@@ -489,13 +570,20 @@ fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
                         .iter()
                         .find(|entry| entry.id == binding.target_id)
                 })
-                .or_else(|| {
-                    if bound.is_some() {
-                        None
-                    } else {
-                        resolve_first_observation(&manifest.files, &source.path, &reference)
-                    }
+                .filter(|entry| {
+                    moved_ids.contains(entry.id.as_str())
+                        || replay_source_unchanged
+                        || (legacy_binding_sources.contains(source.id.as_str())
+                            && source_bytes_unchanged
+                            && !matches!(&strict_resolution, LinkResolution::Resolved(_)))
                 });
+            let current_exact = match &strict_resolution {
+                LinkResolution::Resolved(path) => {
+                    manifest.files.iter().find(|entry| &entry.path == path)
+                }
+                LinkResolution::Missing | LinkResolution::Ambiguous(_) => None,
+            };
+            let target = current_exact.or(historic_moved).or(current_target);
             let Some(target) = target else {
                 let unresolved = Unresolved {
                     source_id: source.id.clone(),
@@ -512,7 +600,15 @@ fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
                     && entry.reference == reference.raw
                     && entry.syntax == reference.syntax)
             });
-            if bound.is_none() {
+            if bound
+                .as_ref()
+                .is_none_or(|binding| binding.target_id != target.id)
+            {
+                manifest.bindings.retain(|binding| {
+                    !(binding.source_id == source.id
+                        && binding.reference == reference.raw
+                        && binding.syntax == reference.syntax)
+                });
                 manifest.bindings.push(Binding {
                     source_id: source.id.clone(),
                     reference: reference.raw.clone(),
@@ -531,8 +627,10 @@ fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
                     })
                     .count()
                     > 1;
-            let stale_reference = bound.is_some()
-                && !reference_points_to(&manifest.files, &source.path, &reference, &target.path);
+            let stale_reference = !matches!(
+                &strict_resolution,
+                LinkResolution::Resolved(path) if path == &target.path
+            );
             let relative_link = matches!(
                 reference.syntax,
                 ReferenceSyntax::MarkdownImage | ReferenceSyntax::MarkdownLink
@@ -544,7 +642,7 @@ fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
             {
                 match reference.syntax {
                     ReferenceSyntax::Wikilink | ReferenceSyntax::FrontmatterMedia => {
-                        display_target(&manifest.files, &target.path, !old_target.ends_with(".md"))
+                        display_target(&current_links, &target.path, !old_target.ends_with(".md"))
                     }
                     ReferenceSyntax::MarkdownImage | ReferenceSyntax::MarkdownLink => {
                         relative_from_source(&source.path, &target.path)
@@ -580,18 +678,18 @@ fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
         }
         if revised != content {
             files::validate_vault_write_target(vault, &path)?;
-            anyhow::ensure!(
-                std::fs::read_to_string(&path)? == content,
-                "source changed during identity rewrite: {}",
-                path.display()
-            );
             manifest.pending_revisions.insert(
                 source.id.clone(),
                 crate::storage::save_operations::sha256_bytes(revised.as_bytes()),
             );
             // Persist both old and new bindings before source publication.
             write_manifest(vault, &manifest)?;
-            files::write_atomically(&path, revised.as_bytes())?;
+            files::write_atomically_if_unchanged(
+                &path,
+                content.as_bytes(),
+                revised.as_bytes(),
+                &vault.mine_dir().join("link-repair-conflicts"),
+            )?;
             if let Some(entry) = manifest
                 .files
                 .iter_mut()
@@ -636,113 +734,24 @@ fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
 
 fn resolve_first_observation<'a>(
     files: &'a [FileEntry],
+    index: &LinkIndex,
     source: &str,
     reference: &Reference,
 ) -> Option<&'a FileEntry> {
-    let (name, _) = split_reference(reference);
-    if name.starts_with("http:")
-        || name.starts_with("https:")
-        || name.starts_with('/')
-        || name.contains('\0')
-    {
-        return None;
-    }
-    let decoded = if matches!(
-        reference.syntax,
-        ReferenceSyntax::MarkdownImage | ReferenceSyntax::MarkdownLink
-    ) {
-        percent_encoding::percent_decode_str(name)
-            .decode_utf8()
-            .ok()?
-            .into_owned()
-    } else {
-        name.to_string()
+    let syntax = match reference.syntax {
+        ReferenceSyntax::Wikilink | ReferenceSyntax::FrontmatterMedia => LinkSyntax::Obsidian,
+        ReferenceSyntax::MarkdownImage | ReferenceSyntax::MarkdownLink => LinkSyntax::Markdown,
     };
-    let source_parent = Path::new(source).parent().unwrap_or(Path::new(""));
-    let candidate = normalize_relative(source_parent, &decoded)?;
-    let explicit = decoded.contains('/');
-    let is_note = Path::new(&decoded).extension().is_none();
-    let wanted = if is_note {
-        format!("{decoded}.md")
-    } else {
-        decoded.clone()
-    };
-    if !explicit
-        && !matches!(
-            reference.syntax,
-            ReferenceSyntax::MarkdownImage | ReferenceSyntax::MarkdownLink
-        )
-    {
-        let basename_count = files
-            .iter()
-            .filter(|entry| {
-                Path::new(&entry.path)
-                    .file_name()
-                    .and_then(|file| file.to_str())
-                    == Some(wanted.as_str())
-            })
-            .count();
-        if basename_count > 1 {
-            return None;
-        }
-    }
-    let relative_wanted = if is_note {
-        format!("{candidate}.md")
-    } else {
-        candidate
-    };
-    let path_matches = files
-        .iter()
-        .filter(|entry| entry.path == relative_wanted || (explicit && entry.path == wanted))
-        .collect::<Vec<_>>();
-    if path_matches.len() == 1 {
-        return Some(path_matches[0]);
-    }
-    if explicit
-        || matches!(
-            reference.syntax,
-            ReferenceSyntax::MarkdownImage | ReferenceSyntax::MarkdownLink
-        )
-    {
-        return None;
-    }
-    let matches = files
-        .iter()
-        .filter(|entry| {
-            Path::new(&entry.path)
-                .file_name()
-                .and_then(|file| file.to_str())
-                == Some(wanted.as_str())
-        })
-        .collect::<Vec<_>>();
-    if matches.len() == 1 {
-        Some(matches[0])
-    } else {
-        None
+    match index.resolve(source, &reference.raw, syntax) {
+        LinkResolution::Resolved(path) => files.iter().find(|entry| entry.path == path),
+        LinkResolution::Missing | LinkResolution::Ambiguous(_) => None,
     }
 }
 
-fn display_target(files: &[FileEntry], path: &str, omit_markdown_extension: bool) -> String {
-    let basename = Path::new(path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(path);
-    let duplicate = files
-        .iter()
-        .filter(|entry| {
-            Path::new(&entry.path)
-                .file_name()
-                .and_then(|name| name.to_str())
-                == Some(basename)
-        })
-        .count()
-        > 1;
-    let value = if duplicate { path } else { basename };
-    if omit_markdown_extension {
-        value.strip_suffix(".md").unwrap_or(value).to_string()
-    } else {
-        value.to_string()
-    }
+fn display_target(index: &LinkIndex, path: &str, omit_markdown_extension: bool) -> String {
+    index
+        .shortest_link(path, omit_markdown_extension)
+        .unwrap_or_else(|| path.to_string())
 }
 
 fn relative_from_source(source: &str, target: &str) -> String {
@@ -767,75 +776,10 @@ fn relative_from_source(source: &str, target: &str) -> String {
         .join("/")
 }
 
-fn reference_points_to(
-    files: &[FileEntry],
-    source: &str,
-    reference: &Reference,
-    target: &str,
-) -> bool {
-    let (raw, _) = split_reference(reference);
-    let decoded = if matches!(
-        reference.syntax,
-        ReferenceSyntax::MarkdownImage | ReferenceSyntax::MarkdownLink
-    ) {
-        match percent_encoding::percent_decode_str(raw).decode_utf8() {
-            Ok(value) => value.into_owned(),
-            Err(_) => return false,
-        }
-    } else {
-        raw.to_string()
-    };
-    let wanted = if Path::new(&decoded).extension().is_none() {
-        format!("{decoded}.md")
-    } else {
-        decoded.clone()
-    };
-    if matches!(
-        reference.syntax,
-        ReferenceSyntax::MarkdownImage | ReferenceSyntax::MarkdownLink
-    ) {
-        let parent = Path::new(source).parent().unwrap_or(Path::new(""));
-        return normalize_relative(parent, &wanted).as_deref() == Some(target);
-    }
-    if decoded.contains('/') {
-        return wanted == target
-            || normalize_relative(Path::new(source).parent().unwrap_or(Path::new("")), &wanted)
-                .as_deref()
-                == Some(target);
-    }
-    let same_name = files
-        .iter()
-        .filter(|entry| {
-            Path::new(&entry.path)
-                .file_name()
-                .and_then(|name| name.to_str())
-                == Some(wanted.as_str())
-        })
-        .collect::<Vec<_>>();
-    same_name.len() == 1 && same_name[0].path == target
-}
-
-fn normalize_relative(base: &Path, relative: &str) -> Option<String> {
-    let mut parts = base
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
-    for component in Path::new(relative).components() {
-        match component {
-            std::path::Component::CurDir => {}
-            std::path::Component::Normal(name) => parts.push(name.to_string_lossy().into_owned()),
-            std::path::Component::ParentDir => {
-                parts.pop()?;
-            }
-            _ => return None,
-        }
-    }
-    Some(parts.join("/"))
-}
-
 /// Resolve an established source link by durable target identity. `Some(None)`
 /// means a binding exists but its target is absent; callers must not fall back
 /// to another file at the old path.
+#[cfg(test)]
 pub fn bound_target(
     vault: &VaultLayout,
     source_slug: &str,
@@ -845,6 +789,7 @@ pub fn bound_target(
 }
 
 /// Resolve a source frontmatter media field by its established binding.
+#[cfg(test)]
 pub fn bound_frontmatter_target(
     vault: &VaultLayout,
     source_slug: &str,
@@ -860,6 +805,7 @@ pub fn bound_frontmatter_target(
 
 /// Indexed fields can aggregate several source syntaxes. A conflicting raw
 /// spelling has no safe single target until the caller supplies its context.
+#[cfg(test)]
 pub fn bound_any_target(
     vault: &VaultLayout,
     source_slug: &str,
@@ -904,6 +850,7 @@ pub fn bound_any_target(
 
 /// Resolve a bound relative Markdown image independently of a wikilink with
 /// the same text in the same source note.
+#[cfg(test)]
 pub fn bound_markdown_target(
     vault: &VaultLayout,
     source_slug: &str,
@@ -917,6 +864,7 @@ pub fn bound_markdown_target(
     )
 }
 
+#[cfg(test)]
 fn bound_target_kind(
     vault: &VaultLayout,
     source_slug: &str,
@@ -1193,7 +1141,7 @@ mod tests {
     }
 
     #[test]
-    fn same_spelling_keeps_frontmatter_and_wikilink_targets_separate() {
+    fn stale_history_cannot_disambiguate_a_current_bare_link() {
         use crate::domain::block::{InlineMediaReference, InlineMediaSyntax};
         let directory = tempfile::tempdir().unwrap();
         let vault = VaultLayout::new(directory.path().to_path_buf());
@@ -1243,7 +1191,7 @@ mod tests {
         write_manifest(&vault, &manifest).unwrap();
         assert_eq!(
             crate::storage::media_refs::resolve_frontmatter_media(&vault, "A/Card", "photo.jpg"),
-            Some(a)
+            None
         );
         assert_eq!(
             crate::storage::media_refs::resolve_inline_media(
@@ -1254,11 +1202,44 @@ mod tests {
                     syntax: InlineMediaSyntax::ObsidianEmbed,
                 }
             ),
-            Some(b)
+            None
         );
         assert_eq!(
             crate::storage::media_refs::resolve_indexed_media(&vault, "A/Card", "photo.jpg"),
             None
         );
+        assert_eq!(
+            crate::storage::media_refs::resolve_frontmatter_media(&vault, "A/Card", "A/photo.jpg"),
+            Some(a)
+        );
+        assert_eq!(
+            crate::storage::media_refs::resolve_frontmatter_media(&vault, "A/Card", "B/photo.jpg"),
+            Some(b)
+        );
+        reconcile(&vault).unwrap();
+        let rewritten = std::fs::read_to_string(&source).unwrap();
+        assert!(rewritten.contains("file: \"[[A/photo.jpg]]\""));
+        assert!(rewritten.contains("![[B/photo.jpg]]"));
+    }
+
+    #[test]
+    fn root_exact_note_link_outvotes_a_moved_stale_binding() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(directory.path().to_path_buf());
+        std::fs::create_dir_all(directory.path().join("Nested")).unwrap();
+        std::fs::write(directory.path().join("Design.md"), "---\ntype: article\n---\nroot").unwrap();
+        std::fs::write(directory.path().join("Nested/Design.md"), "---\ntype: article\n---\nnested").unwrap();
+        let source = directory.path().join("Card.md");
+        std::fs::write(&source, "---\ntype: article\n---\n[[Design]]").unwrap();
+        reconcile(&vault).unwrap();
+        let mut manifest = read_manifest(&vault).unwrap();
+        let source_id = manifest.files.iter().find(|entry| entry.path == "Card.md").unwrap().id.clone();
+        let nested_id = manifest.files.iter().find(|entry| entry.path == "Nested/Design.md").unwrap().id.clone();
+        manifest.bindings.retain(|binding| !(binding.source_id == source_id && binding.reference == "Design"));
+        manifest.bindings.push(Binding { source_id, reference: "Design".into(), syntax: ReferenceSyntax::Wikilink, target_id: nested_id });
+        write_manifest(&vault, &manifest).unwrap();
+        std::fs::rename(directory.path().join("Nested/Design.md"), directory.path().join("Nested/Renamed.md")).unwrap();
+        reconcile(&vault).unwrap();
+        assert_eq!(std::fs::read_to_string(&source).unwrap(), "---\ntype: article\n---\n[[Design]]");
     }
 }

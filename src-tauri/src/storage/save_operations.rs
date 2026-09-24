@@ -204,6 +204,35 @@ impl StagedSavePlan {
     }
 }
 
+fn plan_has_global_name_conflict(plan: &StagedSavePlan, vault: &VaultLayout) -> Result<bool> {
+    let targets: Vec<&str> = std::iter::once(plan.markdown.source.relative_path.as_str())
+        .chain(
+            plan.media
+                .iter()
+                .map(|artifact| artifact.source.relative_path.as_str()),
+        )
+        .collect();
+    let occupied = files::scan_vault_file_paths(vault)?
+        .into_iter()
+        .filter(|path| !targets.contains(&path.as_str()))
+        .collect::<Vec<_>>();
+    for target in targets {
+        let path = Path::new(target);
+        let stem = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .context("planned filename is not Unicode")?;
+        let extension = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .context("planned file extension is missing")?;
+        if mine_core::save::select_unique_file_stem(stem, extension, &occupied)? != stem {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SaveOperationRecord {
     pub version: u32,
@@ -447,6 +476,16 @@ impl LockedSaveOperations {
                     .ok_or_else(|| anyhow::anyhow!("operation outcome is unknown"));
             };
             let action = plan.action(*step, vault);
+            if matches!(
+                action,
+                SaveAction::PublishMedia | SaveAction::PublishMarkdown
+            ) && plan_has_global_name_conflict(plan, vault)?
+            {
+                if *step == SavePhase::Prepared {
+                    return self.reject_prepared_conflict(record);
+                }
+                anyhow::bail!("publication outcome is unknown; planned filename became ambiguous");
+            }
             match action {
                 SaveAction::PublishMedia => {
                     files::ensure_vault_write_layout(
@@ -513,8 +552,6 @@ impl LockedSaveOperations {
                                 unreachable!()
                             };
                             if plan.action(*step, vault) == SaveAction::PersistReceipt {
-                                crate::storage::file_identity::enroll_capture(vault, &destination)
-                                    .context("enroll source identities before uncertain capture receipt")?;
                                 let response = plan.response.clone();
                                 return self
                                     .commit_with_durability_warning(record, response, &error);
@@ -580,6 +617,9 @@ impl LockedSaveOperations {
                 Ok(Some(response))
             }
             OperationPhase::PlannedV2 { step, plan } => {
+                if *step == SavePhase::Prepared && plan_has_global_name_conflict(plan, vault)? {
+                    return self.reject_prepared_conflict(record).map(Some);
+                }
                 let action = plan.action(*step, vault);
                 if *step == SavePhase::Prepared && action == SaveAction::NameConflict {
                     return self.reject_prepared_conflict(record).map(Some);
@@ -595,18 +635,12 @@ impl LockedSaveOperations {
                         if plan.action(*step, vault) != SaveAction::PersistReceipt {
                             return Ok(None);
                         }
-                        let markdown_path = vault.root().join(&plan.markdown.source.relative_path);
-                        crate::storage::file_identity::enroll_capture(vault, &markdown_path)
-                            .context("enroll source identities before uncertain recovered receipt")?;
                         let response = plan.response.clone();
                         return self
                             .commit_with_durability_warning(record, response, &error)
                             .map(Some);
                     }
                 }
-                let markdown_path = vault.root().join(&plan.markdown.source.relative_path);
-                crate::storage::file_identity::enroll_capture(vault, &markdown_path)
-                    .context("enroll source identities before committing capture")?;
                 let response = plan.response.clone();
                 self.commit(record, response.clone())?;
                 Ok(Some(response))
@@ -652,9 +686,6 @@ impl LockedSaveOperations {
                     let path = vault.root().join(&artifact.relative_path);
                     sync_artifact_tree(vault.root(), &path)?;
                 }
-                let markdown_path = vault.root().join(&markdown.relative_path);
-                crate::storage::file_identity::enroll_capture(vault, &markdown_path)
-                    .context("enroll source identities before committing recovered capture")?;
                 let response = response.clone();
                 self.commit(record, response.clone())?;
                 Ok(Some(response))
@@ -882,7 +913,24 @@ mod tests {
     }
 
     #[test]
-    fn identity_enrollment_failure_resumes_same_operation_without_republishing() {
+    fn planned_save_rejects_same_filename_added_in_another_folder() {
+        let (_tmp, vault, store) = setup();
+        let locked = store.lock(&binding_id(&vault).unwrap()).unwrap();
+        let mut record = staged_plan(&locked, "cross-folder-race", 1);
+        std::fs::create_dir_all(vault.root().join("Elsewhere")).unwrap();
+        std::fs::write(vault.root().join("Elsewhere/Card.md"), b"foreign").unwrap();
+        let result = locked.publish_plan(&mut record, &vault).unwrap();
+        assert_eq!(result["code"], "name_conflict");
+        assert_eq!(
+            std::fs::read(vault.root().join("Elsewhere/Card.md")).unwrap(),
+            b"foreign"
+        );
+        assert!(!vault.root().join("Cards/Card.md").exists());
+        assert!(!vault.root().join("Media/Card-0.png").exists());
+    }
+
+    #[test]
+    fn unavailable_identity_history_does_not_block_save_or_receipt_replay() {
         let (_tmp, vault, store) = setup();
         let binding = binding_id(&vault).unwrap();
         let locked = store.lock(&binding).unwrap();
@@ -891,52 +939,28 @@ mod tests {
         std::fs::create_dir_all(&manifest_path).unwrap();
 
         let mut published = 0;
-        let error = locked
+        let response = locked
             .publish_plan_with(&mut record, &vault, |staged, target| {
                 published += 1;
                 files::copy_new_atomically(staged, target)
             })
-            .unwrap_err();
-        assert!(format!("{error:#}").contains("enroll source identities"));
+            .unwrap();
+        assert_eq!(response["outcome"], "committed");
         assert_eq!(published, 2);
         assert!(vault.root().join("Cards/Card.md").is_file());
         assert!(vault.root().join("Media/Card-0.png").is_file());
-        assert!(locked.staging_root("identity-retry").unwrap().exists());
-        assert!(locked.directory.join("identity-retry.request.json").is_file());
         let mut disk = locked.load("identity-retry").unwrap().unwrap();
         assert_eq!(disk.operation_id, "identity-retry");
-        assert!(matches!(disk.phase, OperationPhase::PlannedV2 { .. }));
+        assert!(matches!(disk.phase, OperationPhase::Committed { .. }));
 
-        std::fs::remove_dir(&manifest_path).unwrap();
-        let response = locked
+        let replay = locked
             .publish_plan_with(&mut disk, &vault, |_, _| {
                 panic!("recovery must not publish source bytes again")
             })
             .unwrap();
-        assert_eq!(response["operation_id"], "identity-retry");
+        assert_eq!(replay, response);
         assert_eq!(published, 2);
-        assert!(matches!(
-            locked.load("identity-retry").unwrap().unwrap().phase,
-            OperationPhase::Committed { .. }
-        ));
-        let manifest: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(manifest_path).unwrap()).unwrap();
-        let files = manifest["files"].as_array().unwrap();
-        let source_id = files
-            .iter()
-            .find(|entry| entry["path"] == "Cards/Card.md")
-            .unwrap()["id"]
-            .as_str()
-            .unwrap();
-        let target_id = files
-            .iter()
-            .find(|entry| entry["path"] == "Media/Card-0.png")
-            .unwrap()["id"]
-            .as_str()
-            .unwrap();
-        assert!(manifest["bindings"].as_array().unwrap().iter().any(|binding| {
-            binding["source_id"] == source_id && binding["target_id"] == target_id
-        }));
+        assert!(manifest_path.is_dir());
     }
 
     #[test]

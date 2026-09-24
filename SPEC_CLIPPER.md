@@ -264,6 +264,8 @@ Save-инварианты:
 
 ### 3c. Source-specific content extractor chain
 
+Реализовано [извлечение товарных страниц](/Users/i_iii/Проекты/Личные%20проекты/local-arena/SPEC_PRODUCT_EXTRACTION.md). Отдельный обработчик перед общим Defuddle собирает подтверждённый товар Shopify и его галерею изображений. При неоднозначном распознавании или наличии видео сохраняется прежний общий путь. Автоматический выбор режима сохранения не меняется.
+
 `ArticleData` остаётся единственным контрактом результата для Content preview и
 Save path: `title`, `byline/author`, `content`, `excerpt`,
 `embeddedVideos`. Preview и сохранение не имеют права использовать разные body

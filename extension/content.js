@@ -1221,6 +1221,8 @@
       return { title: document.title, content: "", byline: null, excerpt: "", embeddedVideos: extractEmbeddedVideoPreviews() };
     }
     try {
+      const product = extractProductArticle();
+      if (product) return product;
       const result = new Defuddle(createExtractionDocument(), {
         separateMarkdown: true,
       }).parse();
@@ -1243,6 +1245,13 @@
   }
 
   // Async version — custom YouTube fetcher, Defuddle for everything else
+  function extractProductArticle() {
+    const extractor = globalThis.MineProductExtraction;
+    if (!extractor || typeof Defuddle.createMarkdownContent !== "function") return null;
+    return extractor.extractProductArticle(document, window.location.href,
+      (html, url) => Defuddle.createMarkdownContent(html, url));
+  }
+
   async function extractArticleAsync() {
     const pageUrl = window.location.href;
     const sourceUrl = capturePageSource(pageUrl);
@@ -1299,6 +1308,8 @@
       return { title: document.title, content: "", byline: null, excerpt: "", embeddedVideos: extractEmbeddedVideoPreviews() };
     }
     try {
+      const product = extractProductArticle();
+      if (product) return product;
       const result = await new Defuddle(createExtractionDocument(), {
         separateMarkdown: true,
       }).parseAsync();

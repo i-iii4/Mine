@@ -121,6 +121,179 @@ pub fn write_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Publish a link repair while retaining any concurrent editor version.
+/// The atomic exchange gives us the exact inode displaced at publication,
+/// including an editor write that ignored Mine's advisory lock.
+#[cfg(target_os = "macos")]
+pub(crate) fn write_atomically_if_unchanged(
+    path: &Path,
+    expected: &[u8],
+    replacement: &[u8],
+    conflict_dir: &Path,
+) -> Result<()> {
+    write_atomically_if_unchanged_with_hooks(
+        path,
+        expected,
+        replacement,
+        conflict_dir,
+        || {},
+        || {},
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn write_atomically_if_unchanged_with_hooks(
+    path: &Path,
+    expected: &[u8],
+    replacement: &[u8],
+    conflict_dir: &Path,
+    before_exchange: impl FnOnce(),
+    before_rollback: impl FnOnce(),
+) -> Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    unsafe extern "C" {
+        fn renamex_np(
+            from: *const std::ffi::c_char,
+            to: *const std::ffi::c_char,
+            flags: u32,
+        ) -> i32;
+    }
+    const RENAME_SWAP: u32 = 0x00000002;
+    let swap = |from: &Path, to: &Path| -> Result<()> {
+        let from = CString::new(from.as_os_str().as_bytes())?;
+        let to = CString::new(to.as_os_str().as_bytes())?;
+        let status = unsafe { renamex_np(from.as_ptr(), to.as_ptr(), RENAME_SWAP) };
+        if status != 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        Ok(())
+    };
+
+    anyhow::ensure!(
+        std::fs::read(path)? == expected,
+        "source changed before link repair: {}",
+        path.display()
+    );
+    let tmp = prepare_replacement_temp_file(path, path, |file| file.write_all(replacement))?;
+    before_exchange();
+    let outcome = (|| -> Result<()> {
+        swap(&tmp, path)?;
+        if std::fs::read(&tmp)? == expected {
+            std::fs::remove_file(&tmp)?;
+            sync_published_parent(path)?;
+            return Ok(());
+        }
+
+        // A concurrent replacement is now at tmp. Exchange again so the
+        // editor's version is visible, then retain whichever bytes this
+        // exchange displaced if another write raced the rollback.
+        let live_was_ours = std::fs::read(path)? == replacement;
+        if live_was_ours {
+            before_rollback();
+            swap(&tmp, path)?;
+            if std::fs::read(&tmp)? == replacement {
+                std::fs::remove_file(&tmp)?;
+                sync_published_parent(path)?;
+                anyhow::bail!(
+                    "source changed during link repair; editor version restored: {}",
+                    path.display()
+                );
+            }
+        }
+        std::fs::create_dir_all(conflict_dir)?;
+        let conflict = conflict_dir.join(tmp.file_name().context("repair temp has no name")?);
+        std::fs::rename(&tmp, &conflict)?;
+        sync_parent_directory(&conflict)?;
+        anyhow::bail!(
+            "source changed during link repair; displaced version preserved at {}",
+            conflict.display()
+        )
+    })();
+    if outcome.is_err() && tmp.exists() {
+        // An exchange may have failed before publication. Keep the staged
+        // inode for diagnosis rather than discarding possible editor bytes.
+        anyhow::bail!(
+            "link repair failed; staged or displaced version preserved at {}: {}",
+            tmp.display(),
+            outcome.unwrap_err()
+        );
+    }
+    outcome
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod link_repair_tests {
+    use super::*;
+
+    #[test]
+    fn atomic_editor_publication_during_repair_restores_editor_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("Card.md");
+        let editor_staged = dir.path().join("editor.md");
+        let conflict_dir = dir.path().join(".mine/link-repair-conflicts");
+        std::fs::write(&source, b"old [[photo.jpg]]").unwrap();
+        std::fs::write(&editor_staged, b"editor [[new.jpg]]").unwrap();
+
+        let result = write_atomically_if_unchanged_with_hooks(
+            &source,
+            b"old [[photo.jpg]]",
+            b"Mine [[renamed.jpg]]",
+            &conflict_dir,
+            || std::fs::rename(&editor_staged, &source).unwrap(),
+            || {},
+        );
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&source).unwrap(), b"editor [[new.jpg]]");
+        assert!(!conflict_dir.exists());
+    }
+
+    #[test]
+    fn second_editor_publication_during_rollback_is_preserved() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("Card.md");
+        let first_staged = dir.path().join("first.md");
+        let second_staged = dir.path().join("second.md");
+        let conflict_dir = dir.path().join(".mine/link-repair-conflicts");
+        std::fs::write(&source, b"old").unwrap();
+        std::fs::write(&first_staged, b"editor first").unwrap();
+        std::fs::write(&second_staged, b"editor second").unwrap();
+
+        let result = write_atomically_if_unchanged_with_hooks(
+            &source,
+            b"old",
+            b"Mine revised",
+            &conflict_dir,
+            || std::fs::rename(&first_staged, &source).unwrap(),
+            || std::fs::rename(&second_staged, &source).unwrap(),
+        );
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&source).unwrap(), b"editor first");
+        let saved = std::fs::read_dir(&conflict_dir)
+            .unwrap()
+            .collect::<Vec<_>>();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(
+            std::fs::read(saved[0].as_ref().unwrap().path()).unwrap(),
+            b"editor second"
+        );
+    }
+}
+
+/// Other platforms must provide an atomic exchange before source repair is safe.
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn write_atomically_if_unchanged(
+    _path: &Path,
+    _expected: &[u8],
+    _replacement: &[u8],
+    _conflict_dir: &Path,
+) -> Result<()> {
+    anyhow::bail!("atomic source exchange is unavailable on this platform")
+}
+
 /// Atomically publish a new file without replacing an existing destination.
 /// The complete fsynced temp inode is linked under the final name in one
 /// operation, preserving create-new semantics without exposing partial bytes.
@@ -300,6 +473,40 @@ pub fn scan_vault_file_stems(vault: &VaultLayout) -> Result<std::collections::Ha
     Ok(stems)
 }
 
+/// Vault-relative source paths for shortest unambiguous Obsidian references.
+pub fn scan_vault_file_paths(vault: &VaultLayout) -> Result<Vec<String>> {
+    fn walk(vault: &VaultLayout, dir: &Path, out: &mut Vec<String>) -> Result<()> {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let kind = entry.file_type()?;
+            if kind.is_dir() && !is_ignored_vault_dir(&path) {
+                walk(vault, &path, out)?;
+            } else if kind.is_file() {
+                if let Ok(relative) = path.strip_prefix(vault.root()) {
+                    if !relative
+                        .components()
+                        .any(|part| part.as_os_str().to_string_lossy().starts_with('.'))
+                    {
+                        out.push(relative.to_string_lossy().replace('\\', "/"));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+    let mut paths = Vec::new();
+    walk(vault, vault.root(), &mut paths)?;
+    paths.sort();
+    Ok(paths)
+}
+
+pub fn shortest_vault_link(vault: &VaultLayout, target: &str, omit_md_ext: bool) -> Result<String> {
+    mine_core::links::LinkIndex::new(scan_vault_file_paths(vault)?)
+        .shortest_link(target, omit_md_ext)
+        .ok_or_else(|| anyhow::anyhow!("vault link target is missing: {target}"))
+}
+
 /// Read explicit write destinations. Missing configuration and missing fields
 /// mean the space root, regardless of directory names on disk.
 pub fn load_vault_write_layout(
@@ -320,7 +527,9 @@ pub fn load_vault_write_layout(
 /// Snapshot the latest saved destinations immediately before creating files.
 /// Native host and the desktop app may both change the shared layout marker.
 pub fn layout_for_new_files(vault: &VaultLayout) -> Result<VaultLayout> {
-    Ok(vault.clone().with_write_layout(load_vault_write_layout(vault)?))
+    Ok(vault
+        .clone()
+        .with_write_layout(load_vault_write_layout(vault)?))
 }
 
 /// Anchor the layout agreed by a durable capture plan. This is idempotent
@@ -476,11 +685,17 @@ pub fn delete_user_file(path: &Path) -> Result<()> {
 /// One OS trash request for a batch. The OS may partially succeed; callers
 /// must refresh their view after errors. Never remove remaining files here.
 pub fn delete_user_files(paths: &[PathBuf]) -> Result<()> {
-    if paths.is_empty() { return Ok(()); }
+    if paths.is_empty() {
+        return Ok(());
+    }
     #[cfg(not(target_os = "ios"))]
-    { trash::delete_all(paths).context("failed to move files to the system Trash") }
+    {
+        trash::delete_all(paths).context("failed to move files to the system Trash")
+    }
     #[cfg(target_os = "ios")]
-    { anyhow::bail!("system Trash is unavailable; files were not deleted") }
+    {
+        anyhow::bail!("system Trash is unavailable; files were not deleted")
+    }
 }
 
 /// Delete a block's .md file and optional media file.
@@ -753,7 +968,10 @@ mod tests {
         std::fs::create_dir_all(vault.root().join("Cards")).unwrap();
         std::fs::create_dir_all(vault.root().join("Media")).unwrap();
         std::fs::create_dir_all(vault.root().join("Collections")).unwrap();
-        assert_eq!(load_vault_write_layout(&vault).unwrap(), crate::domain::vault::VaultWriteLayout::flat());
+        assert_eq!(
+            load_vault_write_layout(&vault).unwrap(),
+            crate::domain::vault::VaultWriteLayout::flat()
+        );
         std::fs::create_dir(vault.mine_dir()).unwrap();
         std::fs::write(
             vault.write_layout_path(),

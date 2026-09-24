@@ -83,6 +83,155 @@ fn assert_source_path(path: &Path, expected: &Path) {
 }
 
 #[test]
+fn unique_paths_repair_after_history_and_derived_state_are_deleted_before_move() {
+    let space = SpaceFixture::new();
+    space.write("Cards/Card.md", b"---\ntype: image\nsaved_at: 2026-09-01T00:00:00Z\nfile: \"[[Media/photo.jpg]]\"\n---\n![[Media/photo.jpg|caption]]");
+    space.write("Media/photo.jpg", b"original image");
+    space.reconcile();
+    fs::remove_file(space.path(".mine/file-identity.json")).expect("delete temporary history");
+    fs::remove_dir_all(&space.derived).expect("delete temporary derived state");
+    space.move_file("Cards/Card.md", "Card.md");
+    space.move_file("Media/photo.jpg", "photo.jpg");
+    space.reconcile();
+
+    let source = fs::read_to_string(space.path("Card.md")).expect("repaired source");
+    assert!(source.contains("file: \"[[photo.jpg]]\""));
+    assert!(source.contains("![[photo.jpg|caption]]"));
+    let (path, bytes) = media_bytes_for_card(&space.layout(), "Card");
+    assert_source_path(&path, &space.path("photo.jpg"));
+    assert_eq!(bytes, b"original image");
+}
+
+#[test]
+fn corrupt_history_does_not_block_unique_source_repair() {
+    let space = SpaceFixture::new();
+    space.write(
+        "Cards/Card.md",
+        b"---\ntype: image\nsaved_at: 2026-09-01T00:00:00Z\nfile: \"[[Media/photo.jpg]]\"\n---\n",
+    );
+    space.write("Media/photo.jpg", b"original image");
+    space.reconcile();
+    space.write(".mine/file-identity.json", b"{broken json");
+    space.move_file("Media/photo.jpg", "Assets/photo.jpg");
+    space.reconcile();
+    let source = fs::read_to_string(space.path("Cards/Card.md")).expect("source after repair");
+    assert!(source.contains("[[photo.jpg]]"));
+    assert_source_path(
+        &media_bytes_for_card(&space.layout(), "Cards/Card").0,
+        &space.path("Assets/photo.jpg"),
+    );
+}
+
+#[test]
+fn edited_valid_link_outvotes_stale_history_after_external_rename() {
+    let space = SpaceFixture::new();
+    space.write("Old/first.jpg", b"former target");
+    space.write("New/second.jpg", b"edited target");
+    space.write(
+        "Card.md",
+        b"---\ntype: image\nsaved_at: 2026-09-01T00:00:00Z\nfile: \"[[Old/first.jpg]]\"\n---\n",
+    );
+    space.reconcile();
+    space.atomic_editor_save(
+        "Card.md",
+        b"---\ntype: image\nsaved_at: 2026-09-01T00:00:00Z\nfile: \"[[New/second.jpg]]\"\n---\n",
+    );
+    space.move_file("Old/first.jpg", "Moved/first-renamed.jpg");
+    space.reconcile();
+    let source = fs::read_to_string(space.path("Card.md")).expect("editor source");
+    assert!(source.contains("[[New/second.jpg]]"));
+    assert!(!source.contains("first-renamed.jpg"));
+    assert_source_path(
+        &media_bytes_for_card(&space.layout(), "Card").0,
+        &space.path("New/second.jpg"),
+    );
+}
+
+#[test]
+fn current_bare_link_outvotes_history_when_old_name_is_reused() {
+    let space = SpaceFixture::new();
+    space.write("Old/photo.jpg", b"former target");
+    space.write(
+        "Card.md",
+        b"---\ntype: image\nsaved_at: 2026-09-01T00:00:00Z\nfile: \"[[photo.jpg]]\"\n---\n",
+    );
+    space.reconcile();
+    space.move_file("Old/photo.jpg", "Moved/renamed.jpg");
+    space.write("Other/photo.jpg", b"current target");
+    space.reconcile();
+    let source = fs::read_to_string(space.path("Card.md")).expect("source");
+    assert!(source.contains("[[photo.jpg]]"));
+    assert_source_path(
+        &media_bytes_for_card(&space.layout(), "Card").0,
+        &space.path("Other/photo.jpg"),
+    );
+}
+
+#[test]
+fn known_bare_binding_is_written_as_explicit_link_when_duplicate_appears() {
+    let space = SpaceFixture::new();
+    space.write("Media/photo.jpg", b"original target");
+    space.write(
+        "Card.md",
+        b"---\ntype: image\nsaved_at: 2026-09-01T00:00:00Z\nfile: \"[[photo.jpg]]\"\n---\n",
+    );
+    space.reconcile();
+    space.write("Other/photo.jpg", b"other target");
+    space.reconcile();
+    let source = fs::read_to_string(space.path("Card.md")).expect("disambiguated source");
+    assert!(source.contains("[[Media/photo.jpg]]"));
+    fs::remove_file(space.path(".mine/file-identity.json")).expect("delete temporary history");
+    fs::remove_dir_all(&space.derived).expect("delete temporary derived state");
+    space.reconcile();
+    assert_source_path(
+        &media_bytes_for_card(&space.layout(), "Card").0,
+        &space.path("Media/photo.jpg"),
+    );
+}
+
+#[test]
+fn external_note_rename_repairs_custom_property_without_touching_prose() {
+    let space = SpaceFixture::new();
+    space.write(
+        "Old/Peer.md",
+        b"---\ntype: article\nsaved_at: 2026-09-01T00:00:00Z\n---\npeer",
+    );
+    space.write("Card.md", b"---\ntype: article\nsaved_at: 2026-09-01T00:00:00Z\nrelated: \"[[Old/Peer#part|label]]\"\nsummary: \"Read [[Old/Peer]] later\"\n---\n`[[Old/Peer]]`");
+    space.reconcile();
+    space.move_file("Old/Peer.md", "New/Renamed.md");
+    space.reconcile();
+    let source = fs::read_to_string(space.path("Card.md")).expect("repaired source");
+    assert!(source.contains("related: \"[[Renamed#part|label]]\""));
+    assert!(source.contains("summary: \"Read [[Old/Peer]] later\""));
+    assert!(source.contains("`[[Old/Peer]]`"));
+}
+
+#[test]
+fn missing_history_never_guesses_between_duplicate_basenames() {
+    let space = SpaceFixture::new();
+    space.write("Old/photo.jpg", b"former target");
+    space.write(
+        "Card.md",
+        b"---\ntype: image\nsaved_at: 2026-09-01T00:00:00Z\nfile: \"[[Old/photo.jpg]]\"\n---\n",
+    );
+    space.reconcile();
+    fs::remove_file(space.path(".mine/file-identity.json")).expect("delete temporary history");
+    space.move_file("Old/photo.jpg", "A/photo.jpg");
+    space.write("B/photo.jpg", b"other target");
+    space.reconcile();
+    let source = fs::read_to_string(space.path("Card.md")).expect("unmodified ambiguous source");
+    assert!(source.contains("[[Old/photo.jpg]]"));
+    assert_eq!(media_bytes_for_card_opt(&space.layout(), "Card"), None);
+}
+
+fn media_bytes_for_card_opt(vault: &VaultLayout, slug: &str) -> Option<Vec<u8>> {
+    let conn = db::open_or_create(&vault.index_db_path()).ok()?;
+    let card = index::get_block(&conn, slug).ok()??;
+    let path = media_refs::resolve_indexed_media(vault, slug, card.media_file.as_deref()?)?;
+    fs::read(path).ok()
+}
+
+#[test]
 fn closed_space_moves_keep_the_same_media_and_source_links_after_index_loss() {
     let space = SpaceFixture::new();
     let image = b"first-original-image-bytes";
@@ -90,7 +239,7 @@ fn closed_space_moves_keep_the_same_media_and_source_links_after_index_loss() {
     space.write("Old/Media/photo.jpg", image);
     space.write(
         "Old/Cards/First.md",
-        b"---\ntype: image\nsaved_at: 2026-09-01T00:00:00Z\nfile: \"[[photo.jpg]]\"\nMine Related Notes:\n  - \"[[Old/Cards/Peer]]\"\n---\n![[photo.jpg]]",
+        b"---\ntype: image\nsaved_at: 2026-09-01T00:00:00Z\nfile: \"[[Old/Media/photo.jpg]]\"\nMine Related Notes:\n  - \"[[Old/Cards/Peer]]\"\n---\n![[Old/Media/photo.jpg]]",
     );
     space.write(
         "Old/Cards/Peer.md",
@@ -387,7 +536,7 @@ fn same_named_collections_keep_separate_members_and_descriptions_after_moves() {
 }
 
 #[test]
-fn replacement_with_identical_contents_does_not_inherit_a_deleted_target_link() {
+fn current_unique_note_target_outvotes_deleted_target_history() {
     let space = SpaceFixture::new();
     let identical = b"---\ntype: article\nsaved_at: 2026-09-01T00:00:00Z\n---\nidentical text";
     space.write("Old/Peer.md", identical);
@@ -405,17 +554,20 @@ fn replacement_with_identical_contents_does_not_inherit_a_deleted_target_link() 
         }
         space.reconcile();
         let source = fs::read_to_string(space.path("Source.md")).expect("read source note");
-        assert!(source.contains("[[Old/Peer]]"));
-        assert!(!source.contains("[[New/Peer]]"));
+        assert!(source.contains("[[Peer]]"));
+        assert!(!source.contains("[[Old/Peer]]"));
         let vault = space.layout();
         let conn = db::open_or_create(&vault.index_db_path()).expect("open derived index");
         let card = index::get_block(&conn, "Source")
             .expect("query source")
             .expect("source still exists");
-        assert!(!card
-            .related_notes
-            .iter()
-            .any(|reference| reference == "New/Peer"));
+        assert!(
+            card.related_notes
+                .iter()
+                .any(|reference| reference == "Peer" || reference == "New/Peer"),
+            "related notes: {:?}",
+            card.related_notes
+        );
     }
 }
 
@@ -427,13 +579,13 @@ fn atomic_editor_save_keeps_binding_when_original_media_moves_later() {
     space.write("Media/target.jpg", original);
     space.write(
         "Card.md",
-        b"---\ntype: image\nsaved_at: 2026-09-01T00:00:00Z\nfile: \"[[target.jpg]]\"\n---\nfirst body",
+        b"---\ntype: image\nsaved_at: 2026-09-01T00:00:00Z\nfile: \"[[Media/target.jpg]]\"\n---\nfirst body",
     );
     space.reconcile();
     space.write("Other/target.jpg", distractor);
     space.atomic_editor_save(
         "Card.md",
-        b"---\ntype: image\nsaved_at: 2026-09-01T00:00:00Z\nfile: \"[[target.jpg]]\"\n---\nbody edited by another app",
+        b"---\ntype: image\nsaved_at: 2026-09-01T00:00:00Z\nfile: \"[[Media/target.jpg]]\"\n---\nbody edited by another app",
     );
     space.reconcile();
     space.move_file("Media/target.jpg", "Moved/original.jpg");
@@ -464,7 +616,7 @@ fn atomic_editor_save_keeps_binding_when_original_media_moves_later() {
 }
 
 #[test]
-fn new_file_at_deleted_medias_exact_path_does_not_inherit_its_binding() {
+fn current_exact_media_path_outvotes_deleted_target_history() {
     let space = SpaceFixture::new();
     let original = b"original target bytes";
     let replacement = b"replacement from a different file";
@@ -492,8 +644,8 @@ fn new_file_at_deleted_medias_exact_path_does_not_inherit_its_binding() {
             .expect("indexed reference remains available");
         assert_eq!(
             media_refs::resolve_indexed_media(&vault, "Card", &shown_reference),
-            None,
-            "the displayed card must not open a replacement file"
+            Some(space.path("Media/target.jpg")),
+            "the source link names the current exact file"
         );
         let source = fs::read_to_string(space.path("Card.md")).expect("source card");
         let parsed = parse_block("Card", &source).expect("parse source card");
@@ -507,8 +659,8 @@ fn new_file_at_deleted_medias_exact_path_does_not_inherit_its_binding() {
                     .as_deref()
                     .expect("source reference"),
             ),
-            None,
-            "the source reference must not silently switch targets"
+            Some(space.path("Media/target.jpg")),
+            "the current exact source link is authoritative"
         );
         assert_eq!(
             fs::read(space.path("Media/target.jpg")).expect("replacement"),

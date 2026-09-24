@@ -28,11 +28,9 @@ describe("EdgeStatesSection", () => {
     expect(container.querySelector("[data-folder-confirmation]")).not.toBeNull();
     expect(container.querySelector("[data-empty-space-onboarding]")).not.toBeNull();
 
-    // The standing iCloud explanation, in both the "held" and "all local"
-    // readings — the second is the one nobody would think to check.
-    expect(container.querySelectorAll("[data-cloud-disclaimer]")).toHaveLength(2);
-    expect(screen.getByText(/contents of 12 files are in iCloud/)).toBeInTheDocument();
-    expect(screen.getByText(/Every file of this space is on this Mac/)).toBeInTheDocument();
+    // The recommendation appears at the relevant moment, not permanently in Spaces.
+    expect(container.querySelector("[data-cloud-recommendation-card]")).not.toBeNull();
+    expect(container.querySelector("[data-cloud-disclaimer]")).toBeNull();
 
     // Every clipper variant, including the one that used to break saving in
     // silence — plus the settings-page frame showing where the block lives.

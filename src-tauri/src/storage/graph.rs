@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use mine_core::links::{LinkIndex, LinkResolution, LinkSyntax};
 #[cfg(test)]
 use rusqlite::params;
 use rusqlite::Connection;
@@ -255,6 +256,23 @@ fn build_graph_snapshot(
 }
 
 fn build_graph_model(conn: &Connection, options: &GraphOptions) -> Result<GraphModel> {
+    let mut path_stmt = conn.prepare("SELECT slug FROM blocks")?;
+    let paths = path_stmt
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|slug| format!("{slug}.md"))
+        .collect::<Vec<_>>();
+    let link_index = LinkIndex::new(paths);
+    let mut collection_sources = BTreeMap::new();
+    let mut collection_stmt =
+        conn.prepare("SELECT source_slug, tag FROM channels WHERE source_slug IS NOT NULL")?;
+    for row in collection_stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })? {
+        let (slug, tag) = row?;
+        collection_sources.insert(slug, tag);
+    }
     let cards = load_cards(conn)?;
     let mut model = GraphModel::default();
     for card in cards {
@@ -309,6 +327,8 @@ fn build_graph_model(conn: &Connection, options: &GraphOptions) -> Result<GraphM
             insert_reference_edge(
                 &mut model,
                 options,
+                &link_index,
+                &collection_sources,
                 GraphLinkKind::Wikilink,
                 source,
                 target_ref,
@@ -320,6 +340,8 @@ fn build_graph_model(conn: &Connection, options: &GraphOptions) -> Result<GraphM
             insert_reference_edge(
                 &mut model,
                 options,
+                &link_index,
+                &collection_sources,
                 GraphLinkKind::RelatedNote,
                 source,
                 target_ref,
@@ -333,6 +355,8 @@ fn build_graph_model(conn: &Connection, options: &GraphOptions) -> Result<GraphM
 fn insert_reference_edge(
     model: &mut GraphModel,
     options: &GraphOptions,
+    link_index: &LinkIndex,
+    collection_sources: &BTreeMap<String, String>,
     kind: GraphLinkKind,
     source_slug: String,
     target_ref: String,
@@ -340,15 +364,28 @@ fn insert_reference_edge(
     if !model.card_slugs.contains(&source_slug) {
         return;
     }
-    let normalized = normalize_graph_target(&target_ref);
-    if normalized.is_empty() || normalized == source_slug {
+    let LinkResolution::Resolved(target_path) = link_index.resolve(
+        &format!("{source_slug}.md"),
+        &target_ref,
+        LinkSyntax::Obsidian,
+    ) else {
+        return;
+    };
+    let Some(target_slug) = target_path.strip_suffix(".md") else {
+        return;
+    };
+    if target_slug == source_slug {
         return;
     }
 
-    let target = if model.card_slugs.contains(&normalized) {
-        card_node_id(&normalized)
-    } else if options.include_collections && model.collection_refs.contains(&normalized) {
-        collection_node_id(&normalized)
+    let target = if model.card_slugs.contains(target_slug) {
+        card_node_id(target_slug)
+    } else if options.include_collections
+        && collection_sources
+            .get(target_slug)
+            .is_some_and(|reference| model.collection_refs.contains(reference))
+    {
+        collection_node_id(&collection_sources[target_slug])
     } else {
         return;
     };
@@ -597,17 +634,6 @@ fn insert_collection_node(nodes: &mut BTreeMap<String, GraphNode>, collection_re
     });
 }
 
-fn normalize_graph_target(target: &str) -> String {
-    let trimmed = target.trim();
-    let boundary = [trimmed.find('#'), trimmed.find('|')]
-        .into_iter()
-        .flatten()
-        .min()
-        .unwrap_or(trimmed.len());
-    let base = trimmed[..boundary].trim().trim_start_matches("./");
-    base.strip_suffix(".md").unwrap_or(base).trim().to_string()
-}
-
 fn card_node_id(slug: &str) -> String {
     format!("card:{slug}")
 }
@@ -736,6 +762,83 @@ mod tests {
         assert_eq!(link.source, "card:source");
         assert_eq!(link.target, "card:target");
         assert!(link.directed);
+    }
+
+    #[test]
+    fn short_wikilink_reaches_nested_note_in_graph_and_detail_both_directions() {
+        let conn = db::open_memory().unwrap();
+        insert_block(&conn, "Cards/Source", "See [[Peer]]", &[]);
+        insert_block(&conn, "Notes/Peer", "", &[]);
+
+        let snapshot = graph_snapshot(&conn, &library_scope(), &options()).unwrap();
+        assert!(snapshot
+            .links
+            .iter()
+            .any(|link| link.kind == GraphLinkKind::Wikilink
+                && link.source == "card:Cards/Source"
+                && link.target == "card:Notes/Peer"));
+        assert_eq!(
+            index::get_block(&conn, "Cards/Source")
+                .unwrap()
+                .unwrap()
+                .related_notes,
+            vec!["Notes/Peer"]
+        );
+        assert_eq!(
+            index::get_block(&conn, "Notes/Peer")
+                .unwrap()
+                .unwrap()
+                .related_notes,
+            vec!["Cards/Source"]
+        );
+        assert_eq!(
+            crate::storage::block_queries::resolve_note_link(&conn, "Cards/Source", "Peer#Heading")
+                .unwrap()
+                .as_deref(),
+            Some("Notes/Peer")
+        );
+    }
+
+    #[test]
+    fn duplicate_short_name_needs_explicit_target() {
+        let conn = db::open_memory().unwrap();
+        insert_block(&conn, "Cards/Source", "See [[Peer]]", &[]);
+        insert_block(&conn, "A/Peer", "", &[]);
+        insert_block(&conn, "B/Peer", "", &[]);
+        let snapshot = graph_snapshot(&conn, &library_scope(), &options()).unwrap();
+        assert!(!snapshot
+            .links
+            .iter()
+            .any(|link| link.kind == GraphLinkKind::Wikilink));
+        assert!(index::get_block(&conn, "Cards/Source")
+            .unwrap()
+            .unwrap()
+            .related_notes
+            .is_empty());
+        assert_eq!(crate::storage::block_queries::resolve_note_link(&conn, "Cards/Source", "Peer").unwrap(), None);
+    }
+
+    #[test]
+    fn wikilink_to_collection_document_reaches_collection_node() {
+        let conn = db::open_memory().unwrap();
+        insert_block(&conn, "Cards/Source", "See [[Design]]", &[]);
+        let mut page = block("Collections/Design", "", &[]);
+        page.frontmatter.block_type = BlockType::Channel;
+        index::upsert_block(&conn, &page, None).unwrap();
+        conn.execute(
+            "INSERT INTO channels (tag, source_slug, title, position, created_at)
+             VALUES ('Design', 'Collections/Design', 'Design', 0, '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+
+        let snapshot = graph_snapshot(&conn, &library_scope(), &options()).unwrap();
+        assert!(snapshot
+            .links
+            .iter()
+            .any(|link| link.kind == GraphLinkKind::Wikilink
+                && link.source == "card:Cards/Source"
+                && link.target == "collection:Design"));
     }
 
     #[test]

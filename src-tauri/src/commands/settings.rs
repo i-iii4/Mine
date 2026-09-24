@@ -13,20 +13,20 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use unicode_normalization::UnicodeNormalization;
 
-use crate::commands::blocks::{collect_delete_media_for_block, resolve_unique_block_slug};
+use crate::commands::blocks::collect_delete_media_for_block;
 use crate::commands::state::{current_vault_layout, AppState, CommandError, VaultState};
-use crate::commands::vault::{canonical_space_path, derived_store_root, initialize_new_space_layout, load_config, write_config};
+use crate::commands::vault::{
+    canonical_space_path, derived_store_root, initialize_new_space_layout, load_config,
+    write_config,
+};
 use crate::domain::block::{Block, BlockType, DateTime, Frontmatter};
 use crate::domain::vault::VaultLayout;
-use crate::storage::{files, index, media_dimensions, media_refs, preview_plan, thumbnails};
+use crate::storage::{files, index, media_refs, preview_plan, thumbnails};
 
 const SETTINGS_WINDOW_LABEL: &str = "settings";
 
 #[tauri::command]
-pub fn open_settings_window(
-    app: AppHandle,
-    section: Option<String>,
-) -> Result<(), CommandError> {
+pub fn open_settings_window(app: AppHandle, section: Option<String>) -> Result<(), CommandError> {
     if let Some(existing) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
         let _ = existing.show();
         let _ = existing.set_focus();
@@ -43,15 +43,12 @@ pub fn open_settings_window(
         Some(section) => format!("settings.html?section={section}"),
         None => "settings.html".to_string(),
     };
-    let builder = WebviewWindowBuilder::new(
-        &app,
-        SETTINGS_WINDOW_LABEL,
-        WebviewUrl::App(url.into()),
-    )
-    .title("Settings")
-    .inner_size(760.0, 560.0)
-    .min_inner_size(640.0, 460.0)
-    .resizable(true);
+    let builder =
+        WebviewWindowBuilder::new(&app, SETTINGS_WINDOW_LABEL, WebviewUrl::App(url.into()))
+            .title("Settings")
+            .inner_size(760.0, 560.0)
+            .min_inner_size(640.0, 460.0)
+            .resizable(true);
 
     // Chrome is consistent with the main window: overlay title bar, hidden
     // native title, our own h-8 drag bar drawn by the settings frontend.
@@ -69,7 +66,8 @@ pub fn open_settings_window(
 // ─── Spaces ─────────────────────────────────────────────────────────────────
 
 fn known_vaults_from_config(cfg: &serde_json::Value) -> Vec<String> {
-    let paths: Vec<String> = cfg.get("known_vaults")
+    let paths: Vec<String> = cfg
+        .get("known_vaults")
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
@@ -220,9 +218,6 @@ pub struct SpaceStats {
     /// From the space's local derived index; `None` when the space has never
     /// been opened (no vault-id / no index) or the index predates `card_kind`.
     pub element_count: Option<u64>,
-    /// Files whose contents iCloud is currently holding rather than keeping on
-    /// this Mac. The number behind the settings explanation (SPEC_CLOUD_STORAGE.md Х20).
-    pub offloaded_count: u64,
 }
 
 /// Stat-only scan of the whole space: counts and sizes come from directory
@@ -240,7 +235,6 @@ pub(crate) fn scan_space_files(root: &Path) -> Result<SpaceStats, CommandError> 
         media_count: 0,
         total_bytes: 0,
         element_count: None,
-        offloaded_count: 0,
     };
     // Fails loudly for the root only: an unreadable subfolder degrades its own
     // numbers, an unreadable space is an error worth showing.
@@ -287,9 +281,6 @@ fn scan_space_dir(entries: std::fs::ReadDir, stats: &mut SpaceStats, depth: usiz
             stats.media_count += 1;
         }
         stats.total_bytes += entry.metadata().ok().map(|m| m.len()).unwrap_or(0);
-        if media_dimensions::is_content_offloaded(&path) {
-            stats.offloaded_count += 1;
-        }
     }
 }
 
@@ -336,17 +327,26 @@ fn existing_vault_id(root: &Path) -> Option<String> {
     None
 }
 
+/// Run a space's filesystem scan away from the main thread. Access to a
+/// protected or slow directory may wait for macOS consent or disk I/O, but
+/// the settings window must remain responsive while that row is pending.
 #[tauri::command]
-pub fn space_stats(app: AppHandle, path: String) -> Result<SpaceStats, CommandError> {
-    let cfg = load_config(&app);
-    if !is_known_space(&cfg, &path) {
+pub async fn space_stats(app: AppHandle, path: String) -> Result<SpaceStats, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || space_stats_inner(&app, &path))
+        .await
+        .map_err(|error| CommandError::Internal(format!("space_stats task join failed: {error}")))?
+}
+
+fn space_stats_inner(app: &AppHandle, path: &str) -> Result<SpaceStats, CommandError> {
+    let cfg = load_config(app);
+    if !is_known_space(&cfg, path) {
         return Err(CommandError::Internal(format!("not a known space: {path}")));
     }
 
-    let root = Path::new(&path);
+    let root = Path::new(path);
     let mut stats = scan_space_files(root)?;
     stats.element_count = existing_vault_id(root)
-        .and_then(|vault_id| derived_store_root(&app, &vault_id).ok())
+        .and_then(|vault_id| derived_store_root(app, &vault_id).ok())
         .map(|derived| VaultLayout::with_derived_root(root.to_path_buf(), derived).index_db_path())
         .and_then(|index_db| read_indexed_element_count(&index_db));
     Ok(stats)
@@ -484,12 +484,16 @@ fn scan_orphans(vs: &VaultState) -> Result<Vec<OrphanMedia>, CommandError> {
 }
 
 #[tauri::command]
-pub async fn list_orphan_media(state: State<'_, AppState>) -> Result<Vec<OrphanMedia>, CommandError> {
+pub async fn list_orphan_media(
+    state: State<'_, AppState>,
+) -> Result<Vec<OrphanMedia>, CommandError> {
     let vault = current_vault_layout(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
         let vs = orphan_worker_state(vault)?;
         scan_orphans(&vs)
-    }).await.map_err(|error| CommandError::Internal(error.to_string()))?
+    })
+    .await
+    .map_err(|error| CommandError::Internal(error.to_string()))?
 }
 
 /// An independent read connection: filesystem and Finder waits never own the
@@ -558,9 +562,9 @@ pub(crate) fn promote_orphan_media_inner(
     file_names: Vec<String>,
 ) -> Result<PromoteOrphanResult, CommandError> {
     let referenced = referenced_media_file_names(vs)?;
+    let write_vault = files::layout_for_new_files(&vs.vault)?;
     let mut created = Vec::new();
     let mut skipped = Vec::new();
-    let write_vault = files::layout_for_new_files(&vs.vault)?;
 
     for file_name in file_names {
         if !validate_orphan_operand(&file_name, &referenced, vs.vault.root()) {
@@ -583,8 +587,12 @@ pub(crate) fn promote_orphan_media_inner(
         // The media file already lives in the vault: the markdown is created
         // next to it without copying anything. Only the .md slug needs the
         // identity collision rules.
-        let slug = match resolve_unique_block_slug(&vs.conn, &write_vault, &stem, None) {
-            Ok(slug) => slug,
+        let occupied = files::scan_vault_file_paths(&vs.vault)?
+            .into_iter()
+            .filter(|path| path != &file_name)
+            .collect::<Vec<_>>();
+        let slug = match mine_core::save::select_unique_file_stem(&stem, "md", &occupied) {
+            Ok(name) => write_vault.new_card_slug(&name),
             Err(error) => {
                 log::warn!("promote_orphan_media: slug for '{file_name}' failed: {error}");
                 skipped.push(file_name);
@@ -604,7 +612,8 @@ pub(crate) fn promote_orphan_media_inner(
                 title: None,
                 description: None,
                 url: None,
-                file: Some(file_name.clone()),
+                file: mine_core::links::LinkIndex::new(files::scan_vault_file_paths(&vs.vault)?)
+                    .shortest_link(&file_name, false),
                 thumbnail: None,
                 tags: Vec::new(),
                 related_notes: Vec::new(),
@@ -684,7 +693,9 @@ fn delete_orphan_media_with(
     let mut seen = BTreeSet::new();
 
     for file_name in file_names {
-        if !seen.insert(file_name.clone()) { continue; }
+        if !seen.insert(file_name.clone()) {
+            continue;
+        }
         if !validate_orphan_operand(&file_name, &referenced, vs.vault.root()) {
             skipped.push(file_name);
             continue;
@@ -712,7 +723,9 @@ pub async fn delete_orphan_media(
     tauri::async_runtime::spawn_blocking(move || {
         let vs = orphan_worker_state(vault)?;
         delete_orphan_media_inner(&vs, request.file_names)
-    }).await.map_err(|error| CommandError::Internal(error.to_string()))?
+    })
+    .await
+    .map_err(|error| CommandError::Internal(error.to_string()))?
 }
 
 #[cfg(test)]
@@ -839,9 +852,12 @@ mod tests {
         let result = delete_orphan_media_with(&vs, names, |paths| {
             assert_eq!(paths.len(), 105);
             // Simulate Trash without touching the user's Trash or Finder.
-            for path in paths { std::fs::rename(path, path.with_extension("trashed"))?; }
+            for path in paths {
+                std::fs::rename(path, path.with_extension("trashed"))?;
+            }
             Ok(())
-        }).expect("batch");
+        })
+        .expect("batch");
         assert_eq!(result.deleted.len(), 105);
     }
 
@@ -850,10 +866,14 @@ mod tests {
         let (_root, _derived, vs) = make_vault();
         write_media(&vs, "first.jpg");
         write_media(&vs, "second.jpg");
-        let result = delete_orphan_media_with(&vs, vec!["first.jpg".into(), "second.jpg".into()], |paths| {
-            std::fs::rename(&paths[0], paths[0].with_extension("trashed"))?;
-            anyhow::bail!("Finder refused second file")
-        });
+        let result = delete_orphan_media_with(
+            &vs,
+            vec!["first.jpg".into(), "second.jpg".into()],
+            |paths| {
+                std::fs::rename(&paths[0], paths[0].with_extension("trashed"))?;
+                anyhow::bail!("Finder refused second file")
+            },
+        );
         assert!(result.is_err());
         assert!(vs.vault.root().join("first.trashed").exists());
         assert!(vs.vault.root().join("second.jpg").exists());
@@ -876,11 +896,16 @@ mod tests {
                 Ok(())
             })
         });
-        started_rx.recv_timeout(std::time::Duration::from_secs(5)).expect("worker running");
+        started_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("worker running");
         let available = state.vault_state.try_lock().is_ok();
         resume_tx.send(()).expect("resume worker");
         worker.join().expect("join").expect("delete result");
-        assert!(available, "UI vault lock must remain available while Trash waits");
+        assert!(
+            available,
+            "UI vault lock must remain available while Trash waits"
+        );
     }
 
     #[test]
@@ -919,7 +944,8 @@ mod tests {
         assert_eq!(names, vec!["Media/loose.jpg"]);
 
         // And that path is a usable operand, not just a label.
-        let result = delete_orphan_media_inner(&vs, vec!["Media/loose.jpg".into()]).expect("delete");
+        let result =
+            delete_orphan_media_inner(&vs, vec!["Media/loose.jpg".into()]).expect("delete");
         assert_eq!(result.deleted, vec!["Media/loose.jpg".to_string()]);
         assert!(!root.path().join("Media").join("loose.jpg").exists());
     }
@@ -968,8 +994,6 @@ mod tests {
         assert_eq!(stats.media_count, 2);
         assert_eq!(stats.total_bytes, 5 + 2 + 1 + 3 + 4);
         assert_eq!(stats.element_count, None);
-        // Nothing here lives in iCloud, so nothing is reported as held there.
-        assert_eq!(stats.offloaded_count, 0);
     }
 
     #[test]
@@ -1055,5 +1079,17 @@ mod tests {
         let legacy = serde_json::json!({ "vault_path": "/spaces/active" });
         assert!(is_known_space(&legacy, "/spaces/active"));
         assert!(!is_known_space(&legacy, "/spaces/other"));
+    }
+
+    #[test]
+    fn space_stats_command_is_async() {
+        fn assert_async_command<F, Fut>(_command: F)
+        where
+            F: Fn(AppHandle, String) -> Fut,
+            Fut: std::future::Future<Output = Result<SpaceStats, CommandError>>,
+        {
+        }
+
+        assert_async_command(space_stats);
     }
 }

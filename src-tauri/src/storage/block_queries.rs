@@ -4,7 +4,9 @@
 //! models, row hydration and legacy structured search.
 
 use anyhow::{Context, Result};
+use mine_core::links::{LinkIndex, LinkResolution, LinkSyntax};
 use rusqlite::{params, Connection, OptionalExtension};
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::domain::search::{SearchFilter, SearchQuery};
 use crate::storage::index::{
@@ -60,7 +62,9 @@ pub fn list_grid_blocks(
 
 /// Fetch only requested rows using exactly the feed's preview visibility rules.
 pub fn grid_rows_by_slug(conn: &Connection, slugs: &[String]) -> Result<Vec<LightBlock>> {
-    if slugs.is_empty() { return Ok(Vec::new()); }
+    if slugs.is_empty() {
+        return Ok(Vec::new());
+    }
     Ok(list_grid_blocks_filtered(conn, None, 0, slugs.len(), Some(slugs))?.0)
 }
 
@@ -123,13 +127,20 @@ fn list_grid_blocks_filtered(
             .collect::<Result<Vec<_>, _>>()?,
         None if slugs.is_some() => stmt
             .query_map(
-                params![LIGHT_BLOCK_BODY_PREVIEW_CHARS, fetch_limit, offset,
-                    slugs.map(serde_json::to_string).transpose()?],
+                params![
+                    LIGHT_BLOCK_BODY_PREVIEW_CHARS,
+                    fetch_limit,
+                    offset,
+                    slugs.map(serde_json::to_string).transpose()?
+                ],
                 light_block_from_row,
             )?
             .collect::<Result<Vec<_>, _>>()?,
         None => stmt
-            .query_map(params![LIGHT_BLOCK_BODY_PREVIEW_CHARS, fetch_limit, offset], light_block_from_row)?
+            .query_map(
+                params![LIGHT_BLOCK_BODY_PREVIEW_CHARS, fetch_limit, offset],
+                light_block_from_row,
+            )?
             .collect::<Result<Vec<_>, _>>()?,
     };
 
@@ -212,9 +223,8 @@ pub fn list_preview_blocks(conn: &Connection, limit: usize) -> Result<Vec<Previe
 /// `Cards/x`), and the owner has to be looked up by the indexed file name
 /// instead of guessed from the path.
 pub fn list_slugs_by_media_file(conn: &Connection, media_file: &str) -> Result<Vec<String>> {
-    let mut stmt = conn.prepare(
-        "SELECT slug FROM blocks WHERE media_file = ?1 AND slug != '' ORDER BY slug",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT slug FROM blocks WHERE media_file = ?1 AND slug != '' ORDER BY slug")?;
     let rows = stmt.query_map([media_file], |row| row.get::<_, String>(0))?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
@@ -481,15 +491,9 @@ pub(crate) fn light_block_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<
         media_dimensions: row.get(19)?,
         preview_manifest: row.get(20)?,
         feed_playback: row.get(21)?,
-        content_in_cloud: row
-            .get::<_, Option<String>>(22)
-            .unwrap_or(None)
-            .as_deref()
+        content_in_cloud: row.get::<_, Option<String>>(22).unwrap_or(None).as_deref()
             == Some("content_in_cloud"),
-        preview_unreadable: row
-            .get::<_, Option<String>>(22)
-            .unwrap_or(None)
-            .as_deref()
+        preview_unreadable: row.get::<_, Option<String>>(22).unwrap_or(None).as_deref()
             == Some("unreadable_artifact"),
         search_match: None,
     })
@@ -514,69 +518,95 @@ fn escape_fts5(input: &str) -> String {
         .join(" ")
 }
 
-fn normalized_wikilink_target_sql(column: &str) -> String {
-    format!(
-        "TRIM(
-            CASE
-                WHEN instr({column}, '#') > 0 AND instr({column}, '|') > 0
-                    THEN substr({column}, 1, MIN(instr({column}, '#'), instr({column}, '|')) - 1)
-                WHEN instr({column}, '#') > 0
-                    THEN substr({column}, 1, instr({column}, '#') - 1)
-                WHEN instr({column}, '|') > 0
-                    THEN substr({column}, 1, instr({column}, '|') - 1)
-                ELSE {column}
-            END
-        )",
-    )
+/// Resolve one author-written Obsidian note link against the current source projection.
+pub fn resolve_note_link(
+    conn: &Connection,
+    source_slug: &str,
+    raw_target: &str,
+) -> Result<Option<String>> {
+    let mut stmt = conn.prepare("SELECT slug FROM blocks")?;
+    let paths = stmt
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|slug| format!("{slug}.md"))
+        .collect::<Vec<_>>();
+    let index = LinkIndex::new(paths);
+    let LinkResolution::Resolved(path) = index.resolve(
+        &format!("{source_slug}.md"),
+        raw_target,
+        LinkSyntax::Obsidian,
+    ) else {
+        return Ok(None);
+    };
+    let Some(slug) = path.strip_suffix(".md") else {
+        return Ok(None);
+    };
+    let is_card: Option<bool> = conn
+        .query_row(
+            "SELECT card_kind != 'channel' FROM blocks WHERE slug = ?1",
+            [slug],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(is_card.filter(|value| *value).map(|_| slug.to_string()))
 }
 
 fn load_bidirectional_related_notes(
     conn: &Connection,
-    block_id: i64,
+    _block_id: i64,
     slug: &str,
 ) -> Result<Vec<String>> {
-    let normalized_target = normalized_wikilink_target_sql("w.target_slug");
-    let sql = format!(
-        "WITH all_links AS (
+    let mut block_stmt = conn.prepare("SELECT slug, saved_at, card_kind FROM blocks")?;
+    let blocks = block_stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let link_index = LinkIndex::new(blocks.iter().map(|(path, _, _)| format!("{path}.md")));
+    let card_dates = blocks
+        .into_iter()
+        .filter(|(_, _, kind)| kind != "channel")
+        .map(|(slug, date, _)| (slug, date))
+        .collect::<BTreeMap<_, _>>();
+    let mut link_stmt = conn.prepare(
+        "SELECT sb.slug, w.target_slug FROM (
              SELECT source_id, target_slug FROM wikilinks
              UNION ALL
              SELECT source_id, target_slug FROM related_note_links
-         )
-         SELECT slug
-         FROM (
-             SELECT tb.slug AS slug, tb.saved_at AS saved_at
-             FROM all_links w
-             JOIN blocks tb
-               ON tb.slug = {normalized_target}
-             WHERE w.source_id = ?1
-               AND tb.card_kind != 'channel'
-               AND tb.slug != ?2
-
-             UNION
-
-             SELECT sb.slug AS slug, sb.saved_at AS saved_at
-             FROM all_links w
-             JOIN blocks sb
-               ON sb.id = w.source_id
-             WHERE {normalized_target} = ?2
-               AND sb.card_kind != 'channel'
-               AND sb.slug != ?2
-         )
-         ORDER BY saved_at DESC, slug ASC",
-    );
-
-    let mut stmt = conn
-        .prepare(&sql)
-        .context("failed to prepare bidirectional related notes query")?;
-    let rows = stmt
-        .query_map(params![block_id, slug], |row| row.get::<_, String>(0))
-        .context("failed to query bidirectional related notes")?;
-
-    let mut related_notes = Vec::new();
-    for row in rows {
-        related_notes.push(row?);
+         ) w JOIN blocks sb ON sb.id = w.source_id",
+    )?;
+    let links = link_stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut related = BTreeSet::new();
+    for link in links {
+        let (source, raw_target) = link?;
+        let LinkResolution::Resolved(path) =
+            link_index.resolve(&format!("{source}.md"), &raw_target, LinkSyntax::Obsidian)
+        else {
+            continue;
+        };
+        let Some(target) = path.strip_suffix(".md") else {
+            continue;
+        };
+        if source == slug && target != slug && card_dates.contains_key(target) {
+            related.insert(target.to_string());
+        } else if target == slug && source != slug && card_dates.contains_key(&source) {
+            related.insert(source);
+        }
     }
-    Ok(related_notes)
+    let mut related = related.into_iter().collect::<Vec<_>>();
+    related.sort_by(|left, right| {
+        card_dates[right]
+            .cmp(&card_dates[left])
+            .then_with(|| left.cmp(right))
+    });
+    Ok(related)
 }
 
 fn row_to_block(row: &rusqlite::Row<'_>) -> rusqlite::Result<IndexedBlock> {

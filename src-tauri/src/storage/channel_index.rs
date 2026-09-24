@@ -70,15 +70,16 @@ pub fn upsert_channel_from_block_in_vault(
         }
     }
     collection_slugs.insert(block.slug.clone());
-    let collection_ref =
-        crate::domain::collection::collection_ref_for_slug(&block.slug, &collection_slugs);
+    let link_index = media_refs::build_link_index(vault.root());
+    let collection_ref = link_index
+        .shortest_link(&format!("{}.md", block.slug), true)
+        .unwrap_or_else(|| block.slug.clone());
     if collection_slugs.len() > 1 {
         for page in &pages {
             if page.slug != block.slug {
-                let sibling_ref = crate::domain::collection::collection_ref_for_slug(
-                    &page.slug,
-                    &collection_slugs,
-                );
+                let sibling_ref = link_index
+                    .shortest_link(&format!("{}.md", page.slug), true)
+                    .unwrap_or_else(|| page.slug.clone());
                 upsert_channel_from_block_with_ref(conn, page, &sibling_ref)?;
             }
         }

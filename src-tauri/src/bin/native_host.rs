@@ -818,6 +818,7 @@ fn merge_channels_and_tags(channels: Vec<Channel>, tags: Vec<index::TagCount>) -
     infos
 }
 
+#[cfg(test)]
 fn existing_vault_stems(
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
@@ -1094,6 +1095,28 @@ fn handle_get_save_operation(vault: &VaultLayout, params: serde_json::Value) {
     });
 }
 
+fn dedupe_prepared_media_ref(
+    source_vault: &VaultLayout,
+    staging: &VaultLayout,
+    reference: &mut Option<String>,
+) -> anyhow::Result<()> {
+    let Some(current) = reference.as_ref() else { return Ok(()); };
+    let filename = current.rsplit('/').next().unwrap_or(current);
+    let (stem, extension) = filename.rsplit_once('.')
+        .ok_or_else(|| anyhow::anyhow!("prepared media has no extension"))?;
+    let mut occupied = files::scan_vault_file_paths(source_vault)?;
+    occupied.extend(files::scan_vault_file_paths(staging)?.into_iter().filter(|path| path != current));
+    let unique = mine_core::save::select_unique_file_stem(stem, extension, &occupied)?;
+    if unique != stem {
+        let filename = format!("{unique}.{extension}");
+        let destination = staging.new_media_path(&filename);
+        files::validate_vault_write_target(staging, &destination)?;
+        std::fs::rename(staging.root().join(current), &destination)?;
+        *reference = Some(staging.new_media_stem(&filename));
+    }
+    Ok(())
+}
+
 fn perform_save_block(
     vault: &VaultLayout,
     p: SaveBlockParams,
@@ -1112,12 +1135,12 @@ fn perform_save_block_with_publisher(
 ) -> anyhow::Result<serde_json::Value> {
     let bt = BlockType::from_str(&p.block_type).map_err(anyhow::Error::msg)?;
     let pending_upload_id = pending_id(&p);
-    let existing = files::scan_vault_file_stems(vault)?;
+    let existing = files::scan_vault_file_paths(vault)?;
     let name = mine_core::save::select_name(
         vault.write_layout(),
         p.title.as_deref(),
         p.url.as_deref(),
-        &existing.into_iter().collect::<Vec<_>>(),
+        &existing,
     )?;
     let slug = vault.new_card_slug(&name);
     files::validate_vault_write_target(vault, &vault.block_path(&slug))?;
@@ -1223,7 +1246,7 @@ fn perform_save_block_with_publisher(
 
         if !raw.trim().is_empty() {
             let page_url = p.url.as_deref().unwrap_or("");
-            localize_body_images(&raw, vault, &name, page_url)
+            localize_body_images(&raw, vault, &name, page_url, source_vault)
         } else {
             (raw, Vec::new(), Vec::new())
         }
@@ -1241,7 +1264,14 @@ fn perform_save_block_with_publisher(
                 .map(|entry| entry.poster_url.clone())
         }) {
             let ext = ext_from_url(&poster_url);
-            let dest_name = format!("{name} (poster).{ext}");
+            let mut occupied = files::scan_vault_file_paths(source_vault)?;
+            occupied.extend(files::scan_vault_file_paths(vault)?);
+            let poster_name = mine_core::save::select_unique_file_stem(
+                &format!("{name} (poster)"),
+                &ext,
+                &occupied,
+            )?;
+            let dest_name = format!("{poster_name}.{ext}");
             let dest_path = vault.new_media_path(&dest_name);
             files::validate_vault_write_target(vault, &dest_path)?;
             let referer = p.url.as_deref().unwrap_or(&poster_url);
@@ -1252,6 +1282,14 @@ fn perform_save_block_with_publisher(
         }
     }
 
+    dedupe_prepared_media_ref(source_vault, vault, &mut media_file)?;
+    dedupe_prepared_media_ref(source_vault, vault, &mut thumbnail_file)?;
+    let mut link_paths = files::scan_vault_file_paths(source_vault)?;
+    link_paths.extend(inline_files.iter().filter_map(|path| vault.root_relative_reference(path)));
+    link_paths.extend(media_file.iter().chain(thumbnail_file.iter()).cloned());
+    let link_index = mine_core::links::LinkIndex::new(link_paths);
+    let file_link = media_file.as_deref().and_then(|path| link_index.shortest_link(path, false));
+    let thumbnail_link = thumbnail_file.as_deref().and_then(|path| link_index.shortest_link(path, false));
     let block = mine_core::save::build_capture(&mine_core::save::CaptureRequest {
         intent: mine_core::save::CaptureIntent::WebClip,
         slug: slug.clone(),
@@ -1260,8 +1298,8 @@ fn perform_save_block_with_publisher(
         description: p.description,
         url: p.url,
         body,
-        file: media_file,
-        thumbnail: thumbnail_file,
+        file: file_link,
+        thumbnail: thumbnail_link,
         tags: p.tags.unwrap_or_default(),
         saved_at: p.saved_at.unwrap_or_else(now_iso8601),
         source: Some("web-clipper".into()),
@@ -1273,10 +1311,7 @@ fn perform_save_block_with_publisher(
         .iter()
         .map(|path| save_operations::PlannedArtifact::inspect(vault, path))
         .collect::<anyhow::Result<Vec<_>>>()?;
-    for filename in [
-        block.frontmatter.file.as_deref(),
-        block.frontmatter.thumbnail.as_deref(),
-    ]
+    for filename in [media_file.as_deref(), thumbnail_file.as_deref()]
     .into_iter()
     .flatten()
     {
@@ -1361,7 +1396,22 @@ fn handle_create_channel(vault: &VaultLayout, params: serde_json::Value) {
         Ok(tag) => tag,
         Err(error) => return send_error(&format!("invalid collection ref: {error}")),
     };
+    match index::list_channels(&conn) {
+        Ok(channels) if channels.iter().any(|channel| channel.tag == tag) => {
+            return send_error(&format!("channel already exists: {tag}"));
+        }
+        Ok(_) => {}
+        Err(error) => return send_error(&format!("failed to inspect collections: {error}")),
+    }
 
+    let existing = match files::scan_vault_file_paths(vault) {
+        Ok(existing) => existing,
+        Err(e) => return send_error(&format!("failed to inspect existing vault files: {e}")),
+    };
+    let tag = match mine_core::save::select_unique_file_stem(&tag, "md", &existing) {
+        Ok(tag) => tag,
+        Err(e) => return send_error(&format!("failed to select collection name: {e}")),
+    };
     let mut channel = match Channel::new(&tag, created_at) {
         Ok(channel) => channel,
         Err(e) => return send_error(&format!("invalid channel: {e}")),
@@ -1370,15 +1420,6 @@ fn handle_create_channel(vault: &VaultLayout, params: serde_json::Value) {
         Ok(position) => position,
         Err(e) => return send_error(&format!("failed to resolve channel position: {e}")),
     };
-
-    let existing = match existing_vault_stems(&conn, vault) {
-        Ok(existing) => existing,
-        Err(e) => return send_error(&format!("failed to inspect existing vault files: {e}")),
-    };
-    let slug = vault.new_collection_slug(&channel.tag);
-    if existing.contains(&slug) || existing.contains(&channel.tag) {
-        return send_error(&format!("channel file already exists: {}", channel.tag));
-    }
 
     let block = channel_to_block(vault, &channel);
     if let Err(e) = files::write_new_block_file(vault, &block) {
@@ -1996,10 +2037,22 @@ struct RewriteSpec {
 
 /// Phase C: dedup by byte comparison among successful downloads, build
 /// rewrite specs, apply in reverse offset order, return new body.
+#[cfg(test)]
 fn apply_rewrites(
     body: &str,
     tasks: &[InlineTask],
     outcomes: &[Result<(), String>],
+) -> (String, Vec<std::path::PathBuf>) {
+    apply_rewrites_with_links(body, tasks, outcomes, &mine_core::links::LinkIndex::new(
+        tasks.iter().map(|task| task.dest_name.as_str())
+    ))
+}
+
+fn apply_rewrites_with_links(
+    body: &str,
+    tasks: &[InlineTask],
+    outcomes: &[Result<(), String>],
+    links: &mine_core::links::LinkIndex,
 ) -> (String, Vec<std::path::PathBuf>) {
     debug_assert_eq!(tasks.len(), outcomes.len());
 
@@ -2047,7 +2100,9 @@ fn apply_rewrites(
             }
             (Ok(()), None) => {
                 // Successful unique: replace `![alt](url)` with wikilink.
-                let replacement = build_inline_wikilink(&task.dest_name, task.alt.trim());
+                let target = links.shortest_link(&task.dest_name, false)
+                    .unwrap_or_else(|| task.dest_name.clone());
+                let replacement = build_inline_wikilink(&target, task.alt.trim());
                 specs.push(RewriteSpec {
                     range: task.img_start..task.paren_end + 1,
                     replacement,
@@ -2109,8 +2164,28 @@ fn localize_body_images(
     vault: &VaultLayout,
     slug: &str,
     page_url: &str,
+    source_vault: &VaultLayout,
 ) -> (String, Vec<std::path::PathBuf>, Vec<String>) {
-    let tasks = scan_inline_tasks_with(body, vault, slug, &probe_ext_over_network);
+    let mut tasks = scan_inline_tasks_with(body, vault, slug, &probe_ext_over_network);
+    let mut paths = match files::scan_vault_file_paths(source_vault) {
+        Ok(paths) => paths,
+        Err(error) => {
+            log::warn!("inline media names unavailable: {error:#}");
+            return (body.to_string(), Vec::new(), Vec::new());
+        }
+    };
+    for task in &mut tasks {
+        let filename = task.dest_name.rsplit('/').next().unwrap_or(&task.dest_name);
+        let (stem, ext) = filename.rsplit_once('.').unwrap_or((filename, ""));
+        let Ok(name) = mine_core::save::select_unique_file_stem(stem, ext, &paths) else {
+            log::warn!("inline media name exhausted");
+            return (body.to_string(), Vec::new(), Vec::new());
+        };
+        let filename = if ext.is_empty() { name } else { format!("{name}.{ext}") };
+        task.dest_path = vault.new_media_path(&filename);
+        task.dest_name = vault.new_media_stem(&filename);
+        paths.push(task.dest_name.clone());
+    }
     if tasks
         .iter()
         .any(|task| files::validate_vault_write_target(vault, &task.dest_path).is_err())
@@ -2142,7 +2217,8 @@ fn localize_body_images(
             }
         }
     }
-    let (result, inline_files) = apply_rewrites(body, &tasks, &outcomes);
+    let links = mine_core::links::LinkIndex::new(paths);
+    let (result, inline_files) = apply_rewrites_with_links(body, &tasks, &outcomes, &links);
     log::info!(
         "inline-media: done in {:?}, {}/{} ok",
         started.elapsed(),
@@ -3009,9 +3085,9 @@ mod tests {
         let block = mine_lib::domain::block::parse_block("Cards/Canonical", &markdown).unwrap();
         assert_eq!(
             block.frontmatter.file.as_deref(),
-            Some("Media/Canonical.jpg")
+            Some("Canonical.jpg")
         );
-        assert!(markdown.contains("[[Media/Canonical.jpg]]"));
+        assert!(markdown.contains("[[Canonical.jpg]]"));
         assert!(markdown.contains("2026-08-31T12:34:56Z"));
         let tasks = scan_inline_tasks("![](https://example.com/image.jpg)", &vault, "Inline");
         assert_eq!(tasks[0].dest_name, "Media/Inline (image 1).jpg");
@@ -3378,7 +3454,7 @@ mod tests {
                 let markdown =
                     std::fs::read_to_string(staging.join(&plan.markdown.staged_resource))?;
                 assert!(markdown.contains("2026-08-31T12:34:56Z"));
-                assert!(markdown.contains("Media/Prepared capture.png"));
+                assert!(markdown.contains("[[Prepared capture.png]]"));
                 assert_eq!(
                     std::fs::read(staging.join(&plan.media[0].staged_resource))?,
                     b"pending bytes"
@@ -4564,7 +4640,7 @@ mod tests {
         let body = "no images here";
         assert_eq!(apply_rewrites(body, &[], &[]).0, body);
         assert_eq!(
-            localize_body_images(body, &vault_at(tmp.path()), "S", "").0,
+            localize_body_images(body, &vault_at(tmp.path()), "S", "", &vault_at(tmp.path())).0,
             body
         );
     }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { decodeLocalMarkdownUrl, preprocessWikilinks, markdownSourceByteOffset } from "./markdownWikilinks";
+import { decodeLocalMarkdownUrl, decodeWikilinkHref, preprocessWikilinks, markdownSourceByteOffset } from "./markdownWikilinks";
 
 describe("selection source offsets", () => {
   it.each(["![[Media/Камень (1).jpg]]", "[[Заметка|ссылка]]", "😀 русский текст"])("maps a repeated paragraph after %s to UTF-8 source bytes", (prefix) => {
@@ -49,25 +49,32 @@ describe("preprocessWikilinks", () => {
   });
 
   it("rewrites text wikilink (no leading !) to markdown link", () => {
-    expect(preprocessWikilinks("see [[note]]")).toBe("see [note](note)");
+    expect(preprocessWikilinks("see [[note]]")).toBe("see [note](#mine-wikilink:note)");
   });
 
   it("uses display text from pipe in text wikilink", () => {
     expect(preprocessWikilinks("see [[note|my note]]")).toBe(
-      "see [my note](note)"
+      "see [my note](#mine-wikilink:note)"
     );
   });
 
   it("rewrites multiple wikilinks in one body", () => {
     const input = "![[a.jpg]]\n\n![[b (2).mp4|b alt]]\n\n[[c]]";
     const expected =
-      "![](a.jpg)\n\n![b alt](b%20%282%29.mp4)\n\n[c](c)";
+      "![](a.jpg)\n\n![b alt](b%20%282%29.mp4)\n\n[c](#mine-wikilink:c)";
     expect(preprocessWikilinks(input)).toBe(expected);
   });
 
   it("leaves ordinary markdown untouched", () => {
     const input = "![alt](photo.jpg)\n\n[link](https://example.com)";
     expect(preprocessWikilinks(input)).toBe(input);
+  });
+
+  it("keeps wiki target, alias and anchor separate from ordinary markdown links", () => {
+    const rendered = preprocessWikilinks("[[Notes/Peer#Heading|my peer]] [external](https://example.com)");
+    expect(rendered).toBe("[my peer](#mine-wikilink:Notes%2FPeer%23Heading) [external](https://example.com)");
+    expect(decodeWikilinkHref("#mine-wikilink:Notes%2FPeer%23Heading")).toBe("Notes/Peer#Heading");
+    expect(decodeWikilinkHref("https://example.com")).toBeNull();
   });
 
   it("drops empty wikilinks silently instead of producing broken markdown", () => {

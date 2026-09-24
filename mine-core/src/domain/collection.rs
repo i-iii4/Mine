@@ -5,6 +5,7 @@
 // target, not a normalized tag.
 
 use crate::domain::vault::validate_slug;
+use crate::links::LinkIndex;
 use std::collections::BTreeSet;
 
 pub const MINE_COLLECTIONS_FIELD: &str = "Mine Collections";
@@ -41,17 +42,10 @@ pub fn collection_ref_from_slug(slug: &str) -> String {
 /// filename require their vault-relative paths so neither page overwrites the
 /// other in the collection index.
 pub fn collection_ref_for_slug(slug: &str, all_channel_slugs: &BTreeSet<String>) -> String {
-    let short = collection_ref_from_slug(slug);
-    let duplicates = all_channel_slugs
-        .iter()
-        .filter(|candidate| collection_ref_from_slug(candidate) == short)
-        .take(2)
-        .count();
-    if duplicates > 1 {
-        normalize_collection_ref(slug)
-    } else {
-        short
-    }
+    let target = format!("{}.md", normalize_collection_ref(slug));
+    LinkIndex::new(all_channel_slugs.iter().map(|slug| format!("{slug}.md")))
+        .shortest_link(&target, true)
+        .unwrap_or_else(|| normalize_collection_ref(slug))
 }
 
 pub fn collection_ref_from_canonical_value(raw: &str) -> Option<String> {

@@ -3,8 +3,8 @@
 // Standard Markdown image paths are resolved relative to the containing note.
 // Obsidian embeds additionally support basename lookup through the vault.
 
-use std::collections::HashMap;
-use std::path::{Component, Path, PathBuf};
+use mine_core::links::{LinkIndex, LinkResolution, LinkSyntax};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, thiserror::Error)]
 #[error("ambiguous media reference: {0}")]
@@ -20,14 +20,14 @@ use crate::domain::vault::VaultLayout;
 /// vault basename index lazily once and reuses it for every row in the pass.
 pub struct MediaResolver<'a> {
     vault: &'a VaultLayout,
-    basename_index: Option<HashMap<String, Vec<PathBuf>>>,
+    link_index: Option<LinkIndex>,
 }
 
 impl<'a> MediaResolver<'a> {
     pub fn new(vault: &'a VaultLayout) -> Self {
         Self {
             vault,
-            basename_index: None,
+            link_index: None,
         }
     }
 
@@ -36,14 +36,18 @@ impl<'a> MediaResolver<'a> {
         block_slug: &str,
         reference: &InlineMediaReference,
     ) -> Option<PathBuf> {
-        match reference.syntax {
-            InlineMediaSyntax::MarkdownImage => {
-                resolve_markdown_media(self.vault, block_slug, &reference.source)
-            }
-            InlineMediaSyntax::ObsidianEmbed => {
-                self.resolve_obsidian_embed(block_slug, &reference.source)
-            }
-        }
+        let syntax = match reference.syntax {
+            InlineMediaSyntax::MarkdownImage => LinkSyntax::Markdown,
+            InlineMediaSyntax::ObsidianEmbed => LinkSyntax::Obsidian,
+        };
+        let source = format!("{block_slug}.md");
+        resolve_with_index(
+            self.vault,
+            self.link_index(),
+            &source,
+            &reference.source,
+            syntax,
+        )
     }
 
     pub fn resolve_inline_media_root_relative(
@@ -55,40 +59,39 @@ impl<'a> MediaResolver<'a> {
             .and_then(|path| self.vault.root_relative_reference(&path))
     }
 
-    fn resolve_obsidian_embed(&mut self, block_slug: &str, reference: &str) -> Option<PathBuf> {
-        if reference.is_empty()
-            || reference.starts_with("http://")
-            || reference.starts_with("https://")
-            || reference.contains('\0')
+    pub fn resolve_note_target(&mut self, block_slug: &str, reference: &str) -> Option<String> {
+        let source = format!("{block_slug}.md");
+        match self
+            .link_index()
+            .resolve(&source, reference, LinkSyntax::Obsidian)
         {
-            return None;
-        }
-
-        if let Some(path) = resolve_wikilink_media(self.vault, block_slug, reference) {
-            return Some(path);
-        }
-
-        if has_path_separator(reference) {
-            return resolve_root_relative(self.vault, reference);
-        }
-
-        self.resolve_by_basename(block_slug, reference)
-    }
-
-    fn resolve_by_basename(&mut self, block_slug: &str, file_name: &str) -> Option<PathBuf> {
-        let _ = block_slug;
-        match self.basename_index().get(file_name).map(Vec::as_slice) {
-            Some([only]) => Some(only.clone()),
+            LinkResolution::Resolved(path) if path.ends_with(".md") => Some(path),
             _ => None,
         }
     }
 
-    fn basename_index(&mut self) -> &HashMap<String, Vec<PathBuf>> {
-        self.basename_index.get_or_insert_with(|| {
-            let mut index = HashMap::new();
-            collect_all_basename_matches(self.vault.root(), &mut index);
-            index
-        })
+    pub fn resolve_indexed_media(&mut self, block_slug: &str, reference: &str) -> Option<PathBuf> {
+        if let Some(path) = exact_indexed_root_path(self.vault.root(), reference) {
+            return Some(path);
+        }
+        let syntax = if reference.starts_with("./") || reference.starts_with("../") {
+            LinkSyntax::Markdown
+        } else {
+            LinkSyntax::Obsidian
+        };
+        let vault = self.vault;
+        resolve_with_index(
+            vault,
+            self.link_index(),
+            &format!("{block_slug}.md"),
+            reference,
+            syntax,
+        )
+    }
+
+    fn link_index(&mut self) -> &LinkIndex {
+        self.link_index
+            .get_or_insert_with(|| build_link_index(self.vault.root()))
     }
 
     /// Destructive actions may resolve a short name only when it is unique.
@@ -96,10 +99,10 @@ impl<'a> MediaResolver<'a> {
         &mut self,
         file_name: &str,
     ) -> Result<Option<PathBuf>, AmbiguousMediaReference> {
-        match self.basename_index().get(file_name).map(Vec::as_slice) {
-            None | Some([]) => Ok(None),
-            Some([path]) => Ok(Some(path.clone())),
-            Some(_) => Err(AmbiguousMediaReference(file_name.into())),
+        match self.link_index().resolve_basename(file_name) {
+            LinkResolution::Resolved(path) => Ok(Some(self.vault.root().join(path))),
+            LinkResolution::Missing => Ok(None),
+            LinkResolution::Ambiguous(_) => Err(AmbiguousMediaReference(file_name.into())),
         }
     }
 }
@@ -114,19 +117,13 @@ impl<'a> MediaResolver<'a> {
 /// Returns `None` when no such document exists — the caller decides whether
 /// that is an error or an invitation to create one.
 pub fn resolve_collection_document(vault: &VaultLayout, collection_ref: &str) -> Option<PathBuf> {
-    let direct = vault.block_path(collection_ref);
-    if direct.exists() {
-        return Some(direct);
-    }
-    if has_path_separator(collection_ref) {
-        return None;
-    }
-    let file_name = format!("{collection_ref}.md");
-    let mut candidates = Vec::new();
-    collect_basename_matches(vault.root(), &file_name, &mut candidates);
-    (candidates.len() == 1)
-        .then(|| candidates.into_iter().next())
-        .flatten()
+    resolve_with_index(
+        vault,
+        &build_link_index(vault.root()),
+        "source.md",
+        collection_ref,
+        LinkSyntax::Obsidian,
+    )
 }
 
 /// Enumerate every matching path for destructive collection operations.
@@ -149,17 +146,28 @@ pub fn collection_document_candidates(
         }
         Ok(())
     }
+    let mut paths = Vec::new();
+    let name = collection_ref.rsplit('/').next().unwrap_or(collection_ref);
+    collect(vault.root(), &format!("{name}.md"), &mut paths)?;
     if has_path_separator(collection_ref) {
-        let path = vault.block_path(collection_ref);
-        return match std::fs::symlink_metadata(&path) {
-            Ok(metadata) if metadata.is_file() => Ok(vec![path]),
-            Ok(_) => Ok(Vec::new()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-            Err(error) => Err(error),
+        let relative = paths
+            .iter()
+            .filter_map(|path| path.strip_prefix(vault.root()).ok())
+            .filter_map(|path| path.to_str())
+            .collect::<Vec<_>>();
+        let index = LinkIndex::new(&relative);
+        return match index.resolve("source.md", collection_ref, LinkSyntax::Obsidian) {
+            LinkResolution::Resolved(path)
+                if path == format!("{collection_ref}.md")
+                    || path.ends_with(&format!("/{collection_ref}.md")) =>
+            {
+                Ok(vec![vault.root().join(path)])
+            }
+            LinkResolution::Resolved(_)
+            | LinkResolution::Missing
+            | LinkResolution::Ambiguous(_) => Ok(Vec::new()),
         };
     }
-    let mut paths = Vec::new();
-    collect(vault.root(), &format!("{collection_ref}.md"), &mut paths)?;
     paths.sort();
     Ok(paths)
 }
@@ -170,23 +178,18 @@ pub fn resolve_frontmatter_media(
     block_slug: &str,
     reference: &str,
 ) -> Option<PathBuf> {
-    match crate::storage::file_identity::bound_frontmatter_target(vault, block_slug, reference) {
-        Ok(Some(path)) => return path,
-        Err(error) => {
-            log::warn!("media identity manifest unavailable: {error:#}");
-            return None;
-        }
-        Ok(None) => {}
-    }
-    if !has_path_separator(reference) {
-        let mut matches = Vec::new();
-        collect_basename_matches(vault.root(), reference, &mut matches);
-        if matches.len() > 1 {
-            return None;
-        }
-    }
-    let path = vault.resolve_local_reference(block_slug, reference)?;
-    path.exists().then_some(path)
+    let syntax = if reference.starts_with("./") || reference.starts_with("../") {
+        LinkSyntax::Markdown
+    } else {
+        LinkSyntax::Obsidian
+    };
+    resolve_with_index(
+        vault,
+        &build_link_index(vault.root()),
+        &format!("{block_slug}.md"),
+        reference,
+        syntax,
+    )
 }
 
 fn resolve_wikilink_media(
@@ -194,26 +197,13 @@ fn resolve_wikilink_media(
     block_slug: &str,
     reference: &str,
 ) -> Option<PathBuf> {
-    match crate::storage::file_identity::bound_target(vault, block_slug, reference) {
-        Ok(Some(path)) => return path,
-        Err(error) => {
-            log::warn!("media identity manifest unavailable: {error:#}");
-            return None;
-        }
-        Ok(None) => {}
-    }
-    if has_path_separator(reference) {
-        let local = vault
-            .resolve_local_reference(block_slug, reference)
-            .filter(|path| path.exists());
-        let root = resolve_root_relative(vault, reference);
-        return match (local, root) {
-            (Some(left), Some(right)) if left != right => None,
-            (Some(path), _) | (_, Some(path)) => Some(path),
-            _ => None,
-        };
-    }
-    resolve_by_basename(vault, block_slug, reference)
+    resolve_with_index(
+        vault,
+        &build_link_index(vault.root()),
+        &format!("{block_slug}.md"),
+        reference,
+        LinkSyntax::Obsidian,
+    )
 }
 
 fn resolve_markdown_media(
@@ -221,17 +211,13 @@ fn resolve_markdown_media(
     block_slug: &str,
     reference: &str,
 ) -> Option<PathBuf> {
-    match crate::storage::file_identity::bound_markdown_target(vault, block_slug, reference) {
-        Ok(Some(path)) => return path,
-        Err(error) => {
-            log::warn!("media identity manifest unavailable: {error:#}");
-            return None;
-        }
-        Ok(None) => {}
-    }
-    vault
-        .resolve_local_reference(block_slug, reference)
-        .filter(|path| path.exists())
+    resolve_with_index(
+        vault,
+        &build_link_index(vault.root()),
+        &format!("{block_slug}.md"),
+        reference,
+        LinkSyntax::Markdown,
+    )
 }
 
 /// Resolve a media path that already came from the SQLite index.
@@ -243,32 +229,45 @@ pub fn resolve_indexed_media(
     block_slug: &str,
     reference: &str,
 ) -> Option<PathBuf> {
-    match crate::storage::file_identity::bound_any_target(vault, block_slug, reference) {
-        Ok(Some(path)) => return path,
-        Err(error) => {
-            log::warn!("media identity manifest unavailable: {error:#}");
-            return None;
-        }
-        Ok(None) => {}
+    if let Some(path) = exact_indexed_root_path(vault.root(), reference) {
+        return Some(path);
     }
-    let ambiguous_short_name = if has_path_separator(reference) {
-        false
+    let syntax = if reference.starts_with("./") || reference.starts_with("../") {
+        LinkSyntax::Markdown
     } else {
-        let mut matches = Vec::new();
-        collect_basename_matches(vault.root(), reference, &mut matches);
-        matches.len() > 1
+        LinkSyntax::Obsidian
     };
-    if ambiguous_short_name {
+    resolve_with_index(
+        vault,
+        &build_link_index(vault.root()),
+        &format!("{block_slug}.md"),
+        reference,
+        syntax,
+    )
+}
+
+fn exact_indexed_root_path(root: &Path, reference: &str) -> Option<PathBuf> {
+    if reference.is_empty() || reference.contains('\\') || reference.contains('\0') {
         return None;
     }
-    resolve_root_relative(vault, reference)
-        .or_else(|| resolve_frontmatter_media(vault, block_slug, reference))
-        // A bare legacy name is safe only when exactly one file has that name.
-        .or_else(|| {
-            (!has_path_separator(reference))
-                .then(|| resolve_by_basename(vault, block_slug, reference))
-                .flatten()
-        })
+    let mut path = root.to_path_buf();
+    for component in Path::new(reference).components() {
+        let std::path::Component::Normal(part) = component else {
+            return None;
+        };
+        path.push(part);
+        if std::fs::symlink_metadata(&path)
+            .ok()?
+            .file_type()
+            .is_symlink()
+        {
+            return None;
+        }
+    }
+    std::fs::symlink_metadata(&path)
+        .ok()?
+        .is_file()
+        .then_some(path)
 }
 
 /// Resolve an inline media reference using syntax-specific rules.
@@ -302,35 +301,49 @@ fn resolve_obsidian_embed(
     block_slug: &str,
     reference: &str,
 ) -> Option<PathBuf> {
-    if reference.is_empty()
-        || reference.starts_with("http://")
-        || reference.starts_with("https://")
-        || reference.contains('\0')
-    {
-        return None;
-    }
-
-    if let Some(path) = resolve_wikilink_media(vault, block_slug, reference) {
-        return Some(path);
-    }
-
-    if has_path_separator(reference) {
-        return resolve_root_relative(vault, reference);
-    }
-
-    resolve_by_basename(vault, block_slug, reference)
+    resolve_wikilink_media(vault, block_slug, reference)
 }
 
-fn resolve_root_relative(vault: &VaultLayout, reference: &str) -> Option<PathBuf> {
-    let reference_path = Path::new(reference);
-    if reference_path.is_absolute() {
-        return None;
+fn resolve_with_index(
+    vault: &VaultLayout,
+    index: &LinkIndex,
+    source: &str,
+    reference: &str,
+    syntax: LinkSyntax,
+) -> Option<PathBuf> {
+    match index.resolve(source, reference, syntax) {
+        LinkResolution::Resolved(path) => Some(vault.root().join(path)),
+        LinkResolution::Missing | LinkResolution::Ambiguous(_) => None,
     }
-    let resolved = normalize_join(vault.root(), reference_path)?;
-    if !resolved.starts_with(vault.root()) || !resolved.exists() {
-        return None;
+}
+
+pub fn build_link_index(root: &Path) -> LinkIndex {
+    let mut files = Vec::new();
+    collect_all_files(root, root, &mut files);
+    LinkIndex::new(files)
+}
+
+fn collect_all_files(root: &Path, dir: &Path, files: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_dir() {
+            if !is_ignored_media_search_dir(&path) {
+                collect_all_files(root, &path, files);
+            }
+        } else if kind.is_file() {
+            if let Ok(relative) = path.strip_prefix(root) {
+                if let Some(relative) = relative.to_str() {
+                    files.push(relative.to_string());
+                }
+            }
+        }
     }
-    Some(resolved)
 }
 
 /// Find a file by name anywhere under `root`, nearest to the root first.
@@ -341,70 +354,12 @@ fn resolve_root_relative(vault: &VaultLayout, reference: &str) -> Option<PathBuf
 /// the frontend and must still find the file after the vault was sorted into
 /// folders.
 pub fn resolve_basename_under(root: &Path, file_name: &str) -> Option<PathBuf> {
-    let mut candidates = Vec::new();
-    collect_basename_matches(root, file_name, &mut candidates);
-    (candidates.len() == 1)
-        .then(|| candidates.into_iter().next())
-        .flatten()
-}
-
-fn resolve_by_basename(vault: &VaultLayout, block_slug: &str, file_name: &str) -> Option<PathBuf> {
-    let _ = block_slug;
-    let mut candidates = Vec::new();
-    collect_basename_matches(vault.root(), file_name, &mut candidates);
-    (candidates.len() == 1)
-        .then(|| candidates.into_iter().next())
-        .flatten()
-}
-
-fn collect_basename_matches(dir: &Path, file_name: &str, candidates: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        if file_type.is_dir() {
-            if is_ignored_media_search_dir(&path) {
-                continue;
-            }
-            collect_basename_matches(&path, file_name, candidates);
-            continue;
-        }
-        if file_type.is_file()
-            && path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name == file_name)
-        {
-            candidates.push(path);
-        }
+    if file_name.contains('/') || file_name.contains('\\') {
+        return None;
     }
-}
-
-fn collect_all_basename_matches(dir: &Path, index: &mut HashMap<String, Vec<PathBuf>>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        if file_type.is_dir() {
-            if is_ignored_media_search_dir(&path) {
-                continue;
-            }
-            collect_all_basename_matches(&path, index);
-            continue;
-        }
-        if file_type.is_file() {
-            if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
-                index.entry(name.to_string()).or_default().push(path);
-            }
-        }
+    match build_link_index(root).resolve_basename(file_name) {
+        LinkResolution::Resolved(path) => Some(root.join(path)),
+        LinkResolution::Missing | LinkResolution::Ambiguous(_) => None,
     }
 }
 
@@ -418,21 +373,6 @@ fn is_ignored_media_search_dir(path: &Path) -> bool {
         .is_some_and(|name| {
             name.starts_with('.') || matches!(name, "node_modules" | "target" | "__pycache__")
         })
-}
-
-fn normalize_join(base: &Path, relative: &Path) -> Option<PathBuf> {
-    let mut out = base.to_path_buf();
-    for component in relative.components() {
-        match component {
-            Component::CurDir => {}
-            Component::Normal(part) => out.push(part),
-            Component::ParentDir => {
-                out.pop();
-            }
-            Component::RootDir | Component::Prefix(_) => return None,
-        }
-    }
-    Some(out)
 }
 
 #[cfg(test)]
@@ -540,6 +480,37 @@ mod tests {
     }
 
     #[test]
+    fn collection_candidates_accept_a_unique_folder_suffix() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        std::fs::create_dir_all(dir.path().join("Archive/A")).unwrap();
+        let nested = dir.path().join("Archive/A/Design.md");
+        std::fs::write(&nested, "---\ntype: channel\n---\n").unwrap();
+        assert_eq!(
+            collection_document_candidates(&vault, "A/Design").unwrap(),
+            vec![nested.clone()]
+        );
+
+        std::fs::create_dir_all(dir.path().join("Other/A")).unwrap();
+        std::fs::write(
+            dir.path().join("Other/A/Design.md"),
+            "---\ntype: channel\n---\n",
+        )
+        .unwrap();
+        assert!(collection_document_candidates(&vault, "A/Design")
+            .unwrap()
+            .is_empty());
+
+        std::fs::create_dir_all(dir.path().join("A")).unwrap();
+        let exact = dir.path().join("A/Design.md");
+        std::fs::write(&exact, "---\ntype: channel\n---\n").unwrap();
+        assert_eq!(
+            collection_document_candidates(&vault, "A/Design").unwrap(),
+            vec![exact]
+        );
+    }
+
+    #[test]
     fn indexed_media_finds_a_frontmatter_file_that_moved_to_another_folder() {
         // The layout this exists for: notes in Cards/, media in Media/, and
         // `file: "[[photo.jpg]]"` naming the file without a path. Resolving that
@@ -589,6 +560,18 @@ mod tests {
             resolve_indexed_media(&vault, "Cards/note", "gone.jpg"),
             None
         );
+    }
+
+    #[test]
+    fn indexed_exact_path_rejects_parent_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        std::fs::write(dir.path().join("safe.jpg"), b"safe").unwrap();
+        assert_eq!(
+            exact_indexed_root_path(vault.root(), "safe.jpg"),
+            Some(dir.path().join("safe.jpg"))
+        );
+        assert_eq!(exact_indexed_root_path(vault.root(), "../safe.jpg"), None);
     }
 
     #[test]

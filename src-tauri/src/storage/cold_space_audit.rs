@@ -393,10 +393,13 @@ fn capture_snapshot(
         .iter()
         .filter_map(|(slug, kind)| (kind == "channel").then_some(slug.clone()))
         .collect::<BTreeSet<_>>();
+    let link_index = crate::storage::media_refs::build_link_index(vault.root());
     let expected_collections = channel_document_slugs
         .iter()
         .map(|slug| {
-            crate::domain::collection::collection_ref_for_slug(slug, &channel_document_slugs)
+            link_index
+                .shortest_link(&format!("{slug}.md"), true)
+                .unwrap_or_else(|| slug.clone())
         })
         .collect::<BTreeSet<_>>();
     // Shared filenames remain a useful diagnostic even though every document
