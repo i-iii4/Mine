@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { getCommandOverrides, setCommandOverrides } from "@/lib/commandRegistry";
 import { ShortcutsSection } from "./ShortcutsSection";
 
@@ -25,13 +26,16 @@ describe("ShortcutsSection", () => {
     saveMock.mockReset().mockResolvedValue(null);
   });
 
-  it("groups editable commands in a bounded, stable list", () => {
+  it("groups editable commands in compact rows with right aligned bindings", () => {
     render(<ShortcutsSection />);
     expect(document.querySelector("[data-shortcuts-section]")).toHaveClass("max-w-[720px]");
     for (const context of ["global", "feed", "element", "selection"]) {
       expect(document.querySelector(`[data-shortcuts-group="${context}"]`)).toBeInTheDocument();
     }
-    expect(row("find-elements")).toHaveClass("min-h-14");
+    expect(row("find-elements")).toHaveClass("min-h-10", "flex");
+    expect(row("find-elements")).not.toHaveClass("grid");
+    expect(shortcut("find-elements")).toHaveClass("h-6");
+    expect(shortcut("find-elements")).not.toHaveClass("w-28");
   });
 
   it("hides fixed gestures and uses the binding itself as the editor control", () => {
@@ -113,20 +117,34 @@ describe("ShortcutsSection", () => {
     expect(shortcut("copy-path")).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("searches command names, visible symbols and typed key names", () => {
+  it("filters on actual typing by command names and key names", async () => {
+    const user = userEvent.setup();
     render(<ShortcutsSection />);
     const search = screen.getByRole("searchbox", { name: "Search shortcuts" });
-    fireEvent.change(search, { target: { value: "Copy path" } });
+    await user.click(search);
+    await user.type(search, "Copy path");
     expect(row("copy-path")).toBeInTheDocument();
     expect(row("find-elements")).toBeNull();
     expect(document.querySelectorAll("[data-shortcuts-group]")).toHaveLength(1);
 
-    fireEvent.change(search, { target: { value: "cmd+f" } });
+    await user.clear(search);
+    await user.type(search, "cmd+f");
     expect(row("find-elements")).toBeInTheDocument();
     expect(row("copy-path")).toBeNull();
 
-    fireEvent.change(search, { target: { value: "⌘L" } });
+    await user.clear(search);
+    await user.type(search, "⌘L");
     expect(row("copy-path")).toBeInTheDocument();
+
+    await user.clear(search);
+    await user.type(search, "find cmd");
+    expect(row("find-elements")).toBeInTheDocument();
+    expect(row("copy-path")).toBeNull();
+
+    await user.clear(search);
+    await user.type(search, "nothing matches");
+    expect(screen.getByText("No matching commands.")).toBeInTheDocument();
+    expect(document.querySelectorAll("[data-shortcut-row]")).toHaveLength(0);
   });
 
   it("keeps the old binding and editing focus when persistence fails", async () => {
@@ -147,9 +165,14 @@ describe("ShortcutsSection", () => {
     render(<ShortcutsSection />);
 
     expect(within(row("copy-path")).queryByRole("button", { name: /Reset shortcut/ })).toBeNull();
-    fireEvent.click(within(row("find-elements")).getByRole("button", {
+    const resetButton = within(row("find-elements")).getByRole("button", {
       name: "Reset shortcut for Find elements",
-    }));
+    });
+    expect(resetButton.parentElement).toContainElement(within(row("find-elements")).getByText("Find elements"));
+    expect(resetButton).toHaveAttribute("data-variant", "secondary");
+    expect(resetButton).toHaveAttribute("data-size", "xs");
+    expect(screen.getByRole("button", { name: "Reset all" })).toHaveAttribute("data-size", "xs");
+    fireEvent.click(resetButton);
     await waitFor(() => expect(saveMock).toHaveBeenCalledWith({}));
 
     act(() => setCommandOverrides({ "copy-path": { key: "p", meta: true, alt: true } }));

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { setCommandOverrides } from "@/lib/commandRegistry";
 import { SettingsApp } from "./SettingsApp";
 
 vi.mock("@/lib/commands", () => ({
@@ -33,6 +35,7 @@ function renderSettings() {
 describe("SettingsApp", () => {
   beforeEach(() => {
     localStorage.clear();
+    setCommandOverrides({});
   });
 
   afterEach(() => {
@@ -95,5 +98,21 @@ describe("SettingsApp", () => {
     expect(header).toHaveClass("chrome-row");
     expect(header).toHaveAttribute("data-chrome-separator", "bottom");
     expect(header).not.toHaveClass("border-b");
+  });
+
+  it("filters shortcut rows when typing in the opened Settings section", async () => {
+    const user = userEvent.setup();
+    renderSettings();
+
+    await user.click(screen.getByRole("button", { name: "Shortcuts" }));
+    const search = screen.getByRole("searchbox", { name: "Search shortcuts" });
+    await user.type(search, "copy path");
+    expect(document.querySelectorAll("[data-shortcut-row]")).toHaveLength(1);
+    expect(document.querySelector('[data-shortcut-row="copy-path"]')).toBeInTheDocument();
+
+    await user.clear(search);
+    await user.type(search, "cmd+f");
+    expect(document.querySelector('[data-shortcut-row="find-elements"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-shortcut-row="copy-path"]')).toBeNull();
   });
 });

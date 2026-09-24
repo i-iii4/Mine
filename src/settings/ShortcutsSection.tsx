@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { setShortcutCaptureActive } from "@/lib/commands";
 import { bindingId, bindingsEqual, type CommandBinding } from "@/lib/commandBinding";
 import {
@@ -36,18 +37,18 @@ function bindingFromEvent(event: KeyboardEvent): CommandBinding | null {
 }
 
 function matchesSearch(command: ResolvedCommand, query: string): boolean {
-  const term = query.trim().toLocaleLowerCase();
-  if (!term) return true;
+  const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return true;
   const id = command.binding ? bindingId(command.binding) : "";
-  return [
+  const searchable = [
     command.name,
-    COMMAND_CONTEXT_TITLES[command.context],
     command.combo,
     id,
     id.replaceAll("meta", "cmd"),
     id.replaceAll("alt", "option"),
     id.replaceAll("ctrl", "control"),
-  ].some((value) => value.toLocaleLowerCase().includes(term));
+  ].map((value) => value.toLocaleLowerCase());
+  return terms.every((term) => searchable.some((value) => value.includes(term)));
 }
 
 export function ShortcutsSection() {
@@ -172,20 +173,25 @@ export function ShortcutsSection() {
       <div className="flex items-center justify-between gap-s3">
         <h1 className="text-lg font-semibold">Shortcuts</h1>
         {anyRebound && (
-          <Button type="button" variant="ghost" size="sm" disabled={pending !== null} onClick={() => void resetAll()}>
+          <Button
+            type="button"
+            variant="secondary"
+            size="xs"
+            disabled={pending !== null}
+            onClick={() => void resetAll()}
+          >
             Reset all
           </Button>
         )}
       </div>
       {error?.id === "all" && <p className="text-sm text-destructive" role="alert">{error.message}</p>}
 
-      <input
+      <Input
         type="search"
         aria-label="Search shortcuts"
-        placeholder="Search commands or keys"
+        placeholder="Search shortcuts"
         value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        className="h-9 w-full rounded-1 border border-border bg-background px-3 text-base text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+        onInput={(event) => setQuery(event.currentTarget.value)}
       />
 
       {CONTEXT_ORDER.map((context) => {
@@ -203,10 +209,24 @@ export function ShortcutsSection() {
                 <div
                   key={command.id}
                   data-shortcut-row={command.id}
-                  className="grid min-h-14 grid-cols-[minmax(0,1fr)_7rem_3.5rem] items-center gap-2 border-b border-border px-2"
+                  className="flex min-h-10 items-center justify-between gap-3 border-b border-border py-1"
                 >
-                  <div className="min-w-0">
-                    <div className="truncate text-base text-foreground">{command.name}</div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="truncate text-base text-foreground">{command.name}</span>
+                      {command.rebound && (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="xs"
+                          disabled={pending !== null}
+                          aria-label={`Reset shortcut for ${command.name}`}
+                          onClick={() => void reset(command.id)}
+                        >
+                          Reset
+                        </Button>
+                      )}
+                    </div>
                     {rowError && (
                       <p id={`shortcut-error-${command.id}`} className="truncate text-xs text-destructive" role="alert" title={rowError} data-shortcut-error="">
                         {rowError}
@@ -221,7 +241,7 @@ export function ShortcutsSection() {
                     aria-pressed={isEditing}
                     aria-busy={pending === command.id || arming === command.id}
                     aria-describedby={rowError ? `shortcut-error-${command.id}` : undefined}
-                    className={`flex h-8 w-28 items-center justify-center rounded-1 border px-2 font-mono text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring ${isEditing ? "border-foreground bg-active text-foreground" : "border-border bg-accent text-foreground hover:bg-active"}`}
+                    className={`flex h-6 min-w-12 shrink-0 items-center justify-center rounded-1 border px-2 font-mono text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring ${isEditing ? "border-foreground bg-active text-foreground" : "border-border bg-transparent text-foreground hover:bg-active"}`}
                     onClick={() => {
                       if (pendingRef.current || arming) return;
                       if (isEditing) cancel();
@@ -262,27 +282,13 @@ export function ShortcutsSection() {
                   >
                     {arming === command.id ? "Preparing…" : pending === command.id ? "Saving…" : isEditing ? "Press keys" : command.combo}
                   </button>
-                  <div className="flex justify-end">
-                    {command.rebound && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        disabled={pending !== null}
-                        aria-label={`Reset shortcut for ${command.name}`}
-                        onClick={() => void reset(command.id)}
-                      >
-                        Reset
-                      </Button>
-                    )}
-                  </div>
                 </div>
               );
             })}
           </div>
         );
       })}
-      {visibleCommands.length === 0 && <p className="text-sm text-muted-foreground">No shortcuts found.</p>}
+      {visibleCommands.length === 0 && <p className="text-sm text-muted-foreground">No matching commands.</p>}
     </section>
   );
 }
