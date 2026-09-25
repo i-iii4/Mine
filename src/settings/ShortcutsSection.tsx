@@ -212,78 +212,79 @@ export function ShortcutsSection() {
                   className="flex min-h-10 items-center justify-between gap-3 border-b border-border py-1"
                 >
                   <div className="min-w-0 flex-1">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <span className="truncate text-base text-foreground">{command.name}</span>
-                      {command.rebound && (
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="xs"
-                          disabled={pending !== null}
-                          aria-label={`Reset shortcut for ${command.name}`}
-                          onClick={() => void reset(command.id)}
-                        >
-                          Reset
-                        </Button>
-                      )}
-                    </div>
+                    <span className="block truncate text-base text-foreground">{command.name}</span>
                     {rowError && (
                       <p id={`shortcut-error-${command.id}`} className="truncate text-xs text-destructive" role="alert" title={rowError} data-shortcut-error="">
                         {rowError}
                       </p>
                     )}
                   </div>
-                  <Button
-                    data-shortcut-trigger=""
-                    ref={isEditing ? captureRef : undefined}
-                    type="button"
-                    variant="default"
-                    size="xs"
-                    aria-label={`${isEditing ? "Press new shortcut for" : "Change shortcut for"} ${command.name}. Current: ${command.combo}`}
-                    aria-pressed={isEditing}
-                    aria-busy={pending === command.id || arming === command.id}
-                    aria-describedby={rowError ? `shortcut-error-${command.id}` : undefined}
-                    className={`h-5 min-w-12 font-mono font-normal text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring ${isEditing ? "bg-active text-foreground" : ""}`}
-                    onClick={() => {
-                      if (pendingRef.current || arming) return;
-                      if (isEditing) cancel();
-                      else if (editing) {
-                        setEditing(command.id);
+                  <div className="flex shrink-0 items-center gap-2" data-shortcut-actions="">
+                    {command.rebound && (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="xs"
+                        className="h-5"
+                        disabled={pending !== null}
+                        aria-label={`Reset shortcut for ${command.name}`}
+                        onClick={() => void reset(command.id)}
+                      >
+                        Reset
+                      </Button>
+                    )}
+                    <Button
+                      data-shortcut-trigger=""
+                      ref={isEditing ? captureRef : undefined}
+                      type="button"
+                      variant="default"
+                      size="xs"
+                      aria-label={`${isEditing ? "Press new shortcut for" : "Change shortcut for"} ${command.name}. Current: ${command.combo}`}
+                      aria-pressed={isEditing}
+                      aria-busy={pending === command.id || arming === command.id}
+                      aria-describedby={rowError ? `shortcut-error-${command.id}` : undefined}
+                      className={`h-5 min-w-12 font-mono font-normal text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring ${isEditing ? "bg-active text-foreground" : ""}`}
+                      onClick={() => {
+                        if (pendingRef.current || arming) return;
+                        if (isEditing) cancel();
+                        else if (editing) {
+                          setEditing(command.id);
+                          setError(null);
+                        } else void startEditing(command.id);
+                      }}
+                      onBlur={(event) => {
+                        const next = event.relatedTarget as HTMLElement | null;
+                        if (next?.closest("[data-shortcut-trigger]")) return;
+                        if (isEditing && !pendingRef.current) cancel();
+                      }}
+                      onKeyDownCapture={(event) => {
+                        if (!isEditing) return;
+                        if (event.key === "Tab") return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        if (event.key === "Escape") {
+                          cancel();
+                          return;
+                        }
+                        if (pendingRef.current) return;
+                        const binding = bindingFromEvent(event.nativeEvent);
+                        if (!binding) return;
+                        if (command.binding && bindingsEqual(command.binding, binding)) {
+                          cancel();
+                          return;
+                        }
+                        const rejection = validateShortcut(command.id, binding, allCommands());
+                        if (rejection) {
+                          setError({ id: command.id, message: rejectionMessage(rejection) });
+                          return;
+                        }
                         setError(null);
-                      } else void startEditing(command.id);
-                    }}
-                    onBlur={(event) => {
-                      const next = event.relatedTarget as HTMLElement | null;
-                      if (next?.closest("[data-shortcut-trigger]")) return;
-                      if (isEditing && !pendingRef.current) cancel();
-                    }}
-                    onKeyDownCapture={(event) => {
-                      if (!isEditing) return;
-                      if (event.key === "Tab") return;
-                      event.preventDefault();
-                      event.stopPropagation();
-                      if (event.key === "Escape") {
-                        cancel();
-                        return;
-                      }
-                      if (pendingRef.current) return;
-                      const binding = bindingFromEvent(event.nativeEvent);
-                      if (!binding) return;
-                      if (command.binding && bindingsEqual(command.binding, binding)) {
-                        cancel();
-                        return;
-                      }
-                      const rejection = validateShortcut(command.id, binding, allCommands());
-                      if (rejection) {
-                        setError({ id: command.id, message: rejectionMessage(rejection) });
-                        return;
-                      }
-                      setError(null);
-                      void save(command.id, binding);
-                    }}
-                  >
-                    {arming === command.id ? "Preparing…" : pending === command.id ? "Saving…" : isEditing ? "Press keys" : command.combo}
-                  </Button>
+                        void save(command.id, binding);
+                      }}
+                    >
+                      {arming === command.id ? "Preparing…" : pending === command.id ? "Saving…" : isEditing ? "Press keys" : command.combo}
+                    </Button>
+                  </div>
                 </div>
               );
             })}

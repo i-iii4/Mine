@@ -34,6 +34,8 @@ describe("ShortcutsSection", () => {
     }
     expect(row("find-elements")).toHaveClass("min-h-10", "flex");
     expect(row("find-elements")).not.toHaveClass("grid");
+    expect(row("find-elements").querySelector("[data-shortcut-actions]")).toHaveClass("flex", "shrink-0", "items-center", "gap-2");
+    expect(shortcut("find-elements").parentElement).toHaveAttribute("data-shortcut-actions");
     expect(shortcut("find-elements")).toHaveAttribute("data-variant", "default");
     expect(shortcut("find-elements")).toHaveAttribute("data-size", "xs");
     expect(shortcut("find-elements")).toHaveClass("h-5", "bg-component-fill", "text-muted-foreground");
@@ -173,7 +175,12 @@ describe("ShortcutsSection", () => {
     const resetButton = within(row("find-elements")).getByRole("button", {
       name: "Reset shortcut for Find elements",
     });
-    expect(resetButton.parentElement).toContainElement(within(row("find-elements")).getByText("Find elements"));
+    const actions = row("find-elements").querySelector("[data-shortcut-actions]");
+    expect(actions?.children).toHaveLength(2);
+    expect(actions?.children[0]).toBe(resetButton);
+    expect(actions?.children[1]).toBe(shortcut("find-elements"));
+    expect(actions).not.toContainElement(within(row("find-elements")).getByText("Find elements"));
+    expect(resetButton).toHaveClass("h-5");
     expect(resetButton).toHaveAttribute("data-variant", "secondary");
     expect(resetButton).toHaveAttribute("data-size", "xs");
     expect(screen.getByRole("button", { name: "Reset all" })).toHaveAttribute("data-size", "xs");
