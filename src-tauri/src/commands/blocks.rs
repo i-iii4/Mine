@@ -12,7 +12,10 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 use thiserror::Error;
 
-use crate::commands::state::{current_vault_layout, ensure_vault_fresh, AppState, CommandError};
+use crate::commands::state::{
+    adopt_recovered_projection, current_vault_layout, ensure_vault_fresh, read_owned_projection,
+    AppState, CommandError,
+};
 use crate::domain::block::{
     compute_body_hash, derive_card_kind, derive_title_fields, iter_inline_media_references,
     parse_markdown_document, suggest_slug, Block, BlockType, CardKind, DateTime, Frontmatter,
@@ -384,13 +387,23 @@ const IN_APP_RENAME_WATCHER_SUPPRESSION_MS: u64 = 1500;
 
 /// List all blocks (lightweight — without body/description), ordered by saved_at descending.
 #[tauri::command]
-pub fn list_blocks(state: State<'_, AppState>) -> Result<Vec<index::LightBlock>, CommandError> {
-    let vault_state = state
-        .vault_state
-        .lock()
-        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-    Ok(index::list_blocks_light(&vs.conn)?)
+pub async fn list_blocks(app: AppHandle) -> Result<Vec<index::LightBlock>, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (original, result) = {
+            let state = app.state::<AppState>();
+            let vault_state = state
+                .vault_state
+                .lock()
+                .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+            let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+            (vs.vault.clone(), index::list_blocks_light(&vs.conn))
+        };
+        let (recovered, value) =
+            db::recover_projection_read(&original, result, index::list_blocks_light)?;
+        adopt_recovered_projection(&app, &original, recovered, value)
+    })
+    .await
+    .map_err(|error| CommandError::Internal(format!("list_blocks task join failed: {error}")))?
 }
 
 /// List only the blocks required by the current grid route, plus the total
@@ -417,17 +430,18 @@ pub async fn list_grid_blocks(
     ensure_vault_fresh(&app, vault.clone()).await?;
     let page_offset = offset.unwrap_or(0);
     let page_limit = limit.unwrap_or(200).max(1);
-    let db_path = vault.index_db_path();
+    let app_for_query = app.clone();
     let current_tag_for_task = current_tag.clone();
     let snapshot =
         tauri::async_runtime::spawn_blocking(move || -> Result<GridSnapshot, CommandError> {
-            let conn = db::open_read_only(&db_path)?;
-            Ok(projection::read_grid_snapshot(
-                &conn,
-                current_tag_for_task.as_deref(),
-                page_offset,
-                page_limit,
-            )?)
+            read_owned_projection(&app_for_query, &vault, |conn| {
+                Ok(projection::read_grid_snapshot(
+                    conn,
+                    current_tag_for_task.as_deref(),
+                    page_offset,
+                    page_limit,
+                )?)
+            })
         })
         .await
         .map_err(|e| CommandError::Internal(format!("list_grid_blocks task join failed: {e}")))??;
@@ -448,6 +462,7 @@ pub async fn list_grid_blocks(
 /// Get a single block by slug.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn get_grid_rows(
+    app: AppHandle,
     state: State<'_, AppState>,
     path: String,
     slugs: Vec<String>,
@@ -463,8 +478,9 @@ pub async fn get_grid_rows(
         return Err(CommandError::NoVault);
     }
     tauri::async_runtime::spawn_blocking(move || {
-        let conn = db::open_read_only(&vault.index_db_path())?;
-        Ok(projection::read_grid_rows(&conn, path, &slugs)?)
+        read_owned_projection(&app, &vault, |conn| {
+            projection::read_grid_rows(conn, path.clone(), &slugs)
+        })
     })
     .await
     .map_err(|error| CommandError::Internal(format!("get_grid_rows task join failed: {error}")))?
@@ -480,10 +496,8 @@ pub async fn get_block(
     validate_slug(&slug).map_err(|e| CommandError::Internal(e.to_string()))?;
     let vault = current_vault_layout(&state)?;
     ensure_vault_fresh(&app, vault.clone()).await?;
-    let db_path = vault.index_db_path();
     tauri::async_runtime::spawn_blocking(move || -> Result<Option<IndexedBlock>, CommandError> {
-        let conn = db::open_read_only(&db_path)?;
-        Ok(index::get_block(&conn, &slug)?)
+        read_owned_projection(&app, &vault, |conn| index::get_block(conn, &slug))
     })
     .await
     .map_err(|error| CommandError::Internal(format!("get_block task join failed: {error}")))?
@@ -500,14 +514,10 @@ pub async fn resolve_note_link(
     validate_slug(&source_slug).map_err(|error| CommandError::Internal(error.to_string()))?;
     let vault = current_vault_layout(&state)?;
     ensure_vault_fresh(&app, vault.clone()).await?;
-    let db_path = vault.index_db_path();
     tauri::async_runtime::spawn_blocking(move || -> Result<Option<String>, CommandError> {
-        let conn = db::open_read_only(&db_path)?;
-        Ok(crate::storage::block_queries::resolve_note_link(
-            &conn,
-            &source_slug,
-            &raw_target,
-        )?)
+        read_owned_projection(&app, &vault, |conn| {
+            crate::storage::block_queries::resolve_note_link(conn, &source_slug, &raw_target)
+        })
     })
     .await
     .map_err(|error| {
@@ -542,17 +552,24 @@ pub(crate) fn create_block_inner(
             .and_then(|ext| ext.to_str())
             .unwrap_or("bin");
         let mut paths = files::scan_vault_file_paths(vault)?;
-        let mut statement = conn.prepare("SELECT slug FROM blocks")
+        let mut statement = conn
+            .prepare("SELECT slug FROM blocks")
             .map_err(|error| CommandError::Internal(error.to_string()))?;
-        for row in statement.query_map([], |row| row.get::<_, String>(0))
-            .map_err(|error| CommandError::Internal(error.to_string()))? {
-            paths.push(format!("{}.md", row.map_err(|error| CommandError::Internal(error.to_string()))?));
+        for row in statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| CommandError::Internal(error.to_string()))?
+        {
+            paths.push(format!(
+                "{}.md",
+                row.map_err(|error| CommandError::Internal(error.to_string()))?
+            ));
         }
         mine_core::save::select_unique_file_bundle_stem(
             &suggest_slug(params.title.as_deref(), params.url.as_deref()),
             &["md", ext],
             &paths,
-        ).map_err(|error| CommandError::Internal(error.to_string()))?
+        )
+        .map_err(|error| CommandError::Internal(error.to_string()))?
     } else {
         select_capture_name(conn, vault, params.title.as_deref(), params.url.as_deref())?
     };
@@ -1625,18 +1642,25 @@ pub fn rename_block_file(
 
 /// Prepare a user-visible deletion plan for a block.
 #[tauri::command]
-pub fn prepare_delete_block(
+pub async fn prepare_delete_block(
+    app: AppHandle,
     state: State<'_, AppState>,
     slug: String,
 ) -> Result<DeleteBlockPlan, CommandError> {
-    let vault_state = state
-        .vault_state
-        .lock()
-        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-
     validate_slug(&slug).map_err(|e| CommandError::Internal(e.to_string()))?;
-    build_delete_block_plan(&vs.conn, &vs.vault, &slug)
+    let vault = current_vault_layout(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let (block, blocks) = super::state::read_owned_projection(&app, &vault, |conn| {
+            Ok((index::get_block(conn, &slug)?, index::list_blocks(conn)?))
+        })?;
+        let block =
+            block.ok_or_else(|| CommandError::Internal(format!("block not found: {slug}")))?;
+        Ok(build_delete_block_plan_from_blocks(
+            &vault, &slug, &block, blocks,
+        ))
+    })
+    .await
+    .map_err(|error| CommandError::Internal(format!("delete plan task failed: {error}")))?
 }
 
 /// Delete a block: remove .md, selected unused media, derived artifacts, and index row.
@@ -1859,13 +1883,26 @@ pub(crate) fn build_delete_block_plan(
 ) -> Result<DeleteBlockPlan, CommandError> {
     let block = index::get_block(conn, slug)?
         .ok_or_else(|| CommandError::Internal(format!("block not found: {slug}")))?;
+    Ok(build_delete_block_plan_from_blocks(
+        vault,
+        slug,
+        &block,
+        index::list_blocks(conn)?,
+    ))
+}
 
+fn build_delete_block_plan_from_blocks(
+    vault: &VaultLayout,
+    slug: &str,
+    block: &IndexedBlock,
+    blocks: Vec<IndexedBlock>,
+) -> DeleteBlockPlan {
     let mut current_resolver = media_refs::MediaResolver::new(vault);
     let current_media = collect_delete_media_for_block(vault, &block, &mut current_resolver);
 
     let mut other_refs: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut shared_resolver = media_refs::MediaResolver::new(vault);
-    for other in index::list_blocks(conn)? {
+    for other in blocks {
         if other.slug == slug {
             continue;
         }
@@ -1888,12 +1925,12 @@ pub(crate) fn build_delete_block_plan(
         }
     }
 
-    Ok(DeleteBlockPlan {
+    DeleteBlockPlan {
         slug: slug.to_string(),
         markdown_file: format!("{slug}.md"),
         unused_media,
         shared_media,
-    })
+    }
 }
 
 pub(crate) fn merge_blocks_inner(

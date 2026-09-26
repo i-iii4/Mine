@@ -102,13 +102,17 @@ fn read_manifest(vault: &VaultLayout) -> Result<Manifest> {
     };
     match serde_json::from_slice::<Manifest>(&bytes) {
         Ok(manifest) if manifest.version == MANIFEST_VERSION => Ok(manifest),
-        _ => {
-            eprintln!(
-                "ignoring invalid auxiliary file identity history at {}",
+        Ok(manifest) => anyhow::bail!(
+            "unsupported file identity history version {} at {}; preserved",
+            manifest.version,
+            path.display()
+        ),
+        Err(error) => Err(error).with_context(|| {
+            format!(
+                "invalid file identity history at {}; preserved",
                 path.display()
-            );
-            Ok(Manifest::default())
-        }
+            )
+        }),
     }
 }
 
@@ -236,6 +240,7 @@ pub fn reconcile(vault: &VaultLayout) -> Result<IdentityRefresh> {
 }
 
 fn reconcile_auxiliary(vault: &VaultLayout) -> Result<IdentityRefresh> {
+    let _write = crate::storage::source_mutation::begin_write()?;
     let lock_path = vault.mine_dir().join("file-identity.lock");
     files::validate_vault_write_target(vault, &lock_path)?;
     std::fs::create_dir_all(vault.mine_dir())?;
@@ -288,7 +293,16 @@ fn enroll_capture(vault: &VaultLayout, required_markdown: &Path) -> Result<()> {
 }
 
 fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
-    let mut manifest = read_manifest(vault)?;
+    let (mut manifest, persist_history) = match read_manifest(vault) {
+        Ok(manifest) => (manifest, true),
+        Err(error) if error.downcast_ref::<serde_json::Error>().is_some() => {
+            // A malformed history cannot establish identity. Current unique
+            // source targets can still be repaired, without replacing evidence.
+            log::warn!("file identity history preserved; using current targets only: {error:#}");
+            (Manifest::default(), false)
+        }
+        Err(error) => return Err(error),
+    };
     let replay_pending = manifest
         .pending_source_ids
         .iter()
@@ -683,7 +697,9 @@ fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
                 crate::storage::save_operations::sha256_bytes(revised.as_bytes()),
             );
             // Persist both old and new bindings before source publication.
-            write_manifest(vault, &manifest)?;
+            if persist_history {
+                write_manifest(vault, &manifest)?;
+            }
             files::write_atomically_if_unchanged(
                 &path,
                 content.as_bytes(),
@@ -722,11 +738,11 @@ fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
         });
         manifest.pending_revisions.remove(&source.id);
         manifest.pending_source_ids.retain(|id| id != &source.id);
-        if revised != content {
+        if revised != content && persist_history {
             write_manifest(vault, &manifest)?;
         }
     }
-    if manifest != original {
+    if manifest != original && persist_history {
         write_manifest(vault, &manifest)?;
     }
     Ok(moves)

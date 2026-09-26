@@ -4,10 +4,13 @@
 
 use tauri::{AppHandle, State};
 
-use crate::commands::state::{current_vault_layout, ensure_vault_fresh, AppState, CommandError};
+use crate::commands::state::{
+    current_vault_layout, ensure_vault_fresh, read_owned_projection, read_owned_search_projection,
+    AppState, CommandError,
+};
 use crate::domain::search::parse_search_query;
 use crate::storage::index::{self, IndexedBlock};
-use crate::storage::{db, search_projection};
+use crate::storage::search_projection;
 
 const MAX_SEARCH_PAGE_SIZE: usize = 200;
 
@@ -22,11 +25,9 @@ pub async fn search(
 ) -> Result<Vec<IndexedBlock>, CommandError> {
     let vault = current_vault_layout(&state)?;
     ensure_vault_fresh(&app, vault.clone()).await?;
-    let db_path = vault.index_db_path();
     let parsed = parse_search_query(&query);
     tauri::async_runtime::spawn_blocking(move || -> Result<Vec<IndexedBlock>, CommandError> {
-        let conn = db::open_read_only(&db_path)?;
-        Ok(index::search_blocks(&conn, &parsed)?)
+        read_owned_projection(&app, &vault, |conn| index::search_blocks(conn, &parsed))
     })
     .await
     .map_err(|error| CommandError::Internal(format!("search task join failed: {error}")))?
@@ -43,20 +44,20 @@ pub async fn search_grid_blocks(
 ) -> Result<search_projection::SearchSnapshot, CommandError> {
     let vault = current_vault_layout(&state)?;
     ensure_vault_fresh(&app, vault.clone()).await?;
-    let db_path = vault.index_db_path();
     let page_limit = limit
         .unwrap_or(MAX_SEARCH_PAGE_SIZE)
         .clamp(1, MAX_SEARCH_PAGE_SIZE);
     tauri::async_runtime::spawn_blocking(
         move || -> Result<search_projection::SearchSnapshot, CommandError> {
-            let conn = db::open_or_create(&db_path)?;
-            Ok(search_projection::read_search_snapshot(
-                &conn,
-                current_tag.as_deref(),
-                &query,
-                page_limit,
-                cursor.as_ref(),
-            )?)
+            read_owned_search_projection(&app, &vault, |conn| {
+                Ok(search_projection::read_search_snapshot(
+                    conn,
+                    current_tag.as_deref(),
+                    &query,
+                    page_limit,
+                    cursor.as_ref(),
+                )?)
+            })
         },
     )
     .await

@@ -1,4 +1,5 @@
 fn main() {
+    emit_build_identity();
     // Article audio is opt-in; without the feature the Swift helper is neither
     // compiled nor placed in `binaries/` for bundling.
     #[cfg(all(feature = "desktop", feature = "article-audio", target_os = "macos"))]
@@ -17,6 +18,118 @@ fn main() {
         ensure_clipper_runtime_manifest_placeholder();
         tauri_build::build();
     }
+}
+
+/// Bind the running executable to its source inputs, including uncommitted work.
+/// This identity is diagnostic, not a version ordering or a signing substitute.
+fn emit_build_identity() {
+    use sha2::{Digest, Sha256};
+    use std::{path::Path, process::Command};
+
+    fn hash_path(root: &Path, path: &Path, digest: &mut Sha256) {
+        println!("cargo:rerun-if-changed={}", path.display());
+        if path.is_dir() {
+            let mut entries: Vec<_> = std::fs::read_dir(path)
+                .expect("cannot enumerate build identity input")
+                .map(|entry| entry.expect("cannot read build identity entry").path())
+                .collect();
+            entries.sort();
+            for entry in entries {
+                hash_path(root, &entry, digest);
+            }
+        } else if path.is_file() {
+            let relative = path.strip_prefix(root).expect("input outside workspace");
+            let bytes = std::fs::read(path).expect("cannot read build identity input");
+            digest.update(relative.to_string_lossy().as_bytes());
+            digest.update([0]);
+            digest.update((bytes.len() as u64).to_le_bytes());
+            digest.update(bytes);
+        }
+    }
+
+    let manifest = std::path::PathBuf::from(
+        std::env::var("CARGO_MANIFEST_DIR").expect("missing manifest directory"),
+    );
+    let root = manifest.parent().expect("missing workspace root");
+    let mut digest = Sha256::new();
+    for input in [
+        "Cargo.toml",
+        "Cargo.lock",
+        "src-tauri/Cargo.toml",
+        "src-tauri/build.rs",
+        "src-tauri/tauri.conf.json",
+        "src-tauri/src",
+        "src-tauri/native",
+        "mine-core/Cargo.toml",
+        "mine-core/src",
+        "src",
+        "public",
+        "package.json",
+        "bun.lock",
+        "index.html",
+        "settings.html",
+        "vite.config.ts",
+        "extension/manifest.json",
+    ] {
+        hash_path(root, &root.join(input), &mut digest);
+    }
+    let mut environment: Vec<_> = std::env::vars()
+        .filter(|(key, _)| {
+            key.starts_with("CARGO_FEATURE_") || matches!(key.as_str(), "TARGET" | "PROFILE")
+        })
+        .collect();
+    environment.sort();
+    for (key, value) in environment {
+        digest.update(key.as_bytes());
+        digest.update([0]);
+        digest.update(value.as_bytes());
+        digest.update([0]);
+    }
+    let commit = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(root)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .unwrap_or_else(|| "source-archive".to_string());
+    if let Ok(output) = Command::new("git")
+        .args(["rev-parse", "--git-path", "HEAD"])
+        .current_dir(root)
+        .output()
+    {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout);
+            println!(
+                "cargo:rerun-if-changed={}",
+                root.join(path.trim()).display()
+            );
+        }
+    }
+    if let Ok(reference) = Command::new("git")
+        .args(["symbolic-ref", "-q", "HEAD"])
+        .current_dir(root)
+        .output()
+    {
+        if reference.status.success() {
+            let reference = String::from_utf8_lossy(&reference.stdout);
+            if let Ok(path) = Command::new("git")
+                .args(["rev-parse", "--git-path", reference.trim()])
+                .current_dir(root)
+                .output()
+            {
+                if path.status.success() {
+                    let path = String::from_utf8_lossy(&path.stdout);
+                    println!(
+                        "cargo:rerun-if-changed={}",
+                        root.join(path.trim()).display()
+                    );
+                }
+            }
+        }
+    }
+    println!("cargo:rustc-env=MINE_BUILD_ID={:x}", digest.finalize());
+    println!("cargo:rustc-env=MINE_BUILD_COMMIT={commit}");
 }
 
 /// Tauri validates configured resources before compiling the application,

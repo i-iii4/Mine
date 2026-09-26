@@ -319,7 +319,10 @@
       return failed(id, failure, !mismatch && record && record.phase !== "prepared" ? "unknown" : "not_committed");
     }
   }
-  const saveStandaloneBlock = (request, options) => serialized(() => save(request, options));
+  const saveStandaloneBlock = (request, options) => {
+    const rejection = root.MineSaveProtocol.validate(request);
+    return rejection ? Promise.resolve(rejection) : serialized(() => save(request, options));
+  };
   const createStandaloneChannel = (tag, options) => serialized(() => save({ title: tag, operation_id: newId() }, options, "collection"));
   async function lookupOperation(id, bindingId, options) {
     return serialized(async () => {

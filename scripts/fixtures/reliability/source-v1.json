@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "synthetic": true,
+  "cases": ["plain-markdown", "unknown-properties", "malformed-frontmatter", "unicode", "spaces", "nested-folders", "duplicate-basenames", "relative-links", "obsidian-links", "collections", "multiple-media", "missing-attachment", "unavailable-cloud-file"],
+  "files": {
+    "Plain note.md": "# Ordinary Markdown\n\nNo Mine metadata. [[Nested/Unicode ñ 日本]]\n",
+    "Nested/Unicode ñ 日本.md": "---\nunknown_property: {nested: [one, two]}\ntags: [3, green]\n---\n# Unicode ñ 日本\n\n[relative](../Plain%20note.md)\n![[../Media/one.svg]]\n![[../Media/two.svg|Second]]\n![[missing.png]]\n",
+    "Broken metadata.md": "---\nunfinished: [\n---\nOriginal malformed metadata must survive.\n",
+    "A/Same.md": "# First duplicate basename\n",
+    "B/Same.md": "# Second duplicate basename\n",
+    "Collections/Collection.md": "---\ntype: channel\nposition: 1\ncolor: green\n---\n# Collection\n",
+    "Cards/Card.md": "---\ntype: article\nMine Collections:\n  - \"[[Collections/Collection]]\"\n---\n# Card\n\n[[Plain note]]\n",
+    "Media/one.svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"><rect width=\"1\" height=\"1\"/></svg>\n",
+    "Media/two.svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"2\" height=\"1\"><rect width=\"2\" height=\"1\"/></svg>\n"
+  },
+  "environmentCases": [{"id": "unavailable-cloud-file", "status": "pending", "reason": "Requires a real macOS dataless file and observed access failure; an ordinary placeholder is not evidence."}]
+}

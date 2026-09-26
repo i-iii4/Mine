@@ -16,11 +16,11 @@ use std::time::{Duration, SystemTime};
 
 use crate::domain::block::{derive_title_fields, strip_first_markdown_h1, Block};
 use crate::domain::vault::{ThumbLevel, VaultLayout};
+use crate::storage::media_dimensions::PreviewDimensions;
 use crate::storage::preview_plan::{
     self, media_ext_lower, PreviewMediaKind, MICRO_PREVIEW_IMAGE_LIMIT, PREVIEW_TILE_LIMIT,
 };
 pub use crate::storage::preview_plan::{is_image_ext, is_video_ext};
-use crate::storage::media_dimensions::PreviewDimensions;
 use crate::storage::{files, media_refs};
 
 /// Default max side for thumbnails: 640px covers masonry columns up to
@@ -45,6 +45,7 @@ fn write_thumb_atomically<F>(dest: &Path, write_fn: F) -> Result<()>
 where
     F: FnOnce(&mut std::io::BufWriter<std::fs::File>) -> Result<()>,
 {
+    let _write = crate::storage::source_mutation::begin_write()?;
     use std::sync::atomic::{AtomicU64, Ordering};
     static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -457,8 +458,12 @@ pub fn generate_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Result<P
         })?;
     }
 
-    PreviewDimensions::new(rw, rh)
-        .with_context(|| format!("generated thumbnail has a zero dimension: {}", dest.display()))
+    PreviewDimensions::new(rw, rh).with_context(|| {
+        format!(
+            "generated thumbnail has a zero dimension: {}",
+            dest.display()
+        )
+    })
 }
 
 /// Whether the image actually uses its alpha channel.
@@ -552,8 +557,12 @@ pub fn generate_composite_thumbnail(
             .with_context(|| format!("failed to encode composite thumbnail: {}", dest.display()))
     })?;
 
-    PreviewDimensions::new(max_size, max_size)
-        .with_context(|| format!("composite thumbnail has a zero dimension: {}", dest.display()))
+    PreviewDimensions::new(max_size, max_size).with_context(|| {
+        format!(
+            "composite thumbnail has a zero dimension: {}",
+            dest.display()
+        )
+    })
 }
 
 // ─── Text thumbnail ─────────────────────────────────────────────────────────
@@ -594,7 +603,11 @@ const TITLE_COLOR: Rgba<u8> = Rgba([51, 51, 51, 255]);
 /// - Saves as PNG; the app asset protocol sniffs image magic bytes because
 ///   the stable thumbnail path is still `<slug>.jpg`
 /// - Sidebar wraps in `bg-background` div + `dark:invert` for theme adaptation
-pub fn generate_text_thumbnail(title: Option<&str>, body: &str, dest: &Path) -> Result<PreviewDimensions> {
+pub fn generate_text_thumbnail(
+    title: Option<&str>,
+    body: &str,
+    dest: &Path,
+) -> Result<PreviewDimensions> {
     let font = &*FONT;
 
     let size = TEXT_THUMB_SIZE;
@@ -668,7 +681,11 @@ pub fn generate_text_thumbnail(title: Option<&str>, body: &str, dest: &Path) -> 
 /// - Decodes H.264 to YUV via OpenH264, converts to RGB
 /// - Resizes and saves as JPEG
 #[cfg(not(target_os = "ios"))]
-pub fn generate_video_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Result<PreviewDimensions> {
+pub fn generate_video_thumbnail(
+    source: &Path,
+    dest: &Path,
+    max_size: u32,
+) -> Result<PreviewDimensions> {
     use mp4::TrackType;
     use openh264::decoder::Decoder;
     use openh264::formats::YUVSource;
@@ -815,8 +832,12 @@ pub fn generate_video_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Re
             .with_context(|| format!("failed to encode video thumbnail: {}", dest.display()))
     })?;
 
-    PreviewDimensions::new(rw, rh)
-        .with_context(|| format!("generated video thumbnail has a zero dimension: {}", dest.display()))
+    PreviewDimensions::new(rw, rh).with_context(|| {
+        format!(
+            "generated video thumbnail has a zero dimension: {}",
+            dest.display()
+        )
+    })
 }
 
 #[cfg(target_os = "ios")]
@@ -1068,6 +1089,9 @@ pub enum ThumbSource {
 /// dozen ways to finish, and levels must exist after every one of them that
 /// leaves a file on disk.
 pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
+    let Ok(_write) = crate::storage::source_mutation::begin_write() else {
+        return ThumbSource::None;
+    };
     let source = generate_for_block_inner(block, vault);
     generate_thumb_levels(vault, &block.slug);
     source
@@ -1077,6 +1101,9 @@ pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
 /// there. Failure is never fatal: a missing level means a surface falls back to
 /// its waiting state, not that the card disappears.
 pub fn generate_thumb_levels(vault: &VaultLayout, slug: &str) {
+    let Ok(_write) = crate::storage::source_mutation::begin_write() else {
+        return;
+    };
     let full = vault.thumb_path(slug);
     if !full.is_file() {
         return;
@@ -1115,23 +1142,35 @@ pub fn backfill_thumb_levels(vault: &VaultLayout) -> usize {
     let mut written = 0usize;
     let mut stack = vec![root];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
                 stack.push(path);
                 continue;
             }
-            let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
-            let Some(stem) = name.strip_suffix(".jpg") else { continue };
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            let Some(stem) = name.strip_suffix(".jpg") else {
+                continue;
+            };
             // Levels and multi-tile previews are not sources for levels.
-            if ThumbLevel::ALL.iter().any(|l| stem.ends_with(&format!(".{}", l.suffix())))
+            if ThumbLevel::ALL
+                .iter()
+                .any(|l| stem.ends_with(&format!(".{}", l.suffix())))
                 || stem.contains(".preview-")
             {
                 continue;
             }
-            let Ok(relative) = path.strip_prefix(vault.thumbs_dir()) else { continue };
-            let Some(slug) = relative.to_str().and_then(|p| p.strip_suffix(".jpg")) else { continue };
+            let Ok(relative) = path.strip_prefix(vault.thumbs_dir()) else {
+                continue;
+            };
+            let Some(slug) = relative.to_str().and_then(|p| p.strip_suffix(".jpg")) else {
+                continue;
+            };
             let micro = vault.thumb_level_path(slug, ThumbLevel::Micro);
             if micro.is_file() && !levels_dropped_alpha(&path, &micro) {
                 continue;
@@ -1164,6 +1203,9 @@ fn levels_dropped_alpha(full: &Path, micro: &Path) -> bool {
 
 /// Remove the reduced levels for a slug, for when its thumbnail is discarded.
 pub fn remove_thumb_levels(vault: &VaultLayout, slug: &str) {
+    let Ok(_write) = crate::storage::source_mutation::begin_write() else {
+        return;
+    };
     for level in ThumbLevel::ALL {
         let path = vault.thumb_level_path(slug, level);
         if path.exists() {
@@ -1341,8 +1383,8 @@ fn media_may_still_be_arriving(block: &Block, vault: &VaultLayout) -> bool {
     // Freshness comes from the card file, not from `saved_at`: a card synced
     // in from another device carries an old timestamp while its media is only
     // now downloading.
-    let Ok(modified) = std::fs::metadata(vault.block_path(&block.slug))
-        .and_then(|metadata| metadata.modified())
+    let Ok(modified) =
+        std::fs::metadata(vault.block_path(&block.slug)).and_then(|metadata| metadata.modified())
     else {
         return false;
     };
@@ -1456,7 +1498,10 @@ mod tests {
         let dest = dir.path().join("thumb.jpg");
 
         create_test_image(&source, 800, 600);
-        let PreviewDimensions { width: w, height: h } = generate_thumbnail(&source, &dest, 240).unwrap();
+        let PreviewDimensions {
+            width: w,
+            height: h,
+        } = generate_thumbnail(&source, &dest, 240).unwrap();
 
         assert!(dest.exists());
         assert!(w <= 240);
@@ -1473,7 +1518,10 @@ mod tests {
         let dest = dir.path().join("thumb.jpg");
 
         create_test_image(&source, 100, 80);
-        let PreviewDimensions { width: w, height: h } = generate_thumbnail(&source, &dest, 240).unwrap();
+        let PreviewDimensions {
+            width: w,
+            height: h,
+        } = generate_thumbnail(&source, &dest, 240).unwrap();
 
         assert!(dest.exists());
         assert_eq!(w, 100);
@@ -1487,7 +1535,10 @@ mod tests {
         let dest = dir.path().join("sub").join("deep").join("thumb.jpg");
 
         create_test_image(&source, 400, 400);
-        let PreviewDimensions { width: w, height: h } = generate_thumbnail(&source, &dest, 240).unwrap();
+        let PreviewDimensions {
+            width: w,
+            height: h,
+        } = generate_thumbnail(&source, &dest, 240).unwrap();
 
         assert!(dest.exists());
         assert_eq!(w, 240);
@@ -1547,7 +1598,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("empty-thumb.jpg");
 
-        let PreviewDimensions { width: w, height: h } = generate_text_thumbnail(Some("Title Only"), "", &dest).unwrap();
+        let PreviewDimensions {
+            width: w,
+            height: h,
+        } = generate_text_thumbnail(Some("Title Only"), "", &dest).unwrap();
         assert!(dest.exists());
         assert_eq!(w, 480);
         assert_eq!(h, 480);
@@ -1654,7 +1708,10 @@ mod tests {
         let micro = std::fs::metadata(vault.thumb_level_path("Card", ThumbLevel::Micro))
             .unwrap()
             .len();
-        assert!(micro * 4 < full, "micro {micro} is not much smaller than full {full}");
+        assert!(
+            micro * 4 < full,
+            "micro {micro} is not much smaller than full {full}"
+        );
     }
 
     #[test]
@@ -1682,7 +1739,9 @@ mod tests {
 
         generate_thumb_levels(&vault, "Missing");
 
-        assert!(!vault.thumb_level_path("Missing", ThumbLevel::Micro).exists());
+        assert!(!vault
+            .thumb_level_path("Missing", ThumbLevel::Micro)
+            .exists());
     }
 
     #[test]
@@ -1700,10 +1759,7 @@ mod tests {
 
         assert_eq!(written, 1, "only the thumbnail without levels is processed");
         assert!(vault.thumb_level_path("Old", ThumbLevel::Micro).is_file());
-        assert!(!vault
-            .thumbs_dir()
-            .join("Old.preview-2.micro.jpg")
-            .exists());
+        assert!(!vault.thumbs_dir().join("Old.preview-2.micro.jpg").exists());
     }
 
     #[test]
@@ -1719,12 +1775,17 @@ mod tests {
         for (x, y, pixel) in png.enumerate_pixels_mut() {
             *pixel = image::Rgba([(x % 256) as u8, (y % 256) as u8, 90, 255]);
         }
-        png.save_with_format(&path, image::ImageFormat::Png).unwrap();
+        png.save_with_format(&path, image::ImageFormat::Png)
+            .unwrap();
 
         generate_thumb_levels(&vault, "Placeholder");
 
-        assert!(vault.thumb_level_path("Placeholder", ThumbLevel::Micro).is_file());
-        assert!(vault.thumb_level_path("Placeholder", ThumbLevel::Zoom).is_file());
+        assert!(vault
+            .thumb_level_path("Placeholder", ThumbLevel::Micro)
+            .is_file());
+        assert!(vault
+            .thumb_level_path("Placeholder", ThumbLevel::Zoom)
+            .is_file());
     }
 
     #[test]
@@ -1737,7 +1798,8 @@ mod tests {
         let source = tmp.path().join("text.png");
         let mut png = image::RgbaImage::from_pixel(480, 480, image::Rgba([0, 0, 0, 0]));
         png.put_pixel(10, 10, image::Rgba([80, 80, 80, 255]));
-        png.save_with_format(&source, image::ImageFormat::Png).unwrap();
+        png.save_with_format(&source, image::ImageFormat::Png)
+            .unwrap();
 
         let dest = tmp.path().join("text.micro.jpg");
         generate_thumbnail(&source, &dest, 64).unwrap();
@@ -1764,7 +1826,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let source = tmp.path().join("screenshot.png");
         let png = image::RgbaImage::from_pixel(480, 480, image::Rgba([10, 20, 30, 255]));
-        png.save_with_format(&source, image::ImageFormat::Png).unwrap();
+        png.save_with_format(&source, image::ImageFormat::Png)
+            .unwrap();
 
         let dest = tmp.path().join("screenshot.micro.jpg");
         generate_thumbnail(&source, &dest, 64).unwrap();
@@ -1783,7 +1846,8 @@ mod tests {
         std::fs::create_dir_all(full.parent().unwrap()).unwrap();
         let mut png = image::RgbaImage::from_pixel(480, 480, image::Rgba([0, 0, 0, 0]));
         png.put_pixel(10, 10, image::Rgba([80, 80, 80, 255]));
-        png.save_with_format(&full, image::ImageFormat::Png).unwrap();
+        png.save_with_format(&full, image::ImageFormat::Png)
+            .unwrap();
 
         // What the old encoder produced: alpha collapsed, JPEG on disk.
         for level in ThumbLevel::ALL {
@@ -1794,7 +1858,11 @@ mod tests {
                 .unwrap();
         }
 
-        assert_eq!(backfill_thumb_levels(&vault), 1, "the black level is repaired");
+        assert_eq!(
+            backfill_thumb_levels(&vault),
+            1,
+            "the black level is repaired"
+        );
         assert_eq!(
             read_thumb_magic(&vault.thumb_level_path("Text", ThumbLevel::Micro)),
             Some(PNG_MAGIC)
@@ -1829,7 +1897,11 @@ mod tests {
         write_source_jpeg(&vault.thumb_path("Card"), 640, 480);
 
         assert_eq!(backfill_thumb_levels(&vault), 1);
-        assert_eq!(backfill_thumb_levels(&vault), 0, "second launch does no work");
+        assert_eq!(
+            backfill_thumb_levels(&vault),
+            0,
+            "second launch does no work"
+        );
     }
 
     #[test]
@@ -1983,8 +2055,12 @@ mod tests {
         std::fs::write(&card_path, "---\n---\n").unwrap();
         // Past the arrival window the reference is broken, not in flight, and
         // the card must still show its name rather than vanish into a blank.
-        let file = std::fs::OpenOptions::new().write(true).open(&card_path).unwrap();
-        file.set_modified(SystemTime::now() - Duration::from_secs(600)).unwrap();
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&card_path)
+            .unwrap();
+        file.set_modified(SystemTime::now() - Duration::from_secs(600))
+            .unwrap();
         drop(file);
 
         let source = generate_for_block(&block, &vault);

@@ -4,8 +4,10 @@
 
 use tauri::{AppHandle, State};
 
-use crate::commands::state::{current_vault_layout, ensure_vault_fresh, AppState, CommandError};
-use crate::storage::{db, graph};
+use crate::commands::state::{
+    current_vault_layout, ensure_vault_fresh, read_owned_projection, AppState, CommandError,
+};
+use crate::storage::graph;
 use crate::util::append_startup_trace;
 
 #[tauri::command(rename_all = "snake_case")]
@@ -33,11 +35,12 @@ pub async fn list_graph_snapshot(
     );
     let vault = current_vault_layout(&state)?;
     ensure_vault_fresh(&app, vault.clone()).await?;
-    let db_path = vault.index_db_path();
+    let app_for_query = app.clone();
     let snapshot = tauri::async_runtime::spawn_blocking(
         move || -> Result<graph::GraphSnapshot, CommandError> {
-            let conn = db::open_read_only(&db_path)?;
-            Ok(graph::graph_snapshot(&conn, &scope, &options)?)
+            read_owned_projection(&app_for_query, &vault, |conn| {
+                graph::graph_snapshot(conn, &scope, &options)
+            })
         },
     )
     .await

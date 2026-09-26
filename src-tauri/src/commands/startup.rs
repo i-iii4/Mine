@@ -23,6 +23,7 @@ fn valid_milestone(event: &str) -> bool {
             | "first_route_committed"
             | "first_cards_painted"
             | "interactive"
+            | "update_ready"
     )
 }
 
@@ -35,6 +36,9 @@ pub fn record_startup_milestone(app: AppHandle, event: String) -> Result<(), Com
         )));
     }
     append_startup_trace(&app, "startup", &format!("milestone={event}"));
+    if event == "update_ready" {
+        crate::update_activation::record_interactive().map_err(CommandError::Internal)?;
+    }
     Ok(())
 }
 
@@ -42,6 +46,8 @@ pub fn record_startup_milestone(app: AppHandle, event: String) -> Result<(), Com
 /// surface. The worker never joins the IPC command or the UI thread.
 #[tauri::command]
 pub fn start_startup_maintenance(app: AppHandle) -> Result<bool, CommandError> {
+    let write = crate::storage::source_mutation::begin_write()
+        .map_err(|error| CommandError::Internal(error.to_string()))?;
     if MAINTENANCE_STARTED.swap(true, Ordering::AcqRel) {
         return Ok(false);
     }
@@ -51,6 +57,7 @@ pub fn start_startup_maintenance(app: AppHandle) -> Result<bool, CommandError> {
     std::thread::Builder::new()
         .name("mine-startup-maintenance".into())
         .spawn(move || {
+            let _write = write;
             let started = Instant::now();
             append_startup_trace(&worker_app, "startup_maintenance", "start");
             match clipper_setup::maintain_installed_runtime(&worker_app) {
@@ -95,6 +102,7 @@ mod tests {
         assert!(valid_milestone("first_route_committed"));
         assert!(valid_milestone("first_cards_painted"));
         assert!(valid_milestone("interactive"));
+        assert!(valid_milestone("update_ready"));
         assert!(!valid_milestone("vault=/private/user-content"));
     }
 }

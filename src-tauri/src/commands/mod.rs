@@ -27,6 +27,7 @@ pub mod state;
 pub mod tags;
 mod thumbnail_sweeps;
 pub mod thumbnails;
+pub mod updates;
 pub mod vault;
 pub mod vault_stats;
 pub mod window_chrome;

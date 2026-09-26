@@ -6,7 +6,7 @@ import { AppSettingsMenu } from "./AppSettingsMenu";
 const sections = [
   ["Appearance", "appearance"], ["Shortcuts", "shortcuts"],
   ["Graph", "graph"], ["Spaces", "spaces"], ["New files", "layout"],
-  ["Extension", "clipper"], ["Orphans", "orphans"], ["Design system", "design-system"],
+  ["Extension", "clipper"], ["Updates", "updates"], ["Orphans", "orphans"], ["Design system", "design-system"],
 ];
 
 describe("AppSettingsMenu", () => {

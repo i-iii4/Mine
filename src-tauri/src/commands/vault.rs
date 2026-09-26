@@ -73,24 +73,38 @@ pub fn list_known_vaults(app: AppHandle) -> Vec<String> {
 /// Select a vault directory: open/create DB, create directories, full scan.
 /// Persists the path so next launch auto-restores.
 #[tauri::command]
-pub fn select_vault(
+pub async fn select_vault(
     app: AppHandle,
     state: State<'_, AppState>,
     path: String,
 ) -> Result<VaultOpenResult, CommandError> {
-    let path = canonical_space_path(&path)?;
-    append_startup_trace(&app, "select_vault", &format!("start path={path}"));
-    let result = initialize_vault(&app, &state, &path)?;
-    save_vault_path(&app, &path);
-    // Broadcast the switch to every window: the main window re-mounts on this
-    // even when the switch originated elsewhere (e.g. the settings window).
-    let _ = app.emit("vault-selected", VaultChangedPayload { path: path.clone() });
-    append_startup_trace(
-        &app,
-        "select_vault",
-        &format!("done path={} indexed={}", path, result.indexed),
-    );
-    Ok(result)
+    let request = state.begin_vault_selection();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let _selection = state
+            .vault_selection
+            .lock()
+            .map_err(|_| CommandError::Internal("vault selection mutex poisoned".into()))?;
+        require_latest_selection(&state, request)?;
+        let path = canonical_space_path(&path)?;
+        let result = initialize_vault(&app, &state, &path, request)?;
+        require_latest_selection(&state, request)?;
+        save_vault_path(&app, &path);
+        let _ = app.emit("vault-selected", VaultChangedPayload { path });
+        Ok(result)
+    })
+    .await
+    .map_err(|error| CommandError::Internal(format!("vault selection worker failed: {error}")))?
+}
+
+fn require_latest_selection(state: &AppState, request: u64) -> Result<(), CommandError> {
+    if state.is_latest_vault_selection(request) {
+        Ok(())
+    } else {
+        Err(CommandError::Internal(
+            "vault selection superseded by a newer request".into(),
+        ))
+    }
 }
 
 /// Resolve aliases and trailing separators before a folder enters the space
@@ -151,7 +165,9 @@ fn count_folder(dir: &Path, preview: &mut FolderPreview, depth: usize) {
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        let Ok(kind) = entry.file_type() else { continue };
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
         if kind.is_dir() {
             if !files::is_ignored_vault_dir(&path) {
                 count_folder(&path, preview, depth + 1);
@@ -338,6 +354,8 @@ pub fn organize_vault_layout(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<VaultWriteLayoutDto, CommandError> {
+    let _write = crate::storage::source_mutation::begin_write()
+        .map_err(|error| CommandError::Internal(error.to_string()))?;
     let standard = VaultWriteLayout::standard();
     {
         let vault_state = state
@@ -346,9 +364,8 @@ pub fn organize_vault_layout(
             .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
         let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
         for folder in [&standard.cards, &standard.media, &standard.collections] {
-            std::fs::create_dir_all(vs.vault.root().join(folder)).map_err(|e| {
-                CommandError::Internal(format!("failed to create {folder}: {e}"))
-            })?;
+            std::fs::create_dir_all(vs.vault.root().join(folder))
+                .map_err(|e| CommandError::Internal(format!("failed to create {folder}: {e}")))?;
         }
     }
     set_vault_write_layout(app, state, VaultWriteLayoutDto::from(&standard))
@@ -373,37 +390,23 @@ impl From<&VaultWriteLayout> for VaultWriteLayoutDto {
 
 /// Open a vault snapshot without mutating persisted config.
 #[tauri::command]
-pub fn open_vault(
+pub async fn open_vault(
     app: AppHandle,
     state: State<'_, AppState>,
     path: String,
 ) -> Result<VaultOpenResult, CommandError> {
-    append_startup_trace(&app, "open_vault", &format!("start path={path}"));
-    let started = Instant::now();
-    let result = initialize_vault(&app, &state, &path);
-    match &result {
-        Ok(open) => append_startup_trace(
-            &app,
-            "open_vault",
-            &format!(
-                "done path={} indexed={} elapsed_ms={}",
-                path,
-                open.indexed,
-                started.elapsed().as_millis()
-            ),
-        ),
-        Err(err) => append_startup_trace(
-            &app,
-            "open_vault",
-            &format!(
-                "error path={} elapsed_ms={} err={}",
-                path,
-                started.elapsed().as_millis(),
-                err
-            ),
-        ),
-    }
-    result
+    let request = state.begin_vault_selection();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let _selection = state
+            .vault_selection
+            .lock()
+            .map_err(|_| CommandError::Internal("vault selection mutex poisoned".into()))?;
+        require_latest_selection(&state, request)?;
+        initialize_vault(&app, &state, &path, request)
+    })
+    .await
+    .map_err(|error| CommandError::Internal(format!("vault opening worker failed: {error}")))?
 }
 
 /// Get the current vault path, or None if no vault is selected.
@@ -489,16 +492,38 @@ pub async fn rebuild_index(
     let app_for_task = app.clone();
     let result =
         tauri::async_runtime::spawn_blocking(move || -> Result<ScanResult, CommandError> {
-            let conn = db::open_or_create(&vault.index_db_path())?;
-
             // Force every source through the canonical reconciler without deleting
             // the last-good projection first. A fatal or per-file failure therefore
             // preserves readable Grid/Search/Detail state and remains retryable.
-            let report = rebuild_index_projection(&conn, &vault)?;
-            search_engine::warm_search_index(&conn, None)?;
             let app_state = app_for_task.state::<AppState>();
-            start_thumbnail_sweep(&app_for_task, &app_state, vault.clone())?;
-            schedule_preview_reconcile(&app_for_task, vault, std::iter::empty::<String>(), true)?;
+            let owned = current_vault_layout(&app_state)?;
+            if owned.root() != vault.root() {
+                return Err(CommandError::NoVault);
+            }
+            let attempt = |layout: &VaultLayout| -> anyhow::Result<_> {
+                let conn = db::open_or_create(&layout.index_db_path())?;
+                let report = rebuild_index_projection(&conn, layout)?;
+                search_engine::warm_search_index(&conn, None)?;
+                Ok(report)
+            };
+            let (selected, report) = match attempt(&owned) {
+                Ok(report) => (owned.clone(), report),
+                Err(error) if db::is_index_corruption(&error) => {
+                    let recovered = db::recover_vault_index_after_error(owned.clone(), &error)
+                        .map_err(|error| CommandError::Internal(error.to_string()))?;
+                    let report = attempt(&recovered)?;
+                    (recovered, report)
+                }
+                Err(error) => return Err(error.into()),
+            };
+            super::state::adopt_recovered_projection(&app_for_task, &owned, selected.clone(), ())?;
+            start_thumbnail_sweep(&app_for_task, &app_state, selected.clone())?;
+            schedule_preview_reconcile(
+                &app_for_task,
+                selected,
+                std::iter::empty::<String>(),
+                true,
+            )?;
             Ok(ScanResult {
                 indexed: report.upserted.len(),
                 errors: report.errors.len(),
@@ -521,13 +546,10 @@ pub async fn rebuild_index(
 fn rebuild_index_projection(
     conn: &Connection,
     vault: &VaultLayout,
-) -> Result<reconcile::ReconcileReport, CommandError> {
-    conn.execute("DELETE FROM source_index_state", [])
-        .map_err(|error| {
-            CommandError::Internal(format!("failed to invalidate source stamps: {error}"))
-        })?;
-    reconcile::reconcile_vault(conn, vault)
-        .map_err(|error| CommandError::Internal(format!("failed to rebuild index: {error:#}")))
+) -> anyhow::Result<reconcile::ReconcileReport> {
+    db::set_index_ready(conn, false)?;
+    conn.execute("DELETE FROM source_index_state", [])?;
+    Ok(reconcile::reconcile_vault(conn, vault)?)
 }
 
 /// Re-verify the thumb cache against current media dependencies and
@@ -634,39 +656,58 @@ fn initialize_vault(
     app: &AppHandle,
     state: &AppState,
     path: &str,
+    request: u64,
 ) -> Result<VaultOpenResult, CommandError> {
+    let _write = crate::storage::source_mutation::begin_write()
+        .map_err(|error| CommandError::Internal(error.to_string()))?;
     let total = Instant::now();
     append_startup_trace(app, "initialize_vault", &format!("start path={path}"));
-    let mut vault_state = state
+    let vault_state = state
         .vault_state
         .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     if let Some(ref vs) = *vault_state {
         if vs.vault.root() == Path::new(path) {
-            state.freshness.mark_committed_snapshot_available(path);
-            let indexed = count_indexed_blocks(&vs.conn)?;
-            append_startup_trace(
-                app,
-                "initialize_vault",
-                &format!(
-                    "reuse_existing path={} indexed={} elapsed_ms={}",
-                    path,
+            let cached = (|| -> anyhow::Result<_> {
+                let indexed: i64 = vs
+                    .conn
+                    .query_row("SELECT COUNT(*) FROM blocks", [], |row| row.get(0))?;
+                let ready = db::index_is_ready(&vs.conn)?;
+                Ok((usize::try_from(indexed)?, ready))
+            })();
+            let reusable = match cached {
+                Ok(value) => Some(value),
+                Err(error) if db::is_index_corruption(&error) => None,
+                Err(error) => return Err(error.into()),
+            };
+            if let Some((indexed, ready)) = reusable {
+                if ready {
+                    state.freshness.mark_committed_snapshot_available(path);
+                }
+                append_startup_trace(
+                    app,
+                    "initialize_vault",
+                    &format!(
+                        "reuse_existing path={} indexed={} elapsed_ms={}",
+                        path,
+                        indexed,
+                        total.elapsed().as_millis()
+                    ),
+                );
+                append_startup_trace(app, "startup", "milestone=local_snapshot_opened");
+                return Ok(VaultOpenResult {
                     indexed,
-                    total.elapsed().as_millis()
-                ),
-            );
-            append_startup_trace(app, "startup", "milestone=local_snapshot_opened");
-            return Ok(VaultOpenResult {
-                indexed,
-                errors: 0,
-                sync_in_progress: false,
-                derived_store_ready: true,
-                bootstrapped_from_legacy: false,
-                migration_required: false,
-                thumbs_root: vs.vault.thumbs_dir().to_string_lossy().into_owned(),
-            });
+                    errors: 0,
+                    sync_in_progress: false,
+                    derived_store_ready: ready,
+                    bootstrapped_from_legacy: false,
+                    migration_required: false,
+                    thumbs_root: vs.vault.thumbs_dir().to_string_lossy().into_owned(),
+                });
+            }
         }
     }
+    drop(vault_state);
 
     let vault = resolve_runtime_vault_layout(app, Path::new(path))?;
     append_startup_trace(
@@ -678,7 +719,6 @@ fn initialize_vault(
             vault.audio_dir().display()
         ),
     );
-    let local_index_existed = vault.index_db_path().exists();
     // Opening the space starts a new cloud-wait session: Х17 reasons in
     // sessions, and a quiet one is itself a signal (Х21). Best effort.
     if let Err(error) = crate::storage::cloud_waits::begin_session(
@@ -697,24 +737,9 @@ fn initialize_vault(
     std::fs::create_dir_all(vault.mine_dir())
         .map_err(|e| CommandError::Internal(format!("failed to create Mine metadata dir: {e}")))?;
 
-    let bootstrapped_from_legacy = if !local_index_existed {
-        bootstrap_local_index_from_legacy(&vault)?
-    } else {
-        false
-    };
-
-    if bootstrapped_from_legacy {
-        append_startup_trace(
-            app,
-            "initialize_vault",
-            &format!(
-                "bootstrapped_local_index legacy={} derived={} elapsed_ms={}",
-                vault.legacy_index_db_path().display(),
-                vault.index_db_path().display(),
-                total.elapsed().as_millis()
-            ),
-        );
-    }
+    // The shared pre-B0 database may still belong to another running component.
+    // Rebuild from documents in our own generation instead of copying its WAL.
+    let bootstrapped_from_legacy = false;
     if bootstrapped_thumbs_from_legacy {
         append_startup_trace(
             app,
@@ -727,9 +752,6 @@ fn initialize_vault(
             ),
         );
     }
-    cleanup_legacy_vault_artifacts(&vault)?;
-    let derived_store_ready = local_index_existed || bootstrapped_from_legacy;
-    let migration_required = !derived_store_ready;
 
     // Expand asset protocol scope for the vault root plus derived caches.
     // Recursive scope is required because Obsidian-compatible vaults may keep
@@ -770,8 +792,10 @@ fn initialize_vault(
 
     // Open or create database
     let db_started = Instant::now();
-    let conn = db::open_or_create(&vault.index_db_path())?;
-    let indexed = count_indexed_blocks(&conn)?;
+    let (vault, conn, indexed) =
+        db::open_vault_index(vault).map_err(|error| CommandError::Internal(error.to_string()))?;
+    let derived_store_ready = db::index_is_ready(&conn)?;
+    let migration_required = !derived_store_ready;
     append_startup_trace(
         app,
         "initialize_vault",
@@ -783,16 +807,11 @@ fn initialize_vault(
     );
     append_startup_trace(app, "startup", "milestone=local_snapshot_opened");
 
-    // Start file watcher
+    // Prepare OS and database resources before the short publication boundary.
     let db_path = vault.index_db_path();
     let watcher_started = Instant::now();
-    match watch::start_watching(app, &vault, &db_path) {
+    let prepared_watcher = match watch::start_watching(app, &vault, &db_path) {
         Ok(w) => {
-            let mut watcher = state
-                .watcher
-                .lock()
-                .map_err(|_| CommandError::Internal("watcher mutex poisoned".into()))?;
-            *watcher = Some(w);
             append_startup_trace(
                 app,
                 "initialize_vault",
@@ -801,6 +820,7 @@ fn initialize_vault(
                     watcher_started.elapsed().as_millis()
                 ),
             );
+            Some(w)
         }
         Err(e) => {
             log::warn!("failed to start file watcher: {e:#}");
@@ -813,11 +833,33 @@ fn initialize_vault(
                     e
                 ),
             );
+            None
         }
-    }
+    };
 
     let thumbs_root = vault.thumbs_dir().to_string_lossy().into_owned();
-    *vault_state = Some(VaultState { conn, vault });
+    let publication = state
+        .vault_publication
+        .lock()
+        .map_err(|_| CommandError::Internal("vault publication mutex poisoned".into()))?;
+    require_latest_selection(state, request)?;
+    let (old_vault, old_watcher) = {
+        let mut active = state
+            .vault_state
+            .lock()
+            .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+        let mut watcher = state
+            .watcher
+            .lock()
+            .map_err(|_| CommandError::Internal("watcher mutex poisoned".into()))?;
+        (
+            active.replace(VaultState { conn, vault }),
+            std::mem::replace(&mut *watcher, prepared_watcher),
+        )
+    };
+    drop(publication);
+    drop(old_watcher);
+    drop(old_vault);
     // Switching away can miss watcher events for this vault. Every selection
     // therefore invalidates the in-memory clean generation; the existing local
     // snapshot remains readable while one background pass catches up.
@@ -910,6 +952,7 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
     let _ = std::thread::Builder::new()
         .name(format!("index-meta-backfill-{}", path))
         .spawn(move || {
+            let Ok(_write)=crate::storage::source_mutation::begin_write() else {return;};
             let vault =
                 match resolve_runtime_vault_layout(&app_for_thread, Path::new(&path_for_thread)) {
                     Ok(vault) => vault,
@@ -927,8 +970,14 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
                         return;
                     }
                 };
-            let conn = match db::open_or_create(&vault.index_db_path()) {
-                Ok(conn) => conn,
+            let (mut vault, mut conn) = match db::open_vault_index(vault.clone()) {
+                Ok((selected, conn, _)) => {
+                    if let Err(error) = super::state::adopt_recovered_projection(&app_for_thread, &vault, selected.clone(), ()) {
+                        log::warn!("backfill index adoption skipped: {error}");
+                        return;
+                    }
+                    (selected, conn)
+                }
                 Err(err) => {
                     log::warn!(
                         "index metadata backfill db open failed for {}: {:#}",
@@ -948,6 +997,17 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
                 .state::<AppState>()
                 .freshness
                 .reconcile(&vault);
+            if let Some(recovered) = freshness.recovered_vault {
+                if let Err(error) = super::state::adopt_recovered_projection(&app_for_thread, &vault, recovered.clone(), ()) {
+                    log::warn!("backfill recovery adoption skipped: {error}");
+                    return;
+                }
+                conn = match db::open_or_create(&recovered.index_db_path()) {
+                    Ok(conn) => conn,
+                    Err(error) => { log::warn!("backfill recovered index open failed: {error:#}"); return; }
+                };
+                vault = recovered;
+            }
             if let Err(error) = freshness.result {
                 log::warn!(
                     "index metadata backfill freshness failed for {}: {}",
@@ -1185,6 +1245,8 @@ fn thumbs_done_cb(app: AppHandle, path: String) -> Box<dyn FnOnce() + Send> {
 }
 
 fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandError> {
+    let write = crate::storage::source_mutation::begin_write()
+        .map_err(|error| CommandError::Internal(error.to_string()))?;
     append_startup_trace(&app, "start_vault_sync", &format!("request path={path}"));
     let app_state = app.state::<AppState>();
     app_state.freshness.mark_dirty(&path);
@@ -1203,6 +1265,7 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
     match std::thread::Builder::new()
         .name(format!("vault-sync-{}", sync_path))
         .spawn(move || {
+            let _write = write;
             let total = Instant::now();
             let vault =
                 match resolve_runtime_vault_layout(&app_for_thread, Path::new(&path_for_thread)) {
@@ -1240,8 +1303,23 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
                 &format!("start path={}", path_for_thread),
             );
 
-            match db::open_or_create(&vault.index_db_path()) {
-                Ok(conn) => drop(conn),
+            let mut vault = match db::open_vault_index(vault.clone()) {
+                Ok((selected, conn, _)) => {
+                    drop(conn);
+                    if let Err(error) = super::state::adopt_recovered_projection(
+                        &app_for_thread,
+                        &vault,
+                        selected.clone(),
+                        (),
+                    ) {
+                        log::warn!("sync index adoption skipped: {error}");
+                        let _ = app_for_thread
+                            .state::<AppState>()
+                            .abort_sync(&path_for_thread);
+                        return;
+                    }
+                    selected
+                }
                 Err(err) => {
                     log::error!("failed to open db for sync {}: {:#}", path_for_thread, err);
                     append_startup_trace(
@@ -1298,11 +1376,21 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
                         },
                     );
                 };
-                let result = match sync_state
+                let outcome = sync_state
                     .freshness
-                    .reconcile_with_progress(&vault, &emit_progress)
-                    .result
-                {
+                    .reconcile_with_progress(&vault, &emit_progress);
+                if let Some(recovered) = outcome.recovered_vault {
+                    if let Err(error) = super::state::adopt_recovered_projection(
+                        &app_for_thread,
+                        &vault,
+                        recovered.clone(),
+                        (),
+                    ) {
+                        break Err(error);
+                    }
+                    vault = recovered;
+                }
+                let result = match outcome.result {
                     Ok(report) => Ok(ScanResult {
                         indexed: report.upserted.len(),
                         errors: report.errors.len(),
@@ -1428,14 +1516,9 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
     }
 }
 
-fn count_indexed_blocks(conn: &Connection) -> Result<usize, CommandError> {
-    let count: i64 = conn
-        .query_row("SELECT count(*) FROM blocks", [], |row| row.get(0))
-        .map_err(|e| CommandError::Internal(format!("failed to count indexed blocks: {e}")))?;
-    Ok(count as usize)
-}
-
 fn resolve_runtime_vault_layout(app: &AppHandle, root: &Path) -> Result<VaultLayout, CommandError> {
+    let _write = crate::storage::source_mutation::begin_write()
+        .map_err(|error| CommandError::Internal(error.to_string()))?;
     let base = VaultLayout::new(root.to_path_buf());
     initialize_new_space_layout(&base)?;
     std::fs::create_dir_all(base.mine_dir())
@@ -1453,17 +1536,21 @@ fn resolve_runtime_vault_layout(app: &AppHandle, root: &Path) -> Result<VaultLay
         IdentityClaim::Owned | IdentityClaim::Adopted => {
             record_owner_path(&derived_root, root);
             let write_layout = load_write_layout(&base)?;
-            Ok(
+            db::resolve_vault_index(
                 VaultLayout::with_derived_root(root.to_path_buf(), derived_root)
                     .with_write_layout(write_layout),
             )
+            .map_err(|error| CommandError::Internal(error.to_string()))
         }
         IdentityClaim::Copy { owner } => {
             let new_id = generate_vault_id()?;
             files::write_atomically(
                 &base.vault_id_path(),
-                format!("{new_id}
-").as_bytes(),
+                format!(
+                    "{new_id}
+"
+                )
+                .as_bytes(),
             )
             .map_err(|e| {
                 CommandError::Internal(format!("failed to write the copy's own vault-id: {e:#}"))
@@ -1478,10 +1565,11 @@ fn resolve_runtime_vault_layout(app: &AppHandle, root: &Path) -> Result<VaultLay
             let fresh_derived = derived_store_root(app, &vault_id)?;
             record_owner_path(&fresh_derived, root);
             let write_layout = load_write_layout(&base)?;
-            Ok(
+            db::resolve_vault_index(
                 VaultLayout::with_derived_root(root.to_path_buf(), fresh_derived)
                     .with_write_layout(write_layout),
             )
+            .map_err(|error| CommandError::Internal(error.to_string()))
         }
     }
 }
@@ -1490,6 +1578,8 @@ fn resolve_runtime_vault_layout(app: &AppHandle, root: &Path) -> Result<VaultLay
 /// user content, a vault identity, or a saved layout is an existing space and
 /// never gets a layout inferred from its directory names.
 pub(crate) fn initialize_new_space_layout(vault: &VaultLayout) -> Result<(), CommandError> {
+    let _write = crate::storage::source_mutation::begin_write()
+        .map_err(|error| CommandError::Internal(error.to_string()))?;
     if vault.vault_id_path().exists()
         || vault.legacy_vault_id_path().exists()
         || vault.write_layout_path().exists()
@@ -1573,6 +1663,8 @@ fn load_write_layout(vault: &VaultLayout) -> Result<VaultWriteLayout, CommandErr
 }
 
 fn save_write_layout(vault: &VaultLayout, layout: &VaultWriteLayout) -> Result<(), CommandError> {
+    let _write = crate::storage::source_mutation::begin_write()
+        .map_err(|error| CommandError::Internal(error.to_string()))?;
     let stored = StoredWriteLayout {
         cards: layout.cards.clone(),
         media: layout.media.clone(),
@@ -1594,6 +1686,8 @@ struct StoredWriteLayout {
 }
 
 fn ensure_vault_id(vault: &VaultLayout) -> Result<String, CommandError> {
+    let _write = crate::storage::source_mutation::begin_write()
+        .map_err(|error| CommandError::Internal(error.to_string()))?;
     let path = vault.vault_id_path();
     if let Ok(existing) = std::fs::read_to_string(&path) {
         let trimmed = existing.trim();
@@ -1657,39 +1751,9 @@ pub(crate) fn derived_store_root(app: &AppHandle, vault_id: &str) -> Result<Path
     Ok(app_data.join("vaults").join(vault_id))
 }
 
-fn bootstrap_local_index_from_legacy(vault: &VaultLayout) -> Result<bool, CommandError> {
-    let target = vault.index_db_path();
-    let source = vault.legacy_index_db_path();
-    if target.exists() || !source.exists() {
-        return Ok(false);
-    }
-
-    if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            CommandError::Internal(format!("failed to create local derived dir: {e}"))
-        })?;
-    }
-
-    std::fs::copy(&source, &target)
-        .map_err(|e| CommandError::Internal(format!("failed to copy legacy index db: {e}")))?;
-
-    for suffix in ["-wal", "-shm"] {
-        let source_sidecar = PathBuf::from(format!("{}{}", source.display(), suffix));
-        let target_sidecar = PathBuf::from(format!("{}{}", target.display(), suffix));
-        if source_sidecar.exists() {
-            std::fs::copy(&source_sidecar, &target_sidecar).map_err(|e| {
-                CommandError::Internal(format!(
-                    "failed to copy legacy sqlite sidecar {}: {e}",
-                    source_sidecar.display()
-                ))
-            })?;
-        }
-    }
-
-    Ok(true)
-}
-
 fn bootstrap_local_thumbs_from_legacy(vault: &VaultLayout) -> Result<bool, CommandError> {
+    let _write = crate::storage::source_mutation::begin_write()
+        .map_err(|error| CommandError::Internal(error.to_string()))?;
     let source = vault.legacy_thumbs_dir();
     let target = vault.thumbs_dir();
     if !source.exists() {
@@ -1746,68 +1810,6 @@ fn bootstrap_local_thumbs_from_legacy(vault: &VaultLayout) -> Result<bool, Comma
     Ok(copied_any)
 }
 
-fn cleanup_legacy_vault_artifacts(vault: &VaultLayout) -> Result<(), CommandError> {
-    remove_file_if_exists(&vault.legacy_vault_id_path(), "legacy vault-id")?;
-    remove_file_if_exists(&vault.legacy_index_db_path(), "legacy index db")?;
-    for suffix in ["-wal", "-shm"] {
-        remove_file_if_exists(
-            &PathBuf::from(format!(
-                "{}{}",
-                vault.legacy_index_db_path().display(),
-                suffix
-            )),
-            "legacy sqlite sidecar",
-        )?;
-    }
-    remove_file_if_exists(
-        &vault.legacy_arena_dir().join(".DS_Store"),
-        "legacy metadata .DS_Store",
-    )?;
-    remove_dir_all_if_exists(&vault.legacy_arena_dir().join("cache"), "legacy cache")?;
-    remove_empty_dir_if_exists(&vault.legacy_arena_dir(), "legacy metadata dir")?;
-    Ok(())
-}
-
-fn remove_file_if_exists(path: &Path, label: &str) -> Result<(), CommandError> {
-    match std::fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(CommandError::Internal(format!(
-            "failed to remove {label} {}: {error}",
-            path.display()
-        ))),
-    }
-}
-
-fn remove_dir_all_if_exists(path: &Path, label: &str) -> Result<(), CommandError> {
-    match std::fs::remove_dir_all(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(CommandError::Internal(format!(
-            "failed to remove {label} {}: {error}",
-            path.display()
-        ))),
-    }
-}
-
-fn remove_empty_dir_if_exists(path: &Path, label: &str) -> Result<(), CommandError> {
-    match std::fs::remove_dir(path) {
-        Ok(()) => Ok(()),
-        Err(error)
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
-            ) =>
-        {
-            Ok(())
-        }
-        Err(error) => Err(CommandError::Internal(format!(
-            "failed to remove empty {label} {}: {error}",
-            path.display()
-        ))),
-    }
-}
-
 // ─── Config persistence ─────────────────────────────────────────────────────
 
 /// Path to the app config file: <app_data_dir>/config.json
@@ -1837,7 +1839,8 @@ pub(crate) fn write_config(app: &AppHandle, json: &serde_json::Value) {
 }
 
 pub(crate) fn try_write_config(app: &AppHandle, json: &serde_json::Value) -> anyhow::Result<()> {
-    let config = config_path(app).ok_or_else(|| anyhow::anyhow!("app data directory is unavailable"))?;
+    let config =
+        config_path(app).ok_or_else(|| anyhow::anyhow!("app data directory is unavailable"))?;
     write_config_file(&config, json)
 }
 
@@ -1868,7 +1871,10 @@ fn save_vault_path(app: &AppHandle, path: &str) {
 fn upsert_known_space(paths: &mut Vec<serde_json::Value>, path: &str) {
     let mut found = false;
     paths.retain_mut(|entry| {
-        if entry.as_str().is_some_and(|known| same_space_path(known, path)) {
+        if entry
+            .as_str()
+            .is_some_and(|known| same_space_path(known, path))
+        {
             if found {
                 false
             } else {
@@ -1903,7 +1909,8 @@ fn load_known_vaults(app: &AppHandle) -> Vec<String> {
             .and_then(|s| canonical_space_path(s).ok().map(|path| vec![path]))
             .unwrap_or_default();
     };
-    let paths: Vec<String> = arr.iter()
+    let paths: Vec<String> = arr
+        .iter()
         .filter_map(|v| v.as_str().map(|s| s.to_string()))
         .filter(|p| PathBuf::from(p).is_dir())
         .collect();
@@ -1953,7 +1960,10 @@ mod tests {
         for folder in ["Cards", "Media", "Collections"] {
             assert!(root.path().join(folder).is_dir());
         }
-        assert_eq!(load_write_layout(&vault).unwrap(), VaultWriteLayout::standard());
+        assert_eq!(
+            load_write_layout(&vault).unwrap(),
+            VaultWriteLayout::standard()
+        );
 
         std::fs::remove_dir_all(root.path().join("Media")).unwrap();
         initialize_new_space_layout(&vault).unwrap();
@@ -1980,18 +1990,27 @@ mod tests {
         let alias = alias_parent.path().join("alias");
         std::os::unix::fs::symlink(root.path(), &alias).unwrap();
         let canonical = canonical_space_path(root.path().to_str().unwrap()).unwrap();
-        assert_eq!(canonical_space_path(alias.to_str().unwrap()).unwrap(), canonical);
-        assert!(same_space_path(alias.to_str().unwrap(), root.path().to_str().unwrap()));
+        assert_eq!(
+            canonical_space_path(alias.to_str().unwrap()).unwrap(),
+            canonical
+        );
+        assert!(same_space_path(
+            alias.to_str().unwrap(),
+            root.path().to_str().unwrap()
+        ));
         let other = tempfile::tempdir().unwrap();
         let mut registry = vec![
             serde_json::json!(other.path().to_str().unwrap()),
             serde_json::json!(alias.to_str().unwrap()),
         ];
         upsert_known_space(&mut registry, &canonical);
-        assert_eq!(registry, vec![
-            serde_json::json!(other.path().to_str().unwrap()),
-            serde_json::json!(canonical),
-        ]);
+        assert_eq!(
+            registry,
+            vec![
+                serde_json::json!(other.path().to_str().unwrap()),
+                serde_json::json!(canonical),
+            ]
+        );
     }
 
     #[test]
@@ -2061,12 +2080,36 @@ mod tests {
         let report = rebuild_index_projection(&conn, &vault).unwrap();
 
         assert_eq!(report.errors.len(), 1);
+        assert!(!db::index_is_ready(&conn).unwrap());
         let indexed = index::get_block(&conn, "Stable").unwrap().unwrap();
         assert_eq!(indexed.body.trim(), "old body");
     }
 
     #[test]
-    fn bootstrap_local_index_from_legacy_copies_sqlite_files() {
+    fn reliability_explicit_rebuild_marks_incomplete_before_clear_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        std::fs::write(vault.block_path("Stable"), "stable source").unwrap();
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+        assert!(db::index_is_ready(&conn).unwrap());
+        conn.execute_batch(
+            "CREATE TRIGGER reject_state_clear BEFORE DELETE ON source_index_state
+             BEGIN SELECT RAISE(ABORT, 'injected clear failure'); END;",
+        )
+        .unwrap();
+        let error = rebuild_index_projection(&conn, &vault).unwrap_err();
+        assert!(error.downcast_ref::<rusqlite::Error>().is_some());
+        assert!(!db::is_index_corruption(&error));
+        assert!(!db::index_is_ready(&conn).unwrap());
+        assert_eq!(
+            std::fs::read_to_string(vault.block_path("Stable")).unwrap(),
+            "stable source"
+        );
+    }
+
+    #[test]
+    fn generation_selection_preserves_legacy_sqlite_files() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("vault");
         let derived = dir.path().join("derived");
@@ -2084,17 +2127,24 @@ mod tests {
         )
         .unwrap();
 
-        assert!(bootstrap_local_index_from_legacy(&vault).unwrap());
-        assert_eq!(std::fs::read(vault.index_db_path()).unwrap(), b"legacy-db");
+        let selected = db::resolve_vault_index(vault.clone()).unwrap();
+        assert!(selected.index_db_path().exists());
         assert_eq!(
-            std::fs::read(format!("{}-wal", vault.index_db_path().display())).unwrap(),
+            std::fs::read(vault.legacy_index_db_path()).unwrap(),
+            b"legacy-db"
+        );
+        assert_eq!(
+            std::fs::read(format!("{}-wal", vault.legacy_index_db_path().display())).unwrap(),
             b"legacy-wal"
         );
         assert_eq!(
-            std::fs::read(format!("{}-shm", vault.index_db_path().display())).unwrap(),
+            std::fs::read(format!("{}-shm", vault.legacy_index_db_path().display())).unwrap(),
             b"legacy-shm"
         );
-        assert!(!bootstrap_local_index_from_legacy(&vault).unwrap());
+        assert_eq!(
+            db::resolve_vault_index(vault).unwrap().index_db_path(),
+            selected.index_db_path()
+        );
     }
 
     #[test]
@@ -2120,7 +2170,7 @@ mod tests {
     }
 
     #[test]
-    fn cleanup_legacy_vault_artifacts_removes_known_files_only() {
+    fn selecting_generation_keeps_legacy_identity_cache_and_unknown_history() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("vault");
         let derived = dir.path().join("derived");
@@ -2136,11 +2186,11 @@ mod tests {
         .unwrap();
         std::fs::write(vault.legacy_thumbs_dir().join("alpha.jpg"), b"jpg").unwrap();
 
-        cleanup_legacy_vault_artifacts(&vault).unwrap();
+        db::resolve_vault_index(vault.clone()).unwrap();
 
-        assert!(!vault.legacy_vault_id_path().exists());
-        assert!(!vault.legacy_index_db_path().exists());
-        assert!(!vault.legacy_arena_dir().join("cache").exists());
+        assert!(vault.legacy_vault_id_path().exists());
+        assert!(vault.legacy_index_db_path().exists());
+        assert!(vault.legacy_arena_dir().join("cache").exists());
         assert!(vault.legacy_arena_dir().join("conflicts-archive").exists());
     }
 }

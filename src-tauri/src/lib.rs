@@ -7,15 +7,26 @@ pub mod cli;
 pub mod cli_mutations;
 #[cfg(feature = "desktop")]
 mod commands;
+#[cfg(feature = "desktop")]
+pub use commands::clipper_setup::{
+    install_development_runtime, DevelopmentRuntimeInputs, DevelopmentRuntimeReport,
+    RuntimeInstallationError,
+};
 pub mod domain;
 #[cfg(feature = "desktop")]
 mod import;
 #[cfg(feature = "desktop")]
 pub mod mcp;
 pub mod net;
+pub mod runtime_installation;
+pub mod runtime_protocol;
 pub mod storage;
 #[cfg(feature = "desktop")]
 mod swipe_gesture;
+#[cfg(feature = "desktop")]
+pub mod update_activation;
+#[cfg(feature = "desktop")]
+pub mod updater;
 pub mod util;
 #[cfg(feature = "desktop")]
 mod watcher;
@@ -25,13 +36,13 @@ use commands::state::AppState;
 #[cfg(feature = "desktop")]
 use commands::window_chrome::{MENU_ID_TOGGLE_SIDEBAR, MENU_ID_VIEW};
 #[cfg(feature = "desktop")]
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(feature = "desktop")]
 use tauri::menu::{AboutMetadata, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 #[cfg(feature = "desktop")]
 use tauri::Emitter;
 #[cfg(feature = "desktop")]
 use tauri::Manager;
-#[cfg(feature = "desktop")]
-use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(feature = "desktop")]
 const MENU_ID_FIND_CARDS: &str = "surface-search-find-cards";
@@ -44,10 +55,16 @@ const MENU_ID_SETTINGS: &str = "open-settings-window";
 static SHORTCUT_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 #[cfg(feature = "desktop")]
+pub(crate) fn application_context() -> tauri::Context<tauri::Wry> {
+    tauri::generate_context!()
+}
+
+#[cfg(feature = "desktop")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     crate::asset_protocol::register(tauri::Builder::default())
         .manage(AppState::new())
+        .manage(updater::UpdateService::default())
         .manage(commands::app_open::PendingSpace::default())
         // Article audio commands are registered only with the `article-audio`
         // feature; `generate_handler!` takes a flat list, so the gate lives on
@@ -72,6 +89,11 @@ pub fn run() {
             commands::vault::rebuild_index,
             commands::vault::sweep_vault_thumbnails,
             commands::clipper_setup::get_clipper_setup_status,
+            commands::updates::get_update_status,
+            commands::updates::check_for_updates,
+            commands::updates::download_update,
+            commands::updates::install_update,
+            commands::updates::restore_previous_update,
             commands::icloud_progress::icloud_download_progress,
             commands::cloud_recommendation::cloud_recommendation_state,
             commands::cloud_recommendation::dismiss_cloud_recommendation,
@@ -165,15 +187,16 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if window.label() == "settings"
-                && matches!(event, tauri::WindowEvent::Focused(false) | tauri::WindowEvent::Destroyed)
+                && matches!(
+                    event,
+                    tauri::WindowEvent::Focused(false) | tauri::WindowEvent::Destroyed
+                )
             {
                 let _ = set_shortcut_capture_menu(window.app_handle(), false);
             }
         })
         .setup(|app| {
-            crate::util::reset_startup_trace(app.handle());
-            crate::util::append_startup_trace(app.handle(), "process", "started");
-            crate::util::append_startup_trace(app.handle(), "setup", "start");
+            updater::initialize(app.handle());
             let instance_id = if commands::native_shell_smoke::enabled() {
                 "com.mine.app.native-shell-smoke"
             } else {
@@ -182,6 +205,9 @@ pub fn run() {
             match crate::util::acquire_single_instance(instance_id)? {
                 crate::util::SingleInstanceAcquire::Primary(guard) => {
                     app.state::<AppState>().set_instance_guard(guard)?;
+                    crate::util::reset_startup_trace(app.handle());
+                    crate::util::append_startup_trace(app.handle(), "process", "started");
+                    crate::util::append_startup_trace(app.handle(), "setup", "start");
                 }
                 crate::util::SingleInstanceAcquire::Secondary => {
                     log::warn!("second Mine instance suppressed");
@@ -232,7 +258,7 @@ pub fn run() {
 
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(application_context())
         .expect("error while building tauri application")
         .run(|app, event| {
             #[cfg(any(target_os = "macos", target_os = "ios"))]

@@ -3,6 +3,7 @@
 //! Contract: SPEC_STORAGE.md#storagereconcile--filesystem-first-visibility
 
 use anyhow::{Context, Result};
+use fs2::FileExt;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -14,7 +15,7 @@ use crate::domain::block::{
     iter_inline_media_references, parse_markdown_document, Block, BlockType, DateTime,
 };
 use crate::domain::vault::{detect_icloud_conflict, VaultLayout};
-use crate::storage::{article_audio, file_identity, files, index, media_refs};
+use crate::storage::{article_audio, db, file_identity, files, index, media_refs};
 use mine_core::links::LinkIndex;
 
 fn channel_ref_for_slug(vault: &VaultLayout, slug: &str) -> Result<String> {
@@ -129,6 +130,8 @@ pub enum ReconcileError {
     State(#[source] anyhow::Error),
     #[error("failed to commit reconciliation: {0}")]
     Commit(#[source] anyhow::Error),
+    #[error("sources kept changing while building index for {path}; retry is required")]
+    SourcesChanging { path: PathBuf },
 }
 
 #[derive(Debug)]
@@ -170,8 +173,113 @@ pub fn reconcile_vault_with_progress(
     vault: &VaultLayout,
     on_progress: &(dyn Fn(usize, usize) + Sync),
 ) -> std::result::Result<ReconcileReport, ReconcileError> {
-    let started = Instant::now();
+    reconcile_projection(
+        conn,
+        vault,
+        on_progress,
+        &file_identity::IdentityRefresh::default(),
+    )
+}
+
+/// Runtime source maintenance repairs confirmed offline renames before indexing.
+/// This source operation is deliberately absent from rebuild/read-only APIs.
+pub fn reconcile_runtime_vault_with_progress(
+    conn: &Connection,
+    vault: &VaultLayout,
+    on_progress: &(dyn Fn(usize, usize) + Sync),
+) -> std::result::Result<ReconcileReport, ReconcileError> {
+    files::scan_md_files(vault).map_err(|source| ReconcileError::Inventory {
+        path: vault.root().to_path_buf(),
+        source,
+    })?;
     let identity = file_identity::reconcile(vault).map_err(ReconcileError::State)?;
+    reconcile_projection(conn, vault, on_progress, &identity)
+}
+
+fn reconcile_projection(
+    conn: &Connection,
+    vault: &VaultLayout,
+    on_progress: &(dyn Fn(usize, usize) + Sync),
+    identity: &file_identity::IdentityRefresh,
+) -> std::result::Result<ReconcileReport, ReconcileError> {
+    const MAX_SOURCE_PASSES: usize = 3;
+    let _write = crate::storage::source_mutation::begin_write().map_err(ReconcileError::State)?;
+    let directory = vault.index_generation_dir();
+    std::fs::create_dir_all(&directory).map_err(|error| ReconcileError::State(error.into()))?;
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(directory.join("build.lock"))
+        .map_err(|error| ReconcileError::State(error.into()))?;
+    lock.lock_exclusive()
+        .map_err(|error| ReconcileError::State(error.into()))?;
+    db::set_index_ready(conn, false).map_err(ReconcileError::State)?;
+    let mut aggregate: Option<ReconcileReport> = None;
+    for _ in 0..MAX_SOURCE_PASSES {
+        let report = reconcile_source_pass(conn, vault, on_progress, identity)?;
+        let fresh = report.is_fresh();
+        match &mut aggregate {
+            Some(total) => {
+                total.inventory_markdown = report.inventory_markdown;
+                total.unchanged = report.unchanged;
+                total.upserted.extend(report.upserted);
+                total.removed.extend(report.removed);
+                total.dependency_changed.extend(report.dependency_changed);
+                total.errors = report.errors;
+                total.content_reads += report.content_reads;
+                total.database_writes += report.database_writes;
+                total.elapsed_ms += report.elapsed_ms;
+            }
+            None => aggregate = Some(report),
+        }
+        if !fresh || source_inventory_matches(conn, vault).map_err(ReconcileError::State)? {
+            db::set_index_ready(conn, fresh).map_err(ReconcileError::Commit)?;
+            return aggregate.ok_or_else(|| {
+                ReconcileError::State(anyhow::anyhow!("source pass produced no report"))
+            });
+        }
+    }
+    Err(ReconcileError::SourcesChanging {
+        path: vault.root().to_path_buf(),
+    })
+}
+
+fn source_inventory_matches(conn: &Connection, vault: &VaultLayout) -> Result<bool> {
+    let stored = load_source_states(conn)?;
+    let paths = files::scan_md_files(vault)?;
+    let mut live = BTreeSet::new();
+    for path in paths {
+        if path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .and_then(detect_icloud_conflict)
+            .is_some()
+        {
+            continue;
+        }
+        let slug = vault.slug_for_path(&path)?;
+        live.insert(slug.clone());
+        let Some(state) = stored.get(&slug) else {
+            return Ok(false);
+        };
+        if FileStamp::read(&path)? != state.stamp.markdown
+            || dependencies_changed(vault, &state.stamp.dependencies)
+        {
+            return Ok(false);
+        }
+    }
+    Ok(live.len() == stored.len())
+}
+
+fn reconcile_source_pass(
+    conn: &Connection,
+    vault: &VaultLayout,
+    on_progress: &(dyn Fn(usize, usize) + Sync),
+    identity: &file_identity::IdentityRefresh,
+) -> std::result::Result<ReconcileReport, ReconcileError> {
+    let started = Instant::now();
     let identity_affected = identity.affected_markdown.iter().collect::<BTreeSet<_>>();
     let paths = files::scan_md_files(vault).map_err(|source| ReconcileError::Inventory {
         path: vault.root().to_path_buf(),
@@ -300,7 +408,7 @@ pub fn reconcile_vault_with_progress(
         .into_iter()
         .collect::<Vec<_>>();
 
-    let moved = identity.moved_markdown;
+    let moved = &identity.moved_markdown;
 
     let tx = conn
         .unchecked_transaction()
@@ -310,7 +418,7 @@ pub fn reconcile_vault_with_progress(
     let mut database_writes = 0usize;
     let mut committed_sources = Vec::new();
 
-    for (old_slug, new_slug) in &moved {
+    for (old_slug, new_slug) in moved {
         if indexed_kinds.get(old_slug) == Some(&SourceKind::Block)
             && indexed_kinds.get(new_slug).is_none()
         {
@@ -345,7 +453,7 @@ pub fn reconcile_vault_with_progress(
         }
     }
 
-    for (old_slug, new_slug) in &moved {
+    for (old_slug, new_slug) in moved {
         if let Err(error) = files::rename_derived_artifacts(vault, old_slug, new_slug) {
             log::warn!("failed to carry derived artifacts {old_slug} -> {new_slug}: {error:#}");
         }
@@ -750,13 +858,13 @@ mod tests {
         std::fs::create_dir_all(vault.thumbs_dir()).unwrap();
         std::fs::create_dir_all(vault.root().join("Cards")).unwrap();
         write_note(&vault, "Note", "the very same words");
-        reconcile_vault(&conn, &vault).unwrap();
+        reconcile_runtime_vault_with_progress(&conn, &vault, &|_, _| {}).unwrap();
 
         // Stand in for whatever the derived store keyed by this slug.
         std::fs::write(vault.thumb_path("Note"), b"preview").unwrap();
 
         std::fs::rename(vault.block_path("Note"), vault.block_path("Cards/Note")).unwrap();
-        let report = reconcile_vault(&conn, &vault).unwrap();
+        let report = reconcile_runtime_vault_with_progress(&conn, &vault, &|_, _| {}).unwrap();
 
         assert_eq!(report.upserted, vec!["Cards/Note"]);
         assert_eq!(report.removed, vec!["Note"]);
@@ -776,12 +884,12 @@ mod tests {
         std::fs::create_dir_all(vault.root().join("Cards")).unwrap();
         write_note(&vault, "First", "identical");
         write_note(&vault, "Second", "identical");
-        reconcile_vault(&conn, &vault).unwrap();
+        reconcile_runtime_vault_with_progress(&conn, &vault, &|_, _| {}).unwrap();
         std::fs::write(vault.thumb_path("First"), b"first").unwrap();
 
         std::fs::rename(vault.block_path("First"), vault.block_path("Cards/First")).unwrap();
         std::fs::rename(vault.block_path("Second"), vault.block_path("Cards/Second")).unwrap();
-        reconcile_vault(&conn, &vault).unwrap();
+        reconcile_runtime_vault_with_progress(&conn, &vault, &|_, _| {}).unwrap();
 
         // Native file locators distinguish both notes despite identical bodies.
         assert_eq!(
@@ -797,16 +905,67 @@ mod tests {
         std::fs::create_dir_all(vault.thumbs_dir()).unwrap();
         std::fs::create_dir_all(vault.root().join("Cards")).unwrap();
         write_note(&vault, "Note", "original body");
-        reconcile_vault(&conn, &vault).unwrap();
+        reconcile_runtime_vault_with_progress(&conn, &vault, &|_, _| {}).unwrap();
         std::fs::write(vault.thumb_path("Note"), b"preview").unwrap();
 
         std::fs::remove_file(vault.block_path("Note")).unwrap();
         write_note(&vault, "Cards/Note", "different body entirely");
-        reconcile_vault(&conn, &vault).unwrap();
+        reconcile_runtime_vault_with_progress(&conn, &vault, &|_, _| {}).unwrap();
 
         // Same name, different content: a new card, and inheriting the old
         // preview would show the wrong picture.
         assert!(!vault.thumb_path("Cards/Note").exists());
+    }
+
+    #[test]
+    fn reliability_pure_rebuild_preserves_history_and_runtime_repairs_offline_rename() {
+        let (_dir, vault, conn) = setup();
+        write_note(&vault, "Target", "target content");
+        write_note(&vault, "Source", "See [[Target]]");
+        reconcile_runtime_vault_with_progress(&conn, &vault, &|_, _| {}).unwrap();
+        std::fs::rename(vault.block_path("Target"), vault.block_path("Renamed")).unwrap();
+        let before_source = std::fs::read(vault.block_path("Source")).unwrap();
+        let before_target = std::fs::read(vault.block_path("Renamed")).unwrap();
+        let history_path = vault.mine_dir().join("file-identity.json");
+        let before_history = std::fs::read(&history_path).unwrap();
+        reconcile_vault(&conn, &vault).unwrap();
+        assert_eq!(
+            std::fs::read(vault.block_path("Source")).unwrap(),
+            before_source
+        );
+        assert_eq!(
+            std::fs::read(vault.block_path("Renamed")).unwrap(),
+            before_target
+        );
+        assert_eq!(std::fs::read(&history_path).unwrap(), before_history);
+        reconcile_runtime_vault_with_progress(&conn, &vault, &|_, _| {}).unwrap();
+        assert!(std::fs::read_to_string(vault.block_path("Source"))
+            .unwrap()
+            .contains("[[Renamed]]"));
+        assert_eq!(
+            std::fs::read(vault.block_path("Renamed")).unwrap(),
+            before_target
+        );
+        let source = index::get_block(&conn, "Source").unwrap().unwrap();
+        assert!(source.body.contains("[[Renamed]]"));
+    }
+
+    #[test]
+    fn reliability_unknown_history_survives_runtime_and_index_recovery() {
+        let (_dir, vault, conn) = setup();
+        std::fs::create_dir_all(vault.mine_dir()).unwrap();
+        let history = vault.mine_dir().join("file-identity.json");
+        std::fs::write(
+            &history,
+            br#"{"version":999,"files":[],"bindings":[],"future":"retain"}"#,
+        )
+        .unwrap();
+        let before = std::fs::read(&history).unwrap();
+        write_note(&vault, "Source", "# Still available");
+        reconcile_runtime_vault_with_progress(&conn, &vault, &|_, _| {}).unwrap();
+        reconcile_vault(&conn, &vault).unwrap();
+        assert_eq!(std::fs::read(history).unwrap(), before);
+        assert!(index::get_block(&conn, "Source").unwrap().is_some());
     }
 
     #[test]

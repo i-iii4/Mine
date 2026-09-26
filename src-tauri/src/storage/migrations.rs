@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 4;
+pub const CURRENT_SCHEMA_VERSION: i64 = 5;
 pub const GRAPH_LINK_INDEX_VERSION: i64 = 2;
 
 const BLOCK_COLUMNS: &[(&str, &str)] = &[
@@ -183,6 +183,15 @@ pub fn migrate_and_validate(conn: &Connection) -> Result<()> {
                 2 => migrate_v1_to_v2(conn)?,
                 3 => migrate_v2_to_v3(conn)?,
                 4 => migrate_v3_to_v4(conn)?,
+                5 => conn
+                    .execute_batch(
+                        "CREATE TABLE index_build_state (
+                        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                        ready INTEGER NOT NULL DEFAULT 0 CHECK (ready IN (0, 1))
+                    );
+                    INSERT INTO index_build_state (singleton, ready) VALUES (1, 0);",
+                    )
+                    .context("failed to create index build state")?,
                 _ => bail!("missing SQLite migration implementation for version {target}"),
             }
             conn.pragma_update(None, "user_version", target)
@@ -628,7 +637,7 @@ fn validate_legacy_block_baseline(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn validate_schema(conn: &Connection) -> Result<()> {
+pub(crate) fn validate_schema(conn: &Connection) -> Result<()> {
     let installed = user_version(conn)?;
     if installed != CURRENT_SCHEMA_VERSION {
         bail!(
@@ -639,6 +648,18 @@ fn validate_schema(conn: &Connection) -> Result<()> {
     for (table, expected_columns) in REQUIRED_TABLE_COLUMNS {
         validate_table_columns(conn, table, expected_columns)?;
     }
+    validate_table_columns(
+        conn,
+        "index_build_state",
+        &[("singleton", "INTEGER"), ("ready", "INTEGER")],
+    )?;
+    let _: bool = conn
+        .query_row(
+            "SELECT ready FROM index_build_state WHERE singleton = 1",
+            [],
+            |row| row.get(0),
+        )
+        .context("failed to validate index build state")?;
     validate_table_columns(
         conn,
         "blocks_fts",
@@ -846,8 +867,14 @@ mod tests {
         migrate_and_validate(&conn).unwrap();
 
         let rows = [
-            ("stale-video", r#"{"kind":"video_poster","width":null,"height":null}"#),
-            ("measured-video", r#"{"kind":"video_poster","width":588,"height":720}"#),
+            (
+                "stale-video",
+                r#"{"kind":"video_poster","width":null,"height":null}"#,
+            ),
+            (
+                "measured-video",
+                r#"{"kind":"video_poster","width":588,"height":720}"#,
+            ),
             ("image", r#"{"kind":"image","width":null,"height":null}"#),
         ];
         for (slug, manifest) in rows {

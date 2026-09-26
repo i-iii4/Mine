@@ -1,0 +1,812 @@
+{
+  "schemaVersion": 1,
+  "fixtureVersion": 1,
+  "principles": [
+    {
+      "id": "P01",
+      "requirement": "PRINCIPLES.md#### 1.",
+      "behavior": "Изменённое поведение связано с требованием и исполнимой проверкой",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "test:reliability",
+      "levels": [
+        "core"
+      ],
+      "result": "pending",
+      "pendingReason": "Полная проверка принципа и связанное ревью ещё не выполнены.",
+      "evidence": []
+    },
+    {
+      "id": "P02",
+      "requirement": "PRINCIPLES.md#### 2.",
+      "behavior": "Типы, стиль и запрещённые конструкции проверены; исключения подтверждены ревью",
+      "tests": [
+        "eslint.config.js"
+      ],
+      "command": "verify:core",
+      "levels": [
+        "core",
+        "integration"
+      ],
+      "result": "pending",
+      "pendingReason": "Полная проверка принципа и связанное ревью ещё не выполнены.",
+      "evidence": []
+    },
+    {
+      "id": "P03",
+      "requirement": "PRINCIPLES.md#### 3.",
+      "behavior": "Производственные зависимости не пересекают запрещённые границы модулей",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "test:reliability",
+      "levels": [
+        "core"
+      ],
+      "result": "pending",
+      "pendingReason": "Полная проверка принципа и связанное ревью ещё не выполнены.",
+      "evidence": []
+    },
+    {
+      "id": "P04",
+      "requirement": "PRINCIPLES.md#### 4.",
+      "behavior": "Генерация интерфейсов не расходится с сохранёнными типами",
+      "tests": [
+        "src-tauri/src/tooling/export_bindings.rs"
+      ],
+      "command": "bindings:check",
+      "levels": [
+        "core",
+        "integration"
+      ],
+      "result": "pending",
+      "pendingReason": "Полная проверка принципа и связанное ревью ещё не выполнены.",
+      "evidence": []
+    },
+    {
+      "id": "P05",
+      "requirement": "PRINCIPLES.md#### 5.",
+      "behavior": "Отказы различаются и имеют проверенное восстановление и понятный результат",
+      "tests": [
+        "src-tauri/tests/space_storage_acceptance.rs"
+      ],
+      "command": "test:rust",
+      "levels": [
+        "core",
+        "integration"
+      ],
+      "result": "pending",
+      "pendingReason": "Полная проверка принципа и связанное ревью ещё не выполнены.",
+      "evidence": []
+    },
+    {
+      "id": "P06",
+      "requirement": "PRINCIPLES.md#### 6.",
+      "behavior": "Проверяется доступность и содержимое материалов после восстановления",
+      "tests": [
+        "src-tauri/tests/space_storage_acceptance.rs"
+      ],
+      "command": "test:rust",
+      "levels": [
+        "core",
+        "integration"
+      ],
+      "result": "pending",
+      "pendingReason": "Полная проверка принципа и связанное ревью ещё не выполнены.",
+      "evidence": []
+    },
+    {
+      "id": "P07",
+      "requirement": "PRINCIPLES.md#### 7.",
+      "behavior": "Изменённый контракт имеет актуальную документацию и честный статус",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "test:reliability",
+      "levels": [
+        "core"
+      ],
+      "result": "pending",
+      "pendingReason": "Полная проверка принципа и связанное ревью ещё не выполнены.",
+      "evidence": []
+    },
+    {
+      "id": "P08",
+      "requirement": "PRINCIPLES.md#### 8.",
+      "behavior": "Измерения закреплённого набора соответствуют действующим порогам",
+      "tests": [
+        "scripts/startup-performance-acceptance.mjs"
+      ],
+      "command": "test:startup:real",
+      "levels": [
+        "installed-release"
+      ],
+      "result": "pending",
+      "pendingReason": "Полная проверка принципа и связанное ревью ещё не выполнены.",
+      "evidence": []
+    },
+    {
+      "id": "P09",
+      "requirement": "PRINCIPLES.md#### 9.",
+      "behavior": "Изменяемая политика определена один раз и проверена на границах",
+      "tests": [
+        "src-tauri/src/storage/db.rs"
+      ],
+      "command": "test:rust",
+      "levels": [
+        "core",
+        "integration"
+      ],
+      "result": "pending",
+      "pendingReason": "Полная проверка принципа и связанное ревью ещё не выполнены.",
+      "evidence": []
+    },
+    {
+      "id": "P10",
+      "requirement": "PRINCIPLES.md#### 10.",
+      "behavior": "Удаление производных данных сохраняет исходники и восстанавливает материалы",
+      "tests": [
+        "scripts/reliability-source-guard.test.mjs"
+      ],
+      "command": "test:reliability-source",
+      "levels": [
+        "core",
+        "integration"
+      ],
+      "result": "pending",
+      "pendingReason": "Полная проверка принципа и связанное ревью ещё не выполнены.",
+      "evidence": []
+    },
+    {
+      "id": "P11",
+      "requirement": "PRINCIPLES.md#### 11.",
+      "behavior": "Повтор и восстановление не создают дубликаты и не теряют подтверждённый результат",
+      "tests": [
+        "scripts/test-save-core.mjs"
+      ],
+      "command": "test:save-core",
+      "levels": [
+        "core",
+        "integration"
+      ],
+      "result": "pending",
+      "pendingReason": "Полная проверка принципа и связанное ревью ещё не выполнены.",
+      "evidence": []
+    }
+  ],
+  "acceptance": [
+    {
+      "id": "A01",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md### 9. Обязательная матрица приёмки",
+      "behavior": "Отсутствующий индекс строится без изменения исходников",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "integration",
+        "built-components",
+        "installed-release"
+      ],
+      "result": "pending",
+      "pendingReason": "Испытание конкретных собранных и установленных артефактов ещё не выполнено; тест валидатора не закрывает сценарий.",
+      "evidence": []
+    },
+    {
+      "id": "A02",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md### 9. Обязательная матрица приёмки",
+      "behavior": "Более новая база сохраняется; совместимое поколение строится отдельно",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "integration",
+        "built-components",
+        "installed-release"
+      ],
+      "result": "pending",
+      "pendingReason": "Испытание конкретных собранных и установленных артефактов ещё не выполнено; тест валидатора не закрывает сценарий.",
+      "evidence": []
+    },
+    {
+      "id": "A03",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md### 9. Обязательная матрица приёмки",
+      "behavior": "Повреждённая база сохраняется для диагностики; история и операции не теряются",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "integration",
+        "built-components",
+        "installed-release"
+      ],
+      "result": "pending",
+      "pendingReason": "Испытание конкретных собранных и установленных артефактов ещё не выполнено; тест валидатора не закрывает сценарий.",
+      "evidence": []
+    },
+    {
+      "id": "A04",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md### 9. Обязательная матрица приёмки",
+      "behavior": "Два реальных выпуска работают параллельно без взаимной миграции",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "integration",
+        "built-components",
+        "installed-release"
+      ],
+      "result": "pending",
+      "pendingReason": "Испытание конкретных собранных и установленных артефактов ещё не выполнено; тест валидатора не закрывает сценарий.",
+      "evidence": []
+    },
+    {
+      "id": "A05",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md### 9. Обязательная матрица приёмки",
+      "behavior": "Обновление, возврат и повторное обновление сохраняют материалы и связи",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "integration",
+        "built-components",
+        "installed-release"
+      ],
+      "result": "pending",
+      "pendingReason": "Испытание конкретных собранных и установленных артефактов ещё не выполнено; тест валидатора не закрывает сценарий.",
+      "evidence": []
+    },
+    {
+      "id": "A06",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md### 9. Обязательная матрица приёмки",
+      "behavior": "Прерывание и изменение исходников дают актуальный конечный индекс",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "integration",
+        "built-components",
+        "installed-release"
+      ],
+      "result": "pending",
+      "pendingReason": "Испытание конкретных собранных и установленных артефактов ещё не выполнено; тест валидатора не закрывает сценарий.",
+      "evidence": []
+    },
+    {
+      "id": "A07",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md### 9. Обязательная матрица приёмки",
+      "behavior": "Место, доступ и iCloud различаются без потери данных и зависания",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "integration",
+        "built-components",
+        "installed-release"
+      ],
+      "result": "pending",
+      "pendingReason": "Испытание конкретных собранных и установленных артефактов ещё не выполнено; тест валидатора не закрывает сценарий.",
+      "evidence": []
+    },
+    {
+      "id": "A08",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md### 9. Обязательная матрица приёмки",
+      "behavior": "После переключения заголовок и содержимое принадлежат одной папке",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "integration",
+        "built-components",
+        "installed-release"
+      ],
+      "result": "pending",
+      "pendingReason": "Испытание конкретных собранных и установленных артефактов ещё не выполнено; тест валидатора не закрывает сценарий.",
+      "evidence": []
+    },
+    {
+      "id": "A09",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md### 9. Обязательная матрица приёмки",
+      "behavior": "Поддерживаемые версии сохраняют и открывают выбранное пространство",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "built-components",
+        "installed-release"
+      ],
+      "result": "pending",
+      "pendingReason": "Испытание конкретных собранных и установленных артефактов ещё не выполнено; тест валидатора не закрывает сценарий.",
+      "evidence": []
+    },
+    {
+      "id": "A10",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md### 9. Обязательная матрица приёмки",
+      "behavior": "Неподдерживаемый протокол отклоняется до записи и сохраняет черновик",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "built-components",
+        "installed-release"
+      ],
+      "result": "pending",
+      "pendingReason": "Испытание конкретных собранных и установленных артефактов ещё не выполнено; тест валидатора не закрывает сценарий.",
+      "evidence": []
+    },
+    {
+      "id": "A11",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md### 9. Обязательная матрица приёмки",
+      "behavior": "Восстановление после потери ответа даёт ровно один результат",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "built-components",
+        "installed-release"
+      ],
+      "result": "pending",
+      "pendingReason": "Испытание конкретных собранных и установленных артефактов ещё не выполнено; тест валидатора не закрывает сценарий.",
+      "evidence": []
+    },
+    {
+      "id": "A12",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md### 9. Обязательная матрица приёмки",
+      "behavior": "Открытый черновик и несколько вложений переживают уничтожение контекста",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "built-components",
+        "installed-release"
+      ],
+      "result": "pending",
+      "pendingReason": "Испытание конкретных собранных и установленных артефактов ещё не выполнено; тест валидатора не закрывает сценарий.",
+      "evidence": []
+    },
+    {
+      "id": "A13",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md### 9. Обязательная матрица приёмки",
+      "behavior": "Сеть, неверная подпись и неполный пакет не ломают рабочую версию",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "built-components",
+        "installed-release"
+      ],
+      "result": "pending",
+      "pendingReason": "Испытание конкретных собранных и установленных артефактов ещё не выполнено; тест валидатора не закрывает сценарий.",
+      "evidence": []
+    },
+    {
+      "id": "A14",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md### 9. Обязательная матрица приёмки",
+      "behavior": "Остановка установки оставляет восстановимый комплект без отката исходников",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "built-components",
+        "installed-release"
+      ],
+      "result": "pending",
+      "pendingReason": "Испытание конкретных собранных и установленных артефактов ещё не выполнено; тест валидатора не закрывает сценарий.",
+      "evidence": []
+    },
+    {
+      "id": "A15",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md### 9. Обязательная матрица приёмки",
+      "behavior": "Прежний процесс и установщик не понижают новый комплект",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "built-components",
+        "installed-release"
+      ],
+      "result": "pending",
+      "pendingReason": "Испытание конкретных собранных и установленных артефактов ещё не выполнено; тест валидатора не закрывает сценарий.",
+      "evidence": []
+    },
+    {
+      "id": "A16",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md### 9. Обязательная матрица приёмки",
+      "behavior": "Чистая установка, повторная установка и Dock запускают нужную сборку",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "built-components",
+        "installed-release"
+      ],
+      "result": "pending",
+      "pendingReason": "Испытание конкретных собранных и установленных артефактов ещё не выполнено; тест валидатора не закрывает сценарий.",
+      "evidence": []
+    },
+    {
+      "id": "A17",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md### 9. Обязательная матрица приёмки",
+      "behavior": "Задержка или закрепление расширения не выключает базовые операции",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "built-components",
+        "installed-release"
+      ],
+      "result": "pending",
+      "pendingReason": "Испытание конкретных собранных и установленных артефактов ещё не выполнено; тест валидатора не закрывает сценарий.",
+      "evidence": []
+    },
+    {
+      "id": "A18",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md### 9. Обязательная матрица приёмки",
+      "behavior": "Миграции настроек и журналов сохраняют неизвестные поля",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "built-components",
+        "installed-release"
+      ],
+      "result": "pending",
+      "pendingReason": "Испытание конкретных собранных и установленных артефактов ещё не выполнено; тест валидатора не закрывает сценарий.",
+      "evidence": []
+    },
+    {
+      "id": "A19",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md### 9. Обязательная матрица приёмки",
+      "behavior": "Все достижимые порядки перехода сохраняют базовый протокол",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "built-components",
+        "installed-release"
+      ],
+      "result": "pending",
+      "pendingReason": "Испытание конкретных собранных и установленных артефактов ещё не выполнено; тест валидатора не закрывает сценарий.",
+      "evidence": []
+    },
+    {
+      "id": "A20",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md### 9. Обязательная матрица приёмки",
+      "behavior": "Гонка записи черновика и нехватка места не дают ложного успеха",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "built-components",
+        "installed-release"
+      ],
+      "result": "pending",
+      "pendingReason": "Испытание конкретных собранных и установленных артефактов ещё не выполнено; тест валидатора не закрывает сценарий.",
+      "evidence": []
+    },
+    {
+      "id": "A21",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md### 9. Обязательная матрица приёмки",
+      "behavior": "Конкурирующие редакторы не затирают чужие изменения",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "built-components",
+        "installed-release"
+      ],
+      "result": "pending",
+      "pendingReason": "Испытание конкретных собранных и установленных артефактов ещё не выполнено; тест валидатора не закрывает сценарий.",
+      "evidence": []
+    },
+    {
+      "id": "A22",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md### 9. Обязательная матрица приёмки",
+      "behavior": "Очистка сохраняет активные ресурсы и исправный комплект",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "built-components",
+        "installed-release"
+      ],
+      "result": "pending",
+      "pendingReason": "Испытание конкретных собранных и установленных артефактов ещё не выполнено; тест валидатора не закрывает сценарий.",
+      "evidence": []
+    },
+    {
+      "id": "A23",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md### 9. Обязательная матрица приёмки",
+      "behavior": "Первый переход к B0 разрешает исход операций и защищает регистрацию",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "built-components",
+        "installed-release"
+      ],
+      "result": "pending",
+      "pendingReason": "Испытание конкретных собранных и установленных артефактов ещё не выполнено; тест валидатора не закрывает сценарий.",
+      "evidence": []
+    },
+    {
+      "id": "A24",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md### 9. Обязательная матрица приёмки",
+      "behavior": "Снятие выпуска, откат и смена ключа сохраняют материалы и обязательную подпись",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "built-components",
+        "installed-release"
+      ],
+      "result": "pending",
+      "pendingReason": "Испытание конкретных собранных и установленных артефактов ещё не выполнено; тест валидатора не закрывает сценарий.",
+      "evidence": []
+    }
+  ],
+  "levels": [
+    {
+      "id": "core",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md#### INV-03.",
+      "behavior": "Фактическое выполнение уровня core связано с коммитом, набором и артефактами",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "core"
+      ],
+      "result": "pending",
+      "pendingReason": "Полный отчёт этого уровня ещё не получен.",
+      "evidence": []
+    },
+    {
+      "id": "integration",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md#### INV-03.",
+      "behavior": "Фактическое выполнение уровня integration связано с коммитом, набором и артефактами",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "integration"
+      ],
+      "result": "pending",
+      "pendingReason": "Полный отчёт этого уровня ещё не получен.",
+      "evidence": []
+    },
+    {
+      "id": "built-components",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md#### INV-03.",
+      "behavior": "Фактическое выполнение уровня built-components связано с коммитом, набором и артефактами",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "built-components"
+      ],
+      "result": "pending",
+      "pendingReason": "Полный отчёт этого уровня ещё не получен.",
+      "evidence": []
+    },
+    {
+      "id": "installed-release",
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md#### INV-03.",
+      "behavior": "Фактическое выполнение уровня installed-release связано с коммитом, набором и артефактами",
+      "tests": [
+        "scripts/reliability-gate.test.mjs"
+      ],
+      "command": "verify:reliability-release",
+      "levels": [
+        "installed-release"
+      ],
+      "result": "pending",
+      "pendingReason": "Полный отчёт этого уровня ещё не получен.",
+      "evidence": []
+    }
+  ],
+  "changeCoverage": [
+    {
+      "paths": [
+        "extension/popup/components/ChannelList.tsx",
+        "extension/popup/PopupApp.tsx",
+        "extension/popup/PopupApp.test.tsx",
+        "extension/popup/hooks/useClipperState.ts",
+        "extension/popup/hooks/useClipperState.standalone.test.tsx"
+      ],
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md### IDX-03. Отзывчивость и переключение",
+      "tests": [
+        "extension/popup/PopupApp.test.tsx",
+        "extension/popup/hooks/useClipperState.standalone.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": ["scripts/finalize-local-bundle.mjs", "scripts/finalize-local-bundle.test.mjs"],
+      "requirement": "SPEC_DISTRIBUTION.md### D2. Подпись macOS",
+      "tests": ["scripts/finalize-local-bundle.test.mjs"],
+      "command": "test:startup-packaging"
+    },
+    {
+      "paths": ["scripts/finalize-local-bundle.mjs", "scripts/finalize-local-bundle.test.mjs"],
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md### UPD-03. Независимая доставка",
+      "tests": ["scripts/finalize-local-bundle.test.mjs"],
+      "command": "test:startup-packaging"
+    },
+    {
+      "paths": [
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/background.js",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/draftStore.js",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/saveProtocol.js",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/standaloneVault.js"
+      ],
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md#### UPD-08.",
+      "tests": ["scripts/verify-extension-mirrors.test.mjs"],
+      "command": "verify:extension-mirrors"
+    },
+    {
+      "paths": ["src-tauri/tests/space_storage_acceptance.rs"],
+      "requirement": "SPEC_STORAGE.md### storage/reconcile: видимость файлов",
+      "tests": ["src-tauri/tests/space_storage_acceptance.rs"],
+      "command": "test:rust"
+    },
+    {
+      "paths": ["src/types/generated.ts"],
+      "requirement": "PRINCIPLES.md#### 4.",
+      "tests": ["src-tauri/src/tooling/export_bindings.rs"],
+      "command": "bindings:check"
+    },
+    {
+      "paths": [
+        "scripts/reliability-gate.mjs",
+        "scripts/reliability-gate.test.mjs",
+        "scripts/reliability-source-guard.mjs",
+        "scripts/reliability-source-guard.test.mjs",
+        "scripts/verify-extension-mirrors.mjs",
+        "scripts/verify-extension-mirrors.test.mjs",
+        "scripts/fixtures/reliability/",
+        "package.json"
+      ],
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md#### INV-01.",
+      "tests": [
+        "scripts/reliability-gate.test.mjs",
+        "scripts/reliability-source-guard.test.mjs",
+        "scripts/verify-extension-mirrors.test.mjs"
+      ],
+      "command": "test:reliability"
+    },
+    {
+      "paths": [
+        "src-tauri/src/domain/vault.rs",
+        "src-tauri/src/storage/db.rs",
+        "src-tauri/src/storage/migrations.rs",
+        "src-tauri/src/storage/reconcile.rs",
+        "src-tauri/src/storage/file_identity.rs",
+        "src-tauri/src/commands/vault.rs",
+        "src-tauri/src/commands/vault_stats.rs",
+        "src-tauri/src/commands/state.rs",
+        "src-tauri/src/commands/blocks.rs",
+        "src-tauri/src/commands/freshness.rs",
+        "src-tauri/src/commands/channels.rs",
+        "src-tauri/src/commands/tags.rs",
+        "src-tauri/src/commands/conflicts.rs",
+        "src-tauri/src/commands/thumbnails.rs",
+        "src-tauri/src/commands/delete_plan.rs",
+        "src-tauri/src/commands/graph.rs",
+        "src-tauri/src/commands/search.rs",
+        "src-tauri/src/cli.rs",
+        "src-tauri/src/tooling/mine_cli.rs",
+        "src-tauri/src/mcp.rs",
+        "src-tauri/src/watcher/handler.rs",
+        "src-tauri/src/util.rs",
+        "core-ffi/src/lib.rs"
+      ],
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md#### IDX-01.",
+      "tests": [
+        "src-tauri/src/storage/db.rs"
+      ],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src-tauri/src/commands/clipper_setup.rs",
+        "src-tauri/src/bin/native_host.rs",
+        "src-tauri/src/runtime_protocol.rs",
+        "src-tauri/src/runtime_installation.rs",
+        "src-tauri/src/lib.rs",
+        "src-tauri/Cargo.toml",
+        "src-tauri/build.rs",
+        "scripts/build-extension.mjs",
+        "scripts/build-identity.mjs",
+        "scripts/build-identity.test.mjs",
+        "extension/background.js",
+        "extension/background.messaging.test.ts",
+        "extension/background.connection.test.ts",
+        "extension/popup/PopupApp.tsx",
+        "extension/popup/PopupApp.test.tsx",
+        "extension/popup/components/SaveButton.tsx",
+        "extension/popup/components/SaveButton.test.tsx",
+        "extension/popup/hooks/useClipperState.ts",
+        "extension/popup/hooks/useClipperState.standalone.test.tsx",
+        "extension/lib/draftStore.js",
+        "extension/lib/draftStore.test.ts",
+        "extension/popup/lib/draft.ts",
+        "extension/popup/lib/protocol.ts",
+        "extension/popup/lib/protocol.test.ts",
+        "extension/popup/lib/saveOperation.ts",
+        "extension/popup/lib/saveOperation.test.ts",
+        "scripts/install-clipper-host.mjs",
+        "scripts/install-clipper-host.test.mjs",
+        "scripts/install-cli.sh",
+        "scripts/install-cli.mjs",
+        "scripts/install-cli.test.mjs",
+        "src-tauri/src/tooling/clipper_runtime_install.rs",
+        "src-tauri/src/tooling/cli_runtime_install.rs",
+        "src-tauri/src/bindings.rs",
+        "src-tauri/src/commands/mod.rs",
+        "src-tauri/src/commands/updates.rs",
+        "src-tauri/src/updater.rs"
+      ],
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md#### UPD-08.",
+      "tests": [
+        "scripts/startup-packaging.test.mjs",
+        "extension/lib/draftStore.test.ts",
+        "extension/popup/lib/protocol.test.ts",
+        "extension/popup/lib/saveOperation.test.ts",
+        "extension/popup/hooks/useClipperState.standalone.test.tsx"
+      ],
+      "command": "test:reliability-updates"
+    },
+    {
+      "paths": ["extension/lib/standaloneVault.js", "extension/lib/standaloneVault.test.ts", "extension/lib/standaloneVault.recovery.test.ts", "extension/lib/saveProtocol.js", "extension/popup/lib/standalone.ts", "scripts/build-clipper-runtime-manifest.mjs", "scripts/clipper-runtime-manifest.test.mjs"],
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md#### UPD-08.",
+      "tests": ["extension/popup/lib/protocol.test.ts", "extension/lib/standaloneVault.test.ts", "extension/lib/standaloneVault.recovery.test.ts", "scripts/clipper-runtime-manifest.test.mjs"],
+      "command": "test:reliability-updates"
+    },
+    {
+      "paths": ["src-tauri/src/update_activation.rs", "src-tauri/src/main.rs", "src-tauri/src/commands/startup.rs", "src-tauri/src/storage/source_mutation.rs", "src-tauri/src/storage/files.rs", "src-tauri/src/storage/thumbnails.rs", "src-tauri/src/storage/article_audio.rs", "src-tauri/src/commands/article_audio.rs", "src-tauri/src/commands/thumbnail_sweeps.rs", "src-tauri/src/commands/preview_reconcile.rs", "src-tauri/src/import/importer.rs", "src-tauri/src/cli_mutations.rs", "src-tauri/src/commands/settings.rs"],
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md#### UPD-04.",
+      "tests": ["src-tauri/src/update_activation.rs", "src-tauri/src/updater.rs", "src-tauri/src/storage/source_mutation.rs"],
+      "command": "test:rust"
+    },
+    {
+      "paths": ["src/settings/UpdatesSection.tsx", "src/settings/UpdatesSection.test.tsx", "src/settings/SettingsApp.tsx", "src/settings/SettingsApp.test.tsx", "src/lib/settingsSections.ts", "src/lib/commands.ts", "src/lib/commands.test.ts", "src/lib/bindings.ts", "src/App.tsx", "src/App.test.tsx", "src/components/AppSettingsMenu.tsx", "src/components/AppSettingsMenu.test.tsx"],
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md#### UPD-01.",
+      "tests": ["src/settings/UpdatesSection.test.tsx", "src/settings/SettingsApp.test.tsx", "src/lib/commands.test.ts"],
+      "command": "test"
+    },
+    {
+      "paths": ["scripts/prepare-update-channel.mjs", "scripts/prepare-update-channel.test.mjs"],
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md#### UPD-04.",
+      "tests": ["scripts/prepare-update-channel.test.mjs"],
+      "command": "test:reliability"
+    }
+  ],
+  "release": null
+}

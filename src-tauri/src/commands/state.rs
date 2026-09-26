@@ -5,12 +5,14 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use notify::RecommendedWatcher;
 use rusqlite::Connection;
 use serde::Serialize;
+use tauri::Manager;
 use thiserror::Error;
 
 pub use super::freshness::ensure_vault_fresh;
@@ -35,6 +37,9 @@ pub struct SyncTracker {
 
 pub struct AppState {
     pub vault_state: Mutex<Option<VaultState>>,
+    pub(crate) vault_selection: Mutex<()>,
+    pub(crate) vault_publication: Mutex<()>,
+    vault_selection_request: AtomicU64,
     pub watcher: Mutex<Option<RecommendedWatcher>>,
     pub instance_guard: Mutex<Option<SingleInstanceGuard>>,
     pub sync_tracker: Mutex<SyncTracker>,
@@ -48,6 +53,9 @@ impl AppState {
     pub fn new() -> Self {
         Self {
             vault_state: Mutex::new(None),
+            vault_selection: Mutex::new(()),
+            vault_publication: Mutex::new(()),
+            vault_selection_request: AtomicU64::new(0),
             watcher: Mutex::new(None),
             instance_guard: Mutex::new(None),
             sync_tracker: Mutex::new(SyncTracker::default()),
@@ -56,6 +64,20 @@ impl AppState {
             freshness: FreshnessCoordinator::default(),
             preview_reconcile: PreviewReconcileCoordinator::default(),
         }
+    }
+
+    /// Register user intent before any blocking disk work is queued.
+    pub(crate) fn begin_vault_selection(&self) -> u64 {
+        let _publication = self
+            .vault_publication
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.vault_selection_request.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    /// A detached older load must never publish over the newest selection.
+    pub(crate) fn is_latest_vault_selection(&self, request: u64) -> bool {
+        self.vault_selection_request.load(Ordering::SeqCst) == request
     }
 
     pub fn try_start_sweep(&self, vault: &VaultLayout) -> Option<SweepGuard> {
@@ -182,6 +204,114 @@ pub fn current_vault_layout(state: &AppState) -> Result<VaultLayout, CommandErro
     Ok(vs.vault.clone())
 }
 
+/// Read a projection with one corruption recovery, adopting its new slot only
+/// while the same session still owns the requested space and old index.
+pub(crate) fn read_owned_projection<T>(
+    app: &tauri::AppHandle,
+    vault: &VaultLayout,
+    query: impl Fn(&Connection) -> anyhow::Result<T>,
+) -> Result<T, CommandError> {
+    let owned = current_read_owner(app, vault)?;
+    let (recovered, value) = crate::storage::db::read_vault_projection(&owned, query)?;
+    adopt_recovered_projection(app, &owned, recovered, value)
+}
+
+/// Search retains its idempotent derived-index maintenance within read ownership.
+pub(crate) fn read_owned_search_projection<T>(
+    app: &tauri::AppHandle,
+    vault: &VaultLayout,
+    query: impl Fn(&Connection) -> anyhow::Result<T>,
+) -> Result<T, CommandError> {
+    let owned = current_read_owner(app, vault)?;
+    let (recovered, value) = crate::storage::db::read_search_projection(&owned, query)?;
+    adopt_recovered_projection(app, &owned, recovered, value)
+}
+
+fn same_projection_owner(current: &VaultLayout, requested: &VaultLayout) -> bool {
+    current.root() == requested.root() && current.index_db_path() == requested.index_db_path()
+}
+
+fn current_read_owner(
+    app: &tauri::AppHandle,
+    requested: &VaultLayout,
+) -> Result<VaultLayout, CommandError> {
+    let current = current_vault_layout(&app.state::<AppState>())?;
+    if current.root() != requested.root() {
+        return Err(CommandError::NoVault);
+    }
+    Ok(current)
+}
+
+pub(crate) fn adopt_recovered_projection<T>(
+    app: &tauri::AppHandle,
+    vault: &VaultLayout,
+    recovered: VaultLayout,
+    value: T,
+) -> Result<T, CommandError> {
+    if recovered.index_db_path() == vault.index_db_path() {
+        let current = current_vault_layout(&app.state::<AppState>())?;
+        return if same_projection_owner(&current, vault) {
+            Ok(value)
+        } else {
+            Err(CommandError::NoVault)
+        };
+    }
+    let conn = crate::storage::db::open_or_create(&recovered.index_db_path())?;
+    let watcher =
+        match crate::watcher::watch::start_watching(app, &recovered, &recovered.index_db_path()) {
+            Ok(watcher) => Some(watcher),
+            Err(error) => {
+                log::warn!("recovered index is readable but watcher could not start: {error:#}");
+                None
+            }
+        };
+    let state = app.state::<AppState>();
+    let publication = state
+        .vault_publication
+        .lock()
+        .map_err(|_| CommandError::Internal("vault publication mutex poisoned".into()))?;
+    let mut active = state
+        .vault_state
+        .lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+    let matches = active.as_ref().is_some_and(|session| {
+        session.vault.root() == vault.root()
+            && session.vault.index_db_path() == vault.index_db_path()
+    });
+    let already_adopted = active.as_ref().is_some_and(|session| {
+        session.vault.root() == vault.root()
+            && session.vault.index_db_path() == recovered.index_db_path()
+    });
+    if already_adopted {
+        drop(active);
+        drop(publication);
+        drop(watcher);
+        return Ok(value);
+    }
+    if !matches {
+        drop(active);
+        drop(publication);
+        drop(watcher);
+        return Err(CommandError::NoVault);
+    }
+    let mut watcher_slot = state
+        .watcher
+        .lock()
+        .map_err(|_| CommandError::Internal("watcher mutex poisoned".into()))?;
+    let old_vault = active.replace(VaultState {
+        conn,
+        vault: recovered,
+    });
+    let old_watcher = std::mem::replace(&mut *watcher_slot, watcher);
+    drop(watcher_slot);
+    drop(active);
+    drop(publication);
+    drop(old_watcher);
+    drop(old_vault);
+    state.freshness.mark_dirty(&vault.root().to_string_lossy());
+    Ok(value)
+}
+
 #[derive(Debug, Error, Serialize, specta::Type)]
 #[serde(tag = "kind", content = "message", rename_all = "snake_case")]
 pub enum CommandError {
@@ -206,6 +336,16 @@ mod tests {
     use super::{AppState, VaultState};
     use crate::domain::vault::VaultLayout;
     use crate::storage::db;
+
+    #[test]
+    fn reliability_new_selection_detaches_previous_request() {
+        let state = AppState::new();
+        let old = state.begin_vault_selection();
+        assert!(state.is_latest_vault_selection(old));
+        let latest = state.begin_vault_selection();
+        assert!(!state.is_latest_vault_selection(old));
+        assert!(state.is_latest_vault_selection(latest));
+    }
 
     #[test]
     fn sync_tracker_repeats_when_marked_dirty() {
@@ -255,4 +395,17 @@ mod tests {
         assert!(state.is_current_vault(vault.root()));
         assert!(!state.is_current_vault(&source.path().join("other")));
     }
+}
+#[test]
+fn reliability_projection_owner_rejects_switched_space_and_retired_slot() {
+    let requested =
+        crate::domain::vault::VaultLayout::new(std::path::PathBuf::from("/synthetic/first"));
+    let switched =
+        crate::domain::vault::VaultLayout::new(std::path::PathBuf::from("/synthetic/second"));
+    let recovered = requested
+        .clone()
+        .with_index_db_path(std::path::PathBuf::from("/synthetic/recovery/index.db"));
+    assert!(same_projection_owner(&requested, &requested));
+    assert!(!same_projection_owner(&switched, &requested));
+    assert!(!same_projection_owner(&recovered, &requested));
 }

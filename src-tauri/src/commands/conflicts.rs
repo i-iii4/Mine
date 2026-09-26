@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 
-use crate::commands::state::{AppState, CommandError};
+use crate::commands::state::{current_vault_layout, read_owned_projection, AppState, CommandError};
 use crate::domain::block::parse_markdown_document;
 use crate::domain::vault::validate_slug;
 use crate::storage::source_mutation::{SourceFileWrite, StagedSourceMutation};
@@ -52,18 +52,17 @@ pub enum ResolveAction {
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn list_vault_conflicts(
+pub async fn list_vault_conflicts(
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Vec<VaultConflictItem>, CommandError> {
-    let vault_state = state
-        .vault_state
-        .lock()
-        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-
-    let rows = index::list_vault_conflicts(&vs.conn)
-        .map_err(|e| CommandError::Internal(format!("list_vault_conflicts failed: {e:#}")))?;
-    Ok(rows.into_iter().map(VaultConflictItem::from).collect())
+    let vault = current_vault_layout(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let rows = read_owned_projection(&app, &vault, index::list_vault_conflicts)?;
+        Ok(rows.into_iter().map(VaultConflictItem::from).collect())
+    })
+    .await
+    .map_err(|error| CommandError::Internal(format!("conflict list task failed: {error}")))?
 }
 
 #[tauri::command(rename_all = "snake_case")]

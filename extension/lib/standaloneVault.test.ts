@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { Blob as NodeBlob } from "node:buffer";
 import { webcrypto } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import "./saveProtocol.js";
 import "./standaloneVault.js";
 
 const wasm = createRequire(import.meta.url)("../../output/playwright/save-core-node/mine_core.js");
@@ -89,6 +90,16 @@ beforeEach(() => {
 });
 
 describe("browser executor backed by actual WASM", () => {
+  it.each([{ save_protocol: 2 }, { required_capabilities: ["future_required"] }, { required_capabilities: "invalid" }])("rejects incompatible saves before any platform access: %j", async requirement => {
+    const put = vi.spyOn(store, "put");
+    const get = vi.spyOn(store, "get");
+    const permission = vi.spyOn(folder, "queryPermission");
+    expect(await vault.saveStandaloneBlock(request(requirement), options())).toMatchObject({
+      ok: false, code: "incompatible_protocol", outcome: "not_committed", terminal_rejected: true, operation_id: "save-1",
+    });
+    expect(put).not.toHaveBeenCalled(); expect(get).not.toHaveBeenCalled(); expect(permission).not.toHaveBeenCalled();
+    expect(folder.files.size).toBe(0); expect(folder.directories.size).toBe(0);
+  });
   it("writes canonical Markdown and shared collection references", async () => {
     expect(await vault.saveStandaloneBlock(request(), options())).toMatchObject({ ok: true, slug: "Cards/Article" });
     const markdown = await folder.text("Cards/Article.md");

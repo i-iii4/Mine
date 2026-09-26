@@ -56,6 +56,9 @@ struct StatusResponse {
     vault_path: Option<String>,
     version: String,
     host_api_version: u32,
+    build_id: String,
+    commit: String,
+    save_protocols: Vec<u32>,
     features: Vec<String>,
     upload_port: Option<u16>,
     upload_token: Option<String>,
@@ -339,12 +342,7 @@ fn resolve_native_vault_layout_at(
     let write_layout = files::load_vault_write_layout(&base).map_err(|error| error.to_string())?;
     let layout = VaultLayout::with_derived_root(root, derived_root).with_write_layout(write_layout);
 
-    if let Err(error) = bootstrap_native_index_from_legacy(&layout) {
-        log::warn!("legacy index bootstrap deferred: {error}");
-    } else if let Err(error) = cleanup_native_legacy_vault_artifacts(&layout) {
-        log::warn!("legacy derived cleanup deferred: {error}");
-    }
-    Ok(layout)
+    db::resolve_vault_index(layout).map_err(|error| format!("index selection failed: {error:#}"))
 }
 
 fn initialize_native_new_space_layout(vault: &VaultLayout) -> Result<(), String> {
@@ -433,88 +431,6 @@ fn generate_native_vault_id() -> Result<String, String> {
         bytes[8], bytes[9], bytes[10], bytes[11],
         bytes[12], bytes[13], bytes[14], bytes[15],
     ))
-}
-
-fn bootstrap_native_index_from_legacy(vault: &VaultLayout) -> Result<(), String> {
-    let target = vault.index_db_path();
-    if target.exists() {
-        return Ok(());
-    }
-
-    let source = vault.legacy_index_db_path();
-    if !source.exists() {
-        return Ok(());
-    }
-
-    if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create local derived dir: {e}"))?;
-    }
-    std::fs::copy(&source, &target)
-        .map_err(|e| format!("failed to bootstrap local index from legacy: {e}"))?;
-    Ok(())
-}
-
-fn cleanup_native_legacy_vault_artifacts(vault: &VaultLayout) -> Result<(), String> {
-    remove_native_file_if_exists(&vault.legacy_vault_id_path(), "legacy vault-id")?;
-    remove_native_file_if_exists(&vault.legacy_index_db_path(), "legacy index db")?;
-    for suffix in ["-wal", "-shm"] {
-        remove_native_file_if_exists(
-            &PathBuf::from(format!(
-                "{}{}",
-                vault.legacy_index_db_path().display(),
-                suffix
-            )),
-            "legacy sqlite sidecar",
-        )?;
-    }
-    remove_native_file_if_exists(
-        &vault.legacy_arena_dir().join(".DS_Store"),
-        "legacy metadata .DS_Store",
-    )?;
-    remove_native_dir_all_if_exists(&vault.legacy_arena_dir().join("cache"), "legacy cache")?;
-    remove_native_empty_dir_if_exists(&vault.legacy_arena_dir(), "legacy metadata dir")?;
-    Ok(())
-}
-
-fn remove_native_file_if_exists(path: &Path, label: &str) -> Result<(), String> {
-    match std::fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!(
-            "failed to remove {label} {}: {error}",
-            path.display()
-        )),
-    }
-}
-
-fn remove_native_dir_all_if_exists(path: &Path, label: &str) -> Result<(), String> {
-    match std::fs::remove_dir_all(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!(
-            "failed to remove {label} {}: {error}",
-            path.display()
-        )),
-    }
-}
-
-fn remove_native_empty_dir_if_exists(path: &Path, label: &str) -> Result<(), String> {
-    match std::fs::remove_dir(path) {
-        Ok(()) => Ok(()),
-        Err(error)
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
-            ) =>
-        {
-            Ok(())
-        }
-        Err(error) => Err(format!(
-            "failed to remove empty {label} {}: {error}",
-            path.display()
-        )),
-    }
 }
 
 // ─── Action handlers ────────────────────────────────────────────────────────
@@ -739,6 +655,9 @@ fn handle_get_status_with_upload(upload: &Option<UploadServer>, vault_path: Opti
         vault_path,
         version: VERSION.to_string(),
         host_api_version: HOST_API_VERSION,
+        build_id: option_env!("MINE_BUILD_ID").unwrap_or("unidentified-build").into(),
+        commit: option_env!("MINE_BUILD_COMMIT").unwrap_or("unknown").into(),
+        save_protocols: vec![mine_lib::runtime_protocol::BASE_SAVE_PROTOCOL],
         features: vec![
             "pending_uploads_v1".into(),
             "save_operation_v1".into(),
@@ -752,25 +671,21 @@ fn handle_get_status_with_upload(upload: &Option<UploadServer>, vault_path: Opti
 }
 
 fn handle_list_channels(vault: &VaultLayout) {
-    let conn = match db::open_or_create(&vault.index_db_path()) {
-        Ok(c) => c,
+    let (vault, conn, _) = match db::open_vault_index(vault.clone()) {
+        Ok(opened) => opened,
         Err(e) => return send_error(&format!("failed to open database: {e}")),
     };
-
-    if let Err(e) = index::backfill_collection_index(&conn, vault) {
-        return send_error(&format!("failed to update collection index: {e}"));
-    }
-
-    // Get all tags (every tag used by any block)
-    let tags = match index::get_all_tags(&conn) {
-        Ok(t) => t,
-        Err(e) => return send_error(&format!("failed to list tags: {e}")),
+    let result = db::recover_projection_read(&vault, (|| -> anyhow::Result<_> {
+        if !db::index_is_ready(&conn)? {
+            mine_lib::storage::reconcile::reconcile_vault(&conn, &vault)?;
+        }
+        index::backfill_collection_index(&conn, &vault)?;
+        Ok((index::list_channels(&conn)?, index::get_all_tags(&conn)?))
+    })(), |retry| Ok((index::list_channels(retry)?, index::get_all_tags(retry)?)));
+    let (_, (channels, tags)) = match result {
+        Ok(value) => value,
+        Err(error) => return send_error(&format!("failed to list collections: {error:#}")),
     };
-
-    // Get promoted channels. Empty promoted channels must still be visible
-    // in the clipper: the user can create a channel in one tab and then
-    // select it before any block has been saved into it.
-    let channels = index::list_channels(&conn).unwrap_or_default();
     let channel_infos = merge_channels_and_tags(channels, tags);
 
     send_response(&ChannelsResponse {
@@ -861,6 +776,15 @@ fn pending_id(p: &SaveBlockParams) -> Option<String> {
     })
 }
 
+fn incompatible_save_response(params: &serde_json::Value, error: impl ToString) -> serde_json::Value {
+    let id = params.get("operation_id").and_then(serde_json::Value::as_str).unwrap_or("");
+    let mut response = operation_failure(id, "not_committed", "incompatible_protocol", error);
+    // Compatibility is checked before layout, journal and source effects. This
+    // exact request is terminally rejected; its draft remains available.
+    response["terminal_rejected"] = serde_json::json!(true);
+    response
+}
+
 fn fingerprint_capture(p: &SaveBlockParams, binding: &str) -> String {
     mine_core::save::request_fingerprint(&serde_json::json!({
         "capture": p, "binding_id": binding, "executor_id": "native"
@@ -886,6 +810,10 @@ fn check_binding(params: &serde_json::Value, binding: &str) -> anyhow::Result<()
 }
 
 fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
+    if let Err(error) = mine_lib::runtime_protocol::validate_save_request(&params) {
+        send_response(&incompatible_save_response(&params, error));
+        return;
+    }
     let response = match operation_store(vault) {
         Ok(store) => save_block_with_store(vault, params, &store),
         Err(error) => operation_failure("", "unknown", "operation_unknown", error),
@@ -898,6 +826,9 @@ fn save_block_with_store(
     params: serde_json::Value,
     store: &save_operations::SaveOperationStore,
 ) -> serde_json::Value {
+    if let Err(error) = mine_lib::runtime_protocol::validate_save_request(&params) {
+        return incompatible_save_response(&params, error);
+    }
     let mut p: SaveBlockParams = match serde_json::from_value(params.clone()) {
         Ok(value) => value,
         Err(error) => return operation_failure("", "not_committed", "invalid_request", error),
@@ -2877,6 +2808,19 @@ fn handle_confirm_connection_check(launch_origin: Option<&str>, params: serde_js
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--runtime-probe") {
+        let probe = mine_lib::runtime_protocol::RuntimeProbe {
+            schema_version: 1, version: VERSION.into(),
+            build_id: option_env!("MINE_BUILD_ID").unwrap_or("unidentified-build").into(),
+            commit: option_env!("MINE_BUILD_COMMIT").unwrap_or("unknown").into(),
+            save_protocols: vec![mine_lib::runtime_protocol::BASE_SAVE_PROTOCOL],
+        };
+        match serde_json::to_string(&probe) {
+            Ok(json) => println!("{json}"),
+            Err(error) => { eprintln!("runtime probe encoding failed: {error}"); std::process::exit(1); }
+        }
+        return;
+    }
     // Chromium supplies the caller origin. Request fields cannot impersonate it.
     let launch_origin = std::env::args().nth(1);
     // Start upload HTTP server
@@ -2919,6 +2863,13 @@ fn main() {
         if req.action == "confirm_connection_check" {
             handle_confirm_connection_check(launch_origin.as_deref(), req.params);
             continue;
+        }
+
+        if req.action == "save_block" {
+            if let Err(error) = mine_lib::runtime_protocol::validate_save_request(&req.params) {
+                send_response(&incompatible_save_response(&req.params, error));
+                continue;
+            }
         }
 
         // Load vault: prefer per-request vault_path, fallback to config
@@ -3070,6 +3021,25 @@ mod tests {
             VaultLayout::with_derived_root(tmp.path().join("vault"), tmp.path().join("derived"));
         std::fs::create_dir_all(vault.root()).unwrap();
         (tmp, vault)
+    }
+
+    #[test]
+    fn incompatible_save_protocol_is_rejected_before_source_or_journal_writes() {
+        let (tmp, vault) = sc2_temp_vault();
+        std::fs::write(vault.root().join("existing.md"), "# Existing source\n").unwrap();
+        let before = std::fs::read(vault.root().join("existing.md")).unwrap();
+        let response = sc0_save_response(&vault, serde_json::json!({
+            "block_type": "link", "title": "Rejected", "url": "https://example.com",
+            "save_protocol": 2, "operation_id": "incompatible-operation"
+        }));
+        assert_eq!(response["code"], "incompatible_protocol");
+        assert_eq!(response["outcome"], "not_committed");
+        assert_eq!(response["terminal_rejected"], true);
+        assert_eq!(response["operation_id"], "incompatible-operation");
+        assert_eq!(std::fs::read(vault.root().join("existing.md")).unwrap(), before);
+        assert_eq!(files::scan_md_files(&vault).unwrap().len(), 1);
+        assert!(!tmp.path().join("derived").exists());
+        assert!(!vault.root().join(".mine").exists());
     }
 
     #[test]
@@ -3475,6 +3445,26 @@ mod tests {
         );
         assert_eq!(std::fs::read_dir(vault.root()).unwrap().count(), 1);
         assert!(vault.write_layout_path().is_file());
+    }
+
+    #[test]
+    fn reliability_native_generation_preserves_legacy_db_wal_and_history() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("vault");
+        let base = VaultLayout::new(root.clone());
+        std::fs::create_dir_all(base.legacy_arena_dir()).unwrap();
+        std::fs::write(base.legacy_vault_id_path(), b"legacy-native-id").unwrap();
+        std::fs::write(base.legacy_index_db_path(), b"foreign database").unwrap();
+        let wal = PathBuf::from(format!("{}-wal", base.legacy_index_db_path().display()));
+        std::fs::write(&wal, b"foreign wal").unwrap();
+        let history = base.legacy_arena_dir().join("unknown-history.json");
+        std::fs::write(&history, b"history is not a cache").unwrap();
+        let vault = resolve_native_vault_layout_at(root, temp.path().join("state")).unwrap();
+        assert_ne!(vault.index_db_path(), base.legacy_index_db_path());
+        assert_eq!(std::fs::read(base.legacy_index_db_path()).unwrap(), b"foreign database");
+        assert_eq!(std::fs::read(wal).unwrap(), b"foreign wal");
+        assert_eq!(std::fs::read(history).unwrap(), b"history is not a cache");
+        assert_eq!(std::fs::read(base.legacy_vault_id_path()).unwrap(), b"legacy-native-id");
     }
 
     #[test]

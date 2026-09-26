@@ -42,6 +42,8 @@ pub async fn generate_article_audio(
     let desktop_config = ensure_desktop_article_audio_config(&app)?;
     let task_slug = slug.clone();
     let ready = tauri::async_runtime::spawn_blocking(move || {
+        let _write = crate::storage::source_mutation::begin_write()
+            .map_err(|error| CommandError::Internal(error.to_string()))?;
         generate_desktop_article_audio(&vault, &task_slug, &desktop_config, &helper_path)
     })
     .await
@@ -58,6 +60,8 @@ pub fn delete_article_audio(
     state: State<'_, AppState>,
     slug: String,
 ) -> Result<(), CommandError> {
+    let _write = crate::storage::source_mutation::begin_write()
+        .map_err(|error| CommandError::Internal(error.to_string()))?;
     validate_slug(&slug).map_err(|e| CommandError::Internal(e.to_string()))?;
     let vault = current_vault_layout(&state)?;
     let removed = article_audio::delete_all_artifacts(&vault, &slug)?;

@@ -11,7 +11,7 @@ use crate::domain::collection::{normalize_collection_ref, validate_collection_re
 use crate::domain::vault::{validate_slug, VaultLayout};
 use crate::storage::index::{IndexedBlock, TagCount};
 use crate::storage::source_mutation::{SourceFileWrite, StagedSourceMutation};
-use crate::storage::{db, files, index};
+use crate::storage::{files, index};
 use crate::util::append_startup_trace;
 
 // ─── Commands ───────────────────────────────────────────────────────────────
@@ -25,11 +25,12 @@ pub async fn list_tags(
     append_startup_trace(&app, "list_tags", "start");
     let vault = current_vault_layout(&state)?;
     ensure_vault_fresh(&app, vault.clone()).await?;
-    let db_path = vault.index_db_path();
+    let app_for_query = app.clone();
     let tags =
         tauri::async_runtime::spawn_blocking(move || -> Result<Vec<TagCount>, CommandError> {
-            let conn = db::open_read_only(&db_path)?;
-            Ok(index::get_all_tags(&conn)?)
+            super::state::read_owned_projection(&app_for_query, &vault, |conn| {
+                Ok(index::get_all_tags(conn)?)
+            })
         })
         .await
         .map_err(|e| CommandError::Internal(format!("list_tags task join failed: {e}")))??;

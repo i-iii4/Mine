@@ -12,7 +12,9 @@ use std::path::PathBuf;
 use tauri::ipc::{InvokeBody, Request};
 use tauri::{AppHandle, Emitter, State};
 
-use crate::commands::state::{schedule_preview_reconcile, AppState, CommandError};
+use crate::commands::state::{
+    read_owned_projection, schedule_preview_reconcile, AppState, CommandError,
+};
 use crate::domain::vault::validate_slug;
 use crate::storage::preview_plan::{resolve_upgrade_media, PreviewUpgradeInput};
 use crate::storage::{db, files, index, thumbnails};
@@ -323,6 +325,7 @@ fn validate_tile_poster_request(poster_name: &str, bytes: &[u8]) -> Result<(), C
 /// better we could produce.
 #[tauri::command]
 pub async fn list_pending_thumb_upgrades(
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Vec<ThumbUpgradeRequest>, CommandError> {
     let vault = {
@@ -337,14 +340,10 @@ pub async fn list_pending_thumb_upgrades(
             .clone()
     };
 
-    let db_path = vault.index_db_path();
     let requests = tauri::async_runtime::spawn_blocking(
         move || -> Result<Vec<ThumbUpgradeRequest>, CommandError> {
-            let conn = db::open_or_create(&db_path)
-                .map_err(|e| CommandError::Internal(format!("open thumb upgrade db: {e:#}")))?;
-            let blocks = index::list_pending_thumb_upgrade_blocks(&conn).map_err(|e| {
-                CommandError::Internal(format!("list_pending_thumb_upgrade_blocks: {e:#}"))
-            })?;
+            let blocks =
+                read_owned_projection(&app, &vault, index::list_pending_thumb_upgrade_blocks)?;
 
             let mut out: Vec<ThumbUpgradeRequest> = Vec::new();
             for block in &blocks {
@@ -702,8 +701,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let vault = make_vault(dir.path());
         let media = dir.path().join("shot.png");
-        let transparent =
-            image::RgbaImage::from_pixel(64, 64, image::Rgba([10, 20, 30, 0]));
+        let transparent = image::RgbaImage::from_pixel(64, 64, image::Rgba([10, 20, 30, 0]));
         transparent.save(&media).unwrap();
         thumbnails::generate_thumbnail(&media, &vault.thumb_path("shot"), 240).unwrap();
         assert!(matches!(
@@ -730,12 +728,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let vault = make_vault(dir.path());
         std::fs::write(dir.path().join("poster.avif"), b"fake avif").unwrap();
-        thumbnails::generate_text_thumbnail(
-            Some("poster"),
-            "",
-            &vault.thumb_path("poster"),
-        )
-        .unwrap();
+        thumbnails::generate_text_thumbnail(Some("poster"), "", &vault.thumb_path("poster"))
+            .unwrap();
 
         let block = index::PendingThumbUpgradeBlock {
             slug: "poster".into(),

@@ -6,6 +6,18 @@ import { createRequire } from "node:module";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import objktVideo from "../lib/fixtures/objkt-video.json";
+import type { DurableClipperDraft } from "../lib/draft";
+
+const { drafts } = vi.hoisted(() => ({ drafts: new Map<string, DurableClipperDraft>() }));
+vi.mock("../lib/draft", () => ({
+  readDraft: async (url: string) => drafts.get(url) ?? null,
+  writeDraft: async (url: string, draft: DurableClipperDraft) => { drafts.set(url, draft); return draft; },
+  clearDraft: async (url: string) => { drafts.delete(url); },
+}));
+vi.mock("../lib/protocol", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../lib/protocol")>(),
+  negotiateWidgetProtocol: async () => undefined,
+}));
 
 const { sendToNative, standalone, threadArticle } = vi.hoisted(() => ({
   threadArticle: { value: null as null | Record<string, unknown> },
@@ -83,6 +95,7 @@ function mockChrome() {
 }
 
 beforeEach(() => {
+  drafts.clear();
   threadArticle.value = null;
   vi.clearAllMocks();
   mockChrome();
@@ -94,6 +107,68 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("standalone mode decision", () => {
+  it("reports a collection load failure and clears it after retry", async () => {
+    sendToNative.mockResolvedValue({ ok: false, error: "No helper connection" });
+    standalone.getStandaloneStatus.mockResolvedValue({ configured: true, folderName: "Mine", permission: "granted", bindingId: "browser-original" });
+    standalone.standaloneListChannels.mockResolvedValue({ ok: false, error: "Cannot read index" });
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.channelsError).toBe("Could not load collections."));
+    expect(result.current.channelsLoading).toBe(false);
+    standalone.standaloneListChannels.mockResolvedValue({ ok: true, channels: [{ tag: "Art", block_count: 3 }] });
+    act(() => result.current.retryChannels());
+    await waitFor(() => expect(result.current.channels).toEqual([{ tag: "Art", block_count: 3 }]));
+    expect(result.current.channelsError).toBeNull();
+    expect(result.current.channelsLoading).toBe(false);
+  });
+  it("ignores a delayed collection failure after switching spaces", async () => {
+    sendToNative.mockImplementation(async (request: { action: string; vault_path?: string }) => {
+      if (request.action === "get_status") return nativeStatus();
+      return { ok: true, vaults: ["/v", "/b"], current: "/v", channels: [] };
+    });
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.selectedVault).toBe("/v"));
+    await waitFor(() => expect(result.current.channelsLoading).toBe(false));
+    let resolveOld: ((value: unknown) => void) | undefined;
+    sendToNative.mockImplementation(async (request: { action: string; vault_path?: string }) => {
+      if (request.action === "get_status") return { ...nativeStatus(), vault_path: "/b", binding_id: "native-b" };
+      if (request.action === "list_channels" && request.vault_path === "/v") return new Promise((resolve) => { resolveOld = resolve; });
+      return { ok: true, vaults: ["/v", "/b"], channels: [{ tag: "New", block_count: 1 }] };
+    });
+    act(() => result.current.retryChannels());
+    await waitFor(() => expect(resolveOld).toBeDefined());
+    await act(async () => { await result.current.switchVault("/b"); });
+    await act(async () => { resolveOld?.({ ok: false, error: "Old index failed" }); });
+    expect(result.current.channels).toEqual([{ tag: "New", block_count: 1 }]);
+    expect(result.current.channelsError).toBeNull();
+    expect(result.current.channelsLoading).toBe(false);
+  });
+  it("restores title, collection order and screenshot bytes after the widget is destroyed", async () => {
+    browserDestination();
+    drafts.set("https://example.com", {
+      schemaVersion: 1, revision: 3, draftId: "confirmed-draft",
+      state: {
+        metadata: { url: "https://example.com", title: "Page", description: "", image: null, author: null,
+          ogType: null, favicon: null, selection: "", detectedType: "link", isArticle: false },
+        articleData: null, title: "Confirmed title", selectedTags: ["Second", "First"], currentType: "link",
+        selectedVault: null, screenshotDataUrl: "data:image/png;base64,AQID", screenshotUploadId: "expired-worker-id",
+        executor: "browser", bindingId: "browser-original",
+      },
+    });
+    const first = renderHook(() => useClipperState());
+    await waitFor(() => expect(first.result.current.draftReady).toBe(true));
+    expect(first.result.current.title).toBe("Confirmed title");
+    expect(first.result.current.selectedTags).toEqual(["Second", "First"]);
+    expect(first.result.current.screenshotDataUrl).toBe("data:image/png;base64,AQID");
+    act(() => first.result.current.setTitle("Next confirmed edition"));
+    await waitFor(() => expect(drafts.get("https://example.com")?.state.title).toBe("Next confirmed edition"));
+    first.unmount();
+    const reopened = renderHook(() => useClipperState());
+    await waitFor(() => expect(reopened.result.current.draftReady).toBe(true));
+    expect(reopened.result.current.title).toBe("Next confirmed edition");
+    expect(reopened.result.current.screenshotDataUrl).toBe("data:image/png;base64,AQID");
+    expect(standalone.standaloneSave).not.toHaveBeenCalled();
+  });
+
   function browserDestination() {
     sendToNative.mockResolvedValue({ ok: false, error: "No helper" });
     standalone.getStandaloneStatus.mockResolvedValue({ configured: true, folderName: "Mine", permission: "granted", bindingId: "browser-original" });
@@ -196,6 +271,7 @@ describe("standalone mode decision", () => {
     const { result } = renderHook(() => useClipperState());
     await waitFor(() => expect(result.current.saveMode).toBe(executor === "native" ? "app" : "standalone"));
     await waitFor(() => expect(result.current.articleData?.content).toContain(`![](${objktVideo.mediaUrl})`));
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
     const previewBody = result.current.articleData?.content;
     expect(previewBody).not.toContain("<video");
     expect(result.current.articleData?.embeddedVideos).toHaveLength(1);
@@ -272,6 +348,7 @@ describe("standalone mode decision", () => {
     });
     const { result } = renderHook(() => useClipperState());
     await waitFor(() => expect(result.current.saveMode).toBe(executor === "native" ? "app" : "standalone"));
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
     act(() => result.current.setCurrentType("link"));
     let outcome: { ok: boolean; error?: string } | undefined;
     await act(async () => { outcome = await result.current.save(); });

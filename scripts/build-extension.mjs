@@ -1,13 +1,16 @@
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, readdirSync, rmSync, readFileSync } from 'node:fs';
+import { cpSync, mkdirSync, readdirSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { replaceExtensionPayload } from './clipper-extension-payload.mjs';
+import { sourceBuildIdentity } from './build-identity.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const source = join(root, 'extension');
+const identity = sourceBuildIdentity(root);
+const buildEnvironment = { ...process.env, VITE_MINE_BUILD_ID: identity.buildId, VITE_MINE_BUILD_COMMIT: identity.commit };
 function run(command, args, cwd = root) {
-  const result = spawnSync(command, args, { cwd, stdio: 'inherit' });
+  const result = spawnSync(command, args, { cwd, stdio: 'inherit', env: buildEnvironment });
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
@@ -17,6 +20,7 @@ run(process.execPath, ['scripts/build-save-core.mjs']);
 rmSync(join(source, 'dist'), { recursive: true, force: true });
 run('bunx', ['vite', 'build', '--config', 'vite.extension.config.ts']);
 run('bunx', ['vite', 'build', '--config', 'vite.overlay.config.ts']);
+writeFileSync(join(source, 'dist/runtime-identity.json'), `${JSON.stringify(identity)}\n`);
 cpSync(join(root, 'public/fonts'), join(source, 'dist/fonts'), { recursive: true });
 const safari = join(root, 'safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources');
 // Generated copies only: Safari consumes the same adapter/WASM, not a fork.

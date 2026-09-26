@@ -54,6 +54,7 @@ pub fn import_channel<F>(
 where
     F: Fn(ImportProgress),
 {
+    let _write = crate::storage::source_mutation::begin_write()?;
     let arena_blocks = arena_api::fetch_channel_blocks(channel_slug)
         .with_context(|| format!("failed to fetch channel {}", channel_slug))?;
 

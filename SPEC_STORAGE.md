@@ -24,6 +24,27 @@ open_or_create(path: &Path) -> Result<Connection>   // открыть или с�
 open_memory() -> Result<Connection>                  // для тестов
 ```
 
+### Поколения и восстановление индекса
+
+Общий выбор производной базы реализован в [db.rs](/Users/i_iii/Проекты/Личные проекты/local-arena/src-tauri/src/storage/db.rs). Приложение, CLI, нативный обработчик и FFI выбирают индекс через `resolve_vault_index` или `open_vault_index`, а не копируют прежнюю базу. Номер схемы принадлежит [migrations.rs](/Users/i_iii/Проекты/Личные проекты/local-arena/src-tauri/src/storage/migrations.rs). Чистый контракт `INDEX_GENERATION` находится в [vault.rs](/Users/i_iii/Проекты/Личные проекты/local-arena/src-tauri/src/domain/vault.rs): `schema-5-semantics-1`. Его совместимость определяется схемой и смыслом проекции, а не версией приложения.
+
+```text
+<derived_root>/indexes/schema-5-semantics-1/index.db
+<derived_root>/indexes/schema-5-semantics-1/recovery-<slot>/index.db
+```
+
+`active-slot` хранит номер выбранной базы. Межпроцессная `selection.lock` защищает выбор. База неподдерживаемой версии, несовместимой структуры или с обнаруженным повреждением остаётся на месте вместе с WAL и SHM. Общая старая база в корне производного хранилища и база внутри `.arena` не открываются ради миграции или копирования. Повреждённый указатель сохраняется отдельно, затем выбирается новый свободный номер. При выборе проверяются метаданные схемы, без полного `quick_check`. Проверка существующих отвергнутых баз ограничена 16 попытками.
+
+`open_vault_index` проверяет фактическое чтение количества блоков. Последующие запросы используют `read_vault_projection`, `read_vault_projection_from` или `read_search_projection`. Только SQLite `CORRUPT` и `NOTADB` разрешают один повтор после чистой пересборки выбранной базы. Повторная ошибка возвращается вызывающему коду. Ошибки доступа, ввода и вывода, занятой базы и заполненного диска не запускают восстановление. Повтор чтения не повторяет сохранение, удаление, изменение исходных файлов или запись журналов. Поиск может обновлять только свои производные таблицы.
+
+Владельцем активного соединения и наблюдателя остаётся [state.rs](/Users/i_iii/Проекты/Личные проекты/local-arena/src-tauri/src/commands/state.rs). Результат принимается только для того же корня пространства и актуальной базы. Подготовка нового соединения и наблюдателя происходит до короткой публикации состояния. Завершившийся запрос прежнего пространства не заменяет уже выбранное пространство. CLI и нативный обработчик владеют соединением отдельного запроса, FFI хранит выбранную базу вместе с соединением в одной сессии.
+
+### Готовность пересборки
+
+`index_build_state.ready` из схемы версии 5 становится `false` до прохода. Межпроцессная `build.lock` сериализует пересборку поколения. `ready=true` публикуется только после прохода без ошибок исходных файлов и повторной проверки их метаданных и зависимостей. Изменение исходников во время прохода требует нового прохода, максимум 3; затем возвращается `SourcesChanging`. Прерванная работа остаётся незавершённой и продолжает использовать те же сохранённые состояния исходников после повторного открытия. Блокировки освобождаются ядром при завершении процесса, постоянные флаги блокировки не создаются.
+
+Перечисленные правила реализованы в Rust. Они не подтверждают приёмку интерфейса, установленных версий, холодного запуска или принудительного завершения на каждой фазе. Критерии остаются в [SPEC_SYSTEM_RELIABILITY.md](/Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_SYSTEM_RELIABILITY.md). Автоматического удаления старых поколений нет; журналы и история не считаются кэшем.
+
 ### Схема
 
 ```sql
@@ -248,11 +269,13 @@ rebuilds those cached columns from `body` and `media_file` without rewriting
 source Markdown. Bulk backfill uses a cached basename resolver so vault-wide
 attachment lookup is built once per pass, not once per note.
 
-## storage/reconcile — filesystem-first visibility
+## storage/reconcile: видимость файлов
 
-Status: implemented in Phase A1 and consumed by Phase A3. Route-facing final
-reads join the coalesced reconciler before querying SQLite; the same persisted
-source stamps drive derived-preview invalidation.
+Общий алгоритм находится в [reconcile.rs](/Users/i_iii/Проекты/Личные проекты/local-arena/src-tauri/src/storage/reconcile.rs). `reconcile_vault` и `reconcile_vault_with_progress` пересобирают только производный индекс. Они не записывают историю, не исправляют ссылки в Markdown и не изменяют медиа. Чистая пересборка используется при восстановлении повреждённой базы и первом чтении CLI или нативного обработчика.
+
+`reconcile_runtime_vault_with_progress` сначала проверяет доступность исходников, затем отдельно согласует вспомогательную историю и подтверждённые внешние переименования. Этот этап работает и для перемещения при выключенном приложении, независимо от поколения индекса. Повтор после повреждения SQLite выполняет только чистую пересборку, не повторяет исправление исходников. Неподдерживаемая или повреждённая история сохраняется без перезаписи; отсутствие пригодной истории не блокирует чтение документов.
+
+Первое поколение приложения ожидает согласование исходников. При наличии готового снимка последующие чтения используют его сразу, а загрязнение или проверка по сроку запускают один фоновый проход через [freshness.rs](/Users/i_iii/Проекты/Личные проекты/local-arena/src-tauri/src/commands/freshness.rs). Те же сохранённые метаданные исходников определяют обновление производных превью.
 
 `VaultReconciler` is the only storage primitive allowed to claim that the local
 derived index reflects the current source vault. It compares a metadata-only
@@ -323,8 +346,9 @@ fn reconcile_vault(
 ```rust
 enum ReconcileError {
     Inventory { path: PathBuf, source: anyhow::Error },
-    State { source: anyhow::Error },
-    Commit { source: anyhow::Error },
+    State(anyhow::Error),
+    Commit(anyhow::Error),
+    SourcesChanging { path: PathBuf },
 }
 
 enum ReconcileFileErrorKind {
@@ -344,8 +368,7 @@ prevent a false `fresh` state.
 
 - Complexity: `O(N + D)` metadata calls for `N` Markdown files and persisted
   dependency entries, and `O(delta)` content reads/parses/upserts.
-- An unchanged pass performs zero Markdown/media content reads and zero SQLite
-  writes.
+* Неизменившийся проход не читает содержимое Markdown или медиа и не обновляет строки проекции. Записи маркера готовности выполняются отдельно и не входят в счётчик `database_writes`.
 - Eight concurrent route-facing reads for one vault produce one inventory pass,
   not eight passes.
 - One hundred sequential route reads on a clean coordinator generation produce

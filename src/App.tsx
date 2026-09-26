@@ -393,6 +393,7 @@ export function App() {
   const [unavailablePath, setUnavailablePath] = useState<string | null>(null);
   const [unavailableReason, setUnavailableReason] = useState<UnavailableVaultReason>("missing");
   const [loading, setLoading] = useState(true);
+  const [selectionReadSucceeded, setSelectionReadSucceeded] = useState(false);
   const [externalOpenSequence, setExternalOpenSequence] = useState(0);
   const handleExternalOpen = useCallback((path: string) => {
     setVaultPath(path);
@@ -414,10 +415,11 @@ export function App() {
         // or the chosen folder is unreachable at the moment. Only the second
         // deserves an explanation instead of a first-run screen.
         if (!path) {
-          const unavailable = await getUnavailableVault().catch(() => null);
+          const unavailable = await getUnavailableVault();
           setUnavailablePath(unavailable?.path ?? null);
           setUnavailableReason(unavailable?.reason ?? "missing");
         }
+        setSelectionReadSucceeded(true);
       })
       .catch((err) => {
         console.error("[startup] getVaultPath:failed", err);
@@ -430,11 +432,14 @@ export function App() {
     if (loading || vaultPath || !isTauri()) return;
     return scheduleAfterNextPaint(() => {
       void recordStartupMilestone("interactive").catch(() => {});
+      if (selectionReadSucceeded) {
+        void recordStartupMilestone("update_ready").catch(() => {});
+      }
       void startStartupMaintenance().catch((error) => {
         console.warn("Startup maintenance could not begin:", error);
       });
     });
-  }, [loading, vaultPath]);
+  }, [loading, vaultPath, selectionReadSucceeded]);
 
   // A space switch may originate in another window (settings). The backend
   // broadcasts every select_vault; key={vaultPath} below re-mounts the app.
@@ -1539,6 +1544,7 @@ export function AppWithVault({
         if (routeCommitted && isTauri()) {
           void recordStartupMilestone("first_cards_painted").catch(() => {});
           void recordStartupMilestone("interactive").catch(() => {});
+          void recordStartupMilestone("update_ready").catch(() => {});
           void startStartupMaintenance().catch((error) => {
             console.warn("Startup maintenance could not begin:", error);
           });

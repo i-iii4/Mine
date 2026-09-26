@@ -11,6 +11,7 @@ import { SpacesSection } from "./SpacesSection";
 import { OrphansSection } from "./OrphansSection";
 import { LayoutSection } from "./LayoutSection";
 import { ClipperSection } from "./ClipperSection";
+import { UpdatesSection } from "./UpdatesSection";
 
 /// Loaded on demand: the showcase pulls in every production primitive and has
 /// no business weighing down a window opened to change a checkbox.
@@ -96,6 +97,7 @@ export function SettingsApp() {
           {section === "spaces" && <SpacesSection />}
           {section === "layout" && <LayoutSection />}
           {section === "clipper" && <ClipperSection />}
+          {section === "updates" && <UpdatesSection />}
           {section === "orphans" && <OrphansSection />}
         </main>
       </div>

@@ -25,6 +25,7 @@ use crate::commands::settings::{
     DeleteOrphanResult, OrphanMedia, OrphanMediaBatchRequest, PromoteOrphanResult, SpaceStats,
 };
 use crate::commands::state::CommandError;
+use crate::updater::{UpdateError, UpdateStage, UpdateStatus};
 use crate::commands::clipper_setup::{ClipperBrowserStatus, ClipperSetupStatus};
 use crate::commands::cloud_recommendation::CloudRecommendationState;
 use crate::commands::icloud_progress::{IcloudDownloadProgress, IcloudDownloadStatus};
@@ -131,6 +132,9 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<ImportProgress>()
         .register::<NativeShellSmokeReport>()
         .register::<CommandError>()
+        .register::<UpdateError>()
+        .register::<UpdateStage>()
+        .register::<UpdateStatus>()
         .register::<SpaceStats>()
         .register::<OrphanMedia>()
         .register::<OrphanMediaBatchRequest>()

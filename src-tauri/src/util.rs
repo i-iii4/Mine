@@ -173,6 +173,32 @@ pub fn append_startup_trace(app: &AppHandle, scope: &str, message: &str) {
         scope,
         startup_trace_message(scope, message, cfg!(debug_assertions))
     );
+    if scope == "process" && message == "started" {
+        // Record the executable actually running, not merely the installed bundle.
+        // JSON escaping keeps paths from injecting extra log records.
+        let identity = process_identity();
+        let _ = writeln!(
+            file,
+            "{} launch_id={} [process_identity] {}",
+            now_iso8601(),
+            launch_id(),
+            identity
+        );
+    }
+}
+
+/// Local diagnostic identity for the process that is actually serving commands.
+#[cfg(feature = "desktop")]
+fn process_identity() -> serde_json::Value {
+    serde_json::json!({
+        "pid": std::process::id(),
+        "executable": std::env::current_exe().ok(),
+        "version": env!("CARGO_PKG_VERSION"),
+        "build_id": env!("MINE_BUILD_ID"),
+        "commit": env!("MINE_BUILD_COMMIT"),
+        "schema_version": crate::storage::migrations::CURRENT_SCHEMA_VERSION,
+        "index_generation": crate::domain::vault::INDEX_GENERATION,
+    })
 }
 
 #[cfg(feature = "desktop")]
@@ -210,6 +236,32 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
 mod tests {
     #[cfg(feature = "desktop")]
     use super::{single_instance_port, startup_trace_message};
+
+    #[test]
+    #[cfg(feature = "desktop")]
+    fn process_identity_reports_running_binary_and_compiled_source() {
+        let identity = super::process_identity();
+        assert_eq!(identity["pid"], std::process::id());
+        assert_eq!(identity["index_generation"], crate::domain::vault::INDEX_GENERATION);
+        assert_eq!(
+            identity["schema_version"],
+            crate::storage::migrations::CURRENT_SCHEMA_VERSION
+        );
+        let build = identity["build_id"]
+            .as_str()
+            .expect("build ID must be a string");
+        assert_eq!(build.len(), 64);
+        assert!(build.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert_eq!(
+            identity["executable"],
+            serde_json::to_value(std::env::current_exe().expect("running test path"))
+                .expect("serializable path")
+        );
+        assert!(!identity["commit"]
+            .as_str()
+            .expect("commit string")
+            .is_empty());
+    }
 
     #[test]
     #[cfg(feature = "desktop")]

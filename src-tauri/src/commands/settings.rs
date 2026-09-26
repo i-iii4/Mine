@@ -139,42 +139,21 @@ pub fn forget_known_vault(
         ));
     }
 
-    let known: Vec<String> = current
-        .into_iter()
-        .filter(|existing| existing != &path)
-        .collect();
+    let known = detach_known_vault(current, &path);
     cfg["known_vaults"] = serde_json::json!(known);
     write_config(&app, &cfg);
 
-    // Removing a space means removing it: the derived store holds only an index
-    // and previews, both rebuilt from the files if the space is added back
-    // later. Leaving it behind quietly accumulated hundreds of megabytes for
-    // spaces the user had already dismissed. See SPEC_VAULT_LIFECYCLE.md P17.
-    discard_derived_store(&app, &path);
+    // Detach is not garbage collection. Backups, pending uploads and indexes
+    // still owned by another process must survive removing the registry entry.
+    // Reclamation requires a separate ownership-proven operation (P17 / IDX-07).
     Ok(known)
 }
 
-/// Delete the local cache of a space that is no longer known.
-///
-/// Best effort by design: failing to reclaim disk space must never block the
-/// user's request to forget a space.
-fn discard_derived_store(app: &AppHandle, vault_path: &str) {
-    let vault = VaultLayout::new(std::path::PathBuf::from(vault_path));
-    let Ok(raw_id) = std::fs::read_to_string(vault.vault_id_path()) else {
-        return;
-    };
-    let vault_id = raw_id.trim();
-    if vault_id.is_empty() {
-        return;
-    }
-    let Ok(root) = crate::commands::vault::derived_store_root(app, vault_id) else {
-        return;
-    };
-    if let Err(error) = std::fs::remove_dir_all(&root) {
-        if error.kind() != std::io::ErrorKind::NotFound {
-            log::warn!("failed to remove derived store for {vault_path}: {error}");
-        }
-    }
+fn detach_known_vault(current: Vec<String>, path: &str) -> Vec<String> {
+    current
+        .into_iter()
+        .filter(|existing| existing != path)
+        .collect()
 }
 
 /// Pure reorder rule: the new order must be exactly the same set of paths the
@@ -347,7 +326,15 @@ fn space_stats_inner(app: &AppHandle, path: &str) -> Result<SpaceStats, CommandE
     let mut stats = scan_space_files(root)?;
     stats.element_count = existing_vault_id(root)
         .and_then(|vault_id| derived_store_root(app, &vault_id).ok())
-        .map(|derived| VaultLayout::with_derived_root(root.to_path_buf(), derived).index_db_path())
+        .and_then(|derived| {
+            crate::storage::db::existing_selected_index(&VaultLayout::with_derived_root(
+                root.to_path_buf(),
+                derived,
+            ))
+            .ok()
+            .flatten()
+        })
+        .map(|vault| vault.index_db_path())
         .and_then(|index_db| read_indexed_element_count(&index_db));
     Ok(stats)
 }
@@ -385,15 +372,22 @@ fn nfc(value: &str) -> String {
 /// One pass over every indexed block: the set of media file names any block
 /// references (frontmatter file/thumbnail + inline body links).
 fn referenced_media_file_names(vs: &VaultState) -> Result<BTreeSet<String>, CommandError> {
-    let mut resolver = media_refs::MediaResolver::new(&vs.vault);
-    let mut referenced: BTreeSet<String> = BTreeSet::new();
     let blocks = index::list_blocks(&vs.conn).map_err(|e| CommandError::Internal(e.to_string()))?;
+    Ok(referenced_media_file_names_from_blocks(&vs.vault, blocks))
+}
+
+fn referenced_media_file_names_from_blocks(
+    vault: &VaultLayout,
+    blocks: Vec<index::IndexedBlock>,
+) -> BTreeSet<String> {
+    let mut resolver = media_refs::MediaResolver::new(vault);
+    let mut referenced: BTreeSet<String> = BTreeSet::new();
     for block in blocks {
-        for media in collect_delete_media_for_block(&vs.vault, &block, &mut resolver).values() {
+        for media in collect_delete_media_for_block(vault, &block, &mut resolver).values() {
             referenced.insert(nfc(&media.file_name));
         }
     }
-    Ok(referenced)
+    referenced
 }
 
 fn is_media_ext(ext: &str) -> bool {
@@ -454,15 +448,22 @@ fn basename_of(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
+#[cfg(test)]
 fn scan_orphans(vs: &VaultState) -> Result<Vec<OrphanMedia>, CommandError> {
     let referenced = referenced_media_file_names(vs)?;
+    scan_orphans_with_referenced(&vs.vault, referenced)
+}
 
+fn scan_orphans_with_referenced(
+    vault: &VaultLayout,
+    referenced: BTreeSet<String>,
+) -> Result<Vec<OrphanMedia>, CommandError> {
     let mut orphans = Vec::new();
     // Subfolders included: with the standard layout every media file lives
     // under `Media/`, so a root-only scan reported no orphans at all and the
     // whole section quietly stopped working. Names are vault-relative for the
     // same reason — a bare basename cannot address a file in a folder.
-    let entries = collect_media_files(vs.vault.root(), Path::new(""), 0)
+    let entries = collect_media_files(vault.root(), Path::new(""), 0)
         .map_err(|e| CommandError::Internal(e.to_string()))?;
     for (file_name, metadata) in entries {
         if referenced.contains(&nfc(basename_of(&file_name))) {
@@ -485,12 +486,18 @@ fn scan_orphans(vs: &VaultState) -> Result<Vec<OrphanMedia>, CommandError> {
 
 #[tauri::command]
 pub async fn list_orphan_media(
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Vec<OrphanMedia>, CommandError> {
     let vault = current_vault_layout(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let vs = orphan_worker_state(vault)?;
-        scan_orphans(&vs)
+        let blocks = super::state::read_owned_projection(&app, &vault, |conn| {
+            Ok(index::list_blocks(conn)?)
+        })?;
+        scan_orphans_with_referenced(
+            &vault,
+            referenced_media_file_names_from_blocks(&vault, blocks),
+        )
     })
     .await
     .map_err(|error| CommandError::Internal(error.to_string()))?
@@ -741,6 +748,67 @@ mod tests {
             VaultLayout::with_derived_root(root.path().to_path_buf(), derived.path().to_path_buf());
         let conn = db::open_or_create(&vault.index_db_path()).expect("open db");
         (root, derived, VaultState { vault, conn })
+    }
+
+    #[test]
+    fn reliability_detach_preserves_history_pending_and_live_generations() {
+        fn snapshot(root: &Path) -> Vec<(std::path::PathBuf, Option<[u8; 32]>)> {
+            fn walk(
+                root: &Path,
+                relative: &Path,
+                entries: &mut Vec<(std::path::PathBuf, Option<[u8; 32]>)>,
+            ) {
+                for entry in std::fs::read_dir(root.join(relative)).unwrap() {
+                    let entry = entry.unwrap();
+                    let path = relative.join(entry.file_name());
+                    if entry.file_type().unwrap().is_dir() {
+                        entries.push((path.clone(), None));
+                        walk(root, &path, entries);
+                    } else {
+                        use sha2::{Digest, Sha256};
+                        entries.push((
+                            path,
+                            Some(Sha256::digest(std::fs::read(entry.path()).unwrap()).into()),
+                        ));
+                    }
+                }
+            }
+            let mut entries = Vec::new();
+            walk(root, Path::new(""), &mut entries);
+            entries.sort_by(|left, right| left.0.cmp(&right.0));
+            entries
+        }
+        let (root, derived, vs) = make_vault();
+        for (base, path) in [
+            (root.path(), ".mine/file-identity.json"),
+            (derived.path(), "cli-backups/Card.md"),
+            (derived.path(), "pending-uploads/capture/manifest.json"),
+            (derived.path(), "indexes/foreign-generation/index.db"),
+            (derived.path(), "indexes/foreign-generation/index.db-wal"),
+            (derived.path(), "operations/pending.json"),
+        ] {
+            let path = base.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, b"retained bytes").unwrap();
+        }
+        vs.conn
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+            .unwrap();
+        let source_before = snapshot(root.path());
+        let derived_before = snapshot(derived.path());
+        let requested = root.path().to_string_lossy().into_owned();
+        assert_eq!(
+            detach_known_vault(vec![requested.clone(), "other".into()], &requested),
+            vec!["other"]
+        );
+        assert_eq!(snapshot(root.path()), source_before);
+        assert_eq!(snapshot(derived.path()), derived_before);
+        let count: i64 = vs
+            .conn
+            .query_row("SELECT COUNT(*) FROM blocks", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+        assert!(vs.vault.index_db_path().is_file());
     }
 
     fn write_media(vs: &VaultState, name: &str) {

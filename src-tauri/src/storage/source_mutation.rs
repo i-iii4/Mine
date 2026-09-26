@@ -5,9 +5,107 @@
 use anyhow::{Context, Result};
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock, Mutex};
 use thiserror::Error;
 
 use crate::storage::files;
+
+#[derive(Debug, Default)]
+struct WriterState {
+    active: usize,
+    shutdown: bool,
+}
+
+/// A nonblocking gate: shutdown may begin only after every existing writer drains.
+/// Nested write scopes are safe because shutdown never waits while holding a lock.
+#[derive(Debug, Clone, Default)]
+pub struct WriterGate(Arc<Mutex<WriterState>>);
+#[derive(Debug)]
+pub struct SourceWriteLease(Arc<Mutex<WriterState>>);
+pub struct ShutdownLease(Arc<Mutex<WriterState>>);
+static WRITERS: LazyLock<WriterGate> = LazyLock::new(WriterGate::default);
+
+impl WriterGate {
+    pub fn write(&self) -> Result<SourceWriteLease> {
+        let mut state = self
+            .0
+            .lock()
+            .map_err(|_| anyhow::anyhow!("writer gate poisoned"))?;
+        anyhow::ensure!(
+            !state.shutdown,
+            "application update is preparing shutdown; new writes are disabled"
+        );
+        state.active += 1;
+        Ok(SourceWriteLease(self.0.clone()))
+    }
+    pub fn shutdown(&self) -> Result<ShutdownLease> {
+        let mut state = self
+            .0
+            .lock()
+            .map_err(|_| anyhow::anyhow!("writer gate poisoned"))?;
+        anyhow::ensure!(
+            !state.shutdown && state.active == 0,
+            "pending application operations must finish before update activation"
+        );
+        state.shutdown = true;
+        Ok(ShutdownLease(self.0.clone()))
+    }
+}
+impl Drop for SourceWriteLease {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.0.lock() {
+            state.active -= 1;
+        }
+    }
+}
+impl Drop for ShutdownLease {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.0.lock() {
+            state.shutdown = false;
+        }
+    }
+}
+pub fn begin_write() -> Result<SourceWriteLease> {
+    WRITERS.write()
+}
+pub fn begin_shutdown() -> Result<ShutdownLease> {
+    WRITERS.shutdown()
+}
+
+#[cfg(test)]
+mod gate_tests {
+    use super::*;
+    #[test]
+    fn active_operation_blocks_activation_and_retains_lease_through_commit() {
+        let gate = WriterGate::default();
+        let staged = StagedSourceMutation {
+            files: vec![],
+            lease: Some(gate.write().unwrap()),
+        };
+        assert!(gate.shutdown().is_err());
+        let committed = staged.commit().unwrap();
+        assert!(gate.shutdown().is_err());
+        committed.finalize();
+        let shutdown = gate.shutdown().unwrap();
+        assert!(gate.write().is_err());
+        drop(shutdown);
+        assert!(gate.write().is_ok());
+    }
+    #[test]
+    fn failed_preparation_reopens_gate_without_rejecting_existing_rollback() {
+        let gate = WriterGate::default();
+        let outer = gate.write().unwrap();
+        assert!(gate.shutdown().is_err());
+        let nested = gate.write().unwrap();
+        drop(nested);
+        drop(outer);
+        {
+            let _shutdown = gate.shutdown().unwrap();
+            assert!(gate.write().is_err());
+        }
+        assert!(gate.write().is_ok());
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceFileMode {
@@ -139,17 +237,23 @@ enum OriginalSource {
 #[derive(Debug)]
 pub struct StagedSourceMutation {
     files: Vec<StagedSourceFile>,
+    lease: Option<SourceWriteLease>,
 }
 
 #[derive(Debug)]
 pub struct CommittedSourceMutation {
     originals: Vec<(PathBuf, OriginalSource)>,
     finalized: bool,
+    _lease: Option<SourceWriteLease>,
 }
 
 impl StagedSourceMutation {
     /// Stage every byte sequence before any destination becomes visible.
     pub fn stage(writes: Vec<SourceFileWrite>) -> std::result::Result<Self, SourceMutationError> {
+        let lease = begin_write().map_err(|error| SourceMutationError::Validate {
+            path: PathBuf::new(),
+            reason: error.to_string(),
+        })?;
         let mut staged = Vec::with_capacity(writes.len());
         let mut destinations = std::collections::BTreeSet::new();
         for write in writes {
@@ -240,9 +344,7 @@ impl StagedSourceMutation {
                     }
                 },
                 SourceFileContent::Bytes(bytes) => {
-                    let writer = |file: &mut std::fs::File| {
-                        std::io::Write::write_all(file, bytes)
-                    };
+                    let writer = |file: &mut std::fs::File| std::io::Write::write_all(file, bytes);
                     let prepared = if write.mode == SourceFileMode::Replace {
                         files::prepare_replacement_temp_file(&write.path, &write.path, writer)
                     } else {
@@ -284,7 +386,10 @@ impl StagedSourceMutation {
                 original,
             });
         }
-        Ok(Self { files: staged })
+        Ok(Self {
+            files: staged,
+            lease: Some(lease),
+        })
     }
 
     /// Publish the staged files. The returned guard must be finalized only
@@ -370,6 +475,7 @@ impl StagedSourceMutation {
         Ok(CommittedSourceMutation {
             originals,
             finalized: false,
+            _lease: self.lease.take(),
         })
     }
 

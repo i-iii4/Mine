@@ -4,6 +4,7 @@ import { Blob as NodeBlob } from "node:buffer";
 import { webcrypto } from "node:crypto";
 import { createRequire } from "node:module";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import "./saveProtocol.js";
 import "./standaloneVault.js";
 
 const wasm = createRequire(import.meta.url)("../../output/playwright/save-core-node/mine_core.js");

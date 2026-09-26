@@ -410,6 +410,9 @@ export function PopupApp() {
         <fieldset disabled={clipper.pendingOperation || clipper.saving} className="contents">
         <ChannelList
           channels={clipper.channels}
+          loading={clipper.channelsLoading}
+          error={clipper.channelsError}
+          onRetry={clipper.retryChannels}
           selectedTags={clipper.selectedTags}
           onToggle={clipper.toggleTag}
           onCreate={clipper.createChannel}
@@ -434,6 +437,7 @@ export function PopupApp() {
             state={saved ? "saved" : clipper.saving ? "saving" : "idle"}
             onClick={handleSave}
             checkingOutcome={clipper.pendingOperation}
+            disabled={!clipper.draftReady}
           />
         </div>
       </div>

@@ -4,6 +4,10 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG
 
 ## Context
 
+Related documents: [SPEC_SYSTEM_RELIABILITY.md](/Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_SYSTEM_RELIABILITY.md).
+
+Изоляция поколений индекса и ограниченное восстановление реализованы в общем ядре Rust. Требования к согласованной доставке компонентов и приёмка интерфейса остаются отдельными частями контракта, реализация индекса не подтверждает их завершение.
+
 Для медиа X [SPEC_CLIPPER.md](/Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_CLIPPER.md)
 закрепляет промежуточную структуру постов и цитат `ArticleData.twitterPosts`.
 Модуль [twitterMedia.ts](/Users/i_iii/Проекты/Личные проекты/local-arena/extension/popup/lib/twitterMedia.ts)
@@ -219,7 +223,13 @@ fallback only; new write paths do not create it.
 
 ```
 ~/Library/Application Support/com.mine.app/vaults/<vault-id>/
-├── index.db                         ← local derived SQLite index
+├── indexes/
+│   └── schema-5-semantics-1/
+│       ├── index.db                 ← производный индекс
+│       ├── recovery-<slot>/index.db  ← база после восстановления
+│       ├── active-slot              ← выбранный номер базы
+│       ├── selection.lock           ← межпроцессный выбор базы
+│       └── build.lock               ← межпроцессная пересборка
 └── cache/
     ├── thumbs/                      ← local preview / thumb cache (<slug>.jpg)
     └── audio/                       ← article audio renditions (<slug>.json + <slug>.wav)
@@ -228,6 +238,16 @@ fallback only; new write paths do not create it.
 Источник содержит пользовательские файлы и метаданные `.mine`, необходимые
 для сохранения привязок при перемещении. SQLite и превью находятся в локальном
 производном хранилище и могут быть пересозданы.
+
+### Поколения и владелец индекса
+
+[vault.rs](/Users/i_iii/Проекты/Личные проекты/local-arena/src-tauri/src/domain/vault.rs) задаёт поколение по совместимости схемы и смысла проекции, без зависимости domain от storage. [db.rs](/Users/i_iii/Проекты/Личные проекты/local-arena/src-tauri/src/storage/db.rs) выбирает совместимую базу под межпроцессной блокировкой; приложение, CLI, нативный обработчик и FFI используют этот общий путь. Старая общая база, чужая схема, неизвестная версия и повреждённая база сохраняются на месте, даже при открытых соединениях другой версии. Журналы и вспомогательная история не удаляются ради пересборки. Полный контракт хранения: [SPEC_STORAGE.md](/Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_STORAGE.md).
+
+Только ошибки SQLite `CORRUPT` и `NOTADB` запускают одну чистую пересборку с повтором чтения. Ошибки доступа, диска или блокировки возвращаются без пересборки. Сохранение исходников не входит в повтор. Проверки схемы используют метаданные, а повреждение страницы данных обнаруживается фактическим запросом, без полного обхода базы при каждом открытии.
+
+[state.rs](/Users/i_iii/Проекты/Личные проекты/local-arena/src-tauri/src/commands/state.rs) связывает активное пространство, выбранную базу и наблюдатель. Результат восстановления принимается только для актуального корня и базы; прежний запрос не заменяет переключённое пространство. [vault.rs](/Users/i_iii/Проекты/Личные проекты/local-arena/src-tauri/src/commands/vault.rs) выполняет выбор и дисковые операции открытия через `spawn_blocking`, сериализует выбор и публикует только последний запрос. Наблюдатель готовится до публикации, прежние ресурсы освобождаются после снятия блокировок состояния.
+
+[reconcile.rs](/Users/i_iii/Проекты/Личные проекты/local-arena/src-tauri/src/storage/reconcile.rs) разделяет чистую пересборку индекса и обычное согласование исходников. Чистая пересборка не меняет Markdown, медиа или историю. Обычное согласование отдельно восстанавливает подтверждённые ссылки после внешнего переименования, в том числе при выключенном приложении. Маркер готовности публикуется после полного успешного прохода и повторной проверки исходников; незавершённый проход продолжается при открытии. Это устройство ядра, не подтверждение приёмки интерфейса или установленных версий.
 
 ### Filesystem-first visibility contract
 
@@ -776,10 +796,7 @@ iOS UI contract:
   article/social block still opens as a one-image quick look in the left menu.
   Rich composite/gallery rendering stays in feed cards and the Related Notes
   hover preview.
-- Legacy vault compatibility: если в старом vault ещё лежат `.arena/cache/thumbs/`
-  или `.arena/index.db`, `open_vault()` использует их только как bootstrap source:
-  копирует данные в local derived store, мигрирует `.arena/vault-id` в
-  `.mine/vault-id`, затем удаляет известные legacy artifacts из source vault.
+* Совместимость со старым пространством сохраняет `.arena/index.db`, его WAL и SHM, прежнюю историю и кэш на месте. Идентификатор можно перенести в `.mine`, а старые миниатюры скопировать в локальное производное хранилище. SQLite не копируется для миграции: отдельное поколение пересобирается из документов. Автоматического удаления старых поколений нет.
 - Startup backlog planner для Phase 2 (`list_pending_thumb_upgrades`) тоже
   больше не читает thumb-файлы на main thread. Он работает через отдельный
   SQLite connection в `spawn_blocking`, выбирает PNG placeholder rows и

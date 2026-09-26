@@ -63,6 +63,7 @@ pub struct FreshnessOutcome {
     pub fast_path_hits: usize,
     pub ran_reconcile: bool,
     pub result: Result<ReconcileReport, String>,
+    pub recovered_vault: Option<VaultLayout>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -122,14 +123,41 @@ impl FreshnessCoordinator {
         on_progress: &(dyn Fn(usize, usize) + Sync),
     ) -> FreshnessOutcome {
         let vault_path = vault.root().to_string_lossy().into_owned();
-        self.run(vault_path, || {
-            db::open_or_create(&vault.index_db_path())
-                .map_err(|error| format!("failed to open freshness database: {error:#}"))
-                .and_then(|conn| {
-                    reconcile::reconcile_vault_with_progress(&conn, vault, on_progress)
-                        .map_err(|error| format!("filesystem reconciliation failed: {error:#}"))
-                })
-        })
+        let recovered = Mutex::new(None);
+        let mut outcome = self.run(vault_path, || {
+            let attempt = (|| -> anyhow::Result<ReconcileReport> {
+                let _write = crate::storage::source_mutation::begin_write()?;
+                let conn = db::open_or_create(&vault.index_db_path())?;
+                Ok(reconcile::reconcile_runtime_vault_with_progress(
+                    &conn,
+                    vault,
+                    on_progress,
+                )?)
+            })();
+            match attempt {
+                Ok(report) => Ok(report),
+                Err(error) if db::is_index_corruption(&error) => {
+                    // Identity/source maintenance ran at most once. The retry
+                    // is strictly the pure rebuild of a new derived slot.
+                    let retry = (|| -> anyhow::Result<ReconcileReport> {
+                        let layout = db::recover_vault_index_after_error(vault.clone(), &error)?;
+                        let conn = db::open_or_create(&layout.index_db_path())?;
+                        let report =
+                            reconcile::reconcile_vault_with_progress(&conn, &layout, on_progress)?;
+                        *recovered
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(layout);
+                        Ok(report)
+                    })();
+                    retry.map_err(|error| format!("index freshness recovery failed: {error:#}"))
+                }
+                Err(error) => Err(format!("filesystem reconciliation failed: {error:#}")),
+            }
+        });
+        outcome.recovered_vault = recovered
+            .into_inner()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        outcome
     }
 
     pub fn reconcile_scheduled(&self, vault: &VaultLayout) -> FreshnessOutcome {
@@ -167,6 +195,7 @@ impl FreshnessCoordinator {
                 .get(&vault_path)
                 .expect("freshness entry remains present after reconciliation");
             return FreshnessOutcome {
+                recovered_vault: None,
                 vault_path,
                 generation: completed.generation,
                 joined_callers: completed.joined_callers,
@@ -183,6 +212,7 @@ impl FreshnessCoordinator {
             if let Some(result) = entry.last_result.clone() {
                 entry.fast_path_hits = entry.fast_path_hits.saturating_add(1);
                 return FreshnessOutcome {
+                    recovered_vault: None,
                     vault_path,
                     generation: entry.generation,
                     joined_callers: 0,
@@ -224,6 +254,7 @@ impl FreshnessCoordinator {
             entry.committed_snapshot_available = true;
         }
         let outcome = FreshnessOutcome {
+            recovered_vault: None,
             vault_path,
             generation: entry.generation,
             joined_callers: entry.joined_callers,
@@ -308,6 +339,17 @@ fn publish_freshness_outcome(
     preview_vault: VaultLayout,
     outcome: FreshnessOutcome,
 ) {
+    let preview_vault = if let Some(recovered) = &outcome.recovered_vault {
+        match super::state::adopt_recovered_projection(app, &preview_vault, recovered.clone(), ()) {
+            Ok(()) => recovered.clone(),
+            Err(error) => {
+                log::warn!("freshness recovery session was not adopted: {error}");
+                return;
+            }
+        }
+    } else {
+        preview_vault
+    };
     match outcome.result {
         Ok(report) => {
             let changed = !report.upserted.is_empty()
@@ -438,6 +480,33 @@ mod tests {
             database_writes: 0,
             elapsed_ms: 1,
         }
+    }
+
+    #[test]
+    fn reliability_first_generation_recovers_corrupt_projection_without_source_maintenance() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("source");
+        std::fs::create_dir(&root).unwrap();
+        let source = root.join("Card.md");
+        let bytes = b"A source card that must stay unchanged.\n";
+        std::fs::write(&source, bytes).unwrap();
+        let vault = VaultLayout::with_derived_root(root.clone(), temp.path().join("derived"));
+        let vault = crate::storage::db::resolve_vault_index(vault).unwrap();
+        std::fs::create_dir_all(vault.index_generation_dir()).unwrap();
+        std::fs::write(vault.index_db_path(), b"not a SQLite database").unwrap();
+
+        let outcome = FreshnessCoordinator::default().reconcile(&vault);
+        assert!(outcome.result.as_ref().unwrap().is_fresh());
+        let recovered = outcome.recovered_vault.unwrap();
+        assert_ne!(recovered.index_db_path(), vault.index_db_path());
+        assert_eq!(
+            std::fs::read(vault.index_db_path()).unwrap(),
+            b"not a SQLite database"
+        );
+        assert_eq!(std::fs::read(source).unwrap(), bytes);
+        assert_eq!(std::fs::read_dir(root).unwrap().count(), 1);
+        let conn = crate::storage::db::open_read_only(&recovered.index_db_path()).unwrap();
+        assert_eq!(crate::storage::index::list_blocks(&conn).unwrap().len(), 1);
     }
 
     #[test]

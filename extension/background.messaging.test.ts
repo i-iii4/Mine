@@ -87,7 +87,9 @@ function background(apiMode: BrowserApiMode) {
     importScripts: vi.fn(),
     setTimeout,
     clearTimeout,
+    fetch: vi.fn(async () => ({ ok: true, json: async () => ({ buildId: "worker-build", commit: "worker-commit" }) })),
   });
+  runInContext(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib/saveProtocol.js"), "utf8"), context);
   runInContext(source, context);
 
   function dispatch(message: Message, sender: { url?: string } = {}) {
@@ -165,5 +167,27 @@ describe("background browser API failures", () => {
 
     expect(request.keepAlive).toBe(true);
     await expect(request.response).resolves.toMatchObject({ ok: false, error: "tab API unavailable" });
+  });
+});
+
+describe("widget and background compatibility", () => {
+  it("accepts an older widget through the retained baseline, independently of build identity", async () => {
+    const worker = background("promise");
+    const request = worker.dispatch({ target: "background", action: "clipperHandshake", build_id: "old-widget", save_protocols: [1] });
+    await expect(request.response).resolves.toMatchObject({ ok: true, save_protocols: [1], build_id: "worker-build", commit: "worker-commit" });
+    expect(worker.nativePort.postMessage).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unsupported widget before native calls", async () => {
+    const worker = background("promise");
+    const request = worker.dispatch({ target: "background", action: "clipperHandshake", save_protocols: [9] });
+    await expect(request.response).resolves.toMatchObject({ ok: false, code: "incompatible_protocol" });
+    expect(worker.nativePort.postMessage).not.toHaveBeenCalled();
+  });
+  it("rejects unsupported mandatory widget capabilities before native calls", async () => {
+    const worker = background("promise");
+    const request = worker.dispatch({ target: "background", action: "clipperHandshake", save_protocols: [1], required_capabilities: ["future_required"] });
+    await expect(request.response).resolves.toMatchObject({ ok: false, code: "incompatible_protocol" });
+    expect(worker.nativePort.postMessage).not.toHaveBeenCalled();
   });
 });

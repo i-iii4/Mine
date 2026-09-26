@@ -6,7 +6,7 @@
 uniffi::setup_scaffolding!();
 
 use mine_core::domain::article_audio::prepare_article_speech;
-use mine_core::domain::block::{parse_markdown_document, BlockType, DateTime};
+use mine_core::domain::block::{parse_markdown_document, DateTime};
 use mine_lib::domain::vault::VaultLayout;
 use mine_lib::storage::{db, index};
 use std::path::PathBuf;
@@ -58,7 +58,7 @@ pub enum ArenaError {
 /// UniFFI Object = passed by reference (Arc), safe across threads via Mutex.
 #[derive(uniffi::Object)]
 pub struct ArenaVault {
-    conn: Mutex<rusqlite::Connection>,
+    session: Mutex<(VaultLayout, rusqlite::Connection)>,
     vault_path: String,
 }
 
@@ -67,76 +67,66 @@ impl ArenaVault {
     /// Open (or create) a vault at the given path.
     #[uniffi::constructor]
     fn open(vault_path: String) -> Result<Self, ArenaError> {
-        let vault = VaultLayout::new(PathBuf::from(&vault_path));
+        let (vault, conn, _) = db::open_vault_index(VaultLayout::new(PathBuf::from(&vault_path)))
+            .map_err(|e| ArenaError::Database { msg: e.to_string() })?;
         std::fs::create_dir_all(vault.mine_dir())
             .map_err(|e| ArenaError::Io { msg: e.to_string() })?;
-        if !vault.index_db_path().exists() && vault.legacy_index_db_path().exists() {
-            std::fs::copy(vault.legacy_index_db_path(), vault.index_db_path())
-                .map_err(|e| ArenaError::Io { msg: e.to_string() })?;
-        }
         if !vault.vault_id_path().exists() && vault.legacy_vault_id_path().exists() {
             std::fs::copy(vault.legacy_vault_id_path(), vault.vault_id_path())
                 .map_err(|e| ArenaError::Io { msg: e.to_string() })?;
         }
-        let db_path = vault.index_db_path();
-        let conn = db::open_or_create(&db_path)
-            .map_err(|e| ArenaError::Database { msg: e.to_string() })?;
         Ok(Self {
-            conn: Mutex::new(conn),
+            session: Mutex::new((vault, conn)),
             vault_path,
         })
     }
 
     /// List all blocks (lightweight, for grid views).
     fn list_blocks(&self) -> Result<Vec<FfiLightBlock>, ArenaError> {
-        let conn = self
-            .conn
+        let mut session = self
+            .session
             .lock()
             .map_err(|e| ArenaError::Database { msg: e.to_string() })?;
-        let blocks =
-            index::list_blocks(&conn).map_err(|e| ArenaError::Database { msg: e.to_string() })?;
+        let (recovered, blocks) = db::read_vault_projection_from(&session.1, &session.0, |conn| {
+            Ok(index::list_blocks(conn)?)
+        })
+        .map_err(|e| ArenaError::Database { msg: e.to_string() })?;
+        if recovered.index_db_path() != session.0.index_db_path() {
+            let conn = db::open_or_create(&recovered.index_db_path())
+                .map_err(|e| ArenaError::Database { msg: e.to_string() })?;
+            *session = (recovered, conn);
+        }
         Ok(blocks.into_iter().map(light_block_to_ffi).collect())
     }
 
     /// Scan all .md files in vault and index them in SQLite.
     /// Must be called after open() to populate the database.
     fn scan_vault(&self) -> Result<u32, ArenaError> {
-        let conn = self
-            .conn
+        let mut session = self
+            .session
             .lock()
             .map_err(|e| ArenaError::Database { msg: e.to_string() })?;
-
-        let vault_dir = PathBuf::from(&self.vault_path);
-        let vault = VaultLayout::new(vault_dir.clone());
-        let entries =
-            std::fs::read_dir(&vault_dir).map_err(|e| ArenaError::Io { msg: e.to_string() })?;
-
-        let mut count = 0u32;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("md") {
-                continue;
-            }
-            if let Ok((slug, content)) = mine_lib::storage::files::read_block_file(&vault, &path) {
-                match parse_markdown_document(&slug, &content, file_saved_at(&path)) {
-                    Ok(parsed) => {
-                        let block = parsed.block;
-                        if block.frontmatter.block_type == BlockType::Channel {
-                            let _ = index::upsert_channel_from_block(&conn, &block);
-                        } else {
-                            let _ = index::upsert_block(
-                                &conn,
-                                &block,
-                                Some(std::path::Path::new(&self.vault_path)),
-                            );
-                        }
-                        count += 1;
-                    }
-                    Err(_) => continue,
+        let report = match mine_lib::storage::reconcile::reconcile_vault(&session.1, &session.0) {
+            Ok(report) => report,
+            Err(error) => {
+                let error = error.into();
+                if !db::is_index_corruption(&error) {
+                    return Err(ArenaError::Database {
+                        msg: error.to_string(),
+                    });
                 }
+                let recovered = db::recover_vault_index_after_error(session.0.clone(), &error)
+                    .map_err(|e| ArenaError::Database { msg: e.to_string() })?;
+                let conn = db::open_or_create(&recovered.index_db_path())
+                    .map_err(|e| ArenaError::Database { msg: e.to_string() })?;
+                let report = mine_lib::storage::reconcile::reconcile_vault(&conn, &recovered)
+                    .map_err(|e| ArenaError::Database { msg: e.to_string() })?;
+                *session = (recovered, conn);
+                report
             }
-        }
-        Ok(count)
+        };
+        u32::try_from(report.inventory_markdown)
+            .map_err(|e| ArenaError::Database { msg: e.to_string() })
     }
 
     /// Get the vault path.
@@ -187,16 +177,6 @@ fn parse_block_file(slug: String, content: String) -> Result<FfiLightBlock, Aren
         media_urls: None,
         tags: block.frontmatter.tags,
     })
-}
-
-fn file_saved_at(path: &std::path::Path) -> DateTime {
-    let time = std::fs::metadata(path)
-        .ok()
-        .and_then(|metadata| metadata.created().ok().or_else(|| metadata.modified().ok()))
-        .unwrap_or_else(std::time::SystemTime::now);
-    DateTime::new(&mine_lib::util::system_time_to_iso8601(time))
-        // infallible inner unwrap: parsing a hardcoded valid ISO-8601 literal.
-        .unwrap_or_else(|_| DateTime::new("1970-01-01T00:00:00Z").unwrap())
 }
 
 // ─── Internal helpers ───────────────────────────────────────────────────────

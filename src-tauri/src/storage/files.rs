@@ -100,6 +100,7 @@ pub fn write_block_file(vault: &VaultLayout, block: &Block) -> Result<PathBuf> {
 /// be observable (mirrors `thumbnails::write_thumb_atomically` for derived
 /// files).
 pub fn write_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
+    let _write = crate::storage::source_mutation::begin_write()?;
     let tmp = match std::fs::symlink_metadata(path) {
         Ok(_) => prepare_replacement_temp_file(path, path, |file| file.write_all(bytes))?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -131,6 +132,7 @@ pub(crate) fn write_atomically_if_unchanged(
     replacement: &[u8],
     conflict_dir: &Path,
 ) -> Result<()> {
+    let _write = crate::storage::source_mutation::begin_write()?;
     write_atomically_if_unchanged_with_hooks(
         path,
         expected,
@@ -298,6 +300,7 @@ pub(crate) fn write_atomically_if_unchanged(
 /// The complete fsynced temp inode is linked under the final name in one
 /// operation, preserving create-new semantics without exposing partial bytes.
 pub fn write_new_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
+    let _write = crate::storage::source_mutation::begin_write()?;
     write_new_atomically_with_sync(path, bytes, sync_parent_directory)
 }
 
@@ -327,6 +330,7 @@ fn write_new_atomically_with_sync(
 
 /// Atomically copy a file to a destination that must not already exist.
 pub fn copy_new_atomically(source: &Path, destination: &Path) -> Result<()> {
+    let _write = crate::storage::source_mutation::begin_write()?;
     let mut source_file = std::fs::File::open(source)
         .with_context(|| format!("failed to open media source: {}", source.display()))?;
     let tmp = prepare_temp_file(destination, |file| {
@@ -348,6 +352,7 @@ pub fn copy_new_atomically(source: &Path, destination: &Path) -> Result<()> {
 }
 
 fn copy_atomically(source: &Path, destination: &Path) -> Result<()> {
+    let _write = crate::storage::source_mutation::begin_write()?;
     let mut source_file = std::fs::File::open(source)
         .with_context(|| format!("failed to open media source: {}", source.display()))?;
     let tmp = prepare_temp_file(destination, |file| {
@@ -538,6 +543,7 @@ pub fn ensure_vault_write_layout(
     vault: &VaultLayout,
     requested: &crate::domain::vault::VaultWriteLayout,
 ) -> Result<()> {
+    let _write = crate::storage::source_mutation::begin_write()?;
     let expected = requested
         .validate()
         .map_err(|error| anyhow::anyhow!(error))?;
@@ -675,6 +681,7 @@ pub fn copy_new_media_file(source: &Path, vault: &VaultLayout, slug: &str) -> Re
 ///
 /// Moves to OS trash. Failure must never become permanent deletion.
 pub fn delete_user_file(path: &Path) -> Result<()> {
+    let _write = crate::storage::source_mutation::begin_write()?;
     if !path.exists() {
         return Ok(());
     }
@@ -685,6 +692,7 @@ pub fn delete_user_file(path: &Path) -> Result<()> {
 /// One OS trash request for a batch. The OS may partially succeed; callers
 /// must refresh their view after errors. Never remove remaining files here.
 pub fn delete_user_files(paths: &[PathBuf]) -> Result<()> {
+    let _write = crate::storage::source_mutation::begin_write()?;
     if paths.is_empty() {
         return Ok(());
     }

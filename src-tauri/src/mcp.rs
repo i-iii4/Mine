@@ -582,10 +582,11 @@ mod tests {
         // args() is imported for parity with cli tests; silence unused warning.
         let _ = args(&[]);
         let vault = crate::cli::resolve_space(&env, None).map_err(|e| e.message).unwrap();
-        let before = std::fs::read(vault.index_db_path()).unwrap();
+        use sha2::{Digest, Sha256};
+        let before = Sha256::digest(std::fs::read(vault.index_db_path()).unwrap());
         let result = call(&env, "search", json!({ "query": "sunset" }));
         assert_eq!(result["isError"], false);
-        let after = std::fs::read(vault.index_db_path()).unwrap();
+        let after = Sha256::digest(std::fs::read(vault.index_db_path()).unwrap());
         assert_eq!(before, after, "reads must not touch the index");
     }
 }

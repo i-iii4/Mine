@@ -11,6 +11,10 @@ pub use mine_core::domain::vault::{
     validate_slug, VaultError, VaultWriteLayout,
 };
 
+/// Compatibility of the complete derived read model, independent of app version.
+/// Change this key when schema or projection semantics cease to be compatible.
+pub const INDEX_GENERATION: &str = "schema-5-semantics-1";
+
 /// A reduced size of a block's thumbnail.
 ///
 /// `Micro` covers a 32-logical-pixel node or sidebar cell at double density;
@@ -48,6 +52,7 @@ pub struct VaultLayout {
     root: PathBuf,
     derived_root: PathBuf,
     write_layout: VaultWriteLayout,
+    index_path: Option<PathBuf>,
 }
 
 impl VaultLayout {
@@ -58,6 +63,7 @@ impl VaultLayout {
             root,
             derived_root,
             write_layout,
+            index_path: None,
         }
     }
 
@@ -67,6 +73,7 @@ impl VaultLayout {
             root,
             derived_root,
             write_layout,
+            index_path: None,
         }
     }
 
@@ -212,9 +219,22 @@ impl VaultLayout {
         self.legacy_arena_dir().join("index.db")
     }
 
-    /// Path to the SQLite index in the local derived store.
+    /// Isolated directory for the current compatibility generation.
+    pub fn index_generation_dir(&self) -> PathBuf {
+        self.derived_root.join("indexes").join(INDEX_GENERATION)
+    }
+
+    /// Pin the slot selected by the shared storage resolver for this session.
+    pub fn with_index_db_path(mut self, path: PathBuf) -> Self {
+        self.index_path = Some(path);
+        self
+    }
+
+    /// Path to the SQLite index, never the shared index used before B0.
     pub fn index_db_path(&self) -> PathBuf {
-        self.derived_root.join("index.db")
+        self.index_path
+            .clone()
+            .unwrap_or_else(|| self.index_generation_dir().join("index.db"))
     }
 
     /// Path to the legacy thumbnails directory inside the vault:
@@ -465,7 +485,7 @@ mod tests {
     fn index_db_path() {
         assert_eq!(
             layout().index_db_path(),
-            PathBuf::from("/vault/.mine/index.db")
+            PathBuf::from("/vault/.mine/indexes/schema-5-semantics-1/index.db")
         );
     }
 
@@ -540,7 +560,7 @@ mod tests {
         assert_eq!(layout.derived_root(), Path::new("/local-derived/vault-123"));
         assert_eq!(
             layout.index_db_path(),
-            PathBuf::from("/local-derived/vault-123/index.db")
+            PathBuf::from("/local-derived/vault-123/indexes/schema-5-semantics-1/index.db")
         );
         assert_eq!(
             layout.legacy_index_db_path(),
@@ -606,12 +626,18 @@ mod tests {
     #[test]
     fn folder_names_do_not_choose_write_destinations() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(VaultLayout::new(dir.path().to_path_buf()).write_layout(), &VaultWriteLayout::flat());
+        assert_eq!(
+            VaultLayout::new(dir.path().to_path_buf()).write_layout(),
+            &VaultWriteLayout::flat()
+        );
 
         std::fs::create_dir_all(dir.path().join("Cards")).unwrap();
         std::fs::create_dir_all(dir.path().join("Media")).unwrap();
         std::fs::create_dir_all(dir.path().join("Collections")).unwrap();
-        assert_eq!(VaultLayout::new(dir.path().to_path_buf()).write_layout(), &VaultWriteLayout::flat());
+        assert_eq!(
+            VaultLayout::new(dir.path().to_path_buf()).write_layout(),
+            &VaultWriteLayout::flat()
+        );
     }
 
     #[test]

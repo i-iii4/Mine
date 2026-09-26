@@ -58,6 +58,7 @@ pub fn schedule_preview_reconcile<I>(
 where
     I: IntoIterator<Item = String>,
 {
+    let write=crate::storage::source_mutation::begin_write().map_err(|error|CommandError::Internal(error.to_string()))?;
     let state = app.state::<AppState>();
     if !state.is_current_vault(vault.root()) {
         return Ok(());
@@ -98,7 +99,7 @@ where
     let app_for_worker = app.clone();
     let spawn = std::thread::Builder::new()
         .name("derived-preview-reconcile".to_string())
-        .spawn(move || preview_worker_loop(app_for_worker));
+        .spawn(move || {let _write=write;preview_worker_loop(app_for_worker)});
     if let Err(error) = spawn {
         let mut queue = state
             .preview_reconcile
@@ -114,6 +115,9 @@ where
 }
 
 fn preview_worker_loop(app: AppHandle) {
+    let Ok(_write) = crate::storage::source_mutation::begin_write() else {
+        return;
+    };
     loop {
         let work = {
             let state = app.state::<AppState>();

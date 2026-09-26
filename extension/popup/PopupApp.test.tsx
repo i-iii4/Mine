@@ -8,7 +8,8 @@ const { state } = vi.hoisted(() => ({ state: {
   state: "main", saveMode: "app", currentType: "content", articleExtractionState: "ready",
   metadata: { url: "https://x.com/home", title: "Repost", selection: "", detectedType: "content", image: null as string | null },
   articleData: { content: "sketching the landscape", threadWarning: "Open the original X post to collect its thread.", embeddedVideos: [] as EmbeddedVideoPreview[] },
-  channels: [], selectedTags: [], saving: false, nativeStatusError: null,
+  channels: [], selectedTags: [], saving: false, draftReady: true, nativeStatusError: null,
+  channelsLoading: false, channelsError: null as string | null, retryChannels: vi.fn(),
   save: vi.fn(), setCurrentType: vi.fn(), toggleTag: vi.fn(), createChannel: vi.fn(),
 } }));
 vi.mock("./hooks/useClipperState", () => ({ useClipperState: () => state }));
@@ -16,12 +17,46 @@ import { PopupApp } from "./PopupApp";
 
 beforeEach(() => {
   state.save.mockReset();
+  state.channelsLoading = false;
+  state.channelsError = null;
+  state.retryChannels.mockReset();
+  state.draftReady = true;
   state.articleData.content = "sketching the landscape";
   state.articleData.embeddedVideos = [];
   state.metadata.url = "https://x.com/home";
   state.metadata.image = null;
 });
 describe("clipper preview", () => {
+  it("distinguishes loading collections from an empty collection list", () => {
+    state.channelsLoading = true;
+    render(<PopupApp />);
+    expect(screen.getByText("Loading collections...")).toBeInTheDocument();
+    expect(screen.queryByText("No collections")).not.toBeInTheDocument();
+  });
+  it("offers retry on collection failure without blocking saving", () => {
+    state.channelsError = "Could not load collections.";
+    render(<PopupApp />);
+    expect(screen.getByText(state.channelsError)).toBeInTheDocument();
+    expect(screen.queryByText("No collections")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(state.retryChannels).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+  });
+  it("shows an empty list only after a successful load", () => {
+    render(<PopupApp />);
+    expect(screen.getByText("No collections")).toBeInTheDocument();
+  });
+  it("enables Save only after the durable draft has restored", () => {
+    state.draftReady = false;
+    const view = render(<PopupApp />);
+    const button = screen.getByRole("button", { name: "Save", exact: true });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(state.save).not.toHaveBeenCalled();
+    state.draftReady = true;
+    view.rerender(<PopupApp />);
+    expect(screen.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+  });
   it("shows each X video's own poster and never substitutes the page promo image", () => {
     state.metadata.url = "https://x.com/artist/status/123";
     state.metadata.image = "https://example.com/x-promo.jpg";

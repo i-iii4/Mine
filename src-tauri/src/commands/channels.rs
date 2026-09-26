@@ -7,7 +7,9 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tauri::{AppHandle, State};
 
-use crate::commands::state::{current_vault_layout, ensure_vault_fresh, AppState, CommandError};
+use crate::commands::state::{
+    current_vault_layout, ensure_vault_fresh, read_owned_projection, AppState, CommandError,
+};
 use crate::commands::tags::patch_collections_frontmatter;
 use crate::domain::block::{
     parse_markdown_document, serialize_block, Block, BlockType, DateTime, Frontmatter,
@@ -15,8 +17,10 @@ use crate::domain::block::{
 use crate::domain::channel::Channel;
 use crate::domain::collection::{normalize_collection_ref, validate_collection_ref};
 use crate::domain::vault::VaultLayout;
+#[cfg(test)]
+use crate::storage::db;
 use crate::storage::source_mutation::{SourceFileWrite, SourceMutationError, StagedSourceMutation};
-use crate::storage::{db, files, index, projection};
+use crate::storage::{files, index, projection};
 use crate::util::append_startup_trace;
 
 const SOURCE_MUTATION_WATCHER_SUPPRESSION_MS: u64 = 1500;
@@ -69,11 +73,10 @@ pub async fn list_channels(
     append_startup_trace(&app, "list_channels", "start");
     let vault = current_vault_layout(&state)?;
     ensure_vault_fresh(&app, vault.clone()).await?;
-    let db_path = vault.index_db_path();
+    let app_for_query = app.clone();
     let dtos =
         tauri::async_runtime::spawn_blocking(move || -> Result<Vec<ChannelDto>, CommandError> {
-            let conn = db::open_read_only(&db_path)?;
-            Ok(load_channels(&conn)?)
+            read_owned_projection(&app_for_query, &vault, load_channels)
         })
         .await
         .map_err(|e| CommandError::Internal(format!("list_channels task join failed: {e}")))??;
@@ -90,21 +93,22 @@ pub async fn list_taxonomy_snapshot(
     append_startup_trace(&app, "list_taxonomy_snapshot", "start");
     let vault = current_vault_layout(&state)?;
     ensure_vault_fresh(&app, vault.clone()).await?;
-    let db_path = vault.index_db_path();
+    let app_for_query = app.clone();
     let snapshot =
         tauri::async_runtime::spawn_blocking(move || -> Result<TaxonomySnapshot, CommandError> {
-            let conn = db::open_read_only(&db_path)?;
-            Ok(projection::read_projection_snapshot(
-                &conn,
-                |conn, generation| {
-                    Ok(TaxonomySnapshot {
-                        generation,
-                        tags: index::get_all_tags(conn)?,
-                        channels: load_channels(conn)?,
-                        total_blocks: index::count_grid_blocks(conn)?,
-                    })
-                },
-            )?)
+            read_owned_projection(&app_for_query, &vault, |conn| {
+                Ok(projection::read_projection_snapshot(
+                    conn,
+                    |conn, generation| {
+                        Ok(TaxonomySnapshot {
+                            generation,
+                            tags: index::get_all_tags(conn)?,
+                            channels: load_channels(conn)?,
+                            total_blocks: index::count_grid_blocks(conn)?,
+                        })
+                    },
+                )?)
+            })
         })
         .await
         .map_err(|e| {
@@ -526,47 +530,47 @@ pub async fn list_channel_previews(
 ) -> Result<ChannelPreviewsSnapshot, CommandError> {
     let vault = current_vault_layout(&state)?;
     ensure_vault_fresh(&app, vault.clone()).await?;
-    let db_path = vault.index_db_path();
     tauri::async_runtime::spawn_blocking(
         move || -> Result<ChannelPreviewsSnapshot, CommandError> {
-            let conn = db::open_read_only(&db_path)?;
-            Ok(projection::read_projection_snapshot(
-                &conn,
-                |conn, generation| {
-                    let tags = index::get_all_tags(conn)?;
-                    let all_previews = index::list_preview_blocks(conn, limit)?;
-                    let per_tag_previews = index::list_preview_blocks_by_tag(conn, limit)?;
+            read_owned_projection(&app, &vault, |conn| {
+                Ok(projection::read_projection_snapshot(
+                    conn,
+                    |conn, generation| {
+                        let tags = index::get_all_tags(conn)?;
+                        let all_previews = index::list_preview_blocks(conn, limit)?;
+                        let per_tag_previews = index::list_preview_blocks_by_tag(conn, limit)?;
 
-                    let to_item = |preview: &index::PreviewBlock| -> PreviewItem {
-                        PreviewItem {
-                            slug: preview.slug.clone(),
-                            // Text-ness comes from the preview manifest, not
-                            // from the thumbnail's format: a transparent
-                            // picture is stored as PNG as well.
-                            text: preview.is_text,
-                            mtime: preview.thumb_mtime,
-                            has_thumb: preview.thumb_format.is_some(),
+                        let to_item = |preview: &index::PreviewBlock| -> PreviewItem {
+                            PreviewItem {
+                                slug: preview.slug.clone(),
+                                // Text-ness comes from the preview manifest, not
+                                // from the thumbnail's format: a transparent
+                                // picture is stored as PNG as well.
+                                text: preview.is_text,
+                                mtime: preview.thumb_mtime,
+                                has_thumb: preview.thumb_format.is_some(),
+                            }
+                        };
+
+                        let mut previews = HashMap::new();
+                        previews.insert(
+                            "__all__".to_string(),
+                            all_previews.iter().map(to_item).collect(),
+                        );
+                        for (tag, items) in per_tag_previews {
+                            previews.insert(tag, items.iter().map(to_item).collect());
                         }
-                    };
+                        for tag in &tags {
+                            previews.entry(tag.tag.clone()).or_default();
+                        }
 
-                    let mut previews = HashMap::new();
-                    previews.insert(
-                        "__all__".to_string(),
-                        all_previews.iter().map(to_item).collect(),
-                    );
-                    for (tag, items) in per_tag_previews {
-                        previews.insert(tag, items.iter().map(to_item).collect());
-                    }
-                    for tag in &tags {
-                        previews.entry(tag.tag.clone()).or_default();
-                    }
-
-                    Ok(ChannelPreviewsSnapshot {
-                        generation,
-                        previews,
-                    })
-                },
-            )?)
+                        Ok(ChannelPreviewsSnapshot {
+                            generation,
+                            previews,
+                        })
+                    },
+                )?)
+            })
         },
     )
     .await

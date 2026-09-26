@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import {
   mkdirSync,
   readFileSync,
@@ -55,11 +56,24 @@ export function treeComponentManifest(root) {
   return { sha256: hash.digest('hex'), bytes: totalBytes };
 }
 
-export function createRuntimeManifest({ appVersion, buildProfile, nativeHost, extension, ytdlp }) {
+export function probeNativeHost(nativeHost, appVersion, timeout = 5000) {
+  const result = spawnSync(nativeHost, ['--runtime-probe'], { encoding: 'utf8', timeout, maxBuffer: 65536 });
+  if (result.error || result.status !== 0) throw new Error(`native helper probe failed: ${result.error?.message ?? result.status}`);
+  const identity = JSON.parse(result.stdout);
+  if (identity.schema_version !== 1 || identity.version !== appVersion
+      || !/^[a-fA-F0-9]{64}$/.test(identity.build_id ?? '')
+      || !Array.isArray(identity.save_protocols) || !identity.save_protocols.includes(1)) {
+    throw new Error('native helper probe identity or baseline protocol differs from package');
+  }
+  return identity;
+}
+
+export function createRuntimeManifest({ appVersion, buildProfile, nativeHost, nativeHostBuildId, extension, ytdlp }) {
   return {
     schema_version: 1,
     build_profile: buildProfile,
     app_version: appVersion,
+    native_host_build_id: nativeHostBuildId ?? null,
     native_host: fileComponentManifest(nativeHost),
     extension: treeComponentManifest(extension),
     ytdlp: ytdlp ? fileComponentManifest(ytdlp) : null,
@@ -71,10 +85,13 @@ function main() {
   const cargoTarget = resolve(process.env.CARGO_TARGET_DIR ?? join(projectRoot, 'target'));
   const tauriConfig = JSON.parse(readFileSync(join(projectRoot, 'src-tauri/tauri.conf.json'), 'utf8'));
   const output = join(projectRoot, 'build/clipper-runtime-manifest.json');
+  const nativeHost = join(cargoTarget, profile, 'native-host');
+  const identity = probeNativeHost(nativeHost, tauriConfig.version);
   const manifest = createRuntimeManifest({
     appVersion: tauriConfig.version,
     buildProfile: profile,
-    nativeHost: join(cargoTarget, profile, 'native-host'),
+    nativeHost,
+    nativeHostBuildId: identity.build_id,
     extension: join(projectRoot, 'build/clipper-extension'),
     ytdlp: join(projectRoot, 'src-tauri/binaries/yt-dlp'),
   });

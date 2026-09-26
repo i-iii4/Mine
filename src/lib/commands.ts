@@ -57,6 +57,7 @@ import type {
   CommandError,
   IcloudDownloadProgress,
   CloudRecommendationState,
+  UpdateStatus,
 } from "@/types";
 
 function isCommandError(error: unknown): error is CommandError {
@@ -110,6 +111,7 @@ export type StartupMilestone =
   | "window_shell_painted"
   | "first_route_committed"
   | "first_cards_painted"
+  | "update_ready"
   | "interactive";
 
 export const recordStartupMilestone = (event: StartupMilestone) =>
@@ -580,3 +582,9 @@ export const spaceStats = (path: string) =>
 
 export const reorderKnownVaults = (paths: string[]) =>
   invoke<string[]>("reorder_known_vaults", { paths });
+
+export const getUpdateStatus = () => invoke<UpdateStatus>("get_update_status");
+export const checkForUpdates = () => invoke<UpdateStatus>("check_for_updates");
+export const downloadUpdate = () => invoke<UpdateStatus>("download_update");
+export const installUpdate = () => invoke<UpdateStatus>("install_update");
+export const restorePreviousUpdate = () => invoke<UpdateStatus>("restore_previous_update");

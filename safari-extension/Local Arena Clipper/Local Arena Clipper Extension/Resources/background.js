@@ -20,9 +20,10 @@
 // Standalone writing engine (О1–О4): saves clips straight to the granted
 // folder when the native host is not there. Classic script, attaches to
 // globalThis — the same convention every lib/ file follows.
-importScripts("generated/save-core/mine_core.js", "lib/mineCore.js", "lib/standaloneVault.js");
+importScripts("generated/save-core/mine_core.js", "lib/mineCore.js", "lib/saveProtocol.js", "lib/standaloneVault.js");
+importScripts("lib/draftStore.js");
 
-const HOST_NAME = "com.localarena.clipper";
+const HOST_NAME = "com.mine.clipper.v1";
 // Must match extension/popup/popup-layout.css body { width: 360px }
 // so detached window has no horizontal gap next to the content.
 const POPUP_DEFAULT_WIDTH = 360;
@@ -687,6 +688,36 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       { url: "https://github.com/i-iii4/Mine/releases" },
       callback,
     ));
+    return true;
+  }
+
+  if (msg.action === "clipperHandshake") {
+    const supported = Array.isArray(msg.save_protocols) && msg.save_protocols.includes(1)
+      && !globalThis.MineSaveProtocol.validate({ required_capabilities: msg.required_capabilities });
+    Promise.resolve().then(async () => {
+      let identity = { buildId: "unbuilt", commit: "unknown" };
+      try {
+        const response = await fetch(chrome.runtime.getURL("dist/runtime-identity.json"));
+        if (!response.ok) throw new Error("runtime identity is unavailable");
+        const value = await response.json();
+        if (typeof value.buildId === "string" && typeof value.commit === "string") identity = value;
+      } catch (error) {
+        console.warn("[Mine] runtime identity unavailable:", String(error.message ?? error));
+      }
+      sendResponse({ ok: supported, save_protocols: [1], features: ["save_operation_v1", "operation_lookup_v1"],
+        build_id: identity.buildId, commit: identity.commit,
+        ...(supported ? {} : { code: "incompatible_protocol", error: "This Mine widget uses an unsupported protocol. Its saved draft has been preserved. Reload the page to open the current widget." }) });
+    }).catch(error => sendResponse(extensionBackgroundFailure(error)));
+    return true;
+  }
+
+  if (["draftRead", "draftWrite", "draftClear"].includes(msg.action)) {
+    const store = globalThis.MineDraftStore;
+    const operation = msg.action === "draftRead" ? store.read(msg.sourceUrl)
+      : msg.action === "draftWrite" ? store.write(msg.sourceUrl, msg.draft, msg.expectedRevision)
+      : store.clear(msg.sourceUrl, msg.draftId, msg.expectedRevision);
+    operation.then(draft => sendResponse({ ok: true, draft: draft ?? null }),
+      error => sendResponse({ ok: false, code: error.code ?? "draft_storage_failed", error: String(error.message ?? error) }));
     return true;
   }
 

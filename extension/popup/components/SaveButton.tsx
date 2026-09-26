@@ -7,9 +7,10 @@ interface SaveButtonProps {
   state: SaveButtonState;
   onClick: () => void;
   checkingOutcome?: boolean;
+  disabled?: boolean;
 }
 
-export function SaveButton({ count, state, onClick, checkingOutcome = false }: SaveButtonProps) {
+export function SaveButton({ count, state, onClick, checkingOutcome = false, disabled = false }: SaveButtonProps) {
   if (state === "saving") {
     // Indeterminate progress bar replaces the button while save is in
     // flight. Native host doesn't report percentage, so we animate a
@@ -36,7 +37,7 @@ export function SaveButton({ count, state, onClick, checkingOutcome = false }: S
     count === 0 ? "Save" : count === 1 ? "Save to 1 collection" : `Save to ${count} collections`;
 
   return (
-    <Button size="clipper" onClick={onClick} className="w-full">
+    <Button size="clipper" onClick={onClick} disabled={disabled} className="w-full">
       <span>{label}</span>
     </Button>
   );

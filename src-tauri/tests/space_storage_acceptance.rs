@@ -56,7 +56,8 @@ impl SpaceFixture {
     fn reconcile(&self) {
         let vault = self.layout();
         let conn = db::open_or_create(&vault.index_db_path()).expect("open derived index");
-        let report = reconcile::reconcile_vault(&conn, &vault).expect("reconcile source space");
+        let report = reconcile::reconcile_runtime_vault_with_progress(&conn, &vault, &|_, _| {})
+            .expect("reconcile runtime source space");
         assert!(report.is_fresh(), "source errors: {:?}", report.errors);
     }
 }
@@ -115,6 +116,10 @@ fn corrupt_history_does_not_block_unique_source_repair() {
     space.move_file("Media/photo.jpg", "Assets/photo.jpg");
     space.reconcile();
     let source = fs::read_to_string(space.path("Cards/Card.md")).expect("source after repair");
+    assert_eq!(
+        fs::read(space.path(".mine/file-identity.json")).expect("preserved history"),
+        b"{broken json"
+    );
     assert!(source.contains("[[photo.jpg]]"));
     assert_source_path(
         &media_bytes_for_card(&space.layout(), "Cards/Card").0,

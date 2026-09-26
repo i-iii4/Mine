@@ -6,7 +6,7 @@
 use tauri::{AppHandle, State};
 
 use crate::commands::state::{current_vault_layout, ensure_vault_fresh, AppState, CommandError};
-use crate::storage::{db, vault_stats};
+use crate::storage::vault_stats;
 use crate::util::append_startup_trace;
 
 #[tauri::command(rename_all = "snake_case")]
@@ -18,15 +18,16 @@ pub async fn get_vault_stats(
     append_startup_trace(&app, "get_vault_stats", "start");
     let vault = current_vault_layout(&state)?;
     ensure_vault_fresh(&app, vault.clone()).await?;
-    let db_path = vault.index_db_path();
+    let app_for_query = app.clone();
     let stats = tauri::async_runtime::spawn_blocking(
         move || -> Result<vault_stats::VaultStats, CommandError> {
-            let conn = db::open_read_only(&db_path)?;
-            Ok(vault_stats::get_vault_stats(
-                &conn,
-                &vault,
-                current_collection.as_deref(),
-            )?)
+            super::state::read_owned_projection(&app_for_query, &vault, |conn| {
+                Ok(vault_stats::get_vault_stats(
+                    conn,
+                    &vault,
+                    current_collection.as_deref(),
+                )?)
+            })
         },
     )
     .await

@@ -114,6 +114,7 @@ pub fn full_scan(
     on_thumbs_done: Option<Box<dyn FnOnce() + Send>>,
     app: Option<AppHandle>,
 ) -> Result<ScanResult> {
+    let _write = crate::storage::source_mutation::begin_write()?;
     reconcile_scan(conn, vault, on_thumbs_done, app, "full")
 }
 
@@ -266,6 +267,7 @@ fn spawn_thumb_jobs_worker(
     match std::thread::Builder::new()
         .name(format!("thumb-gen-{label}"))
         .spawn(move || {
+            let Ok(_write)=crate::storage::source_mutation::begin_write() else {return;};
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let metadata_conn = db::open_or_create(&vault.index_db_path())
                     .map_err(|e| {
@@ -530,6 +532,9 @@ pub fn index_md_file(
         std::thread::Builder::new()
             .name(format!("thumb-{}", &slug))
             .spawn(move || {
+                let Ok(_write) = crate::storage::source_mutation::begin_write() else {
+                    return;
+                };
                 let source = thumbnails::generate_for_block(&job.block, &vault);
                 let upgrade = match db::open_or_create(&vault.index_db_path()) {
                     Ok(conn) => {
@@ -907,6 +912,7 @@ pub fn handle_event(
     app: Option<&AppHandle>,
 ) -> Result<bool> {
     // Before any dispatch, commit removals whose rename-match window
+    let _write = crate::storage::source_mutation::begin_write()?;
     // expired. Keeps the pending queue bounded and ensures deferred
     // deletes are eventually visible to the frontend.
     for expired in drain_expired_pending(vault) {
@@ -957,7 +963,11 @@ pub fn handle_event(
             }
         }
         VaultEvent::MediaChanged(path) => {
-            crate::storage::reconcile::reconcile_vault(conn, vault)?;
+            crate::storage::reconcile::reconcile_runtime_vault_with_progress(
+                conn,
+                vault,
+                &|_, _| {},
+            )?;
             let ext = path
                 .extension()
                 .and_then(|e| e.to_str())
@@ -1456,7 +1466,8 @@ mod tests {
             "---\ntype: image\nfile: \"[[Media/original.jpg]]\"\n---\n",
         )
         .unwrap();
-        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        crate::storage::reconcile::reconcile_runtime_vault_with_progress(&conn, &vault, &|_, _| {})
+            .unwrap();
 
         std::fs::create_dir_all(dir.path().join("Other")).unwrap();
         std::fs::write(dir.path().join("Other/original.jpg"), b"different").unwrap();

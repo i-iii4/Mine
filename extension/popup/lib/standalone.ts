@@ -10,6 +10,7 @@
 
 import "../../lib/standaloneVault.js";
 import { extensionTransportFailure, type ChannelInfo, type NativeResponse } from "./messaging";
+import { validateSaveRequest } from "./protocol";
 
 export type StandaloneMode = "app" | "standalone" | "unconfigured";
 
@@ -58,6 +59,8 @@ export function getStandaloneStatus(): Promise<StandaloneStatus> {
 }
 
 export function standaloneSave(payload: Record<string, unknown>): Promise<NativeResponse> {
+  const rejection = validateSaveRequest(payload);
+  if (rejection) return Promise.resolve(rejection);
   return toBackground<NativeResponse>({ action: "standaloneSave", payload });
 }
 

@@ -17,6 +17,7 @@ pub struct ThumbnailSweepCoordinator {
 pub struct SweepGuard {
     state: Arc<Mutex<ThumbnailSweepState>>,
     vault_root: PathBuf,
+    _write: crate::storage::source_mutation::SourceWriteLease,
 }
 
 impl Drop for SweepGuard {
@@ -32,6 +33,7 @@ impl ThumbnailSweepCoordinator {
     /// Claim one sweep. Same-vault requests coalesce and the latest different
     /// vault is retained as a single pending pass.
     pub fn try_start(&self, vault: &VaultLayout) -> Option<SweepGuard> {
+        let write = crate::storage::source_mutation::begin_write().ok()?;
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         if let Some(running) = state.running_vault.as_deref() {
             if running != vault.root() {
@@ -44,6 +46,7 @@ impl ThumbnailSweepCoordinator {
         Some(SweepGuard {
             state: Arc::clone(&self.state),
             vault_root: vault.root().to_path_buf(),
+            _write: write,
         })
     }
 

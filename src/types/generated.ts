@@ -454,6 +454,21 @@ export type UnavailableVaultReason =
  */
 "access_denied"
 
+/**
+ * Failures are distinct; a signed staged archive is never reported as installed.
+ */
+export type UpdateError = { kind: "disabled" } | { kind: "configuration"; detail: string } | { kind: "busy" } | { kind: "no_update" } | { kind: "transport"; detail: string } | { kind: "signature"; detail: string } | { kind: "storage"; detail: string } | { kind: "journal"; detail: string } | { kind: "archive_changed" } | { kind: "activation"; detail: string }
+
+/**
+ * Persisted download lifecycle, separate from installation and activation.
+ */
+export type UpdateStage = "disabled" | "idle" | "checking" | "available" | "downloading" | "verified" | "installing" | "restarting" | "activated" | "rolled_back" | "recovery_required" | "failed"
+
+/**
+ * Content-free updater status for local diagnostics and a future settings UI.
+ */
+export type UpdateStatus = { stage: UpdateStage; version: string | null; notes: string | null; downloaded_bytes: number; total_bytes: number | null; archive_sha256: string | null; error: UpdateError | null; activation_available: boolean }
+
 export type VaultOpenResult = { indexed: number; errors: number; sync_in_progress: boolean; derived_store_ready: boolean; bootstrapped_from_legacy: boolean; migration_required: boolean; thumbs_root: string }
 
 export type VaultStats = { totalFileCount: number; markdownFileCount: number; mediaFileCount: number; sourceBytes: number; currentCollectionCardCount: number; currentCollection: string | null; updatedAtMs: number }

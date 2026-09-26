@@ -81,6 +81,7 @@ vi.mock("@/lib/commands", () => ({
   firstCardMarkerPending: vi.fn(async () => false),
   completeFirstCardMarker: vi.fn(async () => null),
   getVaultPath: commandMocks.getVaultPath,
+  getUnavailableVault: vi.fn(async () => null),
   createBlock: commandMocks.createBlock,
   readClipboardPayload: commandMocks.readClipboardPayload,
   openVault: commandMocks.openVault,
@@ -771,6 +772,35 @@ describe("AppWithVault", () => {
     expect(commandMocks.recordStartupMilestone).toHaveBeenCalledWith("first_route_committed");
     expect(commandMocks.recordStartupMilestone).toHaveBeenCalledWith("first_cards_painted");
     expect(commandMocks.recordStartupMilestone).toHaveBeenCalledWith("interactive");
+    expect(commandMocks.recordStartupMilestone).toHaveBeenCalledWith("update_ready");
+  });
+
+  it("never accepts a failed space load as a healthy updated app", async () => {
+    vi.mocked(isTauri).mockReturnValue(true);
+    commandMocks.openVault.mockRejectedValue(new Error("database schema is newer than supported"));
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await screen.findByText("database schema is newer than supported");
+    await waitFor(() => expect(commandMocks.recordStartupMilestone).toHaveBeenCalledWith("interactive"));
+    expect(commandMocks.recordStartupMilestone).not.toHaveBeenCalledWith("update_ready");
+  });
+
+  it("never accepts a failed initial selection read as a healthy updated app", async () => {
+    vi.mocked(isTauri).mockReturnValue(true);
+    commandMocks.getVaultPath.mockRejectedValue(new Error("selection unreadable"));
+    render(<MemoryRouter><App /></MemoryRouter>);
+    await waitFor(() => expect(commandMocks.recordStartupMilestone).toHaveBeenCalledWith("interactive"));
+    expect(commandMocks.recordStartupMilestone).not.toHaveBeenCalledWith("update_ready");
+  });
+
+  it("accepts a healthy app with no configured space", async () => {
+    vi.mocked(isTauri).mockReturnValue(true);
+    commandMocks.getVaultPath.mockResolvedValue(null);
+    render(<MemoryRouter><App /></MemoryRouter>);
+    await waitFor(() => expect(commandMocks.recordStartupMilestone).toHaveBeenCalledWith("update_ready"));
   });
 
   it("keeps the first route usable while startup maintenance is still pending", async () => {

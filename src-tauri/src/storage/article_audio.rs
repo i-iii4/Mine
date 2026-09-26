@@ -63,6 +63,7 @@ pub fn absent_state() -> ArticleAudioState {
 }
 
 pub fn ensure_audio_dir(vault: &VaultLayout) -> Result<()> {
+    let _write = crate::storage::source_mutation::begin_write()?;
     std::fs::create_dir_all(vault.audio_dir()).with_context(|| {
         format!(
             "failed to create article audio dir: {}",
@@ -102,6 +103,7 @@ pub fn resolve_state_for_prepared(
     slug: &str,
     prepared: &PreparedArticleSpeech,
 ) -> Result<ArticleAudioState> {
+    let _write = crate::storage::source_mutation::begin_write()?;
     ensure_audio_dir(vault)?;
     let Some(stored) = read_stored_state(vault, slug)? else {
         return Ok(absent_state());
@@ -236,6 +238,7 @@ pub fn update_playback_position(
 }
 
 pub fn delete_all_artifacts(vault: &VaultLayout, slug: &str) -> Result<bool> {
+    let _write = crate::storage::source_mutation::begin_write()?;
     let mut removed = false;
     let state_path = vault.article_audio_state_path(slug);
     if state_path.exists() {
@@ -267,6 +270,7 @@ pub fn delete_all_artifacts(vault: &VaultLayout, slug: &str) -> Result<bool> {
 }
 
 pub fn rename_all_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str) -> Result<bool> {
+    let _write = crate::storage::source_mutation::begin_write()?;
     if old_slug == new_slug {
         return Ok(false);
     }

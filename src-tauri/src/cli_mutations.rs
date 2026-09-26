@@ -71,11 +71,7 @@ fn saved_at_of(content: &str) -> Option<String> {
 }
 
 /// Every guard a patched card must clear before it may touch the disk.
-fn verify_patched(
-    slug: &str,
-    old_content: &str,
-    new_content: &str,
-) -> Result<(), MutationError> {
+fn verify_patched(slug: &str, old_content: &str, new_content: &str) -> Result<(), MutationError> {
     // Front matter cannot disappear.
     if frontmatter_span(old_content).is_some() && frontmatter_span(new_content).is_none() {
         return Err(MutationError::Refused(
@@ -111,12 +107,20 @@ fn guarded_write(
     summary: String,
     dry_run: bool,
 ) -> Result<MutationOutcome, MutationError> {
+    let _write = crate::storage::source_mutation::begin_write()
+        .map_err(|error| MutationError::Internal(error.to_string()))?;
     if old_content == new_content {
-        return Ok(MutationOutcome { summary: "no change".into(), dry_run: true });
+        return Ok(MutationOutcome {
+            summary: "no change".into(),
+            dry_run: true,
+        });
     }
     verify_patched(slug, old_content, new_content)?;
     if dry_run {
-        return Ok(MutationOutcome { summary: format!("would apply: {summary}"), dry_run: true });
+        return Ok(MutationOutcome {
+            summary: format!("would apply: {summary}"),
+            dry_run: true,
+        });
     }
     let backup = backup_path(vault, slug);
     if let Some(parent) = backup.parent() {
@@ -127,13 +131,19 @@ fn guarded_write(
         .map_err(|e| MutationError::Internal(format!("backup write: {e}")))?;
     write_atomically(path, new_content.as_bytes())
         .map_err(|e| MutationError::Internal(format!("write: {e:#}")))?;
-    Ok(MutationOutcome { summary, dry_run: false })
+    Ok(MutationOutcome {
+        summary,
+        dry_run: false,
+    })
 }
 
 /// yaml_quote lives in domain::block privately; the CLI reuses the same rules
 /// through serialization of a single field line.
 fn yaml_field_line(field: &str, value: &str) -> String {
-    format!("{field}: {}", crate::domain::block::yaml_quote_public(value))
+    format!(
+        "{field}: {}",
+        crate::domain::block::yaml_quote_public(value)
+    )
 }
 
 /// Set or replace one known front-matter field, byte-surgically.
@@ -165,7 +175,10 @@ pub fn set_field(
     match (existing, value) {
         (Some(i), Some(v)) => {
             new_line = yaml_field_line(field, v);
-            summary = format!("{field}: {:?} -> {v:?}", lines[i].trim_start_matches(&prefix).trim());
+            summary = format!(
+                "{field}: {:?} -> {v:?}",
+                lines[i].trim_start_matches(&prefix).trim()
+            );
             lines[i] = &new_line;
         }
         (None, Some(v)) => {
@@ -174,11 +187,17 @@ pub fn set_field(
             lines.push(&new_line);
         }
         (Some(i), None) => {
-            summary = format!("{field}: {:?} -> (absent)", lines[i].trim_start_matches(&prefix).trim());
+            summary = format!(
+                "{field}: {:?} -> (absent)",
+                lines[i].trim_start_matches(&prefix).trim()
+            );
             lines.remove(i);
         }
         (None, None) => {
-            return Ok(MutationOutcome { summary: format!("{field} already absent"), dry_run: true });
+            return Ok(MutationOutcome {
+                summary: format!("{field} already absent"),
+                dry_run: true,
+            });
         }
     }
     let new_fm = lines.join("\n");
@@ -202,7 +221,10 @@ pub fn set_body(
     let (old_body_start, old_body) = match frontmatter_span(&content) {
         Some((_, end)) => {
             // Past the closing fence line.
-            let after = content[end..].find('\n').map(|i| end + i + 1).unwrap_or(content.len());
+            let after = content[end..]
+                .find('\n')
+                .map(|i| end + i + 1)
+                .unwrap_or(content.len());
             let after = content[after..]
                 .find('\n')
                 .map(|i| after + i + 1)
@@ -215,8 +237,10 @@ pub fn set_body(
     let old_embeds: Vec<String> = iter_inline_media_sources(old_body);
     let new_embeds: Vec<String> = iter_inline_media_sources(new_body);
     if !allow_media_changes {
-        let mut lost: Vec<&String> =
-            old_embeds.iter().filter(|e| !new_embeds.contains(e)).collect();
+        let mut lost: Vec<&String> = old_embeds
+            .iter()
+            .filter(|e| !new_embeds.contains(e))
+            .collect();
         lost.dedup();
         if !lost.is_empty() {
             return Err(MutationError::Refused(format!(
@@ -275,8 +299,8 @@ pub fn set_collection_membership(
         (false, true) => tags.push(collection_ref.clone()),
         (true, false) => tags.retain(|t| t != &collection_ref),
     }
-    let new_content = patch_collections_frontmatter(&content, &tags)
-        .map_err(MutationError::Internal)?;
+    let new_content =
+        patch_collections_frontmatter(&content, &tags).map_err(MutationError::Internal)?;
     let verb = if connected { "connect" } else { "disconnect" };
     guarded_write(
         vault,
@@ -291,6 +315,8 @@ pub fn set_collection_membership(
 
 /// Bring back the version saved before the last CLI mutation of this card.
 pub fn restore(vault: &VaultLayout, slug: &str) -> Result<MutationOutcome, MutationError> {
+    let _write = crate::storage::source_mutation::begin_write()
+        .map_err(|error| MutationError::Internal(error.to_string()))?;
     let backup = backup_path(vault, slug);
     let previous = std::fs::read_to_string(&backup)
         .map_err(|_| MutationError::NotFound(format!("no CLI backup for {slug}")))?;
@@ -301,5 +327,8 @@ pub fn restore(vault: &VaultLayout, slug: &str) -> Result<MutationOutcome, Mutat
         .map_err(|e| MutationError::Internal(format!("backup swap: {e}")))?;
     write_atomically(&path, previous.as_bytes())
         .map_err(|e| MutationError::Internal(format!("restore write: {e:#}")))?;
-    Ok(MutationOutcome { summary: format!("restored {slug} from the CLI backup"), dry_run: false })
+    Ok(MutationOutcome {
+        summary: format!("restored {slug} from the CLI backup"),
+        dry_run: false,
+    })
 }
