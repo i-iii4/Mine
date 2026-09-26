@@ -15,6 +15,13 @@ function response(tweets: ReturnType<typeof raw>[]) {
 const select = (tweets: ReturnType<typeof raw>[], target = "10") => api.select(api.page(response(tweets)).posts, target);
 
 describe("X author-chain contract", () => {
+  it("distinguishes complete extended media from a partial entity or unresolved player", () => {
+    const gif = { type: "animated_gif", media_url_https: "https://pbs.twimg.com/media/frame.jpg",
+      video_info: { variants: [{ content_type: "video/mp4", url: "https://video.twimg.com/tweet_video/gif.mp4" }] } };
+    expect(api.post(raw("10", null, "7", { extended_entities: { media: [gif] } }))).toMatchObject({ hasVideo: true, mediaComplete: true });
+    expect(api.post(raw("10", null, "7", { entities: { media: [gif] } }))).toMatchObject({ hasVideo: true, mediaComplete: false });
+    expect(api.post(raw("10", null, "7", { extended_entities: { media: [{ type: "video" }] } }))).toMatchObject({ hasVideo: true, mediaComplete: false, media: [] });
+  });
   it("ignores global discussion cursors when the four-part author chain is loaded", () => {
     const d = response([raw("10"), raw("11", "10"), raw("12", "11"), raw("13", "12")]);
     d.data.threaded_conversation_with_injections_v2.instructions[0].entries.push({ content: { __typename: "TimelineTimelineCursor", cursorType: "Bottom", value: "infinite-comments" } });

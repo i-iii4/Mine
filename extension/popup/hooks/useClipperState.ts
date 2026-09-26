@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { normalizeArticleMedia } from "../lib/normalizeArticleMedia";
+import { hydrateTwitterPosts } from "../lib/twitterMedia";
 
 /** Remove duplicate images from markdown by comparing alt text.
  *  If two images have identical alt text, the second is a duplicate (e.g. OG hero + body image). */
@@ -1394,6 +1395,17 @@ async function hydrateTwitterVideoPreviews(
   article: ArticleData,
 ): Promise<ArticleData> {
   if (!isTwitterStatusUrl(metadata.url)) return article;
+
+  if (article.twitterPosts) {
+    return hydrateTwitterPosts(article, {
+      publicMedia: (tweetId) => sendToNative({ action: "resolve_twitter_media", tweet_id: tweetId }),
+      authenticatedMedia: (tweetId) => chrome.runtime.sendMessage({
+        target: "background", action: "resolveAuthenticatedTweetVideo",
+        payload: { tweetUrl: `https://x.com/i/status/${tweetId}`, tweetId },
+      }),
+      frame: (src) => captureVideoUrlFrameDataUrl(src, firstEmbeddedVideoCurrentTime(article)),
+    });
+  }
 
   let response = await sendToNative({
     action: "resolve_twitter_media",

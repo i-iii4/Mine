@@ -218,6 +218,29 @@ describe("standalone mode decision", () => {
     expect(standalone.standaloneSave).toHaveBeenCalledTimes(1);
     expect(standalone.standaloneSave.mock.calls[0][0]).toMatchObject({ body: "part one" });
   });
+
+  it("saves both restricted X animations from the same recovered preview", async () => {
+    browserDestination();
+    const gif = "https://video.twimg.com/tweet_video/HTGOUI-a8AA8ROt.mp4";
+    const video = "https://video.twimg.com/amplify_video/2103618771441360896/vid/avc1/1280x720/SRz40Vsis3bFBscQ.mp4?tag=14";
+    const tweetId = "2103621844733714547";
+    threadArticle.value = { pageUrl: `https://x.com/GasprArt/status/${tweetId}`,
+      title: "Post", content: `Post\n\n![](${gif})`, byline: "@GasprArt", excerpt: "Post", threadPostCount: 1,
+      twitterPosts: [{ id: tweetId, text: "Post", media: [{ kind: "video", url: gif, poster: null }] }],
+    };
+    sendToNative.mockImplementation(async request => request.action === "resolve_twitter_media"
+      ? { ok: true, media: [] } : { ok: false, error: "No helper" });
+    vi.mocked(chrome.runtime.sendMessage).mockResolvedValue({ ok: true, media: [video, gif].map(src => ({
+      kind: "video", src, poster: "https://pbs.twimg.com/media/frame.jpg",
+    })) });
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.articleData?.embeddedVideos).toHaveLength(2));
+    const preview = result.current.articleData;
+    expect(preview?.embeddedVideos?.map(m => m.src)).toEqual([video, gif]);
+    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+    expect(standalone.standaloneSave.mock.calls[0][0].body).toBe(preview?.content);
+    expect(preview?.content).toBe(`Post\n\n![](${video})\n\n![](${gif})`);
+  });
   it.each(["browser", "native"])("sends a real UI timestamp accepted by shared WASM through %s", async (executor) => {
     // Keep nonzero milliseconds in the clock: hand-written seconds-only requests
     // would miss the UI/core contract failure this regression protects against.

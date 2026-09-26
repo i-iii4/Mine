@@ -19,8 +19,10 @@
     }
     const media = [];
     let incomplete = !!l.truncated && !note?.text;
+    let hasVideo = false;
     for (const m of l.extended_entities?.media || l.entities?.media || []) {
       const isVideo = m.type === "video" || m.type === "animated_gif";
+      hasVideo ||= isVideo;
       const variants = (m.video_info?.variants || []).filter(v => v.content_type === "video/mp4" && https(v.url));
       variants.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
       const url = https(isVideo ? variants[0]?.url : m.media_url_https);
@@ -31,9 +33,11 @@
     const quoted = t.quoted_status_result?.result;
     const quote = quoteDepth === 0 && quoted ? post(quoted, 1) : null;
     if (quoted && !quote || quote?.incomplete) incomplete = true;
+    const mediaComplete = Array.isArray(l.extended_entities?.media)
+      && media.length === l.extended_entities.media.length;
     return { id: t.rest_id || l.id_str, authorId: user.rest_id,
       handle: user.core?.screen_name || user.legacy?.screen_name || "",
-      parentId: id(l.in_reply_to_status_id_str), text: text.trim(), media, quote, incomplete };
+      parentId: id(l.in_reply_to_status_id_str), text: text.trim(), media, quote, incomplete, hasVideo, mediaComplete };
   }
   function page(data) {
     const instructions = data?.data?.threaded_conversation_with_injections_v2?.instructions;

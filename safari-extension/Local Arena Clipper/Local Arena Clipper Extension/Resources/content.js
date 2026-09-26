@@ -524,6 +524,7 @@
         const quoteText = cleanSyndicationText(data.quoted_tweet.text || "", quoteMedia);
         if (quoteText || quoteMedia.length > 0) {
           quotedTweet = {
+            tweetId: data.quoted_tweet.id_str || null,
             text: quoteText,
             media: quoteMedia.map((entry) => entry.url),
             mediaDetails: quoteMedia,
@@ -565,7 +566,7 @@
         }
       }
       const title = snapshot.posts[0].text.replace(/\n/g, " ").slice(0, 80) || `@${authorHandle}`;
-      return { title, content, byline: `@${authorHandle}`, excerpt: snapshot.posts[0].text.slice(0, 200),
+      return { title, content, twitterPosts: snapshot.posts, byline: `@${authorHandle}`, excerpt: snapshot.posts[0].text.slice(0, 200),
         embeddedVideos, threadWarning: snapshot.issues?.join(" ") || undefined,
         threadPostCount: snapshot.posts.length };
     }
@@ -618,8 +619,8 @@
           : "";
       const mainText = preferCompleteTweetText(contentParts.mainText, apiText);
       const text = composeTweetText(mainText, quotes);
-      if (text || finalMedia.length > 0) {
-        tweets.push({ text, media: finalMedia });
+      if (text || finalMedia.length > 0 || contentParts.hasVideo || quotes.some(quote => quote.hasVideo)) {
+        tweets.push({ text, mainText, quotes, media: finalMedia, hasVideo: contentParts.hasVideo });
       }
     }
 
@@ -691,7 +692,7 @@
     // has video the anonymous paths cannot see: the API answers with a
     // tombstone for age-restricted posts, and the DOM only carries a `blob:`
     // URL. Flag it so the save path can ask the authenticated route.
-    const hasPlayerInPage = !!targetArticle?.querySelector("video");
+    const hasPlayerInPage = !!tweets[0].hasVideo;
     // A preview entry with no `src` is exactly the case this path exists for:
     // the player runs off a blob: URL, so the entry carries a poster and
     // nothing fetchable. Counting entries would treat that as resolved.
@@ -700,8 +701,18 @@
       || apiMediaDetails.some((media) => media.kind === "video");
     const needsAuthenticatedVideo = hasPlayerInPage && !hasResolvedVideo;
 
+    const target = tweets[0];
+    const quote = target.quotes?.length === 1 && target.quotes[0].tweetId ? target.quotes[0] : null;
+    const structuredMedia = (urls, details = []) => urls.map(src => ({ url: src,
+      kind: isInlineVideoUrl(src) ? "video" : "image",
+      poster: details.find(media => media.url === src)?.poster || null }));
     return {
       title: tweetTitle,
+      twitterPosts: [{ id: tweetId, text: quote ? target.mainText : target.text,
+        media: structuredMedia(target.media || [], apiMediaDetails),
+        hasVideo: hasPlayerInPage,
+        quote: quote ? { id: quote.tweetId, text: quote.text,
+          media: structuredMedia(quote.media || [], quote.mediaDetails), hasVideo: !!quote.hasVideo } : null }],
       threadWarning,
       threadPostCount: 1,
       content: parts.join("\n\n"),

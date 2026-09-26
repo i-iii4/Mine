@@ -150,6 +150,7 @@
     const mainTextEl = firstTopLevelTweetText(article, rootIdentity);
     const mainText = mainTextEl ? tweetTextToMarkdown(mainTextEl).trim() : "";
     const media = [];
+    let hasVideo = false;
     const quoteGroups = new Map();
     const quoteOrder = [];
 
@@ -176,13 +177,17 @@
     }
 
     for (const video of article.querySelectorAll("video")) {
-      const src = video.src || video.querySelector("source")?.src || "";
-      if (!src || src.startsWith("blob:") || !src.includes("video.twimg.com/")) continue;
       const container = quoteContainerForElement(article, video, rootIdentity);
+      let quote = null;
       if (container) {
         const identity = quoteIdentityForContainer(article, container, rootIdentity);
-        pushUnique(ensureQuoteGroup(quoteGroups, quoteOrder, identity?.tweetId || container, identity).media, src);
-      } else {
+        quote = ensureQuoteGroup(quoteGroups, quoteOrder, identity?.tweetId || container, identity);
+        quote.hasVideo = true;
+      } else hasVideo = true;
+      const src = video.src || video.querySelector("source")?.src || "";
+      if (!src || src.startsWith("blob:") || !src.includes("video.twimg.com/")) continue;
+      if (quote) pushUnique(quote.media, src);
+      else {
         pushUnique(media, src);
       }
     }
@@ -190,6 +195,7 @@
     return {
       mainText,
       media,
+      hasVideo,
       quotes: quoteOrder.map((container) => quoteGroups.get(container)).filter(Boolean),
     };
   }

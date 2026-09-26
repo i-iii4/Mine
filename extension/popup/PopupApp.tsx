@@ -193,6 +193,8 @@ export function PopupApp() {
     ? capture.imageUrl
     : metadata?.image ?? null;
   const embeddedVideoPreviews = articleData?.embeddedVideos ?? [];
+  const videoFallbackPoster = /(?:twitter\.com|x\.com)\/[^/]+\/status\/\d+/i.test(metadata?.url ?? "")
+    ? null : ogImage;
   const embeddedVideoBySrc = useMemo(() => {
     return buildEmbeddedVideoPreviewMap(embeddedVideoPreviews);
   }, [embeddedVideoPreviews]);
@@ -320,15 +322,15 @@ export function PopupApp() {
               className="max-h-[280px] min-h-24 overflow-y-auto rounded-1 border border-border p-2"
               data-clipper-scrollbar=""
             >
-              {metadata?.detectedType === "video" && embeddedVideoPreviews.length === 0 && ogImage && (
-                <VideoPosterPreview posterUrl={ogImage} title="Video preview" />
+              {metadata?.detectedType === "video" && embeddedVideoPreviews.length === 0 && videoFallbackPoster && (
+                <VideoPosterPreview posterUrl={videoFallbackPoster} title="Video preview" />
               )}
               {embeddedVideoPreviews.length > 0 && (
                 <div className="space-y-1.5">
                   {embeddedVideoPreviews.map((video, index) => (
                     <VideoPosterPreview
                       key={`${video.src ?? video.poster ?? "video"}-${index}`}
-                      posterUrl={video.poster ?? ogImage}
+                      posterUrl={video.poster ?? videoFallbackPoster}
                       title={video.title || "Video preview"}
                     />
                   ))}
@@ -363,7 +365,7 @@ export function PopupApp() {
                         if (isVideoUrl(src)) {
                           return (
                             <VideoPosterPreview
-                              posterUrl={ogImage}
+                              posterUrl={videoFallbackPoster}
                               title={alt ? `Video preview: ${alt}` : "Video preview"}
                             />
                           );

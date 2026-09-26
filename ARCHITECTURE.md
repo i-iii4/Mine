@@ -4,6 +4,14 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG
 
 ## Context
 
+Для медиа X [SPEC_CLIPPER.md](/Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_CLIPPER.md)
+закрепляет промежуточную структуру постов и цитат `ArticleData.twitterPosts`.
+Модуль [twitterMedia.ts](/Users/i_iii/Проекты/Личные проекты/local-arena/extension/popup/lib/twitterMedia.ts)
+восстанавливает видео по ID каждого поста. Общий `MineXThread.compose`
+формирует тело после восстановления, а предпросмотр читает тот же набор медиа.
+Сопоставление вариантов качества действует внутри поста; фото, цитаты и
+намеренные повторы в разных постах сохраняются.
+
 Извлечение [товарных страниц](/Users/i_iii/Проекты/Личные%20проекты/local-arena/SPEC_PRODUCT_EXTRACTION.md) использует изолированный обработчик подтверждённой структуры Shopify перед общим Defuddle. Галерея изображений и описание преобразуются через существующий Markdown-конвертер; контракт результата и сохранения прежний. Неоднозначные структуры и галереи с видео переходят к общему обработчику. Фильтры остальных страниц не меняются.
 
 Clipper `open_app.path` routes a registered space through macOS file-open events.

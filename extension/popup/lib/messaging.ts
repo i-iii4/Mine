@@ -144,6 +144,8 @@ export interface PageMetadata {
 }
 
 export interface ArticleData {
+  /** Structured X posts retain media ownership through authenticated recovery. */
+  twitterPosts?: import("../../lib/xThread").XPostContent[];
   documentUrl?: string;
   /** Source captured with the extracted content, never inferred at save time. */
   sourceUrl?: string;
