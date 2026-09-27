@@ -3,7 +3,8 @@
 Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md)
 
 Доступ AI-агентов к материалам пространства — чтение и безопасные мутации.
-Статус: **принято 27.08.2026**, реализация начата (первым — читающее ядро).
+Статус: **принято и реализовано 27.08.2026**: читающее ядро, CLI `mine` с
+мутациями и MCP-адаптер `mine mcp`.
 
 ## Зачем
 
@@ -161,7 +162,7 @@ watcher приложения видит те же изменения и сход
 слой поверх корзины: `mine restore` возвращает текст карточки одной командой.
 
 Установка: `bun run cli:install` собирает release-бинарник и кладёт его как
-`~/.local/bin/mine`. Впереди: MCP (этап 2).
+`~/.local/bin/mine`. MCP (этап 2) описан ниже.
 
 ## Требования: MCP (этап 2) — реализовано (27.08.2026)
 
