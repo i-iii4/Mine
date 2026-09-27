@@ -10,9 +10,10 @@ test('developer installation delegates all writes to the shared Rust installer',
     calls.push({ command, args });
     return { status: 0, stdout: args[0] === 'metadata' ? JSON.stringify({ target_directory: '/test-only/cargo-target' }) : '' };
   } });
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 5);
   assert.deepEqual(calls[0].args, ['scripts/build-extension.mjs']);
-  const owner = calls[3];
+  assert.deepEqual(calls[1].args, ['scripts/clipper-worker-smoke.mjs', '--extension', join(root, 'build/clipper-extension')]);
+  const owner = calls[4];
   assert.equal(owner.command, 'cargo');
   assert.ok(owner.args.includes('clipper-runtime-install'));
   assert.ok(owner.args.includes('/test-only/cargo-target/release/native-host'));
@@ -49,8 +50,18 @@ test('missing optional media helper is omitted; malformed Cargo metadata fails c
   installDeveloperRuntime([], { platform: 'darwin', exists: () => false, execute(command, args) {
     calls.push({ command, args }); return { status: 0, stdout: args[0] === 'metadata' ? JSON.stringify({ target_directory: '/test-only/target' }) : '' };
   } });
-  assert.ok(!calls[3].args.includes('--ytdlp'));
+  assert.ok(!calls[4].args.includes('--ytdlp'));
   assert.throws(() => installDeveloperRuntime([], { platform: 'darwin', execute(_command, args) {
     return { status: 0, stdout: args[0] === 'metadata' ? '{}' : '' };
   } }), /absolute target directory/);
+});
+
+test('a failed built clipper contract prevents compilation and installation', () => {
+  const calls = [];
+  assert.throws(() => installDeveloperRuntime([], { platform: 'darwin', execute(command, args) {
+    calls.push({ command, args });
+    return { status: args[0] === 'scripts/clipper-worker-smoke.mjs' ? 7 : 0 };
+  } }), /exit 7/);
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every(call => call.command !== 'cargo'));
 });

@@ -63,7 +63,12 @@ describe("actual product content capture", () => {
       + '<img src="https://example.com/art.jpg" alt="Study"></article></main></body></html>';
     const oldApi = page(html, false);
     const newApi = page(html);
-    expect(await newApi.extractArticleAsync()).toEqual(await oldApi.extractArticleAsync());
+    const { captureGeneration: newGeneration, ...newArticle } = await newApi.extractArticleAsync();
+    const { captureGeneration: oldGeneration, ...oldArticle } = await oldApi.extractArticleAsync();
+    expect(newGeneration).toEqual(expect.any(String));
+    expect(oldGeneration).toEqual(expect.any(String));
+    expect(newGeneration).not.toBe(oldGeneration);
+    expect(newArticle).toEqual(oldArticle);
     expect(newApi.extractMetadata().detectedType).toBe(oldApi.extractMetadata().detectedType);
     expect(page(product).extractMetadata().detectedType).toBe(page(product, false).extractMetadata().detectedType);
   });

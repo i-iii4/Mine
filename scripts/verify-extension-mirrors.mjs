@@ -9,6 +9,7 @@ const resourceRoot = 'safari-extension/Local Arena Clipper/Local Arena Clipper E
 export const SAFARI_MIRRORS = [
   'background.js',
   'lib/draftStore.js',
+  'lib/storedValue.js',
   'lib/saveProtocol.js',
   'lib/standaloneVault.js',
 ].map(path => ({ source: `extension/${path}`, mirror: `${resourceRoot}/${path}` }));

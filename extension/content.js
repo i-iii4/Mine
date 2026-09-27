@@ -8,6 +8,37 @@
 (() => {
   "use strict";
 
+  const captureInstanceId = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+  let navigationEpoch = 0;
+  let observedDocumentUrl = window.location.href;
+  function invalidateCaptureDocument() {
+    navigationEpoch += 1;
+    observedDocumentUrl = window.location.href;
+  }
+  for (const event of ["popstate", "hashchange", "yt-navigate-start"]) {
+    window.addEventListener(event, invalidateCaptureDocument);
+  }
+  window.navigation?.addEventListener("navigate", invalidateCaptureDocument);
+
+  function captureDocumentSnapshot() {
+    if (observedDocumentUrl !== window.location.href) invalidateCaptureDocument();
+    return Object.freeze({
+      documentUrl: window.location.href,
+      captureGeneration: `${captureInstanceId}:${navigationEpoch}`,
+    });
+  }
+
+  function assertCaptureDocument(snapshot) {
+    const current = captureDocumentSnapshot();
+    if (current.documentUrl !== snapshot.documentUrl || current.captureGeneration !== snapshot.captureGeneration) {
+      throw new Error("Capture document changed");
+    }
+  }
+
+  function youtubeSource(url) {
+    return globalThis.MineYoutubeSource?.parse(url) || null;
+  }
+
   // ── Metadata extraction ─────────────────────────────────────────────────
 
   function getMeta(name) {
@@ -24,6 +55,8 @@
 
   // Metadata is only a candidate source, never authority over a concrete post.
   function capturePageSource(pageUrl) {
+    const youtube = youtubeSource(pageUrl);
+    if (youtube) return youtube.sourceUrl;
     const page = new URL(pageUrl);
     if (/^(www\.)?(x\.com|twitter\.com)$/.test(page.hostname)) {
       const post = page.pathname.match(/^\/([^/]+)\/status\/(\d+)(?:\/|$)/);
@@ -55,15 +88,9 @@
     return "/favicon.ico";
   }
 
-  /** Upgrade YouTube thumbnail URL from hqdefault (480x360, 4:3 with bars) to maxresdefault (1280x720, 16:9). */
+  /** A YouTube page poster belongs to its current address, regardless of stale metadata. */
   function upgradeYoutubeThumbnail(imageUrl, pageUrl) {
-    if (!imageUrl) return null;
-    if (!pageUrl || !isVideoUrl(pageUrl)) return imageUrl;
-    const match = imageUrl.match(/https?:\/\/i\.ytimg\.com\/vi\/([\w-]+)\//);
-    if (match) {
-      return `https://i.ytimg.com/vi/${match[1]}/maxresdefault.jpg`;
-    }
-    return imageUrl;
+    return youtubeSource(pageUrl)?.posterUrl || imageUrl || null;
   }
 
   function absoluteUrl(url) {
@@ -113,21 +140,7 @@
   }
 
   function youtubeIdFromUrl(url) {
-    if (!url) return null;
-    try {
-      const parsed = new URL(url, document.baseURI);
-      if (parsed.hostname.includes("youtu.be")) {
-        return parsed.pathname.split("/").filter(Boolean)[0] || null;
-      }
-      if (parsed.hostname.includes("youtube.com")) {
-        if (parsed.pathname === "/watch") return parsed.searchParams.get("v");
-        const embed = parsed.pathname.match(/\/(?:embed|shorts)\/([\w-]+)/);
-        if (embed) return embed[1];
-      }
-    } catch {
-      // Malformed URL — fall through to null.
-    }
-    return null;
+    return youtubeSource(absoluteUrl(url))?.videoId || null;
   }
 
   function youtubePosterFromUrl(url) {
@@ -185,6 +198,8 @@
   }
 
   function extractEmbeddedVideoPreviews() {
+    const youtube = youtubeSource(window.location.href);
+    if (youtube) return [{ src: youtube.embedUrl, poster: youtube.posterUrl, title: document.title }];
     const root = document.querySelector("article") || document.body;
     if (!root) return [];
 
@@ -215,13 +230,7 @@
       const rawSrc = iframe.getAttribute("src") || iframe.getAttribute("data-src");
       const src = absoluteUrl(rawSrc);
       if (!src) continue;
-      const lower = src.toLowerCase();
-      const isKnownVideo =
-        lower.includes("youtube.com/") ||
-        lower.includes("youtu.be/") ||
-        lower.includes("vimeo.com/") ||
-        lower.includes("player.vimeo.com/");
-      if (!isKnownVideo) continue;
+      if (!isVideoUrl(src)) continue;
       pushUniqueVideo(out, {
         src,
         poster: youtubePosterFromUrl(src),
@@ -354,11 +363,13 @@
   }
 
   function extractMetadata() {
+    const snapshot = captureDocumentSnapshot();
     const sel = window.getSelection();
     const selectionText = sel.toString().trim();
 
-    const pageUrl = window.location.href;
-    let title = getMeta("og:title") || getMeta("twitter:title") || document.title || "";
+    const pageUrl = snapshot.documentUrl;
+    let title = youtubeSource(pageUrl) ? document.title || ""
+      : getMeta("og:title") || getMeta("twitter:title") || document.title || "";
     let author = getMeta("author") || getMeta("article:author") || null;
 
     // Twitter/X: author from URL, title left as og:title (overridden by extractTwitterThread later)
@@ -372,6 +383,7 @@
     return {
       url: capturePageSource(pageUrl),
       documentUrl: pageUrl,
+      captureGeneration: snapshot.captureGeneration,
       title,
       description:
         getMeta("og:description") ||
@@ -390,12 +402,12 @@
   // ── Auto-detection heuristic ────────────────────────────────────────────
 
   function isVideoUrl(url) {
-    const lc = url.toLowerCase();
-    return (
-      lc.includes("youtube.com/watch") ||
-      lc.includes("youtu.be/") ||
-      lc.includes("vimeo.com/")
-    );
+    if (youtubeSource(url)) return true;
+    try {
+      const parsed = new URL(url);
+      return ["vimeo.com", "www.vimeo.com", "player.vimeo.com"].includes(parsed.hostname)
+        && /^https?:$/.test(parsed.protocol) && parsed.pathname !== "/";
+    } catch { return false; }
   }
 
   function isArticlePage(meta) {
@@ -1201,6 +1213,14 @@
   // ── Article extraction (Defuddle) ─────────────────────────────────────
 
   function extractArticle() {
+    const snapshot = captureDocumentSnapshot();
+    const sourceUrl = capturePageSource(snapshot.documentUrl);
+    const article = extractArticleForCurrentDocument();
+    assertCaptureDocument(snapshot);
+    return { ...article, sourceUrl, documentUrl: snapshot.documentUrl, captureGeneration: snapshot.captureGeneration };
+  }
+
+  function extractArticleForCurrentDocument() {
     // Twitter/X: long-form article can be extracted synchronously; tweet/thread
     // fallback is async because it can use the syndication API.
     if (isTwitterUrl(window.location.href)) {
@@ -1219,7 +1239,7 @@
     // YouTube: skip Defuddle sync (transcript comes from async path)
     if (isVideoUrl(window.location.href)) {
       return {
-        title: getMeta("og:title") || document.title || "",
+        title: youtubeSource(window.location.href) ? document.title || "" : getMeta("og:title") || document.title || "",
         content: "",
         html: "",
         byline: null,
@@ -1264,11 +1284,12 @@
   }
 
   async function extractArticleAsync() {
-    const pageUrl = window.location.href;
+    const snapshot = captureDocumentSnapshot();
+    const pageUrl = snapshot.documentUrl;
     const sourceUrl = capturePageSource(pageUrl);
     const article = await extractArticleForCurrentPage();
-    if (window.location.href !== pageUrl) throw new Error("Capture document changed");
-    return { ...article, sourceUrl, documentUrl: pageUrl };
+    assertCaptureDocument(snapshot);
+    return { ...article, sourceUrl, documentUrl: pageUrl, captureGeneration: snapshot.captureGeneration };
   }
 
   async function extractArticleForCurrentPage() {
@@ -1302,7 +1323,7 @@
       try {
         const result = await new Defuddle(document, { separateMarkdown: true }).parseAsync();
         return {
-          title: result?.title || getMeta("og:title") || document.title || "",
+          title: result?.title || (youtubeSource(window.location.href) ? document.title || "" : getMeta("og:title") || document.title || ""),
           content: result?.variables?.transcript || "",
           html: "",
           byline: result?.author || null,
@@ -1310,7 +1331,7 @@
           embeddedVideos: extractEmbeddedVideoPreviews(),
         };
       } catch {
-        return { title: getMeta("og:title") || document.title || "", content: "", byline: null, excerpt: "", embeddedVideos: extractEmbeddedVideoPreviews() };
+        return { title: youtubeSource(window.location.href) ? document.title || "" : getMeta("og:title") || document.title || "", content: "", byline: null, excerpt: "", embeddedVideos: extractEmbeddedVideoPreviews() };
       }
     }
 
@@ -1730,8 +1751,12 @@
     }
 
     if (msg.action === "extractArticleAsync") {
+      const snapshot = captureDocumentSnapshot();
+      const title = document.title;
+      const sourceUrl = capturePageSource(snapshot.documentUrl);
       extractArticleAsync().then(sendResponse).catch(error => sendResponse({
-        title: document.title, content: "", byline: null, excerpt: "",
+        title, content: "", byline: null, excerpt: "",
+        sourceUrl, documentUrl: snapshot.documentUrl, captureGeneration: snapshot.captureGeneration,
         threadWarning: `Content extraction failed: ${error.message || "unknown error"}`,
       }));
       return true;
@@ -1913,6 +1938,7 @@
     },
     extractArticle,
     extractArticleAsync,
+    captureDocumentSnapshot,
     getImageInfo: getImageInfoBySrc,
     detectTwitterLightboxImage,
   };

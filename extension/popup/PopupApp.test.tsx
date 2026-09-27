@@ -8,7 +8,8 @@ const { state } = vi.hoisted(() => ({ state: {
   state: "main", saveMode: "app", currentType: "content", articleExtractionState: "ready",
   metadata: { url: "https://x.com/home", title: "Repost", selection: "", detectedType: "content", image: null as string | null },
   articleData: { content: "sketching the landscape", threadWarning: "Open the original X post to collect its thread.", embeddedVideos: [] as EmbeddedVideoPreview[] },
-  channels: [], selectedTags: [], saving: false, draftReady: true, nativeStatusError: null,
+  channels: [], selectedTags: [], saving: false, savePinned: false, canSave: true, draftReady: true, nativeStatusError: null,
+  draftError: null as string | null, draftLoading: false,
   channelsLoading: false, channelsError: null as string | null, retryChannels: vi.fn(),
   save: vi.fn(), setCurrentType: vi.fn(), toggleTag: vi.fn(), createChannel: vi.fn(),
 } }));
@@ -21,12 +22,32 @@ beforeEach(() => {
   state.channelsError = null;
   state.retryChannels.mockReset();
   state.draftReady = true;
+  state.canSave = true;
+  state.savePinned = false;
+  state.draftError = null;
+  state.draftLoading = false;
   state.articleData.content = "sketching the landscape";
   state.articleData.embeddedVideos = [];
   state.metadata.url = "https://x.com/home";
   state.metadata.image = null;
 });
 describe("clipper preview", () => {
+  it("locks edits but keeps Save available for a prepared journal confirmation", () => {
+    state.savePinned = true;
+    const { container } = render(<PopupApp />);
+    expect(screen.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+    const fieldsets = container.querySelectorAll("fieldset");
+    expect(fieldsets.length).toBeGreaterThan(0);
+    fieldsets.forEach(fieldset => expect(fieldset).toBeDisabled());
+  });
+  it("keeps Save available when recovery storage is unavailable", () => {
+    state.draftError = "Edits are kept in this open clipper. Save will store the clip shown here.";
+    render(<PopupApp />);
+    expect(screen.getByRole("status")).toHaveTextContent(state.draftError);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry draft" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+  });
   it("distinguishes loading collections from an empty collection list", () => {
     state.channelsLoading = true;
     render(<PopupApp />);
@@ -46,13 +67,12 @@ describe("clipper preview", () => {
     render(<PopupApp />);
     expect(screen.getByText("No collections")).toBeInTheDocument();
   });
-  it("enables Save only after the durable draft has restored", () => {
+  it("keeps Save available while recovery restoration is pending", () => {
     state.draftReady = false;
+    state.draftLoading = true;
     const view = render(<PopupApp />);
     const button = screen.getByRole("button", { name: "Save", exact: true });
-    expect(button).toBeDisabled();
-    fireEvent.click(button);
-    expect(state.save).not.toHaveBeenCalled();
+    expect(button).toBeEnabled();
     state.draftReady = true;
     view.rerender(<PopupApp />);
     expect(screen.getByRole("button", { name: "Save", exact: true })).toBeEnabled();

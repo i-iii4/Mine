@@ -13,6 +13,8 @@ import { createPortal } from "react-dom";
 import { useDraggable } from "@dnd-kit/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { fromMarkdown } from "mdast-util-from-markdown";
+import type { Nodes } from "mdast";
 import type { Components } from "react-markdown";
 import {
   CloudDownload,
@@ -99,6 +101,8 @@ import {
   normalizeDetailPreviewManifest,
 } from "@/lib/feedPreview";
 import { deriveCardLayoutDescriptor } from "@/lib/cardLayout";
+import { parseYoutubeSource } from "@/lib/youtubeSource";
+import { YoutubeSourcePlayer } from "@/components/YoutubeSourcePlayer";
 import {
   setActiveMineTextSelectionDragPayload,
   type MineTextSelectionDragPayload,
@@ -1094,14 +1098,24 @@ function formatIndexWarning(warning: string): string {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function youtubeEmbedUrl(url: string): string | null {
-  const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/);
-  return match ? `https://www.youtube.com/embed/${match[1]}` : null;
-}
-
 function resolveDetailMediaReference(vaultPath: string, src: string | null): string | null {
   if (!src) return null;
   return isSafeUrl(src) ? src : mediaUrl(vaultPath, src);
+}
+
+function localBodyVideoReferences(body: string, manifest: ReturnType<typeof normalizeDetailPreviewManifest>): string[] {
+  const sources: string[] = [];
+  function visit(node: Nodes) {
+    if (node.type === "image") {
+      const source = decodeLocalMarkdownUrl(node.url);
+      if (isLocalMediaRef(source) && /\.(?:mp4|webm|m4v|mov)$/i.test(source)) {
+        sources.push(findPreviewTileForSource(manifest, source)?.sourcePath ?? source);
+      }
+    }
+    if ("children" in node) node.children.forEach(visit);
+  }
+  visit(fromMarkdown(preprocessWikilinks(body)));
+  return sources;
 }
 
 function detailPreviewImageSource({
@@ -1221,11 +1235,48 @@ function BlockContent({
   const description = "description" in block ? (block as IndexedBlock).description : null;
   const displayTitle = getDisplayTitle(block);
   const navigationLabel = getNavigationLabel(block);
+  const sourceVideo = parseYoutubeSource(block.url);
+  const bodyVideoReferences = useMemo(() => localBodyVideoReferences(body, previewManifest), [body, previewManifest]);
+  const mainVideoIsInBody = !!block.media_file && bodyVideoReferences.some((source) => (
+    source === block.media_file || (!source.includes("/") && block.media_file?.endsWith(`/${source}`))
+  ));
+  const primaryLocalVideo = block.media_file
+    && !isSafeUrl(block.media_file)
+    && /\.(?:mp4|webm|m4v|mov)$/i.test(block.media_file)
+    ? resolveDetailMediaReference(vaultPath, block.media_file)
+    : null;
+  const sourcePlayer = sourceVideo && !primaryLocalVideo && bodyVideoReferences.length === 0 ? (
+    <YoutubeSourcePlayer
+      key={sourceVideo.videoId}
+      source={sourceVideo}
+      poster={block.thumbnail && !isSafeUrl(block.thumbnail)
+        ? resolveDetailMediaReference(vaultPath, block.thumbnail)
+        : null}
+      title={displayTitle ?? navigationLabel}
+    />
+  ) : null;
 
   switch (block.card_kind) {
     case "article": {
       return (
         <div>
+          {primaryLocalVideo && sourceVideo && !mainVideoIsInBody ? (
+            <MediaAssetActionFrame
+              asset={mediaAssetFromPrimary(block, "video")}
+              vaultPath={vaultPath}
+              tags={tags}
+              currentTag={currentTag}
+              canDrag={false}
+              onCreateMediaAssetCard={onCreateMediaAssetCard}
+              onCreateChannelAndMediaAssetCard={onCreateChannelAndMediaAssetCard}
+              onRenameMediaAsset={onRenameMediaAsset}
+              onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
+              onDeleteMediaAsset={onDeleteMediaAsset}
+              onOpenRelatedNote={onOpenRelatedNote}
+            >
+              <VideoFromBlob key={primaryLocalVideo} src={primaryLocalVideo} controls className="mb-6 block max-h-[85vh] max-w-full" />
+            </MediaAssetActionFrame>
+          ) : sourcePlayer}
           <ArticleBody
             body={body}
             vaultPath={vaultPath}
@@ -1289,6 +1340,7 @@ function BlockContent({
     }
 
     case "link": {
+      if (sourcePlayer) return <div>{sourcePlayer}</div>;
       if (descriptor.variant === "link" && previewManifest?.kind !== "text") {
         const src = detailPreviewImageSource({
           block,
@@ -1424,7 +1476,6 @@ function BlockContent({
       }
 
       if (descriptor.variant === "video") {
-        const embedUrl = block.url ? youtubeEmbedUrl(block.url) : null;
         const videoSourcePath =
           descriptor.mediaItems.find((item) => item.isVideo)?.sourcePath
           ?? block.media_file;
@@ -1432,7 +1483,7 @@ function BlockContent({
         return (
           <div className="flex min-h-full flex-col">
             <div className="flex flex-1 items-center justify-center bg-black">
-              {embedUrl ? (
+              {sourcePlayer ? (
                 <MediaAssetActionFrame
                   asset={null}
                   vaultPath={vaultPath}
@@ -1447,12 +1498,7 @@ function BlockContent({
                   onOpenRelatedNote={onOpenRelatedNote}
                   className="w-full"
                 >
-                  <iframe
-                    src={embedUrl}
-                    className="aspect-video w-full max-h-[85vh]"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                    allowFullScreen
-                  />
+                  {sourcePlayer}
                 </MediaAssetActionFrame>
               ) : localSrc ? (
                 <MediaAssetActionFrame
@@ -1468,9 +1514,7 @@ function BlockContent({
                   onDeleteMediaAsset={onDeleteMediaAsset}
                   onOpenRelatedNote={onOpenRelatedNote}
                 >
-                  <video controls className="block max-h-[85vh] max-w-full" draggable={false}>
-                    <source src={localSrc} />
-                  </video>
+                  <VideoFromBlob key={localSrc} src={localSrc} controls className="block max-h-[85vh] max-w-full" />
                 </MediaAssetActionFrame>
               ) : (
                 <div className="flex aspect-video items-center justify-center text-muted-foreground">
@@ -2809,7 +2853,7 @@ function ArticleBody({
           : undefined;
         // Video/GIF (downloaded MP4) — render as inline autoplay video with controls.
         // Autoplay must stay muted to satisfy browser/WebView media policies.
-        if (/\.mp4(\?|$)|\.webm(\?|$)/i.test(decodedSrc)) {
+        if (/\.(?:mp4|webm|m4v|mov)(?:\?|$)/i.test(decodedSrc)) {
           const videoAsset = sourceSlug && isLocalMediaRef(resolvedSrc)
             ? mediaAssetFromMediaRef(sourceSlug, resolvedSrc, "video", "body_embed", occurrenceIndex)
             : null;

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { StandaloneSetup } from "./StandaloneSetup";
 import {
   canPickFolderHere, chooseStandaloneFolder, getStandaloneStatus, getBoundFolderStatus,
   notifyStandaloneFolderChanged, regrantStandaloneAccess,
@@ -12,6 +11,8 @@ export function FolderSetupPage() {
   const bindingId = new URLSearchParams(window.location.search).get("binding_id") ?? undefined;
   const [status, setStatus] = useState<StandaloneStatus>({ configured: false });
   const [completed, setCompleted] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const setupGeneration = useRef(0);
 
   useEffect(() => {
@@ -26,16 +27,28 @@ export function FolderSetupPage() {
   }, [bindingId]);
 
   async function configure(action: () => Promise<StandaloneStatus>) {
+    if (busy) return;
     setupGeneration.current += 1;
-    const next = await action();
-    setStatus(next);
-    if (!next.configured || next.permission !== "granted") {
-      return { ok: false, error: next.error };
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await action();
+      if (!next.configured || next.permission !== "granted") {
+        setError(next.error ?? null);
+        return;
+      }
+      setStatus(next);
+      const notified = await notifyStandaloneFolderChanged(bindingId);
+      if (!notified.ok) {
+        setError(notified.error ?? "Could not return the selected folder to your clip. Try again.");
+        return;
+      }
+      setCompleted(true);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
     }
-    const notified = await notifyStandaloneFolderChanged(bindingId);
-    if (!notified.ok) return notified;
-    setCompleted(true);
-    return { ok: true };
   }
 
   if (completed) {
@@ -49,14 +62,19 @@ export function FolderSetupPage() {
   }
 
   return (
-    <StandaloneSetup
-      canPickFolder={canPickFolderHere()}
-      folderName={status.configured ? status.folderName ?? null : null}
-      allowFolderChange={!bindingId}
-      diagnosis={status.error}
-      onChooseFolder={() => configure(chooseStandaloneFolder)}
-      onRegrantAccess={() => configure(() => regrantStandaloneAccess(bindingId))}
-      onClose={() => window.close()}
-    />
+    <section className="flex flex-col gap-4 p-4" aria-labelledby="folder-access-title">
+      <h1 id="folder-access-title" className="text-base font-semibold">{bindingId ? "Restore folder access" : "Choose a folder for your clips"}</h1>
+      <p className="text-sm text-muted-foreground">
+        {bindingId ? `Allow Mine to write to ${status.folderName ?? "the original folder"}.`
+          : "Select a folder in the system dialog. Your clip stays in the original window."}
+      </p>
+      {(error ?? status.error) && <p role="alert" className="text-sm text-destructive">{error ?? status.error}</p>}
+      <div className="flex items-center gap-2">
+        <Button disabled={busy || !canPickFolderHere()} onClick={() => void configure(
+          bindingId ? () => regrantStandaloneAccess(bindingId) : chooseStandaloneFolder,
+        )}>{busy ? "Waiting for folder access…" : bindingId ? "Allow access" : "Choose folder…"}</Button>
+        <Button variant="secondary" disabled={busy} onClick={() => window.close()}>Cancel</Button>
+      </div>
+    </section>
   );
 }

@@ -663,6 +663,7 @@
       "paths": [
         "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/background.js",
         "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/draftStore.js",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/storedValue.js",
         "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/saveProtocol.js",
         "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/standaloneVault.js"
       ],
@@ -755,6 +756,7 @@
         "extension/popup/hooks/useClipperState.ts",
         "extension/popup/hooks/useClipperState.standalone.test.tsx",
         "extension/lib/draftStore.js",
+        "extension/lib/storedValue.js",
         "extension/lib/draftStore.test.ts",
         "extension/popup/lib/draft.ts",
         "extension/popup/lib/protocol.ts",
@@ -800,6 +802,100 @@
       "requirement": "SPEC_SYSTEM_RELIABILITY.md#### UPD-01.",
       "tests": ["src/settings/UpdatesSection.test.tsx", "src/settings/SettingsApp.test.tsx", "src/lib/commands.test.ts"],
       "command": "test"
+    },
+    {
+      "paths": [
+        "extension/content.js",
+        "extension/lib/captureSource.test.ts",
+        "extension/lib/youtubeSource.js",
+        "extension/lib/youtubeSource.d.ts",
+        "extension/lib/youtubeSource.fixtures.json",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/content.js",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/youtubeSource.js"
+      ],
+      "requirement": "SPEC_CLIPPER.md### Согласованный источник захвата",
+      "tests": ["extension/lib/captureSource.test.ts", "src/lib/youtubeSource.test.ts"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "extension/manifest.json",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/manifest.json"
+      ],
+      "requirement": "SPEC_CLIPPER.md### Manifest V3",
+      "tests": ["scripts/clipper-worker-smoke.mjs"],
+      "command": "test:clipper-worker-built"
+    },
+    {
+      "paths": ["extension/lib/productCapture.test.ts"],
+      "requirement": "SPEC_PRODUCT_EXTRACTION.md### Проверки и приёмка",
+      "tests": ["extension/lib/productCapture.test.ts"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "extension/popup/components/FolderSetupPage.tsx",
+        "extension/popup/components/FolderSetupPage.test.tsx",
+        "extension/popup/components/StandaloneSetup.tsx",
+        "extension/popup/components/StandaloneSetup.test.tsx",
+        "extension/popup/lib/draft.test.ts",
+        "extension/popup/lib/messaging.ts",
+        "extension/popup/lib/messaging.test.ts"
+      ],
+      "requirement": "SPEC_CLIPPER.md### Исправление целостности захвата и восстановления",
+      "tests": [
+        "extension/popup/components/FolderSetupPage.test.tsx",
+        "extension/popup/components/StandaloneSetup.test.tsx",
+        "extension/popup/lib/draft.test.ts",
+        "extension/popup/lib/messaging.test.ts",
+        "extension/popup/hooks/useClipperState.standalone.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": ["scripts/clipper-worker-smoke.mjs"],
+      "requirement": "SPEC_CLIPPER.md### Исправление целостности захвата и восстановления",
+      "tests": ["scripts/clipper-worker-smoke.mjs"],
+      "command": "test:clipper-worker-built"
+    },
+    {
+      "paths": ["scripts/native-capture-smoke.mjs"],
+      "requirement": "SPEC_SAVE_CORE.md### Приёмка результата",
+      "tests": ["scripts/native-capture-smoke.mjs"],
+      "command": "test:native-capture"
+    },
+    {
+      "paths": ["scripts/clipper-native-lifecycle.mjs", "scripts/clipper-native-relay.mjs", "scripts/clipper-native-relay.test.mjs", "scripts/clipper-card-render.mjs"],
+      "requirement": "SPEC_CLIPPER.md### Устойчивый черновик и базовый протокол",
+      "tests": ["scripts/clipper-native-lifecycle.mjs", "scripts/clipper-native-relay.test.mjs", "scripts/clipper-card-render.mjs"],
+      "command": "test:clipper-native-release"
+    },
+    {
+      "paths": [
+        "src/components/Detail.tsx",
+        "src/components/Detail.test.tsx",
+        "src/components/YoutubeSourcePlayer.tsx",
+        "src/lib/youtubeSource.ts",
+        "src/lib/youtubeSource.test.ts",
+        "src/lib/cardLayout.ts"
+      ],
+      "requirement": "SPEC_FRONTEND.md### Видеопрезентация источника карточки",
+      "tests": ["src/components/Detail.test.tsx", "src/lib/youtubeSource.test.ts", "src/lib/cardLayout.test.ts"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "mine-core/src/domain/mod.rs",
+        "mine-core/src/domain/video_source.rs",
+        "src-tauri/src/storage/index.rs",
+        "src-tauri/src/storage/preview_plan.rs",
+        "src-tauri/src/storage/thumbnails.rs",
+        "src-tauri/src/commands/thumbnails.rs",
+        "src-tauri/src/watcher/handler.rs"
+      ],
+      "requirement": "SPEC_FRONTEND.md### Видеопрезентация источника карточки",
+      "tests": ["mine-core/src/domain/video_source.rs", "src-tauri/src/storage/index.rs", "src-tauri/src/storage/thumbnails.rs"],
+      "command": "test:rust"
     },
     {
       "paths": ["scripts/prepare-update-channel.mjs", "scripts/prepare-update-channel.test.mjs"],

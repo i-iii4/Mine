@@ -357,6 +357,7 @@ pub async fn list_pending_thumb_upgrades(
                         thumbnail: block.thumbnail.as_deref(),
                         media_urls: block.media_urls.as_deref(),
                         first_image: block.first_image.as_deref(),
+                        preview_manifest: block.preview_manifest.as_deref(),
                     },
                 )
                 .map(|media| (media.path, media.kind.as_str()))
@@ -529,6 +530,7 @@ mod tests {
                 thumbnail: target.thumbnail.as_deref(),
                 media_urls: target.media_urls.as_deref(),
                 first_image: target.first_image.as_deref(),
+                preview_manifest: target.preview_manifest.as_deref(),
             },
         )
     }

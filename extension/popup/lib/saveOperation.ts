@@ -1,5 +1,10 @@
 import { sendToNative, type NativeRequest, type NativeResponse } from "./messaging";
 import { standaloneLookup, standaloneSave } from "./standalone";
+import "../../lib/storedValue.js";
+
+declare global {
+  var MineStoredValue: Readonly<{ same(left: unknown, right: unknown): boolean }>;
+}
 
 export interface PinnedSaveOperation {
   schemaVersion?: 1;
@@ -21,14 +26,17 @@ const PENDING_PREFIX = "minePendingSaveOperation:";
 export async function persistPendingSave(operation: PinnedSaveOperation): Promise<void> {
   // A restart between persistence and dispatch must be treated as unknown.
   const key = PENDING_PREFIX + operation.id;
+  const record = { ...operation, schemaVersion: 1, attempted: true };
   const previous = await chrome.storage.local.get(key);
   if (previous[key] !== undefined) {
+    // This read confirms a previously interrupted persistence attempt. It does
+    // not establish whether dispatch happened; restored operations stay attempted.
+    if (!operation.terminalResult && MineStoredValue.same(previous[key], record)) return;
     throw new Error("An operation with this identity is already stored and has been preserved");
   }
-  const record = { ...operation, schemaVersion: 1, attempted: true };
   await chrome.storage.local.set({ [key]: record });
   const confirmed = await chrome.storage.local.get(key);
-  if (JSON.stringify(confirmed[key]) !== JSON.stringify(record)) {
+  if (!MineStoredValue.same(confirmed[key], record)) {
     throw new Error("The save operation could not be confirmed in durable storage; no save was dispatched");
   }
 }
@@ -59,7 +67,7 @@ export async function persistSaveReceipt(operation: PinnedSaveOperation, result:
   const record = { ...operation, schemaVersion: 1, attempted: true, terminalResult: result };
   await chrome.storage.local.set({ [key]: record });
   const confirmed = await chrome.storage.local.get(key);
-  if (JSON.stringify(confirmed[key]) !== JSON.stringify(record)) throw new Error("The committed save receipt could not be confirmed");
+  if (!MineStoredValue.same(confirmed[key], record)) throw new Error("The committed save receipt could not be confirmed");
   operation.terminalResult = result;
 }
 
@@ -68,17 +76,20 @@ export async function findPendingSave(url: string): Promise<PinnedSaveOperation 
   for (const [key, value] of Object.entries(stored)) {
     if (!key.startsWith(PENDING_PREFIX) || !value || typeof value !== "object") continue;
     const operation = value as Partial<PinnedSaveOperation>;
+    const payload = operation.payload && typeof operation.payload === "object" && operation.payload.action === "save_block" ? operation.payload : null;
+    const sourceUrl = typeof operation.sourceUrl === "string" ? operation.sourceUrl : typeof payload?.url === "string" ? payload.url : undefined;
+    // The source envelope scopes recovery before interpreting the versioned
+    // payload. Preserve foreign records without blocking an unrelated page.
+    // Missing source identity remains uncertain and must not authorize a retry.
+    if (sourceUrl && sourceUrl !== url) continue;
     if ("schemaVersion" in operation && operation.schemaVersion !== 1) {
       throw new Error("An unknown pending save format has been preserved. Restore a compatible Mine version before saving");
     }
     if (typeof operation.id !== "string" || typeof operation.bindingId !== "string"
       || (operation.executor !== "native" && operation.executor !== "browser")
       || (operation.vaultPath !== null && typeof operation.vaultPath !== "string")) continue;
-    const payload = operation.payload && typeof operation.payload === "object" && operation.payload.action === "save_block" ? operation.payload : null;
-    const sourceUrl = typeof operation.sourceUrl === "string" ? operation.sourceUrl : typeof payload?.url === "string" ? payload.url : undefined;
     // A damaged payload remains discoverable and lookup-only; it is not proof
     // that the source operation never happened. Older records use payload.url.
-    if (sourceUrl && sourceUrl !== url) continue;
     return { id: operation.id, executor: operation.executor, bindingId: operation.bindingId,
       vaultPath: operation.vaultPath, payload, sourceUrl, draftId: operation.draftId,
       draftRevision: typeof operation.draftRevision === "number" ? operation.draftRevision : undefined,

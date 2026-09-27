@@ -11,3 +11,4 @@ pub mod markdown;
 pub mod search;
 pub mod tag;
 pub mod vault;
+pub mod video_source;

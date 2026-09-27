@@ -17,15 +17,15 @@ async function fixture(t) {
   return root;
 }
 
-test('actual generated Safari resources equal all four exact extension sources', async () => {
+test('actual generated Safari resources equal all registered extension sources', async () => {
   const evidence = await verifyExtensionMirrors();
-  assert.equal(evidence.length, 4);
+  assert.equal(evidence.length, SAFARI_MIRRORS.length);
   assert.ok(evidence.every(item => /^[a-f0-9]{64}$/.test(item.sha256)));
 });
 
 test('a stale generated copy is rejected even when its path is covered', async t => {
   const root = await fixture(t);
-  assert.equal((await verifyExtensionMirrors(root)).length, 4);
+  assert.equal((await verifyExtensionMirrors(root)).length, SAFARI_MIRRORS.length);
   await writeFile(join(root, SAFARI_MIRRORS[0].mirror), 'older build\n');
   await assert.rejects(verifyExtensionMirrors(root), /differs from its extension source/);
 });

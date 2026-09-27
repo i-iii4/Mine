@@ -169,7 +169,8 @@ pub fn expected_thumb(block: &Block, vault: &VaultLayout) -> ExpectedThumb {
     }
 
     // 2. Frontmatter thumbnail field (OG image for link, video poster).
-    if let Some(ref thumb_file) = block.frontmatter.thumbnail {
+    if let Some(thumb_file) = block.frontmatter.thumbnail.as_ref()
+        .filter(|_| !preview_plan::body_precedes_source_poster(block)) {
         let ext = ext_lower(thumb_file);
         if is_image_ext(&ext) {
             if let Some(media_path) = resolve_block_media_path(block, vault, thumb_file) {
@@ -222,7 +223,8 @@ fn preview_dependency_paths(block: &Block, vault: &VaultLayout) -> Vec<std::path
         }
     }
 
-    if let Some(ref thumb_file) = block.frontmatter.thumbnail {
+    if let Some(thumb_file) = block.frontmatter.thumbnail.as_ref()
+        .filter(|_| !preview_plan::body_precedes_source_poster(block)) {
         if let Some(media_path) = resolve_block_media_path(block, vault, thumb_file) {
             return vec![media_path];
         }
@@ -1244,7 +1246,8 @@ fn generate_for_block_inner(block: &Block, vault: &VaultLayout) -> ThumbSource {
 
     // 2. Frontmatter thumbnail field (video poster, OG image). Same
     //    content-sniff gate as above.
-    if let Some(thumb_file) = block.frontmatter.thumbnail.as_ref() {
+    if let Some(thumb_file) = block.frontmatter.thumbnail.as_ref()
+        .filter(|_| !preview_plan::body_precedes_source_poster(block)) {
         let ext = ext_lower(thumb_file);
         if is_image_ext(&ext) {
             if let Some(media_path) = resolve_block_media_path(block, vault, thumb_file) {
@@ -1978,6 +1981,35 @@ mod tests {
             },
             body: String::new(),
         }
+    }
+
+    #[test]
+    fn youtube_source_preview_uses_the_body_image_before_the_source_poster() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        create_test_image_with_color(&vault.root().join("body.jpg"), 120, 240, [220, 10, 10]);
+        create_test_image_with_color(&vault.root().join("poster.jpg"), 240, 120, [10, 10, 220]);
+        let mut block = make_article("youtube-gallery", "Transcript\n\n![](body.jpg)");
+        block.frontmatter.url = Some("https://youtu.be/9KDDhAOyv9k".into());
+        block.frontmatter.thumbnail = Some("poster.jpg".into());
+        assert_eq!(generate_for_block(&block, &vault), ThumbSource::Image);
+        let generated = image::open(vault.thumb_path(&block.slug)).unwrap();
+        assert_eq!(generated.dimensions(), (120, 240));
+        assert_eq!(preview_dependency_paths(&block, &vault), vec![vault.root().join("body.jpg")]);
+        assert_eq!(expected_thumb(&block, &vault), ExpectedThumb::OnlyJpeg);
+    }
+
+    #[test]
+    fn youtube_source_preview_reuses_its_saved_poster_when_no_body_media_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        create_test_image(&vault.root().join("poster.jpg"), 1280, 720);
+        let mut block = make_article("youtube-transcript", "# Film\n\nTranscript");
+        block.frontmatter.url = Some("https://www.youtube.com/watch?v=9KDDhAOyv9k".into());
+        block.frontmatter.thumbnail = Some("poster.jpg".into());
+        assert_eq!(generate_for_block(&block, &vault), ThumbSource::Image);
+        assert_eq!(image::open(vault.thumb_path(&block.slug)).unwrap().dimensions(), (640, 360));
+        assert_eq!(preview_dependency_paths(&block, &vault), vec![vault.root().join("poster.jpg")]);
     }
 
     #[test]

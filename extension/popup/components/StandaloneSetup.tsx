@@ -61,8 +61,8 @@ export function StandaloneSetup({
 
       <div className="flex flex-col items-start gap-3 p-4 text-left">
         <p className="text-sm text-muted-foreground">
-          Choose where to save your clips. The browser can save plain files
-          in a folder without the Mine app. Your draft stays here while you set it up.
+          {nativeConnected ? "Choose a space for this clip."
+            : "Choose a folder to save clips without the Mine app."}
         </p>
 
         {folderName && (
@@ -70,28 +70,26 @@ export function StandaloneSetup({
             Check write access to “{folderName}” to keep saving in the same folder.
           </p>
         )}
-        {!canPickFolder && (
+        {!nativeConnected && !canPickFolder && (
           <p className="text-sm text-muted-foreground">
-            Folder setup opens in a separate Mine window so access belongs to
-            the extension, not this website.
+            Browser folder access opens in a separate permission window. Your clip stays here.
           </p>
         )}
 
         <div className="flex flex-wrap items-center gap-2">
           {folderName && <Button disabled={busy} onClick={() => void run(onRegrantAccess)}>Allow access</Button>}
-          {allowFolderChange && <Button variant={folderName ? "secondary" : "default"} disabled={busy} onClick={() => void run(onChooseFolder)}>
+          {allowFolderChange && !nativeConnected && <Button variant={folderName ? "secondary" : "default"} disabled={busy} onClick={() => void run(onChooseFolder)}>
             Choose folder…
           </Button>}
           {nativeConnected && onChooseNativeFolder && (
-            <Button variant="secondary" disabled={busy} onClick={() => void run(async () => { await onChooseNativeFolder(); return { ok: true }; })}>Choose with Mine…</Button>
+            <Button disabled={busy} onClick={() => void run(async () => { await onChooseNativeFolder(); return { ok: true }; })}>Choose space…</Button>
           )}
         </div>
         {diagnosis && <p className="text-sm text-muted-foreground" role="status">{diagnosis}</p>}
-        {onRetryConnection && <>
-          <p className="text-sm text-muted-foreground">If Mine is already installed, open it once to register its helper, then retry.</p>
+        {!nativeConnected && onRetryConnection && <>
           <Button variant="secondary" disabled={busy} onClick={() => void run(async () => { await onRetryConnection(); return { ok: true }; })}>Retry connection</Button>
         </>}
-        <Button variant="ghost" disabled={busy} onClick={() => void run(openDownloadPage)}>Get the Mine app (optional)</Button>
+        {!nativeConnected && <Button variant="link" disabled={busy} onClick={() => void run(openDownloadPage)}>Get the Mine app (optional)</Button>}
         {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
       </div>
     </div>

@@ -57,6 +57,7 @@
         "lib/extractionDocumentSanitizer.js",
         "lib/productExtraction.js",
         "lib/tweetTextCompletion.js",
+        "lib/youtubeSource.js",
         "content.js"
       ],
       "run_at": "document_idle"

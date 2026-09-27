@@ -61,6 +61,14 @@ pub fn has_body_media(block: &Block) -> bool {
         .any(|reference| !reference.source.is_empty())
 }
 
+/// A provider poster is a fallback; the article's own media stays authoritative.
+pub fn body_precedes_source_poster(block: &Block) -> bool {
+    has_body_media(block)
+        && block.frontmatter.url.as_deref()
+            .and_then(mine_core::domain::video_source::parse_youtube_source)
+            .is_some()
+}
+
 pub fn is_remote_media(src: &str) -> bool {
     src.starts_with("http://") || src.starts_with("https://")
 }
@@ -131,6 +139,7 @@ pub struct PreviewUpgradeInput<'a> {
     pub thumbnail: Option<&'a str>,
     pub media_urls: Option<&'a str>,
     pub first_image: Option<&'a str>,
+    pub preview_manifest: Option<&'a str>,
 }
 
 /// Resolve the one source that a browser decoder should use when Rust could
@@ -143,6 +152,13 @@ pub fn resolve_upgrade_media(
     let mut candidates = Vec::<String>::new();
     if let Some(source) = input.media_file {
         candidates.push(source.to_string());
+    }
+    if let Some(manifest) = input.preview_manifest.and_then(|raw| {
+        serde_json::from_str::<crate::storage::index::FeedPreviewManifest>(raw).ok()
+    }) {
+        if let Some(tile) = manifest.tiles.first() {
+            candidates.push(tile.source_path.clone());
+        }
     }
     if let Some(source) = input.thumbnail {
         candidates.push(source.to_string());
@@ -430,5 +446,19 @@ mod tests {
             vec!["clip.mp4".to_string()]
         );
         assert!(local_media_items(None, is_image_media).is_empty());
+    }
+
+    #[test]
+    fn youtube_source_preview_upgrade_preserves_the_manifest_media_before_the_poster() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        std::fs::write(vault.root().join("article.heic"), b"native image").unwrap();
+        std::fs::write(vault.root().join("source-poster.jpg"), b"source poster").unwrap();
+        let manifest = r#"{"kind":"image","primary_preview_path":"card.jpg","tiles":[{"source_path":"article.heic","preview_path":"card.preview-1.jpg","is_video":false,"is_video_poster":false}],"overflow_count":0}"#;
+        let resolved = resolve_upgrade_media(&vault, PreviewUpgradeInput {
+            slug: "card", media_file: None, thumbnail: Some("source-poster.jpg"),
+            media_urls: Some(r#"["article.heic"]"#), first_image: Some("article.heic"), preview_manifest: Some(manifest),
+        }).unwrap();
+        assert_eq!(resolved.source, "article.heic");
     }
 }

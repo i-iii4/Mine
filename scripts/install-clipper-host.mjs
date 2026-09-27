@@ -32,6 +32,7 @@ export function installDeveloperRuntime(argv = [], options = {}) {
   validateDeveloperInstallArguments(argv, { projectRoot, platform: options.platform ?? process.platform });
   const execute = options.execute ?? spawnSync;
   run(execute, process.execPath, ['scripts/build-extension.mjs'], projectRoot);
+  run(execute, process.execPath, ['scripts/clipper-worker-smoke.mjs', '--extension', join(projectRoot, 'build/clipper-extension')], projectRoot);
   run(execute, 'cargo', ['build', '-p', 'mine', '--bin', 'native-host', '--release', '--no-default-features', '--locked'], projectRoot);
   const metadata = run(execute, 'cargo', ['metadata', '--format-version', '1', '--no-deps', '--locked'], projectRoot, true);
   const targetDirectory = JSON.parse(metadata.stdout).target_directory;

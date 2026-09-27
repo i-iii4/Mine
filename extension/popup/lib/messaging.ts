@@ -48,7 +48,7 @@ function timeoutForAction(action: string): number {
   // The folder chooser waits on a human: the promise resolves when the
   // dialog does, not on IPC speed.
   if (action === "pick_vault_folder") return 300_000;
-  return 10_000;
+  return 30_000;
 }
 
 export async function sendToNative(payload: NativeRequest): Promise<NativeResponse> {
@@ -124,6 +124,8 @@ export interface ContextMenuData {
 }
 
 export interface PageMetadata {
+  /** Navigation generation shared with asynchronous extraction. */
+  captureGeneration?: string;
   /** Raw document address at capture start; separate from normalized Source. */
   documentUrl?: string;
   url: string;
@@ -144,6 +146,7 @@ export interface PageMetadata {
 }
 
 export interface ArticleData {
+  captureGeneration?: string;
   /** Structured X posts retain media ownership through authenticated recovery. */
   twitterPosts?: import("../../lib/xThread").XPostContent[];
   documentUrl?: string;

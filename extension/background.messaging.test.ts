@@ -8,7 +8,7 @@ type BrowserApiMode = "callback" | "promise";
 type Message = Record<string, unknown>;
 type MessageListener = (
   message: Message,
-  sender: { url?: string },
+  sender: { url?: string; tab?: { id: number } },
   sendResponse: (response: Message) => void,
 ) => boolean | undefined;
 
@@ -67,11 +67,12 @@ function background(apiMode: BrowserApiMode) {
     tabs: {
       create: createTab,
       get: vi.fn(async () => null),
-      query: vi.fn(async () => []),
+      query: vi.fn(async () => [] as Array<{ id: number }>),
       sendMessage: vi.fn(),
     },
     windows: {
       create: createWindow,
+      getAll: vi.fn(async () => [] as Array<{ id: number; tabs: Array<{ url: string }> }>),
       getCurrent: vi.fn(async () => ({ id: 1 })),
       onBoundsChanged: eventSink(),
       onRemoved: eventSink(),
@@ -79,7 +80,9 @@ function background(apiMode: BrowserApiMode) {
     },
   };
 
+  const draftStore = { attach: vi.fn(async () => ({ draft: null, draftId: "capture", generation: 1 })), writeOwned: vi.fn(async () => null) };
   const context = createContext({
+    MineDraftStore: draftStore,
     URL,
     chrome,
     console,
@@ -92,7 +95,7 @@ function background(apiMode: BrowserApiMode) {
   runInContext(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib/saveProtocol.js"), "utf8"), context);
   runInContext(source, context);
 
-  function dispatch(message: Message, sender: { url?: string } = {}) {
+  function dispatch(message: Message, sender: { url?: string; tab?: { id: number } } = {}) {
     let resolveResponse: (response: Message) => void = () => undefined;
     const response = new Promise<Message>((resolve) => { resolveResponse = resolve; });
     const keepAlive = receiveRuntimeMessage(message, sender, resolveResponse);
@@ -101,6 +104,7 @@ function background(apiMode: BrowserApiMode) {
 
   return {
     chrome,
+    draftStore,
     createTab,
     createWindow,
     dispatch,
@@ -111,6 +115,30 @@ function background(apiMode: BrowserApiMode) {
 }
 
 describe.each<BrowserApiMode>(["callback", "promise"])("background messaging with %s browser APIs", (apiMode) => {
+  it("takes capture scope from the sender instead of page-supplied options", async () => {
+    const worker = background(apiMode);
+    await expect(worker.dispatch({ target: "background", action: "draftAttach", sourceUrl: "https://example.com", sourceTabId: 99,
+      options: { ownerId: "owner", captureId: "capture", captureScope: "forged" } }, { tab: { id: 7 } }).response).resolves.toMatchObject({ ok: true, draft: { generation: 1 } });
+    expect(worker.draftStore.attach).toHaveBeenCalledWith("https://example.com", expect.objectContaining({ captureScope: "7" }));
+  });
+  it("creates one durable browser session for concurrent attaches and ignores forged sessions", async () => {
+    const worker = background(apiMode);
+    worker.chrome.tabs.query.mockResolvedValue([{ id: 7 }, { id: 8 }]);
+    await Promise.all([7, 8].map(id => worker.dispatch({ target: "background", action: "draftAttach", sourceUrl: "https://example.com",
+      options: { ownerId: String(id), captureId: String(id), captureSession: "forged", activeScopes: [] } }, { tab: { id } }).response));
+    expect(worker.chrome.storage.session.set).toHaveBeenCalledOnce();
+    expect(worker.draftStore.attach).toHaveBeenCalledWith("https://example.com", expect.objectContaining({
+      captureSession: "bcb8f719-aa35-44f5-9a47-17b4d52f530f", activeScopes: ["extension", "7", "8"],
+    }));
+  });
+  it("uses the existing browser session after worker restart and the source tab of an extension window", async () => {
+    const worker = background(apiMode);
+    worker.chrome.storage.session.get.mockResolvedValue({ mineDraftBrowserSession: "still-this-browser" });
+    await worker.dispatch({ target: "background", action: "draftAttach", sourceUrl: "https://example.com", sourceTabId: 7,
+      options: { ownerId: "owner", captureId: "capture" } }, { url: "chrome-extension://test/dist/index.html", tab: { id: 99 } }).response;
+    expect(worker.chrome.storage.session.set).not.toHaveBeenCalled();
+    expect(worker.draftStore.attach).toHaveBeenCalledWith("https://example.com", expect.objectContaining({ captureScope: "7", captureSession: "still-this-browser" }));
+  });
   it("answers openStandaloneSetup after creating its extension-origin window", async () => {
     const worker = background(apiMode);
     const request = worker.dispatch({ target: "background", action: "openStandaloneSetup", binding_id: "original" });
@@ -133,6 +161,22 @@ describe.each<BrowserApiMode>(["callback", "promise"])("background messaging wit
       { url: "https://github.com/i-iii4/Mine/releases" },
       expect.any(Function),
     );
+  });
+
+  it("focuses an existing folder permission window after worker restart", async () => {
+    const worker = background(apiMode);
+    worker.chrome.windows.getAll.mockResolvedValue([{ id: 42, tabs: [{ url: "chrome-extension://test/dist/index.html?mode=setup" }] }]);
+    await expect(worker.dispatch({ target: "background", action: "openStandaloneSetup" }).response).resolves.toEqual({ ok: true });
+    expect(worker.createWindow).not.toHaveBeenCalled();
+    expect(worker.chrome.windows.update).toHaveBeenCalledWith(42, { focused: true }, expect.any(Function));
+  });
+
+  it("coalesces simultaneous setup requests", async () => {
+    const worker = background(apiMode);
+    const first = worker.dispatch({ target: "background", action: "openStandaloneSetup" });
+    const second = worker.dispatch({ target: "background", action: "openStandaloneSetup" });
+    await Promise.all([first.response, second.response]);
+    expect(worker.createWindow).toHaveBeenCalledOnce();
   });
 
   it("keeps nativeMessage open until the correlated native reply", async () => {

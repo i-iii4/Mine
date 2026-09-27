@@ -21,9 +21,29 @@
 // folder when the native host is not there. Classic script, attaches to
 // globalThis — the same convention every lib/ file follows.
 importScripts("generated/save-core/mine_core.js", "lib/mineCore.js", "lib/saveProtocol.js", "lib/standaloneVault.js");
-importScripts("lib/draftStore.js");
+importScripts("lib/storedValue.js", "lib/draftStore.js");
 
 const HOST_NAME = "com.mine.clipper.v1";
+const DRAFT_SESSION_KEY = "mineDraftBrowserSession";
+let draftSessionPromise = null;
+function currentDraftSession() {
+  if (!draftSessionPromise) draftSessionPromise = (async () => {
+    const stored = await chrome.storage.session.get(DRAFT_SESSION_KEY);
+    if (typeof stored[DRAFT_SESSION_KEY] === "string") return stored[DRAFT_SESSION_KEY];
+    const session = crypto.randomUUID();
+    await chrome.storage.session.set({ [DRAFT_SESSION_KEY]: session });
+    return session;
+  })().catch(error => { draftSessionPromise = null; throw error; });
+  return draftSessionPromise;
+}
+async function attachClipperDraft(store, message, sourceTabId) {
+  const [captureSession, tabs] = await Promise.all([currentDraftSession(), chrome.tabs.query({})]);
+  return store.attach(message.sourceUrl, {
+    ...message.options, captureSession,
+    captureScope: sourceTabId === null ? "extension" : String(sourceTabId),
+    activeScopes: ["extension", ...tabs.filter(tab => Number.isInteger(tab.id)).map(tab => String(tab.id))],
+  });
+}
 // Must match extension/popup/popup-layout.css body { width: 360px }
 // so detached window has no horizontal gap next to the content.
 const POPUP_DEFAULT_WIDTH = 360;
@@ -623,6 +643,37 @@ function respondToBrowserCreate(sendResponse, invoke) {
   }
 }
 
+// The in-flight map coalesces clicks. Existing browser windows remain the
+// source of truth after a service worker restart.
+const folderSetupRequests = new Map();
+function browserCall(invoke) {
+  return new Promise((resolve, reject) => {
+    try {
+      const pending = invoke((value) => {
+        const error = chrome.runtime.lastError;
+        if (error) reject(new Error(error.message)); else resolve(value);
+      });
+      if (pending?.then) pending.then(resolve, reject);
+    } catch (error) { reject(error); }
+  });
+}
+function openFolderSetup(url) {
+  if (folderSetupRequests.has(url)) return folderSetupRequests.get(url);
+  const operation = (async () => {
+    const windows = await browserCall(callback => chrome.windows.getAll({ populate: true }, callback));
+    const existing = windows.find(window => window.tabs?.some(tab => tab.url === url));
+    if (existing) {
+      await browserCall(callback => chrome.windows.update(existing.id, { focused: true }, callback));
+    } else {
+      await browserCall(callback => chrome.windows.create({ url, type: "popup", width: 420, height: 280, focused: true }, callback));
+    }
+    return { ok: true };
+  })();
+  folderSetupRequests.set(url, operation);
+  operation.finally(() => folderSetupRequests.delete(url)).catch(() => {});
+  return operation;
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.target !== "background") return false;
 
@@ -647,10 +698,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === "openStandaloneSetup") {
     const url = new URL(chrome.runtime.getURL("dist/index.html?mode=setup"));
     if (typeof msg.binding_id === "string") url.searchParams.set("binding_id", msg.binding_id);
-    respondToBrowserCreate(sendResponse, (callback) => chrome.windows.create({
-      url: url.href,
-      type: "popup", width: 420, height: 460, focused: true,
-    }, callback));
+    openFolderSetup(url.href).then(sendResponse, error => sendResponse(extensionBackgroundFailure(error)));
     return true;
   }
 
@@ -711,9 +759,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  if (["draftRead", "draftWrite", "draftClear"].includes(msg.action)) {
+  if (["draftRead", "draftWrite", "draftClear", "draftAttach", "draftWriteOwned", "draftClearOwned"].includes(msg.action)) {
     const store = globalThis.MineDraftStore;
-    const operation = msg.action === "draftRead" ? store.read(msg.sourceUrl)
+    const extensionPage = sender.url?.split("?")[0] === chrome.runtime.getURL("dist/index.html");
+    const sourceTabId = extensionPage && Number.isInteger(msg.sourceTabId) && msg.sourceTabId >= 0
+      ? msg.sourceTabId : sender.tab?.id ?? null;
+    const operation = msg.action === "draftAttach" ? attachClipperDraft(store, msg, sourceTabId)
+      : msg.action === "draftWriteOwned" ? store.writeOwned(msg.sourceUrl, msg.draft, msg.expectedRevision, msg.ownership)
+      : msg.action === "draftClearOwned" ? store.clearOwned(msg.sourceUrl, msg.draftId, msg.expectedRevision, msg.ownership)
+      : msg.action === "draftRead" ? store.read(msg.sourceUrl)
       : msg.action === "draftWrite" ? store.write(msg.sourceUrl, msg.draft, msg.expectedRevision)
       : store.clear(msg.sourceUrl, msg.draftId, msg.expectedRevision);
     operation.then(draft => sendResponse({ ok: true, draft: draft ?? null }),

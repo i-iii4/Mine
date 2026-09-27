@@ -57,7 +57,7 @@ pub use crate::storage::vault_conflicts::{
 
 const MEDIA_INDEX_VERSION: i64 = 5;
 const COLLECTION_INDEX_VERSION: i64 = 1;
-pub const PREVIEW_SCHEMA_VERSION: i64 = 2;
+pub const PREVIEW_SCHEMA_VERSION: i64 = 3;
 
 /// A block as read from the database index.
 #[derive(Debug, Clone, PartialEq, Serialize, specta::Type)]
@@ -751,6 +751,24 @@ fn serialize_feed_preview_manifest(
                     let tile = media_tile(&video_src, &dims, true, true);
                     FeedPreviewManifest {
                         kind: FeedPreviewKind::VideoPoster,
+                        primary_preview_path: Some(primary_preview_path(&block.slug)),
+                        width: tile.width,
+                        height: tile.height,
+                        preview_width: None,
+                        preview_height: None,
+                        tiles: vec![tile],
+                        overflow_count: 0,
+                    }
+                } else if let Some(source) = block.frontmatter.url.as_deref()
+                    .and_then(mine_core::domain::video_source::parse_youtube_source)
+                    .and_then(|_| block.frontmatter.thumbnail.as_deref())
+                    .filter(|source| !is_remote_media(source) && is_image_media(source))
+                {
+                    // An external video poster remains an image. The source
+                    // player belongs to Detail, never to feed autoplay.
+                    let tile = media_tile(source, &dims, false, false);
+                    FeedPreviewManifest {
+                        kind: FeedPreviewKind::Image,
                         primary_preview_path: Some(primary_preview_path(&block.slug)),
                         width: tile.width,
                         height: tile.height,
@@ -1829,7 +1847,8 @@ pub fn backfill_collection_index(conn: &Connection, vault: &VaultLayout) -> Resu
 /// the current feed preview contract.
 pub fn backfill_missing_preview_manifest(conn: &Connection) -> Result<usize> {
     let mut stmt = conn.prepare(
-        "SELECT slug, block_type, url, media_file, thumbnail, width, height, body, media_dimensions, media_urls
+        "SELECT slug, block_type, url, media_file, thumbnail, width, height, body, media_dimensions, media_urls,
+                preview_schema_version, preview_manifest
          FROM blocks
          WHERE slug != ''
            AND card_kind != 'channel'
@@ -1849,6 +1868,8 @@ pub fn backfill_missing_preview_manifest(conn: &Connection) -> Result<usize> {
                 row.get::<_, String>(7)?,
                 row.get::<_, Option<String>>(8)?,
                 row.get::<_, Option<String>>(9)?,
+                row.get::<_, i64>(10)?,
+                row.get::<_, Option<String>>(11)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -1865,8 +1886,24 @@ pub fn backfill_missing_preview_manifest(conn: &Connection) -> Result<usize> {
         body,
         media_dimensions,
         media_urls,
+        previous_version,
+        previous_manifest,
     ) in rows
     {
+        // Recipe 3 only changes saved provider posters. Preserve unaffected
+        // ready artifacts and measured geometry instead of regenerating a vault.
+        let provider_poster = url.as_deref()
+            .and_then(mine_core::domain::video_source::parse_youtube_source)
+            .is_some() && thumbnail.is_some();
+        if PREVIEW_SCHEMA_VERSION == 3 && previous_version == 2
+            && parse_feed_preview_manifest(previous_manifest.as_deref()).is_some() && !provider_poster
+        {
+            updated += conn.execute(
+                "UPDATE blocks SET preview_schema_version = ?2 WHERE slug = ?1 AND preview_schema_version = 2",
+                params![slug, PREVIEW_SCHEMA_VERSION],
+            )?;
+            continue;
+        }
         let block_type = BlockType::from_str(&raw_type).with_context(|| {
             format!("unknown block_type in preview manifest backfill: {raw_type}")
         })?;
@@ -3285,6 +3322,87 @@ mod tests {
         );
         assert_eq!(manifest.tiles.len(), 3);
         assert_eq!(manifest.overflow_count, 0);
+    }
+
+    #[test]
+    fn youtube_source_preview_is_an_image_without_changing_article_kind() {
+        let conn = test_conn();
+        let mut block = make_block_full("saved-film", "article", None, "2026-01-01T00:00:00Z", &[], "# Film\n\nTranscript");
+        block.frontmatter.url = Some("https://www.youtube.com/watch?feature=shared&v=9KDDhAOyv9k".into());
+        block.frontmatter.thumbnail = Some("film.jpg".into());
+        upsert_block(&conn, &block, None).unwrap();
+        sync_test_jpeg_thumb(&conn, "saved-film");
+        let light = list_blocks_light(&conn).unwrap();
+        assert_eq!(light[0].card_kind, CardKind::Article);
+        let manifest: FeedPreviewManifest = serde_json::from_str(light[0].preview_manifest.as_deref().unwrap()).unwrap();
+        assert_eq!(manifest.kind, FeedPreviewKind::Image);
+        assert_eq!(manifest.tiles[0].source_path, "film.jpg");
+        assert!(!manifest.tiles[0].is_video);
+        assert!(!manifest.tiles[0].is_video_poster);
+        assert!(light[0].feed_playback.is_none());
+    }
+
+    #[test]
+    fn youtube_source_preview_preserves_body_gallery_and_local_video() {
+        for (body, urls, kind) in [
+            ("Transcript\n![](a.jpg)\n![](b.jpg)", r#"["a.jpg","b.jpg"]"#, FeedPreviewKind::Composite),
+            ("Transcript\n![](local.mp4)", r#"["local.mp4"]"#, FeedPreviewKind::VideoPoster),
+        ] {
+            let mut block = make_block_full("film", "article", None, "2026-01-01T00:00:00Z", &[], body);
+            block.frontmatter.url = Some("https://youtu.be/9KDDhAOyv9k".into());
+            block.frontmatter.thumbnail = Some("source-poster.jpg".into());
+            let manifest: FeedPreviewManifest = serde_json::from_str(&serialize_feed_preview_manifest(&block, None, None, None, Some(urls)).unwrap()).unwrap();
+            assert_eq!(manifest.kind, kind);
+            assert!(manifest.tiles.iter().all(|tile| tile.source_path != "source-poster.jpg"));
+        }
+    }
+
+    #[test]
+    fn youtube_source_preview_does_not_activate_from_body_links_or_false_domains() {
+        for url in ["https://example.org/article", "https://youtube.com.evil.example/watch?v=9KDDhAOyv9k"] {
+            let mut block = make_block_full("article", "article", None, "2026-01-01T00:00:00Z", &[], "[Film](https://youtu.be/9KDDhAOyv9k)");
+            block.frontmatter.url = Some(url.into());
+            block.frontmatter.thumbnail = Some("source-poster.jpg".into());
+            let manifest: FeedPreviewManifest = serde_json::from_str(&serialize_feed_preview_manifest(&block, None, None, None, None).unwrap()).unwrap();
+            assert_eq!(manifest.kind, FeedPreviewKind::Text);
+        }
+    }
+
+    #[test]
+    fn youtube_source_preview_backfills_the_previous_recipe_without_rewriting_content() {
+        let conn = test_conn();
+        let mut block = make_block_full("old-film", "article", None, "2026-01-01T00:00:00Z", &[], "# Existing title\n\nExisting transcript");
+        block.frontmatter.url = Some("https://www.youtube.com/watch?v=9KDDhAOyv9k".into());
+        block.frontmatter.thumbnail = Some("existing-poster.jpg".into());
+        upsert_block(&conn, &block, None).unwrap();
+        conn.execute("UPDATE blocks SET preview_schema_version = 2, preview_manifest = '{\"kind\":\"text\",\"tiles\":[],\"overflow_count\":0}' WHERE slug = 'old-film'", []).unwrap();
+        assert_eq!(backfill_missing_preview_manifest(&conn).unwrap(), 1);
+        assert_eq!(backfill_missing_preview_manifest(&conn).unwrap(), 0);
+        let row = get_block(&conn, "old-film").unwrap().unwrap();
+        assert_eq!(row.body, block.body);
+        assert_eq!(row.thumbnail, block.frontmatter.thumbnail);
+        let manifest: FeedPreviewManifest = serde_json::from_str(row.preview_manifest.as_deref().unwrap()).unwrap();
+        assert_eq!(manifest.kind, FeedPreviewKind::Image);
+        assert_eq!(manifest.tiles[0].source_path, "existing-poster.jpg");
+    }
+
+    #[test]
+    fn youtube_source_preview_recipe_keeps_unaffected_ready_geometry_and_cache_stamp() {
+        let conn = test_conn();
+        let block = make_block_full("ordinary-gallery", "article", None, "2026-01-01T00:00:00Z", &[], "Article\n![](photo.jpg)");
+        upsert_block(&conn, &block, None).unwrap();
+        conn.execute("UPDATE blocks SET preview_schema_version = 2, preview_state = 'ready',
+            preview_source_stamp = 'retained-stamp', preview_manifest = json_set(preview_manifest, '$.preview_width', 640, '$.preview_height', 360)
+            WHERE slug = 'ordinary-gallery'", []).unwrap();
+        let before: String = conn.query_row("SELECT preview_manifest FROM blocks WHERE slug = 'ordinary-gallery'", [], |row| row.get(0)).unwrap();
+        assert_eq!(backfill_missing_preview_manifest(&conn).unwrap(), 1);
+        let (manifest, state, stamp): (String, String, String) = conn.query_row(
+            "SELECT preview_manifest, preview_state, preview_source_stamp FROM blocks WHERE slug = 'ordinary-gallery'", [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        assert_eq!(manifest, before);
+        assert_eq!(state, "ready");
+        assert_eq!(stamp, "retained-stamp");
     }
 
     #[test]

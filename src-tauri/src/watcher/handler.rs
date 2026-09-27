@@ -601,6 +601,7 @@ fn emit_thumb_events(
                     thumbnail: indexed.thumbnail.as_deref(),
                     media_urls: indexed.media_urls.as_deref(),
                     first_image: indexed.first_image.as_deref(),
+                    preview_manifest: indexed.preview_manifest.as_deref(),
                 },
             )
         })
@@ -1725,6 +1726,7 @@ mod tests {
                 thumbnail: block.frontmatter.thumbnail.as_deref(),
                 media_urls: Some(&media_urls),
                 first_image: Some(image_name),
+                preview_manifest: None,
             },
         )
         .unwrap();
@@ -1760,6 +1762,7 @@ mod tests {
                 thumbnail: block.frontmatter.thumbnail.as_deref(),
                 media_urls: Some(&media_urls),
                 first_image: Some("later.jpg"),
+                preview_manifest: None,
             },
         )
         .unwrap();

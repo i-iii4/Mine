@@ -283,7 +283,7 @@ export function PopupApp() {
         />
       )}
 
-      <fieldset disabled={clipper.pendingOperation || clipper.saving} className="contents">
+      <fieldset disabled={clipper.savePinned || clipper.pendingOperation || clipper.saving} className="contents">
       {hasTypeRow && (
         <TypeRow current={clipper.currentType} onChange={clipper.setCurrentType} />
       )}
@@ -407,7 +407,7 @@ export function PopupApp() {
           )}
         </div>
 
-        <fieldset disabled={clipper.pendingOperation || clipper.saving} className="contents">
+        <fieldset disabled={clipper.savePinned || clipper.pendingOperation || clipper.saving} className="contents">
         <ChannelList
           channels={clipper.channels}
           loading={clipper.channelsLoading}
@@ -426,6 +426,15 @@ export function PopupApp() {
               {footerError}
             </p>
           )}
+          {clipper.nativeStatusError && !saved && (
+            <Button variant="secondary" disabled={clipper.connectionChecking} onClick={() => void clipper.retryConnection(true)}>
+              {clipper.connectionChecking ? "Connecting…" : "Retry connection"}
+            </Button>
+          )}
+          {clipper.draftError && !saved && (
+            <p role="status" className="text-sm text-muted-foreground">{clipper.draftError}</p>
+          )}
+          {clipper.draftLoading && !saved && <p role="status" className="text-sm text-muted-foreground">Restoring your draft…</p>}
           {saveWarning && <p className="text-sm text-muted-foreground" role="status">{saveWarning}</p>}
           {clipper.pendingOperation && clipper.saveMode === "standalone" && !clipper.saving && !saved && (
             <Button variant="secondary" disabled={clipper.saving} onClick={() => {
@@ -437,7 +446,7 @@ export function PopupApp() {
             state={saved ? "saved" : clipper.saving ? "saving" : "idle"}
             onClick={handleSave}
             checkingOutcome={clipper.pendingOperation}
-            disabled={!clipper.draftReady}
+            disabled={!clipper.canSave}
           />
         </div>
       </div>

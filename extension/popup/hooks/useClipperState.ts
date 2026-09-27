@@ -99,7 +99,7 @@ import {
   type StandaloneMode,
 } from "../lib/standalone";
 import { clearPendingSave, executePinnedSave, findPendingSave, persistPendingSave, persistSaveReceipt, type PinnedSaveOperation } from "../lib/saveOperation";
-import { clearDraft, readDraft, writeDraft, type ClipperDraftState } from "../lib/draft";
+import { attachDraft, clearOwnedDraft, writeOwnedDraft, DraftStorageError, type ClipperDraftState, type DurableClipperDraft, type DraftOwnership } from "../lib/draft";
 import { baselineSaveRequest, negotiateSaveProtocol, negotiateWidgetProtocol } from "../lib/protocol";
 
 export type ClipType = "content" | "link" | "image" | "video" | "screenshot";
@@ -143,18 +143,44 @@ export function useClipperState() {
     useState<ArticleExtractionState>("idle");
   const [knownVaults, setKnownVaults] = useState<string[]>([]);
   const [selectedVault, setSelectedVault] = useState<string | null>(null);
-  const [screenshotDataUrl, setScreenshotDataUrl] = useState<string | null>(null);
-  const [screenshotUploadId, setScreenshotUploadId] = useState<string | null>(null);
+  const [screenshotDataUrl, setScreenshotDataUrlValue] = useState<string | null>(null);
+  const [screenshotUploadId, setScreenshotUploadIdValue] = useState<string | null>(null);
+  const screenshotRef = useRef<{ dataUrl: string | null; uploadId: string | null; generation: number }>({ dataUrl: null, uploadId: null, generation: 0 });
+  const setScreenshotDataUrl = useCallback((dataUrl: string | null) => {
+    if (screenshotRef.current.dataUrl !== dataUrl) {
+      screenshotRef.current = { dataUrl, uploadId: null, generation: screenshotRef.current.generation + 1 };
+      setScreenshotUploadIdValue(null);
+    }
+    setScreenshotDataUrlValue(dataUrl);
+  }, []);
+  const setScreenshotUploadId = useCallback((uploadId: string | null) => {
+    screenshotRef.current.uploadId = uploadId;
+    setScreenshotUploadIdValue(uploadId);
+  }, []);
   const [cropSupported, setCropSupported] = useState<boolean>(false);
   const [nativeStatusError, setNativeStatusError] = useState<string | null>(null);
   const [nativeConnected, setNativeConnected] = useState(false);
   const [canOpenApp, setCanOpenApp] = useState(false);
   const [pendingOperation, setPendingOperation] = useState(false);
+  const [savePrepared, setSavePrepared] = useState(false);
   const [previousOperation, setPreviousOperation] = useState<PinnedSaveOperation | null>(null);
   const [allowDifferentDraft, setAllowDifferentDraft] = useState(false);
   const [draftId, setDraftId] = useState<string>(() => crypto.randomUUID());
   const [draftReadySource, setDraftReadySource] = useState<string | null>(null);
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const [connectionChecking, setConnectionChecking] = useState(false);
   const draftRevisionRef = useRef(0);
+  const draftOwnerRef = useRef(crypto.randomUUID());
+  const draftCaptureRef = useRef(draftId);
+  const draftGenerationRef = useRef(0);
+  const draftSequenceRef = useRef(0);
+  const draftSnapshotsSupportedRef = useRef(false);
+  const newCaptureRef = useRef(false);
+  const draftRestoredRef = useRef(false);
+  const draftOwnedRef = useRef(false);
+  const editorChangedRef = useRef(false);
+  const draftPendingMutationRef = useRef<{ sourceUrl: string; draft: DurableClipperDraft; expectedRevision: number; ownership: DraftOwnership } | null>(null);
+  const mountedRef = useRef(true);
   const draftWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
   const draftStorageErrorRef = useRef<string | null>(null);
   // Which road a save takes (О2): the app when its host answers, the granted
@@ -167,9 +193,11 @@ export function useClipperState() {
   const supportsPendingUploadsRef = useRef(false);
   const nativeStatusErrorRef = useRef<string | null>(null);
   const nativeStatusPromiseRef = useRef<Promise<boolean> | null>(null);
+  const nativeStatusGenerationRef = useRef<number | null>(null);
   const bindingIdRef = useRef<string | null>(null);
   const saveProtocolRef = useRef<number | null>(null);
   const operationRef = useRef<PinnedSaveOperation | null>(null);
+  const preparedOperationRef = useRef<PinnedSaveOperation | null>(null);
   const savingRef = useRef(false);
   const destinationRef = useRef<"native" | "browser" | null>(null);
   const destinationGenerationRef = useRef(0);
@@ -182,9 +210,13 @@ export function useClipperState() {
   const articleExtractionPromiseRef = useRef<Promise<ArticleData | null> | null>(null);
   const deferredArticleRef = useRef<ArticleData | null>(null);
   const extractionEpochRef = useRef(0);
-  useEffect(() => () => {
-    extractionEpochRef.current += 1;
-    channelsRequestRef.current += 1;
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      extractionEpochRef.current += 1;
+      channelsRequestRef.current += 1;
+    };
   }, []);
 
   const setMetadataValue = useCallback((value: PageMetadata | null) => {
@@ -206,6 +238,13 @@ export function useClipperState() {
     articleExtractionStateRef.current = value;
     setArticleExtractionState(value);
   }, []);
+
+  const cacheCapturedScreenshot = useCallback((dataUrl: string) => {
+    const generation = screenshotRef.current.generation;
+    void cacheScreenshotUpload(dataUrl).then((id) => {
+      if (mountedRef.current && screenshotRef.current.generation === generation && screenshotRef.current.dataUrl === dataUrl) setScreenshotUploadId(id);
+    }).catch(cause => console.warn("Screenshot cache unavailable; captured bytes retained", cause));
+  }, [setScreenshotUploadId]);
 
   const captureScreenshot = useCallback(() => {
     // Hide the overlay before capture so the clipper UI doesn't appear
@@ -268,16 +307,13 @@ export function useClipperState() {
         cacheCapturedScreenshot(dataUrl);
       },
     );
-  }, []);
+  }, [cacheCapturedScreenshot, setScreenshotDataUrl, setScreenshotUploadId]);
 
   const retakeScreenshot = useCallback(() => {
-    if (operationRef.current || savingRef.current) return;
+    if (operationRef.current || preparedOperationRef.current || savingRef.current) return;
+    editorChangedRef.current = true;
     captureScreenshot();
   }, [captureScreenshot]);
-
-  function cacheCapturedScreenshot(dataUrl: string) {
-    void cacheScreenshotUpload(dataUrl).then((id) => setScreenshotUploadId(id));
-  }
 
   const ensureArticleLoaded = useCallback(async (): Promise<ArticleData | null> => {
     const existing = articleDataRef.current;
@@ -306,6 +342,9 @@ export function useClipperState() {
         if (extractionEpochRef.current !== epoch) return null;
         if (meta.documentUrl && asyncArticle.documentUrl && meta.documentUrl !== asyncArticle.documentUrl) {
           throw new Error("Capture document changed");
+        }
+        if (meta.captureGeneration && asyncArticle.captureGeneration && meta.captureGeneration !== asyncArticle.captureGeneration) {
+          throw new Error("Capture navigation changed");
         }
         const hydrated = await hydrateTwitterVideoPreviews(meta, asyncArticle);
         if (extractionEpochRef.current !== epoch) return null;
@@ -337,7 +376,8 @@ export function useClipperState() {
   }, [setArticleDataValue, setArticleExtractionStateValue]);
 
   const handleTypeChange = useCallback((type: ClipType) => {
-    if (operationRef.current || savingRef.current) return;
+    if (operationRef.current || preparedOperationRef.current || savingRef.current) return;
+    editorChangedRef.current = true;
     extractionEpochRef.current += 1;
     articleExtractionPromiseRef.current = null;
     setCurrentType(type);
@@ -389,22 +429,25 @@ export function useClipperState() {
 
   const ensureNativeStatus = useCallback(async (refresh = false): Promise<boolean> => {
     if (nativeStatusPromiseRef.current) {
-      if (!refresh) return nativeStatusPromiseRef.current;
+      if (!refresh || nativeStatusGenerationRef.current === destinationGenerationRef.current) return nativeStatusPromiseRef.current;
       await nativeStatusPromiseRef.current;
     }
     const generation = destinationGenerationRef.current;
+    setConnectionChecking(true);
 
     const promise = Promise.all([
       getStandaloneStatus(),
-      chrome.storage.local.get("mineSaveDestination"),
+      chrome.storage.local.get(["mineSaveDestination", "mineKnownVaults"]),
     ]).then(async ([standalone, stored]) => {
         if (generation !== destinationGenerationRef.current) return false;
         const selected = stored.mineSaveDestination;
+        if (Array.isArray(stored.mineKnownVaults)) setKnownVaults(stored.mineKnownVaults.filter((path: unknown): path is string => typeof path === "string"));
         if (!destinationRef.current && selected && typeof selected === "object"
           && "executor" in selected && selected.executor === "native"
           && "vaultPath" in selected && typeof selected.vaultPath === "string") {
           destinationRef.current = "native";
           vaultRef.current = selected.vaultPath;
+          setSelectedVault(selected.vaultPath);
           bindingIdRef.current = "bindingId" in selected && typeof selected.bindingId === "string" ? selected.bindingId : null;
         }
         if (!destinationRef.current && selected && typeof selected === "object"
@@ -415,7 +458,7 @@ export function useClipperState() {
         if (generation !== destinationGenerationRef.current) return false;
         setNativeConnected(status.ok && status.connected !== false);
         setCanOpenApp(status.ok && status.features?.includes("open_app_v1") === true);
-        if (operationRef.current) return true;
+        if (operationRef.current || preparedOperationRef.current) return true;
         saveProtocolRef.current = negotiateSaveProtocol(status);
         const compatible = saveProtocolRef.current !== null;
         uploadPortRef.current = typeof status.upload_port === "number" ? status.upload_port : null;
@@ -450,16 +493,17 @@ export function useClipperState() {
               : status.error ?? "The Mine helper is connected. Choose a folder to save your clips.";
           nativeStatusErrorRef.current = message;
           setNativeStatusError(message);
-          saveModeRef.current = "unconfigured";
-          setSaveMode("unconfigured");
+          const uncertain = status.outcome === "unknown" || status.code === "native_timeout" || status.code === "extension_transport" || status.code === "extension_background_error";
+          saveModeRef.current = destinationRef.current === "native" || uncertain ? "app" : "unconfigured";
+          setSaveMode(saveModeRef.current);
           return false;
         }
         if (bindingIdRef.current && bindingIdRef.current !== status.binding_id && destinationRef.current === "native") {
           const message = "The selected folder binding changed. Choose the folder again before saving.";
           nativeStatusErrorRef.current = message;
           setNativeStatusError(message);
-          saveModeRef.current = "unconfigured";
-          setSaveMode("unconfigured");
+          saveModeRef.current = "app";
+          setSaveMode("app");
           return false;
         }
         destinationRef.current = "native";
@@ -478,6 +522,7 @@ export function useClipperState() {
         void listKnownVaults().then((vaultsResult) => {
           if (vaultsResult.ok) {
             setKnownVaults(vaultsResult.vaults);
+            void chrome.storage.local.set({ mineKnownVaults: vaultsResult.vaults }).catch(cause => console.warn("Could not cache Mine folders", cause));
           }
         });
         void refreshChannels();
@@ -488,15 +533,17 @@ export function useClipperState() {
         const message = cause instanceof Error ? cause.message : String(cause);
         nativeStatusErrorRef.current = message;
         setNativeStatusError(message);
-        saveModeRef.current = "unconfigured";
-        setSaveMode("unconfigured");
+        saveModeRef.current = destinationRef.current === "browser" ? "unconfigured" : "app";
+        setSaveMode(saveModeRef.current);
         return false;
       })
       .finally(() => {
         nativeStatusPromiseRef.current = null;
+        setConnectionChecking(false);
       });
 
     nativeStatusPromiseRef.current = promise;
+    nativeStatusGenerationRef.current = generation;
     return promise;
   }, [enterStandaloneMode, refreshChannels]);
 
@@ -505,7 +552,7 @@ export function useClipperState() {
       if (msg?.action === "mineChannelsChanged") {
         void refreshChannels();
       }
-      if (msg?.action === "mineStandaloneFolderChanged" && !operationRef.current && !savingRef.current) {
+      if (msg?.action === "mineStandaloneFolderChanged" && !operationRef.current && !preparedOperationRef.current && !savingRef.current) {
         destinationGenerationRef.current += 1;
         destinationRef.current = "browser";
         void ensureNativeStatus(true);
@@ -521,13 +568,57 @@ export function useClipperState() {
     if (!draftSourceUrl || state !== "main") return;
     let current = true;
     setDraftReadySource(null);
-    void readDraft(draftSourceUrl).then((draft) => {
+    draftOwnedRef.current = false;
+    const settleDetached = () => {
+      draftRestoredRef.current = true;
+      draftOwnedRef.current = false;
+      setDraftReadySource(draftSourceUrl);
+    };
+    const restore = async () => {
+      const options = { ownerId: draftOwnerRef.current, captureId: draftCaptureRef.current, newCapture: newCaptureRef.current };
+      let attached;
+      try {
+        attached = await attachDraft(draftSourceUrl, options, tabIdRef.current);
+      } catch (cause) {
+        if (!current || !isRecoverableDraftError(cause)) throw cause;
+        // Attachment is idempotent for the same capture and editor. One retry
+        // resolves a dropped reply without allocating or overwriting a draft.
+        attached = await attachDraft(draftSourceUrl, options, tabIdRef.current);
+      }
       if (!current) return;
+      if (savingRef.current || operationRef.current || preparedOperationRef.current) {
+        settleDetached();
+        return;
+      }
+      if (attached.draft && !draftRestoredRef.current && editorChangedRef.current) {
+        // The visible editor already has user changes. Preserve the old record
+        // and acquire a separate capture instead of restoring over those edits.
+        const captureId = crypto.randomUUID();
+        attached = await attachDraft(draftSourceUrl, { ownerId: draftOwnerRef.current, captureId, newCapture: true }, tabIdRef.current);
+        if (!current) return;
+        if (savingRef.current || operationRef.current || preparedOperationRef.current) {
+          settleDetached();
+          return;
+        }
+      }
+      const draft = attached.draft;
+      draftOwnedRef.current = true;
+      draftGenerationRef.current = attached.generation;
+      draftSequenceRef.current = attached.sequence ?? 0;
+      draftSnapshotsSupportedRef.current = attached.sequence !== undefined;
+      draftCaptureRef.current = attached.draftId;
+      setDraftId(attached.draftId);
       draftRevisionRef.current = draft?.revision ?? 0;
       draftStorageErrorRef.current = null;
-      if (draft) {
-        setDraftId(draft.draftId);
-        setMetadataValue(draft.state.metadata);
+      setDraftError(null);
+      if (draft && !draftRestoredRef.current && !editorChangedRef.current) {
+        const fresh = metadataRef.current;
+        const sameDocument = fresh && (fresh.documentUrl ?? fresh.url) === (draft.state.metadata.documentUrl ?? draft.state.metadata.url);
+        // The saved content survives reload, while future extraction binds to
+        // the current instance only when it still represents this document.
+        setMetadataValue(sameDocument && fresh.captureGeneration
+          ? { ...draft.state.metadata, captureGeneration: fresh.captureGeneration }
+          : draft.state.metadata);
         setArticleDataValue(draft.state.articleData);
         setArticleExtractionStateValue(draft.state.articleData ? articleExtractionStateForResult(draft.state.articleData, draft.state.metadata) : "idle");
         setTitle(draft.state.title);
@@ -535,75 +626,125 @@ export function useClipperState() {
         setCurrentType(draft.state.currentType);
         setSelectedVault(draft.state.selectedVault);
         vaultRef.current = draft.state.selectedVault;
+        destinationGenerationRef.current += 1;
         destinationRef.current = draft.state.executor;
         bindingIdRef.current = draft.state.bindingId;
         setScreenshotDataUrl(draft.state.screenshotDataUrl);
         // Worker cache IDs are ephemeral; restored bytes get a fresh upload ID.
         setScreenshotUploadId(null);
-        if (draft.state.screenshotDataUrl) void cacheScreenshotUpload(draft.state.screenshotDataUrl).then(setScreenshotUploadId);
+        if (draft.state.screenshotDataUrl) cacheCapturedScreenshot(draft.state.screenshotDataUrl);
         void ensureNativeStatus(true);
       }
+      draftRestoredRef.current = true;
       setDraftReadySource(draftSourceUrl);
-    }).catch((cause) => {
+    };
+    void restore().catch((cause) => {
       if (!current) return;
-      const message = `Could not restore the saved draft: ${cause instanceof Error ? cause.message : String(cause)}`;
+      if (savingRef.current || operationRef.current || preparedOperationRef.current) {
+        settleDetached();
+        return;
+      }
+      const message = cause instanceof DraftStorageError && cause.code === "draft_ambiguous"
+        ? "Several earlier clips from this page are preserved. Save will store the clip shown here."
+        : "Previous edits could not be restored and remain untouched. Save will store the clip shown here.";
       draftStorageErrorRef.current = message;
-      setNativeStatusError(message);
+      console.warn("Clipper draft restoration unavailable; previous edits preserved", cause);
+      draftRestoredRef.current = true;
+      // A detached editor may save through the durable operation journal, but
+      // cannot autosave into a record whose contents and ownership are unknown.
+      draftOwnedRef.current = false;
+      setDraftReadySource(draftSourceUrl);
+      setDraftError(message);
     });
     return () => { current = false; };
-  }, [draftSourceUrl, state, setMetadataValue, setArticleDataValue, setArticleExtractionStateValue, ensureNativeStatus]);
+  }, [draftSourceUrl, state, setMetadataValue, setArticleDataValue, setArticleExtractionStateValue, ensureNativeStatus,
+    cacheCapturedScreenshot, setScreenshotDataUrl, setScreenshotUploadId]);
 
   const persistCurrentDraft = useCallback(async () => {
-    if (!metadata || !draftSourceUrl || draftReadySource !== draftSourceUrl) {
+    if (!metadata || !draftSourceUrl || draftReadySource !== draftSourceUrl || !draftOwnedRef.current) {
       throw new Error(draftStorageErrorRef.current ?? "The saved draft has not finished restoring. Retry when it is ready.");
     }
     const draftState: ClipperDraftState = {
       metadata, articleData, title, selectedTags, currentType, selectedVault,
-      screenshotDataUrl, screenshotUploadId, executor: destinationRef.current, bindingId: bindingIdRef.current,
+      // Keep the legacy schema slot for older widgets, never a cache identity.
+      screenshotDataUrl, screenshotUploadId: null, executor: destinationRef.current, bindingId: bindingIdRef.current,
     };
     const previous = draftWriteQueueRef.current;
-    const writing = previous.catch(() => undefined).then(async () => {
+    const snapshotsSupported = draftSnapshotsSupportedRef.current;
+    const sequence = ++draftSequenceRef.current;
+    const generation = draftGenerationRef.current;
+    const dispatch = async () => {
+      // New workers order snapshots themselves. Only the legacy revision
+      // protocol waits for the preceding reply to allocate its next edition.
+      if (!snapshotsSupported && draftPendingMutationRef.current) {
+        const confirmed = await confirmDraftMutation(draftPendingMutationRef.current);
+        draftRevisionRef.current = confirmed.revision;
+      }
       const expectedRevision = draftRevisionRef.current;
-      const confirmed = await writeDraft(draftSourceUrl, {
+      const mutation = { sourceUrl: draftSourceUrl, expectedRevision, draft: {
         schemaVersion: 1, revision: expectedRevision + 1, draftId, state: draftState,
-      }, expectedRevision);
-      draftRevisionRef.current = confirmed.revision;
-      draftStorageErrorRef.current = null;
-    });
-    draftWriteQueueRef.current = writing;
+      } satisfies DurableClipperDraft, ownership: { ownerId: draftOwnerRef.current, generation, mutationId: crypto.randomUUID(),
+        ...(snapshotsSupported ? { sequence } : {}) } };
+      draftPendingMutationRef.current = mutation;
+      try {
+        const confirmed = await confirmDraftMutation(mutation);
+        if (generation !== draftGenerationRef.current) return;
+        draftRevisionRef.current = Math.max(draftRevisionRef.current, confirmed.revision);
+        if (draftPendingMutationRef.current === mutation) draftPendingMutationRef.current = null;
+        if (sequence === draftSequenceRef.current) {
+          draftStorageErrorRef.current = null;
+          if (mountedRef.current) setDraftError(null);
+        }
+      } catch (cause) {
+        if (snapshotsSupported && sequence < draftSequenceRef.current) return;
+        throw cause;
+      }
+    };
+    // Dispatch before awaiting: closing the editor cannot cancel a snapshot
+    // already handed to the durable worker queue.
+    const writing = snapshotsSupported ? dispatch() : previous.catch(() => undefined).then(dispatch);
+    draftWriteQueueRef.current = Promise.all([previous, writing.catch(() => undefined)]).then(() => undefined);
     await writing;
   }, [metadata, articleData, title, selectedTags, currentType, selectedVault, screenshotDataUrl,
-    screenshotUploadId, draftSourceUrl, draftReadySource, draftId]);
+    draftSourceUrl, draftReadySource, draftId]);
 
   useEffect(() => {
-    if (!draftSourceUrl || draftReadySource !== draftSourceUrl || savingRef.current) return;
+    if (!draftSourceUrl || draftReadySource !== draftSourceUrl || !draftOwnedRef.current || savingRef.current) return;
     void persistCurrentDraft().catch((cause) => {
-      const message = `The latest draft changes are not stored: ${cause instanceof Error ? cause.message : String(cause)}`;
+      const message = "Edits are kept in this open clipper. Save will store the clip shown here.";
       draftStorageErrorRef.current = message;
-      setNativeStatusError(message);
+      console.warn("Clipper autosave unavailable; visible edits retained", cause);
+      if (mountedRef.current) setDraftError(message);
     });
   }, [draftSourceUrl, draftReadySource, persistCurrentDraft]);
 
   const confirmSavedOperation = useCallback(async (operation: PinnedSaveOperation, result: NativeResponse) => {
-    await persistSaveReceipt(operation, result);
+    // The executor has confirmed the source commit. A failed recovery receipt
+    // cannot turn that outcome into failure or allocate another operation.
+    operation.terminalResult = result;
     try {
-      await clearDraft(draftSourceUrl, operation.draftId ?? draftId, operation.draftRevision ?? draftRevisionRef.current);
-      await clearPendingSave(operation);
-      return { ok: true as const, warning: result.warning };
+      await persistSaveReceipt(operation, result);
     } catch (cause) {
-      // A committed source result stays successful even if a concurrent edition
-      // or storage failure prevents deleting the draft. The receipt prevents retry.
-      const warning = `The clip was saved. Its newer or unconfirmed draft is retained: ${cause instanceof Error ? cause.message : String(cause)}`;
-      setNativeStatusError(warning);
-      return { ok: true as const, warning: [result.warning, warning].filter(Boolean).join(" ") };
+      console.warn("Committed clip receipt deferred; original save journal retained", cause);
+      return { ok: true as const, warning: result.warning };
     }
+    const ownership = { ownerId: draftOwnerRef.current, generation: draftGenerationRef.current };
+    const owned = draftOwnedRef.current;
+    // A receipt remains discoverable until owner-fenced cleanup completes.
+    // Autosave latency must not delay the visible source success.
+    void draftWriteQueueRef.current.then(async () => {
+      if (!owned || draftPendingMutationRef.current) return;
+      await clearOwnedDraft(draftSourceUrl, operation.draftId ?? draftId, draftRevisionRef.current, ownership);
+      await clearPendingSave(operation);
+    }).catch(cause => console.warn("Saved clip recovery cleanup deferred", cause));
+    return { ok: true as const, warning: result.warning };
   }, [draftSourceUrl, draftId]);
 
   useEffect(() => {
     if (!captureSourceUrl) return;
     let current = true;
     void findPendingSave(captureSourceUrl).then((pending) => {
-      if (!current || operationRef.current || savingRef.current) return;
+      if (!current || operationRef.current || preparedOperationRef.current || savingRef.current) return;
       setPreviousOperation(pending);
     }).catch((cause) => {
       if (current) setNativeStatusError(`Could not read pending save: ${cause instanceof Error ? cause.message : String(cause)}`);
@@ -638,7 +779,7 @@ export function useClipperState() {
   }, [previousOperation]);
 
   const startCropMode = useCallback(async () => {
-    if (operationRef.current || savingRef.current) return;
+    if (operationRef.current || preparedOperationRef.current || savingRef.current) return;
     if (!cropSupported || tabIdRef.current === null) return;
 
     if (IS_CONTENT_SCRIPT_CONTEXT) {
@@ -744,6 +885,7 @@ export function useClipperState() {
       // Check for pre-loaded data (from Instagram feed button)
       const preloaded = await chrome.storage.session.get("preloadedClipData");
       if (preloaded.preloadedClipData) {
+        newCaptureRef.current = true;
         const { metadata: preMeta, article: preArticle } = preloaded.preloadedClipData as { metadata: PageMetadata; article: ArticleData };
         chrome.storage.session.remove("preloadedClipData");
 
@@ -815,6 +957,7 @@ export function useClipperState() {
       }
 
       const ctxData = await getContextMenuData();
+      if (ctxData) newCaptureRef.current = true;
 
       // Resolve the target tab: in content-script context we ARE the tab,
       // so we use the sentinel tabId and read URL/title from window+document.
@@ -840,7 +983,7 @@ export function useClipperState() {
       tabIdRef.current = tabId;
       applyCropCapability(tabUrl ?? null);
 
-      let meta = await extractMetadata(tabId);
+      const meta = await extractMetadata(tabId);
       let article: ArticleData = { title: "", content: "", byline: null, excerpt: "" };
 
       // Apply tab fallbacks
@@ -1037,23 +1180,34 @@ export function useClipperState() {
   // --- Actions ---
 
   const toggleTag = useCallback((tag: string) => {
-    if (operationRef.current || savingRef.current) return;
+    if (operationRef.current || preparedOperationRef.current || savingRef.current) return;
+    editorChangedRef.current = true;
     setSelectedTags((prev) =>
       prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
     );
   }, []);
 
   const createChannel = useCallback(async (name: string) => {
-    if (operationRef.current || savingRef.current) return;
-    const result = saveModeRef.current === "standalone"
+    if (operationRef.current || preparedOperationRef.current || savingRef.current) return;
+    editorChangedRef.current = true;
+    const generation = destinationGenerationRef.current;
+    const mode = saveModeRef.current;
+    const vault = vaultRef.current;
+    const binding = bindingIdRef.current;
+    const isCurrent = () => mountedRef.current && generation === destinationGenerationRef.current
+      && mode === saveModeRef.current && vault === vaultRef.current && binding === bindingIdRef.current
+      && !operationRef.current && !preparedOperationRef.current && !savingRef.current;
+    const result = mode === "standalone"
       ? await standaloneCreateChannel(name)
-      : await sendToNative({ action: "create_channel", tag: name, vault_path: vaultRef.current });
+      : await sendToNative({ action: "create_channel", tag: name, vault_path: vault });
+    if (!isCurrent()) return;
     if (!result.ok) {
       showError(result.error ?? "Failed to create collection");
       return;
     }
     const tag = typeof result.tag === "string" ? result.tag : name;
     await refreshChannels();
+    if (!isCurrent()) return;
     setSelectedTags((prev) => (prev.includes(tag) ? prev : [...prev, tag]));
   }, [refreshChannels]);
 
@@ -1064,9 +1218,16 @@ export function useClipperState() {
     setSaving(true);
     try {
     await negotiateWidgetProtocol();
-    await persistCurrentDraft();
-    const pending = operationRef.current;
+    const pending = operationRef.current ?? preparedOperationRef.current;
     if (pending) {
+      if (pending.terminalResult?.ok || pending.terminalResult?.outcome === "committed") {
+        return { ok: true as const, warning: pending.terminalResult.warning };
+      }
+      if (preparedOperationRef.current === pending) {
+        await persistPendingSave(pending);
+        preparedOperationRef.current = null;
+        setSavePrepared(false);
+      }
       operationRef.current = pending;
       setPendingOperation(true);
       const result = await executePinnedSave(pending);
@@ -1174,10 +1335,10 @@ export function useClipperState() {
         setSaving(false);
         return { ok: false as const, error: "Screenshot not captured yet" };
       }
-      let uploadId = screenshotUploadId;
+      let uploadId = screenshotRef.current.dataUrl === screenshotDataUrl ? screenshotRef.current.uploadId : null;
       if (!uploadId) {
         uploadId = await cacheScreenshotUpload(screenshotDataUrl);
-        setScreenshotUploadId(uploadId);
+        if (screenshotRef.current.dataUrl === screenshotDataUrl) setScreenshotUploadId(uploadId);
       }
       if (!uploadId) {
         setSaving(false);
@@ -1210,7 +1371,7 @@ export function useClipperState() {
         );
         if (!uploadResult.ok && uploadResult.error === "Screenshot upload expired") {
           const refreshedUploadId = await cacheScreenshotUpload(screenshotDataUrl);
-          setScreenshotUploadId(refreshedUploadId);
+          if (screenshotRef.current.dataUrl === screenshotDataUrl) setScreenshotUploadId(refreshedUploadId);
           if (refreshedUploadId) {
             uploadResult = await uploadFile(
               uploadPortRef.current,
@@ -1276,7 +1437,13 @@ export function useClipperState() {
       payload: baselineSaveRequest({ ...payload, saved_at: new Date().toISOString().replace(/\.\d{3}Z$/, "Z") }, chosenExecutor === "browser" ? 1 : saveProtocolRef.current ?? 1),
       attempted: false,
     };
+    // A failed readback may follow a successful journal write. Keep this exact
+    // live snapshot for confirmation, without treating it as dispatched.
+    preparedOperationRef.current = operation;
+    setSavePrepared(true);
     await persistPendingSave(operation);
+    preparedOperationRef.current = null;
+    setSavePrepared(false);
     operationRef.current = operation;
     setPendingOperation(true);
     const result = await executePinnedSave(operation);
@@ -1310,13 +1477,13 @@ export function useClipperState() {
     allowDifferentDraft,
     draftId,
     standaloneFolder,
-    persistCurrentDraft,
     confirmSavedOperation,
     draftSourceUrl,
   ]);
 
   const switchVault = useCallback(async (vaultPath: string) => {
-    if (operationRef.current || savingRef.current) return;
+    if (operationRef.current || preparedOperationRef.current || savingRef.current) return;
+    editorChangedRef.current = true;
     destinationRef.current = "native";
     destinationGenerationRef.current += 1;
     setChannelsLoading(true);
@@ -1334,12 +1501,19 @@ export function useClipperState() {
   /// chooser, registers the folder in the shared config, and the clipper
   /// switches to it — the same flow Add space runs in the app.
   const addSpace = useCallback(async () => {
-    if (operationRef.current || savingRef.current) return;
-    const resp = await pickVaultFolder();
-    if (!resp.ok) throw new Error(resp.error ?? "The Mine helper could not choose a folder");
-    if (resp.cancelled || !resp.path) return;
-    setKnownVaults(resp.vaults);
-    await switchVault(resp.path);
+    if (operationRef.current || preparedOperationRef.current || savingRef.current) return;
+    try {
+      const resp = await pickVaultFolder();
+      if (!resp.ok) throw new Error(resp.error ?? "The Mine helper could not choose a folder");
+      if (resp.cancelled || !resp.path) return;
+      setKnownVaults(resp.vaults);
+      await chrome.storage.local.set({ mineKnownVaults: resp.vaults });
+      await switchVault(resp.path);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      nativeStatusErrorRef.current = message;
+      setNativeStatusError(message);
+    }
   }, [switchVault]);
 
   const revealSpace = useCallback(async (vaultPath: string) => {
@@ -1347,10 +1521,11 @@ export function useClipperState() {
   }, []);
 
   const chooseFolder = useCallback(async () => {
-    if (operationRef.current || savingRef.current) return { ok: false as const, error: "Resolve the pending save before changing its folder." };
+    if (operationRef.current || preparedOperationRef.current || savingRef.current) return { ok: false as const, error: "Resolve the pending save before changing its folder." };
     if (!canPickFolderHere()) return openStandaloneSetup();
     const status = await chooseStandaloneFolder();
     if (status.configured && status.permission === "granted") {
+      editorChangedRef.current = true;
       await chrome.storage.local.set({ mineSaveDestination: { executor: "browser", bindingId: status.bindingId } });
       enterStandaloneMode(status);
       return { ok: true as const };
@@ -1386,14 +1561,23 @@ export function useClipperState() {
     startCropMode,
     cropSupported,
     title,
-    setTitle,
+    setTitle: (value: string) => {
+      if (operationRef.current || preparedOperationRef.current || savingRef.current) return;
+      editorChangedRef.current = true;
+      setTitle(value);
+    },
     saving,
+    canSave: state === "main" && metadata !== null,
     draftReady: Boolean(draftSourceUrl && draftReadySource === draftSourceUrl),
+    draftLoading: Boolean(draftSourceUrl && draftReadySource !== draftSourceUrl && !draftError),
+    draftError,
+    connectionChecking,
     articleExtractionState,
     nativeStatusError,
     nativeConnected,
     canOpenApp,
     pendingOperation,
+    savePinned: pendingOperation || savePrepared,
     previousOperation,
     recoverPreviousSave,
     restorePreviousFolder,
@@ -1427,6 +1611,21 @@ interface ResolveTwitterMediaResponse {
   ok: boolean;
   error?: string;
   media?: TwitterMediaPreview[];
+}
+
+function isRecoverableDraftError(cause: unknown): boolean {
+  return cause instanceof DraftStorageError
+    && (cause.code === "draft_transport" || cause.code === "draft_storage_failed" || cause.code === "draft_not_confirmed");
+}
+
+async function confirmDraftMutation(mutation: { sourceUrl: string; draft: DurableClipperDraft; expectedRevision: number; ownership: DraftOwnership }): Promise<DurableClipperDraft> {
+  try {
+    return await writeOwnedDraft(mutation.sourceUrl, mutation.draft, mutation.expectedRevision, mutation.ownership);
+  } catch (cause) {
+    if (!isRecoverableDraftError(cause)) throw cause;
+    // Replay the same identity and payload, never a replacement write.
+    return writeOwnedDraft(mutation.sourceUrl, mutation.draft, mutation.expectedRevision, mutation.ownership);
+  }
 }
 
 function isTwitterStatusUrl(url: string | null | undefined): boolean {

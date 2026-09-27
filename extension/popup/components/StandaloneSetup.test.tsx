@@ -6,6 +6,15 @@ vi.mock("../lib/standalone", () => ({ openDownloadPage: vi.fn(async () => ({ ok:
 vi.mock("./ClipperOverflowMenu", () => ({ ClipperOverflowMenu: () => null }));
 
 describe("standalone setup", () => {
+  it("uses the native space chooser when the helper is connected", async () => {
+    const native = vi.fn(async () => undefined);
+    const browser = vi.fn();
+    render(<StandaloneSetup canPickFolder={false} folderName={null} nativeConnected onChooseNativeFolder={native} onChooseFolder={browser} onRegrantAccess={browser} />);
+    fireEvent.click(screen.getByRole("button", { name: "Choose space…" }));
+    await waitFor(() => expect(native).toHaveBeenCalledOnce());
+    expect(browser).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Choose folder…" })).toBeNull();
+  });
   it("offers the folder action directly in an overlay without claiming the app is absent", async () => {
     const choose = vi.fn(async () => ({ ok: true }));
     render(<StandaloneSetup canPickFolder={false} folderName={null} diagnosis="Helper connection rejected" onChooseFolder={choose} onRegrantAccess={choose} />);

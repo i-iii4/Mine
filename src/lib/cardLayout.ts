@@ -5,6 +5,7 @@ import {
 } from "@/lib/feedPreview";
 import { getDisplayTitle } from "@/lib/displayTitle";
 import { clampCardAspect } from "@/lib/cardAspect";
+import { parseYoutubeSource } from "@/lib/youtubeSource";
 
 export type CardLayoutVariant =
   | "image"
@@ -149,8 +150,7 @@ function galleryAspectRatio(itemCount: number): number {
 }
 
 function isEmbeddableVideoUrl(url: string | null): boolean {
-  if (!url) return false;
-  return /(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/.test(url);
+  return parseYoutubeSource(url) !== null;
 }
 
 /// Ratio an image card renders its graphic at.

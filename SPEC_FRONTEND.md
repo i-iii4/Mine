@@ -1,5 +1,13 @@
 # SPEC: Frontend
 
+## Видеопрезентация источника карточки
+
+Наличие текста не исключает просмотр видео. Проверенный основной URL поддерживаемого видеопровайдера задаёт внешнее воспроизведение независимо от вида карточки. В просмотре доступны проигрыватель и транскрипт; внешний проигрыватель подключается по действию пользователя. Основной локальный видеофайл сохраняет приоритет. Ссылки внутри обычного текста не меняют презентацию карточки.
+
+В ленте изображения тела и галереи сохраняют приоритет. Для видеоссылки без такого превью используется сохранённая миниатюра как изображение, не как локальный ролик. Изменённый рецепт использует существующее версионирование производного превью. Markdown и медиа старых карточек не переписываются.
+
+Приёмка: старая карточка с транскриптом и миниатюрой; ссылка без транскрипта; обычная статья; локальное видео; галерея; недопустимый домен; отказ внешнего проигрывателя; восстановление превью из прежних исходников.
+
 Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
 
 ## Overview

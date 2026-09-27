@@ -38,7 +38,7 @@ vi.mock("./VideoFromBlob", () => ({
     muted?: boolean;
     loop?: boolean;
   }) => (
-    <div
+    <video
       data-src={src}
       data-controls={controls ? "true" : "false"}
       data-autoplay={autoPlay ? "true" : "false"}
@@ -105,6 +105,81 @@ const getBlockMock = vi.mocked(getBlock);
 const copyMediaAssetToClipboardMock = vi.mocked(copyMediaAssetToClipboard);
 const prepareDeleteMediaAssetMock = vi.mocked(prepareDeleteMediaAsset);
 const resolveNoteLinkMock = vi.mocked(resolveNoteLink);
+
+function renderVideoDetail(overrides: Partial<IndexedBlock> = {}) {
+  const props = {
+    block: block({ url: "https://www.youtube.com/watch?v=9KDDhAOyv9k", body: "# Film\n\nPreserved transcript.", thumbnail: "Media/film.jpg", ...overrides }),
+    vaultPath: "/tmp/test-vault", thumbsRootPath: "/tmp/thumbs", tags: [],
+    onClose: vi.fn(), onNavigate: vi.fn(), onToggleTag: vi.fn(),
+    onCreateAndAssign: vi.fn(), onTagsChanged: vi.fn(), onRequestRename: vi.fn(),
+    onRequestDelete: vi.fn(), onOpenRelatedNote: vi.fn(),
+  };
+  return { ...render(<Detail {...props} />), props };
+}
+
+describe("Detail source video independent of card kind", () => {
+  it("keeps an existing article transcript and waits for a click before embedding", () => {
+    const { container } = renderVideoDetail();
+    expect(screen.getByText("Preserved transcript.")).toBeInTheDocument();
+    expect(container.querySelector("iframe")).toBeNull();
+    expect(container.querySelector("[data-youtube-source-player] img")?.getAttribute("src")).toContain("Media/film.jpg");
+    fireEvent.click(screen.getByRole("button", { name: "Play video" }));
+    expect(container.querySelector("iframe")?.getAttribute("src")).toBe("https://www.youtube.com/embed/9KDDhAOyv9k?autoplay=1");
+    expect(screen.getByText("Preserved transcript.")).toBeInTheDocument();
+  });
+
+  it("supports a metadata-only source link and leaves its direct source accessible on an error", () => {
+    const { container } = renderVideoDetail({ card_kind: "link", block_type: "link", body: "" });
+    fireEvent.click(screen.getByRole("button", { name: "Play video" }));
+    fireEvent.error(container.querySelector("iframe")!);
+    expect(screen.getByRole("link", { name: "Open on YouTube" })).toHaveAttribute("href", "https://www.youtube.com/watch?v=9KDDhAOyv9k");
+    expect(container.querySelector("iframe")).not.toBeNull();
+  });
+
+  it("retains the transcript after the external frame fails", () => {
+    const { container } = renderVideoDetail();
+    fireEvent.click(screen.getByRole("button", { name: "Play video" }));
+    fireEvent.error(container.querySelector("iframe")!);
+    expect(screen.getByText("Preserved transcript.")).toBeInTheDocument();
+  });
+
+  it("gives the main local video priority over its YouTube source", () => {
+    const { container } = renderVideoDetail({ media_file: "Media/film.mp4" });
+    expect(screen.getByTestId("video-from-blob")).toHaveAttribute("data-src", expect.stringContaining("Media/film.mp4"));
+    expect(screen.queryByRole("button", { name: "Play video" })).toBeNull();
+    expect(container.querySelector("iframe")).toBeNull();
+    expect(screen.getByText("Preserved transcript.")).toBeInTheDocument();
+  });
+
+  it.each([null, "Media/film.mp4"])("keeps one body video without adding a duplicate source player (%s)", (media_file) => {
+    const { container } = renderVideoDetail({ media_file, body: "Transcript\n\n![[film.mp4]]", preview_manifest: JSON.stringify({
+      kind: "video_poster", tiles: [{ source_path: "Media/film.mp4", is_video: true, is_video_poster: true }], overflow_count: 0,
+    }) });
+    expect(screen.getAllByTestId("video-from-blob")).toHaveLength(1);
+    expect(container.querySelector("[data-youtube-source-player]")).toBeNull();
+  });
+
+  it("does not hide the source player for video syntax inside a code example", () => {
+    renderVideoDetail({ body: "Example: `![](film.mp4)`" });
+    expect(screen.getByRole("button", { name: "Play video" })).toBeInTheDocument();
+    expect(screen.queryByTestId("video-from-blob")).toBeNull();
+  });
+
+  it("does not treat body links or a misleading host as a source player", () => {
+    const { container } = renderVideoDetail({ url: "https://youtube.com.evil.example/watch?v=9KDDhAOyv9k", body: "See [film](https://youtu.be/9KDDhAOyv9k)." });
+    expect(container.querySelector("[data-youtube-source-player]")).toBeNull();
+    expect(screen.getByRole("link", { name: "film" })).toBeInTheDocument();
+  });
+
+  it("resets playback when navigation changes video identity", () => {
+    const { container, rerender, props } = renderVideoDetail();
+    fireEvent.click(screen.getByRole("button", { name: "Play video" }));
+    rerender(<Detail {...props} block={block({ slug: "next", url: "https://youtu.be/abcdefghijk", body: "Second transcript" })} />);
+    expect(container.querySelector("iframe")).toBeNull();
+    expect(screen.getByRole("button", { name: "Play video" })).toBeInTheDocument();
+    expect(screen.getByText("Second transcript")).toBeInTheDocument();
+  });
+});
 
 function setViewportWidth(value: number) {
   Object.defineProperty(window, "innerWidth", {

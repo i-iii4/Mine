@@ -20,6 +20,25 @@ beforeEach(() => {
 });
 
 describe("extension-origin folder setup page", () => {
+  it("keeps cancellation local and never mounts a second clipper", async () => {
+    choose.mockResolvedValue({ configured: false });
+    render(<FolderSetupPage />);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Choose folder…" })); });
+    expect(notify).not.toHaveBeenCalled();
+    expect(screen.queryByText("Get the Mine app (optional)")).toBeNull();
+    expect(screen.queryByText("Search collections...")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "Choose folder…" })).toBeEnabled();
+  });
+
+  it("shows a failed permission request and permits another attempt", async () => {
+    choose.mockRejectedValue(new Error("Permission unavailable"));
+    render(<FolderSetupPage />);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Choose folder…" })); });
+    expect(screen.getByRole("alert")).toHaveTextContent("Permission unavailable");
+    expect(screen.getByRole("button", { name: "Choose folder…" })).toBeEnabled();
+    expect(notify).not.toHaveBeenCalled();
+  });
   it("notifies the original clip after a granted folder is stored", async () => {
     choose.mockResolvedValue({ configured: true, folderName: "Clips", permission: "granted", bindingId: "chosen" });
     render(<FolderSetupPage />);

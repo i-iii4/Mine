@@ -9,10 +9,61 @@ function operation(executor: "native" | "browser" = "native"): PinnedSaveOperati
   return { id: "same-operation", executor, bindingId: "same-folder", vaultPath: executor === "native" ? "/v" : null,
     payload: { action: "save_block", title: "Original", url: "https://example.com" }, attempted: false };
 }
+function sortedKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortedKeys);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, item]) => [key, sortedKeys(item)]));
+}
 
 beforeEach(() => vi.resetAllMocks());
 
 describe("pinned save operation", () => {
+  it("confirms a pending operation when storage reorders nested object keys", async () => {
+    const values: Record<string, unknown> = {};
+    vi.stubGlobal("chrome", { storage: { local: {
+      get: async () => ({ ...values }),
+      set: async (records: Record<string, unknown>) => {
+        for (const [key, value] of Object.entries(records)) values[key] = sortedKeys(value);
+      },
+    } } });
+    await persistPendingSave(operation());
+    expect(await findPendingSave("https://example.com")).toMatchObject({ attempted: true, id: "same-operation" });
+    vi.unstubAllGlobals();
+  });
+
+  it("confirms a committed receipt when storage reorders nested object keys", async () => {
+    const values: Record<string, unknown> = { "minePendingSaveOperation:same-operation": operation() };
+    vi.stubGlobal("chrome", { storage: { local: {
+      get: async () => ({ ...values }),
+      set: async (records: Record<string, unknown>) => {
+        for (const [key, value] of Object.entries(records)) values[key] = sortedKeys(value);
+      },
+    } } });
+    const pinned = operation();
+    await persistSaveReceipt(pinned, { ok: true, outcome: "committed", slug: "Cards/Once" });
+    const reopened = await findPendingSave("https://example.com");
+    expect(await executePinnedSave(reopened!)).toMatchObject({ outcome: "committed", slug: "Cards/Once" });
+    expect(native).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("rejects a pending operation readback that changes content or attachment order", async () => {
+    const pinned = operation();
+    pinned.payload = { ...pinned.payload!, tags: ["B", "A"] };
+    const values: Record<string, unknown> = {};
+    vi.stubGlobal("chrome", { storage: { local: {
+      get: async () => ({ ...values }),
+      set: async () => { values["minePendingSaveOperation:same-operation"] = {
+        ...pinned, schemaVersion: 1, attempted: true, payload: { ...pinned.payload, tags: ["A", "B"] },
+      }; },
+    } } });
+    await expect(persistPendingSave(pinned)).rejects.toThrow("could not be confirmed");
+    expect(native).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
   it("uses read-only lookup after a lost native response, without fallback", async () => {
     native.mockResolvedValueOnce({ ok: false, outcome: "unknown" }).mockResolvedValue({ ok: true, outcome: "committed" });
     const pinned = operation();
@@ -61,7 +112,45 @@ describe("pinned save operation", () => {
     } } });
     await persistPendingSave(operation());
     expect(await findPendingSave("https://example.com")).toMatchObject({ attempted: true, id: "same-operation" });
+    await persistPendingSave(operation());
+    await expect(persistPendingSave({ ...operation(), payload: { action: "save_block", title: "Changed" } })).rejects.toThrow("already stored");
+    vi.unstubAllGlobals();
+  });
+
+  it("confirms the same identity after the original pending readback was interrupted", async () => {
+    const values: Record<string, unknown> = {};
+    let reads = 0;
+    const set = vi.fn(async (records: Record<string, unknown>) => {
+      for (const [key, value] of Object.entries(records)) values[key] = sortedKeys(value);
+    });
+    vi.stubGlobal("chrome", { storage: { local: {
+      get: async () => {
+        reads += 1;
+        if (reads === 2) throw new Error("Pending readback interrupted");
+        return { ...values };
+      }, set,
+    } } });
+    const prepared = operation();
+    await expect(persistPendingSave(prepared)).rejects.toThrow("Pending readback interrupted");
+    expect(prepared.attempted).toBe(false);
+    await persistPendingSave(prepared);
+    expect(set).toHaveBeenCalledTimes(1);
+    expect(prepared.attempted).toBe(false);
+    expect(await findPendingSave("https://example.com")).toMatchObject({ attempted: true, id: prepared.id });
+    expect(native).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("does not replace a committed receipt when confirming a prepared operation again", async () => {
+    vi.stubGlobal("chrome", { storage: { local: { get: async () => ({
+      "minePendingSaveOperation:same-operation": {
+        ...operation(), schemaVersion: 1, attempted: true, terminalResult: { ok: true, outcome: "committed" },
+      },
+    }), set: vi.fn() } } });
     await expect(persistPendingSave(operation())).rejects.toThrow("already stored");
+    await expect(persistPendingSave({ ...operation(), terminalResult: { ok: true, outcome: "committed" } })).rejects.toThrow("already stored");
+    expect(chrome.storage.local.set).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
 
@@ -76,7 +165,41 @@ describe("pinned save operation", () => {
     vi.unstubAllGlobals();
   });
 
-  it("a committed receipt survives draft cleanup failure without repeating source writes", async () => {
+  it.each(["envelope", "legacy payload"])("preserves an unrelated unknown format identified by its %s without blocking this page", async (source) => {
+    const unrelated = { ...operation(), schemaVersion: 2,
+      ...(source === "envelope"
+        ? { sourceUrl: "https://example.com/other", payload: null }
+        : { payload: { action: "save_block", url: "https://example.com/other" } }),
+    };
+    const values: Record<string, unknown> = { "minePendingSaveOperation:older": unrelated };
+    const remove = vi.fn();
+    vi.stubGlobal("chrome", { storage: { local: {
+      get: async () => structuredClone(values),
+      set: async (records: Record<string, unknown>) => { Object.assign(values, structuredClone(records)); },
+      remove,
+    } } });
+    expect(await findPendingSave("https://example.com")).toBeNull();
+    const current = operation();
+    await persistPendingSave(current);
+    native.mockResolvedValue({ ok: true, outcome: "committed", slug: "Current" });
+    expect(await executePinnedSave(current)).toMatchObject({ outcome: "committed" });
+    expect(await findPendingSave("https://example.com")).toMatchObject({ id: current.id });
+    expect(values["minePendingSaveOperation:older"]).toEqual(unrelated);
+    expect(remove).not.toHaveBeenCalled();
+    expect(native).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ operation_id: current.id, url: "https://example.com" }));
+    vi.unstubAllGlobals();
+  });
+
+  it("does not assume an unknown record without source identity belongs to another page", async () => {
+    vi.stubGlobal("chrome", { storage: { local: { get: async () => ({
+      "minePendingSaveOperation:unidentified": { ...operation(), schemaVersion: 2, payload: null },
+    }) } } });
+    await expect(findPendingSave("https://example.com/other")).rejects.toThrow("unknown pending save format");
+    expect(native).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("a reopened committed receipt returns success without repeating source writes", async () => {
     const values: Record<string, unknown> = {};
     vi.stubGlobal("chrome", { storage: { local: {
       get: async () => ({ ...values }), set: async (record: Record<string, unknown>) => { Object.assign(values, record); },
