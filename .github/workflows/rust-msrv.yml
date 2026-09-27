@@ -22,5 +22,10 @@ jobs:
       # binary joined the bundle.
       - name: Fetch bundled yt-dlp
         run: node scripts/fetch-ytdlp.mjs
+      # The clipper payload is a bundle resource too. `cargo check` never
+      # packages it, so the directory only has to exist; the real payload is
+      # built and verified by the native shell smoke and by release bundling.
+      - name: Provide the clipper payload directory
+        run: mkdir -p build/clipper-extension
       - name: Check locked workspace at MSRV
         run: cargo +1.88.0 check --workspace --all-targets --locked
