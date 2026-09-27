@@ -14,6 +14,8 @@ pub use commands::clipper_setup::{
 };
 pub mod domain;
 #[cfg(feature = "desktop")]
+mod frame_context_menu;
+#[cfg(feature = "desktop")]
 mod import;
 #[cfg(feature = "desktop")]
 pub mod mcp;
@@ -123,6 +125,7 @@ pub fn run() {
             commands::blocks::prepare_delete_media_asset,
             commands::blocks::delete_media_asset,
             commands::blocks::remove_media_asset_from_card,
+            commands::blocks::delete_source_video,
             commands::blocks::copy_media_asset_to_clipboard,
             commands::clipboard::read_clipboard_payload,
             commands::shortcuts::list_shortcut_overrides,
@@ -222,6 +225,10 @@ pub fn run() {
             // The two-finger swipe is recognised here, where the system
             // describes its phases, and reaches the interface as a decision.
             swipe_gesture::install(app.handle().clone());
+
+            // A right click inside the embedded video player opens Mine's
+            // menu instead of WebKit's frame menu.
+            frame_context_menu::install(app.handle());
 
             if app.get_webview_window("main").is_some() {
                 crate::util::append_startup_trace(app.handle(), "window", "created");

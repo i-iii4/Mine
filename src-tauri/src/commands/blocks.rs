@@ -917,6 +917,50 @@ pub fn remove_media_asset_from_card(
     Ok(result)
 }
 
+/// Remove the card's source video: its YouTube `url`, its `thumbnail`
+/// property, and the poster file when no other card references it. Title,
+/// body, collections and the card file stay. See SPEC_MEDIA_ASSET_ACTIONS.md
+/// «Меню видео источника».
+#[tauri::command(rename_all = "snake_case")]
+pub fn delete_source_video(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    slug: String,
+) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
+    let vault_state = state
+        .vault_state
+        .lock()
+        .map_err(|_| MediaAssetActionError::Internal {
+            message: "vault state mutex poisoned".into(),
+        })?;
+    let vs = vault_state.as_ref().ok_or(MediaAssetActionError::NoVault)?;
+
+    let result = delete_source_video_inner(&state, &vs.conn, &vs.vault, &slug)?;
+    for slug in &result.affected_slugs {
+        app.emit(
+            "thumb:updated",
+            ThumbUpdatedPayload {
+                slug: slug.clone(),
+                is_text: false,
+            },
+        )
+        .map_err(|e| MediaAssetActionError::Internal {
+            message: format!("failed to emit thumb:updated: {e}"),
+        })?;
+    }
+    app.emit(
+        "vault-changed",
+        VaultChangedPayload {
+            path: vs.vault.root().to_string_lossy().to_string(),
+        },
+    )
+    .map_err(|e| MediaAssetActionError::Internal {
+        message: format!("failed to emit vault-changed: {e}"),
+    })?;
+
+    Ok(result)
+}
+
 /// Copy the selected local media file as a native media/file object. This is
 /// intentionally separate from Copy Path, which copies a plain string path.
 #[tauri::command(rename_all = "snake_case")]
@@ -2671,6 +2715,91 @@ fn remove_media_asset_from_card_inner(
     .map_err(internal_media_asset_error)?;
     staged
         .commit_with_index(conn, "detach_media_asset", |index_conn| {
+            index::upsert_block(index_conn, &block, Some(vault.root())).map(|_| ())
+        })
+        .map_err(internal_media_asset_error)?;
+    let thumb_source = thumbnails::generate_for_block(&block, vault);
+    if matches!(thumb_source, thumbnails::ThumbSource::None) && thumb_path.exists() {
+        let _ = std::fs::remove_file(&thumb_path);
+    }
+    let _ = index::sync_thumb_metadata(conn, &block.slug, &thumb_path, Some(vault.root()));
+
+    Ok(MediaAssetMutationResult {
+        media_ref,
+        new_media_ref: None,
+        affected_slugs: vec![block.slug],
+    })
+}
+
+fn delete_source_video_inner(
+    state: &AppState,
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    slug: &str,
+) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
+    validate_slug(slug).map_err(|e| MediaAssetActionError::InvalidMediaRef {
+        reason: format!("invalid card slug: {e}"),
+    })?;
+    let source_path = vault.block_path(slug);
+    if !source_path.exists() {
+        return Err(MediaAssetActionError::InvalidMediaRef {
+            reason: format!("card not found: {slug}"),
+        });
+    }
+    let (read_slug, content) =
+        files::read_block_file(vault, &source_path).map_err(internal_media_asset_error)?;
+    let mut block = parse_markdown_document(&read_slug, &content, file_saved_at(&source_path))
+        .map_err(|e| MediaAssetActionError::Internal {
+            message: format!("failed to parse card: {e}"),
+        })?
+        .block;
+    let source_url = block.frontmatter.url.clone().unwrap_or_default();
+    if mine_core::domain::video_source::parse_youtube_source(&source_url).is_none() {
+        return Err(MediaAssetActionError::InvalidMediaRef {
+            reason: format!("card has no source video: {slug}"),
+        });
+    }
+
+    // The poster goes with the video only when nothing else shows it.
+    let poster_path = block
+        .frontmatter
+        .thumbnail
+        .as_deref()
+        .and_then(|reference| media_refs::resolve_indexed_media(vault, &block.slug, reference));
+    let poster_to_delete = match &poster_path {
+        Some(path) => {
+            let shared = collect_media_asset_reference_blocks(vault, path)?
+                .iter()
+                .any(|reference| reference.slug != block.slug);
+            (!shared).then(|| path.clone())
+        }
+        None => None,
+    };
+    let media_ref = poster_to_delete
+        .as_deref()
+        .and_then(|path| vault.root_relative_reference(path))
+        .unwrap_or_default();
+
+    block.frontmatter.url = None;
+    block.frontmatter.thumbnail = None;
+
+    let thumb_path = vault.thumb_path(&block.slug);
+    let mut suppressed = vec![source_path.clone(), thumb_path.clone()];
+    suppressed.extend(poster_to_delete.iter().cloned());
+    state
+        .suppress_paths(
+            suppressed,
+            Duration::from_millis(IN_APP_RENAME_WATCHER_SUPPRESSION_MS),
+        )
+        .map_err(internal_media_asset_error)?;
+
+    let serialized = crate::domain::block::serialize_block(&block);
+    let writes = std::iter::once(SourceFileWrite::replace(source_path, serialized.into_bytes()))
+        .chain(poster_to_delete.into_iter().map(SourceFileWrite::delete))
+        .collect();
+    let staged = StagedSourceMutation::stage(writes).map_err(internal_media_asset_error)?;
+    staged
+        .commit_with_index(conn, "delete_source_video", |index_conn| {
             index::upsert_block(index_conn, &block, Some(vault.root())).map(|_| ())
         })
         .map_err(internal_media_asset_error)?;
@@ -4976,6 +5105,67 @@ mod tests {
             std::fs::read(vault.root().join("renamed.png")).unwrap(),
             b"image-bytes"
         );
+    }
+
+    fn youtube_card(slug: &str, poster: &str) -> Block {
+        let mut block = article(slug, "# Film\n\nTranscript stays.");
+        block.frontmatter.url = Some("https://www.youtube.com/watch?v=9KDDhAOyv9k".to_string());
+        block.frontmatter.thumbnail = Some(poster.to_string());
+        block
+    }
+
+    #[test]
+    fn delete_source_video_inner_clears_link_and_deletes_unshared_poster() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        persist_block(&conn, &vault, &youtube_card("Film", "poster.jpg"));
+        std::fs::write(vault.root().join("poster.jpg"), b"poster-bytes").unwrap();
+
+        let result = delete_source_video_inner(&state, &conn, &vault, "Film").unwrap();
+
+        assert_eq!(result.media_ref, "poster.jpg");
+        assert_eq!(result.affected_slugs, vec!["Film".to_string()]);
+        assert!(!vault.root().join("poster.jpg").exists());
+        let (_, content) = files::read_block_file(&vault, &vault.block_path("Film")).unwrap();
+        let parsed = crate::domain::block::parse_block("Film", &content).unwrap();
+        assert!(parsed.frontmatter.url.is_none());
+        assert!(parsed.frontmatter.thumbnail.is_none());
+        assert_eq!(parsed.frontmatter.tags, vec!["notes".to_string()]);
+        assert!(parsed.body.contains("Transcript stays."));
+    }
+
+    #[test]
+    fn delete_source_video_inner_keeps_a_poster_another_card_shows() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        persist_block(&conn, &vault, &youtube_card("Film", "poster.jpg"));
+        persist_block(&conn, &vault, &image("Poster Card", "poster.jpg"));
+        std::fs::write(vault.root().join("poster.jpg"), b"poster-bytes").unwrap();
+
+        let result = delete_source_video_inner(&state, &conn, &vault, "Film").unwrap();
+
+        assert_eq!(result.media_ref, "");
+        assert_eq!(std::fs::read(vault.root().join("poster.jpg")).unwrap(), b"poster-bytes");
+        let (_, content) = files::read_block_file(&vault, &vault.block_path("Film")).unwrap();
+        let parsed = crate::domain::block::parse_block("Film", &content).unwrap();
+        assert!(parsed.frontmatter.url.is_none());
+        assert!(parsed.frontmatter.thumbnail.is_none());
+        let (_, other) = files::read_block_file(&vault, &vault.block_path("Poster Card")).unwrap();
+        assert!(other.contains("poster.jpg"));
+    }
+
+    #[test]
+    fn delete_source_video_inner_refuses_a_card_without_a_source_video() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        let plain = article("Plain", "Body");
+        persist_block(&conn, &vault, &plain);
+
+        let error = delete_source_video_inner(&state, &conn, &vault, "Plain").unwrap_err();
+
+        assert!(matches!(error, MediaAssetActionError::InvalidMediaRef { .. }));
+        let (_, content) = files::read_block_file(&vault, &vault.block_path("Plain")).unwrap();
+        assert!(content.contains("https://example.com/article"));
     }
 
     #[test]

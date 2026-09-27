@@ -271,6 +271,16 @@ export const deleteMediaAsset = async (media_ref: string) => {
   }
 };
 
+/** Remove the card's source video: its link, poster property and unshared poster file.
+ *  See SPEC_MEDIA_ASSET_ACTIONS.md «Меню видео источника». */
+export const deleteSourceVideo = async (slug: string) => {
+  try {
+    return await tauriInvoke<MediaAssetMutationResult>("delete_source_video", { slug });
+  } catch (error) {
+    throw normalizeMediaAssetActionError(error);
+  }
+};
+
 export const removeMediaAssetFromCard = async (params: RemoveMediaAssetFromCardParams) => {
   try {
     return await tauriInvoke<MediaAssetMutationResult>("remove_media_asset_from_card", { params });

@@ -20,6 +20,9 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
   revealItemInDir: vi.fn(),
 }));
 
+const writeText = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ writeText }));
+
 vi.mock("./ArticleAudioControls", () => ({
   ArticleAudioControls: () => <div data-testid="article-audio-controls" />,
 }));
@@ -206,6 +209,51 @@ describe("Detail source video independent of card kind", () => {
     expect(container.querySelector("[data-youtube-source-player]")).toBeNull();
     expect(youtubePlayerUrlMock).not.toHaveBeenCalled();
     expect(screen.getByRole("link", { name: "film" })).toBeInTheDocument();
+  });
+
+  it("opens the source video menu on a right click with only the actions a link supports", async () => {
+    const { container } = renderVideoDetail();
+    fireEvent.contextMenu(container.querySelector("[data-source-video-surface]")!);
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Open on YouTube" })).toBeInTheDocument());
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open on YouTube", "Copy Link", "Delete Media"]);
+  });
+
+  it("opens the menu when the shell reports a right click inside the player frame, and only then", async () => {
+    const { container } = renderVideoDetail();
+    const surface = container.querySelector<HTMLElement>("[data-source-video-surface]")!;
+    surface.getBoundingClientRect = () => ({ left: 100, top: 50, right: 740, bottom: 410, width: 640, height: 360, x: 100, y: 50, toJSON: () => ({}) });
+    await act(async () => {});
+    act(() => { window.dispatchEvent(new CustomEvent("source-video-context-menu", { detail: { payload: { x: 20, y: 20 } } })); });
+    expect(screen.queryByRole("menuitem", { name: "Copy Link" })).toBeNull();
+    act(() => { window.dispatchEvent(new CustomEvent("source-video-context-menu", { detail: { payload: { x: 300, y: 200 } } })); });
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Copy Link" })).toBeInTheDocument());
+  });
+
+  it("copies the canonical video link", async () => {
+    writeText.mockClear();
+    const { container } = renderVideoDetail({ url: "https://youtu.be/9KDDhAOyv9k" });
+    fireEvent.contextMenu(container.querySelector("[data-source-video-surface]")!);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Copy Link" }));
+    expect(writeText).toHaveBeenCalledWith("https://www.youtube.com/watch?v=9KDDhAOyv9k");
+  });
+
+  it("deletes the source video only after confirmation", async () => {
+    const onDeleteSourceVideo = vi.fn(async () => {});
+    const props = {
+      block: block({ url: "https://www.youtube.com/watch?v=9KDDhAOyv9k", body: "# Film\n\nPreserved transcript.", thumbnail: "Media/film.jpg" }),
+      vaultPath: "/tmp/test-vault", thumbsRootPath: "/tmp/thumbs", tags: [],
+      onClose: vi.fn(), onNavigate: vi.fn(), onToggleTag: vi.fn(),
+      onCreateAndAssign: vi.fn(), onTagsChanged: vi.fn(), onRequestRename: vi.fn(),
+      onRequestDelete: vi.fn(), onOpenRelatedNote: vi.fn(), onDeleteSourceVideo,
+    };
+    const { container } = render(<Detail {...props} />);
+    fireEvent.contextMenu(container.querySelector("[data-source-video-surface]")!);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete Media" }));
+    expect(await screen.findByText("Delete video from element?")).toBeInTheDocument();
+    expect(onDeleteSourceVideo).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Delete media" }));
+    await waitFor(() => expect(onDeleteSourceVideo).toHaveBeenCalledWith(props.block.slug));
+    await waitFor(() => expect(screen.queryByText("Delete video from element?")).toBeNull());
   });
 
   it("loads the next video's player when navigation changes video identity", async () => {

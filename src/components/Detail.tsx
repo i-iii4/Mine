@@ -183,6 +183,7 @@ interface DetailProps {
   onRenameMediaAsset?: (asset: MediaAssetRef, newStem: string) => Promise<void>;
   onRemoveMediaAssetFromCard?: (asset: MediaAssetRef) => Promise<void>;
   onDeleteMediaAsset?: (asset: MediaAssetRef) => Promise<void>;
+  onDeleteSourceVideo?: (slug: string) => Promise<void>;
   onOpenImagePreview?: (preview: ImagePreviewRequest) => void;
   onOpenRelatedNote: (slug: string) => void;
   onTextSelectionDrop?: (payload: MineTextSelectionDragPayload, tag: string) => void;
@@ -219,6 +220,7 @@ type HoveredRelatedNote = {
 const noopMediaAssetConnect = async (_asset: MediaAssetRef, _tag: string) => {};
 const noopMediaAssetRename = async (_asset: MediaAssetRef, _newStem: string) => {};
 const noopMediaAssetDelete = async (_asset: MediaAssetRef) => {};
+const noopSourceVideoDelete = async (_slug: string) => {};
 const noopTextSelectionCreate = async (_payload: MineTextSelectionDragPayload, _tag: string) => {};
 const noopOpenImagePreview = (_preview: ImagePreviewRequest) => {};
 
@@ -301,6 +303,7 @@ export function Detail({
   onRenameMediaAsset = noopMediaAssetRename,
   onRemoveMediaAssetFromCard = noopMediaAssetDelete,
   onDeleteMediaAsset = noopMediaAssetDelete,
+  onDeleteSourceVideo = noopSourceVideoDelete,
   onOpenImagePreview = noopOpenImagePreview,
   onOpenRelatedNote,
   onTextSelectionDrop,
@@ -515,6 +518,7 @@ export function Detail({
                 onRenameMediaAsset={onRenameMediaAsset}
                 onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
                 onDeleteMediaAsset={onDeleteMediaAsset}
+                onDeleteSourceVideo={onDeleteSourceVideo}
                 onOpenImagePreview={onOpenImagePreview}
                 onOpenRelatedNote={onOpenRelatedNote}
                 onTextSelectionDrop={onTextSelectionDrop}
@@ -1173,6 +1177,7 @@ function BlockContent({
   onRenameMediaAsset,
   onRemoveMediaAssetFromCard,
   onDeleteMediaAsset,
+  onDeleteSourceVideo,
   onOpenImagePreview,
   onOpenRelatedNote,
   onTextSelectionDrop,
@@ -1191,6 +1196,7 @@ function BlockContent({
   onRenameMediaAsset: (asset: MediaAssetRef, newStem: string) => Promise<void>;
   onRemoveMediaAssetFromCard: (asset: MediaAssetRef) => Promise<void>;
   onDeleteMediaAsset: (asset: MediaAssetRef) => Promise<void>;
+  onDeleteSourceVideo: (slug: string) => Promise<void>;
   onOpenImagePreview: (preview: ImagePreviewRequest) => void;
   onOpenRelatedNote: (slug: string) => void;
   onTextSelectionDrop?: (payload: MineTextSelectionDragPayload, tag: string) => void;
@@ -1253,6 +1259,7 @@ function BlockContent({
         ? resolveDetailMediaReference(vaultPath, block.thumbnail)
         : null}
       title={displayTitle ?? navigationLabel}
+      onDelete={() => onDeleteSourceVideo(block.slug)}
     />
   ) : null;
 

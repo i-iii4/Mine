@@ -894,11 +894,12 @@
         "src-tauri/src/commands/thumbnails.rs",
         "src-tauri/src/watcher/handler.rs",
         "src-tauri/src/youtube_embed.rs",
+        "src-tauri/src/frame_context_menu.rs",
         "src-tauri/src/commands/youtube_player.rs",
         "src-tauri/tauri.conf.json"
       ],
       "requirement": "SPEC_FRONTEND.md### Видеопрезентация источника карточки",
-      "tests": ["mine-core/src/domain/video_source.rs", "src-tauri/src/storage/index.rs", "src-tauri/src/storage/thumbnails.rs", "src-tauri/src/youtube_embed.rs"],
+      "tests": ["mine-core/src/domain/video_source.rs", "src-tauri/src/storage/index.rs", "src-tauri/src/storage/thumbnails.rs", "src-tauri/src/youtube_embed.rs", "src-tauri/src/frame_context_menu.rs"],
       "command": "test:rust"
     },
     {
