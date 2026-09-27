@@ -30,6 +30,8 @@ pub mod updater;
 pub mod util;
 #[cfg(feature = "desktop")]
 mod watcher;
+#[cfg(feature = "desktop")]
+mod youtube_embed;
 
 #[cfg(feature = "desktop")]
 use commands::state::AppState;
@@ -66,6 +68,7 @@ pub fn run() {
         .manage(AppState::new())
         .manage(updater::UpdateService::default())
         .manage(commands::app_open::PendingSpace::default())
+        .manage(youtube_embed::YoutubeEmbedServer::default())
         // Article audio commands are registered only with the `article-audio`
         // feature; `generate_handler!` takes a flat list, so the gate lives on
         // this attribute rather than on individual entries.
@@ -163,6 +166,7 @@ pub fn run() {
             commands::settings::delete_orphan_media,
             commands::window_chrome::set_sidebar_menu_collapsed,
             commands::native_shell_smoke::report_native_shell_smoke,
+            commands::youtube_player::youtube_player_url,
         ])
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())

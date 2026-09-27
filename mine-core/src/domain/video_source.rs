@@ -10,7 +10,9 @@ pub struct YoutubeSource {
     pub video_id: String,
 }
 
-fn valid_video_id(value: &str) -> bool {
+/// Whether `value` is a well-formed eleven-character YouTube video identifier.
+#[must_use]
+pub fn valid_video_id(value: &str) -> bool {
     value.len() == 11
         && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
 }

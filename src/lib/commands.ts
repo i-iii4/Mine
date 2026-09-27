@@ -500,6 +500,12 @@ export const dismissCloudRecommendation = (neverShowAgain: boolean) =>
 export const icloudDownloadProgress = (mediaRef: string) =>
   invoke<IcloudDownloadProgress>("icloud_download_progress", { mediaRef });
 
+/** Local page that hosts the YouTube player for a card's source URL.
+ *  YouTube refuses an embed without a referrer, and the interface origin
+ *  sends none. See SPEC_FRONTEND.md «Видеопрезентация источника карточки». */
+export const youtubePlayerUrl = (sourceUrl: string) =>
+  invoke<string>("youtube_player_url", { sourceUrl });
+
 /** The saved space that could not be opened, if any.
  *  `null` means either no space was ever chosen or the saved one is reachable —
  *  a missing folder must never look like a fresh install.

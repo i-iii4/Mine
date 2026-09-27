@@ -9,7 +9,7 @@ import {
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { COLLECTION_PICKER_CONTENT_CLASS } from "./CollectionPicker";
-import { copyMediaAssetToClipboard, getBlock, icloudDownloadProgress, prepareDeleteMediaAsset, resolveNoteLink } from "@/lib/commands";
+import { copyMediaAssetToClipboard, getBlock, icloudDownloadProgress, prepareDeleteMediaAsset, resolveNoteLink, youtubePlayerUrl } from "@/lib/commands";
 import {
   HOVER_PREVIEW_COLD_OPEN_DELAY_MS,
   HOVER_PREVIEW_WARM_WINDOW_MS,
@@ -55,6 +55,7 @@ vi.mock("@/lib/commands", () => ({
   prepareDeleteMediaAsset: vi.fn(),
   resolveNoteLink: vi.fn(),
   icloudDownloadProgress: vi.fn(),
+  youtubePlayerUrl: vi.fn(),
 }));
 
 function cardKindForBlockType(blockType: IndexedBlock["block_type"]): IndexedBlock["card_kind"] {
@@ -117,28 +118,69 @@ function renderVideoDetail(overrides: Partial<IndexedBlock> = {}) {
   return { ...render(<Detail {...props} />), props };
 }
 
+const youtubePlayerUrlMock = vi.mocked(youtubePlayerUrl);
+
 describe("Detail source video independent of card kind", () => {
-  it("keeps an existing article transcript and waits for a click before embedding", () => {
+  beforeEach(() => {
+    youtubePlayerUrlMock.mockReset();
+    youtubePlayerUrlMock.mockImplementation(async (sourceUrl) => `http://localhost:4321/youtube/${new URL(sourceUrl).searchParams.get("v") ?? new URL(sourceUrl).pathname.slice(1)}`);
+  });
+
+  it("keeps an existing article transcript and waits for a click before embedding", async () => {
     const { container } = renderVideoDetail();
     expect(screen.getByText("Preserved transcript.")).toBeInTheDocument();
     expect(container.querySelector("iframe")).toBeNull();
     expect(container.querySelector("[data-youtube-source-player] img")?.getAttribute("src")).toContain("Media/film.jpg");
+    await waitFor(() => expect(youtubePlayerUrlMock).toHaveBeenCalledWith("https://www.youtube.com/watch?v=9KDDhAOyv9k"));
+    expect(container.querySelector("iframe")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Play video" }));
-    expect(container.querySelector("iframe")?.getAttribute("src")).toBe("https://www.youtube.com/embed/9KDDhAOyv9k?autoplay=1");
+    await waitFor(() => expect(container.querySelector("iframe")?.getAttribute("src")).toBe("http://localhost:4321/youtube/9KDDhAOyv9k"));
     expect(screen.getByText("Preserved transcript.")).toBeInTheDocument();
   });
 
-  it("supports a metadata-only source link and leaves its direct source accessible on an error", () => {
+  it("never embeds YouTube into the interface document itself", async () => {
+    const { container } = renderVideoDetail();
+    fireEvent.click(screen.getByRole("button", { name: "Play video" }));
+    await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull());
+    expect(container.querySelector("iframe")?.getAttribute("src")).not.toContain("youtube.com");
+  });
+
+  it("starts playback once the local player page is ready after an early click", async () => {
+    let resolve: (url: string) => void = () => {};
+    youtubePlayerUrlMock.mockImplementation(() => new Promise((done) => { resolve = done; }));
+    const { container } = renderVideoDetail();
+    fireEvent.click(screen.getByRole("button", { name: "Play video" }));
+    expect(container.querySelector("iframe")).toBeNull();
+    expect(screen.getByRole("button", { name: "Play video" })).toBeDisabled();
+    await act(async () => { resolve("http://localhost:4321/youtube/9KDDhAOyv9k"); });
+    expect(container.querySelector("iframe")?.getAttribute("src")).toBe("http://localhost:4321/youtube/9KDDhAOyv9k");
+  });
+
+  it("says the video cannot play inside Mine and keeps the source link when the player page fails", async () => {
+    youtubePlayerUrlMock.mockRejectedValue(new Error("bind failed"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { container } = renderVideoDetail();
+    expect(await screen.findByText("This video can't play inside Mine.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Play video" })).toBeNull();
+    expect(container.querySelector("iframe")).toBeNull();
+    expect(screen.getByRole("link", { name: "Open on YouTube" })).toHaveAttribute("href", "https://www.youtube.com/watch?v=9KDDhAOyv9k");
+    expect(screen.getByText("Preserved transcript.")).toBeInTheDocument();
+    consoleError.mockRestore();
+  });
+
+  it("supports a metadata-only source link and leaves its direct source accessible on an error", async () => {
     const { container } = renderVideoDetail({ card_kind: "link", block_type: "link", body: "" });
     fireEvent.click(screen.getByRole("button", { name: "Play video" }));
+    await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull());
     fireEvent.error(container.querySelector("iframe")!);
     expect(screen.getByRole("link", { name: "Open on YouTube" })).toHaveAttribute("href", "https://www.youtube.com/watch?v=9KDDhAOyv9k");
     expect(container.querySelector("iframe")).not.toBeNull();
   });
 
-  it("retains the transcript after the external frame fails", () => {
+  it("retains the transcript after the external frame fails", async () => {
     const { container } = renderVideoDetail();
     fireEvent.click(screen.getByRole("button", { name: "Play video" }));
+    await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull());
     fireEvent.error(container.querySelector("iframe")!);
     expect(screen.getByText("Preserved transcript.")).toBeInTheDocument();
   });
@@ -148,6 +190,7 @@ describe("Detail source video independent of card kind", () => {
     expect(screen.getByTestId("video-from-blob")).toHaveAttribute("data-src", expect.stringContaining("Media/film.mp4"));
     expect(screen.queryByRole("button", { name: "Play video" })).toBeNull();
     expect(container.querySelector("iframe")).toBeNull();
+    expect(youtubePlayerUrlMock).not.toHaveBeenCalled();
     expect(screen.getByText("Preserved transcript.")).toBeInTheDocument();
   });
 
@@ -159,8 +202,9 @@ describe("Detail source video independent of card kind", () => {
     expect(container.querySelector("[data-youtube-source-player]")).toBeNull();
   });
 
-  it("does not hide the source player for video syntax inside a code example", () => {
+  it("does not hide the source player for video syntax inside a code example", async () => {
     renderVideoDetail({ body: "Example: `![](film.mp4)`" });
+    await act(async () => {});
     expect(screen.getByRole("button", { name: "Play video" })).toBeInTheDocument();
     expect(screen.queryByTestId("video-from-blob")).toBeNull();
   });
@@ -168,16 +212,19 @@ describe("Detail source video independent of card kind", () => {
   it("does not treat body links or a misleading host as a source player", () => {
     const { container } = renderVideoDetail({ url: "https://youtube.com.evil.example/watch?v=9KDDhAOyv9k", body: "See [film](https://youtu.be/9KDDhAOyv9k)." });
     expect(container.querySelector("[data-youtube-source-player]")).toBeNull();
+    expect(youtubePlayerUrlMock).not.toHaveBeenCalled();
     expect(screen.getByRole("link", { name: "film" })).toBeInTheDocument();
   });
 
-  it("resets playback when navigation changes video identity", () => {
+  it("resets playback when navigation changes video identity", async () => {
     const { container, rerender, props } = renderVideoDetail();
     fireEvent.click(screen.getByRole("button", { name: "Play video" }));
+    await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull());
     rerender(<Detail {...props} block={block({ slug: "next", url: "https://youtu.be/abcdefghijk", body: "Second transcript" })} />);
     expect(container.querySelector("iframe")).toBeNull();
     expect(screen.getByRole("button", { name: "Play video" })).toBeInTheDocument();
     expect(screen.getByText("Second transcript")).toBeInTheDocument();
+    await waitFor(() => expect(youtubePlayerUrlMock).toHaveBeenCalledWith("https://www.youtube.com/watch?v=abcdefghijk"));
   });
 });
 
