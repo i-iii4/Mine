@@ -119,7 +119,7 @@ fn wrapper_html(video_id: &str, port: u16) -> String {
 <html><head><meta charset="utf-8"><meta name="referrer" content="strict-origin-when-cross-origin">
 <style>html,body{{margin:0;height:100%;background:#000;overflow:hidden}}iframe{{display:block;border:0;width:100%;height:100%}}</style>
 </head><body>
-<iframe src="https://www.youtube.com/embed/{video_id}?autoplay=1&amp;playsinline=1&amp;origin={origin}" title="YouTube video player" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
+<iframe src="https://www.youtube.com/embed/{video_id}?playsinline=1&amp;origin={origin}" title="YouTube video player" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
 </body></html>
 "#
     )
@@ -167,7 +167,8 @@ mod tests {
     #[test]
     fn wrapper_embeds_youtube_with_its_own_origin_as_referrer() {
         let html = wrapper_html("9KDDhAOyv9k", 4321);
-        assert!(html.contains(r#"src="https://www.youtube.com/embed/9KDDhAOyv9k?autoplay=1&amp;playsinline=1&amp;origin=http://localhost:4321""#));
+        assert!(html.contains(r#"src="https://www.youtube.com/embed/9KDDhAOyv9k?playsinline=1&amp;origin=http://localhost:4321""#));
+        assert!(!html.contains("autoplay=1"), "opening a card must not start the video");
         assert!(html.contains(r#"referrerpolicy="strict-origin-when-cross-origin""#));
         assert!(html.contains("allowfullscreen"));
     }

@@ -126,32 +126,28 @@ describe("Detail source video independent of card kind", () => {
     youtubePlayerUrlMock.mockImplementation(async (sourceUrl) => `http://localhost:4321/youtube/${new URL(sourceUrl).searchParams.get("v") ?? new URL(sourceUrl).pathname.slice(1)}`);
   });
 
-  it("keeps an existing article transcript and waits for a click before embedding", async () => {
+  it("loads the player on open next to the transcript without a play button", async () => {
     const { container } = renderVideoDetail();
     expect(screen.getByText("Preserved transcript.")).toBeInTheDocument();
-    expect(container.querySelector("iframe")).toBeNull();
     expect(container.querySelector("[data-youtube-source-player] img")?.getAttribute("src")).toContain("Media/film.jpg");
-    await waitFor(() => expect(youtubePlayerUrlMock).toHaveBeenCalledWith("https://www.youtube.com/watch?v=9KDDhAOyv9k"));
-    expect(container.querySelector("iframe")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Play video" }));
+    expect(screen.queryByRole("button", { name: "Play video" })).toBeNull();
     await waitFor(() => expect(container.querySelector("iframe")?.getAttribute("src")).toBe("http://localhost:4321/youtube/9KDDhAOyv9k"));
+    expect(youtubePlayerUrlMock).toHaveBeenCalledWith("https://www.youtube.com/watch?v=9KDDhAOyv9k");
     expect(screen.getByText("Preserved transcript.")).toBeInTheDocument();
   });
 
   it("never embeds YouTube into the interface document itself", async () => {
     const { container } = renderVideoDetail();
-    fireEvent.click(screen.getByRole("button", { name: "Play video" }));
     await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull());
     expect(container.querySelector("iframe")?.getAttribute("src")).not.toContain("youtube.com");
   });
 
-  it("starts playback once the local player page is ready after an early click", async () => {
+  it("shows the poster until the local player page is ready", async () => {
     let resolve: (url: string) => void = () => {};
     youtubePlayerUrlMock.mockImplementation(() => new Promise((done) => { resolve = done; }));
     const { container } = renderVideoDetail();
-    fireEvent.click(screen.getByRole("button", { name: "Play video" }));
     expect(container.querySelector("iframe")).toBeNull();
-    expect(screen.getByRole("button", { name: "Play video" })).toBeDisabled();
+    expect(container.querySelector("[data-youtube-source-player] img")).not.toBeNull();
     await act(async () => { resolve("http://localhost:4321/youtube/9KDDhAOyv9k"); });
     expect(container.querySelector("iframe")?.getAttribute("src")).toBe("http://localhost:4321/youtube/9KDDhAOyv9k");
   });
@@ -161,7 +157,6 @@ describe("Detail source video independent of card kind", () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const { container } = renderVideoDetail();
     expect(await screen.findByText("This video can't play inside Mine.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Play video" })).toBeNull();
     expect(container.querySelector("iframe")).toBeNull();
     expect(screen.getByRole("link", { name: "Open on YouTube" })).toHaveAttribute("href", "https://www.youtube.com/watch?v=9KDDhAOyv9k");
     expect(screen.getByText("Preserved transcript.")).toBeInTheDocument();
@@ -170,7 +165,6 @@ describe("Detail source video independent of card kind", () => {
 
   it("supports a metadata-only source link and leaves its direct source accessible on an error", async () => {
     const { container } = renderVideoDetail({ card_kind: "link", block_type: "link", body: "" });
-    fireEvent.click(screen.getByRole("button", { name: "Play video" }));
     await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull());
     fireEvent.error(container.querySelector("iframe")!);
     expect(screen.getByRole("link", { name: "Open on YouTube" })).toHaveAttribute("href", "https://www.youtube.com/watch?v=9KDDhAOyv9k");
@@ -179,7 +173,6 @@ describe("Detail source video independent of card kind", () => {
 
   it("retains the transcript after the external frame fails", async () => {
     const { container } = renderVideoDetail();
-    fireEvent.click(screen.getByRole("button", { name: "Play video" }));
     await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull());
     fireEvent.error(container.querySelector("iframe")!);
     expect(screen.getByText("Preserved transcript.")).toBeInTheDocument();
@@ -203,9 +196,8 @@ describe("Detail source video independent of card kind", () => {
   });
 
   it("does not hide the source player for video syntax inside a code example", async () => {
-    renderVideoDetail({ body: "Example: `![](film.mp4)`" });
-    await act(async () => {});
-    expect(screen.getByRole("button", { name: "Play video" })).toBeInTheDocument();
+    const { container } = renderVideoDetail({ body: "Example: `![](film.mp4)`" });
+    await waitFor(() => expect(container.querySelector("[data-youtube-source-player] iframe")).not.toBeNull());
     expect(screen.queryByTestId("video-from-blob")).toBeNull();
   });
 
@@ -216,15 +208,12 @@ describe("Detail source video independent of card kind", () => {
     expect(screen.getByRole("link", { name: "film" })).toBeInTheDocument();
   });
 
-  it("resets playback when navigation changes video identity", async () => {
+  it("loads the next video's player when navigation changes video identity", async () => {
     const { container, rerender, props } = renderVideoDetail();
-    fireEvent.click(screen.getByRole("button", { name: "Play video" }));
-    await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull());
+    await waitFor(() => expect(container.querySelector("iframe")?.getAttribute("src")).toBe("http://localhost:4321/youtube/9KDDhAOyv9k"));
     rerender(<Detail {...props} block={block({ slug: "next", url: "https://youtu.be/abcdefghijk", body: "Second transcript" })} />);
-    expect(container.querySelector("iframe")).toBeNull();
-    expect(screen.getByRole("button", { name: "Play video" })).toBeInTheDocument();
     expect(screen.getByText("Second transcript")).toBeInTheDocument();
-    await waitFor(() => expect(youtubePlayerUrlMock).toHaveBeenCalledWith("https://www.youtube.com/watch?v=abcdefghijk"));
+    await waitFor(() => expect(container.querySelector("iframe")?.getAttribute("src")).toBe("http://localhost:4321/youtube/abcdefghijk"));
   });
 });
 
