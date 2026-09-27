@@ -11,6 +11,13 @@ const root = new URL('../', import.meta.url);
 const cargo = readFileSync(new URL('src-tauri/Cargo.toml', root), 'utf8');
 const config = JSON.parse(readFileSync(new URL('src-tauri/tauri.conf.json', root), 'utf8'));
 
+test('native IPC smoke does not create a second production app bundle', () => {
+  const script = readFileSync(new URL('scripts/native-shell-smoke.mjs', root), 'utf8');
+  assert.match(script, /"tauri", "build", "--debug", "--no-bundle"/);
+  assert.match(script, /join\(ROOT, "target\/debug\/mine"\)/);
+  assert.doesNotMatch(script, /bundle\/macos\/Mine\.app|"--bundles"/);
+});
+
 function binBlock(name) {
   const blocks = cargo.split('[[bin]]').slice(1);
   return blocks.find((block) => block.match(new RegExp(`\\bname = "${name}"`))) ?? '';

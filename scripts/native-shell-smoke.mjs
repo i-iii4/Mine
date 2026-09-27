@@ -5,10 +5,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const APP_EXECUTABLE = join(
-  ROOT,
-  "target/debug/bundle/macos/Mine.app/Contents/MacOS/mine",
-);
+// IPC verification needs WKWebView, not a second registered production app.
+const APP_EXECUTABLE = join(ROOT, "target/debug/mine");
 const outputPath = join(
   tmpdir(),
   `mine-native-shell-smoke-${process.pid}-${Date.now()}.json`,
@@ -65,7 +63,7 @@ async function stop(child) {
 let appProcess;
 try {
   if (process.env.MINE_NATIVE_SMOKE_SKIP_BUILD !== "1") {
-    await run("bunx", ["tauri", "build", "--debug", "--bundles", "app"]);
+    await run("bunx", ["tauri", "build", "--debug", "--no-bundle"]);
   }
 
   appProcess = spawn(APP_EXECUTABLE, [], {
