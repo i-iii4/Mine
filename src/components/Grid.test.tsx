@@ -22,6 +22,14 @@ import {
 import { TOP_FADE_HEIGHT } from "@/lib/edgeFade";
 import { computeMasonryLayout } from "@/lib/masonryLayout";
 import { computeCardHeight } from "@/lib/cardHeight";
+import {
+  HOVER_LEAVE_GRACE_MS,
+  getCardSelectionSummary,
+  isRowConnectedToHoveredCard,
+  resetCollectionHover,
+  setCollectionMemberships,
+  setHoveredCollectionRow,
+} from "@/lib/collectionHover";
 import type { LightBlock } from "@/types";
 
 // These constants must match the ones in Grid.tsx. If Grid.tsx changes
@@ -1252,6 +1260,105 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(document.querySelector("[data-feed-grid-item-focused]")).toBeNull();
   });
 
+  it("lights the cards of a hovered collection and reports the card under the pointer", async () => {
+    vi.useFakeTimers();
+    resetCollectionHover();
+    setCollectionMemberships([{ block_id: 9401, tag: "alpha" }]);
+    const blocks = [makeBlock(9401), makeBlock(9402)];
+    setBlockHeight(9401, 200);
+    setBlockHeight(9402, 220);
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} />);
+    await flushAsync();
+
+    act(() => setHoveredCollectionRow("tag:alpha"));
+    expect(gridItemForSlug("block-9401")).toHaveAttribute("data-feed-grid-item-collection-lit", "true");
+    expect(gridItemForSlug("block-9402")).not.toHaveAttribute("data-feed-grid-item-collection-lit");
+    act(() => setHoveredCollectionRow("all"));
+    expect(gridItemForSlug("block-9402")).toHaveAttribute("data-feed-grid-item-collection-lit", "true");
+    act(() => setHoveredCollectionRow(null));
+    expect(gridItemForSlug("block-9401")).not.toHaveAttribute("data-feed-grid-item-collection-lit");
+
+    fireEvent.pointerEnter(gridItemForSlug("block-9401")!);
+    expect(isRowConnectedToHoveredCard("tag:alpha")).toBe(true);
+    fireEvent.pointerLeave(gridItemForSlug("block-9401")!);
+    // The hover waits out the gap before the next card, then clears.
+    expect(isRowConnectedToHoveredCard("tag:alpha")).toBe(true);
+    act(() => { vi.advanceTimersByTime(HOVER_LEAVE_GRACE_MS); });
+    expect(isRowConnectedToHoveredCard("tag:alpha")).toBe(false);
+    resetCollectionHover();
+  });
+
+  it("marks the focused card's collections under the arrow keys, not the card under the hidden pointer", async () => {
+    vi.useFakeTimers();
+    resetCollectionHover();
+    setCollectionMemberships([
+      { block_id: 9451, tag: "alpha" },
+      { block_id: 9452, tag: "beta" },
+    ]);
+    const blocks = [makeBlock(9451), makeBlock(9452)];
+    setBlockHeight(9451, 200);
+    setBlockHeight(9452, 220);
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} />);
+    await flushAsync();
+
+    // The pointer rests on the second card.
+    fireEvent.pointerEnter(gridItemForSlug("block-9452")!);
+    expect(isRowConnectedToHoveredCard("tag:beta")).toBe(true);
+
+    // Arrow keys focus the first card: the sidebar follows the focus.
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    await flushAsync();
+    expect(gridItemForSlug("block-9451")).toHaveAttribute("data-feed-grid-item-focused", "true");
+    expect(isRowConnectedToHoveredCard("tag:alpha")).toBe(true);
+    expect(isRowConnectedToHoveredCard("tag:beta")).toBe(false);
+
+    // Scrolling slides cards under the still pointer; WebKit reports them
+    // entered and left. None of that reaches the sidebar.
+    fireEvent.pointerLeave(gridItemForSlug("block-9452")!);
+    fireEvent.pointerEnter(gridItemForSlug("block-9452")!);
+    act(() => { vi.advanceTimersByTime(HOVER_LEAVE_GRACE_MS); });
+    expect(isRowConnectedToHoveredCard("tag:alpha")).toBe(true);
+    expect(isRowConnectedToHoveredCard("tag:beta")).toBe(false);
+
+    // A real pointer move hands the sidebar back to the card under the pointer.
+    fireEvent.pointerMove(gridItemForSlug("block-9452")!, { clientX: 40, clientY: 40, movementX: 6, movementY: 3 });
+    await flushAsync();
+    expect(isRowConnectedToHoveredCard("tag:beta")).toBe(true);
+    expect(isRowConnectedToHoveredCard("tag:alpha")).toBe(false);
+    resetCollectionHover();
+  });
+
+  it("tells the sidebar which cards are selected", async () => {
+    vi.useFakeTimers();
+    resetCollectionHover();
+    setCollectionMemberships([{ block_id: 9461, tag: "alpha" }]);
+    const blocks = [makeBlock(9461), makeBlock(9462)];
+    setBlockHeight(9461, 200);
+    setBlockHeight(9462, 220);
+
+    const { unmount } = render(<Grid {...BASE_PROPS} blocks={blocks} />);
+    await flushAsync();
+    expect(getCardSelectionSummary()).toBeNull();
+
+    fireEvent.click(document.querySelector('[data-block-slug="block-9461"]') as HTMLElement, { metaKey: true });
+    fireEvent.click(document.querySelector('[data-block-slug="block-9462"]') as HTMLElement, { metaKey: true });
+    await flushAsync();
+    expect(getCardSelectionSummary()?.slugs).toEqual(["block-9461", "block-9462"]);
+    expect(getCardSelectionSummary()?.connectedByTag.get("alpha")).toBe(1);
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    await flushAsync();
+    expect(getCardSelectionSummary()).toBeNull();
+
+    fireEvent.click(document.querySelector('[data-block-slug="block-9461"]') as HTMLElement, { metaKey: true });
+    await flushAsync();
+    unmount();
+    expect(getCardSelectionSummary()).toBeNull();
+    resetCollectionHover();
+  });
+
   it("toggles group selection with Command-click without opening Detail", async () => {
     vi.useFakeTimers();
 
@@ -1285,9 +1392,10 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(selectedWrapper?.querySelector("[data-feed-grid-card-clip]")).toHaveClass(
       "overflow-hidden",
     );
+    // Selection is the card's own border, brighter; nothing is drawn outside it.
     expect(
       selectedWrapper?.querySelector("[data-feed-grid-selection-frame]"),
-    ).toBeTruthy();
+    ).toBeNull();
     expect(
       selectedWrapper?.querySelector("[data-card-hover-more-action]"),
     ).not.toHaveClass("group-hover:opacity-100");

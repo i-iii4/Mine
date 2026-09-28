@@ -46,7 +46,8 @@ it("preserves nine ordered product embeds, title and source in final save-core M
     expect(markdown.match(/^# Meridian$/gm)).toHaveLength(1);
     expect(Array.from(markdown.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g), (match) => match[1])).toEqual(imageUrls);
     expect(markdown).toContain(`url: ${url}`);
-    expect(markdown).toContain("source: web-clipper");
+    // Cards carry no `source` property any more, even when a client sends one.
+    expect(markdown).not.toContain("source:");
     expect(markdown).toContain("A book about geometry.");
     expect(markdown).toContain("192 pages");
     expect(markdown.indexOf(imageUrls[8])).toBeLessThan(markdown.indexOf("A book about geometry."));

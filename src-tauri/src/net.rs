@@ -6,7 +6,7 @@
 //! sites validated only the initial URL, so a redirect to `169.254.169.254` or
 //! `127.0.0.1` bypassed the filter entirely.
 
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::{IpAddr, ToSocketAddrs};
 use std::path::Path;
 use std::time::Duration;
@@ -19,7 +19,7 @@ use url::{Host, Url};
 const MAX_REDIRECTS: usize = 5;
 
 /// Hard cap on a downloaded media body. Protects the disk from an unbounded or
-/// chunked response that stays within the per-request timeout. The clipper
+/// chunked response that keeps trickling bytes under the idle timeout. The clipper
 /// upload server applies the same `take(MAX + 1)` guard; this aligns the
 /// download path with it.
 ///
@@ -28,6 +28,12 @@ const MAX_REDIRECTS: usize = 5;
 /// leaves a remote URL in the note, and a note that depends on someone else's
 /// server is exactly what this vault exists to avoid.
 pub const MAX_MEDIA_BYTES: u64 = 500 * 1024 * 1024;
+
+/// How many times a download is attempted before it fails.
+const DOWNLOAD_ATTEMPTS: u32 = 3;
+
+/// Pause before the second attempt; each later attempt waits one step more.
+const DOWNLOAD_RETRY_BACKOFF: Duration = Duration::from_millis(500);
 
 /// Validate that a URL is safe to fetch: `http`/`https` only, and the resolved
 /// host must not be a private, loopback, link-local, broadcast, unspecified or
@@ -104,7 +110,7 @@ pub fn fetch_validated_get(
     timeout: Duration,
     headers: &[(&str, &str)],
 ) -> Result<ureq::Response> {
-    fetch_validated(Method::Get, url, timeout, headers)
+    fetch_validated(Method::Get, url, Limit::Total(timeout), headers)
 }
 
 /// HEAD `url` under the same validation and redirect rules as
@@ -117,7 +123,7 @@ pub fn fetch_validated_head(
     timeout: Duration,
     headers: &[(&str, &str)],
 ) -> Result<ureq::Response> {
-    fetch_validated(Method::Head, url, timeout, headers)
+    fetch_validated(Method::Head, url, Limit::Total(timeout), headers)
 }
 
 #[derive(Clone, Copy)]
@@ -126,21 +132,41 @@ enum Method {
     Head,
 }
 
+/// How long a request may take.
+#[derive(Clone, Copy)]
+enum Limit {
+    /// The whole request, body included: right for small answers.
+    Total(Duration),
+    /// Connecting and every single read. A body of any size may take as long
+    /// as it needs while bytes keep arriving; only a stalled transfer fails.
+    Idle(Duration),
+}
+
 fn fetch_validated(
     method: Method,
     url: &str,
-    timeout: Duration,
+    limit: Limit,
     headers: &[(&str, &str)],
 ) -> Result<ureq::Response> {
-    let agent = ureq::AgentBuilder::new().redirects(0).build();
+    let agent = match limit {
+        Limit::Total(_) => ureq::AgentBuilder::new(),
+        Limit::Idle(idle) => ureq::AgentBuilder::new()
+            .timeout_connect(idle)
+            .timeout_read(idle)
+            .timeout_write(idle),
+    }
+    .redirects(0)
+    .build();
     let mut current = url.to_string();
     for _ in 0..=MAX_REDIRECTS {
         validate_fetch_url(&current)?;
         let mut req = match method {
             Method::Get => agent.get(&current),
             Method::Head => agent.head(&current),
+        };
+        if let Limit::Total(timeout) = limit {
+            req = req.timeout(timeout);
         }
-        .timeout(timeout);
         for (name, value) in headers {
             req = req.set(name, value);
         }
@@ -180,16 +206,71 @@ fn fetch_validated(
 /// the body at [`MAX_MEDIA_BYTES`]. Bytes are streamed into a same-directory
 /// temp file, fsynced, then atomically linked under the final create-new name;
 /// callers never observe a partial download.
+///
+/// `idle_timeout` bounds connecting and each read, not the whole transfer: a
+/// large video on a slow link finishes as long as bytes keep coming. Up to
+/// [`DOWNLOAD_ATTEMPTS`] attempts are made; when the server names the file with
+/// a strong `ETag` or a `Last-Modified` date and honours `Range`, a retry
+/// continues from the bytes already on disk instead of starting over. A 25 MB
+/// clip used to be thrown away at 22 MB when a total deadline ran out.
 pub fn download_validated_to_file(
     url: &str,
     dest: &Path,
-    timeout: Duration,
+    idle_timeout: Duration,
     headers: &[(&str, &str)],
 ) -> Result<()> {
-    let resp = fetch_validated_get(url, timeout, headers)?;
-    // take(MAX + 1) so an exactly-MAX body is not silently truncated: a read of
-    // MAX + 1 bytes proves the body exceeds the cap.
-    let mut reader = resp.into_reader().take(MAX_MEDIA_BYTES + 1);
+    download_resumable(dest, DOWNLOAD_RETRY_BACKOFF, |resume| {
+        let range;
+        let mut request_headers = headers.to_vec();
+        if let Some((offset, validator)) = resume {
+            range = format!("bytes={offset}-");
+            request_headers.push(("Range", &range));
+            request_headers.push(("If-Range", validator));
+        }
+        let resp = fetch_validated(Method::Get, url, Limit::Idle(idle_timeout), &request_headers)?;
+        Ok(DownloadResponse {
+            status: resp.status(),
+            content_range_start: resp.header("Content-Range").and_then(content_range_start),
+            validator: resume_validator(&resp),
+            body: Box::new(resp.into_reader()),
+        })
+    })
+    .with_context(|| format!("download failed: {url}"))
+}
+
+/// One answer to a download request, reduced to what resuming needs.
+struct DownloadResponse {
+    status: u16,
+    content_range_start: Option<u64>,
+    validator: Option<String>,
+    body: Box<dyn Read + Send>,
+}
+
+/// A value for `If-Range` that names this exact file: a strong `ETag`, else a
+/// `Last-Modified` date. A weak `ETag` cannot guard a byte range.
+fn resume_validator(resp: &ureq::Response) -> Option<String> {
+    resp.header("ETag")
+        .filter(|tag| !tag.starts_with("W/"))
+        .or_else(|| resp.header("Last-Modified"))
+        .map(str::to_string)
+}
+
+/// The first byte of `Content-Range: bytes <start>-<end>/<total>`.
+fn content_range_start(value: &str) -> Option<u64> {
+    value.trim().strip_prefix("bytes ")?.split('-').next()?.trim().parse().ok()
+}
+
+/// The attempt loop behind [`download_validated_to_file`], with the network
+/// replaced by `fetch` so resuming can be tested without a server.
+///
+/// `fetch` receives `Some((offset, validator))` when a retry asks the server
+/// to continue from `offset`. An answer that is not the matching `206` part
+/// (the file changed, or the server ignores `Range`) restarts from zero.
+fn download_resumable(
+    dest: &Path,
+    backoff: Duration,
+    mut fetch: impl FnMut(Option<(u64, &str)>) -> Result<DownloadResponse>,
+) -> Result<()> {
     let parent = dest
         .parent()
         .ok_or_else(|| anyhow::anyhow!("download destination has no parent: {}", dest.display()))?;
@@ -204,49 +285,100 @@ pub fn download_validated_to_file(
         .unwrap_or("download");
     let tmp = dest.with_file_name(format!("{file_name}.tmp.{}.{}", std::process::id(), nonce));
     let mut file = std::fs::OpenOptions::new()
+        .read(true)
         .write(true)
         .create_new(true)
         .open(&tmp)
         .with_context(|| format!("failed to create {}", tmp.display()))?;
-    match std::io::copy(&mut reader, &mut file) {
-        Ok(written) if written > MAX_MEDIA_BYTES => {
-            drop(file);
-            let _ = std::fs::remove_file(&tmp);
-            bail!("media body exceeds {MAX_MEDIA_BYTES} bytes: {url}");
-        }
-        Ok(_) => {
-            if let Err(error) = file
-                .sync_all()
+    let result = fill_with_attempts(&mut file, backoff, &mut fetch)
+        .and_then(|()| {
+            file.sync_all()
                 .with_context(|| format!("failed to fsync download {}", tmp.display()))
-            {
-                drop(file);
-                let _ = std::fs::remove_file(&tmp);
-                return Err(error);
-            }
-            drop(file);
-            if let Err(error) = std::fs::hard_link(&tmp, dest).with_context(|| {
-                format!(
-                    "failed to publish download {} -> {}",
-                    tmp.display(),
-                    dest.display()
-                )
-            }) {
-                let _ = std::fs::remove_file(&tmp);
-                return Err(error);
-            }
-            let _ = std::fs::remove_file(&tmp);
-            std::fs::File::open(parent)
-                .and_then(|directory| directory.sync_all())
-                .with_context(|| format!("failed to fsync directory {}", parent.display()))?;
-            Ok(())
+        });
+    drop(file);
+    if let Err(error) = result {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(error);
+    }
+    if let Err(error) = std::fs::hard_link(&tmp, dest).with_context(|| {
+        format!(
+            "failed to publish download {} -> {}",
+            tmp.display(),
+            dest.display()
+        )
+    }) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(error);
+    }
+    let _ = std::fs::remove_file(&tmp);
+    std::fs::File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .with_context(|| format!("failed to fsync directory {}", parent.display()))?;
+    Ok(())
+}
+
+fn fill_with_attempts(
+    file: &mut std::fs::File,
+    backoff: Duration,
+    fetch: &mut impl FnMut(Option<(u64, &str)>) -> Result<DownloadResponse>,
+) -> Result<()> {
+    let mut validator: Option<String> = None;
+    let mut last_error = None;
+    for attempt in 0..DOWNLOAD_ATTEMPTS {
+        if attempt > 0 {
+            std::thread::sleep(backoff * attempt);
         }
-        Err(error) => {
-            drop(file);
-            let _ = std::fs::remove_file(&tmp);
-            Err(anyhow::Error::from(error)
-                .context(format!("failed to write download to {}", tmp.display())))
+        let offset = file.metadata()?.len();
+        let resume = match validator.as_deref() {
+            Some(tag) if offset > 0 => Some((offset, tag)),
+            _ => None,
+        };
+        let response = match fetch(resume) {
+            Ok(response) => response,
+            Err(error) => {
+                last_error = Some(error);
+                continue;
+            }
+        };
+        let continues = resume.is_some()
+            && response.status == 206
+            && response.content_range_start == Some(offset);
+        if continues {
+            file.seek(SeekFrom::End(0))?;
+        } else {
+            if (200..300).contains(&response.status) && response.status != 200 {
+                // A part we did not ask for (or not where we asked) cannot be
+                // stitched on; start over without Range next time.
+                file.set_len(0)?;
+                validator = None;
+                last_error = Some(anyhow!("unexpected HTTP {} for a download", response.status));
+                continue;
+            }
+            file.set_len(0)?;
+            file.seek(SeekFrom::Start(0))?;
+            validator = response.validator.clone();
+        }
+        let already = if continues { offset } else { 0 };
+        // take(remaining + 1) so an exactly-MAX body is not silently truncated:
+        // one byte past the cap proves the body exceeds it.
+        let mut reader = response.body.take(MAX_MEDIA_BYTES - already + 1);
+        match std::io::copy(&mut reader, file) {
+            Ok(written) if already + written > MAX_MEDIA_BYTES => {
+                bail!("media body exceeds {MAX_MEDIA_BYTES} bytes");
+            }
+            Ok(_) => {
+                file.flush()?;
+                return Ok(());
+            }
+            Err(error) => {
+                // Keep what arrived: the next attempt continues from it when
+                // the server can resume, and starts over otherwise.
+                file.flush()?;
+                last_error = Some(anyhow::Error::from(error).context("download interrupted"));
+            }
         }
     }
+    Err(last_error.unwrap_or_else(|| anyhow!("download failed")))
 }
 
 #[cfg(test)]
@@ -277,5 +409,148 @@ mod tests {
     #[test]
     fn validate_fetch_url_allows_public_ip() {
         assert!(validate_fetch_url("https://93.184.216.34/image.jpg").is_ok());
+    }
+
+    /// A body that yields `bytes`, then fails as a dropped connection does.
+    struct Interrupted {
+        bytes: std::io::Cursor<Vec<u8>>,
+    }
+
+    impl Read for Interrupted {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            match self.bytes.read(buf)? {
+                0 => Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "stalled")),
+                n => Ok(n),
+            }
+        }
+    }
+
+    fn response(status: u16, start: Option<u64>, validator: Option<&str>, body: Box<dyn Read + Send>) -> DownloadResponse {
+        DownloadResponse {
+            status,
+            content_range_start: start,
+            validator: validator.map(str::to_string),
+            body,
+        }
+    }
+
+    fn whole(bytes: &[u8]) -> Box<dyn Read + Send> {
+        Box::new(std::io::Cursor::new(bytes.to_vec()))
+    }
+
+    fn cut(bytes: &[u8]) -> Box<dyn Read + Send> {
+        Box::new(Interrupted { bytes: std::io::Cursor::new(bytes.to_vec()) })
+    }
+
+    fn scratch() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "mine-net-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("clip.mp4")
+    }
+
+    #[test]
+    fn a_retry_continues_from_the_bytes_already_on_disk() {
+        let dest = scratch();
+        let mut asked = Vec::new();
+        download_resumable(&dest, Duration::ZERO, |resume| {
+            asked.push(resume.map(|(offset, tag)| (offset, tag.to_string())));
+            Ok(match resume {
+                None => response(200, None, Some("\"v1\""), cut(b"hello ")),
+                Some(_) => response(206, Some(6), None, whole(b"world")),
+            })
+        })
+        .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"hello world");
+        assert_eq!(asked, vec![None, Some((6, "\"v1\"".to_string()))]);
+    }
+
+    #[test]
+    fn a_server_that_ignores_range_starts_the_file_over() {
+        let dest = scratch();
+        let mut attempt = 0;
+        download_resumable(&dest, Duration::ZERO, |_| {
+            attempt += 1;
+            Ok(if attempt == 1 {
+                response(200, None, Some("\"v1\""), cut(b"hel"))
+            } else {
+                response(200, None, Some("\"v1\""), whole(b"hello world"))
+            })
+        })
+        .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"hello world");
+    }
+
+    #[test]
+    fn a_file_without_a_validator_is_never_resumed() {
+        let dest = scratch();
+        let mut asked = Vec::new();
+        download_resumable(&dest, Duration::ZERO, |resume| {
+            asked.push(resume.is_some());
+            Ok(if asked.len() == 1 {
+                response(200, None, None, cut(b"hel"))
+            } else {
+                response(200, None, None, whole(b"hello world"))
+            })
+        })
+        .unwrap();
+        assert_eq!(asked, vec![false, false]);
+        assert_eq!(std::fs::read(&dest).unwrap(), b"hello world");
+    }
+
+    #[test]
+    fn a_misplaced_part_is_discarded() {
+        let dest = scratch();
+        let mut attempt = 0;
+        download_resumable(&dest, Duration::ZERO, |_| {
+            attempt += 1;
+            Ok(match attempt {
+                1 => response(200, None, Some("\"v1\""), cut(b"hello ")),
+                2 => response(206, Some(3), None, whole(b"lo world")),
+                _ => response(200, None, None, whole(b"hello world")),
+            })
+        })
+        .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"hello world");
+    }
+
+    #[test]
+    fn three_failed_attempts_leave_no_file_behind() {
+        let dest = scratch();
+        let result = download_resumable(&dest, Duration::ZERO, |_| {
+            Ok(response(200, None, None, cut(b"partial")))
+        });
+        assert!(result.is_err());
+        assert!(!dest.exists());
+        let leftovers = std::fs::read_dir(dest.parent().unwrap()).unwrap().count();
+        assert_eq!(leftovers, 0);
+    }
+
+    /// Manual: the 25.9 MB 2160p clip that a 15 s whole-request deadline used
+    /// to throw away. `cargo test -p mine --lib real_x_video -- --ignored`.
+    #[test]
+    #[ignore = "downloads a real 26 MB video from video.twimg.com"]
+    fn real_x_video_downloads_under_the_idle_timeout() {
+        let dest = scratch();
+        let started = std::time::Instant::now();
+        download_validated_to_file(
+            "https://video.twimg.com/amplify_video/2104542324449787904/vid/avc1/2842x2160/jum7WbJ0hV9Y7wq3.mp4",
+            &dest,
+            Duration::from_secs(15),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(std::fs::metadata(&dest).unwrap().len(), 25_919_872);
+        eprintln!("downloaded in {:?}", started.elapsed());
+    }
+
+    #[test]
+    fn content_range_start_reads_the_first_byte() {
+        assert_eq!(content_range_start("bytes 6-10/11"), Some(6));
+        assert_eq!(content_range_start("bytes */11"), None);
+        assert_eq!(content_range_start("items 1-2/3"), None);
     }
 }

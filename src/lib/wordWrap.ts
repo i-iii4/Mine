@@ -8,6 +8,10 @@
 // break it mid-word via CSS `overflow-wrap: break-word`, but from a line-
 // counting perspective it's still one line of our computation).
 //
+// CJK text has no spaces: the worker measures it per character and marks each
+// character as following the previous one with no space, so the line may break
+// between any two of them, as the browser breaks CJK text.
+//
 // This is a pure function with no DOM access — safe for use on main thread,
 // in workers, and in unit tests without any mocking.
 
@@ -18,12 +22,14 @@
  * @param wordWidths Widths of individual words in pixels (from measureText).
  * @param spaceWidth Width of a single space character in pixels.
  * @param maxWidth   Target column width in pixels. Must be > 0.
+ * @param noSpaceBefore Per word: no space separates it from the previous word.
  * @returns Non-negative integer line count. Empty input returns 0.
  */
 export function countLines(
   wordWidths: readonly number[],
   spaceWidth: number,
   maxWidth: number,
+  noSpaceBefore?: readonly boolean[],
 ): number {
   if (wordWidths.length === 0) return 0;
   if (maxWidth <= 0) return wordWidths.length;
@@ -41,7 +47,8 @@ export function countLines(
       continue;
     }
 
-    const projected = currentLineWidth + spaceWidth + wordWidth;
+    const gap = noSpaceBefore?.[i] ? 0 : spaceWidth;
+    const projected = currentLineWidth + gap + wordWidth;
     if (projected <= maxWidth) {
       currentLineWidth = projected;
     } else {

@@ -1439,7 +1439,9 @@ fn upsert_block_inner(
             block.frontmatter.url,
             block.frontmatter.file,
             block.frontmatter.thumbnail,
-            block.frontmatter.saved_at.as_str(),
+            // Older files hold UTC, newer ones local time; the column keeps
+            // one form so ordering by it stays chronological.
+            crate::util::saved_at_local(block.frontmatter.saved_at.as_str()),
             block.frontmatter.source,
             width.map(|w| w as i64),
             height.map(|h| h as i64),
@@ -2778,6 +2780,21 @@ mod tests {
             }
         );
         assert_eq!(tags.len(), 3);
+    }
+
+    #[test]
+    fn block_collections_pair_every_card_with_each_of_its_collections() {
+        let conn = test_conn();
+        let a = upsert_block(&conn, &make_block("a", &["design", "web"]), None).unwrap();
+        let b = upsert_block(&conn, &make_block("b", &["design"]), None).unwrap();
+        upsert_block(&conn, &make_block("c", &[]), None).unwrap();
+
+        let pairs = crate::storage::block_queries::list_block_collections(&conn).unwrap();
+
+        assert_eq!(
+            pairs,
+            vec![(a, "design".to_string()), (a, "web".to_string()), (b, "design".to_string())]
+        );
     }
 
     #[test]

@@ -3331,6 +3331,7 @@ dependencies = [
  "image",
  "imageproc",
  "indoc",
+ "libc",
  "log",
  "mine-core",
  "minisign-verify",

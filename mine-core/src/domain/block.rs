@@ -1510,6 +1510,11 @@ fn validate_iso8601(s: &str) -> bool {
         return false;
     }
 
+    // Local wall-clock time without a zone: how Mine writes saved_at now.
+    if b.len() == 19 {
+        return true;
+    }
+
     // UTC suffix
     if b.len() == 20 && b[19] == b'Z' {
         return true;
@@ -1717,6 +1722,15 @@ mod tests {
     fn datetime_with_timezone() {
         let dt = DateTime::new("2026-02-26T14:30:00+03:00").unwrap();
         assert_eq!(dt.as_str(), "2026-02-26T14:30:00+03:00");
+    }
+
+    #[test]
+    fn datetime_local_without_zone() {
+        // saved_at is written as local wall-clock time; Obsidian reads it as a date.
+        let dt = DateTime::new("2026-09-27T22:25:11").unwrap();
+        assert_eq!(dt.as_str(), "2026-09-27T22:25:11");
+        assert!(DateTime::new("2026-09-27T22:25").is_err());
+        assert!(DateTime::new("2026-09-27T24:25:11").is_err());
     }
 
     #[test]

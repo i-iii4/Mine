@@ -155,6 +155,10 @@ export interface WordWidths {
   titleSpace: number;
   /** Ширина пробела preview font */
   previewSpace: number;
+  /** По слову title: перед ним нет пробела (символы CJK), перенос возможен */
+  titleNoSpaceBefore: boolean[];
+  /** По слову preview, как titleNoSpaceBefore */
+  previewNoSpaceBefore: boolean[];
 }
 
 /** Кэшированные word widths для блока, версии шрифта и measured text fingerprint */
@@ -392,7 +396,7 @@ self.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
 });
 ```
 
-`splitWords` использует `Intl.Segmenter` для корректного word-breaking в CJK и emoji контексте, fallback на `str.split(/\s+/)` для латиницы.
+`splitWords` ([lineUnits.ts](src/lib/lineUnits.ts)) делит текст на единицы, между которыми возможен перенос строки. Пробелы разделяют слова. Внутри куска без пробелов каждый символ CJK становится отдельной единицей без пробела перед ней, потому что браузер переносит такой текст между любыми двумя символами; цифры и латиница внутри остаются целыми, закрывающие знаки и маленькие каны прилипают к предыдущему символу, открывающие к следующему. `countLines` не добавляет ширину пробела перед единицей с `noSpaceBefore`. Раньше абзац японского текста считался одним словом, если где-то в тексте был пробел или перенос строки, и карточка получала высоту на строку меньше (28.09.2026, версия кэша `v3`).
 
 ### `src/lib/layoutCache.ts`
 
@@ -688,10 +692,10 @@ Phase 11 закрыта через доказуемые вертикальные
 
 3. **Emoji в тексте** — `Intl.Segmenter` корректно обрабатывает ZWJ sequences. `measureText` возвращает корректную ширину для font'ов с emoji support.
 
-4. **CJK текст без пробелов** — worker сначала сохраняет whitespace-delimited
-   tokens для языков с пробелами, включая punctuation attached to words. Для
-   текста без пробелов используется `Intl.Segmenter` и non-whitespace segments,
-   чтобы CJK/emoji не схлопывались и не теряли width.
+4. **CJK текст без пробелов**: каждый символ CJK измеряется отдельно и
+   помечается `noSpaceBefore`, так что расчёт переносит строку между любыми
+   двумя символами, как браузер. Это верно и когда в том же тексте есть
+   пробелы или переносы строк.
 
 5. **Font loading failure** — если Geist Sans не загружается, browser fallback на system UI font. `measureText` вернёт widths для fallback font, что даст корректное computation но не идеальное соответствие когда Geist наконец загрузится. Mitigation: перед первым `fetchWordWidths` ожидать `document.fonts.ready`, проверять что Geist Sans в `document.fonts.check("14px Geist")`.
 

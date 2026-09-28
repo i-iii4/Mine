@@ -101,6 +101,7 @@ import {
 import { clearPendingSave, executePinnedSave, findPendingSave, persistPendingSave, persistSaveReceipt, type PinnedSaveOperation } from "../lib/saveOperation";
 import { attachDraft, clearOwnedDraft, writeOwnedDraft, DraftStorageError, type ClipperDraftState, type DurableClipperDraft, type DraftOwnership } from "../lib/draft";
 import { baselineSaveRequest, negotiateSaveProtocol, negotiateWidgetProtocol } from "../lib/protocol";
+import { localSavedAt } from "../lib/savedAt";
 
 export type ClipType = "content" | "link" | "image" | "video" | "screenshot";
 export type PopupState = "loading" | "error" | "main";
@@ -1433,8 +1434,8 @@ export function useClipperState() {
       executor: chosenExecutor,
       bindingId: chosenBinding,
       vaultPath: chosenVault,
-      // DateTime's canonical wire format is UTC seconds, shared by both executors.
-      payload: baselineSaveRequest({ ...payload, saved_at: new Date().toISOString().replace(/\.\d{3}Z$/, "Z") }, chosenExecutor === "browser" ? 1 : saveProtocolRef.current ?? 1),
+      // saved_at is the local wall clock without a zone, shared by both executors.
+      payload: baselineSaveRequest({ ...payload, saved_at: localSavedAt() }, chosenExecutor === "browser" ? 1 : saveProtocolRef.current ?? 1),
       attempted: false,
     };
     // A failed readback may follow a successful journal write. Keep this exact
@@ -1706,7 +1707,11 @@ function captureVideoUrlFrameDataUrl(
     video.crossOrigin = "anonymous";
     video.muted = true;
     video.playsInline = true;
-    video.preload = "auto";
+    // One frame is all the preview needs. "auto" let the browser pull the
+    // whole file (26 MB for a 2160p post) on the same link the save is about
+    // to download it over; "metadata" plus the seek fetches only the range
+    // around the frame.
+    video.preload = "metadata";
     video.addEventListener("loadedmetadata", onMetadata, { once: true });
     video.addEventListener("loadeddata", onLoadedData, { once: true });
     video.addEventListener("seeked", onSeeked, { once: true });

@@ -33,6 +33,7 @@
 - `SPEC_FEED_VIDEO.md` — desktop feed video contract: четыре surfaces, `feed_playback` descriptor, autoplay gating standard/heavy
 - `SPEC_GRAPH_VIEW.md` — спецификация Graph View: Canvas force-directed graph на базе решения Longevity Landscape, graph snapshot read model, коллекции/wikilinks/related notes, физика, UX и проверки
 - `SPEC_GROUP_SELECTION.md` — групповое выделение в Grid: marquee/keyboard selection, batch card actions, selection-scoped меню
+- `SPEC_CARD_STATES.md`: единые состояния карточки (наведение, фокус, выделение) и связи карточки с коллекциями в боковом меню; реализовано 28.09.2026
 - `SPEC_ARTICLE_AUDIO.md` — manual article audio renditions: speech prep, derived audio state, desktop/iOS controls. **Функция выключена** (Cargo feature `article-audio` вне `default`, `ARTICLE_AUDIO_ENABLED = false`); процедура включения — в самой спецификации
 - `SPEC_TEXT_SELECTION_EXTRACTION.md` — извлечение выделенного текста статьи в отдельный article-блок и удаление фрагмента из source `.md`
 - `SPEC_MEDIA_ASSET_ACTIONS.md` — media-level hover/drag/actions для конкретного local media asset, независимо от frontmatter/body source

@@ -2132,6 +2132,42 @@ describe("Detail", () => {
     expect(screen.queryByRole("alertdialog", { name: "Delete media file?" })).not.toBeInTheDocument();
   });
 
+  describe("media card whose video is a body embed", () => {
+    const manifest = (sources: string[]) => JSON.stringify({
+      kind: "video_poster",
+      primary_preview_path: "Cards/Post.jpg",
+      width: 540, height: 290,
+      tiles: sources.map((source) => ({ source_path: source, preview_path: "Cards/Post.preview-1.jpg", width: 540, height: 290, is_video: true, is_video_poster: true })),
+      overflow_count: 0,
+    });
+    function renderPost(body: string, sources: string[]) {
+      return render(
+        <Detail
+          block={block({ slug: "Cards/Post", card_kind: "media", block_type: "video", url: "https://x.com/a/status/1", media_file: null, body, preview_manifest: manifest(sources) })}
+          vaultPath="/tmp/test-vault" thumbsRootPath="/tmp/thumbs" tags={[]}
+          onClose={vi.fn()} onNavigate={vi.fn()} onToggleTag={vi.fn()} onCreateAndAssign={vi.fn()}
+          onTagsChanged={vi.fn()} onRequestRename={vi.fn()} onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
+        />,
+      );
+    }
+
+    it("shows the video once, playing on its own", () => {
+      renderPost("![[Post (video 1).mp4]]", ["Media/Post (video 1).mp4"]);
+      const videos = screen.getAllByTestId("video-from-blob");
+      expect(videos).toHaveLength(1);
+      expect(videos[0]).toHaveAttribute("data-autoplay", "true");
+      expect(videos[0]).toHaveAttribute("data-muted", "true");
+    });
+
+    it("still shows the rest of the body under the lead video", () => {
+      renderPost("![[Post (video 1).mp4]]\n\n![[Post (video 2).mp4]]", ["Media/Post (video 1).mp4", "Media/Post (video 2).mp4"]);
+      const sources = screen.getAllByTestId("video-from-blob").map((video) => video.getAttribute("data-src"));
+      expect(sources).toHaveLength(2);
+      expect(sources[0]).toContain("video 1");
+      expect(sources[1]).toContain("video 2");
+    });
+  });
+
   it("keeps the ellipsis off a video and opens its menu only on right click", async () => {
     const b = block({
       card_kind: "media",

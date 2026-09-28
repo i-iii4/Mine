@@ -26,7 +26,7 @@ use mine_lib::domain::collection::{normalize_collection_ref, validate_collection
 use mine_lib::domain::vault::VaultLayout;
 use mine_lib::net;
 use mine_lib::storage::{clipper_uploads, db, file_identity, files, index, save_operations, thumbnails};
-use mine_lib::util::now_iso8601;
+use mine_lib::util::now_saved_at;
 use percent_encoding::percent_decode_str;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -1232,8 +1232,7 @@ fn perform_save_block_with_publisher(
         file: file_link,
         thumbnail: thumbnail_link,
         tags: p.tags.unwrap_or_default(),
-        saved_at: p.saved_at.unwrap_or_else(now_iso8601),
-        source: Some("web-clipper".into()),
+        saved_at: p.saved_at.unwrap_or_else(now_saved_at),
         width: p.width,
         height: p.height,
         author: p.author,
@@ -1319,7 +1318,7 @@ fn handle_create_channel(vault: &VaultLayout, params: serde_json::Value) {
         Err(e) => return send_error(&format!("failed to open database: {e}")),
     };
 
-    let created_at = match DateTime::new(&now_iso8601()) {
+    let created_at = match DateTime::new(&now_saved_at()) {
         Ok(dt) => dt,
         Err(e) => return send_error(&format!("failed to create timestamp: {e}")),
     };
@@ -1569,10 +1568,16 @@ fn probe_ext_over_network(url: &str) -> Option<&'static str> {
     ext_from_content_type(resp.header("Content-Type")?)
 }
 
-/// Per-request timeout for inline-media downloads. ureq 2.x default is
-/// 30s — too long for one stuck CDN to monopolize a worker slot when
-/// the parallel pool only has 3 workers serving 15+ images.
+/// Whole-request timeout for the HEAD probe of inline media. ureq 2.x default
+/// is 30s: too long for one stuck CDN to monopolize a worker slot when the
+/// parallel pool only has 3 workers serving 15+ images.
 const INLINE_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// How long an inline-media download may stall: connecting, or waiting for the
+/// next bytes. It is not a deadline for the whole file. A 25 MB clip needs
+/// longer than 15 seconds on an ordinary link, and a whole-request deadline
+/// threw it away at 22 MB, then again on every retry.
+const INLINE_DOWNLOAD_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Per-request timeout for the Twitter syndication API. Without it a hung
 /// `cdn.syndication.twimg.com` would block `save_block` on the serial host
@@ -1581,27 +1586,16 @@ const TWITTER_API_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Download a file from URL to local path.
 /// `referer` should be the page URL (not the image URL) — CDNs validate this.
-/// Retries up to 3 times with backoff. SSRF validation of every redirect hop
-/// and the body-size cap live in `mine_lib::net::download_validated_to_file`.
+/// Retries, resuming from the bytes already received, SSRF validation of every
+/// redirect hop and the body-size cap live in
+/// `mine_lib::net::download_validated_to_file`.
 fn download_file(url: &str, dest: &std::path::Path, referer: &str) -> anyhow::Result<()> {
     let headers = [
         ("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
         ("Referer", referer),
         ("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"),
     ];
-    let mut last_err = None;
-    for attempt in 0..3u64 {
-        if attempt > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(500 * attempt));
-        }
-        match net::download_validated_to_file(url, dest, INLINE_REQUEST_TIMEOUT, &headers) {
-            Ok(()) => return Ok(()),
-            Err(e) => last_err = Some(e),
-        }
-    }
-    // The loop runs at least once and only reaches here after recording an
-    // error; the fallback message is defensive, not an expected path.
-    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("download failed with no recorded error")))
+    net::download_validated_to_file(url, dest, INLINE_DOWNLOAD_IDLE_TIMEOUT, &headers)
 }
 
 /// Build an Obsidian wikilink embed for a locally-downloaded media file.

@@ -723,7 +723,7 @@ fn initialize_vault(
     // sessions, and a quiet one is itself a signal (Х21). Best effort.
     if let Err(error) = crate::storage::cloud_waits::begin_session(
         vault.derived_root(),
-        &crate::commands::state::now_iso8601(),
+        &crate::util::now_iso8601(),
     ) {
         log::warn!("failed to open a cloud-wait session: {error:#}");
     }
