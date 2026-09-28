@@ -1137,6 +1137,36 @@ function localBodyVideoReferences(body: string, manifest: ReturnType<typeof norm
   return sources;
 }
 
+/** Whether the body holds anything besides one embed of `source`: text, or other media. */
+function bodyHasMoreThanEmbed(
+  body: string,
+  manifest: ReturnType<typeof normalizeDetailPreviewManifest>,
+  source: string,
+): boolean {
+  let skipped = false;
+  let more = false;
+  function visit(node: Nodes) {
+    if (more) return;
+    if (node.type === "image") {
+      const resolved = findPreviewTileForSource(manifest, decodeLocalMarkdownUrl(node.url))?.sourcePath
+        ?? decodeLocalMarkdownUrl(node.url);
+      if (!skipped && resolved === source) {
+        skipped = true;
+      } else {
+        more = true;
+      }
+      return;
+    }
+    if ((node.type === "text" || node.type === "inlineCode" || node.type === "code") && node.value.trim()) {
+      more = true;
+      return;
+    }
+    if ("children" in node) node.children.forEach(visit);
+  }
+  visit(fromMarkdown(preprocessWikilinks(body)));
+  return more;
+}
+
 function detailPreviewImageSource({
   block,
   previewManifest,
@@ -1506,9 +1536,18 @@ function BlockContent({
           descriptor.mediaItems.find((item) => item.isVideo)?.sourcePath
           ?? block.media_file;
         const localSrc = resolveDetailMediaReference(vaultPath, videoSourcePath);
+        // The lead video is either the primary file or the body's first video
+        // embed. In the second case the body below must not show it again.
+        const leadIsBodyEmbed = !!videoSourcePath
+          && videoSourcePath !== block.media_file
+          && bodyVideoReferences.includes(videoSourcePath);
+        const omittedEmbed = leadIsBodyEmbed && videoSourcePath
+          ? { source: videoSourcePath, occurrence: 0 }
+          : null;
+        const showBody = !!body && (!omittedEmbed || bodyHasMoreThanEmbed(body, previewManifest, omittedEmbed.source));
         return (
           <div className="flex min-h-full flex-col">
-            <div className="flex flex-1 items-center justify-center bg-black">
+            <div className="flex flex-1 items-center justify-center">
               {sourcePlayer ? (
                 <MediaAssetActionFrame
                   asset={null}
@@ -1528,7 +1567,11 @@ function BlockContent({
                 </MediaAssetActionFrame>
               ) : localSrc ? (
                 <MediaAssetActionFrame
-                  asset={videoSourcePath ? mediaAssetFromMediaRef(block.slug, videoSourcePath, "video", "frontmatter_file") : null}
+                  asset={videoSourcePath
+                    ? leadIsBodyEmbed
+                      ? mediaAssetFromMediaRef(block.slug, videoSourcePath, "video", "body_embed", 0)
+                      : mediaAssetFromMediaRef(block.slug, videoSourcePath, "video", "frontmatter_file")
+                    : null}
                   vaultPath={vaultPath}
                   tags={tags}
                   currentTag={currentTag}
@@ -1540,7 +1583,17 @@ function BlockContent({
                   onDeleteMediaAsset={onDeleteMediaAsset}
                   onOpenRelatedNote={onOpenRelatedNote}
                 >
-                  <VideoFromBlob key={localSrc} src={localSrc} controls className="block max-h-[85vh] max-w-full" />
+                  {/* Plays on its own, muted and looping, like a video inside
+                      an article and like the feed. */}
+                  <VideoFromBlob
+                    key={localSrc}
+                    src={localSrc}
+                    controls
+                    autoPlay
+                    muted
+                    loop
+                    className="block h-auto max-h-[85vh] max-w-full"
+                  />
                 </MediaAssetActionFrame>
               ) : (
                 <div className="flex aspect-video items-center justify-center text-muted-foreground">
@@ -1548,9 +1601,10 @@ function BlockContent({
                 </div>
               )}
             </div>
-            {body && (
+            {showBody && (
               <div className="p-6">
                 <ArticleBody
+                  omittedEmbed={omittedEmbed}
                   body={body}
                   vaultPath={vaultPath}
                   thumbsRootPath={resolvedThumbsRoot}
@@ -2665,6 +2719,7 @@ function MediaAssetReferenceCards({
 // ─── Markdown renderer for article body ─────────────────────────────────────
 
 function ArticleBody({
+  omittedEmbed = null,
   body,
   vaultPath,
   thumbsRootPath,
@@ -2685,6 +2740,8 @@ function ArticleBody({
   onCreateChannelAndTextSelectionCard,
   onTextSelectionDelete,
 }: {
+  /** An embed already shown above the body (a media card's lead video): not drawn twice. */
+  omittedEmbed?: { source: string; occurrence: number } | null;
   body: string;
   vaultPath: string;
   thumbsRootPath: string;
@@ -2936,6 +2993,9 @@ function ArticleBody({
         const occurrenceIndex = typeof nodeStartOffset === "number"
           ? inlineMediaOccurrenceIndex(processedBody, decodedSrc, nodeStartOffset)
           : undefined;
+        if (omittedEmbed && resolvedSrc === omittedEmbed.source && (occurrenceIndex ?? 0) === omittedEmbed.occurrence) {
+          return null;
+        }
         // Video/GIF (downloaded MP4) — render as inline autoplay video with controls.
         // Autoplay must stay muted to satisfy browser/WebView media policies.
         if (/\.(?:mp4|webm|m4v|mov)(?:\?|$)/i.test(decodedSrc)) {
