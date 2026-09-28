@@ -1376,6 +1376,17 @@ makes rows inert (no hover states, no previews) and shows `cursor: grabbing`.
 The gesture contract is enforced by the `sidebar-reorder` browser audit
 (`scripts/sidebar-reorder-audit.mjs` over `/__sidebar-reorder-audit`).
 
+A drag whose release never reaches the page is ended by the next press.
+WebKit sometimes keeps the button release from the page (for instance when its
+own native drag takes over an image); dnd-kit then stays active, stops every
+click on the document, and the app keeps its drag state, so collection rows
+stop navigating in the feed and in an open card until restart.
+`useStaleDragRecovery` watches for a primary `pointerdown` while any drag
+state is recorded: the button cannot be pressed again while a drag holds it,
+so the press proves the drag is over. It sends dnd-kit its Escape cancel
+(stopped at the document so the app's Escape shortcuts never see it) and
+resets the app's drag state before the click that follows.
+
 A drop applies the new order optimistically (`applyPendingTagOrder` over the
 vault order) and writes to `reorder_channels` afterwards, dropping the optimistic
 order once the reload confirms it or the write fails. Waiting for the round trip

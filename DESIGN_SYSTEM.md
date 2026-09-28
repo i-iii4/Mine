@@ -2327,8 +2327,10 @@ Membership action behaviour: checkbox в link-editor не используетс
 правой action button меняет membership. Count остаётся в обычном правом
 layout slot `h-8 w-8`; action button рисуется абсолютным overlay поверх строки
 и не участвует во flex-раскладке preview strip. В link-editor яркость sidebar
-rows больше не следует route/hover contract: `text-foreground` получают только
-уже связанные каналы, все остальные строки остаются `text-muted-foreground`.
+rows не следует route contract: `text-foreground` получают уже связанные
+каналы и строка под курсором или в фокусе, как в ленте; остальные строки
+остаются `text-muted-foreground`. С 28.09.2026: строка под курсором в
+развёрнутой карточке раньше не подсвечивалась.
 Для уже связанного канала
 overlay всегда показывает серую кнопку `Connected`; на hover/focus строки текст
 замещается на `Disconnect`. Для несвязанного канала slot по умолчанию
