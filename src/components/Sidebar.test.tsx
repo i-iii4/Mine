@@ -1271,10 +1271,12 @@ describe("sidebar and the card under the pointer (SPEC_CARD_STATES.md)", () => {
       const row = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
       pointerTo(row, 10);
       rest();
+      // What the click reaches shows at once under a slow pointer (С7.10)...
+      expect(row).toHaveAttribute("data-sidebar-row-intent", "true");
+      // ...the lit feed waits for the dwell.
       expect(isCardLitByCollection(7)).toBe(false);
       rest(HOVER_INTENT.dwellMs);
       expect(isCardLitByCollection(7)).toBe(true);
-      expect(row).toHaveAttribute("data-sidebar-row-intent", "true");
       // Moving slowly onto another part of the row does not leave it.
       pointerTo(row.querySelector("a")!, 12);
       expect(isCardLitByCollection(7)).toBe(true);

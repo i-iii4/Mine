@@ -31,19 +31,27 @@ export const HOVER_INTENT = {
   velocityWindowMs: 60,
   /**
    * С7.3, С7.4: after the pointer leaves the chosen target, neighbours answer
-   * a slow pointer at once for this long, and a fast pointer keeps the old
-   * answer for this long instead of blinking through every target it crosses.
+   * a slow pointer at once for this long, and a pointer moving fast over other
+   * targets keeps the old answer for this long instead of blinking through
+   * every target it crosses. 800 ms read as the answer sticking.
    */
-  warmMs: 800,
-  /** С7.4: leaving the feed or the sidebar clears the answer after this. */
+  warmMs: 400,
+  /**
+   * С7.4: a pointer that leaves the feed or the sidebar, or slows down or
+   * stops over empty space, clears the answer after this. It still bridges a
+   * gap between two cards crossed at attending speed.
+   */
   leaveGraceMs: 150,
   /** С7.5: quiet after the last scroll or reflow step. */
   scrollSettleMs: 150,
   /**
-   * С7.6: cross-fade of a row's pill and count, and of its button. CSS holds
-   * the same value as `--hover-intent-fade`; a test keeps them equal.
+   * С7.6: answers fade in over `fadeInMs` and out over the shorter
+   * `fadeOutMs`, so leaving reads as a response, not a lag. CSS holds the same
+   * values as `--hover-intent-fade-in` and `--hover-intent-fade-out`; a test
+   * keeps them equal.
    */
-  fadeMs: 150,
+  fadeInMs: 150,
+  fadeOutMs: 100,
 } as const;
 
 export type HoverIntentTiming = typeof HOVER_INTENT;
@@ -102,6 +110,8 @@ export class HoverIntent {
   private chosen: string | null = null;
   /** +Infinity while the pointer is on the chosen target. */
   private warmUntil = -Infinity;
+  /** Since when a slow or resting pointer has been over no target. */
+  private idleSince: number | null = null;
   private slow: string | null = null;
   private lastEmittedChosen: string | null = null;
 
@@ -217,7 +227,7 @@ export class HoverIntent {
   }
 
   private evaluate(now: number): void {
-    const { dwellMs, maxSpeed, velocityWindowMs, leaveGraceMs } = this.timing;
+    const { dwellMs, maxSpeed, velocityWindowMs } = this.timing;
     // Keep only what the speed can still read.
     const horizon = now - velocityWindowMs;
     while (this.samples.length > 1 && this.samples[1]!.t <= horizon) this.samples.shift();
@@ -232,6 +242,11 @@ export class HoverIntent {
       this.candidate = { target: slow, since: now };
     }
 
+    // A slow or resting pointer over empty space is attending to nothing.
+    const idle = attending && this.under === null && speed <= maxSpeed;
+    if (!idle) this.idleSince = null;
+    else if (this.idleSince === null) this.idleSince = now;
+
     // The pointer is on the chosen target, or has just left it.
     if (this.chosen !== null) {
       if (this.under === this.chosen && this.inside) {
@@ -245,9 +260,8 @@ export class HoverIntent {
     if (this.candidate && (warm || now - this.candidate.since >= dwellMs)) {
       this.chosen = this.candidate.target;
       this.warmUntil = Infinity;
-    } else if (this.chosen !== null && this.under !== this.chosen) {
-      const expired = this.inside ? !warm : now >= this.leftAt + leaveGraceMs;
-      if (expired) this.chosen = null;
+    } else if (this.chosen !== null && this.under !== this.chosen && now >= this.releaseAt()) {
+      this.chosen = null;
     }
 
     if (slow !== this.slow || this.chosen !== this.lastEmittedChosen) {
@@ -258,11 +272,24 @@ export class HoverIntent {
     this.schedule(now, speed);
   }
 
+  /**
+   * When the answer for a target the pointer has left clears: after the
+   * leave grace once the pointer has left the surface or idles over empty
+   * space (С7.4), otherwise at the end of the warm window, while it keeps
+   * moving fast.
+   */
+  private releaseAt(): number {
+    const { leaveGraceMs } = this.timing;
+    if (!this.inside) return this.leftAt + leaveGraceMs;
+    if (this.idleSince !== null) return Math.min(this.idleSince + leaveGraceMs, this.warmUntil);
+    return this.warmUntil;
+  }
+
   /** One timer: the next moment an answer could change without new input. */
   private schedule(now: number, speed: number): void {
     if (this.timer !== null) this.clock.clearTimeout(this.timer);
     this.timer = null;
-    const { dwellMs, velocityWindowMs, leaveGraceMs } = this.timing;
+    const { dwellMs, velocityWindowMs } = this.timing;
     const moments: number[] = [];
     // Speed decays as samples age out: a resting pointer becomes slow.
     if (speed > 0) {
@@ -273,7 +300,7 @@ export class HoverIntent {
       moments.push(this.candidate.since + dwellMs);
     }
     if (this.chosen !== null && this.under !== this.chosen) {
-      moments.push(this.inside ? this.warmUntil : this.leftAt + leaveGraceMs);
+      moments.push(this.releaseAt());
     }
     if (now < this.quietUntil) moments.push(this.quietUntil);
     const next = Math.min(...moments.filter((moment) => moment > now && Number.isFinite(moment)));

@@ -113,15 +113,38 @@ describe("hover intent (SPEC_CARD_STATES.md, С7)", () => {
     expect(chosenHistory().filter((value) => value !== null)).toEqual(["a", "d"]);
   });
 
-  it("С7.4: with no new target the held answer clears after the warm window", () => {
+  it("С7.4: a pointer moving fast over empty space keeps the answer only for the warm window", () => {
     const { time, intent, arrive, glide } = setup();
     arrive("a");
     time.advance(HOVER_INTENT.dwellMs + 10);
-    glide(null, 0.1, 16);
-    time.advance(HOVER_INTENT.warmMs - 60);
+    glide(null, 1.5, HOVER_INTENT.warmMs - 40);
     expect(intent.state.chosen).toBe("a");
-    time.advance(100);
+    glide(null, 1.5, 80);
     expect(intent.state.chosen).toBeNull();
+  });
+
+  it("С7.4: a pointer that slows or stops over empty space clears the answer after the leave grace, not the warm window", () => {
+    const { time, intent, arrive, glide } = setup();
+    arrive("a");
+    time.advance(HOVER_INTENT.dwellMs + 10);
+    // Leaves the card fast and stops in the gap.
+    glide(null, 1.5, 24);
+    time.advance(HOVER_INTENT.velocityWindowMs + HOVER_INTENT.leaveGraceMs - 20);
+    expect(intent.state.chosen).toBe("a");
+    time.advance(40);
+    expect(intent.state.chosen).toBeNull();
+    expect(time.now).toBeLessThan(HOVER_INTENT.warmMs + 400);
+  });
+
+  it("С7.4: a gap crossed slowly between two cards does not blink the answer", () => {
+    const { time, intent, arrive, glide, chosenHistory } = setup();
+    arrive("a");
+    time.advance(HOVER_INTENT.dwellMs + 10);
+    // A 24 px gap at attending speed takes 120 ms, inside the leave grace.
+    glide(null, 0.2, 120);
+    glide("b", 0.2, 16);
+    expect(intent.state.chosen).toBe("b");
+    expect(chosenHistory().slice(chosenHistory().indexOf("a"))).toEqual(["a", "b"]);
   });
 
   it("С7.4: leaving the surface clears the answer after the leave grace", () => {
@@ -188,8 +211,10 @@ describe("hover intent (SPEC_CARD_STATES.md, С7)", () => {
     expect(intent.state.chosen).toBe("b");
   });
 
-  it("С7.6: the fade in CSS matches the one in the engine", () => {
+  it("С7.6: the fades in CSS match the engine's, and leaving is the faster one", () => {
     const css = readFileSync("src/styles/global.css", "utf8");
-    expect(css).toContain(`--hover-intent-fade: ${HOVER_INTENT.fadeMs}ms`);
+    expect(css).toContain(`--hover-intent-fade-in: ${HOVER_INTENT.fadeInMs}ms`);
+    expect(css).toContain(`--hover-intent-fade-out: ${HOVER_INTENT.fadeOutMs}ms`);
+    expect(HOVER_INTENT.fadeOutMs).toBeLessThan(HOVER_INTENT.fadeInMs);
   });
 });

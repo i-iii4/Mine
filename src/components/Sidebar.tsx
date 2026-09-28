@@ -102,15 +102,28 @@ const SIDEBAR_ROW_CONNECTED_PILL_CLASS = cn(
   buttonVariants({ variant: "reference", size: "xs" }),
   "pointer-events-none h-6 font-mono font-normal text-muted-foreground",
 );
-/** A row's parts that answer the chosen row cross-fade over one duration (С7.6). */
-const ROW_INTENT_FADE =
-  "transition-opacity duration-[var(--hover-intent-fade)] ease-[cubic-bezier(0.22,1,0.36,1)]";
-/** Shown until the pointer chooses the row or the keyboard focuses it. */
-const ROW_INTENT_HIDES =
-  "opacity-100 group-data-[sidebar-row-intent=true]:opacity-0 group-focus-within:opacity-0";
-/** Shown once the pointer chooses the row or the keyboard focuses it. */
-const ROW_INTENT_SHOWS =
-  "opacity-0 group-data-[sidebar-row-intent=true]:opacity-100 group-focus-within:opacity-100";
+/**
+ * A row's answering parts cross-fade: in over `--hover-intent-fade-in` when the
+ * answer appears, out over the shorter `--hover-intent-fade-out` when it goes
+ * (С7.6). Both parts of a swap share the timing, so no gap opens between them.
+ */
+const ROW_INTENT_FADE = "transition-opacity ease-[cubic-bezier(0.22,1,0.36,1)]";
+const ANSWER_ON = "duration-[var(--hover-intent-fade-in)]";
+const ANSWER_OFF = "duration-[var(--hover-intent-fade-out)]";
+/** Shown until a slow pointer or the keyboard reaches the row. */
+const ROW_INTENT_HIDES = cn(
+  "opacity-100",
+  ANSWER_OFF,
+  "group-data-[sidebar-row-intent=true]:opacity-0 group-data-[sidebar-row-intent=true]:duration-[var(--hover-intent-fade-in)]",
+  "group-focus-within:opacity-0 group-focus-within:duration-[var(--hover-intent-fade-in)]",
+);
+/** Shown once a slow pointer or the keyboard reaches the row. */
+const ROW_INTENT_SHOWS = cn(
+  "opacity-0",
+  ANSWER_OFF,
+  "group-data-[sidebar-row-intent=true]:opacity-100 group-data-[sidebar-row-intent=true]:duration-[var(--hover-intent-fade-in)]",
+  "group-focus-within:opacity-100 group-focus-within:duration-[var(--hover-intent-fade-in)]",
+);
 /** Two labels stacked in one cell, so swapping them never moves the button's text. */
 const ROW_INTENT_LABEL_STACK = "grid place-items-center [&>*]:[grid-area:1/1]";
 const SIDEBAR_ROW_ACTION_BUTTON_CLASS =
@@ -305,13 +318,14 @@ const SidebarCore = memo(function SidebarCore({
   const location = useLocation();
 
   // Rows answer attention, not the pointer's path (SPEC_CARD_STATES.md,
-  // С7.10). A row's name lights under a slow pointer at once; its button, the
-  // lit feed (С3) and the big preview wait until the pointer chooses the row.
+  // С7.10). What the click reaches, a row's name and its button, shows under
+  // a slow pointer at once; the lit feed (С3) and the big preview wait until
+  // the pointer chooses the row.
   const [intentRowKey, setIntentRowKey] = useState<string | null>(null);
   const applyPointerRowFocusRef = useRef<(rowKey: string | null) => void>(() => {});
   const rowIntent = useHoverIntent(({ slow, chosen }) => {
     applyPointerRowFocusRef.current(slow);
-    setIntentRowKey(chosen);
+    setIntentRowKey(slow);
     setHoveredCollectionRow(chosen);
   });
   useEffect(() => () => setHoveredCollectionRow(null), []);
@@ -1078,7 +1092,7 @@ function assignRef<T>(ref: Ref<T> | undefined, value: T) {
 }
 
 type SidebarRowFrameProps = {
-  /** The pointer has chosen this row (SPEC_CARD_STATES.md, С7.10). */
+  /** A slow pointer is on this row (SPEC_CARD_STATES.md, С7.10). */
   isIntentRow?: boolean;
   compact?: boolean;
   rowKey: string;
@@ -1124,7 +1138,7 @@ const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(functio
       ref={setRefs}
       style={style}
       {...domProps}
-      // The pointer has chosen this row (С7.10): its button shows.
+      // A slow pointer is on this row (С7.10): its button shows.
       data-sidebar-row-intent={isIntentRow ? "true" : undefined}
       data-sidebar-row=""
       data-sidebar-row-surface={hasSurface ? "" : undefined}
@@ -1353,7 +1367,7 @@ function SidebarRowBody({
                       ? "opacity-0"
                       : ROW_INTENT_HIDES,
                   )
-                : cn(ROW_INTENT_FADE, showConnectedPill ? "opacity-0" : "opacity-100"),
+                : cn(ROW_INTENT_FADE, showConnectedPill ? cn("opacity-0", ANSWER_ON) : cn("opacity-100", ANSWER_OFF)),
             )}
             data-sidebar-row-text=""
           >
@@ -1369,7 +1383,7 @@ function SidebarRowBody({
             SIDEBAR_ROW_CONNECTED_PILL_CLASS,
             ROW_INTENT_FADE,
             "absolute top-1/2 z-10 -translate-y-1/2",
-            showConnectedPill ? "opacity-100" : "opacity-0",
+            showConnectedPill ? cn("opacity-100", ANSWER_ON) : cn("opacity-0", ANSWER_OFF),
           )}
           style={{
             right: SIDEBAR_ROW_ACTION_BUTTON_INSET,
@@ -1404,7 +1418,10 @@ function SidebarRowBody({
             ROW_INTENT_FADE,
             linkButtonPinned
               ? "opacity-100"
-              : "pointer-events-none opacity-0 group-data-[sidebar-row-intent=true]:pointer-events-auto group-data-[sidebar-row-intent=true]:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
+              : cn(
+                  ROW_INTENT_SHOWS,
+                  "pointer-events-none group-data-[sidebar-row-intent=true]:pointer-events-auto group-focus-within:pointer-events-auto",
+                ),
           )}
           style={{
             right: SIDEBAR_ROW_ACTION_BUTTON_INSET,
