@@ -11,7 +11,7 @@ import {
   HOVER_PREVIEW_WARM_WINDOW_MS,
 } from "@/lib/hoverPreviewTiming";
 import { SIDEBAR_ROW_HOVER_SEAM_ENABLED } from "@/lib/featureFlags";
-import { HOVER_LEAVE_GRACE_MS, isCardLitByCollection, resetCollectionHover, setCollectionMemberships, setHoveredCard } from "@/lib/collectionHover";
+import { HOVER_LEAVE_GRACE_MS, isCardLitByCollection, resetCollectionHover, setCollectionMemberships, setHoveredCard, setSelectedCards } from "@/lib/collectionHover";
 
 const dndContextState = vi.hoisted(() => ({
   over: null as { id: string } | null,
@@ -1269,5 +1269,110 @@ describe("sidebar and the card under the pointer (SPEC_CARD_STATES.md)", () => {
     act(() => { vi.advanceTimersByTime(HOVER_LEAVE_GRACE_MS); });
     expect(isCardLitByCollection(7)).toBe(true);
     vi.useRealTimers();
+  });
+});
+
+describe("sidebar and the feed selection (SPEC_CARD_STATES.md, С6)", () => {
+  const selectionProps = {
+    ...defaultProps,
+    width: 600,
+    orderedTags: [tag("alpha", 10), tag("beta", 5), tag("gamma", 3)],
+  };
+
+  beforeEach(() => {
+    resetCollectionHover();
+    // Cards 1 and 2 are selected: both in alpha, one in beta, none in gamma.
+    setCollectionMemberships([
+      { block_id: 1, tag: "alpha" },
+      { block_id: 2, tag: "alpha" },
+      { block_id: 2, tag: "beta" },
+      { block_id: 3, tag: "gamma" },
+    ]);
+  });
+  afterEach(() => {
+    resetCollectionHover();
+    vi.useRealTimers();
+  });
+
+  const rowIn = (container: HTMLElement, rowKey: string) =>
+    container.querySelector(`[data-sidebar-row-key="${rowKey}"]`)!;
+
+  it("shows the selection's membership as active buttons: all, part, none", () => {
+    const { container } = renderSidebar({ ...selectionProps, onBatchSetTag: vi.fn() });
+    expect(container.querySelector("[data-sidebar-link-action]")).toBeNull();
+    act(() => setSelectedCards([{ id: 1, slug: "one" }, { id: 2, slug: "two" }]));
+
+    const alpha = screen.getByRole("button", { name: "Disconnect alpha" });
+    expect(alpha).toHaveTextContent("Connected");
+    expect(alpha).toHaveClass("opacity-100", "font-semibold", "bg-component-fill");
+
+    const beta = screen.getByRole("button", { name: "Connect beta" });
+    expect(beta).toHaveClass("opacity-100");
+    expect(beta.querySelector("[data-sidebar-link-partial]")).toHaveTextContent(/^1\/2$/);
+    expect(screen.getByText("5")).toHaveClass("opacity-0");
+
+    const gamma = screen.getByRole("button", { name: "Connect gamma" });
+    expect(gamma).toHaveClass("opacity-0", "group-hover:opacity-100");
+    expect(screen.getByText("3")).toHaveClass("opacity-100");
+
+    // Everything holds every card: a reference pill, not a button.
+    expect(rowIn(container, "all").querySelector("[data-sidebar-row-connected-pill]")).toHaveTextContent("Connected");
+    expect(rowIn(container, "all").querySelector("button")).toBeNull();
+  });
+
+  it("connects the whole selection, then disconnects it, updating the buttons at once", () => {
+    vi.useFakeTimers();
+    const onBatchSetTag = vi.fn();
+    renderSidebar({ ...selectionProps, onBatchSetTag });
+    act(() => setSelectedCards([{ id: 1, slug: "one" }, { id: 2, slug: "two" }]));
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect beta" }));
+    // The row answers before the files change.
+    expect(screen.getByRole("button", { name: "Disconnect beta" })).toHaveTextContent("Connected");
+    act(() => { vi.runAllTimers(); });
+    expect(onBatchSetTag).toHaveBeenLastCalledWith(["one", "two"], "beta", true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect beta" }));
+    expect(screen.getByRole("button", { name: "Connect beta" })).toHaveClass("opacity-0");
+    act(() => { vi.runAllTimers(); });
+    expect(onBatchSetTag).toHaveBeenLastCalledWith(["one", "two"], "beta", false);
+  });
+
+  it("ignores the hovered card while cards are selected", () => {
+    const { container } = renderSidebar({ ...selectionProps, onBatchSetTag: vi.fn() });
+    act(() => {
+      setSelectedCards([{ id: 1, slug: "one" }]);
+      setHoveredCard(3);
+    });
+    expect(rowIn(container, "tag:gamma").querySelector("[data-sidebar-row-connected-pill]")).toBeNull();
+    expect(screen.getByRole("button", { name: "Connect gamma" })).toHaveClass("opacity-0");
+  });
+
+  it("keeps the rows reorderable while the selection edits them", () => {
+    const { container } = renderSidebar({ ...selectionProps, onBatchSetTag: vi.fn() });
+    act(() => setSelectedCards([{ id: 1, slug: "one" }]));
+    expect(rowIn(container, "tag:alpha")).toHaveAttribute("aria-roledescription", "sortable");
+  });
+
+  it("belongs to the expanded card when one is open", () => {
+    renderSidebar({
+      ...selectionProps,
+      onBatchSetTag: vi.fn(),
+      linkedBlockSlug: "open-block",
+      linkedTags: ["gamma"],
+      onToggleLinkedTag: vi.fn(),
+    });
+    act(() => setSelectedCards([{ id: 1, slug: "one" }, { id: 2, slug: "two" }]));
+    expect(screen.getByRole("button", { name: "Disconnect gamma" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connect alpha" })).toBeInTheDocument();
+  });
+
+  it("returns to counts when the selection ends", () => {
+    renderSidebar({ ...selectionProps, onBatchSetTag: vi.fn() });
+    act(() => setSelectedCards([{ id: 1, slug: "one" }]));
+    expect(screen.getByRole("button", { name: "Disconnect alpha" })).toBeInTheDocument();
+    act(() => setSelectedCards([]));
+    expect(screen.queryByRole("button", { name: "Disconnect alpha" })).toBeNull();
+    expect(screen.getByText("10")).toHaveClass("opacity-100");
   });
 });

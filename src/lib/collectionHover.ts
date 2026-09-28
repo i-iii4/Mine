@@ -20,6 +20,44 @@ let hoveredBlockId: number | null = null;
 let hoveredRowKey: string | null = null;
 const listeners = new Set<() => void>();
 
+/** A card of the feed selection: the id keys memberships, the slug keys commands. */
+export interface SelectedCard {
+  id: number;
+  slug: string;
+}
+
+/**
+ * The feed selection as the sidebar sees it (SPEC_CARD_STATES.md, С6): how many
+ * selected cards each collection holds. Rebuilt only when the selection or the
+ * memberships change, so a subscriber gets the same object until then.
+ */
+export interface CardSelectionSummary {
+  slugs: readonly string[];
+  total: number;
+  connectedByTag: ReadonlyMap<string, number>;
+}
+
+let selectedCards: readonly SelectedCard[] = [];
+let selectionSummary: CardSelectionSummary | null = null;
+
+function rebuildSelectionSummary() {
+  if (selectedCards.length === 0) {
+    selectionSummary = null;
+    return;
+  }
+  const connectedByTag = new Map<string, number>();
+  for (const { id } of selectedCards) {
+    for (const tag of tagsByBlock.get(id) ?? []) {
+      connectedByTag.set(tag, (connectedByTag.get(tag) ?? 0) + 1);
+    }
+  }
+  selectionSummary = {
+    slugs: selectedCards.map((card) => card.slug),
+    total: selectedCards.length,
+    connectedByTag,
+  };
+}
+
 function emit() {
   for (const listener of listeners) listener();
 }
@@ -43,6 +81,45 @@ export function setCollectionMemberships(pairs: readonly BlockCollection[]): voi
   }
   tagsByBlock = byBlock;
   blocksByTag = byTag;
+  rebuildSelectionSummary();
+  emit();
+}
+
+/** The cards selected in the feed; an empty list ends the selection. */
+export function setSelectedCards(cards: readonly SelectedCard[]): void {
+  const same =
+    cards.length === selectedCards.length &&
+    cards.every((card, index) => card.id === selectedCards[index]?.id);
+  if (same) return;
+  selectedCards = [...cards];
+  rebuildSelectionSummary();
+  emit();
+}
+
+/**
+ * Connect or disconnect every selected card to a collection in the answers at
+ * once, before the files change; the next taxonomy snapshot confirms it.
+ */
+export function applySelectionMembership(tag: string, connected: boolean): void {
+  if (selectedCards.length === 0) return;
+  const byBlock = new Map(tagsByBlock);
+  const tagBlocks = new Set(blocksByTag.get(tag) ?? []);
+  for (const { id } of selectedCards) {
+    const tags = new Set(byBlock.get(id) ?? []);
+    if (connected) {
+      tags.add(tag);
+      tagBlocks.add(id);
+    } else {
+      tags.delete(tag);
+      tagBlocks.delete(id);
+    }
+    byBlock.set(id, tags);
+  }
+  const byTag = new Map(blocksByTag);
+  byTag.set(tag, tagBlocks);
+  tagsByBlock = byBlock;
+  blocksByTag = byTag;
+  rebuildSelectionSummary();
   emit();
 }
 
@@ -123,6 +200,15 @@ export function isRowConnectedToHoveredCard(rowKey: string): boolean {
   return tagsByBlock.get(hoveredBlockId)?.has(rowKey.slice(TAG_ROW_PREFIX.length)) === true;
 }
 
+/** The feed selection as the sidebar sees it, or `null` without a selection (С6). */
+export function getCardSelectionSummary(): CardSelectionSummary | null {
+  return selectionSummary;
+}
+
+export function useCardSelectionSummary(): CardSelectionSummary | null {
+  return useSyncExternalStore(subscribe, getCardSelectionSummary);
+}
+
 export function useCardLitByCollection(blockId: number): boolean {
   return useSyncExternalStore(subscribe, () => isCardLitByCollection(blockId));
 }
@@ -139,5 +225,7 @@ export function resetCollectionHover(): void {
   blocksByTag = new Map();
   hoveredBlockId = null;
   hoveredRowKey = null;
+  selectedCards = [];
+  selectionSummary = null;
   emit();
 }

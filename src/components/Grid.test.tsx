@@ -24,6 +24,7 @@ import { computeMasonryLayout } from "@/lib/masonryLayout";
 import { computeCardHeight } from "@/lib/cardHeight";
 import {
   HOVER_LEAVE_GRACE_MS,
+  getCardSelectionSummary,
   isRowConnectedToHoveredCard,
   resetCollectionHover,
   setCollectionMemberships,
@@ -1326,6 +1327,35 @@ describe("Grid — no collapse after add / revisit", () => {
     await flushAsync();
     expect(isRowConnectedToHoveredCard("tag:beta")).toBe(true);
     expect(isRowConnectedToHoveredCard("tag:alpha")).toBe(false);
+    resetCollectionHover();
+  });
+
+  it("tells the sidebar which cards are selected", async () => {
+    vi.useFakeTimers();
+    resetCollectionHover();
+    setCollectionMemberships([{ block_id: 9461, tag: "alpha" }]);
+    const blocks = [makeBlock(9461), makeBlock(9462)];
+    setBlockHeight(9461, 200);
+    setBlockHeight(9462, 220);
+
+    const { unmount } = render(<Grid {...BASE_PROPS} blocks={blocks} />);
+    await flushAsync();
+    expect(getCardSelectionSummary()).toBeNull();
+
+    fireEvent.click(document.querySelector('[data-block-slug="block-9461"]') as HTMLElement, { metaKey: true });
+    fireEvent.click(document.querySelector('[data-block-slug="block-9462"]') as HTMLElement, { metaKey: true });
+    await flushAsync();
+    expect(getCardSelectionSummary()?.slugs).toEqual(["block-9461", "block-9462"]);
+    expect(getCardSelectionSummary()?.connectedByTag.get("alpha")).toBe(1);
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    await flushAsync();
+    expect(getCardSelectionSummary()).toBeNull();
+
+    fireEvent.click(document.querySelector('[data-block-slug="block-9461"]') as HTMLElement, { metaKey: true });
+    await flushAsync();
+    unmount();
+    expect(getCardSelectionSummary()).toBeNull();
     resetCollectionHover();
   });
 

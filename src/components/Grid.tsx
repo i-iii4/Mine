@@ -74,7 +74,7 @@ import {
   isOverlayKeyboardTarget,
 } from "@/lib/keyboardTargets";
 import { commandById } from "@/lib/commandRegistry";
-import { releaseHoveredCard, setHoveredCard, useCardLitByCollection } from "@/lib/collectionHover";
+import { releaseHoveredCard, setHoveredCard, setSelectedCards, useCardLitByCollection } from "@/lib/collectionHover";
 import {
   blockCanRenderFromDeterministicHeight,
   blockSlugFromKeyboardTarget,
@@ -2032,6 +2032,12 @@ export function Grid({
   }, [feedInteractionMode, keyboardFocusedBlockId]);
 
   useEffect(() => () => setHoveredCard(null), []);
+
+  // The sidebar describes and edits the whole selection (SPEC_CARD_STATES.md, С6).
+  useEffect(() => {
+    setSelectedCards(selectedBlocks.map((block) => ({ id: block.id, slug: block.slug })));
+  }, [selectedBlocks]);
+  useEffect(() => () => setSelectedCards([]), []);
   const visualFocusActive = keyboardFocusedSlug !== null || pinnedActionMenuSlug !== null;
 
   const gridContext: GridContext = useMemo(

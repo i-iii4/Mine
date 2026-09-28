@@ -54,10 +54,13 @@ import {
 } from "@/lib/appLayout";
 import { EDGE_FADE_WIDTH, createRightFadeMaskStyle } from "@/lib/edgeFade";
 import {
+  applySelectionMembership,
   releaseHoveredCollectionRow,
   setHoveredCollectionRow,
+  useCardSelectionSummary,
   useRowConnectedToHoveredCard,
 } from "@/lib/collectionHover";
+import { scheduleAfterOptimisticUiUpdate } from "@/lib/groupSelection";
 import { TopFadeScrim } from "./TopFadeScrim";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
@@ -126,6 +129,17 @@ type CardMenuPoint = {
   y: number;
 };
 
+/** The row's Connect / Connected / Disconnect button: for the expanded card,
+ *  or for the whole feed selection (SPEC_CARD_STATES.md, С6). */
+type SidebarRowLinkEditor = {
+  checked: boolean;
+  /** Some but not all selected cards are in the collection: `connected/total`. */
+  partial?: string;
+  /** Edits the feed selection: the row stays reorderable and renamable. */
+  forSelection?: boolean;
+  onToggle: () => void;
+};
+
 type SidebarKeyboardNavigationFocus = {
   rowKey: string;
   sequence: number;
@@ -176,6 +190,8 @@ interface SidebarProps {
   linkedBlockSlug?: string | null;
   linkedTags?: string[];
   onToggleLinkedTag?: (slug: string, tag: string, hasTag: boolean) => void;
+  /** Connects or disconnects every selected feed card (SPEC_CARD_STATES.md, С6). */
+  onBatchSetTag?: (slugs: string[], tag: string, connected: boolean) => void | Promise<void>;
   linkMode?: SidebarLinkMode;
   onLinkModeChange?: (mode: SidebarLinkMode) => void;
   showLinkModeChrome?: boolean;
@@ -239,6 +255,7 @@ const SidebarCore = memo(function SidebarCore({
   linkedBlockSlug,
   linkedTags = [],
   onToggleLinkedTag,
+  onBatchSetTag,
   linkMode,
   onLinkModeChange,
   showLinkModeChrome = true,
@@ -323,6 +340,30 @@ const SidebarCore = memo(function SidebarCore({
   const compact = false;
   const isLinkingBlock = !!linkedBlockSlug && !!onToggleLinkedTag;
   const isLinkEditorActive = isLinkingBlock && !detailChromeClosing;
+  // While cards are selected in the feed, the rows describe and edit the whole
+  // selection the way they edit one card in an expanded card (С6). An expanded
+  // card takes precedence: the sidebar then belongs to it.
+  const cardSelection = useCardSelectionSummary();
+  const isSelectionEditorActive = !isLinkEditorActive && cardSelection !== null && !!onBatchSetTag;
+  const selectionLinkEditor = (tag: string): SidebarRowLinkEditor | undefined => {
+    if (!isSelectionEditorActive || !cardSelection || !onBatchSetTag) return undefined;
+    const connected = cardSelection.connectedByTag.get(tag) ?? 0;
+    const checked = connected === cardSelection.total;
+    return {
+      checked,
+      partial: connected > 0 && !checked ? `${connected}/${cardSelection.total}` : undefined,
+      forSelection: true,
+      onToggle: () => {
+        const slugs = [...cardSelection.slugs];
+        applySelectionMembership(tag, !checked);
+        scheduleAfterOptimisticUiUpdate(() => {
+          void Promise.resolve(onBatchSetTag(slugs, tag, !checked)).catch((err: unknown) => {
+            console.error("Failed to update the selection's collection:", err);
+          });
+        });
+      },
+    };
+  };
   const linkedTagSet = useMemo(() => new Set(linkedTags), [linkedTags]);
   const baseVisibleTags = useMemo(() => (
     isLinkEditorActive && effectiveLinkMode === "linked"
@@ -766,7 +807,7 @@ const SidebarCore = memo(function SidebarCore({
               rowKey="all"
               isSidebarRowFocused={effectiveSidebarRowFocusKey === "all"}
               isSidebarRowSeamAccent={seamAccentKeys.has("all")}
-              staticConnected={isLinkEditorActive}
+              staticConnected={isLinkEditorActive || isSelectionEditorActive}
             />
           )}
 
@@ -797,7 +838,7 @@ const SidebarCore = memo(function SidebarCore({
                   linkEditor={isLinkEditorActive ? {
                     checked,
                     onToggle: () => onToggleLinkedTag(linkedBlockSlug, tc.tag, checked),
-                  } : undefined}
+                  } : selectionLinkEditor(tc.tag)}
                   onDoubleClick={startRenamingTag}
                   onRenameSubmit={handleRename}
                   onRenameCancel={cancelRenamingTag}
@@ -1138,13 +1179,15 @@ function SidebarRowBody({
   onClick?: () => void;
   onSameClick?: () => void;
   onDoubleClick?: () => void;
-  linkEditor?: {
-    checked: boolean;
-    onToggle: () => void;
-  };
+  linkEditor?: SidebarRowLinkEditor;
   staticConnected?: boolean;
 }) {
   const isLinkEditor = !!linkEditor;
+  // The expanded card's editor locks the row; the selection's editor (С6) does not.
+  const isCardLinkEditor = isLinkEditor && !linkEditor.forSelection;
+  // The button stays shown when the collection holds the card, or some of the
+  // selected cards; otherwise it appears on hover over the count.
+  const linkButtonPinned = !!linkEditor && (linkEditor.checked || linkEditor.partial !== undefined);
   // A reference `Connected` replaces the count: always for Everything in an
   // expanded card (С5), and in the feed for the collections of the card under
   // the pointer (С4). The link editor's own buttons keep that place otherwise.
@@ -1163,7 +1206,7 @@ function SidebarRowBody({
     }
   };
   const handleNavLinkDoubleClick = onDoubleClick ? (e: ReactMouseEvent<HTMLAnchorElement>) => {
-    if (isLinkEditor) return;
+    if (isCardLinkEditor) return;
     e.preventDefault();
     onDoubleClick();
   } : undefined;
@@ -1219,7 +1262,7 @@ function SidebarRowBody({
                 "font-mono",
                 "text-muted-foreground",
                 !compact && "-translate-x-px",
-                linkEditor.checked
+                linkButtonPinned
                   ? "opacity-0"
                   : "opacity-100 group-hover:opacity-0 group-focus-within:opacity-0",
               )}
@@ -1252,7 +1295,7 @@ function SidebarRowBody({
               isLinkEditor
                 ? cn(
                     "transition-opacity duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
-                    linkEditor?.checked
+                    linkButtonPinned
                       ? "opacity-0"
                       : "opacity-100 group-hover:opacity-0 group-focus-within:opacity-0",
                   )
@@ -1295,7 +1338,7 @@ function SidebarRowBody({
           className={cn(
             SIDEBAR_ROW_ACTION_BUTTON_CLASS,
             "absolute top-1/2 z-10 -translate-y-1/2 transition-opacity duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
-            linkEditor.checked
+            linkButtonPinned
               ? "opacity-100"
               : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
           )}
@@ -1309,6 +1352,13 @@ function SidebarRowBody({
             <>
               <span className="group-hover:hidden group-focus-within:hidden">Connected</span>
               <span className="hidden text-detach group-hover:inline group-focus-within:inline">Disconnect</span>
+            </>
+          ) : linkEditor.partial !== undefined ? (
+            <>
+              <span className="font-mono font-normal group-hover:hidden group-focus-within:hidden" data-sidebar-link-partial="">
+                {linkEditor.partial}
+              </span>
+              <span className="hidden group-hover:inline group-focus-within:inline">Connect</span>
             </>
           ) : (
             "Connect"
@@ -1488,10 +1538,7 @@ const TagNavItem = memo(function TagNavItem({
   compact?: boolean;
   isDropDragging: boolean;
   isEditing: boolean;
-  linkEditor?: {
-    checked: boolean;
-    onToggle: () => void;
-  };
+  linkEditor?: SidebarRowLinkEditor;
   onDoubleClick: (tag: string) => void;
   onRenameSubmit: (tag: string, value: string) => void;
   onRenameCancel: () => void;
@@ -1584,8 +1631,8 @@ const TagNavItem = memo(function TagNavItem({
             style={style}
             nodeRef={setNodeRef}
             textDropTag={tag}
-            {...(!isLinkEditor ? attributes : {})}
-            {...(!isLinkEditor ? listeners : {})}
+            {...(!isLinkEditor || linkEditor.forSelection ? attributes : {})}
+            {...(!isLinkEditor || linkEditor.forSelection ? listeners : {})}
           >
             <SidebarRowBody
               to={to}

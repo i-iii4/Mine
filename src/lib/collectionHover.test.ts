@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   HOVER_LEAVE_GRACE_MS,
+  applySelectionMembership,
+  getCardSelectionSummary,
   isCardLitByCollection,
   isRowConnectedToHoveredCard,
   releaseHoveredCard,
@@ -9,6 +11,7 @@ import {
   setCollectionMemberships,
   setHoveredCard,
   setHoveredCollectionRow,
+  setSelectedCards,
 } from "./collectionHover";
 
 describe("collection hover", () => {
@@ -97,5 +100,54 @@ describe("collection hover", () => {
     setHoveredCollectionRow("tag:Интерфейсы");
     setCollectionMemberships([{ block_id: 2, tag: "Интерфейсы" }]);
     expect([1, 2].map(isCardLitByCollection)).toEqual([false, true]);
+  });
+});
+
+describe("feed selection summary (SPEC_CARD_STATES.md, С6)", () => {
+  beforeEach(() => {
+    resetCollectionHover();
+    setCollectionMemberships([
+      { block_id: 1, tag: "Аниме" },
+      { block_id: 2, tag: "Аниме" },
+      { block_id: 2, tag: "Интерфейсы" },
+    ]);
+  });
+
+  it("counts the selected cards each collection holds", () => {
+    expect(getCardSelectionSummary()).toBeNull();
+    setSelectedCards([{ id: 1, slug: "one" }, { id: 2, slug: "two" }]);
+    const summary = getCardSelectionSummary()!;
+    expect(summary.total).toBe(2);
+    expect(summary.slugs).toEqual(["one", "two"]);
+    expect(summary.connectedByTag.get("Аниме")).toBe(2);
+    expect(summary.connectedByTag.get("Интерфейсы")).toBe(1);
+    expect(summary.connectedByTag.get("Музыка")).toBeUndefined();
+  });
+
+  it("keeps the same summary object until the selection or memberships change", () => {
+    setSelectedCards([{ id: 1, slug: "one" }]);
+    const first = getCardSelectionSummary();
+    setSelectedCards([{ id: 1, slug: "one" }]);
+    expect(getCardSelectionSummary()).toBe(first);
+    setCollectionMemberships([{ block_id: 1, tag: "Музыка" }]);
+    expect(getCardSelectionSummary()).not.toBe(first);
+    expect(getCardSelectionSummary()!.connectedByTag.get("Музыка")).toBe(1);
+  });
+
+  it("applies a connect or disconnect to every selected card at once", () => {
+    setSelectedCards([{ id: 1, slug: "one" }, { id: 2, slug: "two" }]);
+    applySelectionMembership("Интерфейсы", true);
+    expect(getCardSelectionSummary()!.connectedByTag.get("Интерфейсы")).toBe(2);
+    setHoveredCollectionRow("tag:Интерфейсы");
+    expect(isCardLitByCollection(1)).toBe(true);
+    applySelectionMembership("Интерфейсы", false);
+    expect(getCardSelectionSummary()!.connectedByTag.get("Интерфейсы")).toBeUndefined();
+    expect(isCardLitByCollection(2)).toBe(false);
+  });
+
+  it("ends with an empty selection", () => {
+    setSelectedCards([{ id: 1, slug: "one" }]);
+    setSelectedCards([]);
+    expect(getCardSelectionSummary()).toBeNull();
   });
 });

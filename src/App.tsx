@@ -3429,6 +3429,7 @@ export function AppWithVault({
         linkedBlockSlug={renderedLinkedBlockSlug}
         linkedTags={renderedLinkedTags}
         onToggleLinkedTag={handleToggleTag}
+        onBatchSetTag={handleBatchSetTag}
         linkMode={detailLinkMode}
         onLinkModeChange={setDetailLinkMode}
         showLinkModeChrome={false}
