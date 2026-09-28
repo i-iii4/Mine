@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  HOVER_LEAVE_GRACE_MS,
   isCardLitByCollection,
   isRowConnectedToHoveredCard,
   releaseHoveredCard,
@@ -44,6 +45,41 @@ describe("collection hover", () => {
     expect(isRowConnectedToHoveredCard("tag:Интерфейсы")).toBe(false);
     setHoveredCard(null);
     expect(isRowConnectedToHoveredCard("all")).toBe(false);
+  });
+
+  it("crossing the gap to the next card keeps shared answers steady", () => {
+    vi.useFakeTimers();
+    const everything: boolean[] = [];
+    setHoveredCard(1);
+    everything.push(isRowConnectedToHoveredCard("all"));
+    releaseHoveredCard(1);                                  // pointer in the gap
+    everything.push(isRowConnectedToHoveredCard("all"));
+    vi.advanceTimersByTime(HOVER_LEAVE_GRACE_MS - 1);
+    everything.push(isRowConnectedToHoveredCard("all"));
+    setHoveredCard(2);                                      // next card
+    vi.advanceTimersByTime(HOVER_LEAVE_GRACE_MS);
+    everything.push(isRowConnectedToHoveredCard("all"));
+    expect(everything).toEqual([true, true, true, true]);
+    expect(isRowConnectedToHoveredCard("tag:Интерфейсы")).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it("clears once the pointer has really left, after the grace window", () => {
+    vi.useFakeTimers();
+    setHoveredCard(1);
+    releaseHoveredCard(1);
+    vi.advanceTimersByTime(HOVER_LEAVE_GRACE_MS);
+    expect(isRowConnectedToHoveredCard("all")).toBe(false);
+    setHoveredCollectionRow("tag:Аниме");
+    releaseHoveredCollectionRow("tag:Аниме");
+    expect(isCardLitByCollection(2)).toBe(true);
+    setHoveredCollectionRow("tag:Интерфейсы");            // next row, no dark frame
+    vi.advanceTimersByTime(HOVER_LEAVE_GRACE_MS);
+    expect(isCardLitByCollection(1)).toBe(true);
+    releaseHoveredCollectionRow("tag:Интерфейсы");
+    vi.advanceTimersByTime(HOVER_LEAVE_GRACE_MS);
+    expect(isCardLitByCollection(1)).toBe(false);
+    vi.useRealTimers();
   });
 
   it("releases only its own hover, so a late leave does not clear the next one", () => {

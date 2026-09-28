@@ -23,6 +23,7 @@ import { TOP_FADE_HEIGHT } from "@/lib/edgeFade";
 import { computeMasonryLayout } from "@/lib/masonryLayout";
 import { computeCardHeight } from "@/lib/cardHeight";
 import {
+  HOVER_LEAVE_GRACE_MS,
   isRowConnectedToHoveredCard,
   resetCollectionHover,
   setCollectionMemberships,
@@ -1280,6 +1281,9 @@ describe("Grid — no collapse after add / revisit", () => {
     fireEvent.pointerEnter(gridItemForSlug("block-9401")!);
     expect(isRowConnectedToHoveredCard("tag:alpha")).toBe(true);
     fireEvent.pointerLeave(gridItemForSlug("block-9401")!);
+    // The hover waits out the gap before the next card, then clears.
+    expect(isRowConnectedToHoveredCard("tag:alpha")).toBe(true);
+    act(() => { vi.advanceTimersByTime(HOVER_LEAVE_GRACE_MS); });
     expect(isRowConnectedToHoveredCard("tag:alpha")).toBe(false);
     resetCollectionHover();
   });

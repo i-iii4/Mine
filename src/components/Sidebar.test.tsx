@@ -11,7 +11,7 @@ import {
   HOVER_PREVIEW_WARM_WINDOW_MS,
 } from "@/lib/hoverPreviewTiming";
 import { SIDEBAR_ROW_HOVER_SEAM_ENABLED } from "@/lib/featureFlags";
-import { isCardLitByCollection, resetCollectionHover, setCollectionMemberships, setHoveredCard } from "@/lib/collectionHover";
+import { HOVER_LEAVE_GRACE_MS, isCardLitByCollection, resetCollectionHover, setCollectionMemberships, setHoveredCard } from "@/lib/collectionHover";
 
 const dndContextState = vi.hoisted(() => ({
   over: null as { id: string } | null,
@@ -1236,6 +1236,7 @@ describe("sidebar and the card under the pointer (SPEC_CARD_STATES.md)", () => {
   });
 
   it("lights a collection's cards while the pointer is anywhere on its row", () => {
+    vi.useFakeTimers();
     const { container } = renderSidebar({ ...defaultProps, width: 600 });
     const row = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
     fireEvent.pointerEnter(row);
@@ -1244,9 +1245,26 @@ describe("sidebar and the card under the pointer (SPEC_CARD_STATES.md)", () => {
     fireEvent.pointerEnter(row.querySelector("a")!);
     expect(isCardLitByCollection(7)).toBe(true);
     fireEvent.pointerLeave(row);
+    act(() => { vi.advanceTimersByTime(HOVER_LEAVE_GRACE_MS); });
     expect(isCardLitByCollection(7)).toBe(false);
     const everything = container.querySelector('[data-sidebar-row-key="all"]')!;
     fireEvent.pointerEnter(everything);
     expect(isCardLitByCollection(12345)).toBe(true);
+    vi.useRealTimers();
+  });
+
+  it("moving to the next row switches the highlight without a dark frame", () => {
+    vi.useFakeTimers();
+    setCollectionMemberships([{ block_id: 7, tag: "alpha" }, { block_id: 7, tag: "beta" }]);
+    const { container } = renderSidebar({ ...defaultProps, width: 600 });
+    const alpha = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
+    const beta = container.querySelector('[data-sidebar-row-key="tag:beta"]')!;
+    fireEvent.pointerEnter(alpha);
+    fireEvent.pointerLeave(alpha);
+    expect(isCardLitByCollection(7)).toBe(true);
+    fireEvent.pointerEnter(beta);
+    act(() => { vi.advanceTimersByTime(HOVER_LEAVE_GRACE_MS); });
+    expect(isCardLitByCollection(7)).toBe(true);
+    vi.useRealTimers();
   });
 });
