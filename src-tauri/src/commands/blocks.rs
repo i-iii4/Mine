@@ -599,7 +599,7 @@ pub(crate) fn create_block_inner(
         tags: params.tags,
         file: media_file,
         body: params.body.unwrap_or_default(),
-        saved_at: crate::util::now_iso8601(),
+        saved_at: crate::util::now_saved_at(),
         ..Default::default()
     })
     .map_err(|error| CommandError::Internal(error.to_string()))?;
@@ -1274,7 +1274,7 @@ fn extract_inline_media_inner(
         files::shortest_vault_link(vault, &media_file, false).map_err(internal_extract_error)?;
     let source_link = files::shortest_vault_link(vault, &format!("{}.md", source_block.slug), true)
         .map_err(internal_extract_error)?;
-    let now = crate::commands::state::now_iso8601();
+    let now = crate::commands::state::now_saved_at();
     let saved_at = DateTime::new(&now).map_err(|e| InlineMediaExtractError::Internal {
         message: e.to_string(),
     })?;
@@ -1352,7 +1352,7 @@ fn create_media_asset_card_inner(
         .map(|block| files::shortest_vault_link(vault, &format!("{}.md", block.slug), true))
         .transpose()
         .map_err(internal_media_asset_error)?;
-    let now = crate::commands::state::now_iso8601();
+    let now = crate::commands::state::now_saved_at();
     let saved_at = DateTime::new(&now).map_err(|e| MediaAssetActionError::Internal {
         message: e.to_string(),
     })?;
@@ -1376,7 +1376,7 @@ fn create_media_asset_card_inner(
             related_notes: source_link.into_iter().collect(),
             source_media: Some(media_link),
             saved_at,
-            source: Some("media-asset-action".to_string()),
+            source: None,
             width: None,
             height: None,
             author: None,
@@ -1492,7 +1492,7 @@ fn extract_text_selection_inner(
         .map_err(internal_text_selection_error)?;
     let source_link = files::shortest_vault_link(vault, &format!("{}.md", source_block.slug), true)
         .map_err(internal_text_selection_error)?;
-    let now = crate::commands::state::now_iso8601();
+    let now = crate::commands::state::now_saved_at();
     let saved_at = DateTime::new(&now).map_err(|e| TextSelectionExtractError::Internal {
         message: e.to_string(),
     })?;
@@ -2228,7 +2228,7 @@ fn build_merged_block(
     let raw_slug = suggest_slug(Some(&slug_seed), None);
     let slug =
         resolve_unique_block_slug(conn, vault, &raw_slug, None).map_err(internal_merge_error)?;
-    let now = crate::commands::state::now_iso8601();
+    let now = crate::commands::state::now_saved_at();
     let saved_at = DateTime::new(&now).map_err(internal_merge_error)?;
 
     let mut tags = Vec::new();
@@ -4968,7 +4968,7 @@ mod tests {
         assert_eq!(indexed.media_file.as_deref(), Some("photo.png"));
         assert_eq!(indexed.tags, vec!["Mood Board".to_string()]);
         assert_eq!(indexed.related_notes, vec!["Source Article".to_string()]);
-        assert_eq!(indexed.source.as_deref(), Some("media-asset-action"));
+        assert_eq!(indexed.source, None, "new cards carry no source");
 
         let source_after = index::get_block(&conn, "Source Article").unwrap().unwrap();
         assert_eq!(source_after.tags, vec!["notes".to_string()]);

@@ -31,6 +31,8 @@ tauri-build = { version = "2", features = [], optional = true }
 [dependencies]
 mine-core = { path = "../mine-core" }
 fs2 = "0.4"
+# Local time zone offset for saved_at (localtime_r); already in the tree.
+libc = "0.2"
 
 # Tauri (desktop only)
 tauri = { version = "2", features = ["protocol-asset"], optional = true }

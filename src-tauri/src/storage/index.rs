@@ -1439,7 +1439,9 @@ fn upsert_block_inner(
             block.frontmatter.url,
             block.frontmatter.file,
             block.frontmatter.thumbnail,
-            block.frontmatter.saved_at.as_str(),
+            // Older files hold UTC, newer ones local time; the column keeps
+            // one form so ordering by it stays chronological.
+            crate::util::saved_at_local(block.frontmatter.saved_at.as_str()),
             block.frontmatter.source,
             width.map(|w| w as i64),
             height.map(|h| h as i64),

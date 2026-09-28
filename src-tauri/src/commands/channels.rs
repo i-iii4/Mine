@@ -149,7 +149,7 @@ pub(crate) fn create_channel_inner(
     vault: &VaultLayout,
     tag: &str,
 ) -> Result<ChannelDto, CommandError> {
-    let now = crate::commands::state::now_iso8601();
+    let now = crate::commands::state::now_saved_at();
     let dt = DateTime::new(&now).map_err(|e| CommandError::Internal(e.to_string()))?;
 
     let tag = validate_collection_ref(tag).map_err(CommandError::Internal)?;
@@ -223,7 +223,7 @@ pub fn reorder_channels(
         .into_iter()
         .map(|channel| (channel.tag.clone(), channel))
         .collect::<HashMap<_, _>>();
-    let now = crate::commands::state::now_iso8601();
+    let now = crate::commands::state::now_saved_at();
     let mut seen = std::collections::HashSet::new();
     let mut planned_channels = Vec::with_capacity(items.len());
     let mut writes = Vec::with_capacity(items.len());
@@ -631,7 +631,7 @@ fn collection_document_for_mutation(
         crate::storage::media_refs::collection_document_candidates(vault, collection_ref).map_err(
             |error| CommandError::Internal(format!("find collection documents: {error}")),
         )?;
-    let fallback_date = DateTime::new(&crate::commands::state::now_iso8601())
+    let fallback_date = DateTime::new(&crate::commands::state::now_saved_at())
         .map_err(|error| CommandError::Internal(error.to_string()))?;
     let mut pages = Vec::new();
     for path in candidates {

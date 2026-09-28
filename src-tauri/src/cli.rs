@@ -748,7 +748,7 @@ fn cmd_card_create(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
     .map_err(|e| CliError::internal(format!("slug: {e:#}")))?;
     let media_file = media_ext.as_ref().map(|ext| format!("{name}.{ext}"));
     let slug = vault.new_card_slug(&name);
-    let now = crate::util::now_iso8601();
+    let now = crate::util::now_saved_at();
     let tags = flags
         .collection
         .as_deref()
@@ -762,7 +762,6 @@ fn cmd_card_create(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
         file: media_file,
         tags,
         saved_at: now,
-        source: Some("mine-cli".to_owned()),
         body,
         ..Default::default()
     })

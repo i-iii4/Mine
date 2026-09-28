@@ -15,7 +15,11 @@
   const join = (dir, name) => dir ? `${dir}/${name}` : name;
   const missing = (error) => error?.name === "NotFoundError";
   function error(code, message) { return Object.assign(new Error(message), { code }); }
-  const now = () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  // saved_at fallback: the local wall clock without a zone, the same form as
+  // popup/lib/savedAt.ts (Obsidian reads it as a date; a `Z` makes it text).
+  const pad = (value) => String(value).padStart(2, "0");
+  const now = (date = new Date()) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+    + `T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
   const newId = () => root.crypto.randomUUID();
 
   function openDb() {
@@ -296,7 +300,7 @@
         : await core({ op: "capture", request: { slug: named.slug, block_type: request.block_type,
           title: request.title ?? null, url: request.url ?? null, body: request.body ?? "", file,
           thumbnail: null, tags: request.tags ?? [], saved_at: request.saved_at ?? now(),
-          source: "web-clipper", author: request.author ?? null, description: request.description ?? null,
+          author: request.author ?? null, description: request.description ?? null,
           width: request.width ?? null, height: request.height ?? null } });
       record = { id, binding: binding.id, fingerprint, kind, phase: "prepared", layout, newSpace,
         slug: named.slug, block_type: kind === "collection" ? "channel" : request.block_type,

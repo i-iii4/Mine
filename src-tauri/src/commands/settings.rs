@@ -607,7 +607,7 @@ pub(crate) fn promote_orphan_media_inner(
             }
         };
 
-        let now = crate::commands::state::now_iso8601();
+        let now = crate::commands::state::now_saved_at();
         let saved_at = match DateTime::new(&now) {
             Ok(dt) => dt,
             Err(error) => return Err(CommandError::Internal(error.to_string())),

@@ -716,7 +716,8 @@ describe("standalone mode decision", () => {
     // Keep nonzero milliseconds in the clock: hand-written seconds-only requests
     // would miss the UI/core contract failure this regression protects against.
     vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date("2026-08-31T15:20:30.789Z"));
+    // A local clock reading: saved_at is the wall clock without a zone.
+    vi.setSystemTime(new Date(2026, 7, 31, 15, 20, 30, 789));
     let outgoingTimestamp: unknown;
     let markdown: string | undefined;
     const executeCapture = async (payload: Record<string, unknown>) => {
@@ -748,8 +749,8 @@ describe("standalone mode decision", () => {
     let outcome: { ok: boolean; error?: string } | undefined;
     await act(async () => { outcome = await result.current.save(); });
     expect(outcome).toMatchObject({ ok: true });
-    expect(outgoingTimestamp).toBe("2026-08-31T15:20:30Z");
-    expect(markdown).toContain("saved_at: 2026-08-31T15:20:30Z");
+    expect(outgoingTimestamp).toBe("2026-08-31T15:20:30");
+    expect(markdown).toContain("saved_at: 2026-08-31T15:20:30\n");
   });
 
   it("saves through the granted folder when the host is silent", async () => {

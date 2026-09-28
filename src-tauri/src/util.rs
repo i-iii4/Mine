@@ -100,6 +100,101 @@ fn acquire_single_instance_at(addr: SocketAddrV4) -> io::Result<SingleInstanceAc
     }
 }
 
+/// When a card or collection was saved, as the person's wall clock showed it:
+/// `YYYY-MM-DDTHH:MM:SS`, no time zone. Obsidian reads this form as a date,
+/// while a `Z` suffix makes it a plain string (decision of the user,
+/// 27.09.2026). Technical timestamps (logs, uploads) stay UTC via
+/// [`now_iso8601`].
+pub fn now_saved_at() -> String {
+    local_timestamp(std::time::SystemTime::now())
+}
+
+/// Local wall-clock time without a zone, `YYYY-MM-DDTHH:MM:SS`.
+pub fn local_timestamp(time: std::time::SystemTime) -> String {
+    let secs = time
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    let secs = i64::try_from(secs).unwrap_or(i64::MAX);
+    let local = secs + local_offset_seconds(secs);
+    let local = u64::try_from(local).unwrap_or(0);
+    let (year, month, day) = days_to_ymd(local / 86_400);
+    let rem = local % 86_400;
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}",
+        rem / 3600,
+        (rem % 3600) / 60,
+        rem % 60
+    )
+}
+
+/// The local zone's offset from UTC at that instant, in seconds (DST included).
+#[cfg(unix)]
+fn local_offset_seconds(epoch_secs: i64) -> i64 {
+    let time: libc::time_t = epoch_secs as libc::time_t;
+    // SAFETY: `localtime_r` only writes the provided `tm`, and is the
+    // thread-safe form of `localtime`.
+    unsafe {
+        let mut tm: libc::tm = std::mem::zeroed();
+        if libc::localtime_r(&time, &mut tm).is_null() {
+            return 0;
+        }
+        i64::from(tm.tm_gmtoff as i32)
+    }
+}
+
+#[cfg(not(unix))]
+fn local_offset_seconds(_epoch_secs: i64) -> i64 {
+    0
+}
+
+/// A stored `saved_at` in the local wall-clock form used for ordering.
+///
+/// Older files carry UTC (`…Z`) or an explicit offset; new files carry local
+/// time without a zone. Sorting mixed strings would misplace cards saved around
+/// the change, so the index keeps every value as local wall-clock time. The
+/// files themselves are never rewritten for this. Date-only and zone-less
+/// values are returned unchanged.
+pub fn saved_at_local(value: &str) -> String {
+    match iso8601_epoch_seconds(value) {
+        Some(epoch) => local_timestamp(
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(u64::try_from(epoch).unwrap_or(0)),
+        ),
+        None => value.to_owned(),
+    }
+}
+
+/// Seconds since the epoch for `YYYY-MM-DDTHH:MM:SSZ` or `…±HH:MM`; `None`
+/// for any value without a zone, which is already local.
+fn iso8601_epoch_seconds(value: &str) -> Option<i64> {
+    let b = value.as_bytes();
+    let offset = match b.len() {
+        20 if b[19] == b'Z' => 0,
+        25 if b[19] == b'+' || b[19] == b'-' => {
+            let hours: i64 = value.get(20..22)?.parse().ok()?;
+            let minutes: i64 = value.get(23..25)?.parse().ok()?;
+            let sign = if b[19] == b'-' { -1 } else { 1 };
+            sign * (hours * 3600 + minutes * 60)
+        }
+        _ => return None,
+    };
+    let year: i64 = value.get(0..4)?.parse().ok()?;
+    let month: i64 = value.get(5..7)?.parse().ok()?;
+    let day: i64 = value.get(8..10)?.parse().ok()?;
+    let hour: i64 = value.get(11..13)?.parse().ok()?;
+    let minute: i64 = value.get(14..16)?.parse().ok()?;
+    let second: i64 = value.get(17..19)?.parse().ok()?;
+    // Days from civil (Howard Hinnant), the inverse of `days_to_ymd`.
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some(days * 86_400 + hour * 3600 + minute * 60 + second - offset)
+}
+
 /// Current UTC time as ISO 8601 string (without chrono dependency).
 pub fn now_iso8601() -> String {
     system_time_to_iso8601(std::time::SystemTime::now())
@@ -230,6 +325,39 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
     (y, m, d)
+}
+
+#[cfg(test)]
+mod saved_at_tests {
+    use super::*;
+
+    #[test]
+    fn saved_at_is_local_wall_clock_without_a_zone() {
+        let value = now_saved_at();
+        assert_eq!(value.len(), 19, "{value}");
+        assert_eq!(&value[10..11], "T");
+        assert!(!value.ends_with('Z'));
+    }
+
+    #[test]
+    fn epoch_parsing_inverts_the_utc_formatter() {
+        let time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_790_558_711);
+        let utc = system_time_to_iso8601(time);
+        assert_eq!(iso8601_epoch_seconds(&utc), Some(1_790_558_711));
+        assert_eq!(iso8601_epoch_seconds("2026-09-28T01:25:11Z"), iso8601_epoch_seconds("2026-09-27T22:25:11-03:00"));
+        assert_eq!(iso8601_epoch_seconds("2026-09-27T22:25:11"), None);
+        assert_eq!(iso8601_epoch_seconds("2026-09-27"), None);
+    }
+
+    #[test]
+    fn stored_utc_becomes_the_same_instant_on_the_local_clock() {
+        let instant = std::time::UNIX_EPOCH + std::time::Duration::from_secs(
+            u64::try_from(iso8601_epoch_seconds("2026-09-28T01:25:11Z").unwrap()).unwrap(),
+        );
+        assert_eq!(saved_at_local("2026-09-28T01:25:11Z"), local_timestamp(instant));
+        assert_eq!(saved_at_local("2026-09-27T22:25:11"), "2026-09-27T22:25:11");
+        assert_eq!(saved_at_local("2026-09-27"), "2026-09-27");
+    }
 }
 
 #[cfg(test)]

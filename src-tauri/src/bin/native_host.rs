@@ -26,7 +26,7 @@ use mine_lib::domain::collection::{normalize_collection_ref, validate_collection
 use mine_lib::domain::vault::VaultLayout;
 use mine_lib::net;
 use mine_lib::storage::{clipper_uploads, db, file_identity, files, index, save_operations, thumbnails};
-use mine_lib::util::now_iso8601;
+use mine_lib::util::now_saved_at;
 use percent_encoding::percent_decode_str;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -1232,8 +1232,7 @@ fn perform_save_block_with_publisher(
         file: file_link,
         thumbnail: thumbnail_link,
         tags: p.tags.unwrap_or_default(),
-        saved_at: p.saved_at.unwrap_or_else(now_iso8601),
-        source: Some("web-clipper".into()),
+        saved_at: p.saved_at.unwrap_or_else(now_saved_at),
         width: p.width,
         height: p.height,
         author: p.author,
@@ -1319,7 +1318,7 @@ fn handle_create_channel(vault: &VaultLayout, params: serde_json::Value) {
         Err(e) => return send_error(&format!("failed to open database: {e}")),
     };
 
-    let created_at = match DateTime::new(&now_iso8601()) {
+    let created_at = match DateTime::new(&now_saved_at()) {
         Ok(dt) => dt,
         Err(e) => return send_error(&format!("failed to create timestamp: {e}")),
     };

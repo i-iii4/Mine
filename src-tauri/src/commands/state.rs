@@ -327,8 +327,9 @@ impl From<anyhow::Error> for CommandError {
     }
 }
 
-pub fn now_iso8601() -> String {
-    crate::util::now_iso8601()
+/// `saved_at` for a document created now: local wall-clock time, no zone.
+pub fn now_saved_at() -> String {
+    crate::util::now_saved_at()
 }
 
 #[cfg(test)]

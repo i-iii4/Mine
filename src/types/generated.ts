@@ -31,7 +31,7 @@ export type CaptureIntent =
 /**
  * A prepared capture. Resource acquisition belongs to the executor.
  */
-export type CaptureRequest = { slug?: string; block_type: string; intent?: CaptureIntent; title: string | null; description: string | null; url: string | null; body?: string; file: string | null; thumbnail: string | null; tags?: string[]; saved_at: string; source: string | null; width: number | null; height: number | null; author: string | null }
+export type CaptureRequest = { slug?: string; block_type: string; intent?: CaptureIntent; title: string | null; description: string | null; url: string | null; body?: string; file: string | null; thumbnail: string | null; tags?: string[]; saved_at: string; width: number | null; height: number | null; author: string | null }
 
 /**
  * Runtime card category derived from the Markdown document shape.

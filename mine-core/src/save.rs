@@ -34,7 +34,9 @@ pub struct CaptureRequest {
     #[serde(default)]
     pub tags: Vec<String>,
     pub saved_at: String,
-    pub source: Option<String>,
+    // No `source`: nothing read it, and it only cluttered the card's
+    // properties (decision of the user, 28.09.2026). A client that still sends
+    // it is not rejected; the value is ignored.
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub author: Option<String>,
@@ -227,7 +229,7 @@ pub fn build_capture(request: &CaptureRequest) -> Result<Block, SaveError> {
             source_media: None,
             saved_at: DateTime::new(&request.saved_at)
                 .map_err(|error| failure(SaveErrorCode::InvalidRequest, error))?,
-            source: request.source.clone(),
+            source: None,
             width: request.width,
             height: request.height,
             author: request.author.clone(),
@@ -599,9 +601,17 @@ mod tests {
             title: Some("Example".into()),
             body: "Text".into(),
             saved_at: "2026-08-31T12:00:00Z".into(),
-            source: Some("web-clipper".into()),
             ..Default::default()
         }
+    }
+    #[test]
+    fn capture_writes_no_source_even_when_a_client_sends_one() {
+        let json = r#"{"slug":"Cards/Example","block_type":"article","body":"Text","saved_at":"2026-09-27T22:25:11","source":"web-clipper","title":null,"description":null,"url":null,"file":null,"thumbnail":null,"width":null,"height":null,"author":null}"#;
+        let input: CaptureRequest = serde_json::from_str(json).expect("an old client's request still parses");
+        let block = build_capture(&input).expect("capture");
+        assert_eq!(block.frontmatter.source, None);
+        assert!(!crate::domain::block::serialize_block(&block).contains("source:"));
+        assert_eq!(block.frontmatter.saved_at.as_str(), "2026-09-27T22:25:11");
     }
     #[test]
     fn desktop_capture_preserves_body_and_ignores_the_obsolete_declared_type() {
