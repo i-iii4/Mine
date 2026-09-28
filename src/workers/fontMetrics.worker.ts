@@ -15,6 +15,7 @@ import type {
   WordWidths,
 } from "../types/fontMetrics";
 import { FONT_METRICS_PREVIEW_MAX_CHARS } from "../types/fontMetrics";
+import { splitWords } from "../lib/lineUnits";
 
 declare const self: DedicatedWorkerGlobalScope;
 
@@ -49,48 +50,6 @@ async function loadFont(family: string, buffer: ArrayBuffer): Promise<void> {
   fontReady = true;
 }
 
-interface SegmenterInstance {
-  segment(text: string): Iterable<{ segment: string; isWordLike?: boolean }>;
-}
-interface SegmenterConstructor {
-  new (locale?: string | undefined, options?: { granularity: "word" }): SegmenterInstance;
-}
-
-/**
- * Split text into words for measurement. Uses Intl.Segmenter when available
- * for correct word boundaries in CJK / emoji / mixed scripts; falls back to
- * whitespace splitting otherwise.
- */
-function splitWords(text: string): string[] {
-  if (!text) return [];
-  const trimmed = text.trim();
-  if (!trimmed) return [];
-
-  if (/\s/u.test(trimmed)) {
-    return trimmed.split(/\s+/u).filter((w) => w.length > 0);
-  }
-
-  const intlObj = (globalThis as unknown as { Intl?: { Segmenter?: SegmenterConstructor } }).Intl;
-  const SegmenterCtor = intlObj?.Segmenter;
-
-  if (SegmenterCtor) {
-    try {
-      const segmenter = new SegmenterCtor(undefined, { granularity: "word" });
-      const words: string[] = [];
-      for (const segment of segmenter.segment(trimmed)) {
-        if (segment.segment.trim().length > 0) {
-          words.push(segment.segment);
-        }
-      }
-      if (words.length > 0) return words;
-    } catch {
-      // fall through to whitespace split
-    }
-  }
-
-  return trimmed.split(/\s+/).filter((w) => w.length > 0);
-}
-
 function measureWords(ctxLocal: OffscreenCanvasRenderingContext2D, words: string[]): number[] {
   const widths = new Array<number>(words.length);
   for (let i = 0; i < words.length; i += 1) {
@@ -105,20 +64,20 @@ function computeWordWidthsForBlock(
   titleFontSpec: string,
   previewFontSpec: string,
 ): WordWidths {
-  const titleWords = splitWords(block.title);
+  const title = splitWords(block.title);
   const previewText = block.body.length > FONT_METRICS_PREVIEW_MAX_CHARS
     ? block.body.slice(0, FONT_METRICS_PREVIEW_MAX_CHARS)
     : block.body;
-  const previewWords = splitWords(previewText);
+  const preview = splitWords(previewText);
 
   // Title measurement pass (semibold)
   ctxLocal.font = titleFontSpec;
-  const titleWidths = measureWords(ctxLocal, titleWords);
+  const titleWidths = measureWords(ctxLocal, title.words);
   const titleSpace = ctxLocal.measureText(" ").width;
 
   // Preview measurement pass (regular)
   ctxLocal.font = previewFontSpec;
-  const previewWidths = measureWords(ctxLocal, previewWords);
+  const previewWidths = measureWords(ctxLocal, preview.words);
   const previewSpace = ctxLocal.measureText(" ").width;
 
   return {
@@ -126,6 +85,8 @@ function computeWordWidthsForBlock(
     preview: previewWidths,
     titleSpace,
     previewSpace,
+    titleNoSpaceBefore: title.noSpaceBefore,
+    previewNoSpaceBefore: preview.noSpaceBefore,
   };
 }
 

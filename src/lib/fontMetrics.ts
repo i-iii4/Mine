@@ -49,7 +49,8 @@ const FONT_HASH: FontHash = `descriptor-preview-v2-${INTERFACE_FONT}`;
 const DB_NAME = "mine-font-metrics";
 const DB_VERSION = 2;
 const STORE_NAME = "wordWidths";
-const CACHE_KEY_VERSION = "v2";
+// v3: CJK text is measured per character with no spaces between them.
+const CACHE_KEY_VERSION = "v3";
 
 // ─── Worker lifecycle ───────────────────────────────────────────────────────
 
@@ -244,7 +245,9 @@ function isWordWidths(value: unknown): value is WordWidths {
     Array.isArray(candidate.title) &&
     Array.isArray(candidate.preview) &&
     typeof candidate.titleSpace === "number" &&
-    typeof candidate.previewSpace === "number"
+    typeof candidate.previewSpace === "number" &&
+    Array.isArray(candidate.titleNoSpaceBefore) &&
+    Array.isArray(candidate.previewNoSpaceBefore)
   );
 }
 

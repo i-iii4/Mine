@@ -216,7 +216,7 @@ function computeArticleHeight(
     const titleLines = descriptor.titleText
       ? Math.min(
           ARTICLE_TITLE_MAX_LINES,
-          Math.max(1, countLines(wordWidths.title, wordWidths.titleSpace, contentWidth)),
+          Math.max(1, countLines(wordWidths.title, wordWidths.titleSpace, contentWidth, wordWidths.titleNoSpaceBefore)),
         )
       : 0;
     const previewMax = descriptor.variant === "article-media"
@@ -225,7 +225,7 @@ function computeArticleHeight(
     const previewLines = descriptor.previewText
       ? Math.min(
           previewMax,
-          Math.max(0, countLines(wordWidths.preview, wordWidths.previewSpace, contentWidth)),
+          Math.max(0, countLines(wordWidths.preview, wordWidths.previewSpace, contentWidth, wordWidths.previewNoSpaceBefore)),
         )
       : 0;
 
@@ -311,7 +311,7 @@ function computeSocialHeight(
     ? (descriptor.previewText
         ? Math.min(
             SOCIAL_PREVIEW_MAX_LINES,
-            Math.max(0, countLines(wordWidths.preview, wordWidths.previewSpace, contentWidth)),
+            Math.max(0, countLines(wordWidths.preview, wordWidths.previewSpace, contentWidth, wordWidths.previewNoSpaceBefore)),
           )
         : 0)
     : (descriptor.previewText ? SOCIAL_PREVIEW_MAX_LINES : 0);

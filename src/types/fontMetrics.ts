@@ -33,6 +33,13 @@ export interface WordWidths {
   titleSpace: number;
   /** Pixel width of a space character in the preview font */
   previewSpace: number;
+  /**
+   * Per title word: it follows the previous word with no space between them,
+   * as CJK characters do. A line may still break before it.
+   */
+  titleNoSpaceBefore: boolean[];
+  /** Per preview word, as `titleNoSpaceBefore`. */
+  previewNoSpaceBefore: boolean[];
 }
 
 /**

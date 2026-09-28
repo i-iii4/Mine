@@ -1707,7 +1707,11 @@ function captureVideoUrlFrameDataUrl(
     video.crossOrigin = "anonymous";
     video.muted = true;
     video.playsInline = true;
-    video.preload = "auto";
+    // One frame is all the preview needs. "auto" let the browser pull the
+    // whole file (26 MB for a 2160p post) on the same link the save is about
+    // to download it over; "metadata" plus the seek fetches only the range
+    // around the frame.
+    video.preload = "metadata";
     video.addEventListener("loadedmetadata", onMetadata, { once: true });
     video.addEventListener("loadeddata", onLoadedData, { once: true });
     video.addEventListener("seeked", onSeeked, { once: true });

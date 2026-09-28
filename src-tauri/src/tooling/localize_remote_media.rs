@@ -25,7 +25,8 @@ use std::time::Duration;
 
 use mine_lib::net::download_validated_to_file;
 
-/// Matches the clipper's inline download budget.
+/// How long a download may stall (connecting, or between reads), not a
+/// deadline for the whole file.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Short by design: this only reads headers to classify a URL.
