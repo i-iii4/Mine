@@ -2478,10 +2478,15 @@ do not appear under an open keyboard menu.
 Focused GridItem дополнительно показывает shortcut badge в левом верхнем углу: `data-feed-grid-action-badge`, внутри `data-feed-grid-action-layer` (`absolute inset-px`), затем `absolute left-2 top-2`, `h-6`, `px-[1ch]`, `rounded-1` (3px), `bg-component-fill`, `text-sm font-semibold text-foreground`, `pointer-events-none`. Action layer компенсирует 1px Card frame, поэтому offsets badge считаются из той же внутренней плоскости карточки, что и Card Hover Menu controls: `top-2` как у верхнего `More`, `left-2` как у нижнего action row. Текст badge — `⌘K`; он сообщает scoped action shortcut для открытия card overflow menu и не является hover affordance. `Cmd+K` toggles top-right `More`/overflow menu; нижние `Source`/`Connect` не появляются.
 
 Состояния карточки ленты сведены в одну систему
-([SPEC_CARD_STATES.md](SPEC_CARD_STATES.md), 28.09.2026). Наведение мышью,
-клавиатурный фокус и подсветка от строки коллекции в боковом меню красят
-собственную границу карточки в `--border-accent`; картинка при этом получает
-затенение `--graphic-card-focus-overlay`, текстовая карточка только границу.
+([SPEC_CARD_STATES.md](SPEC_CARD_STATES.md), 28.09.2026). Наведение мышью
+показывает только кнопки карточки. Клавиатурный фокус красит собственную
+границу карточки в `--border-accent`, картинка при этом получает затенение
+`--graphic-card-focus-overlay`, текстовая карточка только границу. Подсветка
+от строки коллекции в боковом меню красит только границу, без затенения:
+строка зажигает много карточек разом. Ответы на курсор (подсветка от строки
+и пилюли `Connected` от карточки) включаются только при задержке и медленном
+курсоре, молчат при прокрутке и сменяются растворением (С7); ответ на
+клавиатурный фокус мгновенный.
 Выделенная карточка (`data-feed-grid-item-selected="true"`) красит ту же
 границу в `--feed-selection-frame` (`oklch(0.145 0 0)` в светлой теме,
 `oklch(0.985 0 0)` в тёмной) и тоже затеняет картинку. Ничего не рисуется
