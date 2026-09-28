@@ -238,10 +238,14 @@ Image click contract:
   state may update only low-frequency UI such as the numeric zoom label;
 - the bottom island appears on pointer movement and fades out after 3 seconds
   of inactivity;
-- right click on a local image opens the same media-asset overflow menu as the
-  ellipsis trigger;
-- this image click contract does not apply to video, because video clicks belong
-  to playback controls.
+- right click on any local media asset (image or video) opens a context menu at
+  the pointer, the way a feed card's right click does; it holds the same items
+  as the ellipsis menu and never opens the ellipsis menu itself. Both menus are
+  drawn from one item list (`MediaAssetMenuItems`), and their dialogs belong to
+  the media frame, so either entry point opens the same Rename, Remove and
+  Delete dialogs (decision of the user, 27.09.2026);
+- the left click part of this contract does not apply to video, because video
+  left clicks belong to playback controls; the right click context menu does.
 
 ## Меню видео источника
 
@@ -254,8 +258,9 @@ Image click contract:
 
 1. Правый клик в любой точке проигрывателя YouTube не показывает системное
    меню WebKit («Open Frame in New Window» и другие пункты).
-2. Вместо него открывается меню Mine: тот же компонент, вид и место, что при
-   правом клике по изображению, то есть у правого верхнего угла проигрывателя.
+2. Вместо него открывается контекстное меню Mine в точке клика, как у
+   карточки в ленте и у локального медиа. Точку из окна macOS интерфейс
+   воспроизводит событием `contextmenu` на поверхности проигрывателя.
 3. Меню закрывается как у изображений: Esc или клик мимо.
 4. Левый клик по-прежнему принадлежит проигрывателю: запуск, пауза, перемотка,
    полноэкранный режим.

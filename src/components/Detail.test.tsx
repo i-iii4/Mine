@@ -218,6 +218,12 @@ describe("Detail source video independent of card kind", () => {
     expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open on YouTube", "Copy Link", "Delete Media"]);
   });
 
+  it("opens the source video menu as a context menu at the pointer", async () => {
+    const { container } = renderVideoDetail();
+    fireEvent.contextMenu(container.querySelector("[data-source-video-surface]")!, { clientX: 200, clientY: 120 });
+    expect(await screen.findByRole("menu")).toHaveAttribute("data-slot", "context-menu-content");
+  });
+
   it("opens the menu when the shell reports a right click inside the player frame, and only then", async () => {
     const { container } = renderVideoDetail();
     const surface = container.querySelector<HTMLElement>("[data-source-video-surface]")!;
@@ -1685,11 +1691,44 @@ describe("Detail", () => {
     });
     expect(screen.queryByRole("dialog", { name: "Image preview" })).not.toBeInTheDocument();
 
-    fireEvent.contextMenu(image!);
-    const dropdownMenu = await screen.findByRole("menu");
-    expect(within(dropdownMenu).getByText("Create Element")).toBeInTheDocument();
-    expect(within(dropdownMenu).getByText("Rename Media...")).toBeInTheDocument();
+    fireEvent.contextMenu(image!, { clientX: 140, clientY: 90 });
+    const contextMenu = await screen.findByRole("menu");
+    // A right click opens a context menu at the pointer, not the ellipsis menu.
+    expect(contextMenu).toHaveAttribute("data-slot", "context-menu-content");
+    expect(container.querySelector("[data-detail-media-more-button]")).toHaveAttribute("aria-expanded", "false");
+    expect(within(contextMenu).getByText("Create Element")).toBeInTheDocument();
+    expect(within(contextMenu).getByText("Rename Media...")).toBeInTheDocument();
+    expect(within(contextMenu).getByText("Delete Media")).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Image preview" })).not.toBeInTheDocument();
+  });
+
+  it("opens the same menu items from the ellipsis and from a right click", async () => {
+    const b = block({ card_kind: "media", block_type: "image", title: "Photo", url: null, media_file: "photo.jpg" });
+    const { container } = render(
+      <Detail
+        block={b}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        tags={[]}
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={vi.fn()}
+      />,
+    );
+    const frame = container.querySelector<HTMLElement>("[data-detail-media-action-frame]")!;
+    fireEvent.contextMenu(frame, { clientX: 60, clientY: 40 });
+    const fromRightClick = within(await screen.findByRole("menu")).getAllByRole("menuitem").map((item) => item.textContent);
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Media actions" }), { button: 0, pointerType: "mouse" });
+    const fromEllipsis = within(await screen.findByRole("menu")).getAllByRole("menuitem").map((item) => item.textContent);
+    expect(fromRightClick).toEqual(fromEllipsis);
+    expect(fromRightClick).toEqual(["Create Element", "Reveal in Finder", "Copy Path", "Copy Media", "Rename Media...", "Remove from Element", "Delete Media"]);
   });
 
   it("uses the shared quantized list height for Create Element from image", () => {

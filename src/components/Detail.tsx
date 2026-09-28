@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   useMemo,
+  type ComponentType,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
@@ -54,6 +55,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -1610,6 +1621,7 @@ function MediaAssetActionFrame({
   children: ReactNode;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [dialog, setDialog] = useState<MediaAssetDialog | null>(null);
   // Copying reads the file, and reading a file iCloud is holding downloads it
   // first. A local copy finishes instantly; only a copy that outlives the
   // shared badge delay earns an indicator, so fast copies never flash one.
@@ -1666,159 +1678,303 @@ function MediaAssetActionFrame({
     );
   }
 
+  const menuItemProps = {
+    asset,
+    vaultPath,
+    tags,
+    currentTag,
+    onCreateMediaAssetCard,
+    onCreateChannelAndMediaAssetCard,
+    onCopyStarted: beginCopyIndicator,
+    onCopySettled: endCopyIndicator,
+    onRequestDialog: setDialog,
+  };
+
   return (
-    <div
-      ref={setDragRef}
-      {...(canDrag ? dragAttributes : {})}
-      {...(canDrag ? dragListeners : {})}
-      className={cn(
-        "not-prose group/detail-media relative inline-flex max-h-[85vh] max-w-full overflow-hidden align-top leading-none [&_img]:m-0 [&_img]:block [&_video]:m-0 [&_video]:block",
-        // No resting cursor of its own: the pointer stays default until a drag
-        // actually starts, and only then becomes grabbing.
-        canDrag && "select-none active:cursor-grabbing",
-        isDragging && "opacity-40",
-        className,
-      )}
-      draggable={false}
-      data-detail-media-action-frame
-      data-detail-inline-media-drag={canDrag ? "true" : undefined}
-      data-media-asset-ref={asset.media_ref}
-      onPointerDown={(event) => {
-        if (!canDrag || event.button !== 0) return;
-        dragPointerListener?.(event);
-        // Suppressing the default here would also suppress the click that
-        // follows, and a click is now how the image opens. The drag sensor
-        // needs an 8px move to engage, so a still press stays a click.
-        if (!canOpenImagePreview) event.preventDefault();
-        window.getSelection()?.removeAllRanges();
-      }}
-      onMouseDown={(event) => {
-        if (canDrag && event.button === 0 && !canOpenImagePreview) {
-          event.preventDefault();
-        }
-      }}
-      onClick={(event) => {
-        // A completed drag never reaches here: dnd-kit swallows the click once
-        // the pointer passes the activation distance.
-        if (!canOpenImagePreview || !fullSizeImageSrc || isDragging) return;
-        onOpenImagePreview({
-          src: fullSizeImageSrc,
-          mediaRef: asset.media_ref,
-          siblings: collectCardImages(event.currentTarget),
-        });
-      }}
-      onContextMenu={(event) => {
-        if (!canOpenImagePreview) return;
-        event.preventDefault();
-        event.stopPropagation();
-        setMenuOpen(true);
-      }}
-      onDragStart={(event) => {
-        if (canDrag) {
-          event.preventDefault();
-        }
-      }}
-    >
-      {children}
-      {copyWaiting && (
-        <div
-          className="absolute inset-x-0 bottom-0 z-10 flex items-center gap-2 bg-card/90 px-3 py-2"
-          data-detail-copy-waiting=""
-        >
-          <CloudDownload className="size-3.5 text-muted-foreground" aria-hidden="true" />
-          <span className="text-sm text-muted-foreground">{CLOUD_DOWNLOADING_LABEL}</span>
-        </div>
-      )}
-      <div
-        className={cn(
-          "absolute right-2 top-2 z-10 flex gap-1 transition-opacity duration-[160ms]",
-          controlsVisible
-            ? "opacity-100"
-            : "pointer-events-none opacity-0 group-hover/detail-media:pointer-events-auto group-hover/detail-media:opacity-100 group-focus-within/detail-media:pointer-events-auto group-focus-within/detail-media:opacity-100",
-        )}
-        data-detail-media-action-menu
-        onClick={(event) => event.stopPropagation()}
-        onPointerDown={(event) => event.stopPropagation()}
-        onContextMenu={(event) => event.stopPropagation()}
-      >
-        {canOpenImagePreview && fullSizeImageSrc && (
-          <Button
-            type="button"
-            variant="default"
-            size="icon"
-            aria-label="Expand image"
-            data-detail-media-expand-button
+    <>
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <div
+            ref={setDragRef}
+            {...(canDrag ? dragAttributes : {})}
+            {...(canDrag ? dragListeners : {})}
+            className={cn(
+              "not-prose group/detail-media relative inline-flex max-h-[85vh] max-w-full overflow-hidden align-top leading-none [&_img]:m-0 [&_img]:block [&_video]:m-0 [&_video]:block",
+              // No resting cursor of its own: the pointer stays default until a drag
+              // actually starts, and only then becomes grabbing.
+              canDrag && "select-none active:cursor-grabbing",
+              isDragging && "opacity-40",
+              className,
+            )}
+            draggable={false}
+            data-detail-media-action-frame
+            data-detail-inline-media-drag={canDrag ? "true" : undefined}
+            data-media-asset-ref={asset.media_ref}
+            onPointerDown={(event) => {
+              if (!canDrag || event.button !== 0) return;
+              dragPointerListener?.(event);
+              // Suppressing the default here would also suppress the click that
+              // follows, and a click is now how the image opens. The drag sensor
+              // needs an 8px move to engage, so a still press stays a click.
+              if (!canOpenImagePreview) event.preventDefault();
+              window.getSelection()?.removeAllRanges();
+            }}
+            onMouseDown={(event) => {
+              if (canDrag && event.button === 0 && !canOpenImagePreview) {
+                event.preventDefault();
+              }
+            }}
             onClick={(event) => {
+              // A completed drag never reaches here: dnd-kit swallows the click once
+              // the pointer passes the activation distance.
+              if (!canOpenImagePreview || !fullSizeImageSrc || isDragging) return;
               onOpenImagePreview({
                 src: fullSizeImageSrc,
                 mediaRef: asset.media_ref,
                 siblings: collectCardImages(event.currentTarget),
               });
             }}
+            onContextMenu={(event) => {
+              // The menu opens here, at the pointer; an enclosing surface must not
+              // open its own menu over it.
+              event.stopPropagation();
+            }}
+            onDragStart={(event) => {
+              if (canDrag) {
+                event.preventDefault();
+              }
+            }}
           >
-            <Expand className="size-4" />
-          </Button>
-        )}
-        <MediaAssetMoreMenu
-            onCopyStarted={beginCopyIndicator}
-            onCopySettled={endCopyIndicator}
-          asset={asset}
-          vaultPath={vaultPath}
-          tags={tags}
-          currentTag={currentTag}
-          onCreateMediaAssetCard={onCreateMediaAssetCard}
-          onCreateChannelAndMediaAssetCard={onCreateChannelAndMediaAssetCard}
-          onRenameMediaAsset={onRenameMediaAsset}
-          onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
-          onDeleteMediaAsset={onDeleteMediaAsset}
-          onOpenRelatedNote={onOpenRelatedNote}
-          open={menuOpen}
-          onOpenChange={setMenuOpen}
-        />
-      </div>
-    </div>
+            {children}
+            {copyWaiting && (
+              <div
+                className="absolute inset-x-0 bottom-0 z-10 flex items-center gap-2 bg-card/90 px-3 py-2"
+                data-detail-copy-waiting=""
+              >
+                <CloudDownload className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                <span className="text-sm text-muted-foreground">{CLOUD_DOWNLOADING_LABEL}</span>
+              </div>
+            )}
+            <div
+              className={cn(
+                "absolute right-2 top-2 z-10 flex gap-1 transition-opacity duration-[160ms]",
+                controlsVisible
+                  ? "opacity-100"
+                  : "pointer-events-none opacity-0 group-hover/detail-media:pointer-events-auto group-hover/detail-media:opacity-100 group-focus-within/detail-media:pointer-events-auto group-focus-within/detail-media:opacity-100",
+              )}
+              data-detail-media-action-menu
+              onClick={(event) => event.stopPropagation()}
+              onPointerDown={(event) => event.stopPropagation()}
+              onContextMenu={(event) => event.stopPropagation()}
+            >
+              {canOpenImagePreview && fullSizeImageSrc && (
+                <Button
+                  type="button"
+                  variant="default"
+                  size="icon"
+                  aria-label="Expand image"
+                  data-detail-media-expand-button
+                  onClick={(event) => {
+                    onOpenImagePreview({
+                      src: fullSizeImageSrc,
+                      mediaRef: asset.media_ref,
+                      siblings: collectCardImages(event.currentTarget),
+                    });
+                  }}
+                >
+                  <Expand className="size-4" />
+                </Button>
+              )}
+              <MediaAssetMoreMenu
+                itemProps={menuItemProps}
+                open={menuOpen}
+                onOpenChange={setMenuOpen}
+              />
+            </div>
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent data-detail-media-context-menu>
+          <MediaAssetMenuItems kit={CONTEXT_MENU_KIT} {...menuItemProps} />
+        </ContextMenuContent>
+      </ContextMenu>
+      <RenameMediaAssetDialog
+        asset={asset}
+        open={dialog === "rename"}
+        onOpenChange={(open) => setDialog(open ? "rename" : null)}
+        onRename={onRenameMediaAsset}
+      />
+      <RemoveMediaAssetFromCardDialog
+        asset={asset}
+        open={dialog === "remove"}
+        onOpenChange={(open) => setDialog(open ? "remove" : null)}
+        onRemove={onRemoveMediaAssetFromCard}
+      />
+      <DeleteMediaAssetDialog
+        asset={asset}
+        vaultPath={vaultPath}
+        open={dialog === "delete"}
+        onOpenChange={(open) => setDialog(open ? "delete" : null)}
+        onDelete={onDeleteMediaAsset}
+        onOpenRelatedNote={(slug) => {
+          setDialog(null);
+          setMenuOpen(false);
+          onOpenRelatedNote(slug);
+        }}
+      />
+    </>
   );
 }
 
-function MediaAssetMoreMenu({
-  onCopyStarted,
-  onCopySettled,
-  asset,
-  vaultPath,
-  tags,
-  currentTag,
-  onCreateMediaAssetCard,
-  onCreateChannelAndMediaAssetCard,
-  onRenameMediaAsset,
-  onRemoveMediaAssetFromCard,
-  onDeleteMediaAsset,
-  onOpenRelatedNote,
-  open,
-  onOpenChange,
-  className,
-}: {
-  onCopyStarted: () => void;
-  onCopySettled: () => void;
+type MediaAssetDialog = "rename" | "remove" | "delete";
+
+/** The primitives a media menu is drawn with: the ellipsis opens a dropdown,
+ *  a right click opens a context menu at the pointer. Same items in both. */
+interface MediaMenuKit {
+  Item: ComponentType<{
+    variant?: "default" | "destructive" | "detach";
+    onSelect?: (event: Event) => void;
+    children?: ReactNode;
+  }>;
+  Separator: ComponentType;
+  Sub: ComponentType<{ open?: boolean; onOpenChange?: (open: boolean) => void; children?: ReactNode }>;
+  SubTrigger: ComponentType<{ children?: ReactNode }>;
+  SubContent: ComponentType<{ widthRole?: "command" | "selector" | "picker"; className?: string; children?: ReactNode }>;
+}
+
+const DROPDOWN_MENU_KIT: MediaMenuKit = {
+  Item: DropdownMenuItem,
+  Separator: DropdownMenuSeparator,
+  Sub: DropdownMenuSub,
+  SubTrigger: DropdownMenuSubTrigger,
+  SubContent: DropdownMenuSubContent,
+};
+
+const CONTEXT_MENU_KIT: MediaMenuKit = {
+  Item: ContextMenuItem,
+  Separator: ContextMenuSeparator,
+  Sub: ContextMenuSub,
+  SubTrigger: ContextMenuSubTrigger,
+  SubContent: ContextMenuSubContent,
+};
+
+interface MediaAssetMenuItemProps {
   asset: MediaAssetRef;
   vaultPath: string;
   tags: TagCount[];
   currentTag?: string;
   onCreateMediaAssetCard: (asset: MediaAssetRef, tag: string) => Promise<void>;
   onCreateChannelAndMediaAssetCard: (asset: MediaAssetRef, tag: string) => Promise<void>;
-  onRenameMediaAsset: (asset: MediaAssetRef, newStem: string) => Promise<void>;
-  onRemoveMediaAssetFromCard: (asset: MediaAssetRef) => Promise<void>;
-  onDeleteMediaAsset: (asset: MediaAssetRef) => Promise<void>;
-  onOpenRelatedNote: (slug: string) => void;
+  onCopyStarted: () => void;
+  onCopySettled: () => void;
+  onRequestDialog: (dialog: MediaAssetDialog) => void;
+}
+
+function MediaAssetMenuItems({
+  kit,
+  asset,
+  vaultPath,
+  tags,
+  currentTag,
+  onCreateMediaAssetCard,
+  onCreateChannelAndMediaAssetCard,
+  onCopyStarted,
+  onCopySettled,
+  onRequestDialog,
+  connectSubmenuOpen,
+  onConnectSubmenuOpenChange,
+}: MediaAssetMenuItemProps & {
+  kit: MediaMenuKit;
+  connectSubmenuOpen?: boolean;
+  onConnectSubmenuOpenChange?: (open: boolean) => void;
+}) {
+  const [actionError, setActionError] = useState<string | null>(null);
+  const mediaPath = mediaAbsolutePath(vaultPath, asset.media_ref);
+  const { Item, Separator, Sub, SubTrigger, SubContent } = kit;
+
+  return (
+    <>
+      <Sub open={connectSubmenuOpen} onOpenChange={onConnectSubmenuOpenChange}>
+        <SubTrigger>
+          <MenuIconSlot>
+            <Plus className="size-3" />
+          </MenuIconSlot>
+          Create Element
+        </SubTrigger>
+        <SubContent widthRole="picker" className={COLLECTION_PICKER_CONTENT_CLASS}>
+          <MediaAssetCollectionPicker
+            asset={asset}
+            tags={tags}
+            currentTag={currentTag}
+            onConnect={onCreateMediaAssetCard}
+            onCreateAndConnect={onCreateChannelAndMediaAssetCard}
+          />
+        </SubContent>
+      </Sub>
+
+      <Separator />
+
+      <Item onSelect={() => revealItemInDir(mediaPath)}>
+        <MenuIconSlot />
+        Reveal in Finder
+      </Item>
+      <Item onSelect={() => copyTextToClipboard(mediaPath)}>
+        <MenuIconSlot />
+        Copy Path
+      </Item>
+      <Item
+        onSelect={(event) => {
+          event.preventDefault();
+          setActionError(null);
+          onCopyStarted();
+          void copyMediaAssetToClipboard(asset.media_ref)
+            .catch((error) => setActionError(mediaAssetErrorMessage(error)))
+            .finally(onCopySettled);
+        }}
+      >
+        <MenuIconSlot />
+        Copy Media
+      </Item>
+
+      {actionError && (
+        <div className="px-2 py-1.5 text-sm text-destructive">
+          {actionError}
+        </div>
+      )}
+
+      <Separator />
+
+      <Item onSelect={() => onRequestDialog("rename")}>
+        <MenuIconSlot />
+        Rename Media...
+      </Item>
+      <Item variant="detach" onSelect={() => onRequestDialog("remove")}>
+        <MenuIconSlot>
+          <Unlink className="size-3" />
+        </MenuIconSlot>
+        Remove from Element
+      </Item>
+      <Item variant="destructive" onSelect={() => onRequestDialog("delete")}>
+        <MenuIconSlot>
+          <Trash2 className="size-3" />
+        </MenuIconSlot>
+        Delete Media
+      </Item>
+    </>
+  );
+}
+
+function MediaAssetMoreMenu({
+  itemProps,
+  open,
+  onOpenChange,
+  className,
+}: {
+  itemProps: MediaAssetMenuItemProps;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   className?: string;
 }) {
   const [connectSubmenuOpen, setConnectSubmenuOpen] = useState(false);
-  const [renameOpen, setRenameOpen] = useState(false);
-  const [removeOpen, setRemoveOpen] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const mediaPath = mediaAbsolutePath(vaultPath, asset.media_ref);
   const updateRootOpen = useCallback((open: boolean) => {
     if (!open) {
       setConnectSubmenuOpen(false);
@@ -1827,117 +1983,27 @@ function MediaAssetMoreMenu({
   }, [onOpenChange]);
 
   return (
-    <>
-      <DropdownMenu open={open} onOpenChange={updateRootOpen} modal={false}>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="default"
-            size="icon"
-            className={className}
-            aria-label="Media actions"
-            data-detail-media-more-button
-          >
-            <MoreHorizontal className="size-4" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuSub open={connectSubmenuOpen} onOpenChange={setConnectSubmenuOpen}>
-            <DropdownMenuSubTrigger>
-              <MenuIconSlot>
-                <Plus className="size-3" />
-              </MenuIconSlot>
-              Create Element
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent widthRole="picker" className={COLLECTION_PICKER_CONTENT_CLASS}>
-              <MediaAssetCollectionPicker
-                asset={asset}
-                tags={tags}
-                currentTag={currentTag}
-                onConnect={onCreateMediaAssetCard}
-                onCreateAndConnect={onCreateChannelAndMediaAssetCard}
-              />
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
-
-          <DropdownMenuSeparator />
-
-          <DropdownMenuItem onSelect={() => revealItemInDir(mediaPath)}>
-            <MenuIconSlot />
-            Reveal in Finder
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => copyTextToClipboard(mediaPath)}>
-            <MenuIconSlot />
-            Copy Path
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onSelect={(event) => {
-              event.preventDefault();
-              setActionError(null);
-              onCopyStarted();
-              void copyMediaAssetToClipboard(asset.media_ref)
-                .catch((error) => setActionError(mediaAssetErrorMessage(error)))
-                .finally(onCopySettled);
-            }}
-          >
-            <MenuIconSlot />
-            Copy Media
-          </DropdownMenuItem>
-
-          {actionError && (
-            <div className="px-2 py-1.5 text-sm text-destructive">
-              {actionError}
-            </div>
-          )}
-
-          <DropdownMenuSeparator />
-
-          <DropdownMenuItem onSelect={() => setRenameOpen(true)}>
-            <MenuIconSlot />
-            Rename Media...
-          </DropdownMenuItem>
-          <DropdownMenuItem variant="detach" onSelect={() => setRemoveOpen(true)}>
-            <MenuIconSlot>
-              <Unlink className="size-3" />
-            </MenuIconSlot>
-            Remove from Element
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            variant="destructive"
-            onSelect={() => setDeleteOpen(true)}
-          >
-            <MenuIconSlot>
-              <Trash2 className="size-3" />
-            </MenuIconSlot>
-            Delete Media
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-
-      <RenameMediaAssetDialog
-        asset={asset}
-        open={renameOpen}
-        onOpenChange={setRenameOpen}
-        onRename={onRenameMediaAsset}
-      />
-      <RemoveMediaAssetFromCardDialog
-        asset={asset}
-        open={removeOpen}
-        onOpenChange={setRemoveOpen}
-        onRemove={onRemoveMediaAssetFromCard}
-      />
-      <DeleteMediaAssetDialog
-        asset={asset}
-        vaultPath={vaultPath}
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
-        onDelete={onDeleteMediaAsset}
-        onOpenRelatedNote={(slug) => {
-          setDeleteOpen(false);
-          onOpenChange(false);
-          onOpenRelatedNote(slug);
-        }}
-      />
-    </>
+    <DropdownMenu open={open} onOpenChange={updateRootOpen} modal={false}>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="default"
+          size="icon"
+          className={className}
+          aria-label="Media actions"
+          data-detail-media-more-button
+        >
+          <MoreHorizontal className="size-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <MediaAssetMenuItems
+          kit={DROPDOWN_MENU_KIT}
+          {...itemProps}
+          connectSubmenuOpen={connectSubmenuOpen}
+          onConnectSubmenuOpenChange={setConnectSubmenuOpen}
+        />
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
