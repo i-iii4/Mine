@@ -1345,6 +1345,30 @@ describe("Grid — no collapse after add / revisit", () => {
       expect(isRowConnectedToHoveredCard("all")).toBe(false);
     });
 
+    it("with the hover switch off, the pointer marks nothing while the arrow keys still do", async () => {
+      const { rerender } = render(
+        <Grid {...BASE_PROPS} blocks={[makeBlock(9451), makeBlock(9452)]} hoverCollectionPills={false} />,
+      );
+      await flushAsync();
+      const second = gridItemForSlug("block-9452")!;
+      step(second, 0, 10);
+      step(second, 1, 100);
+      act(() => { vi.advanceTimersByTime(500); });
+      expect(isRowConnectedToHoveredCard("all")).toBe(false);
+
+      // Turning it on applies at once to the card under the pointer.
+      rerender(<Grid {...BASE_PROPS} blocks={[makeBlock(9451), makeBlock(9452)]} hoverCollectionPills />);
+      expect(isRowConnectedToHoveredCard("tag:beta")).toBe(true);
+      rerender(<Grid {...BASE_PROPS} blocks={[makeBlock(9451), makeBlock(9452)]} hoverCollectionPills={false} />);
+      expect(isRowConnectedToHoveredCard("all")).toBe(false);
+
+      fireEvent.keyDown(window, { key: "ArrowLeft" });
+      await flushAsync();
+      const focused = document.querySelector('[data-feed-grid-item-focused="true"]');
+      expect(focused).not.toBeNull();
+      expect(isRowConnectedToHoveredCard("all")).toBe(true);
+    });
+
     it("marks the focused card's collections under the arrow keys at once, not the card under the hidden pointer", async () => {
       render(<Grid {...BASE_PROPS} blocks={[makeBlock(9451), makeBlock(9452)]} />);
       await flushAsync();

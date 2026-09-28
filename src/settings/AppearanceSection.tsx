@@ -16,6 +16,10 @@ import {
   getStoredScrollEdgeFade,
 } from "@/lib/scrollEdgeFade";
 import {
+  HOVER_COLLECTION_PILLS_STORAGE_KEY,
+  getStoredHoverCollectionPills,
+} from "@/lib/hoverCollectionPills";
+import {
   DENSITY_STEPS,
   DENSITY_STORAGE_KEY,
   applyDensity,
@@ -58,6 +62,7 @@ export function AppearanceSection() {
     getStoredBottomActionBarHidden,
   );
   const [scrollEdgeFade, setScrollEdgeFade] = useState(getStoredScrollEdgeFade);
+  const [hoverCollectionPills, setHoverCollectionPills] = useState(getStoredHoverCollectionPills);
   const [cardRadius, setCardRadius] = useState<CardRadius>(getStoredCardRadius);
   const [density, setDensity] = useState<DensityStep>(getStoredDensity);
 
@@ -91,6 +96,12 @@ export function AppearanceSection() {
     setScrollEdgeFade(checked);
     localStorage.setItem(SCROLL_EDGE_FADE_STORAGE_KEY, checked ? "true" : "false");
     broadcastSettingsChange(SCROLL_EDGE_FADE_STORAGE_KEY);
+  };
+
+  const handleHoverCollectionPillsChange = (checked: boolean) => {
+    setHoverCollectionPills(checked);
+    localStorage.setItem(HOVER_COLLECTION_PILLS_STORAGE_KEY, checked ? "true" : "false");
+    broadcastSettingsChange(HOVER_COLLECTION_PILLS_STORAGE_KEY);
   };
 
   return (
@@ -141,6 +152,17 @@ export function AppearanceSection() {
           aria-label="Fade content under the chrome"
           checked={scrollEdgeFade}
           onCheckedChange={(checked) => handleScrollEdgeFadeChange(checked === true)}
+        />
+      </SettingRow>
+
+      <SettingRow
+        label="Show collections on card hover"
+        caption="Mark the collections of the card under the pointer in the sidebar. Arrow keys and selected cards always show them"
+      >
+        <Checkbox
+          aria-label="Show collections on card hover"
+          checked={hoverCollectionPills}
+          onCheckedChange={(checked) => handleHoverCollectionPillsChange(checked === true)}
         />
       </SettingRow>
 

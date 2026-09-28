@@ -225,6 +225,11 @@ interface GridProps {
   onLoadMoreBlocks?: () => void;
   /** Dissolve cards into transparency as they scroll up under the chrome. */
   scrollEdgeFade?: boolean;
+  /**
+   * Whether the card under the pointer marks its collections in the sidebar
+   * (SPEC_CARD_STATES.md, С4). The keyboard-focused card always does.
+   */
+  hoverCollectionPills?: boolean;
 }
 
 interface GridContext {
@@ -449,6 +454,7 @@ export function Grid({
   loadingMoreBlocks = false,
   onLoadMoreBlocks,
   scrollEdgeFade = false,
+  hoverCollectionPills = true,
 }: GridProps) {
   const spacing = useDensity();
   const layoutGap = spacing;
@@ -503,10 +509,16 @@ export function Grid({
     if (keyboardAnswerTimerRef.current !== null) window.clearTimeout(keyboardAnswerTimerRef.current);
     keyboardAnswerTimerRef.current = null;
   }, []);
+  const hoverCollectionPillsRef = useRef(hoverCollectionPills);
+  hoverCollectionPillsRef.current = hoverCollectionPills;
+  /** The pointer's answer for the sidebar, or none when the setting is off. */
+  const pointerCardAnswer = useCallback((chosen: string | null) => (
+    chosen === null || !hoverCollectionPillsRef.current ? null : Number(chosen)
+  ), []);
   const cardIntent = useHoverIntent(({ chosen }) => {
     if (!pointerDrivesCardHoverRef.current) return;
     clearKeyboardAnswerTimer();
-    setHoveredCard(chosen === null ? null : Number(chosen));
+    setHoveredCard(pointerCardAnswer(chosen));
   });
   const cardIntentRef = useRef(cardIntent);
   cardIntentRef.current = cardIntent;
@@ -2062,14 +2074,20 @@ export function Grid({
     }
     const { chosen } = cardIntent.current();
     if (chosen !== null) {
-      setHoveredCard(Number(chosen));
+      setHoveredCard(pointerCardAnswer(chosen));
       return;
     }
     keyboardAnswerTimerRef.current = window.setTimeout(() => {
       keyboardAnswerTimerRef.current = null;
       if (cardIntent.current().chosen === null) setHoveredCard(null);
     }, HOVER_INTENT.warmMs);
-  }, [cardIntent, clearKeyboardAnswerTimer, feedInteractionMode, keyboardFocusedBlockId]);
+  }, [cardIntent, clearKeyboardAnswerTimer, feedInteractionMode, keyboardFocusedBlockId, pointerCardAnswer]);
+
+  // Turning the setting over applies at once to the card under the pointer.
+  useEffect(() => {
+    if (!pointerDrivesCardHoverRef.current) return;
+    setHoveredCard(pointerCardAnswer(cardIntent.current().chosen));
+  }, [cardIntent, hoverCollectionPills, pointerCardAnswer]);
 
   useEffect(() => () => {
     clearKeyboardAnswerTimer();

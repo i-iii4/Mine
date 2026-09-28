@@ -71,6 +71,10 @@ import {
   SCROLL_EDGE_FADE_STORAGE_KEY,
   getStoredScrollEdgeFade,
 } from "@/lib/scrollEdgeFade";
+import {
+  HOVER_COLLECTION_PILLS_STORAGE_KEY,
+  getStoredHoverCollectionPills,
+} from "@/lib/hoverCollectionPills";
 import { DENSITY_STORAGE_KEY, applyDensity, getStoredDensity } from "@/lib/density";
 import {
   CONTENT_FONT_STORAGE_KEY,
@@ -560,6 +564,7 @@ export function AppWithVault({
     getStoredGraphPreferences,
   );
   const [scrollEdgeFade, setScrollEdgeFade] = useState(getStoredScrollEdgeFade);
+  const [hoverCollectionPills, setHoverCollectionPills] = useState(getStoredHoverCollectionPills);
   const [mainViewMode, setMainViewMode] = useState<MainViewMode>(getStoredMainViewMode);
   const [imagePreview, setImagePreview] = useState<ImagePreviewRequest | null>(null);
   const [isCreatingChannel, setIsCreatingChannel] = useState(false);
@@ -1927,6 +1932,8 @@ export function AppWithVault({
         setGraphPreferences(getStoredGraphPreferences());
       } else if (key === SCROLL_EDGE_FADE_STORAGE_KEY) {
         setScrollEdgeFade(getStoredScrollEdgeFade());
+      } else if (key === HOVER_COLLECTION_PILLS_STORAGE_KEY) {
+        setHoverCollectionPills(getStoredHoverCollectionPills());
       } else if (key === CARD_RADIUS_STORAGE_KEY) {
         applyCardRadius(getStoredCardRadius());
       } else if (key === DENSITY_STORAGE_KEY) {
@@ -3503,6 +3510,7 @@ export function AppWithVault({
                 viewMode={mainViewMode}
                 graphPreferences={graphPreferences}
                 scrollEdgeFade={scrollEdgeFade}
+                hoverCollectionPills={hoverCollectionPills}
                 routeSnapshotReady={gridRouteSnapshotReady}
                 scrollToTop={scrollToTopSignal}
                 blockDragActive={activeDragBlocks.length > 0}
@@ -3915,6 +3923,7 @@ interface RouteContext {
   viewMode: MainViewMode;
   graphPreferences: GraphPreferences;
   scrollEdgeFade: boolean;
+  hoverCollectionPills: boolean;
   routeSnapshotReady: boolean;
   scrollToTop: number;
   blockDragActive: boolean;

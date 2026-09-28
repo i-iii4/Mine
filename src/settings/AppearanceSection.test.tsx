@@ -80,6 +80,22 @@ describe("AppearanceSection", () => {
     expect(localStorage.getItem("mine.scrollEdgeFade")).toBe("false");
   });
 
+  it("persists the hover collection pills switch, on by default, and broadcasts its key", () => {
+    render(<AppearanceSection />);
+
+    const checkbox = screen.getByRole("checkbox", { name: "Show collections on card hover" });
+    expect(checkbox).toHaveAttribute("data-state", "checked");
+
+    fireEvent.click(checkbox);
+    expect(localStorage.getItem("mine.hoverCollectionPills")).toBe("false");
+    expect(emit).toHaveBeenCalledWith("settings-changed", {
+      key: "mine.hoverCollectionPills",
+    });
+
+    fireEvent.click(checkbox);
+    expect(localStorage.getItem("mine.hoverCollectionPills")).toBe("true");
+  });
+
   it("applies the card corner radius and broadcasts it", () => {
     render(<AppearanceSection />);
 

@@ -144,6 +144,7 @@ Settings и `Cmd+,` сохраняются. Прежняя условная те
 | Spacing: 32 / 24 / 16 | `SegmentedControl` | `mine.spacing` |
 | Card corners | `SegmentedControl` | `mine.cardRadius` |
 | Fade content under the chrome | `Checkbox` + подпись | `mine.scrollEdgeFade` |
+| Show collections on card hover | `Checkbox` + подпись, по умолчанию включено | `mine.hoverCollectionPills` |
 | Hide bottom menu | `Checkbox` + подпись | `mine.bottomActionBarHidden` |
 
 Оформление использует только Alt 1, шрифт интерфейса Geist и шрифт статьи
