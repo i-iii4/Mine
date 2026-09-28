@@ -153,21 +153,24 @@ select,
   background-color: var(--border-accent);
 }
 
-/* One card state system (SPEC_CARD_STATES.md). Keyboard focus, pointer hover
-   and the highlight from a hovered collection row share one look: the card's
-   own border in --border-accent and, on a picture, the focus wash. Selection
-   uses the same border, brighter; it never draws outside the card. */
+/* One card state system (SPEC_CARD_STATES.md). Keyboard focus and the
+   highlight from a hovered collection row share one look: the card's own
+   border in --border-accent and, on a picture, the focus wash. Pointer hover
+   adds nothing but the card's buttons. Selection uses the same border,
+   brighter, never draws outside the card, and outranks every other state:
+   nothing is added on top of a selected card. */
 [data-block-slug] {
   transition: border-color 180ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 [data-grid-scroll][data-feed-grid-focus-mode="true"] [data-feed-grid-item-focused="true"] [data-block-slug],
-[data-grid-scroll] [data-feed-grid-item-live="true"]:hover [data-block-slug],
 [data-grid-scroll] [data-feed-grid-item-collection-lit="true"] [data-block-slug] {
   border-color: var(--border-accent);
 }
 
-[data-grid-scroll] [data-feed-grid-item-selected="true"] [data-block-slug] {
+/* Five attribute selectors: more specific than the focus rule above, so a
+   focused selected card keeps the selection border. */
+[data-grid-scroll] [data-feed-grid-item][data-feed-grid-item-live][data-feed-grid-item-selected="true"] [data-block-slug] {
   border-color: var(--feed-selection-frame);
 }
 
@@ -184,7 +187,6 @@ select,
 
 /* The wash is for pictures only; a text card shows the border alone. */
 [data-grid-scroll][data-feed-grid-focus-mode="true"] [data-feed-grid-item-focused="true"] [data-card-graphic-surface]::after,
-[data-grid-scroll] [data-feed-grid-item-live="true"]:hover [data-card-graphic-surface]::after,
 [data-grid-scroll] [data-feed-grid-item-collection-lit="true"] [data-card-graphic-surface]::after,
 [data-grid-scroll] [data-feed-grid-item-selected="true"] [data-card-graphic-surface]::after {
   opacity: 1;

@@ -953,12 +953,13 @@ function CardPatternSection() {
     >
       <ComponentSpec
         title="Карточка ленты — фокус и выделение"
-        summary="Одна система состояний (SPEC_CARD_STATES.md): наведение, клавиатурный фокус и подсветка от коллекции красят границу карточки в --border-accent и затеняют картинку; выделение красит ту же границу ярче и тоже затеняет."
+        summary="Одна система состояний (SPEC_CARD_STATES.md): клавиатурный фокус и подсветка от коллекции красят границу карточки в --border-accent и затеняют картинку; выделение красит ту же границу ярче, тоже затеняет и главнее всех состояний. Наведение мышью показывает только кнопки."
         specs={[
           { prop: "Карточка", value: "border --border · bg --card · rounded-0" },
           { prop: "Медиа", value: "rounded-0 (--radius-media) · object-cover" },
-          { prop: "Наведение и фокус", value: "граница --border-accent · затенение --graphic-card-focus-overlay" },
-          { prop: "Выделение", value: "граница --feed-selection-frame · затенение" },
+          { prop: "Фокус и подсветка от коллекции", value: "граница --border-accent · затенение --graphic-card-focus-overlay" },
+          { prop: "Наведение мышью", value: "только кнопки карточки" },
+          { prop: "Выделение", value: "граница --feed-selection-frame · затенение · наведение ничего не добавляет" },
           { prop: "Затенение", value: "только у картинок" },
           { prop: "Отступ", value: "p-3 (12)" },
         ]}
@@ -1259,7 +1260,7 @@ function FeedCardPreview({ state }: { state: "default" | "keyboard" | "selected"
   const label = state === "default"
     ? "default"
     : state === "keyboard"
-      ? "hover · keyboard focus"
+      ? "keyboard focus · collection highlight"
       : "selected";
 
   return (

@@ -1,22 +1,24 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-/// Card states share one look (SPEC_CARD_STATES.md): the card's own border
-/// changes colour and, on a picture, the focus wash appears. Hover, keyboard
-/// focus and the highlight from a hovered collection use --border-accent;
-/// selection uses the brighter --feed-selection-frame and never draws outside
-/// the card.
+/// Card states (SPEC_CARD_STATES.md): keyboard focus and the highlight from a
+/// hovered collection colour the card's own border with --border-accent and
+/// wash a picture. Pointer hover adds no border and no wash, only the card's
+/// buttons. Selection uses the brighter --feed-selection-frame, never draws
+/// outside the card, and outranks every other state.
 describe("card state styles", () => {
   const css = readFileSync("src/styles/global.css", "utf8");
-  const ruleFor = (selectorPart: string, declaration: string) => {
-    const blocks = css.split("}").filter((block) => block.includes(selectorPart));
-    return blocks.some((block) => block.includes(declaration));
-  };
+  const rules = css.split("}");
+  const ruleFor = (selectorPart: string, declaration: string) =>
+    rules.some((block) => block.includes(selectorPart) && block.includes(declaration));
 
-  it("gives hover and the collection highlight the keyboard focus border", () => {
-    expect(ruleFor('[data-feed-grid-item-live="true"]:hover [data-block-slug]', "border-color: var(--border-accent)")).toBe(true);
-    expect(ruleFor('[data-feed-grid-item-collection-lit="true"] [data-block-slug]', "border-color: var(--border-accent)")).toBe(true);
+  it("gives keyboard focus and the collection highlight the accent border", () => {
     expect(ruleFor('[data-feed-grid-item-focused="true"] [data-block-slug]', "border-color: var(--border-accent)")).toBe(true);
+    expect(ruleFor('[data-feed-grid-item-collection-lit="true"] [data-block-slug]', "border-color: var(--border-accent)")).toBe(true);
+  });
+
+  it("leaves pointer hover without a border or a wash", () => {
+    expect(css).not.toMatch(/\[data-feed-grid-item[^\]]*\]:hover/);
   });
 
   it("marks a selected card with its own border in the bright colour", () => {
@@ -25,21 +27,24 @@ describe("card state styles", () => {
     expect(css).not.toContain("--feed-selection-ring");
   });
 
-  it("washes pictures in every state, and only pictures", () => {
+  it("lets selection outrank keyboard focus and the collection highlight", () => {
+    const count = (selector: string) => (selector.match(/\[/g) ?? []).length;
+    const selectorOf = (part: string, declaration: string) => {
+      const block = rules.find((candidate) => candidate.includes(part) && candidate.includes(declaration))!;
+      return block.slice(block.lastIndexOf("\n\n") + 2, block.indexOf("{")).split(",").find((line) => line.includes(part))!;
+    };
+    const selected = selectorOf('[data-feed-grid-item-selected="true"] [data-block-slug]', "--feed-selection-frame");
+    const focused = selectorOf('[data-feed-grid-item-focused="true"] [data-block-slug]', "--border-accent");
+    expect(count(selected)).toBeGreaterThan(count(focused));
+  });
+
+  it("washes pictures when focused, lit by a collection or selected", () => {
     for (const state of [
-      '[data-feed-grid-item-live="true"]:hover',
       '[data-feed-grid-item-collection-lit="true"]',
       '[data-feed-grid-item-selected="true"]',
       '[data-feed-grid-item-focused="true"]',
     ]) {
       expect(ruleFor(`${state} [data-card-graphic-surface]::after`, "opacity: 1")).toBe(true);
     }
-  });
-
-  it("lets selection win over the lighter states", () => {
-    const lighter = css.indexOf('[data-feed-grid-item-collection-lit="true"] [data-block-slug]');
-    const selected = css.indexOf('[data-feed-grid-item-selected="true"] [data-block-slug]');
-    expect(lighter).toBeGreaterThan(-1);
-    expect(selected).toBeGreaterThan(lighter);
   });
 });

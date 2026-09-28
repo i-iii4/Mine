@@ -47,6 +47,7 @@ import {
   sidebarRowDomId,
 } from "@/lib/sidebarSearch";
 import { cn } from "@/lib/utils";
+import { buttonVariants } from "@/components/ui/button";
 import {
   SIDEBAR_PREVIEW_DIVIDER_GAP_PX,
   SIDEBAR_ROW_ACTION_GAP_PX,
@@ -89,11 +90,14 @@ const SIDEBAR_PREVIEW_MASK_FADE_WIDTH = EDGE_FADE_WIDTH;
 /// button's own field instead left the previews short of their zone.
 const SIDEBAR_PREVIEW_MASK_CLEAR_TAIL =
   `calc(var(--sidebar-zone) + 1px + ${SIDEBAR_PREVIEW_DIVIDER_GAP}px)`;
-/** A row's `Connected` that only reports: the geometry of the action button,
- *  the body of a reference key (DESIGN_SYSTEM.md: transparent, permanent
- *  outline, no hover). SPEC_CARD_STATES.md, С4 and С5. */
-const SIDEBAR_ROW_CONNECTED_PILL_CLASS =
-  "pointer-events-none inline-flex h-6 items-center justify-center rounded-1 bg-transparent px-[1ch] font-sans text-sm font-semibold text-foreground outline-1 -outline-offset-1 outline-border";
+/** A row's `Connected` that only reports. It is the bottom bar's reference
+ *  key, built the same way (ActionButton with `readOnly`): the `reference`
+ *  body, mono regular type, muted colour, no hover. Only its height follows
+ *  the row's action button, whose place it takes. SPEC_CARD_STATES.md, С4, С5. */
+const SIDEBAR_ROW_CONNECTED_PILL_CLASS = cn(
+  buttonVariants({ variant: "reference", size: "xs" }),
+  "pointer-events-none h-6 font-mono font-normal text-muted-foreground",
+);
 const SIDEBAR_ROW_ACTION_BUTTON_CLASS =
   "inline-flex h-6 items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover";
 const SIDEBAR_ROW_TEXT_MASK_STYLE = createRightFadeMaskStyle(

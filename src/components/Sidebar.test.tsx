@@ -1214,7 +1214,10 @@ describe("sidebar and the card under the pointer (SPEC_CARD_STATES.md)", () => {
     expect(screen.getByText("5")).toHaveClass("opacity-100");
     const pill = pillIn(container, "tag:alpha")!;
     expect(pill.tagName).toBe("SPAN");
-    expect(pill).toHaveClass("pointer-events-none", "bg-transparent", "outline-border");
+    // The bottom bar's reference key: transparent body, 1px outline, mono regular, muted.
+    expect(pill).toHaveClass("pointer-events-none", "bg-transparent", "outline-1", "outline-border", "font-mono", "font-normal", "text-muted-foreground");
+    expect(pill).not.toHaveClass("font-semibold");
+    expect(pill).not.toHaveClass("text-foreground");
     act(() => setHoveredCard(null));
     expect(pillIn(container, "tag:alpha")).toBeNull();
     expect(screen.getByText("10")).toHaveClass("opacity-100");
