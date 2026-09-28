@@ -2867,6 +2867,36 @@ fn delete_source_video_inner(
     })
 }
 
+fn is_remote_media_reference(source: &str) -> bool {
+    source.starts_with("http://") || source.starts_with("https://")
+}
+
+fn is_video_file_name(source: &str) -> bool {
+    Path::new(source.split(['|', '#']).next().unwrap_or(source))
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| matches!(ext.to_ascii_lowercase().as_str(), "mp4" | "m4v" | "mov" | "webm"))
+}
+
+/// Put the video right under the card's heading, or first when there is none,
+/// so it leads the card the way a saved post's video does.
+fn insert_video_embed(body: &str, link: &str) -> String {
+    let embed = format!("![[{link}]]");
+    let trimmed = body.trim_start_matches('\n');
+    if trimmed.starts_with("# ") {
+        let (heading, rest) = trimmed.split_once('\n').unwrap_or((trimmed, ""));
+        let rest = rest.trim_start_matches('\n');
+        if rest.is_empty() {
+            return format!("{heading}\n\n{embed}\n");
+        }
+        return format!("{heading}\n\n{embed}\n\n{rest}");
+    }
+    if trimmed.is_empty() {
+        return format!("{embed}\n");
+    }
+    format!("{embed}\n\n{trimmed}")
+}
+
 fn attach_downloaded_source_video_inner(
     state: &AppState,
     conn: &rusqlite::Connection,
@@ -2903,9 +2933,12 @@ fn attach_downloaded_source_video_inner(
             reason: "the card no longer links to this video".into(),
         });
     }
-    if block.frontmatter.file.is_some() {
+    let has_body_video = iter_inline_media_references(&block.body)
+        .iter()
+        .any(|reference| !is_remote_media_reference(&reference.source) && is_video_file_name(&reference.source));
+    if block.frontmatter.file.is_some() || has_body_video {
         return Err(MediaAssetActionError::InvalidMediaRef {
-            reason: "the card already has its own media file".into(),
+            reason: "the card already has its own video".into(),
         });
     }
 
@@ -2925,7 +2958,10 @@ fn attach_downloaded_source_video_inner(
         .ok_or_else(|| MediaAssetActionError::Internal {
             message: "new video link target is unavailable".into(),
         })?;
-    block.frontmatter.file = Some(link);
+    // The video goes into the body as an embed, the way the clipper saves a
+    // post's video: that is what makes the feed show its frame and autoplay
+    // it, and Detail play it inline in place of the YouTube player.
+    block.body = insert_video_embed(&block.body, &link);
 
     let thumb_path = vault.thumb_path(&block.slug);
     state
@@ -5319,10 +5355,42 @@ mod tests {
         assert_eq!(std::fs::read(vault.root().join("Film.mp4")).unwrap(), b"someone else's file");
         let (_, content) = files::read_block_file(&vault, &vault.block_path("Film")).unwrap();
         let parsed = crate::domain::block::parse_block("Film", &content).unwrap();
-        let file = parsed.frontmatter.file.expect("the card now has its own video");
-        assert!(result.media_ref.ends_with(file.trim_start_matches("[[").trim_end_matches("]]")));
+        assert!(parsed.frontmatter.file.is_none(), "the video is an embed, as a saved post's video is");
+        let file_name = Path::new(&result.media_ref).file_name().unwrap().to_str().unwrap();
+        assert_eq!(parsed.body, format!("# Film\n\n![[{file_name}]]\n\nTranscript stays."));
         assert!(parsed.frontmatter.url.is_some(), "the source link stays");
-        assert!(parsed.body.contains("Transcript stays."));
+
+        // The feed sees a video poster and can autoplay the card.
+        let indexed = index::get_block(&conn, "Film").unwrap().unwrap();
+        assert!(indexed.preview_manifest.as_deref().unwrap_or("").contains("\"kind\":\"video_poster\""), "{:?}", indexed.preview_manifest);
+    }
+
+    #[test]
+    fn attach_downloaded_source_video_inner_refuses_a_card_that_already_has_a_video() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        let mut card = youtube_card("Film", "poster.jpg");
+        card.body = "# Film\n\n![[clip.mp4]]\n\nTranscript stays.".to_string();
+        persist_block(&conn, &vault, &card);
+        let staging = tempfile::tempdir().unwrap();
+        let downloaded = staging.path().join("joined.mp4");
+        std::fs::write(&downloaded, b"video-bytes").unwrap();
+
+        let error =
+            attach_downloaded_source_video_inner(&state, &conn, &vault, "Film", "9KDDhAOyv9k", &downloaded)
+                .unwrap_err();
+
+        assert!(matches!(error, MediaAssetActionError::InvalidMediaRef { .. }));
+        assert!(downloaded.exists());
+    }
+
+    #[test]
+    fn video_embed_goes_under_the_heading_or_first() {
+        assert_eq!(insert_video_embed("# Film\n\nText", "a.mp4"), "# Film\n\n![[a.mp4]]\n\nText");
+        assert_eq!(insert_video_embed("# Film", "a.mp4"), "# Film\n\n![[a.mp4]]\n");
+        assert_eq!(insert_video_embed("Text only", "a.mp4"), "![[a.mp4]]\n\nText only");
+        assert_eq!(insert_video_embed("", "a.mp4"), "![[a.mp4]]\n");
+        assert_eq!(insert_video_embed("## Section\n\nText", "a.mp4"), "![[a.mp4]]\n\n## Section\n\nText");
     }
 
     #[test]
