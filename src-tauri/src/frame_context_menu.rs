@@ -1,25 +1,33 @@
-//! Right click inside an embedded frame opens Mine's menu, not WebKit's.
+//! What WebKit's own context menu may show inside Mine.
 //!
-//! The only frame the interface embeds is the source video player, which
-//! lives on another origin: its `contextmenu` event never reaches the
-//! interface, so the page cannot replace the menu the way it does for local
-//! media. WebKit instead builds its own menu with a lone "Open Frame in New
-//! Window" item, which would open the internal wrapper page.
+//! Two rules, applied where AppKit asks the view before a context menu opens
+//! (`willOpenMenu:withEvent:`):
 //!
-//! AppKit asks the view before a context menu opens (`willOpenMenu:withEvent:`).
-//! Wry's WKWebView subclass does not implement it, so the method is added to
-//! that class here. A menu that WebKit built for a frame is emptied (an empty
-//! menu is not shown) and the click position, in CSS pixels, is sent to the
-//! interface as `source-video-context-menu`; every other menu is left alone.
-//! This relies on wry's view class rather than on a supported Tauri API, and
-//! is rechecked on every Tauri update. See SPEC_MEDIA_ASSET_ACTIONS.md
-//! «Меню видео источника».
+//! 1. Browser navigation never appears. Mine is an application, not a browser:
+//!    Back, Forward, Stop and Reload are removed from every native menu in
+//!    every window. A menu left with nothing but separators is not shown.
+//!    Text commands (Copy, Look Up, Translate and the rest) stay.
+//! 2. A right click inside an embedded frame opens Mine's menu. The only frame
+//!    the interface embeds is the source video player, which lives on another
+//!    origin: its `contextmenu` event never reaches the interface. WebKit
+//!    marks the menu it builds for a frame with "Open Frame in New Window";
+//!    in the main window that menu is emptied and the click position, in CSS
+//!    pixels, is sent to the interface as `source-video-context-menu`.
+//!
+//! Wry's WKWebView subclass does not implement `willOpenMenu:withEvent:`, so
+//! the method is added to that class. This relies on wry's view class rather
+//! than on a supported Tauri API, and is rechecked on every Tauri update. See
+//! SPEC_MEDIA_ASSET_ACTIONS.md «Меню видео источника».
 
 /// Event carrying the click point to the interface.
 pub const EVENT: &str = "source-video-context-menu";
 /// WebKit's identifier for the item it adds to a frame's context menu.
 #[cfg(any(target_os = "macos", test))]
 const FRAME_MENU_ITEM: &str = "WKMenuItemIdentifierOpenFrameInNewWindow";
+/// WebCore context menu tags of browser navigation: Back, Forward, Stop,
+/// Reload. Stop carries no WebKit identifier, so the tag is the reliable key.
+#[cfg(any(target_os = "macos", test))]
+const NAVIGATION_TAGS: [isize; 4] = [9, 10, 11, 12];
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct MenuPoint {
@@ -27,10 +35,52 @@ pub struct MenuPoint {
     pub y: f64,
 }
 
-/// Whether WebKit built this menu for a click inside an embedded frame.
+/// One native menu item, as far as these rules need to know it.
 #[cfg(any(target_os = "macos", test))]
-fn is_frame_menu<'a>(mut identifiers: impl Iterator<Item = Option<&'a str>>) -> bool {
-    identifiers.any(|identifier| identifier == Some(FRAME_MENU_ITEM))
+#[derive(Debug, Clone, PartialEq)]
+struct NativeItem {
+    identifier: Option<String>,
+    tag: isize,
+    separator: bool,
+}
+
+/// What to do with a native menu before it opens.
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug, PartialEq)]
+enum MenuPlan {
+    /// A frame's menu: show nothing and let the interface open Mine's menu.
+    ReplaceWithMineMenu,
+    /// Remove these items (indices in descending order); an empty menu is not shown.
+    Remove(Vec<usize>),
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn plan_menu(items: &[NativeItem], frame_menu_allowed: bool) -> MenuPlan {
+    if frame_menu_allowed
+        && items
+            .iter()
+            .any(|item| item.identifier.as_deref() == Some(FRAME_MENU_ITEM))
+    {
+        return MenuPlan::ReplaceWithMineMenu;
+    }
+    let kept: Vec<usize> = (0..items.len())
+        .filter(|&index| !NAVIGATION_TAGS.contains(&items[index].tag) || items[index].separator)
+        .collect();
+    // Separators survive only between two kept commands.
+    let mut visible: Vec<usize> = Vec::new();
+    for index in kept {
+        let separator = items[index].separator;
+        if separator && visible.last().is_none_or(|&last| items[last].separator) {
+            continue;
+        }
+        visible.push(index);
+    }
+    while visible.last().is_some_and(|&last| items[last].separator) {
+        visible.pop();
+    }
+    let mut remove: Vec<usize> = (0..items.len()).filter(|index| !visible.contains(index)).collect();
+    remove.reverse();
+    MenuPlan::Remove(remove)
 }
 
 /// View coordinates in points to CSS pixels from the top left of the page.
@@ -53,16 +103,16 @@ mod imp {
     use objc2_foundation::{NSPoint, NSRect, NSString};
     use tauri::{AppHandle, Emitter, Manager, Wry};
 
-    use super::{css_point, is_frame_menu, EVENT};
+    use super::{css_point, plan_menu, MenuPlan, NativeItem, EVENT};
 
     static APP: OnceLock<AppHandle<Wry>> = OnceLock::new();
     static MAIN_VIEW: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
-    /// Attach the handler to the main window's web view. Must run once.
+    /// Attach the handler to the web view class. Must run once, on setup.
     pub fn install(app: &AppHandle<Wry>) {
         let _ = APP.set(app.clone());
         let Some(window) = app.get_webview_window("main") else {
-            log::warn!("frame context menu: main window is missing");
+            log::warn!("native context menu: main window is missing");
             return;
         };
         let result = window.with_webview(|webview| {
@@ -70,10 +120,12 @@ mod imp {
             MAIN_VIEW.store(view, Ordering::SeqCst);
             // SAFETY: `inner()` is the live WKWebView of the main window, and
             // this closure runs on the main thread where AppKit objects live.
+            // Every window's web view shares this class, so the rules reach
+            // the settings window too.
             unsafe { add_menu_hook(view.cast::<AnyObject>()) };
         });
         if let Err(error) = result {
-            log::warn!("frame context menu: {error}");
+            log::warn!("native context menu: {error}");
         }
     }
 
@@ -93,7 +145,7 @@ mod imp {
             c"v@:@@".as_ptr(),
         );
         if !added.as_bool() {
-            log::warn!("frame context menu: web view class already handles willOpenMenu");
+            log::warn!("native context menu: web view class already handles willOpenMenu");
         }
     }
 
@@ -102,17 +154,25 @@ mod imp {
             (this as *const AnyObject).cast::<c_void>(),
             MAIN_VIEW.load(Ordering::SeqCst).cast_const(),
         );
-        if is_main && frame_menu(menu) {
-            let _: () = msg_send![menu, removeAllItems];
-            let location: NSPoint = msg_send![event, locationInWindow];
-            let point: NSPoint = msg_send![this, convertPoint: location, fromView: std::ptr::null::<AnyObject>()];
-            let bounds: NSRect = msg_send![this, bounds];
-            let flipped: Bool = msg_send![this, isFlipped];
-            let zoom: f64 = msg_send![this, pageZoom];
-            let payload = css_point(point.x, point.y, bounds.size.height, flipped.as_bool(), zoom);
-            if let Some(app) = APP.get() {
-                if let Err(error) = app.emit_to("main", EVENT, payload) {
-                    log::warn!("frame context menu: {error}");
+        match plan_menu(&native_items(menu), is_main) {
+            MenuPlan::ReplaceWithMineMenu => {
+                let _: () = msg_send![menu, removeAllItems];
+                let location: NSPoint = msg_send![event, locationInWindow];
+                let point: NSPoint = msg_send![this, convertPoint: location, fromView: std::ptr::null::<AnyObject>()];
+                let bounds: NSRect = msg_send![this, bounds];
+                let flipped: Bool = msg_send![this, isFlipped];
+                let zoom: f64 = msg_send![this, pageZoom];
+                let payload = css_point(point.x, point.y, bounds.size.height, flipped.as_bool(), zoom);
+                if let Some(app) = APP.get() {
+                    if let Err(error) = app.emit_to("main", EVENT, payload) {
+                        log::warn!("native context menu: {error}");
+                    }
+                }
+            }
+            MenuPlan::Remove(indices) => {
+                for index in indices {
+                    let index = isize::try_from(index).unwrap_or(isize::MAX);
+                    let _: () = msg_send![menu, removeItemAtIndex: index];
                 }
             }
         }
@@ -122,17 +182,22 @@ mod imp {
         }
     }
 
-    unsafe fn frame_menu(menu: &AnyObject) -> bool {
+    unsafe fn native_items(menu: &AnyObject) -> Vec<NativeItem> {
         let count: isize = msg_send![menu, numberOfItems];
-        let identifiers: Vec<Option<String>> = (0..count)
-            .map(|index| {
+        (0..count)
+            .filter_map(|index| {
                 let item: *mut AnyObject = msg_send![menu, itemAtIndex: index];
                 let item = item.as_ref()?;
                 let identifier: Option<Retained<NSString>> = msg_send![item, identifier];
-                identifier.map(|identifier| identifier.to_string())
+                let tag: isize = msg_send![item, tag];
+                let separator: Bool = msg_send![item, isSeparatorItem];
+                Some(NativeItem {
+                    identifier: identifier.map(|identifier| identifier.to_string()),
+                    tag,
+                    separator: separator.as_bool(),
+                })
             })
-            .collect();
-        is_frame_menu(identifiers.iter().map(Option::as_deref))
+            .collect()
     }
 }
 
@@ -146,12 +211,65 @@ pub fn install(_app: &tauri::AppHandle<tauri::Wry>) {}
 mod tests {
     use super::*;
 
+    fn item(identifier: &str, tag: isize) -> NativeItem {
+        NativeItem { identifier: Some(identifier.to_owned()), tag, separator: false }
+    }
+
+    fn separator() -> NativeItem {
+        NativeItem { identifier: None, tag: 0, separator: true }
+    }
+
+    // Menus as WebKit built them in a WKWebView probe on 27.09.2026.
+    fn page_menu() -> Vec<NativeItem> {
+        vec![item("WKMenuItemIdentifierReload", 12), separator()]
+    }
+    fn loading_menu() -> Vec<NativeItem> {
+        vec![item("forwardContextMenuAction:", 11), separator()]
+    }
+    fn frame_menu() -> Vec<NativeItem> {
+        vec![item(FRAME_MENU_ITEM, 7), separator()]
+    }
+    fn selection_menu() -> Vec<NativeItem> {
+        vec![
+            item("WKMenuItemIdentifierLookUp", 22),
+            item("WKMenuItemIdentifierTranslate", 95),
+            separator(),
+            item("WKMenuItemIdentifierSearchWeb", 21),
+            separator(),
+            item("WKMenuItemIdentifierCopy", 8),
+        ]
+    }
+
     #[test]
-    fn only_a_menu_webkit_built_for_a_frame_is_taken_over() {
-        assert!(is_frame_menu([Some(FRAME_MENU_ITEM), None].into_iter()));
-        assert!(is_frame_menu([Some("WKMenuItemIdentifierCopyLink"), Some(FRAME_MENU_ITEM)].into_iter()));
-        assert!(!is_frame_menu([Some("WKMenuItemIdentifierReload"), None].into_iter()));
-        assert!(!is_frame_menu(std::iter::empty()));
+    fn reload_and_stop_never_reach_the_screen() {
+        assert_eq!(plan_menu(&page_menu(), true), MenuPlan::Remove(vec![1, 0]));
+        assert_eq!(plan_menu(&loading_menu(), false), MenuPlan::Remove(vec![1, 0]));
+    }
+
+    #[test]
+    fn back_and_forward_are_removed_and_text_commands_stay() {
+        let mut items = vec![item("WKMenuItemIdentifierGoBack", 9), item("WKMenuItemIdentifierGoForward", 10), separator()];
+        items.extend(selection_menu());
+        assert_eq!(plan_menu(&items, true), MenuPlan::Remove(vec![2, 1, 0]));
+        assert_eq!(plan_menu(&selection_menu(), true), MenuPlan::Remove(vec![]));
+    }
+
+    #[test]
+    fn only_the_main_window_turns_a_frame_menu_into_mine() {
+        assert_eq!(plan_menu(&frame_menu(), true), MenuPlan::ReplaceWithMineMenu);
+        assert_eq!(plan_menu(&frame_menu(), false), MenuPlan::Remove(vec![1]));
+    }
+
+    #[test]
+    fn separators_survive_only_between_commands() {
+        let items = vec![
+            item("WKMenuItemIdentifierCopy", 8),
+            separator(),
+            item("WKMenuItemIdentifierReload", 12),
+            separator(),
+            item("WKMenuItemIdentifierLookUp", 22),
+        ];
+        assert_eq!(plan_menu(&items, true), MenuPlan::Remove(vec![3, 2]));
     }
 
     #[test]

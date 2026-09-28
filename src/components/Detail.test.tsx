@@ -161,7 +161,7 @@ describe("Detail source video independent of card kind", () => {
     const { container } = renderVideoDetail();
     expect(await screen.findByText("This video can't play inside Mine.")).toBeInTheDocument();
     expect(container.querySelector("iframe")).toBeNull();
-    expect(screen.getByRole("link", { name: "Open on YouTube" })).toHaveAttribute("href", "https://www.youtube.com/watch?v=9KDDhAOyv9k");
+    expect(screen.getByRole("link", { name: "Open Original" })).toHaveAttribute("href", "https://www.youtube.com/watch?v=9KDDhAOyv9k");
     expect(screen.getByText("Preserved transcript.")).toBeInTheDocument();
     consoleError.mockRestore();
   });
@@ -170,7 +170,7 @@ describe("Detail source video independent of card kind", () => {
     const { container } = renderVideoDetail({ card_kind: "link", block_type: "link", body: "" });
     await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull());
     fireEvent.error(container.querySelector("iframe")!);
-    expect(screen.getByRole("link", { name: "Open on YouTube" })).toHaveAttribute("href", "https://www.youtube.com/watch?v=9KDDhAOyv9k");
+    expect(screen.getByRole("link", { name: "Open Original" })).toHaveAttribute("href", "https://www.youtube.com/watch?v=9KDDhAOyv9k");
     expect(container.querySelector("iframe")).not.toBeNull();
   });
 
@@ -214,8 +214,8 @@ describe("Detail source video independent of card kind", () => {
   it("opens the source video menu on a right click with only the actions a link supports", async () => {
     const { container } = renderVideoDetail();
     fireEvent.contextMenu(container.querySelector("[data-source-video-surface]")!);
-    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Open on YouTube" })).toBeInTheDocument());
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open on YouTube", "Copy Link", "Delete Media"]);
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Open Original" })).toBeInTheDocument());
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open Original", "Copy Link", "Delete Embed"]);
   });
 
   it("opens the source video menu as a context menu at the pointer", async () => {
@@ -254,12 +254,12 @@ describe("Detail source video independent of card kind", () => {
     };
     const { container } = render(<Detail {...props} />);
     fireEvent.contextMenu(container.querySelector("[data-source-video-surface]")!);
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete Media" }));
-    expect(await screen.findByText("Delete video from element?")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete Embed" }));
+    expect(await screen.findByText("Delete embed from element?")).toBeInTheDocument();
     expect(onDeleteSourceVideo).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Delete media" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete embed" }));
     await waitFor(() => expect(onDeleteSourceVideo).toHaveBeenCalledWith(props.block.slug));
-    await waitFor(() => expect(screen.queryByText("Delete video from element?")).toBeNull());
+    await waitFor(() => expect(screen.queryByText("Delete embed from element?")).toBeNull());
   });
 
   it("loads the next video's player when navigation changes video identity", async () => {

@@ -122,7 +122,7 @@ export function YoutubeSourcePlayer({ source, poster, title, onDelete }: {
         <ContextMenuContent data-source-video-menu>
           <ContextMenuItem onSelect={() => openSource(source.sourceUrl)}>
             <MenuIconSlot />
-            Open on YouTube
+            Open Original
           </ContextMenuItem>
           <ContextMenuItem onSelect={() => copyTextToClipboard(source.sourceUrl)}>
             <MenuIconSlot />
@@ -133,7 +133,7 @@ export function YoutubeSourcePlayer({ source, poster, title, onDelete }: {
             <MenuIconSlot>
               <Trash2 className="size-3" />
             </MenuIconSlot>
-            Delete Media
+            Delete Embed
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
@@ -144,7 +144,7 @@ export function YoutubeSourcePlayer({ source, poster, title, onDelete }: {
           event.preventDefault();
           openSource(source.sourceUrl);
         }}
-      >Open on YouTube</a>
+      >Open Original</a>
       <DeleteSourceVideoDialog open={deleteOpen} onOpenChange={setDeleteOpen} onDelete={onDelete} />
     </div>
   );
@@ -169,9 +169,9 @@ function DeleteSourceVideoDialog({ open, onOpenChange, onDelete }: {
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent data-delete-source-video-dialog="">
         <AlertDialogHeader>
-          <AlertDialogTitle>Delete video from element?</AlertDialogTitle>
+          <AlertDialogTitle>Delete embed from element?</AlertDialogTitle>
           <AlertDialogDescription>
-            This removes the YouTube link and the poster from this element. The poster file is deleted unless another element uses it. Text and collections stay.
+            This removes the embedded video and its poster from this element. The poster file is deleted unless another element uses it. Text and collections stay.
           </AlertDialogDescription>
         </AlertDialogHeader>
         {error && <p className="text-sm text-destructive">{error}</p>}
@@ -196,7 +196,7 @@ function DeleteSourceVideoDialog({ open, onOpenChange, onDelete }: {
               })();
             }}
           >
-            {submitting ? "Deleting..." : "Delete media"}
+            {submitting ? "Deleting..." : "Delete embed"}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
