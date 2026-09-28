@@ -58,6 +58,23 @@ describe("masonryLayout", () => {
     }
   });
 
+  it("gives leftover pixels to the columns, so edges and gaps are exactly the token", () => {
+    for (const width of [902, 1000, 1279, 1343, 1512]) {
+      const layout = computeMasonryLayout(new Array(12).fill(100), width, MIN_COL, GAP);
+      const firstRow = layout.positions.slice(0, layout.columnCount).sort((a, b) => a.left - b.left);
+      expect(firstRow[0]!.left).toBe(0);
+      const last = firstRow[firstRow.length - 1]!;
+      expect(last.left + last.width).toBe(width);
+      for (let i = 1; i < firstRow.length; i += 1) {
+        expect(firstRow[i]!.left - (firstRow[i - 1]!.left + firstRow[i - 1]!.width)).toBe(GAP);
+      }
+      for (const position of firstRow) {
+        expect(position.width - layout.columnWidth).toBeGreaterThanOrEqual(0);
+        expect(position.width - layout.columnWidth).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
   it("returns only items inside the viewport plus overscan", () => {
     const layout = computeMasonryLayout([100, 100, 100, 100, 100], 600, MIN_COL, GAP);
     const visible = getVisibleMasonryItems(layout.positions, 90, 120, 20, 20);

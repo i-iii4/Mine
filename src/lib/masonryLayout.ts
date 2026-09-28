@@ -54,10 +54,17 @@ export function computeMasonryLayout(
   const safeGap = clampPositive(gap);
   const columnWidth = getMasonryColumnWidth(containerWidth, minColumnWidth, gap);
   // Column widths are floored, so up to columnCount-1 leftover pixels exist.
-  // Split them between both sides: piling the remainder on the right reads as
-  // an uneven inset once the gap is small enough to compare against it.
+  // They go to the columns, one pixel each from the left, never to the edges:
+  // the space around every card, the outer edges included, is exactly the
+  // spacing token. Placing the remainder at the edges made the outer insets
+  // wider than the gaps, and the right one wider still (28.09.2026).
   const usedWidth = columnCount * columnWidth + safeGap * (columnCount - 1);
-  const leftOffset = Math.max(0, Math.floor((clampPositive(containerWidth) - usedWidth) / 2));
+  const widenedColumns = Math.min(
+    columnCount - 1,
+    Math.max(0, Math.floor(clampPositive(containerWidth) - usedWidth)),
+  );
+  const columnLeft = (column: number) => column * (columnWidth + safeGap) + Math.min(column, widenedColumns);
+  const widthOf = (column: number) => columnWidth + (column < widenedColumns ? 1 : 0);
 
   const columnHeights = new Array<number>(columnCount).fill(0);
   const positions: MasonryPosition[] = [];
@@ -73,14 +80,14 @@ export function computeMasonryLayout(
     }
 
     const top = columnHeights[targetColumn]!;
-    const left = leftOffset + targetColumn * (columnWidth + safeGap);
+    const left = columnLeft(targetColumn);
     const bottom = top + height;
 
     positions.push({
       index,
       top,
       left,
-      width: columnWidth,
+      width: widthOf(targetColumn),
       height,
       bottom,
       column: targetColumn,
