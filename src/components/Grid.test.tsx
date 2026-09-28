@@ -1288,6 +1288,47 @@ describe("Grid — no collapse after add / revisit", () => {
     resetCollectionHover();
   });
 
+  it("marks the focused card's collections under the arrow keys, not the card under the hidden pointer", async () => {
+    vi.useFakeTimers();
+    resetCollectionHover();
+    setCollectionMemberships([
+      { block_id: 9451, tag: "alpha" },
+      { block_id: 9452, tag: "beta" },
+    ]);
+    const blocks = [makeBlock(9451), makeBlock(9452)];
+    setBlockHeight(9451, 200);
+    setBlockHeight(9452, 220);
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} />);
+    await flushAsync();
+
+    // The pointer rests on the second card.
+    fireEvent.pointerEnter(gridItemForSlug("block-9452")!);
+    expect(isRowConnectedToHoveredCard("tag:beta")).toBe(true);
+
+    // Arrow keys focus the first card: the sidebar follows the focus.
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    await flushAsync();
+    expect(gridItemForSlug("block-9451")).toHaveAttribute("data-feed-grid-item-focused", "true");
+    expect(isRowConnectedToHoveredCard("tag:alpha")).toBe(true);
+    expect(isRowConnectedToHoveredCard("tag:beta")).toBe(false);
+
+    // Scrolling slides cards under the still pointer; WebKit reports them
+    // entered and left. None of that reaches the sidebar.
+    fireEvent.pointerLeave(gridItemForSlug("block-9452")!);
+    fireEvent.pointerEnter(gridItemForSlug("block-9452")!);
+    act(() => { vi.advanceTimersByTime(HOVER_LEAVE_GRACE_MS); });
+    expect(isRowConnectedToHoveredCard("tag:alpha")).toBe(true);
+    expect(isRowConnectedToHoveredCard("tag:beta")).toBe(false);
+
+    // A real pointer move hands the sidebar back to the card under the pointer.
+    fireEvent.pointerMove(gridItemForSlug("block-9452")!, { clientX: 40, clientY: 40, movementX: 6, movementY: 3 });
+    await flushAsync();
+    expect(isRowConnectedToHoveredCard("tag:beta")).toBe(true);
+    expect(isRowConnectedToHoveredCard("tag:alpha")).toBe(false);
+    resetCollectionHover();
+  });
+
   it("toggles group selection with Command-click without opening Detail", async () => {
     vi.useFakeTimers();
 

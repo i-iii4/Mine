@@ -238,6 +238,8 @@ interface GridContext {
   selectionBatchMenuRequest: { slug: string; sequence: number } | null;
   hoverEnabled: boolean;
   onGridItemPointerMove: (slug: string, event: ReactPointerEvent<HTMLDivElement>) => void;
+  onGridItemPointerEnter: (blockId: number) => void;
+  onGridItemPointerLeave: (blockId: number) => void;
   onKeyboardActionMenuOpenChange: (slug: string, open: boolean) => void;
   onCardMenuOpenChange?: (slug: string, open: boolean) => void;
   onClearSelection: () => void;
@@ -491,6 +493,11 @@ export function Grid({
   const lastRestoreFocusSequenceRef = useRef(0);
   const lastPointerPositionRef = useRef<FeedPointerPosition | null>(null);
   const blockedPointerPositionRef = useRef<FeedPointerPosition | null>(null);
+  // The card under the pointer, known in every interaction mode. The sidebar
+  // hears about it only while the pointer drives the feed; under the arrow
+  // keys it hears about the focused card instead (SPEC_CARD_STATES.md, С4).
+  const pointerCardIdRef = useRef<number | null>(null);
+  const pointerDrivesCardHoverRef = useRef(true);
   const latestScrollTopRef = useRef(0);
   const scrollSignalSampleRef = useRef<FeedScrollSignalSample | null>(null);
   const scrollAnchorSnapshotRef = useRef<ScrollAnchorSnapshot | null>(null);
@@ -1357,6 +1364,16 @@ export function Grid({
     setFocusedSlug(slug);
   }, [feedInteractionMode]);
 
+  const handleGridItemPointerEnter = useCallback((blockId: number) => {
+    pointerCardIdRef.current = blockId;
+    if (pointerDrivesCardHoverRef.current) setHoveredCard(blockId);
+  }, []);
+
+  const handleGridItemPointerLeave = useCallback((blockId: number) => {
+    if (pointerCardIdRef.current === blockId) pointerCardIdRef.current = null;
+    if (pointerDrivesCardHoverRef.current) releaseHoveredCard(blockId);
+  }, []);
+
   const handleKeyboardActionMenuOpenChange = useCallback((slug: string, open: boolean) => {
     setPinnedActionMenuSlug((current) => {
       if (open) return slug;
@@ -2001,6 +2018,20 @@ export function Grid({
   );
 
   const keyboardFocusedSlug = feedInteractionMode === "keyboard" ? focusedSlug : null;
+  const keyboardFocusedBlockId =
+    keyboardFocusedSlug === null ? null : blocksBySlug.get(keyboardFocusedSlug)?.id ?? null;
+
+  // Under the arrow keys the hidden pointer must not pick the sidebar's
+  // Connected pills: scrolling to the focus slides other cards under it, and
+  // WebKit reports them entered. The focused card answers instead; back in
+  // pointer mode the card actually under the pointer does (SPEC_CARD_STATES.md, С4).
+  useEffect(() => {
+    const keyboard = feedInteractionMode === "keyboard";
+    pointerDrivesCardHoverRef.current = !keyboard;
+    setHoveredCard(keyboard ? keyboardFocusedBlockId : pointerCardIdRef.current);
+  }, [feedInteractionMode, keyboardFocusedBlockId]);
+
+  useEffect(() => () => setHoveredCard(null), []);
   const visualFocusActive = keyboardFocusedSlug !== null || pinnedActionMenuSlug !== null;
 
   const gridContext: GridContext = useMemo(
@@ -2016,6 +2047,8 @@ export function Grid({
       selectionBatchMenuRequest,
       hoverEnabled: feedInteractionMode !== "keyboard" && selectedSlugs.size === 0,
       onGridItemPointerMove: handleGridItemPointerMove,
+      onGridItemPointerEnter: handleGridItemPointerEnter,
+      onGridItemPointerLeave: handleGridItemPointerLeave,
       onKeyboardActionMenuOpenChange: handleKeyboardActionMenuOpenChange,
       onCardMenuOpenChange,
       onClearSelection: clearSelection,
@@ -2045,6 +2078,8 @@ export function Grid({
       selectionBatchMenuRequest,
       feedInteractionMode,
       handleGridItemPointerMove,
+      handleGridItemPointerEnter,
+      handleGridItemPointerLeave,
       handleKeyboardActionMenuOpenChange,
       onCardMenuOpenChange,
       clearSelection,
@@ -2304,9 +2339,11 @@ const GridItem = memo(function GridItem({
   // deps are all stable during a pure scroll, so scrolling never re-renders Card.
   // A hovered sidebar row lights the cards of its collection (SPEC_CARD_STATES.md, С3).
   const litByCollection = useCardLitByCollection(block.id);
-  // The card under the pointer tells the sidebar which collections to mark (С4).
-  // A card that unmounts under the pointer gets no pointerleave.
-  useEffect(() => () => releaseHoveredCard(block.id), [block.id]);
+  // The card under the pointer tells the grid, which decides whether the
+  // sidebar marks its collections (С4). A card that unmounts under the pointer
+  // gets no pointerleave.
+  const onPointerLeaveCard = context.onGridItemPointerLeave;
+  useEffect(() => () => onPointerLeaveCard(block.id), [block.id, onPointerLeaveCard]);
 
   const dragBlocks = useMemo(
     () =>
@@ -2364,9 +2401,9 @@ const GridItem = memo(function GridItem({
       data-feed-grid-item-collection-lit={isCommitted && litByCollection ? "true" : undefined}
       data-feed-grid-item-slug={block.slug}
       onPointerEnter={() => {
-        if (isCommitted) setHoveredCard(block.id);
+        if (isCommitted) context.onGridItemPointerEnter(block.id);
       }}
-      onPointerLeave={() => releaseHoveredCard(block.id)}
+      onPointerLeave={() => context.onGridItemPointerLeave(block.id)}
       onPointerMove={(event) => {
         if (isCommitted) {
           context.onGridItemPointerMove(block.slug, event);
