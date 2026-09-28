@@ -5,8 +5,9 @@
 //! `video-mux-helper` joins them without re-encoding (Mine ships no ffmpeg).
 //! When YouTube offers no separate pair, one progressive MP4 with sound is
 //! taken instead. The finished file is published into the space by one atomic
-//! mutation (`commands::blocks::attach_downloaded_source_video`), and becomes
-//! the card's main video. Progress, cancellation and failure are reported as
+//! mutation (`commands::blocks::attach_downloaded_source_video`) and embedded
+//! under the card's heading, as a saved post's video is. Progress,
+//! cancellation and failure are reported as
 //! `source-video-download` events. See SPEC_MEDIA_ASSET_ACTIONS.md
 //! «Download Media».
 

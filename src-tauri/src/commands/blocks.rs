@@ -961,8 +961,8 @@ pub fn delete_source_video(
     Ok(result)
 }
 
-/// Publish a downloaded source video into the vault and make it the card's
-/// main video. Called by the download job once the file is complete; the
+/// Publish a downloaded source video into the vault and embed it under the
+/// card's heading. Called by the download job once the file is complete; the
 /// card is re-read here, so edits made during the download are kept. See
 /// SPEC_MEDIA_ASSET_ACTIONS.md «Download Media».
 pub(crate) fn attach_downloaded_source_video(
