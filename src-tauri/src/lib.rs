@@ -24,6 +24,8 @@ pub mod runtime_installation;
 pub mod runtime_protocol;
 pub mod storage;
 #[cfg(feature = "desktop")]
+mod source_video_download;
+#[cfg(feature = "desktop")]
 mod swipe_gesture;
 #[cfg(feature = "desktop")]
 pub mod update_activation;
@@ -71,6 +73,7 @@ pub fn run() {
         .manage(updater::UpdateService::default())
         .manage(commands::app_open::PendingSpace::default())
         .manage(youtube_embed::YoutubeEmbedServer::default())
+        .manage(source_video_download::SourceVideoDownloads::default())
         // Article audio commands are registered only with the `article-audio`
         // feature; `generate_handler!` takes a flat list, so the gate lives on
         // this attribute rather than on individual entries.
@@ -170,6 +173,9 @@ pub fn run() {
             commands::window_chrome::set_sidebar_menu_collapsed,
             commands::native_shell_smoke::report_native_shell_smoke,
             commands::youtube_player::youtube_player_url,
+            commands::source_video_download::start_source_video_download,
+            commands::source_video_download::cancel_source_video_download,
+            commands::source_video_download::source_video_download_status,
         ])
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())

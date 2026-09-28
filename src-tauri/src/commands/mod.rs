@@ -22,6 +22,7 @@ mod preview_reconcile;
 pub mod search;
 pub mod settings;
 pub mod shortcuts;
+pub mod source_video_download;
 pub mod startup;
 pub mod state;
 pub mod tags;

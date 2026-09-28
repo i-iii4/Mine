@@ -126,6 +126,7 @@ local-arena/
 │   │   ├── util.rs             # Общие утилиты приложения и native host
 │   │   ├── youtube_embed.rs    # Локальная страница-обёртка проигрывателя YouTube (Referer, ошибка 153)
 │   │   ├── frame_context_menu.rs # Правый клик по встроенному кадру: меню Mine вместо меню WebKit
+│   │   ├── source_video_download.rs # Download Media: yt-dlp, склейка, прогресс, отмена
 │   │   ├── domain/             # Чистая бизнес-логика (без Tauri, без SQLite)
 │   │   │   ├── mod.rs
 │   │   │   ├── block.rs        # Block, BlockType, frontmatter parsing
@@ -197,6 +198,7 @@ local-arena/
 │   │       └── import.rs       # list_arena_channels, import_arena_channels
 │   ├── native/                 # Нативные помощники, собираются build.rs
 │   │   ├── icloud_progress_helper.swift # Честные сигналы iCloud: dataless-флаг + Progress
+│   │   ├── video_mux_helper.swift # Склейка видео и звука YouTube без перекодирования (AVFoundation)
 │   │   └── article_audio_helper.swift   # AVSpeechSynthesizer (feature article-audio)
 │   ├── build.rs                # Сборка Swift-помощников, ресурсы бандла
 │   ├── Cargo.toml

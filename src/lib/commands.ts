@@ -516,6 +516,28 @@ export const icloudDownloadProgress = (mediaRef: string) =>
 export const youtubePlayerUrl = (sourceUrl: string) =>
   invoke<string>("youtube_player_url", { sourceUrl });
 
+/** State of a card's Download Media job, as the shell reports it.
+ *  See SPEC_MEDIA_ASSET_ACTIONS.md «Download Media». */
+export type SourceVideoDownloadState =
+  | { state: "downloading"; percent: number }
+  | { state: "finishing" }
+  | { state: "done" }
+  | { state: "failed"; message: string }
+  | { state: "cancelled" };
+
+/** Download the card's source video into the space; progress arrives as
+ *  `source-video-download` events. */
+export const startSourceVideoDownload = (slug: string, sourceUrl: string) =>
+  invoke<null>("start_source_video_download", { slug, sourceUrl });
+
+/** Stop a running download; partial files are removed. */
+export const cancelSourceVideoDownload = (slug: string) =>
+  invoke<null>("cancel_source_video_download", { slug });
+
+/** The last known download state of a card in this session, if any. */
+export const sourceVideoDownloadStatus = (slug: string) =>
+  invoke<SourceVideoDownloadState | null>("source_video_download_status", { slug });
+
 /** The saved space that could not be opened, if any.
  *  `null` means either no space was ever chosen or the saved one is reachable —
  *  a missing folder must never look like a fresh install.

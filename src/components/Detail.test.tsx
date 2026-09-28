@@ -9,7 +9,7 @@ import {
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { COLLECTION_PICKER_CONTENT_CLASS } from "./CollectionPicker";
-import { copyMediaAssetToClipboard, getBlock, icloudDownloadProgress, prepareDeleteMediaAsset, resolveNoteLink, youtubePlayerUrl } from "@/lib/commands";
+import { cancelSourceVideoDownload, copyMediaAssetToClipboard, getBlock, icloudDownloadProgress, prepareDeleteMediaAsset, resolveNoteLink, sourceVideoDownloadStatus, startSourceVideoDownload, youtubePlayerUrl } from "@/lib/commands";
 import {
   HOVER_PREVIEW_COLD_OPEN_DELAY_MS,
   HOVER_PREVIEW_WARM_WINDOW_MS,
@@ -59,6 +59,9 @@ vi.mock("@/lib/commands", () => ({
   resolveNoteLink: vi.fn(),
   icloudDownloadProgress: vi.fn(),
   youtubePlayerUrl: vi.fn(),
+  startSourceVideoDownload: vi.fn(async () => null),
+  cancelSourceVideoDownload: vi.fn(async () => null),
+  sourceVideoDownloadStatus: vi.fn(async () => null),
 }));
 
 function cardKindForBlockType(blockType: IndexedBlock["block_type"]): IndexedBlock["card_kind"] {
@@ -215,7 +218,7 @@ describe("Detail source video independent of card kind", () => {
     const { container } = renderVideoDetail();
     fireEvent.contextMenu(container.querySelector("[data-source-video-surface]")!);
     await waitFor(() => expect(screen.getByRole("menuitem", { name: "Open Original" })).toBeInTheDocument());
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open Original", "Copy Link", "Delete Embed"]);
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open Original", "Copy Link", "Download Media", "Delete Embed"]);
   });
 
   it("opens the source video menu as a context menu at the pointer", async () => {
@@ -260,6 +263,82 @@ describe("Detail source video independent of card kind", () => {
     fireEvent.click(screen.getByRole("button", { name: "Delete embed" }));
     await waitFor(() => expect(onDeleteSourceVideo).toHaveBeenCalledWith(props.block.slug));
     await waitFor(() => expect(screen.queryByText("Delete embed from element?")).toBeNull());
+  });
+
+  describe("Download Media", () => {
+    const sendDownload = (payload: Record<string, unknown>) => act(() => {
+      window.dispatchEvent(new CustomEvent("source-video-download", { detail: { payload } }));
+    });
+
+    function renderWithDownloadHandler() {
+      const onSourceVideoDownloaded = vi.fn(async () => {});
+      const props = {
+        block: block({ url: "https://www.youtube.com/watch?v=9KDDhAOyv9k", body: "# Film\n\nPreserved transcript.", thumbnail: "Media/film.jpg" }),
+        vaultPath: "/tmp/test-vault", thumbsRootPath: "/tmp/thumbs", tags: [],
+        onClose: vi.fn(), onNavigate: vi.fn(), onToggleTag: vi.fn(),
+        onCreateAndAssign: vi.fn(), onTagsChanged: vi.fn(), onRequestRename: vi.fn(),
+        onRequestDelete: vi.fn(), onOpenRelatedNote: vi.fn(), onSourceVideoDownloaded,
+      };
+      return { ...render(<Detail {...props} />), props, onSourceVideoDownloaded };
+    }
+
+    beforeEach(() => {
+      vi.mocked(startSourceVideoDownload).mockClear();
+      vi.mocked(cancelSourceVideoDownload).mockClear();
+      vi.mocked(sourceVideoDownloadStatus).mockReset();
+      vi.mocked(sourceVideoDownloadStatus).mockResolvedValue(null);
+    });
+
+    it("starts from the menu and shows progress under the player, not over it", async () => {
+      const { container, props } = renderWithDownloadHandler();
+      await act(async () => {});
+      fireEvent.contextMenu(container.querySelector("[data-source-video-surface]")!);
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Download Media" }));
+      expect(startSourceVideoDownload).toHaveBeenCalledWith(props.block.slug, "https://www.youtube.com/watch?v=9KDDhAOyv9k");
+      expect(await screen.findByText("Downloading 0%")).toBeInTheDocument();
+      expect(container.querySelector("[data-source-video-surface] [data-source-video-download]")).toBeNull();
+      sendDownload({ slug: props.block.slug, state: "downloading", percent: 42 });
+      expect(screen.getByText("Downloading 42%")).toBeInTheDocument();
+      sendDownload({ slug: "another card", state: "downloading", percent: 90 });
+      expect(screen.getByText("Downloading 42%")).toBeInTheDocument();
+      sendDownload({ slug: props.block.slug, state: "finishing" });
+      expect(screen.getByText("Joining video and sound…")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    });
+
+    it("reloads the card once the file is in the space", async () => {
+      const { props, onSourceVideoDownloaded } = renderWithDownloadHandler();
+      await act(async () => {});
+      sendDownload({ slug: props.block.slug, state: "done" });
+      await waitFor(() => expect(onSourceVideoDownloaded).toHaveBeenCalledTimes(1));
+      expect(screen.queryByText(/Downloading/)).toBeNull();
+    });
+
+    it("cancels a running download and says why one failed", async () => {
+      const { props } = renderWithDownloadHandler();
+      await act(async () => {});
+      sendDownload({ slug: props.block.slug, state: "downloading", percent: 10 });
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(cancelSourceVideoDownload).toHaveBeenCalledWith(props.block.slug);
+      sendDownload({ slug: props.block.slug, state: "cancelled" });
+      expect(screen.queryByText(/Downloading/)).toBeNull();
+      sendDownload({ slug: props.block.slug, state: "failed", message: "YouTube refused the download (HTTP 403)." });
+      expect(screen.getByText("Download failed: YouTube refused the download (HTTP 403).")).toBeInTheDocument();
+    });
+
+    it("shows a download that is still running when the card is opened again", async () => {
+      vi.mocked(sourceVideoDownloadStatus).mockResolvedValue({ state: "downloading", percent: 64 });
+      renderWithDownloadHandler();
+      expect(await screen.findByText("Downloading 64%")).toBeInTheDocument();
+    });
+
+    it("does not start a second download while one runs", async () => {
+      const { container, props } = renderWithDownloadHandler();
+      await act(async () => {});
+      sendDownload({ slug: props.block.slug, state: "downloading", percent: 5 });
+      fireEvent.contextMenu(container.querySelector("[data-source-video-surface]")!);
+      expect(await screen.findByRole("menuitem", { name: "Download Media" })).toHaveAttribute("data-disabled");
+    });
   });
 
   it("loads the next video's player when navigation changes video identity", async () => {

@@ -195,6 +195,7 @@ interface DetailProps {
   onRemoveMediaAssetFromCard?: (asset: MediaAssetRef) => Promise<void>;
   onDeleteMediaAsset?: (asset: MediaAssetRef) => Promise<void>;
   onDeleteSourceVideo?: (slug: string) => Promise<void>;
+  onSourceVideoDownloaded?: () => Promise<void>;
   onOpenImagePreview?: (preview: ImagePreviewRequest) => void;
   onOpenRelatedNote: (slug: string) => void;
   onTextSelectionDrop?: (payload: MineTextSelectionDragPayload, tag: string) => void;
@@ -232,6 +233,7 @@ const noopMediaAssetConnect = async (_asset: MediaAssetRef, _tag: string) => {};
 const noopMediaAssetRename = async (_asset: MediaAssetRef, _newStem: string) => {};
 const noopMediaAssetDelete = async (_asset: MediaAssetRef) => {};
 const noopSourceVideoDelete = async (_slug: string) => {};
+const noopSourceVideoDownloaded = async () => {};
 const noopTextSelectionCreate = async (_payload: MineTextSelectionDragPayload, _tag: string) => {};
 const noopOpenImagePreview = (_preview: ImagePreviewRequest) => {};
 
@@ -315,6 +317,7 @@ export function Detail({
   onRemoveMediaAssetFromCard = noopMediaAssetDelete,
   onDeleteMediaAsset = noopMediaAssetDelete,
   onDeleteSourceVideo = noopSourceVideoDelete,
+  onSourceVideoDownloaded = noopSourceVideoDownloaded,
   onOpenImagePreview = noopOpenImagePreview,
   onOpenRelatedNote,
   onTextSelectionDrop,
@@ -530,6 +533,7 @@ export function Detail({
                 onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
                 onDeleteMediaAsset={onDeleteMediaAsset}
                 onDeleteSourceVideo={onDeleteSourceVideo}
+                onSourceVideoDownloaded={onSourceVideoDownloaded}
                 onOpenImagePreview={onOpenImagePreview}
                 onOpenRelatedNote={onOpenRelatedNote}
                 onTextSelectionDrop={onTextSelectionDrop}
@@ -1189,6 +1193,7 @@ function BlockContent({
   onRemoveMediaAssetFromCard,
   onDeleteMediaAsset,
   onDeleteSourceVideo,
+  onSourceVideoDownloaded,
   onOpenImagePreview,
   onOpenRelatedNote,
   onTextSelectionDrop,
@@ -1208,6 +1213,7 @@ function BlockContent({
   onRemoveMediaAssetFromCard: (asset: MediaAssetRef) => Promise<void>;
   onDeleteMediaAsset: (asset: MediaAssetRef) => Promise<void>;
   onDeleteSourceVideo: (slug: string) => Promise<void>;
+  onSourceVideoDownloaded: () => Promise<void>;
   onOpenImagePreview: (preview: ImagePreviewRequest) => void;
   onOpenRelatedNote: (slug: string) => void;
   onTextSelectionDrop?: (payload: MineTextSelectionDragPayload, tag: string) => void;
@@ -1270,7 +1276,9 @@ function BlockContent({
         ? resolveDetailMediaReference(vaultPath, block.thumbnail)
         : null}
       title={displayTitle ?? navigationLabel}
+      slug={block.slug}
       onDelete={() => onDeleteSourceVideo(block.slug)}
+      onDownloaded={onSourceVideoDownloaded}
     />
   ) : null;
 
