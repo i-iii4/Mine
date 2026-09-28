@@ -22,6 +22,12 @@ import {
 import { TOP_FADE_HEIGHT } from "@/lib/edgeFade";
 import { computeMasonryLayout } from "@/lib/masonryLayout";
 import { computeCardHeight } from "@/lib/cardHeight";
+import {
+  isRowConnectedToHoveredCard,
+  resetCollectionHover,
+  setCollectionMemberships,
+  setHoveredCollectionRow,
+} from "@/lib/collectionHover";
 import type { LightBlock } from "@/types";
 
 // These constants must match the ones in Grid.tsx. If Grid.tsx changes
@@ -1252,6 +1258,32 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(document.querySelector("[data-feed-grid-item-focused]")).toBeNull();
   });
 
+  it("lights the cards of a hovered collection and reports the card under the pointer", async () => {
+    vi.useFakeTimers();
+    resetCollectionHover();
+    setCollectionMemberships([{ block_id: 9401, tag: "alpha" }]);
+    const blocks = [makeBlock(9401), makeBlock(9402)];
+    setBlockHeight(9401, 200);
+    setBlockHeight(9402, 220);
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} />);
+    await flushAsync();
+
+    act(() => setHoveredCollectionRow("tag:alpha"));
+    expect(gridItemForSlug("block-9401")).toHaveAttribute("data-feed-grid-item-collection-lit", "true");
+    expect(gridItemForSlug("block-9402")).not.toHaveAttribute("data-feed-grid-item-collection-lit");
+    act(() => setHoveredCollectionRow("all"));
+    expect(gridItemForSlug("block-9402")).toHaveAttribute("data-feed-grid-item-collection-lit", "true");
+    act(() => setHoveredCollectionRow(null));
+    expect(gridItemForSlug("block-9401")).not.toHaveAttribute("data-feed-grid-item-collection-lit");
+
+    fireEvent.pointerEnter(gridItemForSlug("block-9401")!);
+    expect(isRowConnectedToHoveredCard("tag:alpha")).toBe(true);
+    fireEvent.pointerLeave(gridItemForSlug("block-9401")!);
+    expect(isRowConnectedToHoveredCard("tag:alpha")).toBe(false);
+    resetCollectionHover();
+  });
+
   it("toggles group selection with Command-click without opening Detail", async () => {
     vi.useFakeTimers();
 
@@ -1285,9 +1317,10 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(selectedWrapper?.querySelector("[data-feed-grid-card-clip]")).toHaveClass(
       "overflow-hidden",
     );
+    // Selection is the card's own border, brighter; nothing is drawn outside it.
     expect(
       selectedWrapper?.querySelector("[data-feed-grid-selection-frame]"),
-    ).toBeTruthy();
+    ).toBeNull();
     expect(
       selectedWrapper?.querySelector("[data-card-hover-more-action]"),
     ).not.toHaveClass("group-hover:opacity-100");

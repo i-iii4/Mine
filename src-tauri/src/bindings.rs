@@ -17,7 +17,7 @@ use crate::commands::blocks::{
 use crate::commands::clipboard::ClipboardPayload;
 use crate::commands::shortcuts::ShortcutBinding;
 use crate::commands::channels::{
-    ChannelDto, ChannelPreviewsSnapshot, PreviewItem, TaxonomySnapshot,
+    BlockCollection, ChannelDto, ChannelPreviewsSnapshot, PreviewItem, TaxonomySnapshot,
 };
 use crate::commands::import::{ArenaChannelInfo, ImportChannelRequest};
 use crate::commands::native_shell_smoke::NativeShellSmokeReport;
@@ -91,6 +91,7 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<GraphSnapshot>()
         .register::<ChannelDto>()
         .register::<TaxonomySnapshot>()
+        .register::<BlockCollection>()
         .register::<PreviewItem>()
         .register::<ChannelPreviewsSnapshot>()
         .register::<RenameBlockResult>()

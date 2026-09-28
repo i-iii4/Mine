@@ -7,6 +7,11 @@ export type ArticleAudioState = { status: ArticleAudioStatus; audio_path: string
 export type ArticleAudioStatus = "absent" | "ready"
 
 /**
+ * One card in one collection.
+ */
+export type BlockCollection = { block_id: number; tag: string }
+
+/**
  * The type of content a block represents.
  */
 export type BlockType = "image" | "article" | "link" | "video" | "file" | "channel"
@@ -425,7 +430,12 @@ element_count: number | null }
  */
 export type TagCount = { tag: string; count: number }
 
-export type TaxonomySnapshot = { generation: ProjectionRevision; tags: TagCount[]; channels: ChannelDto[]; total_blocks: number }
+export type TaxonomySnapshot = { generation: ProjectionRevision; tags: TagCount[]; channels: ChannelDto[]; total_blocks: number;
+/**
+ * Which collections each card is in, from the same projection revision
+ * as `tags`. See SPEC_CARD_STATES.md, С3 and С4.
+ */
+memberships: BlockCollection[] }
 
 export type TextSelectionExtractError = { kind: "no_vault" } | { kind: "source_not_found"; source_slug: string } | { kind: "source_not_article"; source_slug: string; block_type: string } | { kind: "empty_selection" } | { kind: "stale_selection" } | { kind: "unsupported_selection_shape"; reason: string } | { kind: "unsafe_source_patch"; reason: string } | { kind: "invalid_collection_ref"; reason: string } | { kind: "internal"; message: string }
 

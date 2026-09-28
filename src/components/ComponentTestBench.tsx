@@ -157,7 +157,7 @@ const COLOR_TOKEN_GROUPS: readonly TokenGroup[] = [
       { token: "--glass-bg", use: "Backdrop-стекло" },
       { token: "--card-hover-overlay", use: "Оверлей hover карточки" },
       { token: "--graphic-card-focus-overlay", use: "Фокус-затемнение медиа" },
-      { token: "--feed-selection-frame", use: "Рамка выделения ленты" },
+      { token: "--feed-selection-frame", use: "Граница выделенной карточки" },
     ],
   },
 ];
@@ -953,13 +953,13 @@ function CardPatternSection() {
     >
       <ComponentSpec
         title="Карточка ленты — фокус и выделение"
-        summary="Карточки контента: radius 0, медиа в фокусе. Клавиатурный фокус — затемнение поверх медиа, batch-выделение — рамка снаружи."
+        summary="Одна система состояний (SPEC_CARD_STATES.md): наведение, клавиатурный фокус и подсветка от коллекции красят границу карточки в --border-accent и затеняют картинку; выделение красит ту же границу ярче и тоже затеняет."
         specs={[
           { prop: "Карточка", value: "border --border · bg --card · rounded-0" },
           { prop: "Медиа", value: "rounded-0 (--radius-media) · object-cover" },
-          { prop: "Keyboard-фокус", value: "оверлей --graphic-card-focus-overlay" },
-          { prop: "Выделение", value: "рамка 2px снаружи · inset -3px" },
-          { prop: "Цвет рамки", value: "--feed-selection-frame" },
+          { prop: "Наведение и фокус", value: "граница --border-accent · затенение --graphic-card-focus-overlay" },
+          { prop: "Выделение", value: "граница --feed-selection-frame · затенение" },
+          { prop: "Затенение", value: "только у картинок" },
           { prop: "Отступ", value: "p-3 (12)" },
         ]}
       >
@@ -1259,18 +1259,22 @@ function FeedCardPreview({ state }: { state: "default" | "keyboard" | "selected"
   const label = state === "default"
     ? "default"
     : state === "keyboard"
-      ? "keyboard focus"
-      : "batch selected";
+      ? "hover · keyboard focus"
+      : "selected";
 
   return (
     <div className="relative">
-      {state === "selected" && (
-        <div className="absolute -inset-[3px] border-2 border-[var(--feed-selection-frame)]" />
-      )}
-      <div className="relative border border-border bg-card">
+      <div
+        className={cn(
+          "relative border bg-card",
+          state === "default" && "border-border",
+          state === "keyboard" && "border-[var(--border-accent)]",
+          state === "selected" && "border-[var(--feed-selection-frame)]",
+        )}
+      >
         <div className="relative overflow-hidden bg-accent">
           <img src={ARTICLE_IMAGE_DATA_URL} alt="" className="block aspect-[4/3] w-full object-cover" />
-          {state === "keyboard" && (
+          {state !== "default" && (
             <div className="absolute inset-0 bg-[var(--graphic-card-focus-overlay)]" />
           )}
         </div>

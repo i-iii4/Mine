@@ -1,30 +1,45 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-/// The selection ring is one measurement used twice: its own thickness, and
-/// how far the selected card grows outward to make room for it. Drawing it as
-/// a thick square frame floating off the card's edge read as a different
-/// object sitting on top of the card; the ring now sits on the edge and turns
-/// the card's own corners.
-describe("selection ring", () => {
+/// Card states share one look (SPEC_CARD_STATES.md): the card's own border
+/// changes colour and, on a picture, the focus wash appears. Hover, keyboard
+/// focus and the highlight from a hovered collection use --border-accent;
+/// selection uses the brighter --feed-selection-frame and never draws outside
+/// the card.
+describe("card state styles", () => {
   const css = readFileSync("src/styles/global.css", "utf8");
-  const rule = css.slice(
-    css.indexOf("[data-feed-grid-selection-frame]"),
-    css.indexOf("[data-feed-grid-marquee-selection]"),
-  );
+  const ruleFor = (selectorPart: string, declaration: string) => {
+    const blocks = css.split("}").filter((block) => block.includes(selectorPart));
+    return blocks.some((block) => block.includes(declaration));
+  };
 
-  it("takes its thickness and the card's growth from one token", () => {
-    expect(css).toMatch(/--feed-selection-ring:\s*1px/);
-    expect(rule).toContain("inset: calc(-1 * var(--feed-selection-ring))");
-    expect(rule).toContain(
-      "box-shadow: inset 0 0 0 var(--feed-selection-ring) var(--feed-selection-frame)",
-    );
+  it("gives hover and the collection highlight the keyboard focus border", () => {
+    expect(ruleFor('[data-feed-grid-item-live="true"]:hover [data-block-slug]', "border-color: var(--border-accent)")).toBe(true);
+    expect(ruleFor('[data-feed-grid-item-collection-lit="true"] [data-block-slug]', "border-color: var(--border-accent)")).toBe(true);
+    expect(ruleFor('[data-feed-grid-item-focused="true"] [data-block-slug]', "border-color: var(--border-accent)")).toBe(true);
   });
 
-  it("rounds with the card instead of cutting a square across it", () => {
-    expect(rule).toContain(
-      "border-radius: calc(var(--radius-card) + var(--feed-selection-ring))",
-    );
-    expect(rule).not.toMatch(/border-radius:\s*0/);
+  it("marks a selected card with its own border in the bright colour", () => {
+    expect(ruleFor('[data-feed-grid-item-selected="true"] [data-block-slug]', "border-color: var(--feed-selection-frame)")).toBe(true);
+    expect(css).not.toContain("[data-feed-grid-selection-frame]");
+    expect(css).not.toContain("--feed-selection-ring");
+  });
+
+  it("washes pictures in every state, and only pictures", () => {
+    for (const state of [
+      '[data-feed-grid-item-live="true"]:hover',
+      '[data-feed-grid-item-collection-lit="true"]',
+      '[data-feed-grid-item-selected="true"]',
+      '[data-feed-grid-item-focused="true"]',
+    ]) {
+      expect(ruleFor(`${state} [data-card-graphic-surface]::after`, "opacity: 1")).toBe(true);
+    }
+  });
+
+  it("lets selection win over the lighter states", () => {
+    const lighter = css.indexOf('[data-feed-grid-item-collection-lit="true"] [data-block-slug]');
+    const selected = css.indexOf('[data-feed-grid-item-selected="true"] [data-block-slug]');
+    expect(lighter).toBeGreaterThan(-1);
+    expect(selected).toBeGreaterThan(lighter);
   });
 });

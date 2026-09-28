@@ -60,6 +60,16 @@ pub struct TaxonomySnapshot {
     pub tags: Vec<index::TagCount>,
     pub channels: Vec<ChannelDto>,
     pub total_blocks: usize,
+    /// Which collections each card is in, from the same projection revision
+    /// as `tags`. See SPEC_CARD_STATES.md, С3 and С4.
+    pub memberships: Vec<BlockCollection>,
+}
+
+/// One card in one collection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
+pub struct BlockCollection {
+    pub block_id: i64,
+    pub tag: String,
 }
 
 // ─── Commands ───────────────────────────────────────────────────────────────
@@ -105,6 +115,10 @@ pub async fn list_taxonomy_snapshot(
                             tags: index::get_all_tags(conn)?,
                             channels: load_channels(conn)?,
                             total_blocks: index::count_grid_blocks(conn)?,
+                            memberships: crate::storage::block_queries::list_block_collections(conn)?
+                                .into_iter()
+                                .map(|(block_id, tag)| BlockCollection { block_id, tag })
+                                .collect(),
                         })
                     },
                 )?)

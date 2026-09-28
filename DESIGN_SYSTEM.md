@@ -402,10 +402,10 @@ Selection, focus, навигация/hover — сигналы состояния
 | Focus (button) | `--ring` | ~0.46 | 0.5693 | 0.6268 |
 | Навигация / hover | `--border-accent` | 0.30 | 0.79 | 0.44 |
 
-Толщина кольца выделения — `--feed-selection-ring` (`1px`). Значение служит
-дважды: это и ширина обводки, и величина, на которую выделенная карточка растёт
-наружу, чтобы кольцо встало на прибавку, а не на содержимое. Скругление кольца —
-радиус карточки плюс эта же величина, поэтому угол остаётся цвета обводки.
+С 28.09.2026 (SPEC_CARD_STATES.md) выделение не рисует кольцо снаружи
+карточки: `--feed-selection-frame` красит собственную границу карточки `1px`,
+как `--border-accent` при наведении и фокусе. Токен `--feed-selection-ring`
+удалён.
 
 **Light-коррекция (восприятие).** При равном ΔL тёмная линия на белом читается
 резче, чем светлая на тёмном (иррадиация). Поэтому в светлой теме целевой
@@ -2473,15 +2473,17 @@ do not appear under an open keyboard menu.
 
 Focused GridItem дополнительно показывает shortcut badge в левом верхнем углу: `data-feed-grid-action-badge`, внутри `data-feed-grid-action-layer` (`absolute inset-px`), затем `absolute left-2 top-2`, `h-6`, `px-[1ch]`, `rounded-1` (3px), `bg-component-fill`, `text-sm font-semibold text-foreground`, `pointer-events-none`. Action layer компенсирует 1px Card frame, поэтому offsets badge считаются из той же внутренней плоскости карточки, что и Card Hover Menu controls: `top-2` как у верхнего `More`, `left-2` как у нижнего action row. Текст badge — `⌘K`; он сообщает scoped action shortcut для открытия card overflow menu и не является hover affordance. `Cmd+K` toggles top-right `More`/overflow menu; нижние `Source`/`Connect` не появляются.
 
-Group-selected GridItem показывает индивидуальный selected frame, не цветной
-system-selection outline. Contract: `data-feed-grid-item-selected="true"` на
-GridItem, sibling overlay `pointer-events-none` вне clipped card layer,
-external frame `inset: -3px` — это 2px frame + 1px gap снаружи карточки,
-`box-shadow: inset 0 0 0 2px var(--feed-selection-frame)`. Token:
-`--feed-selection-frame: oklch(0.145 0 0)` в light theme и
-`oklch(0.985 0 0)` в dark theme. Рамка
-рисуется без скруглений вокруг каждой выбранной карточки, а не вокруг всей
-selection area, не меняет masonry layout и должна быть сильнее hover/focus.
+Состояния карточки ленты сведены в одну систему
+([SPEC_CARD_STATES.md](SPEC_CARD_STATES.md), 28.09.2026). Наведение мышью,
+клавиатурный фокус и подсветка от строки коллекции в боковом меню красят
+собственную границу карточки в `--border-accent`; картинка при этом получает
+затенение `--graphic-card-focus-overlay`, текстовая карточка только границу.
+Выделенная карточка (`data-feed-grid-item-selected="true"`) красит ту же
+границу в `--feed-selection-frame` (`oklch(0.145 0 0)` в светлой теме,
+`oklch(0.985 0 0)` в тёмной) и тоже затеняет картинку. Ничего не рисуется
+снаружи карточки, masonry layout не меняется, выделение сильнее остальных
+состояний только яркостью границы. Подсветка от строки коллекции помечается
+`data-feed-grid-item-collection-lit="true"`.
 
 Marquee selection rectangle принадлежит Grid и рисуется только во время
 empty-area drag внутри `data-grid-layout`: `data-feed-grid-marquee-selection`,

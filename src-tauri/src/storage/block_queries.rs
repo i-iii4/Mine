@@ -394,6 +394,23 @@ pub fn get_all_tags(conn: &Connection) -> Result<Vec<TagCount>> {
     Ok(tags)
 }
 
+/// Every card's collections as `(block id, collection)` pairs, collection
+/// documents excluded. The interface keeps them to answer, instantly and in
+/// both directions, which collections a hovered card is in and which cards a
+/// hovered collection holds (SPEC_CARD_STATES.md, С3 and С4).
+pub fn list_block_collections(conn: &Connection) -> Result<Vec<(i64, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT bt.block_id, bt.tag FROM block_tags bt
+         JOIN blocks b ON b.id = bt.block_id
+         WHERE b.card_kind != 'channel'
+         ORDER BY bt.block_id, bt.tag",
+    )?;
+    let pairs = stmt
+        .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(pairs)
+}
+
 /// Search blocks using a structured query (free text + filters).
 ///
 /// Builds SQL dynamically:

@@ -11,6 +11,7 @@ import {
   HOVER_PREVIEW_WARM_WINDOW_MS,
 } from "@/lib/hoverPreviewTiming";
 import { SIDEBAR_ROW_HOVER_SEAM_ENABLED } from "@/lib/featureFlags";
+import { isCardLitByCollection, resetCollectionHover, setCollectionMemberships, setHoveredCard } from "@/lib/collectionHover";
 
 const dndContextState = vi.hoisted(() => ({
   over: null as { id: string } | null,
@@ -1190,4 +1191,62 @@ describe("Sidebar", () => {
     expect(preview.querySelector('[data-sidebar-preview-thumbnail="trigger"]')).toBeNull();
   });
 
+});
+
+describe("sidebar and the card under the pointer (SPEC_CARD_STATES.md)", () => {
+  beforeEach(() => {
+    resetCollectionHover();
+    setCollectionMemberships([{ block_id: 7, tag: "alpha" }]);
+  });
+  afterEach(() => resetCollectionHover());
+
+  const pillIn = (container: HTMLElement, rowKey: string) =>
+    container.querySelector(`[data-sidebar-row-key="${rowKey}"] [data-sidebar-row-connected-pill]`);
+
+  it("shows reference Connected pills instead of counts for the hovered card's collections and Everything", () => {
+    const { container } = renderSidebar({ ...defaultProps, width: 600 });
+    expect(pillIn(container, "all")).toBeNull();
+    act(() => setHoveredCard(7));
+    expect(pillIn(container, "all")).toHaveTextContent("Connected");
+    expect(pillIn(container, "tag:alpha")).toHaveTextContent("Connected");
+    expect(pillIn(container, "tag:beta")).toBeNull();
+    expect(screen.getByText("10")).toHaveClass("opacity-0");
+    expect(screen.getByText("5")).toHaveClass("opacity-100");
+    const pill = pillIn(container, "tag:alpha")!;
+    expect(pill.tagName).toBe("SPAN");
+    expect(pill).toHaveClass("pointer-events-none", "bg-transparent", "outline-border");
+    act(() => setHoveredCard(null));
+    expect(pillIn(container, "tag:alpha")).toBeNull();
+    expect(screen.getByText("10")).toHaveClass("opacity-100");
+  });
+
+  it("marks Everything as connected in an expanded card, without a button", () => {
+    const { container } = renderSidebar({
+      ...defaultProps,
+      width: 600,
+      linkedBlockSlug: "open-block",
+      linkedTags: ["alpha"],
+      onToggleLinkedTag: vi.fn(),
+    });
+    expect(pillIn(container, "all")).toHaveTextContent("Connected");
+    expect(container.querySelector('[data-sidebar-row-key="all"] button')).toBeNull();
+    // Other collections keep their own active buttons.
+    expect(screen.getByRole("button", { name: "Disconnect alpha" })).toBeInTheDocument();
+    expect(pillIn(container, "tag:alpha")).toBeNull();
+  });
+
+  it("lights a collection's cards while the pointer is anywhere on its row", () => {
+    const { container } = renderSidebar({ ...defaultProps, width: 600 });
+    const row = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
+    fireEvent.pointerEnter(row);
+    expect(isCardLitByCollection(7)).toBe(true);
+    // Moving onto a part of the row (a preview, the link) does not leave the row.
+    fireEvent.pointerEnter(row.querySelector("a")!);
+    expect(isCardLitByCollection(7)).toBe(true);
+    fireEvent.pointerLeave(row);
+    expect(isCardLitByCollection(7)).toBe(false);
+    const everything = container.querySelector('[data-sidebar-row-key="all"]')!;
+    fireEvent.pointerEnter(everything);
+    expect(isCardLitByCollection(12345)).toBe(true);
+  });
 });

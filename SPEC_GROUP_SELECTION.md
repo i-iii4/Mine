@@ -228,10 +228,10 @@ drift apart in what a batch command does.
 
 ## Selected Card Visual
 
-> Заменяется требованием С2 в [SPEC_CARD_STATES.md](SPEC_CARD_STATES.md)
-> (согласовано 28.09.2026): рамка снаружи карточки убирается, выделение
-> получает затенение и яркую обводку по собственному краю карточки. Ниже
-> описана реализация, действующая до этого изменения.
+> Заменено требованием С2 в [SPEC_CARD_STATES.md](SPEC_CARD_STATES.md)
+> (реализовано 28.09.2026): рамки снаружи карточки больше нет, выделение
+> получает затенение картинки и яркую границу `--feed-selection-frame` по
+> собственному краю карточки. Ниже описана прежняя реализация, до 28.09.2026.
 
 Selected cards use a strong monochrome frame, not the blue system selection
 color.

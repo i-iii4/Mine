@@ -2783,6 +2783,21 @@ mod tests {
     }
 
     #[test]
+    fn block_collections_pair_every_card_with_each_of_its_collections() {
+        let conn = test_conn();
+        let a = upsert_block(&conn, &make_block("a", &["design", "web"]), None).unwrap();
+        let b = upsert_block(&conn, &make_block("b", &["design"]), None).unwrap();
+        upsert_block(&conn, &make_block("c", &[]), None).unwrap();
+
+        let pairs = crate::storage::block_queries::list_block_collections(&conn).unwrap();
+
+        assert_eq!(
+            pairs,
+            vec![(a, "design".to_string()), (a, "web".to_string()), (b, "design".to_string())]
+        );
+    }
+
+    #[test]
     fn get_all_tags_empty() {
         let conn = test_conn();
         let tags = get_all_tags(&conn).unwrap();

@@ -289,6 +289,7 @@ import {
   type ImagePreviewRequest,
 } from "@/components/ImagePreviewOverlay";
 import { copyTextToClipboard } from "@/lib/clipboard";
+import { setCollectionMemberships } from "@/lib/collectionHover";
 
 const Detail = lazy(async () => {
   const mod = await import("@/components/Detail");
@@ -1126,6 +1127,9 @@ export function AppWithVault({
       setTags(snapshot.tags);
       setChannels(snapshot.channels);
       setTotalBlocks(snapshot.total_blocks);
+      // Kept outside React state: hovering cards and rows reads it on every
+      // pointer move (SPEC_CARD_STATES.md, С3 and С4).
+      setCollectionMemberships(snapshot.memberships ?? []);
       setLoadError(null);
       console.info("[startup] loadTaxonomy:done", {
         requestId,

@@ -74,6 +74,7 @@ import {
   isOverlayKeyboardTarget,
 } from "@/lib/keyboardTargets";
 import { commandById } from "@/lib/commandRegistry";
+import { releaseHoveredCard, setHoveredCard, useCardLitByCollection } from "@/lib/collectionHover";
 import {
   blockCanRenderFromDeterministicHeight,
   blockSlugFromKeyboardTarget,
@@ -2301,6 +2302,12 @@ const GridItem = memo(function GridItem({
   // Card's memo, so any re-render of GridItem (focus change, gridContext
   // identity churn) would needlessly re-render the whole Card subtree. These
   // deps are all stable during a pure scroll, so scrolling never re-renders Card.
+  // A hovered sidebar row lights the cards of its collection (SPEC_CARD_STATES.md, С3).
+  const litByCollection = useCardLitByCollection(block.id);
+  // The card under the pointer tells the sidebar which collections to mark (С4).
+  // A card that unmounts under the pointer gets no pointerleave.
+  useEffect(() => () => releaseHoveredCard(block.id), [block.id]);
+
   const dragBlocks = useMemo(
     () =>
       isSelected
@@ -2354,7 +2361,12 @@ const GridItem = memo(function GridItem({
       data-feed-grid-item-live={isCommitted ? "true" : "false"}
       data-feed-grid-item-focused={isCommitted && isFocused ? "true" : undefined}
       data-feed-grid-item-selected={isCommitted && isSelected ? "true" : undefined}
+      data-feed-grid-item-collection-lit={isCommitted && litByCollection ? "true" : undefined}
       data-feed-grid-item-slug={block.slug}
+      onPointerEnter={() => {
+        if (isCommitted) setHoveredCard(block.id);
+      }}
+      onPointerLeave={() => releaseHoveredCard(block.id)}
       onPointerMove={(event) => {
         if (isCommitted) {
           context.onGridItemPointerMove(block.slug, event);
@@ -2419,12 +2431,6 @@ const GridItem = memo(function GridItem({
           />
         )}
       </div>
-      {isCommitted && isSelected && (
-        <div
-          aria-hidden="true"
-          data-feed-grid-selection-frame=""
-        />
-      )}
     </div>
   );
 });

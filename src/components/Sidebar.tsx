@@ -52,6 +52,11 @@ import {
   SIDEBAR_ROW_ACTION_GAP_PX,
 } from "@/lib/appLayout";
 import { EDGE_FADE_WIDTH, createRightFadeMaskStyle } from "@/lib/edgeFade";
+import {
+  releaseHoveredCollectionRow,
+  setHoveredCollectionRow,
+  useRowConnectedToHoveredCard,
+} from "@/lib/collectionHover";
 import { TopFadeScrim } from "./TopFadeScrim";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
@@ -84,6 +89,11 @@ const SIDEBAR_PREVIEW_MASK_FADE_WIDTH = EDGE_FADE_WIDTH;
 /// button's own field instead left the previews short of their zone.
 const SIDEBAR_PREVIEW_MASK_CLEAR_TAIL =
   `calc(var(--sidebar-zone) + 1px + ${SIDEBAR_PREVIEW_DIVIDER_GAP}px)`;
+/** A row's `Connected` that only reports: the geometry of the action button,
+ *  the body of a reference key (DESIGN_SYSTEM.md: transparent, permanent
+ *  outline, no hover). SPEC_CARD_STATES.md, С4 and С5. */
+const SIDEBAR_ROW_CONNECTED_PILL_CLASS =
+  "pointer-events-none inline-flex h-6 items-center justify-center rounded-1 bg-transparent px-[1ch] font-sans text-sm font-semibold text-foreground outline-1 -outline-offset-1 outline-border";
 const SIDEBAR_ROW_ACTION_BUTTON_CLASS =
   "inline-flex h-6 items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover";
 const SIDEBAR_ROW_TEXT_MASK_STYLE = createRightFadeMaskStyle(
@@ -752,6 +762,7 @@ const SidebarCore = memo(function SidebarCore({
               rowKey="all"
               isSidebarRowFocused={effectiveSidebarRowFocusKey === "all"}
               isSidebarRowSeamAccent={seamAccentKeys.has("all")}
+              staticConnected={isLinkEditorActive}
             />
           )}
 
@@ -997,13 +1008,25 @@ const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(functio
     nodeRef?.(node);
   }, [forwardedRef, nodeRef]);
   const hasSurface = surface ?? !compact;
+  const { onPointerEnter, onPointerLeave, ...restDomProps } = domProps;
 
   return (
     <div
       id={sidebarRowDomId(rowKey)}
       ref={setRefs}
       style={style}
-      {...domProps}
+      {...restDomProps}
+      // The whole row, previews and action button included, lights its
+      // collection's cards in the feed: moving between them never resets it
+      // (SPEC_CARD_STATES.md, С3).
+      onPointerEnter={(event) => {
+        setHoveredCollectionRow(rowKey);
+        onPointerEnter?.(event);
+      }}
+      onPointerLeave={(event) => {
+        releaseHoveredCollectionRow(rowKey);
+        onPointerLeave?.(event);
+      }}
       data-sidebar-row=""
       data-sidebar-row-surface={hasSurface ? "" : undefined}
       data-sidebar-row-key={rowKey}
@@ -1089,6 +1112,7 @@ function SidebarRowBody({
   onSameClick,
   onDoubleClick,
   linkEditor,
+  staticConnected = false,
 }: {
   to: string;
   end?: boolean;
@@ -1114,8 +1138,14 @@ function SidebarRowBody({
     checked: boolean;
     onToggle: () => void;
   };
+  staticConnected?: boolean;
 }) {
   const isLinkEditor = !!linkEditor;
+  // A reference `Connected` replaces the count: always for Everything in an
+  // expanded card (С5), and in the feed for the collections of the card under
+  // the pointer (С4). The link editor's own buttons keep that place otherwise.
+  const connectedToHoveredCard = useRowConnectedToHoveredCard(rowKey);
+  const showConnectedPill = !compact && (staticConnected || (!isLinkEditor && connectedToHoveredCard));
   const handleNavLinkClick = (e: ReactMouseEvent<HTMLAnchorElement>) => {
     if (isDragging || isDropDragging) {
       e.preventDefault();
@@ -1222,7 +1252,7 @@ function SidebarRowBody({
                       ? "opacity-0"
                       : "opacity-100 group-hover:opacity-0 group-focus-within:opacity-0",
                   )
-                : "opacity-100",
+                : showConnectedPill ? "opacity-0" : "opacity-100",
             )}
             data-sidebar-row-text=""
           >
@@ -1230,6 +1260,18 @@ function SidebarRowBody({
           </span>
         )}
       </NavLink>
+      {showConnectedPill && (
+        <span
+          className={cn(SIDEBAR_ROW_CONNECTED_PILL_CLASS, "absolute top-1/2 z-10 -translate-y-1/2")}
+          style={{
+            right: SIDEBAR_ROW_ACTION_BUTTON_INSET,
+            width: SIDEBAR_ROW_ACTION_BUTTON_WIDTH,
+          }}
+          data-sidebar-row-connected-pill=""
+        >
+          Connected
+        </span>
+      )}
       {linkEditor && (
         <button
           type="button"
@@ -1338,6 +1380,7 @@ const NavItem = memo(function NavItem({
   rowKey,
   isSidebarRowFocused,
   isSidebarRowSeamAccent,
+  staticConnected = false,
 }: {
   to: string;
   label: string;
@@ -1357,6 +1400,8 @@ const NavItem = memo(function NavItem({
   rowKey: string;
   isSidebarRowFocused: boolean;
   isSidebarRowSeamAccent: boolean;
+  /** Everything while a card is expanded: connected, and nothing can change that. */
+  staticConnected?: boolean;
 }) {
   const loc = useLocation();
   const isCurrentRoute = end ? loc.pathname === to : loc.pathname.startsWith(to);
@@ -1387,6 +1432,7 @@ const NavItem = memo(function NavItem({
         isCurrentRoute={isCurrentRoute}
         onClick={onClick}
         onSameClick={onSameClick}
+        staticConnected={staticConnected}
       />
     </SidebarRowFrame>
   );
