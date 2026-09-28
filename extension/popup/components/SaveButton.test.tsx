@@ -12,9 +12,9 @@ describe("SaveButton", () => {
   });
 
   it("replaces itself with the indeterminate bar while saving", () => {
-    const { container } = render(<SaveButton count={0} state="saving" onClick={vi.fn()} />);
+    render(<SaveButton count={0} state="saving" onClick={vi.fn()} />);
     expect(screen.queryByRole("button")).toBeNull();
-    expect(container.querySelector(".mine-progress-indicator")).not.toBeNull();
+    expect(screen.getByRole("progressbar", { name: "Saving" })).toHaveAttribute("data-progress-mode", "indeterminate");
   });
 
   it("carries success on the button itself — no separate status strip", () => {

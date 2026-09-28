@@ -84,7 +84,8 @@ membership. It does not make the source article/card the action target.
 7. The feature is local-media only. Remote media has no media-asset actions in
    this contract. The one exception is the card's source video, which has its
    own menu: see «Меню видео источника».
-8. Video has hover actions but no drag-to-sidebar behavior.
+8. Video has no hover actions and no drag-to-sidebar behavior; its media menu
+   opens on right click.
 
 ## Surface Contract
 
@@ -179,8 +180,9 @@ align without adding decorative per-command icons.
 contract: fixed search header, shared `QuantizedMenuScrollArea` for the channel
 rows, `default` 32px row token, and no local `max-height` value.
 
-Video controls remain usable. The media-asset trigger occupies only the top
-right corner and does not place a full-surface overlay over the video.
+Video has no hover trigger at all (decision of the user, 27.09.2026): the
+ellipsis covered the player's own controls in the top right corner. A video's
+media menu opens only on right click, as a context menu at the pointer.
 
 Image click contract:
 
@@ -314,8 +316,10 @@ Remove from Element, Create Element) в меню видео источника �
 1. Загрузка идёт в фоне, в процессе приложения. Карточку можно закрыть; при
    повторном открытии видно, где загрузка сейчас.
 2. Прогресс показывается строкой под проигрывателем, не поверх него: ролик
-   можно смотреть, пока он скачивается. Строка: полоса, «Downloading N%» и
-   кнопка Cancel; на этапе склейки «Joining video and sound…» без отмены.
+   можно смотреть, пока он скачивается. Этапы: «Preparing…» (чтение форматов,
+   длительность неизвестна: полоса без процента, Cancel доступен),
+   «Downloading N%» (полоса с процентом, Cancel), «Joining video and sound…»
+   (полоса без процента, без отмены). Полоса: `Progress` дизайн-системы.
 3. Процент честный: доля полученных байтов обоих потоков по их размерам из
    метаданных; 100% означает готовый файл, до этого не больше 99%.
 4. После записи карточка перечитывается, и по правилу приоритета локального

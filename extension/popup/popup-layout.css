@@ -34,17 +34,6 @@ body {
   flex-direction: column;
 }
 
-/* Indeterminate progress animation used by SaveButton during save.
-   Native host doesn't report progress percentage, so we show a bar
-   sliding left-to-right as a "work in progress" indicator. */
-@keyframes mine-indeterminate-progress {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(300%); }
-}
-.mine-progress-indicator {
-  animation: mine-indeterminate-progress 1.4s ease-in-out infinite;
-}
-
 /* Thin visible scrollbar for the content preview only. Keyed by a data
    attribute, not by the .overflow-y-auto utility: a class-name selector
    would also restyle shared components (the collection picker) that hide

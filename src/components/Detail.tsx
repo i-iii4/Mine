@@ -1763,42 +1763,46 @@ function MediaAssetActionFrame({
                 <span className="text-sm text-muted-foreground">{CLOUD_DOWNLOADING_LABEL}</span>
               </div>
             )}
-            <div
-              className={cn(
-                "absolute right-2 top-2 z-10 flex gap-1 transition-opacity duration-[160ms]",
-                controlsVisible
-                  ? "opacity-100"
-                  : "pointer-events-none opacity-0 group-hover/detail-media:pointer-events-auto group-hover/detail-media:opacity-100 group-focus-within/detail-media:pointer-events-auto group-focus-within/detail-media:opacity-100",
-              )}
-              data-detail-media-action-menu
-              onClick={(event) => event.stopPropagation()}
-              onPointerDown={(event) => event.stopPropagation()}
-              onContextMenu={(event) => event.stopPropagation()}
-            >
-              {canOpenImagePreview && fullSizeImageSrc && (
-                <Button
-                  type="button"
-                  variant="default"
-                  size="icon"
-                  aria-label="Expand image"
-                  data-detail-media-expand-button
-                  onClick={(event) => {
-                    onOpenImagePreview({
-                      src: fullSizeImageSrc,
-                      mediaRef: asset.media_ref,
-                      siblings: collectCardImages(event.currentTarget),
-                    });
-                  }}
-                >
-                  <Expand className="size-4" />
-                </Button>
-              )}
-              <MediaAssetMoreMenu
-                itemProps={menuItemProps}
-                open={menuOpen}
-                onOpenChange={setMenuOpen}
-              />
-            </div>
+            {/* A video has its own controls under the pointer, and the
+                ellipsis covered them; its menu opens only on right click. */}
+            {asset.media_kind !== "video" && (
+              <div
+                className={cn(
+                  "absolute right-2 top-2 z-10 flex gap-1 transition-opacity duration-[160ms]",
+                  controlsVisible
+                    ? "opacity-100"
+                    : "pointer-events-none opacity-0 group-hover/detail-media:pointer-events-auto group-hover/detail-media:opacity-100 group-focus-within/detail-media:pointer-events-auto group-focus-within/detail-media:opacity-100",
+                )}
+                data-detail-media-action-menu
+                onClick={(event) => event.stopPropagation()}
+                onPointerDown={(event) => event.stopPropagation()}
+                onContextMenu={(event) => event.stopPropagation()}
+              >
+                {canOpenImagePreview && fullSizeImageSrc && (
+                  <Button
+                    type="button"
+                    variant="default"
+                    size="icon"
+                    aria-label="Expand image"
+                    data-detail-media-expand-button
+                    onClick={(event) => {
+                      onOpenImagePreview({
+                        src: fullSizeImageSrc,
+                        mediaRef: asset.media_ref,
+                        siblings: collectCardImages(event.currentTarget),
+                      });
+                    }}
+                  >
+                    <Expand className="size-4" />
+                  </Button>
+                )}
+                <MediaAssetMoreMenu
+                  itemProps={menuItemProps}
+                  open={menuOpen}
+                  onOpenChange={setMenuOpen}
+                />
+              </div>
+            )}
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent data-detail-media-context-menu>

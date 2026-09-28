@@ -498,7 +498,31 @@ body {
   }
 }
 
+/* Progress without a known length (components/ui/progress.tsx): a pill
+   segment crosses the track from outside to outside, easing in and out, so
+   the motion reads as work under way rather than as a value. */
+@keyframes mine-progress-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
+@keyframes mine-progress-breathe {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+.mine-progress-indeterminate {
+  animation: mine-progress-indeterminate 1.4s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
+  /* No travel: the segment fills the track and breathes in place. */
+  .mine-progress-indeterminate {
+    width: 100%;
+    transform: none;
+    animation: mine-progress-breathe 2s ease-in-out infinite;
+  }
+
   .detail-top-bar-enter,
   .detail-top-bar-line-enter {
     opacity: 1;

@@ -295,14 +295,20 @@ describe("Detail source video independent of card kind", () => {
       fireEvent.contextMenu(container.querySelector("[data-source-video-surface]")!);
       fireEvent.click(await screen.findByRole("menuitem", { name: "Download Media" }));
       expect(startSourceVideoDownload).toHaveBeenCalledWith(props.block.slug, "https://www.youtube.com/watch?v=9KDDhAOyv9k");
-      expect(await screen.findByText("Downloading 0%")).toBeInTheDocument();
+      // Reading formats has no known length: an indeterminate bar, cancellable.
+      expect(await screen.findByText("Preparing…")).toBeInTheDocument();
+      expect(screen.getByRole("progressbar", { name: "Download progress" })).toHaveAttribute("data-progress-mode", "indeterminate");
+      expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
       expect(container.querySelector("[data-source-video-surface] [data-source-video-download]")).toBeNull();
+      sendDownload({ slug: props.block.slug, state: "downloading", percent: 0 });
+      expect(screen.getByRole("progressbar", { name: "Download progress" })).toHaveAttribute("data-progress-mode", "determinate");
       sendDownload({ slug: props.block.slug, state: "downloading", percent: 42 });
       expect(screen.getByText("Downloading 42%")).toBeInTheDocument();
       sendDownload({ slug: "another card", state: "downloading", percent: 90 });
       expect(screen.getByText("Downloading 42%")).toBeInTheDocument();
       sendDownload({ slug: props.block.slug, state: "finishing" });
       expect(screen.getByText("Joining video and sound…")).toBeInTheDocument();
+      expect(screen.getByRole("progressbar", { name: "Download progress" })).toHaveAttribute("data-progress-mode", "indeterminate");
       expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
     });
 
@@ -2126,7 +2132,7 @@ describe("Detail", () => {
     expect(screen.queryByRole("alertdialog", { name: "Delete media file?" })).not.toBeInTheDocument();
   });
 
-  it("shows the standard overflow menu trigger on video media surfaces", () => {
+  it("keeps the ellipsis off a video and opens its menu only on right click", async () => {
     const b = block({
       card_kind: "media",
       block_type: "video",
@@ -2151,14 +2157,14 @@ describe("Detail", () => {
       />,
     );
 
-    expect(container.querySelector("video")).not.toBeNull();
-    const menu = container.querySelector("[data-detail-media-action-menu]");
-    expect(menu).not.toBeNull();
-    expect(menu).toHaveClass("right-2", "top-2");
-    const trigger = menu!.querySelector("button");
-    expect(trigger).toHaveAttribute("data-variant", "default");
-    expect(trigger).toHaveAttribute("data-size", "icon");
-    expect(trigger).toHaveClass("bg-component-fill");
+    const video = container.querySelector("video");
+    expect(video).not.toBeNull();
+    // The ellipsis covered the video's own controls.
+    expect(container.querySelector("[data-detail-media-action-menu]")).toBeNull();
+    fireEvent.contextMenu(video!, { clientX: 120, clientY: 80 });
+    const menu = await screen.findByRole("menu");
+    expect(menu).toHaveAttribute("data-slot", "context-menu-content");
+    expect(within(menu).getByText("Delete Media")).toBeInTheDocument();
   });
 
   it("renders non-image media files as a file shell even with article legacy type", () => {

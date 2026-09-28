@@ -614,8 +614,9 @@ function CoreComponentSection() {
         specs={[
           { prop: "Checkbox", value: "size-4 (16) · rounded-[2px]" },
           { prop: "— checked", value: "bg --primary · галочка 14" },
-          { prop: "Progress", value: "h-2 (8) · rounded-1 · трек --primary/20" },
-          { prop: "— заполнено", value: "bg --primary" },
+          { prop: "Progress", value: "h-2 (8) · rounded-pill · трек --primary/20" },
+          { prop: "— заполнено", value: "bg --primary · rounded-pill" },
+          { prop: "— без процента", value: "сегмент 1/3 · 1.4s ease-in-out" },
           { prop: "Tooltip", value: "bg --foreground · text --background" },
           { prop: "— геометрия", value: "px-3 py-1.5 · rounded-1 · 12px" },
         ]}
@@ -629,6 +630,7 @@ function CoreComponentSection() {
           Checked
         </label>
         <Progress value={45} className="w-56" />
+        <Progress value={null} className="w-56" aria-label="Indeterminate progress" />
         <Tooltip>
           <TooltipTrigger asChild>
             <Button><Info />Tooltip</Button>

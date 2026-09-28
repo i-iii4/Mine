@@ -31,6 +31,8 @@ const PROGRESS_PREFIX: &str = "MINE-PROGRESS";
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum DownloadState {
+    /// Reading the video's formats: the length of this step is unknown.
+    Preparing,
     Downloading { percent: u8 },
     Finishing,
     Done,
@@ -194,7 +196,7 @@ impl SourceVideoDownloads {
                 let running = existing
                     .state
                     .lock()
-                    .map(|state| matches!(*state, DownloadState::Downloading { .. } | DownloadState::Finishing))
+                    .map(|state| state.is_running())
                     .unwrap_or(false);
                 if running {
                     return Ok(());
@@ -203,12 +205,12 @@ impl SourceVideoDownloads {
             let job = Arc::new(Job {
                 cancel: AtomicBool::new(false),
                 child: Mutex::new(None),
-                state: Mutex::new(DownloadState::Downloading { percent: 0 }),
+                state: Mutex::new(DownloadState::Preparing),
             });
             jobs.insert(slug.clone(), job.clone());
             job
         };
-        report(app, &slug, &job, DownloadState::Downloading { percent: 0 });
+        emit(app, &slug, DownloadState::Preparing);
         let app = app.clone();
         std::thread::Builder::new()
             .name("source-video-download".into())
@@ -241,6 +243,13 @@ impl SourceVideoDownloads {
     }
 }
 
+impl DownloadState {
+    fn is_running(&self) -> bool {
+        matches!(self, Self::Preparing | Self::Downloading { .. } | Self::Finishing)
+    }
+}
+
+/// Record a new state and tell the interface; repeats are not re-sent.
 fn report(app: &AppHandle, slug: &str, job: &Job, state: DownloadState) {
     if let Ok(mut current) = job.state.lock() {
         if *current == state {
@@ -248,6 +257,10 @@ fn report(app: &AppHandle, slug: &str, job: &Job, state: DownloadState) {
         }
         *current = state.clone();
     }
+    emit(app, slug, state);
+}
+
+fn emit(app: &AppHandle, slug: &str, state: DownloadState) {
     if let Err(error) = app.emit(EVENT, DownloadEvent { slug: slug.to_owned(), state }) {
         log::warn!("source video download event: {error}");
     }
@@ -505,7 +518,7 @@ mod tests {
         let job = Job {
             cancel: AtomicBool::new(false),
             child: Mutex::new(None),
-            state: Mutex::new(DownloadState::Downloading { percent: 0 }),
+            state: Mutex::new(DownloadState::Preparing),
         };
         let staging = tempfile::tempdir().unwrap();
         let mut states = Vec::new();
@@ -514,7 +527,19 @@ mod tests {
             .unwrap_or_else(|error| panic!("download failed: {error}"));
         assert!(file.metadata().unwrap().len() > 100_000, "{}", file.display());
         assert!(states.iter().any(|state| matches!(state, DownloadState::Downloading { percent } if *percent > 0)));
+        assert_eq!(states.last(), Some(&DownloadState::Finishing));
         println!("{} bytes at {}; states: {states:?}", file.metadata().unwrap().len(), file.display());
+    }
+
+    #[test]
+    fn preparing_downloading_and_joining_are_running_states() {
+        assert!(DownloadState::Preparing.is_running());
+        assert!(DownloadState::Downloading { percent: 3 }.is_running());
+        assert!(DownloadState::Finishing.is_running());
+        assert!(!DownloadState::Done.is_running());
+        assert!(!DownloadState::Cancelled.is_running());
+        assert!(!DownloadState::Failed { message: String::new() }.is_running());
+        assert_eq!(serde_json::to_value(DownloadState::Preparing).unwrap(), serde_json::json!({ "state": "preparing" }));
     }
 
     #[test]

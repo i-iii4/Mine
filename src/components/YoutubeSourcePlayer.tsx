@@ -47,7 +47,7 @@ function openSource(url: string) {
 }
 
 function isRunning(download: SourceVideoDownloadState | null) {
-  return download?.state === "downloading" || download?.state === "finishing";
+  return download?.state === "preparing" || download?.state === "downloading" || download?.state === "finishing";
 }
 
 /** The player loads as soon as the card opens and waits for the user to start it.
@@ -134,7 +134,7 @@ export function YoutubeSourcePlayer({ slug, source, poster, title, onDelete, onD
 
   const running = isRunning(download);
   const startDownload = () => {
-    setDownload({ state: "downloading", percent: 0 });
+    setDownload({ state: "preparing" });
     startSourceVideoDownload(slug, source.sourceUrl).catch((error: unknown) => {
       setDownload({ state: "failed", message: error instanceof Error ? error.message : String(error) });
     });
@@ -212,7 +212,9 @@ export function YoutubeSourcePlayer({ slug, source, poster, title, onDelete, onD
 }
 
 /** Progress of Download Media under the player, never over it: the video
- *  stays watchable while it downloads. */
+ *  stays watchable while it downloads. Steps without a known length
+ *  (preparing, joining) show the indeterminate bar; only real bytes move
+ *  the determinate one. */
 function SourceVideoDownloadRow({ download, onCancel }: {
   download: SourceVideoDownloadState | null;
   onCancel: () => void;
@@ -225,16 +227,20 @@ function SourceVideoDownloadRow({ download, onCancel }: {
       </p>
     );
   }
-  const label = download.state === "finishing" ? "Joining video and sound…" : `Downloading ${download.percent}%`;
+  const label = download.state === "preparing"
+    ? "Preparing…"
+    : download.state === "finishing"
+      ? "Joining video and sound…"
+      : `Downloading ${download.percent}%`;
   return (
     <div className="mt-2 flex items-center gap-3" data-source-video-download={download.state}>
       <Progress
-        value={download.state === "finishing" ? 100 : download.percent}
+        value={download.state === "downloading" ? download.percent : null}
         className="flex-1"
         aria-label="Download progress"
       />
       <span className="shrink-0 text-sm tabular-nums text-muted-foreground">{label}</span>
-      {download.state === "downloading" && (
+      {download.state !== "finishing" && (
         <Button type="button" variant="secondary" size="sm" onClick={onCancel}>Cancel</Button>
       )}
     </div>

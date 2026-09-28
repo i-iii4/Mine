@@ -519,6 +519,7 @@ export const youtubePlayerUrl = (sourceUrl: string) =>
 /** State of a card's Download Media job, as the shell reports it.
  *  See SPEC_MEDIA_ASSET_ACTIONS.md «Download Media». */
 export type SourceVideoDownloadState =
+  | { state: "preparing" }
   | { state: "downloading"; percent: number }
   | { state: "finishing" }
   | { state: "done" }
