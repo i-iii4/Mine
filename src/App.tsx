@@ -248,6 +248,7 @@ import { useSidebarSwipe } from "@/hooks/useSidebarSwipe";
 import { useThumbnailUpgrade } from "@/hooks/useThumbnailUpgrade";
 import { useChannelPreviewsEvents } from "@/hooks/useChannelPreviewsEvents";
 import { useChromeDragGesture } from "@/hooks/useChromeDragGesture";
+import { useStaleDragRecovery } from "@/hooks/useStaleDragRecovery";
 import { useProjectionRevisionOwner } from "@/hooks/useProjectionRevisionOwner";
 import { VaultPicker } from "@/components/VaultPicker";
 import { SpaceUnavailable } from "@/components/SpaceUnavailable";
@@ -2941,6 +2942,14 @@ export function AppWithVault({
     setActiveDragTextSelection(null);
     clearActiveMineTextSelectionDragPayload();
   }, []);
+
+  useStaleDragRecovery(
+    activeDragBlocks.length > 0
+      || activeDragTag !== null
+      || activeDragMediaAsset !== null
+      || activeDragTextSelection !== null,
+    handleDndCancel,
+  );
 
   // ── Card tag management (context menu) ───────────────────────────────────
 

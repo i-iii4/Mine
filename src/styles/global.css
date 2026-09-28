@@ -139,7 +139,9 @@ select,
   color: var(--foreground);
 }
 
-[data-sidebar-scroll]:not([data-sidebar-link-editor-mode="true"])[data-sidebar-row-focus-mode="true"] [data-sidebar-row-focused="true"] [data-sidebar-row-text] {
+/* The row under the pointer answers in the feed and in an open card alike:
+   the row is a way into its collection from both. */
+[data-sidebar-scroll][data-sidebar-row-focus-mode="true"] [data-sidebar-row-focused="true"] [data-sidebar-row-text] {
   color: var(--foreground);
 }
 
