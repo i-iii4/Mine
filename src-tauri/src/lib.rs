@@ -14,6 +14,8 @@ pub use commands::clipper_setup::{
 };
 pub mod domain;
 #[cfg(feature = "desktop")]
+mod frame_context_menu;
+#[cfg(feature = "desktop")]
 mod import;
 #[cfg(feature = "desktop")]
 pub mod mcp;
@@ -21,6 +23,8 @@ pub mod net;
 pub mod runtime_installation;
 pub mod runtime_protocol;
 pub mod storage;
+#[cfg(feature = "desktop")]
+mod source_video_download;
 #[cfg(feature = "desktop")]
 mod swipe_gesture;
 #[cfg(feature = "desktop")]
@@ -30,6 +34,8 @@ pub mod updater;
 pub mod util;
 #[cfg(feature = "desktop")]
 mod watcher;
+#[cfg(feature = "desktop")]
+mod youtube_embed;
 
 #[cfg(feature = "desktop")]
 use commands::state::AppState;
@@ -66,6 +72,8 @@ pub fn run() {
         .manage(AppState::new())
         .manage(updater::UpdateService::default())
         .manage(commands::app_open::PendingSpace::default())
+        .manage(youtube_embed::YoutubeEmbedServer::default())
+        .manage(source_video_download::SourceVideoDownloads::default())
         // Article audio commands are registered only with the `article-audio`
         // feature; `generate_handler!` takes a flat list, so the gate lives on
         // this attribute rather than on individual entries.
@@ -120,6 +128,7 @@ pub fn run() {
             commands::blocks::prepare_delete_media_asset,
             commands::blocks::delete_media_asset,
             commands::blocks::remove_media_asset_from_card,
+            commands::blocks::delete_source_video,
             commands::blocks::copy_media_asset_to_clipboard,
             commands::clipboard::read_clipboard_payload,
             commands::shortcuts::list_shortcut_overrides,
@@ -163,6 +172,10 @@ pub fn run() {
             commands::settings::delete_orphan_media,
             commands::window_chrome::set_sidebar_menu_collapsed,
             commands::native_shell_smoke::report_native_shell_smoke,
+            commands::youtube_player::youtube_player_url,
+            commands::source_video_download::start_source_video_download,
+            commands::source_video_download::cancel_source_video_download,
+            commands::source_video_download::source_video_download_status,
         ])
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -218,6 +231,10 @@ pub fn run() {
             // The two-finger swipe is recognised here, where the system
             // describes its phases, and reaches the interface as a decision.
             swipe_gesture::install(app.handle().clone());
+
+            // A right click inside the embedded video player opens Mine's
+            // menu instead of WebKit's frame menu.
+            frame_context_menu::install(app.handle());
 
             if app.get_webview_window("main").is_some() {
                 crate::util::append_startup_trace(app.handle(), "window", "created");

@@ -82,8 +82,10 @@ membership. It does not make the source article/card the action target.
 6. `Reveal in Finder`, `Copy Path`, and `Copy Media` all resolve and act on the
    media file, not the `.md` file.
 7. The feature is local-media only. Remote media has no media-asset actions in
-   this contract.
-8. Video has hover actions but no drag-to-sidebar behavior.
+   this contract. The one exception is the card's source video, which has its
+   own menu: see «Меню видео источника».
+8. Video has no hover actions and no drag-to-sidebar behavior; its media menu
+   opens on right click.
 
 ## Surface Contract
 
@@ -178,8 +180,9 @@ align without adding decorative per-command icons.
 contract: fixed search header, shared `QuantizedMenuScrollArea` for the channel
 rows, `default` 32px row token, and no local `max-height` value.
 
-Video controls remain usable. The media-asset trigger occupies only the top
-right corner and does not place a full-surface overlay over the video.
+Video has no hover trigger at all (decision of the user, 27.09.2026): the
+ellipsis covered the player's own controls in the top right corner. A video's
+media menu opens only on right click, as a context menu at the pointer.
 
 Image click contract:
 
@@ -237,10 +240,129 @@ Image click contract:
   state may update only low-frequency UI such as the numeric zoom label;
 - the bottom island appears on pointer movement and fades out after 3 seconds
   of inactivity;
-- right click on a local image opens the same media-asset overflow menu as the
-  ellipsis trigger;
-- this image click contract does not apply to video, because video clicks belong
-  to playback controls.
+- right click on any local media asset (image or video) opens a context menu at
+  the pointer, the way a feed card's right click does; it holds the same items
+  as the ellipsis menu and never opens the ellipsis menu itself. Both menus are
+  drawn from one item list (`MediaAssetMenuItems`), and their dialogs belong to
+  the media frame, so either entry point opens the same Rename, Remove and
+  Delete dialogs (decision of the user, 27.09.2026);
+- the left click part of this contract does not apply to video, because video
+  left clicks belong to playback controls; the right click context menu does.
+
+## Меню видео источника
+
+Согласовано с пользователем 27.09.2026. Касается проигрывателя YouTube в
+открытой карточке ([SPEC_FRONTEND.md](SPEC_FRONTEND.md), «Видеопрезентация
+источника карточки»). Видео источника не является локальным файлом, поэтому
+меню отдельное, но вид, место и поведение у него те же, что у меню медиа.
+
+### Правый клик
+
+1. Правый клик в любой точке проигрывателя YouTube не показывает системное
+   меню WebKit («Open Frame in New Window» и другие пункты).
+2. Вместо него открывается контекстное меню Mine в точке клика, как у
+   карточки в ленте и у локального медиа. Точку из окна macOS интерфейс
+   воспроизводит событием `contextmenu` на поверхности проигрывателя.
+3. Меню закрывается как у изображений: Esc или клик мимо.
+4. Левый клик по-прежнему принадлежит проигрывателю: запуск, пауза, перемотка,
+   полноэкранный режим.
+5. В остальных местах окна правый клик не меняется, кроме правила о
+   навигации ниже.
+
+Проигрыватель находится в кадре чужого источника, события из него интерфейс не
+получает. Поэтому правый клик перехватывается на уровне окна macOS: перед
+показом меню WKWebView приложение отменяет системное меню и передаёт
+интерфейсу координаты. Интерфейс открывает меню видео, только если точка
+приходится на проигрыватель. Механизм опирается на внутренний класс окна wry,
+а не на поддерживаемый API Tauri, и перепроверяется при обновлении Tauri.
+Реализация: [frame_context_menu.rs](src-tauri/src/frame_context_menu.rs).
+
+### Навигация браузера не показывается нигде
+
+Решение пользователя 27.09.2026: пункт Reload не появляется в интерфейсе Mine
+никогда. Тем же механизмом из любого системного меню WebKit во всех окнах
+убираются пункты навигации браузера: Back, Forward, Stop и Reload (метки
+WebCore 9, 10, 11 и 12; у Stop нет идентификатора WebKit, поэтому ключом
+служит метка). Разделители остаются только между командами; меню, в котором
+не осталось команд, не показывается. Текстовые команды (Copy, Look Up,
+Translate, Search и другие) остаются.
+
+### Пункты
+
+1. `Open Original`: открыть ролик у источника в браузере по умолчанию.
+   Название не привязано к провайдеру; так же названа ссылка под проигрывателем.
+2. `Copy Link`: скопировать канонический адрес ролика
+   `https://www.youtube.com/watch?v=<id>` в системный буфер обмена.
+3. `Delete Embed`: убрать встроенное видео из карточки. Из свойств карточки удаляется
+   ссылка `url` на YouTube; файл обложки из `thumbnail` удаляется так же, как
+   файл при Delete Media у изображения, если на него не ссылается ни одна
+   другая карточка, и свойство `thumbnail` тоже удаляется. Команда
+   `delete_source_video(slug)` выполняет запись карточки и удаление обложки
+   одной атомарной мутацией. Заголовок, тело, расшифровка, коллекции и имя файла карточки
+   не меняются. Перед удалением показывается подтверждение, как у удаления
+   медиа. После удаления проигрыватель исчезает, карточка остаётся текстом.
+
+Пункты медиафайла (Reveal in Finder, Copy Path, Copy Media, Rename Media,
+Remove from Element, Create Element) в меню видео источника не входят: у
+ролика нет локального файла.
+
+### Download Media
+
+Реализовано 27.09.2026. Пункт `Download Media` стоит в меню видео источника
+между Copy Link и Delete Embed; пока загрузка идёт, он недоступен.
+
+Поведение:
+
+1. Загрузка идёт в фоне, в процессе приложения. Карточку можно закрыть; при
+   повторном открытии видно, где загрузка сейчас.
+2. Прогресс показывается строкой под проигрывателем, не поверх него: ролик
+   можно смотреть, пока он скачивается. Этапы: «Preparing…» (чтение форматов,
+   длительность неизвестна: полоса без процента, Cancel доступен),
+   «Downloading N%» (полоса с процентом, Cancel), «Joining video and sound…»
+   (полоса без процента, без отмены). Полоса: `Progress` дизайн-системы.
+3. Процент честный: доля полученных байтов обоих потоков по их размерам из
+   метаданных; 100% означает готовый файл, до этого не больше 99%.
+4. После записи карточка ведёт себя как штатно сохранённый пост с видео:
+   ролик вставлен в текст (`![[имя.mp4]]`) сразу под заголовком, в ленте у
+   карточки превью «кадр видео» и автоплей, в открытой карточке видео играет
+   само вместо проигрывателя YouTube. Ссылка на источник, обложка и
+   расшифровка остаются. Правый клик по видео открывает обычное меню медиа;
+   Delete Media удаляет файл и вставку, и карточка возвращается к
+   проигрывателю. (Первая версия от 27.09.2026 писала файл в свойство `file`:
+   карточка оставалась статьёй с картинкой-обложкой, без автоплея и без кадра
+   видео в ленте; исправлено в тот же день.)
+5. При ошибке карточка не меняется, недокачанные файлы удаляются, под
+   проигрывателем видна причина («Download failed: …»); повтор из того же меню.
+   Отмена удаляет недокачанное без сообщения.
+
+Устройство ([source_video_download.rs](src-tauri/src/source_video_download.rs)):
+
+- встроенный `yt-dlp -J` читает форматы; выбирается самое высокое видео
+  H.264 в MP4 не выше 720p и лучший стерео AAC, а если отдельной пары нет,
+  один MP4 со звуком (обычно 360p);
+- `yt-dlp` скачивает выбранные потоки отдельными файлами во временную папку и
+  печатает прогресс строками `MINE-PROGRESS`;
+- помощник `video-mux-helper` ([video_mux_helper.swift](src-tauri/native/video_mux_helper.swift))
+  склеивает видео и звук без перекодирования через AVFoundation. Длительность
+  он берёт из метаданных источника: для фрагментированных MP4 YouTube
+  AVFoundation считает дорожки вдвое длиннее, и без этого файл заканчивался
+  бы пустой половиной;
+- `attach_downloaded_source_video` перечитывает карточку, проверяет, что она
+  всё ещё ссылается на этот ролик и не имеет своего видео (ни `file`, ни
+  локальной видеовставки в тексте), называет файл по карточке с уникальностью
+  по всему пространству, переносит его в папку медиа и вставляет
+  `![[имя.mp4]]` под заголовком одной атомарной мутацией. Индекс строит из
+  вставки превью `video_poster` и описание автоплея ленты, как для поста X.
+
+Версия `yt-dlp` важна: YouTube меняет проигрыватель, и сборка 2026.07.04 к
+27.09.2026 получала HTTP 403 даже с Deno, а 2026.08.19 скачивает и без Deno.
+Закреплённая версия задаётся в `scripts/fetch-ytdlp.mjs`; при её смене уже
+лежащий бинарник заменяется. Если в системе установлен Deno, он доступен
+`yt-dlp` через стандартные пути Homebrew и `~/.deno/bin`.
+
+Проверки: выбор форматов, разбор прогресса, общий процент и тексты отказов
+покрыты тестами; тест `real_youtube_download_produces_one_playable_mp4`
+(запуск вручную с `--ignored`) скачивает настоящий ролик и склеивает его.
 
 ## User Flows
 

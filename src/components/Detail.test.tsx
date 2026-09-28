@@ -9,7 +9,7 @@ import {
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { COLLECTION_PICKER_CONTENT_CLASS } from "./CollectionPicker";
-import { copyMediaAssetToClipboard, getBlock, icloudDownloadProgress, prepareDeleteMediaAsset, resolveNoteLink } from "@/lib/commands";
+import { cancelSourceVideoDownload, copyMediaAssetToClipboard, getBlock, icloudDownloadProgress, prepareDeleteMediaAsset, resolveNoteLink, sourceVideoDownloadStatus, startSourceVideoDownload, youtubePlayerUrl } from "@/lib/commands";
 import {
   HOVER_PREVIEW_COLD_OPEN_DELAY_MS,
   HOVER_PREVIEW_WARM_WINDOW_MS,
@@ -19,6 +19,9 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(),
   revealItemInDir: vi.fn(),
 }));
+
+const writeText = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ writeText }));
 
 vi.mock("./ArticleAudioControls", () => ({
   ArticleAudioControls: () => <div data-testid="article-audio-controls" />,
@@ -55,6 +58,10 @@ vi.mock("@/lib/commands", () => ({
   prepareDeleteMediaAsset: vi.fn(),
   resolveNoteLink: vi.fn(),
   icloudDownloadProgress: vi.fn(),
+  youtubePlayerUrl: vi.fn(),
+  startSourceVideoDownload: vi.fn(async () => null),
+  cancelSourceVideoDownload: vi.fn(async () => null),
+  sourceVideoDownloadStatus: vi.fn(async () => null),
 }));
 
 function cardKindForBlockType(blockType: IndexedBlock["block_type"]): IndexedBlock["card_kind"] {
@@ -117,28 +124,62 @@ function renderVideoDetail(overrides: Partial<IndexedBlock> = {}) {
   return { ...render(<Detail {...props} />), props };
 }
 
+const youtubePlayerUrlMock = vi.mocked(youtubePlayerUrl);
+
 describe("Detail source video independent of card kind", () => {
-  it("keeps an existing article transcript and waits for a click before embedding", () => {
+  beforeEach(() => {
+    youtubePlayerUrlMock.mockReset();
+    youtubePlayerUrlMock.mockImplementation(async (sourceUrl) => `http://localhost:4321/youtube/${new URL(sourceUrl).searchParams.get("v") ?? new URL(sourceUrl).pathname.slice(1)}`);
+  });
+
+  it("loads the player on open next to the transcript without a play button", async () => {
     const { container } = renderVideoDetail();
     expect(screen.getByText("Preserved transcript.")).toBeInTheDocument();
-    expect(container.querySelector("iframe")).toBeNull();
     expect(container.querySelector("[data-youtube-source-player] img")?.getAttribute("src")).toContain("Media/film.jpg");
-    fireEvent.click(screen.getByRole("button", { name: "Play video" }));
-    expect(container.querySelector("iframe")?.getAttribute("src")).toBe("https://www.youtube.com/embed/9KDDhAOyv9k?autoplay=1");
+    expect(screen.queryByRole("button", { name: "Play video" })).toBeNull();
+    await waitFor(() => expect(container.querySelector("iframe")?.getAttribute("src")).toBe("http://localhost:4321/youtube/9KDDhAOyv9k"));
+    expect(youtubePlayerUrlMock).toHaveBeenCalledWith("https://www.youtube.com/watch?v=9KDDhAOyv9k");
     expect(screen.getByText("Preserved transcript.")).toBeInTheDocument();
   });
 
-  it("supports a metadata-only source link and leaves its direct source accessible on an error", () => {
+  it("never embeds YouTube into the interface document itself", async () => {
+    const { container } = renderVideoDetail();
+    await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull());
+    expect(container.querySelector("iframe")?.getAttribute("src")).not.toContain("youtube.com");
+  });
+
+  it("shows the poster until the local player page is ready", async () => {
+    let resolve: (url: string) => void = () => {};
+    youtubePlayerUrlMock.mockImplementation(() => new Promise((done) => { resolve = done; }));
+    const { container } = renderVideoDetail();
+    expect(container.querySelector("iframe")).toBeNull();
+    expect(container.querySelector("[data-youtube-source-player] img")).not.toBeNull();
+    await act(async () => { resolve("http://localhost:4321/youtube/9KDDhAOyv9k"); });
+    expect(container.querySelector("iframe")?.getAttribute("src")).toBe("http://localhost:4321/youtube/9KDDhAOyv9k");
+  });
+
+  it("says the video cannot play inside Mine and keeps the source link when the player page fails", async () => {
+    youtubePlayerUrlMock.mockRejectedValue(new Error("bind failed"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { container } = renderVideoDetail();
+    expect(await screen.findByText("This video can't play inside Mine.")).toBeInTheDocument();
+    expect(container.querySelector("iframe")).toBeNull();
+    expect(screen.getByRole("link", { name: "Open Original" })).toHaveAttribute("href", "https://www.youtube.com/watch?v=9KDDhAOyv9k");
+    expect(screen.getByText("Preserved transcript.")).toBeInTheDocument();
+    consoleError.mockRestore();
+  });
+
+  it("supports a metadata-only source link and leaves its direct source accessible on an error", async () => {
     const { container } = renderVideoDetail({ card_kind: "link", block_type: "link", body: "" });
-    fireEvent.click(screen.getByRole("button", { name: "Play video" }));
+    await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull());
     fireEvent.error(container.querySelector("iframe")!);
-    expect(screen.getByRole("link", { name: "Open on YouTube" })).toHaveAttribute("href", "https://www.youtube.com/watch?v=9KDDhAOyv9k");
+    expect(screen.getByRole("link", { name: "Open Original" })).toHaveAttribute("href", "https://www.youtube.com/watch?v=9KDDhAOyv9k");
     expect(container.querySelector("iframe")).not.toBeNull();
   });
 
-  it("retains the transcript after the external frame fails", () => {
+  it("retains the transcript after the external frame fails", async () => {
     const { container } = renderVideoDetail();
-    fireEvent.click(screen.getByRole("button", { name: "Play video" }));
+    await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull());
     fireEvent.error(container.querySelector("iframe")!);
     expect(screen.getByText("Preserved transcript.")).toBeInTheDocument();
   });
@@ -148,6 +189,7 @@ describe("Detail source video independent of card kind", () => {
     expect(screen.getByTestId("video-from-blob")).toHaveAttribute("data-src", expect.stringContaining("Media/film.mp4"));
     expect(screen.queryByRole("button", { name: "Play video" })).toBeNull();
     expect(container.querySelector("iframe")).toBeNull();
+    expect(youtubePlayerUrlMock).not.toHaveBeenCalled();
     expect(screen.getByText("Preserved transcript.")).toBeInTheDocument();
   });
 
@@ -159,25 +201,158 @@ describe("Detail source video independent of card kind", () => {
     expect(container.querySelector("[data-youtube-source-player]")).toBeNull();
   });
 
-  it("does not hide the source player for video syntax inside a code example", () => {
-    renderVideoDetail({ body: "Example: `![](film.mp4)`" });
-    expect(screen.getByRole("button", { name: "Play video" })).toBeInTheDocument();
+  it("does not hide the source player for video syntax inside a code example", async () => {
+    const { container } = renderVideoDetail({ body: "Example: `![](film.mp4)`" });
+    await waitFor(() => expect(container.querySelector("[data-youtube-source-player] iframe")).not.toBeNull());
     expect(screen.queryByTestId("video-from-blob")).toBeNull();
   });
 
   it("does not treat body links or a misleading host as a source player", () => {
     const { container } = renderVideoDetail({ url: "https://youtube.com.evil.example/watch?v=9KDDhAOyv9k", body: "See [film](https://youtu.be/9KDDhAOyv9k)." });
     expect(container.querySelector("[data-youtube-source-player]")).toBeNull();
+    expect(youtubePlayerUrlMock).not.toHaveBeenCalled();
     expect(screen.getByRole("link", { name: "film" })).toBeInTheDocument();
   });
 
-  it("resets playback when navigation changes video identity", () => {
+  it("opens the source video menu on a right click with only the actions a link supports", async () => {
+    const { container } = renderVideoDetail();
+    fireEvent.contextMenu(container.querySelector("[data-source-video-surface]")!);
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Open Original" })).toBeInTheDocument());
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open Original", "Copy Link", "Download Media", "Delete Embed"]);
+  });
+
+  it("opens the source video menu as a context menu at the pointer", async () => {
+    const { container } = renderVideoDetail();
+    fireEvent.contextMenu(container.querySelector("[data-source-video-surface]")!, { clientX: 200, clientY: 120 });
+    expect(await screen.findByRole("menu")).toHaveAttribute("data-slot", "context-menu-content");
+  });
+
+  it("opens the menu when the shell reports a right click inside the player frame, and only then", async () => {
+    const { container } = renderVideoDetail();
+    const surface = container.querySelector<HTMLElement>("[data-source-video-surface]")!;
+    surface.getBoundingClientRect = () => ({ left: 100, top: 50, right: 740, bottom: 410, width: 640, height: 360, x: 100, y: 50, toJSON: () => ({}) });
+    await act(async () => {});
+    act(() => { window.dispatchEvent(new CustomEvent("source-video-context-menu", { detail: { payload: { x: 20, y: 20 } } })); });
+    expect(screen.queryByRole("menuitem", { name: "Copy Link" })).toBeNull();
+    act(() => { window.dispatchEvent(new CustomEvent("source-video-context-menu", { detail: { payload: { x: 300, y: 200 } } })); });
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Copy Link" })).toBeInTheDocument());
+  });
+
+  it("copies the canonical video link", async () => {
+    writeText.mockClear();
+    const { container } = renderVideoDetail({ url: "https://youtu.be/9KDDhAOyv9k" });
+    fireEvent.contextMenu(container.querySelector("[data-source-video-surface]")!);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Copy Link" }));
+    expect(writeText).toHaveBeenCalledWith("https://www.youtube.com/watch?v=9KDDhAOyv9k");
+  });
+
+  it("deletes the source video only after confirmation", async () => {
+    const onDeleteSourceVideo = vi.fn(async () => {});
+    const props = {
+      block: block({ url: "https://www.youtube.com/watch?v=9KDDhAOyv9k", body: "# Film\n\nPreserved transcript.", thumbnail: "Media/film.jpg" }),
+      vaultPath: "/tmp/test-vault", thumbsRootPath: "/tmp/thumbs", tags: [],
+      onClose: vi.fn(), onNavigate: vi.fn(), onToggleTag: vi.fn(),
+      onCreateAndAssign: vi.fn(), onTagsChanged: vi.fn(), onRequestRename: vi.fn(),
+      onRequestDelete: vi.fn(), onOpenRelatedNote: vi.fn(), onDeleteSourceVideo,
+    };
+    const { container } = render(<Detail {...props} />);
+    fireEvent.contextMenu(container.querySelector("[data-source-video-surface]")!);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete Embed" }));
+    expect(await screen.findByText("Delete embed from element?")).toBeInTheDocument();
+    expect(onDeleteSourceVideo).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Delete embed" }));
+    await waitFor(() => expect(onDeleteSourceVideo).toHaveBeenCalledWith(props.block.slug));
+    await waitFor(() => expect(screen.queryByText("Delete embed from element?")).toBeNull());
+  });
+
+  describe("Download Media", () => {
+    const sendDownload = (payload: Record<string, unknown>) => act(() => {
+      window.dispatchEvent(new CustomEvent("source-video-download", { detail: { payload } }));
+    });
+
+    function renderWithDownloadHandler() {
+      const onSourceVideoDownloaded = vi.fn(async () => {});
+      const props = {
+        block: block({ url: "https://www.youtube.com/watch?v=9KDDhAOyv9k", body: "# Film\n\nPreserved transcript.", thumbnail: "Media/film.jpg" }),
+        vaultPath: "/tmp/test-vault", thumbsRootPath: "/tmp/thumbs", tags: [],
+        onClose: vi.fn(), onNavigate: vi.fn(), onToggleTag: vi.fn(),
+        onCreateAndAssign: vi.fn(), onTagsChanged: vi.fn(), onRequestRename: vi.fn(),
+        onRequestDelete: vi.fn(), onOpenRelatedNote: vi.fn(), onSourceVideoDownloaded,
+      };
+      return { ...render(<Detail {...props} />), props, onSourceVideoDownloaded };
+    }
+
+    beforeEach(() => {
+      vi.mocked(startSourceVideoDownload).mockClear();
+      vi.mocked(cancelSourceVideoDownload).mockClear();
+      vi.mocked(sourceVideoDownloadStatus).mockReset();
+      vi.mocked(sourceVideoDownloadStatus).mockResolvedValue(null);
+    });
+
+    it("starts from the menu and shows progress under the player, not over it", async () => {
+      const { container, props } = renderWithDownloadHandler();
+      await act(async () => {});
+      fireEvent.contextMenu(container.querySelector("[data-source-video-surface]")!);
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Download Media" }));
+      expect(startSourceVideoDownload).toHaveBeenCalledWith(props.block.slug, "https://www.youtube.com/watch?v=9KDDhAOyv9k");
+      // Reading formats has no known length: an indeterminate bar, cancellable.
+      expect(await screen.findByText("Preparing…")).toBeInTheDocument();
+      expect(screen.getByRole("progressbar", { name: "Download progress" })).toHaveAttribute("data-progress-mode", "indeterminate");
+      expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+      expect(container.querySelector("[data-source-video-surface] [data-source-video-download]")).toBeNull();
+      sendDownload({ slug: props.block.slug, state: "downloading", percent: 0 });
+      expect(screen.getByRole("progressbar", { name: "Download progress" })).toHaveAttribute("data-progress-mode", "determinate");
+      sendDownload({ slug: props.block.slug, state: "downloading", percent: 42 });
+      expect(screen.getByText("Downloading 42%")).toBeInTheDocument();
+      sendDownload({ slug: "another card", state: "downloading", percent: 90 });
+      expect(screen.getByText("Downloading 42%")).toBeInTheDocument();
+      sendDownload({ slug: props.block.slug, state: "finishing" });
+      expect(screen.getByText("Joining video and sound…")).toBeInTheDocument();
+      expect(screen.getByRole("progressbar", { name: "Download progress" })).toHaveAttribute("data-progress-mode", "indeterminate");
+      expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    });
+
+    it("reloads the card once the file is in the space", async () => {
+      const { props, onSourceVideoDownloaded } = renderWithDownloadHandler();
+      await act(async () => {});
+      sendDownload({ slug: props.block.slug, state: "done" });
+      await waitFor(() => expect(onSourceVideoDownloaded).toHaveBeenCalledTimes(1));
+      expect(screen.queryByText(/Downloading/)).toBeNull();
+    });
+
+    it("cancels a running download and says why one failed", async () => {
+      const { props } = renderWithDownloadHandler();
+      await act(async () => {});
+      sendDownload({ slug: props.block.slug, state: "downloading", percent: 10 });
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(cancelSourceVideoDownload).toHaveBeenCalledWith(props.block.slug);
+      sendDownload({ slug: props.block.slug, state: "cancelled" });
+      expect(screen.queryByText(/Downloading/)).toBeNull();
+      sendDownload({ slug: props.block.slug, state: "failed", message: "YouTube refused the download (HTTP 403)." });
+      expect(screen.getByText("Download failed: YouTube refused the download (HTTP 403).")).toBeInTheDocument();
+    });
+
+    it("shows a download that is still running when the card is opened again", async () => {
+      vi.mocked(sourceVideoDownloadStatus).mockResolvedValue({ state: "downloading", percent: 64 });
+      renderWithDownloadHandler();
+      expect(await screen.findByText("Downloading 64%")).toBeInTheDocument();
+    });
+
+    it("does not start a second download while one runs", async () => {
+      const { container, props } = renderWithDownloadHandler();
+      await act(async () => {});
+      sendDownload({ slug: props.block.slug, state: "downloading", percent: 5 });
+      fireEvent.contextMenu(container.querySelector("[data-source-video-surface]")!);
+      expect(await screen.findByRole("menuitem", { name: "Download Media" })).toHaveAttribute("data-disabled");
+    });
+  });
+
+  it("loads the next video's player when navigation changes video identity", async () => {
     const { container, rerender, props } = renderVideoDetail();
-    fireEvent.click(screen.getByRole("button", { name: "Play video" }));
+    await waitFor(() => expect(container.querySelector("iframe")?.getAttribute("src")).toBe("http://localhost:4321/youtube/9KDDhAOyv9k"));
     rerender(<Detail {...props} block={block({ slug: "next", url: "https://youtu.be/abcdefghijk", body: "Second transcript" })} />);
-    expect(container.querySelector("iframe")).toBeNull();
-    expect(screen.getByRole("button", { name: "Play video" })).toBeInTheDocument();
     expect(screen.getByText("Second transcript")).toBeInTheDocument();
+    await waitFor(() => expect(container.querySelector("iframe")?.getAttribute("src")).toBe("http://localhost:4321/youtube/abcdefghijk"));
   });
 });
 
@@ -1601,11 +1776,44 @@ describe("Detail", () => {
     });
     expect(screen.queryByRole("dialog", { name: "Image preview" })).not.toBeInTheDocument();
 
-    fireEvent.contextMenu(image!);
-    const dropdownMenu = await screen.findByRole("menu");
-    expect(within(dropdownMenu).getByText("Create Element")).toBeInTheDocument();
-    expect(within(dropdownMenu).getByText("Rename Media...")).toBeInTheDocument();
+    fireEvent.contextMenu(image!, { clientX: 140, clientY: 90 });
+    const contextMenu = await screen.findByRole("menu");
+    // A right click opens a context menu at the pointer, not the ellipsis menu.
+    expect(contextMenu).toHaveAttribute("data-slot", "context-menu-content");
+    expect(container.querySelector("[data-detail-media-more-button]")).toHaveAttribute("aria-expanded", "false");
+    expect(within(contextMenu).getByText("Create Element")).toBeInTheDocument();
+    expect(within(contextMenu).getByText("Rename Media...")).toBeInTheDocument();
+    expect(within(contextMenu).getByText("Delete Media")).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Image preview" })).not.toBeInTheDocument();
+  });
+
+  it("opens the same menu items from the ellipsis and from a right click", async () => {
+    const b = block({ card_kind: "media", block_type: "image", title: "Photo", url: null, media_file: "photo.jpg" });
+    const { container } = render(
+      <Detail
+        block={b}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        tags={[]}
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={vi.fn()}
+      />,
+    );
+    const frame = container.querySelector<HTMLElement>("[data-detail-media-action-frame]")!;
+    fireEvent.contextMenu(frame, { clientX: 60, clientY: 40 });
+    const fromRightClick = within(await screen.findByRole("menu")).getAllByRole("menuitem").map((item) => item.textContent);
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Media actions" }), { button: 0, pointerType: "mouse" });
+    const fromEllipsis = within(await screen.findByRole("menu")).getAllByRole("menuitem").map((item) => item.textContent);
+    expect(fromRightClick).toEqual(fromEllipsis);
+    expect(fromRightClick).toEqual(["Create Element", "Reveal in Finder", "Copy Path", "Copy Media", "Rename Media...", "Remove from Element", "Delete Media"]);
   });
 
   it("uses the shared quantized list height for Create Element from image", () => {
@@ -1924,7 +2132,7 @@ describe("Detail", () => {
     expect(screen.queryByRole("alertdialog", { name: "Delete media file?" })).not.toBeInTheDocument();
   });
 
-  it("shows the standard overflow menu trigger on video media surfaces", () => {
+  it("keeps the ellipsis off a video and opens its menu only on right click", async () => {
     const b = block({
       card_kind: "media",
       block_type: "video",
@@ -1949,14 +2157,14 @@ describe("Detail", () => {
       />,
     );
 
-    expect(container.querySelector("video")).not.toBeNull();
-    const menu = container.querySelector("[data-detail-media-action-menu]");
-    expect(menu).not.toBeNull();
-    expect(menu).toHaveClass("right-2", "top-2");
-    const trigger = menu!.querySelector("button");
-    expect(trigger).toHaveAttribute("data-variant", "default");
-    expect(trigger).toHaveAttribute("data-size", "icon");
-    expect(trigger).toHaveClass("bg-component-fill");
+    const video = container.querySelector("video");
+    expect(video).not.toBeNull();
+    // The ellipsis covered the video's own controls.
+    expect(container.querySelector("[data-detail-media-action-menu]")).toBeNull();
+    fireEvent.contextMenu(video!, { clientX: 120, clientY: 80 });
+    const menu = await screen.findByRole("menu");
+    expect(menu).toHaveAttribute("data-slot", "context-menu-content");
+    expect(within(menu).getByText("Delete Media")).toBeInTheDocument();
   });
 
   it("renders non-image media files as a file shell even with article legacy type", () => {

@@ -27,7 +27,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' asset: https: http: data:; media-src 'self' asset: https:; script-src 'self'; style-src 'self' 'unsafe-inline'; frame-src 'self' https://www.youtube.com",
+      "csp": "default-src 'self'; img-src 'self' asset: https: http: data:; media-src 'self' asset: https:; script-src 'self'; style-src 'self' 'unsafe-inline'; frame-src 'self' http://localhost:*",
       "assetProtocol": {
         "enable": true,
         "scope": {
@@ -52,6 +52,7 @@
     "resources": {
       "binaries/yt-dlp": "binaries/yt-dlp",
       "binaries/icloud-progress-helper": "binaries/icloud-progress-helper",
+      "binaries/video-mux-helper": "binaries/video-mux-helper",
       "../build/clipper-extension/": "clipper-extension/",
       "../build/clipper-runtime-manifest.json": "clipper-runtime-manifest.json"
     }

@@ -11,7 +11,12 @@ fn main() {
     // makes swiftc (Xcode Command Line Tools) a build requirement on macOS —
     // the documented price of a percent that tells the truth.
     #[cfg(all(feature = "desktop", target_os = "macos"))]
-    build_icloud_progress_helper();
+    build_swift_helper("icloud_progress_helper.swift", "icloud-progress-helper");
+
+    // Download Media joins YouTube's separate video and audio streams without
+    // ffmpeg, through AVFoundation. See SPEC_MEDIA_ASSET_ACTIONS.md.
+    #[cfg(all(feature = "desktop", target_os = "macos"))]
+    build_swift_helper("video_mux_helper.swift", "video-mux-helper");
 
     #[cfg(feature = "desktop")]
     {
@@ -158,25 +163,21 @@ fn ensure_clipper_runtime_manifest_placeholder() {
     .expect("failed to write runtime manifest placeholder");
 }
 
-/// Compile the iCloud progress helper into `binaries/` under a fixed name, so
-/// it ships as a bundle resource the same way yt-dlp does and is found beside
-/// the resources at runtime.
+/// Compile a Swift helper from `native/` into `binaries/` under a fixed name,
+/// so it ships as a bundle resource the same way yt-dlp does and is found
+/// beside the resources at runtime.
 #[cfg(all(feature = "desktop", target_os = "macos"))]
-fn build_icloud_progress_helper() {
+fn build_swift_helper(source_name: &str, helper_name: &str) {
     use std::env;
     use std::path::PathBuf;
     use std::process::Command;
 
-    const HELPER_NAME: &str = "icloud-progress-helper";
-
     let manifest_dir =
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("missing CARGO_MANIFEST_DIR"));
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("missing OUT_DIR"));
-    let source = manifest_dir
-        .join("native")
-        .join("icloud_progress_helper.swift");
+    let source = manifest_dir.join("native").join(source_name);
     let binaries_dir = manifest_dir.join("binaries");
-    let output = binaries_dir.join(HELPER_NAME);
+    let output = binaries_dir.join(helper_name);
     let module_cache = out_dir.join("swift-module-cache");
 
     println!("cargo:rerun-if-changed={}", source.display());
@@ -193,15 +194,12 @@ fn build_icloud_progress_helper() {
         .arg(&output)
         .arg(&source)
         .status()
-        .expect(
-            "failed to spawn swiftc for the iCloud progress helper — Xcode Command Line Tools are required",
-        );
+        .unwrap_or_else(|error| {
+            panic!("failed to spawn swiftc for {helper_name} ({error}): Xcode Command Line Tools are required")
+        });
 
     if !status.success() {
-        panic!(
-            "failed to build the iCloud progress helper at {}",
-            output.display()
-        );
+        panic!("failed to build {helper_name} at {}", output.display());
     }
 }
 

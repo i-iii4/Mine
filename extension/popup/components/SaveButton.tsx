@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 
 export type SaveButtonState = "idle" | "saving" | "saved";
 
@@ -12,14 +13,16 @@ interface SaveButtonProps {
 
 export function SaveButton({ count, state, onClick, checkingOutcome = false, disabled = false }: SaveButtonProps) {
   if (state === "saving") {
-    // Indeterminate progress bar replaces the button while save is in
-    // flight. Native host doesn't report percentage, so we animate a
-    // sliding indicator via mine-progress-indicator keyframe defined
-    // in popup-layout.css.
+    // The design system's indeterminate Progress takes the button's place
+    // while save is in flight: the native host reports no percentage. It
+    // keeps the button's body so the bar sits exactly where the button was.
     return (
-      <div role="status" aria-label="Saving" className="relative h-10 w-full overflow-hidden rounded-1 bg-component-fill">
-        <div className="mine-progress-indicator absolute inset-y-0 left-0 w-1/3 bg-component-fill-hover" />
-      </div>
+      <Progress
+        value={null}
+        aria-label="Saving"
+        className="h-10 rounded-1 bg-component-fill"
+        indicatorClassName="rounded-1 bg-component-fill-hover"
+      />
     );
   }
 

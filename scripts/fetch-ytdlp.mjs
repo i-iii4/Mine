@@ -9,9 +9,14 @@
 //
 // Downloaded rather than committed: it is a 30 MB third-party artifact with its
 // own release cadence, and git is the wrong place for it.
+//
+// It also downloads YouTube videos for Download Media, and YouTube changes its
+// player on its own schedule: a build older than a couple of months starts
+// getting HTTP 403. Raising VERSION replaces an already staged binary, because
+// the staged version is recorded next to it.
 
 import { createWriteStream } from "node:fs";
-import { chmod, mkdir, stat } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pipeline } from "node:stream/promises";
@@ -19,15 +24,18 @@ import { pipeline } from "node:stream/promises";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PROJECT = join(HERE, "..");
 const DESTINATION = join(PROJECT, "src-tauri", "binaries", "yt-dlp");
+// Outside `binaries/` resources: only the binary is bundled.
+const VERSION_MARKER = join(PROJECT, "src-tauri", "binaries", ".yt-dlp-version");
 
 // macOS universal build, pinned so a rebuild is reproducible.
-const VERSION = "2026.07.04";
+const VERSION = "2026.08.19";
 const URL = `https://github.com/yt-dlp/yt-dlp/releases/download/${VERSION}/yt-dlp_macos`;
 
 async function alreadyPresent() {
   try {
     const info = await stat(DESTINATION);
-    return info.isFile() && info.size > 1_000_000;
+    const staged = (await readFile(VERSION_MARKER, "utf8")).trim();
+    return info.isFile() && info.size > 1_000_000 && staged === VERSION;
   } catch {
     return false;
   }
@@ -35,7 +43,7 @@ async function alreadyPresent() {
 
 async function main() {
   if (await alreadyPresent()) {
-    console.log(`yt-dlp already staged at ${DESTINATION}`);
+    console.log(`yt-dlp ${VERSION} already staged at ${DESTINATION}`);
     return;
   }
 
@@ -53,7 +61,8 @@ async function main() {
   if (info.size < 1_000_000) {
     throw new Error(`downloaded yt-dlp looks truncated: ${info.size} bytes`);
   }
-  console.log(`yt-dlp staged at ${DESTINATION} (${Math.round(info.size / 1_000_000)} MB)`);
+  await writeFile(VERSION_MARKER, `${VERSION}\n`);
+  console.log(`yt-dlp ${VERSION} staged at ${DESTINATION} (${Math.round(info.size / 1_000_000)} MB)`);
 }
 
 main().catch((error) => {

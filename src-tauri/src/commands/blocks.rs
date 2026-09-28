@@ -917,6 +917,101 @@ pub fn remove_media_asset_from_card(
     Ok(result)
 }
 
+/// Remove the card's source video: its YouTube `url`, its `thumbnail`
+/// property, and the poster file when no other card references it. Title,
+/// body, collections and the card file stay. See SPEC_MEDIA_ASSET_ACTIONS.md
+/// «Меню видео источника».
+#[tauri::command(rename_all = "snake_case")]
+pub fn delete_source_video(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    slug: String,
+) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
+    let vault_state = state
+        .vault_state
+        .lock()
+        .map_err(|_| MediaAssetActionError::Internal {
+            message: "vault state mutex poisoned".into(),
+        })?;
+    let vs = vault_state.as_ref().ok_or(MediaAssetActionError::NoVault)?;
+
+    let result = delete_source_video_inner(&state, &vs.conn, &vs.vault, &slug)?;
+    for slug in &result.affected_slugs {
+        app.emit(
+            "thumb:updated",
+            ThumbUpdatedPayload {
+                slug: slug.clone(),
+                is_text: false,
+            },
+        )
+        .map_err(|e| MediaAssetActionError::Internal {
+            message: format!("failed to emit thumb:updated: {e}"),
+        })?;
+    }
+    app.emit(
+        "vault-changed",
+        VaultChangedPayload {
+            path: vs.vault.root().to_string_lossy().to_string(),
+        },
+    )
+    .map_err(|e| MediaAssetActionError::Internal {
+        message: format!("failed to emit vault-changed: {e}"),
+    })?;
+
+    Ok(result)
+}
+
+/// Publish a downloaded source video into the vault and embed it under the
+/// card's heading. Called by the download job once the file is complete; the
+/// card is re-read here, so edits made during the download are kept. See
+/// SPEC_MEDIA_ASSET_ACTIONS.md «Download Media».
+pub(crate) fn attach_downloaded_source_video(
+    app: &AppHandle,
+    expected_vault_root: &Path,
+    slug: &str,
+    video_id: &str,
+    downloaded: &Path,
+) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
+    let state = app.state::<AppState>();
+    let vault_state = state
+        .vault_state
+        .lock()
+        .map_err(|_| MediaAssetActionError::Internal {
+            message: "vault state mutex poisoned".into(),
+        })?;
+    let vs = vault_state.as_ref().ok_or(MediaAssetActionError::NoVault)?;
+    if vs.vault.root() != expected_vault_root {
+        return Err(MediaAssetActionError::Internal {
+            message: "the space changed while the video was downloading".into(),
+        });
+    }
+
+    let result =
+        attach_downloaded_source_video_inner(&state, &vs.conn, &vs.vault, slug, video_id, downloaded)?;
+    for slug in &result.affected_slugs {
+        app.emit(
+            "thumb:updated",
+            ThumbUpdatedPayload {
+                slug: slug.clone(),
+                is_text: false,
+            },
+        )
+        .map_err(|e| MediaAssetActionError::Internal {
+            message: format!("failed to emit thumb:updated: {e}"),
+        })?;
+    }
+    app.emit(
+        "vault-changed",
+        VaultChangedPayload {
+            path: vs.vault.root().to_string_lossy().to_string(),
+        },
+    )
+    .map_err(|e| MediaAssetActionError::Internal {
+        message: format!("failed to emit vault-changed: {e}"),
+    })?;
+    Ok(result)
+}
+
 /// Copy the selected local media file as a native media/file object. This is
 /// intentionally separate from Copy Path, which copies a plain string path.
 #[tauri::command(rename_all = "snake_case")]
@@ -2682,6 +2777,218 @@ fn remove_media_asset_from_card_inner(
 
     Ok(MediaAssetMutationResult {
         media_ref,
+        new_media_ref: None,
+        affected_slugs: vec![block.slug],
+    })
+}
+
+fn delete_source_video_inner(
+    state: &AppState,
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    slug: &str,
+) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
+    validate_slug(slug).map_err(|e| MediaAssetActionError::InvalidMediaRef {
+        reason: format!("invalid card slug: {e}"),
+    })?;
+    let source_path = vault.block_path(slug);
+    if !source_path.exists() {
+        return Err(MediaAssetActionError::InvalidMediaRef {
+            reason: format!("card not found: {slug}"),
+        });
+    }
+    let (read_slug, content) =
+        files::read_block_file(vault, &source_path).map_err(internal_media_asset_error)?;
+    let mut block = parse_markdown_document(&read_slug, &content, file_saved_at(&source_path))
+        .map_err(|e| MediaAssetActionError::Internal {
+            message: format!("failed to parse card: {e}"),
+        })?
+        .block;
+    let source_url = block.frontmatter.url.clone().unwrap_or_default();
+    if mine_core::domain::video_source::parse_youtube_source(&source_url).is_none() {
+        return Err(MediaAssetActionError::InvalidMediaRef {
+            reason: format!("card has no source video: {slug}"),
+        });
+    }
+
+    // The poster goes with the video only when nothing else shows it.
+    let poster_path = block
+        .frontmatter
+        .thumbnail
+        .as_deref()
+        .and_then(|reference| media_refs::resolve_indexed_media(vault, &block.slug, reference));
+    let poster_to_delete = match &poster_path {
+        Some(path) => {
+            let shared = collect_media_asset_reference_blocks(vault, path)?
+                .iter()
+                .any(|reference| reference.slug != block.slug);
+            (!shared).then(|| path.clone())
+        }
+        None => None,
+    };
+    let media_ref = poster_to_delete
+        .as_deref()
+        .and_then(|path| vault.root_relative_reference(path))
+        .unwrap_or_default();
+
+    block.frontmatter.url = None;
+    block.frontmatter.thumbnail = None;
+
+    let thumb_path = vault.thumb_path(&block.slug);
+    let mut suppressed = vec![source_path.clone(), thumb_path.clone()];
+    suppressed.extend(poster_to_delete.iter().cloned());
+    state
+        .suppress_paths(
+            suppressed,
+            Duration::from_millis(IN_APP_RENAME_WATCHER_SUPPRESSION_MS),
+        )
+        .map_err(internal_media_asset_error)?;
+
+    let serialized = crate::domain::block::serialize_block(&block);
+    let writes = std::iter::once(SourceFileWrite::replace(source_path, serialized.into_bytes()))
+        .chain(poster_to_delete.into_iter().map(SourceFileWrite::delete))
+        .collect();
+    let staged = StagedSourceMutation::stage(writes).map_err(internal_media_asset_error)?;
+    staged
+        .commit_with_index(conn, "delete_source_video", |index_conn| {
+            index::upsert_block(index_conn, &block, Some(vault.root())).map(|_| ())
+        })
+        .map_err(internal_media_asset_error)?;
+    let thumb_source = thumbnails::generate_for_block(&block, vault);
+    if matches!(thumb_source, thumbnails::ThumbSource::None) && thumb_path.exists() {
+        let _ = std::fs::remove_file(&thumb_path);
+    }
+    let _ = index::sync_thumb_metadata(conn, &block.slug, &thumb_path, Some(vault.root()));
+
+    Ok(MediaAssetMutationResult {
+        media_ref,
+        new_media_ref: None,
+        affected_slugs: vec![block.slug],
+    })
+}
+
+fn is_remote_media_reference(source: &str) -> bool {
+    source.starts_with("http://") || source.starts_with("https://")
+}
+
+fn is_video_file_name(source: &str) -> bool {
+    Path::new(source.split(['|', '#']).next().unwrap_or(source))
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| matches!(ext.to_ascii_lowercase().as_str(), "mp4" | "m4v" | "mov" | "webm"))
+}
+
+/// Put the video right under the card's heading, or first when there is none,
+/// so it leads the card the way a saved post's video does.
+fn insert_video_embed(body: &str, link: &str) -> String {
+    let embed = format!("![[{link}]]");
+    let trimmed = body.trim_start_matches('\n');
+    if trimmed.starts_with("# ") {
+        let (heading, rest) = trimmed.split_once('\n').unwrap_or((trimmed, ""));
+        let rest = rest.trim_start_matches('\n');
+        if rest.is_empty() {
+            return format!("{heading}\n\n{embed}\n");
+        }
+        return format!("{heading}\n\n{embed}\n\n{rest}");
+    }
+    if trimmed.is_empty() {
+        return format!("{embed}\n");
+    }
+    format!("{embed}\n\n{trimmed}")
+}
+
+fn attach_downloaded_source_video_inner(
+    state: &AppState,
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    slug: &str,
+    video_id: &str,
+    downloaded: &Path,
+) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
+    validate_slug(slug).map_err(|e| MediaAssetActionError::InvalidMediaRef {
+        reason: format!("invalid card slug: {e}"),
+    })?;
+    let source_path = vault.block_path(slug);
+    if !source_path.exists() {
+        return Err(MediaAssetActionError::InvalidMediaRef {
+            reason: format!("card not found: {slug}"),
+        });
+    }
+    let (read_slug, content) =
+        files::read_block_file(vault, &source_path).map_err(internal_media_asset_error)?;
+    let mut block = parse_markdown_document(&read_slug, &content, file_saved_at(&source_path))
+        .map_err(|e| MediaAssetActionError::Internal {
+            message: format!("failed to parse card: {e}"),
+        })?
+        .block;
+    // The card must still be the one the download started from.
+    let still_same_video = block
+        .frontmatter
+        .url
+        .as_deref()
+        .and_then(mine_core::domain::video_source::parse_youtube_source)
+        .is_some_and(|source| source.video_id == video_id);
+    if !still_same_video {
+        return Err(MediaAssetActionError::InvalidMediaRef {
+            reason: "the card no longer links to this video".into(),
+        });
+    }
+    let has_body_video = iter_inline_media_references(&block.body)
+        .iter()
+        .any(|reference| !is_remote_media_reference(&reference.source) && is_video_file_name(&reference.source));
+    if block.frontmatter.file.is_some() || has_body_video {
+        return Err(MediaAssetActionError::InvalidMediaRef {
+            reason: "the card already has its own video".into(),
+        });
+    }
+
+    // Media is named after the card, unique across the whole space.
+    let card_name = slug.rsplit('/').next().unwrap_or(slug);
+    let occupied = files::scan_vault_file_paths(vault).map_err(internal_media_asset_error)?;
+    let stem = mine_core::save::select_unique_file_stem(card_name, "mp4", &occupied)
+        .map_err(|e| MediaAssetActionError::Internal {
+            message: format!("failed to name the video file: {e}"),
+        })?;
+    let target = vault.new_media_stem(&format!("{stem}.mp4"));
+    let media_path = vault.root().join(&target);
+    let mut paths = occupied;
+    paths.push(target.clone());
+    let link = mine_core::links::LinkIndex::new(paths)
+        .shortest_link(&target, false)
+        .ok_or_else(|| MediaAssetActionError::Internal {
+            message: "new video link target is unavailable".into(),
+        })?;
+    // The video goes into the body as an embed, the way the clipper saves a
+    // post's video: that is what makes the feed show its frame and autoplay
+    // it, and Detail play it inline in place of the YouTube player.
+    block.body = insert_video_embed(&block.body, &link);
+
+    let thumb_path = vault.thumb_path(&block.slug);
+    state
+        .suppress_paths(
+            [source_path.clone(), thumb_path.clone(), media_path.clone()],
+            Duration::from_millis(IN_APP_RENAME_WATCHER_SUPPRESSION_MS),
+        )
+        .map_err(internal_media_asset_error)?;
+    if let Some(parent) = media_path.parent() {
+        std::fs::create_dir_all(parent).map_err(internal_media_asset_error)?;
+    }
+    let serialized = crate::domain::block::serialize_block(&block);
+    let staged = StagedSourceMutation::stage(vec![
+        SourceFileWrite::rename(downloaded.to_path_buf(), media_path.clone()),
+        SourceFileWrite::replace(source_path, serialized.into_bytes()),
+    ])
+    .map_err(internal_media_asset_error)?;
+    staged
+        .commit_with_index(conn, "attach_downloaded_source_video", |index_conn| {
+            index::upsert_block(index_conn, &block, Some(vault.root())).map(|_| ())
+        })
+        .map_err(internal_media_asset_error)?;
+    let _ = thumbnails::generate_for_block(&block, vault);
+    let _ = index::sync_thumb_metadata(conn, &block.slug, &thumb_path, Some(vault.root()));
+
+    Ok(MediaAssetMutationResult {
+        media_ref: vault.root_relative_reference(&media_path).unwrap_or(target),
         new_media_ref: None,
         affected_slugs: vec![block.slug],
     })
@@ -4976,6 +5283,147 @@ mod tests {
             std::fs::read(vault.root().join("renamed.png")).unwrap(),
             b"image-bytes"
         );
+    }
+
+    fn youtube_card(slug: &str, poster: &str) -> Block {
+        let mut block = article(slug, "# Film\n\nTranscript stays.");
+        block.frontmatter.url = Some("https://www.youtube.com/watch?v=9KDDhAOyv9k".to_string());
+        block.frontmatter.thumbnail = Some(poster.to_string());
+        block
+    }
+
+    #[test]
+    fn delete_source_video_inner_clears_link_and_deletes_unshared_poster() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        persist_block(&conn, &vault, &youtube_card("Film", "poster.jpg"));
+        std::fs::write(vault.root().join("poster.jpg"), b"poster-bytes").unwrap();
+
+        let result = delete_source_video_inner(&state, &conn, &vault, "Film").unwrap();
+
+        assert_eq!(result.media_ref, "poster.jpg");
+        assert_eq!(result.affected_slugs, vec!["Film".to_string()]);
+        assert!(!vault.root().join("poster.jpg").exists());
+        let (_, content) = files::read_block_file(&vault, &vault.block_path("Film")).unwrap();
+        let parsed = crate::domain::block::parse_block("Film", &content).unwrap();
+        assert!(parsed.frontmatter.url.is_none());
+        assert!(parsed.frontmatter.thumbnail.is_none());
+        assert_eq!(parsed.frontmatter.tags, vec!["notes".to_string()]);
+        assert!(parsed.body.contains("Transcript stays."));
+    }
+
+    #[test]
+    fn delete_source_video_inner_keeps_a_poster_another_card_shows() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        persist_block(&conn, &vault, &youtube_card("Film", "poster.jpg"));
+        persist_block(&conn, &vault, &image("Poster Card", "poster.jpg"));
+        std::fs::write(vault.root().join("poster.jpg"), b"poster-bytes").unwrap();
+
+        let result = delete_source_video_inner(&state, &conn, &vault, "Film").unwrap();
+
+        assert_eq!(result.media_ref, "");
+        assert_eq!(std::fs::read(vault.root().join("poster.jpg")).unwrap(), b"poster-bytes");
+        let (_, content) = files::read_block_file(&vault, &vault.block_path("Film")).unwrap();
+        let parsed = crate::domain::block::parse_block("Film", &content).unwrap();
+        assert!(parsed.frontmatter.url.is_none());
+        assert!(parsed.frontmatter.thumbnail.is_none());
+        let (_, other) = files::read_block_file(&vault, &vault.block_path("Poster Card")).unwrap();
+        assert!(other.contains("poster.jpg"));
+    }
+
+    #[test]
+    fn attach_downloaded_source_video_inner_moves_the_file_in_and_links_it() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        persist_block(&conn, &vault, &youtube_card("Film", "poster.jpg"));
+        std::fs::write(vault.root().join("poster.jpg"), b"poster-bytes").unwrap();
+        std::fs::write(vault.root().join("Film.mp4"), b"someone else's file").unwrap();
+        let staging = tempfile::tempdir().unwrap();
+        let downloaded = staging.path().join("joined.mp4");
+        std::fs::write(&downloaded, b"video-bytes").unwrap();
+
+        let result =
+            attach_downloaded_source_video_inner(&state, &conn, &vault, "Film", "9KDDhAOyv9k", &downloaded)
+                .unwrap();
+
+        assert_eq!(result.affected_slugs, vec!["Film".to_string()]);
+        assert!(!downloaded.exists());
+        let published = vault.root().join(&result.media_ref);
+        assert_eq!(std::fs::read(&published).unwrap(), b"video-bytes");
+        assert_ne!(result.media_ref, "Film.mp4", "an existing file keeps its name");
+        assert_eq!(std::fs::read(vault.root().join("Film.mp4")).unwrap(), b"someone else's file");
+        let (_, content) = files::read_block_file(&vault, &vault.block_path("Film")).unwrap();
+        let parsed = crate::domain::block::parse_block("Film", &content).unwrap();
+        assert!(parsed.frontmatter.file.is_none(), "the video is an embed, as a saved post's video is");
+        let file_name = Path::new(&result.media_ref).file_name().unwrap().to_str().unwrap();
+        assert_eq!(parsed.body, format!("# Film\n\n![[{file_name}]]\n\nTranscript stays."));
+        assert!(parsed.frontmatter.url.is_some(), "the source link stays");
+
+        // The feed sees a video poster and can autoplay the card.
+        let indexed = index::get_block(&conn, "Film").unwrap().unwrap();
+        assert!(indexed.preview_manifest.as_deref().unwrap_or("").contains("\"kind\":\"video_poster\""), "{:?}", indexed.preview_manifest);
+    }
+
+    #[test]
+    fn attach_downloaded_source_video_inner_refuses_a_card_that_already_has_a_video() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        let mut card = youtube_card("Film", "poster.jpg");
+        card.body = "# Film\n\n![[clip.mp4]]\n\nTranscript stays.".to_string();
+        persist_block(&conn, &vault, &card);
+        let staging = tempfile::tempdir().unwrap();
+        let downloaded = staging.path().join("joined.mp4");
+        std::fs::write(&downloaded, b"video-bytes").unwrap();
+
+        let error =
+            attach_downloaded_source_video_inner(&state, &conn, &vault, "Film", "9KDDhAOyv9k", &downloaded)
+                .unwrap_err();
+
+        assert!(matches!(error, MediaAssetActionError::InvalidMediaRef { .. }));
+        assert!(downloaded.exists());
+    }
+
+    #[test]
+    fn video_embed_goes_under_the_heading_or_first() {
+        assert_eq!(insert_video_embed("# Film\n\nText", "a.mp4"), "# Film\n\n![[a.mp4]]\n\nText");
+        assert_eq!(insert_video_embed("# Film", "a.mp4"), "# Film\n\n![[a.mp4]]\n");
+        assert_eq!(insert_video_embed("Text only", "a.mp4"), "![[a.mp4]]\n\nText only");
+        assert_eq!(insert_video_embed("", "a.mp4"), "![[a.mp4]]\n");
+        assert_eq!(insert_video_embed("## Section\n\nText", "a.mp4"), "![[a.mp4]]\n\n## Section\n\nText");
+    }
+
+    #[test]
+    fn attach_downloaded_source_video_inner_refuses_a_card_that_changed_video() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        persist_block(&conn, &vault, &youtube_card("Film", "poster.jpg"));
+        let staging = tempfile::tempdir().unwrap();
+        let downloaded = staging.path().join("joined.mp4");
+        std::fs::write(&downloaded, b"video-bytes").unwrap();
+
+        let error =
+            attach_downloaded_source_video_inner(&state, &conn, &vault, "Film", "abcdefghijk", &downloaded)
+                .unwrap_err();
+
+        assert!(matches!(error, MediaAssetActionError::InvalidMediaRef { .. }));
+        assert!(downloaded.exists(), "the download is left for the job to clean up");
+        let (_, content) = files::read_block_file(&vault, &vault.block_path("Film")).unwrap();
+        assert!(!content.contains(".mp4"));
+    }
+
+    #[test]
+    fn delete_source_video_inner_refuses_a_card_without_a_source_video() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        let plain = article("Plain", "Body");
+        persist_block(&conn, &vault, &plain);
+
+        let error = delete_source_video_inner(&state, &conn, &vault, "Plain").unwrap_err();
+
+        assert!(matches!(error, MediaAssetActionError::InvalidMediaRef { .. }));
+        let (_, content) = files::read_block_file(&vault, &vault.block_path("Plain")).unwrap();
+        assert!(content.contains("https://example.com/article"));
     }
 
     #[test]

@@ -216,6 +216,7 @@ import {
   createMediaAssetCard,
   renameMediaAsset,
   deleteMediaAsset,
+  deleteSourceVideo,
   removeMediaAssetFromCard,
   extractTextSelection,
   deleteTextSelection,
@@ -2672,6 +2673,31 @@ export function AppWithVault({
     [invalidateRouteSnapshots, scheduleRefresh],
   );
 
+  const handleSourceVideoDelete = useCallback(
+    async (slug: string) => {
+      await deleteSourceVideo(slug);
+      invalidateRouteSnapshots();
+      scheduleRefresh({
+        grid: true,
+        taxonomy: true,
+        previews: true,
+      }, 0, { force: true });
+      window.dispatchEvent(new Event("vault-refreshed"));
+    },
+    [invalidateRouteSnapshots, scheduleRefresh],
+  );
+
+  // The shell already wrote the file and the card; the views only reload.
+  const handleSourceVideoDownloaded = useCallback(async () => {
+    invalidateRouteSnapshots();
+    scheduleRefresh({
+      grid: true,
+      taxonomy: true,
+      previews: true,
+    }, 0, { force: true });
+    window.dispatchEvent(new Event("vault-refreshed"));
+  }, [invalidateRouteSnapshots, scheduleRefresh]);
+
   const handleMediaAssetRemoveFromCard = useCallback(
     async (asset: MediaAssetRef) => {
       await removeMediaAssetFromCard({
@@ -3524,6 +3550,8 @@ export function AppWithVault({
               onRenameMediaAsset={handleMediaAssetRename}
               onRemoveMediaAssetFromCard={handleMediaAssetRemoveFromCard}
               onDeleteMediaAsset={handleMediaAssetDelete}
+              onDeleteSourceVideo={handleSourceVideoDelete}
+              onSourceVideoDownloaded={handleSourceVideoDownloaded}
               onOpenImagePreview={setImagePreview}
               onOpenRelatedNote={handleOpenRelatedNote}
               onTextSelectionDrop={handleTextSelectionDrop}
