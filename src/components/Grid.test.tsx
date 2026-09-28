@@ -22,8 +22,8 @@ import {
 import { TOP_FADE_HEIGHT } from "@/lib/edgeFade";
 import { computeMasonryLayout } from "@/lib/masonryLayout";
 import { computeCardHeight } from "@/lib/cardHeight";
+import { HOVER_INTENT } from "@/lib/hoverIntent";
 import {
-  HOVER_LEAVE_GRACE_MS,
   getCardSelectionSummary,
   isRowConnectedToHoveredCard,
   resetCollectionHover,
@@ -1260,7 +1260,7 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(document.querySelector("[data-feed-grid-item-focused]")).toBeNull();
   });
 
-  it("lights the cards of a hovered collection and reports the card under the pointer", async () => {
+  it("lights the chosen collection's cards; Everything lights none", async () => {
     vi.useFakeTimers();
     resetCollectionHover();
     setCollectionMemberships([{ block_id: 9401, tag: "alpha" }]);
@@ -1275,59 +1275,102 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(gridItemForSlug("block-9401")).toHaveAttribute("data-feed-grid-item-collection-lit", "true");
     expect(gridItemForSlug("block-9402")).not.toHaveAttribute("data-feed-grid-item-collection-lit");
     act(() => setHoveredCollectionRow("all"));
-    expect(gridItemForSlug("block-9402")).toHaveAttribute("data-feed-grid-item-collection-lit", "true");
-    act(() => setHoveredCollectionRow(null));
     expect(gridItemForSlug("block-9401")).not.toHaveAttribute("data-feed-grid-item-collection-lit");
-
-    fireEvent.pointerEnter(gridItemForSlug("block-9401")!);
-    expect(isRowConnectedToHoveredCard("tag:alpha")).toBe(true);
-    fireEvent.pointerLeave(gridItemForSlug("block-9401")!);
-    // The hover waits out the gap before the next card, then clears.
-    expect(isRowConnectedToHoveredCard("tag:alpha")).toBe(true);
-    act(() => { vi.advanceTimersByTime(HOVER_LEAVE_GRACE_MS); });
-    expect(isRowConnectedToHoveredCard("tag:alpha")).toBe(false);
+    expect(gridItemForSlug("block-9402")).not.toHaveAttribute("data-feed-grid-item-collection-lit");
+    act(() => setHoveredCollectionRow(null));
     resetCollectionHover();
   });
 
-  it("marks the focused card's collections under the arrow keys, not the card under the hidden pointer", async () => {
-    vi.useFakeTimers();
-    resetCollectionHover();
-    setCollectionMemberships([
-      { block_id: 9451, tag: "alpha" },
-      { block_id: 9452, tag: "beta" },
-    ]);
-    const blocks = [makeBlock(9451), makeBlock(9452)];
-    setBlockHeight(9451, 200);
-    setBlockHeight(9452, 220);
+  describe("the card the pointer attends to (SPEC_CARD_STATES.md, С7)", () => {
+    const at = { x: 0 };
+    /** One pointer step over `element`, `dx` pixels on, `ms` after the last. */
+    const step = (element: Element, dx: number, ms: number) => {
+      act(() => { vi.advanceTimersByTime(ms); });
+      at.x += dx;
+      fireEvent.pointerMove(element, { clientX: at.x, clientY: 50 });
+    };
 
-    render(<Grid {...BASE_PROPS} blocks={blocks} />);
-    await flushAsync();
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "performance", "Date", "requestAnimationFrame", "cancelAnimationFrame"] });
+      resetCollectionHover();
+      at.x = 0;
+      setCollectionMemberships([
+        { block_id: 9451, tag: "alpha" },
+        { block_id: 9452, tag: "beta" },
+      ]);
+      setBlockHeight(9451, 200);
+      setBlockHeight(9452, 220);
+    });
+    afterEach(() => resetCollectionHover());
 
-    // The pointer rests on the second card.
-    fireEvent.pointerEnter(gridItemForSlug("block-9452")!);
-    expect(isRowConnectedToHoveredCard("tag:beta")).toBe(true);
+    it("answers a card only after the pointer rests on it", async () => {
+      render(<Grid {...BASE_PROPS} blocks={[makeBlock(9451), makeBlock(9452)]} />);
+      await flushAsync();
+      const card = gridItemForSlug("block-9452")!;
+      step(card, 0, 10);
+      step(card, 1, 100);
+      expect(isRowConnectedToHoveredCard("tag:beta")).toBe(false);
+      act(() => { vi.advanceTimersByTime(HOVER_INTENT.velocityWindowMs + HOVER_INTENT.dwellMs + 20); });
+      expect(isRowConnectedToHoveredCard("tag:beta")).toBe(true);
+      // Leaving the feed clears it after the leave grace.
+      fireEvent.pointerLeave(document.querySelector("[data-grid-scroll]")!);
+      act(() => { vi.advanceTimersByTime(HOVER_INTENT.leaveGraceMs + 10); });
+      expect(isRowConnectedToHoveredCard("tag:beta")).toBe(false);
+    });
 
-    // Arrow keys focus the first card: the sidebar follows the focus.
-    fireEvent.keyDown(window, { key: "ArrowDown" });
-    await flushAsync();
-    expect(gridItemForSlug("block-9451")).toHaveAttribute("data-feed-grid-item-focused", "true");
-    expect(isRowConnectedToHoveredCard("tag:alpha")).toBe(true);
-    expect(isRowConnectedToHoveredCard("tag:beta")).toBe(false);
+    it("answers nothing for a pointer sweeping across the cards", async () => {
+      render(<Grid {...BASE_PROPS} blocks={[makeBlock(9451), makeBlock(9452)]} />);
+      await flushAsync();
+      const first = gridItemForSlug("block-9451")!;
+      const second = gridItemForSlug("block-9452")!;
+      step(first, 0, 10);
+      for (let index = 0; index < 20; index += 1) step(index % 2 ? second : first, 12, 8);
+      expect(isRowConnectedToHoveredCard("all")).toBe(false);
+    });
 
-    // Scrolling slides cards under the still pointer; WebKit reports them
-    // entered and left. None of that reaches the sidebar.
-    fireEvent.pointerLeave(gridItemForSlug("block-9452")!);
-    fireEvent.pointerEnter(gridItemForSlug("block-9452")!);
-    act(() => { vi.advanceTimersByTime(HOVER_LEAVE_GRACE_MS); });
-    expect(isRowConnectedToHoveredCard("tag:alpha")).toBe(true);
-    expect(isRowConnectedToHoveredCard("tag:beta")).toBe(false);
+    it("stays silent while the feed scrolls under a still pointer", async () => {
+      render(<Grid {...BASE_PROPS} blocks={[makeBlock(9451), makeBlock(9452)]} />);
+      await flushAsync();
+      const card = gridItemForSlug("block-9451")!;
+      step(card, 0, 10);
+      step(card, 1, 100);
+      act(() => { vi.advanceTimersByTime(500); });
+      expect(isRowConnectedToHoveredCard("tag:alpha")).toBe(true);
+      const scroller = document.querySelector("[data-grid-scroll]")!;
+      fireEvent.scroll(scroller);
+      expect(isRowConnectedToHoveredCard("tag:alpha")).toBe(false);
+      // WebKit repeats the still pointer's point over the card now under it.
+      fireEvent.pointerMove(gridItemForSlug("block-9452")!, { clientX: at.x, clientY: 50 });
+      act(() => { vi.advanceTimersByTime(2000); });
+      expect(isRowConnectedToHoveredCard("all")).toBe(false);
+    });
 
-    // A real pointer move hands the sidebar back to the card under the pointer.
-    fireEvent.pointerMove(gridItemForSlug("block-9452")!, { clientX: 40, clientY: 40, movementX: 6, movementY: 3 });
-    await flushAsync();
-    expect(isRowConnectedToHoveredCard("tag:beta")).toBe(true);
-    expect(isRowConnectedToHoveredCard("tag:alpha")).toBe(false);
-    resetCollectionHover();
+    it("marks the focused card's collections under the arrow keys at once, not the card under the hidden pointer", async () => {
+      render(<Grid {...BASE_PROPS} blocks={[makeBlock(9451), makeBlock(9452)]} />);
+      await flushAsync();
+      const second = gridItemForSlug("block-9452")!;
+      step(second, 0, 10);
+      step(second, 1, 100);
+      act(() => { vi.advanceTimersByTime(500); });
+      expect(isRowConnectedToHoveredCard("tag:beta")).toBe(true);
+
+      // The pointer left the second card focused; the arrows move to the first.
+      fireEvent.keyDown(window, { key: "ArrowLeft" });
+      await flushAsync();
+      if (!gridItemForSlug("block-9451")?.hasAttribute("data-feed-grid-item-focused")) {
+        fireEvent.keyDown(window, { key: "ArrowLeft" });
+        await flushAsync();
+      }
+      expect(gridItemForSlug("block-9451")).toHaveAttribute("data-feed-grid-item-focused", "true");
+      expect(isRowConnectedToHoveredCard("tag:alpha")).toBe(true);
+      expect(isRowConnectedToHoveredCard("tag:beta")).toBe(false);
+
+      // Cards sliding under the still pointer never reach the sidebar.
+      fireEvent.pointerMove(second, { clientX: at.x, clientY: 50 });
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(isRowConnectedToHoveredCard("tag:alpha")).toBe(true);
+      expect(isRowConnectedToHoveredCard("tag:beta")).toBe(false);
+    });
   });
 
   it("tells the sidebar which cards are selected", async () => {

@@ -11,7 +11,24 @@ import {
   HOVER_PREVIEW_WARM_WINDOW_MS,
 } from "@/lib/hoverPreviewTiming";
 import { SIDEBAR_ROW_HOVER_SEAM_ENABLED } from "@/lib/featureFlags";
-import { HOVER_LEAVE_GRACE_MS, isCardLitByCollection, resetCollectionHover, setCollectionMemberships, setHoveredCard, setSelectedCards } from "@/lib/collectionHover";
+import { isCardLitByCollection, resetCollectionHover, setCollectionMemberships, setHoveredCard, setSelectedCards } from "@/lib/collectionHover";
+import { HOVER_INTENT } from "@/lib/hoverIntent";
+
+/** Fake timers that also drive the hover-intent clock (performance.now). */
+const INTENT_TIMERS = {
+  toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "performance", "Date", "requestAnimationFrame", "cancelAnimationFrame"],
+} as const;
+
+/** A pointer step to `x` over `element`, `ms` after the previous one. */
+function pointerTo(element: Element, x: number, ms = 20) {
+  act(() => { vi.advanceTimersByTime(ms); });
+  fireEvent.pointerMove(element, { clientX: x, clientY: 10 });
+}
+
+/** Let a resting pointer's speed settle to zero. */
+function rest(ms = HOVER_INTENT.velocityWindowMs + 10) {
+  act(() => { vi.advanceTimersByTime(ms); });
+}
 
 const dndContextState = vi.hoisted(() => ({
   over: null as { id: string } | null,
@@ -311,6 +328,7 @@ describe("Sidebar", () => {
   });
 
   it("keeps rows muted by default while selected and focused rows use the bright sidebar state", () => {
+    vi.useFakeTimers(INTENT_TIMERS);
     const { container } = renderSidebar({ ...defaultProps, width: 600 }, ["/channel/alpha"]);
 
     const everythingLink = screen.getByRole("link", { name: /Everything/ });
@@ -353,7 +371,9 @@ describe("Sidebar", () => {
     expect(nav).not.toHaveAttribute("data-sidebar-row-focus-mode");
     expect(alphaRow).not.toHaveAttribute("data-sidebar-row-focused");
 
-    fireEvent.pointerMove(alphaRow);
+    // A slow pointer lights the row under it (SPEC_CARD_STATES.md, С7.10).
+    pointerTo(alphaRow, 10);
+    rest();
     expect(nav).toHaveAttribute("data-sidebar-row-focus-mode", "true");
     expect(allRow).toHaveAttribute("data-sidebar-row-seam-accent", "true");
     expect(alphaRow).toHaveAttribute("data-sidebar-row-seam-accent", "true");
@@ -361,7 +381,7 @@ describe("Sidebar", () => {
     expect(alphaRow).toHaveAttribute("data-sidebar-row-focused", "true");
     expect(betaRow).not.toHaveAttribute("data-sidebar-row-focused");
 
-    fireEvent.pointerMove(betaRow);
+    pointerTo(betaRow, 11);
     expect(nav).toHaveAttribute("data-sidebar-row-focus-mode", "true");
     expect(nav).toHaveAttribute("data-sidebar-row-switching", "true");
     expect(allRow).not.toHaveAttribute("data-sidebar-row-seam-accent");
@@ -1200,8 +1220,9 @@ describe("sidebar and the card under the pointer (SPEC_CARD_STATES.md)", () => {
   });
   afterEach(() => resetCollectionHover());
 
+  /** The row's pill while it shows; it stays mounted and fades otherwise (С7.6). */
   const pillIn = (container: HTMLElement, rowKey: string) =>
-    container.querySelector(`[data-sidebar-row-key="${rowKey}"] [data-sidebar-row-connected-pill]`);
+    container.querySelector(`[data-sidebar-row-key="${rowKey}"] [data-sidebar-row-connected-pill][data-state="on"]`);
 
   it("shows reference Connected pills instead of counts for the hovered card's collections and Everything", () => {
     const { container } = renderSidebar({ ...defaultProps, width: 600 });
@@ -1238,37 +1259,86 @@ describe("sidebar and the card under the pointer (SPEC_CARD_STATES.md)", () => {
     expect(pillIn(container, "tag:alpha")).toBeNull();
   });
 
-  it("lights a collection's cards while the pointer is anywhere on its row", () => {
-    vi.useFakeTimers();
-    const { container } = renderSidebar({ ...defaultProps, width: 600 });
-    const row = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
-    fireEvent.pointerEnter(row);
-    expect(isCardLitByCollection(7)).toBe(true);
-    // Moving onto a part of the row (a preview, the link) does not leave the row.
-    fireEvent.pointerEnter(row.querySelector("a")!);
-    expect(isCardLitByCollection(7)).toBe(true);
-    fireEvent.pointerLeave(row);
-    act(() => { vi.advanceTimersByTime(HOVER_LEAVE_GRACE_MS); });
-    expect(isCardLitByCollection(7)).toBe(false);
-    const everything = container.querySelector('[data-sidebar-row-key="all"]')!;
-    fireEvent.pointerEnter(everything);
-    expect(isCardLitByCollection(12345)).toBe(true);
-    vi.useRealTimers();
-  });
+  describe("a row the pointer attends to (С3, С7.10)", () => {
+    beforeEach(() => {
+      vi.useFakeTimers(INTENT_TIMERS);
+      setCollectionMemberships([{ block_id: 7, tag: "alpha" }, { block_id: 7, tag: "beta" }]);
+    });
 
-  it("moving to the next row switches the highlight without a dark frame", () => {
-    vi.useFakeTimers();
-    setCollectionMemberships([{ block_id: 7, tag: "alpha" }, { block_id: 7, tag: "beta" }]);
-    const { container } = renderSidebar({ ...defaultProps, width: 600 });
-    const alpha = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
-    const beta = container.querySelector('[data-sidebar-row-key="tag:beta"]')!;
-    fireEvent.pointerEnter(alpha);
-    fireEvent.pointerLeave(alpha);
-    expect(isCardLitByCollection(7)).toBe(true);
-    fireEvent.pointerEnter(beta);
-    act(() => { vi.advanceTimersByTime(HOVER_LEAVE_GRACE_MS); });
-    expect(isCardLitByCollection(7)).toBe(true);
-    vi.useRealTimers();
+    it("lights a collection's cards once the pointer rests on its row, anywhere on it", () => {
+      const { container } = renderSidebar({ ...defaultProps, width: 600 });
+      const nav = container.querySelector("[data-sidebar-scroll]")!;
+      const row = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
+      pointerTo(row, 10);
+      rest();
+      expect(isCardLitByCollection(7)).toBe(false);
+      rest(HOVER_INTENT.dwellMs);
+      expect(isCardLitByCollection(7)).toBe(true);
+      expect(row).toHaveAttribute("data-sidebar-row-intent", "true");
+      // Moving slowly onto another part of the row does not leave it.
+      pointerTo(row.querySelector("a")!, 12);
+      expect(isCardLitByCollection(7)).toBe(true);
+      fireEvent.pointerLeave(nav);
+      rest(HOVER_INTENT.leaveGraceMs + 10);
+      expect(isCardLitByCollection(7)).toBe(false);
+      expect(row).not.toHaveAttribute("data-sidebar-row-intent");
+    });
+
+    it("lights nothing in the feed for Everything", () => {
+      const { container } = renderSidebar({ ...defaultProps, width: 600 });
+      const everything = container.querySelector('[data-sidebar-row-key="all"]')!;
+      pointerTo(everything, 10);
+      rest(HOVER_INTENT.velocityWindowMs + HOVER_INTENT.dwellMs + 20);
+      expect(isCardLitByCollection(7)).toBe(false);
+    });
+
+    it("once warm, a neighbour reached slowly takes over with no dark frame", () => {
+      const { container } = renderSidebar({ ...defaultProps, width: 600 });
+      const alpha = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
+      const beta = container.querySelector('[data-sidebar-row-key="tag:beta"]')!;
+      pointerTo(alpha, 10);
+      rest(HOVER_INTENT.velocityWindowMs + HOVER_INTENT.dwellMs + 20);
+      pointerTo(beta, 12);
+      expect(isCardLitByCollection(7)).toBe(true);
+      expect(beta).toHaveAttribute("data-sidebar-row-intent", "true");
+      expect(alpha).not.toHaveAttribute("data-sidebar-row-intent");
+    });
+
+    it("a fast sweep lights no row, shows no button and lights no card", () => {
+      const { container } = renderSidebar({
+        ...defaultProps,
+        width: 600,
+        linkedBlockSlug: "open-block",
+        linkedTags: [],
+        onToggleLinkedTag: vi.fn(),
+      });
+      const nav = container.querySelector("[data-sidebar-scroll]")!;
+      const rows = ["all", "tag:alpha", "tag:beta"].map((key) => container.querySelector(`[data-sidebar-row-key="${key}"]`)!);
+      pointerTo(rows[0]!, 0, 10);
+      for (let index = 1; index <= 30; index += 1) {
+        pointerTo(rows[index % 3]!, index * 12, 8);
+        expect(nav).not.toHaveAttribute("data-sidebar-row-focus-mode");
+        expect(container.querySelector("[data-sidebar-row-intent]")).toBeNull();
+        expect(isCardLitByCollection(7)).toBe(false);
+      }
+    });
+
+    it("stays silent while the list scrolls under a still pointer", () => {
+      const { container } = renderSidebar({ ...defaultProps, width: 600 });
+      const nav = container.querySelector("[data-sidebar-scroll]")!;
+      const alpha = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
+      const beta = container.querySelector('[data-sidebar-row-key="tag:beta"]')!;
+      pointerTo(alpha, 10);
+      rest(HOVER_INTENT.velocityWindowMs + HOVER_INTENT.dwellMs + 20);
+      expect(isCardLitByCollection(7)).toBe(true);
+      fireEvent.scroll(nav);
+      expect(isCardLitByCollection(7)).toBe(false);
+      // WebKit repeats the still pointer's point over the row now under it.
+      fireEvent.pointerMove(beta, { clientX: 10, clientY: 10 });
+      rest(2000);
+      expect(isCardLitByCollection(7)).toBe(false);
+      expect(nav).not.toHaveAttribute("data-sidebar-row-focus-mode");
+    });
   });
 });
 
@@ -1312,11 +1382,11 @@ describe("sidebar and the feed selection (SPEC_CARD_STATES.md, С6)", () => {
     expect(screen.getByText("5")).toHaveClass("opacity-0");
 
     const gamma = screen.getByRole("button", { name: "Connect gamma" });
-    expect(gamma).toHaveClass("opacity-0", "group-hover:opacity-100");
+    expect(gamma).toHaveClass("opacity-0", "group-data-[sidebar-row-intent=true]:opacity-100");
     expect(screen.getByText("3")).toHaveClass("opacity-100");
 
     // Everything holds every card: a reference pill, not a button.
-    expect(rowIn(container, "all").querySelector("[data-sidebar-row-connected-pill]")).toHaveTextContent("Connected");
+    expect(rowIn(container, "all").querySelector('[data-sidebar-row-connected-pill][data-state="on"]')).toHaveTextContent("Connected");
     expect(rowIn(container, "all").querySelector("button")).toBeNull();
   });
 
@@ -1344,7 +1414,7 @@ describe("sidebar and the feed selection (SPEC_CARD_STATES.md, С6)", () => {
       setSelectedCards([{ id: 1, slug: "one" }]);
       setHoveredCard(3);
     });
-    expect(rowIn(container, "tag:gamma").querySelector("[data-sidebar-row-connected-pill]")).toBeNull();
+    expect(rowIn(container, "tag:gamma").querySelector('[data-sidebar-row-connected-pill][data-state="on"]')).toBeNull();
     expect(screen.getByRole("button", { name: "Connect gamma" })).toHaveClass("opacity-0");
   });
 

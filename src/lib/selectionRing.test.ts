@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-/// Card states (SPEC_CARD_STATES.md): keyboard focus and the highlight from a
-/// hovered collection colour the card's own border with --border-accent and
-/// wash a picture. Pointer hover adds no border and no wash, only the card's
+/// Card states (SPEC_CARD_STATES.md): keyboard focus colours the card's own
+/// border with --border-accent and washes a picture; a chosen collection's
+/// highlight colours the border only. Pointer hover adds no border and no wash, only the card's
 /// buttons. Selection uses the brighter --feed-selection-frame, never draws
 /// outside the card, and outranks every other state.
 describe("card state styles", () => {
@@ -38,13 +38,16 @@ describe("card state styles", () => {
     expect(count(selected)).toBeGreaterThan(count(focused));
   });
 
-  it("washes pictures when focused, lit by a collection or selected", () => {
+  it("washes pictures when focused or selected", () => {
     for (const state of [
-      '[data-feed-grid-item-collection-lit="true"]',
       '[data-feed-grid-item-selected="true"]',
       '[data-feed-grid-item-focused="true"]',
     ]) {
       expect(ruleFor(`${state} [data-card-graphic-surface]::after`, "opacity: 1")).toBe(true);
     }
+  });
+
+  it("lights a chosen collection's cards with the border only, never the wash (С3, С7)", () => {
+    expect(ruleFor('[data-feed-grid-item-collection-lit="true"] [data-card-graphic-surface]::after', "opacity: 1")).toBe(false);
   });
 });

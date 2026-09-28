@@ -124,71 +124,30 @@ export function applySelectionMembership(tag: string, connected: boolean): void 
 }
 
 /**
- * How long a hover outlives the pointer leaving its card or row.
- *
- * Between two cards lies the feed gap, between two rows their edge: the
- * pointer leaves one before it enters the next. Clearing at once made every
- * answer the two share (Everything above all, which holds every card) go off
- * and on again, a flicker on each crossing. Within this window the next enter
- * replaces the hover directly, so a shared answer never changes; leaving for
- * good costs only this delay.
+ * The card the pointer or the keyboard is attending to, or `null`. Pointer
+ * answers arrive already calmed by the hover-intent engine (С7); the keyboard
+ * sets its focused card directly.
  */
-export const HOVER_LEAVE_GRACE_MS = 150;
-
-let cardReleaseTimer: ReturnType<typeof setTimeout> | null = null;
-let rowReleaseTimer: ReturnType<typeof setTimeout> | null = null;
-
-function cancelCardRelease() {
-  if (cardReleaseTimer !== null) clearTimeout(cardReleaseTimer);
-  cardReleaseTimer = null;
-}
-
-function cancelRowRelease() {
-  if (rowReleaseTimer !== null) clearTimeout(rowReleaseTimer);
-  rowReleaseTimer = null;
-}
-
-/** The card under the pointer in the feed, or `null` to clear at once. */
 export function setHoveredCard(blockId: number | null): void {
-  cancelCardRelease();
   if (hoveredBlockId === blockId) return;
   hoveredBlockId = blockId;
   emit();
 }
 
-/** The pointer left this card: clear after the grace window unless another card took over. */
-export function releaseHoveredCard(blockId: number): void {
-  if (hoveredBlockId !== blockId) return;
-  cancelCardRelease();
-  cardReleaseTimer = setTimeout(() => {
-    cardReleaseTimer = null;
-    if (hoveredBlockId === blockId) setHoveredCard(null);
-  }, HOVER_LEAVE_GRACE_MS);
-}
-
-/** The sidebar row under the pointer (`all` or `tag:<collection>`), or `null` to clear at once. */
+/** The sidebar row the pointer is attending to (`all` or `tag:<collection>`), or `null`. */
 export function setHoveredCollectionRow(rowKey: string | null): void {
-  cancelRowRelease();
   const key = rowKey === EVERYTHING_ROW_KEY || rowKey?.startsWith(TAG_ROW_PREFIX) ? rowKey : null;
   if (hoveredRowKey === key) return;
   hoveredRowKey = key;
   emit();
 }
 
-/** The pointer left this row: clear after the grace window unless another row took over. */
-export function releaseHoveredCollectionRow(rowKey: string): void {
-  if (hoveredRowKey !== rowKey) return;
-  cancelRowRelease();
-  rowReleaseTimer = setTimeout(() => {
-    rowReleaseTimer = null;
-    if (hoveredRowKey === rowKey) setHoveredCollectionRow(null);
-  }, HOVER_LEAVE_GRACE_MS);
-}
-
-/** Whether a hovered collection row holds this card (С3). */
+/**
+ * Whether a hovered collection row holds this card (С3). Everything holds every
+ * card, so lighting the whole feed would say nothing: it lights none.
+ */
 export function isCardLitByCollection(blockId: number): boolean {
-  if (hoveredRowKey === null) return false;
-  if (hoveredRowKey === EVERYTHING_ROW_KEY) return true;
+  if (hoveredRowKey === null || hoveredRowKey === EVERYTHING_ROW_KEY) return false;
   return blocksByTag.get(hoveredRowKey.slice(TAG_ROW_PREFIX.length))?.has(blockId) === true;
 }
 
@@ -219,8 +178,6 @@ export function useRowConnectedToHoveredCard(rowKey: string): boolean {
 
 /** Test support: forget everything. */
 export function resetCollectionHover(): void {
-  cancelCardRelease();
-  cancelRowRelease();
   tagsByBlock = new Map();
   blocksByTag = new Map();
   hoveredBlockId = null;

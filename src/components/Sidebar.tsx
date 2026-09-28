@@ -55,12 +55,13 @@ import {
 import { EDGE_FADE_WIDTH, createRightFadeMaskStyle } from "@/lib/edgeFade";
 import {
   applySelectionMembership,
-  releaseHoveredCollectionRow,
   setHoveredCollectionRow,
   useCardSelectionSummary,
   useRowConnectedToHoveredCard,
 } from "@/lib/collectionHover";
 import { scheduleAfterOptimisticUiUpdate } from "@/lib/groupSelection";
+import { HOVER_INTENT } from "@/lib/hoverIntent";
+import { HoverIntentDragWatch, useHoverIntent } from "@/hooks/useHoverIntent";
 import { TopFadeScrim } from "./TopFadeScrim";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
@@ -101,6 +102,17 @@ const SIDEBAR_ROW_CONNECTED_PILL_CLASS = cn(
   buttonVariants({ variant: "reference", size: "xs" }),
   "pointer-events-none h-6 font-mono font-normal text-muted-foreground",
 );
+/** A row's parts that answer the chosen row cross-fade over one duration (С7.6). */
+const ROW_INTENT_FADE =
+  "transition-opacity duration-[var(--hover-intent-fade)] ease-[cubic-bezier(0.22,1,0.36,1)]";
+/** Shown until the pointer chooses the row or the keyboard focuses it. */
+const ROW_INTENT_HIDES =
+  "opacity-100 group-data-[sidebar-row-intent=true]:opacity-0 group-focus-within:opacity-0";
+/** Shown once the pointer chooses the row or the keyboard focuses it. */
+const ROW_INTENT_SHOWS =
+  "opacity-0 group-data-[sidebar-row-intent=true]:opacity-100 group-focus-within:opacity-100";
+/** Two labels stacked in one cell, so swapping them never moves the button's text. */
+const ROW_INTENT_LABEL_STACK = "grid place-items-center [&>*]:[grid-area:1/1]";
 const SIDEBAR_ROW_ACTION_BUTTON_CLASS =
   "inline-flex h-6 items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover";
 const SIDEBAR_ROW_TEXT_MASK_STYLE = createRightFadeMaskStyle(
@@ -291,6 +303,18 @@ const SidebarCore = memo(function SidebarCore({
   const [sidebarRowFocusMode, setSidebarRowFocusMode] = useState(false);
   const [sidebarRowSwitching, setSidebarRowSwitching] = useState(false);
   const location = useLocation();
+
+  // Rows answer attention, not the pointer's path (SPEC_CARD_STATES.md,
+  // С7.10). A row's name lights under a slow pointer at once; its button, the
+  // lit feed (С3) and the big preview wait until the pointer chooses the row.
+  const [intentRowKey, setIntentRowKey] = useState<string | null>(null);
+  const applyPointerRowFocusRef = useRef<(rowKey: string | null) => void>(() => {});
+  const rowIntent = useHoverIntent(({ slow, chosen }) => {
+    applyPointerRowFocusRef.current(slow);
+    setIntentRowKey(chosen);
+    setHoveredCollectionRow(chosen);
+  });
+  useEffect(() => () => setHoveredCollectionRow(null), []);
 
   useEffect(() => {
     const recordPointerPoint = (event: Event) => {
@@ -485,9 +509,31 @@ const SidebarCore = memo(function SidebarCore({
     activateSidebarRowFocus(rowKey);
   }, [activateSidebarRowFocus, deactivateSidebarRowFocusMode]);
 
+  // The row a slow pointer is over lights its name; a fast sweep lights none.
+  const pointerRowFocusRef = useRef(false);
+  applyPointerRowFocusRef.current = (rowKey) => {
+    if (rowKey !== null) {
+      pointerRowFocusRef.current = true;
+      activateSidebarRowFocus(rowKey);
+    } else if (pointerRowFocusRef.current) {
+      pointerRowFocusRef.current = false;
+      deactivateSidebarRowFocusMode();
+    }
+  };
+
   const handleSidebarPointerMove = useCallback((event: ReactPointerEvent<HTMLElement>) => {
-    focusSidebarRowFromTarget(event.target, event.currentTarget);
-  }, [focusSidebarRowFromTarget]);
+    const row = event.target instanceof Element
+      ? event.target.closest<HTMLElement>("[data-sidebar-row]")
+      : null;
+    const rowKey = row && event.currentTarget.contains(row) ? row.dataset.sidebarRowKey ?? null : null;
+    rowIntent.move(rowKey, event.clientX, event.clientY);
+  }, [rowIntent]);
+
+  const handleSidebarPointerLeave = useCallback(() => {
+    pointerRowFocusRef.current = false;
+    deactivateSidebarRowFocusMode();
+    rowIntent.leave();
+  }, [deactivateSidebarRowFocusMode, rowIntent]);
 
   const handleSidebarFocusCapture = useCallback((event: ReactFocusEvent<HTMLElement>) => {
     focusSidebarRowFromTarget(event.target, event.currentTarget);
@@ -569,16 +615,28 @@ const SidebarCore = memo(function SidebarCore({
     clearPreviewOpenTimer();
     clearPreviewCloseTimer();
     setHoveredPreview(null);
+    // The big preview also waits for a slow pointer (С7.10): past its delay,
+    // a pointer still sweeping the row is checked again a moment later.
+    const openWhenSlow = () => {
+      if (rowIntent.isSlow()) {
+        openPreview(target);
+        return;
+      }
+      previewOpenTimerRef.current = window.setTimeout(() => {
+        previewOpenTimerRef.current = null;
+        openWhenSlow();
+      }, HOVER_INTENT.velocityWindowMs);
+    };
     const delay = getHoverPreviewOpenDelay(lastPreviewOpenedAtRef.current);
     if (delay <= 0) {
-      openPreview(target);
+      openWhenSlow();
       return;
     }
     previewOpenTimerRef.current = window.setTimeout(() => {
       previewOpenTimerRef.current = null;
-      openPreview(target);
+      openWhenSlow();
     }, delay);
-  }, [clearPreviewCloseTimer, clearPreviewOpenTimer, hoverPreviewFrozen, openPreview]);
+  }, [clearPreviewCloseTimer, clearPreviewOpenTimer, hoverPreviewFrozen, openPreview, rowIntent]);
 
   useEffect(() => {
     if (hoverPreviewFrozen) {
@@ -763,10 +821,12 @@ const SidebarCore = memo(function SidebarCore({
         data-sidebar-row-focus-mode={hasSidebarRowFocusMode ? "true" : undefined}
         data-sidebar-row-switching={sidebarRowSwitching ? "true" : undefined}
         onPointerMove={handleSidebarPointerMove}
-        onPointerLeave={deactivateSidebarRowFocusMode}
+        onPointerLeave={handleSidebarPointerLeave}
+        onScroll={rowIntent.displace}
         onFocusCapture={handleSidebarFocusCapture}
         onBlurCapture={handleSidebarBlurCapture}
       >
+        <HoverIntentDragWatch intent={rowIntent} />
         {!isLinkingBlock && headerSlot}
 
         <div className="relative" data-sidebar-rows>
@@ -846,6 +906,7 @@ const SidebarCore = memo(function SidebarCore({
                   onClick={onNavClick}
                   onSameClick={isLinkEditorActive ? undefined : onScrollToTop}
                   rowKey={`tag:${tc.tag}`}
+                  isIntentRow={intentRowKey === `tag:${tc.tag}`}
                   isSidebarRowFocused={effectiveSidebarRowFocusKey === `tag:${tc.tag}`}
                   isSidebarRowSeamAccent={seamAccentKeys.has(`tag:${tc.tag}`)}
                 />
@@ -1017,6 +1078,8 @@ function assignRef<T>(ref: Ref<T> | undefined, value: T) {
 }
 
 type SidebarRowFrameProps = {
+  /** The pointer has chosen this row (SPEC_CARD_STATES.md, С7.10). */
+  isIntentRow?: boolean;
   compact?: boolean;
   rowKey: string;
   isCurrentRoute: boolean;
@@ -1033,6 +1096,7 @@ type SidebarRowFrameProps = {
 } & Omit<ComponentPropsWithoutRef<"div">, "children" | "style" | "className">;
 
 const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(function SidebarRowFrame({
+  isIntentRow = false,
   compact,
   rowKey,
   isCurrentRoute,
@@ -1053,25 +1117,15 @@ const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(functio
     nodeRef?.(node);
   }, [forwardedRef, nodeRef]);
   const hasSurface = surface ?? !compact;
-  const { onPointerEnter, onPointerLeave, ...restDomProps } = domProps;
 
   return (
     <div
       id={sidebarRowDomId(rowKey)}
       ref={setRefs}
       style={style}
-      {...restDomProps}
-      // The whole row, previews and action button included, lights its
-      // collection's cards in the feed: moving between them never resets it
-      // (SPEC_CARD_STATES.md, С3).
-      onPointerEnter={(event) => {
-        setHoveredCollectionRow(rowKey);
-        onPointerEnter?.(event);
-      }}
-      onPointerLeave={(event) => {
-        releaseHoveredCollectionRow(rowKey);
-        onPointerLeave?.(event);
-      }}
+      {...domProps}
+      // The pointer has chosen this row (С7.10): its button shows.
+      data-sidebar-row-intent={isIntentRow ? "true" : undefined}
       data-sidebar-row=""
       data-sidebar-row-surface={hasSurface ? "" : undefined}
       data-sidebar-row-key={rowKey}
@@ -1264,7 +1318,7 @@ function SidebarRowBody({
                 !compact && "-translate-x-px",
                 linkButtonPinned
                   ? "opacity-0"
-                  : "opacity-100 group-hover:opacity-0 group-focus-within:opacity-0",
+                  : ROW_INTENT_HIDES,
               )}
               data-sidebar-row-text=""
             >
@@ -1294,12 +1348,12 @@ function SidebarRowBody({
               "-translate-x-px",
               isLinkEditor
                 ? cn(
-                    "transition-opacity duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
+                    ROW_INTENT_FADE,
                     linkButtonPinned
                       ? "opacity-0"
-                      : "opacity-100 group-hover:opacity-0 group-focus-within:opacity-0",
+                      : ROW_INTENT_HIDES,
                   )
-                : showConnectedPill ? "opacity-0" : "opacity-100",
+                : cn(ROW_INTENT_FADE, showConnectedPill ? "opacity-0" : "opacity-100"),
             )}
             data-sidebar-row-text=""
           >
@@ -1307,14 +1361,23 @@ function SidebarRowBody({
           </span>
         )}
       </NavLink>
-      {showConnectedPill && (
+      {!compact && (
+        // Always mounted: pill and count cross-fade in place instead of
+        // popping in and out (С7.6).
         <span
-          className={cn(SIDEBAR_ROW_CONNECTED_PILL_CLASS, "absolute top-1/2 z-10 -translate-y-1/2")}
+          className={cn(
+            SIDEBAR_ROW_CONNECTED_PILL_CLASS,
+            ROW_INTENT_FADE,
+            "absolute top-1/2 z-10 -translate-y-1/2",
+            showConnectedPill ? "opacity-100" : "opacity-0",
+          )}
           style={{
             right: SIDEBAR_ROW_ACTION_BUTTON_INSET,
             width: SIDEBAR_ROW_ACTION_BUTTON_WIDTH,
           }}
+          aria-hidden={showConnectedPill ? undefined : true}
           data-sidebar-row-connected-pill=""
+          data-state={showConnectedPill ? "on" : "off"}
         >
           Connected
         </span>
@@ -1337,10 +1400,11 @@ function SidebarRowBody({
           }}
           className={cn(
             SIDEBAR_ROW_ACTION_BUTTON_CLASS,
-            "absolute top-1/2 z-10 -translate-y-1/2 transition-opacity duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
+            "absolute top-1/2 z-10 -translate-y-1/2",
+            ROW_INTENT_FADE,
             linkButtonPinned
               ? "opacity-100"
-              : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
+              : "pointer-events-none opacity-0 group-data-[sidebar-row-intent=true]:pointer-events-auto group-data-[sidebar-row-intent=true]:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
           )}
           style={{
             right: SIDEBAR_ROW_ACTION_BUTTON_INSET,
@@ -1349,17 +1413,17 @@ function SidebarRowBody({
           aria-label={`${linkEditor.checked ? "Disconnect" : "Connect"} ${label}`}
         >
           {linkEditor.checked ? (
-            <>
-              <span className="group-hover:hidden group-focus-within:hidden">Connected</span>
-              <span className="hidden text-detach group-hover:inline group-focus-within:inline">Disconnect</span>
-            </>
+            <span className={ROW_INTENT_LABEL_STACK}>
+              <span className={cn(ROW_INTENT_FADE, ROW_INTENT_HIDES)}>Connected</span>
+              <span className={cn(ROW_INTENT_FADE, ROW_INTENT_SHOWS, "text-detach")}>Disconnect</span>
+            </span>
           ) : linkEditor.partial !== undefined ? (
-            <>
-              <span className="font-mono font-normal group-hover:hidden group-focus-within:hidden" data-sidebar-link-partial="">
+            <span className={ROW_INTENT_LABEL_STACK}>
+              <span className={cn(ROW_INTENT_FADE, ROW_INTENT_HIDES, "font-mono font-normal")} data-sidebar-link-partial="">
                 {linkEditor.partial}
               </span>
-              <span className="hidden group-hover:inline group-focus-within:inline">Connect</span>
-            </>
+              <span className={cn(ROW_INTENT_FADE, ROW_INTENT_SHOWS)}>Connect</span>
+            </span>
           ) : (
             "Connect"
           )}
@@ -1520,6 +1584,7 @@ const TagNavItem = memo(function TagNavItem({
   onClick,
   onSameClick,
   rowKey,
+  isIntentRow = false,
   isSidebarRowFocused,
   isSidebarRowSeamAccent,
 }: {
@@ -1546,6 +1611,7 @@ const TagNavItem = memo(function TagNavItem({
   onClick?: () => void;
   onSameClick?: () => void;
   rowKey: string;
+  isIntentRow?: boolean;
   isSidebarRowFocused: boolean;
   isSidebarRowSeamAccent: boolean;
 }) {
@@ -1590,6 +1656,7 @@ const TagNavItem = memo(function TagNavItem({
       <SidebarRowFrame
         compact={compact}
         rowKey={rowKey}
+        isIntentRow={isIntentRow}
         isCurrentRoute={isCurrentRoute}
         isLinked={linkEditor?.checked}
         isSidebarRowFocused={isSidebarRowFocused}
@@ -1621,6 +1688,7 @@ const TagNavItem = memo(function TagNavItem({
           <SidebarRowFrame
             compact={compact}
             rowKey={rowKey}
+            isIntentRow={isIntentRow}
             isCurrentRoute={isCurrentRoute}
             isLinked={linkEditor?.checked}
             isSidebarRowFocused={isSidebarRowFocused}
@@ -1763,12 +1831,14 @@ function SidebarCreateChannelRowBody({
         compact
           ? cn(
               "flex w-full items-center gap-2 overflow-hidden rounded-1 p-2 font-sans text-base text-muted-foreground",
-              !isEditing && "group-hover:text-foreground group-focus-within:text-foreground",
+              // A slow pointer lights it like any row (С7.10); the keyboard at once.
+              !isEditing && "group-focus-within:text-foreground",
             )
           : cn(
               SIDEBAR_ROW_BOX_CLASS,
               "pl-[var(--sidebar-row-pad-x)] font-sans text-base text-muted-foreground",
-              !isEditing && "group-hover:text-foreground group-focus-within:text-foreground",
+              // A slow pointer lights it like any row (С7.10); the keyboard at once.
+              !isEditing && "group-focus-within:text-foreground",
             )
       }
       data-sidebar-create-channel-row-body
