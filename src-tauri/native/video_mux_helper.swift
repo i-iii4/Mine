@@ -65,7 +65,18 @@ Task {
         }
         try? FileManager.default.removeItem(at: outputURL)
         export.shouldOptimizeForNetworkUse = true
+        // `export(to:as:)` arrives with the macOS 15 SDK (Swift 6); CI's
+        // macos-14 image still builds with the older SDK and its API.
+        #if compiler(>=6.0)
         try await export.export(to: outputURL, as: .mp4)
+        #else
+        export.outputURL = outputURL
+        export.outputFileType = .mp4
+        await export.export()
+        guard export.status == .completed else {
+            fail(export.error?.localizedDescription ?? "export ended with status \(export.status.rawValue)")
+        }
+        #endif
         exit(0)
     } catch {
         fail(error.localizedDescription)
