@@ -416,6 +416,22 @@ describe("Detail", () => {
     }
   });
 
+  it.each([
+    [{ slug: "Cards/Шуховская башня", media_file: null }, "Шуховская башня.md", "Cards/Шуховская башня.md"],
+    [{ slug: "Cards/Amelia", media_file: "Media/Amelia Watt.jpg" }, "Amelia Watt.jpg", "Media/Amelia Watt.jpg"],
+    [{ slug: "Flat card", media_file: null }, "Flat card.md", "Flat card.md"],
+  ])("names the file in the header and keeps its folder for the hint: %o", (overrides, name, path) => {
+    const { container } = render(<Detail
+      block={block({ ...overrides, url: null })}
+      vaultPath="/tmp/fixture" thumbsRootPath="/tmp/thumbs" tags={[]}
+      onClose={vi.fn()} onNavigate={vi.fn()} onToggleTag={vi.fn()} onCreateAndAssign={vi.fn()}
+      onTagsChanged={vi.fn()} onRequestRename={vi.fn()} onRequestDelete={vi.fn()} />);
+    const header = container.querySelector("[data-detail-drag-handle]")!;
+    expect(header).toHaveTextContent(name);
+    expect(header.textContent).toBe(name);
+    expect(header).toHaveAttribute("title", path);
+  });
+
   it("renders the classic top menu", () => {
     const props = {
       block: block(),

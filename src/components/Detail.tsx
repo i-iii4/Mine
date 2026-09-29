@@ -437,7 +437,10 @@ export function Detail({
     panelRef.current?.focus({ preventScroll: true });
   }, [block]);
 
-  const filename = displayBlock.media_file ?? `${displayBlock.slug}.md`;
+  // The header names the file; the folder it sits in (Cards/, Media/) only
+  // in the hint. Paths are relative to the space root.
+  const filePath = displayBlock.media_file ?? `${displayBlock.slug}.md`;
+  const filename = filePath.slice(filePath.lastIndexOf("/") + 1);
   const formattedDate = new Date(displayBlock.saved_at).toLocaleDateString("ru-RU", {
     day: "numeric",
     month: "short",
@@ -475,7 +478,7 @@ export function Detail({
               isDragging && "opacity-30",
             )}
             data-detail-drag-handle
-            title={filename}
+            title={filePath}
           >
             {filename}
           </div>
