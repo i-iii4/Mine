@@ -122,6 +122,9 @@ local-arena/
 │   │   ├── bindings.rs         # Rust-owned IPC DTO contract для Specta-экспорта
 │   │   ├── net.rs              # validate_fetch_url и сетевые утилиты (native host, импорт)
 │   │   ├── util.rs             # Общие утилиты приложения и native host
+│   │   ├── app_config.rs       # Единственный владелец config.json: блокировка, сохранение чужих ключей, поколение
+│   │   ├── space_registry.rs   # Реестр пространств по vault_id, восстановление, поиск переехавшей папки
+│   │   ├── clipper_registration.rs # Регистрация помощника в браузерах: список браузеров, замена помощника
 │   │   ├── youtube_embed.rs    # Локальная страница-обёртка проигрывателя YouTube (Referer, ошибка 153)
 │   │   ├── frame_context_menu.rs # Правый клик по встроенному кадру: меню Mine вместо меню WebKit
 │   │   ├── source_video_download.rs # Download Media: yt-dlp, склейка, прогресс, отмена
@@ -142,6 +145,7 @@ local-arena/
 │   │   │   ├── cold_space_audit.rs # Cold/reopen/cache-reset projection acceptance
 │   │   │   ├── index.rs        # Frontmatter → SQLite indexing
 │   │   │   ├── reconcile.rs    # Filesystem-first реконсиляция source vault ↔ индекс
+│   │   │   ├── root_guard.rs   # Страж корня: массовые удаления только при живом корне с тем же vault_id
 │   │   │   ├── source_mutation.rs # Атомарные multi-file мутации source с rollback
 │   │   │   ├── block_queries.rs # Block read models + row hydration
 │   │   │   ├── channel_index.rs # Collection persistence owner
