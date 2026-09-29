@@ -169,10 +169,7 @@ pub fn rename_wikilink_targets(body: &str, old_target: &str, new_target: &str) -
 }
 
 fn split_wikilink_fragment(target: &str) -> (&str, Option<&str>) {
-    match target.split_once('#') {
-        Some((base, fragment)) => (base, Some(fragment)),
-        None => (target, None),
-    }
+    crate::links::split_link_fragment(target)
 }
 
 /// Rewrite local inline-media references according to `renames`.

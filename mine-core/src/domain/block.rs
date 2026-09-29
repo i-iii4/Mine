@@ -410,7 +410,8 @@ pub const IMAGE_MEDIA_EXTS: &[&str] = &[
 pub const VIDEO_MEDIA_EXTS: &[&str] = &["mp4", "webm", "m4v", "mov"];
 
 fn media_extension(reference: &str) -> Option<String> {
-    let clean = reference.split(['?', '#']).next().unwrap_or(reference);
+    let without_query = reference.split('?').next().unwrap_or(reference);
+    let clean = crate::links::link_file_part(without_query);
     let ext = std::path::Path::new(clean).extension()?.to_str()?;
     Some(ext.to_ascii_lowercase())
 }
@@ -1538,7 +1539,9 @@ fn validate_iso8601(s: &str) -> bool {
 ///
 /// Behavior:
 /// - NFC-normalize so filesystem variants (HFS+/APFS) agree on identity
-/// - Replace filesystem-hostile characters with a space
+/// - Replace filesystem-hostile characters with a space, and the characters
+///   Obsidian refuses in a name (`#`, `^`, `[`, `]`): `#` would read as a
+///   heading fragment in `![[name]]` and the file could not be found
 /// - Strip control characters entirely
 /// - Collapse whitespace runs
 /// - Trim leading/trailing spaces and dots
@@ -1555,8 +1558,9 @@ fn sanitize_for_filename(raw: &str) -> String {
     for c in normalized.chars() {
         match c {
             // Filesystem-reserved on macOS (/, :) and Windows (* ? " < > |)
-            // plus backslash and NUL. Replace with space to preserve word gaps.
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0' => {
+            // plus backslash and NUL, and what Obsidian refuses in a name
+            // (# ^ [ ]). Replace with space to preserve word gaps.
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0' | '#' | '^' | '[' | ']' => {
                 if !prev_space {
                     result.push(' ');
                     prev_space = true;
@@ -1619,6 +1623,23 @@ fn truncate_filename_stem(stem: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn file_names_keep_out_what_obsidian_refuses() {
+        assert_eq!(
+            sanitize_for_filename("Force-directed #touchdesigner graph"),
+            "Force-directed touchdesigner graph"
+        );
+        assert_eq!(sanitize_for_filename("a^b [c] #d"), "a b c d");
+    }
+
+    #[test]
+    fn a_hash_inside_a_media_name_keeps_its_type() {
+        assert_eq!(
+            media_block_type("Force-directed #touchdesigner graph (video 1).mp4"),
+            BlockType::Video
+        );
+    }
+
     use super::*;
 
     // ── Helpers ─────────────────────────────────────────────────────────

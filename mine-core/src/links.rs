@@ -3,6 +3,43 @@
 use std::collections::{HashMap, HashSet};
 use unicode_normalization::UnicodeNormalization;
 
+/// Extensions that end a file name inside a link target.
+const FILE_EXTENSIONS: &[&str] = &["md", "pdf", "mp3", "m4a", "wav", "ogg"];
+
+/// Split a link target into the file it names and an Obsidian heading or
+/// block fragment: `Note#Heading` is `Note` and `Heading`. Files saved before
+/// `#` was kept out of names carry it in the name itself
+/// (`Graph #touchdesigner (video 1).mp4`); a target that still ends in a file
+/// extension after its last `#` is such a name and has no fragment.
+pub fn split_link_fragment(target: &str) -> (&str, Option<&str>) {
+    let Some((base, fragment)) = target.split_once('#') else {
+        return (target, None);
+    };
+    if names_a_file(target) {
+        (target, None)
+    } else {
+        (base, Some(fragment))
+    }
+}
+
+/// The file a link target names, without its fragment.
+pub fn link_file_part(target: &str) -> &str {
+    split_link_fragment(target).0
+}
+
+fn names_a_file(target: &str) -> bool {
+    let tail = target.rsplit('#').next().unwrap_or(target);
+    std::path::Path::new(tail)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(str::to_ascii_lowercase)
+        .is_some_and(|ext| {
+            crate::domain::block::IMAGE_MEDIA_EXTS.contains(&ext.as_str())
+                || crate::domain::block::VIDEO_MEDIA_EXTS.contains(&ext.as_str())
+                || FILE_EXTENSIONS.contains(&ext.as_str())
+        })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkSyntax {
     Obsidian,
@@ -205,7 +242,7 @@ fn result_for(paths: &[String]) -> LinkResolution {
 
 fn parse_target(raw: &str, syntax: LinkSyntax) -> Option<String> {
     let target = match syntax {
-        LinkSyntax::Obsidian => raw.split(['|', '#']).next()?.trim().to_string(),
+        LinkSyntax::Obsidian => link_file_part(raw.split('|').next()?).trim().to_string(),
         LinkSyntax::Markdown => percent_encoding::percent_decode_str(raw.trim().split('#').next()?)
             .decode_utf8()
             .ok()?
@@ -245,6 +282,27 @@ fn normalize_path(raw: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hash_inside_a_file_name_is_part_of_the_name() {
+        let index = LinkIndex::new([
+            "Media/Force-directed #touchdesigner graph (video 1).mp4",
+            "Cards/Заметка.md",
+        ]);
+        assert_eq!(
+            index.resolve(
+                "Cards/Force-directed #touchdesigner graph.md",
+                "Force-directed #touchdesigner graph (video 1).mp4",
+                LinkSyntax::Obsidian
+            ),
+            LinkResolution::Resolved("Media/Force-directed #touchdesigner graph (video 1).mp4".into())
+        );
+        // A heading after a note name stays a fragment.
+        assert_eq!(split_link_fragment("Заметка#Раздел 1.2"), ("Заметка", Some("Раздел 1.2")));
+        assert_eq!(split_link_fragment("Заметка#Раздел"), ("Заметка", Some("Раздел")));
+        assert_eq!(split_link_fragment("clip #tag.mp4"), ("clip #tag.mp4", None));
+        assert_eq!(link_file_part("photo.jpg"), "photo.jpg");
+    }
 
     #[test]
     fn unique_name_survives_move_and_shortest_path_disambiguates() {

@@ -2872,7 +2872,7 @@ fn is_remote_media_reference(source: &str) -> bool {
 }
 
 fn is_video_file_name(source: &str) -> bool {
-    Path::new(source.split(['|', '#']).next().unwrap_or(source))
+    Path::new(mine_core::links::link_file_part(source.split('|').next().unwrap_or(source)))
         .extension()
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| matches!(ext.to_ascii_lowercase().as_str(), "mp4" | "m4v" | "mov" | "webm"))

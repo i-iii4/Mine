@@ -55,7 +55,11 @@ pub use crate::storage::vault_conflicts::{
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-const MEDIA_INDEX_VERSION: i64 = 5;
+const MEDIA_INDEX_VERSION: i64 = 6;
+/// The media index version at which a `#` inside a media file name stopped
+/// reading as a heading fragment. Cards indexed before it hold a text
+/// placeholder where their media preview belongs; the backfill discards it.
+const HASH_IN_MEDIA_NAMES_VERSION: i64 = 6;
 const COLLECTION_INDEX_VERSION: i64 = 1;
 pub const PREVIEW_SCHEMA_VERSION: i64 = 3;
 
@@ -1629,7 +1633,7 @@ pub fn backfill_missing_thumb_metadata(conn: &Connection, vault: &VaultLayout) -
 /// `preview_manifest` may be non-null but stale after a resolver migration.
 pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<usize> {
     let mut stmt = conn.prepare(
-        "SELECT slug, block_type, url, media_file, thumbnail, width, height, body, thumb_format, body_hash
+        "SELECT slug, block_type, url, media_file, thumbnail, width, height, body, thumb_format, body_hash, media_index_version
          FROM blocks
          WHERE slug != ''
            AND card_kind != 'channel'
@@ -1649,6 +1653,7 @@ pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<us
                 row.get::<_, String>(7)?,
                 row.get::<_, Option<String>>(8)?,
                 row.get::<_, Option<String>>(9)?,
+                row.get::<_, Option<i64>>(10)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -1668,6 +1673,7 @@ pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<us
         body,
         raw_thumb_format,
         body_hash,
+        indexed_version,
     ) in rows
     {
         let block_type = BlockType::from_str(&raw_type)
@@ -1729,6 +1735,9 @@ pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<us
         // leave the fresh data (and its version stamp) in place. `IS` matches
         // NULL == NULL so legacy rows with no stored hash still backfill.
         let card_kind = derive_card_kind(&block);
+        if indexed_version.unwrap_or(0) < HASH_IN_MEDIA_NAMES_VERSION && names_media_with_hash(&block) {
+            discard_derived_previews(vault, &block.slug, preview_manifest.as_deref());
+        }
         updated += conn.execute(
             "UPDATE blocks
              SET first_image = ?2,
@@ -1759,6 +1768,31 @@ pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<us
     }
 
     Ok(updated)
+}
+
+/// Whether the card names a media file with `#` in it: its own file or an
+/// embed in the body.
+fn names_media_with_hash(block: &Block) -> bool {
+    block.frontmatter.file.as_deref().is_some_and(|file| file.contains('#'))
+        || iter_inline_media_references(&block.body)
+            .iter()
+            .any(|reference| reference.source.contains('#'))
+}
+
+/// Remove a card's preview artifacts so the preview pass builds them again
+/// instead of adopting what is on disk.
+fn discard_derived_previews(vault: &VaultLayout, slug: &str, manifest: Option<&str>) {
+    let _ = std::fs::remove_file(vault.thumb_path(slug));
+    crate::storage::thumbnails::remove_thumb_levels(vault, slug);
+    let tiles = manifest
+        .and_then(|raw| serde_json::from_str::<FeedPreviewManifest>(raw).ok())
+        .map_or(0, |manifest| manifest.tiles.len());
+    for index in 0..tiles {
+        let path = vault
+            .thumbs_dir()
+            .join(crate::storage::preview_plan::tile_preview_path(slug, index));
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 /// Rebuild Mine collection memberships after collection parsing rules change.
@@ -4106,6 +4140,46 @@ mod tests {
         assert_eq!(manifest.kind, FeedPreviewKind::VideoPoster);
         assert_eq!(manifest.tiles.len(), 1);
         assert!(manifest.tiles[0].is_video);
+    }
+
+    #[test]
+    fn backfill_media_index_rebuilds_previews_of_media_named_with_a_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = crate::domain::vault::VaultLayout::new(dir.path().to_path_buf());
+        std::fs::create_dir_all(vault.root().join("Media")).unwrap();
+        std::fs::write(vault.root().join("Media/Graph #touchdesigner (video 1).mp4"), b"video").unwrap();
+        std::fs::create_dir_all(vault.thumbs_dir().join("Cards")).unwrap();
+        let text_placeholder = vault.thumb_path("Cards/Graph #touchdesigner");
+        std::fs::write(&text_placeholder, b"text placeholder").unwrap();
+        let untouched = vault.thumb_path("Cards/Plain");
+        std::fs::write(&untouched, b"a real preview").unwrap();
+
+        let conn = test_conn();
+        for (slug, body) in [
+            ("Cards/Graph #touchdesigner", "![[Graph #touchdesigner (video 1).mp4]]"),
+            ("Cards/Plain", "Just text"),
+        ] {
+            conn.execute(
+                "INSERT INTO blocks (slug, block_type, title, saved_at, body, media_index_version)
+                 VALUES (?1, 'article', NULL, '2026-04-24T15:53:13Z', ?2, 5)",
+                params![slug, body],
+            )
+            .unwrap();
+        }
+
+        backfill_media_index(&conn, &vault).unwrap();
+
+        assert!(!text_placeholder.exists(), "the placeholder is rebuilt, not adopted");
+        assert!(untouched.exists());
+        let (media_urls, state): (Option<String>, String) = conn
+            .query_row(
+                "SELECT media_urls, preview_state FROM blocks WHERE slug = 'Cards/Graph #touchdesigner'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(media_urls.as_deref(), Some("[\"Media/Graph #touchdesigner (video 1).mp4\"]"));
+        assert_eq!(state, "stale");
     }
 
     #[test]
