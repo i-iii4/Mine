@@ -999,6 +999,31 @@ describe("AppWithVault", () => {
     expect(bottomBarEntry("Switch collection")).toBeNull();
   });
 
+  it("offers New Collection in the bottom bar only with the sidebar shown", async () => {
+    sidebarResizeState.collapsed = true;
+    const { unmount } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+    expect(bottomBarEntry("New Collection")).toBeNull();
+    unmount();
+
+    sidebarResizeState.collapsed = false;
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+    expect(bottomBarEntry("New Collection")).not.toBeNull();
+  });
+
   it("withdraws Navigate while a card is open, where arrows do nothing", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>

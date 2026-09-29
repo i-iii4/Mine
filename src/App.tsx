@@ -3731,15 +3731,19 @@ export function AppWithVault({
               {sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar"}
             </ActionButton>
           </span>
-          <span
-            data-bar-entry="new-collection"
-            className="inline-flex shrink-0 items-center"
-            style={hiddenBarEntries.has("new-collection") ? { display: "none" } : undefined}
-          >
-            <ActionButton chrome hotkey={commandById("new-collection").combo} onClick={beginCreateCollection}>
-              {commandById("new-collection").name}
-            </ActionButton>
-          </span>
+          {/* The new collection is named in the sidebar list: with the sidebar
+              hidden there is nowhere to name it, so the command leaves the bar. */}
+          {!sidebarCollapsed && (
+            <span
+              data-bar-entry="new-collection"
+              className="inline-flex shrink-0 items-center"
+              style={hiddenBarEntries.has("new-collection") ? { display: "none" } : undefined}
+            >
+              <ActionButton chrome hotkey={commandById("new-collection").combo} onClick={beginCreateCollection}>
+                {commandById("new-collection").name}
+              </ActionButton>
+            </span>
+          )}
           {/* A command appears only while it can be used, and contextual
               entries only append at the end of the group — what the user has
               already seen never shifts. During a selection the bar narrows to
