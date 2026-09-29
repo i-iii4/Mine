@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::commands::state::{
     current_vault_layout, ensure_vault_fresh, read_owned_projection, AppState, CommandError,
@@ -221,11 +221,21 @@ pub struct ReorderItem {
 
 /// Reorder channels by setting new positions for each tag.
 /// Tags without channel entries are auto-created.
+///
+/// Off the main thread: it writes one document per moved collection, and a
+/// synchronous command held the window still until the last write landed,
+/// right at the moment of the drop.
 #[tauri::command]
-pub fn reorder_channels(
-    state: State<'_, AppState>,
-    items: Vec<ReorderItem>,
-) -> Result<(), CommandError> {
+pub async fn reorder_channels(app: AppHandle, items: Vec<ReorderItem>) -> Result<(), CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        reorder_channels_blocking(&state, items)
+    })
+    .await
+    .map_err(|error| CommandError::Internal(format!("reorder worker failed: {error}")))?
+}
+
+fn reorder_channels_blocking(state: &AppState, items: Vec<ReorderItem>) -> Result<(), CommandError> {
     let vault_state = state
         .vault_state
         .lock()
@@ -251,6 +261,13 @@ pub fn reorder_channels(
             return Err(CommandError::Internal(format!(
                 "duplicate collection in reorder: {tag}"
             )));
+        }
+        // A collection that keeps its place keeps its document untouched.
+        if existing_by_tag
+            .get(&tag)
+            .is_some_and(|existing| existing.position == item.position)
+        {
+            continue;
         }
         let mut channel = if let Some(existing) = existing_by_tag.get(&tag) {
             existing.clone()
@@ -730,6 +747,46 @@ fn load_channels(conn: &rusqlite::Connection) -> anyhow::Result<Vec<ChannelDto>>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reorder_writes_only_the_collections_that_moved() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::with_derived_root(dir.path().join("space"), dir.path().join("derived"))
+            .with_write_layout(crate::domain::vault::VaultWriteLayout::standard());
+        std::fs::create_dir_all(vault.root().join("Collections")).unwrap();
+        for (name, position) in [("Art", 0), ("Cities", 1), ("Games", 2)] {
+            std::fs::write(
+                vault.block_path(&format!("Collections/{name}")),
+                format!("---\ntype: channel\nposition: {position}\nsaved_at: 2026-04-25T14:00:40Z\n---\n"),
+            )
+            .unwrap();
+        }
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        let state = AppState::new();
+        *state.vault_state.lock().unwrap() = Some(crate::commands::state::VaultState {
+            conn,
+            vault: vault.clone(),
+        });
+        let art_before = std::fs::read(vault.block_path("Collections/Art")).unwrap();
+
+        // Games moves above Cities; Art keeps its place.
+        reorder_channels_blocking(
+            &state,
+            vec![
+                ReorderItem { tag: "Art".into(), position: 0 },
+                ReorderItem { tag: "Games".into(), position: 1 },
+                ReorderItem { tag: "Cities".into(), position: 2 },
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(std::fs::read(vault.block_path("Collections/Art")).unwrap(), art_before);
+        let games = std::fs::read_to_string(vault.block_path("Collections/Games")).unwrap();
+        assert!(games.contains("position: 1"), "{games}");
+        let cities = std::fs::read_to_string(vault.block_path("Collections/Cities")).unwrap();
+        assert!(cities.contains("position: 2"), "{cities}");
+    }
 
     #[test]
     fn new_collection_uses_layout_despite_legacy_root_collection() {
