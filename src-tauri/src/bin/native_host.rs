@@ -63,6 +63,9 @@ struct StatusResponse {
     binding_accepted: bool,
     /// Bumped by the app on every settings change (К5, П28).
     config_generation: u64,
+    /// The build of the extension installed on disk. The running extension
+    /// compares it with its own and reloads itself when it is older (К4).
+    extension_build_id: Option<String>,
     version: String,
     host_api_version: u32,
     build_id: String,
@@ -535,6 +538,29 @@ fn initialize_native_new_space_layout(vault: &VaultLayout) -> Result<(), String>
     Ok(())
 }
 
+/// The build of the installed extension, from the identity file the
+/// extension build writes next to its bundle. The copy browsers load first
+/// (`clipper/extension`), then the managed one.
+fn installed_extension_build(app_data: &Path) -> Option<String> {
+    let clipper = app_data.join("clipper");
+    [
+        clipper.join("extension"),
+        clipper
+            .join(mine_lib::runtime_installation::MANAGED_RUNTIME_DIRECTORY)
+            .join("extension"),
+    ]
+    .iter()
+    .find_map(|extension| {
+        let bytes = std::fs::read(extension.join("dist/runtime-identity.json")).ok()?;
+        let identity: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+        identity
+            .get("buildId")
+            .and_then(serde_json::Value::as_str)
+            .filter(|id| !id.is_empty())
+            .map(str::to_string)
+    })
+}
+
 fn native_app_data_dir() -> Result<PathBuf, String> {
     let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
     Ok(PathBuf::from(home).join("Library/Application Support/com.mine.app"))
@@ -853,6 +879,9 @@ fn handle_get_status_with_upload(
         moved_from: space.moved_from.clone(),
         binding_accepted: space.binding_accepted,
         config_generation,
+        extension_build_id: native_app_data_dir()
+            .ok()
+            .and_then(|dir| installed_extension_build(&dir)),
         version: VERSION.to_string(),
         host_api_version: HOST_API_VERSION,
         build_id: option_env!("MINE_BUILD_ID").unwrap_or("unidentified-build").into(),
@@ -4070,6 +4099,20 @@ mod tests {
         let (_tmp, vault) = k3_space_with_collection();
         let flat = vault.with_write_layout(mine_lib::domain::vault::VaultWriteLayout::flat());
         assert!(folder_collections(&flat).is_empty());
+    }
+
+    #[test]
+    fn k4_status_names_the_installed_extension_build() {
+        let tmp = TempDir::new().unwrap();
+        assert_eq!(installed_extension_build(tmp.path()), None);
+        let managed = tmp.path().join("clipper/managed-v1/extension/dist");
+        std::fs::create_dir_all(&managed).unwrap();
+        std::fs::write(managed.join("runtime-identity.json"), r#"{"buildId":"managed","commit":"c"}"#).unwrap();
+        assert_eq!(installed_extension_build(tmp.path()).as_deref(), Some("managed"));
+        let loaded = tmp.path().join("clipper/extension/dist");
+        std::fs::create_dir_all(&loaded).unwrap();
+        std::fs::write(loaded.join("runtime-identity.json"), r#"{"buildId":"loaded","commit":"c"}"#).unwrap();
+        assert_eq!(installed_extension_build(tmp.path()).as_deref(), Some("loaded"));
     }
 
     #[test]

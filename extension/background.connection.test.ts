@@ -150,3 +150,80 @@ describe("helper replaced during a session (SPEC_CLIPPER.md, К4)", () => {
     expect(host.connectNative).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("extension update applies itself (SPEC_CLIPPER.md, К4)", () => {
+  function updatableTransport(ownBuild: string, stored: Record<string, unknown> = {}) {
+    let respond: (message: NativeResponse) => void = () => undefined;
+    const local = { ...stored };
+    const session: Record<string, unknown> = {};
+    const reload = vi.fn();
+    const port = {
+      onMessage: { addListener: (listener: typeof respond) => { respond = listener; } },
+      onDisconnect: { addListener: () => undefined },
+      postMessage: vi.fn<(message: NativeResponse) => void>(),
+    };
+    const context = createContext({
+      HOST_NAME: "test.mine",
+      chrome: {
+        runtime: { connectNative: () => port, getURL: (path: string) => `chrome-extension://id/${path}`, reload },
+        storage: {
+          local: { get: async (key: string) => ({ [key]: local[key] }), set: async (values: Record<string, unknown>) => { Object.assign(local, values); } },
+          session: {
+            get: async (key: string) => ({ [key]: session[key] }),
+            set: async (values: Record<string, unknown>) => { Object.assign(session, values); },
+            remove: async (key: string) => { delete session[key]; },
+          },
+        },
+      },
+      fetch: async () => ({ ok: true, json: async () => ({ buildId: ownBuild, commit: "c" }) }),
+      console: { warn: vi.fn() },
+      crypto: { randomUUID: () => checkId },
+      setTimeout, clearTimeout,
+    });
+    runInContext(transport, context);
+    const send = (action: string): Promise<NativeResponse> =>
+      runInContext(`sendNativeMessage({action:${JSON.stringify(action)}})`, context);
+    const closed = (): Promise<void> => runInContext("reloadIfUpdated()", context);
+    return { send, closed, respond: (message: NativeResponse) => respond(message), reload, local, session };
+  }
+
+  async function statusFrom(host: ReturnType<typeof updatableTransport>, installed: string) {
+    const status = host.send("get_status");
+    host.respond({ _messageId: 1, ok: true, connected: true, features: [], extension_build_id: installed });
+    await status;
+    await vi.waitFor(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  it("reloads once the clipper closes when a newer build is installed", async () => {
+    const host = updatableTransport("old-build");
+    await statusFrom(host, "new-build");
+    expect(host.reload).not.toHaveBeenCalled();
+    await host.closed();
+    expect(host.reload).toHaveBeenCalledOnce();
+    expect(host.local.mineReloadedFor).toBe("new-build");
+  });
+
+  it("does nothing when the running build is the installed one", async () => {
+    const host = updatableTransport("same-build");
+    await statusFrom(host, "same-build");
+    await host.closed();
+    expect(host.reload).not.toHaveBeenCalled();
+  });
+
+  it("never reloads twice for the same installed build", async () => {
+    const host = updatableTransport("old-build", { mineReloadedFor: "new-build" });
+    await statusFrom(host, "new-build");
+    await host.closed();
+    expect(host.reload).not.toHaveBeenCalled();
+  });
+
+  it("waits for a save that is still in flight", async () => {
+    const host = updatableTransport("old-build");
+    await statusFrom(host, "new-build");
+    void host.send("save_block");
+    await host.closed();
+    expect(host.reload).not.toHaveBeenCalled();
+    expect(host.session.mineReloadPending).toBe("new-build");
+  });
+});

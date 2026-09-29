@@ -252,8 +252,10 @@ chrome.windows.onBoundsChanged.addListener(async (win) => {
   });
 });
 
-chrome.windows.onRemoved.addListener((windowId) => {
-  forgetPopupWindow(windowId);
+chrome.windows.onRemoved.addListener(async (windowId) => {
+  const ours = await isOurPopup(windowId);
+  await forgetPopupWindow(windowId);
+  if (ours) await reloadIfUpdated();
 });
 
 // ── Context menus ─────────────────────────────────────────────────────────
@@ -363,7 +365,10 @@ function getNativePort() {
       pendingCallbacks.delete(id);
       clearTimeout(timeout);
       resolve(msg);
-      if (action === "get_status") confirmNativeConnection(msg, port);
+      if (action === "get_status") {
+        confirmNativeConnection(msg, port);
+        void noteInstalledExtension(msg).catch(() => undefined);
+      }
     } else {
       // An uncorrelated or late response must never acknowledge another save.
       console.warn("[Mine] Ignored uncorrelated native response");
@@ -381,6 +386,45 @@ function getNativePort() {
   });
 
   return nativePort;
+}
+
+// ── Extension update (SPEC_CLIPPER.md, К4) ───────────────────────────────
+//
+// A browser keeps running the extension it loaded until someone presses
+// Reload. The helper reports the build installed on disk; when it differs
+// from this one, the extension reloads itself once the clipper is closed and
+// no save is waiting for an answer. One reload per installed build: if the
+// browser loads another folder than the one updated, the extension does not
+// reload in a loop.
+let ownRuntimeIdentity = null;
+
+function runtimeIdentity() {
+  ownRuntimeIdentity ??= fetch(chrome.runtime.getURL("dist/runtime-identity.json"))
+    .then((response) => (response.ok ? response.json() : null))
+    .catch(() => null);
+  return ownRuntimeIdentity;
+}
+
+async function noteInstalledExtension(status) {
+  const installed = status?.extension_build_id;
+  if (typeof installed !== "string" || installed.length === 0) return;
+  const own = await runtimeIdentity();
+  if (typeof own?.buildId !== "string" || own.buildId === installed) return;
+  const { mineReloadedFor } = await chrome.storage.local.get("mineReloadedFor");
+  if (mineReloadedFor === installed) return;
+  await chrome.storage.session.set({ mineReloadPending: installed });
+}
+
+async function reloadIfUpdated() {
+  const { mineReloadPending } = await chrome.storage.session.get("mineReloadPending");
+  if (typeof mineReloadPending !== "string") return;
+  for (const [, pending] of pendingCallbacks) {
+    // A save in flight finishes first; the next close reloads.
+    if (pending.action === "save_block") return;
+  }
+  await chrome.storage.local.set({ mineReloadedFor: mineReloadPending });
+  await chrome.storage.session.remove("mineReloadPending");
+  chrome.runtime.reload();
 }
 
 // A newer helper was installed while this connection stayed open (К4). The
@@ -758,6 +802,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: true });
     }).catch((error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
     return true;
+  }
+
+  // The clipper overlay closed: the moment an update can apply (К4).
+  if (msg.action === "mineClipperClosed") {
+    void reloadIfUpdated().catch((error) => console.warn("[Mine] extension reload failed:", String(error?.message ?? error)));
+    return false;
   }
 
   if (msg.action === "openDownloadPage") {

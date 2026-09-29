@@ -268,6 +268,12 @@ export function closeClipperOverlay(): void {
   current.root.unmount();
   current.host.remove();
   current = null;
+  // A pending extension update applies now that nothing is open (SPEC_CLIPPER.md, К4).
+  try {
+    void chrome.runtime.sendMessage({ target: "background", action: "mineClipperClosed" }).catch(() => undefined);
+  } catch {
+    // The extension context is gone; there is nothing left to update.
+  }
 }
 
 // Expose on isolated-world window so content.js and in-world code

@@ -8,7 +8,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub(crate) const MANAGED_RUNTIME_DIRECTORY: &str = "managed-v1";
+pub const MANAGED_RUNTIME_DIRECTORY: &str = "managed-v1";
 pub(crate) const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, PartialEq, Eq)]
