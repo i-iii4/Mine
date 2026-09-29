@@ -80,12 +80,6 @@ struct ChannelInfo {
 }
 
 #[derive(serde::Serialize)]
-struct ChannelsResponse {
-    ok: bool,
-    channels: Vec<ChannelInfo>,
-}
-
-#[derive(serde::Serialize)]
 struct CreateChannelResponse {
     ok: bool,
     tag: String,

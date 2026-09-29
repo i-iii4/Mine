@@ -31,7 +31,11 @@ test('JS entrypoint has no user-path installation or legacy registration algorit
   const owner = await readFile(join(root, 'src-tauri/src/runtime_installation.rs'), 'utf8');
   assert.match(owner, /MANAGED_RUNTIME_DIRECTORY[^\n]*"managed-v1"/);
   assert.match(rust, /MANAGED_RUNTIME_DIRECTORY/);
-  assert.match(rust, /HOST_NAME[^\n]*"com\.mine\.clipper\.v1"/);
+  // The host name lives with the browser list both the installer and the
+  // helper read (SPEC_CLIPPER.md, К4).
+  const registration = await readFile(join(root, 'src-tauri/src/clipper_registration.rs'), 'utf8');
+  assert.match(rust, /clipper_registration::\{[^}]*HOST_NAME/);
+  assert.match(registration, /HOST_NAME[^\n]*"com\.mine\.clipper\.v1"/);
 });
 
 test('invalid arguments and earlier build failure prevent any installer invocation', () => {

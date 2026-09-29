@@ -383,6 +383,8 @@ local-arena/
 bun install                    # Установка JS-зависимостей
 cargo tauri dev                # Запуск в режиме разработки (Rust + Vite)
 cargo tauri build              # Сборка .dmg/.app
+bun run build:local-app        # Локальная сборка .app с проверкой клиппера и подписью ad-hoc
+bun run install:local-app      # Установить собранный .app: прежняя копия в Корзину, сборка снята с регистрации macOS
 cargo tauri build --features article-audio # Сборка с включённым article audio (по умолчанию выключен)
 bun run build:extension        # Обязательная отдельная сборка расширения → extension/dist
 bun run pack:extension         # Упаковка расширения в архив
