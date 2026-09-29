@@ -275,7 +275,11 @@ export function PopupApp() {
           value={clipper.selectedVault}
           options={clipper.knownVaults}
           onChange={clipper.switchVault}
-          onReveal={clipper.revealSpace}
+          onReveal={(path) => {
+            void clipper.revealSpace(path).then((result) => {
+              setSaveError(result.ok ? null : result.error);
+            });
+          }}
           onAddSpace={clipper.addSpace}
           onClose={closeClipper}
           canOpenApp={clipper.canOpenApp}

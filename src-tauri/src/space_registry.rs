@@ -202,6 +202,82 @@ pub fn find_moved(record: &SpaceRecord) -> Option<String> {
     found
 }
 
+/// Where a space chosen earlier stands now (SPEC_CLIPPER.md, К1, К3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Located {
+    /// The space is at the path that was asked about.
+    Here { path: String },
+    /// The space was renamed or moved; it is now at `path`.
+    Moved { from: String, path: String },
+    /// Nothing that is this space can be found. `reason` tells what stands
+    /// at the last known path.
+    Lost { path: String, reason: LostReason },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LostReason {
+    /// No folder there: renamed, moved, deleted or on a disconnected drive.
+    Missing,
+    /// The folder is there but cannot be read.
+    AccessDenied,
+    /// The folder there is another space.
+    Replaced,
+}
+
+/// Find the space `vault_id` names, starting at the path it was last seen at
+/// (`hint`). The identity decides; the path is only where to look first.
+/// Without an identity (a choice made before К1) the hint is taken as it is,
+/// and a missing hint is looked up in the list by path.
+pub fn locate(cfg: &Map<String, Value>, vault_id: Option<&str>, hint: &str) -> Located {
+    let here = Path::new(hint);
+    let hint_readable = std::fs::read_dir(here).is_ok();
+    if hint_readable {
+        match vault_id {
+            None => return Located::Here { path: hint.to_string() },
+            Some(id) if read_space_id(here).as_deref() == Some(id) => {
+                return Located::Here { path: hint.to_string() }
+            }
+            Some(_) => {}
+        }
+    }
+    let id = vault_id
+        .map(str::to_string)
+        .or_else(|| record_at(cfg, hint).and_then(|record| record.vault_id));
+    if let Some(id) = id {
+        let listed = records(cfg)
+            .into_iter()
+            .find(|record| record.vault_id.as_deref() == Some(id.as_str()));
+        if let Some(record) = &listed {
+            if !same_path(&record.path, hint) && is_available(record) {
+                return Located::Moved { from: hint.to_string(), path: record.path.clone() };
+            }
+        }
+        // Look beside the path asked about, then beside the listed one.
+        let beside_hint = SpaceRecord {
+            vault_id: Some(id.clone()),
+            path: hint.to_string(),
+            last_opened_ms: None,
+        };
+        let found = find_moved(&beside_hint)
+            .or_else(|| listed.as_ref().and_then(find_moved));
+        if let Some(path) = found {
+            return Located::Moved { from: hint.to_string(), path };
+        }
+    }
+    let reason = if hint_readable {
+        LostReason::Replaced
+    } else {
+        match std::fs::metadata(here) {
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                LostReason::AccessDenied
+            }
+            Ok(metadata) if metadata.is_dir() => LostReason::AccessDenied,
+            _ => LostReason::Missing,
+        }
+    };
+    Located::Lost { path: hint.to_string(), reason }
+}
+
 /// The person forgot the space at `path`: exactly that record goes, and
 /// recovery will not bring it back (П13, П28).
 pub fn forget(cfg: &mut Map<String, Value>, path: &str) {
@@ -415,6 +491,72 @@ mod tests {
         let store = vaults_dir(app_data).join(id);
         std::fs::create_dir_all(&store).unwrap();
         std::fs::write(store.join("owner-path.json"), json!({ "path": path }).to_string()).unwrap();
+    }
+
+    #[test]
+    fn k1_locate_finds_a_space_by_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let mine = space(dir.path(), "Mine", MINE);
+        let nsfv = space(dir.path(), "NSFV", NSFV);
+        let mut cfg = Map::new();
+        record_open(&mut cfg, NSFV, &nsfv, 1);
+        record_open(&mut cfg, MINE, &mine, 2);
+        assert_eq!(locate(&cfg, Some(MINE), &mine), Located::Here { path: mine.clone() });
+
+        // Renamed between two requests, before the app noticed.
+        let renamed = dir.path().join("Mine!").to_string_lossy().into_owned();
+        std::fs::rename(&mine, &renamed).unwrap();
+        assert_eq!(
+            locate(&cfg, Some(MINE), &mine),
+            Located::Moved { from: mine.clone(), path: renamed.clone() }
+        );
+        // A choice made before К1 carries no identity: the list supplies it.
+        assert_eq!(
+            locate(&cfg, None, &mine),
+            Located::Moved { from: mine.clone(), path: renamed.clone() }
+        );
+        // The other space is untouched by the rename.
+        assert_eq!(locate(&cfg, Some(NSFV), &nsfv), Located::Here { path: nsfv });
+    }
+
+    #[test]
+    fn k1_locate_follows_the_list_to_another_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("a").join("Mine").to_string_lossy().into_owned();
+        let moved = space(&dir.path().join("b"), "Mine", MINE);
+        let mut cfg = Map::new();
+        record_open(&mut cfg, MINE, &moved, 1);
+        assert_eq!(
+            locate(&cfg, Some(MINE), &old),
+            Located::Moved { from: old, path: moved }
+        );
+    }
+
+    #[test]
+    fn k1_locate_does_not_guess_between_copies() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("Mine").to_string_lossy().into_owned();
+        space(dir.path(), "Mine copy 1", MINE);
+        space(dir.path(), "Mine copy 2", MINE);
+        assert_eq!(
+            locate(&Map::new(), Some(MINE), &old),
+            Located::Lost { path: old, reason: LostReason::Missing }
+        );
+    }
+
+    #[test]
+    fn k1_locate_reports_a_missing_drive_and_a_replaced_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let gone = "/Volumes/Unplugged/Mine".to_string();
+        assert_eq!(
+            locate(&Map::new(), Some(MINE), &gone),
+            Located::Lost { path: gone, reason: LostReason::Missing }
+        );
+        let other = space(dir.path(), "Mine", NSFV);
+        assert_eq!(
+            locate(&Map::new(), Some(MINE), &other),
+            Located::Lost { path: other, reason: LostReason::Replaced }
+        );
     }
 
     #[test]

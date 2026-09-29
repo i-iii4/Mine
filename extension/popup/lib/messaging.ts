@@ -17,6 +17,12 @@ export interface NativeResponse {
   vaultConfigured?: boolean;
   vault_path?: string | null;
   binding_id?: string | null;
+  /// К1 to К5: identity, move and settings generation of the chosen space.
+  vault_id?: string | null;
+  moved_from?: string | null;
+  binding_accepted?: boolean;
+  config_generation?: number;
+  folder_state?: string;
   executor_id?: SaveExecutor;
   outcome?: SaveOutcome;
   code?: string;
@@ -109,9 +115,10 @@ export async function pickVaultFolder(): Promise<PickVaultFolderResponse> {
   return resp as PickVaultFolderResponse;
 }
 
-/// Reveals a known vault in Finder via the native host.
-export async function revealVault(path: string): Promise<NativeResponse> {
-  return sendToNative({ action: "reveal_vault", params: { path } });
+/// Reveals a known space in Finder via the native host. The binding lets
+/// the host find a space that moved since the popup saw it (К6).
+export async function revealVault(path: string, bindingId: string | null = null): Promise<NativeResponse> {
+  return sendToNative({ action: "reveal_vault", path, binding_id: bindingId });
 }
 
 export interface ContextMenuData {

@@ -196,6 +196,8 @@ export function useClipperState() {
   const nativeStatusPromiseRef = useRef<Promise<boolean> | null>(null);
   const nativeStatusGenerationRef = useRef<number | null>(null);
   const bindingIdRef = useRef<string | null>(null);
+  // The app's settings generation seen last (SPEC_CLIPPER.md, К5).
+  const configGenerationRef = useRef<number | null>(null);
   const saveProtocolRef = useRef<number | null>(null);
   const operationRef = useRef<PinnedSaveOperation | null>(null);
   const preparedOperationRef = useRef<PinnedSaveOperation | null>(null);
@@ -417,6 +419,16 @@ export function useClipperState() {
     }
   }, []);
 
+  /// The spaces the popup can switch to, re-read from the app's list.
+  const refreshKnownVaults = useCallback(() => {
+    void listKnownVaults().then((vaultsResult) => {
+      if (vaultsResult.ok) {
+        setKnownVaults(vaultsResult.vaults);
+        void chrome.storage.local.set({ mineKnownVaults: vaultsResult.vaults }).catch(cause => console.warn("Could not cache Mine folders", cause));
+      }
+    });
+  }, []);
+
   const enterStandaloneMode = useCallback((status: StandaloneStatus) => {
     saveModeRef.current = "standalone";
     setSaveMode("standalone");
@@ -455,8 +467,15 @@ export function useClipperState() {
           && "executor" in selected && selected.executor === "browser") {
           destinationRef.current = "browser";
         }
-        const status = await sendToNative({ action: "get_status", vault_path: vaultRef.current });
+        // The host finds the space by its identity; the path is where it
+        // was last seen (SPEC_CLIPPER.md, К1).
+        const status = await sendToNative({
+          action: "get_status",
+          vault_path: vaultRef.current,
+          binding_id: destinationRef.current === "native" ? bindingIdRef.current : null,
+        });
         if (generation !== destinationGenerationRef.current) return false;
+        if (typeof status.config_generation === "number") configGenerationRef.current = status.config_generation;
         setNativeConnected(status.ok && status.connected !== false);
         setCanOpenApp(status.ok && status.features?.includes("open_app_v1") === true);
         if (operationRef.current || preparedOperationRef.current) return true;
@@ -497,14 +516,26 @@ export function useClipperState() {
           const uncertain = status.outcome === "unknown" || status.code === "native_timeout" || status.code === "extension_transport" || status.code === "extension_background_error";
           saveModeRef.current = destinationRef.current === "native" || uncertain ? "app" : "unconfigured";
           setSaveMode(saveModeRef.current);
+          // Without a reachable space there is nothing to load: the picker
+          // stops waiting, and the other spaces stay one click away (К3).
+          channelsRequestRef.current += 1;
+          setChannelsLoading(false);
+          setChannelsError("Collections appear once Mine can reach the space.");
+          if (status.ok) refreshKnownVaults();
           return false;
         }
-        if (bindingIdRef.current && bindingIdRef.current !== status.binding_id && destinationRef.current === "native") {
+        // Hosts before К2 do not judge the binding; the popup compares it.
+        const bindingRejected = status.binding_accepted === false
+          || (typeof status.binding_accepted !== "boolean" && bindingIdRef.current !== null && bindingIdRef.current !== status.binding_id);
+        if (bindingRejected && destinationRef.current === "native") {
           const message = "The selected folder binding changed. Choose the folder again before saving.";
           nativeStatusErrorRef.current = message;
           setNativeStatusError(message);
           saveModeRef.current = "app";
           setSaveMode("app");
+          channelsRequestRef.current += 1;
+          setChannelsLoading(false);
+          setChannelsError("Collections appear once Mine can reach the space.");
           return false;
         }
         destinationRef.current = "native";
@@ -520,12 +551,7 @@ export function useClipperState() {
         // Taxonomy and vault list are useful, but they must not block the
         // first paint of the clipper. Open overlays refresh again when another
         // tab creates a channel.
-        void listKnownVaults().then((vaultsResult) => {
-          if (vaultsResult.ok) {
-            setKnownVaults(vaultsResult.vaults);
-            void chrome.storage.local.set({ mineKnownVaults: vaultsResult.vaults }).catch(cause => console.warn("Could not cache Mine folders", cause));
-          }
-        });
+        refreshKnownVaults();
         void refreshChannels();
         return true;
       })
@@ -536,6 +562,9 @@ export function useClipperState() {
         setNativeStatusError(message);
         saveModeRef.current = destinationRef.current === "browser" ? "unconfigured" : "app";
         setSaveMode(saveModeRef.current);
+        channelsRequestRef.current += 1;
+        setChannelsLoading(false);
+        setChannelsError("Collections appear once Mine can reach the space.");
         return false;
       })
       .finally(() => {
@@ -546,7 +575,30 @@ export function useClipperState() {
     nativeStatusPromiseRef.current = promise;
     nativeStatusGenerationRef.current = generation;
     return promise;
-  }, [enterStandaloneMode, refreshChannels]);
+  }, [enterStandaloneMode, refreshChannels, refreshKnownVaults]);
+
+  // Changes made in the app while the clipper stays open (a space renamed,
+  // forgotten or added) reach it when the person comes back to it: a new
+  // settings generation re-reads the destination and the space list (К5).
+  useEffect(() => {
+    const recheck = () => {
+      if (document.visibilityState !== "visible") return;
+      if (operationRef.current || preparedOperationRef.current || savingRef.current) return;
+      if (configGenerationRef.current === null || destinationRef.current !== "native") return;
+      void sendToNative({ action: "get_status", vault_path: vaultRef.current, binding_id: bindingIdRef.current }).then((status) => {
+        if (typeof status.config_generation !== "number" || status.config_generation === configGenerationRef.current) return;
+        if (operationRef.current || preparedOperationRef.current || savingRef.current) return;
+        destinationGenerationRef.current += 1;
+        void ensureNativeStatus(true);
+      });
+    };
+    window.addEventListener("focus", recheck);
+    document.addEventListener("visibilitychange", recheck);
+    return () => {
+      window.removeEventListener("focus", recheck);
+      document.removeEventListener("visibilitychange", recheck);
+    };
+  }, [ensureNativeStatus]);
 
   useEffect(() => {
     const onMessage = (msg: { action?: string }) => {
@@ -1487,16 +1539,18 @@ export function useClipperState() {
     editorChangedRef.current = true;
     destinationRef.current = "native";
     destinationGenerationRef.current += 1;
+    // An error from the previous space does not follow the switch (К3).
+    nativeStatusErrorRef.current = null;
+    setNativeStatusError(null);
     setChannelsLoading(true);
     setChannelsError(null);
     setSelectedTags([]);
     bindingIdRef.current = null;
     setSelectedVault(vaultPath);
     vaultRef.current = vaultPath;
+    // A reachable space loads its collections from the status itself.
     await ensureNativeStatus(true);
-    // Reload channels for new vault
-    await refreshChannels(vaultPath);
-  }, [refreshChannels, ensureNativeStatus]);
+  }, [ensureNativeStatus]);
 
   /// Desktop parity for the space switcher: the host shows the system folder
   /// chooser, registers the folder in the shared config, and the clipper
@@ -1517,8 +1571,12 @@ export function useClipperState() {
     }
   }, [switchVault]);
 
-  const revealSpace = useCallback(async (vaultPath: string) => {
-    await revealVault(vaultPath);
+  /// Reveal answers either way (К6): the host opens where the space is now,
+  /// found by identity, or says why it cannot.
+  const revealSpace = useCallback(async (vaultPath: string): Promise<{ ok: true } | { ok: false; error: string }> => {
+    const binding = vaultPath === vaultRef.current && destinationRef.current === "native" ? bindingIdRef.current : null;
+    const result = await revealVault(vaultPath, binding);
+    return result.ok ? { ok: true } : { ok: false, error: result.error ?? "Finder could not show this space." };
   }, []);
 
   const chooseFolder = useCallback(async () => {

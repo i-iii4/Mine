@@ -36,14 +36,39 @@ pub fn sha256_file(path: &Path) -> Result<String> {
     Ok(format!("{:x}", hash.finalize()))
 }
 
-/// Canonical folder binding; equal display names do not imply equal bindings.
+/// The save binding is the space's identity (SPEC_CLIPPER.md, К2): renaming
+/// or moving the folder keeps it. A folder without a readable identity yet
+/// falls back to the path binding used before К2.
 pub fn binding_id(vault: &VaultLayout) -> Result<String> {
+    if let Some(id) = crate::space_registry::read_space_id(vault.root()) {
+        if validate_id(&id).is_ok() && !is_legacy_binding(&id) {
+            return Ok(id);
+        }
+    }
+    legacy_binding_id(vault)
+}
+
+/// The binding before К2: a hash of the canonical folder path.
+pub fn legacy_binding_id(vault: &VaultLayout) -> Result<String> {
     let root = vault
         .root()
         .canonicalize()
         .context("cannot resolve vault binding")?;
     let path = root.to_str().context("vault path is not valid Unicode")?;
-    Ok(sha256_bytes(path.as_bytes()))
+    Ok(legacy_binding_of_path(path))
+}
+
+/// The pre-К2 binding of a path as it was spelled when the binding was made.
+pub fn legacy_binding_of_path(path: &str) -> String {
+    sha256_bytes(path.as_bytes())
+}
+
+/// Path bindings are SHA-256 hex digests; space identities never are.
+pub fn is_legacy_binding(binding: &str) -> bool {
+    binding.len() == 64
+        && binding
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 /// An artifact whose bytes must still match before a receipt is recovered.
@@ -242,6 +267,10 @@ pub struct SaveOperationRecord {
     pub reserved_name: Option<String>,
     #[serde(default)]
     pub pending_upload_id: Option<String>,
+    /// The path binding this receipt was made under before it moved to the
+    /// space identity; its fingerprint was computed with that binding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adopted_from: Option<String>,
     pub phase: OperationPhase,
 }
 
@@ -305,6 +334,71 @@ impl SaveOperationStore {
             _lock: lock,
         })
     }
+
+    /// Move receipts kept under a path binding to the space identity
+    /// (SPEC_CLIPPER.md, К2), so an operation begun before the folder was
+    /// renamed, or before К2, continues under the new binding. Each receipt
+    /// is written under the new binding first, then its request and staging
+    /// follow, then the old receipt goes: an interrupted move resumes on the
+    /// next call. Returns how many receipts moved.
+    pub fn adopt_legacy(&self, legacy: &str, current: &str) -> Result<usize> {
+        if legacy == current {
+            return Ok(0);
+        }
+        validate_id(legacy)?;
+        validate_id(current)?;
+        match std::fs::symlink_metadata(self.root.join(legacy)) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => return Err(error.into()),
+            Ok(metadata) if !metadata.is_dir() => {
+                anyhow::bail!("legacy operation journal is not a directory")
+            }
+            Ok(_) => {}
+        }
+        // Always legacy first: two adopters take the locks in one order.
+        let old = self.lock(legacy)?;
+        let new = self.lock(current)?;
+        let mut ids = Vec::new();
+        for entry in std::fs::read_dir(&old.directory)? {
+            let name = entry?.file_name();
+            let Some(name) = name.to_str() else { continue };
+            let Some(id) = name.strip_suffix(".json") else {
+                continue;
+            };
+            if id.ends_with(".request") || validate_id(id).is_err() {
+                continue;
+            }
+            ids.push(id.to_string());
+        }
+        ids.sort();
+        let mut moved = 0;
+        for id in ids {
+            let Some(mut record) = old.load(&id)? else {
+                continue;
+            };
+            if new.load(&id)?.is_none() {
+                record.adopted_from = Some(legacy.to_string());
+                record.binding_id = current.to_string();
+                new.store(&record)?;
+            }
+            for suffix in [".request.json", ".staging"] {
+                let from = old.directory.join(format!("{id}{suffix}"));
+                let to = new.directory.join(format!("{id}{suffix}"));
+                if std::fs::symlink_metadata(&from).is_ok()
+                    && std::fs::symlink_metadata(&to).is_err()
+                {
+                    std::fs::rename(&from, &to).context("move operation material")?;
+                }
+            }
+            std::fs::remove_file(old.path(&id)?).context("remove adopted receipt")?;
+            moved += 1;
+        }
+        if moved > 0 {
+            files::sync_parent_directory(&old.directory.join(".lock"))?;
+            files::sync_parent_directory(&new.directory.join(".lock"))?;
+        }
+        Ok(moved)
+    }
 }
 
 /// The open locked file releases the process lock when this value drops.
@@ -361,6 +455,7 @@ impl LockedSaveOperations {
             fingerprint,
             reserved_name: None,
             pending_upload_id: None,
+            adopted_from: None,
             phase: OperationPhase::StagingV2,
         };
         let request_path = self.directory.join(format!("{id}.request.json"));
@@ -1498,6 +1593,85 @@ mod tests {
         let store = SaveOperationStore::new(root.clone());
         let _locked = store.lock("binding").unwrap();
         std::fs::write(root.join("acquired"), b"acquired").unwrap();
+    }
+
+    const SPACE_ID: &str = "0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn k2_binding_is_the_space_identity_and_survives_a_rename() {
+        let (tmp, vault, _store) = setup();
+        let legacy = binding_id(&vault).unwrap();
+        assert!(is_legacy_binding(&legacy));
+        assert_eq!(legacy, legacy_binding_id(&vault).unwrap());
+
+        std::fs::create_dir_all(vault.mine_dir()).unwrap();
+        std::fs::write(vault.vault_id_path(), format!("{SPACE_ID}\n")).unwrap();
+        assert_eq!(binding_id(&vault).unwrap(), SPACE_ID);
+
+        let renamed = tmp.path().join("vault!");
+        std::fs::rename(vault.root(), &renamed).unwrap();
+        assert_eq!(binding_id(&VaultLayout::new(renamed)).unwrap(), SPACE_ID);
+    }
+
+    #[test]
+    fn k2_legacy_receipts_move_to_the_space_identity() {
+        let (_tmp, vault, store) = setup();
+        let legacy = legacy_binding_id(&vault).unwrap();
+        {
+            let locked = store.lock(&legacy).unwrap();
+            staged_plan(&locked, "before-rename", 1);
+        }
+        assert_eq!(store.adopt_legacy(&legacy, SPACE_ID).unwrap(), 1);
+
+        let locked = store.lock(SPACE_ID).unwrap();
+        let mut record = locked.load("before-rename").unwrap().unwrap();
+        assert_eq!(record.binding_id, SPACE_ID);
+        assert_eq!(record.adopted_from.as_deref(), Some(legacy.as_str()));
+        assert!(locked.staging_root("before-rename").unwrap().is_dir());
+        assert!(locked.directory.join("before-rename.request.json").is_file());
+        assert!(locked.can_resume(&record, &vault));
+        let response = locked.publish_plan(&mut record, &vault).unwrap();
+        assert_eq!(response["outcome"], "committed");
+        assert!(vault.root().join("Cards/Card.md").is_file());
+        drop(locked);
+
+        let old = store.lock(&legacy).unwrap();
+        assert!(old.load("before-rename").unwrap().is_none());
+        drop(old);
+        assert_eq!(store.adopt_legacy(&legacy, SPACE_ID).unwrap(), 0);
+    }
+
+    #[test]
+    fn k2_an_interrupted_adoption_finishes_on_the_next_call() {
+        let (_tmp, vault, store) = setup();
+        let legacy = legacy_binding_id(&vault).unwrap();
+        {
+            let locked = store.lock(&legacy).unwrap();
+            staged_plan(&locked, "interrupted", 0);
+        }
+        // The new receipt was written, then the move stopped.
+        {
+            let old = store.lock(&legacy).unwrap();
+            let mut record = old.load("interrupted").unwrap().unwrap();
+            drop(old);
+            record.binding_id = SPACE_ID.into();
+            record.adopted_from = Some(legacy.clone());
+            store.lock(SPACE_ID).unwrap().store(&record).unwrap();
+        }
+        assert_eq!(store.adopt_legacy(&legacy, SPACE_ID).unwrap(), 1);
+        let locked = store.lock(SPACE_ID).unwrap();
+        assert!(locked.staging_root("interrupted").unwrap().is_dir());
+        assert!(locked.directory.join("interrupted.request.json").is_file());
+        let record = locked.load("interrupted").unwrap().unwrap();
+        assert!(locked.can_resume(&record, &vault));
+    }
+
+    #[test]
+    fn k2_nothing_to_adopt_creates_nothing() {
+        let (tmp, _vault, store) = setup();
+        let legacy = legacy_binding_of_path("/nowhere");
+        assert_eq!(store.adopt_legacy(&legacy, SPACE_ID).unwrap(), 0);
+        assert!(!tmp.path().join("operations").join("v1").join(&legacy).exists());
     }
 
     #[test]

@@ -1010,3 +1010,89 @@ function lifecycleDraft(): DurableClipperDraft {
     selectedVault: null, screenshotDataUrl: null, screenshotUploadId: null, executor: "browser", bindingId: "browser-original",
   } };
 }
+
+describe("space identity (SPEC_CLIPPER.md, К1, К3, К6)", () => {
+  const seedDestination = async (vaultPath: string, bindingId: string) => {
+    await chrome.storage.local.set({ mineSaveDestination: { executor: "native", vaultPath, bindingId } });
+  };
+  // Helpers inside the messaging module reach the host through the runtime.
+  const runtimeRequests: Record<string, unknown>[] = [];
+  const routeRuntime = (respond: (request: Record<string, unknown>) => unknown) => {
+    runtimeRequests.length = 0;
+    const send = chrome.runtime.sendMessage as unknown as ReturnType<typeof vi.fn>;
+    send.mockImplementation((message: { payload: Record<string, unknown> }, callback?: (response: unknown) => void) => {
+      runtimeRequests.push(message.payload);
+      callback?.(respond(message.payload));
+    });
+  };
+
+  it("follows a renamed space by its identity and remembers the new path", async () => {
+    await seedDestination("/Mine", "space-id");
+    sendToNative.mockImplementation(async (request: { action: string }) => request.action === "get_status"
+      ? { ...nativeStatus(), vault_path: "/Mine!", binding_id: "space-id", folder_state: "moved", moved_from: "/Mine", binding_accepted: true }
+      : { ok: true, channels: [], vaults: ["/Mine!"] });
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.selectedVault).toBe("/Mine!"));
+    const status = sendToNative.mock.calls.map(([request]) => request as Record<string, unknown>)
+      .find((request) => request.action === "get_status");
+    expect(status).toMatchObject({ vault_path: "/Mine", binding_id: "space-id" });
+    expect(result.current.nativeStatusError).toBeNull();
+    const stored = await chrome.storage.local.get(["mineSaveDestination"]);
+    expect(stored.mineSaveDestination).toEqual({ executor: "native", vaultPath: "/Mine!", bindingId: "space-id" });
+  });
+
+  it("accepts the identity binding that replaces a path binding from before К2", async () => {
+    await seedDestination("/v", "a".repeat(64));
+    sendToNative.mockImplementation(async (request: { action: string }) => request.action === "get_status"
+      ? { ...nativeStatus(), binding_id: "space-id", binding_accepted: true }
+      : { ok: true, channels: [], vaults: ["/v"] });
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.channelsLoading).toBe(false));
+    expect(result.current.nativeStatusError).toBeNull();
+    const stored = await chrome.storage.local.get(["mineSaveDestination"]);
+    expect(stored.mineSaveDestination).toMatchObject({ bindingId: "space-id" });
+  });
+
+  it("stops loading collections and lists the other spaces when the space is lost", async () => {
+    await seedDestination("/Mine", "space-id");
+    const lost = "“Mine” was renamed, moved or is on a disconnected drive. Choose a space.";
+    sendToNative.mockImplementation(async (request: { action: string }) => {
+      if (request.action === "get_status") {
+        return { ...nativeStatus(), vaultConfigured: false, vault_path: null, binding_id: null,
+          folder_state: "missing", binding_accepted: false, error: lost };
+      }
+      return { ok: true, channels: [] };
+    });
+    routeRuntime(() => ({ ok: true, vaults: ["/NSFV"], current: null }));
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.nativeStatusError).toBe(lost));
+    expect(result.current.channelsLoading).toBe(false);
+    await waitFor(() => expect(result.current.knownVaults).toEqual(["/NSFV"]));
+
+    // Switching to another space clears the lost space's error.
+    sendToNative.mockImplementation(async (request: { action: string }) => request.action === "get_status"
+      ? { ...nativeStatus(), vault_path: "/NSFV", binding_id: "nsfv-id" }
+      : { ok: true, channels: [{ tag: "Art", block_count: 1 }], vaults: ["/NSFV"] });
+    await act(async () => { await result.current.switchVault("/NSFV"); });
+    expect(result.current.nativeStatusError).toBeNull();
+    await waitFor(() => expect(result.current.channels).toEqual([{ tag: "Art", block_count: 1 }]));
+    expect(result.current.channelsLoading).toBe(false);
+  });
+
+  it("reports why Reveal in Finder could not open the space", async () => {
+    sendToNative.mockImplementation(async (request: { action: string }) => {
+      if (request.action === "get_status") return nativeStatus();
+      return { ok: true, channels: [], vaults: ["/v"] };
+    });
+    routeRuntime((request) => request.action === "reveal_vault"
+      ? { ok: false, error: "“v” is not one of your Mine spaces." }
+      : { ok: true, vaults: ["/v"], current: "/v" });
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.selectedVault).toBe("/v"));
+    let outcome: Awaited<ReturnType<typeof result.current.revealSpace>> | undefined;
+    await act(async () => { outcome = await result.current.revealSpace("/v"); });
+    expect(outcome).toEqual({ ok: false, error: "“v” is not one of your Mine spaces." });
+    const reveal = runtimeRequests.find((request) => request.action === "reveal_vault");
+    expect(reveal).toMatchObject({ path: "/v", binding_id: "native-v" });
+  });
+});

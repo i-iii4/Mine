@@ -54,6 +54,15 @@ struct StatusResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
     vault_path: Option<String>,
+    /// The identity of the space at `vault_path` (SPEC_CLIPPER.md, К1).
+    vault_id: Option<String>,
+    /// The path the popup asked about, when the space has moved from it.
+    moved_from: Option<String>,
+    /// Whether the binding the popup holds names this space (К2). A path
+    /// binding from before К2 counts when it is this space's.
+    binding_accepted: bool,
+    /// Bumped by the app on every settings change (К5, П28).
+    config_generation: u64,
     version: String,
     host_api_version: u32,
     build_id: String,
@@ -280,6 +289,182 @@ fn canonical_native_space_path(path: &str) -> Result<String, String> {
 
 fn same_native_space(left: &str, right: &str) -> bool {
     mine_lib::space_registry::same_path(left, right)
+}
+
+/// The space a request is about, found by identity rather than by the path
+/// the popup remembered (SPEC_CLIPPER.md, К1 to К3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RequestSpace {
+    /// Where the space is now, when it was found.
+    path: Option<String>,
+    /// `ready`, `moved`, `missing`, `access_denied`, `unavailable`,
+    /// `unknown_space` or `unconfigured`.
+    state: &'static str,
+    moved_from: Option<String>,
+    /// The request's path binding from before К2, proven to be this space's:
+    /// its receipts move to the identity binding.
+    accepted_legacy: Option<String>,
+    binding_accepted: bool,
+}
+
+impl RequestSpace {
+    /// What the popup shows instead of an OS error text (К3).
+    fn message(&self) -> Option<String> {
+        let name = |path: &str| {
+            Path::new(path)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.to_string())
+        };
+        let last = self.moved_from.as_deref().or(self.path.as_deref());
+        match (self.state, last) {
+            ("missing", Some(path)) => Some(format!(
+                "“{}” was renamed, moved or is on a disconnected drive. Choose a space.",
+                name(path)
+            )),
+            ("access_denied", Some(path)) => Some(format!(
+                "Mine cannot read “{}”. Allow access to the folder or choose another space.",
+                name(path)
+            )),
+            ("unavailable", Some(path)) => Some(format!(
+                "The folder “{}” now holds another space. Choose a space.",
+                name(path)
+            )),
+            ("unknown_space", Some(path)) => Some(format!(
+                "“{}” is not one of your Mine spaces.",
+                name(path)
+            )),
+            _ => None,
+        }
+    }
+}
+
+fn resolve_request_space(requested: Option<String>, binding: Option<&str>) -> RequestSpace {
+    resolve_request_space_in(&read_app_settings(), requested, binding)
+}
+
+fn resolve_request_space_in(
+    cfg: &serde_json::Map<String, serde_json::Value>,
+    requested: Option<String>,
+    binding: Option<&str>,
+) -> RequestSpace {
+    use mine_lib::space_registry::{self, Located, LostReason};
+    let identity = binding.filter(|value| !save_operations::is_legacy_binding(value));
+    let hint = requested
+        .or_else(|| {
+            let id = identity?;
+            space_registry::records(cfg)
+                .into_iter()
+                .find(|record| record.vault_id.as_deref() == Some(id))
+                .map(|record| record.path)
+        })
+        .or_else(|| space_registry::current_path(cfg));
+    let Some(hint) = hint else {
+        return RequestSpace {
+            path: None,
+            state: "unconfigured",
+            moved_from: None,
+            accepted_legacy: None,
+            binding_accepted: true,
+        };
+    };
+    let (path, moved_from) = match space_registry::locate(cfg, identity, &hint) {
+        Located::Here { path } => (path, None),
+        Located::Moved { from, path } => (path, Some(from)),
+        Located::Lost { path, reason } => {
+            return RequestSpace {
+                path: None,
+                state: match reason {
+                    LostReason::Missing => "missing",
+                    LostReason::AccessDenied => "access_denied",
+                    LostReason::Replaced => "unavailable",
+                },
+                moved_from: Some(path),
+                accepted_legacy: None,
+                binding_accepted: false,
+            };
+        }
+    };
+    let (binding_accepted, accepted_legacy) = match binding {
+        None => (true, None),
+        Some(value) if save_operations::is_legacy_binding(value) => {
+            let canonical = std::fs::canonicalize(&path)
+                .ok()
+                .and_then(|path| path.to_str().map(str::to_string));
+            let proven = [Some(hint.as_str()), canonical.as_deref()]
+                .into_iter()
+                .flatten()
+                .any(|spelling| save_operations::legacy_binding_of_path(spelling) == value);
+            (proven, proven.then(|| value.to_string()))
+        }
+        Some(value) => (
+            space_registry::read_space_id(Path::new(&path)).as_deref() == Some(value),
+            None,
+        ),
+    };
+    RequestSpace {
+        state: if moved_from.is_some() { "moved" } else { "ready" },
+        path: Some(path),
+        moved_from,
+        accepted_legacy,
+        binding_accepted,
+    }
+}
+
+/// A request about a space that cannot be found answers with its state and
+/// a readable message, never the OS error (К3).
+fn send_space_error(space: &RequestSpace) {
+    send_response(&serde_json::json!({
+        "ok": false,
+        "code": "space_unavailable",
+        "folder_state": space.state,
+        "error": space
+            .message()
+            .unwrap_or_else(|| "Choose a space before saving.".to_string()),
+    }));
+}
+
+/// Receipts made under a path binding follow the space to its identity
+/// binding (К2): the folder's own path binding and a path binding the
+/// request proved to be this space's. A request carrying such a binding is
+/// rewritten to the identity so its checks match.
+fn adopt_space_journal(vault: &VaultLayout, space: &RequestSpace, params: &mut serde_json::Value) {
+    let Ok(binding) = save_operations::binding_id(vault) else {
+        return;
+    };
+    if save_operations::is_legacy_binding(&binding) {
+        return;
+    }
+    let Ok(store) = operation_store(vault) else {
+        return;
+    };
+    let mut legacies = Vec::new();
+    if let Ok(own) = save_operations::legacy_binding_id(vault) {
+        legacies.push(own);
+    }
+    if let Some(proven) = &space.accepted_legacy {
+        if !legacies.contains(proven) {
+            legacies.push(proven.clone());
+        }
+    }
+    for legacy in &legacies {
+        if let Err(error) = store.adopt_legacy(legacy, &binding) {
+            host_log(&format!("cannot move save receipts to the space identity: {error:#}"));
+        }
+    }
+    let carries_legacy = params
+        .get("binding_id")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|value| legacies.iter().any(|legacy| legacy == value));
+    if carries_legacy {
+        params["binding_id"] = serde_json::Value::from(binding);
+    }
+}
+
+fn config_generation(cfg: &serde_json::Map<String, serde_json::Value>) -> u64 {
+    cfg.get(mine_lib::app_config::GENERATION_KEY)
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0)
 }
 
 /// The spaces that can be opened right now, canonical and without repeats.
@@ -538,55 +723,94 @@ fn handle_open_app(params: serde_json::Value) {
     }
 }
 
+/// Reveal in Finder opens where the space is now, found by identity, and
+/// always answers (SPEC_CLIPPER.md, К6).
 fn handle_reveal_vault(params: serde_json::Value) {
-    #[derive(serde::Deserialize)]
-    struct RevealVaultParams {
-        path: String,
-    }
-    #[derive(serde::Serialize)]
-    struct RevealVaultResponse {
-        ok: bool,
-    }
-    let p: RevealVaultParams = match serde_json::from_value(params) {
-        Ok(p) => p,
-        Err(e) => return send_error(&format!("invalid reveal_vault params: {e}")),
-    };
-    let mut allowed = load_known_vaults();
-    if let Some(current) = load_vault_path() {
-        allowed.push(current);
-    }
-    if !allowed.iter().any(|vault| same_native_space(vault, &p.path)) {
-        return send_error("path is not a known vault");
-    }
-    match std::process::Command::new("open")
-        .arg("-R")
-        .arg(&p.path)
-        .status()
-    {
-        Ok(status) if status.success() => send_response(&RevealVaultResponse { ok: true }),
-        Ok(status) => send_error(&format!("open -R exited with {status}")),
-        Err(e) => return send_error(&format!("cannot run open: {e}")),
+    match reveal_target(&params) {
+        Ok(path) => match std::process::Command::new("open").arg("-R").arg(&path).status() {
+            Ok(status) if status.success() => {
+                send_response(&serde_json::json!({ "ok": true, "path": path }));
+            }
+            Ok(status) => {
+                host_log(&format!("open -R {path} exited with {status}"));
+                send_error("Finder could not show this space.");
+            }
+            Err(error) => {
+                host_log(&format!("cannot run open: {error}"));
+                send_error("Finder could not show this space.");
+            }
+        },
+        Err(space) => send_space_error(&space),
     }
 }
 
-fn handle_get_status_with_upload(upload: &Option<UploadServer>, vault_path: Option<String>) {
-    let (binding_id, folder_state, error) = match &vault_path {
-        None => (None, "unconfigured", None),
-        Some(path) => match std::fs::read_dir(path) {
-            Ok(_) => match save_operations::binding_id(&VaultLayout::new(PathBuf::from(path))) {
-                Ok(id) => (Some(id), "ready", None),
-                Err(error) => (None, "unavailable", Some(error.to_string())),
-            },
+/// The folder Reveal opens: the space the popup names, wherever it is now,
+/// and only a space Mine knows.
+fn reveal_target(params: &serde_json::Value) -> Result<String, RequestSpace> {
+    reveal_target_in(&read_app_settings(), params)
+}
+
+fn reveal_target_in(
+    cfg: &serde_json::Map<String, serde_json::Value>,
+    params: &serde_json::Value,
+) -> Result<String, RequestSpace> {
+    // Popups before К6 nested the fields under `params`.
+    let fields = params
+        .get("params")
+        .filter(|value| value.is_object())
+        .unwrap_or(params);
+    let path = fields
+        .get("path")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
+    let binding = fields
+        .get("binding_id")
+        .or_else(|| params.get("binding_id"))
+        .and_then(serde_json::Value::as_str);
+    let space = resolve_request_space_in(cfg, path, binding);
+    let Some(target) = space.path.clone() else {
+        return Err(space);
+    };
+    let mut allowed: Vec<String> = mine_lib::space_registry::statuses(cfg)
+        .into_iter()
+        .filter(|status| status.available)
+        .map(|status| status.record.path)
+        .collect();
+    allowed.extend(mine_lib::space_registry::current_path(cfg));
+    if !allowed.iter().any(|vault| same_native_space(vault, &target)) {
+        return Err(RequestSpace {
+            path: None,
+            state: "unknown_space",
+            moved_from: Some(target),
+            ..space
+        });
+    }
+    Ok(target)
+}
+
+fn handle_get_status_with_upload(
+    upload: &Option<UploadServer>,
+    space: &RequestSpace,
+    config_generation: u64,
+) {
+    let (binding_id, folder_state, error) = match &space.path {
+        None => (None, space.state, space.message()),
+        Some(path) => match save_operations::binding_id(&VaultLayout::new(PathBuf::from(path))) {
+            Ok(id) => (Some(id), space.state, None),
             Err(error) => {
-                let state = match error.kind() {
-                    std::io::ErrorKind::NotFound => "missing",
-                    std::io::ErrorKind::PermissionDenied => "access_denied",
-                    _ => "unavailable",
-                };
-                (None, state, Some(error.to_string()))
+                host_log(&format!("cannot bind space {path}: {error:#}"));
+                (
+                    None,
+                    "unavailable",
+                    Some("Mine cannot use this folder right now. Choose another space.".to_string()),
+                )
             }
         },
     };
+    let vault_id = space
+        .path
+        .as_deref()
+        .and_then(|path| mine_lib::space_registry::read_space_id(Path::new(path)));
     send_response(&StatusResponse {
         ok: true,
         connected: true,
@@ -595,7 +819,11 @@ fn handle_get_status_with_upload(upload: &Option<UploadServer>, vault_path: Opti
         executor_id: "native".into(),
         folder_state: folder_state.into(),
         error,
-        vault_path,
+        vault_path: space.path.clone(),
+        vault_id,
+        moved_from: space.moved_from.clone(),
+        binding_accepted: space.binding_accepted,
+        config_generation,
         version: VERSION.to_string(),
         host_api_version: HOST_API_VERSION,
         build_id: option_env!("MINE_BUILD_ID").unwrap_or("unidentified-build").into(),
@@ -830,7 +1058,12 @@ fn save_block_with_store(
     };
     match locked.load(&id) {
         Ok(Some(mut record)) => {
-            if record.fingerprint != fingerprint {
+            let same_request = record.fingerprint == fingerprint
+                || record
+                    .adopted_from
+                    .as_deref()
+                    .is_some_and(|legacy| fingerprint_capture(&p, legacy) == record.fingerprint);
+            if !same_request {
                 return operation_failure(
                     &id,
                     "not_committed",
@@ -2619,7 +2852,8 @@ fn handle_upload_request(mut request: tiny_http::Request, token: &str) {
     // but it is intentionally no longer the primary routing mechanism.
     let filename = upload_filename_from_url(request.url());
     let vault_path = query_param(request.url(), "vault_path")
-        .or_else(|| UPLOAD_VAULT.lock().ok().and_then(|v| v.clone()));
+        .or_else(|| UPLOAD_VAULT.lock().ok().and_then(|v| v.clone()))
+        .map(|path| resolve_request_space(Some(path.clone()), None).path.unwrap_or(path));
 
     // Read body
     let mut body = Vec::new();
@@ -2809,16 +3043,32 @@ fn main() {
             }
         }
 
-        // Load vault: prefer per-request vault_path, fallback to config
-        let vault_path = req.vault_path.clone().or_else(|| load_vault_path());
-        if let Some(ref vp) = vault_path {
-            if let Ok(mut v) = UPLOAD_VAULT.lock() {
-                *v = Some(vp.clone());
+        // The space is found by identity; the path the popup sent is where
+        // to look first (SPEC_CLIPPER.md, К1).
+        let binding_hint = req
+            .params
+            .get("binding_id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+        let request_space = || {
+            let space = resolve_request_space(req.vault_path.clone(), binding_hint.as_deref());
+            if let Some(ref vp) = space.path {
+                if let Ok(mut v) = UPLOAD_VAULT.lock() {
+                    *v = Some(vp.clone());
+                }
             }
-        }
+            space
+        };
 
         match req.action.as_str() {
-            "get_status" => handle_get_status_with_upload(&upload_server, vault_path),
+            "get_status" => {
+                let space = request_space();
+                handle_get_status_with_upload(
+                    &upload_server,
+                    &space,
+                    config_generation(&read_app_settings()),
+                );
+            }
             "list_known_vaults" => handle_list_known_vaults(),
             "pick_vault_folder" => handle_pick_vault_folder(),
             "reveal_vault" => handle_reveal_vault(req.params),
@@ -2826,15 +3076,16 @@ fn main() {
             "resolve_twitter_media" => handle_resolve_twitter_media(req.params),
 
             "list_channels" | "save_block" | "create_channel" | "get_save_operation" => {
-                let Some(ref vp) = vault_path else {
-                    send_error("Choose a vault folder before saving.");
+                let space = request_space();
+                let Some(ref vp) = space.path else {
+                    send_space_error(&space);
                     continue;
                 };
                 let path = PathBuf::from(vp);
                 // An unavailable selected folder is not permission to create
                 // a replacement vault at the same display path.
                 if !path.is_dir() {
-                    send_error(&format!("Selected vault is unavailable: {vp}"));
+                    send_space_error(&RequestSpace { path: None, state: "missing", moved_from: Some(vp.clone()), ..space });
                     continue;
                 }
                 if matches!(req.action.as_str(), "save_block" | "create_channel") {
@@ -2851,11 +3102,15 @@ fn main() {
                     }
                 };
 
+                let mut params = req.params;
+                if matches!(req.action.as_str(), "save_block" | "get_save_operation") {
+                    adopt_space_journal(&vault, &space, &mut params);
+                }
                 match req.action.as_str() {
                     "list_channels" => handle_list_channels(&vault),
-                    "save_block" => handle_save_block(&vault, req.params),
-                    "get_save_operation" => handle_get_save_operation(&vault, req.params),
-                    "create_channel" => handle_create_channel(&vault, req.params),
+                    "save_block" => handle_save_block(&vault, params),
+                    "get_save_operation" => handle_get_save_operation(&vault, params),
+                    "create_channel" => handle_create_channel(&vault, params),
                     _ => unreachable!(),
                 }
             }
@@ -3467,7 +3722,11 @@ mod tests {
             (Some(vault.root().to_string_lossy().into_owned()), "ready"),
         ] {
             SC0_RESPONSE_CAPTURE.with(|capture| *capture.borrow_mut() = Some(Vec::new()));
-            handle_get_status_with_upload(&None, path);
+            let space = match path {
+                None => resolve_request_space_in(&serde_json::Map::new(), None, None),
+                Some(path) => resolve_request_space_in(&serde_json::Map::new(), Some(path), None),
+            };
+            handle_get_status_with_upload(&None, &space, 7);
             let responses =
                 SC0_RESPONSE_CAPTURE.with(|capture| capture.borrow_mut().take().unwrap());
             let response: serde_json::Value = serde_json::from_str(&responses[0]).unwrap();
@@ -3475,6 +3734,13 @@ mod tests {
             assert_eq!(response["connected"], true);
             assert_eq!(response["folder_state"], expected);
             assert_eq!(response["vaultConfigured"], expected == "ready");
+            assert_eq!(response["config_generation"], 7);
+            // A missing folder is described, never reported with the OS text.
+            if expected == "missing" {
+                let error = response["error"].as_str().unwrap();
+                assert!(error.contains("renamed, moved"), "{error}");
+                assert!(!error.contains("os error"), "{error}");
+            }
             if expected == "ready" {
                 assert_eq!(
                     response["binding_id"],
@@ -3482,6 +3748,162 @@ mod tests {
                 );
             }
         }
+    }
+
+    const K_SPACE_ID: &str = "0123456789abcdef0123456789abcdef";
+
+    fn k_space(parent: &Path, name: &str) -> String {
+        let folder = parent.join(name);
+        std::fs::create_dir_all(folder.join(".mine")).unwrap();
+        std::fs::write(folder.join(".mine/vault-id"), K_SPACE_ID).unwrap();
+        std::fs::canonicalize(folder).unwrap().to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn k1_a_space_renamed_between_two_requests_is_found_by_identity() {
+        let tmp = TempDir::new().unwrap();
+        let old = k_space(tmp.path(), "Mine");
+        let cfg = serde_json::Map::new();
+        let first = resolve_request_space_in(&cfg, Some(old.clone()), Some(K_SPACE_ID));
+        assert_eq!(first.state, "ready");
+        assert!(first.binding_accepted);
+
+        let renamed = Path::new(&old).with_file_name("Mine!");
+        std::fs::rename(&old, &renamed).unwrap();
+        let second = resolve_request_space_in(&cfg, Some(old.clone()), Some(K_SPACE_ID));
+        assert_eq!(second.state, "moved");
+        assert_eq!(second.path.as_deref(), renamed.to_str());
+        assert_eq!(second.moved_from.as_deref(), Some(old.as_str()));
+        assert!(second.binding_accepted);
+    }
+
+    #[test]
+    fn k3_a_lost_space_is_described_and_blocks_nothing_else() {
+        let tmp = TempDir::new().unwrap();
+        let gone = tmp.path().join("Mine").to_string_lossy().into_owned();
+        let space = resolve_request_space_in(&serde_json::Map::new(), Some(gone), Some(K_SPACE_ID));
+        assert_eq!(space.state, "missing");
+        assert!(space.path.is_none());
+        assert!(space.message().unwrap().starts_with("“Mine” was renamed"));
+    }
+
+    #[test]
+    fn k6_reveal_opens_where_the_space_is_now_and_explains_otherwise() {
+        let tmp = TempDir::new().unwrap();
+        let old = k_space(tmp.path(), "Mine");
+        let mut cfg = serde_json::Map::new();
+        mine_lib::space_registry::record_open(&mut cfg, K_SPACE_ID, &old, 1);
+        let renamed = Path::new(&old).with_file_name("Mine!");
+        std::fs::rename(&old, &renamed).unwrap();
+        mine_lib::space_registry::record_open(&mut cfg, K_SPACE_ID, renamed.to_str().unwrap(), 2);
+        // The popup before К6 nested its fields; the current one does not.
+        for params in [
+            serde_json::json!({ "params": { "path": renamed.to_string_lossy() } }),
+            serde_json::json!({ "path": old, "binding_id": K_SPACE_ID }),
+        ] {
+            assert_eq!(reveal_target_in(&cfg, &params).unwrap(), renamed.to_str().unwrap());
+        }
+        let stranger = tmp.path().join("Stranger");
+        std::fs::create_dir_all(&stranger).unwrap();
+        let refused = reveal_target_in(
+            &cfg,
+            &serde_json::json!({ "path": stranger.to_string_lossy() }),
+        )
+        .unwrap_err();
+        assert_eq!(refused.message().unwrap(), "“Stranger” is not one of your Mine spaces.");
+        let gone = reveal_target_in(
+            &serde_json::Map::new(),
+            &serde_json::json!({ "path": tmp.path().join("Gone").to_string_lossy(), "binding_id": "fedcba9876543210fedcba9876543210" }),
+        )
+        .unwrap_err();
+        assert_eq!(gone.state, "missing");
+    }
+
+    #[test]
+    fn k2_a_path_binding_is_accepted_only_for_its_own_space() {
+        let tmp = TempDir::new().unwrap();
+        let path = k_space(tmp.path(), "Mine");
+        let cfg = serde_json::Map::new();
+        let own = save_operations::legacy_binding_of_path(&path);
+        let space = resolve_request_space_in(&cfg, Some(path.clone()), Some(&own));
+        assert!(space.binding_accepted);
+        assert_eq!(space.accepted_legacy.as_deref(), Some(own.as_str()));
+
+        let foreign = save_operations::legacy_binding_of_path("/elsewhere/Other");
+        let space = resolve_request_space_in(&cfg, Some(path), Some(&foreign));
+        assert!(!space.binding_accepted);
+        assert!(space.accepted_legacy.is_none());
+    }
+
+    #[test]
+    fn k2_a_pending_save_continues_after_the_space_is_renamed() {
+        let (tmp, vault) = sc2_temp_vault();
+        std::fs::create_dir_all(vault.mine_dir()).unwrap();
+        std::fs::write(vault.vault_id_path(), K_SPACE_ID).unwrap();
+        let binding = save_operations::binding_id(&vault).unwrap();
+        assert_eq!(binding, K_SPACE_ID);
+        let mut request = sc0_image_request("Before rename", "k2-rename");
+        request["operation_id"] = serde_json::json!("k2-rename");
+        request["binding_id"] = serde_json::json!(binding);
+        request["executor_id"] = serde_json::json!("native");
+        // The receipt exists, the publication did not happen yet.
+        {
+            let store = operation_store(&vault).unwrap();
+            let locked = store.lock(&binding).unwrap();
+            let p: SaveBlockParams = serde_json::from_value(request.clone()).unwrap();
+            locked
+                .begin("k2-rename", fingerprint_capture(&p, &binding), &request)
+                .unwrap();
+        }
+        let renamed = tmp.path().join("renamed-space");
+        std::fs::rename(vault.root(), &renamed).unwrap();
+        let space = resolve_request_space_in(
+            &serde_json::Map::new(),
+            Some(vault.root().to_string_lossy().into_owned()),
+            Some(&binding),
+        );
+        assert_eq!(space.state, "moved");
+        let moved = VaultLayout::with_derived_root(renamed, vault.derived_root().to_path_buf());
+        let mut params = request.clone();
+        adopt_space_journal(&moved, &space, &mut params);
+        assert_eq!(params["binding_id"], K_SPACE_ID);
+        let store = operation_store(&moved).unwrap();
+        let locked = store.lock(K_SPACE_ID).unwrap();
+        assert!(locked.load("k2-rename").unwrap().is_some());
+    }
+
+    #[test]
+    fn k2_receipts_under_the_old_path_binding_follow_the_space() {
+        let (_tmp, vault) = sc2_temp_vault();
+        let legacy = save_operations::legacy_binding_id(&vault).unwrap();
+        let mut request = sc0_image_request("Legacy", "k2-legacy");
+        request["operation_id"] = serde_json::json!("k2-legacy");
+        request["binding_id"] = serde_json::json!(legacy);
+        request["executor_id"] = serde_json::json!("native");
+        let p: SaveBlockParams = serde_json::from_value(request.clone()).unwrap();
+        {
+            let store = operation_store(&vault).unwrap();
+            let locked = store.lock(&legacy).unwrap();
+            locked
+                .begin("k2-legacy", fingerprint_capture(&p, &legacy), &request)
+                .unwrap();
+        }
+        std::fs::create_dir_all(vault.mine_dir()).unwrap();
+        std::fs::write(vault.vault_id_path(), K_SPACE_ID).unwrap();
+        let space = resolve_request_space_in(
+            &serde_json::Map::new(),
+            Some(vault.root().to_string_lossy().into_owned()),
+            Some(&legacy),
+        );
+        assert!(space.binding_accepted);
+        let mut params = request.clone();
+        adopt_space_journal(&vault, &space, &mut params);
+        assert_eq!(params["binding_id"], K_SPACE_ID);
+        let store = operation_store(&vault).unwrap();
+        let locked = store.lock(K_SPACE_ID).unwrap();
+        let record = locked.load("k2-legacy").unwrap().unwrap();
+        assert_eq!(record.adopted_from.as_deref(), Some(legacy.as_str()));
+        assert_eq!(record.fingerprint, fingerprint_capture(&p, &legacy));
     }
 
     #[cfg(unix)]
