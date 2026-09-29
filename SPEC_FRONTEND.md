@@ -1217,7 +1217,9 @@ Image media expansion:
   top menu.
 - Внешний non-compact Detail chrome показывает filename/title в
   `font-mono text-sm text-muted-foreground`; справа находятся shared overflow
-  menu (`CardMoreMenu`) и close button.
+  menu (`CardMoreMenu`) и close button. Filename это имя файла без папки
+  (`Шуховская башня.md`, не `Cards/Шуховская башня.md`); путь от корня
+  пространства остаётся в подсказке `title`.
 - Внешний non-compact Detail chrome закрывается как единый top-bar transition,
   а не как серия независимых переключений. `MainSecondaryTopBar` держит main
   statistics layer и Detail/link-editor layer в одних и тех же sidebar/content
