@@ -1,9 +1,11 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { VaultSwitcher } from "./VaultSwitcher";
+import type { SpaceEntry } from "@/types";
 
 it.each(["pointer", "keyboard"])("refreshes externally added spaces when opened by %s", async (input) => {
   commandMocks.listKnownVaults.mockResolvedValue(["/tmp/Mine"]);
+  commandMocks.listSpaces.mockResolvedValue([]);
   render(<VaultSwitcher currentPath="/tmp/Mine" onVaultSelected={vi.fn()} surface="topChrome" />);
   await waitFor(() => expect(commandMocks.listKnownVaults).toHaveBeenCalled());
   commandMocks.listKnownVaults.mockResolvedValue(["/tmp/Mine", "/tmp/From clipper"]);
@@ -17,6 +19,7 @@ const commandMocks = vi.hoisted(() => ({
   listKnownVaults: vi.fn<() => Promise<string[]>>(),
   selectVault: vi.fn<(path: string) => Promise<void>>(),
   forgetKnownVault: vi.fn<(path: string) => Promise<string[]>>(),
+  listSpaces: vi.fn<() => Promise<SpaceEntry[]>>(),
 }));
 
 const revealItemInDir = vi.hoisted(() => vi.fn<(path: string) => Promise<void>>());
@@ -31,11 +34,13 @@ vi.mock("@/lib/commands", () => ({
   listKnownVaults: commandMocks.listKnownVaults,
   selectVault: commandMocks.selectVault,
   forgetKnownVault: commandMocks.forgetKnownVault,
+  listSpaces: commandMocks.listSpaces,
 }));
 
 describe("VaultSwitcher", () => {
   beforeEach(() => {
     commandMocks.listKnownVaults.mockResolvedValue([]);
+    commandMocks.listSpaces.mockResolvedValue([]);
     commandMocks.selectVault.mockResolvedValue(undefined);
     commandMocks.forgetKnownVault.mockReset();
     commandMocks.forgetKnownVault.mockResolvedValue([]);
@@ -99,6 +104,22 @@ describe("VaultSwitcher", () => {
     expect(trigger).toHaveClass("max-w-[159px]");
     expect(trigger).not.toHaveClass("max-w-[50%]");
     expect(trigger).toHaveTextContent("Mine");
+  });
+
+  it("lists a space whose folder is gone as unavailable instead of dropping it", async () => {
+    commandMocks.listKnownVaults.mockResolvedValue(["/spaces/Mine!"]);
+    commandMocks.listSpaces.mockResolvedValue([
+      { path: "/spaces/Mine!", name: "Mine!", available: true, current: true },
+      { path: "/spaces/NSFV", name: "NSFV", available: false, current: false },
+    ]);
+    render(<VaultSwitcher currentPath="/spaces/Mine!" onVaultSelected={vi.fn()} surface="topChrome" />);
+    fireEvent.click(screen.getByRole("button", { name: /Switch space: Mine!/ }));
+    await waitFor(() => {
+      expect(document.querySelector('[data-vault-switcher-unavailable="/spaces/NSFV"]')).toHaveTextContent("NSFV");
+    });
+    // Not a destination: no menu item switches to it.
+    expect(screen.queryByRole("menuitem", { name: "NSFV" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Forget NSFV" })).toBeInTheDocument();
   });
 
   it("omits the current space and keeps space rows free of icon markers", async () => {

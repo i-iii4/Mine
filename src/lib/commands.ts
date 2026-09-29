@@ -26,6 +26,7 @@ import type {
   VaultOpenResult,
   VaultWriteLayoutDto,
   UnavailableVault,
+  SpaceEntry,
   ClipperSetupStatus,
   FolderPreview,
   ClipboardPayload,
@@ -102,6 +103,10 @@ export const reportNativeShellSmoke = (report: NativeShellSmokeReport) =>
 
 export const listKnownVaults = () =>
   invoke<string[]>("list_known_vaults");
+
+/** Every known space with whether it can be opened now (SPEC_VAULT_LIFECYCLE.md, П25). */
+export const listSpaces = () =>
+  invoke<SpaceEntry[]>("list_spaces");
 
 export const startVaultSync = () =>
   invoke<boolean>("start_vault_sync");

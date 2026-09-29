@@ -6,13 +6,16 @@
 // as if it had never been opened, which is indistinguishable from losing
 // everything. The path stays bound until the user says otherwise.
 // See SPEC_VAULT_LIFECYCLE.md П12–П16.
+//
+// One space being gone never locks the others away (П25): every other known
+// space is listed here, and an available one opens with one click.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Button } from "@/components/ui/button";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { forgetUnavailableVault, selectVault } from "@/lib/commands";
-import type { UnavailableVaultReason } from "@/types";
+import { forgetUnavailableVault, listSpaces, selectVault } from "@/lib/commands";
+import type { SpaceEntry, UnavailableVaultReason } from "@/types";
 
 interface SpaceUnavailableProps {
   path: string;
@@ -22,6 +25,8 @@ interface SpaceUnavailableProps {
   reason?: UnavailableVaultReason;
   onReopened: (path: string) => void;
   onForgotten: () => void;
+  /// Start a new space in another folder, the way the first screen does.
+  onCreateNew?: () => void;
 }
 
 /// Where macOS keeps the files-and-folders permission this app was denied.
@@ -38,10 +43,39 @@ export function SpaceUnavailable({
   reason = "missing",
   onReopened,
   onForgotten,
+  onCreateNew,
 }: SpaceUnavailableProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [otherSpaces, setOtherSpaces] = useState<SpaceEntry[]>([]);
   const accessDenied = reason === "access_denied";
+
+  useEffect(() => {
+    let cancelled = false;
+    listSpaces()
+      .then((spaces) => {
+        if (!cancelled) setOtherSpaces(spaces.filter((space) => space.path !== path));
+      })
+      .catch(() => {
+        if (!cancelled) setOtherSpaces([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [path]);
+
+  const openOther = async (other: string) => {
+    setError(null);
+    setBusy(true);
+    try {
+      await selectVault(other);
+      onReopened(other);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const retry = async () => {
     setError(null);
@@ -133,7 +167,12 @@ export function SpaceUnavailable({
               <Button onClick={() => void locate()} disabled={busy}>
                 Locate folder…
               </Button>
-              <Button variant="secondary" onClick={() => void locate()} disabled={busy}>
+              <Button
+                variant="secondary"
+                onClick={() => (onCreateNew ? onCreateNew() : void locate())}
+                disabled={busy}
+                data-space-unavailable-create=""
+              >
                 Create new space
               </Button>
             </>
@@ -152,6 +191,41 @@ export function SpaceUnavailable({
             Everything in this space lives in the folder itself. Find it, and
             Mine picks up where it left off.
           </p>
+        )}
+
+        {otherSpaces.length > 0 && (
+          <div className="grid w-full gap-2" data-space-unavailable-others="">
+            <p className="text-sm text-muted-foreground">Other spaces</p>
+            <ul className="grid gap-1">
+              {otherSpaces.map((space) => (
+                <li
+                  key={space.path}
+                  className="flex items-center justify-between gap-4"
+                  data-space-unavailable-other={space.available ? "available" : "unavailable"}
+                >
+                  <div className="grid min-w-0">
+                    <span className={space.available ? "truncate text-base text-foreground" : "truncate text-base text-muted-foreground"}>
+                      {space.name}
+                    </span>
+                    <span className="truncate font-mono text-sm text-muted-foreground">{space.path}</span>
+                  </div>
+                  {space.available ? (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => void openOther(space.path)}
+                      disabled={busy}
+                      aria-label={`Open ${space.name}`}
+                    >
+                      Open
+                    </Button>
+                  ) : (
+                    <span className="shrink-0 text-sm text-muted-foreground">Unavailable</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
 
         {error && <p className="text-sm text-destructive">{error}</p>}

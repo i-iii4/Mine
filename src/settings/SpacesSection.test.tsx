@@ -6,16 +6,26 @@ import {
   addKnownVault,
   forgetKnownVault,
   getVaultPath,
-  listKnownVaults,
+  listSpaces,
   reorderKnownVaults,
   selectVault,
   spaceStats,
 } from "@/lib/commands";
-import type { SpaceStats } from "@/types";
+import type { SpaceEntry, SpaceStats } from "@/types";
+
+/** The space list as the backend returns it: every known space, available. */
+function spaces(...paths: string[]): SpaceEntry[] {
+  return paths.map((path) => ({
+    path,
+    name: path.split("/").pop() ?? path,
+    available: true,
+    current: false,
+  }));
+}
 import { SpacesSection, reorderedPaths } from "./SpacesSection";
 
 vi.mock("@/lib/commands", () => ({
-  listKnownVaults: vi.fn(),
+  listSpaces: vi.fn(),
   getVaultPath: vi.fn(),
   addKnownVault: vi.fn(),
   forgetKnownVault: vi.fn(),
@@ -63,9 +73,9 @@ function openRowMenu(row: HTMLElement) {
 
 describe("SpacesSection", () => {
   beforeEach(() => {
-    vi.mocked(listKnownVaults)
+    vi.mocked(listSpaces)
       .mockReset()
-      .mockResolvedValue(["/Users/me/Mine", "/Users/me/Archive"]);
+      .mockResolvedValue(spaces("/Users/me/Mine", "/Users/me/Archive"));
     vi.mocked(getVaultPath).mockReset().mockResolvedValue("/Users/me/Mine");
     vi.mocked(spaceStats).mockReset().mockImplementation(async (path: string) => {
       if (path === "/Users/me/Mine") return MINE_STATS;
@@ -236,8 +246,23 @@ describe("SpacesSection", () => {
     expect(switchOrder).toBeLessThan(forgetOrder);
   });
 
+  it("lists a space whose folder is gone as unavailable, without opening it", async () => {
+    vi.mocked(listSpaces).mockResolvedValue([
+      ...spaces("/Users/me/Mine"),
+      { path: "/Users/me/Gone", name: "Gone", available: false, current: false },
+    ]);
+    renderSpaces();
+    await screen.findByText("Gone");
+    const row = spaceRowOf("Gone");
+    expect(row).toHaveAttribute("aria-disabled", "true");
+    expect(within(row).getByText(/Folder unavailable/)).toBeInTheDocument();
+    fireEvent.click(row);
+    expect(selectVault).not.toHaveBeenCalled();
+    expect(spaceStats).not.toHaveBeenCalledWith("/Users/me/Gone");
+  });
+
   it("removing the sole space forgets it without switching", async () => {
-    vi.mocked(listKnownVaults).mockResolvedValue(["/Users/me/Mine"]);
+    vi.mocked(listSpaces).mockResolvedValue(spaces("/Users/me/Mine"));
     vi.mocked(forgetKnownVault).mockResolvedValue([]);
     renderSpaces();
     await screen.findByText("Mine");

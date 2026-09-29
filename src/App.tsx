@@ -399,6 +399,7 @@ export function App() {
   const [vaultPath, setVaultPath] = useState<string | null>(null);
   const [unavailablePath, setUnavailablePath] = useState<string | null>(null);
   const [unavailableReason, setUnavailableReason] = useState<UnavailableVaultReason>("missing");
+  const [creatingNewSpace, setCreatingNewSpace] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selectionReadSucceeded, setSelectionReadSucceeded] = useState(false);
   const [externalOpenSequence, setExternalOpenSequence] = useState(0);
@@ -489,7 +490,7 @@ export function App() {
     );
   }
 
-  if (!vaultPath && unavailablePath) {
+  if (!vaultPath && unavailablePath && !creatingNewSpace) {
     return (
       <div className="h-screen w-screen">
         <SpaceUnavailable
@@ -500,13 +501,22 @@ export function App() {
             setVaultPath(path);
           }}
           onForgotten={() => setUnavailablePath(null)}
+          onCreateNew={() => setCreatingNewSpace(true)}
         />
       </div>
     );
   }
 
   if (!vaultPath) {
-    return <VaultPicker onVaultSelected={setVaultPath} />;
+    return (
+      <VaultPicker
+        onVaultSelected={(path) => {
+          setCreatingNewSpace(false);
+          setUnavailablePath(null);
+          setVaultPath(path);
+        }}
+      />
+    );
   }
 
   const routedApp = (

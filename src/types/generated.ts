@@ -418,6 +418,23 @@ export type SearchTextRange = { start: number; end: number }
  */
 export type ShortcutBinding = { key: string; meta?: boolean; shift?: boolean; alt?: boolean; ctrl?: boolean }
 
+/**
+ * One space in the list, with whether it can be opened right now.
+ */
+export type SpaceEntry = { path: string;
+/**
+ * The folder name, as the switcher shows it.
+ */
+name: string;
+/**
+ * The folder is there and is this space.
+ */
+available: boolean;
+/**
+ * The space the app is bound to.
+ */
+current: boolean }
+
 export type SpaceStats = { file_count: number; markdown_count: number; media_count: number; total_bytes: number;
 /**
  * From the space's local derived index; `None` when the space has never

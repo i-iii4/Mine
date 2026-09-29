@@ -29,7 +29,7 @@ import {
   addKnownVault,
   forgetKnownVault,
   getVaultPath,
-  listKnownVaults,
+  listSpaces,
   reorderKnownVaults,
   selectVault,
   spaceStats,
@@ -74,11 +74,14 @@ interface SpaceRowProps {
   path: string;
   isActive: boolean;
   stats: SpaceStatsState | undefined;
+  /// The folder is there and is this space; an unavailable space stays
+  /// listed and marked (SPEC_VAULT_LIFECYCLE.md, П26) but cannot be opened.
+  available: boolean;
   onSwitch: (path: string) => void;
   onRemove: (path: string) => void;
 }
 
-function SpaceRow({ path, isActive, stats, onSwitch, onRemove }: SpaceRowProps) {
+function SpaceRow({ path, isActive, stats, available, onSwitch, onRemove }: SpaceRowProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const { setNodeRef, attributes, listeners, transform, transition, isDragging } =
     useSortable({ id: path });
@@ -95,21 +98,25 @@ function SpaceRow({ path, isActive, stats, onSwitch, onRemove }: SpaceRowProps) 
         isDragging && "opacity-30",
       )}
       aria-current={isActive ? "true" : undefined}
+      aria-disabled={available ? undefined : "true"}
       data-space-row=""
+      data-space-row-unavailable={available ? undefined : ""}
       onClick={(event) => {
         // dnd-kit prevents the click that follows a completed drag.
-        if (event.defaultPrevented) return;
+        if (event.defaultPrevented || !available) return;
         onSwitch(path);
       }}
       onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
+        if (available && (event.key === "Enter" || event.key === " ")) {
           event.preventDefault();
           onSwitch(path);
         }
       }}
     >
       <div className="flex items-center gap-s2">
-        <p className="min-w-0 flex-1 truncate text-base">{basename(path)}</p>
+        <p className={cn("min-w-0 flex-1 truncate text-base", !available && "text-muted-foreground")}>
+          {basename(path)}
+        </p>
         {/* Fixed-size slot: ⋯ fades in on hover/focus, geometry never jumps
             (opacity canon of card hover actions). Clicks must not bubble into
             the row switch. */}
@@ -150,7 +157,9 @@ function SpaceRow({ path, isActive, stats, onSwitch, onRemove }: SpaceRowProps) 
       </div>
       <p className="truncate text-sm text-muted-foreground">{path}</p>
       <p className="text-sm text-muted-foreground" data-space-summary="">
-        {statsSummary(stats)}
+        {available
+          ? statsSummary(stats)
+          : "Folder unavailable: renamed, moved or on a disconnected drive"}
       </p>
     </li>
   );
@@ -158,6 +167,7 @@ function SpaceRow({ path, isActive, stats, onSwitch, onRemove }: SpaceRowProps) 
 
 export function SpacesSection() {
   const [knownVaults, setKnownVaults] = useState<string[]>([]);
+  const [unavailable, setUnavailable] = useState<ReadonlySet<string>>(() => new Set());
   const [activeVault, setActiveVault] = useState<string | null>(null);
   const [statsByPath, setStatsByPath] = useState<Record<string, SpaceStatsState>>({});
   const [error, setError] = useState<string | null>(null);
@@ -183,10 +193,11 @@ export function SpacesSection() {
 
   const reload = useCallback(async () => {
     try {
-      const [vaults, active] = await Promise.all([listKnownVaults(), getVaultPath()]);
-      setKnownVaults(vaults);
+      const [spaces, active] = await Promise.all([listSpaces(), getVaultPath()]);
+      setKnownVaults(spaces.map((space) => space.path));
+      setUnavailable(new Set(spaces.filter((space) => !space.available).map((space) => space.path)));
       setActiveVault(active);
-      loadStats(vaults);
+      loadStats(spaces.filter((space) => space.available).map((space) => space.path));
     } catch (e) {
       setError(String(e));
     }
@@ -230,7 +241,9 @@ export function SpacesSection() {
       void (async () => {
         try {
           if (path === activeVault) {
-            const next = knownVaults.find((candidate) => candidate !== path);
+            const next = knownVaults.find(
+              (candidate) => candidate !== path && !unavailable.has(candidate),
+            );
             if (next) {
               await selectVault(next);
               setActiveVault(next);
@@ -242,7 +255,7 @@ export function SpacesSection() {
         }
       })();
     },
-    [activeVault, knownVaults],
+    [activeVault, knownVaults, unavailable],
   );
 
   const handleDragEnd = useCallback(
@@ -292,6 +305,7 @@ export function SpacesSection() {
                 path={path}
                 isActive={path === activeVault}
                 stats={statsByPath[path]}
+                available={!unavailable.has(path)}
                 onSwitch={handleSwitch}
                 onRemove={handleRemove}
               />

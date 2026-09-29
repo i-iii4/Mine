@@ -93,6 +93,7 @@ pub fn run() {
             commands::vault::open_vault,
             commands::vault::get_vault_path,
             commands::vault::list_known_vaults,
+            commands::vault::list_spaces,
             commands::vault::start_vault_sync,
             commands::startup::record_startup_milestone,
             commands::startup::start_startup_maintenance,

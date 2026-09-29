@@ -70,6 +70,46 @@ pub fn list_known_vaults(app: AppHandle) -> Vec<String> {
     load_known_vaults(&app)
 }
 
+/// One space in the list, with whether it can be opened right now.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct SpaceEntry {
+    pub path: String,
+    /// The folder name, as the switcher shows it.
+    pub name: String,
+    /// The folder is there and is this space.
+    pub available: bool,
+    /// The space the app is bound to.
+    pub current: bool,
+}
+
+/// Every known space, available or not, in the person's order
+/// (SPEC_VAULT_LIFECYCLE.md, П25, П26). Unavailable spaces stay listed and
+/// marked instead of disappearing.
+#[tauri::command]
+pub fn list_spaces(app: AppHandle) -> Vec<SpaceEntry> {
+    let serde_json::Value::Object(cfg) = load_config(&app) else {
+        return Vec::new();
+    };
+    let current = crate::space_registry::current_path(&cfg);
+    crate::space_registry::statuses(&cfg)
+        .into_iter()
+        .map(|status| {
+            let path = status.record.path;
+            SpaceEntry {
+                name: Path::new(&path)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.clone()),
+                available: status.available,
+                current: current
+                    .as_deref()
+                    .is_some_and(|current| crate::space_registry::same_path(current, &path)),
+                path,
+            }
+        })
+        .collect()
+}
+
 /// Select a vault directory: open/create DB, create directories, full scan.
 /// Persists the path so next launch auto-restores.
 #[tauri::command]

@@ -41,7 +41,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { forgetKnownVault, listKnownVaults, selectVault } from "@/lib/commands";
+import { forgetKnownVault, listKnownVaults, listSpaces, selectVault } from "@/lib/commands";
+import type { SpaceEntry } from "@/types";
 import { cn } from "@/lib/utils";
 
 interface VaultSwitcherProps {
@@ -62,6 +63,39 @@ const ROW_ACTION_CLASS =
   "text-muted-foreground hover:bg-component-fill-hover hover:text-foreground "
   + "focus-visible:bg-component-fill-hover focus-visible:text-foreground";
 
+/// A known space whose folder is not there right now: listed, marked, not a
+/// destination. It can still be forgotten (П26).
+function UnavailableSpaceRow({
+  space,
+  onRequestForget,
+}: {
+  space: SpaceEntry;
+  onRequestForget: () => void;
+}) {
+  return (
+    <div
+      className="group flex h-[var(--menu-row-height)] items-center gap-2 px-2 text-base text-muted-foreground"
+      title={space.path}
+      data-vault-switcher-unavailable={space.path}
+    >
+      <MenuIconSlot />
+      <span className="min-w-0 flex-1 truncate">{space.name}</span>
+      <span className="shrink-0 text-sm group-hover:hidden">Unavailable</span>
+      <button
+        type="button"
+        className={cn(
+          "hidden shrink-0 rounded-1 px-1.5 text-sm group-hover:inline",
+          ROW_ACTION_CLASS,
+        )}
+        onClick={onRequestForget}
+        aria-label={`Forget ${space.name}`}
+      >
+        Forget
+      </button>
+    </div>
+  );
+}
+
 function vaultName(path: string): string {
   const trimmed = path.replace(/\/+$/, "");
   return trimmed.split("/").pop() || path;
@@ -75,6 +109,9 @@ export function VaultSwitcher({
   topChromeCollapsed = false,
 }: VaultSwitcherProps) {
   const [knownVaults, setKnownVaults] = useState<string[]>([]);
+  // Spaces whose folder cannot be opened right now stay listed and marked
+  // instead of vanishing from the list (SPEC_VAULT_LIFECYCLE.md, П26).
+  const [unavailableSpaces, setUnavailableSpaces] = useState<SpaceEntry[]>([]);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
@@ -92,6 +129,11 @@ export function VaultSwitcher({
     listKnownVaults().then((paths) => {
       if (!cancelled) setKnownVaults(paths);
     }).catch((error) => console.error("Could not refresh spaces", error));
+    listSpaces().then((spaces) => {
+      if (!cancelled) setUnavailableSpaces(spaces.filter((space) => !space.available && !space.current));
+    }).catch(() => {
+      if (!cancelled) setUnavailableSpaces([]);
+    });
     return () => { cancelled = true; };
   }, [open]);
 
@@ -120,6 +162,7 @@ export function VaultSwitcher({
   const handleForget = useCallback(async (path: string) => {
     try {
       setKnownVaults(await forgetKnownVault(path));
+      setUnavailableSpaces((current) => current.filter((space) => space.path !== path));
     } finally {
       setPendingForget(null);
     }
@@ -162,6 +205,16 @@ export function VaultSwitcher({
         )
       : sorted
   ), [isTopChrome, query, sorted]);
+
+  const visibleUnavailable = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase();
+    return needle
+      ? unavailableSpaces.filter((space) => (
+          space.name.toLocaleLowerCase().includes(needle)
+          || space.path.toLocaleLowerCase().includes(needle)
+        ))
+      : unavailableSpaces;
+  }, [query, unavailableSpaces]);
 
   // Keyboard order follows visual order: destination spaces, then the two
   // pinned actions below the divider.
@@ -325,7 +378,7 @@ export function VaultSwitcher({
         )}
         {isTopChrome ? (
           <QuantizedMenuScrollArea
-            rowCount={Math.max(visibleVaults.length, 1)}
+            rowCount={Math.max(visibleVaults.length + visibleUnavailable.length, 1)}
             maxRows={8}
             innerClassName="p-1"
           >
@@ -346,12 +399,19 @@ export function VaultSwitcher({
                   onRequestForget={() => setPendingForget(path)}
                 />
               ))
-            ) : (
+            ) : visibleUnavailable.length === 0 ? (
               <div className="flex h-[var(--menu-row-height)] items-center gap-2 px-2 text-base text-muted-foreground">
                 <MenuIconSlot />
                 No other spaces
               </div>
-            )}
+            ) : null}
+            {visibleUnavailable.map((space) => (
+              <UnavailableSpaceRow
+                key={space.path}
+                space={space}
+                onRequestForget={() => setPendingForget(space.path)}
+              />
+            ))}
           </QuantizedMenuScrollArea>
         ) : (
           <div>
@@ -369,12 +429,19 @@ export function VaultSwitcher({
                   </span>
                 </DropdownMenuItem>
               ))
-            ) : (
+            ) : visibleUnavailable.length === 0 ? (
               <div className="flex items-center gap-2 px-2 py-1.5 text-base text-muted-foreground">
                 <MenuIconSlot />
                 No other spaces
               </div>
-            )}
+            ) : null}
+            {visibleUnavailable.map((space) => (
+              <UnavailableSpaceRow
+                key={space.path}
+                space={space}
+                onRequestForget={() => setPendingForget(space.path)}
+              />
+            ))}
           </div>
         )}
         {isTopChrome ? (

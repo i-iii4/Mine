@@ -14,6 +14,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 vi.mock("@/lib/commands", () => ({
   forgetUnavailableVault: vi.fn(),
   selectVault: vi.fn(),
+  listSpaces: vi.fn(() => Promise.resolve([])),
 }));
 
 describe("EdgeStatesSection", () => {
