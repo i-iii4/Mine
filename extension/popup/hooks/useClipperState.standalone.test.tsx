@@ -1119,3 +1119,40 @@ describe("space identity (SPEC_CLIPPER.md, К1, К3, К6)", () => {
     expect(reveal).toMatchObject({ path: "/v", binding_id: "native-v" });
   });
 });
+
+describe("collections while the helper indexes (SPEC_CLIPPER.md, К3)", () => {
+  it("shows the names at once and the counts when indexing ends", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let indexing = true;
+    sendToNative.mockImplementation(async (request: { action: string }) => {
+      if (request.action === "get_status") return nativeStatus();
+      if (request.action === "list_channels") {
+        return indexing
+          ? { ok: true, indexing: true, channels: [{ tag: "Art", block_count: null }] }
+          : { ok: true, channels: [{ tag: "Art", block_count: 4 }] };
+      }
+      return { ok: true, vaults: ["/v"] };
+    });
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.channels).toEqual([{ tag: "Art", block_count: null }]));
+    expect(result.current.channelsLoading).toBe(false);
+    expect(result.current.channelsNotice).toContain("indexing");
+    indexing = false;
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    await waitFor(() => expect(result.current.channels).toEqual([{ tag: "Art", block_count: 4 }]));
+    expect(result.current.channelsNotice).toBeNull();
+    expect(result.current.channelsLoading).toBe(false);
+  });
+
+  it("says the helper is busy instead of a failure when it does not answer in time", async () => {
+    sendToNative.mockImplementation(async (request: { action: string }) => {
+      if (request.action === "get_status") return nativeStatus();
+      if (request.action === "list_channels") return { ok: false, code: "native_timeout", outcome: "unknown", error: "Mine helper did not respond in time" };
+      return { ok: true, vaults: ["/v"] };
+    });
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.channelsError).toBe("Mine is busy with this space. Retry in a moment."));
+    expect(result.current.channelsLoading).toBe(false);
+    expect(result.current.canSave).toBe(true);
+  });
+});

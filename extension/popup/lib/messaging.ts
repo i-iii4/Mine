@@ -32,7 +32,8 @@ export interface NativeResponse {
 
 export interface ChannelInfo {
   tag: string;
-  block_count: number;
+  /** `null` while the space is being indexed and counts are not known. */
+  block_count: number | null;
 }
 
 /** A popup/background channel failure is not evidence about native-host availability. */

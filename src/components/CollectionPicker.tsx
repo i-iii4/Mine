@@ -10,6 +10,10 @@ import { Plus } from "lucide-react";
 import { QuantizedMenuScrollArea } from "@/components/QuantizedMenuScrollArea";
 import { SearchMenuInput } from "@/components/SearchMenuInput";
 import type { TagCount } from "@/types";
+
+/** A collection with its card count; `null` when the count is not known yet
+ *  (the clipper while a space is being indexed). */
+export type PickerTag = Omit<TagCount, "count"> & { count: number | null };
 import { SIDEBAR_ROW_ACTION_BUTTON_PX } from "@/lib/appLayout";
 import { collectionRefLabel } from "@/lib/collections";
 import { cn } from "@/lib/utils";
@@ -17,7 +21,7 @@ import { cn } from "@/lib/utils";
 interface CollectionPickerProps {
   blockSlug: string;
   selectedTags: string[];
-  tags: TagCount[];
+  tags: PickerTag[];
   currentTag?: string;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void | Promise<void>;
   onCreateAndAssign: (tag: string, blockSlug: string) => void | Promise<void>;
@@ -31,7 +35,7 @@ interface CollectionPickerProps {
 
 interface BatchCollectionPickerProps {
   selectedSlugs: string[];
-  tags: TagCount[];
+  tags: PickerTag[];
   tagLookup: ReadonlyMap<string, readonly string[]>;
   onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => void | Promise<void>;
   onCreateAndAssign: (tag: string) => void | Promise<void>;

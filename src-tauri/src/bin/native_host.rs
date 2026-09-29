@@ -859,27 +859,108 @@ fn handle_get_status_with_upload(
 }
 
 fn handle_list_channels(vault: &VaultLayout) {
-    let (vault, conn, _) = match db::open_vault_index(vault.clone()) {
-        Ok(opened) => opened,
-        Err(e) => return send_error(&format!("failed to open database: {e}")),
-    };
-    let result = db::recover_projection_read(&vault, (|| -> anyhow::Result<_> {
-        if !db::index_is_ready(&conn)? {
-            mine_lib::storage::reconcile::reconcile_vault(&conn, &vault)?;
-        }
-        index::backfill_collection_index(&conn, &vault)?;
-        Ok((index::list_channels(&conn)?, index::get_all_tags(&conn)?))
-    })(), |retry| Ok((index::list_channels(retry)?, index::get_all_tags(retry)?)));
-    let (_, (channels, tags)) = match result {
-        Ok(value) => value,
-        Err(error) => return send_error(&format!("failed to list collections: {error:#}")),
-    };
-    let channel_infos = merge_channels_and_tags(channels, tags);
+    let response = list_channels_response(vault);
+    if response["indexing"] == true {
+        index_in_background(vault);
+    }
+    send_response(&response);
+}
 
-    send_response(&ChannelsResponse {
-        ok: true,
-        channels: channel_infos,
-    });
+/// The popup needs collection names and card counts, and the index has both
+/// (SPEC_CLIPPER.md, К3). The answer never waits for the space: no source
+/// pass, no reading of card files, which on an iCloud space would wait for
+/// every card to download. Without a finished index the names come from the
+/// collections folder listing, counts are unknown and `indexing` is set.
+fn list_channels_response(vault: &VaultLayout) -> serde_json::Value {
+    match read_indexed_channels(vault) {
+        Ok(Some(channels)) => serde_json::json!({ "ok": true, "channels": channels }),
+        Ok(None) => serde_json::json!({
+            "ok": true,
+            "indexing": true,
+            "channels": folder_collections(vault)
+                .into_iter()
+                .map(|tag| serde_json::json!({ "tag": tag, "block_count": null }))
+                .collect::<Vec<_>>(),
+        }),
+        Err(error) => {
+            host_log(&format!("cannot read collections from the index: {error:#}"));
+            serde_json::json!({
+                "ok": false,
+                "code": "collections_unavailable",
+                "error": "Mine could not read the collections of this space.",
+            })
+        }
+    }
+}
+
+/// Collections from a finished index, read-only; `None` while there is none.
+fn read_indexed_channels(vault: &VaultLayout) -> anyhow::Result<Option<Vec<ChannelInfo>>> {
+    let Some(selected) = db::existing_selected_index(vault)? else {
+        return Ok(None);
+    };
+    let conn = db::open_read_only(&selected.index_db_path())?;
+    if !db::index_is_ready(&conn)? {
+        return Ok(None);
+    }
+    Ok(Some(merge_channels_and_tags(
+        index::list_channels(&conn)?,
+        index::get_all_tags(&conn)?,
+    )))
+}
+
+/// Collection names from the collections folder: a directory listing, no
+/// file is read. A flat space keeps collections among its cards, where names
+/// alone cannot tell them apart; it gets no names until the index is ready.
+fn folder_collections(vault: &VaultLayout) -> Vec<String> {
+    let layout = vault.write_layout();
+    if layout.collections.is_empty() || layout.collections == layout.cards {
+        return Vec::new();
+    }
+    let Ok(entries) = std::fs::read_dir(vault.collections_dir()) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            (path.extension().and_then(|ext| ext.to_str()) == Some("md"))
+                .then(|| path.file_stem()?.to_str().map(str::to_string))
+                .flatten()
+        })
+        .filter(|name| !name.starts_with('.'))
+        .collect();
+    names.sort();
+    names
+}
+
+/// Build the index of a space the app has not indexed yet, off the request
+/// path: the popup asks again and gets the counts once it is ready. One
+/// build per process at a time.
+fn index_in_background(vault: &VaultLayout) {
+    static BUILDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if BUILDING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let vault = vault.clone();
+    let spawned = std::thread::Builder::new()
+        .name("index-build".into())
+        .spawn(move || {
+            let result = (|| -> anyhow::Result<()> {
+                let (vault, conn, _) = db::open_vault_index(vault)?;
+                if !db::index_is_ready(&conn)? {
+                    mine_lib::storage::reconcile::reconcile_vault(&conn, &vault)?;
+                }
+                index::backfill_collection_index(&conn, &vault)?;
+                Ok(())
+            })();
+            if let Err(error) = result {
+                host_log(&format!("background index build failed: {error:#}"));
+            }
+            BUILDING.store(false, Ordering::SeqCst);
+        });
+    if spawned.is_err() {
+        BUILDING.store(false, Ordering::SeqCst);
+    }
 }
 
 fn merge_channels_and_tags(channels: Vec<Channel>, tags: Vec<index::TagCount>) -> Vec<ChannelInfo> {
@@ -3923,6 +4004,56 @@ mod tests {
         assert_ne!(ExecutableStamp::of(&path).unwrap(), started);
         std::fs::remove_file(&path).unwrap();
         assert_eq!(ExecutableStamp::of(&path), None);
+    }
+
+    fn k3_space_with_collection() -> (TempDir, VaultLayout) {
+        let tmp = TempDir::new().unwrap();
+        let vault = VaultLayout::with_derived_root(tmp.path().join("space"), tmp.path().join("derived"))
+            .with_write_layout(mine_lib::domain::vault::VaultWriteLayout::standard());
+        for folder in ["Cards", "Collections"] {
+            std::fs::create_dir_all(vault.root().join(folder)).unwrap();
+        }
+        std::fs::write(vault.root().join("Collections/Art.md"), "---\ntype: channel\n---\n").unwrap();
+        std::fs::write(
+            vault.root().join("Cards/Card.md"),
+            "---\nsaved_at: 2026-09-29T10:00:00\nMine Collections:\n  - \"[[Art]]\"\n---\n# Card\n",
+        )
+        .unwrap();
+        (tmp, vault)
+    }
+
+    #[test]
+    fn k3_collections_without_an_index_come_from_the_folder_at_once() {
+        let (_tmp, vault) = k3_space_with_collection();
+        let response = list_channels_response(&vault);
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["indexing"], true);
+        assert_eq!(response["channels"], serde_json::json!([{ "tag": "Art", "block_count": null }]));
+        // Answering created no index: building one is background work.
+        assert!(db::existing_selected_index(&vault).unwrap().is_none());
+    }
+
+    #[test]
+    fn k3_collections_come_from_a_ready_index_without_reading_cards() {
+        let (_tmp, vault) = k3_space_with_collection();
+        {
+            let (vault, conn, _) = db::open_vault_index(vault.clone()).unwrap();
+            mine_lib::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+            index::backfill_collection_index(&conn, &vault).unwrap();
+        }
+        // A card changed on disk after indexing is not read to answer.
+        std::fs::write(vault.root().join("Cards/Card.md"), "unreadable \u{0}").unwrap();
+        let response = list_channels_response(&vault);
+        assert_eq!(response["ok"], true);
+        assert!(response.get("indexing").is_none());
+        assert_eq!(response["channels"], serde_json::json!([{ "tag": "Art", "block_count": 1 }]));
+    }
+
+    #[test]
+    fn k3_a_flat_space_offers_no_names_before_its_index() {
+        let (_tmp, vault) = k3_space_with_collection();
+        let flat = vault.with_write_layout(mine_lib::domain::vault::VaultWriteLayout::flat());
+        assert!(folder_collections(&flat).is_empty());
     }
 
     #[test]

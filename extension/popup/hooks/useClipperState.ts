@@ -68,6 +68,8 @@ import {
 // chrome.action are not exposed to that execution context. The window-entry
 // fallback (detached popup window) still has them.
 const IS_CONTENT_SCRIPT_CONTEXT = typeof chrome.tabs === "undefined";
+// How often the collection list is asked again while the helper indexes.
+const CHANNELS_RECHECK_MS = 3_000;
 
 import { resolveCaptureResult } from "../lib/captureResult";
 import {
@@ -114,6 +116,8 @@ export interface ClipperState {
   channels: ChannelInfo[];
   channelsLoading: boolean;
   channelsError: string | null;
+  /** A passing state of the collection list, such as indexing. */
+  channelsNotice: string | null;
   selectedTags: string[];
   currentType: ClipType;
   title: string;
@@ -135,6 +139,8 @@ export function useClipperState() {
   const [channels, setChannels] = useState<ChannelInfo[]>([]);
   const [channelsLoading, setChannelsLoading] = useState(true);
   const [channelsError, setChannelsError] = useState<string | null>(null);
+  const [channelsNotice, setChannelsNotice] = useState<string | null>(null);
+  const channelsRecheckRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const channelsRequestRef = useRef(0);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [currentType, setCurrentType] = useState<ClipType>("link");
@@ -394,7 +400,8 @@ export function useClipperState() {
     }
   }, [screenshotDataUrl, captureScreenshot, ensureArticleLoaded]);
 
-  const refreshChannels = useCallback(async (vaultPath = vaultRef.current) => {
+  const refreshChannelsRef = useRef<(vaultPath?: string | null, silent?: boolean) => Promise<void>>(async () => undefined);
+  const refreshChannels = useCallback(async (vaultPath = vaultRef.current, silent = false) => {
     if (saveModeRef.current === "app" && vaultPath !== vaultRef.current) return;
     const request = ++channelsRequestRef.current;
     const generation = destinationGenerationRef.current;
@@ -402,23 +409,47 @@ export function useClipperState() {
     const isCurrent = () => request === channelsRequestRef.current
       && generation === destinationGenerationRef.current && mode === saveModeRef.current
       && (mode !== "app" || vaultPath === vaultRef.current);
-    setChannelsLoading(true);
+    if (channelsRecheckRef.current) {
+      clearTimeout(channelsRecheckRef.current);
+      channelsRecheckRef.current = null;
+    }
+    // A recheck while indexing keeps the names on screen instead of a
+    // loading state (SPEC_CLIPPER.md, К3).
+    if (!silent) setChannelsLoading(true);
     setChannelsError(null);
     try {
       const result = mode === "standalone"
         ? await standaloneListChannels()
-        : await sendToNative({ action: "list_channels", vault_path: vaultPath });
+        : await sendToNative({ action: "list_channels", vault_path: vaultPath, binding_id: bindingIdRef.current });
       if (!isCurrent()) return;
       if (result.ok && Array.isArray(result.channels)) {
         setChannels(result.channels);
+        if ("indexing" in result && result.indexing === true) {
+          setChannelsNotice("Mine is indexing this space. Card counts will appear shortly.");
+          channelsRecheckRef.current = setTimeout(() => {
+            channelsRecheckRef.current = null;
+            void refreshChannelsRef.current(vaultPath, true);
+          }, CHANNELS_RECHECK_MS);
+        } else {
+          setChannelsNotice(null);
+        }
       } else {
-        setChannelsError("Could not load collections.");
+        setChannelsNotice(null);
+        setChannelsError("code" in result && result.code === "native_timeout"
+          ? "Mine is busy with this space. Retry in a moment."
+          : "Could not load collections.");
       }
     } catch {
       if (isCurrent()) setChannelsError("Could not load collections.");
     } finally {
       if (isCurrent()) setChannelsLoading(false);
     }
+  }, []);
+  useEffect(() => {
+    refreshChannelsRef.current = refreshChannels;
+  }, [refreshChannels]);
+  useEffect(() => () => {
+    if (channelsRecheckRef.current) clearTimeout(channelsRecheckRef.current);
   }, []);
 
   /// The spaces the popup can switch to, re-read from the app's list.
@@ -1623,6 +1654,7 @@ export function useClipperState() {
     channels,
     channelsLoading,
     channelsError,
+    channelsNotice,
     retryChannels: () => { void refreshChannels(); },
     selectedTags,
     currentType,

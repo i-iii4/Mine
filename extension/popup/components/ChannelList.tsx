@@ -2,8 +2,8 @@ import { useMemo } from "react";
 import {
   COLLECTION_PICKER_INLINE_SURFACE_CLASS,
   CollectionPicker,
+  type PickerTag,
 } from "@/components/CollectionPicker";
-import type { TagCount } from "@/types";
 import type { ChannelInfo } from "../lib/messaging";
 import { Button } from "@/components/ui/button";
 
@@ -14,6 +14,8 @@ interface ChannelListProps {
   onCreate: (name: string) => void;
   loading?: boolean;
   error?: string | null;
+  /** A passing state shown under the list, such as indexing. */
+  notice?: string | null;
   onRetry?: () => void;
 }
 
@@ -24,11 +26,12 @@ export function ChannelList({
   onCreate,
   loading = false,
   error = null,
+  notice = null,
   onRetry,
 }: ChannelListProps) {
   // Canonical collection order: exactly what the backend returns — sidebar
   // positions first, positionless tags after (single source of ordering).
-  const tags = useMemo<TagCount[]>(() => {
+  const tags = useMemo<PickerTag[]>(() => {
     return channels.map((channel) => ({
       tag: channel.tag,
       count: channel.block_count,
@@ -54,6 +57,11 @@ export function ChannelList({
         autoFocusSearch={false}
         stopKeyPropagation
       />}
+      {notice && !loading && !error && (
+        <p className="px-3 pb-2 text-sm text-muted-foreground" role="status" data-clipper-channels-notice="">
+          {notice}
+        </p>
+      )}
     </div>
   );
 }
