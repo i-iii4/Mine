@@ -323,12 +323,26 @@ const SidebarCore = memo(function SidebarCore({
   // the pointer chooses the row.
   const [intentRowKey, setIntentRowKey] = useState<string | null>(null);
   const applyPointerRowFocusRef = useRef<(rowKey: string | null) => void>(() => {});
+  // The open collection's row lights nothing: the feed already shows only its
+  // cards, as Everything's row would light them all (С3).
+  const pathnameRef = useRef(location.pathname);
+  pathnameRef.current = location.pathname;
+  const feedRowKey = useCallback((rowKey: string | null) => {
+    if (rowKey === null || !rowKey.startsWith("tag:")) return rowKey;
+    const route = `/channel/${encodeURIComponent(rowKey.slice(4))}`;
+    const pathname = pathnameRef.current;
+    return pathname === route || pathname.startsWith(`${route}/`) ? null : rowKey;
+  }, []);
   const rowIntent = useHoverIntent(({ slow, chosen }) => {
     applyPointerRowFocusRef.current(slow);
     setIntentRowKey(slow);
-    setHoveredCollectionRow(chosen);
+    setHoveredCollectionRow(feedRowKey(chosen));
   });
   useEffect(() => () => setHoveredCollectionRow(null), []);
+  // Opening a collection under the pointer stops its row lighting the feed.
+  useEffect(() => {
+    setHoveredCollectionRow(feedRowKey(rowIntent.current().chosen));
+  }, [feedRowKey, location.pathname, rowIntent]);
 
   useEffect(() => {
     const recordPointerPoint = (event: Event) => {

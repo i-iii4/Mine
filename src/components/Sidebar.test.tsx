@@ -1286,6 +1286,19 @@ describe("sidebar and the card under the pointer (SPEC_CARD_STATES.md)", () => {
       expect(row).not.toHaveAttribute("data-sidebar-row-intent");
     });
 
+    it("lights nothing in the feed for the collection that is open", () => {
+      const { container } = renderSidebar({ ...defaultProps, width: 600 }, ["/channel/alpha"]);
+      const alpha = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
+      const beta = container.querySelector('[data-sidebar-row-key="tag:beta"]')!;
+      pointerTo(alpha, 10);
+      rest(HOVER_INTENT.velocityWindowMs + HOVER_INTENT.dwellMs + 20);
+      expect(isCardLitByCollection(7)).toBe(false);
+      // Its row still answers the pointer itself.
+      expect(alpha).toHaveAttribute("data-sidebar-row-intent", "true");
+      pointerTo(beta, 12);
+      expect(isCardLitByCollection(7)).toBe(true);
+    });
+
     it("lights nothing in the feed for Everything", () => {
       const { container } = renderSidebar({ ...defaultProps, width: 600 });
       const everything = container.querySelector('[data-sidebar-row-key="all"]')!;
