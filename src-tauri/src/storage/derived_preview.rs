@@ -973,6 +973,9 @@ fn file_saved_at(path: &Path) -> DateTime {
 }
 
 fn cleanup_orphan_tile_previews(conn: &Connection, vault: &VaultLayout) -> Result<()> {
+    // Orphans are judged against the index, which only reflects the space
+    // while its folder is there (SPEC_VAULT_LIFECYCLE.md, П29).
+    crate::storage::root_guard::ensure_root_present(vault)?;
     let mut expected = BTreeSet::new();
     let mut stmt =
         conn.prepare("SELECT preview_manifest FROM blocks WHERE preview_manifest IS NOT NULL")?;

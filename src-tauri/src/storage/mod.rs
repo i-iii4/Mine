@@ -19,6 +19,7 @@ pub(crate) mod migrations;
 pub mod preview_plan;
 pub mod projection;
 pub mod reconcile;
+pub mod root_guard;
 pub(crate) mod reference_spans;
 pub mod save_operations;
 pub mod search_engine;

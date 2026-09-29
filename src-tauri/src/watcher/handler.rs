@@ -197,6 +197,9 @@ pub fn thumb_sweep(
     app: Option<AppHandle>,
     on_done: Option<Box<dyn FnOnce() + Send>>,
 ) -> Result<usize> {
+    // A renamed or unmounted folder makes every card look deleted: never
+    // sweep a space that is not provably there (SPEC_VAULT_LIFECYCLE.md, П29).
+    crate::storage::root_guard::ensure_root_present(vault)?;
     let indexed = index::list_blocks(conn).context("thumb_sweep: failed to list blocks")?;
 
     let mut jobs: Vec<ThumbJob> = Vec::with_capacity(indexed.len());
@@ -215,6 +218,14 @@ pub fn thumb_sweep(
         }
         let source_path = vault.block_path(&row.slug);
         if !source_path.exists() {
+            // The folder may be renamed mid-sweep: then nothing is an orphan.
+            if !crate::storage::root_guard::root_still_there(vault) {
+                return Err(crate::storage::root_guard::RootUnavailable {
+                    root: vault.root().to_path_buf(),
+                    state: crate::storage::root_guard::RootState::Missing,
+                }
+                .into());
+            }
             // Orphan: the `.md` is gone (e.g. an iCloud delete event the notify
             // watcher never received). full_scan reconciles these on vault
             // open; do it here too so the sweep stops regenerating a thumb for
@@ -804,6 +815,12 @@ fn commit_deferred_removal(
     pending: &PendingRemove,
     app: Option<&AppHandle>,
 ) {
+    // A folder renamed or unmounted reports every file as deleted. The card
+    // is only removed while the space itself is still there (П29).
+    if let Err(unavailable) = crate::storage::root_guard::ensure_root_present(vault) {
+        log::warn!("deferred removal of {} skipped: {unavailable}", pending.slug);
+        return;
+    }
     if let Err(e) = index::remove_block(conn, &pending.slug) {
         log::warn!(
             "deferred removal: index::remove_block for {} failed: {}",
@@ -1173,6 +1190,34 @@ mod tests {
 
         let blocks = index::list_blocks(&conn).unwrap();
         assert_eq!(blocks.len(), 3);
+    }
+
+    /// П29: the sweep on window focus erased every card and preview of a
+    /// space whose folder had just been renamed. It now leaves them alone, and
+    /// so does the watcher when the rename reports every file as deleted.
+    #[test]
+    fn a_renamed_space_survives_the_sweep_and_the_watcher() {
+        const ID: &str = "cea575682e5a4018991c0097fbedff66";
+        let parent = tempfile::tempdir().unwrap();
+        let source = parent.path().join("Mine");
+        std::fs::create_dir_all(source.join(".mine")).unwrap();
+        std::fs::write(source.join(".mine/vault-id"), ID).unwrap();
+        let derived_parent = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::with_derived_root(source.clone(), derived_parent.path().join(ID));
+        std::fs::create_dir_all(vault.thumbs_dir()).unwrap();
+        let conn = test_conn();
+        write_md_file(&vault, "keep", "article", &[]);
+        full_scan(&conn, &vault, None, None).unwrap();
+        std::fs::write(vault.thumb_path("keep"), b"preview").unwrap();
+        let path = vault.block_path("keep");
+
+        std::fs::rename(&source, parent.path().join("Mine!")).unwrap();
+        assert!(thumb_sweep(&conn, &vault, None, None).is_err());
+        handle_event(&conn, &vault, &VaultEvent::BlockDeleted(path), None).unwrap();
+        flush_pending_for_test(&conn, &vault, None);
+
+        assert!(index::get_block(&conn, "keep").unwrap().is_some());
+        assert_eq!(std::fs::read(vault.thumb_path("keep")).unwrap(), b"preview");
     }
 
     #[test]

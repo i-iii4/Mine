@@ -132,6 +132,10 @@ pub enum ReconcileError {
     Commit(#[source] anyhow::Error),
     #[error("sources kept changing while building index for {path}; retry is required")]
     SourcesChanging { path: PathBuf },
+    /// The space's folder is gone or is another space: nothing is removed
+    /// (SPEC_VAULT_LIFECYCLE.md, П29).
+    #[error(transparent)]
+    RootUnavailable(#[from] crate::storage::root_guard::RootUnavailable),
 }
 
 #[derive(Debug)]
@@ -280,6 +284,7 @@ fn reconcile_source_pass(
     identity: &file_identity::IdentityRefresh,
 ) -> std::result::Result<ReconcileReport, ReconcileError> {
     let started = Instant::now();
+    crate::storage::root_guard::ensure_root_present(vault)?;
     let identity_affected = identity.affected_markdown.iter().collect::<BTreeSet<_>>();
     let paths = files::scan_md_files(vault).map_err(|source| ReconcileError::Inventory {
         path: vault.root().to_path_buf(),
@@ -459,6 +464,12 @@ fn reconcile_source_pass(
         }
     }
 
+    // The folder may have been renamed while the inventory ran: an empty or
+    // partial listing then reads as mass deletion. Removing anything needs the
+    // space to still be there, or the whole pass rolls back (П29).
+    if !removed.is_empty() {
+        crate::storage::root_guard::ensure_root_present(vault)?;
+    }
     for slug in &removed {
         index::remove_block(&tx, slug)
             .with_context(|| format!("remove stale block {slug}"))
@@ -819,6 +830,32 @@ mod tests {
         let vault = VaultLayout::new(dir.path().to_path_buf());
         let conn = db::open_or_create(&vault.index_db_path()).unwrap();
         (dir, vault, conn)
+    }
+
+    /// П29: a space renamed in Finder reads as every card deleted. Nothing is
+    /// removed; the index and the previews wait for the folder to be found.
+    #[test]
+    fn a_renamed_space_keeps_its_index_and_previews() {
+        const ID: &str = "cea575682e5a4018991c0097fbedff66";
+        let parent = TempDir::new().unwrap();
+        let source = parent.path().join("Mine");
+        std::fs::create_dir_all(source.join(".mine")).unwrap();
+        std::fs::write(source.join(".mine/vault-id"), ID).unwrap();
+        let derived_parent = TempDir::new().unwrap();
+        let vault = VaultLayout::with_derived_root(source.clone(), derived_parent.path().join(ID));
+        std::fs::create_dir_all(vault.thumbs_dir()).unwrap();
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        write_note(&vault, "Note", "body");
+        reconcile_vault(&conn, &vault).unwrap();
+        std::fs::write(vault.thumb_path("Note"), b"preview").unwrap();
+
+        std::fs::rename(&source, parent.path().join("Mine!")).unwrap();
+        assert!(matches!(
+            reconcile_vault(&conn, &vault),
+            Err(ReconcileError::RootUnavailable(_))
+        ));
+        assert!(index::get_block(&conn, "Note").unwrap().is_some());
+        assert_eq!(std::fs::read(vault.thumb_path("Note")).unwrap(), b"preview");
     }
 
     /// The first index of a large space must speak in numbers (О13): the
