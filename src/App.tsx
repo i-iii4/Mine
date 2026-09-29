@@ -283,6 +283,7 @@ import {
 } from "@/lib/graphPreferences";
 import {
   SETTINGS_CHANGED_EVENT,
+  adoptSettingsChange,
   type SettingsChangedPayload,
 } from "@/lib/settingsChanged";
 import { RenameBlockDialog } from "@/components/RenameBlockDialog";
@@ -1949,6 +1950,7 @@ export function AppWithVault({
     let cancelled = false;
     const unlisten = listen<SettingsChangedPayload>(SETTINGS_CHANGED_EVENT, (event) => {
       if (cancelled) return;
+      adoptSettingsChange(event.payload);
       const { key } = event.payload;
       if (key === THEME_STORAGE_KEY) {
         applyTheme(getStoredTheme());

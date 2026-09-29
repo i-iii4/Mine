@@ -27,7 +27,7 @@ describe("AppearanceSection", () => {
     expect(localStorage.getItem("theme")).toBe("dark");
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
     expect(setTauriTheme).toHaveBeenLastCalledWith("dark");
-    expect(emit).toHaveBeenCalledWith("settings-changed", { key: "theme" });
+    expect(emit).toHaveBeenCalledWith("settings-changed", expect.objectContaining({ key: "theme" }));
   });
 
   it("only offers the retained appearance controls", () => {
@@ -55,9 +55,7 @@ describe("AppearanceSection", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "Hide bottom menu" }));
 
     expect(localStorage.getItem("mine.bottomActionBarHidden")).toBe("true");
-    expect(emit).toHaveBeenCalledWith("settings-changed", {
-      key: "mine.bottomActionBarHidden",
-    });
+    expect(emit).toHaveBeenCalledWith("settings-changed", expect.objectContaining({ key: "mine.bottomActionBarHidden" }));
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Hide bottom menu" }));
     expect(localStorage.getItem("mine.bottomActionBarHidden")).toBe("false");
@@ -72,9 +70,7 @@ describe("AppearanceSection", () => {
 
     fireEvent.click(checkbox);
     expect(localStorage.getItem("mine.scrollEdgeFade")).toBe("true");
-    expect(emit).toHaveBeenCalledWith("settings-changed", {
-      key: "mine.scrollEdgeFade",
-    });
+    expect(emit).toHaveBeenCalledWith("settings-changed", expect.objectContaining({ key: "mine.scrollEdgeFade" }));
 
     fireEvent.click(checkbox);
     expect(localStorage.getItem("mine.scrollEdgeFade")).toBe("false");
@@ -88,9 +84,7 @@ describe("AppearanceSection", () => {
 
     fireEvent.click(checkbox);
     expect(localStorage.getItem("mine.hoverCollectionPills")).toBe("false");
-    expect(emit).toHaveBeenCalledWith("settings-changed", {
-      key: "mine.hoverCollectionPills",
-    });
+    expect(emit).toHaveBeenCalledWith("settings-changed", { key: "mine.hoverCollectionPills", value: "false" });
 
     fireEvent.click(checkbox);
     expect(localStorage.getItem("mine.hoverCollectionPills")).toBe("true");
@@ -106,7 +100,7 @@ describe("AppearanceSection", () => {
     // Feed-card media is out of scope and stays square.
     expect(root.style.getPropertyValue("--radius-media")).toBe("");
     expect(localStorage.getItem("mine.cardRadius")).toBe("3");
-    expect(emit).toHaveBeenCalledWith("settings-changed", { key: "mine.cardRadius" });
+    expect(emit).toHaveBeenCalledWith("settings-changed", expect.objectContaining({ key: "mine.cardRadius" }));
   });
 
   it("reflects stored values on mount", () => {

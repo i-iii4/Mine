@@ -41,8 +41,6 @@ describe("GraphSection", () => {
       include_wikilinks: false,
       include_related_notes: true,
     });
-    expect(emitMock).toHaveBeenCalledWith("settings-changed", {
-      key: GRAPH_PREFERENCES_STORAGE_KEY,
-    });
+    expect(emitMock).toHaveBeenCalledWith("settings-changed", expect.objectContaining({ key: GRAPH_PREFERENCES_STORAGE_KEY }));
   });
 });
