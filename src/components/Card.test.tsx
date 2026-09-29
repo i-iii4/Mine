@@ -1,3 +1,4 @@
+import { CLOUD_BADGE_DELAY_MS, CLOUD_STATE_LABEL } from "@/lib/cloudContent";
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { Card, DragCardStackPreview, ReadOnlyCardPreview } from "./Card";
@@ -1064,6 +1065,34 @@ describe("Card", () => {
     );
     expect(container.querySelector("video")).toBeInTheDocument();
     expect(container.querySelector("svg path[d]")).toBeNull();
+  });
+
+  it("marks a video card whose file is still in iCloud (SPEC_CLOUD_STORAGE.md, Х6)", () => {
+    vi.useFakeTimers();
+    try {
+      const b = block({
+        block_type: "video",
+        title: "Cloud Video",
+        media_file: "cloud.mp4",
+        content_in_cloud: true,
+        preview_manifest: JSON.stringify({
+          kind: "video_poster",
+          primary_preview_path: "test-block.jpg",
+          width: 1280,
+          height: 720,
+          tiles: [
+            { src: "cloud.mp4", width: 1280, height: 720, is_video: true, is_video_poster: true },
+          ],
+          overflow_count: 0,
+        }),
+      });
+      const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+      expect(container.querySelector("[data-card-cloud-badge]")).toBeNull();
+      act(() => { vi.advanceTimersByTime(CLOUD_BADGE_DELAY_MS); });
+      expect(container.querySelector("[data-card-cloud-badge]")).toHaveAttribute("title", CLOUD_STATE_LABEL);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("renders poster-only video cards from preview metadata with play affordance", () => {

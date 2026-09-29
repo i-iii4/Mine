@@ -705,7 +705,7 @@ export function CardContent({
       case "social-media-grid":
         return <SocialCard block={block} descriptor={descriptor} previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} thumbVersion={thumbVersion} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
       case "video":
-        return <VideoCard previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} thumbVersion={thumbVersion} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
+        return <VideoCard contentInCloud={block.content_in_cloud} previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} thumbVersion={thumbVersion} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
       case "file":
         return <FileCard block={block} />;
     }
@@ -1126,6 +1126,7 @@ const SocialCard = memo(function SocialCard({
             style={{ aspectRatio: `${m.aspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
             data-card-preview-geometry={m.aspectRatio === null ? "pending" : undefined}
           >
+            <CloudBadge active={block.content_in_cloud} />
             {shouldAutoplay ? (
               <FeedVideoSurface
                 playback={playback}
@@ -1167,6 +1168,7 @@ const SocialCard = memo(function SocialCard({
           className="w-full"
           style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
         >
+          <CloudBadge active={block.content_in_cloud} />
           <GalleryTiles
             items={media}
             thumbsRootPath={thumbsRootPath}
@@ -1259,6 +1261,7 @@ const ArticleCard = memo(function ArticleCard({
           style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
           data-card-preview-geometry={descriptor.primaryAspectRatio === null ? "pending" : undefined}
         >
+          <CloudBadge active={block.content_in_cloud} />
           {descriptor.totalMediaCount > 1 ? (
             <GalleryTiles
               items={descriptor.mediaItems}
@@ -1342,6 +1345,7 @@ const ArticleCard = memo(function ArticleCard({
 });
 
 const VideoCard = memo(function VideoCard({
+  contentInCloud,
   previewManifest,
   vaultPath,
   thumbsRootPath,
@@ -1350,6 +1354,7 @@ const VideoCard = memo(function VideoCard({
   allowPlayback,
   measurementMode = false,
 }: {
+  contentInCloud: boolean | undefined;
   previewManifest: ReturnType<typeof parsePreviewManifest>;
   vaultPath: string;
   thumbsRootPath: string;
@@ -1370,6 +1375,7 @@ const VideoCard = memo(function VideoCard({
 
   return (
     <GraphicSurface className="aspect-video">
+      <CloudBadge active={contentInCloud} />
       {shouldAutoplay ? (
         <FeedVideoSurface
           playback={playback}

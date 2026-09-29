@@ -153,13 +153,18 @@ pub fn reconcile_all_previews_with_progress(
         .collect::<std::result::Result<Vec<_>, _>>()?;
     drop(stmt);
 
+    // Two passes (SPEC_CLOUD_STORAGE.md, Х1, Х6, Х16). The first never waits
+    // for iCloud: a card whose media is only in the cloud is marked as such
+    // at once, so the feed shows why it waits and the wait is counted. The
+    // second fetches those files and builds their previews, as before.
     let mut report = PreviewReconcileReport::default();
     for batch in slugs.chunks(PREVIEW_RECONCILE_BATCH_SIZE) {
-        let batch_report = reconcile_preview_slugs_while(
+        let batch_report = reconcile_slugs(
             conn,
             vault,
             batch.iter().map(String::as_str),
             should_continue,
+            CloudSources::Defer,
         )?;
         on_batch(&batch_report);
         merge_report(&mut report, batch_report);
@@ -169,9 +174,54 @@ pub fn reconcile_all_previews_with_progress(
         std::thread::yield_now();
     }
     if !report.cancelled {
+        let deferred = deferred_to_cloud(&report);
+        forget_deferred(&mut report, &deferred);
+        for batch in deferred.chunks(PREVIEW_RECONCILE_BATCH_SIZE) {
+            let batch_report = reconcile_slugs(
+                conn,
+                vault,
+                batch.iter().map(String::as_str),
+                should_continue,
+                CloudSources::Fetch,
+            )?;
+            on_batch(&batch_report);
+            merge_report(&mut report, batch_report);
+            if report.cancelled {
+                break;
+            }
+        }
+    }
+    if !report.cancelled {
         cleanup_orphan_tile_previews(conn, vault)?;
     }
     Ok(report)
+}
+
+/// Whether a pass may wait for iCloud to deliver a source file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CloudSources {
+    /// Mark the card as waiting for iCloud and move on.
+    Defer,
+    /// Read the file; the system downloads it first.
+    Fetch,
+}
+
+/// Cards the first pass left waiting for iCloud.
+fn deferred_to_cloud(report: &PreviewReconcileReport) -> Vec<String> {
+    report
+        .failed
+        .iter()
+        .filter(|failure| failure.error_kind == PreviewErrorKind::ContentInCloud)
+        .map(|failure| failure.slug.clone())
+        .collect()
+}
+
+/// The second pass reports these cards again; count each once.
+fn forget_deferred(report: &mut PreviewReconcileReport, deferred: &[String]) {
+    report
+        .failed
+        .retain(|failure| !deferred.contains(&failure.slug));
+    report.checked -= deferred.len();
 }
 
 pub fn reconcile_preview_slugs<'a>(
@@ -188,13 +238,23 @@ pub fn reconcile_preview_slugs_while<'a>(
     slugs: impl IntoIterator<Item = &'a str>,
     should_continue: &mut dyn FnMut() -> bool,
 ) -> Result<PreviewReconcileReport> {
+    reconcile_slugs(conn, vault, slugs, should_continue, CloudSources::Fetch)
+}
+
+fn reconcile_slugs<'a>(
+    conn: &Connection,
+    vault: &VaultLayout,
+    slugs: impl IntoIterator<Item = &'a str>,
+    should_continue: &mut dyn FnMut() -> bool,
+    cloud: CloudSources,
+) -> Result<PreviewReconcileReport> {
     let mut report = PreviewReconcileReport::default();
     for slug in slugs {
         if !should_continue() {
             report.cancelled = true;
             break;
         }
-        let outcome = match reconcile_preview_for_slug(conn, vault, slug) {
+        let outcome = match reconcile_slug(conn, vault, slug, cloud) {
             Ok(Some(outcome)) => outcome,
             Ok(None) => continue,
             Err(error) => {
@@ -229,6 +289,15 @@ pub fn reconcile_preview_for_slug(
     conn: &Connection,
     vault: &VaultLayout,
     slug: &str,
+) -> Result<Option<PreviewReconcileOutcome>> {
+    reconcile_slug(conn, vault, slug, CloudSources::Fetch)
+}
+
+fn reconcile_slug(
+    conn: &Connection,
+    vault: &VaultLayout,
+    slug: &str,
+    cloud: CloudSources,
 ) -> Result<Option<PreviewReconcileOutcome>> {
     let Some(record) = load_preview_record(conn, slug)? else {
         return Ok(None);
@@ -381,6 +450,25 @@ pub fn reconcile_preview_for_slug(
         }
     };
 
+    if cloud == CloudSources::Defer {
+        if let Some(reference) =
+            source_waiting_for_cloud(vault, slug, &block, &manifest, &record, source_changed)?
+        {
+            record_cloud_wait(vault, slug);
+            return mark_non_ready(
+                conn,
+                slug,
+                &record,
+                DerivedPreviewState::Failed,
+                Some(&source_stamp),
+                PreviewErrorKind::ContentInCloud,
+                true,
+                format!("media contents are in iCloud: {reference}"),
+            )
+            .map(Some);
+        }
+    }
+
     let mut regenerated = false;
     let mut generation_failure = None;
     let primary_disk_path = manifest
@@ -409,15 +497,7 @@ pub fn reconcile_preview_for_slug(
                         format!("media file is missing from the vault: {reference}"),
                     ),
                     PrimarySourceState::InCloud(reference) => {
-                        // The standing record behind the Keep Downloaded
-                        // recommendation (Х16): one wait per block per
-                        // session. Best effort — failing to count must not
-                        // fail the reconcile.
-                        if let Err(error) =
-                            crate::storage::cloud_waits::record_wait(vault.derived_root(), slug)
-                        {
-                            log::warn!("failed to record a cloud wait for {slug}: {error:#}");
-                        }
+                        record_cloud_wait(vault, slug);
                         (
                             PreviewErrorKind::ContentInCloud,
                             format!("media contents are in iCloud: {reference}"),
@@ -735,6 +815,53 @@ fn is_ready_preview(
         }
         _ => false,
     }
+}
+
+/// The standing record behind the Keep Downloaded recommendation (Х16): one
+/// wait per block per session. Best effort: failing to count must not fail
+/// the reconcile.
+fn record_cloud_wait(vault: &VaultLayout, slug: &str) {
+    if let Err(error) = crate::storage::cloud_waits::record_wait(vault.derived_root(), slug) {
+        log::warn!("failed to record a cloud wait for {slug}: {error:#}");
+    }
+}
+
+/// A source this pass would have to read whose contents are only in iCloud:
+/// the block's own media, or a tile source, among the previews that still
+/// need building. Checked by allocation, never by reading (Х3).
+fn source_waiting_for_cloud(
+    vault: &VaultLayout,
+    slug: &str,
+    block: &Block,
+    manifest: &FeedPreviewManifest,
+    record: &PreviewRecord,
+    source_changed: bool,
+) -> Result<Option<String>> {
+    let needs = |relative: &str| -> Result<bool> {
+        let path = preview_disk_path(vault, relative)?;
+        Ok(source_changed || !is_ready_preview(vault, slug, record.media_file.as_deref(), &path))
+    };
+    if let Some(primary) = manifest.primary_preview_path.as_deref() {
+        if needs(primary)? {
+            if let PrimarySourceState::InCloud(reference) = primary_source_state(vault, block) {
+                return Ok(Some(reference));
+            }
+        }
+    }
+    for tile in &manifest.tiles {
+        let Some(preview) = tile.preview_path.as_deref() else {
+            continue;
+        };
+        if !needs(preview)? {
+            continue;
+        }
+        if let Some(source) = media_refs::resolve_indexed_media(vault, slug, &tile.source_path) {
+            if media_dimensions::is_content_offloaded(&source) {
+                return Ok(Some(tile.source_path.clone()));
+            }
+        }
+    }
+    Ok(None)
 }
 
 enum PrimarySourceState {
@@ -1083,6 +1210,50 @@ mod tests {
         block.frontmatter.url = Some("https://example.com".to_string());
         block.body.clear();
         block
+    }
+
+    /// SPEC_CLOUD_STORAGE.md, Х6 and Х16: the first pass marks a card whose
+    /// media is only in iCloud at once and counts the wait; building its
+    /// preview, which downloads the file, comes after every other card.
+    #[test]
+    fn a_card_waiting_for_icloud_is_marked_before_anything_is_downloaded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("Mobile Documents").join("Space");
+        std::fs::create_dir_all(&root).unwrap();
+        let vault = VaultLayout::with_derived_root(root.clone(), tmp.path().join("derived"));
+        std::fs::create_dir_all(vault.thumbs_dir()).unwrap();
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        crate::storage::cloud_waits::begin_session(vault.derived_root(), "2026-09-29T12:00:00Z")
+            .unwrap();
+        // iCloud keeps the name and size and frees the blocks.
+        std::fs::File::create(root.join("cloud.jpg"))
+            .unwrap()
+            .set_len(64 * 1024)
+            .unwrap();
+        files::write_block_file(&vault, &image_block("Cloud", "cloud.jpg")).unwrap();
+        files::write_block_file(&vault, &text_block("Local")).unwrap();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        let mut batches = Vec::new();
+        let report =
+            reconcile_all_previews_with_progress(&conn, &vault, &mut || true, &mut |batch| {
+                batches.push(batch.clone());
+            })
+            .unwrap();
+
+        let first = &batches[0];
+        assert_eq!(first.checked, 2);
+        assert_eq!(first.ready, 1, "the local card is ready in the first pass");
+        assert!(first.failed.iter().any(|failure| failure.slug == "Cloud"
+            && failure.error_kind == PreviewErrorKind::ContentInCloud));
+        assert!(first.changed_slugs.contains(&"Cloud".to_string()));
+        // The second pass tried the cloud card again, and it is counted once.
+        assert_eq!(batches.len(), 2);
+        assert_eq!(batches[1].checked, 1);
+        assert_eq!(report.checked, 2);
+        assert_eq!(report.failed.iter().filter(|failure| failure.slug == "Cloud").count(), 1);
+        let waits = crate::storage::cloud_waits::load(vault.derived_root());
+        assert_eq!(waits.sessions.last().unwrap().slugs, vec!["Cloud".to_string()]);
     }
 
     #[test]
