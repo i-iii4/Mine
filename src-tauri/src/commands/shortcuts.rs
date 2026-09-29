@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, WebviewWindow};
 
 use super::state::CommandError;
-use super::vault::{load_config, try_write_config};
+use super::vault::{load_config, update_config};
 
 const CONFIG_KEY: &str = "shortcut_overrides";
 
@@ -97,11 +97,12 @@ pub fn save_shortcut_overrides(
     app: AppHandle,
     overrides: ShortcutOverrides,
 ) -> Result<(), CommandError> {
-    let mut cfg = load_config(&app);
-    cfg[CONFIG_KEY] = serde_json::to_value(&overrides)
+    let value = serde_json::to_value(&overrides)
         .map_err(|e| CommandError::Internal(format!("failed to serialize overrides: {e}")))?;
-    try_write_config(&app, &cfg)
-        .map_err(|error| CommandError::Internal(format!("failed to save shortcuts: {error:#}")))?;
+    update_config(&app, |cfg| {
+        cfg.insert(CONFIG_KEY.into(), value);
+    })
+    .map_err(|error| CommandError::Internal(format!("failed to save shortcuts: {error}")))?;
 
     // The menu accelerator consumes the key before the webview sees it, so a
     // stale menu would keep firing the old command.

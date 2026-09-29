@@ -10,7 +10,7 @@ use serde::Serialize;
 use tauri::{AppHandle, State};
 
 use crate::commands::state::{AppState, CommandError};
-use crate::commands::vault::{load_config, write_config};
+use crate::commands::vault::{load_config, update_config};
 use crate::storage::cloud_waits;
 
 const NEVER_SHOW_KEY: &str = "cloud_recommendation_never";
@@ -65,9 +65,9 @@ pub fn dismiss_cloud_recommendation(
     cloud_waits::dismiss(&root)
         .map_err(|error| CommandError::Internal(format!("failed to dismiss: {error:#}")))?;
     if never_show_again {
-        let mut cfg = load_config(&app);
-        cfg[NEVER_SHOW_KEY] = serde_json::json!(true);
-        write_config(&app, &cfg);
+        update_config(&app, |cfg| {
+            cfg.insert(NEVER_SHOW_KEY.into(), serde_json::json!(true));
+        })?;
     }
     Ok(())
 }

@@ -8,7 +8,8 @@ use crate::commands::article_audio_desktop::{
     ensure_desktop_article_audio_config, generate_desktop_article_audio,
     resolve_article_audio_helper_path,
 };
-use crate::commands::state::{current_vault_layout, now_iso8601, AppState, CommandError};
+use crate::commands::state::{current_vault_layout, AppState, CommandError};
+use crate::util::now_iso8601;
 use crate::domain::vault::validate_slug;
 use crate::storage::article_audio::{self, ArticleAudioState};
 

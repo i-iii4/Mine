@@ -253,20 +253,23 @@ fn send_error(msg: &str) {
 ///
 /// No implicit fallback: folder selection is an explicit user action.
 fn load_vault_path() -> Option<String> {
-    let home = std::env::var("HOME").ok()?;
+    mine_lib::space_registry::current_path(&read_app_settings())
+}
 
-    // Try config from desktop app first
-    let config_path =
-        PathBuf::from(&home).join("Library/Application Support/com.mine.app/config.json");
-    if let Ok(data) = std::fs::read_to_string(&config_path) {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&data) {
-            if let Some(path) = json.get("vault_path").and_then(|v| v.as_str()) {
-                return Some(path.to_string());
-            }
+/// The shared app settings, read through their one owner
+/// (SPEC_VAULT_LIFECYCLE.md, П28). Unreadable settings read as empty: this
+/// value is never written back.
+fn read_app_settings() -> serde_json::Map<String, serde_json::Value> {
+    let Ok(dir) = native_app_data_dir() else {
+        return serde_json::Map::new();
+    };
+    match mine_lib::app_config::AppConfig::in_dir(&dir).read() {
+        Ok(settings) => settings,
+        Err(error) => {
+            host_log(&format!("app settings unreadable: {error}"));
+            serde_json::Map::new()
         }
     }
-
-    None
 }
 
 fn canonical_native_space_path(path: &str) -> Result<String, String> {
@@ -276,43 +279,16 @@ fn canonical_native_space_path(path: &str) -> Result<String, String> {
 }
 
 fn same_native_space(left: &str, right: &str) -> bool {
-    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
-        (Ok(left), Ok(right)) => left == right,
-        _ => left == right,
-    }
+    mine_lib::space_registry::same_path(left, right)
 }
 
-/// Load known vaults from config, filter to existing directories.
+/// The spaces that can be opened right now, canonical and without repeats.
 fn load_known_vaults() -> Vec<String> {
-    let home = match std::env::var("HOME") {
-        Ok(h) => h,
-        Err(_) => return vec![],
-    };
-    let config_path =
-        PathBuf::from(&home).join("Library/Application Support/com.mine.app/config.json");
-    let data = match std::fs::read_to_string(&config_path) {
-        Ok(d) => d,
-        Err(_) => return vec![],
-    };
-    let json: serde_json::Value = match serde_json::from_str(&data) {
-        Ok(j) => j,
-        Err(_) => return vec![],
-    };
-    let paths = match json.get("known_vaults").and_then(|v| v.as_array()) {
-        Some(arr) => arr
-            .iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-            .filter(|p| PathBuf::from(p).is_dir())
-            .collect(),
-        None => {
-            // Fallback: use vault_path if no known_vaults
-            json.get("vault_path")
-                .and_then(|v| v.as_str())
-                .filter(|p| PathBuf::from(p).is_dir())
-                .map(|s| vec![s.to_string()])
-                .unwrap_or_default()
-        }
-    };
+    let paths: Vec<String> = mine_lib::space_registry::statuses(&read_app_settings())
+        .into_iter()
+        .filter(|status| status.available)
+        .map(|status| status.record.path)
+        .collect();
     let mut unique: Vec<String> = Vec::new();
     for path in paths {
         if let Ok(canonical) = canonical_native_space_path(&path) {
@@ -451,55 +427,22 @@ fn handle_list_known_vaults() {
     });
 }
 
-/// Adds a vault path to the shared desktop config's `known_vaults`, keeping
-/// the write atomic (tmp + rename) so a concurrently reading desktop app never
-/// sees a torn file. Returns the updated list.
+/// Lists a space in the shared app settings through their one owner: under
+/// the lock the app uses too, changing only the space list, never over a file
+/// it cannot read (SPEC_VAULT_LIFECYCLE.md, П28). Returns the updated list.
 fn add_known_vault(path: &str) -> Result<Vec<String>, String> {
     let path = canonical_native_space_path(path)?;
-    let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
-    let config_dir = PathBuf::from(&home).join("Library/Application Support/com.mine.app");
-    std::fs::create_dir_all(&config_dir)
-        .map_err(|e| format!("cannot create config directory: {e}"))?;
-    let config_path = config_dir.join("config.json");
-    let mut json: serde_json::Value = std::fs::read_to_string(&config_path)
-        .ok()
-        .and_then(|data| serde_json::from_str(&data).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-
-    let mut vaults: Vec<String> = json
-        .get("known_vaults")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+    let id = mine_lib::space_registry::read_space_id(std::path::Path::new(&path));
+    let settings = mine_lib::app_config::AppConfig::in_dir(&native_app_data_dir()?);
+    settings
+        .update(|cfg| {
+            mine_lib::space_registry::add_space(cfg, id.as_deref(), &path);
+            mine_lib::space_registry::records(cfg)
+                .into_iter()
+                .map(|record| record.path)
                 .collect()
         })
-        .unwrap_or_default();
-    let mut found = false;
-    vaults.retain_mut(|existing| {
-        if same_native_space(existing, &path) {
-            if found {
-                false
-            } else {
-                *existing = path.clone();
-                found = true;
-                true
-            }
-        } else {
-            true
-        }
-    });
-    if !found {
-        vaults.push(path.clone());
-    }
-    json["known_vaults"] = serde_json::json!(vaults);
-
-    let serialized =
-        serde_json::to_string_pretty(&json).map_err(|e| format!("cannot serialize config: {e}"))?;
-    let tmp_path = config_dir.join("config.json.tmp");
-    std::fs::write(&tmp_path, serialized).map_err(|e| format!("cannot write config: {e}"))?;
-    std::fs::rename(&tmp_path, &config_path).map_err(|e| format!("cannot commit config: {e}"))?;
-    Ok(vaults)
+        .map_err(|error| error.to_string())
 }
 
 /// Shows the native macOS folder chooser and registers the picked folder as a

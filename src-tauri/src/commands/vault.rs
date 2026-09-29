@@ -115,12 +115,6 @@ pub(crate) fn canonical_space_path(path: &str) -> Result<String, CommandError> {
         .map_err(|error| CommandError::Internal(format!("cannot access space {path}: {error}")))
 }
 
-fn same_space_path(left: &str, right: &str) -> bool {
-    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
-        (Ok(left), Ok(right)) => left == right,
-        _ => left == right,
-    }
-}
 
 /// What a folder holds, before it becomes a space.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
@@ -288,21 +282,12 @@ fn current_derived_root(state: &State<'_, AppState>) -> Result<PathBuf, CommandE
 /// dropped, so a folder that is merely offline is never forgotten silently.
 #[tauri::command]
 pub fn forget_unavailable_vault(app: AppHandle) -> Result<(), CommandError> {
-    if let Some(path) = load_saved_vault_path(&app) {
-        let mut cfg = load_config(&app);
-        if let Some(known) = cfg.get("known_vaults").and_then(|v| v.as_array()) {
-            let remaining: Vec<String> = known
-                .iter()
-                .filter_map(|value| value.as_str())
-                .filter(|existing| *existing != path)
-                .map(str::to_string)
-                .collect();
-            cfg["known_vaults"] = serde_json::json!(remaining);
-            write_config(&app, &cfg);
-        }
-    }
-    clear_saved_vault_path(&app);
-    Ok(())
+    let Some(path) = load_saved_vault_path(&app) else {
+        return Ok(());
+    };
+    // Exactly this record and the current binding go; every other space and
+    // setting stays (П13, П28).
+    update_config(&app, |cfg| crate::space_registry::forget(cfg, &path))
 }
 
 /// The write layout of the currently open space.
@@ -435,8 +420,14 @@ pub fn get_vault_path(
         }
     }
 
+    repair_space_registry(&app);
     // Try to restore from saved config
     if let Some(saved_path) = load_saved_vault_path(&app) {
+        let saved_path = if PathBuf::from(&saved_path).is_dir() {
+            saved_path
+        } else {
+            follow_moved_space(&app, &saved_path).unwrap_or(saved_path)
+        };
         if PathBuf::from(&saved_path).is_dir() {
             append_startup_trace(
                 &app,
@@ -1812,111 +1803,82 @@ fn bootstrap_local_thumbs_from_legacy(vault: &VaultLayout) -> Result<bool, Comma
 
 // ─── Config persistence ─────────────────────────────────────────────────────
 
-/// Path to the app config file: <app_data_dir>/config.json
-fn config_path(app: &AppHandle) -> Option<PathBuf> {
+/// The app settings file, through its one owner (SPEC_VAULT_LIFECYCLE.md, П28).
+pub(crate) fn app_config(app: &AppHandle) -> Option<crate::app_config::AppConfig> {
     app.path()
         .app_data_dir()
         .ok()
-        .map(|dir| dir.join("config.json"))
+        .map(|dir| crate::app_config::AppConfig::in_dir(&dir))
 }
 
-/// Load the full config JSON, or empty object if missing.
+/// The settings for reading. An unreadable file reads as empty here, which
+/// is safe because nothing written goes through this value: every change
+/// goes through [`update_config`], which refuses to write over it.
 pub(crate) fn load_config(app: &AppHandle) -> serde_json::Value {
-    let Some(config) = config_path(app) else {
+    let Some(config) = app_config(app) else {
         return serde_json::json!({});
     };
-    let Ok(data) = std::fs::read_to_string(&config) else {
-        return serde_json::json!({});
-    };
-    serde_json::from_str(&data).unwrap_or_else(|_| serde_json::json!({}))
-}
-
-/// Write the full config JSON to disk.
-pub(crate) fn write_config(app: &AppHandle, json: &serde_json::Value) {
-    if let Err(error) = try_write_config(app, json) {
-        log::warn!("failed to save config: {error:#}");
-    }
-}
-
-pub(crate) fn try_write_config(app: &AppHandle, json: &serde_json::Value) -> anyhow::Result<()> {
-    let config =
-        config_path(app).ok_or_else(|| anyhow::anyhow!("app data directory is unavailable"))?;
-    write_config_file(&config, json)
-}
-
-fn write_config_file(config: &Path, json: &serde_json::Value) -> anyhow::Result<()> {
-    if let Some(parent) = config.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    files::write_atomically(&config, &serde_json::to_vec_pretty(json)?)?;
-    Ok(())
-}
-
-/// Save the vault path to the config file and add to known_vaults.
-fn save_vault_path(app: &AppHandle, path: &str) {
-    let mut cfg = load_config(app);
-    cfg["vault_path"] = serde_json::json!(path);
-
-    // Add to known_vaults if not already there
-    let known = cfg["known_vaults"].as_array_mut();
-    if let Some(arr) = known {
-        upsert_known_space(arr, path);
-    } else {
-        cfg["known_vaults"] = serde_json::json!([path]);
-    }
-
-    write_config(app, &cfg);
-}
-
-fn upsert_known_space(paths: &mut Vec<serde_json::Value>, path: &str) {
-    let mut found = false;
-    paths.retain_mut(|entry| {
-        if entry
-            .as_str()
-            .is_some_and(|known| same_space_path(known, path))
-        {
-            if found {
-                false
-            } else {
-                *entry = serde_json::json!(path);
-                found = true;
-                true
-            }
-        } else {
-            true
+    match config.read() {
+        Ok(map) => serde_json::Value::Object(map),
+        Err(error) => {
+            log::warn!("{error}");
+            serde_json::json!({})
         }
+    }
+}
+
+/// Change the settings: only the fields `change` touches, under the shared
+/// lock, never over a file that cannot be read.
+pub(crate) fn update_config<T>(
+    app: &AppHandle,
+    change: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>) -> T,
+) -> Result<T, CommandError> {
+    let config = app_config(app)
+        .ok_or_else(|| CommandError::Internal("app data directory is unavailable".into()))?;
+    config
+        .update(change)
+        .map_err(|error| CommandError::Internal(error.to_string()))
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or_default()
+}
+
+/// Record the opened space in the registry, by its identity (П16, П26).
+fn save_vault_path(app: &AppHandle, path: &str) {
+    let id = crate::space_registry::read_space_id(Path::new(path));
+    let now = now_ms();
+    let result = update_config(app, |cfg| match &id {
+        Some(id) => crate::space_registry::record_open(cfg, id, path, now),
+        None => crate::space_registry::record_path_only(cfg, path),
     });
-    if !found {
-        paths.push(serde_json::json!(path));
+    if let Err(error) = result {
+        log::warn!("failed to record the opened space {path}: {error}");
     }
 }
 
 /// Load the saved vault path from the config file.
 fn load_saved_vault_path(app: &AppHandle) -> Option<String> {
-    let cfg = load_config(app);
-    cfg.get("vault_path")?.as_str().map(|s| s.to_string())
+    let serde_json::Value::Object(cfg) = load_config(app) else {
+        return None;
+    };
+    crate::space_registry::current_path(&cfg)
 }
 
-/// Load known vaults, filtering out directories that no longer exist.
+/// The spaces that can be opened right now, canonical and without repeats.
 fn load_known_vaults(app: &AppHandle) -> Vec<String> {
-    let cfg = load_config(app);
-    let Some(arr) = cfg.get("known_vaults").and_then(|v| v.as_array()) else {
-        // Fallback: if no known_vaults, use current vault_path
-        return cfg
-            .get("vault_path")
-            .and_then(|v| v.as_str())
-            .filter(|p| PathBuf::from(p).is_dir())
-            .and_then(|s| canonical_space_path(s).ok().map(|path| vec![path]))
-            .unwrap_or_default();
+    let serde_json::Value::Object(cfg) = load_config(app) else {
+        return Vec::new();
     };
-    let paths: Vec<String> = arr
-        .iter()
-        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-        .filter(|p| PathBuf::from(p).is_dir())
-        .collect();
     let mut unique: Vec<String> = Vec::new();
-    for path in paths {
-        if let Ok(canonical) = canonical_space_path(&path) {
+    for status in crate::space_registry::statuses(&cfg) {
+        if !status.available {
+            continue;
+        }
+        if let Ok(canonical) = canonical_space_path(&status.record.path) {
             if !unique.contains(&canonical) {
                 unique.push(canonical);
             }
@@ -1925,11 +1887,36 @@ fn load_known_vaults(app: &AppHandle) -> Vec<String> {
     unique
 }
 
-/// Remove the saved vault path (directory no longer valid).
-fn clear_saved_vault_path(app: &AppHandle) {
-    if let Some(config) = config_path(app) {
-        let _ = std::fs::remove_file(&config);
+/// Bring spaces lost from the list back from their derived stores (П27),
+/// and follow a space renamed beside its old path (П30). Runs before the
+/// saved space is resolved at startup; both are no-ops when nothing is lost.
+fn repair_space_registry(app: &AppHandle) {
+    let Some(config) = app_config(app) else {
+        return;
+    };
+    let vaults_dir = crate::space_registry::vaults_dir(config.app_data_dir());
+    match config.update(|cfg| {
+        crate::space_registry::recover_from_derived_stores(cfg, &vaults_dir)
+    }) {
+        Ok(0) => {}
+        Ok(added) => log::info!("recovered {added} space(s) from their derived stores"),
+        Err(error) => log::warn!("space registry recovery skipped: {error}"),
     }
+}
+
+/// The saved space moved beside its old path: switch the registry to the new
+/// path and return it (П30). `None` when it cannot be found unambiguously.
+fn follow_moved_space(app: &AppHandle, saved_path: &str) -> Option<String> {
+    let serde_json::Value::Object(cfg) = load_config(app) else {
+        return None;
+    };
+    let record = crate::space_registry::record_at(&cfg, saved_path)?;
+    let moved = crate::space_registry::find_moved(&record)?;
+    let id = record.vault_id?;
+    let now = now_ms();
+    update_config(app, |cfg| crate::space_registry::record_open(cfg, &id, &moved, now)).ok()?;
+    log::info!("space {id} moved from {saved_path} to {moved}");
+    Some(moved)
 }
 
 #[cfg(test)]
@@ -1939,16 +1926,16 @@ mod tests {
     #[test]
     fn config_write_reports_failure_instead_of_claiming_success() {
         let root = tempfile::tempdir().unwrap();
-        let valid = root.path().join("config.json");
-        write_config_file(&valid, &serde_json::json!({"shortcut_overrides": {}})).unwrap();
-        assert!(valid.is_file());
+        let valid = crate::app_config::AppConfig::in_dir(root.path());
+        valid
+            .update(|cfg| cfg.insert("shortcut_overrides".into(), serde_json::json!({})))
+            .unwrap();
+        assert!(valid.path().is_file());
 
         let blocked_parent = root.path().join("not_a_directory");
         std::fs::write(&blocked_parent, b"file").unwrap();
-        let result = write_config_file(
-            &blocked_parent.join("config.json"),
-            &serde_json::json!({"shortcut_overrides": {}}),
-        );
+        let result = crate::app_config::AppConfig::in_dir(&blocked_parent)
+            .update(|cfg| cfg.insert("shortcut_overrides".into(), serde_json::json!({})));
         assert!(result.is_err());
     }
 
@@ -1994,22 +1981,21 @@ mod tests {
             canonical_space_path(alias.to_str().unwrap()).unwrap(),
             canonical
         );
-        assert!(same_space_path(
+        assert!(crate::space_registry::same_path(
             alias.to_str().unwrap(),
             root.path().to_str().unwrap()
         ));
+        // A path-only record under the alias becomes the space's record.
         let other = tempfile::tempdir().unwrap();
-        let mut registry = vec![
-            serde_json::json!(other.path().to_str().unwrap()),
-            serde_json::json!(alias.to_str().unwrap()),
-        ];
-        upsert_known_space(&mut registry, &canonical);
+        let mut cfg = serde_json::Map::new();
+        cfg.insert(
+            "known_vaults".into(),
+            serde_json::json!([other.path().to_str().unwrap(), alias.to_str().unwrap()]),
+        );
+        crate::space_registry::record_open(&mut cfg, "cea575682e5a4018991c0097fbedff66", &canonical, 1);
         assert_eq!(
-            registry,
-            vec![
-                serde_json::json!(other.path().to_str().unwrap()),
-                serde_json::json!(canonical),
-            ]
+            cfg["known_vaults"],
+            serde_json::json!([other.path().to_str().unwrap(), canonical])
         );
     }
 

@@ -17,7 +17,7 @@ use crate::commands::blocks::collect_delete_media_for_block;
 use crate::commands::state::{current_vault_layout, AppState, CommandError, VaultState};
 use crate::commands::vault::{
     canonical_space_path, derived_store_root, initialize_new_space_layout, load_config,
-    write_config,
+    update_config,
 };
 use crate::domain::block::{Block, BlockType, DateTime, Frontmatter};
 use crate::domain::vault::VaultLayout;
@@ -67,11 +67,11 @@ pub fn open_settings_window(app: AppHandle, section: Option<String>) -> Result<(
 
 fn known_vaults_from_config(cfg: &serde_json::Value) -> Vec<String> {
     let paths: Vec<String> = cfg
-        .get("known_vaults")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
+        .as_object()
+        .map(|cfg| {
+            crate::space_registry::records(cfg)
+                .into_iter()
+                .map(|record| record.path)
                 .collect()
         })
         .unwrap_or_default();
@@ -100,13 +100,10 @@ pub fn add_known_vault(app: AppHandle, path: String) -> Result<Vec<String>, Comm
     }
     initialize_new_space_layout(&VaultLayout::new(std::path::PathBuf::from(trimmed)))?;
 
-    let mut cfg = load_config(&app);
-    let mut known = known_vaults_from_config(&cfg);
-    if !known.iter().any(|existing| existing == trimmed) {
-        known.push(trimmed.to_string());
-        cfg["known_vaults"] = serde_json::json!(known);
-        write_config(&app, &cfg);
-    }
+    let id = crate::space_registry::read_space_id(Path::new(trimmed));
+    update_config(&app, |cfg| {
+        crate::space_registry::add_space(cfg, id.as_deref(), trimmed);
+    })?;
     Ok(known_vaults_from_config(&load_config(&app)))
 }
 
@@ -130,8 +127,7 @@ pub fn forget_known_vault(
             .as_ref()
             .map(|vs| vs.vault.root().to_string_lossy().to_string())
     };
-    let mut cfg = load_config(&app);
-    let current = known_vaults_from_config(&cfg);
+    let current = known_vaults_from_config(&load_config(&app));
     if active.as_deref() == Some(path.as_str()) && current.iter().any(|existing| existing != &path)
     {
         return Err(CommandError::Internal(
@@ -139,9 +135,12 @@ pub fn forget_known_vault(
         ));
     }
 
+    // Exactly this record goes; the app keeps running on its current space
+    // and every other setting stays (П28).
+    update_config(&app, |cfg| {
+        crate::space_registry::forget_record(cfg, &path, false);
+    })?;
     let known = detach_known_vault(current, &path);
-    cfg["known_vaults"] = serde_json::json!(known);
-    write_config(&app, &cfg);
 
     // Detach is not garbage collection. Backups, pending uploads and indexes
     // still owned by another process must survive removing the registry entry.
@@ -179,10 +178,8 @@ pub fn reorder_known_vaults(
     app: AppHandle,
     paths: Vec<String>,
 ) -> Result<Vec<String>, CommandError> {
-    let mut cfg = load_config(&app);
-    let known = reordered_known_vaults(&known_vaults_from_config(&cfg), paths)?;
-    cfg["known_vaults"] = serde_json::json!(known);
-    write_config(&app, &cfg);
+    let known = reordered_known_vaults(&known_vaults_from_config(&load_config(&app)), paths)?;
+    update_config(&app, |cfg| crate::space_registry::reorder(cfg, &known))?;
     Ok(known)
 }
 

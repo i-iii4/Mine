@@ -47,22 +47,16 @@ struct SpaceConfig {
 }
 
 fn load_space_config(env: &CliEnv) -> SpaceConfig {
-    let raw = std::fs::read_to_string(env.app_data_dir.join("config.json")).unwrap_or_default();
-    let value: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
-    let active = value
-        .get("vault_path")
-        .and_then(|v| v.as_str())
-        .map(PathBuf::from);
-    let mut known: Vec<PathBuf> = value
-        .get("known_vaults")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str())
-                .map(PathBuf::from)
-                .collect()
-        })
+    // Read through the settings' one owner (SPEC_VAULT_LIFECYCLE.md, П28);
+    // unreadable settings list no space rather than a guessed one.
+    let settings = crate::app_config::AppConfig::in_dir(&env.app_data_dir)
+        .read()
         .unwrap_or_default();
+    let active = crate::space_registry::current_path(&settings).map(PathBuf::from);
+    let mut known: Vec<PathBuf> = crate::space_registry::records(&settings)
+        .into_iter()
+        .map(|record| PathBuf::from(record.path))
+        .collect();
     if let Some(ref active) = active {
         if !known.contains(active) {
             known.insert(0, active.clone());

@@ -12,6 +12,7 @@ pub use commands::clipper_setup::{
     install_development_runtime, DevelopmentRuntimeInputs, DevelopmentRuntimeReport,
     RuntimeInstallationError,
 };
+pub mod app_config;
 pub mod domain;
 #[cfg(feature = "desktop")]
 mod frame_context_menu;
@@ -22,6 +23,7 @@ pub mod mcp;
 pub mod net;
 pub mod runtime_installation;
 pub mod runtime_protocol;
+pub mod space_registry;
 pub mod storage;
 #[cfg(feature = "desktop")]
 mod source_video_download;

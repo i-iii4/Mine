@@ -13,7 +13,7 @@ use tauri::{AppHandle, Manager};
 use std::sync::{Mutex, OnceLock};
 
 use crate::commands::state::CommandError;
-use crate::commands::vault::{load_config, write_config};
+use crate::commands::vault::update_config;
 use crate::domain::article_audio::prepare_article_speech;
 use crate::domain::vault::VaultLayout;
 use crate::storage::article_audio::{
@@ -56,13 +56,16 @@ pub(crate) struct DesktopArticleAudioHelperResponse {
 pub(crate) fn ensure_desktop_article_audio_config(
     app: &AppHandle,
 ) -> Result<DesktopArticleAudioConfig, CommandError> {
-    let mut config = load_config(app);
-    let before = config.clone();
-    let article_audio_config = merge_article_audio_defaults(&mut config)?;
-    if config != before {
-        write_config(app, &config);
-    }
-    Ok(article_audio_config)
+    // Only the article-audio defaults are merged in; every other setting
+    // stays as another writer left it (SPEC_VAULT_LIFECYCLE.md, П28).
+    update_config(app, |cfg| {
+        let mut config = serde_json::Value::Object(std::mem::take(cfg));
+        let merged = merge_article_audio_defaults(&mut config);
+        if let serde_json::Value::Object(map) = config {
+            *cfg = map;
+        }
+        merged
+    })?
 }
 
 pub(crate) fn generate_desktop_article_audio(
