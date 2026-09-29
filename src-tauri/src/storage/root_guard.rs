@@ -64,6 +64,25 @@ pub fn ensure_root_present(vault: &VaultLayout) -> Result<(), RootUnavailable> {
     }
 }
 
+/// Whether the open space's folder is gone: missing, or another space. The
+/// watch that asks every few seconds never waits for iCloud: an identity
+/// file whose contents are only in the cloud cannot prove the folder gone,
+/// and reading it would stall on a download or fail offline.
+pub fn root_gone(vault: &VaultLayout) -> bool {
+    let root = vault.root();
+    if !root.is_dir() {
+        return true;
+    }
+    if expected_space_id(vault).is_some()
+        && [vault.vault_id_path(), vault.legacy_vault_id_path()]
+            .iter()
+            .any(|path| crate::storage::media_dimensions::is_content_offloaded(path))
+    {
+        return false;
+    }
+    root_state(vault) != RootState::Present
+}
+
 /// The cheap re-check between single removals of a long pass: the folder
 /// can be renamed while the pass runs.
 pub fn root_still_there(vault: &VaultLayout) -> bool {
@@ -99,6 +118,24 @@ fn is_space_id(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_space_whose_identity_is_only_in_icloud_is_not_gone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("Mobile Documents").join("NSFV");
+        std::fs::create_dir_all(root.join(".mine")).unwrap();
+        std::fs::File::create(root.join(".mine/vault-id"))
+            .unwrap()
+            .set_len(32)
+            .unwrap();
+        let vault = VaultLayout::with_derived_root(
+            root.clone(),
+            tmp.path().join("vaults").join("e7fc8f8bf1294aaa89f375ac9cfaf1b4"),
+        );
+        assert!(!root_gone(&vault));
+        std::fs::rename(&root, tmp.path().join("Mobile Documents").join("NSFV!")).unwrap();
+        assert!(root_gone(&vault));
+    }
+
     use super::*;
 
     const ID: &str = "cea575682e5a4018991c0097fbedff66";

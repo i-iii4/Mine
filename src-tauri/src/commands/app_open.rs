@@ -12,7 +12,7 @@ fn requested_space(url: &tauri::Url, known: &[String]) -> Option<String> {
 }
 
 pub fn receive(app: &tauri::AppHandle, urls: &[tauri::Url]) {
-    let known = super::vault::list_known_vaults(app.clone());
+    let known = super::vault::load_known_vaults(app);
     for url in urls {
         if let Some(path) = requested_space(url, &known) {
             match app.state::<PendingSpace>().0.lock() {

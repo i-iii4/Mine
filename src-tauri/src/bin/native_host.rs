@@ -305,6 +305,10 @@ struct RequestSpace {
     /// its receipts move to the identity binding.
     accepted_legacy: Option<String>,
     binding_accepted: bool,
+    /// The space's identity, known without waiting for iCloud: read from the
+    /// folder, or the one the request named when the folder's identity file
+    /// is only in the cloud.
+    identity: Option<String>,
 }
 
 impl RequestSpace {
@@ -366,6 +370,7 @@ fn resolve_request_space_in(
             moved_from: None,
             accepted_legacy: None,
             binding_accepted: true,
+            identity: None,
         };
     };
     let (path, moved_from) = match space_registry::locate(cfg, identity, &hint) {
@@ -382,8 +387,14 @@ fn resolve_request_space_in(
                 moved_from: Some(path),
                 accepted_legacy: None,
                 binding_accepted: false,
+                identity: None,
             };
         }
+    };
+    let identity = match space_registry::space_identity(Path::new(&path)) {
+        space_registry::SpaceIdentity::Known(id) => Some(id),
+        space_registry::SpaceIdentity::InCloud => identity.map(str::to_string),
+        space_registry::SpaceIdentity::Absent => None,
     };
     let (binding_accepted, accepted_legacy) = match binding {
         None => (true, None),
@@ -397,10 +408,7 @@ fn resolve_request_space_in(
                 .any(|spelling| save_operations::legacy_binding_of_path(spelling) == value);
             (proven, proven.then(|| value.to_string()))
         }
-        Some(value) => (
-            space_registry::read_space_id(Path::new(&path)).as_deref() == Some(value),
-            None,
-        ),
+        Some(value) => (identity.as_deref() == Some(value), None),
     };
     RequestSpace {
         state: if moved_from.is_some() { "moved" } else { "ready" },
@@ -408,6 +416,7 @@ fn resolve_request_space_in(
         moved_from,
         accepted_legacy,
         binding_accepted,
+        identity,
     }
 }
 
@@ -617,7 +626,11 @@ fn handle_list_known_vaults() {
 /// it cannot read (SPEC_VAULT_LIFECYCLE.md, П28). Returns the updated list.
 fn add_known_vault(path: &str) -> Result<Vec<String>, String> {
     let path = canonical_native_space_path(path)?;
-    let id = mine_lib::space_registry::read_space_id(std::path::Path::new(&path));
+    // Never wait for iCloud: an identity still in the cloud is learned later.
+    let id = match mine_lib::space_registry::space_identity(std::path::Path::new(&path)) {
+        mine_lib::space_registry::SpaceIdentity::Known(id) => Some(id),
+        _ => None,
+    };
     let settings = mine_lib::app_config::AppConfig::in_dir(&native_app_data_dir()?);
     settings
         .update(|cfg| {
@@ -795,6 +808,9 @@ fn handle_get_status_with_upload(
 ) {
     let (binding_id, folder_state, error) = match &space.path {
         None => (None, space.state, space.message()),
+        // The identity is the binding (К2); reading it again could wait for
+        // iCloud.
+        Some(_) if space.identity.is_some() => (space.identity.clone(), space.state, None),
         Some(path) => match save_operations::binding_id(&VaultLayout::new(PathBuf::from(path))) {
             Ok(id) => (Some(id), space.state, None),
             Err(error) => {
@@ -807,10 +823,7 @@ fn handle_get_status_with_upload(
             }
         },
     };
-    let vault_id = space
-        .path
-        .as_deref()
-        .and_then(|path| mine_lib::space_registry::read_space_id(Path::new(path)));
+    let vault_id = space.identity.clone();
     send_response(&StatusResponse {
         ok: true,
         connected: true,

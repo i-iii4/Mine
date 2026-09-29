@@ -40,23 +40,70 @@ pub struct SpaceStatus {
     pub available: bool,
 }
 
-/// The space identity stored in a folder, if it can be read.
+const ID_FILES: [&str; 2] = [".mine/vault-id", ".arena/vault-id"];
+
+/// The space identity stored in a folder, if it can be read. Reading an
+/// identity file whose contents iCloud has moved off this Mac waits for the
+/// download: only for work that must know the identity and may wait.
 pub fn read_space_id(folder: &Path) -> Option<String> {
-    [".mine/vault-id", ".arena/vault-id"].iter().find_map(|name| {
-        let text = std::fs::read_to_string(folder.join(name)).ok()?;
-        let id = text.trim();
-        (!id.is_empty()).then(|| id.to_string())
-    })
+    ID_FILES.iter().find_map(|name| read_id_file(&folder.join(name)))
 }
 
-/// Whether `path` holds the space `record` stands for.
+/// What a folder says about its identity, without waiting for iCloud.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SpaceIdentity {
+    Known(String),
+    /// The identity file is there, but its contents are only in iCloud.
+    InCloud,
+    Absent,
+}
+
+/// Read the identity only when its contents are on this Mac. A listing of
+/// spaces must never wait for iCloud: a disk short on space leaves even this
+/// 32-byte file in the cloud, and reading it would stall the caller.
+pub fn space_identity(folder: &Path) -> SpaceIdentity {
+    for name in ID_FILES {
+        let path = folder.join(name);
+        if !path.is_file() {
+            continue;
+        }
+        if crate::storage::media_dimensions::is_content_offloaded(&path) {
+            return SpaceIdentity::InCloud;
+        }
+        if let Some(id) = read_id_file(&path) {
+            return SpaceIdentity::Known(id);
+        }
+    }
+    SpaceIdentity::Absent
+}
+
+fn read_id_file(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let id = text.trim();
+    (!id.is_empty()).then(|| id.to_string())
+}
+
+/// The identity when it can be known without waiting.
+fn known_space_id(folder: &Path) -> Option<String> {
+    match space_identity(folder) {
+        SpaceIdentity::Known(id) => Some(id),
+        SpaceIdentity::InCloud | SpaceIdentity::Absent => None,
+    }
+}
+
+/// Whether `path` holds the space `record` stands for. An identity file
+/// still in iCloud cannot disprove it: the folder is where the space was.
 pub fn is_available(record: &SpaceRecord) -> bool {
     let folder = Path::new(&record.path);
     if !folder.is_dir() {
         return false;
     }
     match &record.vault_id {
-        Some(id) => read_space_id(folder).as_deref() == Some(id.as_str()),
+        Some(id) => match space_identity(folder) {
+            SpaceIdentity::Known(found) => &found == id,
+            SpaceIdentity::InCloud => true,
+            SpaceIdentity::Absent => false,
+        },
         None => true,
     }
 }
@@ -77,7 +124,7 @@ pub fn records(cfg: &Map<String, Value>) -> Vec<SpaceRecord> {
                 .iter()
                 .filter_map(Value::as_str)
                 .map(|path| SpaceRecord {
-                    vault_id: read_space_id(Path::new(path)),
+                    vault_id: known_space_id(Path::new(path)),
                     path: path.to_string(),
                     last_opened_ms: None,
                 })
@@ -87,7 +134,7 @@ pub fn records(cfg: &Map<String, Value>) -> Vec<SpaceRecord> {
     if let Some(current) = current_path(cfg) {
         if !records.iter().any(|record| same_path(&record.path, &current)) {
             records.push(SpaceRecord {
-                vault_id: read_space_id(Path::new(&current)),
+                vault_id: known_space_id(Path::new(&current)),
                 path: current,
                 last_opened_ms: None,
             });
@@ -192,7 +239,7 @@ pub fn find_moved(record: &SpaceRecord) -> Option<String> {
         if path == old || !path.is_dir() {
             continue;
         }
-        if read_space_id(&path).as_deref() == Some(id) {
+        if known_space_id(&path).as_deref() == Some(id) {
             if found.is_some() {
                 return None;
             }
@@ -234,10 +281,15 @@ pub fn locate(cfg: &Map<String, Value>, vault_id: Option<&str>, hint: &str) -> L
     if hint_readable {
         match vault_id {
             None => return Located::Here { path: hint.to_string() },
-            Some(id) if read_space_id(here).as_deref() == Some(id) => {
-                return Located::Here { path: hint.to_string() }
-            }
-            Some(_) => {}
+            Some(id) => match space_identity(here) {
+                SpaceIdentity::Known(found) if found == id => {
+                    return Located::Here { path: hint.to_string() }
+                }
+                // The folder is where the space was; its identity is only
+                // in iCloud and cannot say otherwise.
+                SpaceIdentity::InCloud => return Located::Here { path: hint.to_string() },
+                SpaceIdentity::Known(_) | SpaceIdentity::Absent => {}
+            },
         }
     }
     let id = vault_id
@@ -301,7 +353,7 @@ pub fn forget_record(cfg: &mut Map<String, Value>, path: &str, clear_current: bo
         }
     });
     if forgotten_ids.is_empty() {
-        if let Some(id) = read_space_id(Path::new(path)) {
+        if let Some(id) = known_space_id(Path::new(path)) {
             forgotten_ids.push(id);
         }
     }
@@ -491,6 +543,36 @@ mod tests {
         let store = vaults_dir(app_data).join(id);
         std::fs::create_dir_all(&store).unwrap();
         std::fs::write(store.join("owner-path.json"), json!({ "path": path }).to_string()).unwrap();
+    }
+
+    /// A space whose identity file iCloud moved off this Mac: the name and
+    /// size stay, no blocks are allocated.
+    fn space_in_cloud(parent: &Path, name: &str) -> String {
+        let folder = parent.join("Mobile Documents").join(name);
+        std::fs::create_dir_all(folder.join(".mine")).unwrap();
+        std::fs::File::create(folder.join(".mine/vault-id"))
+            .unwrap()
+            .set_len(32)
+            .unwrap();
+        folder.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn an_identity_only_in_icloud_is_never_waited_for() {
+        let dir = tempfile::tempdir().unwrap();
+        let nsfv = space_in_cloud(dir.path(), "NSFV");
+        assert_eq!(space_identity(Path::new(&nsfv)), SpaceIdentity::InCloud);
+        let record = SpaceRecord {
+            vault_id: Some(NSFV.into()),
+            path: nsfv.clone(),
+            last_opened_ms: None,
+        };
+        // The folder is where the space was: listed as available, opened in
+        // place, not searched for.
+        assert!(is_available(&record));
+        let mut cfg = Map::new();
+        add_space(&mut cfg, Some(NSFV), &nsfv);
+        assert_eq!(locate(&cfg, Some(NSFV), &nsfv), Located::Here { path: nsfv });
     }
 
     #[test]

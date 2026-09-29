@@ -65,9 +65,14 @@ struct VaultSyncFinishedPayload {
 // ─── Commands ───────────────────────────────────────────────────────────────
 
 /// List all known vault paths (directories that still exist on disk).
+///
+/// Off the main thread: a synchronous command runs there, and a slow disk or
+/// iCloud would stall every window with it.
 #[tauri::command]
-pub fn list_known_vaults(app: AppHandle) -> Vec<String> {
-    load_known_vaults(&app)
+pub async fn list_known_vaults(app: AppHandle) -> Result<Vec<String>, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || load_known_vaults(&app))
+        .await
+        .map_err(|error| CommandError::Internal(format!("space list worker failed: {error}")))
 }
 
 /// One space in the list, with whether it can be opened right now.
@@ -86,8 +91,14 @@ pub struct SpaceEntry {
 /// (SPEC_VAULT_LIFECYCLE.md, П25, П26). Unavailable spaces stay listed and
 /// marked instead of disappearing.
 #[tauri::command]
-pub fn list_spaces(app: AppHandle) -> Vec<SpaceEntry> {
-    let serde_json::Value::Object(cfg) = load_config(&app) else {
+pub async fn list_spaces(app: AppHandle) -> Result<Vec<SpaceEntry>, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || space_entries(&app))
+        .await
+        .map_err(|error| CommandError::Internal(format!("space list worker failed: {error}")))
+}
+
+fn space_entries(app: &AppHandle) -> Vec<SpaceEntry> {
+    let serde_json::Value::Object(cfg) = load_config(app) else {
         return Vec::new();
     };
     let current = crate::space_registry::current_path(&cfg);
@@ -958,9 +969,7 @@ fn watch_space_root(app: &AppHandle, layout: VaultLayout) {
             if !still_watched {
                 return;
             }
-            if crate::storage::root_guard::root_state(&layout)
-                == crate::storage::root_guard::RootState::Present
-            {
+            if !crate::storage::root_guard::root_gone(&layout) {
                 continue;
             }
             if let Ok(mut watched) = WATCHED.lock() {
@@ -1977,7 +1986,7 @@ fn load_saved_vault_path(app: &AppHandle) -> Option<String> {
 }
 
 /// The spaces that can be opened right now, canonical and without repeats.
-fn load_known_vaults(app: &AppHandle) -> Vec<String> {
+pub(crate) fn load_known_vaults(app: &AppHandle) -> Vec<String> {
     let serde_json::Value::Object(cfg) = load_config(app) else {
         return Vec::new();
     };

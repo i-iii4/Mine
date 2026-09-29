@@ -100,7 +100,12 @@ pub fn add_known_vault(app: AppHandle, path: String) -> Result<Vec<String>, Comm
     }
     initialize_new_space_layout(&VaultLayout::new(std::path::PathBuf::from(trimmed)))?;
 
-    let id = crate::space_registry::read_space_id(Path::new(trimmed));
+    // Never wait for iCloud here: an identity still in the cloud is learned
+    // when the space is opened.
+    let id = match crate::space_registry::space_identity(Path::new(trimmed)) {
+        crate::space_registry::SpaceIdentity::Known(id) => Some(id),
+        _ => None,
+    };
     update_config(&app, |cfg| {
         crate::space_registry::add_space(cfg, id.as_deref(), trimmed);
     })?;
