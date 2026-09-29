@@ -447,6 +447,26 @@ export async function fetchWordWidths(
   return result;
 }
 
+/** How many cards from the top of the feed are measured before the rest. */
+export const FIRST_MEASURED_BLOCKS = 48;
+
+/**
+ * Measure the top of the feed first and publish it before the rest. A card
+ * renders as soon as its own widths are known; measuring a whole space before
+ * showing any of it kept a newly opened space blank for seconds.
+ */
+export async function measureTopFirst(
+  blocks: LightBlock[],
+  fetch: (blocks: LightBlock[]) => Promise<Map<number, WordWidths>>,
+  publish: (computed: Map<number, WordWidths>) => void,
+  isCancelled: () => boolean,
+): Promise<void> {
+  publish(await fetch(blocks.slice(0, FIRST_MEASURED_BLOCKS)));
+  const rest = blocks.slice(FIRST_MEASURED_BLOCKS);
+  if (isCancelled() || rest.length === 0) return;
+  publish(await fetch(rest));
+}
+
 /** Current font hash. Exposed for debugging and cache inspection. */
 export function getFontHash(): FontHash {
   return FONT_HASH;

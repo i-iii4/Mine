@@ -1,10 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { LightBlock } from "@/types";
 import { FONT_METRICS_PREVIEW_MAX_CHARS } from "@/types/fontMetrics";
 import {
   createFontMetricsCacheIdentity,
+  FIRST_MEASURED_BLOCKS,
   getFontHash,
+  measureTopFirst,
 } from "./fontMetrics";
+import type { WordWidths } from "@/types/fontMetrics";
 
 function makeBlock(overrides: Partial<LightBlock> = {}): LightBlock {
   return {
@@ -87,5 +90,40 @@ describe("createFontMetricsCacheIdentity", () => {
     }));
 
     expect(second.cacheKey).toBe(first.cacheKey);
+  });
+});
+
+describe("measuring a newly opened space", () => {
+  const blocks = Array.from({ length: 130 }, (_, index) => makeBlock({ id: index + 1, slug: `b-${index + 1}` }));
+  const widthsFor = (batch: LightBlock[]) =>
+    new Map(batch.map((block) => [block.id, {} as unknown as WordWidths]));
+
+  it("publishes the top of the feed before the rest is measured", async () => {
+    let finishRest: (() => void) | undefined;
+    const calls: number[][] = [];
+    const published: number[] = [];
+    const fetch = (batch: LightBlock[]) => {
+      calls.push(batch.map((block) => block.id));
+      if (calls.length === 1) return Promise.resolve(widthsFor(batch));
+      return new Promise<Map<number, WordWidths>>((resolve) => { finishRest = () => resolve(widthsFor(batch)); });
+    };
+    const done = measureTopFirst(blocks, fetch, (computed) => published.push(computed.size), () => false);
+    await vi.waitFor(() => expect(finishRest).toBeDefined());
+    expect(calls[0]).toEqual(blocks.slice(0, FIRST_MEASURED_BLOCKS).map((block) => block.id));
+    expect(published).toEqual([FIRST_MEASURED_BLOCKS]);
+    finishRest?.();
+    await done;
+    expect(published).toEqual([FIRST_MEASURED_BLOCKS, blocks.length - FIRST_MEASURED_BLOCKS]);
+  });
+
+  it("stops after the top when the feed moved on", async () => {
+    const calls: number[] = [];
+    await measureTopFirst(
+      blocks,
+      async (batch) => { calls.push(batch.length); return widthsFor(batch); },
+      () => undefined,
+      () => true,
+    );
+    expect(calls).toEqual([FIRST_MEASURED_BLOCKS]);
   });
 });

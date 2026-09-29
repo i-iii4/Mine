@@ -40,7 +40,7 @@ import {
 import { computeCardHeight } from "@/lib/cardHeight";
 import { computeFeedPlaybackSurfaceEnvelope } from "@/lib/cardHeight";
 import { LayoutCache } from "@/lib/layoutCache";
-import { createFontMetricsCacheIdentity, fetchWordWidths } from "@/lib/fontMetrics";
+import { createFontMetricsCacheIdentity, fetchWordWidths, measureTopFirst } from "@/lib/fontMetrics";
 import { useGridScroll } from "@/hooks/useGridScroll";
 import { useFeedMediaPreloader } from "@/hooks/useFeedMediaPreloader";
 import type { WordWidths } from "@/types/fontMetrics";
@@ -711,23 +711,23 @@ export function Grid({
     // New or edited blocks have no exact height yet; hold them in the skeleton
     // state until their widths arrive rather than flashing a fallback height.
     setWordMetricsSettled(false);
-    void fetchWordWidths(needsCompute)
-      .then((computed) => {
-        if (cancelled || computed.size === 0) return;
-        for (const id of computed.keys()) {
-          const cacheKey = identityByBlockId.get(id);
-          if (cacheKey !== undefined) {
-            wordWidthsIdentityRef.current.set(id, cacheKey);
-          }
+    const publish = (computed: Map<number, WordWidths>) => {
+      if (cancelled || computed.size === 0) return;
+      for (const id of computed.keys()) {
+        const cacheKey = identityByBlockId.get(id);
+        if (cacheKey !== undefined) {
+          wordWidthsIdentityRef.current.set(id, cacheKey);
         }
-        setWordWidthsMap((prev) => {
-          const next = new Map(prev);
-          for (const [id, widths] of computed) {
-            next.set(id, widths);
-          }
-          return next;
-        });
-      })
+      }
+      setWordWidthsMap((prev) => {
+        const next = new Map(prev);
+        for (const [id, widths] of computed) {
+          next.set(id, widths);
+        }
+        return next;
+      });
+    };
+    void measureTopFirst(needsCompute, fetchWordWidths, publish, () => cancelled)
       .finally(() => {
         if (!cancelled) {
           setWordMetricsSettled(true);
