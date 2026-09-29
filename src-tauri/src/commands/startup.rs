@@ -22,6 +22,7 @@ fn valid_milestone(event: &str) -> bool {
             | "window_shell_painted"
             | "first_route_committed"
             | "first_cards_painted"
+            | "space_switch_requested"
             | "interactive"
             | "update_ready"
     )

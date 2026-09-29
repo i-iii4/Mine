@@ -35,6 +35,7 @@ vi.mock("@/lib/commands", () => ({
   selectVault: commandMocks.selectVault,
   forgetKnownVault: commandMocks.forgetKnownVault,
   listSpaces: commandMocks.listSpaces,
+  recordStartupMilestone: () => Promise.resolve(),
 }));
 
 describe("VaultSwitcher", () => {

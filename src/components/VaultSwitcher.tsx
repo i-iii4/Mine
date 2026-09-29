@@ -41,7 +41,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { forgetKnownVault, listKnownVaults, listSpaces, selectVault } from "@/lib/commands";
+import { forgetKnownVault, listKnownVaults, listSpaces, recordStartupMilestone, selectVault } from "@/lib/commands";
 import type { SpaceEntry } from "@/types";
 import { cn } from "@/lib/utils";
 
@@ -144,6 +144,7 @@ export function VaultSwitcher({
 
   const handleSwitch = useCallback(async (path: string) => {
     if (path === currentPath) return;
+    void recordStartupMilestone("space_switch_requested").catch(() => {});
     setOpen(false);
     resetMenuSearch();
     await selectVault(path);

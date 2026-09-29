@@ -116,6 +116,7 @@ export type StartupMilestone =
   | "window_shell_painted"
   | "first_route_committed"
   | "first_cards_painted"
+  | "space_switch_requested"
   | "update_ready"
   | "interactive";
 

@@ -130,6 +130,9 @@ pub async fn select_vault(
     path: String,
 ) -> Result<VaultOpenResult, CommandError> {
     let _ = state;
+    // With the frontend's space_switch_requested these bound where a slow
+    // switch spends its time: the IPC hop, the selection lock or the open.
+    append_startup_trace(&app, "select_vault", "received");
     tauri::async_runtime::spawn_blocking(move || open_space_blocking(&app, &path))
         .await
         .map_err(|error| CommandError::Internal(format!("vault selection worker failed: {error}")))?
@@ -144,6 +147,7 @@ fn open_space_blocking(app: &AppHandle, path: &str) -> Result<VaultOpenResult, C
         .vault_selection
         .lock()
         .map_err(|_| CommandError::Internal("vault selection mutex poisoned".into()))?;
+    append_startup_trace(app, "select_vault", "selection_locked");
     require_latest_selection(&state, request)?;
     let path = canonical_space_path(path)?;
     let result = initialize_vault(app, &state, &path, request)?;
