@@ -78,23 +78,28 @@ pub async fn select_vault(
     state: State<'_, AppState>,
     path: String,
 ) -> Result<VaultOpenResult, CommandError> {
+    let _ = state;
+    tauri::async_runtime::spawn_blocking(move || open_space_blocking(&app, &path))
+        .await
+        .map_err(|error| CommandError::Internal(format!("vault selection worker failed: {error}")))?
+}
+
+/// Open the space at `path`, record it and tell every window. Shared by the
+/// explicit selection and by following a space that moved (П30).
+fn open_space_blocking(app: &AppHandle, path: &str) -> Result<VaultOpenResult, CommandError> {
+    let state = app.state::<AppState>();
     let request = state.begin_vault_selection();
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let _selection = state
-            .vault_selection
-            .lock()
-            .map_err(|_| CommandError::Internal("vault selection mutex poisoned".into()))?;
-        require_latest_selection(&state, request)?;
-        let path = canonical_space_path(&path)?;
-        let result = initialize_vault(&app, &state, &path, request)?;
-        require_latest_selection(&state, request)?;
-        save_vault_path(&app, &path);
-        let _ = app.emit("vault-selected", VaultChangedPayload { path });
-        Ok(result)
-    })
-    .await
-    .map_err(|error| CommandError::Internal(format!("vault selection worker failed: {error}")))?
+    let _selection = state
+        .vault_selection
+        .lock()
+        .map_err(|_| CommandError::Internal("vault selection mutex poisoned".into()))?;
+    require_latest_selection(&state, request)?;
+    let path = canonical_space_path(path)?;
+    let result = initialize_vault(app, &state, &path, request)?;
+    require_latest_selection(&state, request)?;
+    save_vault_path(app, &path);
+    let _ = app.emit("vault-selected", VaultChangedPayload { path });
+    Ok(result)
 }
 
 fn require_latest_selection(state: &AppState, request: u64) -> Result<(), CommandError> {
@@ -785,6 +790,7 @@ fn initialize_vault(
     let db_started = Instant::now();
     let (vault, conn, indexed) =
         db::open_vault_index(vault).map_err(|error| CommandError::Internal(error.to_string()))?;
+    let root_watch_layout = vault.clone();
     let derived_store_ready = db::index_is_ready(&conn)?;
     let migration_required = !derived_store_ready;
     append_startup_trace(
@@ -870,6 +876,7 @@ fn initialize_vault(
     );
 
     start_index_metadata_backfill(app.clone(), path.to_string());
+    watch_space_root(app, root_watch_layout);
 
     Ok(VaultOpenResult {
         indexed,
@@ -880,6 +887,67 @@ fn initialize_vault(
         migration_required,
         thumbs_root,
     })
+}
+
+/// How often the open space's folder is checked for still being there.
+const SPACE_ROOT_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Watch the open space's folder itself (SPEC_VAULT_LIFECYCLE.md, П15, П30).
+///
+/// The file watcher reports what happens inside the folder; a rename of the
+/// folder itself only looks like every file vanishing. One cheap check every
+/// [`SPACE_ROOT_CHECK_INTERVAL`] asks the root guard whether the folder is
+/// still this space. When it is not, the space is looked for beside its old
+/// path by identity and reopened there, or the unavailable screen is shown.
+/// Opening another space retires the previous check.
+fn watch_space_root(app: &AppHandle, layout: VaultLayout) {
+    static WATCHED: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+    let root = layout.root().to_path_buf();
+    if let Ok(mut watched) = WATCHED.lock() {
+        *watched = Some(root.clone());
+    }
+    let app = app.clone();
+    let spawned = std::thread::Builder::new()
+        .name("space-root-watch".into())
+        .spawn(move || loop {
+            std::thread::sleep(SPACE_ROOT_CHECK_INTERVAL);
+            let still_watched = WATCHED
+                .lock()
+                .map(|watched| watched.as_deref() == Some(root.as_path()))
+                .unwrap_or(false);
+            if !still_watched {
+                return;
+            }
+            if crate::storage::root_guard::root_state(&layout)
+                == crate::storage::root_guard::RootState::Present
+            {
+                continue;
+            }
+            if let Ok(mut watched) = WATCHED.lock() {
+                if watched.as_deref() == Some(root.as_path()) {
+                    *watched = None;
+                }
+            }
+            handle_space_root_lost(&app, &root);
+            return;
+        });
+    if let Err(error) = spawned {
+        log::warn!("cannot watch the space folder: {error}");
+    }
+}
+
+/// The open space's folder is gone or is another space now.
+fn handle_space_root_lost(app: &AppHandle, root: &Path) {
+    let path = root.to_string_lossy().into_owned();
+    log::warn!("space folder is no longer there: {path}");
+    if let Some(moved) = follow_moved_space(app, &path) {
+        match open_space_blocking(app, &moved) {
+            Ok(_) => return,
+            Err(error) => log::warn!("cannot reopen the moved space at {moved}: {error}"),
+        }
+    }
+    let reason = unavailable_reason(root).unwrap_or(UnavailableVaultReason::Missing);
+    let _ = app.emit("space-unavailable", UnavailableVault { path, reason });
 }
 
 /// Current thumb cache format version. Bump this when the thumbnail

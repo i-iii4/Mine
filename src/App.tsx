@@ -463,6 +463,24 @@ export function App() {
     };
   }, []);
 
+  // The open space's folder disappeared while the app ran and could not be
+  // found beside its old path: show the same screen as at startup
+  // (SPEC_VAULT_LIFECYCLE.md, П15). A space found under a new name reopens
+  // through "vault-selected" above instead.
+  useEffect(() => {
+    let cancelled = false;
+    const unlisten = listen<{ path: string; reason: UnavailableVaultReason }>("space-unavailable", (event) => {
+      if (cancelled) return;
+      setUnavailablePath(event.payload.path);
+      setUnavailableReason(event.payload.reason);
+      setVaultPath(null);
+    });
+    return () => {
+      cancelled = true;
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
   if (loading) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-background">

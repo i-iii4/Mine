@@ -219,10 +219,21 @@ fn reconcile_projection(
         .map_err(|error| ReconcileError::State(error.into()))?;
     lock.lock_exclusive()
         .map_err(|error| ReconcileError::State(error.into()))?;
+    let was_ready = db::index_is_ready(conn).map_err(ReconcileError::State)?;
     db::set_index_ready(conn, false).map_err(ReconcileError::State)?;
     let mut aggregate: Option<ReconcileReport> = None;
     for _ in 0..MAX_SOURCE_PASSES {
-        let report = reconcile_source_pass(conn, vault, on_progress, identity)?;
+        let report = match reconcile_source_pass(conn, vault, on_progress, identity) {
+            Ok(report) => report,
+            // The folder is gone and the pass rolled back without touching the
+            // index: it is exactly as ready as before, and a space reopened
+            // under its new name shows it at once (П31).
+            Err(ReconcileError::RootUnavailable(unavailable)) => {
+                db::set_index_ready(conn, was_ready).map_err(ReconcileError::State)?;
+                return Err(ReconcileError::RootUnavailable(unavailable));
+            }
+            Err(error) => return Err(error),
+        };
         let fresh = report.is_fresh();
         match &mut aggregate {
             Some(total) => {
@@ -855,6 +866,8 @@ mod tests {
             Err(ReconcileError::RootUnavailable(_))
         ));
         assert!(index::get_block(&conn, "Note").unwrap().is_some());
+        // Still ready: reopening under the new name shows it at once (П31).
+        assert!(db::index_is_ready(&conn).unwrap());
         assert_eq!(std::fs::read(vault.thumb_path("Note")).unwrap(), b"preview");
     }
 
