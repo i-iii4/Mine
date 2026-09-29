@@ -402,7 +402,7 @@ pub fn recover_from_derived_stores(cfg: &mut Map<String, Value>, vaults_dir: &Pa
     if found.is_empty() {
         return 0;
     }
-    found.sort_by(|left, right| right.0.cmp(&left.0));
+    found.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     let added = found.len();
     records.extend(found.into_iter().map(|(_, record)| record));
     write_records(cfg, &records);

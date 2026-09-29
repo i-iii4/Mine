@@ -192,6 +192,8 @@ export function useClipperState() {
   const uploadPortRef = useRef<number | null>(null);
   const uploadTokenRef = useRef<string | null>(null);
   const supportsPendingUploadsRef = useRef(false);
+  // What the connected helper declared it accepts (SPEC_CLIPPER.md, К4).
+  const nativeFeaturesRef = useRef<string[]>([]);
   const nativeStatusErrorRef = useRef<string | null>(null);
   const nativeStatusPromiseRef = useRef<Promise<boolean> | null>(null);
   const nativeStatusGenerationRef = useRef<number | null>(null);
@@ -485,6 +487,9 @@ export function useClipperState() {
         uploadTokenRef.current = typeof status.upload_token === "string" ? status.upload_token : null;
         supportsPendingUploadsRef.current = Array.isArray(status.features)
           && status.features.includes("pending_uploads_v1");
+        nativeFeaturesRef.current = Array.isArray(status.features)
+          ? status.features.filter((feature): feature is string => typeof feature === "string")
+          : [];
 
         // A previously selected browser folder is not replaced when Mine appears.
         if (destinationRef.current !== "native" && (standalone.configured || destinationRef.current === "browser")) {
@@ -1486,8 +1491,15 @@ export function useClipperState() {
       executor: chosenExecutor,
       bindingId: chosenBinding,
       vaultPath: chosenVault,
-      // saved_at is the local wall clock without a zone, shared by both executors.
-      payload: baselineSaveRequest({ ...payload, saved_at: localSavedAt() }, chosenExecutor === "browser" ? 1 : saveProtocolRef.current ?? 1),
+      // saved_at is the local wall clock without a zone, shared by both
+      // executors. A helper that has not declared this form gets no saved_at
+      // and stamps the card itself (К4).
+      payload: baselineSaveRequest(
+        chosenExecutor === "browser" || nativeFeaturesRef.current.includes("local_saved_at_v1")
+          ? { ...payload, saved_at: localSavedAt() }
+          : payload,
+        chosenExecutor === "browser" ? 1 : saveProtocolRef.current ?? 1,
+      ),
       attempted: false,
     };
     // A failed readback may follow a successful journal write. Keep this exact

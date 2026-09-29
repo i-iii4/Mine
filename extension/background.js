@@ -353,6 +353,10 @@ function getNativePort() {
 
   const port = nativePort;
   port.onMessage.addListener((msg) => {
+    if (msg?.code === "host_replaced") {
+      retireReplacedHost(port, msg);
+      return;
+    }
     const id = msg._messageId;
     if (id !== undefined && pendingCallbacks.has(id)) {
       const { resolve, timeout, action } = pendingCallbacks.get(id);
@@ -379,6 +383,26 @@ function getNativePort() {
   return nativePort;
 }
 
+// A newer helper was installed while this connection stayed open (К4). The
+// old process answers `host_replaced` to the first request it reads and ends
+// without acting on it; the requests still waiting were never read. Every one
+// of them goes again, once, to the new helper.
+function retireReplacedHost(port, reply) {
+  if (nativePort === port) nativePort = null;
+  try {
+    port.disconnect();
+  } catch {
+    // The process may already be gone.
+  }
+  // Resending registers new callbacks: settle a snapshot of the old ones.
+  const waiting = [...pendingCallbacks.values()];
+  pendingCallbacks.clear();
+  for (const { resolve, timeout } of waiting) {
+    clearTimeout(timeout);
+    resolve(reply);
+  }
+}
+
 // save_block может последовательно/параллельно качать до 30 inline-картинок.
 // Worst case: ureq retry × 15s × per-domain ограничения ≈ 150s. 180s — буфер.
 // Остальные actions короткие; только явный diagnostic ACK сохраняет отметку связи.
@@ -402,8 +426,13 @@ function confirmNativeConnection(status, port) {
   });
 }
 
-function sendNativeMessage(message, expectedPort = null) {
-  return new Promise((resolve) => {
+function sendNativeMessage(message, expectedPort = null, afterReplacement = false) {
+  return new Promise((settle) => {
+    // The replaced helper did nothing with the request: it goes once to the
+    // new helper. A check bound to the old connection has nothing to confirm.
+    const resolve = (reply) => settle(reply?.code === "host_replaced" && !expectedPort && !afterReplacement
+      ? sendNativeMessage(message, null, true)
+      : reply);
     const port = expectedPort
       ? (nativePort === expectedPort ? expectedPort : null)
       : getNativePort();

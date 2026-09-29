@@ -627,7 +627,9 @@ describe("standalone mode decision", () => {
     };
     standalone.standaloneSave.mockImplementation(execute);
     sendToNative.mockImplementation(async (payload: Record<string, unknown>) => {
-      if (payload.action === "get_status") return executor === "native" ? nativeStatus() : { ok: false, error: "No helper" };
+      if (payload.action === "get_status") return executor === "native"
+        ? { ...nativeStatus(), features: [...nativeStatus().features, "local_saved_at_v1"] }
+        : { ok: false, error: "No helper" };
       if (payload.action === "list_known_vaults") return { ok: true, vaults: ["/v"], current: "/v" };
       if (payload.action === "list_channels") return { ok: true, channels: [] };
       if (payload.action === "save_block") return execute(payload);
@@ -736,7 +738,9 @@ describe("standalone mode decision", () => {
       ? { configured: true, folderName: "Mine", permission: "granted", bindingId: "browser-original" }
       : { configured: false });
     sendToNative.mockImplementation(async (payload: Record<string, unknown>) => {
-      if (payload.action === "get_status") return executor === "native" ? nativeStatus() : { ok: false, error: "No helper" };
+      if (payload.action === "get_status") return executor === "native"
+        ? { ...nativeStatus(), features: [...nativeStatus().features, "local_saved_at_v1"] }
+        : { ok: false, error: "No helper" };
       if (payload.action === "list_known_vaults") return { ok: true, vaults: ["/v"], current: "/v" };
       if (payload.action === "list_channels") return { ok: true, channels: [] };
       if (payload.action === "save_block") return executeCapture(payload);
@@ -751,6 +755,25 @@ describe("standalone mode decision", () => {
     expect(outcome).toMatchObject({ ok: true });
     expect(outgoingTimestamp).toBe("2026-08-31T15:20:30");
     expect(markdown).toContain("saved_at: 2026-08-31T15:20:30\n");
+  });
+
+  it("does not send a zoneless saved_at to a helper that has not declared it (К4)", async () => {
+    let sent: Record<string, unknown> | undefined;
+    sendToNative.mockImplementation(async (payload: Record<string, unknown>) => {
+      if (payload.action === "get_status") return nativeStatus();
+      if (payload.action === "save_block") {
+        sent = payload;
+        return { ok: true, outcome: "committed", slug: "Cards/Page", operation_id: payload.operation_id };
+      }
+      return { ok: true, channels: [], vaults: ["/v"] };
+    });
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.saveMode).toBe("app"));
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    act(() => result.current.setCurrentType("link"));
+    await act(async () => { await result.current.save(); });
+    expect(sent).toBeDefined();
+    expect(sent).not.toHaveProperty("saved_at");
   });
 
   it("saves through the granted folder when the host is silent", async () => {

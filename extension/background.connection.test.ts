@@ -87,3 +87,66 @@ describe("native connection-check acknowledgement", () => {
     expect(host.port.postMessage).toHaveBeenCalledOnce();
   });
 });
+
+describe("helper replaced during a session (SPEC_CLIPPER.md, К4)", () => {
+  function replaceableTransport() {
+    const ports: Array<{
+      respond: (message: NativeResponse) => void;
+      postMessage: ReturnType<typeof vi.fn>;
+      disconnect: ReturnType<typeof vi.fn>;
+    }> = [];
+    const connectNative = vi.fn(() => {
+      const entry = {
+        respond: (_message: NativeResponse) => undefined as void,
+        postMessage: vi.fn(),
+        disconnect: vi.fn(),
+      };
+      ports.push(entry);
+      return {
+        onMessage: { addListener: (listener: (message: NativeResponse) => void) => { entry.respond = listener; } },
+        onDisconnect: { addListener: () => undefined },
+        postMessage: entry.postMessage,
+        disconnect: entry.disconnect,
+      };
+    });
+    const context = createContext({
+      HOST_NAME: "test.mine",
+      chrome: { runtime: { connectNative } },
+      console: { warn: vi.fn() },
+      crypto: { randomUUID: () => checkId },
+      setTimeout, clearTimeout,
+    });
+    runInContext(transport, context);
+    const send = (action: string): Promise<NativeResponse> =>
+      runInContext(`sendNativeMessage({action:${JSON.stringify(action)}})`, context);
+    return { send, ports, connectNative };
+  }
+
+  it("reconnects to the new helper and sends every unanswered request again, once", async () => {
+    const host = replaceableTransport();
+    const save = host.send("save_block");
+    const status = host.send("get_status");
+    const old = host.ports[0];
+    old.respond({ _messageId: 1, ok: false, code: "host_replaced", outcome: "not_committed" });
+    await vi.waitFor(() => expect(host.connectNative).toHaveBeenCalledTimes(2));
+    expect(old.disconnect).toHaveBeenCalledOnce();
+    const fresh = host.ports[1];
+    await vi.waitFor(() => expect(fresh.postMessage).toHaveBeenCalledTimes(2));
+    const sent = fresh.postMessage.mock.calls.map(([message]) => message as NativeResponse);
+    expect(sent.map((message) => message.action)).toEqual(["save_block", "get_status"]);
+    fresh.respond({ _messageId: sent[0]._messageId, ok: true, outcome: "committed" });
+    fresh.respond({ _messageId: sent[1]._messageId, ok: true, connected: true, features: [] });
+    await expect(save).resolves.toMatchObject({ outcome: "committed" });
+    await expect(status).resolves.toMatchObject({ connected: true });
+  });
+
+  it("does not loop when the new helper is replaced too", async () => {
+    const host = replaceableTransport();
+    const status = host.send("get_status");
+    host.ports[0].respond({ _messageId: 1, ok: false, code: "host_replaced", outcome: "not_committed" });
+    await vi.waitFor(() => expect(host.ports[1]?.postMessage).toHaveBeenCalledOnce());
+    host.ports[1].respond({ _messageId: 2, ok: false, code: "host_replaced", outcome: "not_committed" });
+    await expect(status).resolves.toMatchObject({ code: "host_replaced", outcome: "not_committed" });
+    expect(host.connectNative).toHaveBeenCalledTimes(2);
+  });
+});

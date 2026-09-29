@@ -13,6 +13,7 @@ pub use commands::clipper_setup::{
     RuntimeInstallationError,
 };
 pub mod app_config;
+pub mod clipper_registration;
 pub mod domain;
 #[cfg(feature = "desktop")]
 mod frame_context_menu;

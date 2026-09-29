@@ -17,8 +17,7 @@ use tauri::{AppHandle, Manager};
 use crate::commands::state::CommandError;
 use crate::storage::clipper_connection::{self, ClipperConnectionCheck, DEV_EXTENSION_ID};
 
-/// Native messaging host name, matched by the extension's manifest.
-const HOST_NAME: &str = "com.mine.clipper.v1";
+use crate::clipper_registration::{BrowserTarget, BROWSERS, HOST_NAME};
 use crate::runtime_installation::{
     install_binary, install_lock as runtime_install_lock, probe_runtime_host,
     MANAGED_RUNTIME_DIRECTORY,
@@ -1258,37 +1257,6 @@ fn marker_allows_fast_registration(
     })
 }
 
-/// A Chromium-family browser that supports native messaging.
-struct BrowserTarget {
-    /// Shown to the user.
-    label: &'static str,
-    /// Path of the browser's native messaging directory, relative to Library.
-    manifest_dir: &'static str,
-}
-
-const BROWSERS: &[BrowserTarget] = &[
-    BrowserTarget {
-        label: "Chrome",
-        manifest_dir: "Application Support/Google/Chrome/NativeMessagingHosts",
-    },
-    BrowserTarget {
-        label: "Dia",
-        manifest_dir: "Application Support/Dia/User Data/NativeMessagingHosts",
-    },
-    BrowserTarget {
-        label: "Arc",
-        manifest_dir: "Application Support/Arc/User Data/NativeMessagingHosts",
-    },
-    BrowserTarget {
-        label: "Edge",
-        manifest_dir: "Application Support/Microsoft Edge/NativeMessagingHosts",
-    },
-    BrowserTarget {
-        label: "Brave",
-        manifest_dir: "Application Support/BraveSoftware/Brave-Browser/NativeMessagingHosts",
-    },
-];
-
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct ClipperBrowserStatus {
     pub label: String,
@@ -1318,16 +1286,10 @@ pub struct ClipperSetupStatus {
     pub connection_check_error: Option<String>,
 }
 
-fn library_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library"))
-}
+use crate::clipper_registration::library_dir;
 
 fn manifest_path(browser: &BrowserTarget) -> Option<PathBuf> {
-    Some(
-        library_dir()?
-            .join(browser.manifest_dir)
-            .join(format!("{HOST_NAME}.json")),
-    )
+    Some(crate::clipper_registration::manifest_path(&library_dir()?, browser))
 }
 
 /// Whether a browser is installed, judged by its data directory's parent.

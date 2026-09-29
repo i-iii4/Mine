@@ -835,6 +835,10 @@ fn handle_get_status_with_upload(
             "operation_lookup_v1".into(),
             "open_app_v1".into(),
             "connection_check_v1".into(),
+            // `saved_at` as the local wall clock without a zone (К4).
+            "local_saved_at_v1".into(),
+            // Spaces are found by identity and the status reports moves (К1).
+            "space_identity_v1".into(),
         ],
         upload_port: upload.as_ref().map(|u| u.port),
         upload_token: upload.as_ref().map(|u| u.token.clone()),
@@ -2978,7 +2982,67 @@ fn handle_confirm_connection_check(launch_origin: Option<&str>, params: serde_js
     }
 }
 
+/// The identity of an executable file: a new build installed at the same
+/// path is a different file (SPEC_CLIPPER.md, К4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExecutableStamp {
+    device: u64,
+    inode: u64,
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+}
+
+impl ExecutableStamp {
+    fn of(path: &Path) -> Option<Self> {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = std::fs::metadata(path).ok()?;
+        Some(Self {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+        })
+    }
+}
+
+/// The helper file this process was started from, as it was at start.
+struct StartedFrom {
+    path: PathBuf,
+    stamp: ExecutableStamp,
+    /// A browser registration named this file at start. Only such a helper
+    /// can be superseded by a new registration; one started by hand (tests,
+    /// smoke checks) is not the browser's helper.
+    registered: bool,
+}
+
+static STARTED_FROM: std::sync::OnceLock<Option<StartedFrom>> = std::sync::OnceLock::new();
+
+/// Whether a newer helper has replaced this process. The browser keeps one
+/// connection per session, so without this an old process would go on
+/// answering after an update (К4). Two ways to be replaced: a new file at
+/// this path, or registrations that now name another installed package. A
+/// missing file is not a replacement: nothing newer is there.
+fn replaced_by_newer_helper() -> bool {
+    let Some(Some(started)) = STARTED_FROM.get() else {
+        return false;
+    };
+    if ExecutableStamp::of(&started.path).is_some_and(|now| now != started.stamp) {
+        return true;
+    }
+    started.registered
+        && mine_lib::clipper_registration::library_dir().is_some_and(|library| {
+            mine_lib::clipper_registration::superseded(&library, &started.path)
+        })
+}
+
 fn main() {
+    STARTED_FROM.get_or_init(|| {
+        let path = std::env::current_exe().ok()?;
+        let stamp = ExecutableStamp::of(&path)?;
+        let registered = mine_lib::clipper_registration::library_dir()
+            .is_some_and(|library| mine_lib::clipper_registration::is_registered(&library, &path));
+        Some(StartedFrom { path, stamp, registered })
+    });
     if std::env::args().nth(1).as_deref() == Some("--runtime-probe") {
         let probe = mine_lib::runtime_protocol::RuntimeProbe {
             schema_version: 1, version: VERSION.into(),
@@ -3028,6 +3092,19 @@ fn main() {
         // Echo this request's correlation id back on every response it produces.
         if let Some(id) = req.params.get("_messageId").and_then(|v| v.as_i64()) {
             CURRENT_MESSAGE_ID.store(id, Ordering::Relaxed);
+        }
+
+        // A newer helper was installed: this process does nothing with the
+        // request and ends; the extension reconnects to the new helper and
+        // sends the request again (К4).
+        if replaced_by_newer_helper() {
+            send_response(&serde_json::json!({
+                "ok": false,
+                "code": "host_replaced",
+                "outcome": "not_committed",
+                "error": "The Mine helper was updated. Reconnecting.",
+            }));
+            break;
         }
 
         // Diagnostic ACK has no vault input or capture side effects.
@@ -3817,6 +3894,22 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(gone.state, "missing");
+    }
+
+    #[test]
+    fn k4_a_file_installed_over_the_helper_is_a_different_helper() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("native-host");
+        std::fs::write(&path, b"old build").unwrap();
+        let started = ExecutableStamp::of(&path).unwrap();
+        assert_eq!(ExecutableStamp::of(&path), Some(started.clone()));
+        // Installers put the new file next to the old one and rename it over.
+        let next = tmp.path().join("native-host.new");
+        std::fs::write(&next, b"new build!").unwrap();
+        std::fs::rename(&next, &path).unwrap();
+        assert_ne!(ExecutableStamp::of(&path).unwrap(), started);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(ExecutableStamp::of(&path), None);
     }
 
     #[test]
