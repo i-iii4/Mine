@@ -712,13 +712,35 @@ fn handle_pick_vault_folder() {
 /// the bundle by identifier, so this works regardless of where the app lives.
 /// Explicit destinations are limited to known spaces; opening without one
 /// preserves the setup screen's existing launch-only behaviour.
+/// The installed Mine. Opening by bundle identifier lets macOS pick any
+/// registered copy, a build output or an old bundle among them; the copy in
+/// an Applications folder is the one the person runs.
+fn installed_app() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    installed_app_in(&[
+        Some(PathBuf::from("/Applications")),
+        home.map(|home| home.join("Applications")),
+    ])
+}
+
+fn installed_app_in(folders: &[Option<PathBuf>]) -> Option<PathBuf> {
+    folders
+        .iter()
+        .flatten()
+        .map(|folder| folder.join("Mine.app"))
+        .find(|app| app.join("Contents/Info.plist").is_file())
+}
+
 fn handle_open_app(params: serde_json::Value) {
     #[derive(serde::Serialize)]
     struct OpenAppResponse {
         ok: bool,
     }
     let mut command = std::process::Command::new("open");
-    command.args(["-b", "com.mine.app"]);
+    match installed_app() {
+        Some(app) => command.arg("-a").arg(app),
+        None => command.args(["-b", "com.mine.app"]),
+    };
     if let Some(path) = params.get("path") {
         let Some(path) = path.as_str() else { return send_error("invalid space path"); };
         if !load_known_vaults().iter().any(|known| same_native_space(known, path))
@@ -4054,6 +4076,21 @@ mod tests {
         let (_tmp, vault) = k3_space_with_collection();
         let flat = vault.with_write_layout(mine_lib::domain::vault::VaultWriteLayout::flat());
         assert!(folder_collections(&flat).is_empty());
+    }
+
+    #[test]
+    fn open_mine_prefers_the_copy_in_applications() {
+        let tmp = TempDir::new().unwrap();
+        let system = tmp.path().join("Applications");
+        let user = tmp.path().join("home/Applications");
+        std::fs::create_dir_all(user.join("Mine.app/Contents")).unwrap();
+        std::fs::write(user.join("Mine.app/Contents/Info.plist"), "plist").unwrap();
+        let folders = [Some(system.clone()), Some(user.clone())];
+        assert_eq!(installed_app_in(&folders), Some(user.join("Mine.app")));
+        std::fs::create_dir_all(system.join("Mine.app/Contents")).unwrap();
+        std::fs::write(system.join("Mine.app/Contents/Info.plist"), "plist").unwrap();
+        assert_eq!(installed_app_in(&folders), Some(system.join("Mine.app")));
+        assert_eq!(installed_app_in(&[None]), None);
     }
 
     #[test]
