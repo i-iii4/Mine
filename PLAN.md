@@ -4,6 +4,16 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTU
 
 ## Goal
 
+### Настройки отображения ленты
+
+Статус: требования записаны 30.09.2026, три решения ждут подтверждения пользователя, реализация не начата. Контракт: [SPEC_FEED_DISPLAY.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_FEED_DISPLAY.md>).
+
+- [ ] Д1 по Д5. Кнопка `Display` (`SlidersHorizontal`) во втором уровне хрома справа и панель строк.
+- [ ] Д6 по Д9. `Sort`: `Newest first`, `Oldest first`; порядок в ядре, страницах и кэше маршрута.
+- [ ] Д10 по Д16. `Show`: `Cards`, `Mixed`, `Media` с однозначной геометрией.
+- [ ] Д17. `Spacing` (после решения 1).
+- [ ] Д18. Хранение между запусками.
+
 ### Форма карточек с видео
 
 Статус: решение пользователя 30.09.2026, реализовано 30.09.2026. Контракт: [SPEC_CARD_MEDIA_GEOMETRY.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_CARD_MEDIA_GEOMETRY.md>), разделы о временном конверте и о форме видеокарточки; [SPEC_GRID.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_GRID.md>).
