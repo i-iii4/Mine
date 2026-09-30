@@ -964,6 +964,8 @@
         "src/components/FeedDisplayMenu.tsx",
         "src/components/FeedDisplayMenu.test.tsx",
         "src/components/ui/popover.tsx",
+        "src/components/ui/dropdown-menu.tsx",
+        "src/components/ui/context-menu.tsx",
         "src/components/MainSecondaryChrome.tsx",
         "src/components/MainSecondaryChrome.test.tsx",
         "src/components/Grid.tsx",

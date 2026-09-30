@@ -122,11 +122,17 @@ function MainSecondaryStatsRight({
   const cardCount = stats
     ? `${formatPluralCount(stats.currentCollectionCardCount, "element", "elements")}${inCollection ? " in collection" : ""}`
     : "";
+  // The Display options belong to the feed only (SPEC_FEED_DISPLAY.md, Д4).
+  const feedDisplay = viewMode === "grid";
 
   return (
     <div
       data-main-secondary-stats-right=""
-      className="flex h-full min-w-0 items-center justify-start gap-5 overflow-hidden px-[var(--main-secondary-pad-x)] font-mono text-sm leading-none text-tertiary-foreground"
+      className={cn(
+        "flex h-full min-w-0 items-center justify-start gap-5 overflow-hidden pl-[var(--main-secondary-pad-x)] font-mono text-sm leading-none text-tertiary-foreground",
+        // With actions at the end, ChromeActions owns the right edge inset.
+        !feedDisplay && "pr-[var(--main-secondary-pad-x)]",
+      )}
     >
       {stats && (
         <span className="min-w-0 truncate whitespace-nowrap" title={cardCount}>
@@ -137,12 +143,12 @@ function MainSecondaryStatsRight({
         <span className="shrink-0 font-mono text-sm text-tertiary-foreground">View:</span>
         <MainViewModeSwitch value={viewMode} onChange={onViewModeChange} entered />
       </div>
-      {/* The feed's Display options, at the right edge under the Mine button.
-          None of them applies to the graph (SPEC_FEED_DISPLAY.md, Д1, Д4). */}
-      {viewMode === "grid" && (
-        <div className="ml-auto flex shrink-0 items-center" data-feed-display="">
+      {/* On the Mine button's axis: the same icon button and edge inset as
+          the logo in the row above (SPEC_FEED_DISPLAY.md, Д1). */}
+      {feedDisplay && (
+        <ChromeActions className="ml-auto" data-feed-display="">
           <FeedDisplayMenu />
-        </div>
+        </ChromeActions>
       )}
     </div>
   );

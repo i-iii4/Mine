@@ -123,15 +123,24 @@ describe("MainSecondaryTopBar placement", () => {
 });
 
 describe("Display options (SPEC_FEED_DISPLAY.md, Д1, Д4)", () => {
-  it("sit at the right edge of the feed's row in Grid", () => {
+  it("sit on the Mine button's axis: chrome actions own the right edge inset", () => {
     const { container } = renderBar("top", null, "grid");
     expect(screen.getByRole("button", { name: "Display options" })).toBeInTheDocument();
-    expect(container.querySelector("[data-feed-display]")).toHaveClass("ml-auto");
+    const actions = container.querySelector("[data-feed-display]");
+    expect(actions).toHaveAttribute("data-chrome-actions");
+    expect(actions).toHaveClass("ml-auto", "mr-[var(--chrome-icon-edge-pad)]");
+    const row = container.querySelector("[data-main-secondary-stats-right]");
+    expect(row).toHaveClass("pl-[var(--main-secondary-pad-x)]");
+    expect(row).not.toHaveClass("pr-[var(--main-secondary-pad-x)]");
   });
 
   it("are absent in Graph, where none of them applies", () => {
-    renderBar("top", null, "graph");
+    const { container } = renderBar("top", null, "graph");
     expect(screen.queryByRole("button", { name: "Display options" })).not.toBeInTheDocument();
+    expect(container.querySelector("[data-main-secondary-stats-right]")).toHaveClass(
+      "pl-[var(--main-secondary-pad-x)]",
+      "pr-[var(--main-secondary-pad-x)]",
+    );
   });
 });
 

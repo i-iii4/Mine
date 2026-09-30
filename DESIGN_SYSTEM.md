@@ -993,7 +993,11 @@ Hover/open/keyboard focus используют
 остаётся последней справа при открытой карточке и скрытом bottom bar.
 
 Иконки действий chrome используют тот же вариант Button: область 24×30px,
-плашка 24×24px, SVG 16×16px.
+плашка 24×24px, SVG 16×16px. Кнопка `Display` ленты
+([SPEC_FEED_DISPLAY.md](SPEC_FEED_DISPLAY.md), Д1) стоит во втором уровне под
+логотипом в собственной `ChromeActions`: правая половина строки держит только
+левый отступ `--main-secondary-pad-x`, правый край отдан `ChromeActions`, и ось
+кнопки совпадает с осью логотипа.
 `ChromeActions` задаёт промежуток 4px и общий правый отступ
 `--chrome-icon-edge-pad` (12px). Ось Close второго уровня совпадает с осью
 логотипа сверху. В компактном режиме группа действий перед логотипом не
@@ -1432,6 +1436,16 @@ floating width roles from «Всплывающие элементы» through
 `selector`, `picker`. Raw `w-64` / `w-72` in feature components is invalid
 unless it is the implementation of a named role inside the shared menu
 primitive.
+
+Выбор из нескольких значений (`DropdownMenuRadioItem`, `ContextMenuRadioItem`)
+не сдвигает текст на `pl-8` и не рисует кружок: текущий пункт несёт галочку
+`Check size-3` в обычном `MenuIconSlot`, у остальных слот пустой, как в меню
+macOS. Текстовая колонка совпадает с остальными строками меню. Подпись группы
+выбора повторяет заголовок меню выделения: `px-2 py-1.5 font-mono text-sm
+text-muted-foreground`; группы разделены `DropdownMenuSeparator`. Меню, где
+выбор применяется сразу, остаётся открытым (`onSelect` с `preventDefault`).
+Первое такое меню: `Display` ленты.
+
 Trigger ignores modified opening keys: `Cmd`/`Ctrl`/`Alt` +
 `ArrowDown`/`ArrowUp`/`Enter`/`Space` must not open a dropdown. Those
 combinations remain app/global shortcut candidates even when DOM focus is on a
