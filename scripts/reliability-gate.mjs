@@ -118,13 +118,39 @@ export async function verifyModuleBoundaries(root = repository) {
 }
 
 export function verifyChangeCoverage(registry, paths) {
-  const behaviorPaths = paths.filter(path => /\.(?:rs|tsx?|mjs|js|json|toml|swift)$/.test(path) &&
+  // Styles, pages and shell scripts change what the product does as much as
+  // code does (SPEC_AUDIT_FIXES.md, А10.4).
+  const behaviorPaths = paths.filter(path => /\.(?:rs|tsx?|mjs|js|json|toml|swift|css|html|sh)$/.test(path) &&
     !/(?:^|\/)(?:package-lock|bun\.lock)/.test(path));
   for (const path of behaviorPaths) {
     requireCondition(registry.changeCoverage.some(item => item.paths.some(candidate =>
       candidate.endsWith('/') ? path.startsWith(candidate) : path === candidate)),
     `Behavior change has no requirement and check: ${path}`);
   }
+}
+
+/**
+ * The revision this branch grew from: the explicit `--base`, else where it
+ * meets its upstream, else where it meets origin/main. Comparing with HEAD
+ * saw only uncommitted edits, so committed work passed unchecked (А10.4).
+ */
+export function changeBase(root, requested, execute = spawnSync) {
+  for (const candidate of requested ? [requested] : ['@{upstream}', 'origin/main']) {
+    const base = execute('git', ['merge-base', 'HEAD', candidate], { cwd: root, encoding: 'utf8' });
+    if (base.status === 0 && base.stdout.trim()) return base.stdout.trim();
+  }
+  throw new Error(requested
+    ? `Cannot find the base revision: ${requested}`
+    : 'Cannot find the base revision: pass --base <revision>');
+}
+
+/** Every path changed since `base`: commits, staged and unstaged edits, new files. */
+export function changedPaths(root, base, execute = spawnSync) {
+  const changed = execute('git', ['diff', '--name-only', base], { cwd: root, encoding: 'utf8' });
+  requireCondition(changed.status === 0, 'Cannot inspect changed behavior');
+  const untracked = execute('git', ['ls-files', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8' });
+  requireCondition(untracked.status === 0, 'Cannot inspect new behavior');
+  return [...new Set(`${changed.stdout}\n${untracked.stdout}`.split('\n').filter(Boolean))];
 }
 
 async function evidenceJson(root, entry) {
@@ -231,11 +257,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const registry = JSON.parse(await readFile(registryArgument < 0 ? registryPath : resolve(process.argv[registryArgument + 1]), 'utf8'));
     await validateRegistry(registry); await verifyModuleBoundaries();
     if (process.argv.includes('--release')) await verifyRelease(registry);
-    const changed = spawnSync('git', ['diff', '--name-only', 'HEAD'], { cwd: repository, encoding: 'utf8' });
-    requireCondition(changed.status === 0, 'Cannot inspect changed behavior');
-    const untracked = spawnSync('git', ['ls-files', '--others', '--exclude-standard'], { cwd: repository, encoding: 'utf8' });
-    requireCondition(untracked.status === 0, 'Cannot inspect new behavior');
-    verifyChangeCoverage(registry, `${changed.stdout}\n${untracked.stdout}`.split('\n').filter(Boolean));
+    const baseArgument = process.argv.indexOf('--base');
+    requireCondition(baseArgument < 0 || process.argv[baseArgument + 1], 'Missing --base revision');
+    const base = changeBase(repository, baseArgument < 0 ? undefined : process.argv[baseArgument + 1]);
+    verifyChangeCoverage(registry, changedPaths(repository, base));
     await verifyExtensionMirrors();
     console.log(process.argv.includes('--release') ? 'Release evidence verified.' : 'Registry and module boundaries verified. Release acceptance remains separate.');
   } catch (error) { console.error(error.message); process.exitCode = 1; }

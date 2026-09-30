@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { ACCEPTANCE, PRINCIPLES, artifactDigest, registryPath, validateRegistry, verifyChangeCoverage, verifyModuleBoundaries, verifyRelease } from './reliability-gate.mjs';
+import { ACCEPTANCE, PRINCIPLES, artifactDigest, changeBase, changedPaths, registryPath, validateRegistry, verifyChangeCoverage, verifyModuleBoundaries, verifyRelease } from './reliability-gate.mjs';
 import { fixturePath, sha256 } from './reliability-source-guard.mjs';
 
 async function registry() { return JSON.parse(await readFile(registryPath, 'utf8')); }
@@ -50,6 +50,45 @@ test('new behavior without a requirement and executable check is rejected', asyn
   const value = await registry();
   verifyChangeCoverage(value, ['scripts/reliability-gate.mjs', 'SPEC_SYSTEM_RELIABILITY.md']);
   assert.throws(() => verifyChangeCoverage(value, ['src-tauri/src/new_behavior.rs']), /no requirement and check/);
+});
+
+test('styles, pages and shell scripts are behavior too (А10.4)', async () => {
+  const value = await registry();
+  for (const path of ['src/styles/new.css', 'new-window.html', 'scripts/new-step.sh']) {
+    assert.throws(() => verifyChangeCoverage(value, [path]), /no requirement and check/, path);
+  }
+});
+
+test('committed work since the base revision is inspected, not only uncommitted edits (А10.4)', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'mine-change-base-'));
+  const git = (...args) => {
+    const result = spawnSync('git', ['-c', 'user.name=Gate test', '-c', 'user.email=gate@test.invalid', ...args], { cwd: repo, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  try {
+    git('init', '-q', '-b', 'main');
+    await writeFile(join(repo, 'README.md'), 'base\n');
+    git('add', '.');
+    git('commit', '-q', '-m', 'base');
+    git('checkout', '-q', '-b', 'work');
+    await writeFile(join(repo, 'style.css'), 'a { color: red }\n');
+    git('add', '.');
+    git('commit', '-q', '-m', 'committed change');
+    await writeFile(join(repo, 'README.md'), 'edited\n');
+    await writeFile(join(repo, 'run.sh'), 'echo new\n');
+
+    const base = changeBase(repo, 'main');
+    assert.equal(base, git('rev-parse', 'main'));
+    assert.deepEqual(changedPaths(repo, base).sort(), ['README.md', 'run.sh', 'style.css']);
+    // The working tree is clean against HEAD for the committed file: the old
+    // comparison missed it.
+    assert.ok(!git('diff', '--name-only', 'HEAD').split('\n').includes('style.css'));
+
+    assert.throws(() => changeBase(repo, 'no-such-revision'), /Cannot find the base revision: no-such-revision/);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
 });
 
 test('the current production domain and storage dependencies respect module boundaries', async () => {

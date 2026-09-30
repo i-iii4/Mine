@@ -1,0 +1,52 @@
+name: Tests
+
+# The everyday contract on every push and pull request: lint, the Rust to
+# TypeScript bindings, the frontend and clipper tests, the Rust workspace tests
+# (SPEC_AUDIT_FIXES.md, А10.3). Browser gates stay local by decision of
+# 29.09.2026; the packaged app has its own smoke workflow.
+
+on:
+  pull_request:
+  push:
+    branches: [main, audit-remediation]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    # macOS: the build compiles the Swift helpers with swiftc, and the watcher
+    # tests exercise the real FSEvents.
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      # The frontend tests run the real save core compiled to WebAssembly and
+      # bound with this exact tool version (scripts/build-save-core.mjs
+      # refuses any other).
+      - name: Install the matching WebAssembly binding tool
+        run: cargo install wasm-bindgen-cli --version 0.2.120 --locked --no-default-features --bin wasm-bindgen
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      # The clipper payload is a bundle resource the build script checks for.
+      # Tests never package it, so the directory only has to exist.
+      - name: Provide the clipper payload directory
+        run: mkdir -p build/clipper-extension
+      - name: Lint
+        run: bun run lint
+      - name: Bindings match the Rust contract
+        run: bun run bindings:check
+      - name: Frontend and clipper tests
+        run: bun run test:frontend
+      - name: Rust workspace tests
+        run: bun run test:rust

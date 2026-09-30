@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { JSDOM } from "jsdom";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ArticleData, PageMetadata } from "../popup/lib/messaging";
@@ -7,6 +8,26 @@ import { resolveCaptureResult } from "../popup/lib/captureResult";
 
 const url = "https://shop.example/products/meridian";
 const documents: JSDOM[] = [];
+
+// The real save core, compiled to WebAssembly: the layer that writes the note
+// (SPEC_AUDIT_FIXES.md, А10.2). It builds the Markdown in memory, no I/O.
+const core = createRequire(import.meta.url)("../../output/playwright/save-core-node/mine_core.js") as {
+  execute_json(request: string): string;
+};
+
+/** The note the core writes for what the clipper shows, as both executors send it. */
+function savedMarkdown(title: string, body: string, source: string): string {
+  const reply = JSON.parse(core.execute_json(JSON.stringify({
+    op: "capture",
+    request: {
+      slug: "Cards/Meridian", block_type: "article", title, body, url,
+      author: null, source: "web-clipper", tags: [], saved_at: "2026-09-21T12:00:00Z",
+      ...(source === "selection" ? { selection: true } : {}),
+    },
+  }))) as { ok: boolean; value?: { markdown: string } };
+  expect(reply.ok).toBe(true);
+  return reply.value!.markdown;
+}
 type Extractors = {
   extractArticle(): ArticleData;
   extractArticleAsync(): Promise<ArticleData>;
@@ -79,5 +100,25 @@ describe("actual product content capture", () => {
     const capture = resolveCaptureResult("content", metadata, await api.extractArticleAsync());
     expect(capture.body.text).toBe("Selected passage");
     expect(capture.body.source).toBe("selection");
+  });
+
+  it("writes all nine photos sharing one alt text into the saved note, in order", async () => {
+    const api = page(product);
+    const article = normalizeArticleMedia(await api.extractArticleAsync(), url);
+    const capture = resolveCaptureResult("content", api.extractMetadata(), article);
+    const markdown = savedMarkdown(article.title ?? "Meridian", capture.body.text, capture.body.source);
+    expect([...markdown.matchAll(/!\[Meridian\]\(https:\/\/shop\.example\/media\/(\d)\.jpg\)/g)].map(match => match[1]))
+      .toEqual(["0", "1", "2", "3", "4", "5", "6", "7", "8"]);
+    expect(markdown).toContain("ISBN: 123");
+  });
+
+  it("saves a selection as shown, without the page title above it", async () => {
+    const api = page(product);
+    const metadata = { ...api.extractMetadata(), selection: "Selected passage", detectedType: "selection" as const };
+    const capture = resolveCaptureResult("content", metadata, await api.extractArticleAsync());
+    const markdown = savedMarkdown("Meridian", capture.body.text, capture.body.source);
+    const body = markdown.slice(markdown.indexOf("\n---\n", 4) + 5).trim();
+    expect(body).toBe("Selected passage");
+    expect(markdown).not.toMatch(/^# /m);
   });
 });
