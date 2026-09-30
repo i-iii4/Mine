@@ -139,6 +139,24 @@ function historyDirectionForShortcut(e: KeyboardEvent): -1 | 1 | null {
   return null;
 }
 
+/// How long a preview for a card the feed has not loaded yet is remembered:
+/// long enough to cover a feed read in flight, short enough that cards paged
+/// in much later, read after their preview, are not read twice.
+const UNSEEN_PREVIEW_WINDOW_MS = 10_000;
+const UNSEEN_PREVIEW_LIMIT = 500;
+
+function rememberUnseenPreview(unseen: Map<string, number>, slug: string, now: number) {
+  unseen.delete(slug);
+  unseen.set(slug, now);
+  // A cold-start sweep reports previews for cards far off screen: keep the
+  // newest few hundred, the only ones a read in flight can bring.
+  while (unseen.size > UNSEEN_PREVIEW_LIMIT) {
+    const oldest = unseen.keys().next().value;
+    if (oldest === undefined) break;
+    unseen.delete(oldest);
+  }
+}
+
 /** Pin the DragOverlay so the cursor tip sits just outside the top-left corner. */
 const snapToCursor: Modifier = ({ activatorEvent, draggingNodeRect, transform }) => {
   if (!activatorEvent || !draggingNodeRect) return transform;
@@ -866,6 +884,11 @@ export function AppWithVault({
   }, []);
 
   const previewRowsRef = useRef<ReturnType<typeof createPreviewRowQueue> | null>(null);
+  // A preview that lands before the feed holds its card: the feed read that
+  // brings the card may have started before the preview was written, and
+  // would leave the card on its provisional shape (a restored video stayed
+  // 16:9 over a square picture). Remembered briefly, re-read on arrival.
+  const unseenPreviewSlugsRef = useRef(new Map<string, number>());
   useEffect(() => {
     previewRowRevisionsRef.current.clear();
     if (!vaultReady) return;
@@ -892,6 +915,23 @@ export function AppWithVault({
     previewRowsRef.current = queue;
     return () => { queue.dispose(); previewRowsRef.current = null; };
   }, [vaultPath, currentTag, vaultReady, invalidateRouteSnapshots, projectionRevisionOwner]);
+
+  useEffect(() => {
+    unseenPreviewSlugsRef.current.clear();
+  }, [vaultPath]);
+
+  // A card whose preview landed before it did gets its row read again.
+  useEffect(() => {
+    const unseen = unseenPreviewSlugsRef.current;
+    if (unseen.size === 0) return;
+    const now = Date.now();
+    for (const block of blocks) {
+      const landedAt = unseen.get(block.slug);
+      if (landedAt === undefined) continue;
+      unseen.delete(block.slug);
+      if (now - landedAt <= UNSEEN_PREVIEW_WINDOW_MS) previewRowsRef.current?.add(block.slug);
+    }
+  }, [blocks]);
 
   // Bump the feed cache-buster for a slug that is currently in the loaded feed.
   // Slugs outside the feed are ignored — their card is not mounted, so there is
@@ -1774,6 +1814,8 @@ export function AppWithVault({
       invalidateRouteSnapshots();
       if (blocksRef.current.some((block) => block.slug === event.payload.slug)) {
         previewRowsRef.current?.add(event.payload.slug);
+      } else {
+        rememberUnseenPreview(unseenPreviewSlugsRef.current, event.payload.slug, Date.now());
       }
       // Sidebar preview cache-buster (its own version ref, applied on the next
       // previews refresh below).

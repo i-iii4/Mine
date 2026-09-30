@@ -2612,6 +2612,32 @@ describe("AppWithVault", () => {
     expect(screen.queryByText("Open deleted")).not.toBeInTheDocument();
   });
 
+  it("reads again a new card whose preview landed while the feed read was in flight", async () => {
+    // A video restored from Orphans stayed on the provisional 16:9 shape over
+    // a square picture: its preview landed before the feed held the card, and
+    // the feed then applied the card as read before the preview existed.
+    const existing = block(1, "existing");
+    commandMocks.listGridBlocks.mockResolvedValue(gridSnapshot([existing]));
+    render(<MemoryRouter><AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:1"));
+
+    let finishRead!: (value: GridSnapshot) => void;
+    commandMocks.listGridBlocks.mockImplementationOnce(() => new Promise((resolve) => { finishRead = resolve; }));
+    fireEvent(window, new CustomEvent("vault-changed", { detail: { payload: { path: "/vault" } } }));
+    await waitFor(() => expect(finishRead).toBeDefined(), { timeout: 3000 });
+
+    const restored = block(2, "restored-video");
+    fireEvent(window, new CustomEvent("thumb:updated", {
+      detail: { payload: { path: "/vault", slug: "restored-video", is_text: false } },
+    }));
+    commandMocks.getGridRows.mockResolvedValue({ path: "/vault", generation: 3,
+      blocks: [{ ...restored, preview_manifest: "square-poster", width: 1080, height: 1080 }] });
+    await act(async () => finishRead(gridSnapshot([existing, restored], 2, false, 2)));
+
+    await waitFor(() => expect(screen.getByTestId("grid-previews")).toHaveTextContent("restored-video:square-poster:1080"));
+    expect(commandMocks.getGridRows).toHaveBeenCalledWith("/vault", ["restored-video"]);
+  });
+
   it("ignores preview rows from another space or an older revision", async () => {
     const initial = block(1, "article");
     commandMocks.listGridBlocks.mockResolvedValue(gridSnapshot([initial], 1, false, 5));
