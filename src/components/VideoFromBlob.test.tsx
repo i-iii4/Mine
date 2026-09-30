@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render } from "@testing-library/react";
-import { VideoFromBlob } from "./VideoFromBlob";
+import { MAX_BLOB_VIDEO_BYTES, VideoFromBlob } from "./VideoFromBlob";
 
 describe("VideoFromBlob", () => {
   beforeEach(() => {
@@ -36,8 +36,9 @@ describe("VideoFromBlob", () => {
   it("falls back to blob fetch when the direct video path errors", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
+      headers: new Headers({ "Content-Length": "5" }),
       blob: () => Promise.resolve(new Blob(["video"], { type: "video/mp4" })),
-    } as Response);
+    } as unknown as Response);
     vi.stubGlobal("fetch", fetchMock);
 
     const { container } = render(
@@ -52,15 +53,16 @@ describe("VideoFromBlob", () => {
       await Promise.resolve();
     });
 
-    expect(fetchMock).toHaveBeenCalledWith("asset://localhost//vault/demo.mp4");
+    expect(fetchMock).toHaveBeenCalledWith("asset://localhost//vault/demo.mp4", expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(container.querySelector("video")).toHaveAttribute("src", "blob:video-preview");
   });
 
   it("falls back to blob fetch after a stalled direct load timeout", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
+      headers: new Headers({ "Content-Length": "5" }),
       blob: () => Promise.resolve(new Blob(["video"], { type: "video/mp4" })),
-    } as Response);
+    } as unknown as Response);
     vi.stubGlobal("fetch", fetchMock);
 
     render(<VideoFromBlob src="asset://localhost//vault/stalled.mp4" autoPlay muted loop />);
@@ -70,6 +72,46 @@ describe("VideoFromBlob", () => {
       await Promise.resolve();
     });
 
-    expect(fetchMock).toHaveBeenCalledWith("asset://localhost//vault/stalled.mp4");
+    expect(fetchMock).toHaveBeenCalledWith("asset://localhost//vault/stalled.mp4", expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  });
+
+  it("keeps a video too large for memory on its direct source (А7.6)", async () => {
+    const blob = vi.fn();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: new Headers({ "Content-Length": String(MAX_BLOB_VIDEO_BYTES + 1) }),
+      blob,
+    } as unknown as Response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { container } = render(<VideoFromBlob src="asset://localhost//vault/long.mp4" autoPlay muted loop />);
+    await act(async () => {
+      fireEvent.error(container.querySelector("video")!);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
+
+    expect(blob).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(container.querySelector("video")).toHaveAttribute("src", "asset://localhost//vault/long.mp4");
+  });
+
+  it("stops reading the video when it is closed (А7.6)", async () => {
+    let signal: AbortSignal | undefined;
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      signal = init?.signal ?? undefined;
+      return new Promise<Response>(() => undefined);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { container, unmount } = render(<VideoFromBlob src="asset://localhost//vault/slow.mp4" />);
+    await act(async () => {
+      fireEvent.error(container.querySelector("video")!);
+      await Promise.resolve();
+    });
+    expect(signal?.aborted).toBe(false);
+    unmount();
+    expect(signal?.aborted).toBe(true);
   });
 });
