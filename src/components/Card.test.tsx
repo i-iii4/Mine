@@ -1067,6 +1067,40 @@ describe("Card", () => {
     expect(container.querySelector("svg path[d]")).toBeNull();
   });
 
+  it("draws a square video square, not in a 16:9 slot (30.09.2026)", () => {
+    const b = block({
+      block_type: "video",
+      media_file: "square.mp4",
+      preview_manifest: JSON.stringify({
+        kind: "video_poster",
+        primary_preview_path: "test-block.jpg",
+        width: 1080,
+        height: 1080,
+        preview_width: 640,
+        preview_height: 640,
+        tiles: [{
+          source_path: "square.mp4", preview_path: "test-block.preview-1.jpg",
+          width: 1080, height: 1080, preview_width: 640, preview_height: 640,
+          is_video: true, is_video_poster: true,
+        }],
+        overflow_count: 0,
+      }),
+    });
+    const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    const surface = container.querySelector<HTMLElement>("[data-card-graphic-surface]")!;
+    // jsdom drops a unitless aspect-ratio; the ratio itself is pinned in
+    // cardLayout.test.ts, and the grid reads the same descriptor.
+    expect(surface).not.toHaveClass("aspect-video");
+    expect(surface).not.toHaveAttribute("data-card-preview-geometry");
+  });
+
+  it("keeps a video without a poster in the marked provisional envelope", () => {
+    const b = block({ block_type: "video", media_file: "fresh.mp4" });
+    const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    const surface = container.querySelector<HTMLElement>("[data-card-graphic-surface]")!;
+    expect(surface).toHaveAttribute("data-card-preview-geometry", "pending");
+  });
+
   it("marks a video card whose file is still in iCloud (SPEC_CLOUD_STORAGE.md, Х6)", () => {
     vi.useFakeTimers();
     try {

@@ -212,17 +212,17 @@ function deriveMediaCardLayoutDescriptor(
   const mediaItems = mediaItemsFromMediaMetadata(previewManifest);
 
   if (hasVideoMediaSignal(block, previewManifest, mediaItems)) {
+    // The poster's shape, clamped like a post's media: a fixed 16:9 slot
+    // cropped square and vertical videos to their middle (30.09.2026). The
+    // artifact, or nothing; the source file's size is never read.
+    // See SPEC_CARD_MEDIA_GEOMETRY.md.
+    const artifactAspect = imageSurfaceAspectRatio(previewManifest) ?? mediaItems[0]?.aspectRatio ?? null;
     return {
       variant: "video",
       titleText,
       previewText: "",
       authorText: "",
-      // Same rule as every other variant: the artifact, or nothing. Nothing
-      // currently reads this — a video card's surface is a fixed `aspect-video`
-      // slot and its height comes from a constant — but a value computed the
-      // forbidden way is an invitation to wire it up and inherit the
-      // violation. See SPEC_CARD_MEDIA_GEOMETRY.md.
-      primaryAspectRatio: mediaItems[0]?.aspectRatio ?? null,
+      primaryAspectRatio: artifactAspect === null ? null : clampCardAspect(artifactAspect),
       mediaItems,
       visibleMediaCount: mediaItems.length,
       totalMediaCount: mediaItems.length,

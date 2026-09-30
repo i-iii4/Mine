@@ -170,13 +170,71 @@ describe("computeCardHeight — image", () => {
   });
 });
 
+/** A video card's poster manifest: source size and the poster's own size. */
+function videoPosterManifest(width: number, height: number, previewWidth: number, previewHeight: number): string {
+  return JSON.stringify({
+    kind: "video_poster",
+    primary_preview_path: "clip.jpg",
+    width,
+    height,
+    preview_width: previewWidth,
+    preview_height: previewHeight,
+    tiles: [{
+      source_path: "clip.mp4",
+      preview_path: "clip.preview-1.jpg",
+      width,
+      height,
+      preview_width: previewWidth,
+      preview_height: previewHeight,
+      is_video: true,
+      is_video_poster: true,
+    }],
+    overflow_count: 0,
+  });
+}
+
 describe("computeCardHeight — video / link / file", () => {
-  it("video uses 16:9 aspect", () => {
+  it("video without a poster yet keeps the provisional 16:9 envelope", () => {
     const block = makeBlock({ block_type: "video", media_file: "clip.mp4" });
     // inner width 320 - 2 = 318; height = round(318 * 9/16) + border
     expect(computeCardHeight(block, 320, null)).toBe(
       Math.round(318 * 9 / 16) + CARD_BORDER,
     );
+  });
+
+  it("a video card takes its poster's shape, not a fixed 16:9 slot (30.09.2026)", () => {
+    // The square video restored from Orphans: 1080×1080, poster 640×640.
+    const square = makeBlock({
+      block_type: "video",
+      media_file: "clip.mp4",
+      preview_manifest: videoPosterManifest(1080, 1080, 640, 640),
+    });
+    expect(computeCardHeight(square, 320, null)).toBe(318 + CARD_BORDER);
+    expect(computeFeedPlaybackSurfaceEnvelope(square, 320)).toEqual({ topOffsetPx: 1, heightPx: 318 });
+
+    // A vertical 4:5 video stands taller than wide.
+    const vertical = makeBlock({
+      block_type: "video",
+      media_file: "clip.mp4",
+      preview_manifest: videoPosterManifest(2160, 2700, 512, 640),
+    });
+    expect(computeCardHeight(vertical, 320, null)).toBe(Math.round(318 / 0.8) + CARD_BORDER);
+
+    // A 9:16 phone video fits inside the card limits whole.
+    const phone = makeBlock({
+      block_type: "video",
+      media_file: "clip.mp4",
+      preview_manifest: videoPosterManifest(1080, 1920, 360, 640),
+    });
+    expect(computeCardHeight(phone, 320, null)).toBe(Math.round(318 / (360 / 640)) + CARD_BORDER);
+
+    // Narrower than 1:2 stops at the card limit.
+    const strip = makeBlock({
+      block_type: "video",
+      media_file: "clip.mp4",
+      preview_manifest: videoPosterManifest(360, 1080, 214, 640),
+    });
+    expect(computeCardHeight(strip, 320, null)).toBe(318 * 2 + CARD_BORDER);
   });
 
   it("link adds footer height to thumbnail", () => {

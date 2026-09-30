@@ -927,6 +927,19 @@
       "requirement": "SPEC_ONBOARDING.md#**О16.**",
       "tests": ["src/components/EmptySpaceOnboarding.test.tsx", "src/components/EdgeStatesSection.test.tsx", "src/components/AppSettingsMenu.test.tsx"],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/cardLayout.ts",
+        "src/lib/cardLayout.test.ts",
+        "src/lib/cardHeight.ts",
+        "src/lib/cardHeight.test.ts",
+        "src/components/Card.tsx",
+        "src/components/Card.test.tsx"
+      ],
+      "requirement": "SPEC_CARD_MEDIA_GEOMETRY.md#**30.09.2026: видеокарточка принимает форму постера.**",
+      "tests": ["src/lib/cardLayout.test.ts", "src/lib/cardHeight.test.ts", "src/components/Card.test.tsx"],
+      "command": "test:frontend"
     }
   ],
   "release": null

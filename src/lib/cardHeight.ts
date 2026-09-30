@@ -59,8 +59,14 @@ function innerWidth(columnWidth: number): number {
 const IMAGE_MIN_HEIGHT_MAX = 120;
 const IMAGE_MIN_HEIGHT_COLUMN_RATIO = 0.4;
 
-/** Aspect for video/link thumbnail area (16:9). */
+/** Aspect for the link thumbnail area (16:9). */
 const THUMBNAIL_ASPECT = 9 / 16;
+
+/** A video card's surface: the poster's shape, or the provisional envelope
+ *  while the poster is not made yet (SPEC_CARD_MEDIA_GEOMETRY.md). */
+function videoSurfaceHeight(width: number, aspectRatio: number | null): number {
+  return Math.round(width / Math.max(aspectRatio ?? PROVISIONAL_MEDIA_ASPECT, 0.01));
+}
 
 /** Height of the text footer below link thumbnails (padding + title + domain). */
 const LINK_FOOTER_HEIGHT = 76;
@@ -369,7 +375,7 @@ export function computeFeedPlaybackSurfaceEnvelope(
       }
       return {
         topOffsetPx: CARD_BORDER_TOP,
-        heightPx: Math.round(iw * THUMBNAIL_ASPECT),
+        heightPx: videoSurfaceHeight(iw, descriptor.primaryAspectRatio),
       };
 
     case "article": {
@@ -450,7 +456,8 @@ export function computeCardHeight(
             return computeImageHeight(block, columnWidth);
           case "video":
             return (
-              Math.round(innerWidth(columnWidth) * THUMBNAIL_ASPECT) + CARD_BORDER_HEIGHT
+              videoSurfaceHeight(innerWidth(columnWidth), descriptor.primaryAspectRatio)
+              + CARD_BORDER_HEIGHT
             );
           case "link":
             return (

@@ -245,7 +245,11 @@ export function computeCardHeight(
     (`data-card-preview-geometry="pending"`), а не выдуманный квадрат.
     Полный контракт:
     [SPEC_CARD_MEDIA_GEOMETRY.md](SPEC_CARD_MEDIA_GEOMETRY.md)
-  - video: `columnWidth * 9 / 16` (fixed 16:9 + play overlay)
+  - video (карточка, у которой основной файл сам ролик): форма постера по тому
+    же правилу, что у медиа поста, `clampCardAspect(previewWidth / previewHeight)`
+    в пределах от 1:2 до 2:1; пока постера нет, временная
+    `PROVISIONAL_MEDIA_ASPECT`. До 30.09.2026 рамка была жёсткой 16:9 и
+    обрезала квадратные и вертикальные ролики (решение пользователя)
   - link: `columnWidth * 9 / 16 + 76` (16:9 thumbnail + 76px text)
   - file: fixed compact height
 - **article** — используется `wordWidths`:

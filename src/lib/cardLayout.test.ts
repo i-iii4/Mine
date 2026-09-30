@@ -665,3 +665,32 @@ describe("card shape comes from the artifact, not the source", () => {
     expect(descriptor.primaryAspectRatio).toBeNull();
   });
 });
+
+describe("dedicated video card shape (30.09.2026)", () => {
+  function videoCard(previewWidth: number, previewHeight: number) {
+    return deriveCardLayoutDescriptor(makeBlock({
+      block_type: "video",
+      media_file: "clip.mp4",
+      width: 1920,
+      height: 1080,
+      preview_manifest: JSON.stringify({
+        kind: "video_poster", primary_preview_path: "clip.jpg", width: null, height: null,
+        preview_width: previewWidth, preview_height: previewHeight,
+        tiles: [{ source_path: "clip.mp4", preview_path: "clip.jpg", width: null, height: null,
+          preview_width: previewWidth, preview_height: previewHeight, is_video: true, is_video_poster: true }],
+        overflow_count: 0,
+      }),
+    }));
+  }
+
+  it("takes the poster's shape, not the source size and not a fixed 16:9", () => {
+    // The block claims 1920×1080; the poster that is painted is square.
+    expect(videoCard(640, 640)).toMatchObject({ variant: "video", primaryAspectRatio: 1 });
+    expect(videoCard(512, 640).primaryAspectRatio).toBeCloseTo(0.8);
+  });
+
+  it("stays inside the card limits of 1:2 and 2:1", () => {
+    expect(videoCard(214, 640).primaryAspectRatio).toBe(0.5);
+    expect(videoCard(640, 200).primaryAspectRatio).toBe(2);
+  });
+});

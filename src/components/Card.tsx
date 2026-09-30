@@ -705,7 +705,7 @@ export function CardContent({
       case "social-media-grid":
         return <SocialCard block={block} descriptor={descriptor} previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} thumbVersion={thumbVersion} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
       case "video":
-        return <VideoCard contentInCloud={block.content_in_cloud} previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} thumbVersion={thumbVersion} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
+        return <VideoCard aspectRatio={descriptor.primaryAspectRatio} contentInCloud={block.content_in_cloud} previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} thumbVersion={thumbVersion} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
       case "file":
         return <FileCard block={block} />;
     }
@@ -1345,6 +1345,7 @@ const ArticleCard = memo(function ArticleCard({
 });
 
 const VideoCard = memo(function VideoCard({
+  aspectRatio,
   contentInCloud,
   previewManifest,
   vaultPath,
@@ -1354,6 +1355,8 @@ const VideoCard = memo(function VideoCard({
   allowPlayback,
   measurementMode = false,
 }: {
+  /** The poster's shape; null until the poster is made. */
+  aspectRatio: number | null;
   contentInCloud: boolean | undefined;
   previewManifest: ReturnType<typeof parsePreviewManifest>;
   vaultPath: string;
@@ -1374,7 +1377,12 @@ const VideoCard = memo(function VideoCard({
   ]);
 
   return (
-    <GraphicSurface className="aspect-video">
+    // The poster's shape, like a post's media: the height the grid reserved
+    // is computed from the same ratio (SPEC_CARD_MEDIA_GEOMETRY.md).
+    <GraphicSurface
+      style={{ aspectRatio: `${aspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
+      data-card-preview-geometry={aspectRatio === null ? "pending" : undefined}
+    >
       <CloudBadge active={contentInCloud} />
       {shouldAutoplay ? (
         <FeedVideoSurface
