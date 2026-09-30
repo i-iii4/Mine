@@ -46,6 +46,9 @@ test('nested signing precedes actual-byte manifest and outer-only signature', ()
   assert.equal(signing.at(-1).args.at(-1), bundle);
   assert.ok(signing.every(call => !call.args.includes('--deep')));
   assert.deepEqual(report.manifest.native_host, fileComponentManifest(join(bundle, 'Contents/MacOS/native-host')));
+  // Sealed as a development build: the next local build of the same version
+  // may replace its helper (SPEC_DISTRIBUTION.md, D8).
+  assert.equal(report.manifest.build_profile, 'local');
   assert.deepEqual(report.manifest.ytdlp, fileComponentManifest(join(bundle, 'Contents/Resources/binaries/yt-dlp')));
   assert.ok(harness.calls.at(-1).args.includes('--verify'));
 });

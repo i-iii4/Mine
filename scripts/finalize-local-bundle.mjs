@@ -61,7 +61,9 @@ export function finalizeLocalBundle(bundle, options = {}) {
   const extension = join(bundle, 'Contents/Resources/clipper-extension');
   const ytdlp = join(bundle, 'Contents/Resources/binaries/yt-dlp');
   const identity = (options.probe ?? probeNativeHost)(nativeHost, info.CFBundleShortVersionString);
-  const componentInputs = { appVersion: info.CFBundleShortVersionString, buildProfile: options.buildProfile ?? 'release',
+  // A local ad-hoc build is a development build, not a public package: it may
+  // replace an installed runtime of the same version (SPEC_DISTRIBUTION.md, D8).
+  const componentInputs = { appVersion: info.CFBundleShortVersionString, buildProfile: options.buildProfile ?? 'local',
     nativeHost, nativeHostBuildId: identity.build_id, extension, ytdlp };
   const manifest = createRuntimeManifest(componentInputs);
   const manifestPath = join(bundle, 'Contents/Resources/clipper-runtime-manifest.json');

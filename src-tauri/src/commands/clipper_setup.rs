@@ -1027,8 +1027,15 @@ fn runtime_install_decision(
             identity.build_profile.clone_from(&candidate.build_profile);
             identity == *candidate
         }),
-        candidate.build_profile == "debug",
+        is_development_profile(&candidate.build_profile),
     )
+}
+
+/// Development builds, `tauri dev` (`debug`) and local ad-hoc bundles
+/// (`local`), may replace an installed runtime of the same version; public
+/// packages (`release`) may not (SPEC_DISTRIBUTION.md, D8).
+fn is_development_profile(profile: &str) -> bool {
+    matches!(profile, "debug" | "local")
 }
 
 fn bundled_host_path() -> Option<PathBuf> {
@@ -1125,13 +1132,15 @@ fn runtime_build_manifest(app: &AppHandle) -> Result<RuntimeBuildManifest, Comma
             .ok()
             .and_then(|bytes| serde_json::from_slice::<RuntimeBuildManifest>(&bytes).ok());
         if let Some(manifest) = bundled {
-            let expected_profile = if cfg!(debug_assertions) {
-                "debug"
+            // A release binary carries a public package or a local ad-hoc
+            // build sealed as `local` (SPEC_DISTRIBUTION.md, D8).
+            let profile_matches = if cfg!(debug_assertions) {
+                manifest.build_profile == "debug"
             } else {
-                "release"
+                matches!(manifest.build_profile.as_str(), "release" | "local")
             };
             let current = manifest.schema_version == RUNTIME_MANIFEST_SCHEMA_VERSION
-                && manifest.build_profile == expected_profile
+                && profile_matches
                 && manifest.app_version == app.package_info().version.to_string()
                 && manifest.native_host_build_id.is_some();
             if current {
@@ -2538,6 +2547,28 @@ mod tests {
                 Ok(RuntimeInstallDecision::Install)
             );
         }
+    }
+
+    #[test]
+    fn a_local_build_replaces_another_build_of_the_same_version() {
+        // The case of 30.09.2026: the installed helper came from a separate
+        // development build, and the next local app build refused to put its
+        // own in place, so the helper could never be repaired.
+        let mut installed = RuntimeInstallMarker {
+            manifest: manifest("0.1.0"),
+            verified_at_unix_seconds: 0,
+        };
+        installed.manifest.build_profile = "debug".into();
+        let mut candidate = manifest("0.1.0");
+        candidate.build_profile = "local".into();
+        candidate.native_host.sha256 = "next-local-build".into();
+        assert_eq!(
+            runtime_install_decision(Some(&installed), &candidate),
+            Ok(RuntimeInstallDecision::Install)
+        );
+        // A public package of the same version still may not.
+        candidate.build_profile = "release".into();
+        assert!(runtime_install_decision(Some(&installed), &candidate).is_err());
     }
 
     #[test]
