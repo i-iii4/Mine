@@ -1055,6 +1055,16 @@
       "requirement": "SPEC_AUDIT_FIXES.md#| Б2.1 |",
       "tests": ["src-tauri/src/commands/vault.rs", "src-tauri/src/space_registry.rs", "src-tauri/src/watcher/handler.rs", "src-tauri/src/watcher/watch.rs", "src-tauri/src/storage/search_engine.rs", "src-tauri/src/storage/search_projection.rs", "src-tauri/src/commands/state.rs"],
       "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src-tauri/src/bin/native_host.rs",
+        "src-tauri/Cargo.toml",
+        "Cargo.lock"
+      ],
+      "requirement": "SPEC_AUDIT_FIXES.md#| Б4.4 |",
+      "tests": ["src-tauri/src/bin/native_host.rs"],
+      "command": "test:rust"
     }
   ],
   "release": null

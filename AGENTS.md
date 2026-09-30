@@ -80,6 +80,7 @@
 | whatlang | Определение языка текста (article speech prep) |
 | ureq | Синхронный HTTP-клиент (импорт Are.na) |
 | tiny_http + http-range + url + getrandom | Native host: локальный upload-сервер для бинарных файлов, валидация URL, upload-токены |
+| pulldown-cmark | Native host: разбор CommonMark, чтобы примеры в коде не превращались во вставки медиа |
 | React 19 | UI-фреймворк |
 | react-router | Роутинг main-окна |
 | Vite | Сборка фронтенда, HMR |

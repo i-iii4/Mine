@@ -52,6 +52,10 @@ serde_json = "1"
 serde_yaml = "0.9"
 semver = "1"
 
+# CommonMark parser without HTML rendering: the native host asks it where code
+# is, so a syntax example inside code is never downloaded as media.
+pulldown-cmark = { version = "0.13.4", default-features = false }
+
 # Database
 rusqlite = { version = "0.33", features = ["bundled"] }
 

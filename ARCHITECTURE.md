@@ -604,7 +604,7 @@ iOS UI contract:
 | Thumbnail Generator | Превью 240px: изображения (resize), статьи (text-to-image) | Rust, image + ab_glyph + imageproc |
 | Import | Импорт каналов из Are.na | Rust, ureq (sync HTTP) |
 | Web Clipper | Chrome/Safari расширение: сохранение из браузера | Manifest V3, Defuddle, native messaging |
-| Native Host | Мост между расширением и vault (stdin/stdout JSON + локальный HTTP upload) | Rust (bin/native_host.rs), ureq, tiny_http, url, getrandom |
+| Native Host | Мост между расширением и vault (stdin/stdout JSON + локальный HTTP upload) | Rust (bin/native_host.rs), ureq, tiny_http, url, getrandom, pulldown-cmark |
 | Vault | Пользовательские файлы на диске | Файловая система |
 
 ### Frontend rendering model
@@ -2006,6 +2006,7 @@ Canvas перезапускает симуляцию всякий раз, ког
 | url | 2.x | URL parsing and host classification in native host | MIT/Apache-2.0 |
 | getrandom | 0.3.x | OS random bytes for native-host upload tokens | MIT/Apache-2.0 |
 | tiny_http | latest | Local HTTP upload server for extension binary payloads | MIT/Apache-2.0 |
+| pulldown-cmark | 0.13.x | Разбор CommonMark в помощнике клиппера: примеры `![…]` в коде не становятся вставками (SPEC_AUDIT_FIXES.md, Б4.4) | MIT |
 | react | 19.x | UI-фреймворк | MIT |
 | vite | latest | Сборщик | MIT |
 | react-force-graph-2d | 1.x | Canvas force-directed Graph View renderer with zoom/pan/hit-testing | MIT |

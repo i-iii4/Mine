@@ -345,11 +345,25 @@ impl RequestSpace {
 }
 
 fn resolve_request_space(requested: Option<String>, binding: Option<&str>) -> RequestSpace {
-    resolve_request_space_in(&read_app_settings(), requested, binding)
+    resolve_request_space_in(
+        &read_app_settings(),
+        native_vaults_dir().as_deref(),
+        requested,
+        binding,
+    )
+}
+
+/// Where the app keeps its derived stores, whose `owner-path.json` files say
+/// which space each last saw at which path.
+fn native_vaults_dir() -> Option<PathBuf> {
+    native_app_data_dir()
+        .ok()
+        .map(|dir| mine_lib::space_registry::vaults_dir(&dir))
 }
 
 fn resolve_request_space_in(
     cfg: &serde_json::Map<String, serde_json::Value>,
+    vaults_dir: Option<&Path>,
     requested: Option<String>,
     binding: Option<&str>,
 ) -> RequestSpace {
@@ -374,7 +388,17 @@ fn resolve_request_space_in(
             identity: None,
         };
     };
-    let (path, moved_from) = match space_registry::locate(cfg, identity, &hint) {
+    // A request that names its space is found by that identity. One that
+    // does not (a popup from before К2) is found exactly as the app reopens
+    // its saved space: by the identity the registry or a derived store
+    // recorded for the path, and a folder without an identity of its own is
+    // never taken for the space (Ф8, Б2.2). The helper then writes only where
+    // the app would open.
+    let located = match identity {
+        Some(id) => space_registry::locate(cfg, Some(id), &hint),
+        None => space_registry::locate_saved(cfg, vaults_dir, &hint),
+    };
+    let (path, moved_from) = match located {
         Located::Here { path } => (path, None),
         Located::Moved { from, path } => (path, Some(from)),
         Located::Lost { path, reason } => {
@@ -419,6 +443,40 @@ fn resolve_request_space_in(
         binding_accepted,
         identity,
     }
+}
+
+/// Why a request cannot use its space.
+enum SpaceRefusal {
+    /// The space is not where the request can reach it; its state answers.
+    Space(RequestSpace),
+    Failed(String),
+}
+
+/// Open the space a request was resolved to. Only the located folder is
+/// touched: an unavailable one is never replaced by a new space at the same
+/// display path. `writes` lays out a brand-new empty space first.
+fn open_request_vault(
+    space: &RequestSpace,
+    writes: bool,
+    app_state: PathBuf,
+) -> Result<VaultLayout, SpaceRefusal> {
+    let Some(located) = &space.path else {
+        return Err(SpaceRefusal::Space(space.clone()));
+    };
+    let path = PathBuf::from(located);
+    if !path.is_dir() {
+        return Err(SpaceRefusal::Space(RequestSpace {
+            path: None,
+            state: "missing",
+            moved_from: Some(located.clone()),
+            ..space.clone()
+        }));
+    }
+    if writes {
+        initialize_native_new_space_layout(&VaultLayout::new(path.clone()))
+            .map_err(SpaceRefusal::Failed)?;
+    }
+    resolve_native_vault_layout_at(path, app_state).map_err(SpaceRefusal::Failed)
 }
 
 /// A request about a space that cannot be found answers with its state and
@@ -504,11 +562,7 @@ fn resolve_native_vault_layout_at(
     app_state: PathBuf,
 ) -> Result<VaultLayout, String> {
     let base = VaultLayout::new(root.clone());
-    files::validate_vault_write_target(&base, &base.mine_dir()).map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(base.mine_dir())
-        .map_err(|e| format!("failed to create Mine metadata dir: {e}"))?;
-
-    let vault_id = ensure_native_vault_id(&base)?;
+    let vault_id = ensure_space_identity(&base)?;
     let derived_root = app_state.join("vaults").join(vault_id);
     let write_layout = files::load_vault_write_layout(&base).map_err(|error| error.to_string())?;
     let layout = VaultLayout::with_derived_root(root, derived_root).with_write_layout(write_layout);
@@ -568,6 +622,15 @@ fn installed_extension_build(app_data: &Path) -> Option<String> {
 fn native_app_data_dir() -> Result<PathBuf, String> {
     let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
     Ok(PathBuf::from(home).join("Library/Application Support/com.mine.app"))
+}
+
+/// The space's identity, written first when the folder has none. Called only
+/// for a folder the person chose or a space located by identity.
+fn ensure_space_identity(base: &VaultLayout) -> Result<String, String> {
+    files::validate_vault_write_target(base, &base.mine_dir()).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(base.mine_dir())
+        .map_err(|e| format!("failed to create Mine metadata dir: {e}"))?;
+    ensure_native_vault_id(base)
 }
 
 fn ensure_native_vault_id(vault: &VaultLayout) -> Result<String, String> {
@@ -713,7 +776,14 @@ fn handle_pick_vault_folder() {
         Ok(path) => path,
         Err(error) => return send_error(&error),
     };
-    if let Err(error) = initialize_native_new_space_layout(&VaultLayout::new(PathBuf::from(&picked))) {
+    let chosen = VaultLayout::new(PathBuf::from(&picked));
+    if let Err(error) = initialize_native_new_space_layout(&chosen) {
+        return send_error(&error);
+    }
+    // The person chose this folder: it becomes a space with its identity now,
+    // as a folder chosen in the app does. Requests then find it by identity;
+    // a folder without one is never taken for a space (Ф8).
+    if let Err(error) = ensure_space_identity(&chosen) {
         return send_error(&error);
     }
     match add_known_vault(&picked) {
@@ -806,11 +876,12 @@ fn handle_reveal_vault(params: serde_json::Value) {
 /// The folder Reveal opens: the space the popup names, wherever it is now,
 /// and only a space Mine knows.
 fn reveal_target(params: &serde_json::Value) -> Result<String, RequestSpace> {
-    reveal_target_in(&read_app_settings(), params)
+    reveal_target_in(&read_app_settings(), native_vaults_dir().as_deref(), params)
 }
 
 fn reveal_target_in(
     cfg: &serde_json::Map<String, serde_json::Value>,
+    vaults_dir: Option<&Path>,
     params: &serde_json::Value,
 ) -> Result<String, RequestSpace> {
     // Popups before К6 nested the fields under `params`.
@@ -826,7 +897,7 @@ fn reveal_target_in(
         .get("binding_id")
         .or_else(|| params.get("binding_id"))
         .and_then(serde_json::Value::as_str);
-    let space = resolve_request_space_in(cfg, path, binding);
+    let space = resolve_request_space_in(cfg, vaults_dir, path, binding);
     let Some(target) = space.path.clone() else {
         return Err(space);
     };
@@ -1125,16 +1196,6 @@ fn check_binding(params: &serde_json::Value, binding: &str) -> anyhow::Result<()
         anyhow::bail!("operation belongs to another executor");
     }
     Ok(())
-}
-
-/// The X post whose videos the helper adds to a saved post body: the content
-/// script cannot reach the syndication API. A selection is saved as shown, so
-/// a video the person did not select is never added to it (Ф5).
-fn tweet_to_complete_with_videos(block_type: BlockType, params: &SaveBlockParams) -> Option<String> {
-    if block_type != BlockType::Article || params.selection {
-        return None;
-    }
-    extract_twitter_video_id(params.url.as_deref()?)
 }
 
 fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
@@ -1483,34 +1544,15 @@ fn perform_save_block_with_publisher(
         }
     }
 
-    // Download inline images (and videos) for article bodies
-    let (body, inline_files, unresolved_videos) = {
-        let tweet_to_complete = tweet_to_complete_with_videos(bt, &p);
-        let mut raw = p.body.unwrap_or_default();
-
-        // For Twitter: fetch video MP4 URLs via syndication API.
-        // Insert after the first tweet's text (before first "---"), not at end.
-        // Content script can't call syndication API (CORS), so backend handles it.
-        if let Some(tweet_id) = tweet_to_complete {
-            if let Ok(video_urls) = fetch_tweet_videos(&tweet_id) {
-                for video_url in &video_urls {
-                    if raw.contains(video_url.as_str()) {
-                        continue; // already present
-                    }
-                    // Insert after first tweet text, before first ---
-                    let insert_pos = raw.find("\n\n---\n").unwrap_or(raw.len());
-                    let markup = format!("\n\n![]({})", video_url);
-                    raw.insert_str(insert_pos, &markup);
-                }
-            }
-        }
-
-        if !raw.trim().is_empty() {
-            let page_url = p.url.as_deref().unwrap_or("");
-            localize_body_images(&raw, vault, &name, page_url, source_vault)
-        } else {
-            (raw, Vec::new(), Vec::new())
-        }
+    // Localize the media the body already embeds. The body is the preview the
+    // person saw: post video is resolved while the preview is prepared
+    // (`resolve_twitter_media`), never added here (Ф5).
+    let raw = p.body.unwrap_or_default();
+    let (body, inline_files, unresolved_videos) = if raw.trim().is_empty() {
+        (raw, Vec::new(), Vec::new())
+    } else {
+        let page_url = p.url.as_deref().unwrap_or("");
+        localize_body_images(&raw, vault, &name, page_url, source_vault)
     };
 
     // A video too large to store leaves the note pointing at someone else's
@@ -1911,8 +1953,8 @@ const INLINE_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const INLINE_DOWNLOAD_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Per-request timeout for the Twitter syndication API. Without it a hung
-/// `cdn.syndication.twimg.com` would block `save_block` on the serial host
-/// until the OS socket timeout.
+/// `cdn.syndication.twimg.com` would block `resolve_twitter_media` on the
+/// serial host until the OS socket timeout.
 const TWITTER_API_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Download a file from URL to local path.
@@ -2138,8 +2180,8 @@ fn host_from_url(url: &str) -> String {
 
 /// Phase A: scan the body, build the list of inline-media tasks with
 /// deterministic per-kind indices. Stops at MAX_INLINE_IMAGES successful
-/// http(s) matches; non-http URLs and malformed `![alt](...)` patterns
-/// are skipped without consuming the cap.
+/// http(s) matches; non-http URLs, malformed `![alt](...)` patterns and
+/// examples inside code are skipped without consuming the cap.
 #[cfg(test)]
 fn scan_inline_tasks(body: &str, vault: &VaultLayout, slug: &str) -> Vec<InlineTask> {
     scan_inline_tasks_with(body, vault, slug, &|_| None)
@@ -2162,26 +2204,31 @@ fn scan_inline_tasks_with(
     let mut video_idx: u32 = 0;
     let mut file_idx: u32 = 0;
     let mut search_from = 0;
+    let code = markdown_code_ranges(body);
 
+    // An embed written inside code is an example of the syntax: it is neither
+    // downloaded nor rewritten (Ф5, Б4.4). Code spans bind before brackets
+    // (CommonMark), so every delimiter is looked for outside code.
     while tasks.len() < MAX_INLINE_IMAGES as usize {
-        let Some(offset) = body[search_from..].find("![") else {
+        let Some(img_start) = find_outside_code(body, search_from, "![", &code) else {
             break;
         };
-        let img_start = search_from + offset;
         let alt_start = img_start + 2;
 
-        let Some(offset) = body[alt_start..].find("](") else {
+        let Some(bracket_pos) = find_outside_code(body, alt_start, "](", &code) else {
             search_from = alt_start;
             continue;
         };
-        let bracket_pos = alt_start + offset;
 
         let url_start = bracket_pos + 2;
-        let Some(offset) = body[url_start..].find(')') else {
+        let Some(paren_end) = find_outside_code(body, url_start, ")", &code) else {
             search_from = url_start;
             continue;
         };
-        let paren_end = url_start + offset;
+        if code_overlaps(&code, url_start..paren_end) {
+            search_from = alt_start;
+            continue;
+        }
 
         let url = &body[url_start..paren_end];
         if !(url.starts_with("http://") || url.starts_with("https://")) {
@@ -2229,6 +2276,59 @@ fn scan_inline_tasks_with(
         search_from = paren_end + 1;
     }
     tasks
+}
+
+/// Byte ranges of Markdown code in `body`, sorted and disjoint: fenced and
+/// indented code blocks and inline code spans, inside block quotes and list
+/// items too. The inline-media scan passes over them.
+///
+/// A standard Markdown parser (`pulldown_cmark`) decides, so container rules
+/// (quote and list prefixes, indentation that continues a paragraph, unclosed
+/// fences) are the standard ones rather than an approximation. Table and
+/// strikethrough syntax is on to read clipped bodies the way the renderer
+/// with GitHub extensions shows them.
+fn markdown_code_ranges(body: &str) -> Vec<std::ops::Range<usize>> {
+    use pulldown_cmark::{Event, Options, Parser, Tag};
+    let options = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH;
+    let mut ranges: Vec<std::ops::Range<usize>> = Parser::new_ext(body, options)
+        .into_offset_iter()
+        .filter_map(|(event, range)| {
+            matches!(event, Event::Code(_) | Event::Start(Tag::CodeBlock(_))).then_some(range)
+        })
+        .collect();
+    // Events arrive in document order and code never nests, so this only
+    // guards the invariant the binary searches below rely on.
+    ranges.sort_by_key(|range| range.start);
+    ranges.dedup_by(|next, kept| {
+        let overlaps = next.start < kept.end;
+        if overlaps {
+            kept.end = kept.end.max(next.end);
+        }
+        overlaps
+    });
+    ranges
+}
+
+/// First `needle` at or after `from` that starts outside `code`.
+fn find_outside_code(
+    body: &str,
+    mut from: usize,
+    needle: &str,
+    code: &[std::ops::Range<usize>],
+) -> Option<usize> {
+    loop {
+        let at = from + body[from..].find(needle)?;
+        match code.get(code.partition_point(|range| range.end <= at)) {
+            Some(range) if range.start <= at => from = range.end,
+            _ => return Some(at),
+        }
+    }
+}
+
+/// Whether any of the sorted, disjoint `code` ranges intersects `span`.
+fn code_overlaps(code: &[std::ops::Range<usize>], span: std::ops::Range<usize>) -> bool {
+    code.get(code.partition_point(|range| range.end <= span.start))
+        .is_some_and(|range| range.start < span.end)
 }
 
 /// Phase B: spawn a fixed worker pool, drain a shared queue of task
@@ -2505,21 +2605,20 @@ fn extract_twitter_video_id(url: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-/// Fetch video/GIF MP4 URLs from Twitter syndication API.
-/// Returns only video and animated_gif types (not photos — those are already in body from DOM).
-fn fetch_tweet_videos(tweet_id: &str) -> anyhow::Result<Vec<String>> {
-    Ok(fetch_tweet_media_previews(tweet_id)?
-        .into_iter()
-        .filter(|m| m.kind == "video")
-        .map(|m| m.src)
-        .collect())
+#[cfg(test)]
+std::thread_local! {
+    // Syndication requests made on this thread. Thread-local, like the
+    // response capture, so parallel tests observe only their own requests.
+    static SYNDICATION_REQUESTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// Photos, videos and GIFs the public syndication API reports for one post.
+/// Asked only while the popup prepares its preview (`resolve_twitter_media`);
+/// Save writes the body it receives and never asks (Ф5).
 fn fetch_tweet_media_previews(tweet_id: &str) -> anyhow::Result<Vec<TwitterMediaPreview>> {
-    let api_url = format!(
-        "https://cdn.syndication.twimg.com/tweet-result?id={}&token=0",
-        tweet_id
-    );
+    #[cfg(test)]
+    SYNDICATION_REQUESTS.with(|requests| requests.set(requests.get() + 1));
+    let api_url = format!("https://cdn.syndication.twimg.com/tweet-result?id={tweet_id}&token=0");
     let resp = net::fetch_validated_get(
         &api_url,
         TWITTER_API_TIMEOUT,
@@ -2986,9 +3085,12 @@ fn handle_upload_request(mut request: tiny_http::Request, token: &str) {
     // the same vault. The global fallback exists for older extension builds,
     // but it is intentionally no longer the primary routing mechanism.
     let filename = upload_filename_from_url(request.url());
+    // Only a located space receives the upload: a path the app would not
+    // open (another space or a folder without an identity) gets nothing, not
+    // even an identity file.
     let vault_path = query_param(request.url(), "vault_path")
         .or_else(|| UPLOAD_VAULT.lock().ok().and_then(|v| v.clone()))
-        .map(|path| resolve_request_space(Some(path.clone()), None).path.unwrap_or(path));
+        .and_then(|path| resolve_request_space(Some(path), None).path);
 
     // Read body
     let mut body = Vec::new();
@@ -3022,7 +3124,7 @@ fn handle_upload_request(mut request: tiny_http::Request, token: &str) {
     // Write to local derived pending storage. The source vault is touched only
     // when save_block commits the matching markdown file.
     let Some(vp) = vault_path else {
-        let response = tiny_http::Response::from_string("Vault not configured")
+        let response = tiny_http::Response::from_string("Space not configured or not available")
             .with_status_code(500)
             .with_header(
                 "Access-Control-Allow-Origin: *"
@@ -3285,27 +3387,18 @@ fn main() {
 
             "list_channels" | "save_block" | "create_channel" | "get_save_operation" => {
                 let space = request_space();
-                let Some(ref vp) = space.path else {
-                    send_space_error(&space);
-                    continue;
-                };
-                let path = PathBuf::from(vp);
-                // An unavailable selected folder is not permission to create
-                // a replacement vault at the same display path.
-                if !path.is_dir() {
-                    send_space_error(&RequestSpace { path: None, state: "missing", moved_from: Some(vp.clone()), ..space });
-                    continue;
-                }
-                if matches!(req.action.as_str(), "save_block" | "create_channel") {
-                    if let Err(error) = initialize_native_new_space_layout(&VaultLayout::new(path.clone())) {
-                        send_error(&error);
+                let writes = matches!(req.action.as_str(), "save_block" | "create_channel");
+                let opened = native_app_data_dir()
+                    .map_err(SpaceRefusal::Failed)
+                    .and_then(|state| open_request_vault(&space, writes, state));
+                let vault = match opened {
+                    Ok(vault) => vault,
+                    Err(SpaceRefusal::Space(space)) => {
+                        send_space_error(&space);
                         continue;
                     }
-                }
-                let vault = match resolve_native_vault_layout(path) {
-                    Ok(vault) => vault,
-                    Err(e) => {
-                        send_error(&e);
+                    Err(SpaceRefusal::Failed(error)) => {
+                        send_error(&error);
                         continue;
                     }
                 };
@@ -3504,16 +3597,29 @@ mod tests {
         let path = vault.block_path(response["slug"].as_str().unwrap());
         let content = std::fs::read_to_string(path).unwrap();
         assert!(content.ends_with("---\nSelected words"), "{content}");
+    }
 
-        let post: SaveBlockParams = serde_json::from_value(serde_json::json!({
-            "block_type":"article","url":"https://x.com/author/status/123","body":"Selected words"}))
-            .unwrap();
-        assert!(tweet_to_complete_with_videos(BlockType::Article, &post).is_some());
-        let selected: SaveBlockParams = serde_json::from_value(serde_json::json!({
-            "block_type":"article","url":"https://x.com/author/status/123","body":"Selected words",
-            "selection":true}))
-            .unwrap();
-        assert_eq!(tweet_to_complete_with_videos(BlockType::Article, &selected), None);
+    #[test]
+    fn saving_an_x_post_writes_the_shown_body_without_asking_for_post_video() {
+        // Ф5, Б4.3: Save writes exactly what the preview showed. Neither a
+        // whole post nor a selection gets a video the preview did not carry,
+        // and the helper does not even ask the syndication API for one.
+        let (_tmp, vault) = sc2_temp_vault();
+        let body = "First part of the thread\n\n---\n\nSecond part, no video here";
+        for (index, selection) in [false, true].into_iter().enumerate() {
+            SYNDICATION_REQUESTS.with(|requests| requests.set(0));
+            let response = sc0_save_response(&vault, serde_json::json!({
+                "operation_id": format!("x-post-{index}"), "block_type": "article",
+                "title": format!("Post {index}"),
+                "url": "https://x.com/author/status/1234567890123456789",
+                "body": body, "tags": [], "selection": selection
+            }));
+            assert_eq!(response["outcome"], "committed", "{response}");
+            assert_eq!(SYNDICATION_REQUESTS.with(std::cell::Cell::get), 0);
+            let path = vault.block_path(response["slug"].as_str().unwrap());
+            let content = std::fs::read_to_string(path).unwrap();
+            assert!(content.ends_with(&format!("---\n{body}")), "{content}");
+        }
     }
 
     #[test]
@@ -3943,20 +4049,23 @@ mod tests {
 
     #[test]
     fn sc2_status_distinguishes_connection_from_folder_and_uses_selected_binding() {
-        let (_tmp, vault) = sc2_temp_vault();
+        let (tmp, vault) = sc2_temp_vault();
+        std::fs::create_dir_all(vault.mine_dir()).unwrap();
+        std::fs::write(vault.vault_id_path(), K_SPACE_ID).unwrap();
+        // A folder without an identity of its own is not a space (Ф8).
+        let plain = tmp.path().join("plain");
+        std::fs::create_dir_all(&plain).unwrap();
         for (path, expected) in [
             (None, "unconfigured"),
             (
                 Some(vault.root().join("missing").to_string_lossy().into_owned()),
                 "missing",
             ),
+            (Some(plain.to_string_lossy().into_owned()), "unavailable"),
             (Some(vault.root().to_string_lossy().into_owned()), "ready"),
         ] {
             SC0_RESPONSE_CAPTURE.with(|capture| *capture.borrow_mut() = Some(Vec::new()));
-            let space = match path {
-                None => resolve_request_space_in(&serde_json::Map::new(), None, None),
-                Some(path) => resolve_request_space_in(&serde_json::Map::new(), Some(path), None),
-            };
+            let space = resolve_request_space_in(&serde_json::Map::new(), None, path, None);
             handle_get_status_with_upload(&None, &space, 7);
             let responses =
                 SC0_RESPONSE_CAPTURE.with(|capture| capture.borrow_mut().take().unwrap());
@@ -3979,6 +4088,7 @@ mod tests {
                 );
             }
         }
+        assert_eq!(std::fs::read_dir(&plain).unwrap().count(), 0);
     }
 
     const K_SPACE_ID: &str = "0123456789abcdef0123456789abcdef";
@@ -3995,13 +4105,13 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let old = k_space(tmp.path(), "Mine");
         let cfg = serde_json::Map::new();
-        let first = resolve_request_space_in(&cfg, Some(old.clone()), Some(K_SPACE_ID));
+        let first = resolve_request_space_in(&cfg, None, Some(old.clone()), Some(K_SPACE_ID));
         assert_eq!(first.state, "ready");
         assert!(first.binding_accepted);
 
         let renamed = Path::new(&old).with_file_name("Mine!");
         std::fs::rename(&old, &renamed).unwrap();
-        let second = resolve_request_space_in(&cfg, Some(old.clone()), Some(K_SPACE_ID));
+        let second = resolve_request_space_in(&cfg, None, Some(old.clone()), Some(K_SPACE_ID));
         assert_eq!(second.state, "moved");
         assert_eq!(second.path.as_deref(), renamed.to_str());
         assert_eq!(second.moved_from.as_deref(), Some(old.as_str()));
@@ -4012,7 +4122,8 @@ mod tests {
     fn k3_a_lost_space_is_described_and_blocks_nothing_else() {
         let tmp = TempDir::new().unwrap();
         let gone = tmp.path().join("Mine").to_string_lossy().into_owned();
-        let space = resolve_request_space_in(&serde_json::Map::new(), Some(gone), Some(K_SPACE_ID));
+        let space =
+            resolve_request_space_in(&serde_json::Map::new(), None, Some(gone), Some(K_SPACE_ID));
         assert_eq!(space.state, "missing");
         assert!(space.path.is_none());
         assert!(space.message().unwrap().starts_with("“Mine” was renamed"));
@@ -4032,18 +4143,31 @@ mod tests {
             serde_json::json!({ "params": { "path": renamed.to_string_lossy() } }),
             serde_json::json!({ "path": old, "binding_id": K_SPACE_ID }),
         ] {
-            assert_eq!(reveal_target_in(&cfg, &params).unwrap(), renamed.to_str().unwrap());
+            assert_eq!(reveal_target_in(&cfg, None, &params).unwrap(), renamed.to_str().unwrap());
         }
+        // Another person's space, and a folder that is no space at all.
         let stranger = tmp.path().join("Stranger");
-        std::fs::create_dir_all(&stranger).unwrap();
+        std::fs::create_dir_all(stranger.join(".mine")).unwrap();
+        std::fs::write(stranger.join(".mine/vault-id"), "abcdefabcdefabcdefabcdefabcdefab").unwrap();
         let refused = reveal_target_in(
             &cfg,
+            None,
             &serde_json::json!({ "path": stranger.to_string_lossy() }),
         )
         .unwrap_err();
         assert_eq!(refused.message().unwrap(), "“Stranger” is not one of your Mine spaces.");
+        let plain = tmp.path().join("Plain");
+        std::fs::create_dir_all(&plain).unwrap();
+        let refused = reveal_target_in(
+            &cfg,
+            None,
+            &serde_json::json!({ "path": plain.to_string_lossy() }),
+        )
+        .unwrap_err();
+        assert!(refused.path.is_none());
         let gone = reveal_target_in(
             &serde_json::Map::new(),
+            None,
             &serde_json::json!({ "path": tmp.path().join("Gone").to_string_lossy(), "binding_id": "fedcba9876543210fedcba9876543210" }),
         )
         .unwrap_err();
@@ -4151,12 +4275,12 @@ mod tests {
         let path = k_space(tmp.path(), "Mine");
         let cfg = serde_json::Map::new();
         let own = save_operations::legacy_binding_of_path(&path);
-        let space = resolve_request_space_in(&cfg, Some(path.clone()), Some(&own));
+        let space = resolve_request_space_in(&cfg, None, Some(path.clone()), Some(&own));
         assert!(space.binding_accepted);
         assert_eq!(space.accepted_legacy.as_deref(), Some(own.as_str()));
 
         let foreign = save_operations::legacy_binding_of_path("/elsewhere/Other");
-        let space = resolve_request_space_in(&cfg, Some(path), Some(&foreign));
+        let space = resolve_request_space_in(&cfg, None, Some(path), Some(&foreign));
         assert!(!space.binding_accepted);
         assert!(space.accepted_legacy.is_none());
     }
@@ -4185,6 +4309,7 @@ mod tests {
         std::fs::rename(vault.root(), &renamed).unwrap();
         let space = resolve_request_space_in(
             &serde_json::Map::new(),
+            None,
             Some(vault.root().to_string_lossy().into_owned()),
             Some(&binding),
         );
@@ -4218,6 +4343,7 @@ mod tests {
         std::fs::write(vault.vault_id_path(), K_SPACE_ID).unwrap();
         let space = resolve_request_space_in(
             &serde_json::Map::new(),
+            None,
             Some(vault.root().to_string_lossy().into_owned()),
             Some(&legacy),
         );
@@ -4230,6 +4356,110 @@ mod tests {
         let record = locked.load("k2-legacy").unwrap().unwrap();
         assert_eq!(record.adopted_from.as_deref(), Some(legacy.as_str()));
         assert_eq!(record.fingerprint, fingerprint_capture(&p, &legacy));
+    }
+
+    /// Settings from before the registry: a path list and the current path.
+    fn legacy_settings(path: &str) -> serde_json::Map<String, serde_json::Value> {
+        serde_json::json!({ "vault_path": path, "known_vaults": [path] })
+            .as_object()
+            .unwrap()
+            .clone()
+    }
+
+    /// The app's derived store for `id` last served the folder at `path`.
+    fn derived_owner(state: &Path, id: &str, path: &str) {
+        let store = mine_lib::space_registry::vaults_dir(state).join(id);
+        std::fs::create_dir_all(&store).unwrap();
+        std::fs::write(
+            store.join("owner-path.json"),
+            serde_json::json!({ "path": path }).to_string(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_moved_legacy_space_is_found_through_its_derived_store_and_the_old_folder_gets_nothing() {
+        // Б2.2 in the helper: the settings list only path A, the derived store
+        // of space X last saw it at A. Now A is an empty folder and X lives
+        // in B. The clip goes to B, as the app would open B.
+        let tmp = TempDir::new().unwrap();
+        let spaces = tmp.path().join("Spaces");
+        std::fs::create_dir_all(spaces.join("Mine")).unwrap();
+        let a = std::fs::canonicalize(spaces.join("Mine"))
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let b = k_space(&spaces, "Mine moved");
+        let state = tmp.path().join("state");
+        derived_owner(&state, K_SPACE_ID, &a);
+        let cfg = legacy_settings(&a);
+        let vaults = mine_lib::space_registry::vaults_dir(&state);
+
+        // A popup that remembers A, and one that sends no path at all.
+        for requested in [Some(a.clone()), None] {
+            let space = resolve_request_space_in(&cfg, Some(&vaults), requested, None);
+            assert_eq!(space.state, "moved");
+            assert_eq!(space.path.as_deref(), Some(b.as_str()));
+            assert_eq!(space.identity.as_deref(), Some(K_SPACE_ID));
+        }
+
+        let space = resolve_request_space_in(&cfg, Some(&vaults), Some(a.clone()), None);
+        let Ok(vault) = open_request_vault(&space, true, state.clone()) else {
+            panic!("the located space opens");
+        };
+        let response = sc0_save_response(&vault, sc2_link_request("legacy-moved"));
+        assert_eq!(response["outcome"], "committed", "{response}");
+        let card = vault.block_path("Local link");
+        assert!(card.starts_with(&b) && card.is_file(), "{}", card.display());
+        assert_eq!(std::fs::read_dir(&a).unwrap().count(), 0, "A must stay untouched");
+    }
+
+    #[test]
+    fn a_legacy_path_holding_another_space_or_no_space_receives_nothing() {
+        let tmp = TempDir::new().unwrap();
+        let state = tmp.path().join("state");
+        let vaults = mine_lib::space_registry::vaults_dir(&state);
+
+        // The derived store saw space X at A; A now holds another space.
+        let foreign = tmp.path().join("Foreign");
+        std::fs::create_dir_all(foreign.join(".mine")).unwrap();
+        std::fs::write(foreign.join(".mine/vault-id"), "fedcba9876543210fedcba9876543210").unwrap();
+        let foreign = foreign.to_string_lossy().into_owned();
+        derived_owner(&state, K_SPACE_ID, &foreign);
+        // No store ever saw a space at P, and P has no identity of its own.
+        let plain = tmp.path().join("Plain");
+        std::fs::create_dir_all(&plain).unwrap();
+        std::fs::write(plain.join("note.md"), "# Someone's notes\n").unwrap();
+        let plain = plain.to_string_lossy().into_owned();
+
+        for path in [&foreign, &plain] {
+            let before = files_under(Path::new(path));
+            let space = resolve_request_space_in(&legacy_settings(path), Some(&vaults), None, None);
+            assert_eq!(space.state, "unavailable", "{path}");
+            assert!(space.path.is_none());
+            assert!(matches!(
+                open_request_vault(&space, true, state.clone()),
+                Err(SpaceRefusal::Space(_))
+            ));
+            assert_eq!(files_under(Path::new(path)), before, "{path}");
+        }
+    }
+
+    fn files_under(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+        let mut found = Vec::new();
+        let mut pending = vec![root.to_path_buf()];
+        while let Some(folder) = pending.pop() {
+            for entry in std::fs::read_dir(&folder).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else {
+                    found.push((path.clone(), std::fs::read(&path).unwrap()));
+                }
+            }
+        }
+        found.sort();
+        found
     }
 
     #[cfg(unix)]
@@ -5253,6 +5483,110 @@ mod tests {
         let body = "![a](https://h.com/x.jpg) and ![broken( and ![c](https://h.com/y.jpg)";
         let tasks = scan_inline_tasks(body, &vault_at(tmp.path()), "S");
         assert_eq!(tasks.len(), 2);
+    }
+
+    #[test]
+    fn scan_passes_over_image_examples_in_code() {
+        // Б4.4: an embed written inside code is an example of the syntax,
+        // not media of the page.
+        let tmp = TempDir::new().unwrap();
+        for body in [
+            "```markdown\n![example](https://h.com/fenced.jpg)\n```",
+            "~~~\n![example](https://h.com/tilde.jpg)\n~~~",
+            "  ```\n![example](https://h.com/indented-fence.jpg)\n   ```",
+            "````\n```\n![example](https://h.com/nested.jpg)\n```\n````",
+            "```\n![example](https://h.com/unclosed-fence.jpg)\n\nstill code",
+            "Write `![example](https://h.com/inline.jpg)` to embed.",
+            "Write ``![a](https://h.com/double.jpg) with ` inside`` here.",
+            "A span over\n`two ![example](https://h.com/two-lines.jpg)\nlines` ends.",
+            "![a `b](https://h.com/span-wins.jpg)` is text.",
+            "Text\n\n    ![example](https://h.com/indented.jpg)\n",
+            "Text\n\n\t![example](https://h.com/tab-indented.jpg)",
+            "> ```\n> ![example](https://h.com/quoted-fence.jpg)\n> ```",
+            "> Quote\n>\n>     ![example](https://h.com/quoted-indented.jpg)",
+            "- item\n\n  ```\n  ![example](https://h.com/list-fence.jpg)\n  ```",
+            "- ```\n  ![example](https://h.com/list-fence-first.jpg)\n  ```",
+            "- item\n\n      ![example](https://h.com/list-indented.jpg)",
+            "1. item\n\n       ![example](https://h.com/ordered-indented.jpg)",
+            "> - item\n>\n>   ~~~\n>   ![example](https://h.com/quoted-list-fence.jpg)\n>   ~~~",
+        ] {
+            let tasks = scan_inline_tasks(body, &vault_at(tmp.path()), "S");
+            assert!(tasks.is_empty(), "{body:?} -> {:?}", tasks.iter().map(|t| &t.url).collect::<Vec<_>>());
+        }
+    }
+
+    #[test]
+    fn scan_still_finds_images_next_to_code_and_unmatched_backticks() {
+        let tmp = TempDir::new().unwrap();
+        let body = "Costs 5` today\n\n![one](https://h.com/1.jpg)\n\nand ` again\n\n\
+                    \\`![two](https://h.com/2.jpg)\\`\n\n\
+                    ```js\nconst a = 1;\n```\n![three](https://h.com/3.jpg)\n\n\
+                    ```not`a fence ![four](https://h.com/4.jpg)\n\n\
+                    ![alt with `code` in it](https://h.com/5.jpg)";
+        let tasks = scan_inline_tasks(body, &vault_at(tmp.path()), "S");
+        assert_eq!(
+            tasks.iter().map(|task| task.url.as_str()).collect::<Vec<_>>(),
+            [
+                "https://h.com/1.jpg",
+                "https://h.com/2.jpg",
+                "https://h.com/3.jpg",
+                "https://h.com/4.jpg",
+                "https://h.com/5.jpg"
+            ]
+        );
+        assert_eq!(tasks[4].alt, "alt with `code` in it");
+    }
+
+    #[test]
+    fn scan_finds_images_in_quotes_lists_and_lines_continuing_a_paragraph() {
+        // Indentation that continues a paragraph is text, not a code block;
+        // quote and list prefixes do not hide a real embed.
+        let tmp = TempDir::new().unwrap();
+        let body = "Text\n    ![lazy](https://h.com/lazy.jpg)\n\n\
+                    > ![quoted](https://h.com/quoted.jpg)\n\n\
+                    - ![listed](https://h.com/listed.jpg)\n\n\
+                    > - ![quoted item](https://h.com/quoted-item.jpg)";
+        let tasks = scan_inline_tasks(body, &vault_at(tmp.path()), "S");
+        assert_eq!(
+            tasks.iter().map(|task| task.url.as_str()).collect::<Vec<_>>(),
+            [
+                "https://h.com/lazy.jpg",
+                "https://h.com/quoted.jpg",
+                "https://h.com/listed.jpg",
+                "https://h.com/quoted-item.jpg"
+            ]
+        );
+    }
+
+    #[test]
+    fn localizing_keeps_code_examples_byte_identical() {
+        // Б4.4 end to end over scan and rewrite: every scanned embed is
+        // downloaded, yet only the real images become local wikilinks.
+        let tmp = TempDir::new().unwrap();
+        let vault = vault_at(tmp.path());
+        let body = "Intro ![real](https://h.com/real.jpg)\n\n\
+                    ```markdown\n![example](https://h.com/fenced.jpg)\n```\n\n\
+                    ~~~\n![example](https://h.com/tilde.jpg)\n~~~\n\n\
+                    Inline `![example](https://h.com/inline.jpg)` stays.\n\n\
+                    > ![quoted](https://h.com/quoted.jpg)\n\n\
+                    > ```\n> ![example](https://h.com/quoted-fence.jpg)\n> ```\n\n\
+                    - item\n\n      ![example](https://h.com/list-indented.jpg)\n\n\
+                    Text\n\n    ![example](https://h.com/indented.jpg)\n";
+        let tasks = scan_inline_tasks(body, &vault, "S");
+        for task in &tasks {
+            std::fs::write(&task.dest_path, task.url.as_bytes()).unwrap();
+        }
+        let outcomes = vec![Ok(()); tasks.len()];
+        let (rewritten, surviving) = apply_rewrites(body, &tasks, &outcomes);
+        assert_eq!(
+            rewritten,
+            body.replacen("![real](https://h.com/real.jpg)", "![[S (image 1).jpg|real]]", 1)
+                .replacen("![quoted](https://h.com/quoted.jpg)", "![[S (image 2).jpg|quoted]]", 1)
+        );
+        assert_eq!(
+            surviving,
+            vec![tmp.path().join("S (image 1).jpg"), tmp.path().join("S (image 2).jpg")]
+        );
     }
 
     #[test]
