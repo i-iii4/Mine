@@ -68,7 +68,7 @@ export function SegmentedControl<T extends string>({
           disabled={option.disabled}
           onClick={() => onChange(option.value)}
           className={cn(
-            "relative inline-flex shrink-0 items-center rounded-[2px] leading-none text-current focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50",
+            "relative inline-flex shrink-0 items-center rounded-[2px] leading-none text-current focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50",
             !chrome && cn("px-[1ch]", sizeClasses.item, value === option.value && "bg-component-fill-inner text-foreground"),
           )}
         >

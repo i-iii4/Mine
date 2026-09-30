@@ -499,6 +499,57 @@ describe("SearchOverlay", () => {
     expect(screen.getByTestId("overlay-preview")).toHaveTextContent("fresh");
   });
 
+  it("drops a response to the old text while the new text waits out the debounce (А6.11)", async () => {
+    let resolveFirst: ((grid: GridSnapshot) => void) | null = null;
+    listGridBlocksMock.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveFirst = resolve; }),
+    );
+    listGridBlocksMock.mockResolvedValueOnce(snapshot([makeBlock(2, "fresh")]));
+    const props = {
+      open: true,
+      vaultPath: "/vault",
+      onQueryChange: vi.fn(),
+      onClose: vi.fn(),
+      onOpenBlock: vi.fn(),
+    };
+    const { rerender } = render(<SearchOverlay {...props} query="stale" />);
+    await waitFor(() => expect(listGridBlocksMock).toHaveBeenCalledTimes(1));
+
+    // The new text is typed; its request has not gone out yet.
+    rerender(<SearchOverlay {...props} query="fresh" />);
+    resolveFirst!(snapshot([makeBlock(1, "stale")]));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(listGridBlocksMock).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Title stale")).not.toBeInTheDocument();
+
+    await waitFor(() => expect(screen.getByText("Title fresh")).toBeInTheDocument());
+  });
+
+  it("Enter before the results of the typed text opens that text's first result (А6.11)", async () => {
+    const stale = makeBlock(1, "stale");
+    const fresh = makeBlock(2, "fresh");
+    listGridBlocksMock.mockImplementation(async (_tag, _offset, _limit, query) => (
+      snapshot(query === "stale" ? [stale] : [fresh])
+    ));
+    const onOpenBlock = vi.fn();
+    const props = {
+      open: true,
+      vaultPath: "/vault",
+      onQueryChange: vi.fn(),
+      onClose: vi.fn(),
+      onOpenBlock,
+    };
+    const { rerender } = render(<SearchOverlay {...props} query="stale" />);
+    await waitFor(() => expect(screen.getByText("Title stale")).toBeInTheDocument());
+
+    rerender(<SearchOverlay {...props} query="fresh" />);
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
+    expect(onOpenBlock).not.toHaveBeenCalled();
+
+    await waitFor(() => expect(onOpenBlock).toHaveBeenCalledWith(fresh));
+    expect(onOpenBlock).toHaveBeenCalledTimes(1);
+  });
+
   it("renders the body-match excerpt with a mark and the semantic excerpt without one", async () => {
     listGridBlocksMock.mockResolvedValue(snapshot([
       makeBlock(1, "lexical", {

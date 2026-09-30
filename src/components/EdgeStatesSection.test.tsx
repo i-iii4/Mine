@@ -55,6 +55,6 @@ describe("EdgeStatesSection", () => {
     // Every state that was once a labelled mock is production code now; a
     // label reappearing here means scope quietly slipped again.
     expect(screen.queryByText("нет в продукте")).not.toBeInTheDocument();
-    expect(screen.getByText(/Indexing “Mine”/)).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "Indexing “Mine”" })).toBeInTheDocument();
   });
 });

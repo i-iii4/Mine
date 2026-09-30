@@ -146,6 +146,21 @@ export function PopupApp() {
       if (!host.contains(document.activeElement)) return false;
       return isText(drillToLeaf(document.activeElement));
     }
+    function focusedLeaf(): Element | null {
+      let element: Element | null = document.activeElement;
+      while (element) {
+        const shadow = (element as HTMLElement & { shadowRoot?: ShadowRoot | null }).shadowRoot;
+        if (!shadow?.activeElement) return element;
+        element = shadow.activeElement;
+      }
+      return null;
+    }
+    // On a page, the arrows belong to the page (scrolling, a video) unless
+    // the keyboard is in the clipper; the detached window is all clipper.
+    function focusInsideClipper(): boolean {
+      const host = document.querySelector("[data-mine-clipper-overlay]");
+      return !host || host.contains(document.activeElement);
+    }
     function hasOpenFloatingLayer(): boolean {
       const host = document.querySelector("[data-mine-clipper-overlay]");
       const scope: ParentNode = (host as HTMLElement & { shadowRoot?: ShadowRoot | null })
@@ -169,17 +184,29 @@ export function PopupApp() {
         closeClipper();
         return;
       }
-      if (e.key === "Tab" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      // Tab moves focus between the clipper's controls; the left and right
+      // arrows change the type (SPEC_CLIPPER.md, keyboard; А6.9). Arrows in a
+      // text field move the caret, and an open list keeps its own keys.
+      if (
+        (e.key === "ArrowLeft" || e.key === "ArrowRight")
+        && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey
+      ) {
+        if (!focusInsideClipper()) return;
         if (activeIsOverlayTextField()) return;
+        if (hasOpenFloatingLayer()) return;
         if (clipper.metadata?.detectedType === "image") return;
         e.preventDefault();
         e.stopPropagation();
         const order = ["content", "screenshot", "link"] as const;
         const idx = order.indexOf(clipper.currentType as typeof order[number]);
-        const step = e.shiftKey ? -1 : 1;
-        const next =
-          order[((idx < 0 ? 0 : idx) + step + order.length) % order.length]!;
-        clipper.setCurrentType(next);
+        const step = e.key === "ArrowLeft" ? -1 : 1;
+        const nextIndex = ((idx < 0 ? 0 : idx) + step + order.length) % order.length;
+        clipper.setCurrentType(order[nextIndex]!);
+        // Focus on a type segment follows the choice, as in a radio group:
+        // Space on the focused segment must not pick the old type back.
+        const leaf = focusedLeaf();
+        const switcher = leaf?.closest("[data-clipper-type-switcher]");
+        switcher?.querySelectorAll<HTMLButtonElement>("button")[nextIndex]?.focus({ preventScroll: true });
       }
     }
     window.addEventListener("keydown", onKeyDown, { capture: true });

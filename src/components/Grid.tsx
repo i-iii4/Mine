@@ -144,6 +144,7 @@ export const FEED_HEAVY_HYSTERESIS_FRACTION = 0.1;
 const TOP_OF_FEED_SCROLL_EPSILON_PX = 0.5;
 const EMPTY_CHANNEL_PLACEHOLDER_TEXT =
   "Elements connected to this collection will appear here.";
+const EMPTY_FEED_PLACEHOLDER_TEXT = "Elements you save will appear here.";
 const INITIAL_FEED_SCROLL_SIGNAL: FeedScrollSignal = {
   scrollTop: 0,
   scrollDirection: "idle",
@@ -151,7 +152,13 @@ const INITIAL_FEED_SCROLL_SIGNAL: FeedScrollSignal = {
   isFastScrolling: false,
 };
 
-function EmptyChannelPlaceholder({ viewportHeight }: { viewportHeight: number }) {
+function EmptyChannelPlaceholder({
+  viewportHeight,
+  text = EMPTY_CHANNEL_PLACEHOLDER_TEXT,
+}: {
+  viewportHeight: number;
+  text?: string;
+}) {
   return (
     <div
       className="grid place-items-center"
@@ -162,7 +169,7 @@ function EmptyChannelPlaceholder({ viewportHeight }: { viewportHeight: number })
         className="max-w-xl text-center text-base leading-relaxed text-muted-foreground italic"
         data-grid-empty-channel-placeholder-text=""
       >
-        {EMPTY_CHANNEL_PLACEHOLDER_TEXT}
+        {text}
       </p>
     </div>
   );
@@ -183,6 +190,10 @@ interface GridProps {
   thumbsRootPath?: string;
   /// Start the clipper setup flow from the empty-space onboarding.
   onInstallClipper?: () => void;
+  /// Whether the space never had a card (О14): its empty feed introduces the
+  /// clipper. `false` once it had one: an emptied feed says so plainly and
+  /// the introduction never returns (О15). `null` while unknown.
+  spaceOnboardingOwed?: boolean | null;
   /// The first index in flight: numbers shown instead of the empty-space
   /// onboarding, because "this space is empty" is a falsehood about a space
   /// that is still being read. See SPEC_ONBOARDING.md О13.
@@ -426,6 +437,7 @@ export function Grid({
   vaultPath,
   thumbsRootPath,
   onInstallClipper,
+  spaceOnboardingOwed = true,
   firstIndexProgress = null,
   thumbVersions,
   tags,
@@ -1067,7 +1079,16 @@ export function Grid({
     routeSnapshotReady &&
     blocks.length === 0 &&
     !firstIndexProgress &&
+    spaceOnboardingOwed === true &&
     onInstallClipper,
+  );
+  // The space had cards and they are all gone: an empty feed, not a new space.
+  const showEmptyFeedPlaceholder = Boolean(
+    !currentTag &&
+    routeSnapshotReady &&
+    blocks.length === 0 &&
+    !firstIndexProgress &&
+    spaceOnboardingOwed === false,
   );
   const showFirstIndexProgress = Boolean(
     !currentTag && blocks.length === 0 && firstIndexProgress,
@@ -1719,12 +1740,8 @@ export function Grid({
     if (keyboardNavigationDisabled) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      const commandK =
-        event.metaKey &&
-        !event.shiftKey &&
-        !event.altKey &&
-        !event.ctrlKey &&
-        event.key.toLowerCase() === "k";
+      // The element menu answers the chord the registry holds, rebound or not.
+      const commandK = commandById("element-menu").matches?.(event) ?? false;
       const scrollElement = parentRef.current;
       const currentScrollTop = scrollElement?.scrollTop ?? scrollTop;
       const currentViewportHeight = scrollElement?.clientHeight || viewportHeight;
@@ -2221,6 +2238,12 @@ export function Grid({
           )}
           {parentWidth > 0 && showEmptyChannelPlaceholder && (
             <EmptyChannelPlaceholder viewportHeight={viewportHeight} />
+          )}
+          {parentWidth > 0 && showEmptyFeedPlaceholder && (
+            <EmptyChannelPlaceholder
+              viewportHeight={viewportHeight}
+              text={EMPTY_FEED_PLACEHOLDER_TEXT}
+            />
           )}
           {parentWidth > 0 && showEmptySpaceOnboarding && (
             <EmptySpaceOnboarding

@@ -346,6 +346,47 @@ pub fn complete_first_card_marker(state: State<'_, AppState>) -> Result<(), Comm
         .map_err(|e| CommandError::Internal(format!("failed to record the marker: {e:#}")))
 }
 
+/// Whether this space still owes its first-screen onboarding (О14, О15).
+///
+/// The onboarding introduces a new space and leaves with its first card for
+/// good: a space that had cards and lost them all has an empty feed, not a new
+/// space. The count comes from this space's own index, so a space switch in
+/// flight cannot lend it another space's cards.
+#[tauri::command]
+pub async fn space_onboarding_pending(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<bool, CommandError> {
+    let vault = current_vault_layout(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let cards = crate::commands::state::read_owned_projection(&app, &vault, |conn| {
+            index::count_grid_blocks(conn)
+        })?;
+        onboarding_owed(vault.derived_root(), cards)
+            .map_err(|e| CommandError::Internal(format!("failed to record the onboarding: {e:#}")))
+    })
+    .await
+    .map_err(|e| CommandError::Internal(format!("onboarding check task failed: {e}")))?
+}
+
+const SPACE_ONBOARDING_SIDECAR: &str = "space-onboarding.json";
+
+/// The onboarding is owed while the space has never had a card. The first
+/// time it has one, a sidecar in the derived store records it: from then on
+/// no count brings the onboarding back.
+fn onboarding_owed(derived_root: &Path, cards: usize) -> anyhow::Result<bool> {
+    let sidecar = derived_root.join(SPACE_ONBOARDING_SIDECAR);
+    if sidecar.is_file() {
+        return Ok(false);
+    }
+    if cards == 0 {
+        return Ok(true);
+    }
+    std::fs::create_dir_all(derived_root)?;
+    files::write_atomically(&sidecar, b"{\"had_cards\":true}")?;
+    Ok(false)
+}
+
 fn current_derived_root(state: &State<'_, AppState>) -> Result<PathBuf, CommandError> {
     let vault_state = state
         .vault_state
@@ -2439,5 +2480,26 @@ mod unavailable_reason_tests {
         // undeletable temp dir.
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(reason, Some(UnavailableVaultReason::AccessDenied));
+    }
+}
+
+#[cfg(test)]
+mod space_onboarding_tests {
+    use super::onboarding_owed;
+
+    #[test]
+    fn onboarding_leaves_with_the_first_card_and_never_returns() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("derived");
+
+        // A new space: nothing indexed, nothing recorded.
+        assert!(onboarding_owed(&root, 0).unwrap());
+        assert!(onboarding_owed(&root, 0).unwrap());
+
+        // The first card arrives.
+        assert!(!onboarding_owed(&root, 1).unwrap());
+
+        // Every card deleted: an empty feed, not a new space (О15).
+        assert!(!onboarding_owed(&root, 0).unwrap());
     }
 }

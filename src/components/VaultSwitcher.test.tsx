@@ -165,6 +165,25 @@ describe("VaultSwitcher", () => {
     }
   });
 
+  it("lists spaces in the order set in Settings, not by name (А6.10)", async () => {
+    commandMocks.listKnownVaults.mockResolvedValue([
+      "/tmp/Mine",
+      "/tmp/Zebra",
+      "/tmp/Alpha",
+      "/tmp/Middle",
+    ]);
+    render(<VaultSwitcher currentPath="/tmp/Mine" onVaultSelected={vi.fn()} surface="topChrome" />);
+    await waitFor(() => expect(commandMocks.listKnownVaults).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch space: Mine" }));
+    await screen.findByRole("menuitem", { name: "Zebra" });
+
+    const names = screen.getAllByRole("menuitem")
+      .map((item) => item.textContent?.trim() ?? "")
+      .filter((name) => ["Zebra", "Alpha", "Middle"].includes(name));
+    expect(names).toEqual(["Zebra", "Alpha", "Middle"]);
+  });
+
   it("reveals the current space from the pinned action and closes the menu", async () => {
     await openSwitcherWithSpaces();
 

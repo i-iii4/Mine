@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -16,6 +16,11 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 
 const JOURNAL_VERSION: u32 = 1;
 const NETWORK_TIMEOUT_SECONDS: u64 = 30;
+/// The channel is asked once after launch and then this often (Ф13).
+const AUTOMATIC_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+/// How often the automatic check looks at the wall clock. A sleeping Mac does
+/// not advance a monotonic sleep, so the interval is measured in wall time.
+const AUTOMATIC_CHECK_WAKE: Duration = Duration::from_secs(60 * 60);
 
 /// Persisted download lifecycle, separate from installation and activation.
 #[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq, Eq)]
@@ -496,6 +501,113 @@ pub async fn status(app: &AppHandle) -> Result<UpdateStatus, UpdateError> {
 }
 
 /// Perform an actual Tauri updater check; this is independent of local space access.
+/// Ask the channel for a newer version.
+async fn fetch_offer(app: &AppHandle) -> Result<Option<Update>, UpdateError> {
+    let updater = app
+        .updater_builder()
+        .timeout(Duration::from_secs(NETWORK_TIMEOUT_SECONDS))
+        .build()
+        .map_err(|error| UpdateError::Configuration(error.to_string()))?;
+    let offer = empty_channel_is_no_update(updater.check().await)?;
+    if let Some(update) = &offer {
+        if update.download_url.scheme() != "https" {
+            return Err(UpdateError::Configuration(
+                "download URL must use HTTPS".into(),
+            ));
+        }
+    }
+    Ok(offer)
+}
+
+/// A channel with nothing published yet answers "not found": that is no
+/// update, not a failure (SPEC_AUDIT_FIXES.md, Ф13).
+fn empty_channel_is_no_update<T>(
+    result: Result<Option<T>, tauri_plugin_updater::Error>,
+) -> Result<Option<T>, UpdateError> {
+    match result {
+        Ok(offer) => Ok(offer),
+        Err(tauri_plugin_updater::Error::ReleaseNotFound) => Ok(None),
+        Err(error) => Err(UpdateError::Transport(error.to_string())),
+    }
+}
+
+/// Check the channel after the first interactive frame and then every 24
+/// hours (Ф13). A found version lands in the same status the Check button
+/// produces, so Settings shows it the same way; downloading and installing
+/// stay the person's action. Without a configured channel nothing starts.
+pub fn start_automatic_checks(app: &AppHandle) {
+    if app.state::<UpdateService>().channel().is_err() {
+        return;
+    }
+    let app = app.clone();
+    let spawned = std::thread::Builder::new()
+        .name("mine-update-check".into())
+        .spawn(move || {
+            let mut last_check: Option<SystemTime> = None;
+            loop {
+                let now = SystemTime::now();
+                if automatic_check_due(last_check, now) {
+                    last_check = Some(now);
+                    tauri::async_runtime::block_on(check_in_background(&app));
+                }
+                std::thread::sleep(AUTOMATIC_CHECK_WAKE);
+            }
+        });
+    if let Err(error) = spawned {
+        log::warn!("automatic update checks could not start: {error}");
+    }
+}
+
+/// Due on the first pass, then once a full interval has passed. A clock set
+/// back makes it due too, rather than silent for the time it went back.
+fn automatic_check_due(last: Option<SystemTime>, now: SystemTime) -> bool {
+    match last {
+        None => true,
+        Some(last) => now
+            .duration_since(last)
+            .map_or(true, |elapsed| elapsed >= AUTOMATIC_CHECK_INTERVAL),
+    }
+}
+
+/// The automatic check never overrides work in progress: a download, a
+/// verified archive waiting for Install, an activation. It refreshes only an
+/// answer that a new check may replace.
+fn automatic_check_allowed(stage: &UpdateStage) -> bool {
+    matches!(
+        stage,
+        UpdateStage::Idle | UpdateStage::Available | UpdateStage::Failed
+    )
+}
+
+async fn check_in_background(app: &AppHandle) {
+    let service = app.state::<UpdateService>();
+    // A person's own operation in flight wins; the next pass tries again.
+    let Ok(_operation) = service.begin() else {
+        return;
+    };
+    match service.status() {
+        Ok(status) if automatic_check_allowed(&status.stage) => {}
+        _ => return,
+    }
+    match fetch_offer(app).await {
+        Ok(offer) => {
+            if let Ok(mut status) = service.status.lock() {
+                status.checked_offer(
+                    offer.as_ref().map(|update| update.version.clone()),
+                    offer.as_ref().and_then(|update| update.body.clone()),
+                );
+            }
+            if let Ok(mut slot) = service.offer.lock() {
+                *slot = offer;
+            }
+            service.emit(app);
+        }
+        // Offline or an unreachable channel: the person did not ask, so the
+        // last answer stays on screen and the next pass asks again.
+        Err(error) => log::info!("automatic update check did not complete: {error}"),
+    }
+}
+
 pub async fn check(app: &AppHandle) -> Result<UpdateStatus, UpdateError> {
     let service = app.state::<UpdateService>();
     service.channel()?;
@@ -503,22 +615,7 @@ pub async fn check(app: &AppHandle) -> Result<UpdateStatus, UpdateError> {
     service.set_stage(UpdateStage::Checking)?;
     service.emit(app);
     let result = async {
-        let updater = app
-            .updater_builder()
-            .timeout(Duration::from_secs(NETWORK_TIMEOUT_SECONDS))
-            .build()
-            .map_err(|error| UpdateError::Configuration(error.to_string()))?;
-        let offer = updater
-            .check()
-            .await
-            .map_err(|error| UpdateError::Transport(error.to_string()))?;
-        if let Some(update) = &offer {
-            if update.download_url.scheme() != "https" {
-                return Err(UpdateError::Configuration(
-                    "download URL must use HTTPS".into(),
-                ));
-            }
-        }
+        let offer = fetch_offer(app).await?;
         let mut status = service.status.lock().map_err(|_| UpdateError::Busy)?;
         status.checked_offer(
             offer.as_ref().map(|update| update.version.clone()),
@@ -786,6 +883,58 @@ pub async fn restore(app: &AppHandle) -> Result<UpdateStatus, UpdateError> {
     service.emit(app);
     result?;
     service.status()
+}
+
+#[cfg(test)]
+mod automatic_check_tests {
+    use super::*;
+
+    #[test]
+    fn an_empty_channel_is_no_update_and_a_transport_failure_stays_one() {
+        let empty: Result<Option<()>, _> = Err(tauri_plugin_updater::Error::ReleaseNotFound);
+        assert!(matches!(empty_channel_is_no_update(empty), Ok(None)));
+
+        let offline: Result<Option<()>, _> =
+            Err(tauri_plugin_updater::Error::Network("offline".into()));
+        assert!(matches!(
+            empty_channel_is_no_update(offline),
+            Err(UpdateError::Transport(_))
+        ));
+    }
+
+    #[test]
+    fn checks_after_launch_then_once_a_day() {
+        let launch = SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+        assert!(automatic_check_due(None, launch));
+
+        let almost = launch + AUTOMATIC_CHECK_INTERVAL - Duration::from_secs(1);
+        assert!(!automatic_check_due(Some(launch), almost));
+        assert!(automatic_check_due(Some(launch), launch + AUTOMATIC_CHECK_INTERVAL));
+        assert_eq!(AUTOMATIC_CHECK_INTERVAL, Duration::from_secs(86_400));
+
+        // The clock went back: ask now instead of staying silent.
+        assert!(automatic_check_due(Some(launch), launch - Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn never_overrides_a_download_or_an_install_in_progress() {
+        for stage in [UpdateStage::Idle, UpdateStage::Available, UpdateStage::Failed] {
+            assert!(automatic_check_allowed(&stage), "{stage:?}");
+        }
+        for stage in [
+            UpdateStage::Disabled,
+            UpdateStage::Checking,
+            UpdateStage::Downloading,
+            UpdateStage::Verified,
+            UpdateStage::Installing,
+            UpdateStage::Restarting,
+            UpdateStage::Activated,
+            UpdateStage::RolledBack,
+            UpdateStage::RecoveryRequired,
+        ] {
+            assert!(!automatic_check_allowed(&stage), "{stage:?}");
+        }
+    }
 }
 
 #[cfg(test)]

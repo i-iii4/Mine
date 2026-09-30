@@ -17,6 +17,8 @@ interface OverlayHandle {
   host: HTMLDivElement;
   root: Root;
   onOutsidePointer: (e: MouseEvent | PointerEvent) => void;
+  /// What had the keyboard on the page before the clipper took it.
+  returnFocus: Element | null;
 }
 
 let current: OverlayHandle | null = null;
@@ -70,6 +72,7 @@ async function ensureFontsLoaded() {
 }
 
 async function mount(): Promise<OverlayHandle> {
+  const returnFocus = document.activeElement;
   ensureFontsLoaded();
   const css = await loadCss();
 
@@ -155,11 +158,16 @@ async function mount(): Promise<OverlayHandle> {
       box-sizing: border-box;
     }
 
-    #root button,
-    #root input,
-    #root textarea,
-    #root select {
-      font: inherit;
+    /* In the base layer, like Tailwind's own preflight: an unlayered rule
+       outranks every utility, and font: inherit took the size and weight
+       away from every button (SPEC_AUDIT_FIXES.md, А4.2). */
+    @layer base {
+      #root button,
+      #root input,
+      #root textarea,
+      #root select {
+        font: inherit;
+      }
     }
 
     /* Tailwind v4 uses CSS @property rules (initial-value: solid) for
@@ -228,7 +236,7 @@ async function mount(): Promise<OverlayHandle> {
   const reactRoot = createRoot(appRoot);
   reactRoot.render(<OverlayShell portalContainer={floatingRoot} />);
 
-  return { host, root: reactRoot, onOutsidePointer };
+  return { host, root: reactRoot, onOutsidePointer, returnFocus };
 }
 
 /// Fresh invocation: context menu / toolbar icon / extension icon.
@@ -263,11 +271,23 @@ export function hideClipperOverlay(): void {
 
 export function closeClipperOverlay(): void {
   if (!current) return;
+  const { host, returnFocus } = current;
+  const keyboardInside = host.contains(document.activeElement);
   window.removeEventListener("pointerdown", current.onOutsidePointer, { capture: true });
   window.removeEventListener("mousedown", current.onOutsidePointer, { capture: true });
   current.root.unmount();
-  current.host.remove();
+  host.remove();
   current = null;
+  // Escape and the close after Save give the keyboard back to what had it
+  // on the page (А6.12). A click outside moves focus where it lands itself.
+  if (
+    keyboardInside
+    && returnFocus instanceof HTMLElement
+    && returnFocus !== document.body
+    && returnFocus.isConnected
+  ) {
+    returnFocus.focus({ preventScroll: true });
+  }
   // A pending extension update applies now that nothing is open (SPEC_CLIPPER.md, К4).
   try {
     void chrome.runtime.sendMessage({ target: "background", action: "mineClipperClosed" }).catch(() => undefined);

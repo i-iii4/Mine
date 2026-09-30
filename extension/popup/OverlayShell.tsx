@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { DropdownMenuPortalContainerProvider } from "@/components/ui/dropdown-menu";
 import { PopupApp } from "./PopupApp";
+import { wrapTabFocus } from "./lib/focusCycle";
 
 /**
  * Container for the in-page overlay version of the clipper.
@@ -18,11 +19,11 @@ import { PopupApp } from "./PopupApp";
  * div explicitly opts its subtree back IN via pointer-events-auto.
  *
  * Focus: on mount we pull keyboard focus into the overlay root via
- * tabindex=-1 + .focus(). Without this, the page keeps focus and Tab
- * advances page focusables instead of reaching our keydown handler in
- * PopupApp — users had to click the overlay once before Tab-cycling
- * between Content/Screenshot/Link worked. `preventScroll: true` avoids
- * jumping the page viewport.
+ * tabindex=-1 + .focus(), so the keyboard works without a first click.
+ * Tab and Shift+Tab move between the panel's controls and wrap at its
+ * edges instead of falling into the page behind it (А6.9). Escape hands
+ * focus back to where it was on the page (overlay-entry.tsx).
+ * `preventScroll: true` avoids jumping the page viewport.
  */
 export function OverlayShell({ portalContainer }: { portalContainer: HTMLElement | null }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -35,6 +36,16 @@ export function OverlayShell({ portalContainer }: { portalContainer: HTMLElement
         ref={ref}
         data-mine-clipper-panel
         tabIndex={-1}
+        onKeyDown={(event) => {
+          if (event.key !== "Tab" || event.metaKey || event.ctrlKey || event.altKey) return;
+          const panel = ref.current;
+          if (!panel) return;
+          const root = panel.getRootNode() as Document | ShadowRoot;
+          const target = wrapTabFocus(panel, root.activeElement, event.shiftKey);
+          if (!target) return;
+          event.preventDefault();
+          target.focus({ preventScroll: true });
+        }}
         // max-h pins the panel inside the viewport (16px top and bottom
         // margins); the flex column lets the elastic previews compress while
         // buttons, picker and the save stack keep their heights. overflow-auto

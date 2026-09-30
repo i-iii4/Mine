@@ -1,3 +1,4 @@
+import { setCommandOverrides } from "@/lib/commandRegistry";
 import { reportCardsRendered } from "@/lib/startup";
 import type { ReactNode } from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -80,6 +81,7 @@ vi.mock("@/lib/commands", () => ({
   cloudRecommendationState: vi.fn(async () => ({ due: false })),
   dismissCloudRecommendation: vi.fn(async () => null),
   firstCardMarkerPending: vi.fn(async () => false),
+  spaceOnboardingPending: vi.fn(async () => true),
   completeFirstCardMarker: vi.fn(async () => null),
   getVaultPath: commandMocks.getVaultPath,
   getUnavailableVault: vi.fn(async () => null),
@@ -1495,6 +1497,35 @@ describe("AppWithVault", () => {
     await waitFor(() => {
       expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
     });
+  });
+
+  it("answers a rebound search chord and no longer the old one (Ф11)", async () => {
+    setCommandOverrides({ "find-collections": { key: "j", meta: true, shift: true } });
+    try {
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      await waitFor(() => {
+        expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+      });
+
+      const before = screen.queryByRole("textbox", { name: "Filter collections" });
+      const old = fireEvent.keyDown(window, { key: "F", code: "KeyF", metaKey: true, shiftKey: true });
+      // The old chord is no longer claimed: the event is not prevented and
+      // the collection filter does not take focus.
+      expect(old).toBe(true);
+      expect(document.activeElement).not.toBe(screen.queryByRole("textbox", { name: "Filter collections" }) ?? before);
+
+      const rebound = fireEvent.keyDown(window, { key: "J", code: "KeyJ", metaKey: true, shiftKey: true });
+      expect(rebound).toBe(false);
+      await waitFor(() => {
+        expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Filter collections" }));
+      });
+    } finally {
+      setCommandOverrides({});
+    }
   });
 
   it("opens the settings window from the bottom action bar", async () => {

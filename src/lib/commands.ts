@@ -512,6 +512,11 @@ export const firstCardMarkerPending = () =>
 export const completeFirstCardMarker = () =>
   invoke<null>("complete_first_card_marker");
 
+/** Whether this space never had a card, so its feed still owes the
+ *  onboarding; the first card ends it for good (О14, О15). */
+export const spaceOnboardingPending = () =>
+  invoke<boolean>("space_onboarding_pending");
+
 /** Whether the Keep Downloaded recommendation is due for the active space.
  *  See SPEC_CLOUD_STORAGE.md Х16–Х19. */
 export const cloudRecommendationState = () =>

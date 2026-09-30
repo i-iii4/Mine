@@ -111,6 +111,7 @@ pub fn run() {
             commands::cloud_recommendation::dismiss_cloud_recommendation,
             commands::vault::first_card_marker_pending,
             commands::vault::complete_first_card_marker,
+            commands::vault::space_onboarding_pending,
             commands::clipper_setup::install_clipper_host,
             commands::vault::preview_vault_folder,
             commands::vault::get_unavailable_vault,

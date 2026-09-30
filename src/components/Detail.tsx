@@ -1,3 +1,5 @@
+import { scrollBehavior } from "@/lib/motion";
+import { commandById } from "@/lib/commandRegistry";
 import {
   useCallback,
   useEffect,
@@ -2904,7 +2906,7 @@ function ArticleBody({
     const frame = window.requestAnimationFrame(() => {
       const element = findElementForBlockAnchor(root, scrollAnchor);
       if (!element) return;
-      element.scrollIntoView?.({ block: "center", behavior: "smooth" });
+      element.scrollIntoView?.({ block: "center", behavior: scrollBehavior() });
       element.setAttribute("data-scroll-anchor-hit", "true");
       window.setTimeout(() => {
         element.removeAttribute("data-scroll-anchor-hit");
@@ -3763,14 +3765,10 @@ function shouldIgnoreDetailEscape(event: KeyboardEvent): boolean {
   );
 }
 
+/** The open element's menu chord from the command registry, rebinding
+ *  included (SPEC_AUDIT_FIXES.md, Ф11). */
 function isDetailCommandK(event: KeyboardEvent): boolean {
-  return (
-    event.metaKey &&
-    !event.shiftKey &&
-    !event.altKey &&
-    !event.ctrlKey &&
-    event.key.toLowerCase() === "k"
-  );
+  return commandById("element-menu-open").matches?.(event) ?? false;
 }
 
 function shouldIgnoreDetailCommandK(event: KeyboardEvent): boolean {

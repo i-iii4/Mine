@@ -13,6 +13,7 @@ import { Copy, Minimize2, Minus, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { copyMediaAssetToClipboard } from "@/lib/commands";
 import { cn } from "@/lib/utils";
+import { prefersReducedMotion } from "@/lib/motion";
 
 export type ImagePreviewRequest = {
   src: string;
@@ -36,6 +37,20 @@ const IMAGE_PREVIEW_TOGGLE_SCALE = 1.5;
 const IMAGE_PREVIEW_CONTROLS_HIDE_MS = 3000;
 const IMAGE_PREVIEW_DRAG_THRESHOLD_PX = 3;
 const IMAGE_PREVIEW_MIN_VISIBLE_EDGE_PX = 48;
+const IMAGE_PREVIEW_ANIMATION_MS = 160;
+
+/**
+ * The transform the image shows right now, read from its computed style
+ * (`matrix(a, b, c, d, e, f)`): scale `a`, offset `e`, `f`. `null` when the
+ * browser reports no matrix.
+ */
+export function visibleImagePreviewTransform(computed: string): ImagePreviewTransform | null {
+  const match = /^matrix\(([^)]+)\)$/.exec(computed.trim());
+  if (!match) return null;
+  const values = match[1]!.split(",").map((value) => Number(value.trim()));
+  if (values.length !== 6 || values.some((value) => !Number.isFinite(value))) return null;
+  return { scale: values[0]!, x: values[4]!, y: values[5]! };
+}
 
 type ImagePreviewTransform = {
   scale: number;
@@ -173,16 +188,36 @@ export function ImagePreviewOverlay({
     scheduleControlsHide();
   }, [scheduleControlsHide]);
 
+  /// When the running zoom animation ends; zero when none runs.
+  const animationEndRef = useRef(0);
+
+  /// A gesture during the zoom animation continues from where the image is
+  /// on screen, not from where the animation would have ended: the jump to
+  /// the end point and back read as the image escaping the hand (А5.1).
+  const settleRunningAnimation = useCallback(() => {
+    const image = imageRef.current;
+    if (!image || performance.now() >= animationEndRef.current) return;
+    animationEndRef.current = 0;
+    const shown = visibleImagePreviewTransform(getComputedStyle(image).transform);
+    image.style.transition = "none";
+    if (!shown) return;
+    transformRef.current = shown;
+    image.style.transform = `translate3d(${shown.x}px, ${shown.y}px, 0) scale(${shown.scale})`;
+  }, []);
+
   const applyTransform = useCallback((nextTransform: ImagePreviewTransform, animated = false) => {
     transformRef.current = constrainImagePreviewTransform(
       nextTransform,
       stageRef.current,
       imageRef.current,
     );
+    // Reduced motion places the image at once (SPEC_AUDIT_FIXES.md, Ф12).
+    const animate = animated && !prefersReducedMotion();
+    animationEndRef.current = animate ? performance.now() + IMAGE_PREVIEW_ANIMATION_MS : 0;
     const image = imageRef.current;
     if (image) {
-      image.style.transition = animated
-        ? "transform 160ms cubic-bezier(0.22, 1, 0.36, 1)"
+      image.style.transition = animate
+        ? `transform ${IMAGE_PREVIEW_ANIMATION_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`
         : "none";
     }
     if (frameRef.current !== null) {
@@ -335,10 +370,11 @@ export function ImagePreviewOverlay({
   const handleWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
     event.preventDefault();
     event.stopPropagation();
+    settleRunningAnimation();
     const nextScale = transformRef.current.scale * Math.exp(-event.deltaY * IMAGE_PREVIEW_WHEEL_SCALE_STEP);
     applyScaleAtPoint(nextScale, event.clientX, event.clientY);
     showControls();
-  }, [applyScaleAtPoint, showControls]);
+  }, [applyScaleAtPoint, settleRunningAnimation, showControls]);
 
   const handleImageClick = useCallback((event: ReactMouseEvent<HTMLImageElement>) => {
     event.stopPropagation();
@@ -354,6 +390,7 @@ export function ImagePreviewOverlay({
       return;
     }
     event.stopPropagation();
+    settleRunningAnimation();
     showControls();
     activeDragRef.current = {
       pointerId: event.pointerId,
@@ -364,7 +401,7 @@ export function ImagePreviewOverlay({
       moved: false,
     };
     event.currentTarget.setPointerCapture?.(event.pointerId);
-  }, [showControls]);
+  }, [settleRunningAnimation, showControls]);
 
   const handleImagePointerMove = useCallback((event: ReactPointerEvent<HTMLImageElement>) => {
     const drag = activeDragRef.current;

@@ -58,6 +58,8 @@ pub fn start_startup_maintenance(app: AppHandle) -> Result<bool, CommandError> {
     }
 
     append_startup_trace(&app, "startup_maintenance", "scheduled");
+    // After the first interactive frame, like the rest of maintenance (Ф13).
+    crate::updater::start_automatic_checks(&app);
     let worker_app = app.clone();
     std::thread::Builder::new()
         .name("mine-startup-maintenance".into())

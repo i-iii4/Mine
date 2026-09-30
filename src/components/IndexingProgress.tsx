@@ -16,6 +16,10 @@ interface IndexingProgressProps {
 
 export function IndexingProgress({ spaceName, processed, total }: IndexingProgressProps) {
   const share = total > 0 ? Math.min(processed / total, 1) : 0;
+  const shown = Math.min(processed, total);
+  // A screen reader hears the progress in tenths: every count would talk
+  // over everything else, silence would read as hung (А6.14).
+  const tenths = Math.floor(share * 10) * 10;
   return (
     <div
       className="grid h-full min-h-80 place-items-center"
@@ -28,12 +32,23 @@ export function IndexingProgress({ spaceName, processed, total }: IndexingProgre
             {processed} / {total}
           </p>
         </div>
-        <div className="h-1 overflow-hidden rounded-full bg-component-fill">
+        <div
+          className="h-1 overflow-hidden rounded-full bg-component-fill"
+          role="progressbar"
+          aria-label={`Indexing “${spaceName}”`}
+          aria-valuemin={0}
+          aria-valuemax={total}
+          aria-valuenow={shown}
+          aria-valuetext={`${shown} of ${total}`}
+        >
           <div
             className="h-full bg-foreground transition-[width] duration-300"
             style={{ width: `${share * 100}%` }}
           />
         </div>
+        <p className="sr-only" role="status" aria-live="polite" data-indexing-progress-announcement="">
+          {`Indexing “${spaceName}”: ${tenths}%`}
+        </p>
       </div>
     </div>
   );

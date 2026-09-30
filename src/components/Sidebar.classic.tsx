@@ -1,3 +1,4 @@
+import { scrollBehavior } from "@/lib/motion";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { NavLink, useLocation } from "react-router";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
@@ -67,7 +68,7 @@ export function Sidebar({
     if (!nav) return;
     const active = nav.querySelector<HTMLElement>('[aria-current="page"]');
     if (active) {
-      active.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      active.scrollIntoView({ block: "nearest", behavior: scrollBehavior() });
     }
   }, [location.pathname]);
 

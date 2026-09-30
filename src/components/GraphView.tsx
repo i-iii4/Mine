@@ -69,6 +69,8 @@ import {
   hasNodePosition,
 } from "./graph/interaction";
 import { graphNodeScreenSize, graphZoomBounds } from "./graph/nodeSize";
+import { animateCamera, type CameraTarget } from "./graph/cameraAnimation";
+import { motionDuration } from "@/lib/motion";
 import { graphLinkCurvature, graphLinkLineDash } from "./graph/linkStyle";
 import {
   cardChargeFor,
@@ -98,6 +100,30 @@ export interface GraphViewProps {
 
 export interface GraphViewHandle {
   centerOnNode: (nodeId: string) => void;
+}
+
+const GRAPH_FIT_PADDING_PX = 40;
+
+/// The camera that shows the whole graph with `padding` pixels around it,
+/// as the library's own fit does, within the zoom bounds.
+function fitCameraTarget(
+  bbox: { x: [number, number]; y: [number, number] } | undefined,
+  size: { width: number; height: number },
+  padding: number,
+  bounds: { min: number; max: number },
+): CameraTarget | null {
+  if (!bbox || size.width <= 0 || size.height <= 0) return null;
+  const width = Math.max(1, bbox.x[1] - bbox.x[0]);
+  const height = Math.max(1, bbox.y[1] - bbox.y[0]);
+  const k = Math.min(
+    Math.max(1, size.width - padding * 2) / width,
+    Math.max(1, size.height - padding * 2) / height,
+  );
+  return {
+    x: (bbox.x[0] + bbox.x[1]) / 2,
+    y: (bbox.y[0] + bbox.y[1]) / 2,
+    k: Math.min(bounds.max, Math.max(bounds.min, k)),
+  };
 }
 
 export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function GraphView({
@@ -135,6 +161,8 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   const [dragging, setDragging] = useState(false);
   const [imageVersion, setImageVersion] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
+  /// Stops the camera glide in progress, if any.
+  const stopGlideRef = useRef<(() => void) | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
   const graphRef = useRef<ForceGraphMethods<GraphCanvasNode, GraphCanvasLink> | undefined>(
     undefined,
@@ -346,6 +374,26 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   );
   const graphViewportReady = size.width > 0 && size.height > 0;
 
+  /// A programmatic camera movement: ours, frame by frame, so a gesture can
+  /// stop it where it is; instant when motion is reduced (Ф12, А5.2).
+  const glideCamera = useCallback((target: CameraTarget, durationMs: number) => {
+    const graph = graphRef.current;
+    if (!graph) return;
+    stopGlideRef.current?.();
+    stopGlideRef.current = animateCamera(graph, target, motionDuration(durationMs));
+  }, []);
+
+  /// The person takes the camera: the glide stops and the planned one for
+  /// this screen is dropped, so nothing moves the view out from under them.
+  const yieldCameraToGesture = useCallback(() => {
+    stopGlideRef.current?.();
+    stopGlideRef.current = null;
+    cameraPlanRef.current = null;
+    pendingFitTicksRef.current = 0;
+  }, []);
+
+  useEffect(() => () => stopGlideRef.current?.(), []);
+
   const centerNodeIfNeeded = useCallback((nodeId: string): boolean => {
     const graph = graphRef.current;
     const node = graphData.nodes.find((candidate) => candidate.id === nodeId);
@@ -359,10 +407,10 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       && screen.y >= GRAPH_CENTER_MARGIN
       && screen.y <= size.height - GRAPH_CENTER_MARGIN;
     if (!inside) {
-      graph.centerAt(node.x, node.y, GRAPH_CENTER_DURATION_MS);
+      glideCamera({ x: node.x, y: node.y, k: null }, GRAPH_CENTER_DURATION_MS);
     }
     return true;
-  }, [graphData.nodes, size.height, size.width]);
+  }, [glideCamera, graphData.nodes, size.height, size.width]);
 
   useImperativeHandle(ref, () => ({
     centerOnNode(nodeId: string) {
@@ -655,12 +703,12 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       // recomputed here on every navigation: inheriting it from the previous
       // screen is what left one collection cramped and the next one tiny.
       const zoom = graphZoomForExtent(graphData.nodes, size);
-      graph.centerAt(focus.x, focus.y, GRAPH_CENTER_DURATION_MS);
-      if (zoom !== null) graph.zoom(zoom, GRAPH_CENTER_DURATION_MS);
+      glideCamera({ x: focus.x, y: focus.y, k: zoom }, GRAPH_CENTER_DURATION_MS);
       return;
     }
-    graph.zoomToFit(GRAPH_INITIAL_FIT_DURATION_MS, 40);
-  }, [aimCenterForce, focusNodeId, graphData.nodes, size]);
+    const fit = fitCameraTarget(graph.getGraphBbox(), size, GRAPH_FIT_PADDING_PX, zoomBounds);
+    if (fit) glideCamera(fit, GRAPH_INITIAL_FIT_DURATION_MS);
+  }, [aimCenterForce, focusNodeId, glideCamera, graphData.nodes, size, zoomBounds]);
 
   const clearPreviewOpenTimer = useCallback(() => {
     if (previewOpenTimerRef.current === null) return;
@@ -974,6 +1022,8 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     <div
       ref={containerRef}
       className="absolute inset-0 overflow-hidden bg-background"
+      onWheelCapture={yieldCameraToGesture}
+      onPointerDownCapture={yieldCameraToGesture}
       onContextMenu={(event) => event.preventDefault()}
       data-graph-view=""
       data-graph-snapshot-route={snapshot?.current_collection ?? "__library__"}

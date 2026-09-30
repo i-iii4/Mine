@@ -93,6 +93,7 @@
 | Defuddle | Извлечение статей + Markdown-конвертация + YouTube-транскрипты (content script) |
 | src/lib/masonryLayout.ts | Кастомный virtualized masonry layout engine |
 | src/lib/cardAspect.ts | Политика кадрирования: кламп пропорции карточки `1:2 … 2:1` |
+| src/lib/motion.ts | Единая настройка уменьшения движения для программных анимаций и прокрутки |
 | ESLint 10 + typescript-eslint | Линтинг фронтенда (TypeScript) |
 | Vitest + Testing Library | Frontend-тесты (`bun run test:frontend`) |
 | Playwright + pngjs | Browser acceptance gates: Feed, Graph, cold-space, sidebar reorder |
@@ -336,6 +337,7 @@ local-arena/
 ├── index.db
 ├── cloud-waits.json                # Журнал ожиданий iCloud по сессиям
 ├── first-card.json                 # Пометка первой карточки показана
+├── space-onboarding.json           # В пространстве была карточка: онбординг ленты не возвращается
 ├── owner-path.json                 # Владелец папки: копия пространства vs переезд
 └── cache/
     ├── thumbs/

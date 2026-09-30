@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ImagePreviewOverlay } from "./ImagePreviewOverlay";
+import { ImagePreviewOverlay, visibleImagePreviewTransform } from "./ImagePreviewOverlay";
 import { copyMediaAssetToClipboard } from "@/lib/commands";
 
 vi.mock("@/lib/commands", () => ({
@@ -183,6 +183,41 @@ describe("ImagePreviewOverlay", () => {
   function shownSrc(container: HTMLElement) {
     return container.querySelector("img")?.getAttribute("src");
   }
+
+  it("reads the transform the image shows from its computed matrix", () => {
+    expect(visibleImagePreviewTransform("matrix(1.25, 0, 0, 1.25, 12, -8)")).toEqual({ scale: 1.25, x: 12, y: -8 });
+    expect(visibleImagePreviewTransform("none")).toBeNull();
+  });
+
+  it("continues a gesture from where the zoom animation is on screen (А5.1)", async () => {
+    const { container } = render(
+      <ImagePreviewOverlay preview={{ src: "asset://localhost/photo.jpg", mediaRef: "photo.jpg" }} onClose={vi.fn()} />,
+    );
+    const stage = container.querySelector("[data-image-preview-stage]");
+    const image = container.querySelector("[data-image-preview-image]") as HTMLElement;
+    setElementBox(stage!, { left: 0, top: 0, width: 800, height: 600 });
+    setImageLayout(image, { offsetLeft: 300, offsetTop: 200, offsetWidth: 200, offsetHeight: 100 });
+
+    // An animated zoom to 150% starts; mid-way the image shows 120%.
+    fireEvent.click(image, { clientX: 400, clientY: 250 });
+    const computed = vi.spyOn(window, "getComputedStyle").mockReturnValue({
+      transform: "matrix(1.2, 0, 0, 1.2, 0, 0)",
+    } as CSSStyleDeclaration);
+    try {
+      fireEvent.pointerDown(image, { pointerId: 1, button: 0, clientX: 400, clientY: 250 });
+      fireEvent.pointerMove(image, { pointerId: 1, clientX: 410, clientY: 250 });
+      fireEvent.pointerUp(image, { pointerId: 1, clientX: 410, clientY: 250 });
+    } finally {
+      computed.mockRestore();
+    }
+    // The drag moved the image from its visible place at its visible scale,
+    // not from the end of the animation.
+    await waitFor(() => {
+      expect(image).toHaveAttribute("data-detail-image-preview-scale", "1.200");
+      expect(readImageNumber(image, "data-detail-image-preview-translate-x")).toBeCloseTo(10, 3);
+    });
+    expect(image.style.transition).toBe("none");
+  });
 
   it("steps through a card's images with the arrow keys, starting at the clicked one", () => {
     const { container } = render(

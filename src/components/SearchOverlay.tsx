@@ -117,6 +117,9 @@ export function SearchOverlay({
   const inputRef = useRef<HTMLInputElement>(null);
   const resultsTopFade = useTopFadeMask(undefined, scrollEdgeFade);
   const requestSequenceRef = useRef(0);
+  /// The query Enter was pressed for before its results arrived: the first
+  /// result of exactly that query opens once it settles (А6.11).
+  const pendingOpenRef = useRef<string | null>(null);
   // Pointer ownership starts only after a real pointermove with new
   // coordinates, so keyboard scrolling under a resting cursor does not steal
   // the active row (CollectionPicker contract).
@@ -127,6 +130,7 @@ export function SearchOverlay({
   const isRecentMode = normalizedQuery.length === 0;
   const queryReadyForSearch =
     isRecentMode || normalizedQueryLength >= SEARCH_OVERLAY_MIN_QUERY_CHARS;
+  const currentQuerySettled = settledQueryKey === normalizedQuery;
 
   // searchQuery === null → recent mode: the same grid contract without a
   // query returns the canonical saved_at-DESC order (the feed's first page).
@@ -171,6 +175,11 @@ export function SearchOverlay({
 
   useEffect(() => {
     if (!open) return;
+    // New text: a response still in flight answers the old text and must not
+    // land while this one waits out the debounce (А6.11). An Enter pressed for
+    // the old text is dropped with it.
+    requestSequenceRef.current += 1;
+    pendingOpenRef.current = null;
     if (isRecentMode) {
       // Recent mode loads immediately: the debounce exists for the typing
       // race, a static list has nothing to wait for (Р-16).
@@ -179,7 +188,6 @@ export function SearchOverlay({
       return;
     }
     if (!queryReadyForSearch) {
-      requestSequenceRef.current += 1;
       setResults(null);
       setResultHasMore(false);
       setSettledQueryKey(null);
@@ -354,13 +362,38 @@ export function SearchOverlay({
         moveActiveIndex(-1);
         return;
       }
-      if (event.key === "Enter" && activeBlock) {
+      if (event.key !== "Enter") return;
+      if (currentQuerySettled) {
+        if (!activeBlock) return;
         event.preventDefault();
         onOpenBlock(activeBlock);
+        return;
       }
+      // The rows on screen answer an older text: ask for this one now,
+      // without the debounce, and open its first result when it lands.
+      if (!queryReadyForSearch) return;
+      event.preventDefault();
+      pendingOpenRef.current = normalizedQuery;
+      runSearch(isRecentMode ? null : normalizedQuery, { preserveActive: false });
     },
-    [activeBlock, moveActiveIndex, onOpenBlock],
+    [
+      activeBlock,
+      currentQuerySettled,
+      isRecentMode,
+      moveActiveIndex,
+      normalizedQuery,
+      onOpenBlock,
+      queryReadyForSearch,
+      runSearch,
+    ],
   );
+
+  useEffect(() => {
+    if (pendingOpenRef.current === null || !currentQuerySettled) return;
+    if (pendingOpenRef.current !== normalizedQuery) return;
+    pendingOpenRef.current = null;
+    if (activeBlock) onOpenBlock(activeBlock);
+  }, [activeBlock, currentQuerySettled, normalizedQuery, onOpenBlock]);
 
   const handleRowPointerMove = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>, index: number) => {
@@ -377,7 +410,6 @@ export function SearchOverlay({
     inputRef.current?.focus();
   }, [onQueryChange]);
 
-  const currentQuerySettled = settledQueryKey === normalizedQuery;
   const showCount =
     !isRecentMode && queryReadyForSearch && currentQuerySettled && results !== null;
   const resultCountLabel =

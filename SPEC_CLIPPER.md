@@ -901,7 +901,7 @@ target article не найден, extractor сохраняет не больше
 
 Инвариант: предпросмотр видео в расширении — чисто визуальный affordance, не playback surface. Он не должен запускать playback и не должен менять save payload. Любой frame capture должен быть bounded по времени/размеру, работать только как улучшение poster, и иметь fallback на metadata poster без ошибки для пользователя.
 
-Пользователь переключает тип через TypeSwitcher кликом. Tab/Shift+Tab циклит Content → Screenshot → Link **только** когда keyboard focus уже внутри overlay (после клика по overlay) — это known limitation, см. DEVLOG `24.04.2026 — Clipper: Tab-cycling` и решение не дорабатывать. Основной сценарий переключения — клик по табам.
+Пользователь переключает тип через TypeSwitcher кликом или стрелками влево и вправо: Content, Screenshot, Link по кругу (решение пользователя 29.09.2026, [SPEC_AUDIT_FIXES.md](SPEC_AUDIT_FIXES.md), А6.9). Стрелки меняют тип, только когда фокус в клиппере, не в текстовом поле и не в открытом списке; если фокус стоит на сегменте типа, он переходит на выбранный сегмент. Tab и Shift+Tab переводят фокус между элементами панели и на краях переходят на другой её край, не уходя на страницу. Escape закрывает клиппер и возвращает фокус элементу страницы, который держал его до открытия (А6.12); закрытие щелчком снаружи фокус не трогает.
 
 Click-outside close для in-page overlay не должен зависеть только от `click` и `composedPath()` вокруг full-viewport shadow host. `OverlayShell` обязан маркировать реальную панель `data-mine-clipper-panel`, а `overlay-entry` закрывает overlay на `pointerdown` / `mousedown` capture, если координаты события лежат вне `getBoundingClientRect()` панели. Outside-close handler не вызывает `preventDefault` и `stopPropagation`, чтобы клик оставался кликом страницы после закрытия overlay.
 
@@ -1272,11 +1272,13 @@ Background service worker регистрирует 4 пункта:
 |---|---|---|
 | `Option+A` | Глобальный (настраиваемый через chrome://extensions/shortcuts) | Открыть popup |
 | `Cmd+Enter` | Popup | Сохранить (best-effort — из overlay срабатывает не всегда) |
-| `Escape` | Popup | Слоями, изнутри наружу: непустой поиск очищает запрос; открытый dropdown закрывается сам; и только свободный Escape закрывает окно расширения без сохранения |
+| `Escape` | Popup | Слоями, изнутри наружу: непустой поиск очищает запрос; открытый dropdown закрывается сам; и только свободный Escape закрывает окно расширения без сохранения и возвращает фокус странице |
+| `Tab` / `Shift+Tab` | Popup | Фокус между элементами панели, по кругу внутри неё |
+| `Left/Right` | Popup, фокус не в тексте и не в открытом списке | Предыдущий или следующий тип: Content, Screenshot, Link |
 | `Up/Down` | Popup, фокус на ChannelPicker | Навигация по каналам |
 | `Enter` | Popup, фокус на ChannelPicker | Выбрать/снять канал |
 
-**Known limitation**: keyboard shortcuts работают только когда focus уже внутри overlay. В content-script overlay host (shadow DOM, isolated world) keyboard focus остаётся на странице до явного клика по overlay — это не фиксим, см. DEVLOG `24.04.2026 — Clipper: Tab-cycling в overlay не работает без предварительного клика — won't fix`. Поэтому kbd-подсказки в UI не показываем, чтобы не обещать того, что стабильно не работает.
+Клавиши работают, когда фокус внутри клиппера. `OverlayShell` при открытии забирает фокус на панель; стрелки на странице без фокуса в клиппере остаются странице (прокрутка, видео). Подсказки клавиш в интерфейсе не показываем: `Cmd+Enter` из overlay срабатывает не на всех сайтах.
 
 ## Metadata Extraction (Content Script)
 

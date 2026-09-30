@@ -117,3 +117,46 @@ describe("clipper preview", () => {
     expect(await screen.findByText("Could not write the file.")).toBeInTheDocument();
   });
 });
+
+describe("clipper keyboard (А6.9)", () => {
+  beforeEach(() => {
+    state.setCurrentType.mockReset();
+    state.currentType = "content";
+  });
+
+  it("leaves Tab to move focus and never changes the type with it", () => {
+    render(<PopupApp />);
+    const tab = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+    window.dispatchEvent(tab);
+    expect(tab.defaultPrevented).toBe(false);
+    fireEvent.keyDown(window, { key: "Tab", shiftKey: true });
+    expect(state.setCurrentType).not.toHaveBeenCalled();
+  });
+
+  it("changes the type with the arrows, around the ring", () => {
+    render(<PopupApp />);
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(state.setCurrentType).toHaveBeenLastCalledWith("screenshot");
+    fireEvent.keyDown(window, { key: "ArrowLeft" });
+    expect(state.setCurrentType).toHaveBeenLastCalledWith("link");
+  });
+
+  it("moves focus with the choice when a type segment has it", () => {
+    render(<PopupApp />);
+    const content = screen.getByRole("button", { name: "Content" });
+    content.focus();
+    fireEvent.keyDown(content, { key: "ArrowRight" });
+    expect(state.setCurrentType).toHaveBeenLastCalledWith("screenshot");
+    expect(screen.getByRole("button", { name: "Screenshot" })).toHaveFocus();
+  });
+
+  it("keeps the arrows for the caret in a text field", () => {
+    render(<PopupApp />);
+    const field = document.createElement("input");
+    document.body.appendChild(field);
+    field.focus();
+    fireEvent.keyDown(field, { key: "ArrowRight" });
+    expect(state.setCurrentType).not.toHaveBeenCalled();
+    field.remove();
+  });
+});

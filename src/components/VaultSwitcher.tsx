@@ -189,23 +189,23 @@ export function VaultSwitcher({
     onVaultSelected(selected);
   }, [onVaultSelected, resetMenuSearch]);
 
-  const sorted = useMemo(() => (
-    Array.from(new Set(knownVaults))
-      .filter((path) => path !== currentPath)
-      .sort((a, b) => vaultName(a).localeCompare(vaultName(b)))
+  // The order the person set in Settings > Spaces, not the alphabet: the
+  // switcher and the settings list show one sequence (А6.10).
+  const ordered = useMemo(() => (
+    Array.from(new Set(knownVaults)).filter((path) => path !== currentPath)
   ), [currentPath, knownVaults]);
 
   const visibleVaults = useMemo(() => (
     isTopChrome
       ? filterAndRankChannelSearch(
-          sorted.map((path) => ({
+          ordered.map((path) => ({
             item: path,
             texts: [vaultName(path), path],
           })),
           query,
         )
-      : sorted
-  ), [isTopChrome, query, sorted]);
+      : ordered
+  ), [isTopChrome, query, ordered]);
 
   const visibleUnavailable = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();

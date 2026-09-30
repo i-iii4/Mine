@@ -399,7 +399,7 @@ export function CollectionPicker({
                 // The trailing inset matches the button's vertical breathing
                 // room ((row height − button height) / 2) so the action sits
                 // evenly inside the row on both row sizes (menu and clipper).
-                "flex h-[var(--menu-row-height)] w-full items-center gap-2 rounded-1 pl-2 pr-[calc((var(--menu-row-height)-1.5rem)/2)] text-base",
+                "flex h-[var(--menu-row-height)] w-full items-center gap-2 rounded-1 pl-2 pr-[calc((var(--menu-row-height)-24px)/2)] text-base",
                 isActive && "bg-active",
               )}
               data-collection-picker-row=""
@@ -695,7 +695,7 @@ export function BatchCollectionPicker({
                 }
               }}
               className={cn(
-                "flex h-[var(--menu-row-height)] w-full items-center gap-2 rounded-1 pl-2 pr-[calc((var(--menu-row-height)-1.5rem)/2)] text-base",
+                "flex h-[var(--menu-row-height)] w-full items-center gap-2 rounded-1 pl-2 pr-[calc((var(--menu-row-height)-24px)/2)] text-base",
                 isActive && "bg-active",
               )}
               data-batch-collection-row=""

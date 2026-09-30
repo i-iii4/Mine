@@ -127,26 +127,16 @@ function blockMarkdownPath(vaultPath: string, slug: string): string {
   return `${vaultPath.replace(/\/+$/, "")}/${slug.replace(/^\/+/, "")}.md`;
 }
 
+/// Keys come from the command registry, the user's rebinding included: a
+/// rebound command no longer answers its old chord (SPEC_AUDIT_FIXES.md, Ф11).
+function commandPressed(id: string, e: KeyboardEvent): boolean {
+  return commandById(id).matches?.(e) ?? false;
+}
+
 function historyDirectionForShortcut(e: KeyboardEvent): -1 | 1 | null {
-  if (!e.metaKey || e.shiftKey || e.altKey || e.ctrlKey) return null;
-  if (e.key === "[" || e.code === "BracketLeft") return -1;
-  if (e.key === "]" || e.code === "BracketRight") return 1;
+  if (commandPressed("history-back", e)) return -1;
+  if (commandPressed("history-forward", e)) return 1;
   return null;
-}
-
-function isSearchShortcut(e: KeyboardEvent): boolean {
-  if (!e.metaKey || e.altKey || e.ctrlKey) return false;
-  return e.code === "KeyF" || e.key.toLowerCase() === "f";
-}
-
-function isToggleSidebarShortcut(e: KeyboardEvent): boolean {
-  return (
-    e.metaKey
-    && e.ctrlKey
-    && !e.shiftKey
-    && !e.altKey
-    && (e.code === "KeyS" || e.key.toLowerCase() === "s")
-  );
 }
 
 /** Pin the DragOverlay so the cursor tip sits just outside the top-left corner. */
@@ -195,6 +185,7 @@ import {
   getUnavailableVault,
   firstCardMarkerPending,
   completeFirstCardMarker,
+  spaceOnboardingPending,
   openVault,
   selectVault,
   startVaultSync,
@@ -783,6 +774,9 @@ export function AppWithVault({
       .catch(() => {});
   }, [vaultPath]);
   const [vaultReady, setVaultReady] = useState(false);
+  // Whether this space still owes the empty-feed onboarding (О14, О15); null
+  // until the space's own index answers.
+  const [spaceOnboardingOwed, setSpaceOnboardingOwed] = useState<boolean | null>(null);
   const [migrationRequired, setMigrationRequired] = useState(false);
   const [thumbsRootPath, setThumbsRootPath] = useState<string | null>(null);
   const activeDragBlock = activeDragBlocks[0] ?? null;
@@ -1493,6 +1487,25 @@ export function AppWithVault({
     vaultReady,
   ]);
 
+  const checkSpaceOnboarding = useCallback(() => {
+    const path = vaultPath;
+    void spaceOnboardingPending()
+      .then((owed) => {
+        if (vaultPathRef.current === path) setSpaceOnboardingOwed(owed);
+      })
+      .catch(() => {});
+  }, [vaultPath]);
+  useEffect(() => {
+    setSpaceOnboardingOwed(null);
+    if (vaultReady) checkSpaceOnboarding();
+  }, [checkSpaceOnboarding, vaultReady]);
+  // Cards appeared while the onboarding was owed: the space's index is asked
+  // again and records its first card, after which deleting every card leaves
+  // an empty feed, not the introduction (О15).
+  useEffect(() => {
+    if (spaceOnboardingOwed === true && totalBlocks > 0) checkSpaceOnboarding();
+  }, [checkSpaceOnboarding, spaceOnboardingOwed, totalBlocks]);
+
   useEffect(() => {
     let cancelled = false;
     setVaultReady(false);
@@ -1993,7 +2006,7 @@ export function AppWithVault({
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
-      if (isToggleSidebarShortcut(e)) {
+      if (commandPressed("toggle-sidebar", e)) {
         // The native View menu owns this accelerator in packaged Mine. Letting
         // WKWebView handle the same keydown would toggle the sidebar twice.
         if (isTauri()) return;
@@ -2001,15 +2014,15 @@ export function AppWithVault({
         toggleCollapsed();
         return;
       }
-      if (isSearchShortcut(e)) {
+      const searchSurface = commandPressed("find-collections", e)
+        ? "sidebar"
+        : commandPressed("find-elements", e)
+          ? "main"
+          : null;
+      if (searchSurface) {
         if (isOverlayKeyboardTarget(e.target)) return;
-        if (e.shiftKey) {
-          e.preventDefault();
-          handleSurfaceSearchShortcut("sidebar");
-          return;
-        }
         e.preventDefault();
-        handleSurfaceSearchShortcut("main");
+        handleSurfaceSearchShortcut(searchSurface);
         return;
       }
       if (isEditableKeyboardTarget(e.target)) return;
@@ -2020,38 +2033,23 @@ export function AppWithVault({
         navigate(historyDirection);
         return;
       }
-      if (
-        e.metaKey
-        && !e.shiftKey
-        && !e.altKey
-        && !e.ctrlKey
-        && e.key.toLowerCase() === "k"
-        && renderedDetailBlock
-      ) {
+      if (commandPressed("element-menu-open", e) && renderedDetailBlock) {
         if (isDetailShortcutBlockedTarget(e.target)) return;
         e.preventDefault();
         setCompactDetailTopMenuRequestSequence((current) => current + 1);
         return;
       }
-      if (
-        e.metaKey
-        && !e.shiftKey
-        && !e.altKey
-        && !e.ctrlKey
-        && e.key.toLowerCase() === "l"
-        && selectedBlock
-      ) {
+      if (commandPressed("copy-path", e) && selectedBlock) {
         if (isDetailShortcutBlockedTarget(e.target)) return;
         e.preventDefault();
         copyTextToClipboard(blockMarkdownPath(vaultPath, selectedBlock.slug));
         return;
       }
       if (isOverlayKeyboardTarget(e.target)) return;
-      if (!e.metaKey) return;
-      if (e.shiftKey && e.key === "O") {
+      if (commandPressed("switch-space", e)) {
         e.preventDefault();
         handleSwitchVault();
-      } else if (e.shiftKey && e.key === "N") {
+      } else if (commandPressed("new-collection", e)) {
         e.preventDefault();
         beginCreateCollection();
       }
@@ -3585,6 +3583,7 @@ export function AppWithVault({
                 onNavigateCollection={handleTopCollectionNavigate}
                 acceptGraphRevision={acceptGraphRevision}
                 onInstallClipper={() => void openSettingsWindow()}
+                spaceOnboardingOwed={spaceOnboardingOwed}
                 firstIndexProgress={isSyncing ? syncProgress : null}
               />
             }
@@ -4010,6 +4009,7 @@ interface RouteContext {
   /// Offered by the empty-space onboarding, which is the only place in the app
   /// that can introduce the clipper to someone who has never seen it.
   onInstallClipper: () => void;
+  spaceOnboardingOwed: boolean | null;
   firstIndexProgress: { processed: number; total: number } | null;
 }
 

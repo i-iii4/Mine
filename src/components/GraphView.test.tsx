@@ -74,6 +74,14 @@ const graphMethodMocks = vi.hoisted(() => ({
   zoom: vi.fn(),
 }));
 
+// Camera glides are instant here unless a test asks for real motion: the
+// assertions read where the camera ended, not every frame on the way.
+const motionMocks = vi.hoisted(() => ({ glide: false }));
+vi.mock("@/lib/motion", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/motion")>();
+  return { ...actual, motionDuration: (ms: number) => (motionMocks.glide ? ms : 0) };
+});
+
 // The nodes the canvas was last handed. Positions live on these objects, so a
 // test asserting where a node is pinned has to read the very objects d3 would.
 const graphDataSpy = vi.hoisted(() => ({ current: null as { nodes: Array<Record<string, unknown>> } | null }));
@@ -140,6 +148,7 @@ vi.mock("react-force-graph-2d", async () => {
         },
         d3ReheatSimulation: graphMethodMocks.d3ReheatSimulation,
         graph2ScreenCoords: (x: number, y: number) => ({ x, y }),
+        getGraphBbox: () => ({ x: [0, 200] as [number, number], y: [0, 100] as [number, number] }),
         centerAt: (x?: number, y?: number, ms?: number) => {
           // Called without arguments this reads the camera centre; only a call
           // that moves it counts as a camera move.
@@ -843,10 +852,13 @@ describe("GraphView", () => {
 
     const tick = screen.getByTestId("graph-engine-tick");
     for (let index = 0; index < 17; index += 1) fireEvent.click(tick);
-    expect(graphMethodMocks.zoomToFit).not.toHaveBeenCalled();
+    expect(graphMethodMocks.centerAt).not.toHaveBeenCalled();
     fireEvent.click(tick);
 
-    expect(graphMethodMocks.zoomToFit).toHaveBeenCalledWith(250, 40);
+    // The whole graph (the mock's box is 200 by 100) is fitted once.
+    expect(graphMethodMocks.centerAt).toHaveBeenCalledTimes(1);
+    expect(graphMethodMocks.centerAt).toHaveBeenCalledWith(100, 50, 0);
+    expect(graphMethodMocks.zoom).toHaveBeenCalledTimes(1);
   });
 
   it("keeps collection node left click as graph navigation", async () => {
@@ -1377,7 +1389,7 @@ describe("GraphView", () => {
 
     for (let index = 0; index < 25; index += 1) fireEvent.click(tick);
 
-    expect(graphMethodMocks.centerAt).toHaveBeenCalledWith(restingX, restingY, 400);
+    expect(graphMethodMocks.centerAt).toHaveBeenCalledWith(restingX, restingY, 0);
     expect(graphMethodMocks.centerAt).toHaveBeenCalledTimes(1);
     // Two cameras on one navigation is what made the graph look like it flew
     // apart: the fit rescaled the view while the glide was still running.
@@ -1487,7 +1499,29 @@ describe("GraphView", () => {
     rerenderGraph({ selectedSlug: "alpha-card", detailOpen: false });
 
     await waitFor(() => {
-      expect(graphMethodMocks.centerAt).toHaveBeenCalledWith(2_000, 100, 400);
+      expect(graphMethodMocks.centerAt).toHaveBeenCalledWith(2_000, 100, 0);
     });
+  });
+
+  it("lets a gesture stop a camera glide where it is (А5.2)", async () => {
+    motionMocks.glide = true;
+    try {
+      commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshot(
+        graphCardNode("alpha-card", "Alpha card", { x: 2_000, y: 100 }),
+      ));
+      const { rerenderGraph } = renderGraph({ selectedSlug: "alpha-card", detailOpen: true });
+      await screen.findByRole("button", { name: "Alpha card" });
+      rerenderGraph({ selectedSlug: "alpha-card", detailOpen: false });
+      await waitFor(() => expect(graphMethodMocks.centerAt).toHaveBeenCalled());
+
+      fireEvent.wheel(document.querySelector("[data-graph-view]")!);
+      const calls = graphMethodMocks.centerAt.mock.calls.length;
+      await new Promise((resolve) => setTimeout(resolve, 600));
+
+      expect(graphMethodMocks.centerAt.mock.calls.length).toBe(calls);
+      expect(graphMethodMocks.centerAt).not.toHaveBeenCalledWith(2_000, 100, 0);
+    } finally {
+      motionMocks.glide = false;
+    }
   });
 });

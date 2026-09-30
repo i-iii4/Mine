@@ -106,7 +106,7 @@ select,
 [data-article-media-stack] > [data-detail-media-action-frame] {
   display: flex;
   width: fit-content;
-  margin-block-end: 1rem;
+  margin-block-end: 16px;
 }
 
 [data-article-media-stack] > [data-detail-media-action-frame]:last-child {
@@ -292,26 +292,26 @@ body.sidebar-resizing ::selection {
 [data-floating-menu-width] {
   --floating-menu-available-width: var(
     --radix-dropdown-menu-content-available-width,
-    var(--radix-context-menu-content-available-width, calc(100vw - 1rem))
+    var(--radix-context-menu-content-available-width, calc(100vw - 16px))
   );
   --floating-menu-available-height: var(
     --radix-dropdown-menu-content-available-height,
-    var(--radix-context-menu-content-available-height, calc(100vh - 1rem))
+    var(--radix-context-menu-content-available-height, calc(100vh - 16px))
   );
 }
 
 [data-floating-menu-width="command"] {
   width: max-content;
-  min-width: 12rem;
-  max-width: min(18.75rem, var(--floating-menu-available-width));
+  min-width: 192px;
+  max-width: min(300px, var(--floating-menu-available-width));
 }
 
 [data-floating-menu-width="selector"] {
-  width: min(18rem, var(--floating-menu-available-width));
+  width: min(288px, var(--floating-menu-available-width));
 }
 
 [data-floating-menu-width="picker"] {
-  width: min(20rem, var(--floating-menu-available-width));
+  width: min(320px, var(--floating-menu-available-width));
 }
 
 /* Hide scrollbars in WebKit (Tauri/Safari) */
@@ -542,6 +542,25 @@ body {
 
 .mine-progress-indeterminate {
   animation: mine-progress-indeterminate 1.4s ease-in-out infinite;
+}
+
+/* One setting for all motion (SPEC_AUDIT_FIXES.md, Ф12): with the system's
+   "Reduce motion", menus, dialogs, the secondary bar, the sidebar width and
+   every other transition or animation land at once, the sidebar and its top
+   segment together. A spinner and the indeterminate progress keep moving:
+   they say work goes on, in place. Code that animates itself reads the same
+   setting through src/lib/motion.ts. */
+@media (prefers-reduced-motion: reduce) {
+  *:not(.mine-progress-indeterminate):not(.animate-spin),
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0s !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,3 +1,4 @@
+import { commandById } from "@/lib/commandRegistry";
 import {
   memo,
   useCallback,
@@ -83,14 +84,9 @@ function stopProp(e: React.MouseEvent | React.PointerEvent) {
   e.stopPropagation();
 }
 
+/** The element menu's chord from the command registry, rebinding included. */
 function isCommandK(event: ReactKeyboardEvent): boolean {
-  return (
-    event.metaKey &&
-    !event.shiftKey &&
-    !event.altKey &&
-    !event.ctrlKey &&
-    event.key.toLowerCase() === "k"
-  );
+  return commandById("element-menu").matches?.(event.nativeEvent) ?? false;
 }
 
 export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({

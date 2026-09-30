@@ -1,3 +1,4 @@
+import { scrollBehavior } from "@/lib/motion";
 import {
   useState,
   useRef,
@@ -1009,7 +1010,7 @@ function scrollActiveSidebarItemIntoView(nav: HTMLElement, active: HTMLElement) 
   }
 
   if (typeof nav.scrollTo === "function") {
-    nav.scrollTo({ top: Math.max(0, nextTop), behavior: "smooth" });
+    nav.scrollTo({ top: Math.max(0, nextTop), behavior: scrollBehavior() });
   } else {
     nav.scrollTop = Math.max(0, nextTop);
   }

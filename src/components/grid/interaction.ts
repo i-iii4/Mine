@@ -1,3 +1,4 @@
+import { scrollBehavior } from "@/lib/motion";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { LightBlock } from "@/types";
 import type { WordWidths } from "@/types/fontMetrics";
@@ -277,7 +278,7 @@ export function scrollPositionIntoView(
   }
 
   if (nextTop !== null) {
-    scrollElement.scrollTo({ top: nextTop, behavior: "smooth" });
+    scrollElement.scrollTo({ top: nextTop, behavior: scrollBehavior() });
   }
 }
 
