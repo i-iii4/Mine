@@ -9,6 +9,7 @@ pub mod channel;
 pub mod collection;
 pub mod markdown;
 pub mod search;
+pub mod source_patch;
 pub mod tag;
 pub mod vault;
 pub mod video_source;

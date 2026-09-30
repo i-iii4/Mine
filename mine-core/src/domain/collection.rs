@@ -4,6 +4,10 @@
 // `Mine Collections` frontmatter field. Runtime identity is the wikilink
 // target, not a normalized tag.
 
+use crate::domain::source_patch::{
+    frontmatter_bounds, is_top_level_key, replace_top_level_key, top_level_key_span,
+    FrontmatterBounds,
+};
 use crate::domain::vault::validate_slug;
 use crate::links::LinkIndex;
 use std::collections::BTreeSet;
@@ -106,144 +110,40 @@ pub fn patch_collections_frontmatter(
                 content
             ))
         }
-        FrontmatterBounds::Malformed => {
-            Err("cannot safely patch collections: malformed frontmatter".to_string())
-        }
         FrontmatterBounds::Valid {
             yaml_start,
             yaml_end,
-            closing_start,
+            ..
         } => {
             let yaml = &content[yaml_start..yaml_end];
             if !yaml.trim().is_empty() && serde_yaml::from_str::<serde_yaml::Value>(yaml).is_err() {
                 return Err("cannot safely patch collections: malformed frontmatter".to_string());
             }
-            let patched_yaml = patch_collections_yaml(yaml, collections)?;
+            let patched_yaml = patch_collections_yaml(yaml, collections);
             let mut out = String::with_capacity(content.len() + patched_yaml.len());
             out.push_str(&content[..yaml_start]);
             out.push_str(&patched_yaml);
-            out.push_str(&content[closing_start..]);
+            out.push_str(&content[yaml_end..]);
             Ok(out)
         }
     }
 }
 
-enum FrontmatterBounds {
-    None,
-    Malformed,
-    Valid {
-        yaml_start: usize,
-        yaml_end: usize,
-        closing_start: usize,
-    },
-}
-
-fn frontmatter_bounds(content: &str) -> FrontmatterBounds {
-    let Some(first_line_end) = content.find('\n') else {
-        return if content.trim_end_matches('\r') == "---" {
-            FrontmatterBounds::Malformed
-        } else {
-            FrontmatterBounds::None
-        };
-    };
-    if content[..first_line_end].trim_end_matches('\r') != "---" {
-        return FrontmatterBounds::None;
-    }
-
-    let yaml_start = first_line_end + 1;
-    let mut cursor = yaml_start;
-    for (idx, line) in content[yaml_start..].split_inclusive('\n').enumerate() {
-        if idx >= 20 {
-            return FrontmatterBounds::None;
-        }
-        if line.trim_end_matches(['\r', '\n']) == "---" {
-            return FrontmatterBounds::Valid {
-                yaml_start,
-                yaml_end: cursor,
-                closing_start: cursor,
-            };
-        }
-        cursor += line.len();
-    }
-    FrontmatterBounds::None
-}
-
-fn patch_collections_yaml(yaml: &str, collections: &[String]) -> Result<String, String> {
+/// Write the membership list into the YAML of a note. The block of the
+/// `Mine Collections` key is replaced in place; user keys, comments and blank
+/// lines around it stay.
+pub(crate) fn patch_collections_yaml(yaml: &str, collections: &[String]) -> String {
+    let newline = if yaml.contains("\r\n") { "\r\n" } else { "\n" };
     let lines: Vec<&str> = yaml.split_inclusive('\n').collect();
-    let mut start = None;
-    let mut has_legacy_tags = false;
-    for (idx, line) in lines.iter().enumerate() {
-        if is_top_level_collection_key(line) {
-            start = Some(idx);
-            break;
-        }
-        if is_top_level_legacy_tags_key(line) {
-            has_legacy_tags = true;
-        }
+    let has_legacy_tags = lines.iter().any(|line| is_top_level_key(line, "tags"));
+    // Legacy `tags` once meant membership. An explicit empty list tells a
+    // reader that membership now lives here and `tags` are the user's own.
+    let replacement = (!collections.is_empty() || has_legacy_tags)
+        .then(|| render_collections(collections).replace('\n', newline));
+    if top_level_key_span(&lines, MINE_COLLECTIONS_FIELD).is_none() && collections.is_empty() && !has_legacy_tags {
+        return yaml.to_string();
     }
-
-    let Some(start_idx) = start else {
-        if collections.is_empty() {
-            if has_legacy_tags {
-                let mut out = yaml.to_string();
-                if !out.is_empty() && !out.ends_with('\n') {
-                    out.push('\n');
-                }
-                out.push_str(&render_collections(collections));
-                return Ok(out);
-            }
-            return Ok(yaml.to_string());
-        }
-        let mut out = yaml.to_string();
-        if !out.is_empty() && !out.ends_with('\n') {
-            out.push('\n');
-        }
-        out.push_str(&render_collections(collections));
-        return Ok(out);
-    };
-
-    let mut end_idx = start_idx + 1;
-    while end_idx < lines.len() {
-        let line = lines[end_idx];
-        let trimmed = line.trim();
-        if trimmed.is_empty() || line.starts_with(' ') || line.starts_with('\t') {
-            end_idx += 1;
-            continue;
-        }
-        break;
-    }
-
-    let mut out = String::new();
-    for line in &lines[..start_idx] {
-        if is_top_level_legacy_tags_key(line) {
-            has_legacy_tags = true;
-        }
-        out.push_str(line);
-    }
-    if !collections.is_empty() || has_legacy_tags {
-        out.push_str(&render_collections(collections));
-    }
-    for line in &lines[end_idx..] {
-        out.push_str(line);
-    }
-    Ok(out)
-}
-
-fn is_top_level_collection_key(line: &str) -> bool {
-    let line = line.trim_end_matches(['\r', '\n']);
-    if line.starts_with(' ') || line.starts_with('\t') {
-        return false;
-    }
-    line == format!("{MINE_COLLECTIONS_FIELD}:")
-        || line.starts_with(&format!("{MINE_COLLECTIONS_FIELD}: "))
-}
-
-fn is_top_level_legacy_tags_key(line: &str) -> bool {
-    let line = line.trim_end_matches(['\r', '\n']);
-    if line.starts_with(' ') || line.starts_with('\t') {
-        return false;
-    }
-    line == "tags:" || line.starts_with("tags: ")
+    replace_top_level_key(yaml, MINE_COLLECTIONS_FIELD, replacement.as_deref(), newline)
 }
 
 fn yaml_quote(value: &str) -> String {

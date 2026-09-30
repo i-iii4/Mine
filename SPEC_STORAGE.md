@@ -623,6 +623,7 @@ enum SourceMutationKind {
 
 enum SourceMutationError {
     Validate { path: PathBuf, reason: String },
+    Changed { path: PathBuf, preserved: Option<PathBuf> },
     Stage { path: PathBuf, source: io::Error },
     CommitFile { path: PathBuf, source: io::Error },
     CommitIndex { operation: &'static str, source: rusqlite::Error },
@@ -645,6 +646,39 @@ enum SourceMutationError {
   freshness state to `degraded` so reconciliation runs before further reads.
 - Derived artifacts are never part of the source transaction and may be
   regenerated after commit.
+
+### Checked publication (SPEC_AUDIT_FIXES.md, Ф1, Ф2)
+
+- A write never rebuilds an existing note from the `Block` model:
+  `serialize_block` is for new notes only. Changes to an existing note go
+  through `mine_core::domain::source_patch::apply_block_changes(source,
+  before, after)`: only Mine fields whose rendering changed and a changed body
+  are carried into the original text; unknown keys, their order, YAML
+  comments, blank lines and CRLF stay byte for byte. A note without
+  frontmatter gets one only with the changed fields, never `saved_at`. The
+  result is read back and must match the intended model, otherwise the patch
+  is refused. Frontmatter is found the way Obsidian finds it, with no line
+  limit (`frontmatter_bounds`).
+- `SourceFileWrite::replace(path, expected, bytes)` and
+  `rename_with_bytes(source, destination, expected, bytes)` carry the bytes
+  the caller read. Staging refuses with `Changed` when the file holds
+  anything else. Publication of a replacement is an atomic exchange
+  (`renamex_np` with `RENAME_SWAP`); the displaced bytes are compared with
+  `expected`, and on a mismatch the outside version is made live again and
+  the operation fails with `Changed`.
+- `rename(source, destination)` moves the file in one step without replacing
+  anything (`RENAME_EXCL`), so edits made meanwhile move with it; across
+  volumes the file is copied to a new name and the source removed. A rename
+  that also rewrites publishes the new file, then moves the source aside in
+  one step and compares it with `expected`; a mismatch moves it back and
+  withdraws the new file.
+- Rollback restores only what this operation put in place: a replacement
+  goes back through the same exchange, compared with the published bytes; a
+  created or rewritten file is removed only while its identity (inode, size,
+  modification time) is the published one. A destination edited after
+  publication stays, and the rollback reports it as incomplete.
+- A version displaced by a race with the restore itself is kept in
+  `.mine/source-conflicts/` of the space.
 
 ### Runtime/card kind derivation
 

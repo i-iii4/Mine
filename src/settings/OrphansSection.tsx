@@ -37,6 +37,8 @@ type BatchAction = "promote" | "delete";
 export function OrphansSection() {
   const [orphans, setOrphans] = useState<OrphanMedia[]>([]);
   const [vaultPath, setVaultPath] = useState<string | null>(null);
+  // The space the list was built for: every operation on it names that space.
+  const [listSpace, setListSpace] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [working, setWorking] = useState<BatchAction | null>(null);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
@@ -45,8 +47,10 @@ export function OrphansSection() {
 
   const reload = useCallback(async () => {
     try {
-      const [items, path] = await Promise.all([listOrphanMedia(), getVaultPath()]);
+      const [list, path] = await Promise.all([listOrphanMedia(), getVaultPath()]);
+      const items = list.orphans;
       setOrphans(items);
+      setListSpace(list.vault_id);
       setVaultPath(path);
       setSelected((previous) => {
         const names = new Set(items.map((item) => item.file_name));
@@ -91,11 +95,13 @@ export function OrphansSection() {
     setSummary(null);
     setError(null);
     try {
-      const result = await promoteOrphanMedia(selectedNames);
+      if (listSpace === null) return;
+      const result = await promoteOrphanMedia(listSpace, selectedNames);
       setSummary(`Converted ${result.created.length}, skipped ${result.skipped.length}`);
       await reload();
     } catch (e) {
       setError(String(e));
+      await reload();
     } finally {
       setWorking(null);
     }
@@ -107,7 +113,8 @@ export function OrphansSection() {
     setSummary(null);
     setError(null);
     try {
-      const result = await deleteOrphanMedia(selectedNames);
+      if (listSpace === null) return;
+      const result = await deleteOrphanMedia(listSpace, selectedNames);
       setSummary(`Deleted ${result.deleted.length}, skipped ${result.skipped.length}`);
     } catch (e) {
       setError(String(e));

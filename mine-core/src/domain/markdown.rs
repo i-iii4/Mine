@@ -120,12 +120,16 @@ pub fn encode_local_markdown_url(name: &str) -> String {
         .replace(')', "%29")
 }
 
-/// Rewrite every wikilink target equal to `old_target` to `new_target`.
+/// Rewrite the target of every wikilink for which `retarget` returns a new
+/// one.
 ///
-/// Applies to both text links (`[[note]]`) and embeds (`![[note]]`), while
-/// preserving any `#...` fragment and alias after `|`. Non-matching wikilinks
-/// are left unchanged.
-pub fn rename_wikilink_targets(body: &str, old_target: &str, new_target: &str) -> String {
+/// Applies to both text links (`[[note]]`) and embeds (`![[note]]`).
+/// `retarget` receives the target without its `#...` fragment and alias; both
+/// are kept. The caller decides what a target means, typically by resolving
+/// it the way Obsidian does (SPEC_AUDIT_FIXES.md, Ф3): `[[Foo]]` names
+/// `Cards/Foo.md` as much as `[[Cards/Foo]]` does. Other wikilinks and all
+/// other text are left byte for byte.
+pub fn retarget_wikilinks(body: &str, mut retarget: impl FnMut(&str) -> Option<String>) -> String {
     let mut out = String::with_capacity(body.len());
     let mut i = 0usize;
 
@@ -146,9 +150,9 @@ pub fn rename_wikilink_targets(body: &str, old_target: &str, new_target: &str) -
         let mut parts = inner.splitn(2, '|');
         let raw_target = parts.next().unwrap_or("").trim();
         let (target_base, target_fragment) = split_wikilink_fragment(raw_target);
-        if target_base == old_target {
+        if let Some(new_target) = retarget(target_base) {
             out.push_str("[[");
-            out.push_str(new_target);
+            out.push_str(&new_target);
             if let Some(fragment) = target_fragment {
                 out.push('#');
                 out.push_str(fragment);
@@ -546,24 +550,34 @@ mod tests {
         assert_eq!(convert_markdown_images_to_wikilinks(input), input);
     }
 
-    #[test]
-    fn rename_wikilink_targets_updates_text_and_embed_forms() {
-        let input = "See [[Old Name]] and ![[Old Name|preview]], leave [[Other]].";
-        let expected = "See [[New Name]] and ![[New Name|preview]], leave [[Other]].";
-        assert_eq!(
-            rename_wikilink_targets(input, "Old Name", "New Name"),
-            expected
-        );
+    fn old_to_new(target: &str) -> Option<String> {
+        (target == "Old Name").then(|| "New Name".to_string())
     }
 
     #[test]
-    fn rename_wikilink_targets_preserves_fragments() {
+    fn retarget_wikilinks_updates_text_and_embed_forms() {
+        let input = "See [[Old Name]] and ![[Old Name|preview]], leave [[Other]].";
+        let expected = "See [[New Name]] and ![[New Name|preview]], leave [[Other]].";
+        assert_eq!(retarget_wikilinks(input, old_to_new), expected);
+    }
+
+    #[test]
+    fn retarget_wikilinks_preserves_fragments() {
         let input = "See [[Old Name#^abc123]] and ![[Old Name#Heading|preview]].";
         let expected = "See [[New Name#^abc123]] and ![[New Name#Heading|preview]].";
-        assert_eq!(
-            rename_wikilink_targets(input, "Old Name", "New Name"),
-            expected
-        );
+        assert_eq!(retarget_wikilinks(input, old_to_new), expected);
+    }
+
+    #[test]
+    fn retarget_wikilinks_hands_the_bare_target_to_the_resolver() {
+        let mut seen = Vec::new();
+        let input = "[[Cards/Foo#Heading|alias]] [[Foo]]";
+        let output = retarget_wikilinks(input, |target| {
+            seen.push(target.to_string());
+            None
+        });
+        assert_eq!(output, input);
+        assert_eq!(seen, ["Cards/Foo", "Foo"]);
     }
 
     #[test]

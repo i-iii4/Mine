@@ -130,17 +130,18 @@ pub fn resolve_vault_conflict(
                         base_path.display()
                     ))
                 })?;
-                writes.push(SourceFileWrite::create(archive_path, base_content));
+                writes.push(SourceFileWrite::create(archive_path, base_content.clone()));
                 writes.push(SourceFileWrite::replace(
                     base_path.clone(),
+                    base_content,
                     conflict_content.into_bytes(),
                 ));
                 writes.push(SourceFileWrite::delete(conflict_path.clone()));
             } else {
-                writes.push(SourceFileWrite::rename_with_bytes(
+                // The conflict copy becomes the note as it is.
+                writes.push(SourceFileWrite::rename(
                     conflict_path.clone(),
                     base_path.clone(),
-                    conflict_content.into_bytes(),
                 ));
             }
         }

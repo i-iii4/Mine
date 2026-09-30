@@ -627,6 +627,24 @@ mod tests {
     }
 
     #[test]
+    fn a_folder_without_identity_at_the_saved_path_is_not_the_saved_space() {
+        // Ф8: an empty folder recreated at the saved path (a sync bringing
+        // back the name, a new folder with the old name) must not be opened
+        // as the space, and must not receive its identity.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Mine");
+        std::fs::create_dir_all(&path).unwrap();
+        let path = path.to_string_lossy().into_owned();
+        let mut cfg = Map::new();
+        record_open(&mut cfg, MINE, &path, 1);
+        assert_eq!(
+            locate(&cfg, Some(MINE), &path),
+            Located::Lost { path: path.clone(), reason: LostReason::Replaced }
+        );
+        assert!(!Path::new(&path).join(".mine").exists());
+    }
+
+    #[test]
     fn k1_locate_reports_a_missing_drive_and_a_replaced_folder() {
         let dir = tempfile::tempdir().unwrap();
         let gone = "/Volumes/Unplugged/Mine".to_string();

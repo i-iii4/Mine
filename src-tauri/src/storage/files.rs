@@ -81,8 +81,13 @@ pub fn validate_vault_write_target(vault: &VaultLayout, path: &Path) -> Result<(
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
-/// Write a block to its .md file in the vault.
+/// Write a block to its .md file in the vault, for test fixtures.
 /// Creates parent directories if needed. Returns the path of the written file.
+///
+/// Test-only: it rebuilds the note from the model and would drop what the
+/// model does not know. Application code changes an existing note through
+/// `source_patch::apply_block_changes` (SPEC_AUDIT_FIXES.md, Ф1).
+#[cfg(test)]
 pub fn write_block_file(vault: &VaultLayout, block: &Block) -> Result<PathBuf> {
     let path = vault.block_path(&block.slug);
     let content = serialize_block(block);
@@ -122,10 +127,204 @@ pub fn write_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// A publication or a rollback met bytes at the destination that this
+/// operation did not put there: the file was edited outside Mine meanwhile.
+/// The foreign version stays live; nothing of it is overwritten.
+#[derive(Debug, thiserror::Error)]
+#[error("{} changed outside Mine during the operation{}", path.display(), preserved_note(preserved))]
+pub struct SourceChanged {
+    pub path: PathBuf,
+    /// Where a second foreign version, displaced by a race with the restore
+    /// itself, was kept.
+    pub preserved: Option<PathBuf>,
+}
+
+fn preserved_note(preserved: &Option<PathBuf>) -> String {
+    preserved
+        .as_ref()
+        .map(|path| format!("; displaced version kept at {}", path.display()))
+        .unwrap_or_default()
+}
+
+/// Whether an error means an outside edit won over this operation.
+pub fn source_changed(error: &anyhow::Error) -> Option<&SourceChanged> {
+    error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<SourceChanged>())
+}
+
+/// Identity of a published file: an atomic replacement changes the inode, an
+/// in-place edit changes the size or the modification time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FileFingerprint {
+    dev: u64,
+    ino: u64,
+    len: u64,
+    modified_ns: u128,
+}
+
+pub(crate) fn fingerprint(path: &Path) -> Result<FileFingerprint> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata =
+        std::fs::symlink_metadata(path).with_context(|| format!("stat {}", path.display()))?;
+    Ok(FileFingerprint {
+        dev: metadata.dev(),
+        ino: metadata.ino(),
+        len: metadata.len(),
+        modified_ns: metadata
+            .modified()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos(),
+    })
+}
+
+/// Where displaced versions found during a race are kept: the space's
+/// `.mine` folder when the file lives in a space, otherwise next to the file.
+pub(crate) fn conflict_dir_for(path: &Path) -> PathBuf {
+    path.ancestors()
+        .skip(1)
+        .find(|dir| dir.join(".mine").is_dir())
+        .map(|root| root.join(".mine").join("source-conflicts"))
+        .unwrap_or_else(|| {
+            path.parent()
+                .unwrap_or_else(|| Path::new("."))
+                .join(".mine-source-conflicts")
+        })
+}
+
+/// A unique hidden sibling name for moving a file aside.
+pub(crate) fn aside_path(path: &Path, purpose: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static ASIDE_SEQ: AtomicU64 = AtomicU64::new(0);
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("source");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    path.with_file_name(format!(
+        ".{name}.mine-{purpose}.{}.{}.{}",
+        std::process::id(),
+        nonce,
+        ASIDE_SEQ.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+mod exchange {
+    use anyhow::Result;
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::Path;
+
+    unsafe extern "C" {
+        fn renamex_np(
+            from: *const std::ffi::c_char,
+            to: *const std::ffi::c_char,
+            flags: u32,
+        ) -> i32;
+    }
+    const RENAME_SWAP: u32 = 0x0000_0002;
+    const RENAME_EXCL: u32 = 0x0000_0004;
+
+    fn renamex(from: &Path, to: &Path, flags: u32) -> std::io::Result<()> {
+        let from = CString::new(from.as_os_str().as_bytes())?;
+        let to = CString::new(to.as_os_str().as_bytes())?;
+        let status = unsafe { renamex_np(from.as_ptr(), to.as_ptr(), flags) };
+        if status != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    /// Exchange two paths in one step.
+    pub(super) fn swap(a: &Path, b: &Path) -> Result<()> {
+        Ok(renamex(a, b, RENAME_SWAP)?)
+    }
+
+    /// Move `from` to `to` in one step, refusing when `to` exists.
+    pub(super) fn rename_exclusive(from: &Path, to: &Path) -> std::io::Result<()> {
+        renamex(from, to, RENAME_EXCL)
+    }
+}
+
+/// Move a file in one step without replacing anything at the destination.
+/// Whatever version is at `from` at that moment moves, edits included.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub(crate) fn rename_exclusive(from: &Path, to: &Path) -> Result<()> {
+    exchange::rename_exclusive(from, to)
+        .map_err(anyhow::Error::from)
+        .with_context(|| format!("move {} -> {}", from.display(), to.display()))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+pub(crate) fn rename_exclusive(from: &Path, to: &Path) -> Result<()> {
+    anyhow::bail!(
+        "exclusive move is unavailable on this platform: {} -> {}",
+        from.display(),
+        to.display()
+    )
+}
+
+/// Move a file without replacing anything at the destination, across volumes
+/// too: a download in the derived store may land in a space on another disk.
+/// Across volumes the file is copied to a new name and the source removed.
+pub(crate) fn move_exclusive(from: &Path, to: &Path) -> Result<()> {
+    match rename_exclusive(from, to) {
+        Ok(()) => Ok(()),
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .and_then(std::io::Error::raw_os_error)
+                == Some(libc::EXDEV) =>
+        {
+            copy_new_atomically(from, to)?;
+            std::fs::remove_file(from).with_context(|| format!("remove {}", from.display()))?;
+            sync_parent_directory(from)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Remove `path` only while it is still the file this operation published.
+/// The file is moved aside in one step first, so a version written meanwhile
+/// is never deleted: a mismatch moves it back.
+pub(crate) fn remove_if_unchanged(path: &Path, published: &FileFingerprint) -> Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error).with_context(|| format!("stat {}", path.display())),
+    }
+    let aside = aside_path(path, "rollback");
+    std::fs::rename(path, &aside).with_context(|| format!("move aside {}", path.display()))?;
+    if fingerprint(&aside)? == *published {
+        std::fs::remove_file(&aside).with_context(|| format!("remove {}", aside.display()))?;
+        sync_parent_directory(path)?;
+        return Ok(());
+    }
+    match rename_exclusive(&aside, path) {
+        Ok(()) => {
+            sync_parent_directory(path)?;
+            Err(SourceChanged {
+                path: path.to_path_buf(),
+                preserved: None,
+            }
+            .into())
+        }
+        Err(_) => Err(SourceChanged {
+            path: path.to_path_buf(),
+            preserved: Some(aside),
+        }
+        .into()),
+    }
+}
+
 /// Publish a link repair while retaining any concurrent editor version.
 /// The atomic exchange gives us the exact inode displaced at publication,
 /// including an editor write that ignored Mine's advisory lock.
-#[cfg(target_os = "macos")]
 pub(crate) fn write_atomically_if_unchanged(
     path: &Path,
     expected: &[u8],
@@ -133,7 +332,22 @@ pub(crate) fn write_atomically_if_unchanged(
     conflict_dir: &Path,
 ) -> Result<()> {
     let _write = crate::storage::source_mutation::begin_write()?;
-    write_atomically_if_unchanged_with_hooks(
+    let tmp = prepare_replacement_temp_file(path, path, |file| file.write_all(replacement))?;
+    exchange_if_unchanged(&tmp, path, expected, replacement, conflict_dir)
+}
+
+/// Swap the staged `tmp` (holding `replacement`) into `path` when `path`
+/// still holds `expected`. A foreign version found at the moment of the swap
+/// is made live again and the error is `SourceChanged`.
+pub(crate) fn exchange_if_unchanged(
+    tmp: &Path,
+    path: &Path,
+    expected: &[u8],
+    replacement: &[u8],
+    conflict_dir: &Path,
+) -> Result<()> {
+    exchange_if_unchanged_with_hooks(
+        tmp,
         path,
         expected,
         replacement,
@@ -143,8 +357,9 @@ pub(crate) fn write_atomically_if_unchanged(
     )
 }
 
-#[cfg(target_os = "macos")]
-fn write_atomically_if_unchanged_with_hooks(
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn exchange_if_unchanged_with_hooks(
+    tmp: &Path,
     path: &Path,
     expected: &[u8],
     replacement: &[u8],
@@ -152,38 +367,27 @@ fn write_atomically_if_unchanged_with_hooks(
     before_exchange: impl FnOnce(),
     before_rollback: impl FnOnce(),
 ) -> Result<()> {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
-
-    unsafe extern "C" {
-        fn renamex_np(
-            from: *const std::ffi::c_char,
-            to: *const std::ffi::c_char,
-            flags: u32,
-        ) -> i32;
-    }
-    const RENAME_SWAP: u32 = 0x00000002;
-    let swap = |from: &Path, to: &Path| -> Result<()> {
-        let from = CString::new(from.as_os_str().as_bytes())?;
-        let to = CString::new(to.as_os_str().as_bytes())?;
-        let status = unsafe { renamex_np(from.as_ptr(), to.as_ptr(), RENAME_SWAP) };
-        if status != 0 {
-            return Err(std::io::Error::last_os_error().into());
+    let current = match std::fs::read(path) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            let _ = std::fs::remove_file(tmp);
+            return Err(error).with_context(|| format!("read {}", path.display()));
         }
-        Ok(())
     };
-
-    anyhow::ensure!(
-        std::fs::read(path)? == expected,
-        "source changed before link repair: {}",
-        path.display()
-    );
-    let tmp = prepare_replacement_temp_file(path, path, |file| file.write_all(replacement))?;
+    if current.as_deref() != Some(expected) {
+        let _ = std::fs::remove_file(tmp);
+        return Err(SourceChanged {
+            path: path.to_path_buf(),
+            preserved: None,
+        }
+        .into());
+    }
     before_exchange();
     let outcome = (|| -> Result<()> {
-        swap(&tmp, path)?;
-        if std::fs::read(&tmp)? == expected {
-            std::fs::remove_file(&tmp)?;
+        exchange::swap(tmp, path)?;
+        if std::fs::read(tmp)? == expected {
+            std::fs::remove_file(tmp)?;
             sync_published_parent(path)?;
             return Ok(());
         }
@@ -194,40 +398,83 @@ fn write_atomically_if_unchanged_with_hooks(
         let live_was_ours = std::fs::read(path)? == replacement;
         if live_was_ours {
             before_rollback();
-            swap(&tmp, path)?;
-            if std::fs::read(&tmp)? == replacement {
-                std::fs::remove_file(&tmp)?;
+            exchange::swap(tmp, path)?;
+            if std::fs::read(tmp)? == replacement {
+                std::fs::remove_file(tmp)?;
                 sync_published_parent(path)?;
-                anyhow::bail!(
-                    "source changed during link repair; editor version restored: {}",
-                    path.display()
-                );
+                return Err(SourceChanged {
+                    path: path.to_path_buf(),
+                    preserved: None,
+                }
+                .into());
             }
         }
         std::fs::create_dir_all(conflict_dir)?;
-        let conflict = conflict_dir.join(tmp.file_name().context("repair temp has no name")?);
-        std::fs::rename(&tmp, &conflict)?;
+        let conflict = conflict_dir.join(tmp.file_name().context("exchange temp has no name")?);
+        std::fs::rename(tmp, &conflict)?;
         sync_parent_directory(&conflict)?;
-        anyhow::bail!(
-            "source changed during link repair; displaced version preserved at {}",
-            conflict.display()
-        )
+        Err(SourceChanged {
+            path: path.to_path_buf(),
+            preserved: Some(conflict),
+        }
+        .into())
     })();
-    if outcome.is_err() && tmp.exists() {
-        // An exchange may have failed before publication. Keep the staged
-        // inode for diagnosis rather than discarding possible editor bytes.
-        anyhow::bail!(
-            "link repair failed; staged or displaced version preserved at {}: {}",
-            tmp.display(),
-            outcome.unwrap_err()
-        );
+    if let Err(error) = outcome {
+        if tmp.exists() {
+            // An exchange may have failed before publication. Keep the staged
+            // inode for diagnosis rather than discarding possible editor bytes.
+            anyhow::bail!(
+                "source exchange failed; staged or displaced version preserved at {}: {error:#}",
+                tmp.display()
+            );
+        }
+        return Err(error);
     }
-    outcome
+    Ok(())
+}
+
+/// Other platforms must provide an atomic exchange before a checked write is
+/// safe.
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+fn exchange_if_unchanged_with_hooks(
+    tmp: &Path,
+    path: &Path,
+    _expected: &[u8],
+    _replacement: &[u8],
+    _conflict_dir: &Path,
+    _before_exchange: impl FnOnce(),
+    _before_rollback: impl FnOnce(),
+) -> Result<()> {
+    let _ = std::fs::remove_file(tmp);
+    anyhow::bail!(
+        "atomic source exchange is unavailable on this platform: {}",
+        path.display()
+    )
 }
 
 #[cfg(all(test, target_os = "macos"))]
 mod link_repair_tests {
     use super::*;
+
+    fn write_with_hooks(
+        path: &Path,
+        expected: &[u8],
+        replacement: &[u8],
+        conflict_dir: &Path,
+        before_exchange: impl FnOnce(),
+        before_rollback: impl FnOnce(),
+    ) -> Result<()> {
+        let tmp = prepare_replacement_temp_file(path, path, |file| file.write_all(replacement))?;
+        exchange_if_unchanged_with_hooks(
+            &tmp,
+            path,
+            expected,
+            replacement,
+            conflict_dir,
+            before_exchange,
+            before_rollback,
+        )
+    }
 
     #[test]
     fn atomic_editor_publication_during_repair_restores_editor_bytes() {
@@ -238,7 +485,7 @@ mod link_repair_tests {
         std::fs::write(&source, b"old [[photo.jpg]]").unwrap();
         std::fs::write(&editor_staged, b"editor [[new.jpg]]").unwrap();
 
-        let result = write_atomically_if_unchanged_with_hooks(
+        let result = write_with_hooks(
             &source,
             b"old [[photo.jpg]]",
             b"Mine [[renamed.jpg]]",
@@ -247,7 +494,8 @@ mod link_repair_tests {
             || {},
         );
 
-        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(source_changed(&error).is_some());
         assert_eq!(std::fs::read(&source).unwrap(), b"editor [[new.jpg]]");
         assert!(!conflict_dir.exists());
     }
@@ -263,7 +511,7 @@ mod link_repair_tests {
         std::fs::write(&first_staged, b"editor first").unwrap();
         std::fs::write(&second_staged, b"editor second").unwrap();
 
-        let result = write_atomically_if_unchanged_with_hooks(
+        let result = write_with_hooks(
             &source,
             b"old",
             b"Mine revised",
@@ -283,17 +531,53 @@ mod link_repair_tests {
             b"editor second"
         );
     }
-}
 
-/// Other platforms must provide an atomic exchange before source repair is safe.
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn write_atomically_if_unchanged(
-    _path: &Path,
-    _expected: &[u8],
-    _replacement: &[u8],
-    _conflict_dir: &Path,
-) -> Result<()> {
-    anyhow::bail!("atomic source exchange is unavailable on this platform")
+    #[test]
+    fn edit_before_the_exchange_is_refused_without_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("Card.md");
+        std::fs::write(&source, b"edited outside").unwrap();
+
+        let error = write_atomically_if_unchanged(
+            &source,
+            b"read by Mine",
+            b"Mine revised",
+            &dir.path().join("conflicts"),
+        )
+        .unwrap_err();
+
+        assert!(source_changed(&error).is_some());
+        assert_eq!(std::fs::read(&source).unwrap(), b"edited outside");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn remove_if_unchanged_keeps_a_file_edited_after_publication() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Card.md");
+        std::fs::write(&path, b"published").unwrap();
+        let published = fingerprint(&path).unwrap();
+        std::fs::write(dir.path().join("editor.md"), b"edited").unwrap();
+        std::fs::rename(dir.path().join("editor.md"), &path).unwrap();
+
+        let error = remove_if_unchanged(&path, &published).unwrap_err();
+
+        assert!(source_changed(&error).is_some());
+        assert_eq!(std::fs::read(&path).unwrap(), b"edited");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn remove_if_unchanged_removes_the_published_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Card.md");
+        std::fs::write(&path, b"published").unwrap();
+        let published = fingerprint(&path).unwrap();
+
+        remove_if_unchanged(&path, &published).unwrap();
+
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
 }
 
 /// Atomically publish a new file without replacing an existing destination.

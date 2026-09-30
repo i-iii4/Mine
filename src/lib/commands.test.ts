@@ -53,17 +53,17 @@ describe("IPC command adapter", () => {
     expect(mockInvoke).toHaveBeenCalledWith("create_block", { params });
   });
 
-  it("sends orphan batch commands through a typed request DTO", async () => {
+  it("sends orphan batch commands through a typed request DTO bound to their space", async () => {
     const fileNames = ["loose-photo.jpg", "loose-video.mp4"];
 
-    await promoteOrphanMedia(fileNames);
-    await deleteOrphanMedia(fileNames);
+    await promoteOrphanMedia("space-id", fileNames);
+    await deleteOrphanMedia("space-id", fileNames);
 
     expect(mockInvoke).toHaveBeenNthCalledWith(1, "promote_orphan_media", {
-      request: { file_names: fileNames },
+      request: { vault_id: "space-id", file_names: fileNames },
     });
     expect(mockInvoke).toHaveBeenNthCalledWith(2, "delete_orphan_media", {
-      request: { file_names: fileNames },
+      request: { vault_id: "space-id", file_names: fileNames },
     });
   });
 

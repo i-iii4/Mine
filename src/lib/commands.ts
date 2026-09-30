@@ -49,7 +49,7 @@ import type {
   MergeBlocksError,
   MergeBlocksResult,
   TextSelectionExtractError,
-  OrphanMedia,
+  OrphanMediaList,
   OrphanMediaBatchRequest,
   PromoteOrphanResult,
   DeleteOrphanResult,
@@ -64,11 +64,18 @@ import type {
 function isCommandError(error: unknown): error is CommandError {
   if (!error || typeof error !== "object" || !("kind" in error)) return false;
   const kind = (error as { kind?: unknown }).kind;
-  return kind === "no_vault" || kind === "internal";
+  return kind === "no_vault" || kind === "space_changed" || kind === "internal";
 }
 
 function commandErrorMessage(error: CommandError): string {
-  return error.kind === "no_vault" ? "no vault selected" : error.message;
+  switch (error.kind) {
+    case "no_vault":
+      return "no vault selected";
+    case "space_changed":
+      return "the open space changed; refresh and try again";
+    case "internal":
+      return error.message;
+  }
 }
 
 async function invoke<T>(
@@ -614,16 +621,18 @@ export const forgetKnownVault = (path: string) =>
   invoke<string[]>("forget_known_vault", { path });
 
 export const listOrphanMedia = () =>
-  invoke<OrphanMedia[]>("list_orphan_media");
+  invoke<OrphanMediaList>("list_orphan_media");
 
-export const promoteOrphanMedia = (fileNames: string[]) =>
+// Orphan operations name the space their list was built for; the backend
+// refuses them once another space is open.
+export const promoteOrphanMedia = (vaultId: string, fileNames: string[]) =>
   invoke<PromoteOrphanResult>("promote_orphan_media", {
-    request: { file_names: fileNames } satisfies OrphanMediaBatchRequest,
+    request: { vault_id: vaultId, file_names: fileNames } satisfies OrphanMediaBatchRequest,
   });
 
-export const deleteOrphanMedia = (fileNames: string[]) =>
+export const deleteOrphanMedia = (vaultId: string, fileNames: string[]) =>
   invoke<DeleteOrphanResult>("delete_orphan_media", {
-    request: { file_names: fileNames } satisfies OrphanMediaBatchRequest,
+    request: { vault_id: vaultId, file_names: fileNames } satisfies OrphanMediaBatchRequest,
   });
 
 export const spaceStats = (path: string) =>

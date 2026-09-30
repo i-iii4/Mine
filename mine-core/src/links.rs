@@ -232,6 +232,88 @@ impl LinkIndex {
     }
 }
 
+/// Notes that move to new paths, and how links to them read afterwards
+/// (SPEC_AUDIT_FIXES.md, Ф3).
+///
+/// A link names a note the way Obsidian resolves it: `[[Foo]]` names
+/// `Cards/Foo.md` as much as `[[Cards/Foo]]` does. Comparing link text with
+/// the old path misses the short form, which is the form Obsidian writes.
+#[derive(Debug, Clone)]
+pub struct NoteMoves {
+    before: LinkIndex,
+    after: LinkIndex,
+    /// Normalized old path to the new path.
+    moved: HashMap<String, String>,
+    /// Names of moved notes in both Unicode forms, to skip texts that cannot
+    /// link to them without resolving every link.
+    names: Vec<String>,
+}
+
+impl NoteMoves {
+    /// `paths` lists every vault-relative file before the move. `moves` maps
+    /// an old note path to its new one; several old notes may map to one new
+    /// note (a merge), and the new note need not exist yet.
+    pub fn new<I, S>(paths: I, moves: &[(String, String)]) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let before_paths: Vec<String> = paths.into_iter().map(|p| p.as_ref().to_string()).collect();
+        let moved: HashMap<String, String> = moves
+            .iter()
+            .filter_map(|(old, new)| Some((normalize_path(old)?, new.clone())))
+            .collect();
+        let after_paths = before_paths
+            .iter()
+            .filter(|path| {
+                normalize_path(path).is_none_or(|normalized| !moved.contains_key(&normalized))
+            })
+            .cloned()
+            .chain(moved.values().cloned());
+        let after = LinkIndex::new(after_paths);
+        let mut names = Vec::new();
+        for old in moved.keys() {
+            let file = old.rsplit('/').next().unwrap_or(old);
+            let stem = file.strip_suffix(".md").unwrap_or(file);
+            let composed: String = stem.nfc().collect();
+            let decomposed: String = stem.nfd().collect();
+            names.push(composed);
+            names.push(decomposed);
+        }
+        names.sort();
+        names.dedup();
+        Self {
+            before: LinkIndex::new(before_paths),
+            after,
+            moved,
+            names,
+        }
+    }
+
+    /// The new link text for an Obsidian link target (without its fragment
+    /// and alias) that names a moved note, or `None` for any other target.
+    /// The new text is the shortest unambiguous one; an explicit `.md` stays.
+    pub fn retarget(&self, target: &str) -> Option<String> {
+        let LinkResolution::Resolved(old) =
+            self.before.resolve("source.md", target, LinkSyntax::Obsidian)
+        else {
+            return None;
+        };
+        let new = self.moved.get(&normalize_path(&old)?)?;
+        let keeps_extension = link_file_part(target)
+            .trim()
+            .to_ascii_lowercase()
+            .ends_with(".md");
+        self.after.shortest_link(new, !keeps_extension)
+    }
+
+    /// Whether `text` mentions the name of a moved note and so may link to
+    /// it.
+    pub fn may_be_linked_from(&self, text: &str) -> bool {
+        self.names.iter().any(|name| text.contains(name.as_str()))
+    }
+}
+
 fn result_for(paths: &[String]) -> LinkResolution {
     match paths {
         [] => LinkResolution::Missing,
@@ -282,6 +364,54 @@ fn normalize_path(raw: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_short_link_to_a_moved_note_is_retargeted() {
+        let moves = NoteMoves::new(
+            ["Cards/Foo.md", "Cards/Other.md", "Media/Foo.jpg"],
+            &[("Cards/Foo.md".to_string(), "Cards/Bar.md".to_string())],
+        );
+        assert_eq!(moves.retarget("Foo"), Some("Bar".to_string()));
+        assert_eq!(moves.retarget("Cards/Foo"), Some("Bar".to_string()));
+        assert_eq!(moves.retarget("Foo.md"), Some("Bar.md".to_string()));
+        assert_eq!(moves.retarget("Other"), None);
+        assert_eq!(moves.retarget("Foo.jpg"), None);
+        assert!(moves.may_be_linked_from("see [[Foo]]"));
+        assert!(!moves.may_be_linked_from("see [[Other]]"));
+    }
+
+    #[test]
+    fn a_new_name_shared_with_another_note_keeps_its_folder() {
+        let moves = NoteMoves::new(
+            ["Cards/Foo.md", "Archive/Bar.md"],
+            &[("Cards/Foo.md".to_string(), "Cards/Bar.md".to_string())],
+        );
+        assert_eq!(moves.retarget("Foo"), Some("Cards/Bar".to_string()));
+    }
+
+    #[test]
+    fn an_ambiguous_link_is_left_alone() {
+        let moves = NoteMoves::new(
+            ["Cards/Foo.md", "Archive/Foo.md"],
+            &[("Cards/Foo.md".to_string(), "Cards/Bar.md".to_string())],
+        );
+        assert_eq!(moves.retarget("Foo"), None);
+        assert_eq!(moves.retarget("Cards/Foo"), Some("Bar".to_string()));
+    }
+
+    #[test]
+    fn merged_notes_all_point_to_the_merged_note() {
+        let moves = NoteMoves::new(
+            ["Cards/A.md", "Cards/B.md", "Cards/C.md"],
+            &[
+                ("Cards/A.md".to_string(), "Cards/A — merged.md".to_string()),
+                ("Cards/B.md".to_string(), "Cards/A — merged.md".to_string()),
+            ],
+        );
+        assert_eq!(moves.retarget("A"), Some("A — merged".to_string()));
+        assert_eq!(moves.retarget("B"), Some("A — merged".to_string()));
+        assert_eq!(moves.retarget("C"), None);
+    }
 
     #[test]
     fn a_hash_inside_a_file_name_is_part_of_the_name() {

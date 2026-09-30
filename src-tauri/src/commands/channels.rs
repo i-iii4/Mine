@@ -16,6 +16,7 @@ use crate::domain::block::{
 };
 use crate::domain::channel::Channel;
 use crate::domain::collection::{normalize_collection_ref, validate_collection_ref};
+use crate::domain::source_patch::apply_block_changes;
 use crate::domain::vault::VaultLayout;
 #[cfg(test)]
 use crate::storage::db;
@@ -305,11 +306,20 @@ fn reorder_channels_blocking(state: &AppState, items: Vec<ReorderItem>) -> Resul
             .vault
             .slug_for_path(&path)
             .map_err(|error| CommandError::Internal(error.to_string()))?;
-        let bytes = serialize_block(&channel_to_block(&channel)).into_bytes();
+        // The page is the user's note: its text, properties and membership
+        // stay; only `position` changes.
         writes.push(if path.exists() {
-            SourceFileWrite::replace(path, bytes)
+            let (_, content) = files::read_block_file(&vs.vault, &path)?;
+            let before = parse_markdown_document(&source_slug, &content, channel.created_at.clone())
+                .map_err(|error| CommandError::Internal(error.to_string()))?
+                .block;
+            let mut after = before.clone();
+            after.frontmatter.position = Some(channel.position);
+            let patched = apply_block_changes(&content, &before, &after)
+                .map_err(|error| CommandError::Internal(error.to_string()))?;
+            SourceFileWrite::replace(path, content.into_bytes(), patched.into_bytes())
         } else {
-            SourceFileWrite::create(path, bytes)
+            SourceFileWrite::create(path, serialize_block(&channel_to_block(&channel)).into_bytes())
         });
         planned_channels.push((channel, source_slug));
     }
@@ -414,9 +424,22 @@ pub(crate) fn rename_channel_inner(
         .find(|c| c.tag == normalized_old)
         .ok_or_else(|| CommandError::Internal(format!("channel '{}' not found", old_tag)))?;
 
+    // Rename in place: a collection that lives in its own folder must stay
+    // there, so the new document is written beside the old one rather than in
+    // the vault root.
+    let old_path =
+        collection_document_for_mutation(conn, vault, &normalized_old)?.ok_or_else(|| {
+            CommandError::Internal(format!(
+                "collection document '{}' not found",
+                normalized_old
+            ))
+        })?;
+
     let affected_blocks = index::list_blocks_by_tag(conn, &normalized_old)?;
     let mut writes = Vec::with_capacity(affected_blocks.len() + 1);
     let mut prepared_blocks = Vec::with_capacity(affected_blocks.len());
+    // A page that is a member of itself changes its membership as it moves.
+    let mut page_rewrite = None;
     for indexed_block in &affected_blocks {
         if indexed_block.slug.is_empty() {
             continue;
@@ -436,7 +459,15 @@ pub(crate) fn rename_channel_inner(
 
         let serialized = patch_collections_frontmatter(&content, &block.frontmatter.tags)
             .map_err(CommandError::Internal)?;
-        writes.push(SourceFileWrite::replace(path, serialized.into_bytes()));
+        if path == old_path {
+            page_rewrite = Some((content.into_bytes(), serialized.into_bytes()));
+            continue;
+        }
+        writes.push(SourceFileWrite::replace(
+            path,
+            content.into_bytes(),
+            serialized.into_bytes(),
+        ));
         prepared_blocks.push((block, parsed.origin, parsed.index_warning));
     }
 
@@ -450,17 +481,6 @@ pub(crate) fn rename_channel_inner(
         created_at: existing.created_at.clone(),
     };
 
-    let new_block = channel_to_block(&new_channel);
-    // Rename in place: a collection that lives in its own folder must stay
-    // there, so the new document is written beside the old one rather than in
-    // the vault root.
-    let old_path =
-        collection_document_for_mutation(conn, vault, &normalized_old)?.ok_or_else(|| {
-            CommandError::Internal(format!(
-                "collection document '{}' not found",
-                normalized_old
-            ))
-        })?;
     let new_path = old_path
         .parent()
         .map(|parent| {
@@ -473,11 +493,17 @@ pub(crate) fn rename_channel_inner(
     let new_slug = vault
         .slug_for_path(&new_path)
         .map_err(|error| CommandError::Internal(error.to_string()))?;
-    let page_bytes = serialize_block(&new_block).into_bytes();
-    writes.push(if old_path.exists() {
-        SourceFileWrite::rename_with_bytes(old_path.clone(), new_path, page_bytes)
-    } else {
-        SourceFileWrite::create(new_path, page_bytes)
+    // The page carries no name inside it: renaming the collection is
+    // renaming the file, its text and properties move unchanged.
+    writes.push(match page_rewrite {
+        _ if !old_path.exists() => SourceFileWrite::create(
+            new_path,
+            serialize_block(&channel_to_block(&new_channel)).into_bytes(),
+        ),
+        Some((expected, bytes)) => {
+            SourceFileWrite::rename_with_bytes(old_path.clone(), new_path, expected, bytes)
+        }
+        None => SourceFileWrite::rename(old_path.clone(), new_path),
     });
 
     // Watcher suppression is only meaningful inside the app process; a CLI
@@ -893,6 +919,7 @@ mod tests {
         let result = StagedSourceMutation::stage(vec![SourceFileWrite::rename_with_bytes(
             old_path.clone(),
             new_path.clone(),
+            b"old page".to_vec(),
             b"new page".to_vec(),
         )]);
 
@@ -911,6 +938,7 @@ mod tests {
         let staged = StagedSourceMutation::stage(vec![SourceFileWrite::rename_with_bytes(
             old_path.clone(),
             new_path.clone(),
+            b"old page".to_vec(),
             b"new page".to_vec(),
         )])
         .unwrap();
@@ -922,5 +950,79 @@ mod tests {
 
         assert_eq!(std::fs::read(&old_path).unwrap(), b"old page");
         assert!(!new_path.exists());
+    }
+
+    fn standard_space(dir: &std::path::Path) -> VaultLayout {
+        let vault = VaultLayout::with_derived_root(dir.join("space"), dir.join("derived"))
+            .with_write_layout(crate::domain::vault::VaultWriteLayout::standard());
+        std::fs::create_dir_all(vault.root().join("Collections")).unwrap();
+        std::fs::create_dir_all(vault.root().join("Cards")).unwrap();
+        vault
+    }
+
+    fn app_state(vault: &VaultLayout) -> AppState {
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        crate::storage::reconcile::reconcile_vault(&conn, vault).unwrap();
+        let state = AppState::new();
+        *state.vault_state.lock().unwrap() = Some(crate::commands::state::VaultState {
+            conn,
+            vault: vault.clone(),
+        });
+        state
+    }
+
+    /// A collection page the user wrote into: text, own properties, a
+    /// comment, blank lines, and its own membership in another collection.
+    const WRITTEN_PAGE: &str = "---\ntype: channel\n# my note on this collection\naliases:\n  - Pics\nMine Collections:\n  - \"[[Archive]]\"\n\nposition: 0\nsaved_at: 2026-04-25T14:00:40Z\n---\n# Photos\n\nWhy I keep these.\n\n\n\nEnd.\n";
+
+    #[test]
+    fn a_reorder_changes_only_the_position_of_a_written_page() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = standard_space(dir.path());
+        std::fs::write(vault.block_path("Collections/Photos"), WRITTEN_PAGE).unwrap();
+        std::fs::write(
+            vault.block_path("Collections/Art"),
+            "---\ntype: channel\nposition: 1\nsaved_at: 2026-04-25T14:00:40Z\n---\n",
+        )
+        .unwrap();
+        let state = app_state(&vault);
+
+        reorder_channels_blocking(
+            &state,
+            vec![
+                ReorderItem { tag: "Art".into(), position: 0 },
+                ReorderItem { tag: "Photos".into(), position: 1 },
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(vault.block_path("Collections/Photos")).unwrap(),
+            WRITTEN_PAGE.replace("position: 0", "position: 1")
+        );
+    }
+
+    #[test]
+    fn a_rename_moves_a_written_page_unchanged_and_updates_member_cards() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = standard_space(dir.path());
+        std::fs::write(vault.block_path("Collections/Photos"), WRITTEN_PAGE).unwrap();
+        let card = "---\naliases:\n  - Sunset\n# kept\nMine Collections:\n  - \"[[Photos]]\"\n\nrating: 5\nsaved_at: 2026-04-25T14:00:40Z\n---\nBody\n";
+        std::fs::write(vault.block_path("Cards/Sunset"), card).unwrap();
+        let state = app_state(&vault);
+        let guard = state.vault_state.lock().unwrap();
+        let vs = guard.as_ref().unwrap();
+
+        rename_channel_inner(None, &vs.conn, &vs.vault, "Photos", "Pictures").unwrap();
+
+        assert!(!vault.block_path("Collections/Photos").exists());
+        assert_eq!(
+            std::fs::read_to_string(vault.block_path("Collections/Pictures")).unwrap(),
+            WRITTEN_PAGE
+        );
+        assert_eq!(
+            std::fs::read_to_string(vault.block_path("Cards/Sunset")).unwrap(),
+            card.replace("[[Photos]]", "[[Pictures]]")
+        );
     }
 }

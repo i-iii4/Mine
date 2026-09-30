@@ -20,10 +20,11 @@ const ORPHANS: OrphanMedia[] = [
   { file_name: "loose-photo.jpg", size_bytes: 2_400_000, modified_secs: 1_700_000_000 },
   { file_name: "clip.mp4", size_bytes: 12_000_000, modified_secs: 1_700_000_100 },
 ];
+const SPACE = "space-id";
 
 describe("OrphansSection", () => {
   beforeEach(() => {
-    vi.mocked(listOrphanMedia).mockReset().mockResolvedValue(ORPHANS);
+    vi.mocked(listOrphanMedia).mockReset().mockResolvedValue({ vault_id: SPACE, orphans: ORPHANS });
     vi.mocked(getVaultPath).mockReset().mockResolvedValue("/vault");
     vi.mocked(promoteOrphanMedia).mockReset();
     vi.mocked(deleteOrphanMedia).mockReset();
@@ -44,7 +45,7 @@ describe("OrphansSection", () => {
   });
 
   it("shows the empty state when there are no orphans", async () => {
-    vi.mocked(listOrphanMedia).mockResolvedValue([]);
+    vi.mocked(listOrphanMedia).mockResolvedValue({ vault_id: SPACE, orphans: [] });
     render(<OrphansSection />);
 
     expect(await screen.findByText("No orphan media")).toBeInTheDocument();
@@ -78,7 +79,7 @@ describe("OrphansSection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Convert to Elements" }));
 
     await waitFor(() => {
-      expect(promoteOrphanMedia).toHaveBeenCalledWith(["loose-photo.jpg"]);
+      expect(promoteOrphanMedia).toHaveBeenCalledWith(SPACE, ["loose-photo.jpg"]);
     });
     expect(await screen.findByText("Converted 0, skipped 1")).toBeInTheDocument();
     // Initial load + reload after the batch.
@@ -116,7 +117,7 @@ describe("OrphansSection", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
 
     await waitFor(() => {
-      expect(deleteOrphanMedia).toHaveBeenCalledWith(["clip.mp4"]);
+      expect(deleteOrphanMedia).toHaveBeenCalledWith(SPACE, ["clip.mp4"]);
     });
     expect(await screen.findByText("Deleted 1, skipped 0")).toBeInTheDocument();
   });

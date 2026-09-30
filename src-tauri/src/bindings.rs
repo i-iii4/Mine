@@ -22,7 +22,8 @@ use crate::commands::channels::{
 use crate::commands::import::{ArenaChannelInfo, ImportChannelRequest};
 use crate::commands::native_shell_smoke::NativeShellSmokeReport;
 use crate::commands::settings::{
-    DeleteOrphanResult, OrphanMedia, OrphanMediaBatchRequest, PromoteOrphanResult, SpaceStats,
+    DeleteOrphanResult, OrphanMedia, OrphanMediaBatchRequest, OrphanMediaList, PromoteOrphanResult,
+    SpaceStats,
 };
 use crate::commands::state::CommandError;
 use crate::updater::{UpdateError, UpdateStage, UpdateStatus};
@@ -139,6 +140,7 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<UpdateStatus>()
         .register::<SpaceStats>()
         .register::<OrphanMedia>()
+        .register::<OrphanMediaList>()
         .register::<OrphanMediaBatchRequest>()
         .register::<PromoteOrphanResult>()
         .register::<DeleteOrphanResult>();

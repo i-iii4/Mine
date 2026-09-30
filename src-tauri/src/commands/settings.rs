@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use unicode_normalization::UnicodeNormalization;
 
-use crate::commands::blocks::collect_delete_media_for_block;
+use crate::commands::blocks::{collect_delete_media_for_block, media_users_on_disk};
 use crate::commands::state::{current_vault_layout, AppState, CommandError, VaultState};
 use crate::commands::vault::{
     canonical_space_path, derived_store_root, initialize_new_space_layout, load_config,
@@ -362,9 +362,50 @@ pub struct DeleteOrphanResult {
     pub skipped: Vec<String>,
 }
 
+/// Orphans of one space. Operations on the list name that space, so a list
+/// built before the open space changed can never act on another one
+/// (SPEC_AUDIT_FIXES.md, Ф4).
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct OrphanMediaList {
+    pub vault_id: String,
+    pub orphans: Vec<OrphanMedia>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, specta::Type)]
 pub struct OrphanMediaBatchRequest {
+    /// The space the list was built for.
+    pub vault_id: String,
     pub file_names: Vec<String>,
+}
+
+fn space_id_of(vault: &VaultLayout) -> Result<String, CommandError> {
+    crate::space_registry::read_space_id(vault.root())
+        .ok_or_else(|| CommandError::Internal("the open space has no identity file".into()))
+}
+
+/// The files of a batch request, when it was built for the open space.
+fn orphan_request_files(
+    vault: &VaultLayout,
+    request: OrphanMediaBatchRequest,
+) -> Result<Vec<String>, CommandError> {
+    if space_id_of(vault)? != request.vault_id {
+        return Err(CommandError::SpaceChanged);
+    }
+    Ok(request.file_names)
+}
+
+/// Orphan candidates that some note on disk uses after all: the index the
+/// list came from may lag behind a note saved a moment ago.
+fn used_on_disk(vault: &VaultLayout, file_names: &[String]) -> Result<BTreeSet<String>, CommandError> {
+    let paths: Vec<std::path::PathBuf> =
+        file_names.iter().map(|name| vault.root().join(name)).collect();
+    let users = media_users_on_disk(vault, &paths, None)?;
+    Ok(file_names
+        .iter()
+        .zip(&paths)
+        .filter(|(_, path)| users.contains_key(*path))
+        .map(|(name, _)| name.clone())
+        .collect())
 }
 
 fn nfc(value: &str) -> String {
@@ -490,16 +531,18 @@ fn scan_orphans_with_referenced(
 pub async fn list_orphan_media(
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<Vec<OrphanMedia>, CommandError> {
+) -> Result<OrphanMediaList, CommandError> {
     let vault = current_vault_layout(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
+        let vault_id = space_id_of(&vault)?;
         let blocks = super::state::read_owned_projection(&app, &vault, |conn| {
             Ok(index::list_blocks(conn)?)
         })?;
-        scan_orphans_with_referenced(
+        let orphans = scan_orphans_with_referenced(
             &vault,
             referenced_media_file_names_from_blocks(&vault, blocks),
-        )
+        )?;
+        Ok(OrphanMediaList { vault_id, orphans })
     })
     .await
     .map_err(|error| CommandError::Internal(error.to_string()))?
@@ -571,12 +614,15 @@ pub(crate) fn promote_orphan_media_inner(
     file_names: Vec<String>,
 ) -> Result<PromoteOrphanResult, CommandError> {
     let referenced = referenced_media_file_names(vs)?;
+    let used = used_on_disk(&vs.vault, &file_names)?;
     let write_vault = files::layout_for_new_files(&vs.vault)?;
     let mut created = Vec::new();
     let mut skipped = Vec::new();
 
     for file_name in file_names {
-        if !validate_orphan_operand(&file_name, &referenced, vs.vault.root()) {
+        if !validate_orphan_operand(&file_name, &referenced, vs.vault.root())
+            || used.contains(&file_name)
+        {
             skipped.push(file_name);
             continue;
         }
@@ -680,7 +726,8 @@ pub fn promote_orphan_media(
         .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-    promote_orphan_media_inner(vs, request.file_names)
+    let file_names = orphan_request_files(&vs.vault, request)?;
+    promote_orphan_media_inner(vs, file_names)
 }
 
 pub(crate) fn delete_orphan_media_inner(
@@ -696,6 +743,7 @@ fn delete_orphan_media_with(
     trash_batch: impl FnOnce(&[std::path::PathBuf]) -> anyhow::Result<()>,
 ) -> Result<DeleteOrphanResult, CommandError> {
     let referenced = referenced_media_file_names(vs)?;
+    let used = used_on_disk(&vs.vault, &file_names)?;
     let mut deleted = Vec::new();
     let mut skipped = Vec::new();
     let mut paths = Vec::new();
@@ -705,7 +753,9 @@ fn delete_orphan_media_with(
         if !seen.insert(file_name.clone()) {
             continue;
         }
-        if !validate_orphan_operand(&file_name, &referenced, vs.vault.root()) {
+        if !validate_orphan_operand(&file_name, &referenced, vs.vault.root())
+            || used.contains(&file_name)
+        {
             skipped.push(file_name);
             continue;
         }
@@ -730,8 +780,9 @@ pub async fn delete_orphan_media(
 ) -> Result<DeleteOrphanResult, CommandError> {
     let vault = current_vault_layout(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
+        let file_names = orphan_request_files(&vault, request)?;
         let vs = orphan_worker_state(vault)?;
-        delete_orphan_media_inner(&vs, request.file_names)
+        delete_orphan_media_inner(&vs, file_names)
     })
     .await
     .map_err(|error| CommandError::Internal(error.to_string()))?
@@ -1161,5 +1212,52 @@ mod tests {
         }
 
         assert_async_command(space_stats);
+    }
+
+    #[test]
+    fn orphan_delete_keeps_media_a_note_uses_before_the_index_knows_it() {
+        let (_root, _derived, vs) = make_vault();
+        write_media(&vs, "fresh.jpg");
+        write_media(&vs, "gone.jpg");
+        // Saved a moment ago: on disk, not yet in the index.
+        std::fs::write(
+            vs.vault.block_path("Fresh note"),
+            "---\nsaved_at: 2026-04-22T00:00:00Z\n---\nLook: ![[fresh.jpg]]\n",
+        )
+        .unwrap();
+
+        let result =
+            delete_orphan_media_inner(&vs, vec!["fresh.jpg".into(), "gone.jpg".into()])
+                .expect("delete");
+
+        assert_eq!(result.deleted, vec!["gone.jpg".to_string()]);
+        assert_eq!(result.skipped, vec!["fresh.jpg".to_string()]);
+        assert!(vs.vault.root().join("fresh.jpg").exists());
+    }
+
+    #[test]
+    fn orphan_request_for_another_space_is_refused() {
+        let (root, _derived, vs) = make_vault();
+        std::fs::create_dir_all(root.path().join(".mine")).unwrap();
+        std::fs::write(root.path().join(".mine/vault-id"), "open-space").unwrap();
+
+        let refused = orphan_request_files(
+            &vs.vault,
+            OrphanMediaBatchRequest {
+                vault_id: "listed-space".into(),
+                file_names: vec!["photo.jpg".into()],
+            },
+        );
+        assert!(matches!(refused, Err(CommandError::SpaceChanged)));
+
+        let accepted = orphan_request_files(
+            &vs.vault,
+            OrphanMediaBatchRequest {
+                vault_id: "open-space".into(),
+                file_names: vec!["photo.jpg".into()],
+            },
+        )
+        .expect("same space");
+        assert_eq!(accepted, vec!["photo.jpg".to_string()]);
     }
 }

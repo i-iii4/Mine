@@ -186,6 +186,7 @@ mod tests {
         let before = seed(&path);
         let committed = StagedSourceMutation::stage(vec![SourceFileWrite::replace(
             path.clone(),
+            b"position: 9\n".to_vec(),
             b"position: 10\n".to_vec(),
         )])
         .unwrap()
@@ -205,6 +206,7 @@ mod tests {
         let committed = StagedSourceMutation::stage(vec![SourceFileWrite::rename_with_bytes(
             source.clone(),
             destination.clone(),
+            b"position: 9\n".to_vec(),
             b"position: 10\n".to_vec(),
         )])
         .unwrap()

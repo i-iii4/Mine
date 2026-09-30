@@ -317,6 +317,9 @@ pub(crate) fn adopt_recovered_projection<T>(
 pub enum CommandError {
     #[error("no vault selected")]
     NoVault,
+    /// The request was built for a space that is no longer the open one.
+    #[error("the open space changed; refresh and try again")]
+    SpaceChanged,
     #[error("{0}")]
     Internal(String),
 }

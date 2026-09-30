@@ -126,11 +126,21 @@ pub struct SourceFileWrite {
 enum SourceFileContent {
     Bytes(Vec<u8>),
     Copy(PathBuf),
+    Replace {
+        expected: Vec<u8>,
+        bytes: Vec<u8>,
+    },
     Delete,
     Rename {
         source: PathBuf,
-        replacement: Option<Vec<u8>>,
+        rewrite: Option<Rewrite>,
     },
+}
+
+#[derive(Debug, Clone)]
+struct Rewrite {
+    expected: Vec<u8>,
+    bytes: Vec<u8>,
 }
 
 impl SourceFileWrite {
@@ -142,10 +152,14 @@ impl SourceFileWrite {
         }
     }
 
-    pub fn replace(path: PathBuf, bytes: Vec<u8>) -> Self {
+    /// Replace the bytes of an existing file. `expected` is what the caller
+    /// read and built `bytes` from: when the file holds anything else by the
+    /// time the write would become visible, the operation is refused and the
+    /// other version stays (SPEC_AUDIT_FIXES.md, Ф2).
+    pub fn replace(path: PathBuf, expected: Vec<u8>, bytes: Vec<u8>) -> Self {
         Self {
             path,
-            content: SourceFileContent::Bytes(bytes),
+            content: SourceFileContent::Replace { expected, bytes },
             mode: SourceFileMode::Replace,
         }
     }
@@ -166,23 +180,32 @@ impl SourceFileWrite {
         }
     }
 
+    /// Move a file under a new name. Its bytes move with it, including an
+    /// edit made while the operation was prepared.
     pub fn rename(source: PathBuf, destination: PathBuf) -> Self {
         Self {
             path: destination,
             content: SourceFileContent::Rename {
                 source,
-                replacement: None,
+                rewrite: None,
             },
             mode: SourceFileMode::Rename,
         }
     }
 
-    pub fn rename_with_bytes(source: PathBuf, destination: PathBuf, bytes: Vec<u8>) -> Self {
+    /// Move a file under a new name and rewrite it, when the source still
+    /// holds `expected`, the bytes the caller built `bytes` from.
+    pub fn rename_with_bytes(
+        source: PathBuf,
+        destination: PathBuf,
+        expected: Vec<u8>,
+        bytes: Vec<u8>,
+    ) -> Self {
         Self {
             path: destination,
             content: SourceFileContent::Rename {
                 source,
-                replacement: Some(bytes),
+                rewrite: Some(Rewrite { expected, bytes }),
             },
             mode: SourceFileMode::Rename,
         }
@@ -193,6 +216,13 @@ impl SourceFileWrite {
 pub enum SourceMutationError {
     #[error("invalid source mutation for {path}: {reason}")]
     Validate { path: PathBuf, reason: String },
+    /// The file no longer holds what the operation was built from. Nothing
+    /// was overwritten; the other version stays.
+    #[error("{} changed outside Mine; nothing was overwritten{}", path.display(), preserved_note(preserved))]
+    Changed {
+        path: PathBuf,
+        preserved: Option<PathBuf>,
+    },
     #[error("failed to stage source mutation for {path}: {source}")]
     Stage {
         path: PathBuf,
@@ -218,6 +248,27 @@ pub enum SourceMutationError {
     },
 }
 
+fn preserved_note(preserved: &Option<PathBuf>) -> String {
+    preserved
+        .as_ref()
+        .map(|path| format!("; displaced version kept at {}", path.display()))
+        .unwrap_or_default()
+}
+
+/// A publication error, typed as `Changed` when an outside edit won.
+fn commit_file_error(path: &Path, source: anyhow::Error) -> SourceMutationError {
+    match files::source_changed(&source) {
+        Some(changed) => SourceMutationError::Changed {
+            path: changed.path.clone(),
+            preserved: changed.preserved.clone(),
+        },
+        None => SourceMutationError::CommitFile {
+            path: path.to_path_buf(),
+            source,
+        },
+    }
+}
+
 #[derive(Debug)]
 struct StagedSourceFile {
     path: PathBuf,
@@ -226,12 +277,30 @@ struct StagedSourceFile {
     original: OriginalSource,
 }
 
+/// What stood at a destination before the operation, and what the operation
+/// put there: rollback restores the first only while the second is still in
+/// place.
 #[derive(Debug, Clone)]
 enum OriginalSource {
-    Absent,
-    Bytes(Vec<u8>),
+    /// Nothing was there. Once published, the identity of the new file.
+    Absent(Option<files::FileFingerprint>),
+    /// The file held `expected`; the operation publishes `published`.
+    Bytes {
+        expected: Vec<u8>,
+        published: Vec<u8>,
+    },
+    /// The deleted file, kept until the operation is accepted.
     Backup(PathBuf),
-    Renamed { source: PathBuf, backup: PathBuf },
+    /// The file moved here from `source` unchanged.
+    Moved { source: PathBuf },
+    /// The file moved here from `source` and was rewritten. Once published,
+    /// the original is kept at `aside` and the new file has `published`.
+    Rewritten {
+        source: PathBuf,
+        expected: Vec<u8>,
+        aside: Option<PathBuf>,
+        published: Option<files::FileFingerprint>,
+    },
 }
 
 #[derive(Debug)]
@@ -264,119 +333,22 @@ impl StagedSourceMutation {
                     reason: "duplicate destination in source mutation".to_string(),
                 });
             }
-            let original = match write.mode {
-                SourceFileMode::Create => {
-                    if write.path.exists() {
-                        cleanup_staged(&staged);
-                        return Err(SourceMutationError::Validate {
-                            path: write.path,
-                            reason: "create destination already exists".to_string(),
-                        });
-                    }
-                    OriginalSource::Absent
-                }
-                SourceFileMode::Replace => match std::fs::read(&write.path) {
-                    Ok(bytes) => OriginalSource::Bytes(bytes),
-                    Err(error) => {
-                        cleanup_staged(&staged);
-                        return Err(SourceMutationError::Validate {
-                            path: write.path,
-                            reason: format!("replace destination is unreadable: {error}"),
-                        });
-                    }
-                },
-                SourceFileMode::Delete => match prepare_delete_backup(&write.path) {
-                    Ok(backup) => OriginalSource::Backup(backup),
-                    Err(source) => {
-                        cleanup_staged(&staged);
-                        return Err(SourceMutationError::Stage {
-                            path: write.path,
-                            source,
-                        });
-                    }
-                },
-                SourceFileMode::Rename => {
-                    if write.path.exists() {
-                        cleanup_staged(&staged);
-                        return Err(SourceMutationError::Validate {
-                            path: write.path,
-                            reason: "rename destination already exists".to_string(),
-                        });
-                    }
-                    let source = match &write.content {
-                        SourceFileContent::Rename { source, .. } => source,
-                        _ => unreachable!("rename mode has rename content"),
-                    };
-                    match prepare_delete_backup(source) {
-                        Ok(backup) => OriginalSource::Renamed {
-                            source: source.clone(),
-                            backup,
-                        },
-                        Err(source_error) => {
-                            cleanup_staged(&staged);
-                            return Err(SourceMutationError::Stage {
-                                path: source.clone(),
-                                source: source_error,
-                            });
-                        }
-                    }
+            let original = match stage_original(&write) {
+                Ok(original) => original,
+                Err(error) => {
+                    cleanup_staged(&staged);
+                    return Err(error);
                 }
             };
-            let temp = match &write.content {
-                SourceFileContent::Delete => None,
-                SourceFileContent::Rename {
-                    replacement: None, ..
-                } => None,
-                SourceFileContent::Rename {
-                    replacement: Some(bytes),
-                    source,
-                } => match files::prepare_replacement_temp_file(&write.path, source, |file| {
-                    std::io::Write::write_all(file, bytes)
-                }) {
-                    Ok(temp) => Some(temp),
-                    Err(source) => {
-                        cleanup_original(&original);
-                        cleanup_staged(&staged);
-                        return Err(SourceMutationError::Stage {
-                            path: write.path,
-                            source,
-                        });
-                    }
-                },
-                SourceFileContent::Bytes(bytes) => {
-                    let writer = |file: &mut std::fs::File| std::io::Write::write_all(file, bytes);
-                    let prepared = if write.mode == SourceFileMode::Replace {
-                        files::prepare_replacement_temp_file(&write.path, &write.path, writer)
-                    } else {
-                        files::prepare_temp_file(&write.path, writer)
-                    };
-                    match prepared {
-                        Ok(temp) => Some(temp),
-                        Err(source) => {
-                            cleanup_original(&original);
-                            cleanup_staged(&staged);
-                            return Err(SourceMutationError::Stage {
-                                path: write.path,
-                                source,
-                            });
-                        }
-                    }
-                }
-                SourceFileContent::Copy(source) => {
-                    match files::prepare_temp_file(&write.path, |file| {
-                        let mut input = std::fs::File::open(source)?;
-                        std::io::copy(&mut input, file).map(|_| ())
-                    }) {
-                        Ok(temp) => Some(temp),
-                        Err(source) => {
-                            cleanup_original(&original);
-                            cleanup_staged(&staged);
-                            return Err(SourceMutationError::Stage {
-                                path: write.path,
-                                source,
-                            });
-                        }
-                    }
+            let temp = match stage_temp(&write) {
+                Ok(temp) => temp,
+                Err(source) => {
+                    cleanup_original(&original);
+                    cleanup_staged(&staged);
+                    return Err(SourceMutationError::Stage {
+                        path: write.path,
+                        source,
+                    });
                 }
             };
             staged.push(StagedSourceFile {
@@ -399,77 +371,44 @@ impl StagedSourceMutation {
         let mut originals = Vec::with_capacity(self.files.len());
         for index in 0..self.files.len() {
             let file = &self.files[index];
-            let publish = match file.mode {
-                SourceFileMode::Create => std::fs::hard_link(
-                    file.temp.as_ref().expect("create mutation has temp"),
-                    &file.path,
-                )
-                .with_context(|| format!("link {}", file.path.display())),
-                SourceFileMode::Replace => std::fs::rename(
-                    file.temp.as_ref().expect("replace mutation has temp"),
-                    &file.path,
-                )
-                .with_context(|| format!("rename {}", file.path.display())),
-                SourceFileMode::Delete => files::delete_user_file(&file.path)
-                    .with_context(|| format!("delete {}", file.path.display())),
-                SourceFileMode::Rename => publish_renamed_source(file),
-            };
-            if let Err(source) = publish {
-                let original = SourceMutationError::CommitFile {
-                    path: file.path.clone(),
-                    source,
-                };
-                cleanup_staged(&self.files[index..]);
-                let failures = rollback_originals(&originals);
-                self.files.clear();
-                if failures.is_empty() {
-                    return Err(original);
+            let published = publish(file);
+            let original = match published {
+                Ok(original) => original,
+                Err(error) => {
+                    // A failed checked replacement leaves any foreign bytes
+                    // it met at its temp path; that file is not ours to drop.
+                    if file.mode != SourceFileMode::Replace {
+                        cleanup_staged(&self.files[index..=index]);
+                    } else {
+                        cleanup_original(&file.original);
+                    }
+                    cleanup_staged(&self.files[index + 1..]);
+                    return Err(fail_commit(error, &originals, &mut self.files));
                 }
-                return Err(SourceMutationError::Rollback {
-                    original: original.to_string(),
-                    failures,
-                });
-            }
+            };
             if let Some(temp) = &file.temp {
                 let _ = std::fs::remove_file(temp);
             }
-            if let Err(source) = files::sync_parent_directory(&file.path) {
-                let original = SourceMutationError::CommitFile {
+            originals.push((file.path.clone(), original));
+            let moved_from = match &file.original {
+                OriginalSource::Moved { source } | OriginalSource::Rewritten { source, .. } => {
+                    Some(source.clone())
+                }
+                _ => None,
+            };
+            let synced = files::sync_parent_directory(&file.path).and_then(|()| {
+                moved_from
+                    .as_deref()
+                    .map_or(Ok(()), files::sync_parent_directory)
+            });
+            if let Err(source) = synced {
+                let error = SourceMutationError::CommitFile {
                     path: file.path.clone(),
                     source,
                 };
-                originals.push((file.path.clone(), file.original.clone()));
                 cleanup_staged(&self.files[index + 1..]);
-                let failures = rollback_originals(&originals);
-                self.files.clear();
-                if failures.is_empty() {
-                    return Err(original);
-                }
-                return Err(SourceMutationError::Rollback {
-                    original: original.to_string(),
-                    failures,
-                });
+                return Err(fail_commit(error, &originals, &mut self.files));
             }
-            if let OriginalSource::Renamed { source, .. } = &file.original {
-                if let Err(source_error) = files::sync_parent_directory(source) {
-                    let original = SourceMutationError::CommitFile {
-                        path: file.path.clone(),
-                        source: source_error,
-                    };
-                    originals.push((file.path.clone(), file.original.clone()));
-                    cleanup_staged(&self.files[index + 1..]);
-                    let failures = rollback_originals(&originals);
-                    self.files.clear();
-                    if failures.is_empty() {
-                        return Err(original);
-                    }
-                    return Err(SourceMutationError::Rollback {
-                        original: original.to_string(),
-                        failures,
-                    });
-                }
-            }
-            originals.push((file.path.clone(), file.original.clone()));
         }
         self.files.clear();
         Ok(CommittedSourceMutation {
@@ -523,6 +462,229 @@ impl StagedSourceMutation {
     }
 }
 
+/// Roll back what was already published and report the first error, or the
+/// incomplete rollback.
+fn fail_commit(
+    error: SourceMutationError,
+    originals: &[(PathBuf, OriginalSource)],
+    staged: &mut Vec<StagedSourceFile>,
+) -> SourceMutationError {
+    let failures = rollback_originals(originals);
+    staged.clear();
+    if failures.is_empty() {
+        error
+    } else {
+        SourceMutationError::Rollback {
+            original: error.to_string(),
+            failures,
+        }
+    }
+}
+
+/// Check the destination and record what stands there before staging.
+fn stage_original(write: &SourceFileWrite) -> std::result::Result<OriginalSource, SourceMutationError> {
+    match &write.content {
+        SourceFileContent::Bytes(_) | SourceFileContent::Copy(_) => {
+            if write.path.exists() {
+                return Err(SourceMutationError::Validate {
+                    path: write.path.clone(),
+                    reason: "create destination already exists".to_string(),
+                });
+            }
+            Ok(OriginalSource::Absent(None))
+        }
+        SourceFileContent::Replace { expected, bytes } => match std::fs::read(&write.path) {
+            Ok(current) if current == *expected => Ok(OriginalSource::Bytes {
+                expected: expected.clone(),
+                published: bytes.clone(),
+            }),
+            Ok(_) => Err(SourceMutationError::Changed {
+                path: write.path.clone(),
+                preserved: None,
+            }),
+            Err(error) => Err(SourceMutationError::Validate {
+                path: write.path.clone(),
+                reason: format!("replace destination is unreadable: {error}"),
+            }),
+        },
+        SourceFileContent::Delete => prepare_delete_backup(&write.path)
+            .map(OriginalSource::Backup)
+            .map_err(|source| SourceMutationError::Stage {
+                path: write.path.clone(),
+                source,
+            }),
+        SourceFileContent::Rename { source, rewrite } => {
+            if write.path.exists() {
+                return Err(SourceMutationError::Validate {
+                    path: write.path.clone(),
+                    reason: "rename destination already exists".to_string(),
+                });
+            }
+            match rewrite {
+                None => {
+                    std::fs::symlink_metadata(source).map_err(|error| {
+                        SourceMutationError::Validate {
+                            path: source.clone(),
+                            reason: format!("rename source is unavailable: {error}"),
+                        }
+                    })?;
+                    Ok(OriginalSource::Moved {
+                        source: source.clone(),
+                    })
+                }
+                Some(rewrite) => match std::fs::read(source) {
+                    Ok(current) if current == rewrite.expected => Ok(OriginalSource::Rewritten {
+                        source: source.clone(),
+                        expected: rewrite.expected.clone(),
+                        aside: None,
+                        published: None,
+                    }),
+                    Ok(_) => Err(SourceMutationError::Changed {
+                        path: source.clone(),
+                        preserved: None,
+                    }),
+                    Err(error) => Err(SourceMutationError::Validate {
+                        path: source.clone(),
+                        reason: format!("rename source is unreadable: {error}"),
+                    }),
+                },
+            }
+        }
+    }
+}
+
+fn write_bytes(bytes: &[u8]) -> impl FnOnce(&mut std::fs::File) -> std::io::Result<()> + '_ {
+    move |file| std::io::Write::write_all(file, bytes)
+}
+
+/// Write the new bytes to a hidden temp file next to the destination.
+fn stage_temp(write: &SourceFileWrite) -> Result<Option<PathBuf>> {
+    match &write.content {
+        SourceFileContent::Delete | SourceFileContent::Rename { rewrite: None, .. } => Ok(None),
+        SourceFileContent::Rename {
+            rewrite: Some(rewrite),
+            source,
+        } => files::prepare_replacement_temp_file(&write.path, source, write_bytes(&rewrite.bytes))
+            .map(Some),
+        SourceFileContent::Replace { bytes, .. } => {
+            files::prepare_replacement_temp_file(&write.path, &write.path, write_bytes(bytes))
+                .map(Some)
+        }
+        SourceFileContent::Bytes(bytes) => {
+            files::prepare_temp_file(&write.path, write_bytes(bytes)).map(Some)
+        }
+        SourceFileContent::Copy(source) => files::prepare_temp_file(&write.path, |file| {
+            let mut input = std::fs::File::open(source)?;
+            std::io::copy(&mut input, file).map(|_| ())
+        })
+        .map(Some),
+    }
+}
+
+/// Make one staged file visible and return what rollback needs to undo it.
+fn publish(file: &StagedSourceFile) -> std::result::Result<OriginalSource, SourceMutationError> {
+    let failed = |source: anyhow::Error| commit_file_error(&file.path, source);
+    match &file.original {
+        OriginalSource::Absent(_) => {
+            let temp = file.temp.as_ref().expect("create mutation has temp");
+            std::fs::hard_link(temp, &file.path)
+                .with_context(|| format!("link {}", file.path.display()))
+                .map_err(failed)?;
+            let fingerprint = files::fingerprint(&file.path).map_err(|source| {
+                let _ = std::fs::remove_file(&file.path);
+                failed(source)
+            })?;
+            Ok(OriginalSource::Absent(Some(fingerprint)))
+        }
+        OriginalSource::Bytes {
+            expected,
+            published,
+        } => {
+            let temp = file.temp.as_ref().expect("replace mutation has temp");
+            files::exchange_if_unchanged(
+                temp,
+                &file.path,
+                expected,
+                published,
+                &files::conflict_dir_for(&file.path),
+            )
+            .map_err(failed)?;
+            Ok(file.original.clone())
+        }
+        OriginalSource::Backup(_) => {
+            files::delete_user_file(&file.path)
+                .with_context(|| format!("delete {}", file.path.display()))
+                .map_err(failed)?;
+            Ok(file.original.clone())
+        }
+        OriginalSource::Moved { source } => {
+            files::move_exclusive(source, &file.path).map_err(failed)?;
+            Ok(file.original.clone())
+        }
+        OriginalSource::Rewritten {
+            source, expected, ..
+        } => {
+            let temp = file.temp.as_ref().expect("rewritten rename has temp");
+            let (aside, published) =
+                publish_rewritten_rename(temp, source, &file.path, expected).map_err(failed)?;
+            Ok(OriginalSource::Rewritten {
+                source: source.clone(),
+                expected: expected.clone(),
+                aside: Some(aside),
+                published: Some(published),
+            })
+        }
+    }
+}
+
+/// Publish the rewritten file under its new name, then take the source away
+/// only if it still holds the bytes the rewrite was built from. The source is
+/// moved aside in one step first, so an edit that lands meanwhile is never
+/// deleted: a mismatch moves it back and withdraws the new file.
+fn publish_rewritten_rename(
+    temp: &Path,
+    source: &Path,
+    destination: &Path,
+    expected: &[u8],
+) -> Result<(PathBuf, files::FileFingerprint)> {
+    std::fs::hard_link(temp, destination).with_context(|| {
+        format!(
+            "failed to publish rewritten rename {} -> {}",
+            source.display(),
+            destination.display()
+        )
+    })?;
+    let published = match files::fingerprint(destination) {
+        Ok(published) => published,
+        Err(error) => {
+            let _ = std::fs::remove_file(destination);
+            return Err(error);
+        }
+    };
+    let aside = files::aside_path(source, "rename-original");
+    if let Err(error) = std::fs::rename(source, &aside) {
+        files::remove_if_unchanged(destination, &published)?;
+        return Err(files::SourceChanged {
+            path: source.to_path_buf(),
+            preserved: None,
+        })
+        .with_context(|| format!("rename source vanished: {error}"));
+    }
+    if std::fs::read(&aside)? == expected {
+        return Ok((aside, published));
+    }
+    let preserved = match files::rename_exclusive(&aside, source) {
+        Ok(()) => None,
+        Err(_) => Some(aside),
+    };
+    files::remove_if_unchanged(destination, &published)?;
+    Err(files::SourceChanged {
+        path: source.to_path_buf(),
+        preserved,
+    }
+    .into())
+}
+
 impl Drop for StagedSourceMutation {
     fn drop(&mut self) {
         cleanup_staged(&self.files);
@@ -568,16 +730,29 @@ fn cleanup_staged(files: &[StagedSourceFile]) {
     }
 }
 
+/// Undo published files in reverse order. A destination that no longer holds
+/// what this operation published is left as it is and reported: the outside
+/// version wins over the restore.
 fn rollback_originals(originals: &[(PathBuf, OriginalSource)]) -> Vec<PathBuf> {
     let mut failures = Vec::new();
     for (path, original) in originals.iter().rev() {
         let result = match original {
-            OriginalSource::Absent => remove_created_file(path),
-            OriginalSource::Bytes(bytes) => files::write_atomically(path, bytes),
+            OriginalSource::Absent(None) => Ok(()),
+            OriginalSource::Absent(Some(published)) => files::remove_if_unchanged(path, published),
+            OriginalSource::Bytes {
+                expected,
+                published,
+            } => restore_replaced(path, expected, published),
             OriginalSource::Backup(backup) => restore_delete_backup(path, backup),
-            OriginalSource::Renamed { source, backup } => {
-                restore_renamed_source(path, source, backup)
-            }
+            OriginalSource::Moved { source } => files::move_exclusive(path, source),
+            OriginalSource::Rewritten {
+                source,
+                aside: Some(aside),
+                published: Some(published),
+                ..
+            } => files::remove_if_unchanged(path, published)
+                .and_then(|()| files::rename_exclusive(aside, source)),
+            OriginalSource::Rewritten { .. } => Ok(()),
         };
         if result.is_err() {
             failures.push(path.clone());
@@ -586,28 +761,23 @@ fn rollback_originals(originals: &[(PathBuf, OriginalSource)]) -> Vec<PathBuf> {
     failures
 }
 
+/// Put the original bytes back while the file still holds what the
+/// operation published.
+fn restore_replaced(path: &Path, original: &[u8], published: &[u8]) -> Result<()> {
+    let temp = files::prepare_replacement_temp_file(path, path, |file| {
+        std::io::Write::write_all(file, original)
+    })?;
+    files::exchange_if_unchanged(
+        &temp,
+        path,
+        published,
+        original,
+        &files::conflict_dir_for(path),
+    )
+}
+
 fn prepare_delete_backup(path: &Path) -> Result<PathBuf> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static BACKUP_SEQ: AtomicU64 = AtomicU64::new(0);
-
-    let parent = path
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("file has no parent directory: {}", path.display()))?;
-    let name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("source");
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let backup = parent.join(format!(
-        ".{name}.mine-delete-backup.{}.{}.{}",
-        std::process::id(),
-        nonce,
-        BACKUP_SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
-
+    let backup = files::aside_path(path, "delete-backup");
     match std::fs::hard_link(path, &backup) {
         Ok(()) => {
             if let Err(error) = files::sync_parent_directory(&backup) {
@@ -646,12 +816,18 @@ fn restore_delete_backup(path: &Path, backup: &Path) -> Result<()> {
 
 fn cleanup_original(original: &OriginalSource) {
     match original {
-        OriginalSource::Backup(path) | OriginalSource::Renamed { backup: path, .. } => {
+        OriginalSource::Backup(path)
+        | OriginalSource::Rewritten {
+            aside: Some(path), ..
+        } => {
             if std::fs::remove_file(path).is_ok() {
                 let _ = files::sync_parent_directory(path);
             }
         }
-        OriginalSource::Absent | OriginalSource::Bytes(_) => {}
+        OriginalSource::Absent(_)
+        | OriginalSource::Bytes { .. }
+        | OriginalSource::Moved { .. }
+        | OriginalSource::Rewritten { aside: None, .. } => {}
     }
 }
 
@@ -659,53 +835,6 @@ fn cleanup_originals(originals: &[(PathBuf, OriginalSource)]) {
     for (_, original) in originals {
         cleanup_original(original);
     }
-}
-
-fn publish_renamed_source(file: &StagedSourceFile) -> Result<()> {
-    let OriginalSource::Renamed { source, .. } = &file.original else {
-        unreachable!("rename mode has rename content")
-    };
-    let publish = if let Some(temp) = &file.temp {
-        std::fs::hard_link(temp, &file.path).with_context(|| {
-            format!(
-                "failed to publish rewritten rename {} -> {}",
-                source.display(),
-                file.path.display()
-            )
-        })
-    } else {
-        match std::fs::hard_link(source, &file.path) {
-            Ok(()) => Ok(()),
-            Err(_) => files::copy_new_atomically(source, &file.path),
-        }
-    };
-    publish?;
-    if let Err(error) = std::fs::remove_file(source)
-        .with_context(|| format!("failed to remove rename source: {}", source.display()))
-    {
-        let _ = std::fs::remove_file(&file.path);
-        return Err(error);
-    }
-    Ok(())
-}
-
-fn restore_renamed_source(destination: &Path, source: &Path, backup: &Path) -> Result<()> {
-    remove_created_file(destination)?;
-    if source.exists() {
-        std::fs::remove_file(backup)
-            .with_context(|| format!("failed to remove rename backup: {}", backup.display()))?;
-        return Ok(());
-    }
-    restore_delete_backup(source, backup)
-}
-
-fn remove_created_file(path: &Path) -> Result<()> {
-    if path.exists() {
-        std::fs::remove_file(path)
-            .with_context(|| format!("failed to remove created file: {}", path.display()))?;
-        files::sync_parent_directory(path)?;
-    }
-    Ok(())
 }
 
 fn rollback_after_index_failure<T>(
@@ -734,7 +863,7 @@ mod tests {
         let created = dir.path().join("created.md");
         std::fs::write(&replaced, b"old").unwrap();
         let staged = StagedSourceMutation::stage(vec![
-            SourceFileWrite::replace(replaced.clone(), b"new".to_vec()),
+            SourceFileWrite::replace(replaced.clone(), b"old".to_vec(), b"new".to_vec()),
             SourceFileWrite::create(created.clone(), b"created".to_vec()),
         ])
         .unwrap();
@@ -774,6 +903,7 @@ mod tests {
         std::fs::write(&path, b"before").unwrap();
         let staged = StagedSourceMutation::stage(vec![SourceFileWrite::replace(
             path.clone(),
+            b"before".to_vec(),
             b"after".to_vec(),
         )])
         .unwrap();
@@ -835,6 +965,7 @@ mod tests {
             .unwrap();
         let staged = StagedSourceMutation::stage(vec![SourceFileWrite::replace(
             path.clone(),
+            b"before".to_vec(),
             b"after".to_vec(),
         )])
         .unwrap();
@@ -852,5 +983,176 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM projection", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn replace_refuses_at_staging_when_the_file_differs_from_what_was_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("note.md");
+        std::fs::write(&path, b"edited in Obsidian").unwrap();
+
+        let error = StagedSourceMutation::stage(vec![SourceFileWrite::replace(
+            path.clone(),
+            b"read by Mine".to_vec(),
+            b"Mine rewrite".to_vec(),
+        )])
+        .unwrap_err();
+
+        assert!(matches!(error, SourceMutationError::Changed { .. }));
+        assert_eq!(std::fs::read(&path).unwrap(), b"edited in Obsidian");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn replace_refuses_at_publication_and_rolls_back_earlier_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let created = dir.path().join("created.md");
+        let path = dir.path().join("note.md");
+        std::fs::write(&path, b"read by Mine").unwrap();
+        let staged = StagedSourceMutation::stage(vec![
+            SourceFileWrite::create(created.clone(), b"created".to_vec()),
+            SourceFileWrite::replace(
+                path.clone(),
+                b"read by Mine".to_vec(),
+                b"Mine rewrite".to_vec(),
+            ),
+        ])
+        .unwrap();
+        std::fs::write(&path, b"edited in Obsidian").unwrap();
+
+        let error = staged.commit().unwrap_err();
+
+        assert!(matches!(error, SourceMutationError::Changed { .. }));
+        assert_eq!(std::fs::read(&path).unwrap(), b"edited in Obsidian");
+        assert!(!created.exists());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn rollback_keeps_an_edit_made_after_publication() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("note.md");
+        std::fs::write(&path, b"before").unwrap();
+        let committed = StagedSourceMutation::stage(vec![SourceFileWrite::replace(
+            path.clone(),
+            b"before".to_vec(),
+            b"after".to_vec(),
+        )])
+        .unwrap()
+        .commit()
+        .unwrap();
+        std::fs::write(dir.path().join("editor.md"), b"edited after publication").unwrap();
+        std::fs::rename(dir.path().join("editor.md"), &path).unwrap();
+
+        let error = committed.rollback("injected index failure").unwrap_err();
+
+        assert!(matches!(error, SourceMutationError::Rollback { .. }));
+        assert_eq!(std::fs::read(&path).unwrap(), b"edited after publication");
+    }
+
+    #[test]
+    fn rollback_keeps_a_created_file_edited_after_publication() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("created.md");
+        let committed =
+            StagedSourceMutation::stage(vec![SourceFileWrite::create(path.clone(), b"new".to_vec())])
+                .unwrap()
+                .commit()
+                .unwrap();
+        std::fs::write(dir.path().join("editor.md"), b"edited").unwrap();
+        std::fs::rename(dir.path().join("editor.md"), &path).unwrap();
+
+        assert!(committed.rollback("injected index failure").is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"edited");
+    }
+
+    #[test]
+    fn plain_rename_moves_the_file_with_an_edit_made_meanwhile() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old.md");
+        let new = dir.path().join("new.md");
+        std::fs::write(&old, b"read by Mine").unwrap();
+        let staged =
+            StagedSourceMutation::stage(vec![SourceFileWrite::rename(old.clone(), new.clone())])
+                .unwrap();
+        std::fs::write(dir.path().join("editor.md"), b"edited meanwhile").unwrap();
+        std::fs::rename(dir.path().join("editor.md"), &old).unwrap();
+
+        let committed = staged.commit().unwrap();
+        assert!(!old.exists());
+        assert_eq!(std::fs::read(&new).unwrap(), b"edited meanwhile");
+        committed.rollback("injected index failure").unwrap();
+        assert_eq!(std::fs::read(&old).unwrap(), b"edited meanwhile");
+        assert!(!new.exists());
+    }
+
+    #[test]
+    fn rewritten_rename_refuses_when_the_source_was_edited_meanwhile() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old.md");
+        let new = dir.path().join("new.md");
+        std::fs::write(&old, b"read by Mine").unwrap();
+        let staged = StagedSourceMutation::stage(vec![SourceFileWrite::rename_with_bytes(
+            old.clone(),
+            new.clone(),
+            b"read by Mine".to_vec(),
+            b"Mine rewrite".to_vec(),
+        )])
+        .unwrap();
+        std::fs::write(dir.path().join("editor.md"), b"edited meanwhile").unwrap();
+        std::fs::rename(dir.path().join("editor.md"), &old).unwrap();
+
+        let error = staged.commit().unwrap_err();
+
+        assert!(matches!(error, SourceMutationError::Changed { .. }));
+        assert_eq!(std::fs::read(&old).unwrap(), b"edited meanwhile");
+        assert!(!new.exists());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn rewritten_rename_rolls_back_to_the_original_name_and_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old.md");
+        let new = dir.path().join("new.md");
+        std::fs::write(&old, b"original").unwrap();
+        let committed = StagedSourceMutation::stage(vec![SourceFileWrite::rename_with_bytes(
+            old.clone(),
+            new.clone(),
+            b"original".to_vec(),
+            b"rewritten".to_vec(),
+        )])
+        .unwrap()
+        .commit()
+        .unwrap();
+        assert_eq!(std::fs::read(&new).unwrap(), b"rewritten");
+        assert!(!old.exists());
+
+        committed.rollback("injected index failure").unwrap();
+
+        assert_eq!(std::fs::read(&old).unwrap(), b"original");
+        assert!(!new.exists());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn finalized_rewritten_rename_leaves_no_hidden_original() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old.md");
+        let new = dir.path().join("new.md");
+        std::fs::write(&old, b"original").unwrap();
+        StagedSourceMutation::stage(vec![SourceFileWrite::rename_with_bytes(
+            old.clone(),
+            new.clone(),
+            b"original".to_vec(),
+            b"rewritten".to_vec(),
+        )])
+        .unwrap()
+        .commit()
+        .unwrap()
+        .finalize();
+
+        assert_eq!(std::fs::read(&new).unwrap(), b"rewritten");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 }

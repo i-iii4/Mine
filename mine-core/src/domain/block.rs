@@ -16,10 +16,10 @@ use thiserror::Error;
 use crate::domain::collection::{
     collection_ref_from_canonical_value, collection_wikilink_value, MINE_COLLECTIONS_FIELD,
 };
+use crate::domain::source_patch::{frontmatter_bounds, FrontmatterBounds};
 
-const FRONTMATTER_SCAN_LIMIT_LINES: usize = 20;
-const MINE_RELATED_NOTES_FIELD: &str = "Mine Related Notes";
-const MINE_SOURCE_MEDIA_FIELD: &str = "Mine Source Media";
+pub const MINE_RELATED_NOTES_FIELD: &str = "Mine Related Notes";
+pub const MINE_SOURCE_MEDIA_FIELD: &str = "Mine Source Media";
 const MAX_FILENAME_STEM_CHARS: usize = 100;
 const MAX_FILENAME_STEM_NFD_BYTES: usize = 220;
 
@@ -74,6 +74,10 @@ pub enum BlockError {
     /// The slug (file name without extension) is empty.
     #[error("empty slug")]
     EmptySlug,
+
+    /// The fenced block is YAML but not a set of properties.
+    #[error("frontmatter is not a mapping of properties")]
+    MalformedFrontmatter,
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -362,21 +366,22 @@ pub fn parse_markdown_document(
         return Err(BlockError::EmptySlug);
     }
 
-    let Some((yaml, body, has_fence)) = split_frontmatter_candidate(content) else {
+    // A leading `---` without a closing fence is a Markdown horizontal rule:
+    // the whole file is body, not an indexing error.
+    let FrontmatterBounds::Valid {
+        yaml_start,
+        yaml_end,
+        body_start,
+    } = frontmatter_bounds(content)
+    else {
         return Ok(ParsedMarkdownBlock {
             block: implicit_article_block(slug, content.to_string(), fallback_saved_at),
             origin: "foreign_markdown".to_string(),
             index_warning: None,
         });
     };
-
-    if !has_fence {
-        return Ok(ParsedMarkdownBlock {
-            block: implicit_article_block(slug, content.to_string(), fallback_saved_at),
-            origin: "foreign_markdown".to_string(),
-            index_warning: None,
-        });
-    }
+    let yaml = &content[yaml_start..yaml_end];
+    let body = &content[body_start..];
 
     match parse_frontmatter_compat(slug, yaml, fallback_saved_at.clone()) {
         Ok((frontmatter, warning)) => Ok(ParsedMarkdownBlock {
@@ -875,82 +880,95 @@ pub fn canonical_attachment_wikilink(raw: &str) -> String {
     }
 }
 
-/// Serialize a Frontmatter struct back to a YAML string.
-pub fn serialize_frontmatter(frontmatter: &Frontmatter) -> String {
-    let mut lines = Vec::new();
+/// Frontmatter keys Mine owns, in the order a new note writes them.
+pub const MINE_FRONTMATTER_KEYS: [&str; 17] = [
+    "type",
+    "title",
+    "description",
+    "url",
+    "file",
+    "thumbnail",
+    MINE_COLLECTIONS_FIELD,
+    MINE_RELATED_NOTES_FIELD,
+    MINE_SOURCE_MEDIA_FIELD,
+    "saved_at",
+    "source",
+    "width",
+    "height",
+    "author",
+    "position",
+    "color",
+    "icon",
+];
 
-    // Field order per spec: type (channel marker only), title, description,
-    // url, file, thumbnail, Mine Collections, Mine Related Notes,
-    // Mine Source Media, saved_at, source, width, height, author.
-    //
+/// Render every Mine-owned key of the model as YAML: the key line plus its
+/// value lines, without a trailing newline, or `None` when the model leaves
+/// the key out. Paired with `MINE_FRONTMATTER_KEYS` by position.
+///
+/// One renderer serves both a new note (`serialize_frontmatter`) and a
+/// surgical patch of an existing one (`source_patch`), so a field reads the
+/// same whichever way it was written.
+pub fn render_frontmatter_fields(frontmatter: &Frontmatter) -> [Option<String>; 17] {
     // Cards carry no `type`: their kind is derived from content, and a field
     // that duplicates a derivation lies the moment they disagree — the
     // clipper stamped `article` on every X post regardless of what it held.
-    if frontmatter.block_type == BlockType::Channel {
-        lines.push("type: channel".to_string());
-    }
-
-    if let Some(ref v) = frontmatter.title {
-        lines.push(format!("title: {}", yaml_quote(v)));
-    }
-    if let Some(ref v) = frontmatter.description {
-        lines.push(format!("description: {}", yaml_quote(v)));
-    }
-    if let Some(ref v) = frontmatter.url {
-        lines.push(format!("url: {}", yaml_quote(v)));
-    }
-    if let Some(ref v) = frontmatter.file {
-        lines.push(format!(
-            "file: {}",
-            yaml_quote(&canonical_attachment_wikilink(v))
-        ));
-    }
-    if let Some(ref v) = frontmatter.thumbnail {
-        lines.push(format!("thumbnail: {}", yaml_quote(v)));
-    }
-    if !frontmatter.tags.is_empty() {
-        lines.push(format!("{MINE_COLLECTIONS_FIELD}:"));
+    let block_type = (frontmatter.block_type == BlockType::Channel).then(|| "type: channel".to_string());
+    let quoted = |key: &str, value: &Option<String>| {
+        value
+            .as_ref()
+            .map(|value| format!("{key}: {}", yaml_quote(value)))
+    };
+    let number = |key: &str, value: Option<u32>| value.map(|value| format!("{key}: {value}"));
+    let file = frontmatter
+        .file
+        .as_ref()
+        .map(|value| format!("file: {}", yaml_quote(&canonical_attachment_wikilink(value))));
+    let collections = (!frontmatter.tags.is_empty()).then(|| {
+        let mut lines = vec![format!("{MINE_COLLECTIONS_FIELD}:")];
         for tag in &frontmatter.tags {
-            lines.push(format!(
-                "  - {}",
-                yaml_quote(&collection_wikilink_value(tag))
-            ));
+            lines.push(format!("  - {}", yaml_quote(&collection_wikilink_value(tag))));
         }
-    }
-    if !frontmatter.related_notes.is_empty() {
-        lines.push(format!("{MINE_RELATED_NOTES_FIELD}:"));
+        lines.join("\n")
+    });
+    let related_notes = (!frontmatter.related_notes.is_empty()).then(|| {
+        let mut lines = vec![format!("{MINE_RELATED_NOTES_FIELD}:")];
         for note in &frontmatter.related_notes {
             lines.push(format!("  - {}", yaml_quote(&format!("[[{note}]]"))));
         }
-    }
-    if let Some(ref v) = frontmatter.source_media {
-        lines.push(format!("{MINE_SOURCE_MEDIA_FIELD}: {}", yaml_quote(v)));
-    }
-    lines.push(format!("saved_at: {}", frontmatter.saved_at.as_str()));
-    if let Some(ref v) = frontmatter.source {
-        lines.push(format!("source: {}", yaml_quote(v)));
-    }
-    if let Some(v) = frontmatter.width {
-        lines.push(format!("width: {}", v));
-    }
-    if let Some(v) = frontmatter.height {
-        lines.push(format!("height: {}", v));
-    }
-    if let Some(ref v) = frontmatter.author {
-        lines.push(format!("author: {}", yaml_quote(v)));
-    }
-    // Channel-specific fields
-    if let Some(v) = frontmatter.position {
-        lines.push(format!("position: {}", v));
-    }
-    if let Some(ref v) = frontmatter.color {
-        lines.push(format!("color: {}", yaml_quote(v)));
-    }
-    if let Some(ref v) = frontmatter.icon {
-        lines.push(format!("icon: {}", yaml_quote(v)));
-    }
+        lines.join("\n")
+    });
+    [
+        block_type,
+        quoted("title", &frontmatter.title),
+        quoted("description", &frontmatter.description),
+        quoted("url", &frontmatter.url),
+        file,
+        quoted("thumbnail", &frontmatter.thumbnail),
+        collections,
+        related_notes,
+        quoted(MINE_SOURCE_MEDIA_FIELD, &frontmatter.source_media),
+        Some(format!("saved_at: {}", frontmatter.saved_at.as_str())),
+        quoted("source", &frontmatter.source),
+        number("width", frontmatter.width),
+        number("height", frontmatter.height),
+        quoted("author", &frontmatter.author),
+        number("position", frontmatter.position),
+        quoted("color", &frontmatter.color),
+        quoted("icon", &frontmatter.icon),
+    ]
+}
 
-    lines.join("\n")
+/// Serialize a Frontmatter struct back to a YAML string.
+///
+/// For a new note only. An existing note is changed through
+/// `source_patch::apply_block_changes`, which keeps what this model does not
+/// know about.
+pub fn serialize_frontmatter(frontmatter: &Frontmatter) -> String {
+    render_frontmatter_fields(frontmatter)
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Collapse 3+ consecutive newlines into a single blank line.
@@ -1307,36 +1325,6 @@ fn normalize_related_note(raw: &str) -> String {
     inner.split('|').next().unwrap_or("").trim().to_string()
 }
 
-fn split_frontmatter_candidate(content: &str) -> Option<(&str, &str, bool)> {
-    let mut iter = content.split_inclusive('\n');
-    let first = iter.next()?;
-    let first_trimmed = first.trim_end_matches(['\r', '\n']);
-    if first_trimmed != "---" {
-        return None;
-    }
-
-    let mut yaml_start = first.len();
-    let mut cursor = first.len();
-    for (idx, line) in iter.enumerate() {
-        if idx >= FRONTMATTER_SCAN_LIMIT_LINES {
-            break;
-        }
-        let line_body = line.trim_end_matches(['\r', '\n']);
-        if line_body == "---" {
-            let yaml = &content[yaml_start..cursor];
-            let body_start = cursor + line.len();
-            let body = content.get(body_start..).unwrap_or("");
-            return Some((yaml, body, true));
-        }
-        cursor += line.len();
-    }
-
-    // Leading `---` without a bounded closing fence is treated as body
-    // (Markdown horizontal rule), not an indexing error.
-    yaml_start = 0;
-    Some((&content[yaml_start..], "", false))
-}
-
 fn implicit_article_block(slug: &str, body: String, saved_at: DateTime) -> Block {
     Block {
         slug: slug.to_string(),
@@ -1373,6 +1361,11 @@ fn parse_frontmatter_compat(
     } else {
         serde_yaml::from_str(yaml)?
     };
+    // Text between two horizontal rules parses as a YAML scalar. It is not a
+    // set of properties, and reading it as one would hide that text.
+    if !matches!(value, Value::Mapping(_) | Value::Null) {
+        return Err(BlockError::MalformedFrontmatter);
+    }
 
     let mut warning = None;
 

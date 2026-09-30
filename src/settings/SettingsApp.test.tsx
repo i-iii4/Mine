@@ -19,7 +19,7 @@ vi.mock("@/lib/commands", () => ({
     total_bytes: 0,
     element_count: null,
   }),
-  listOrphanMedia: vi.fn().mockResolvedValue([]),
+  listOrphanMedia: vi.fn().mockResolvedValue({ vault_id: "space-id", orphans: [] }),
   promoteOrphanMedia: vi.fn(),
   deleteOrphanMedia: vi.fn(),
 }));

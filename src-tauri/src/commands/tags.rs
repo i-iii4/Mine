@@ -67,13 +67,14 @@ pub fn add_tag(state: State<'_, AppState>, slug: String, tag: String) -> Result<
     }
     files::normalize_block_media_refs_for_index(&vs.vault, &mut block);
 
-    let content = patch_collections_frontmatter(&content, &block.frontmatter.tags)
+    let patched = patch_collections_frontmatter(&content, &block.frontmatter.tags)
         .map_err(CommandError::Internal)?;
     commit_block_rewrite(
         &vs.conn,
         &vs.vault,
         &path,
         content.as_bytes(),
+        patched.as_bytes(),
         &block,
         parsed.origin.as_str(),
         parsed.index_warning.as_deref(),
@@ -109,13 +110,14 @@ pub fn remove_tag(
     block.frontmatter.tags.retain(|t| t != &collection_ref);
     files::normalize_block_media_refs_for_index(&vs.vault, &mut block);
 
-    let content = patch_collections_frontmatter(&content, &block.frontmatter.tags)
+    let patched = patch_collections_frontmatter(&content, &block.frontmatter.tags)
         .map_err(CommandError::Internal)?;
     commit_block_rewrite(
         &vs.conn,
         &vs.vault,
         &path,
         content.as_bytes(),
+        patched.as_bytes(),
         &block,
         parsed.origin.as_str(),
         parsed.index_warning.as_deref(),
@@ -128,6 +130,7 @@ fn commit_block_rewrite(
     conn: &Connection,
     vault: &VaultLayout,
     path: &std::path::Path,
+    expected: &[u8],
     content: &[u8],
     block: &crate::domain::block::Block,
     origin: &str,
@@ -135,6 +138,7 @@ fn commit_block_rewrite(
 ) -> Result<(), CommandError> {
     let staged = StagedSourceMutation::stage(vec![SourceFileWrite::replace(
         path.to_path_buf(),
+        expected.to_vec(),
         content.to_vec(),
     )])
     .map_err(|error| CommandError::Internal(error.to_string()))?;
@@ -173,7 +177,11 @@ fn rewrite_collection_membership(
         files::normalize_block_media_refs_for_index(vault, &mut block);
         let serialized = patch_collections_frontmatter(&content, &block.frontmatter.tags)
             .map_err(CommandError::Internal)?;
-        writes.push(SourceFileWrite::replace(path, serialized.into_bytes()));
+        writes.push(SourceFileWrite::replace(
+            path,
+            content.into_bytes(),
+            serialized.into_bytes(),
+        ));
         prepared.push((block, parsed.origin, parsed.index_warning));
     }
 
@@ -397,6 +405,7 @@ mod tests {
             &conn,
             &vault,
             &path,
+            original.as_bytes(),
             rewritten.as_bytes(),
             &rewritten_parsed.block,
             rewritten_parsed.origin.as_str(),

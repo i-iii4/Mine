@@ -1380,8 +1380,11 @@ mod tests {
         let writer_done = done_tx.clone();
         let writer = thread::spawn(move || {
             let writer_conn = db::open_or_create(&writer_vault.index_db_path()).unwrap();
+            let path = writer_vault.block_path("Concurrent");
+            let expected = std::fs::read(&path).unwrap();
             let staged = StagedSourceMutation::stage(vec![SourceFileWrite::replace(
-                writer_vault.block_path("Concurrent"),
+                path,
+                expected,
                 updated.as_bytes().to_vec(),
             )])
             .unwrap();

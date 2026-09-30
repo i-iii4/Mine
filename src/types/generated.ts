@@ -128,7 +128,11 @@ export type CloudRecommendationState = {
  */
 due: boolean }
 
-export type CommandError = { kind: "no_vault" } | { kind: "internal"; message: string }
+export type CommandError = { kind: "no_vault" } |
+/**
+ * The request was built for a space that is no longer the open one.
+ */
+{ kind: "space_changed" } | { kind: "internal"; message: string }
 
 /**
  * Commands supported by the JSON/WASM bridge, generated into TypeScript.
@@ -308,7 +312,18 @@ export type NativeShellSmokeReport = { status: string; vault_path: string | null
 
 export type OrphanMedia = { file_name: string; size_bytes: number; modified_secs: number }
 
-export type OrphanMediaBatchRequest = { file_names: string[] }
+export type OrphanMediaBatchRequest = {
+/**
+ * The space the list was built for.
+ */
+vault_id: string; file_names: string[] }
+
+/**
+ * Orphans of one space. Operations on the list name that space, so a list
+ * built before the open space changed can never act on another one
+ * (SPEC_AUDIT_FIXES.md, Ф4).
+ */
+export type OrphanMediaList = { vault_id: string; orphans: OrphanMedia[] }
 
 /**
  * Sidebar preview: slug + whether it's a text-only thumbnail (for dark mode invert).

@@ -13,6 +13,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use rusqlite::Connection;
 use serde::Serialize;
 
+use crate::space_registry::{Located, LostReason};
 use crate::commands::state::{
     current_vault_layout, schedule_preview_reconcile, AppState, CommandError, SweepGuard,
     VaultState,
@@ -280,13 +281,31 @@ pub fn get_unavailable_vault(app: AppHandle) -> Result<Option<UnavailableVault>,
     let Some(saved_path) = load_saved_vault_path(&app) else {
         return Ok(None);
     };
-    match unavailable_reason(Path::new(&saved_path)) {
-        None => Ok(None),
-        Some(reason) => Ok(Some(UnavailableVault {
+    match locate_saved_space(&app, &saved_path) {
+        Located::Here { .. } | Located::Moved { .. } => Ok(None),
+        // A folder at the path that is another space, or no space at all,
+        // means the saved space is not there: the same words as a missing
+        // folder, and the same action, locate it.
+        Located::Lost { reason, .. } => Ok(Some(UnavailableVault {
             path: saved_path,
-            reason,
+            reason: match reason {
+                LostReason::AccessDenied => UnavailableVaultReason::AccessDenied,
+                LostReason::Missing | LostReason::Replaced => UnavailableVaultReason::Missing,
+            },
         })),
     }
+}
+
+/// Where the space saved in settings stands now (SPEC_AUDIT_FIXES.md, Ф8).
+/// The folder at the saved path counts only when it carries the identity the
+/// registry recorded for it; otherwise the space is looked for by identity
+/// (П30). A folder with no identity or another one is not this space.
+fn locate_saved_space(app: &AppHandle, saved_path: &str) -> Located {
+    let serde_json::Value::Object(cfg) = load_config(app) else {
+        return crate::space_registry::locate(&serde_json::Map::new(), None, saved_path);
+    };
+    let vault_id = crate::space_registry::record_at(&cfg, saved_path).and_then(|record| record.vault_id);
+    crate::space_registry::locate(&cfg, vault_id.as_deref(), saved_path)
 }
 
 /// Why a bound folder cannot be opened, or `None` when it can.
@@ -448,6 +467,14 @@ pub async fn open_vault(
             .lock()
             .map_err(|_| CommandError::Internal("vault selection mutex poisoned".into()))?;
         require_latest_selection(&state, request)?;
+        // Opening without a choice by the person: the folder must still be
+        // the saved space. Only an explicit selection may make a folder a
+        // space and give it an identity.
+        if !matches!(locate_saved_space(&app, &path), Located::Here { .. }) {
+            return Err(CommandError::Internal(format!(
+                "the saved space is no longer at {path}"
+            )));
+        }
         initialize_vault(&app, &state, &path, request)
     })
     .await
@@ -481,14 +508,18 @@ pub fn get_vault_path(
     }
 
     repair_space_registry(&app);
-    // Try to restore from saved config
+    // Try to restore from saved config: the saved path opens only while it
+    // holds the recorded space, never a folder that took its place.
     if let Some(saved_path) = load_saved_vault_path(&app) {
-        let saved_path = if PathBuf::from(&saved_path).is_dir() {
-            saved_path
-        } else {
-            follow_moved_space(&app, &saved_path).unwrap_or(saved_path)
+        let found = match locate_saved_space(&app, &saved_path) {
+            Located::Here { path } => Some(path),
+            Located::Moved { path, .. } => {
+                record_moved_space(&app, &saved_path, &path);
+                Some(path)
+            }
+            Located::Lost { .. } => None,
         };
-        if PathBuf::from(&saved_path).is_dir() {
+        if let Some(saved_path) = found {
             append_startup_trace(
                 &app,
                 "get_vault_path",
@@ -2027,6 +2058,22 @@ fn repair_space_registry(app: &AppHandle) {
 
 /// The saved space moved beside its old path: switch the registry to the new
 /// path and return it (П30). `None` when it cannot be found unambiguously.
+/// The saved space was found under another path: that path becomes the one
+/// to open next time too.
+fn record_moved_space(app: &AppHandle, from: &str, to: &str) {
+    let serde_json::Value::Object(cfg) = load_config(app) else {
+        return;
+    };
+    let Some(id) = crate::space_registry::record_at(&cfg, from).and_then(|record| record.vault_id)
+    else {
+        return;
+    };
+    let now = now_ms();
+    if update_config(app, |cfg| crate::space_registry::record_open(cfg, &id, to, now)).is_ok() {
+        log::info!("space {id} moved from {from} to {to}");
+    }
+}
+
 fn follow_moved_space(app: &AppHandle, saved_path: &str) -> Option<String> {
     let serde_json::Value::Object(cfg) = load_config(app) else {
         return None;
