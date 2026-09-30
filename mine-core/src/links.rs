@@ -27,6 +27,13 @@ pub fn link_file_part(target: &str) -> &str {
     split_link_fragment(target).0
 }
 
+/// Whether a path ends in the note extension, in any letter case.
+fn names_a_note(path: &str) -> bool {
+    std::path::Path::new(path)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+}
+
 fn names_a_file(target: &str) -> bool {
     let tail = target.rsplit('#').next().unwrap_or(target);
     std::path::Path::new(tail)
@@ -156,7 +163,12 @@ impl LinkIndex {
                 let Some(path) = normalize_path(&joined) else {
                     return LinkResolution::Missing;
                 };
-                self.exact(&path)
+                let literal = self.exact(&path);
+                // `[text](Foo)` names the note `Foo.md`, as Obsidian reads it.
+                if matches!(literal, LinkResolution::Missing) && !names_a_note(&path) {
+                    return self.exact(&format!("{path}.md"));
+                }
+                literal
             }
             LinkSyntax::Obsidian => {
                 let Some(target) = normalize_path(target.strip_prefix('/').unwrap_or(&target))
@@ -308,10 +320,97 @@ impl NoteMoves {
     }
 
     /// Whether `text` mentions the name of a moved note and so may link to
-    /// it.
+    /// it: as written, or behind the percent-encoding and backslash escapes
+    /// of a Markdown destination (`[f](Foo%20Bar.md)`).
     pub fn may_be_linked_from(&self, text: &str) -> bool {
-        self.names.iter().any(|name| text.contains(name.as_str()))
+        let mentions = |text: &str| self.names.iter().any(|name| text.contains(name.as_str()));
+        if mentions(text) {
+            return true;
+        }
+        if !text.contains(['%', '\\']) {
+            return false;
+        }
+        let unescaped = text.replace('\\', "");
+        mentions(&percent_encoding::percent_decode_str(&unescaped).decode_utf8_lossy())
     }
+
+    /// The new path of a Markdown destination written in the note that was
+    /// at `note_before` and is at `note_after` now, or `None` while the
+    /// destination still names what it named (`SPEC_AUDIT_FIXES.md`, Ф3,
+    /// В1.3).
+    ///
+    /// A Markdown destination is a path from the note's folder: it changes
+    /// when the note moves to another folder or when the file it names moves.
+    /// `destination` is as written, percent-encoded, with any `#fragment`;
+    /// the answer is the decoded path from the note's new folder to the
+    /// file's new place, rooted at the space (`/…`) when the old one was, and
+    /// without `.md` when the old one named a note without it.
+    #[must_use]
+    pub fn retarget_markdown(
+        &self,
+        note_before: &str,
+        note_after: &str,
+        destination: &str,
+    ) -> Option<String> {
+        let LinkResolution::Resolved(target_before) =
+            self.before
+                .resolve(note_before, destination, LinkSyntax::Markdown)
+        else {
+            return None;
+        };
+        let target_key = normalize_path(&target_before)?;
+        let target_moved = self.moved.contains_key(&target_key);
+        if !target_moved && normalize_path(note_before) == normalize_path(note_after) {
+            return None;
+        }
+        let target_after = self
+            .moved
+            .get(&target_key)
+            .map_or(target_before.as_str(), String::as_str);
+        let file_part = destination.split('#').next().unwrap_or(destination).trim();
+        let mut path = if file_part.starts_with('/') {
+            format!("/{}", target_after.trim_start_matches('/'))
+        } else {
+            relative_markdown_path(note_after, target_after)
+        };
+        let names_extension = percent_encoding::percent_decode_str(file_part)
+            .decode_utf8_lossy()
+            .to_ascii_lowercase()
+            .ends_with(".md");
+        if !names_extension {
+            if let Some(stem) = path.strip_suffix(".md") {
+                path = stem.to_string();
+            }
+        }
+        Some(path)
+    }
+}
+
+/// The Markdown path from the note at `note` to the file at `target`, both
+/// relative to the space's root: `../Media/a.jpg` from `Cards/Foo.md` to
+/// `Media/a.jpg`. Folders are compared in one Unicode normalization; the
+/// target's own spelling is written.
+#[must_use]
+pub fn relative_markdown_path(note: &str, target: &str) -> String {
+    let parts: Vec<String> = note
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .map(|part| part.nfc().collect())
+        .collect();
+    let folder = &parts[..parts.len().saturating_sub(1)];
+    let target_parts: Vec<&str> = target
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect();
+    let common = folder
+        .iter()
+        .zip(&target_parts)
+        .take_while(|(own, other)| own.as_str() == other.nfc().collect::<String>())
+        .count();
+    std::iter::repeat_n("..", folder.len() - common)
+        .chain(target_parts[common..].iter().copied())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 fn result_for(paths: &[String]) -> LinkResolution {
@@ -325,10 +424,14 @@ fn result_for(paths: &[String]) -> LinkResolution {
 fn parse_target(raw: &str, syntax: LinkSyntax) -> Option<String> {
     let target = match syntax {
         LinkSyntax::Obsidian => link_file_part(raw.split('|').next()?).trim().to_string(),
-        LinkSyntax::Markdown => percent_encoding::percent_decode_str(raw.trim().split('#').next()?)
-            .decode_utf8()
-            .ok()?
-            .into_owned(),
+        LinkSyntax::Markdown => percent_encoding::percent_decode_str(
+            crate::domain::markdown_link::unescape_destination(raw.trim())
+                .split('#')
+                .next()?,
+        )
+        .decode_utf8()
+        .ok()?
+        .into_owned(),
     };
     if target.is_empty()
         || target.contains('\0')
@@ -378,6 +481,52 @@ mod tests {
         assert_eq!(moves.retarget("Foo.jpg"), None);
         assert!(moves.may_be_linked_from("see [[Foo]]"));
         assert!(!moves.may_be_linked_from("see [[Other]]"));
+    }
+
+    /// В1.3: a Markdown destination is a path from its note's folder. It is
+    /// rewritten when the note moves to another folder or the file it names
+    /// moves, keeping its root form and its missing `.md`.
+    #[test]
+    fn a_markdown_destination_follows_its_note_and_its_target() {
+        let moves = NoteMoves::new(
+            ["Foo.md", "Other.md", "Media/a.jpg", "Deep/Linker.md"],
+            &[("Foo.md".to_string(), "Archive/Foo.md".to_string())],
+        );
+        // The moved note's own links, from its new folder.
+        assert_eq!(moves.retarget_markdown("Foo.md", "Archive/Foo.md", "Media/a.jpg").as_deref(), Some("../Media/a.jpg"));
+        assert_eq!(moves.retarget_markdown("Foo.md", "Archive/Foo.md", "Other.md#Part").as_deref(), Some("../Other.md"));
+        assert_eq!(moves.retarget_markdown("Foo.md", "Archive/Foo.md", "/Media/a.jpg").as_deref(), Some("/Media/a.jpg"));
+        assert_eq!(moves.retarget_markdown("Foo.md", "Archive/Foo.md", "Foo.md").as_deref(), Some("Foo.md"));
+        // Links to the moved note, from notes that stay.
+        assert_eq!(moves.retarget_markdown("Other.md", "Other.md", "Foo.md").as_deref(), Some("Archive/Foo.md"));
+        assert_eq!(moves.retarget_markdown("Other.md", "Other.md", "Foo").as_deref(), Some("Archive/Foo"));
+        assert_eq!(moves.retarget_markdown("Deep/Linker.md", "Deep/Linker.md", "../Foo.md").as_deref(), Some("../Archive/Foo.md"));
+        // Links that still name what they named.
+        assert_eq!(moves.retarget_markdown("Other.md", "Other.md", "Media/a.jpg"), None);
+        assert_eq!(moves.retarget_markdown("Other.md", "Other.md", "Missing.md"), None);
+    }
+
+    #[test]
+    fn a_markdown_link_to_a_note_may_omit_its_extension_or_be_encoded() {
+        let index = LinkIndex::new(["Cards/Foo Bar.md", "Cards/Foo.v1.md", "Media/Foo.jpg"]);
+        assert_eq!(
+            index.resolve("Cards/x.md", "Foo%20Bar", LinkSyntax::Markdown),
+            LinkResolution::Resolved("Cards/Foo Bar.md".into())
+        );
+        assert_eq!(
+            index.resolve("Cards/x.md", "Foo.v1", LinkSyntax::Markdown),
+            LinkResolution::Resolved("Cards/Foo.v1.md".into())
+        );
+        assert_eq!(
+            index.resolve("Cards/x.md", "../Media/Foo\\(1\\).jpg", LinkSyntax::Markdown),
+            LinkResolution::Missing
+        );
+        let moves = NoteMoves::new(["Cards/Foo Bar.md"], &[("Cards/Foo Bar.md".into(), "Cards/Baz.md".into())]);
+        assert!(moves.may_be_linked_from("[f](Foo%20Bar.md)"));
+        assert!(!moves.may_be_linked_from("[f](Other%20Note.md)"));
+        assert_eq!(relative_markdown_path("Cards/Foo.md", "Media/a.jpg"), "../Media/a.jpg");
+        assert_eq!(relative_markdown_path("Foo.md", "Media/a.jpg"), "Media/a.jpg");
+        assert_eq!(relative_markdown_path("A/B/Foo.md", "A/C/x.md"), "../C/x.md");
     }
 
     #[test]

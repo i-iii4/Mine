@@ -344,77 +344,17 @@ fn closing_ticks(bytes: &[u8], mut index: usize, width: usize) -> Option<usize> 
     None
 }
 
+/// The destination of the Markdown link or image starting at `marker_start`
+/// and the offset past it, read by the one Markdown link reader every
+/// caller shares (`mine_core::domain::markdown_link`, В1.1): a title in any
+/// form, angle brackets and balanced parentheses are told apart there.
 fn markdown_target(line: &str, marker_start: usize, image: bool) -> Option<(usize, usize, usize)> {
-    let bytes = line.as_bytes();
-    let mut index = marker_start + if image { 2 } else { 1 };
-    let mut brackets = 1;
-    while index < bytes.len() {
-        match bytes[index] {
-            b'[' if !escaped(bytes, index) => brackets += 1,
-            b']' if !escaped(bytes, index) => {
-                brackets -= 1;
-                if brackets == 0 {
-                    break;
-                }
-            }
-            _ => {}
-        }
-        index += 1;
-    }
-    if bytes.get(index + 1) != Some(&b'(') {
-        return None;
-    }
-    index += 2;
-    while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
-        index += 1;
-    }
-    let angle = bytes.get(index) == Some(&b'<');
-    if angle {
-        index += 1;
-    }
-    let start = index;
-    let mut parens = 0;
-    while index < bytes.len() {
-        if !escaped(bytes, index) {
-            match bytes[index] {
-                b'>' if angle => break,
-                b'(' if !angle => parens += 1,
-                b')' if !angle && parens > 0 => parens -= 1,
-                b')' if !angle => break,
-                byte if !angle && byte.is_ascii_whitespace() => break,
-                _ => {}
-            }
-        }
-        index += 1;
-    }
-    let end = index;
-    if end == start {
-        return None;
-    }
-    if angle {
-        if bytes.get(index) != Some(&b'>') {
-            return None;
-        }
-        index += 1;
-    }
-    while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
-        index += 1;
-    }
-    if bytes.get(index) == Some(&b'"') || bytes.get(index) == Some(&b'\'') {
-        let quote = bytes[index];
-        index += 1;
-        while index < bytes.len() && (bytes[index] != quote || escaped(bytes, index)) {
-            index += 1;
-        }
-        if bytes.get(index) != Some(&quote) {
-            return None;
-        }
-        index += 1;
-        while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
-            index += 1;
-        }
-    }
-    (bytes.get(index) == Some(&b')')).then_some((start, end, index + 1))
+    let link = mine_core::domain::markdown_link::inline_link_at(line, marker_start)?;
+    (link.image == image && !link.destination.is_empty()).then_some((
+        link.destination.start,
+        link.destination.end,
+        link.end,
+    ))
 }
 
 #[cfg(test)]
@@ -448,6 +388,22 @@ mod tests {
         assert_eq!(
             replace_target(text, &links[0], "Media/new photo.jpg").as_deref(),
             Some("![alt](<Media/new%20photo.jpg?size=2#crop> \"caption\")")
+        );
+    }
+
+    /// В1.1: a title in parentheses and parentheses in a file name are read
+    /// the way every other Markdown reader of Mine reads them.
+    #[test]
+    fn reads_parenthesized_titles_and_parentheses_in_names() {
+        let text = "![a](../Media/r.jpg (t)) ![b](../Media/Foo (image 1).jpg) [c](Note.md 't')";
+        let links = references_in(text);
+        assert_eq!(
+            links.iter().map(|link| link.raw.as_str()).collect::<Vec<_>>(),
+            ["../Media/r.jpg", "../Media/Foo (image 1).jpg", "Note.md"]
+        );
+        assert_eq!(
+            replace_target(text, &links[0], "../Media/s.jpg").as_deref(),
+            Some("![a](../Media/s.jpg (t)) ![b](../Media/Foo (image 1).jpg) [c](Note.md 't')")
         );
     }
 

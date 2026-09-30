@@ -907,6 +907,23 @@ mod tests {
         );
     }
 
+    /// В1.1: an image a note links with a title, in angle brackets or with
+    /// parentheses in its name is in use, not an orphan.
+    #[test]
+    fn markdown_images_with_titles_angle_brackets_and_parentheses_are_not_orphans() {
+        let (_root, _derived, vs) = make_vault();
+        for name in ["p.jpg", "p q.jpg", "Foo (image 1).jpg", "s.jpg", "r.jpg", "lonely.jpg"] {
+            write_media(&vs, name);
+        }
+        let md = "---\nsaved_at: 2026-01-01T00:00:00Z\n---\n\
+                  ![x](p.jpg \"t\") ![x](<p q.jpg>) ![x](Foo (image 1).jpg) ![x](s.jpg 't') ![x](r.jpg (t))\n";
+        index_markdown(&vs, "note", md);
+
+        let orphans = scan_orphans(&vs).expect("scan");
+        let names: Vec<_> = orphans.iter().map(|orphan| orphan.file_name.as_str()).collect();
+        assert_eq!(names, vec!["lonely.jpg"]);
+    }
+
     #[test]
     fn promote_creates_markdown_next_to_media_without_copying() {
         let (_root, _derived, vs) = make_vault();

@@ -308,10 +308,12 @@ enum OriginalSource {
         published: Vec<u8>,
     },
     /// The deleted file, kept at `backup` until the operation is accepted.
-    /// With `expected`, the file is deleted only while it holds those bytes.
+    /// With `expected`, the file is deleted only while it holds those bytes
+    /// and is still `read`, the file the backup was taken from.
     Backup {
         backup: PathBuf,
         expected: Option<Vec<u8>>,
+        read: FileId,
     },
     /// The file moved here from `source` unchanged.
     Moved { source: PathBuf },
@@ -534,7 +536,7 @@ fn stage_original(write: &SourceFileWrite) -> std::result::Result<OriginalSource
                 path: write.path.clone(),
                 preserved: None,
             };
-            let backup = match prepare_delete_backup(&write.path) {
+            let (backup, read) = match prepare_delete_backup(&write.path) {
                 Ok(backup) => backup,
                 Err(_) if expected.is_some() && !write.path.exists() => return Err(changed()),
                 Err(source) => {
@@ -562,6 +564,7 @@ fn stage_original(write: &SourceFileWrite) -> std::result::Result<OriginalSource
             Ok(OriginalSource::Backup {
                 backup,
                 expected: expected.clone(),
+                read,
             })
         }
         SourceFileContent::Rename { source, rewrite } => {
@@ -660,15 +663,22 @@ fn publish(file: &StagedSourceFile) -> std::result::Result<OriginalSource, Sourc
             .map_err(failed)?;
             Ok(file.original.clone())
         }
-        OriginalSource::Backup { backup, expected } => {
-            if let Some(expected) = expected {
-                ensure_unchanged(&file.path, expected).map_err(failed)?;
-            }
-            files::delete_user_file(&file.path)
-                .with_context(|| format!("delete {}", file.path.display()))
-                .map_err(failed)?;
-            if let Some(expected) = expected {
-                ensure_trashed_unchanged(&file.path, backup, expected).map_err(failed)?;
+        OriginalSource::Backup {
+            backup,
+            expected,
+            read,
+        } => {
+            match expected {
+                Some(expected) => {
+                    // A cheap refusal first; the check that holds follows.
+                    ensure_unchanged(&file.path, expected).map_err(failed)?;
+                    #[cfg(test)]
+                    hooks::run_before_checked_trash(&file.path);
+                    trash_if_unchanged(&file.path, backup, *read, expected).map_err(failed)?;
+                }
+                None => files::delete_user_file(&file.path)
+                    .with_context(|| format!("delete {}", file.path.display()))
+                    .map_err(failed)?,
             }
             Ok(file.original.clone())
         }
@@ -748,6 +758,100 @@ fn ensure_unchanged(path: &Path, expected: &[u8]) -> Result<()> {
         }
         .into()),
         Err(error) => Err(error).with_context(|| format!("read {}", path.display())),
+    }
+}
+
+/// Which file a path names, whatever its bytes: its device and inode. An
+/// in-place edit keeps them; an atomic save puts another file at the path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FileId {
+    dev: u64,
+    ino: u64,
+}
+
+impl FileId {
+    fn of(metadata: &std::fs::Metadata) -> Self {
+        use std::os::unix::fs::MetadataExt;
+        Self {
+            dev: metadata.dev(),
+            ino: metadata.ino(),
+        }
+    }
+
+    fn at(path: &Path) -> Result<Self> {
+        std::fs::symlink_metadata(path)
+            .map(|metadata| Self::of(&metadata))
+            .with_context(|| format!("stat {}", path.display()))
+    }
+}
+
+/// Move `path` to the Trash only while it is still the file the operation
+/// read: the file `read` names, holding `expected` (`SPEC_AUDIT_FIXES.md`,
+/// Ф2, В1.2).
+///
+/// A comparison at the path proves nothing about the moment the Trash takes
+/// the file: an editor that saves by replacing the file (iCloud, safe-save
+/// editors, git) puts a new file there, and the Trash takes whatever stands
+/// at the path when it moves. So the file first leaves the path in one step,
+/// for a folder of its own next to it where no editor writes, and is checked
+/// there. A file that is not the one read goes back and the operation
+/// refuses; the one read goes to the Trash under its own name.
+fn trash_if_unchanged(path: &Path, backup: &Path, read: FileId, expected: &[u8]) -> Result<()> {
+    let name = path
+        .file_name()
+        .with_context(|| format!("delete source has no file name: {}", path.display()))?;
+    let holder = files::aside_path(path, "checked-delete");
+    std::fs::create_dir(&holder).with_context(|| format!("create {}", holder.display()))?;
+    let aside = holder.join(name);
+    if let Err(error) = std::fs::rename(path, &aside) {
+        remove_holder(&holder);
+        if error.kind() == std::io::ErrorKind::NotFound {
+            return Err(files::SourceChanged {
+                path: path.to_path_buf(),
+                preserved: None,
+            }
+            .into());
+        }
+        return Err(error).with_context(|| format!("move aside {}", path.display()));
+    }
+    let still_read = FileId::at(&aside).is_ok_and(|found| found == read)
+        && std::fs::read(&aside).is_ok_and(|bytes| bytes == expected);
+    if !still_read {
+        let preserved = put_back(path, &holder, &aside);
+        return Err(files::SourceChanged {
+            path: path.to_path_buf(),
+            preserved,
+        }
+        .into());
+    }
+    if let Err(error) = files::delete_user_file(&aside) {
+        // Nothing reached the Trash: the file returns to its path.
+        return Err(match put_back(path, &holder, &aside) {
+            None => error,
+            Some(kept) => error.context(format!("the file is kept at {}", kept.display())),
+        })
+        .with_context(|| format!("delete {}", path.display()));
+    }
+    remove_holder(&holder);
+    ensure_trashed_unchanged(path, backup, expected)
+}
+
+/// Return a file moved aside to its path, unless a new file stands there
+/// now; then it stays aside and its place is returned.
+fn put_back(path: &Path, holder: &Path, aside: &Path) -> Option<PathBuf> {
+    match files::rename_exclusive(aside, path) {
+        Ok(()) => {
+            remove_holder(holder);
+            None
+        }
+        Err(_) => Some(aside.to_path_buf()),
+    }
+}
+
+/// Remove the emptied folder a checked delete set its file aside in.
+fn remove_holder(holder: &Path) {
+    if let Err(error) = std::fs::remove_dir(holder) {
+        log::warn!("checked delete left {}: {error}", holder.display());
     }
 }
 
@@ -891,22 +995,34 @@ fn restore_replaced(path: &Path, original: &[u8], published: &[u8]) -> Result<()
     )
 }
 
-fn prepare_delete_backup(path: &Path) -> Result<PathBuf> {
+/// Keep the file about to be deleted, and say which file that is: a hard
+/// link is the file itself; a copy is read through one open handle, whose
+/// identity is the identity of exactly the bytes copied.
+fn prepare_delete_backup(path: &Path) -> Result<(PathBuf, FileId)> {
     let backup = files::aside_path(path, "delete-backup");
     match std::fs::hard_link(path, &backup) {
         Ok(()) => {
-            if let Err(error) = files::sync_parent_directory(&backup) {
-                let _ = std::fs::remove_file(&backup);
-                return Err(error);
+            let identity = files::sync_parent_directory(&backup).and_then(|()| FileId::at(&backup));
+            match identity {
+                Ok(identity) => Ok((backup, identity)),
+                Err(error) => {
+                    let _ = std::fs::remove_file(&backup);
+                    Err(error)
+                }
             }
-            Ok(backup)
         }
         Err(_) => {
             let mut source = std::fs::File::open(path)
                 .with_context(|| format!("failed to open delete source: {}", path.display()))?;
-            files::prepare_temp_file(path, |target| {
+            let identity = FileId::of(
+                &source
+                    .metadata()
+                    .with_context(|| format!("stat delete source: {}", path.display()))?,
+            );
+            let copy = files::prepare_temp_file(path, |target| {
                 std::io::copy(&mut source, target).map(|_| ())
-            })
+            })?;
+            Ok((copy, identity))
         }
     }
 }
@@ -964,6 +1080,33 @@ fn rollback_after_index_failure<T>(
             failures,
         }),
         Err(error) => Err(error),
+    }
+}
+
+/// Moments inside a publication where a test acts as an outside writer.
+#[cfg(test)]
+pub(crate) mod hooks {
+    use std::cell::RefCell;
+    use std::path::Path;
+
+    type Hook = Box<dyn FnOnce(&Path)>;
+
+    thread_local! {
+        /// Runs once after a checked delete has compared the file with what
+        /// the operation read and before the file goes: the window an editor's
+        /// atomic save can hit.
+        static BEFORE_CHECKED_TRASH: RefCell<Option<Hook>> = const { RefCell::new(None) };
+    }
+
+    pub(crate) fn run_before_checked_trash(path: &Path) {
+        if let Some(hook) = BEFORE_CHECKED_TRASH.with(|slot| slot.borrow_mut().take()) {
+            hook(path);
+        }
+    }
+
+    /// Run `hook` with the path of the next checked delete, at that moment.
+    pub(crate) fn before_next_checked_trash(hook: impl FnOnce(&Path) + 'static) {
+        BEFORE_CHECKED_TRASH.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
     }
 }
 
@@ -1105,6 +1248,31 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"edited in Obsidian");
         assert!(!created.exists());
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    /// В1.2: an editor's atomic save lands after the checked delete compared
+    /// the file and before it went to the Trash. The file at the path is a new
+    /// one; the backup still names the old one, so comparing the backup proves
+    /// nothing. The new version stays where it is and the operation refuses.
+    #[test]
+    fn checked_delete_refuses_an_atomic_replace_after_the_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let created = dir.path().join("merged.md");
+        let path = dir.path().join("note.md");
+        std::fs::write(&path, b"read by Mine").unwrap();
+        let staged = StagedSourceMutation::stage(vec![
+            SourceFileWrite::create(created.clone(), b"merged".to_vec()),
+            SourceFileWrite::delete_if_unchanged(path.clone(), b"read by Mine".to_vec()),
+        ])
+        .unwrap();
+        hooks::before_next_checked_trash(|path| replace_from_outside(path, b"saved by an editor"));
+
+        let error = staged.commit().unwrap_err();
+
+        assert!(matches!(error, SourceMutationError::Changed { .. }), "{error}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"saved by an editor");
+        assert!(!created.exists());
+        assert!(hidden_leftovers(dir.path()).is_empty(), "{:?}", hidden_leftovers(dir.path()));
     }
 
     #[test]

@@ -659,7 +659,14 @@ fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
                         display_target(&current_links, &target.path, !old_target.ends_with(".md"))
                     }
                     ReferenceSyntax::MarkdownImage | ReferenceSyntax::MarkdownLink => {
-                        relative_from_source(&source.path, &target.path)
+                        let path = relative_from_source(&source.path, &target.path);
+                        // `[text](Foo)` keeps naming its note without the extension.
+                        match path.strip_suffix(".md") {
+                            Some(stem) if !old_target.to_ascii_lowercase().ends_with(".md") => {
+                                stem.to_string()
+                            }
+                            _ => path,
+                        }
                     }
                 }
             } else {
@@ -771,25 +778,7 @@ fn display_target(index: &LinkIndex, path: &str, omit_markdown_extension: bool) 
 }
 
 fn relative_from_source(source: &str, target: &str) -> String {
-    let source_parts = Path::new(source)
-        .parent()
-        .unwrap_or(Path::new(""))
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
-    let target_parts = Path::new(target)
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
-    let common = source_parts
-        .iter()
-        .zip(&target_parts)
-        .take_while(|(a, b)| a == b)
-        .count();
-    std::iter::repeat_n("..".to_string(), source_parts.len() - common)
-        .chain(target_parts.into_iter().skip(common))
-        .collect::<Vec<_>>()
-        .join("/")
+    mine_core::links::relative_markdown_path(source, target)
 }
 
 /// Resolve an established source link by durable target identity. `Some(None)`

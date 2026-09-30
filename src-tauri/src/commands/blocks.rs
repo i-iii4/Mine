@@ -19,12 +19,11 @@ use crate::commands::state::{
 use crate::domain::block::{
     compute_body_hash, derive_card_kind, derive_title_fields, iter_inline_media_references,
     parse_markdown_document, suggest_slug, Block, BlockType, CardKind, DateTime, Frontmatter,
-    InlineMediaSyntax,
 };
 use crate::domain::collection::{normalize_collection_ref, validate_collection_ref};
 use crate::domain::markdown::{
     remove_inline_media_reference_at, remove_inline_media_references,
-    rename_inline_media_references, retarget_wikilinks,
+    rename_inline_media_references, retarget_markdown_destinations, retarget_wikilinks,
 };
 use crate::domain::source_patch::apply_block_changes;
 use mine_core::links::{link_file_part, NoteMoves};
@@ -1070,8 +1069,13 @@ fn publish_downloaded_source_video(
 }
 
 /// The space the download started in is not the open one. While its folder
-/// still holds that space, the video goes straight in; otherwise it is kept
-/// for when the space opens again.
+/// is proven to still hold that space, the video goes straight in; otherwise
+/// it is kept for when the space opens again.
+///
+/// Proof is an identity read on this Mac. One iCloud has not brought here is
+/// no proof: another space may stand in the folder, and a write would put
+/// this space's video into that space's card, or fail and lose the video
+/// (`SPEC_AUDIT_FIXES.md`, Ф9, В3.3).
 fn attach_into_closed_space(
     state: &AppState,
     vault: &VaultLayout,
@@ -1086,8 +1090,9 @@ fn attach_into_closed_space(
         .map(str::to_string);
     let holds = match crate::space_registry::space_identity(vault.root()) {
         crate::space_registry::SpaceIdentity::Known(found) => identity.as_deref() == Some(found.as_str()),
-        crate::space_registry::SpaceIdentity::InCloud => true,
-        crate::space_registry::SpaceIdentity::Absent => false,
+        crate::space_registry::SpaceIdentity::InCloud | crate::space_registry::SpaceIdentity::Absent => {
+            false
+        }
     };
     if !holds {
         crate::source_video_download::keep_download(vault, slug, video_id, downloaded)
@@ -2540,9 +2545,18 @@ fn build_merged_block(
         }
     }
 
+    // Each section moves from its note's folder into the merged card's: its
+    // Markdown paths are written again from there (`SPEC_AUDIT_FIXES.md`,
+    // В1.3).
+    let merged_note = format!("{slug}.md");
     let body = sources
         .iter()
-        .map(|source| merged_section_body(&source.block))
+        .map(|source| {
+            let note = format!("{}.md", source.block.slug);
+            retarget_markdown_destinations(&merged_section_body(&source.block), |destination| {
+                moves.retarget_markdown(&note, &merged_note, destination)
+            })
+        })
         .filter(|section| !section.trim().is_empty())
         .collect::<Vec<_>>()
         .join("\n\n---\n\n");
@@ -2598,7 +2612,8 @@ fn build_merge_reference_writes(
                     message: e.to_string(),
                 }
             })?;
-        let rewritten = rewrite_note_links(&parsed.block, moves);
+        let note = format!("{slug}.md");
+        let rewritten = rewrite_note_links(&parsed.block, moves, &note, &note);
         if rewritten.frontmatter != parsed.block.frontmatter || rewritten.body != parsed.block.body
         {
             writes.push(MergeReferenceWrite {
@@ -2612,9 +2627,14 @@ fn build_merge_reference_writes(
     Ok(writes)
 }
 
-/// Point a note's links to moved notes at their new names: wikilinks in the
-/// body and `Mine Related Notes`, resolved the way Obsidian resolves them.
-fn rewrite_note_links(block: &Block, moves: &NoteMoves) -> Block {
+/// Point a note's links at the notes and media that move (`SPEC_AUDIT_FIXES.md`,
+/// Ф3, В1.3): wikilinks in the body and `Mine Related Notes`, resolved the
+/// way Obsidian resolves them; Markdown links and images, and a `file` or
+/// `thumbnail` property written as a path from the note, resolved from the
+/// note's folder. `note_before` and `note_after` are the note's own path
+/// before and after the operation: when its folder changes, each such path
+/// is written again from the new folder, so it names the same file.
+fn rewrite_note_links(block: &Block, moves: &NoteMoves, note_before: &str, note_after: &str) -> Block {
     let mut rewritten = block.clone();
     for note in &mut rewritten.frontmatter.related_notes {
         if let Some(updated) = retarget_related_note(note, moves) {
@@ -2623,7 +2643,43 @@ fn rewrite_note_links(block: &Block, moves: &NoteMoves) -> Block {
     }
     dedupe_strings(&mut rewritten.frontmatter.related_notes);
     rewritten.body = retarget_wikilinks(&rewritten.body, |target| moves.retarget(target));
+    rewritten.body = retarget_markdown_destinations(&rewritten.body, |destination| {
+        moves.retarget_markdown(note_before, note_after, destination)
+    });
+    for property in [&mut rewritten.frontmatter.file, &mut rewritten.frontmatter.thumbnail] {
+        let updated = property
+            .as_deref()
+            .and_then(|reference| retarget_note_relative_property(reference, moves, note_before, note_after));
+        if updated.is_some() {
+            *property = updated;
+        }
+    }
     rewritten
+}
+
+/// Whether a `file` or `thumbnail` property names its file by a path from
+/// the note, which is how `media_refs::resolve_frontmatter_media` reads it.
+fn is_note_relative_property(reference: &str) -> bool {
+    reference.starts_with("./") || reference.starts_with("../")
+}
+
+/// The new value of a property written as a path from the note: resolved and
+/// written again like a Markdown destination, and still a path from the note.
+fn retarget_note_relative_property(
+    reference: &str,
+    moves: &NoteMoves,
+    note_before: &str,
+    note_after: &str,
+) -> Option<String> {
+    if !is_note_relative_property(reference) {
+        return None;
+    }
+    let path = moves.retarget_markdown(note_before, note_after, reference)?;
+    Some(if is_note_relative_property(&path) {
+        path
+    } else {
+        format!("./{path}")
+    })
 }
 
 /// A related note keeps its heading or block fragment when its note moves.
@@ -2641,7 +2697,14 @@ fn merged_section_body(block: &Block) -> String {
     let body = block.body.trim();
     if let Some(file) = trimmed_option(block.frontmatter.file.as_deref()) {
         if body.is_empty() || !body.contains(file) {
-            parts.push(format!("![[{file}]]"));
+            // A path from the note stays one, as a Markdown image the merge
+            // writes again from the merged card's folder; a wikilink would
+            // not resolve it.
+            parts.push(if is_note_relative_property(file) {
+                format!("![](<{}>)", file.replace('<', "%3C").replace('>', "%3E"))
+            } else {
+                format!("![[{file}]]")
+            });
         }
     }
     if !body.is_empty() {
@@ -3196,13 +3259,27 @@ fn attach_downloaded_source_video_inner(
         reason: format!("invalid card slug: {e}"),
     })?;
     let source_path = vault.block_path(slug);
-    if !source_path.exists() {
-        return Err(MediaAssetActionError::InvalidMediaRef {
-            reason: format!("card not found: {slug}"),
-        });
+    // Only a card that is not there is gone for good. A folder that cannot
+    // be read now (no access, an I/O error) says nothing about the card, and
+    // an answer taken as final would discard the video (`SPEC_AUDIT_FIXES.md`,
+    // Ф9, В3.1).
+    match source_path.try_exists() {
+        Ok(true) => {}
+        Ok(false) => {
+            return Err(MediaAssetActionError::InvalidMediaRef {
+                reason: format!("card not found: {slug}"),
+            })
+        }
+        Err(error) => {
+            return Err(MediaAssetActionError::Internal {
+                message: format!("card {slug} cannot be read now: {error}"),
+            })
+        }
     }
     let (read_slug, content) =
         files::read_block_file(vault, &source_path).map_err(internal_media_asset_error)?;
+    #[cfg(test)]
+    tests::run_after_card_read_hook(&source_path);
     let mut block = parse_markdown_document(&read_slug, &content, file_saved_at(&source_path))
         .map_err(|e| MediaAssetActionError::Internal {
             message: format!("failed to parse card: {e}"),
@@ -3819,6 +3896,9 @@ pub(crate) fn rename_block_file_inner(
         .block;
     let media_renames = collect_mine_owned_media_renames(vault, &old_block, old_slug, &new_slug)?;
     let planned_writes = build_planned_block_writes(vault, old_slug, &new_slug, &media_renames)?;
+    // A name with a folder moves the card there, as Obsidian does; a folder
+    // made for it and left empty by a refused rename goes again.
+    let new_folder = NewFolder::make(&vault.block_path(&new_slug)).map_err(internal_rename_error)?;
     let renamed_root_block = planned_writes
         .iter()
         .find(|write| write.target_path == vault.block_path(&new_slug))
@@ -3896,6 +3976,7 @@ pub(crate) fn rename_block_file_inner(
             Ok(())
         })
         .map_err(internal_rename_error)?;
+    new_folder.keep();
     if let Err(error) = files::rename_derived_artifacts(vault, old_slug, &new_slug) {
         log::warn!("rename derived artifacts will self-heal for {new_slug}: {error:#}");
     }
@@ -3917,6 +3998,52 @@ pub(crate) fn rename_block_file_inner(
         old_slug: old_slug.to_string(),
         new_slug,
     })
+}
+
+/// The folders made for a file about to move in. Unless the move is kept,
+/// they are removed again, each only while it is still empty.
+struct NewFolder {
+    made: Vec<PathBuf>,
+    kept: bool,
+}
+
+impl NewFolder {
+    /// Make every missing folder above `file`.
+    fn make(file: &Path) -> std::io::Result<Self> {
+        let mut missing = Vec::new();
+        let mut folder = file.parent();
+        while let Some(dir) = folder {
+            if dir.try_exists()? {
+                break;
+            }
+            missing.push(dir.to_path_buf());
+            folder = dir.parent();
+        }
+        let mut made = Self {
+            made: Vec::with_capacity(missing.len()),
+            kept: false,
+        };
+        for dir in missing.into_iter().rev() {
+            std::fs::create_dir(&dir)?;
+            made.made.push(dir);
+        }
+        Ok(made)
+    }
+
+    fn keep(mut self) {
+        self.kept = true;
+    }
+}
+
+impl Drop for NewFolder {
+    fn drop(&mut self) {
+        if self.kept {
+            return;
+        }
+        for dir in self.made.iter().rev() {
+            let _ = std::fs::remove_dir(dir);
+        }
+    }
 }
 
 fn normalize_requested_stem(raw: &str) -> Result<String, RenameBlockError> {
@@ -4518,12 +4645,21 @@ fn build_planned_block_writes(
             })?
             .block;
 
-        let mut rewritten = rewrite_note_links(&block, &moves);
+        // The renamed card may move to a folder of another depth: its own
+        // Markdown paths are written again from there (`SPEC_AUDIT_FIXES.md`,
+        // В1.3).
+        let note_before = format!("{slug}.md");
+        let note_after = if is_root {
+            format!("{new_slug}.md")
+        } else {
+            note_before.clone()
+        };
+        let mut rewritten = rewrite_note_links(&block, &moves, &note_before, &note_after);
         let mentions_moved_media = media_reference_forms(&block)
             .iter()
             .any(|form| moved_media_names.iter().any(|name| form.contains(name.as_str())));
         if mentions_moved_media {
-            retarget_moved_media(vault, &mut resolver, &block, &mut rewritten, media_renames, &moves);
+            retarget_moved_media_properties(vault, &mut resolver, &block, &mut rewritten, media_renames, &moves);
         }
         if is_root {
             rewritten.slug = new_slug.to_string();
@@ -4547,12 +4683,14 @@ fn build_planned_block_writes(
     Ok(writes)
 }
 
-/// Point `rewritten`, the note `block` with its wikilinks already retargeted,
-/// at the media a card rename moves: each Markdown image and the `file` and
-/// `thumbnail` properties are resolved from the note, and those that name a
-/// moved file follow it (`SPEC_AUDIT_FIXES.md`, Ф3, Б1.6). A Markdown path
-/// keeps its folder prefix and encoding, since the file stays in its folder.
-fn retarget_moved_media(
+/// Point `rewritten`, the note `block` with its links already retargeted by
+/// `rewrite_note_links`, at the media a card rename moves, for the one kind of
+/// reference that pass leaves: a `file` or `thumbnail` property that names
+/// its file the way a wikilink does. Resolved from the note, a property that
+/// names a moved file follows it (`SPEC_AUDIT_FIXES.md`, Ф3, Б1.6). Markdown
+/// images and properties written as a path from the note are Markdown paths,
+/// and `rewrite_note_links` rewrote them already.
+fn retarget_moved_media_properties(
     vault: &VaultLayout,
     resolver: &mut media_refs::MediaResolver<'_>,
     block: &Block,
@@ -4567,9 +4705,11 @@ fn retarget_moved_media(
             .map(|rename| rename.to.clone())
     };
     let mut retarget_property = |reference: Option<&str>| -> Option<String> {
-        let reference = reference?;
+        let reference = reference.filter(|reference| !is_note_relative_property(reference))?;
         let to = moved_to(&resolver.resolve_indexed_media(&block.slug, reference)?)?;
-        renamed_media_property(vault, reference, &to, moves)
+        moves
+            .retarget(reference)
+            .or_else(|| vault.root_relative_reference(&to))
     };
     if let Some(file) = retarget_property(block.frontmatter.file.as_deref()) {
         rewritten.frontmatter.file = Some(file);
@@ -4577,43 +4717,6 @@ fn retarget_moved_media(
     if let Some(thumbnail) = retarget_property(block.frontmatter.thumbnail.as_deref()) {
         rewritten.frontmatter.thumbnail = Some(thumbnail);
     }
-
-    let mut markdown_renames = BTreeMap::new();
-    for reference in iter_inline_media_references(&block.body) {
-        if !matches!(reference.syntax, InlineMediaSyntax::MarkdownImage) {
-            continue;
-        }
-        let Some(to) = resolver
-            .resolve_inline_media(&block.slug, &reference)
-            .and_then(|path| moved_to(&path))
-        else {
-            continue;
-        };
-        if let Some(name) = to.file_name().and_then(|name| name.to_str()) {
-            markdown_renames.insert(reference.source, name.to_string());
-        }
-    }
-    rewritten.body = rename_inline_media_references(&rewritten.body, &markdown_renames);
-}
-
-/// The new value of a `file` or `thumbnail` property that named moved media:
-/// a note-relative path keeps its prefix; any other reference becomes the
-/// shortest link Obsidian resolves to the new file, or its path from the
-/// space's root when no shorter one is certain.
-fn renamed_media_property(
-    vault: &VaultLayout,
-    reference: &str,
-    to: &Path,
-    moves: &NoteMoves,
-) -> Option<String> {
-    let name = to.file_name()?.to_str()?;
-    if reference.starts_with("./") || reference.starts_with("../") {
-        let prefix = reference.rfind('/').map_or("", |slash| &reference[..=slash]);
-        return Some(format!("{prefix}{name}"));
-    }
-    moves
-        .retarget(reference)
-        .or_else(|| vault.root_relative_reference(to))
 }
 
 fn article_audio_should_invalidate_after_rename(old_block: &Block, new_block: &Block) -> bool {
@@ -4712,6 +4815,25 @@ fn generated_inline_target(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+
+    type CardReadHook = Box<dyn FnOnce(&Path)>;
+
+    thread_local! {
+        /// Runs once after attaching a downloaded video has read the card and
+        /// before it writes it: the window an edit in Obsidian can hit.
+        static AFTER_CARD_READ: RefCell<Option<CardReadHook>> = const { RefCell::new(None) };
+    }
+
+    pub(super) fn run_after_card_read_hook(path: &Path) {
+        if let Some(hook) = AFTER_CARD_READ.with(|slot| slot.borrow_mut().take()) {
+            hook(path);
+        }
+    }
+
+    fn after_next_card_read(hook: impl FnOnce(&Path) + 'static) {
+        AFTER_CARD_READ.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+    }
 
     #[test]
     fn batch_delete_retains_media_and_deduplicates_slugs() {
@@ -7150,5 +7272,409 @@ mod tests {
         assert!(matches!(outcome, Err(MediaAssetActionError::InvalidMediaRef { .. })));
         assert!(crate::source_video_download::kept_downloads(&vault).is_empty());
         assert!(!vault.derived_root().join("source-videos").join(&kept.file).exists());
+    }
+
+    /// Images a note links in every `CommonMark` form Mine has to read: a
+    /// title in quotes, apostrophes or parentheses, a destination in angle
+    /// brackets, parentheses in the file name.
+    const TITLED_IMAGES: [&str; 5] = ["p.jpg", "p q.jpg", "Foo (image 1).jpg", "s.jpg", "r.jpg"];
+    const TITLED_IMAGE_LINKS: &str = "![x](../Media/p.jpg \"t\")\n\
+         ![x](<../Media/p q.jpg>)\n\
+         ![x](../Media/Foo (image 1).jpg)\n\
+         ![x](../Media/s.jpg 't')\n\
+         ![x](../Media/r.jpg (t))\n";
+
+    fn write_media(vault: &VaultLayout, relative: &str) -> PathBuf {
+        let path = vault.root().join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, relative.as_bytes()).unwrap();
+        path
+    }
+
+    /// В1.1: deleting a card with its unused media keeps every image another
+    /// note links, whatever `CommonMark` form the link takes.
+    #[test]
+    fn deleting_a_card_keeps_images_linked_with_titles_angle_brackets_and_parentheses() {
+        let (_root, _derived, vault, conn) = make_vault();
+        for name in TITLED_IMAGES {
+            write_media(&vault, &format!("Media/{name}"));
+        }
+        let owner_body: String = TITLED_IMAGES.iter().map(|name| ["![[", name, "]]\n"].concat()).collect();
+        write_note(
+            &vault,
+            "Cards/Owner",
+            &format!("---\nsaved_at: 2026-04-22T00:00:00Z\n---\n{owner_body}"),
+        );
+        write_note(&vault, "Cards/Note", TITLED_IMAGE_LINKS);
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        let plan = build_delete_block_plan(&conn, &vault, "Cards/Owner").unwrap();
+        assert!(plan.unused_media.is_empty(), "{:?}", plan.unused_media);
+        assert_eq!(plan.shared_media.len(), TITLED_IMAGES.len());
+        assert!(delete_block_inner(None, &conn, &vault, "Cards/Owner", Some(true)).unwrap());
+
+        for name in TITLED_IMAGES {
+            let relative = format!("Media/{name}");
+            assert_eq!(std::fs::read(vault.root().join(&relative)).unwrap(), relative.as_bytes());
+        }
+    }
+
+    /// В1.1: renaming an image rewrites only the file name inside each
+    /// Markdown destination; the title and the angle brackets stay.
+    #[test]
+    fn renaming_media_keeps_the_title_and_angle_brackets_of_markdown_images() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        for name in ["p.jpg", "a b.jpg", "Foo (image 1).jpg"] {
+            write_media(&vault, &format!("Media/{name}"));
+        }
+        write_note(
+            &vault,
+            "Cards/Note",
+            "![x](../Media/p.jpg \"t\") ![y](<../Media/a b.jpg> 't') ![z](../Media/Foo (image 1).jpg (t))\n",
+        );
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        for (media, stem) in [("Media/p.jpg", "new"), ("Media/a b.jpg", "c d"), ("Media/Foo (image 1).jpg", "Bar (image 1)")] {
+            rename_media_asset_inner(&state, &conn, &vault, media.to_string(), stem.to_string()).unwrap();
+        }
+
+        assert_eq!(
+            read_note(&vault, "Cards/Note"),
+            "![x](../Media/new.jpg \"t\") ![y](<../Media/c d.jpg> 't') ![z](../Media/Bar%20%28image%201%29.jpg (t))\n"
+        );
+    }
+
+    /// В1.2: an editor saves a note being merged by replacing its file (a new
+    /// inode) after the merge compared the note and before it went to the
+    /// Trash. The merge refuses: the saved version stays in place, out of the
+    /// Trash, and no merged card appears.
+    #[test]
+    fn merge_refuses_an_atomic_save_between_the_check_and_the_trash() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let first = "---\nsaved_at: 2026-04-22T00:00:00Z\n---\n# First\n\nAlpha.\n";
+        let second = "---\nsaved_at: 2026-04-22T00:00:00Z\n---\n# Second\n\nBeta.\n";
+        write_note(&vault, "Cards/First", first);
+        write_note(&vault, "Cards/Second", second);
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        let saved = format!("{first}\nSaved by an editor.\n");
+        let saved_by_editor = saved.clone();
+        crate::storage::source_mutation::hooks::before_next_checked_trash(move |path| {
+            let staged = path.with_file_name("editor-save.tmp");
+            std::fs::write(&staged, saved_by_editor).unwrap();
+            std::fs::rename(&staged, path).unwrap();
+        });
+
+        let error = merge_blocks_inner(
+            None,
+            &conn,
+            &vault,
+            vec!["Cards/First".to_string(), "Cards/Second".to_string()],
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, MergeBlocksError::SourceChanged { .. }), "{error}");
+        assert_eq!(read_note(&vault, "Cards/First"), saved);
+        assert_eq!(read_note(&vault, "Cards/Second"), second);
+        let notes: Vec<PathBuf> = files::scan_md_files(&vault).unwrap();
+        assert_eq!(
+            notes,
+            vec![vault.block_path("Cards/First"), vault.block_path("Cards/Second")]
+        );
+    }
+
+    /// В1.3: a card moved into a folder of another depth keeps its own
+    /// relative Markdown links and a relative property working, and Markdown
+    /// links to it from other notes follow it in the form each note wrote.
+    #[test]
+    fn moving_a_card_into_another_folder_keeps_markdown_links_resolving() {
+        let (_root, _derived, vault, conn) = make_vault();
+        write_media(&vault, "Media/a.jpg");
+        write_media(&vault, "Media/t.jpg");
+        write_note(
+            &vault,
+            "Foo",
+            "---\nthumbnail: ./Media/t.jpg\nsaved_at: 2026-04-22T00:00:00Z\n---\n![](Media/a.jpg)\n\nSee [n](Other.md \"the other\").\n",
+        );
+        write_note(
+            &vault,
+            "Other",
+            "Back to [f](Foo.md), [short](Foo) and [part](Foo.md#Heading).\n",
+        );
+        write_note(&vault, "Deep/Linker", "Up to [f](../Foo.md).\n");
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        rename_block_file_inner(None, None, &conn, &vault, "Foo", "Archive/Foo").unwrap();
+
+        assert!(!vault.block_path("Foo").exists());
+        assert_eq!(
+            read_note(&vault, "Archive/Foo"),
+            "---\nthumbnail: ../Media/t.jpg\nsaved_at: 2026-04-22T00:00:00Z\n---\n![](../Media/a.jpg)\n\nSee [n](../Other.md \"the other\").\n"
+        );
+        assert_eq!(
+            read_note(&vault, "Other"),
+            "Back to [f](Archive/Foo.md), [short](Archive/Foo) and [part](Archive/Foo.md#Heading).\n"
+        );
+        assert_eq!(read_note(&vault, "Deep/Linker"), "Up to [f](../Archive/Foo.md).\n");
+        let index = mine_core::links::LinkIndex::new(files::scan_vault_file_paths(&vault).unwrap());
+        for (note, destination, target) in [
+            ("Archive/Foo.md", "../Media/a.jpg", "Media/a.jpg"),
+            ("Archive/Foo.md", "../Media/t.jpg", "Media/t.jpg"),
+            ("Archive/Foo.md", "../Other.md", "Other.md"),
+            ("Other.md", "Archive/Foo.md", "Archive/Foo.md"),
+            ("Other.md", "Archive/Foo", "Archive/Foo.md"),
+            ("Deep/Linker.md", "../Archive/Foo.md", "Archive/Foo.md"),
+        ] {
+            assert_eq!(
+                index.resolve(note, destination, mine_core::links::LinkSyntax::Markdown),
+                mine_core::links::LinkResolution::Resolved(target.to_string()),
+                "{note}: {destination}"
+            );
+        }
+    }
+
+    /// В1.3: a plain rename in place rewrites Markdown links to the card as
+    /// well as wikilinks.
+    #[test]
+    fn renaming_a_card_rewrites_markdown_links_to_it() {
+        let (_root, _derived, vault, conn) = make_vault();
+        write_note(&vault, "Cards/Foo", "---\nsaved_at: 2026-04-22T00:00:00Z\n---\n# Foo\n");
+        write_note(&vault, "Notes/Other", "[f](../Cards/Foo.md) [g](<../Cards/Foo.md> \"t\") [[Foo]]\n");
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        rename_block_file_inner(None, None, &conn, &vault, "Cards/Foo", "Bar Baz").unwrap();
+
+        assert_eq!(
+            read_note(&vault, "Notes/Other"),
+            "[f](../Cards/Bar%20Baz.md) [g](<../Cards/Bar Baz.md> \"t\") [[Bar Baz]]\n"
+        );
+    }
+
+    /// В1.3: merging a card of the cards folder with a note from the space's
+    /// root into the cards folder keeps every image of both resolving.
+    #[test]
+    fn merging_notes_from_different_folders_keeps_their_images_resolving() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let vault = vault.with_write_layout(crate::domain::vault::VaultWriteLayout::standard());
+        let x = write_media(&vault, "Media/x.jpg");
+        let y = write_media(&vault, "Media/y.jpg");
+        write_note(
+            &vault,
+            "Cards/A",
+            "---\nsaved_at: 2026-04-22T00:00:00Z\n---\n# A\n\n![](../Media/x.jpg)\n",
+        );
+        write_note(&vault, "B", "# B\n\n![](Media/y.jpg \"why\")\n");
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        let mutation =
+            merge_blocks_inner(None, &conn, &vault, vec!["Cards/A".to_string(), "B".to_string()])
+                .unwrap();
+
+        let merged = mutation.result.merged_slug;
+        assert!(merged.starts_with("Cards/"), "{merged}");
+        let text = read_note(&vault, &merged);
+        assert!(text.contains("![](../Media/y.jpg \"why\")"), "{text}");
+        let resolved: Vec<Option<PathBuf>> = iter_inline_media_references(&text)
+            .iter()
+            .map(|reference| media_refs::resolve_inline_media(&vault, &merged, reference))
+            .collect();
+        assert_eq!(resolved, vec![Some(x), Some(y)], "{text}");
+    }
+
+    /// Restores a folder's permissions however the test ends, so the
+    /// temporary space can be removed.
+    struct PermissionsBack(PathBuf, std::fs::Permissions);
+
+    impl Drop for PermissionsBack {
+        fn drop(&mut self) {
+            let _ = std::fs::set_permissions(&self.0, self.1.clone());
+        }
+    }
+
+    /// В3.1: while the card's folder cannot be read, recovering a kept video
+    /// is a passing failure: the video and its record stay. Once the folder
+    /// can be read again, the next recovery attaches the video.
+    #[test]
+    fn an_unreadable_card_folder_keeps_the_kept_video_for_the_next_recovery() {
+        use std::os::unix::fs::PermissionsExt;
+        // SAFETY: `geteuid` only reads the credentials of this process.
+        if unsafe { libc::geteuid() } == 0 {
+            // The superuser reads any folder: there is no denial to observe.
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let (vault, conn) = identified_vault(dir.path(), "0123456789abcdef0123456789abcdef");
+        persist_block(&conn, &vault, &youtube_card("Cards/Film", "poster.jpg"));
+        let downloaded = dir.path().join("joined.mp4");
+        std::fs::write(&downloaded, b"video-bytes").unwrap();
+        crate::source_video_download::keep_download(&vault, "Cards/Film", "9KDDhAOyv9k", &downloaded)
+            .unwrap();
+        let kept = crate::source_video_download::kept_downloads(&vault).remove(0);
+        let kept_path = vault.derived_root().join("source-videos").join(&kept.file);
+        let cards = vault.root().join("Cards");
+        let permissions = std::fs::metadata(&cards).unwrap().permissions();
+        let restore = PermissionsBack(cards.clone(), permissions);
+        std::fs::set_permissions(&cards, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let outcome = attach_downloaded_source_video_inner(
+            &AppState::new(),
+            &conn,
+            &vault,
+            &kept.slug,
+            &kept.video_id,
+            &kept_path,
+        );
+        crate::source_video_download::settle_kept_download(&vault, &kept, &outcome);
+        drop(restore);
+
+        assert!(outcome.is_err());
+        assert!(
+            !matches!(outcome, Err(MediaAssetActionError::InvalidMediaRef { .. })),
+            "{outcome:?}"
+        );
+        assert_eq!(crate::source_video_download::kept_downloads(&vault), vec![kept.clone()]);
+        assert_eq!(std::fs::read(&kept_path).unwrap(), b"video-bytes");
+
+        let outcome = attach_downloaded_source_video_inner(
+            &AppState::new(),
+            &conn,
+            &vault,
+            &kept.slug,
+            &kept.video_id,
+            &kept_path,
+        );
+        crate::source_video_download::settle_kept_download(&vault, &kept, &outcome);
+
+        let attached = outcome.unwrap();
+        assert!(crate::source_video_download::kept_downloads(&vault).is_empty());
+        assert_eq!(
+            std::fs::read(vault.root().join(&attached.media_ref)).unwrap(),
+            b"video-bytes"
+        );
+    }
+
+    /// В3.2: a download finishes while the card is being edited in Obsidian:
+    /// attaching it meets the edit and refuses. The video is kept for its
+    /// space, with its record, to be attached when the space opens again, and
+    /// the edit stays.
+    #[test]
+    fn a_live_download_that_meets_an_outside_edit_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let (vault, conn) = identified_vault(dir.path(), "0123456789abcdef0123456789abcdef");
+        persist_block(&conn, &vault, &youtube_card("Film", "poster.jpg"));
+        let finished = dir.path().join("joined.mp4");
+        std::fs::write(&finished, b"video-bytes").unwrap();
+        after_next_card_read(|card| {
+            let mut text = std::fs::read_to_string(card).unwrap();
+            text.push_str("\nEdited in Obsidian.\n");
+            std::fs::write(card, text).unwrap();
+        });
+        let state = AppState::new();
+
+        let delivered = crate::source_video_download::deliver_download(
+            &vault,
+            "Film",
+            "9KDDhAOyv9k",
+            &finished,
+            |finished| {
+                attach_downloaded_source_video_inner(&state, &conn, &vault, "Film", "9KDDhAOyv9k", finished)
+            },
+        );
+
+        assert!(delivered.is_err());
+        let kept = crate::source_video_download::kept_downloads(&vault);
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert_eq!(kept[0].slug, "Film");
+        assert_eq!(
+            std::fs::read(vault.derived_root().join("source-videos").join(&kept[0].file)).unwrap(),
+            b"video-bytes"
+        );
+        let card = read_note(&vault, "Film");
+        assert!(card.contains("Edited in Obsidian."), "{card}");
+        assert!(!card.contains(".mp4"), "{card}");
+    }
+
+    /// В3.2: a card that links another clip by the time its download ends is
+    /// a final answer: nothing is kept and nothing reaches the space.
+    #[test]
+    fn a_live_download_for_a_card_that_changed_clip_is_not_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let (vault, conn) = identified_vault(dir.path(), "0123456789abcdef0123456789abcdef");
+        persist_block(&conn, &vault, &youtube_card("Film", "poster.jpg"));
+        let card_before = read_note(&vault, "Film");
+        let finished = dir.path().join("joined.mp4");
+        std::fs::write(&finished, b"video-bytes").unwrap();
+        let state = AppState::new();
+
+        let delivered = crate::source_video_download::deliver_download(
+            &vault,
+            "Film",
+            "abcdefghijk",
+            &finished,
+            |finished| {
+                attach_downloaded_source_video_inner(&state, &conn, &vault, "Film", "abcdefghijk", finished)
+            },
+        );
+
+        assert!(delivered.is_err());
+        assert!(crate::source_video_download::kept_downloads(&vault).is_empty());
+        assert_eq!(read_note(&vault, "Film"), card_before);
+        assert!(files::scan_vault_file_paths(&vault)
+            .unwrap()
+            .iter()
+            .all(|path| !is_video_file_name(path)));
+    }
+
+    /// В3.3: space A's download ends while space B, open, stands in A's
+    /// folder with an identity iCloud has not brought to this Mac, and holds a
+    /// card of the same name and clip. An identity that cannot be read proves
+    /// nothing: A's video is kept for A and B's card is left alone.
+    #[test]
+    fn a_video_for_a_folder_whose_identity_is_only_in_icloud_is_kept_for_its_own_space() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("Mobile Documents").join("space");
+        let first = VaultLayout::with_derived_root(
+            root.clone(),
+            dir.path().join("vaults").join("0123456789abcdef0123456789abcdef"),
+        );
+        let second = VaultLayout::with_derived_root(
+            root.clone(),
+            dir.path().join("vaults").join("fedcba9876543210fedcba9876543210"),
+        );
+        std::fs::create_dir_all(root.join(".mine")).unwrap();
+        // iCloud keeps the name and size of a file it moved off this Mac.
+        std::fs::File::create(root.join(".mine/vault-id"))
+            .unwrap()
+            .set_len(32)
+            .unwrap();
+        assert_eq!(
+            crate::space_registry::space_identity(&root),
+            crate::space_registry::SpaceIdentity::InCloud
+        );
+        let conn = db::open_or_create(&second.index_db_path()).unwrap();
+        persist_block(&conn, &second, &youtube_card("Film", "poster.jpg"));
+        let card_before = std::fs::read(second.block_path("Film")).unwrap();
+        let state = AppState::new();
+        *state.vault_state.lock().unwrap() = Some(crate::commands::state::VaultState {
+            conn,
+            vault: second.clone(),
+        });
+        let downloaded = dir.path().join("joined.mp4");
+        std::fs::write(&downloaded, b"video-bytes").unwrap();
+
+        let published =
+            publish_downloaded_source_video(&state, &first, "Film", "9KDDhAOyv9k", &downloaded).unwrap();
+
+        assert!(published.open_root.is_none());
+        assert!(published.result.affected_slugs.is_empty());
+        assert_eq!(std::fs::read(second.block_path("Film")).unwrap(), card_before);
+        let kept = crate::source_video_download::kept_downloads(&first);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].slug, "Film");
+        assert!(crate::source_video_download::kept_downloads(&second).is_empty());
+        assert!(files::scan_vault_file_paths(&second)
+            .unwrap()
+            .iter()
+            .all(|path| !is_video_file_name(path)));
     }
 }

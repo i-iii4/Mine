@@ -12,6 +12,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::domain::block::markdown_image_source;
+use crate::domain::markdown_link::{
+    encode_destination_like, inline_link_at, inline_links_outside_code, is_external_destination,
+    unescape_destination,
+};
+
 /// Rewrite markdown image embeds into Obsidian wikilinks for every
 /// locally-addressed URL in `body`. Returns the new body.
 ///
@@ -25,6 +31,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// disk is the decoded form. A `|` in alt text is escaped to `&#124;`
 /// so it does not split the wikilink. A `]]` inside a filename (rare)
 /// falls back to keeping the original markdown form.
+#[must_use]
 pub fn convert_markdown_images_to_wikilinks(body: &str) -> String {
     let mut out = String::with_capacity(body.len());
     let mut i = 0usize;
@@ -56,32 +63,28 @@ pub fn convert_markdown_images_to_wikilinks(body: &str) -> String {
         }
 
         // Standard `![alt](url)` — try to rewrite.
-        let Some(bracket_offset) = body[after_excl..].find("](") else {
+        let Some(link) = inline_link_at(body, excl) else {
             // Broken inline image start — flush `![` and move on.
             out.push_str(&body[excl..after_excl]);
             i = after_excl;
             continue;
         };
-        let alt_start = after_excl;
-        let bracket_pos = alt_start + bracket_offset;
-        let url_start = bracket_pos + 2;
-        let Some(paren_end) = body[url_start..].find(')') else {
-            out.push_str(&body[excl..after_excl]);
-            i = after_excl;
-            continue;
-        };
-        let alt = &body[alt_start..bracket_pos];
-        let url = &body[url_start..url_start + paren_end];
-        let end = url_start + paren_end + 1;
-
-        if url.starts_with("http://") || url.starts_with("https://") || url.is_empty() {
+        let url = &body[link.destination.clone()];
+        let end = link.end;
+        // A title has no place in a wikilink: such an image keeps its form.
+        let titled = !body[link.destination.end..end]
+            .trim_start_matches('>')
+            .trim_end_matches(')')
+            .trim()
+            .is_empty();
+        if url.starts_with("http://") || url.starts_with("https://") || url.is_empty() || titled {
             out.push_str(&body[excl..end]);
             i = end;
             continue;
         }
 
         // Local URL: decode and emit as wikilink.
-        let decoded: String = percent_encoding::percent_decode_str(url)
+        let decoded: String = percent_encoding::percent_decode_str(&unescape_destination(url))
             .decode_utf8_lossy()
             .into_owned();
         if decoded.contains("]]") {
@@ -91,7 +94,7 @@ pub fn convert_markdown_images_to_wikilinks(body: &str) -> String {
             continue;
         }
 
-        let alt_trimmed = alt.trim();
+        let alt_trimmed = body[link.text].trim();
         if alt_trimmed.is_empty() {
             out.push_str("![[");
             out.push_str(&decoded);
@@ -107,17 +110,6 @@ pub fn convert_markdown_images_to_wikilinks(body: &str) -> String {
         i = end;
     }
     out
-}
-
-/// Encode a local filesystem name into the markdown URL form used by Mine's
-/// render boundary helpers. Mirrors the frontend encoder: preserve Unicode,
-/// but percent-encode `%`, spaces, and parentheses so markdown parsers do not
-/// split the URL.
-pub fn encode_local_markdown_url(name: &str) -> String {
-    name.replace('%', "%25")
-        .replace(' ', "%20")
-        .replace('(', "%28")
-        .replace(')', "%29")
 }
 
 /// Rewrite the target of every wikilink for which `retarget` returns a new
@@ -189,6 +181,7 @@ fn split_wikilink_fragment(target: &str) -> (&str, Option<&str>) {
 /// folder (`SPEC_AUDIT_FIXES.md`, Ф3): a Markdown image keeps its written
 /// prefix (`../Media/`) and its encoding, and only its file-name segment
 /// becomes the file name of the new value.
+#[must_use]
 pub fn rename_inline_media_references(body: &str, renames: &BTreeMap<String, String>) -> String {
     if renames.is_empty() {
         return body.to_string();
@@ -236,23 +229,13 @@ pub fn rename_inline_media_references(body: &str, renames: &BTreeMap<String, Str
             continue;
         }
 
-        let Some(bracket_offset) = body[after_excl..].find("](") else {
+        let Some(link) = inline_link_at(body, excl) else {
             out.push_str(&body[excl..after_excl]);
             i = after_excl;
             continue;
         };
-        let alt_start = after_excl;
-        let bracket_pos = alt_start + bracket_offset;
-        let url_start = bracket_pos + 2;
-        let Some(paren_end) = body[url_start..].find(')') else {
-            out.push_str(&body[excl..after_excl]);
-            i = after_excl;
-            continue;
-        };
-
-        let alt = &body[alt_start..bracket_pos];
-        let raw_url = &body[url_start..url_start + paren_end];
-        let end = url_start + paren_end + 1;
+        let raw_url = &body[link.destination.clone()];
+        let end = link.end;
 
         if raw_url.starts_with("http://") || raw_url.starts_with("https://") || raw_url.is_empty() {
             out.push_str(&body[excl..end]);
@@ -260,17 +243,15 @@ pub fn rename_inline_media_references(body: &str, renames: &BTreeMap<String, Str
             continue;
         }
 
-        let decoded = percent_encoding::percent_decode_str(raw_url)
-            .decode_utf8_lossy()
-            .into_owned();
-        if let Some(new_name) = renames.get(&decoded) {
-            out.push_str("![");
-            out.push_str(alt);
-            out.push_str("](");
-            out.push_str(&renamed_markdown_url(raw_url, new_name));
-            out.push(')');
-        } else {
-            out.push_str(&body[excl..end]);
+        match markdown_image_source(raw_url).and_then(|decoded| renames.get(&decoded)) {
+            Some(new_name) => {
+                // Only the destination changes; the alt text, the angle
+                // brackets and the title stay as written.
+                out.push_str(&body[excl..link.destination.start]);
+                out.push_str(&renamed_markdown_url(raw_url, new_name, link.angle_brackets));
+                out.push_str(&body[link.destination.end..end]);
+            }
+            None => out.push_str(&body[excl..end]),
         }
         i = end;
     }
@@ -281,34 +262,51 @@ pub fn rename_inline_media_references(body: &str, renames: &BTreeMap<String, Str
 /// `raw_url` with its file-name segment replaced by the file name of
 /// `new_name`: the directory prefix and a `#fragment` stay as written, and
 /// the new name is encoded the way the old one was.
-fn renamed_markdown_url(raw_url: &str, new_name: &str) -> String {
+fn renamed_markdown_url(raw_url: &str, new_name: &str, angle_brackets: bool) -> String {
     let (prefix, rest) = raw_url
         .rfind('/')
         .map_or(("", raw_url), |slash| raw_url.split_at(slash + 1));
     let (segment, fragment) = rest.find('#').map_or((rest, ""), |hash| rest.split_at(hash));
     let file_name = new_name.rsplit('/').next().unwrap_or(new_name);
-    format!("{prefix}{}{fragment}", encode_like(segment, file_name))
+    format!(
+        "{prefix}{}{fragment}",
+        encode_destination_like(segment, angle_brackets, file_name)
+    )
 }
 
-/// Characters a fully percent-encoded URL segment keeps as they are: the
-/// unreserved set of RFC 3986.
-const URL_SEGMENT_KEPT: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
-    .remove(b'-')
-    .remove(b'.')
-    .remove(b'_')
-    .remove(b'~');
-
-/// Encode `name` in the style of `written`, the segment it replaces: fully
-/// percent-encoded when `written` encodes its non-ASCII letters (as many
-/// Markdown editors write links), otherwise only the characters that would
-/// break the link.
-fn encode_like(written: &str, name: &str) -> String {
-    let decoded = percent_encoding::percent_decode_str(written).decode_utf8_lossy();
-    if written.is_ascii() && !decoded.is_ascii() {
-        percent_encoding::utf8_percent_encode(name, URL_SEGMENT_KEPT).to_string()
-    } else {
-        encode_local_markdown_url(name)
+/// Rewrite the destination of each Markdown link and image outside code for
+/// which `retarget` returns a new path (`SPEC_AUDIT_FIXES.md`, Ф3, В1.3).
+///
+/// `retarget` receives a local destination as written, without its angle
+/// brackets and with its backslash escapes resolved, still percent-encoded
+/// and with any `#fragment`; it returns the new file path, decoded and
+/// without a fragment. The new path is written in the style of the old one
+/// (`encode_destination_like`); the fragment or query, the title, the link
+/// text and the angle brackets stay byte for byte. Destinations outside the
+/// space are never offered, and code is never rewritten.
+pub fn retarget_markdown_destinations(
+    body: &str,
+    mut retarget: impl FnMut(&str) -> Option<String>,
+) -> String {
+    let mut out = String::with_capacity(body.len());
+    let mut cursor = 0;
+    for link in inline_links_outside_code(body) {
+        let written = &body[link.destination.clone()];
+        let destination = unescape_destination(written);
+        if is_external_destination(&destination) {
+            continue;
+        }
+        let Some(new_path) = retarget(&destination) else {
+            continue;
+        };
+        let (written_path, suffix) = written.split_at(written.find(['#', '?']).unwrap_or(written.len()));
+        out.push_str(&body[cursor..link.destination.start]);
+        out.push_str(&encode_destination_like(written_path, link.angle_brackets, &new_path));
+        out.push_str(suffix);
+        cursor = link.destination.end;
     }
+    out.push_str(&body[cursor..]);
+    out
 }
 
 /// Remove local inline-media references listed in `removals`.
@@ -317,6 +315,7 @@ fn encode_like(written: &str, name: &str) -> String {
 /// legacy markdown images (`![alt](file%20name.jpg)`). When a removed media
 /// reference occupies a whole line, the whole line is removed so article bodies
 /// do not retain an empty media row.
+#[must_use]
 pub fn remove_inline_media_references(body: &str, removals: &BTreeSet<String>) -> String {
     remove_inline_media_references_impl(body, removals, None)
 }
@@ -325,6 +324,7 @@ pub fn remove_inline_media_references(body: &str, removals: &BTreeSet<String>) -
 /// reference whose source is in `removals`. Used to delete a single duplicate
 /// embed from a card without touching its identical siblings. If that occurrence
 /// does not exist, the body is returned unchanged.
+#[must_use]
 pub fn remove_inline_media_reference_at(
     body: &str,
     removals: &BTreeSet<String>,
@@ -376,27 +376,18 @@ fn remove_inline_media_references_impl(
             continue;
         }
 
-        let Some(bracket_offset) = body[after_excl..].find("](") else {
+        let Some(link) = inline_link_at(body, excl) else {
             i = after_excl;
             continue;
         };
-        let url_start = after_excl + bracket_offset + 2;
-        let Some(paren_end) = body[url_start..].find(')') else {
-            i = url_start;
-            continue;
-        };
-
-        let raw_url = &body[url_start..url_start + paren_end];
-        let end = url_start + paren_end + 1;
+        let raw_url = &body[link.destination.clone()];
+        let end = link.end;
         if raw_url.starts_with("http://") || raw_url.starts_with("https://") || raw_url.is_empty() {
             i = end;
             continue;
         }
 
-        let decoded = percent_encoding::percent_decode_str(raw_url)
-            .decode_utf8_lossy()
-            .into_owned();
-        if removals.contains(&decoded) {
+        if markdown_image_source(raw_url).is_some_and(|decoded| removals.contains(&decoded)) {
             if occurrence.map_or(true, |target| target == match_index) {
                 ranges.push(expand_media_removal_range(body, excl, end));
             }
@@ -657,6 +648,61 @@ mod tests {
             rename_inline_media_references(input, &renames),
             "![](../Media/%D1%81%D0%BD%D0%B8%D0%BC%D0%BE%D0%BA%202.jpg) ![](../Media/c%20d.jpg)"
         );
+    }
+
+    /// В1.1: a rename changes the file name inside the destination and
+    /// nothing around it: titles in all three forms and angle brackets stay.
+    #[test]
+    fn rename_inline_media_references_keeps_titles_and_angle_brackets() {
+        let input = "![a](../Media/p.jpg \"t\") ![b](<../Media/p q.jpg> 't') ![c](../Media/Foo (image 1).jpg (t))";
+        let renames = BTreeMap::from([
+            ("../Media/p.jpg".to_string(), "Media/new.jpg".to_string()),
+            ("../Media/p q.jpg".to_string(), "Media/c d.jpg".to_string()),
+            ("../Media/Foo (image 1).jpg".to_string(), "Media/Bar (image 1).jpg".to_string()),
+        ]);
+        assert_eq!(
+            rename_inline_media_references(input, &renames),
+            "![a](../Media/new.jpg \"t\") ![b](<../Media/c d.jpg> 't') ![c](../Media/Bar%20%28image%201%29.jpg (t))"
+        );
+    }
+
+    #[test]
+    fn remove_inline_media_references_removes_a_titled_image_whole() {
+        let input = "Intro\n\n![cap](Foo (image 1).jpg \"t\")\n\nOutro";
+        let removals = BTreeSet::from(["Foo (image 1).jpg".to_string()]);
+        assert_eq!(remove_inline_media_references(input, &removals), "Intro\n\nOutro");
+    }
+
+    #[test]
+    fn converting_to_wikilinks_keeps_an_image_with_a_title() {
+        let input = "![cap](<a b.jpg> \"title\") ![x](<c d.jpg>)";
+        assert_eq!(
+            convert_markdown_images_to_wikilinks(input),
+            "![cap](<a b.jpg> \"title\") ![[c d.jpg|x]]"
+        );
+    }
+
+    /// В1.3: a retarget hands each local destination to the resolver as
+    /// written and writes the answer in the destination's own style, with its
+    /// fragment, title and brackets; code and remote links are left alone.
+    #[test]
+    fn retarget_markdown_destinations_rewrites_only_the_path() {
+        let input = "[a](Foo.md#Part \"t\") ![b](<Media/a b.jpg>) [c](Foo) [w](https://e.com/Foo.md) `[d](Foo.md)` [e](Other.md)";
+        let mut seen = Vec::new();
+        let output = retarget_markdown_destinations(input, |destination| {
+            seen.push(destination.to_string());
+            match destination {
+                "Foo.md#Part" => Some("Archive/Foo bar.md".to_string()),
+                "Media/a b.jpg" => Some("../Media/a b.jpg".to_string()),
+                "Foo" => Some("Archive/Foo".to_string()),
+                _ => None,
+            }
+        });
+        assert_eq!(
+            output,
+            "[a](Archive/Foo%20bar.md#Part \"t\") ![b](<../Media/a b.jpg>) [c](Archive/Foo) [w](https://e.com/Foo.md) `[d](Foo.md)` [e](Other.md)"
+        );
+        assert_eq!(seen, ["Foo.md#Part", "Media/a b.jpg", "Foo", "Other.md"]);
     }
 
     #[test]

@@ -1126,6 +1126,27 @@
       "requirement": "SPEC_AUDIT_FIXES.md#| В4.1 |",
       "tests": ["src-tauri/src/markdown_images.rs", "src-tauri/src/bin/native_host.rs", "src-tauri/src/tooling/localize_remote_media.rs"],
       "command": "test:rust"
+    },
+    {
+      "paths": [
+        "mine-core/src/domain/markdown_link.rs",
+        "mine-core/src/domain/mod.rs",
+        "mine-core/src/domain/block.rs",
+        "mine-core/src/domain/markdown.rs",
+        "mine-core/src/links.rs",
+        "mine-core/src/domain/article_audio.rs",
+        "core-ffi/src/lib.rs",
+        "src-tauri/src/commands/blocks.rs",
+        "src-tauri/src/commands/settings.rs",
+        "src-tauri/src/source_video_download.rs",
+        "src-tauri/src/storage/source_mutation.rs",
+        "src-tauri/src/storage/reference_spans.rs",
+        "src-tauri/src/storage/file_identity.rs",
+        "src-tauri/src/storage/index.rs"
+      ],
+      "requirement": "SPEC_AUDIT_FIXES.md#| В1.1 |",
+      "tests": ["mine-core/src/domain/markdown_link.rs", "mine-core/src/domain/block.rs", "mine-core/src/domain/markdown.rs", "mine-core/src/links.rs", "src-tauri/src/commands/blocks.rs", "src-tauri/src/commands/settings.rs", "src-tauri/src/source_video_download.rs", "src-tauri/src/storage/source_mutation.rs", "src-tauri/src/storage/reference_spans.rs"],
+      "command": "test:rust"
     }
   ],
   "release": null

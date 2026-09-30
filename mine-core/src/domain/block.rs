@@ -16,6 +16,7 @@ use thiserror::Error;
 use crate::domain::collection::{
     collection_ref_from_canonical_value, collection_wikilink_value, MINE_COLLECTIONS_FIELD,
 };
+use crate::domain::markdown_link::{inline_link_at, unescape_destination};
 use crate::domain::source_patch::{frontmatter_bounds, FrontmatterBounds};
 
 pub const MINE_RELATED_NOTES_FIELD: &str = "Mine Related Notes";
@@ -446,11 +447,9 @@ pub fn body_without_media_embeds(body: &str) -> String {
             }
         }
         if rest.starts_with("![") {
-            if let Some(close) = rest.find("](") {
-                if let Some(end) = rest[close + 2..].find(')') {
-                    rest = &rest[close + 2 + end + 1..];
-                    continue;
-                }
+            if let Some(link) = inline_link_at(rest, 0) {
+                rest = &rest[link.end..];
+                continue;
             }
         }
         let mut chars = rest.chars();
@@ -757,17 +756,12 @@ fn remove_markdown_images_for_preview(input: &str) -> String {
             break;
         };
         out.push_str(&rest[..start]);
-        let after_start = &rest[start + 2..];
-        let Some(label_end) = after_start.find("](") else {
-            out.push_str(&rest[start..]);
-            break;
-        };
-        let after_url_start = &after_start[label_end + 2..];
-        let Some(url_end) = after_url_start.find(')') else {
-            out.push_str(&rest[start..]);
-            break;
-        };
-        rest = &after_url_start[url_end + 1..];
+        if let Some(link) = inline_link_at(rest, start) {
+            rest = &rest[link.end..];
+        } else {
+            out.push_str("![");
+            rest = &rest[start + 2..];
+        }
     }
 
     out
@@ -783,19 +777,13 @@ fn replace_markdown_links_for_preview(input: &str) -> String {
             break;
         };
         out.push_str(&rest[..start]);
-        let after_start = &rest[start + 1..];
-        let Some(label_end) = after_start.find("](") else {
-            out.push_str(&rest[start..]);
-            break;
-        };
-        let label = &after_start[..label_end];
-        let after_url_start = &after_start[label_end + 2..];
-        let Some(url_end) = after_url_start.find(')') else {
-            out.push_str(&rest[start..]);
-            break;
-        };
-        out.push_str(label);
-        rest = &after_url_start[url_end + 1..];
+        if let Some(link) = inline_link_at(rest, start) {
+            out.push_str(&rest[link.text]);
+            rest = &rest[link.end..];
+        } else {
+            out.push('[');
+            rest = &rest[start + 1..];
+        }
     }
 
     out
@@ -1079,6 +1067,13 @@ pub struct InlineMediaReference {
 
 /// Extract every inline media reference from a markdown body in document order,
 /// preserving whether it came from an Obsidian embed or a Markdown image.
+///
+/// A Markdown image's destination is read the `CommonMark` way
+/// (`markdown_link::inline_link_at`): without its title and angle brackets,
+/// with balanced parentheses and backslash escapes resolved, then decoded
+/// when local (`SPEC_AUDIT_FIXES.md`, В1.1). Code is not skipped: a reference
+/// that only looks like one keeps its file from being called unused.
+#[must_use]
 pub fn iter_inline_media_references(body: &str) -> Vec<InlineMediaReference> {
     let mut out = Vec::new();
     let mut i = 0;
@@ -1108,26 +1103,28 @@ pub fn iter_inline_media_references(body: &str) -> Vec<InlineMediaReference> {
             }
             i = name_start + close_offset + 2;
         } else {
-            let Some(bracket_offset) = body[after_excl..].find("](") else {
+            let Some(link) = inline_link_at(body, excl) else {
                 i = after_excl;
                 continue;
             };
-            let url_start = after_excl + bracket_offset + 2;
-            let Some(paren_end) = body[url_start..].find(')') else {
-                i = url_start;
-                continue;
-            };
-            let url = &body[url_start..url_start + paren_end];
-            if !url.is_empty() {
+            if let Some(source) = markdown_image_source(&body[link.destination]) {
                 out.push(InlineMediaReference {
-                    source: normalize_local_markdown_url(url),
+                    source,
                     syntax: InlineMediaSyntax::MarkdownImage,
                 });
             }
-            i = url_start + paren_end + 1;
+            i = link.end;
         }
     }
     out
+}
+
+/// The file a Markdown image destination names, in the form references are
+/// compared: escapes resolved and a local path percent-decoded. `None` for an
+/// empty destination.
+#[must_use]
+pub fn markdown_image_source(destination: &str) -> Option<String> {
+    (!destination.is_empty()).then(|| normalize_local_markdown_url(&unescape_destination(destination)))
 }
 
 /// Extract every inline media source from a markdown body in document order.
@@ -2632,6 +2629,45 @@ mod tests {
     fn inline_media_ignores_malformed_wikilink_without_closing() {
         let body = "![[Unclosed wikilink";
         assert!(iter_inline_media_sources(body).is_empty());
+    }
+
+    /// В1.1: a Markdown image destination ends where CommonMark ends it, not
+    /// at the first `)`: a title in any of its three forms, a destination in
+    /// angle brackets and the balanced parentheses of Mine's own media names
+    /// all leave the file name as it is on disk.
+    #[test]
+    fn inline_media_reads_markdown_destinations_the_commonmark_way() {
+        let body = "![x](../Media/p.jpg \"t\")\n\
+                    ![x](../Media/s.jpg 't')\n\
+                    ![x](../Media/r.jpg (t))\n\
+                    ![x](<../Media/p q.jpg>)\n\
+                    ![x](<../Media/a (b).jpg> \"t\")\n\
+                    ![x](../Media/Foo (image 1).jpg)\n\
+                    ![x](../Media/Bar%20%28image%202%29.jpg \"t\")\n\
+                    ![x](../Media/esc\\(1\\).jpg)";
+        assert_eq!(
+            iter_inline_media_sources(body),
+            vec![
+                "../Media/p.jpg",
+                "../Media/s.jpg",
+                "../Media/r.jpg",
+                "../Media/p q.jpg",
+                "../Media/a (b).jpg",
+                "../Media/Foo (image 1).jpg",
+                "../Media/Bar (image 2).jpg",
+                "../Media/esc(1).jpg",
+            ]
+        );
+    }
+
+    /// В1.1: what is left of a card once its media is removed does not keep
+    /// the tail of a destination with a title or with parentheses.
+    #[test]
+    fn body_without_media_embeds_drops_whole_markdown_images() {
+        assert_eq!(
+            body_without_media_embeds("![x](Foo (image 1).jpg)![y](p.jpg \"t\")"),
+            ""
+        );
     }
 
     // ── suggest_slug ────────────────────────────────────────────────────

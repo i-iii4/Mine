@@ -434,9 +434,41 @@ fn run(app: &AppHandle, job: &Job, slug: &str, video_id: &str) -> Result<(), Str
     if job.cancel.load(Ordering::SeqCst) {
         return Err("cancelled".into());
     }
-    crate::commands::blocks::attach_downloaded_source_video(app, &job.vault, slug, video_id, &finished)
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    deliver_download(&job.vault, slug, video_id, &finished, |finished| {
+        crate::commands::blocks::attach_downloaded_source_video(app, &job.vault, slug, video_id, finished)
+    })
+}
+
+/// Hand a finished download to its card through `attach` (`SPEC_AUDIT_FIXES.md`,
+/// Ф9, В3.2).
+///
+/// A refusal no later attempt changes (the card is gone, links another clip
+/// or has its own video now) leaves the video to the job's working folder,
+/// which goes. Any other failure passes: a busy index, the card edited in
+/// Obsidian between the read and the write, a folder that cannot be read
+/// now. Then the video is kept for the space, as a download finished for a
+/// closed space is, and attached when the space opens again; the job still
+/// reports the failure, saying the video is kept.
+pub(crate) fn deliver_download(
+    vault: &VaultLayout,
+    slug: &str,
+    video_id: &str,
+    finished: &Path,
+    attach: impl FnOnce(&Path) -> AttachOutcome,
+) -> Result<(), String> {
+    let outcome = attach(finished);
+    let Err(error) = &outcome else {
+        return Ok(());
+    };
+    if kept_fate(&outcome) == KeptFate::Settled {
+        return Err(error.to_string());
+    }
+    match keep_download(vault, slug, video_id, finished) {
+        Ok(()) => Err(format!(
+            "{error}. The video is kept and will be added the next time this space opens."
+        )),
+        Err(keeping) => Err(format!("{error}. The video could not be kept: {keeping}")),
+    }
 }
 
 /// A finished download kept for a space whose folder was not reachable when

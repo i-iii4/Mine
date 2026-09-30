@@ -8,6 +8,7 @@ pub mod block;
 pub mod channel;
 pub mod collection;
 pub mod markdown;
+pub mod markdown_link;
 pub mod search;
 pub mod source_patch;
 pub mod tag;

@@ -7,6 +7,7 @@ uniffi::setup_scaffolding!();
 
 use mine_core::domain::article_audio::prepare_article_speech;
 use mine_core::domain::block::{parse_markdown_document, DateTime};
+use mine_core::domain::markdown_link::inline_link_at;
 use mine_lib::domain::vault::VaultLayout;
 use mine_lib::storage::{db, index};
 use std::path::PathBuf;
@@ -204,26 +205,24 @@ fn light_block_to_ffi(b: index::IndexedBlock) -> FfiLightBlock {
     }
 }
 
+/// The local destinations of the body's Markdown images, as written, read by
+/// the one Markdown link reader Mine shares: a title, angle brackets and
+/// parentheses in a file name are told apart (`SPEC_AUDIT_FIXES.md`, В1.1).
 fn extract_markdown_media_urls(body: &str) -> Vec<String> {
     let mut urls = Vec::new();
     let mut index = 0usize;
 
     while let Some(image_start) = body[index..].find("![") {
         let absolute_start = index + image_start;
-        let rest = &body[absolute_start..];
-        let Some(paren_start) = rest.find('(') else {
-            break;
+        let Some(link) = inline_link_at(body, absolute_start) else {
+            index = absolute_start + 2;
+            continue;
         };
-        let url_start = absolute_start + paren_start + 1;
-        let Some(paren_end) = body[url_start..].find(')') else {
-            break;
-        };
-        let url_end = url_start + paren_end;
-        let candidate = body[url_start..url_end].trim();
+        let candidate = body[link.destination].trim();
         if !candidate.starts_with("http://") && !candidate.starts_with("https://") {
             urls.push(candidate.to_string());
         }
-        index = url_end + 1;
+        index = link.end;
     }
 
     urls

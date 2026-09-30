@@ -260,27 +260,16 @@ fn replace_markdown_links(input: &str) -> String {
     out
 }
 
+/// The text of the Markdown link `input` starts with and its length, read by
+/// the one Markdown link reader Mine shares (`markdown_link`, В1.1).
 fn parse_markdown_link(input: &str) -> Option<(&str, usize)> {
-    let bytes = input.as_bytes();
-    let close_label = bytes.iter().position(|b| *b == b']')?;
-    if bytes.get(close_label + 1) != Some(&b'(') {
-        return None;
-    }
-    let tail = &input[close_label + 2..];
-    let close_url = tail.find(')')?;
-    let consumed = close_label + 2 + close_url + 1;
-    Some((&input[1..close_label], consumed))
+    let link = crate::domain::markdown_link::inline_link_at(input, 0)?;
+    Some((&input[link.text], link.end))
 }
 
+/// The length of the Markdown image `input` starts with.
 fn find_markdown_link_end(input: &str) -> Option<usize> {
-    let bytes = input.as_bytes();
-    let close_label = bytes.iter().position(|b| *b == b']')?;
-    if bytes.get(close_label + 1) != Some(&b'(') {
-        return None;
-    }
-    let tail = &input[close_label + 2..];
-    let close_url = tail.find(')')?;
-    Some(close_label + 2 + close_url + 1)
+    crate::domain::markdown_link::inline_link_at(input, 0).map(|link| link.end)
 }
 
 fn remove_bare_urls(input: &str) -> String {

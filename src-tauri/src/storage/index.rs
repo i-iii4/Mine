@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::block::{
     build_preview_text, derive_card_kind, derive_title_fields, extract_note_wikilinks,
-    iter_inline_media_references, normalize_local_markdown_url, parse_markdown_document,
+    iter_inline_media_references, markdown_image_source, parse_markdown_document,
     strip_first_markdown_h1, Block, BlockType, CardKind, DateTime, Frontmatter,
     FEED_PREVIEW_TEXT_BUFFER_CHARS,
 };
@@ -551,12 +551,10 @@ fn parse_inline_media_src(line: &str) -> Option<String> {
         let name = inner.split('|').next().unwrap_or(inner).trim();
         (!name.is_empty()).then(|| name.to_string())
     } else {
-        // Standard `![alt](url)`
-        let bracket_offset = line[after_excl..].find("](")?;
-        let url_start = after_excl + bracket_offset + 2;
-        let paren_end = line[url_start..].find(')')?;
-        let src = &line[url_start..url_start + paren_end];
-        (!src.is_empty()).then(|| normalize_local_markdown_url(src))
+        // Standard `![alt](url "title")`, read the way every Markdown
+        // reader of Mine reads it (SPEC_AUDIT_FIXES.md, В1.1).
+        let image = mine_core::domain::markdown_link::inline_link_at(line, start)?;
+        markdown_image_source(&line[image.destination])
     }
 }
 
@@ -2346,7 +2344,7 @@ pub fn rename_slug(conn: &Connection, old_slug: &str, new_slug: &str) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::block::Frontmatter;
+    use crate::domain::block::{normalize_local_markdown_url, Frontmatter};
     use crate::storage::db;
 
     fn test_conn() -> Connection {
