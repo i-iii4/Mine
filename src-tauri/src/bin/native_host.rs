@@ -24,7 +24,9 @@ use mine_lib::domain::block::{Block, BlockType, DateTime, Frontmatter};
 use mine_lib::domain::channel::Channel;
 use mine_lib::domain::collection::{normalize_collection_ref, validate_collection_ref};
 use mine_lib::domain::vault::VaultLayout;
-use mine_lib::markdown_images::{build_inline_wikilink, replaceable_body_images};
+use mine_lib::markdown_images::{
+    build_inline_wikilink, media_extension_for_content_type, replaceable_body_images,
+};
 use mine_lib::net;
 use mine_lib::storage::{clipper_uploads, db, file_identity, files, index, save_operations, thumbnails};
 use mine_lib::util::now_saved_at;
@@ -538,10 +540,30 @@ fn config_generation(cfg: &serde_json::Map<String, serde_json::Value>) -> u64 {
 
 /// The spaces that can be opened right now, canonical and without repeats.
 fn load_known_vaults() -> Vec<String> {
-    let paths: Vec<String> = mine_lib::space_registry::statuses(&read_app_settings())
+    load_known_vaults_in(&read_app_settings(), native_vaults_dir().as_deref())
+}
+
+/// As [`load_known_vaults`], judging a record without an identity by the
+/// derived stores in `vaults_dir`, as the app does: an empty folder left
+/// where a space used to be is not that space (В2.2). A record whose space
+/// moved away is listed where the space is now, the folder a save to it goes
+/// to (Б2.2).
+fn load_known_vaults_in(
+    cfg: &serde_json::Map<String, serde_json::Value>,
+    vaults_dir: Option<&Path>,
+) -> Vec<String> {
+    use mine_lib::space_registry::{self, Located};
+    let paths: Vec<String> = space_registry::statuses_in(cfg, vaults_dir)
         .into_iter()
-        .filter(|status| status.available)
-        .map(|status| status.record.path)
+        .filter_map(|status| {
+            if status.available {
+                return Some(status.record.path);
+            }
+            match space_registry::locate_saved(cfg, vaults_dir, &status.record.path) {
+                Located::Moved { path, .. } => Some(path),
+                Located::Here { .. } | Located::Lost { .. } => None,
+            }
+        })
         .collect();
     let mut unique: Vec<String> = Vec::new();
     for path in paths {
@@ -902,11 +924,7 @@ fn reveal_target_in(
     let Some(target) = space.path.clone() else {
         return Err(space);
     };
-    let mut allowed: Vec<String> = mine_lib::space_registry::statuses(cfg)
-        .into_iter()
-        .filter(|status| status.available)
-        .map(|status| status.record.path)
-        .collect();
+    let mut allowed = load_known_vaults_in(cfg, vaults_dir);
     allowed.extend(mine_lib::space_registry::current_path(cfg));
     if !allowed.iter().any(|vault| same_native_space(vault, &target)) {
         return Err(RequestSpace {
@@ -1907,39 +1925,13 @@ fn ext_from_url_opt(url: &str) -> Option<&str> {
     Some(ext)
 }
 
-/// Map a `Content-Type` value to the extension Mine stores media under.
-///
-/// Only the types the rest of the pipeline can display are mapped; anything
-/// else returns `None` so the caller keeps whatever it already assumed.
-fn ext_from_content_type(content_type: &str) -> Option<&'static str> {
-    let mime = content_type
-        .split(';')
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_lowercase();
-    Some(match mime.as_str() {
-        "image/jpeg" => "jpg",
-        "image/png" => "png",
-        "image/gif" => "gif",
-        "image/webp" => "webp",
-        "image/avif" => "avif",
-        "image/heic" => "heic",
-        "image/svg+xml" => "svg",
-        "video/mp4" => "mp4",
-        "video/webm" => "webm",
-        "video/quicktime" => "mov",
-        _ => return None,
-    })
-}
-
 /// Ask a server what it is about to serve, for URLs that do not say.
 ///
 /// A failure here is not an error: the caller falls back to its own assumption,
 /// so a server that refuses HEAD costs nothing beyond one request.
 fn probe_ext_over_network(url: &str) -> Option<&'static str> {
     let resp = mine_lib::net::fetch_validated_head(url, INLINE_REQUEST_TIMEOUT, &[]).ok()?;
-    ext_from_content_type(resp.header("Content-Type")?)
+    media_extension_for_content_type(resp.header("Content-Type")?)
 }
 
 /// Whole-request timeout for the HEAD probe of inline media. ureq 2.x default
@@ -4276,6 +4268,36 @@ mod tests {
     }
 
     #[test]
+    fn a_moved_legacy_space_is_listed_where_it_is_and_the_empty_folder_is_not() {
+        // В2.2 in the helper: the settings list only path A, the derived
+        // store of space X last saw it at A, A is now an empty folder and X
+        // lives in B. The popup's space list and Reveal follow X to B.
+        let tmp = TempDir::new().unwrap();
+        let spaces = tmp.path().join("Spaces");
+        std::fs::create_dir_all(spaces.join("Mine")).unwrap();
+        let a = std::fs::canonicalize(spaces.join("Mine"))
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let b = k_space(&spaces, "Mine moved");
+        let state = tmp.path().join("state");
+        derived_owner(&state, K_SPACE_ID, &a);
+        let vaults = mine_lib::space_registry::vaults_dir(&state);
+
+        // Settings from before the registry, and ones that already list B too.
+        let mut listing_both = legacy_settings(&a);
+        listing_both["known_vaults"] = serde_json::json!([a, b]);
+        for cfg in [legacy_settings(&a), listing_both] {
+            assert_eq!(load_known_vaults_in(&cfg, Some(&vaults)), [b.clone()]);
+            assert_eq!(
+                reveal_target_in(&cfg, Some(&vaults), &serde_json::json!({ "path": a })).unwrap(),
+                b
+            );
+        }
+        assert_eq!(std::fs::read_dir(&a).unwrap().count(), 0, "A must stay untouched");
+    }
+
+    #[test]
     fn a_legacy_path_holding_another_space_or_no_space_receives_nothing() {
         let tmp = TempDir::new().unwrap();
         let state = tmp.path().join("state");
@@ -5080,15 +5102,6 @@ mod tests {
         // The guessing wrapper keeps its old answer for both cases.
         assert_eq!(ext_from_url("https://h.example/media"), "jpg");
         assert_eq!(ext_from_url("https://h.example/a.mp4"), "mp4");
-    }
-
-    #[test]
-    fn content_type_maps_to_storable_extension() {
-        assert_eq!(ext_from_content_type("video/mp4"), Some("mp4"));
-        assert_eq!(ext_from_content_type("Video/MP4; codecs=avc1"), Some("mp4"));
-        assert_eq!(ext_from_content_type("image/png"), Some("png"));
-        assert_eq!(ext_from_content_type("application/octet-stream"), None);
-        assert_eq!(ext_from_content_type(""), None);
     }
 
     #[test]

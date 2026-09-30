@@ -17,14 +17,25 @@
 // `--dry-run` (default) reports what would be downloaded without touching the
 // disk. `--apply` downloads and rewrites in place. No backups are taken — the
 // user is responsible for git/iCloud/Time Machine before applying.
+//
+// Every note of the space is read, in any folder, the way the app indexes it.
+// Media is saved where the app saves new media (the media folder of
+// `.mine/layout.json`, the root of a flat space) and named by the app's
+// collision rule.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
-use mine_lib::markdown_images::{build_inline_wikilink, replaceable_body_images, BodyImage};
-use mine_lib::net::download_validated_to_file;
+use mine_core::links::LinkIndex;
+use mine_core::save::select_unique_file_stem;
+use mine_lib::domain::vault::VaultLayout;
+use mine_lib::markdown_images::{
+    build_inline_wikilink, media_extension_for_content_type, replaceable_body_images, BodyImage,
+};
+use mine_lib::net::{download_validated_to_file, fetch_validated_head};
+use mine_lib::storage::files;
 
 /// How long a download may stall (connecting, or between reads), not a
 /// deadline for the whole file.
@@ -79,7 +90,7 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     }
 
-    match run(&vault_path, apply) {
+    match run(&vault_path, apply, &Network) {
         Ok(report) => {
             println!(
                 "\n{} .md files scanned, {} remote references in {} notes, \
@@ -116,63 +127,99 @@ struct Report {
     skipped: usize,
 }
 
-fn run(vault_path: &Path, apply: bool) -> anyhow::Result<Report> {
+/// What the tool asks of the network. Tests stand in for it.
+trait Remote {
+    /// The `Content-Type` the server announces for `url`, if it answers.
+    fn content_type(&self, url: &str) -> Option<String>;
+    /// Download `url` to the new file `dest`.
+    fn download(&self, url: &str, dest: &Path) -> anyhow::Result<()>;
+}
+
+struct Network;
+
+impl Remote for Network {
+    fn content_type(&self, url: &str) -> Option<String> {
+        let resp = fetch_validated_head(url, PROBE_TIMEOUT, &[]).ok()?;
+        resp.header("Content-Type").map(str::to_string)
+    }
+
+    fn download(&self, url: &str, dest: &Path) -> anyhow::Result<()> {
+        download_validated_to_file(url, dest, REQUEST_TIMEOUT, &[])
+    }
+}
+
+/// Localize the remote media of every note in the space at `vault_path`.
+///
+/// Notes are the ones the app indexes (`files::scan_md_files`: every `.md`
+/// below the root, hidden and service folders skipped). Media goes where the
+/// app writes new media: the media folder of `.mine/layout.json`, the root of
+/// a flat space. A new name follows the app's collision rule across the whole
+/// space (`select_unique_file_stem`), and the embed names the file by its
+/// shortest unambiguous link, so it resolves from the note wherever it sits.
+/// Without `apply` nothing on disk changes.
+fn run(vault_path: &Path, apply: bool, remote: &dyn Remote) -> anyhow::Result<Report> {
     let mut report = Report::default();
-    let existing = existing_names(vault_path);
+    let vault = files::layout_for_new_files(&VaultLayout::new(vault_path.to_path_buf()))?;
+    // Every file name in the space, grown by each name this run takes.
+    let mut paths = files::scan_vault_file_paths(&vault)?;
 
-    for entry in std::fs::read_dir(vault_path)? {
-        let path = entry?.path();
-        if !path.is_file() || path.extension().and_then(|e| e.to_str()) != Some("md") {
-            continue;
-        }
-        if path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n.starts_with('.'))
-        {
-            continue;
-        }
-
+    for note in files::scan_md_files(&vault)? {
         report.scanned += 1;
-        let original = std::fs::read_to_string(&path)?;
+        let original = std::fs::read_to_string(&note)?;
         let references = remote_references(&original);
         if references.is_empty() {
             continue;
         }
 
-        let stem = path
+        let stem = note
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("media")
             .to_string();
         report.notes_with_references += 1;
         report.references += references.len();
-        println!("{}", path.display());
+        println!("{}", note.display());
 
         let mut stored = BTreeMap::new();
         for (index, url) in references.iter().enumerate() {
             // Not every embedded URL is media. Bodies also carry shortener
             // links (t.co and friends) that resolve to a page; downloading one
             // would store an HTML document as if it were a picture. Ask the
-            // server what it serves before believing the markup.
-            let Some(ext) = media_extension(url) else {
+            // server what it serves before believing the markup; the clipper
+            // stores the same types under the same extensions.
+            let content_type = remote.content_type(url);
+            let Some(ext) = content_type
+                .as_deref()
+                .and_then(media_extension_for_content_type)
+            else {
                 report.skipped += 1;
                 if !apply {
                     println!("  · skipped, not media: {url}");
                 }
                 continue;
             };
-            let name = unique_name(&existing, &stem, index + 1, ext);
+            let raw_name = format!("{stem} (media {})", index + 1);
+            let name = match select_unique_file_stem(&raw_name, ext, &paths) {
+                Ok(name) => format!("{name}.{ext}"),
+                Err(error) => {
+                    println!("  ✗ {url}: no free name for {raw_name}.{ext}: {error}");
+                    report.failed += 1;
+                    continue;
+                }
+            };
+            let relative = vault.new_media_stem(&name);
             if !apply {
-                println!("  → {name}  ({url})");
+                println!("  → {relative}  ({url})");
+                paths.push(relative);
                 continue;
             }
 
-            let dest = vault_path.join(&name);
-            match download_validated_to_file(url, &dest, REQUEST_TIMEOUT, &[]) {
+            let dest = vault.new_media_path(&name);
+            match download_into_space(&vault, remote, url, &dest) {
                 Ok(()) => {
-                    println!("  ✓ {name}");
-                    stored.insert(url.clone(), name);
+                    println!("  ✓ {relative}");
+                    paths.push(relative.clone());
+                    stored.insert(url.clone(), relative);
                     report.downloaded += 1;
                 }
                 Err(e) => {
@@ -183,32 +230,37 @@ fn run(vault_path: &Path, apply: bool) -> anyhow::Result<Report> {
         }
 
         if !stored.is_empty() {
-            std::fs::write(&path, replace_references(&original, &stored))?;
+            let links = LinkIndex::new(&paths);
+            let targets = stored
+                .into_iter()
+                .map(|(url, relative)| {
+                    let link = links.shortest_link(&relative, false).unwrap_or(relative);
+                    (url, link)
+                })
+                .collect();
+            // The note may have been edited during the downloads: rewrite what
+            // it holds now, so an edit made meanwhile is kept.
+            let current = std::fs::read_to_string(&note)?;
+            files::write_atomically(&note, replace_references(&current, &targets).as_bytes())?;
         }
     }
 
     Ok(report)
 }
 
-/// Every filename already in the vault, so generated names never collide with
-/// media a note is legitimately using.
-fn existing_names(vault_path: &Path) -> BTreeSet<String> {
-    let Ok(entries) = std::fs::read_dir(vault_path) else {
-        return BTreeSet::new();
-    };
-    entries
-        .filter_map(|entry| entry.ok()?.file_name().to_str().map(str::to_string))
-        .collect()
-}
-
-fn unique_name(existing: &BTreeSet<String>, stem: &str, index: usize, ext: &str) -> String {
-    let mut candidate = format!("{stem} (media {index}).{ext}");
-    let mut suffix = index;
-    while existing.contains(&candidate) {
-        suffix += 1;
-        candidate = format!("{stem} (media {suffix}).{ext}");
+/// Download `url` to `dest` inside the space, creating the media folder when
+/// the space has none yet and refusing a target that leaves the space.
+fn download_into_space(
+    vault: &VaultLayout,
+    remote: &dyn Remote,
+    url: &str,
+    dest: &Path,
+) -> anyhow::Result<()> {
+    files::validate_vault_write_target(vault, dest)?;
+    if let Some(folder) = dest.parent() {
+        std::fs::create_dir_all(folder)?;
     }
-    candidate
+    remote.download(url, dest)
 }
 
 /// Byte offset where a note's Markdown body begins: after the frontmatter
@@ -275,37 +327,10 @@ fn replace_references(content: &str, stored: &BTreeMap<String, String>) -> Strin
     out
 }
 
-/// The extension to store `url` under, or `None` if it does not serve media.
-///
-/// The server decides, not the markup: an embed can point at anything, and a
-/// URL that ends in `.jpg` is not proof either. One HEAD per reference is cheap
-/// next to the download it guards.
-fn media_extension(url: &str) -> Option<&'static str> {
-    let resp = mine_lib::net::fetch_validated_head(url, PROBE_TIMEOUT, &[]).ok()?;
-    let content_type = resp.header("Content-Type")?;
-    let mime = content_type
-        .split(';')
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_lowercase();
-    Some(match mime.as_str() {
-        "image/jpeg" => "jpg",
-        "image/png" => "png",
-        "image/gif" => "gif",
-        "image/webp" => "webp",
-        "image/avif" => "avif",
-        "image/heic" => "heic",
-        "video/mp4" => "mp4",
-        "video/webm" => "webm",
-        "video/quicktime" => "mov",
-        _ => return None,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mine_core::links::{LinkResolution, LinkSyntax};
 
     #[test]
     fn finds_only_embedded_remote_media() {
@@ -434,11 +459,189 @@ mod tests {
     }
 
     #[test]
-    fn generated_names_avoid_files_already_in_the_vault() {
-        let existing: BTreeSet<String> = ["Note (media 1).mp4".to_string()].into_iter().collect();
-        assert_eq!(
-            unique_name(&existing, "Note", 1, "mp4"),
-            "Note (media 2).mp4"
+    fn a_repaired_note_names_its_media_by_the_apps_collision_rule() {
+        // A name already taken anywhere in the space gets the app's ` (2)`
+        // suffix; a server that answers with a page is not downloaded.
+        let space = Space::flat();
+        space.write("Elsewhere/Note (media 1).jpg", "someone else's picture");
+        space.write(
+            "Note.md",
+            "![a](https://h.com/a.jpg)\n\n![page](https://t.co/x)\n",
         );
+        let remote = FakeRemote::new(&[
+            ("https://h.com/a.jpg", "image/jpeg"),
+            ("https://t.co/x", "text/html; charset=utf-8"),
+        ]);
+
+        let report = run(space.root(), true, &remote).unwrap();
+
+        assert_eq!((report.downloaded, report.skipped), (1, 1));
+        assert_eq!(space.read("Note (media 1) (2).jpg"), "https://h.com/a.jpg");
+        assert_eq!(
+            space.read("Note.md"),
+            "![[Note (media 1) (2).jpg|a]]\n\n![page](https://t.co/x)\n"
+        );
+        assert_eq!(
+            space.resolve("Note.md", "Note (media 1) (2).jpg"),
+            LinkResolution::Resolved("Note (media 1) (2).jpg".to_string())
+        );
+    }
+
+    #[test]
+    fn notes_in_any_folder_get_their_media_in_the_media_folder() {
+        // В4.7: the three-folder layout keeps notes in `Cards/` and deeper;
+        // media goes to `Media/`, created on first use, and the embed resolves
+        // from the note. Hidden folders are not notes.
+        let space = Space::standard();
+        let card = "---\ntype: article\n---\n# Card\n\n![a](https://h.com/a.jpg)\n";
+        space.write("Cards/Card.md", card);
+        space.write("Projects/Deep/Diagram.md", "![d](https://h.com/d.svg)\n");
+        let hidden = "![h](https://h.com/h.jpg)\n";
+        space.write(".obsidian/Hidden.md", hidden);
+        let remote = FakeRemote::new(&[
+            ("https://h.com/a.jpg", "image/jpeg"),
+            ("https://h.com/d.svg", "image/svg+xml"),
+            ("https://h.com/h.jpg", "image/jpeg"),
+        ]);
+
+        let report = run(space.root(), true, &remote).unwrap();
+
+        assert_eq!((report.scanned, report.downloaded), (2, 2));
+        assert_eq!(
+            space.read("Media/Card (media 1).jpg"),
+            "https://h.com/a.jpg"
+        );
+        assert_eq!(
+            space.read("Media/Diagram (media 1).svg"),
+            "https://h.com/d.svg"
+        );
+        assert!(!space.path("Card (media 1).jpg").exists());
+        assert!(!space.path("Cards/Card (media 1).jpg").exists());
+        assert_eq!(
+            space.read("Cards/Card.md"),
+            card.replace("![a](https://h.com/a.jpg)", "![[Card (media 1).jpg|a]]")
+        );
+        assert_eq!(
+            space.read("Projects/Deep/Diagram.md"),
+            "![[Diagram (media 1).svg|d]]\n"
+        );
+        assert_eq!(
+            space.resolve("Cards/Card.md", "Card (media 1).jpg"),
+            LinkResolution::Resolved("Media/Card (media 1).jpg".to_string())
+        );
+        assert_eq!(
+            space.resolve("Projects/Deep/Diagram.md", "Diagram (media 1).svg"),
+            LinkResolution::Resolved("Media/Diagram (media 1).svg".to_string())
+        );
+        assert_eq!(space.read(".obsidian/Hidden.md"), hidden);
+    }
+
+    #[test]
+    fn dry_run_downloads_and_writes_nothing() {
+        let space = Space::standard();
+        space.write("Cards/Card.md", "![a](https://h.com/a.jpg)\n");
+        let before = space.files();
+        let remote = FakeRemote::new(&[("https://h.com/a.jpg", "image/jpeg")]);
+
+        let report = run(space.root(), false, &remote).unwrap();
+
+        assert_eq!(report.references, 1);
+        assert!(remote.downloaded.borrow().is_empty());
+        assert_eq!(space.files(), before);
+    }
+
+    /// A temporary space on disk.
+    struct Space(tempfile::TempDir);
+
+    impl Space {
+        fn flat() -> Self {
+            Self(tempfile::tempdir().unwrap())
+        }
+
+        /// The three-folder layout the app writes for a new space.
+        fn standard() -> Self {
+            let space = Self::flat();
+            space.write(
+                ".mine/layout.json",
+                r#"{"cards":"Cards","media":"Media","collections":"Collections"}"#,
+            );
+            space
+        }
+
+        fn root(&self) -> &Path {
+            self.0.path()
+        }
+
+        fn path(&self, relative: &str) -> PathBuf {
+            self.root().join(relative)
+        }
+
+        fn write(&self, relative: &str, content: &str) {
+            let path = self.path(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, content).unwrap();
+        }
+
+        fn read(&self, relative: &str) -> String {
+            std::fs::read_to_string(self.path(relative)).unwrap()
+        }
+
+        /// Every file of the space with its bytes.
+        fn files(&self) -> BTreeMap<PathBuf, Vec<u8>> {
+            fn walk(dir: &Path, out: &mut BTreeMap<PathBuf, Vec<u8>>) {
+                for entry in std::fs::read_dir(dir).unwrap() {
+                    let path = entry.unwrap().path();
+                    if path.is_dir() {
+                        walk(&path, out);
+                    } else {
+                        out.insert(path.clone(), std::fs::read(&path).unwrap());
+                    }
+                }
+            }
+            let mut files = BTreeMap::new();
+            walk(self.root(), &mut files);
+            files
+        }
+
+        /// How the app resolves the Obsidian link `target` written in `note`.
+        fn resolve(&self, note: &str, target: &str) -> LinkResolution {
+            let vault = VaultLayout::new(self.root().to_path_buf());
+            LinkIndex::new(files::scan_vault_file_paths(&vault).unwrap()).resolve(
+                note,
+                target,
+                LinkSyntax::Obsidian,
+            )
+        }
+    }
+
+    /// Servers that announce the given content types and serve their own URL
+    /// as the file's bytes.
+    struct FakeRemote {
+        content_types: BTreeMap<String, String>,
+        downloaded: std::cell::RefCell<Vec<String>>,
+    }
+
+    impl FakeRemote {
+        fn new(content_types: &[(&str, &str)]) -> Self {
+            Self {
+                content_types: content_types
+                    .iter()
+                    .map(|(url, content_type)| ((*url).to_string(), (*content_type).to_string()))
+                    .collect(),
+                downloaded: std::cell::RefCell::default(),
+            }
+        }
+    }
+
+    impl Remote for FakeRemote {
+        fn content_type(&self, url: &str) -> Option<String> {
+            self.content_types.get(url).cloned()
+        }
+
+        fn download(&self, url: &str, dest: &Path) -> anyhow::Result<()> {
+            self.downloaded.borrow_mut().push(url.to_string());
+            std::fs::write(dest, url)?;
+            Ok(())
+        }
     }
 }

@@ -1,5 +1,6 @@
-//! Images of a Markdown body that can be stored locally, and the Obsidian
-//! wikilink that replaces each of them.
+//! Images of a Markdown body that can be stored locally, the extension a
+//! server's content type stores them under, and the Obsidian wikilink that
+//! replaces each of them.
 //!
 //! Shared by the clipper's native host, which localizes a body at save time,
 //! and the `localize-remote-media` repair tool, which localizes notes after
@@ -193,6 +194,34 @@ pub fn build_inline_wikilink(name: &str, alt: &str) -> String {
     }
 }
 
+/// Map a `Content-Type` value to the extension Mine stores media under.
+///
+/// Only the types the rest of the pipeline can display are mapped; anything
+/// else returns `None`, so the helper keeps whatever it already assumed and
+/// the repair tool leaves the reference alone.
+#[must_use]
+pub fn media_extension_for_content_type(content_type: &str) -> Option<&'static str> {
+    let mime = content_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
+    Some(match mime.as_str() {
+        "image/jpeg" => "jpg",
+        "image/png" => "png",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/avif" => "avif",
+        "image/heic" => "heic",
+        "image/svg+xml" => "svg",
+        "video/mp4" => "mp4",
+        "video/webm" => "webm",
+        "video/quicktime" => "mov",
+        _ => return None,
+    })
+}
+
 /// Whether `![[name|caption]]` holds `caption` whole. Obsidian and the
 /// renderer end the embed at the first `]]`, so a caption containing `]]` or
 /// ending in `]` would close it early and spill the rest into the text.
@@ -231,6 +260,26 @@ fn encode_markdown_url_component(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn content_type_maps_to_storable_extension() {
+        assert_eq!(media_extension_for_content_type("video/mp4"), Some("mp4"));
+        assert_eq!(
+            media_extension_for_content_type("Video/MP4; codecs=avc1"),
+            Some("mp4")
+        );
+        assert_eq!(media_extension_for_content_type("image/png"), Some("png"));
+        assert_eq!(
+            media_extension_for_content_type("image/svg+xml; charset=utf-8"),
+            Some("svg")
+        );
+        assert_eq!(
+            media_extension_for_content_type("application/octet-stream"),
+            None
+        );
+        assert_eq!(media_extension_for_content_type("text/html"), None);
+        assert_eq!(media_extension_for_content_type(""), None);
+    }
 
     // ── Markdown URL encoding ───────────────────────────────────────────
 

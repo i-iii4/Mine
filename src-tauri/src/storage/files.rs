@@ -980,13 +980,69 @@ pub fn delete_user_files(paths: &[PathBuf]) -> Result<()> {
     if paths.is_empty() {
         return Ok(());
     }
-    #[cfg(not(target_os = "ios"))]
+    // Unit tests delete temp notes by the hundred: they go to a test trash,
+    // never into the person's own Trash.
+    #[cfg(test)]
+    {
+        test_trash::move_all(paths)
+    }
+    #[cfg(all(not(test), not(target_os = "ios")))]
     {
         trash::delete_all(paths).context("failed to move files to the system Trash")
     }
-    #[cfg(target_os = "ios")]
+    #[cfg(all(not(test), target_os = "ios"))]
     {
         anyhow::bail!("system Trash is unavailable; files were not deleted")
+    }
+}
+
+/// The Trash of unit tests: a folder in the system temp directory. A file
+/// moved here leaves its path exactly as a trashed one does, and its bytes
+/// stay readable, so rollback and "changed while trashing" checks behave as
+/// with the system Trash.
+#[cfg(test)]
+mod test_trash {
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use anyhow::{Context, Result};
+
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    fn slot() -> Result<PathBuf> {
+        let slot = std::env::temp_dir()
+            .join("mine-test-trash")
+            .join(format!("{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        std::fs::create_dir_all(&slot).with_context(|| format!("create {}", slot.display()))?;
+        Ok(slot)
+    }
+
+    fn move_one(path: &Path) -> Result<()> {
+        let name = path
+            .file_name()
+            .with_context(|| format!("no file name: {}", path.display()))?;
+        let target = slot()?.join(name);
+        if std::fs::rename(path, &target).is_ok() {
+            return Ok(());
+        }
+        // Another volume: copy, then remove the original, as the Trash does.
+        if path.is_dir() {
+            anyhow::bail!("test trash cannot move a folder across volumes: {}", path.display());
+        }
+        std::fs::copy(path, &target).with_context(|| format!("copy {}", path.display()))?;
+        std::fs::remove_file(path).with_context(|| format!("remove {}", path.display()))
+    }
+
+    pub(super) fn move_all(paths: &[PathBuf]) -> Result<()> {
+        // Like the system Trash, a batch naming a missing file moves nothing.
+        for path in paths {
+            std::fs::symlink_metadata(path)
+                .with_context(|| format!("failed to move {} to the test trash", path.display()))?;
+        }
+        for path in paths {
+            move_one(path).with_context(|| format!("failed to move {} to the test trash", path.display()))?;
+        }
+        Ok(())
     }
 }
 
@@ -1209,6 +1265,24 @@ fn is_image_ext(ext: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unit_tests_trash_into_the_test_trash_not_the_persons_trash() {
+        let temp = tempfile::tempdir().unwrap();
+        let note = temp.path().join("Note.md");
+        std::fs::write(&note, b"note bytes").unwrap();
+
+        delete_user_file(&note).unwrap();
+
+        assert!(!note.exists());
+        let test_trash = std::env::temp_dir().join("mine-test-trash");
+        let kept = std::fs::read_dir(&test_trash)
+            .unwrap()
+            .flatten()
+            .map(|slot| slot.path().join("Note.md"))
+            .find(|candidate| std::fs::read(candidate).is_ok_and(|bytes| bytes == b"note bytes"));
+        assert!(kept.is_some(), "the note must land in {}", test_trash.display());
+    }
 
     #[test]
     fn sc2_layout_initialization_never_overwrites_corrupt_or_changed_marker() {
