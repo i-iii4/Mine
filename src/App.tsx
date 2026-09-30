@@ -886,8 +886,8 @@ export function AppWithVault({
   const previewRowsRef = useRef<ReturnType<typeof createPreviewRowQueue> | null>(null);
   // A preview that lands before the feed holds its card: the feed read that
   // brings the card may have started before the preview was written, and
-  // would leave the card on its provisional shape (a restored video stayed
-  // 16:9 over a square picture). Remembered briefly, re-read on arrival.
+  // would leave the card on its provisional shape until the next full read.
+  // Remembered briefly, re-read on arrival.
   const unseenPreviewSlugsRef = useRef(new Map<string, number>());
   useEffect(() => {
     previewRowRevisionsRef.current.clear();

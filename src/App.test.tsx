@@ -2613,9 +2613,9 @@ describe("AppWithVault", () => {
   });
 
   it("reads again a new card whose preview landed while the feed read was in flight", async () => {
-    // A video restored from Orphans stayed on the provisional 16:9 shape over
-    // a square picture: its preview landed before the feed held the card, and
-    // the feed then applied the card as read before the preview existed.
+    // The preview landed before the feed held the card, and the feed then
+    // applied the card as read before the preview existed: without a second
+    // read it would keep its provisional shape.
     const existing = block(1, "existing");
     commandMocks.listGridBlocks.mockResolvedValue(gridSnapshot([existing]));
     render(<MemoryRouter><AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} /></MemoryRouter>);

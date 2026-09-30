@@ -176,6 +176,10 @@ Autoplay semantics в descriptor не кодируются.
 - autoplay возможен только через `FeedVideoSurface`
 - при `feed_playback == null` карточка показывает poster-only preview
 - `PlayBadge` показывается только для poster/preview states и не остаётся поверх уже autoplay-playing surface
+- карточка принимает форму постера в пределах от 1:2 до 2:1, а не жёсткую
+  рамку 16:9; поверхность, высота в раскладке и конверт автовоспроизведения
+  читают одну пропорцию ([SPEC_CARD_MEDIA_GEOMETRY.md](SPEC_CARD_MEDIA_GEOMETRY.md),
+  решение пользователя 30.09.2026)
 
 ## `FeedVideoSurface`
 
