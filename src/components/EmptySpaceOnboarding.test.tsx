@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { EmptySpaceOnboarding } from "./EmptySpaceOnboarding";
+import { EXTENSION_INSTALL_STEP, EmptySpaceOnboarding } from "./EmptySpaceOnboarding";
 
 describe("EmptySpaceOnboarding", () => {
   it("offers both ways to fill a space and does not offer the cancelled import", async () => {
@@ -22,7 +22,9 @@ describe("EmptySpaceOnboarding", () => {
     expect(screen.queryByText(/Are\.na/)).not.toBeInTheDocument();
   });
 
-  it("starts the extension setup", async () => {
+  it("shows the extension folder and says how to load it, right here", async () => {
+    // Settings no longer has an Extension section (SPEC_ONBOARDING.md, О16):
+    // the steps live where a new person first meets the extension.
     const onInstallClipper = vi.fn();
     const user = userEvent.setup();
     render(
@@ -31,9 +33,11 @@ describe("EmptySpaceOnboarding", () => {
         onInstallClipper={onInstallClipper}
       />,
     );
+    expect(screen.queryByText(EXTENSION_INSTALL_STEP)).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /install the extension/i }));
-    expect(onInstallClipper).toHaveBeenCalled();
+    expect(onInstallClipper).toHaveBeenCalledOnce();
+    expect(screen.getByRole("status")).toHaveTextContent("Load unpacked");
   });
 
 });

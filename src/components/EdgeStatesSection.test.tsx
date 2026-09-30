@@ -33,14 +33,11 @@ describe("EdgeStatesSection", () => {
     expect(container.querySelector("[data-cloud-recommendation-card]")).not.toBeNull();
     expect(container.querySelector("[data-cloud-disclaimer]")).toBeNull();
 
-    // Every clipper variant, including the one that used to break saving in
-    // silence — plus the settings-page frame showing where the block lives.
-    expect(container.querySelectorAll("[data-clipper-status]")).toHaveLength(5);
-    expect(screen.getByText(/Helper differs from this Mine build/)).toBeInTheDocument();
-    // Thrice: the settings-page frame, no host installed, and no browser to
-    // install into.
-    expect(screen.getAllByText("Helper not registered yet")).toHaveLength(3);
-    expect(screen.getAllByText(/Found on this Mac: Chrome, Dia/).length).toBeGreaterThan(0);
+    // The clipper helper repairs itself and Settings has no Extension section
+    // (SPEC_ONBOARDING.md, О5, О16): no status block is drawn anywhere, and
+    // the install steps show on the empty space instead.
+    expect(container.querySelector("[data-clipper-status]")).toBeNull();
+    expect(container.querySelector("[data-empty-space-install-step]")).not.toBeNull();
 
     // Words that name a file's state rather than an app error.
     expect(

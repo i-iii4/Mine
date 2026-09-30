@@ -218,6 +218,7 @@ import {
   deleteTextSelection,
   sweepVaultThumbnails,
   openSettingsWindow,
+  clipperExtensionFolder,
   setSidebarMenuCollapsed,
   createBlock,
   readClipboardPayload
@@ -1486,6 +1487,14 @@ export function AppWithVault({
     routeKeyFor,
     vaultReady,
   ]);
+
+  // The empty-space onboarding shows where the extension is: the folder a
+  // browser loads once (SPEC_ONBOARDING.md, О16).
+  const revealClipperExtensionFolder = useCallback(() => {
+    void clipperExtensionFolder()
+      .then((folder) => revealItemInDir(folder))
+      .catch((error) => console.error("Could not show the extension folder:", error));
+  }, []);
 
   const checkSpaceOnboarding = useCallback(() => {
     const path = vaultPath;
@@ -3582,7 +3591,7 @@ export function AppWithVault({
                 hoverPreviewFrozen={cardActionsMenuTarget !== null}
                 onNavigateCollection={handleTopCollectionNavigate}
                 acceptGraphRevision={acceptGraphRevision}
-                onInstallClipper={() => void openSettingsWindow()}
+                onInstallClipper={revealClipperExtensionFolder}
                 spaceOnboardingOwed={spaceOnboardingOwed}
                 firstIndexProgress={isSyncing ? syncProgress : null}
               />

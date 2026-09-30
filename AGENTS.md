@@ -37,6 +37,7 @@
 - `SPEC_FEED_VIDEO.md` — desktop feed video contract: четыре surfaces, `feed_playback` descriptor, autoplay gating standard/heavy
 - `SPEC_GRAPH_VIEW.md` — спецификация Graph View: Canvas force-directed graph на базе решения Longevity Landscape, graph snapshot read model, коллекции/wikilinks/related notes, физика, UX и проверки
 - `SPEC_GROUP_SELECTION.md` — групповое выделение в Grid: marquee/keyboard selection, batch card actions, selection-scoped меню
+- [SPEC_AUDIT_FIXES.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_AUDIT_FIXES.md>): исправления по повторному аудиту 29.09.2026: контракты сохранения исходного текста, записи со сверкой, привязки операций клиппера, каталог находок А2 по А10 и то, что не делаем; этапы 1 по 8 реализованы 30.09.2026, живая приёмка за пользователем
 - `SPEC_CARD_STATES.md`: единые состояния карточки (наведение, фокус, выделение) и связи карточки с коллекциями в боковом меню; реализовано 28.09.2026
 - `SPEC_ARTICLE_AUDIO.md` — manual article audio renditions: speech prep, derived audio state, desktop/iOS controls. **Функция выключена** (Cargo feature `article-audio` вне `default`, `ARTICLE_AUDIO_ENABLED = false`); процедура включения — в самой спецификации
 - `SPEC_TEXT_SELECTION_EXTRACTION.md` — извлечение выделенного текста статьи в отдельный article-блок и удаление фрагмента из source `.md`
@@ -54,6 +55,7 @@
 - `SPEC_DISTRIBUTION.md` — production-контракт подписи, доставки, обновлений, диагностики; статус DEFERRED по явному продуктовому решению
 - `SPEC_STARTUP_PERFORMANCE.md` — принятый контракт мгновенного запуска: окно и local snapshot образуют отдельный critical path, а клиппер/freshness/preview maintenance выполняются после первого интерактивного кадра
 - `DESIGN_SYSTEM_IOS.md` — дизайн-система iOS: цвета, типографика, компоненты, жесты
+- `SPEC_AI_ACCESS.md` — доступ AI-агентов к материалам: ядро → CLI `mine` → MCP, read-only контракт, JSON-вывод как будущие схемы MCP
 - `SPEC_ONBOARDING.md` — онбординг: расширение как самостоятельная точка входа, установка расширения без терминала, первый запуск, пустая лента, импорт Are.na
 - `SPEC_VAULT_LIFECYCLE.md` — жизненный цикл пространства: раскладка трёх папок и настраиваемые целевые папки, детерминированное правило дублей, перемещения, недоступное пространство, удаление и уборка
 - `SPEC_CLOUD_STORAGE.md` — хранилище в iCloud: неблокирующий интерфейс, честный прогресс, индикаторы загрузки и индексации, встроенная рекомендация вместо форума
@@ -95,6 +97,7 @@
 | Defuddle | Извлечение статей + Markdown-конвертация + YouTube-транскрипты (content script) |
 | src/lib/masonryLayout.ts | Кастомный virtualized masonry layout engine |
 | src/lib/cardAspect.ts | Политика кадрирования: кламп пропорции карточки `1:2 … 2:1` |
+| src/lib/motion.ts | Единая настройка уменьшения движения для программных анимаций и прокрутки |
 | ESLint 10 + typescript-eslint | Линтинг фронтенда (TypeScript) |
 | Vitest + Testing Library | Frontend-тесты (`bun run test:frontend`) |
 | Playwright + pngjs | Browser acceptance gates: Feed, Graph, cold-space, sidebar reorder |
@@ -125,6 +128,9 @@ local-arena/
 │   │   ├── bindings.rs         # Rust-owned IPC DTO contract для Specta-экспорта
 │   │   ├── net.rs              # validate_fetch_url и сетевые утилиты (native host, импорт)
 │   │   ├── util.rs             # Общие утилиты приложения и native host
+│   │   ├── app_config.rs       # Единственный владелец config.json: блокировка, сохранение чужих ключей, поколение
+│   │   ├── space_registry.rs   # Реестр пространств по vault_id, восстановление, поиск переехавшей папки
+│   │   ├── clipper_registration.rs # Регистрация помощника в браузерах: список браузеров, замена помощника
 │   │   ├── youtube_embed.rs    # Локальная страница-обёртка проигрывателя YouTube (Referer, ошибка 153)
 │   │   ├── frame_context_menu.rs # Правый клик по встроенному кадру: меню Mine вместо меню WebKit
 │   │   ├── source_video_download.rs # Download Media: yt-dlp, склейка, прогресс, отмена
@@ -145,6 +151,7 @@ local-arena/
 │   │   │   ├── cold_space_audit.rs # Cold/reopen/cache-reset projection acceptance
 │   │   │   ├── index.rs        # Frontmatter → SQLite indexing
 │   │   │   ├── reconcile.rs    # Filesystem-first реконсиляция source vault ↔ индекс
+│   │   │   ├── root_guard.rs   # Страж корня: массовые удаления только при живом корне с тем же vault_id
 │   │   │   ├── source_mutation.rs # Атомарные multi-file мутации source с rollback
 │   │   │   ├── block_queries.rs # Block read models + row hydration
 │   │   │   ├── channel_index.rs # Collection persistence owner
@@ -185,7 +192,7 @@ local-arena/
 │   │       ├── channels.rs     # list/create/delete/reorder channels
 │   │       ├── conflicts.rs    # Vault conflict resolution
 │   │       ├── clipper_recovery.rs # Recovery pending uploads расширения
-│   │       ├── clipper_setup.rs # Установка native host из настроек, статус связи
+│   │       ├── clipper_setup.rs # Установка помощника клиппера и его самопочинка во время работы
 │   │       ├── icloud_progress.rs # Процент загрузки файла из iCloud (Swift-помощник)
 │   │       ├── cloud_recommendation.rs # Состояние и закрытие рекомендации Keep Downloaded
 │   │       ├── article_audio.rs # Article audio state/generate/delete
@@ -210,7 +217,7 @@ local-arena/
 │   ├── settings/               # Окно настроек (второй Vite-entry: settings.html)
 │   │   ├── main.tsx            # Bootstrap: тема до первого рендера
 │   │   ├── SettingsApp.tsx     # Хром + навигация разделов
-│   │   └── *Section.tsx        # AppearanceSection, GraphSection, SpacesSection, ClipperSection (раздел Extension), OrphansSection
+│   │   └── *Section.tsx        # AppearanceSection, GraphSection, SpacesSection, OrphansSection и др.; раздела Extension нет
 │   ├── components/
 │   │   ├── Grid.tsx            # Virtualized masonry grid — scroll-based windowing, direction-aware overscan, priority loading
 │   │   ├── GraphView.tsx       # Graph M1: Canvas nodes/edges, route-derived scope, selection/a11y
@@ -334,6 +341,7 @@ local-arena/
 ├── index.db
 ├── cloud-waits.json                # Журнал ожиданий iCloud по сессиям
 ├── first-card.json                 # Пометка первой карточки показана
+├── space-onboarding.json           # В пространстве была карточка: онбординг ленты не возвращается
 ├── owner-path.json                 # Владелец папки: копия пространства vs переезд
 └── cache/
     ├── thumbs/
@@ -382,10 +390,13 @@ local-arena/
 bun install                    # Установка JS-зависимостей
 cargo tauri dev                # Запуск в режиме разработки (Rust + Vite)
 cargo tauri build              # Сборка .dmg/.app
+bun run build:local-app        # Локальная сборка .app с проверкой клиппера и подписью ad-hoc
+bun run install:local-app      # Установить собранный .app: прежняя копия в Корзину, сборка снята с регистрации macOS
 cargo tauri build --features article-audio # Сборка с включённым article audio (по умолчанию выключен)
 bun run build:extension        # Обязательная отдельная сборка расширения → extension/dist
 bun run pack:extension         # Упаковка расширения в архив
 bun run clipper:install-host   # Установка/обновление native host бинарника
+bun run cli:install            # Сборка release и установка CLI как ~/.local/bin/mine
 bun run lint                   # Линтинг фронтенда
 bun run test                   # Полная проверка: Vitest + Rust workspace tests
 bun run test:frontend          # Сборка actual WASM + Vitest
@@ -419,11 +430,16 @@ cargo clippy                   # Линтинг Rust
 `Load unpacked` подключается стабильная установленная копия в
 `~/Library/Application Support/com.mine.app/clipper/extension`, не checkout.
 
-Native host и payload расширения входят в `.app`. Текущая реализация запускает
-их обслуживание после первого интерактивного кадра; build/install manifests
-убирают полное хеширование из обычного startup path. Для dev-установки:
-`bun run clipper:install-host`. Сборка без запуска не меняет установленный host
-или стабильную browser-копию.
+Native host и payload расширения входят в `.app`. Runtime maintenance начинается
+после первого интерактивного кадра; build/install manifests убирают полное
+хеширование из обычного startup path. Дальше запущенный Mine раз в 5 минут и
+при возврате в окно сверяет помощник, копию расширения и регистрацию в
+браузерах со своей сборкой и при расхождении ставит свои
+(`SPEC_ONBOARDING.md`, О5).
+Для dev-установки без `.app`: `bun run clipper:install-host`. После
+`bun run install:local-app` его не запускать: он поставит отдельно собранный
+помощник поверх помощника приложения, а запущенный Mine вернёт свой. Сборка
+без запуска не меняет установленный host или стабильную browser-копию.
 Capture больше не требует рабочего SQLite до записи исходников. Dev ID:
 `eioalidaccoahofcggkbinalibpajokh`; старый browser storage другого ID не
 переносится автоматически. При старом ID сначала выяснить исход pending;

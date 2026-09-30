@@ -64,9 +64,7 @@ async function main() {
         // where a component lives (a settings page, a window top bar) is not
         // another variant of it, and counting the two together would turn
         // these numbers into a running total nobody can reason about.
-        clipperStatuses: document.querySelectorAll(
-          "[data-clipper-status]:not([data-showcase-context] *)",
-        ).length,
+        installStep: !!document.querySelector("[data-empty-space-install-step]"),
         disclaimers: document.querySelectorAll("[data-cloud-disclaimer]").length,
         spaceUnavailable: !!document.querySelector("[data-space-unavailable]"),
         folderConfirmation: !!document.querySelector("[data-folder-confirmation]"),
@@ -118,11 +116,7 @@ async function main() {
       report.badgeVisible,
       `after ${BADGE_WAIT_MS}ms`,
     );
-    check(
-      "every clipper variant is drawn",
-      report.clipperStatuses === 4,
-      `${report.clipperStatuses} of 4`,
-    );
+    check("the extension install step is drawn", report.installStep);
     check(
       "the iCloud explanation is drawn both ways",
       report.disclaimers === 2,
@@ -137,9 +131,9 @@ async function main() {
       `${report.activityIndicators} of 3`,
     );
     check(
-      "both components are also drawn in their real context",
-      report.contexts === 2,
-      `${report.contexts} of 2`,
+      "the activity indicators are also drawn in their real context",
+      report.contexts === 1,
+      `${report.contexts} of 1`,
     );
     check(
       "no boxed screen is cut off by its frame",

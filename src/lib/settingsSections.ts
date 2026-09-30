@@ -5,7 +5,6 @@ export const SETTINGS_SECTIONS = [
   { id: "graph", label: "Graph" },
   { id: "spaces", label: "Spaces" },
   { id: "layout", label: "New files" },
-  { id: "clipper", label: "Extension" },
   { id: "updates", label: "Updates" },
   { id: "orphans", label: "Orphans" },
   { id: "design-system", label: "Design system" },

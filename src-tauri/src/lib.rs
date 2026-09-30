@@ -100,7 +100,6 @@ pub fn run() {
             commands::startup::start_startup_maintenance,
             commands::vault::rebuild_index,
             commands::vault::sweep_vault_thumbnails,
-            commands::clipper_setup::get_clipper_setup_status,
             commands::updates::get_update_status,
             commands::updates::check_for_updates,
             commands::updates::download_update,
@@ -112,7 +111,7 @@ pub fn run() {
             commands::vault::first_card_marker_pending,
             commands::vault::complete_first_card_marker,
             commands::vault::space_onboarding_pending,
-            commands::clipper_setup::install_clipper_host,
+            commands::clipper_setup::clipper_extension_folder,
             commands::vault::preview_vault_folder,
             commands::vault::get_unavailable_vault,
             commands::vault::forget_unavailable_vault,
@@ -204,6 +203,11 @@ pub fn run() {
             _ => {}
         })
         .on_window_event(|window, event| {
+            // Coming back to Mine, often after installing a browser, checks
+            // the clipper helper at once (SPEC_ONBOARDING.md, О5).
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Focused(true)) {
+                commands::startup::nudge_clipper_upkeep();
+            }
             if window.label() == "settings"
                 && matches!(
                     event,

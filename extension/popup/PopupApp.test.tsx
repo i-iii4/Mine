@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { EmbeddedVideoPreview } from "./lib/messaging";
 import { normalizeArticleMedia } from "./lib/normalizeArticleMedia";
@@ -8,7 +8,8 @@ const { state } = vi.hoisted(() => ({ state: {
   state: "main", saveMode: "app", currentType: "content", articleExtractionState: "ready",
   metadata: { url: "https://x.com/home", title: "Repost", selection: "", detectedType: "content", image: null as string | null },
   articleData: { content: "sketching the landscape", threadWarning: "Open the original X post to collect its thread.", embeddedVideos: [] as EmbeddedVideoPreview[] },
-  channels: [], selectedTags: [], saving: false, savePinned: false, canSave: true, draftReady: true, nativeStatusError: null,
+  channels: [], selectedTags: [], saving: false, savePinned: false, canSave: true, draftReady: true, nativeStatusError: null as string | null,
+  reconnecting: false, connectionChecking: false, retryConnection: vi.fn(),
   draftError: null as string | null, draftLoading: false,
   channelsLoading: false, channelsError: null as string | null, retryChannels: vi.fn(),
   save: vi.fn(), setCurrentType: vi.fn(), toggleTag: vi.fn(), createChannel: vi.fn(),
@@ -115,6 +116,21 @@ describe("clipper preview", () => {
     render(<PopupApp />);
     fireEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
     expect(await screen.findByText("Could not write the file.")).toBeInTheDocument();
+  });
+});
+
+describe("Mine out of reach", () => {
+  afterEach(() => {
+    state.nativeStatusError = null;
+    state.reconnecting = false;
+  });
+
+  it("says what to do and offers no button while it keeps trying by itself", () => {
+    state.nativeStatusError = "Mine isn't connected to this browser. Open Mine and the clipper connects on its own.";
+    state.reconnecting = true;
+    render(<PopupApp />);
+    expect(screen.getByText(state.nativeStatusError)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry connection" })).not.toBeInTheDocument();
   });
 });
 

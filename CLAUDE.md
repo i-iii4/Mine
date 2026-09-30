@@ -188,7 +188,7 @@ local-arena/
 │   │       ├── channels.rs     # list/create/delete/reorder channels
 │   │       ├── conflicts.rs    # Vault conflict resolution
 │   │       ├── clipper_recovery.rs # Recovery pending uploads расширения
-│   │       ├── clipper_setup.rs # Установка native host из настроек, статус связи
+│   │       ├── clipper_setup.rs # Установка помощника клиппера и его самопочинка во время работы
 │   │       ├── icloud_progress.rs # Процент загрузки файла из iCloud (Swift-помощник)
 │   │       ├── cloud_recommendation.rs # Состояние и закрытие рекомендации Keep Downloaded
 │   │       ├── article_audio.rs # Article audio state/generate/delete
@@ -213,7 +213,7 @@ local-arena/
 │   ├── settings/               # Окно настроек (второй Vite-entry: settings.html)
 │   │   ├── main.tsx            # Bootstrap: тема до первого рендера
 │   │   ├── SettingsApp.tsx     # Хром + навигация разделов
-│   │   └── *Section.tsx        # AppearanceSection, GraphSection, SpacesSection, ClipperSection (раздел Extension), OrphansSection
+│   │   └── *Section.tsx        # AppearanceSection, GraphSection, SpacesSection, OrphansSection и др.; раздела Extension нет
 │   ├── components/
 │   │   ├── Grid.tsx            # Virtualized masonry grid — scroll-based windowing, direction-aware overscan, priority loading
 │   │   ├── GraphView.tsx       # Graph M1: Canvas nodes/edges, route-derived scope, selection/a11y
@@ -428,9 +428,14 @@ cargo clippy                   # Линтинг Rust
 
 Native host и payload расширения входят в `.app`. Runtime maintenance начинается
 после первого интерактивного кадра; build/install manifests убирают полное
-хеширование из обычного startup path.
-Для dev-установки: `bun run clipper:install-host`. Сборка без запуска не меняет
-установленный host или стабильную browser-копию.
+хеширование из обычного startup path. Дальше запущенный Mine раз в 5 минут и
+при возврате в окно сверяет помощник, копию расширения и регистрацию в
+браузерах со своей сборкой и при расхождении ставит свои
+(`SPEC_ONBOARDING.md`, О5).
+Для dev-установки без `.app`: `bun run clipper:install-host`. После
+`bun run install:local-app` его не запускать: он поставит отдельно собранный
+помощник поверх помощника приложения, а запущенный Mine вернёт свой. Сборка
+без запуска не меняет установленный host или стабильную browser-копию.
 Capture больше не требует рабочего SQLite до записи исходников. Dev ID:
 `eioalidaccoahofcggkbinalibpajokh`; старый browser storage другого ID не
 переносится автоматически. При старом ID сначала выяснить исход pending;

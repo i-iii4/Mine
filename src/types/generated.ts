@@ -81,51 +81,6 @@ export type ClipboardPayload =
  */
 { kind: "empty" }
 
-export type ClipperBrowserStatus = { label: string;
-/**
- * The browser's own directory exists, so the browser is installed.
- */
-detected: boolean;
-/**
- * The exact bundled helper manifest is registered; not a live handshake.
- */
-connected: boolean }
-
-/**
- * Historical evidence that the extension received a host status response.
- */
-export type ClipperConnectionCheck = { schema_version: number; check_id: string; confirmed_at: string; host_version: string; host_api_version: number; extension_id: string }
-
-export type ClipperSetupStatus = {
-/**
- * The host binary is installed where browsers can launch it.
- */
-host_installed: boolean;
-/**
- * The installed host matches the bundled binary, not just its version marker.
- */
-host_current: boolean;
-/**
- * The browser extension lives outside the app and outside a source checkout.
- */
-extension_installed: boolean;
-/**
- * The installed extension directory exactly matches the bundled payload.
- */
-extension_current: boolean;
-/**
- * Stable folder that a development browser loads once with Load unpacked.
- */
-extension_path: string; app_version: string; browsers: ClipperBrowserStatus[];
-/**
- * Last extension-confirmed handshake, not proof of a current connection.
- */
-last_connection_check: ClipperConnectionCheck | null;
-/**
- * A damaged diagnostic record does not make registration or capture fail.
- */
-connection_check_error: string | null }
-
 export type CloudRecommendationState = {
 /**
  * Show the card now: waits repeated across sessions, nobody dismissed it

@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
 
 use crate::commands::state::CommandError;
-use crate::storage::clipper_connection::{self, ClipperConnectionCheck, DEV_EXTENSION_ID};
+use crate::storage::clipper_connection::DEV_EXTENSION_ID;
 
 use crate::clipper_registration::{BrowserTarget, BROWSERS, HOST_NAME};
 use crate::runtime_installation::{
@@ -1257,35 +1257,6 @@ fn marker_allows_fast_registration(
     })
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-pub struct ClipperBrowserStatus {
-    pub label: String,
-    /// The browser's own directory exists, so the browser is installed.
-    pub detected: bool,
-    /// The exact bundled helper manifest is registered; not a live handshake.
-    pub connected: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-pub struct ClipperSetupStatus {
-    /// The host binary is installed where browsers can launch it.
-    pub host_installed: bool,
-    /// The installed host matches the bundled binary, not just its version marker.
-    pub host_current: bool,
-    /// The browser extension lives outside the app and outside a source checkout.
-    pub extension_installed: bool,
-    /// The installed extension directory exactly matches the bundled payload.
-    pub extension_current: bool,
-    /// Stable folder that a development browser loads once with Load unpacked.
-    pub extension_path: String,
-    pub app_version: String,
-    pub browsers: Vec<ClipperBrowserStatus>,
-    /// Last extension-confirmed handshake, not proof of a current connection.
-    pub last_connection_check: Option<ClipperConnectionCheck>,
-    /// A damaged diagnostic record does not make registration or capture fail.
-    pub connection_check_error: Option<String>,
-}
-
 use crate::clipper_registration::library_dir;
 
 fn manifest_path(browser: &BrowserTarget) -> Option<PathBuf> {
@@ -1378,61 +1349,83 @@ pub fn maintain_installed_runtime(app: &AppHandle) -> Result<RuntimeMaintenanceM
         return Ok(RuntimeMaintenanceMode::FastRegistration);
     }
 
-    install_clipper_host(app.clone(), String::new())?;
+    install_clipper_runtime(app)?;
     Ok(RuntimeMaintenanceMode::VerifiedInstallation)
 }
 
-/// What is installed right now.
-#[tauri::command]
-pub fn get_clipper_setup_status(app: AppHandle) -> Result<ClipperSetupStatus, CommandError> {
-    let app_version = app.package_info().version.to_string();
-    let host = host_binary_path(&app)?;
-    let host_installed = host.is_file();
-    let host_current =
-        bundled_host_path().is_some_and(|bundled| installed_binary_matches(&bundled, &host));
-    let extension = installed_extension_path(&app)?;
-    let extension_installed = extension.join("manifest.json").is_file();
-    let extension_current = bundled_extension_path(&app)
-        .is_some_and(|bundled| installed_extension_matches(&bundled, &extension));
-    let registered_host = registered_host_path(&app)?;
+/// What the periodic upkeep compares: the bundle against what browsers use.
+struct RuntimeUpkeepPaths {
+    bundled_host: PathBuf,
+    bundled_extension: PathBuf,
+    installed_host: PathBuf,
+    /// The helper the browser manifests name, inside its immutable package.
+    registered_host: PathBuf,
+    installed_extension: PathBuf,
+    /// Manifests of the browsers found on this Mac, installed or not yet.
+    browser_manifests: Vec<PathBuf>,
+}
 
-    let browsers = BROWSERS
-        .iter()
-        .map(|browser| ClipperBrowserStatus {
-            label: browser.label.to_string(),
-            detected: browser_detected(browser),
-            connected: manifest_path(browser)
-                .is_some_and(|path| manifest_is_registered(&path, &registered_host)),
-        })
-        .collect();
+/// Whether browsers run exactly this build's helper and extension: the bytes
+/// match the bundle, and every browser found names the helper (SPEC_ONBOARDING.md, О5).
+fn runtime_matches_bundle(paths: &RuntimeUpkeepPaths) -> bool {
+    installed_binary_matches(&paths.bundled_host, &paths.installed_host)
+        && installed_binary_matches(&paths.bundled_host, &paths.registered_host)
+        && installed_extension_matches(&paths.bundled_extension, &paths.installed_extension)
+        && paths
+            .browser_manifests
+            .iter()
+            .all(|manifest| manifest_is_registered(manifest, &paths.registered_host))
+}
 
-    let (last_connection_check, connection_check_error) = match app.path().app_data_dir() {
-        Ok(root) => match clipper_connection::read_last_connection_check(&root) {
-            Ok(record) => (record, None),
-            Err(error) => (
-                None,
-                Some(format!("Last connection check could not be read: {error}")),
-            ),
-        },
-        Err(error) => (
-            None,
-            Some(format!(
-                "Connection-check directory is unavailable: {error}"
-            )),
-        ),
+/// `None` when this build carries no helper or extension: there is nothing
+/// to repair with.
+fn runtime_upkeep_paths(app: &AppHandle) -> Result<Option<RuntimeUpkeepPaths>, CommandError> {
+    let (Some(bundled_host), Some(bundled_extension)) =
+        (bundled_host_path(), bundled_extension_path(app))
+    else {
+        return Ok(None);
     };
+    Ok(Some(RuntimeUpkeepPaths {
+        bundled_host,
+        bundled_extension,
+        installed_host: host_binary_path(app)?,
+        registered_host: registered_host_path(app)?,
+        installed_extension: installed_extension_path(app)?,
+        browser_manifests: BROWSERS
+            .iter()
+            .filter(|browser| browser_detected(browser))
+            .filter_map(manifest_path)
+            .collect(),
+    }))
+}
 
-    Ok(ClipperSetupStatus {
-        host_installed,
-        host_current,
-        extension_installed,
-        extension_current,
-        extension_path: extension.to_string_lossy().into_owned(),
-        app_version,
-        browsers,
-        last_connection_check,
-        connection_check_error,
-    })
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeUpkeep {
+    Current,
+    Repaired,
+    /// The build has no helper to install; upkeep stops.
+    NotBundled,
+}
+
+/// Keep the browsers on this build's helper while Mine runs, not only at
+/// launch: a browser installed later, a helper replaced or damaged, a failed
+/// installation are all repaired without a button (SPEC_ONBOARDING.md, О5).
+pub fn keep_runtime_current(app: &AppHandle) -> Result<RuntimeUpkeep, CommandError> {
+    let Some(paths) = runtime_upkeep_paths(app)? else {
+        return Ok(RuntimeUpkeep::NotBundled);
+    };
+    if runtime_matches_bundle(&paths) {
+        return Ok(RuntimeUpkeep::Current);
+    }
+    install_clipper_runtime(app)?;
+    Ok(RuntimeUpkeep::Repaired)
+}
+
+/// The folder a browser loads once with Load unpacked; Mine keeps its
+/// contents current (SPEC_ONBOARDING.md, О16).
+#[tauri::command]
+pub fn clipper_extension_folder(app: AppHandle) -> Result<String, CommandError> {
+    Ok(installed_extension_path(&app)?.to_string_lossy().into_owned())
 }
 
 /// Install the host binary and register it with every browser found.
@@ -1440,34 +1433,23 @@ pub fn get_clipper_setup_status(app: AppHandle) -> Result<ClipperSetupStatus, Co
 /// Idempotent: running it again refreshes the binary and the manifests, which
 /// is exactly what an app update needs. A browser that is not installed is
 /// skipped rather than reported as a failure.
-#[tauri::command]
-pub fn install_clipper_host(
-    app: AppHandle,
-    extension_id: String,
-) -> Result<ClipperSetupStatus, CommandError> {
-    let extension_id = extension_id.trim().to_string();
-    if !extension_id.is_empty() && extension_id != DEV_EXTENSION_ID {
-        return Err(CommandError::Internal(
-            "only the bundled Mine development extension is supported; the store release is not configured".into(),
-        ));
-    }
-
+pub fn install_clipper_runtime(app: &AppHandle) -> Result<(), CommandError> {
     // Tauri bundles every binary target of this crate next to the app
     // executable, so the host is already inside the .app and installing it is
     // a copy. Declaring it as a bundle resource instead would make the build
     // script depend on its own output.
-    let runtime_manifest = runtime_build_manifest(&app)?;
+    let runtime_manifest = runtime_build_manifest(app)?;
     let bundled = bundled_host_path().ok_or_else(|| {
         CommandError::Internal("clipper host is missing from the app bundle".into())
     })?;
 
-    let destination = host_binary_path(&app)?;
+    let destination = host_binary_path(app)?;
     let parent = destination
         .parent()
         .ok_or_else(|| CommandError::Internal("clipper directory has no parent".into()))?;
     std::fs::create_dir_all(parent)
         .map_err(|e| CommandError::Internal(format!("failed to create clipper directory: {e}")))?;
-    let extension = bundled_extension_path(&app).ok_or_else(|| {
+    let extension = bundled_extension_path(app).ok_or_else(|| {
         CommandError::Internal("clipper extension is missing from the app bundle".into())
     })?;
     let video = std::env::current_exe()
@@ -1487,9 +1469,7 @@ pub fn install_clipper_host(
     )
     .map_err(|error| {
         CommandError::Internal(format!("runtime installation remains recoverable: {error}"))
-    })?;
-
-    get_clipper_setup_status(app)
+    })
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -1498,6 +1478,91 @@ pub fn install_clipper_host(
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    fn executable(path: &Path, bytes: &[u8]) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    fn extension_payload(root: &Path, script: &str) {
+        std::fs::create_dir_all(root).unwrap();
+        std::fs::write(root.join("manifest.json"), br#"{"name":"Mine"}"#).unwrap();
+        std::fs::write(root.join("background.js"), script).unwrap();
+    }
+
+    /// A Mac where browsers run exactly this build's helper and extension.
+    fn current_runtime(root: &Path) -> RuntimeUpkeepPaths {
+        let paths = RuntimeUpkeepPaths {
+            bundled_host: root.join("Mine.app/native-host"),
+            bundled_extension: root.join("Mine.app/clipper-extension"),
+            installed_host: root.join("clipper/native-host"),
+            registered_host: root.join("clipper/packages/current/native-host"),
+            installed_extension: root.join("clipper/extension"),
+            browser_manifests: vec![root.join("Chrome/NativeMessagingHosts/com.mine.host.json")],
+        };
+        for host in [&paths.bundled_host, &paths.installed_host, &paths.registered_host] {
+            executable(host, b"THIS BUILD");
+        }
+        extension_payload(&paths.bundled_extension, "current()");
+        extension_payload(&paths.installed_extension, "current()");
+        let manifest = &paths.browser_manifests[0];
+        std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+        std::fs::write(
+            manifest,
+            serde_json::to_vec_pretty(&host_manifest(&paths.registered_host)).unwrap(),
+        )
+        .unwrap();
+        paths
+    }
+
+    #[test]
+    fn upkeep_leaves_a_current_runtime_alone() {
+        let temp = TempDir::new().unwrap();
+        assert!(runtime_matches_bundle(&current_runtime(temp.path())));
+    }
+
+    #[test]
+    fn upkeep_repairs_a_helper_replaced_while_mine_runs() {
+        // The case of 30.09.2026: a separately built helper was installed on
+        // top of the one this build had registered.
+        let temp = TempDir::new().unwrap();
+        let paths = current_runtime(temp.path());
+        executable(&paths.installed_host, b"ANOTHER BUILD");
+        assert!(!runtime_matches_bundle(&paths));
+
+        let paths = current_runtime(temp.path());
+        executable(&paths.registered_host, b"ANOTHER BUILD");
+        assert!(!runtime_matches_bundle(&paths));
+    }
+
+    #[test]
+    fn upkeep_registers_a_browser_installed_while_mine_runs() {
+        let temp = TempDir::new().unwrap();
+        let mut paths = current_runtime(temp.path());
+        paths
+            .browser_manifests
+            .push(temp.path().join("Arc/NativeMessagingHosts/com.mine.host.json"));
+        assert!(!runtime_matches_bundle(&paths));
+    }
+
+    #[test]
+    fn upkeep_repairs_a_stale_extension_copy_or_a_foreign_registration() {
+        let temp = TempDir::new().unwrap();
+        let paths = current_runtime(temp.path());
+        extension_payload(&paths.installed_extension, "older()");
+        assert!(!runtime_matches_bundle(&paths));
+
+        let paths = current_runtime(temp.path());
+        std::fs::write(
+            &paths.browser_manifests[0],
+            serde_json::to_vec_pretty(&host_manifest(&temp.path().join("elsewhere/native-host")))
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(!runtime_matches_bundle(&paths));
+    }
 
     #[test]
     fn helper_probe_is_bounded_and_rejects_wrong_identity_before_installation() {

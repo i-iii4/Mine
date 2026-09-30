@@ -98,7 +98,7 @@ vi.hoisted(() => {
   (globalThis as Record<string, unknown>).chrome = { tabs: {} };
 });
 
-import { useClipperState } from "./useClipperState";
+import { CLIPPER_RECONNECT_INTERVAL_MS, MINE_NOT_CONNECTED, useClipperState } from "./useClipperState";
 import * as messaging from "../lib/messaging";
 import * as draftApi from "../lib/draft";
 import * as photoLightbox from "../lib/twitterPhotoLightbox";
@@ -883,7 +883,7 @@ describe("standalone mode decision", () => {
 
     const { result } = renderHook(() => useClipperState());
     await waitFor(() => expect(result.current.saveMode).toBe("unconfigured"));
-    expect(result.current.nativeStatusError).toContain("Native host");
+    expect(result.current.nativeStatusError).toBe(MINE_NOT_CONNECTED);
 
     standalone.chooseStandaloneFolder.mockResolvedValue({
       configured: true,
@@ -900,6 +900,30 @@ describe("standalone mode decision", () => {
     expect(result.current.saveMode).toBe("standalone");
     expect(result.current.standaloneFolder).toBe("Clips");
     expect(result.current.nativeStatusError).toBeNull();
+  });
+
+  it("connects by itself once Mine repairs the helper, with no button pressed", async () => {
+    // Chrome's own words for an unregistered helper stay out of the clipper.
+    let registered = false;
+    sendToNative.mockImplementation(async (payload: { action: string }) => {
+      if (payload.action !== "get_status") return { ok: true, vaults: ["/v"], current: "/v", channels: [] };
+      return registered
+        ? nativeStatus()
+        : { ok: false, code: "native_disconnected", error: "Specified native messaging host not found.", outcome: "unknown" };
+    });
+    standalone.getStandaloneStatus.mockResolvedValue({ configured: false });
+
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.nativeStatusError).toBe(MINE_NOT_CONNECTED));
+    expect(result.current.reconnecting).toBe(true);
+    expect(result.current.nativeStatusError).not.toContain("native messaging");
+
+    // Mine opens and registers its helper.
+    registered = true;
+    await waitFor(() => expect(result.current.nativeStatusError).toBeNull(), { timeout: CLIPPER_RECONNECT_INTERVAL_MS + 2_000 });
+    expect(result.current.reconnecting).toBe(false);
+    expect(result.current.saveMode).toBe("app");
+    expect(result.current.selectedVault).toBe("/v");
   });
 
   it("does not describe a restarted extension worker as a missing Mine helper", async () => {
@@ -959,11 +983,10 @@ describe("standalone mode decision", () => {
     sendToNative.mockResolvedValue({ ok: false, error: "Connection rejected" });
     standalone.getStandaloneStatus.mockResolvedValue({ configured: true, folderName: "Mine", permission: "granted", bindingId: "browser-original" });
     const { result } = renderHook(() => useClipperState());
-    await waitFor(() => expect(result.current.nativeStatusError).toContain("Connection rejected"));
+    await waitFor(() => expect(result.current.nativeStatusError).toBe(MINE_NOT_CONNECTED));
     expect(result.current.saveMode).toBe("app");
     expect(result.current.selectedVault).toBe("/v");
     expect(result.current.knownVaults).toEqual(["/v", "/b"]);
-    expect(result.current.nativeStatusError).toContain("Connection rejected");
     expect(standalone.standaloneSave).not.toHaveBeenCalled();
   });
 

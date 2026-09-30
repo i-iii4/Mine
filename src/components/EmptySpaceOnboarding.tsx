@@ -11,20 +11,34 @@
 //
 // The Are.na import is deliberately not offered: it was cancelled for this
 // version (16.08.2026), with no promise of a later one.
+//
+// Installing the extension happens here, not in Settings: the button shows
+// the folder a browser loads once and says how, in one line. Settings has no
+// Extension section since 30.09.2026 (SPEC_ONBOARDING.md, О16).
 // See SPEC_ONBOARDING.md О14–О18.
 
+import { useState } from "react";
 import { Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
+/** How a browser takes the extension while it is not in the store. */
+export const EXTENSION_INSTALL_STEP =
+  "In Chrome, open chrome://extensions, turn on Developer mode, choose Load unpacked and pick the folder that opened in Finder.";
+
 interface EmptySpaceOnboardingProps {
   viewportHeight: number;
+  /** Shows the extension folder in Finder. */
   onInstallClipper: () => void;
+  /** The steps start open (the edge-states showcase). */
+  initialStepsOpen?: boolean;
 }
 
 export function EmptySpaceOnboarding({
   viewportHeight,
   onInstallClipper,
+  initialStepsOpen = false,
 }: EmptySpaceOnboardingProps) {
+  const [stepsOpen, setStepsOpen] = useState(initialStepsOpen);
   return (
     <div
       className="grid place-items-center"
@@ -42,11 +56,22 @@ export function EmptySpaceOnboarding({
         </p>
 
         <div className="mt-6">
-          <Button onClick={onInstallClipper}>
+          <Button
+            onClick={() => {
+              setStepsOpen(true);
+              onInstallClipper();
+            }}
+          >
             <Download className="size-4" />
             Install the extension
           </Button>
         </div>
+
+        {stepsOpen && (
+          <p className="mt-3 text-sm text-foreground" role="status" data-empty-space-install-step="">
+            {EXTENSION_INSTALL_STEP}
+          </p>
+        )}
 
         <p className="mt-4 text-sm text-muted-foreground">
           Or drag images, videos and documents straight into this window.

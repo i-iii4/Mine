@@ -10,7 +10,6 @@ import { ShortcutsSection } from "./ShortcutsSection";
 import { SpacesSection } from "./SpacesSection";
 import { OrphansSection } from "./OrphansSection";
 import { LayoutSection } from "./LayoutSection";
-import { ClipperSection } from "./ClipperSection";
 import { UpdatesSection } from "./UpdatesSection";
 
 /// Loaded on demand: the showcase pulls in every production primitive and has
@@ -96,7 +95,6 @@ export function SettingsApp() {
           {section === "graph" && <GraphSection />}
           {section === "spaces" && <SpacesSection />}
           {section === "layout" && <LayoutSection />}
-          {section === "clipper" && <ClipperSection />}
           {section === "updates" && <UpdatesSection />}
           {section === "orphans" && <OrphansSection />}
         </main>

@@ -912,6 +912,21 @@
       "requirement": "SPEC_SYSTEM_RELIABILITY.md#### UPD-04.",
       "tests": ["scripts/prepare-update-channel.test.mjs"],
       "command": "test:reliability"
+    },
+    {
+      "paths": [
+        "src/components/EmptySpaceOnboarding.tsx",
+        "src/components/EmptySpaceOnboarding.test.tsx",
+        "src/components/EdgeStatesSection.tsx",
+        "src/components/EdgeStatesSection.test.tsx",
+        "scripts/edge-states-audit.mjs",
+        "src/settings/ClipperSection.tsx",
+        "src/settings/ClipperStatus.tsx",
+        "src/settings/ClipperStatus.test.tsx"
+      ],
+      "requirement": "SPEC_ONBOARDING.md#**О16.**",
+      "tests": ["src/components/EmptySpaceOnboarding.test.tsx", "src/components/EdgeStatesSection.test.tsx", "src/components/AppSettingsMenu.test.tsx"],
+      "command": "test:frontend"
     }
   ],
   "release": null

@@ -29,6 +29,12 @@ import {
 const IS_CONTENT_SCRIPT_CONTEXT = typeof chrome.tabs === "undefined";
 // How often the collection list is asked again while the helper indexes.
 const CHANNELS_RECHECK_MS = 3_000;
+/** While Mine is out of reach the clipper asks again this often: Mine repairs
+ *  the helper by itself, so nothing needs a button (SPEC_CLIPPER.md, errors). */
+export const CLIPPER_RECONNECT_INTERVAL_MS = 3_000;
+export const MINE_NOT_CONNECTED = "Mine isn't connected to this browser. Open Mine and the clipper connects on its own.";
+export const MINE_NOT_ANSWERING = "Mine isn't answering. The clipper keeps trying.";
+export const MINE_TOO_OLD = "This clipper needs a newer Mine. Open the updated Mine and the clipper connects on its own.";
 
 import { resolveCaptureResult } from "../lib/captureResult";
 import {
@@ -138,6 +144,8 @@ export function useClipperState() {
   const [draftReadySource, setDraftReadySource] = useState<string | null>(null);
   const [draftError, setDraftError] = useState<string | null>(null);
   const [connectionChecking, setConnectionChecking] = useState(false);
+  // Mine is out of reach or too old: the clipper keeps asking by itself.
+  const [reconnecting, setReconnecting] = useState(false);
   const draftRevisionRef = useRef(0);
   const draftOwnerRef = useRef(crypto.randomUUID());
   const draftCaptureRef = useRef(draftId);
@@ -436,6 +444,7 @@ export function useClipperState() {
     destinationRef.current = "browser";
     nativeStatusErrorRef.current = null;
     setNativeStatusError(null);
+    setReconnecting(false);
     void refreshChannels();
   }, [refreshChannels]);
 
@@ -521,15 +530,22 @@ export function useClipperState() {
           return false;
         }
         if (!compatible || !status.vaultConfigured || !status.vault_path || !status.binding_id) {
+          // Plain words, not the browser's native-messaging error: the person
+          // does one thing, open Mine, and the clipper does the rest.
           const message = !status.ok
             ? status.code === "extension_transport" || status.code === "extension_background_error"
               ? status.error ?? "Mine extension background stopped before replying. Retry this action."
-              : `Cannot connect to the Mine helper. ${status.error ?? "Open Mine once, then retry."}`
+              : status.code === "native_timeout"
+                ? MINE_NOT_ANSWERING
+                : MINE_NOT_CONNECTED
             : !compatible
-              ? "The Mine helper uses an incompatible save protocol. Open the updated Mine app, then retry."
+              ? MINE_TOO_OLD
               : status.error ?? "The Mine helper is connected. Choose a folder to save your clips.";
           nativeStatusErrorRef.current = message;
           setNativeStatusError(message);
+          // Out of reach or too old repairs itself in Mine; a folder to choose
+          // is the person's decision and waits for them.
+          setReconnecting(!status.ok || !compatible);
           const uncertain = status.outcome === "unknown" || status.code === "native_timeout" || status.code === "extension_transport" || status.code === "extension_background_error";
           saveModeRef.current = destinationRef.current === "native" || uncertain ? "app" : "unconfigured";
           setSaveMode(saveModeRef.current);
@@ -564,6 +580,7 @@ export function useClipperState() {
         await chrome.storage.local.set({ mineSaveDestination: { executor: "native", vaultPath: status.vault_path, bindingId: status.binding_id } });
         nativeStatusErrorRef.current = null;
         setNativeStatusError(null);
+        setReconnecting(false);
 
         // Taxonomy and vault list are useful, but they must not block the
         // first paint of the clipper. Open overlays refresh again when another
@@ -577,6 +594,7 @@ export function useClipperState() {
         const message = cause instanceof Error ? cause.message : String(cause);
         nativeStatusErrorRef.current = message;
         setNativeStatusError(message);
+        setReconnecting(true);
         saveModeRef.current = destinationRef.current === "browser" ? "unconfigured" : "app";
         setSaveMode(saveModeRef.current);
         channelsRequestRef.current += 1;
@@ -593,6 +611,16 @@ export function useClipperState() {
     nativeStatusGenerationRef.current = generation;
     return promise;
   }, [enterStandaloneMode, refreshChannels, refreshKnownVaults]);
+
+  // Mine out of reach: ask again until it answers, so opening Mine is all it
+  // takes (SPEC_CLIPPER.md, error table).
+  useEffect(() => {
+    if (!reconnecting) return;
+    const timer = window.setInterval(() => {
+      void ensureNativeStatus(true);
+    }, CLIPPER_RECONNECT_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [ensureNativeStatus, reconnecting]);
 
   // Changes made in the app while the clipper stays open (a space renamed,
   // forgotten or added) reach it when the person comes back to it: a new
@@ -1666,6 +1694,7 @@ export function useClipperState() {
     draftLoading: Boolean(draftSourceUrl && draftReadySource !== draftSourceUrl && !draftError),
     draftError,
     connectionChecking,
+    reconnecting,
     articleExtractionState,
     nativeStatusError,
     nativeConnected,

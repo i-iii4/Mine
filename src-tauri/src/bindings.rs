@@ -27,7 +27,6 @@ use crate::commands::settings::{
 };
 use crate::commands::state::CommandError;
 use crate::updater::{UpdateError, UpdateStage, UpdateStatus};
-use crate::commands::clipper_setup::{ClipperBrowserStatus, ClipperSetupStatus};
 use crate::commands::cloud_recommendation::CloudRecommendationState;
 use crate::commands::icloud_progress::{IcloudDownloadProgress, IcloudDownloadStatus};
 use crate::commands::vault::{FolderPreview, SpaceEntry, UnavailableVault, UnavailableVaultReason, VaultOpenResult, VaultWriteLayoutDto};
@@ -124,11 +123,9 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<SpaceEntry>()
         .register::<UnavailableVaultReason>()
         .register::<FolderPreview>()
-        .register::<ClipperSetupStatus>()
         .register::<CloudRecommendationState>()
         .register::<IcloudDownloadProgress>()
         .register::<IcloudDownloadStatus>()
-        .register::<ClipperBrowserStatus>()
         .register::<ArenaChannelInfo>()
         .register::<ImportChannelRequest>()
         .register::<ImportChannelResult>()

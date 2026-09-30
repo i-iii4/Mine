@@ -49,7 +49,8 @@ Hover/open не меняют положение или размер знака.
 
 Нажатие открывает штатный `DropdownMenu` вниз с выравниванием по правому краю.
 Пункты и порядок совпадают с навигацией окна настроек: Appearance, Shortcuts,
-Graph, Spaces, Folders, Extension, Orphans, Design system. Оба интерфейса
+Graph, Spaces, Folders, Updates, Orphans, Design system. Раздела Extension нет
+с 30.09.2026 (SPEC_ONBOARDING.md, О16). Оба интерфейса
 используют один реестр разделов. Выбор закрывает меню и вызывает существующий
 `open_settings_window(section)`: новое окно открывается сразу на разделе,
 уже открытое переключается и фокусируется. Второй механизм настроек не создаётся.

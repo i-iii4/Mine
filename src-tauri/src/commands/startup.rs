@@ -5,7 +5,8 @@
 //! from drifting back into synchronous `.setup` work.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+use std::sync::{Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 use tauri::AppHandle;
 
@@ -14,6 +15,86 @@ use crate::commands::state::CommandError;
 use crate::util::append_startup_trace;
 
 static MAINTENANCE_STARTED: AtomicBool = AtomicBool::new(false);
+
+/// How often Mine compares the clipper helper with its bundle while it runs.
+const UPKEEP_INTERVAL: Duration = Duration::from_secs(5 * 60);
+/// After a failed repair the next attempt comes sooner.
+const UPKEEP_RETRY_AFTER_FAILURE: Duration = Duration::from_secs(60);
+/// Returning to the window checks at once, but not more often than this.
+const UPKEEP_NUDGE_MIN_GAP: Duration = Duration::from_secs(30);
+
+struct UpkeepWake {
+    nudged: Mutex<bool>,
+    wake: Condvar,
+}
+
+static UPKEEP_WAKE: UpkeepWake = UpkeepWake {
+    nudged: Mutex::new(false),
+    wake: Condvar::new(),
+};
+
+/// Ask the clipper upkeep to check now (the main window gained focus).
+pub fn nudge_clipper_upkeep() {
+    if let Ok(mut nudged) = UPKEEP_WAKE.nudged.lock() {
+        *nudged = true;
+        UPKEEP_WAKE.wake.notify_one();
+    }
+}
+
+/// Sleep until the timeout or a nudge; true when a nudge woke it.
+fn wait_for_upkeep(timeout: Duration) -> bool {
+    let Ok(guard) = UPKEEP_WAKE.nudged.lock() else {
+        std::thread::sleep(timeout);
+        return false;
+    };
+    let Ok((mut nudged, _)) = UPKEEP_WAKE
+        .wake
+        .wait_timeout_while(guard, timeout, |nudged| !*nudged)
+    else {
+        return false;
+    };
+    std::mem::take(&mut *nudged)
+}
+
+/// When the next scheduled check comes.
+fn upkeep_delay(last_failed: bool) -> Duration {
+    if last_failed {
+        UPKEEP_RETRY_AFTER_FAILURE
+    } else {
+        UPKEEP_INTERVAL
+    }
+}
+
+/// A nudge right after a check waits for the schedule instead.
+fn nudge_is_due(since_last_check: Duration) -> bool {
+    since_last_check >= UPKEEP_NUDGE_MIN_GAP
+}
+
+/// The clipper helper stays this build's while Mine runs: every few minutes
+/// and on return to the window (SPEC_ONBOARDING.md, О5).
+fn run_clipper_upkeep(app: &AppHandle, mut last_failed: bool) {
+    let mut last_check = Instant::now();
+    loop {
+        let nudged = wait_for_upkeep(upkeep_delay(last_failed));
+        if nudged && !nudge_is_due(last_check.elapsed()) {
+            continue;
+        }
+        last_check = Instant::now();
+        match clipper_setup::keep_runtime_current(app) {
+            Ok(clipper_setup::RuntimeUpkeep::Current) => last_failed = false,
+            Ok(clipper_setup::RuntimeUpkeep::Repaired) => {
+                last_failed = false;
+                append_startup_trace(app, "clipper_upkeep", "repaired");
+            }
+            Ok(clipper_setup::RuntimeUpkeep::NotBundled) => return,
+            Err(error) => {
+                last_failed = true;
+                log::warn!("clipper helper upkeep failed: {error}");
+                append_startup_trace(app, "clipper_upkeep", &format!("error err={error}"));
+            }
+        }
+    }
+}
 
 fn valid_milestone(event: &str) -> bool {
     matches!(
@@ -64,10 +145,14 @@ pub fn start_startup_maintenance(app: AppHandle) -> Result<bool, CommandError> {
     std::thread::Builder::new()
         .name("mine-startup-maintenance".into())
         .spawn(move || {
-            let _write = write;
             let started = Instant::now();
             append_startup_trace(&worker_app, "startup_maintenance", "start");
-            match clipper_setup::maintain_installed_runtime(&worker_app) {
+            let maintained = clipper_setup::maintain_installed_runtime(&worker_app);
+            // The write lease covers the launch pass only: the upkeep that
+            // follows runs for the whole session.
+            drop(write);
+            let failed = maintained.is_err();
+            match maintained {
                 Ok(mode) => append_startup_trace(
                     &worker_app,
                     "startup_maintenance",
@@ -89,6 +174,7 @@ pub fn start_startup_maintenance(app: AppHandle) -> Result<bool, CommandError> {
                     );
                 }
             }
+            run_clipper_upkeep(&worker_app, failed);
         })
         .map_err(|error| {
             MAINTENANCE_STARTED.store(false, Ordering::Release);
@@ -96,6 +182,38 @@ pub fn start_startup_maintenance(app: AppHandle) -> Result<bool, CommandError> {
         })?;
 
     Ok(true)
+}
+
+#[cfg(test)]
+mod upkeep_tests {
+    use super::*;
+
+    #[test]
+    fn checks_every_five_minutes_and_sooner_after_a_failure() {
+        assert_eq!(upkeep_delay(false), Duration::from_secs(300));
+        assert_eq!(upkeep_delay(true), Duration::from_secs(60));
+    }
+
+    #[test]
+    fn returning_to_the_window_checks_at_most_every_half_minute() {
+        assert!(!nudge_is_due(Duration::from_secs(5)));
+        assert!(nudge_is_due(Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn a_nudge_wakes_the_upkeep_before_its_schedule() {
+        let waiter = std::thread::spawn(|| {
+            let started = Instant::now();
+            (wait_for_upkeep(Duration::from_secs(30)), started.elapsed())
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        nudge_clipper_upkeep();
+        let (nudged, waited) = waiter.join().unwrap();
+        assert!(nudged);
+        assert!(waited < Duration::from_secs(5));
+        // The nudge is consumed: the next wait runs to its timeout.
+        assert!(!wait_for_upkeep(Duration::from_millis(20)));
+    }
 }
 
 #[cfg(test)]

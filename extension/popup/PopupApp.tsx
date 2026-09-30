@@ -459,7 +459,7 @@ export function PopupApp() {
               {footerError}
             </p>
           )}
-          {clipper.nativeStatusError && !saved && (
+          {clipper.nativeStatusError && !saved && !clipper.reconnecting && (
             <Button variant="secondary" disabled={clipper.connectionChecking} onClick={() => void clipper.retryConnection(true)}>
               {clipper.connectionChecking ? "Connecting…" : "Retry connection"}
             </Button>

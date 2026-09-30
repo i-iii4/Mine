@@ -2005,8 +2005,9 @@ Native host читает путь к vault из файла конфигурац�
 | Situation | Behavior |
 |---|---|
 | Vault not configured | Status: `ok:true, connected:true, vaultConfigured:false, folder_state:unconfigured`; UI предлагает выбор папки |
-| Native host not found | Inline-причина регистрации/запуска, инструкция открыть Mine один раз и `Retry connection`; не диагноз «приложение отсутствует» |
-| Incompatible host | Нет обязательных save/lookup capabilities — новый Save не отправляется; предложено открыть обновлённый Mine и повторить handshake |
+| Native host not found | Строка «Mine isn't connected to this browser. Open Mine and the clipper connects on its own.» Пока клиппер открыт, он сам повторяет проверку раз в 3 секунды и подключается без нажатий, как только Mine починит регистрацию (SPEC_ONBOARDING.md, О5). Кнопки повтора под строкой нет. Не диагноз «приложение отсутствует» |
+| Helper not answering | Строка «Mine isn't answering. The clipper keeps trying.» и тот же автоматический повтор |
+| Incompatible host | Нет обязательных save/lookup capabilities: новый Save не отправляется. Строка «This clipper needs a newer Mine. Open the updated Mine and the clipper connects on its own.» и тот же автоматический повтор |
 | Folder missing / access denied | `folder_state` / browser permission и конкретная причина; выбор папки либо восстановление исходного binding |
 | Media source missing | media creation request не создаётся. Popup показывает inline error, main UI остаётся открытым |
 | Media download/finalize failed | Нет успешной media-карточки без media. Доказанный pre-effect отказ получает terminal receipt; после возможных эффектов исход остаётся unknown до проверки |

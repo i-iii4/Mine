@@ -27,7 +27,6 @@ import type {
   VaultWriteLayoutDto,
   UnavailableVault,
   SpaceEntry,
-  ClipperSetupStatus,
   FolderPreview,
   ClipboardPayload,
   ShortcutBinding,
@@ -495,14 +494,10 @@ export const listPendingThumbUpgrades = () =>
 export const previewVaultFolder = (path: string) =>
   invoke<FolderPreview>("preview_vault_folder", { path });
 
-/** What the clipper setup looks like right now: helper version and which
- *  browsers are registered. See SPEC_ONBOARDING.md О7. */
-export const getClipperSetupStatus = () =>
-  invoke<ClipperSetupStatus>("get_clipper_setup_status");
-
-/** Install the helper and register it with every browser found. */
-export const installClipperHost = (extensionId: string) =>
-  invoke<ClipperSetupStatus>("install_clipper_host", { extensionId });
+/** The folder a browser loads once with Load unpacked; Mine keeps its
+ *  contents current. See SPEC_ONBOARDING.md О16. */
+export const clipperExtensionFolder = () =>
+  invoke<string>("clipper_extension_folder");
 
 /** Whether the first-card marker has not been shown in this space yet (О19). */
 export const firstCardMarkerPending = () =>

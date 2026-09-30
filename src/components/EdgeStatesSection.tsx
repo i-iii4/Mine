@@ -1,7 +1,7 @@
 // Every edge state on one page, so nobody has to produce them.
 //
 // A folder on an unplugged drive, a file iCloud decided to hold, a brand-new
-// space, a clipper that was never connected: waiting for these to happen is not
+// space and the steps to its extension: waiting for these to happen is not
 // review. They are laid out here with fixed inputs, and a state counts as done
 // only when it appears in this section. See DESIGN_SYSTEM.md, «Витрина
 // состояний и краёв».
@@ -23,13 +23,11 @@ import { FirstCardMarkerCard } from "@/components/FirstCardMarker";
 import { EmptySpaceOnboarding } from "@/components/EmptySpaceOnboarding";
 import { FolderConfirmation } from "@/components/FolderConfirmation";
 import { SpaceUnavailable } from "@/components/SpaceUnavailable";
-import { ClipperStatus } from "@/settings/ClipperStatus";
 import {
   CLOUD_BADGE_DELAY_MS,
   CLOUD_DOWNLOADING_LABEL,
   CLOUD_OFFLINE_LABEL,
 } from "@/lib/cloudContent";
-import type { ClipperSetupStatus } from "@/types";
 
 /// A state that exists in the product, and the condition that produces it.
 function StateCase({
@@ -70,26 +68,6 @@ function CardFrame({ children }: { children: ReactNode }) {
 /// A window-sized screen, boxed so several fit on one page.
 function ScreenFrame({ children }: { children: ReactNode }) {
   return <div className="h-96 overflow-hidden rounded-1 border border-border">{children}</div>;
-}
-
-const CLIPPER_BROWSERS: ClipperSetupStatus["browsers"] = [
-  { label: "Chrome", detected: true, connected: false },
-  { label: "Dia", detected: true, connected: false },
-];
-
-function clipperStatus(overrides: Partial<ClipperSetupStatus>): ClipperSetupStatus {
-  return {
-    host_installed: false,
-    host_current: false,
-    extension_installed: false,
-    extension_current: false,
-    extension_path: "/Users/test/Library/Application Support/com.mine.app/clipper/extension",
-    last_connection_check: null,
-    connection_check_error: null,
-    app_version: "0.1.0",
-    browsers: CLIPPER_BROWSERS,
-    ...overrides,
-  };
 }
 
 export function EdgeStatesSection() {
@@ -282,82 +260,6 @@ export function EdgeStatesSection() {
           />
         </StateCase>
 
-        <StateCase
-          name="Статус связи — где он живёт"
-          when="Это не всплывающее уведомление, а постоянный блок в настройках, раздел Extension, под шагами установки."
-        >
-          <div className="overflow-hidden rounded-1 border border-border" data-showcase-context="">
-            <div className="flex h-8 items-center border-b border-border bg-chrome px-3">
-              <span className="w-16 shrink-0" aria-hidden="true" />
-              <span className="text-base font-semibold text-foreground">Settings</span>
-            </div>
-            <div className="flex">
-              <div className="w-36 shrink-0 border-r border-border bg-sidebar p-2">
-                {["Appearance", "Spaces", "Folders", "Extension", "Orphans"].map((item) => (
-                  <div
-                    key={item}
-                    className={
-                      item === "Extension"
-                        ? "rounded-1 bg-active px-2 py-1 text-base text-foreground"
-                        : "px-2 py-1 text-base text-muted-foreground"
-                    }
-                  >
-                    {item}
-                  </div>
-                ))}
-              </div>
-              <div className="grid flex-1 gap-3 p-4">
-                <p className="text-sm text-muted-foreground">
-                  1. Install the extension · 2. Connect it to Mine
-                </p>
-                <ClipperStatus status={clipperStatus({})} />
-              </div>
-            </div>
-          </div>
-        </StateCase>
-
-        <StateCase
-          name="Расширение: не подключено"
-          when="Первый запуск. Расширение ещё не связано с приложением."
-        >
-          <ClipperStatus status={clipperStatus({})} />
-        </StateCase>
-
-        <StateCase
-          name="Расширение: подключено"
-          when="Звено установлено, версия совпадает с приложением."
-        >
-          <ClipperStatus
-            status={clipperStatus({
-              host_installed: true,
-              host_current: true,
-              browsers: CLIPPER_BROWSERS.map((browser) => ({ ...browser, connected: true })),
-            })}
-          />
-        </StateCase>
-
-        <StateCase
-          name="Расширение: версия разошлась"
-          when="Приложение обновилось, звено осталось прежним. Без этой строки сохранение просто перестало бы работать."
-        >
-          <ClipperStatus
-            status={clipperStatus({
-              host_installed: true,
-              host_current: false,
-              browsers: [
-                { label: "Chrome", detected: true, connected: true },
-                { label: "Dia", detected: true, connected: false },
-              ],
-            })}
-          />
-        </StateCase>
-
-        <StateCase
-          name="Расширение: ни одного браузера"
-          when="Ставить некуда — приложение не делает вид, что нашло Chrome."
-        >
-          <ClipperStatus status={clipperStatus({ browsers: [] })} />
-        </StateCase>
       </div>
 
       <StateCase
@@ -409,6 +311,19 @@ export function EdgeStatesSection() {
           <EmptySpaceOnboarding
             viewportHeight={320}
             onInstallClipper={() => {}}
+          />
+        </ScreenFrame>
+      </StateCase>
+
+      <StateCase
+        name="Пустое пространство: как поставить расширение"
+        when="После кнопки Install the extension: папка открыта в Finder, одна строка говорит, что с ней делать. Раздела Extension в настройках нет."
+      >
+        <ScreenFrame>
+          <EmptySpaceOnboarding
+            viewportHeight={320}
+            onInstallClipper={() => {}}
+            initialStepsOpen
           />
         </ScreenFrame>
       </StateCase>
