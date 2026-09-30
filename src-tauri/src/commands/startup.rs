@@ -23,6 +23,10 @@ fn valid_milestone(event: &str) -> bool {
             | "first_route_committed"
             | "first_cards_painted"
             | "space_switch_requested"
+            | "tag_reorder_dropped"
+            | "tag_reorder_written"
+            | "tag_reorder_reloaded"
+            | "tag_reorder_painted"
             | "interactive"
             | "update_ready"
     )

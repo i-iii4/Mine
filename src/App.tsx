@@ -199,6 +199,7 @@ import {
   selectVault,
   startVaultSync,
   recordStartupMilestone,
+  type StartupMilestone,
   startStartupMaintenance,
   getVaultStats,
   listGridBlocks,
@@ -2591,6 +2592,10 @@ export function AppWithVault({
       if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) return;
 
       const newOrder = arrayMove(currentOrder, oldIndex, newIndex);
+      const trace = (event: StartupMilestone) => {
+        if (isTauri()) void recordStartupMilestone(event).catch(() => {});
+      };
+      trace("tag_reorder_dropped");
       // Show the result of the gesture at once. Waiting for the write and a
       // full snapshot reload leaves the row in its old place for the whole
       // round trip, which reads as the drop snapping back and then jumping.
@@ -2598,7 +2603,12 @@ export function AppWithVault({
       try {
         const items = newOrder.map((tag, i) => ({ tag, position: i }));
         await reorderChannels(items);
-        await reloadAllSnapshots();
+        trace("tag_reorder_written");
+        // The order of collections changes the collection list only. Reloading
+        // the feed as well rebuilt hundreds of cards right after the drop.
+        await loadTaxonomySnapshotState();
+        trace("tag_reorder_reloaded");
+        scheduleAfterNextPaint(() => trace("tag_reorder_painted"));
       } catch (err) {
         // Dropping the optimistic order restores whatever the vault says, so a
         // failed write never leaves the sidebar claiming an order it does not
@@ -2608,7 +2618,7 @@ export function AppWithVault({
         setPendingTagOrder(null);
       }
     },
-    [orderedTags, reloadAllSnapshots],
+    [loadTaxonomySnapshotState, orderedTags],
   );
 
   // ── Card drag-to-tag (dnd-kit) ──────────────────────────────────────────
