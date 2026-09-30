@@ -1374,6 +1374,9 @@
 
   let cropOverlayHost = null;
   let cropToastHost = null;
+  // The page address the clipper opened for. The crop's capture names it, and
+  // background refuses a page that has changed since (SPEC_AUDIT_FIXES.md, Ф6).
+  let cropDocumentUrl = null;
 
   function afterViewportPaint(callback) {
     let done = false;
@@ -1457,6 +1460,11 @@
     // architecture the React state is still live — we just toggle the
     // host's display:none, no rehydrate needed, no toast needed.
     if (window.__mineOverlay) {
+      if (payload.status === "cancelled" && payload.error) {
+        window.__mineOverlay.show();
+        window.dispatchEvent(new CustomEvent("mine-crop-result", { detail: { error: payload.error } }));
+        return;
+      }
       if (payload.status === "done" && payload.dataUrl) {
         chrome.runtime.sendMessage(
           { target: "background", action: "cacheScreenshotUpload", dataUrl: payload.dataUrl },
@@ -1490,13 +1498,13 @@
     // Ask background for a full viewport capture
     const captureResp = await new Promise((resolve) => {
       chrome.runtime.sendMessage(
-        { target: "background", action: "captureForCrop" },
+        { target: "background", action: "captureForCrop", documentUrl: cropDocumentUrl },
         (resp) => resolve(resp || { ok: false, error: "No response" }),
       );
     });
 
     if (!captureResp.ok || !captureResp.dataUrl) {
-      sendCropResult({ status: "cancelled" });
+      sendCropResult({ status: "cancelled", error: captureResp.error || "Screenshot capture failed" });
       return;
     }
 
@@ -1541,9 +1549,11 @@
     }
   }
 
-  function startCropOverlay() {
+  function startCropOverlay(documentUrl) {
     // Guard against double-start
     if (cropOverlayHost) return;
+    // No address named: background refuses the capture rather than guess.
+    cropDocumentUrl = typeof documentUrl === "string" ? documentUrl : null;
 
     const host = document.createElement("div");
     host.style.cssText = "position:fixed;inset:0;z-index:2147483647;pointer-events:none;";
@@ -1714,6 +1724,7 @@
     window.addEventListener("keydown", onKeyDown, true);
   }
 
+  // The overlay clipper starts a crop directly, naming its page address.
   window.__mineCrop = {
     start: startCropOverlay,
   };
@@ -1728,7 +1739,7 @@
 
     if (msg.action === "startCropOverlay") {
       try {
-        startCropOverlay();
+        startCropOverlay(msg.documentUrl);
         sendResponse({ ok: true });
       } catch (e) {
         sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) });

@@ -1065,6 +1065,14 @@
       "requirement": "SPEC_AUDIT_FIXES.md#| Б4.4 |",
       "tests": ["src-tauri/src/bin/native_host.rs"],
       "command": "test:rust"
+    },
+    {
+      "paths": [
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/content.js"
+      ],
+      "requirement": "SPEC_AUDIT_FIXES.md#| Б4.5 |",
+      "tests": ["extension/lib/cropCapture.test.ts", "extension/background.messaging.test.ts"],
+      "command": "test:frontend"
     }
   ],
   "release": null
