@@ -30,7 +30,7 @@ use mine_core::links::{link_file_part, NoteMoves};
 use unicode_normalization::UnicodeNormalization;
 use crate::domain::vault::{normalize_filename_stem, validate_slug, VaultLayout};
 use crate::storage::index::IndexedBlock;
-use crate::storage::source_mutation::{SourceFileWrite, StagedSourceMutation};
+use crate::storage::source_mutation::{SourceFileWrite, SourceMutationError, StagedSourceMutation};
 use crate::storage::{
     article_audio, db, derived_preview, files, index, media_refs, projection, reconcile, thumbnails,
 };
@@ -322,6 +322,11 @@ pub enum MergeBlocksError {
     #[error("failed to rewrite '{path}': {message}")]
     ReferenceRewriteFailed { path: String, message: String },
 
+    /// A card or a linking note changed on disk after the merge read it.
+    /// Nothing was merged, written or deleted (`SPEC_AUDIT_FIXES.md`, Ф2).
+    #[error("'{path}' changed outside Mine; nothing was merged")]
+    SourceChanged { path: String },
+
     #[error("{message}")]
     Internal { message: String },
 }
@@ -375,6 +380,9 @@ struct FileRename {
 #[derive(Debug)]
 struct MergeSourceBlock {
     path: PathBuf,
+    /// The note as read: the merged card is built from it, so the note is
+    /// deleted only while it still holds this text.
+    source: String,
     block: Block,
 }
 
@@ -2052,8 +2060,10 @@ pub(crate) fn build_delete_block_plan(
 }
 
 /// The notes on disk that use each of `media`, by slug (SPEC_AUDIT_FIXES.md,
-/// Ф4). Only notes whose text mentions a file's name are read and resolved,
-/// so the check costs one pass of plain reads, not an index rebuild.
+/// Ф4). Every note is read and parsed, so a reference counts in whatever form
+/// the parser reads it: a percent-encoded Markdown path, an escaped YAML
+/// value, another Unicode normalization. Path resolution, the expensive step,
+/// runs only for a note whose references hold a candidate's name.
 /// `skip` is a note that is going away with the media.
 pub(crate) fn media_users_on_disk(
     vault: &VaultLayout,
@@ -2061,24 +2071,11 @@ pub(crate) fn media_users_on_disk(
     skip: Option<&Path>,
 ) -> anyhow::Result<BTreeMap<PathBuf, BTreeSet<String>>> {
     let mut users: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
-    let mentions: Vec<(&PathBuf, Vec<String>)> = media
+    let names: Vec<(&PathBuf, String)> = media
         .iter()
-        .filter_map(|path| {
-            let name = path.file_name()?.to_str()?;
-            let mut forms: Vec<String> = [
-                name.to_string(),
-                name.nfc().collect(),
-                name.nfd().collect(),
-            ]
-            .into_iter()
-            .flat_map(|form| [crate::domain::markdown::encode_local_markdown_url(&form), form])
-            .collect();
-            forms.sort();
-            forms.dedup();
-            Some((path, forms))
-        })
+        .filter_map(|path| Some((path, fold_media_name(path.file_name()?.to_str()?))))
         .collect();
-    if mentions.is_empty() {
+    if names.is_empty() {
         return Ok(users);
     }
     for note in files::scan_md_files(vault)? {
@@ -2086,22 +2083,43 @@ pub(crate) fn media_users_on_disk(
             continue;
         }
         let (slug, content) = files::read_block_file(vault, &note)?;
-        let mentioned: Vec<&PathBuf> = mentions
-            .iter()
-            .filter(|(_, forms)| forms.iter().any(|form| content.contains(form.as_str())))
-            .map(|(path, _)| *path)
-            .collect();
-        if mentioned.is_empty() {
-            continue;
-        }
         let block = parse_markdown_document(&slug, &content, file_saved_at(&note))?.block;
-        for path in mentioned {
-            if !media_asset_reference_kinds(vault, &block, path).is_empty() {
-                users.entry(path.clone()).or_default().insert(slug.clone());
+        let forms = media_reference_forms(&block);
+        for (path, name) in &names {
+            if forms.iter().any(|form| form.contains(name.as_str()))
+                && !media_asset_reference_kinds(vault, &block, path).is_empty()
+            {
+                users.entry((*path).clone()).or_default().insert(slug.clone());
             }
         }
     }
     Ok(users)
+}
+
+/// A file name or a reference in one Unicode normalization and one letter
+/// case: the way the file system compares names, so the pre-resolution match
+/// never misses a reference the resolver would accept.
+fn fold_media_name(text: &str) -> String {
+    text.nfc().collect::<String>().to_lowercase()
+}
+
+/// Every reference of `block` that `media_asset_reference_kinds` resolves
+/// (the frontmatter file and thumbnail, each inline embed or image), as
+/// written and percent-decoded, folded by `fold_media_name`.
+fn media_reference_forms(block: &Block) -> Vec<String> {
+    let inline = iter_inline_media_references(&block.body);
+    block
+        .frontmatter
+        .file
+        .iter()
+        .chain(block.frontmatter.thumbnail.iter())
+        .map(String::as_str)
+        .chain(inline.iter().map(|reference| reference.source.as_str()))
+        .flat_map(|reference| {
+            let decoded = percent_encoding::percent_decode_str(reference).decode_utf8_lossy();
+            [fold_media_name(reference), fold_media_name(&decoded)]
+        })
+        .collect()
 }
 
 fn build_delete_block_plan_from_blocks(
@@ -2152,9 +2170,53 @@ pub(crate) fn merge_blocks_inner(
     vault: &VaultLayout,
     ordered_slugs: Vec<String>,
 ) -> Result<MergeBlocksMutation, MergeBlocksError> {
+    let plan = plan_merge_blocks(conn, vault, ordered_slugs)?;
+    apply_merge_plan(state, conn, vault, plan)
+}
+
+/// A merge read from disk and ready to write. It carries the text of every
+/// note it was built from: the write goes ahead only while the notes still
+/// hold that text.
+struct MergePlan {
+    ordered_slugs: Vec<String>,
+    sources: Vec<MergeSourceBlock>,
+    merged_block: Block,
+    reference_writes: Vec<MergeReferenceWrite>,
+}
+
+fn plan_merge_blocks(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    ordered_slugs: Vec<String>,
+) -> Result<MergePlan, MergeBlocksError> {
     let ordered_slugs = validate_merge_slugs(ordered_slugs)?;
     let selected_slugs: BTreeSet<String> = ordered_slugs.iter().cloned().collect();
     let sources = load_merge_source_blocks(vault, &ordered_slugs)?;
+    let merged_slug = merged_block_slug(conn, vault, &sources)?;
+    let moves = merge_note_moves(vault, &sources, &merged_slug)?;
+    let mut merged_block = build_merged_block(&sources, &moves, merged_slug)?;
+    merged_block.body = retarget_wikilinks(&merged_block.body, |target| moves.retarget(target));
+    let reference_writes = build_merge_reference_writes(vault, &selected_slugs, &moves)?;
+    Ok(MergePlan {
+        ordered_slugs,
+        sources,
+        merged_block,
+        reference_writes,
+    })
+}
+
+fn apply_merge_plan(
+    state: Option<&AppState>,
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    plan: MergePlan,
+) -> Result<MergeBlocksMutation, MergeBlocksError> {
+    let MergePlan {
+        ordered_slugs,
+        sources,
+        merged_block,
+        reference_writes,
+    } = plan;
     let removed_events = sources
         .iter()
         .map(|source| BlockRemovedPayload {
@@ -2162,11 +2224,6 @@ pub(crate) fn merge_blocks_inner(
             tags: source.block.frontmatter.tags.clone(),
         })
         .collect();
-    let merged_slug = merged_block_slug(conn, vault, &sources)?;
-    let moves = merge_note_moves(vault, &sources, &merged_slug)?;
-    let mut merged_block = build_merged_block(&sources, &moves, merged_slug)?;
-    merged_block.body = retarget_wikilinks(&merged_block.body, |target| moves.retarget(target));
-    let reference_writes = build_merge_reference_writes(vault, &selected_slugs, &moves)?;
 
     let merged_path = vault.block_path(&merged_block.slug);
     let mut suppressed_paths = vec![merged_path.clone(), vault.thumb_path(&merged_block.slug)];
@@ -2226,12 +2283,10 @@ fn apply_merge_blocks(
             patched.into_bytes(),
         ));
     }
-    writes.extend(
-        sources
-            .iter()
-            .map(|source| SourceFileWrite::delete(source.path.clone())),
-    );
-    let staged = StagedSourceMutation::stage(writes).map_err(internal_merge_error)?;
+    writes.extend(sources.iter().map(|source| {
+        SourceFileWrite::delete_if_unchanged(source.path.clone(), source.source.clone().into_bytes())
+    }));
+    let staged = StagedSourceMutation::stage(writes).map_err(merge_mutation_error)?;
     let merged_path = vault.block_path(&merged_block.slug);
     staged
         .commit_with_index(conn, "merge_blocks", |index_conn| {
@@ -2244,7 +2299,7 @@ fn apply_merge_blocks(
             }
             Ok(())
         })
-        .map_err(internal_merge_error)?;
+        .map_err(merge_mutation_error)?;
 
     reconcile_committed_preview(conn, vault, &merged_block.slug);
 
@@ -2324,6 +2379,7 @@ fn load_merge_source_blocks(
         }
         sources.push(MergeSourceBlock {
             path,
+            source: content,
             block: parsed.block,
         });
     }
@@ -4308,6 +4364,16 @@ fn internal_merge_error(error: impl std::fmt::Display) -> MergeBlocksError {
     }
 }
 
+/// A refused source mutation, typed when an outside edit won.
+fn merge_mutation_error(error: SourceMutationError) -> MergeBlocksError {
+    match error {
+        SourceMutationError::Changed { path, .. } => MergeBlocksError::SourceChanged {
+            path: path.to_string_lossy().to_string(),
+        },
+        error => internal_merge_error(error),
+    }
+}
+
 fn internal_rename_error(error: impl std::fmt::Display) -> RenameBlockError {
     RenameBlockError::Internal {
         message: error.to_string(),
@@ -5212,6 +5278,54 @@ mod tests {
         let parsed = crate::domain::block::parse_block("Photo Card", &media_content).unwrap();
         assert_eq!(parsed.frontmatter.file.as_deref(), Some("renamed.png"));
         assert_eq!(parsed.frontmatter.title.as_deref(), Some("Photo Card"));
+    }
+
+    #[test]
+    fn rename_media_asset_keeps_nested_markdown_links_resolving() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        std::fs::create_dir_all(vault.root().join("Media")).unwrap();
+        std::fs::write(vault.root().join("Media/old.jpg"), b"image-bytes").unwrap();
+        write_note(
+            &vault,
+            "Cards/Note",
+            "---\nsaved_at: 2026-04-22T00:00:00Z\n---\nA ![shot](../Media/old.jpg) and ![[old.jpg]].\n",
+        );
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        let result = rename_media_asset_inner(
+            &state,
+            &conn,
+            &vault,
+            "Media/old.jpg".to_string(),
+            "new".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(result.new_media_ref.as_deref(), Some("Media/new.jpg"));
+        let note = read_note(&vault, "Cards/Note");
+        assert_eq!(
+            note,
+            "---\nsaved_at: 2026-04-22T00:00:00Z\n---\nA ![shot](../Media/new.jpg) and ![[Media/new.jpg]].\n"
+        );
+        let block = parse_markdown_document(
+            "Cards/Note",
+            &note,
+            DateTime::new("2026-04-22T00:00:00Z").unwrap(),
+        )
+        .unwrap()
+        .block;
+        let new_path = vault.root().join("Media/new.jpg");
+        let references = iter_inline_media_references(&block.body);
+        assert_eq!(references.len(), 2);
+        for reference in &references {
+            let resolved = media_refs::resolve_inline_media(&vault, "Cards/Note", reference);
+            assert!(
+                resolved.is_some_and(|path| same_path(&path, &new_path)),
+                "{reference:?} must resolve to the renamed file"
+            );
+        }
+        assert_eq!(std::fs::read(&new_path).unwrap(), b"image-bytes");
     }
 
     #[test]
@@ -6499,6 +6613,100 @@ mod tests {
                 .replace("[[First]]", &format!("[[{link}]]"))
                 .replace("[[Cards/Second|the second]]", &format!("[[{link}|the second]]"))
         );
+    }
+
+    /// `![](../Media/фото.jpg)` written the way a Markdown editor writes it.
+    const ENCODED_PHOTO_LINK: &str = "![](../Media/%D1%84%D0%BE%D1%82%D0%BE.jpg)";
+
+    #[test]
+    fn deleting_a_card_keeps_media_an_unindexed_note_links_percent_encoded() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let photo = vault.root().join("Media/фото.jpg");
+        std::fs::create_dir_all(photo.parent().unwrap()).unwrap();
+        std::fs::write(&photo, b"photo bytes").unwrap();
+        write_note(
+            &vault,
+            "Cards/Owner",
+            "---\nfile: \"[[фото.jpg]]\"\nsaved_at: 2026-04-22T00:00:00Z\n---\n",
+        );
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        // Saved a moment ago: on disk, not yet in the index.
+        write_note(&vault, "Cards/Note", &format!("Look: {ENCODED_PHOTO_LINK}\n"));
+
+        let plan = build_delete_block_plan(&conn, &vault, "Cards/Owner").unwrap();
+        assert!(plan.unused_media.is_empty());
+        assert_eq!(plan.shared_media.len(), 1);
+        assert_eq!(plan.shared_media[0].referenced_by, vec!["Cards/Note".to_string()]);
+
+        assert!(delete_block_inner(None, &conn, &vault, "Cards/Owner", Some(true)).unwrap());
+
+        assert!(!vault.block_path("Cards/Owner").exists());
+        assert_eq!(std::fs::read(&photo).unwrap(), b"photo bytes");
+    }
+
+    #[test]
+    fn media_users_on_disk_reads_references_in_any_encoding() {
+        let (_root, _derived, vault, _conn) = make_vault();
+        let photo = vault.root().join("Media/фото.jpg");
+        std::fs::create_dir_all(photo.parent().unwrap()).unwrap();
+        std::fs::write(&photo, b"photo bytes").unwrap();
+        let nfd: String = "фото.jpg".nfd().collect();
+        write_note(&vault, "Cards/Encoded", &format!("{ENCODED_PHOTO_LINK}\n"));
+        write_note(
+            &vault,
+            "Cards/Escaped",
+            "---\nthumbnail: \"Media/\\u0444\\u043e\\u0442\\u043e.jpg\"\nsaved_at: 2026-04-22T00:00:00Z\n---\n",
+        );
+        write_note(&vault, "Cards/Decomposed", &format!("![[{nfd}]]\n"));
+        write_note(&vault, "Cards/Unrelated", "![](../Media/%D1%84.jpg) and фото elsewhere\n");
+
+        let users = media_users_on_disk(&vault, std::slice::from_ref(&photo), None).unwrap();
+
+        assert_eq!(
+            users.get(&photo).cloned().unwrap_or_default(),
+            BTreeSet::from([
+                "Cards/Decomposed".to_string(),
+                "Cards/Encoded".to_string(),
+                "Cards/Escaped".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn merge_refuses_when_a_source_was_edited_after_it_was_read() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let first = "---\nsaved_at: 2026-04-22T00:00:00Z\n---\n# First\n\nAlpha.\n";
+        let second = "---\nsaved_at: 2026-04-22T00:00:00Z\n---\n# Second\n\nBeta.\n";
+        write_note(&vault, "Cards/First", first);
+        write_note(&vault, "Cards/Second", second);
+        write_note(&vault, "Notes/External", "See [[First]].\n");
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        let plan = plan_merge_blocks(
+            &conn,
+            &vault,
+            vec!["Cards/First".to_string(), "Cards/Second".to_string()],
+        )
+        .unwrap();
+        let merged_slug = plan.merged_block.slug.clone();
+        // Obsidian appends to a source after the merge read it.
+        let edited = format!("{second}\nWritten in Obsidian meanwhile.\n");
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(vault.block_path("Cards/Second"))
+            .and_then(|mut file| {
+                std::io::Write::write_all(&mut file, b"\nWritten in Obsidian meanwhile.\n")
+            })
+            .unwrap();
+
+        let error = apply_merge_plan(None, &conn, &vault, plan).unwrap_err();
+
+        assert!(matches!(error, MergeBlocksError::SourceChanged { .. }), "{error}");
+        assert_eq!(read_note(&vault, "Cards/Second"), edited);
+        assert_eq!(read_note(&vault, "Cards/First"), first);
+        assert_eq!(read_note(&vault, "Notes/External"), "See [[First]].\n");
+        assert!(!vault.block_path(&merged_slug).exists());
+        assert!(index::get_block(&conn, &merged_slug).unwrap().is_none());
+        assert!(index::get_block(&conn, "Cards/Second").unwrap().is_some());
     }
 
     #[test]

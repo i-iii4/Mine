@@ -130,7 +130,11 @@ enum SourceFileContent {
         expected: Vec<u8>,
         bytes: Vec<u8>,
     },
-    Delete,
+    /// Move the file to the Trash; with `expected`, only while it holds
+    /// those bytes.
+    Delete {
+        expected: Option<Vec<u8>>,
+    },
     Rename {
         source: PathBuf,
         rewrite: Option<Rewrite>,
@@ -175,7 +179,21 @@ impl SourceFileWrite {
     pub fn delete(path: PathBuf) -> Self {
         Self {
             path,
-            content: SourceFileContent::Delete,
+            content: SourceFileContent::Delete { expected: None },
+            mode: SourceFileMode::Delete,
+        }
+    }
+
+    /// Move a file to the Trash while it still holds `expected`, the bytes
+    /// the caller read and built the operation from. A file that holds
+    /// anything else, or is gone, refuses the whole operation and stays as it
+    /// is (`SPEC_AUDIT_FIXES.md`, Ф2).
+    pub fn delete_if_unchanged(path: PathBuf, expected: Vec<u8>) -> Self {
+        Self {
+            path,
+            content: SourceFileContent::Delete {
+                expected: Some(expected),
+            },
             mode: SourceFileMode::Delete,
         }
     }
@@ -289,8 +307,12 @@ enum OriginalSource {
         expected: Vec<u8>,
         published: Vec<u8>,
     },
-    /// The deleted file, kept until the operation is accepted.
-    Backup(PathBuf),
+    /// The deleted file, kept at `backup` until the operation is accepted.
+    /// With `expected`, the file is deleted only while it holds those bytes.
+    Backup {
+        backup: PathBuf,
+        expected: Option<Vec<u8>>,
+    },
     /// The file moved here from `source` unchanged.
     Moved { source: PathBuf },
     /// The file moved here from `source` and was rewritten. Once published,
@@ -507,12 +529,41 @@ fn stage_original(write: &SourceFileWrite) -> std::result::Result<OriginalSource
                 reason: format!("replace destination is unreadable: {error}"),
             }),
         },
-        SourceFileContent::Delete => prepare_delete_backup(&write.path)
-            .map(OriginalSource::Backup)
-            .map_err(|source| SourceMutationError::Stage {
+        SourceFileContent::Delete { expected } => {
+            let changed = || SourceMutationError::Changed {
                 path: write.path.clone(),
-                source,
-            }),
+                preserved: None,
+            };
+            let backup = match prepare_delete_backup(&write.path) {
+                Ok(backup) => backup,
+                Err(_) if expected.is_some() && !write.path.exists() => return Err(changed()),
+                Err(source) => {
+                    return Err(SourceMutationError::Stage {
+                        path: write.path.clone(),
+                        source,
+                    })
+                }
+            };
+            if let Some(expected) = expected {
+                // The backup is what rollback restores, so it must be the
+                // version the operation was built from.
+                let held = std::fs::read(&backup);
+                if !matches!(&held, Ok(bytes) if bytes == expected) {
+                    let _ = std::fs::remove_file(&backup);
+                    return Err(match held {
+                        Err(error) => SourceMutationError::Validate {
+                            path: write.path.clone(),
+                            reason: format!("delete source is unreadable: {error}"),
+                        },
+                        Ok(_) => changed(),
+                    });
+                }
+            }
+            Ok(OriginalSource::Backup {
+                backup,
+                expected: expected.clone(),
+            })
+        }
         SourceFileContent::Rename { source, rewrite } => {
             if write.path.exists() {
                 return Err(SourceMutationError::Validate {
@@ -560,7 +611,9 @@ fn write_bytes(bytes: &[u8]) -> impl FnOnce(&mut std::fs::File) -> std::io::Resu
 /// Write the new bytes to a hidden temp file next to the destination.
 fn stage_temp(write: &SourceFileWrite) -> Result<Option<PathBuf>> {
     match &write.content {
-        SourceFileContent::Delete | SourceFileContent::Rename { rewrite: None, .. } => Ok(None),
+        SourceFileContent::Delete { .. } | SourceFileContent::Rename { rewrite: None, .. } => {
+            Ok(None)
+        }
         SourceFileContent::Rename {
             rewrite: Some(rewrite),
             source,
@@ -587,13 +640,9 @@ fn publish(file: &StagedSourceFile) -> std::result::Result<OriginalSource, Sourc
     match &file.original {
         OriginalSource::Absent(_) => {
             let temp = file.temp.as_ref().expect("create mutation has temp");
-            std::fs::hard_link(temp, &file.path)
+            let fingerprint = link_published(temp, &file.path)
                 .with_context(|| format!("link {}", file.path.display()))
                 .map_err(failed)?;
-            let fingerprint = files::fingerprint(&file.path).map_err(|source| {
-                let _ = std::fs::remove_file(&file.path);
-                failed(source)
-            })?;
             Ok(OriginalSource::Absent(Some(fingerprint)))
         }
         OriginalSource::Bytes {
@@ -611,10 +660,16 @@ fn publish(file: &StagedSourceFile) -> std::result::Result<OriginalSource, Sourc
             .map_err(failed)?;
             Ok(file.original.clone())
         }
-        OriginalSource::Backup(_) => {
+        OriginalSource::Backup { backup, expected } => {
+            if let Some(expected) = expected {
+                ensure_unchanged(&file.path, expected).map_err(failed)?;
+            }
             files::delete_user_file(&file.path)
                 .with_context(|| format!("delete {}", file.path.display()))
                 .map_err(failed)?;
+            if let Some(expected) = expected {
+                ensure_trashed_unchanged(&file.path, backup, expected).map_err(failed)?;
+            }
             Ok(file.original.clone())
         }
         OriginalSource::Moved { source } => {
@@ -647,20 +702,13 @@ fn publish_rewritten_rename(
     destination: &Path,
     expected: &[u8],
 ) -> Result<(PathBuf, files::FileFingerprint)> {
-    std::fs::hard_link(temp, destination).with_context(|| {
+    let published = link_published(temp, destination).with_context(|| {
         format!(
             "failed to publish rewritten rename {} -> {}",
             source.display(),
             destination.display()
         )
     })?;
-    let published = match files::fingerprint(destination) {
-        Ok(published) => published,
-        Err(error) => {
-            let _ = std::fs::remove_file(destination);
-            return Err(error);
-        }
-    };
     let aside = files::aside_path(source, "rename-original");
     if let Err(error) = std::fs::rename(source, &aside) {
         files::remove_if_unchanged(destination, &published)?;
@@ -683,6 +731,73 @@ fn publish_rewritten_rename(
         preserved,
     }
     .into())
+}
+
+/// Refuse unless `path` still holds `expected`.
+fn ensure_unchanged(path: &Path, expected: &[u8]) -> Result<()> {
+    match std::fs::read(path) {
+        Ok(current) if current == expected => Ok(()),
+        Ok(_) => Err(files::SourceChanged {
+            path: path.to_path_buf(),
+            preserved: None,
+        }
+        .into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err(files::SourceChanged {
+            path: path.to_path_buf(),
+            preserved: None,
+        }
+        .into()),
+        Err(error) => Err(error).with_context(|| format!("read {}", path.display())),
+    }
+}
+
+/// After a checked delete: an edit written into the file in place while it
+/// was moving to the Trash shows through the backup, a hard link to the same
+/// file. Such a file is put back and the operation refused. A backup that is
+/// a copy holds the checked bytes and passes.
+fn ensure_trashed_unchanged(path: &Path, backup: &Path, expected: &[u8]) -> Result<()> {
+    let held = std::fs::read(backup).with_context(|| format!("read {}", backup.display()))?;
+    if held == expected {
+        return Ok(());
+    }
+    // When a newer version already stands at `path` again, the put-back is
+    // refused and the edited file stays in the Trash.
+    let _ = restore_delete_backup(path, backup);
+    Err(files::SourceChanged {
+        path: path.to_path_buf(),
+        preserved: None,
+    }
+    .into())
+}
+
+/// Link the staged `temp` under `destination`, which must not exist yet, and
+/// return the identity of the published file for rollback.
+///
+/// The identity is taken from the temp before the link: a hard link shares
+/// device, inode, size and modification time, so this is the identity of
+/// exactly the file this operation publishes. Read from the destination after
+/// the link instead, it would record a foreign file that replaced ours in
+/// between as ours, and rollback would delete it. A destination that no
+/// longer matches right after the link is refused and left as it is.
+fn link_published(temp: &Path, destination: &Path) -> Result<files::FileFingerprint> {
+    let published = files::fingerprint(temp)?;
+    std::fs::hard_link(temp, destination)
+        .with_context(|| format!("link {} -> {}", temp.display(), destination.display()))?;
+    #[cfg(test)]
+    tests::run_after_link_hook(destination);
+    match files::fingerprint(destination) {
+        Ok(live) if live == published => Ok(published),
+        Ok(_) => Err(files::SourceChanged {
+            path: destination.to_path_buf(),
+            preserved: None,
+        }
+        .into()),
+        Err(error) => {
+            // Withdraw the link only while it is still ours.
+            let _ = files::remove_if_unchanged(destination, &published);
+            Err(error)
+        }
+    }
 }
 
 impl Drop for StagedSourceMutation {
@@ -743,7 +858,7 @@ fn rollback_originals(originals: &[(PathBuf, OriginalSource)]) -> Vec<PathBuf> {
                 expected,
                 published,
             } => restore_replaced(path, expected, published),
-            OriginalSource::Backup(backup) => restore_delete_backup(path, backup),
+            OriginalSource::Backup { backup, .. } => restore_delete_backup(path, backup),
             OriginalSource::Moved { source } => files::move_exclusive(path, source),
             OriginalSource::Rewritten {
                 source,
@@ -816,7 +931,7 @@ fn restore_delete_backup(path: &Path, backup: &Path) -> Result<()> {
 
 fn cleanup_original(original: &OriginalSource) {
     match original {
-        OriginalSource::Backup(path)
+        OriginalSource::Backup { backup: path, .. }
         | OriginalSource::Rewritten {
             aside: Some(path), ..
         } => {
@@ -855,6 +970,142 @@ fn rollback_after_index_failure<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+
+    type AfterLinkHook = Box<dyn FnOnce(&Path)>;
+
+    thread_local! {
+        /// Runs once between the link of a published file and the check of
+        /// its destination: the window an outside writer can hit.
+        static AFTER_LINK: RefCell<Option<AfterLinkHook>> = const { RefCell::new(None) };
+    }
+
+    pub(super) fn run_after_link_hook(destination: &Path) {
+        if let Some(hook) = AFTER_LINK.with(|slot| slot.borrow_mut().take()) {
+            hook(destination);
+        }
+    }
+
+    fn after_next_link(hook: impl FnOnce(&Path) + 'static) {
+        AFTER_LINK.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+    }
+
+    /// An editor's atomic save: write a sibling, rename it over `path`.
+    fn replace_from_outside(path: &Path, bytes: &'static [u8]) {
+        let staged = path.with_file_name("outside-editor.tmp");
+        std::fs::write(&staged, bytes).unwrap();
+        std::fs::rename(&staged, path).unwrap();
+    }
+
+    fn failing_index(conn: &Connection) -> Result<()> {
+        conn.execute_batch("SELECT 1")?;
+        anyhow::bail!("injected index failure")
+    }
+
+    #[test]
+    fn created_file_replaced_right_after_its_link_is_never_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let created = dir.path().join("created.md");
+        let staged =
+            StagedSourceMutation::stage(vec![SourceFileWrite::create(created.clone(), b"ours".to_vec())])
+                .unwrap();
+        after_next_link(|destination| replace_from_outside(destination, b"foreign"));
+        let conn = Connection::open_in_memory().unwrap();
+
+        let error = staged
+            .commit_with_index(&conn, "test_projection", failing_index)
+            .unwrap_err();
+
+        assert!(matches!(error, SourceMutationError::Changed { .. }), "{error}");
+        assert_eq!(std::fs::read(&created).unwrap(), b"foreign");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn rewritten_rename_replaced_right_after_its_link_keeps_both_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old.md");
+        let new = dir.path().join("new.md");
+        std::fs::write(&old, b"original").unwrap();
+        let staged = StagedSourceMutation::stage(vec![SourceFileWrite::rename_with_bytes(
+            old.clone(),
+            new.clone(),
+            b"original".to_vec(),
+            b"rewritten".to_vec(),
+        )])
+        .unwrap();
+        after_next_link(|destination| replace_from_outside(destination, b"foreign"));
+        let conn = Connection::open_in_memory().unwrap();
+
+        let error = staged
+            .commit_with_index(&conn, "test_projection", failing_index)
+            .unwrap_err();
+
+        assert!(matches!(error, SourceMutationError::Changed { .. }), "{error}");
+        assert_eq!(std::fs::read(&new).unwrap(), b"foreign");
+        assert_eq!(std::fs::read(&old).unwrap(), b"original");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+    }
+
+    fn hidden_leftovers(dir: &Path) -> Vec<String> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+            .filter(|name| name.starts_with('.'))
+            .collect()
+    }
+
+    #[test]
+    fn checked_delete_refuses_at_staging_when_the_file_was_edited() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("note.md");
+        std::fs::write(&path, b"read by Mine\nedited in Obsidian").unwrap();
+
+        let error = StagedSourceMutation::stage(vec![SourceFileWrite::delete_if_unchanged(
+            path.clone(),
+            b"read by Mine".to_vec(),
+        )])
+        .unwrap_err();
+
+        assert!(matches!(error, SourceMutationError::Changed { .. }), "{error}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"read by Mine\nedited in Obsidian");
+        assert!(hidden_leftovers(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn checked_delete_refuses_when_the_file_is_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("note.md");
+
+        let error = StagedSourceMutation::stage(vec![SourceFileWrite::delete_if_unchanged(
+            path,
+            b"read by Mine".to_vec(),
+        )])
+        .unwrap_err();
+
+        assert!(matches!(error, SourceMutationError::Changed { .. }), "{error}");
+    }
+
+    #[test]
+    fn checked_delete_refuses_at_publication_and_rolls_back_earlier_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let created = dir.path().join("merged.md");
+        let path = dir.path().join("note.md");
+        std::fs::write(&path, b"read by Mine").unwrap();
+        let staged = StagedSourceMutation::stage(vec![
+            SourceFileWrite::create(created.clone(), b"merged".to_vec()),
+            SourceFileWrite::delete_if_unchanged(path.clone(), b"read by Mine".to_vec()),
+        ])
+        .unwrap();
+        replace_from_outside(&path, b"edited in Obsidian");
+
+        let error = staged.commit().unwrap_err();
+
+        assert!(matches!(error, SourceMutationError::Changed { .. }), "{error}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"edited in Obsidian");
+        assert!(!created.exists());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
 
     #[test]
     fn commit_then_rollback_restores_replacements_and_removes_creates() {

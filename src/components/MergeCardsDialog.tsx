@@ -209,6 +209,9 @@ function mergeErrorMessage(error: unknown): string {
     if (kind === "duplicate_slug") return "The merge list contains the same element twice.";
     if (kind === "block_not_found") return "One of the selected elements no longer exists.";
     if (kind === "block_not_mergeable") return "Channels cannot be merged.";
+    if (kind === "source_changed") {
+      return "An element changed outside Mine while merging. Nothing was merged; try again.";
+    }
     if ("message" in error && typeof (error as { message: unknown }).message === "string") {
       return (error as { message: string }).message;
     }

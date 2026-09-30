@@ -1294,6 +1294,44 @@ mod mutation_tests {
     }
 
     #[test]
+    fn delete_keeps_media_an_unindexed_note_links_percent_encoded() {
+        let (dir, env, root) = fixture();
+        let source = dir.path().join("source.jpg");
+        std::fs::write(&source, b"\xff\xd8\xff\xdbphoto").unwrap();
+        let out = run(
+            &env,
+            &args(&[
+                "card",
+                "create",
+                "--title",
+                "Фото",
+                "--file",
+                source.to_str().unwrap(),
+            ]),
+        );
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        assert!(root.join("Фото.jpg").is_file());
+        // Written by another editor a moment ago: on disk, not in the index.
+        std::fs::write(
+            root.join("Cards/Note.md"),
+            "Look: ![](../%D0%A4%D0%BE%D1%82%D0%BE.jpg)\n",
+        )
+        .unwrap();
+
+        let out = run(
+            &env,
+            &args(&["card", "delete", "Фото", "--delete-unused-media"]),
+        );
+
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        assert!(!root.join("Фото.md").exists());
+        assert_eq!(
+            std::fs::read(root.join("Фото.jpg")).unwrap(),
+            b"\xff\xd8\xff\xdbphoto"
+        );
+    }
+
+    #[test]
     fn creates_a_media_card_from_a_file() {
         let (dir, env, root) = fixture();
         let source = dir.path().join("shot.jpg");

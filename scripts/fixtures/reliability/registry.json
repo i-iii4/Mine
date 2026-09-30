@@ -1025,6 +1025,22 @@
       "requirement": "SPEC_AUDIT_FIXES.md#| Б4.1 |",
       "tests": ["extension/background.messaging.test.ts", "extension/lib/standaloneVault.test.ts", "extension/lib/cropCapture.test.ts", "extension/popup/components/ScreenshotPreview.test.tsx", "extension/popup/hooks/useClipperState.standalone.test.tsx", "extension/popup/overlay-entry.test.tsx"],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "mine-core/src/domain/collection.rs",
+        "mine-core/src/domain/markdown.rs",
+        "mine-core/src/domain/source_patch.rs",
+        "src-tauri/src/cli.rs",
+        "src-tauri/src/commands/blocks.rs",
+        "src-tauri/src/commands/settings.rs",
+        "src-tauri/src/storage/source_mutation.rs",
+        "src/components/MergeCardsDialog.tsx",
+        "src/types/generated.ts"
+      ],
+      "requirement": "SPEC_AUDIT_FIXES.md#| Б1.1 |",
+      "tests": ["src-tauri/src/commands/blocks.rs", "src-tauri/src/storage/source_mutation.rs", "src-tauri/src/commands/settings.rs", "src-tauri/src/cli.rs", "mine-core/src/domain/source_patch.rs", "mine-core/src/domain/markdown.rs", "mine-core/src/domain/collection.rs"],
+      "command": "test:rust"
     }
   ],
   "release": null

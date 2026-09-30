@@ -182,6 +182,13 @@ fn split_wikilink_fragment(target: &str) -> (&str, Option<&str>) {
 /// legacy markdown images (`![alt](file%20name.jpg)`). Only local filenames
 /// present in `renames` are rewritten; remote URLs and non-matching embeds are
 /// preserved verbatim.
+///
+/// Keys are references as the parser reads them (a Markdown URL
+/// percent-decoded). An embed gets the new value as written. A rename keeps
+/// the file in its folder, and a Markdown path resolves from the note's
+/// folder (`SPEC_AUDIT_FIXES.md`, Ф3): a Markdown image keeps its written
+/// prefix (`../Media/`) and its encoding, and only its file-name segment
+/// becomes the file name of the new value.
 pub fn rename_inline_media_references(body: &str, renames: &BTreeMap<String, String>) -> String {
     if renames.is_empty() {
         return body.to_string();
@@ -260,7 +267,7 @@ pub fn rename_inline_media_references(body: &str, renames: &BTreeMap<String, Str
             out.push_str("![");
             out.push_str(alt);
             out.push_str("](");
-            out.push_str(&encode_local_markdown_url(new_name));
+            out.push_str(&renamed_markdown_url(raw_url, new_name));
             out.push(')');
         } else {
             out.push_str(&body[excl..end]);
@@ -269,6 +276,39 @@ pub fn rename_inline_media_references(body: &str, renames: &BTreeMap<String, Str
     }
 
     out
+}
+
+/// `raw_url` with its file-name segment replaced by the file name of
+/// `new_name`: the directory prefix and a `#fragment` stay as written, and
+/// the new name is encoded the way the old one was.
+fn renamed_markdown_url(raw_url: &str, new_name: &str) -> String {
+    let (prefix, rest) = raw_url
+        .rfind('/')
+        .map_or(("", raw_url), |slash| raw_url.split_at(slash + 1));
+    let (segment, fragment) = rest.find('#').map_or((rest, ""), |hash| rest.split_at(hash));
+    let file_name = new_name.rsplit('/').next().unwrap_or(new_name);
+    format!("{prefix}{}{fragment}", encode_like(segment, file_name))
+}
+
+/// Characters a fully percent-encoded URL segment keeps as they are: the
+/// unreserved set of RFC 3986.
+const URL_SEGMENT_KEPT: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
+
+/// Encode `name` in the style of `written`, the segment it replaces: fully
+/// percent-encoded when `written` encodes its non-ASCII letters (as many
+/// Markdown editors write links), otherwise only the characters that would
+/// break the link.
+fn encode_like(written: &str, name: &str) -> String {
+    let decoded = percent_encoding::percent_decode_str(written).decode_utf8_lossy();
+    if written.is_ascii() && !decoded.is_ascii() {
+        percent_encoding::utf8_percent_encode(name, URL_SEGMENT_KEPT).to_string()
+    } else {
+        encode_local_markdown_url(name)
+    }
 }
 
 /// Remove local inline-media references listed in `removals`.
@@ -590,6 +630,33 @@ mod tests {
         );
         let expected = "![[New Name (image 1).jpg|alt]]\n![cap](New%20Name%20%28image%201%29.jpg)";
         assert_eq!(rename_inline_media_references(input, &renames), expected);
+    }
+
+    #[test]
+    fn rename_inline_media_references_keeps_the_relative_prefix_of_a_markdown_path() {
+        let input = "![cap](../Media/old.jpg) ![[Media/old.jpg]] ![](/Media/old.jpg#crop)";
+        let renames = BTreeMap::from([
+            ("../Media/old.jpg".to_string(), "Media/new name.jpg".to_string()),
+            ("Media/old.jpg".to_string(), "Media/new name.jpg".to_string()),
+            ("/Media/old.jpg#crop".to_string(), "Media/new name.jpg".to_string()),
+        ]);
+        assert_eq!(
+            rename_inline_media_references(input, &renames),
+            "![cap](../Media/new%20name.jpg) ![[Media/new name.jpg]] ![](/Media/new%20name.jpg#crop)"
+        );
+    }
+
+    #[test]
+    fn rename_inline_media_references_keeps_the_encoding_style_of_a_markdown_path() {
+        let input = "![](../Media/%D1%84%D0%BE%D1%82%D0%BE.jpg) ![](../Media/%D0%B0%20b.jpg)";
+        let renames = BTreeMap::from([
+            ("../Media/фото.jpg".to_string(), "Media/снимок 2.jpg".to_string()),
+            ("../Media/а b.jpg".to_string(), "Media/c d.jpg".to_string()),
+        ]);
+        assert_eq!(
+            rename_inline_media_references(input, &renames),
+            "![](../Media/%D1%81%D0%BD%D0%B8%D0%BC%D0%BE%D0%BA%202.jpg) ![](../Media/c%20d.jpg)"
+        );
     }
 
     #[test]

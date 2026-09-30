@@ -261,6 +261,20 @@ mod tests {
     }
 
     #[test]
+    fn patch_collections_frontmatter_keeps_comments_of_the_membership_block() {
+        let input = "---\nMine Collections: # boards\n  - \"[[Design]]\" # main\n  # archived: Old board\n  - \"[[Research]]\"\nrating: 5\n---\nBody";
+        let output = patch_collections_frontmatter(
+            input,
+            &["Design".to_string(), "Typography".to_string()],
+        )
+        .unwrap();
+        assert_eq!(
+            output,
+            "---\nMine Collections: # boards\n  # archived: Old board\n  - \"[[Design]]\" # main\n  - \"[[Typography]]\"\nrating: 5\n---\nBody"
+        );
+    }
+
+    #[test]
     fn patch_collections_frontmatter_updates_existing_mine_collections() {
         let input = "---\ntags: design typography\nMine Collections:\n  - old\n---\nBody";
         let output = patch_collections_frontmatter(

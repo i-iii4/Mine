@@ -1236,6 +1236,30 @@ mod tests {
     }
 
     #[test]
+    fn orphan_delete_keeps_media_an_unindexed_note_links_percent_encoded() {
+        let (root, _derived, vs) = make_vault();
+        std::fs::create_dir_all(root.path().join("Media")).unwrap();
+        std::fs::create_dir_all(root.path().join("Cards")).unwrap();
+        write_media(&vs, "Media/фото.jpg");
+        // Saved a moment ago: on disk, not yet in the index.
+        std::fs::write(
+            vs.vault.block_path("Cards/Note"),
+            "Look: ![](../Media/%D1%84%D0%BE%D1%82%D0%BE.jpg)\n",
+        )
+        .unwrap();
+
+        let result =
+            delete_orphan_media_inner(&vs, vec!["Media/фото.jpg".into()]).expect("delete");
+
+        assert!(result.deleted.is_empty());
+        assert_eq!(result.skipped, vec!["Media/фото.jpg".to_string()]);
+        assert_eq!(
+            std::fs::read(root.path().join("Media/фото.jpg")).unwrap(),
+            b"fake-bytes"
+        );
+    }
+
+    #[test]
     fn orphan_request_for_another_space_is_refused() {
         let (root, _derived, vs) = make_vault();
         std::fs::create_dir_all(root.path().join(".mine")).unwrap();

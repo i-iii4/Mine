@@ -280,7 +280,12 @@ export type MediaAssetReferenceBlock = { slug: string; title: string | null; dis
 
 export type MediaAssetReferenceKind = "frontmatter_file" | "body_embed"
 
-export type MergeBlocksError = { kind: "no_vault" } | { kind: "too_few_cards" } | { kind: "duplicate_slug"; slug: string } | { kind: "block_not_found"; slug: string } | { kind: "block_not_mergeable"; slug: string; block_type: string } | { kind: "invalid_slug"; slug: string; reason: string } | { kind: "reference_rewrite_failed"; path: string; message: string } | { kind: "internal"; message: string }
+export type MergeBlocksError = { kind: "no_vault" } | { kind: "too_few_cards" } | { kind: "duplicate_slug"; slug: string } | { kind: "block_not_found"; slug: string } | { kind: "block_not_mergeable"; slug: string; block_type: string } | { kind: "invalid_slug"; slug: string; reason: string } | { kind: "reference_rewrite_failed"; path: string; message: string } |
+/**
+ * A card or a linking note changed on disk after the merge read it.
+ * Nothing was merged, written or deleted (`SPEC_AUDIT_FIXES.md`, Ф2).
+ */
+{ kind: "source_changed"; path: string } | { kind: "internal"; message: string }
 
 export type MergeBlocksResult = { block: IndexedBlock; merged_slug: string; removed_slugs: string[] }
 

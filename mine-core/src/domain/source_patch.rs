@@ -214,6 +214,12 @@ fn patch_field(
 /// Replace the block of a top-level key (its line and value lines) with
 /// `replacement`, remove it when `replacement` is `None`, or append
 /// `replacement` when the key is absent. Every other line is kept as is.
+///
+/// Comments inside the replaced block are the user's text, not part of the
+/// value, so they survive the replacement: the trailing comment of the key
+/// line stays on the new key line, a trailing comment of a value line stays
+/// on the identical new line, and every other comment is kept as a comment
+/// line right after the new key line, in its original order.
 pub(crate) fn replace_top_level_key(
     yaml: &str,
     key: &str,
@@ -223,12 +229,14 @@ pub(crate) fn replace_top_level_key(
     let lines: Vec<&str> = yaml.split_inclusive('\n').collect();
     match top_level_key_span(&lines, key) {
         Some((start, end)) => {
+            let comments = SpanComments::collect(&lines[start..end]);
             let mut out = String::with_capacity(yaml.len());
             for line in &lines[..start] {
                 out.push_str(line);
             }
-            if let Some(replacement) = replacement {
-                out.push_str(replacement);
+            match replacement {
+                Some(replacement) => out.push_str(&comments.carry_into(replacement, newline)),
+                None => out.push_str(&comments.standalone(&[], false, newline)),
             }
             for line in &lines[end..] {
                 out.push_str(line);
@@ -249,24 +257,33 @@ pub(crate) fn replace_top_level_key(
 }
 
 /// Line range `[start, end)` of a top-level key and the lines of its value:
-/// indented lines and a sequence written at column zero. Blank lines belong
-/// to the value only when more of the value follows them; blank lines after
-/// the value stay with the note.
+/// indented lines, a sequence written at column zero, and the lines a quoted
+/// scalar runs on. Blank and comment lines belong to the value only when more
+/// of the value follows them; the ones after the value stay with the note.
 pub(crate) fn top_level_key_span(lines: &[&str], key: &str) -> Option<(usize, usize)> {
     let start = lines.iter().position(|line| is_top_level_key(line, key))?;
+    let mut scanner = YamlLineScanner::default();
+    scanner.scan(line_text(lines[start]));
     let mut end = start + 1;
     let mut cursor = start + 1;
     while cursor < lines.len() {
         let line = lines[cursor];
-        let text = line.trim_end_matches(['\r', '\n']);
-        if text.trim().is_empty() {
-            cursor += 1;
-            continue;
-        }
-        let continues = line.starts_with(' ')
-            || line.starts_with('\t')
-            || text == "-"
-            || text.starts_with("- ");
+        let text = line_text(line);
+        let continues = match scanner.scan(text) {
+            YamlLine::Blank | YamlLine::Comment => {
+                cursor += 1;
+                continue;
+            }
+            YamlLine::Value {
+                continues_scalar, ..
+            } => {
+                continues_scalar
+                    || line.starts_with(' ')
+                    || line.starts_with('\t')
+                    || text == "-"
+                    || text.starts_with("- ")
+            }
+        };
         if !continues {
             break;
         }
@@ -274,6 +291,327 @@ pub(crate) fn top_level_key_span(lines: &[&str], key: &str) -> Option<(usize, us
         end = cursor;
     }
     Some((start, end))
+}
+
+/// A line without its line break.
+fn line_text(line: &str) -> &str {
+    line.trim_end_matches(['\r', '\n'])
+}
+
+/// How one YAML line reads for the comment rules: a `#` opens a comment only
+/// after whitespace, outside a quoted scalar and outside the text of a block
+/// scalar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum YamlLine {
+    /// Nothing but whitespace.
+    Blank,
+    /// A comment line: `#` is the first character after the indentation.
+    Comment,
+    /// A line of the document. `continues_scalar`: the line is the text of a
+    /// scalar that opened on an earlier line (a quoted scalar running on, or
+    /// the body of a block scalar). `comment_at`: first byte of the
+    /// whitespace before the trailing comment.
+    Value {
+        continues_scalar: bool,
+        comment_at: Option<usize>,
+    },
+}
+
+/// Line-by-line YAML reader that knows just enough to tell comments from
+/// text: which quoted scalar is still open and whether the lines are the body
+/// of a block scalar.
+#[derive(Debug, Default)]
+struct YamlLineScanner {
+    /// Quote character of a quoted scalar still open at the end of the
+    /// previous line.
+    open_quote: Option<char>,
+    /// Indentation of the line that opened a block scalar (`|`, `>`): deeper
+    /// lines are its text.
+    block_scalar_indent: Option<usize>,
+}
+
+impl YamlLineScanner {
+    /// Whether a comment line may follow the lines scanned so far without
+    /// becoming the text of a scalar.
+    fn is_settled(&self) -> bool {
+        self.open_quote.is_none() && self.block_scalar_indent.is_none()
+    }
+
+    /// Classify `text`, a line without its line break, and advance the state.
+    fn scan(&mut self, text: &str) -> YamlLine {
+        let indent = text.len() - text.trim_start_matches([' ', '\t']).len();
+        if let Some(block_indent) = self.block_scalar_indent {
+            if text.trim().is_empty() {
+                return YamlLine::Blank;
+            }
+            if indent > block_indent {
+                return YamlLine::Value {
+                    continues_scalar: true,
+                    comment_at: None,
+                };
+            }
+            self.block_scalar_indent = None;
+        }
+        let continues_scalar = self.open_quote.is_some();
+        if !continues_scalar && text.trim().is_empty() {
+            return YamlLine::Blank;
+        }
+
+        let mut quote = self.open_quote;
+        let mut previous: Option<char> = None;
+        let mut after_space = true;
+        let mut comment_at = None;
+        let mut chars = text.char_indices().peekable();
+        while let Some((index, ch)) = chars.next() {
+            match quote {
+                Some('"') => {
+                    if ch == '\\' {
+                        chars.next();
+                    } else if ch == '"' {
+                        quote = None;
+                        previous = Some(ch);
+                    }
+                    after_space = false;
+                    continue;
+                }
+                Some(_) => {
+                    // Single-quoted: `''` is an escaped quote.
+                    if ch == '\'' {
+                        if chars.peek().is_some_and(|&(_, next)| next == '\'') {
+                            chars.next();
+                        } else {
+                            quote = None;
+                            previous = Some(ch);
+                        }
+                    }
+                    after_space = false;
+                    continue;
+                }
+                None => {}
+            }
+            if ch == ' ' || ch == '\t' {
+                after_space = true;
+                continue;
+            }
+            if ch == '#' && after_space {
+                comment_at = Some(text[..index].trim_end_matches([' ', '\t']).len());
+                break;
+            }
+            if (ch == '"' || ch == '\'') && opens_quoted_scalar(previous, after_space) {
+                quote = Some(ch);
+            }
+            previous = Some(ch);
+            after_space = false;
+        }
+
+        if !continues_scalar && comment_at == Some(0) {
+            return YamlLine::Comment;
+        }
+        self.open_quote = quote;
+        if quote.is_none() && opens_block_scalar(&text[..comment_at.unwrap_or(text.len())]) {
+            self.block_scalar_indent = Some(indent);
+        }
+        YamlLine::Value {
+            continues_scalar,
+            comment_at,
+        }
+    }
+}
+
+/// A quote character starts a quoted scalar only where a scalar starts: at
+/// the start of the line, after `key: `, `- `, `? ` or inside flow brackets.
+/// Elsewhere it is text of a plain scalar, like the apostrophe in `it's`.
+fn opens_quoted_scalar(previous: Option<char>, after_space: bool) -> bool {
+    match previous {
+        None | Some('[' | '{' | ',') => true,
+        Some(':' | '-' | '?') => after_space,
+        Some(_) => false,
+    }
+}
+
+/// Whether the YAML text of a line (its comment removed) ends with a block
+/// scalar header: `key: |`, `- >-`, `key: !!str |2`.
+fn opens_block_scalar(structure: &str) -> bool {
+    let trimmed = structure.trim_end();
+    let (before, last) = match trimmed.rsplit_once([' ', '\t']) {
+        Some((before, last)) => (before.trim_end(), last),
+        None => ("", trimmed),
+    };
+    let is_header = last.starts_with(['|', '>'])
+        && last[1..]
+            .chars()
+            .all(|ch| ch == '+' || ch == '-' || ch.is_ascii_digit());
+    if !is_header {
+        return false;
+    }
+    match before.split_whitespace().last() {
+        None => true,
+        Some(token) => token == "-" || token.ends_with(':') || token.starts_with(['!', '&']),
+    }
+}
+
+/// A comment inside the lines a key replacement takes out.
+#[derive(Debug)]
+enum DisplacedComment<'a> {
+    /// A whole comment line, indentation included, without its line break.
+    Line(&'a str),
+    /// A comment after YAML on a value line.
+    Trailing {
+        /// Indentation of the line.
+        indent: &'a str,
+        /// The YAML before the comment, without surrounding whitespace.
+        structure: &'a str,
+        /// The comment with the whitespace before it.
+        comment: &'a str,
+    },
+}
+
+/// Comments of a key block, collected before the block is replaced.
+#[derive(Debug, Default)]
+struct SpanComments<'a> {
+    /// Trailing comment of the key line with the whitespace before it.
+    key_line: Option<&'a str>,
+    /// Comments of the value lines in their original order.
+    value_lines: Vec<DisplacedComment<'a>>,
+}
+
+impl<'a> SpanComments<'a> {
+    /// Read the comments of `span`, whose first line is the key line.
+    fn collect(span: &[&'a str]) -> Self {
+        let mut scanner = YamlLineScanner::default();
+        let mut comments = Self::default();
+        for (position, line) in span.iter().enumerate() {
+            let text = line_text(line);
+            match scanner.scan(text) {
+                YamlLine::Blank
+                | YamlLine::Value {
+                    comment_at: None, ..
+                } => {}
+                YamlLine::Comment => comments.value_lines.push(DisplacedComment::Line(text)),
+                YamlLine::Value {
+                    comment_at: Some(at),
+                    ..
+                } if position == 0 => comments.key_line = Some(&text[at..]),
+                YamlLine::Value {
+                    comment_at: Some(at),
+                    ..
+                } => {
+                    let indent_len = text.len() - text.trim_start_matches([' ', '\t']).len();
+                    comments.value_lines.push(DisplacedComment::Trailing {
+                        indent: &text[..indent_len.min(at)],
+                        structure: text[..at].trim(),
+                        comment: &text[at..],
+                    });
+                }
+            }
+        }
+        comments
+    }
+
+    fn is_empty(&self) -> bool {
+        self.key_line.is_none() && self.value_lines.is_empty()
+    }
+
+    /// `replacement` with the comments carried into it.
+    fn carry_into(&self, replacement: &str, newline: &str) -> String {
+        if self.is_empty() {
+            return replacement.to_string();
+        }
+        let lines: Vec<&str> = replacement.split_inclusive('\n').collect();
+        if lines.is_empty() {
+            return self.standalone(&[], false, newline);
+        }
+        // Where a comment may be added after a line: the line is YAML
+        // structure with no comment of its own and leaves no scalar open.
+        let mut scanner = YamlLineScanner::default();
+        let takes_comment: Vec<bool> = lines
+            .iter()
+            .map(|line| {
+                let kind = scanner.scan(line_text(line));
+                kind == YamlLine::Value {
+                    continues_scalar: false,
+                    comment_at: None,
+                } && scanner.is_settled()
+            })
+            .collect();
+
+        let key_comment_attached = self.key_line.is_some() && takes_comment.first() == Some(&true);
+        let mut used = vec![false; self.value_lines.len()];
+        let mut line_comments: Vec<Option<&str>> = vec![None; lines.len()];
+        for (index, line) in lines.iter().enumerate().skip(1) {
+            if !takes_comment[index] {
+                continue;
+            }
+            let text = line_text(line).trim();
+            let matched = self
+                .value_lines
+                .iter()
+                .enumerate()
+                .find_map(|(slot, displaced)| match displaced {
+                    DisplacedComment::Trailing {
+                        structure, comment, ..
+                    } if !used[slot] && *structure == text => Some((slot, *comment)),
+                    _ => None,
+                });
+            if let Some((slot, comment)) = matched {
+                used[slot] = true;
+                line_comments[index] = Some(comment);
+            }
+        }
+        if key_comment_attached {
+            line_comments[0] = self.key_line;
+        }
+
+        let standalone = self.standalone(&used, key_comment_attached, newline);
+        // Right after the key line when a comment line may stand there;
+        // otherwise the key line opened a scalar and they follow the block.
+        let insert_after = if takes_comment.first() == Some(&true) {
+            0
+        } else {
+            lines.len().saturating_sub(1)
+        };
+        let mut out = String::with_capacity(replacement.len() + standalone.len() + 16);
+        for (index, line) in lines.iter().enumerate() {
+            let text = line_text(line);
+            let mut line_break = &line[text.len()..];
+            out.push_str(text);
+            if let Some(comment) = line_comments[index] {
+                out.push_str(comment);
+            }
+            if index == insert_after && !standalone.is_empty() && line_break.is_empty() {
+                line_break = newline;
+            }
+            out.push_str(line_break);
+            if index == insert_after {
+                out.push_str(&standalone);
+            }
+        }
+        out
+    }
+
+    /// The comments not attached to a line, each as a comment line of its
+    /// own. `used[slot]` marks trailing comments already attached.
+    fn standalone(&self, used: &[bool], key_comment_attached: bool, newline: &str) -> String {
+        let mut out = String::new();
+        if let (Some(comment), false) = (self.key_line, key_comment_attached) {
+            out.push_str(comment.trim_start());
+            out.push_str(newline);
+        }
+        for (slot, comment) in self.value_lines.iter().enumerate() {
+            if used.get(slot) == Some(&true) {
+                continue;
+            }
+            match comment {
+                DisplacedComment::Line(text) => out.push_str(text),
+                DisplacedComment::Trailing { indent, comment, .. } => {
+                    out.push_str(indent);
+                    out.push_str(comment.trim_start());
+                }
+            }
+            out.push_str(newline);
+        }
+        out
+    }
 }
 
 /// Whether `line` opens the top-level key `key`, written bare or quoted.
@@ -525,6 +863,129 @@ mod tests {
         assert_eq!(patched, "---\nsaved_at: 2026-01-01\nrating: 5\ntype: channel\n---\n");
         let reread = read("Note", &patched);
         assert_eq!(apply_block_changes(&patched, &reread, &before).unwrap(), source);
+    }
+
+    #[test]
+    fn trailing_comment_of_the_key_line_survives_a_value_change() {
+        let source = "---\ntype: channel\nposition: 0   # pinned first\nsaved_at: 2026-01-01\n---\n";
+        let before = read("Collection", source);
+        let mut after = before.clone();
+        after.frontmatter.position = Some(1);
+        assert_eq!(
+            apply_block_changes(source, &before, &after).unwrap(),
+            "---\ntype: channel\nposition: 1   # pinned first\nsaved_at: 2026-01-01\n---\n"
+        );
+    }
+
+    #[test]
+    fn comment_lines_inside_a_list_value_survive_its_replacement() {
+        let source = "---\nMine Related Notes:\n  - \"[[Old]]\"\n  # keep: context for the next one\n  - \"[[Other]]\" # the main one\nsaved_at: 2026-01-01\n---\nBody";
+        let before = read("Note", source);
+        let mut after = before.clone();
+        after.frontmatter.related_notes = vec!["New".to_string(), "Other".to_string()];
+        assert_eq!(
+            apply_block_changes(source, &before, &after).unwrap(),
+            "---\nMine Related Notes:\n  # keep: context for the next one\n  - \"[[New]]\"\n  - \"[[Other]]\" # the main one\nsaved_at: 2026-01-01\n---\nBody"
+        );
+    }
+
+    #[test]
+    fn comment_of_a_removed_list_item_stays_as_a_comment_line() {
+        let source = "---\nMine Related Notes: # sources\n  - \"[[Old]]\" # first draft\n  - \"[[Other]]\"\nsaved_at: 2026-01-01\n---\n";
+        let before = read("Note", source);
+        let mut after = before.clone();
+        after.frontmatter.related_notes = vec!["Other".to_string()];
+        assert_eq!(
+            apply_block_changes(source, &before, &after).unwrap(),
+            "---\nMine Related Notes: # sources\n  # first draft\n  - \"[[Other]]\"\nsaved_at: 2026-01-01\n---\n"
+        );
+    }
+
+    #[test]
+    fn column_zero_comment_between_sequence_items_stays_inside_the_value() {
+        let source = "---\nMine Related Notes:\n- \"[[Old]]\"\n# note\n- \"[[Other]]\"\nsaved_at: 2026-01-01\n---\n";
+        let before = read("Note", source);
+        let mut after = before.clone();
+        after.frontmatter.related_notes = vec!["New".to_string(), "Other".to_string()];
+        assert_eq!(
+            apply_block_changes(source, &before, &after).unwrap(),
+            "---\nMine Related Notes:\n# note\n  - \"[[New]]\"\n  - \"[[Other]]\"\nsaved_at: 2026-01-01\n---\n"
+        );
+    }
+
+    #[test]
+    fn comment_after_the_value_stays_where_it_was() {
+        let source = "---\nthumbnail: a.jpg\n  # about the next key\nsaved_at: 2026-01-01\n---\n";
+        let before = read("Note", source);
+        let mut after = before.clone();
+        after.frontmatter.thumbnail = Some("b.jpg".to_string());
+        assert_eq!(
+            apply_block_changes(source, &before, &after).unwrap(),
+            "---\nthumbnail: b.jpg\n  # about the next key\nsaved_at: 2026-01-01\n---\n"
+        );
+    }
+
+    #[test]
+    fn hash_inside_quotes_or_a_word_is_not_a_comment() {
+        let source = "---\ntitle: \"Issue # 5\"\ndescription: 'it''s # not'\nurl: https://example.com/#top\nauthor: it's # a comment\nsaved_at: 2026-01-01\n---\n";
+        let before = read("Note", source);
+        let mut after = before.clone();
+        after.frontmatter.title = Some("Issue 6".to_string());
+        after.frontmatter.description = Some("done".to_string());
+        after.frontmatter.url = Some("https://example.com/".to_string());
+        after.frontmatter.author = Some("me".to_string());
+        assert_eq!(
+            apply_block_changes(source, &before, &after).unwrap(),
+            "---\ntitle: Issue 6\ndescription: done\nurl: https://example.com/\nauthor: me # a comment\nsaved_at: 2026-01-01\n---\n"
+        );
+    }
+
+    #[test]
+    fn hash_lines_inside_a_multi_line_quoted_value_are_text() {
+        let source = "---\ndescription: \"first\n  # not a comment\n  last\" # real\nsaved_at: 2026-01-01\n---\n";
+        let before = read("Note", source);
+        let mut after = before.clone();
+        after.frontmatter.description = Some("short".to_string());
+        assert_eq!(
+            apply_block_changes(source, &before, &after).unwrap(),
+            "---\ndescription: short\n  # real\nsaved_at: 2026-01-01\n---\n"
+        );
+    }
+
+    #[test]
+    fn hash_lines_inside_a_block_scalar_are_text() {
+        let source = "---\ndescription: | # header\n  # heading of the text\n  line\nsaved_at: 2026-01-01\n---\n";
+        let before = read("Note", source);
+        let mut after = before.clone();
+        after.frontmatter.description = Some("short".to_string());
+        assert_eq!(
+            apply_block_changes(source, &before, &after).unwrap(),
+            "---\ndescription: short # header\nsaved_at: 2026-01-01\n---\n"
+        );
+    }
+
+    #[test]
+    fn comments_of_a_removed_field_are_kept() {
+        let source = "---\nthumbnail: a.jpg # cover\nsaved_at: 2026-01-01\n---\n";
+        let before = read("Note", source);
+        let mut after = before.clone();
+        after.frontmatter.thumbnail = None;
+        assert_eq!(
+            apply_block_changes(source, &before, &after).unwrap(),
+            "---\n# cover\nsaved_at: 2026-01-01\n---\n"
+        );
+    }
+
+    #[test]
+    fn crlf_comment_keeps_its_line_endings() {
+        let source = "---\r\nposition: 0 # c\r\nsaved_at: 2026-01-01\r\n---\r\n";
+        let before = read("Collection", source);
+        let mut after = before.clone();
+        after.frontmatter.position = Some(2);
+        assert_eq!(
+            apply_block_changes(source, &before, &after).unwrap(),
+            "---\r\nposition: 2 # c\r\nsaved_at: 2026-01-01\r\n---\r\n"
+        );
     }
 
     #[test]
