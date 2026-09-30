@@ -309,7 +309,8 @@ describe("Detail source video independent of card kind", () => {
       sendDownload({ slug: props.block.slug, state: "finishing" });
       expect(screen.getByText("Joining video and sound…")).toBeInTheDocument();
       expect(screen.getByRole("progressbar", { name: "Download progress" })).toHaveAttribute("data-progress-mode", "indeterminate");
-      expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+      // The join can be cancelled too (SPEC_AUDIT_FIXES.md, А7.5).
+      expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
     });
 
     it("reloads the card once the file is in the space", async () => {

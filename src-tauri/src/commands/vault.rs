@@ -962,6 +962,8 @@ fn initialize_vault(
     );
 
     start_index_metadata_backfill(app.clone(), path.to_string());
+    // Videos finished while this space was not reachable come in now (Ф9).
+    crate::source_video_download::adopt_kept_downloads(app.clone(), root_watch_layout.clone());
     watch_space_root(app, root_watch_layout);
 
     Ok(VaultOpenResult {

@@ -13,14 +13,19 @@ pub fn start_source_video_download(
 }
 
 #[tauri::command]
-pub fn cancel_source_video_download(downloads: tauri::State<'_, SourceVideoDownloads>, slug: String) {
-    downloads.cancel(&slug);
+pub fn cancel_source_video_download(
+    app: tauri::AppHandle,
+    downloads: tauri::State<'_, SourceVideoDownloads>,
+    slug: String,
+) {
+    downloads.cancel(&app, &slug);
 }
 
 #[tauri::command]
 pub fn source_video_download_status(
+    app: tauri::AppHandle,
     downloads: tauri::State<'_, SourceVideoDownloads>,
     slug: String,
 ) -> Option<DownloadState> {
-    downloads.status(&slug)
+    downloads.status(&app, &slug)
 }

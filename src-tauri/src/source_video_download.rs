@@ -18,8 +18,10 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
+
+use crate::domain::vault::VaultLayout;
 
 /// Event carrying a download's state to the interface.
 pub const EVENT: &str = "source-video-download";
@@ -160,20 +162,45 @@ struct Job {
     cancel: AtomicBool,
     child: Mutex<Option<Child>>,
     state: Mutex<DownloadState>,
+    /// The space the download was started in: its result goes there, even
+    /// if another space is open by then (SPEC_AUDIT_FIXES.md, Ф9).
+    vault: VaultLayout,
 }
 
-/// Running and finished downloads, by card slug.
+/// One download: a card of one space. Cards with the same name in two
+/// spaces are two downloads.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct JobKey {
+    space: PathBuf,
+    slug: String,
+}
+
+/// Running and finished downloads, by space and card.
 #[derive(Default)]
 pub struct SourceVideoDownloads {
-    jobs: Mutex<HashMap<String, Arc<Job>>>,
+    jobs: Mutex<HashMap<JobKey, Arc<Job>>>,
+}
+
+/// The open space, as the download will need it at the end.
+fn open_space(app: &AppHandle) -> Option<VaultLayout> {
+    let state = app.state::<crate::commands::state::AppState>();
+    let vault_state = state.vault_state.lock().ok()?;
+    vault_state.as_ref().map(|vs| vs.vault.clone())
 }
 
 impl SourceVideoDownloads {
-    /// The last known state of a card's download, if one ran in this session.
-    pub fn status(&self, slug: &str) -> Option<DownloadState> {
+    fn job(&self, app: &AppHandle, slug: &str) -> Option<Arc<Job>> {
+        let space = open_space(app)?.root().to_path_buf();
         let jobs = self.jobs.lock().ok()?;
-        let job = jobs.get(slug)?;
-        job.state.lock().ok().map(|state| state.clone())
+        jobs.get(&JobKey { space, slug: slug.to_owned() }).cloned()
+    }
+
+    /// The last known state of a card's download in the open space, if one
+    /// ran in this session.
+    pub fn status(&self, app: &AppHandle, slug: &str) -> Option<DownloadState> {
+        let job = self.job(app, slug)?;
+        let state = job.state.lock().ok()?;
+        Some(state.clone())
     }
 
     /// Start downloading the card's source video, unless it already is.
@@ -183,17 +210,14 @@ impl SourceVideoDownloads {
     pub fn start(&self, app: &AppHandle, slug: String, source_url: &str) -> Result<(), String> {
         let source = mine_core::domain::video_source::parse_youtube_source(source_url)
             .ok_or_else(|| "The card has no supported source video.".to_owned())?;
-        let vault_root = {
-            let state = app.state::<crate::commands::state::AppState>();
-            let vault_state = state.vault_state.lock().map_err(|error| error.to_string())?;
-            vault_state
-                .as_ref()
-                .map(|vs| vs.vault.root().to_path_buf())
-                .ok_or_else(|| "No space is open.".to_owned())?
+        let vault = open_space(app).ok_or_else(|| "No space is open.".to_owned())?;
+        let key = JobKey {
+            space: vault.root().to_path_buf(),
+            slug: slug.clone(),
         };
         let job = {
             let mut jobs = self.jobs.lock().map_err(|error| error.to_string())?;
-            if let Some(existing) = jobs.get(&slug) {
+            if let Some(existing) = jobs.get(&key) {
                 let running = existing
                     .state
                     .lock()
@@ -207,16 +231,17 @@ impl SourceVideoDownloads {
                 cancel: AtomicBool::new(false),
                 child: Mutex::new(None),
                 state: Mutex::new(DownloadState::Preparing),
+                vault,
             });
-            jobs.insert(slug.clone(), job.clone());
+            jobs.insert(key, job.clone());
             job
         };
-        emit(app, &slug, DownloadState::Preparing);
+        emit(app, &job, &slug, DownloadState::Preparing);
         let app = app.clone();
         std::thread::Builder::new()
             .name("source-video-download".into())
             .spawn(move || {
-                let outcome = run(&app, &job, &slug, &source.video_id, &vault_root);
+                let outcome = run(&app, &job, &slug, &source.video_id);
                 let state = match outcome {
                     _ if job.cancel.load(Ordering::SeqCst) => DownloadState::Cancelled,
                     Ok(()) => DownloadState::Done,
@@ -228,19 +253,52 @@ impl SourceVideoDownloads {
         Ok(())
     }
 
-    /// Stop a running download; its partial files are removed.
-    pub fn cancel(&self, slug: &str) {
-        let Some(job) = self.jobs.lock().ok().and_then(|jobs| jobs.get(slug).cloned()) else {
-            return;
-        };
-        job.cancel.store(true, Ordering::SeqCst);
-        let mut slot = match job.child.lock() {
+    /// Stop a running download of a card in the open space; its partial
+    /// files are removed.
+    pub fn cancel(&self, app: &AppHandle, slug: &str) {
+        if let Some(job) = self.job(app, slug) {
+            job.stop();
+        }
+    }
+}
+
+impl Job {
+    /// Stop the download at whatever step it is: a process that is running
+    /// is ended; one about to start is ended as soon as it is registered.
+    fn stop(&self) {
+        self.cancel.store(true, Ordering::SeqCst);
+        let mut slot = match self.child.lock() {
             Ok(slot) => slot,
             Err(poisoned) => poisoned.into_inner(),
         };
         if let Some(child) = slot.as_mut() {
             let _ = child.kill();
         }
+    }
+
+    /// Hand a started process to the job so a cancel can end it. A cancel
+    /// that came between the start and this moment found nothing to end; it
+    /// is honoured here (SPEC_AUDIT_FIXES.md, А7.5).
+    fn register(&self, child: Child) {
+        let mut slot = match self.child.lock() {
+            Ok(slot) => slot,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        *slot = Some(child);
+        if self.cancel.load(Ordering::SeqCst) {
+            if let Some(child) = slot.as_mut() {
+                let _ = child.kill();
+            }
+        }
+    }
+
+    /// Wait for the registered process to end.
+    fn wait(&self) -> Option<std::io::Result<std::process::ExitStatus>> {
+        let child = match self.child.lock() {
+            Ok(mut slot) => slot.take(),
+            Err(poisoned) => poisoned.into_inner().take(),
+        };
+        child.map(|mut child| child.wait())
     }
 }
 
@@ -258,10 +316,16 @@ fn report(app: &AppHandle, slug: &str, job: &Job, state: DownloadState) {
         }
         *current = state.clone();
     }
-    emit(app, slug, state);
+    emit(app, job, slug, state);
 }
 
-fn emit(app: &AppHandle, slug: &str, state: DownloadState) {
+/// Progress is shown for the open space only: a card of the same name in
+/// another space is another card.
+fn emit(app: &AppHandle, job: &Job, slug: &str, state: DownloadState) {
+    let shown = open_space(app).is_some_and(|open| open.root() == job.vault.root());
+    if !shown {
+        return;
+    }
     if let Err(error) = app.emit(EVENT, DownloadEvent { slug: slug.to_owned(), state }) {
         log::warn!("source video download event: {error}");
     }
@@ -276,22 +340,123 @@ impl Drop for Staging {
     }
 }
 
-fn run(app: &AppHandle, job: &Job, slug: &str, video_id: &str, vault_root: &Path) -> Result<(), String> {
+/// A working folder of its own for every download: two cards of one video
+/// never share files (SPEC_AUDIT_FIXES.md, А7.1).
+fn staging_dir(video_id: &str) -> PathBuf {
+    use std::sync::atomic::AtomicU64;
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "mine-source-video-{video_id}-{}-{nonce}-{}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+fn run(app: &AppHandle, job: &Job, slug: &str, video_id: &str) -> Result<(), String> {
     let tools = Tools {
         ytdlp: bundled_tool(app, "yt-dlp").ok_or("The bundled video downloader is missing.")?,
         joiner: bundled_tool(app, "video-mux-helper").ok_or("The bundled video joiner is missing.")?,
     };
-    let staging = Staging(std::env::temp_dir().join(format!(
-        "mine-source-video-{video_id}-{}",
-        std::process::id()
-    )));
+    let staging = Staging(staging_dir(video_id));
     let finished = download_to_file(job, &tools, video_id, &staging.0, |state| report(app, slug, job, state))?;
     if job.cancel.load(Ordering::SeqCst) {
         return Err("cancelled".into());
     }
-    crate::commands::blocks::attach_downloaded_source_video(app, vault_root, slug, video_id, &finished)
+    crate::commands::blocks::attach_downloaded_source_video(app, &job.vault, slug, video_id, &finished)
         .map(|_| ())
         .map_err(|error| error.to_string())
+}
+
+/// A finished download kept for a space whose folder was not reachable when
+/// the download ended. It is attached the next time the space opens.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeptDownload {
+    pub slug: String,
+    pub video_id: String,
+    pub file: String,
+}
+
+fn kept_dir(vault: &VaultLayout) -> PathBuf {
+    vault.derived_root().join("source-videos")
+}
+
+fn kept_list(vault: &VaultLayout) -> PathBuf {
+    kept_dir(vault).join("kept.json")
+}
+
+/// The downloads kept for `vault`.
+pub fn kept_downloads(vault: &VaultLayout) -> Vec<KeptDownload> {
+    std::fs::read(kept_list(vault))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+fn write_kept(vault: &VaultLayout, kept: &[KeptDownload]) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(kept).map_err(|error| error.to_string())?;
+    crate::storage::files::write_atomically(&kept_list(vault), &bytes).map_err(|error| format!("{error:#}"))
+}
+
+/// Keep a finished download in the space's derived store: its folder is not
+/// reachable now, and the result must not be lost (Ф9).
+pub fn keep_download(vault: &VaultLayout, slug: &str, video_id: &str, finished: &Path) -> Result<(), String> {
+    let dir = kept_dir(vault);
+    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let name = staging_dir(video_id)
+        .file_name()
+        .map(|name| format!("{}.mp4", name.to_string_lossy()))
+        .ok_or("no name for the kept video")?;
+    let kept_path = dir.join(&name);
+    crate::storage::files::move_exclusive(finished, &kept_path).map_err(|error| format!("{error:#}"))?;
+    let mut kept = kept_downloads(vault);
+    kept.push(KeptDownload {
+        slug: slug.to_owned(),
+        video_id: video_id.to_owned(),
+        file: name,
+    });
+    write_kept(vault, &kept)
+}
+
+/// Attach the downloads kept for the space that has just opened, in the
+/// background. A kept video whose card no longer wants it is discarded.
+pub fn adopt_kept_downloads(app: AppHandle, vault: VaultLayout) {
+    if kept_downloads(&vault).is_empty() {
+        return;
+    }
+    let spawned = std::thread::Builder::new()
+        .name("kept-source-videos".into())
+        .spawn(move || {
+            for kept in kept_downloads(&vault) {
+                let path = kept_dir(&vault).join(&kept.file);
+                let outcome = crate::commands::blocks::attach_downloaded_source_video(
+                    &app,
+                    &vault,
+                    &kept.slug,
+                    &kept.video_id,
+                    &path,
+                );
+                if let Err(error) = &outcome {
+                    log::warn!("kept video for {} not attached: {error}", kept.slug);
+                }
+                // Attached, or no longer wanted by its card: either way it
+                // leaves the list. A space that closed meanwhile keeps it.
+                if open_space(&app).is_some_and(|open| open.root() == vault.root()) {
+                    let _ = std::fs::remove_file(&path);
+                    let rest: Vec<KeptDownload> =
+                        kept_downloads(&vault).into_iter().filter(|entry| entry != &kept).collect();
+                    if let Err(error) = write_kept(&vault, &rest) {
+                        log::warn!("kept video list: {error}");
+                    }
+                }
+            }
+        });
+    if let Err(error) = spawned {
+        log::warn!("kept source videos: {error}");
+    }
 }
 
 /// The downloader and the joiner, wherever they were found.
@@ -356,20 +521,39 @@ fn download_to_file(
         .and_then(serde_json::Value::as_f64)
         .filter(|seconds| *seconds > 0.0)
         .ok_or("YouTube did not report the video's length.")?;
-    let output = Command::new(&tools.joiner)
+    // The join can take a while on a long video: it is a registered process
+    // a cancel ends, like the download (А7.5).
+    if job.cancel.load(Ordering::SeqCst) {
+        return Err("cancelled".into());
+    }
+    let mut joiner = Command::new(&tools.joiner)
         .arg(file_for(0))
         .arg(file_for(1))
         .arg(&joined)
         .arg(seconds.to_string())
-        .output()
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|error| error.to_string())?;
-    if !output.status.success() {
-        return Err(format!(
-            "Could not join video and sound: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
+    let mut stderr = joiner.stderr.take();
+    job.register(joiner);
+    let stderr = std::thread::spawn(move || {
+        let mut text = String::new();
+        if let Some(stderr) = stderr.as_mut() {
+            let _ = stderr.read_to_string(&mut text);
+        }
+        text
+    });
+    let status = job.wait();
+    let stderr = stderr.join().unwrap_or_default();
+    if job.cancel.load(Ordering::SeqCst) {
+        return Err("cancelled".into());
     }
-    Ok(joined)
+    match status {
+        Some(Ok(status)) if status.success() => Ok(joined),
+        _ => Err(format!("Could not join video and sound: {}", stderr.trim())),
+    }
 }
 
 /// Run `yt-dlp`, feeding stdout lines to `on_line`; returns all of stdout.
@@ -387,9 +571,7 @@ fn run_ytdlp(job: &Job, ytdlp: &Path, args: &[&str], mut on_line: impl FnMut(&st
         .map_err(|error| format!("Could not start the video downloader: {error}"))?;
     let stdout = child.stdout.take();
     let mut stderr = child.stderr.take();
-    if let Ok(mut slot) = job.child.lock() {
-        *slot = Some(child);
-    }
+    job.register(child);
     let stderr_reader = std::thread::spawn(move || {
         let mut text = String::new();
         if let Some(stderr) = stderr.as_mut() {
@@ -405,12 +587,7 @@ fn run_ytdlp(job: &Job, ytdlp: &Path, args: &[&str], mut on_line: impl FnMut(&st
             collected.push('\n');
         }
     }
-    let status = job
-        .child
-        .lock()
-        .ok()
-        .and_then(|mut slot| slot.take())
-        .map(|mut child| child.wait());
+    let status = job.wait();
     let stderr = stderr_reader.join().unwrap_or_default();
     if job.cancel.load(Ordering::SeqCst) {
         return Err("cancelled".into());
@@ -445,6 +622,55 @@ fn bundled_tool(app: &AppHandle, name: &str) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+
+    fn job() -> Job {
+        Job {
+            cancel: AtomicBool::new(false),
+            child: Mutex::new(None),
+            state: Mutex::new(DownloadState::Preparing),
+            vault: VaultLayout::new(PathBuf::from("/space")),
+        }
+    }
+
+    #[test]
+    fn a_cancel_before_the_process_is_registered_still_ends_it() {
+        let job = job();
+        job.stop();
+        let child = Command::new("/bin/sleep").arg("30").spawn().unwrap();
+        let started = std::time::Instant::now();
+        job.register(child);
+        let status = job.wait().unwrap().unwrap();
+        assert!(!status.success());
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    #[test]
+    fn a_cancel_ends_a_registered_process() {
+        let job = job();
+        job.register(Command::new("/bin/sleep").arg("30").spawn().unwrap());
+        job.stop();
+        assert!(!job.wait().unwrap().unwrap().success());
+    }
+
+    #[test]
+    fn every_download_works_in_its_own_folder() {
+        assert_ne!(staging_dir("abc"), staging_dir("abc"));
+    }
+
+    #[test]
+    fn a_kept_download_is_listed_for_its_space() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::with_derived_root(dir.path().join("space"), dir.path().join("derived"));
+        let finished = dir.path().join("joined.mp4");
+        std::fs::write(&finished, b"video").unwrap();
+        keep_download(&vault, "Cards/Film", "9KDDhAOyv9k", &finished).unwrap();
+        let kept = kept_downloads(&vault);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].slug, "Cards/Film");
+        assert_eq!(std::fs::read(kept_dir(&vault).join(&kept[0].file)).unwrap(), b"video");
+        assert!(!finished.exists());
+    }
+
     use super::*;
     use serde_json::json;
 
@@ -516,11 +742,7 @@ mod tests {
     fn real_youtube_download_produces_one_playable_mp4() {
         let binaries = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries");
         let tools = Tools { ytdlp: binaries.join("yt-dlp"), joiner: binaries.join("video-mux-helper") };
-        let job = Job {
-            cancel: AtomicBool::new(false),
-            child: Mutex::new(None),
-            state: Mutex::new(DownloadState::Preparing),
-        };
+        let job = job();
         let staging = tempfile::tempdir().unwrap();
         let mut states = Vec::new();
         // "Me at the zoo": 19 seconds, small in every format.

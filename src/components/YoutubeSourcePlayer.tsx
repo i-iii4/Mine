@@ -240,9 +240,8 @@ function SourceVideoDownloadRow({ download, onCancel }: {
         aria-label="Download progress"
       />
       <span className="shrink-0 text-sm tabular-nums text-muted-foreground">{label}</span>
-      {download.state !== "finishing" && (
-        <Button type="button" variant="secondary" size="sm" onClick={onCancel}>Cancel</Button>
-      )}
+      {/* The join is a process a cancel ends too (SPEC_AUDIT_FIXES.md, А7.5). */}
+      <Button type="button" variant="secondary" size="sm" onClick={onCancel}>Cancel</Button>
     </div>
   );
 }

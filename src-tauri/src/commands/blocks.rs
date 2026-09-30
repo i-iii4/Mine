@@ -976,9 +976,13 @@ pub fn delete_source_video(
 /// card's heading. Called by the download job once the file is complete; the
 /// card is re-read here, so edits made during the download are kept. See
 /// SPEC_MEDIA_ASSET_ACTIONS.md «Download Media».
+/// Publish a downloaded video into the space the download started in
+/// (SPEC_AUDIT_FIXES.md, Ф9): through the open index when that space is open;
+/// straight into its folder and index when another one is open; and when
+/// its folder is not there, kept in its derived store until it opens again.
 pub(crate) fn attach_downloaded_source_video(
     app: &AppHandle,
-    expected_vault_root: &Path,
+    vault: &VaultLayout,
     slug: &str,
     video_id: &str,
     downloaded: &Path,
@@ -990,12 +994,10 @@ pub(crate) fn attach_downloaded_source_video(
         .map_err(|_| MediaAssetActionError::Internal {
             message: "vault state mutex poisoned".into(),
         })?;
-    let vs = vault_state.as_ref().ok_or(MediaAssetActionError::NoVault)?;
-    if vs.vault.root() != expected_vault_root {
-        return Err(MediaAssetActionError::Internal {
-            message: "the space changed while the video was downloading".into(),
-        });
-    }
+    let Some(vs) = vault_state.as_ref().filter(|vs| vs.vault.root() == vault.root()) else {
+        drop(vault_state);
+        return attach_into_closed_space(&state, vault, slug, video_id, downloaded);
+    };
 
     let result =
         attach_downloaded_source_video_inner(&state, &vs.conn, &vs.vault, slug, video_id, downloaded)?;
@@ -1021,6 +1023,39 @@ pub(crate) fn attach_downloaded_source_video(
         message: format!("failed to emit vault-changed: {e}"),
     })?;
     Ok(result)
+}
+
+/// The space the download started in is not the open one. While its folder
+/// still holds that space, the video goes straight in; otherwise it is kept
+/// for when the space opens again.
+fn attach_into_closed_space(
+    state: &AppState,
+    vault: &VaultLayout,
+    slug: &str,
+    video_id: &str,
+    downloaded: &Path,
+) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
+    let identity = vault
+        .derived_root()
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_string);
+    let holds = match crate::space_registry::space_identity(vault.root()) {
+        crate::space_registry::SpaceIdentity::Known(found) => identity.as_deref() == Some(found.as_str()),
+        crate::space_registry::SpaceIdentity::InCloud => true,
+        crate::space_registry::SpaceIdentity::Absent => false,
+    };
+    if !holds {
+        crate::source_video_download::keep_download(vault, slug, video_id, downloaded)
+            .map_err(|message| MediaAssetActionError::Internal { message })?;
+        return Ok(MediaAssetMutationResult {
+            media_ref: String::new(),
+            new_media_ref: None,
+            affected_slugs: Vec::new(),
+        });
+    }
+    let conn = db::open_or_create(&vault.index_db_path()).map_err(internal_media_asset_error)?;
+    attach_downloaded_source_video_inner(state, &conn, vault, slug, video_id, downloaded)
 }
 
 /// Copy the selected local media file as a native media/file object. This is
@@ -6547,5 +6582,53 @@ mod tests {
         assert!(plan.unused_media.is_empty());
         assert_eq!(plan.shared_media.len(), 1);
         assert_eq!(plan.shared_media[0].referenced_by, vec!["Fresh".to_string()]);
+    }
+
+    /// A space whose derived store is named by its identity, like the app's.
+    fn identified_vault(dir: &Path, id: &str) -> (VaultLayout, rusqlite::Connection) {
+        let vault = VaultLayout::with_derived_root(dir.join("space"), dir.join("vaults").join(id));
+        std::fs::create_dir_all(vault.root().join(".mine")).unwrap();
+        std::fs::write(vault.root().join(".mine/vault-id"), id).unwrap();
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        (vault, conn)
+    }
+
+    #[test]
+    fn a_video_finished_after_switching_spaces_goes_into_its_own_space() {
+        let dir = tempfile::tempdir().unwrap();
+        let (vault, conn) = identified_vault(dir.path(), "0123456789abcdef0123456789abcdef");
+        persist_block(&conn, &vault, &youtube_card("Film", "poster.jpg"));
+        drop(conn);
+        let downloaded = dir.path().join("joined.mp4");
+        std::fs::write(&downloaded, b"video-bytes").unwrap();
+
+        let result = attach_into_closed_space(&AppState::new(), &vault, "Film", "9KDDhAOyv9k", &downloaded).unwrap();
+
+        assert_eq!(result.affected_slugs, vec!["Film".to_string()]);
+        assert_eq!(std::fs::read(vault.root().join(&result.media_ref)).unwrap(), b"video-bytes");
+        let (_, content) = files::read_block_file(&vault, &vault.block_path("Film")).unwrap();
+        let name = Path::new(&result.media_ref).file_name().unwrap().to_str().unwrap().to_string();
+        assert!(content.contains(&format!("![[{name}]]")), "{content}");
+    }
+
+    #[test]
+    fn a_video_for_a_space_that_is_not_there_is_kept_for_its_return() {
+        let dir = tempfile::tempdir().unwrap();
+        let (vault, conn) = identified_vault(dir.path(), "0123456789abcdef0123456789abcdef");
+        persist_block(&conn, &vault, &youtube_card("Film", "poster.jpg"));
+        drop(conn);
+        // Another space took the folder's place.
+        std::fs::write(vault.root().join(".mine/vault-id"), "fedcba9876543210fedcba9876543210").unwrap();
+        let downloaded = dir.path().join("joined.mp4");
+        std::fs::write(&downloaded, b"video-bytes").unwrap();
+
+        let result = attach_into_closed_space(&AppState::new(), &vault, "Film", "9KDDhAOyv9k", &downloaded).unwrap();
+
+        assert!(result.affected_slugs.is_empty());
+        let kept = crate::source_video_download::kept_downloads(&vault);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].slug, "Film");
+        let (_, content) = files::read_block_file(&vault, &vault.block_path("Film")).unwrap();
+        assert!(!content.contains(".mp4"), "the other space's card is untouched");
     }
 }
