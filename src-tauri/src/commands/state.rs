@@ -9,7 +9,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use notify::RecommendedWatcher;
 use rusqlite::Connection;
 use serde::Serialize;
 use tauri::Manager;
@@ -23,6 +22,7 @@ pub use super::thumbnail_sweeps::SweepGuard;
 use super::thumbnail_sweeps::ThumbnailSweepCoordinator;
 use crate::domain::vault::VaultLayout;
 use crate::util::SingleInstanceGuard;
+use crate::watcher::watch::VaultWatcher;
 
 pub struct VaultState {
     pub conn: Connection,
@@ -40,7 +40,7 @@ pub struct AppState {
     pub(crate) vault_selection: Mutex<()>,
     pub(crate) vault_publication: Mutex<()>,
     vault_selection_request: AtomicU64,
-    pub watcher: Mutex<Option<RecommendedWatcher>>,
+    pub watcher: Mutex<Option<VaultWatcher>>,
     pub instance_guard: Mutex<Option<SingleInstanceGuard>>,
     pub sync_tracker: Mutex<SyncTracker>,
     pub suppressed_paths: Mutex<HashMap<PathBuf, Instant>>,
@@ -248,24 +248,38 @@ pub(crate) fn adopt_recovered_projection<T>(
     recovered: VaultLayout,
     value: T,
 ) -> Result<T, CommandError> {
+    adopt_recovered_session(&app.state::<AppState>(), vault, recovered, |layout| {
+        crate::watcher::watch::start_watching(app, layout)
+    })?;
+    Ok(value)
+}
+
+/// Move the session of `vault` to the index slot `recovered`, with a watcher
+/// of that slot from `start_watcher`, while the same space and old slot are
+/// still open. A session already on `recovered` is left as it is; any other
+/// session means the space changed, and nothing is replaced.
+pub(crate) fn adopt_recovered_session(
+    state: &AppState,
+    vault: &VaultLayout,
+    recovered: VaultLayout,
+    start_watcher: impl FnOnce(&VaultLayout) -> anyhow::Result<VaultWatcher>,
+) -> Result<(), CommandError> {
     if recovered.index_db_path() == vault.index_db_path() {
-        let current = current_vault_layout(&app.state::<AppState>())?;
+        let current = current_vault_layout(state)?;
         return if same_projection_owner(&current, vault) {
-            Ok(value)
+            Ok(())
         } else {
             Err(CommandError::NoVault)
         };
     }
     let conn = crate::storage::db::open_or_create(&recovered.index_db_path())?;
-    let watcher =
-        match crate::watcher::watch::start_watching(app, &recovered, &recovered.index_db_path()) {
-            Ok(watcher) => Some(watcher),
-            Err(error) => {
-                log::warn!("recovered index is readable but watcher could not start: {error:#}");
-                None
-            }
-        };
-    let state = app.state::<AppState>();
+    let watcher = match start_watcher(&recovered) {
+        Ok(watcher) => Some(watcher),
+        Err(error) => {
+            log::warn!("recovered index is readable but watcher could not start: {error:#}");
+            None
+        }
+    };
     let publication = state
         .vault_publication
         .lock()
@@ -286,7 +300,7 @@ pub(crate) fn adopt_recovered_projection<T>(
         drop(active);
         drop(publication);
         drop(watcher);
-        return Ok(value);
+        return Ok(());
     }
     if !matches {
         drop(active);
@@ -309,7 +323,7 @@ pub(crate) fn adopt_recovered_projection<T>(
     drop(old_watcher);
     drop(old_vault);
     state.freshness.mark_dirty(&vault.root().to_string_lossy());
-    Ok(value)
+    Ok(())
 }
 
 #[derive(Debug, Error, Serialize, specta::Type)]

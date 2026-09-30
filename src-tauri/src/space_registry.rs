@@ -109,35 +109,29 @@ pub fn is_available(record: &SpaceRecord) -> bool {
 }
 
 /// The records, in the person's order. Settings from before the registry
-/// yield path-only records.
+/// yield path-only records: whatever folder stands at a listed path now is
+/// no record of which space was there, so it lends the record no identity
+/// (`SPEC_AUDIT_FIXES.md`, Ф8, Б2.2). [`locate_saved`] finds such a space from
+/// its derived store instead.
 pub fn records(cfg: &Map<String, Value>) -> Vec<SpaceRecord> {
     if let Some(value) = cfg.get(SPACES_KEY) {
         if let Ok(records) = serde_json::from_value::<Vec<SpaceRecord>>(value.clone()) {
             return records;
         }
     }
+    let path_only = |path: &str| SpaceRecord {
+        vault_id: None,
+        path: path.to_string(),
+        last_opened_ms: None,
+    };
     let mut records: Vec<SpaceRecord> = cfg
         .get(KNOWN_VAULTS_KEY)
         .and_then(Value::as_array)
-        .map(|paths| {
-            paths
-                .iter()
-                .filter_map(Value::as_str)
-                .map(|path| SpaceRecord {
-                    vault_id: known_space_id(Path::new(path)),
-                    path: path.to_string(),
-                    last_opened_ms: None,
-                })
-                .collect()
-        })
+        .map(|paths| paths.iter().filter_map(Value::as_str).map(path_only).collect())
         .unwrap_or_default();
     if let Some(current) = current_path(cfg) {
         if !records.iter().any(|record| same_path(&record.path, &current)) {
-            records.push(SpaceRecord {
-                vault_id: known_space_id(Path::new(&current)),
-                path: current,
-                last_opened_ms: None,
-            });
+            records.push(path_only(&current));
         }
     }
     records
@@ -316,18 +310,95 @@ pub fn locate(cfg: &Map<String, Value>, vault_id: Option<&str>, hint: &str) -> L
             return Located::Moved { from: hint.to_string(), path };
         }
     }
-    let reason = if hint_readable {
-        LostReason::Replaced
-    } else {
-        match std::fs::metadata(here) {
-            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-                LostReason::AccessDenied
-            }
-            Ok(metadata) if metadata.is_dir() => LostReason::AccessDenied,
-            _ => LostReason::Missing,
+    Located::Lost {
+        path: hint.to_string(),
+        reason: lost_reason(here, hint_readable),
+    }
+}
+
+/// What stands at the path of a space that is not there.
+fn lost_reason(here: &Path, readable: bool) -> LostReason {
+    if readable {
+        return LostReason::Replaced;
+    }
+    match std::fs::metadata(here) {
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            LostReason::AccessDenied
         }
+        Ok(metadata) if metadata.is_dir() => LostReason::AccessDenied,
+        _ => LostReason::Missing,
+    }
+}
+
+/// Where the space the app last had open at `hint` stands now, for the app
+/// reopening it without the person choosing (`SPEC_AUDIT_FIXES.md`, Ф8).
+///
+/// A record with an identity is found by it. A record without one (settings
+/// from before the registry, or a folder listed before it was ever opened)
+/// takes the identity of the space the derived stores in `vaults_dir` last
+/// saw at this path, and that space is looked for by identity (П30) rather
+/// than taking whatever folder stands at the path now. Only when no store
+/// ever saw a space there does the folder's own identity count, and a folder
+/// without one is never the saved space: opening it would lay out folders
+/// and write an identity nobody chose.
+#[must_use]
+pub fn locate_saved(cfg: &Map<String, Value>, vaults_dir: Option<&Path>, hint: &str) -> Located {
+    let recorded = record_at(cfg, hint).and_then(|record| record.vault_id);
+    let identity = recorded.or_else(|| {
+        vaults_dir.and_then(|dir| derived_owners(dir, hint).into_iter().next())
+    });
+    if let Some(id) = identity {
+        return locate(cfg, Some(&id), hint);
+    }
+    let here = Path::new(hint);
+    let readable = std::fs::read_dir(here).is_ok();
+    if readable && space_identity(here) != SpaceIdentity::Absent {
+        return Located::Here { path: hint.to_string() };
+    }
+    Located::Lost {
+        path: hint.to_string(),
+        reason: lost_reason(here, readable),
+    }
+}
+
+/// The spaces whose derived stores last saw them at `path`, the one opened
+/// there most recently first (П27). Every open records its folder in
+/// `vaults/<vault-id>/owner-path.json`.
+#[must_use]
+pub fn derived_owners(vaults_dir: &Path, path: &str) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(vaults_dir) else {
+        return Vec::new();
     };
-    Located::Lost { path: hint.to_string(), reason }
+    let mut owners: Vec<(u64, String)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let id = entry.file_name().to_str().map(str::to_string)?;
+            if !is_space_id(&id) {
+                return None;
+            }
+            let (owner, seen) = owner_path(&entry.path())?;
+            same_path(&owner, path).then_some((seen, id))
+        })
+        .collect();
+    owners.sort_by_key(|(seen, _)| std::cmp::Reverse(*seen));
+    owners.into_iter().map(|(_, id)| id).collect()
+}
+
+/// The folder a derived store last served and when, in milliseconds since
+/// the epoch.
+fn owner_path(store: &Path) -> Option<(String, u64)> {
+    let file = store.join("owner-path.json");
+    let path = std::fs::read_to_string(&file)
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .and_then(|value| value.get("path").and_then(Value::as_str).map(str::to_string))?;
+    let seen = std::fs::metadata(&file)
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or_default();
+    Some((path, seen))
 }
 
 /// The person forgot the space at `path`: exactly that record goes, and
@@ -424,24 +495,13 @@ pub fn recover_from_derived_stores(cfg: &mut Map<String, Value>, vaults_dir: &Pa
         {
             continue;
         }
-        let owner = entry.path().join("owner-path.json");
-        let Some(path) = std::fs::read_to_string(&owner)
-            .ok()
-            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-            .and_then(|value| value.get("path").and_then(Value::as_str).map(str::to_string))
-        else {
+        let Some((path, seen)) = owner_path(&entry.path()) else {
             continue;
         };
         // A path already listed under another identity is that space's.
         if records.iter().any(|record| same_path(&record.path, &path)) {
             continue;
         }
-        let seen = std::fs::metadata(&owner)
-            .and_then(|meta| meta.modified())
-            .ok()
-            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|elapsed| elapsed.as_millis() as u64)
-            .unwrap_or_default();
         found.push((
             seen,
             SpaceRecord {
@@ -775,14 +835,110 @@ mod tests {
     #[test]
     fn settings_from_before_the_registry_become_records() {
         let dir = tempfile::tempdir().unwrap();
+        let app_data = dir.path().join("app");
         let mine = space(dir.path(), "Mine", MINE);
+        derived(&app_data, MINE, &mine);
         let mut cfg = Map::new();
         cfg.insert("known_vaults".into(), json!([mine.clone(), "/gone"]));
         cfg.insert("vault_path".into(), json!(mine.clone()));
         let listed = records(&cfg);
         assert_eq!(listed.len(), 2);
-        assert_eq!(listed[0].vault_id.as_deref(), Some(MINE));
+        // What stands at a listed path now does not say which space was
+        // there: the records carry no identity of their own.
+        assert_eq!(listed[0].vault_id, None);
         assert_eq!(listed[1].vault_id, None);
+        // The derived store that saw the space there does.
+        assert_eq!(
+            locate_saved(&cfg, Some(&vaults_dir(&app_data)), &mine),
+            Located::Here { path: mine }
+        );
+    }
+
+    /// Settings written before the registry: a list of paths and the current
+    /// one, no identities.
+    fn settings_before_the_registry(path: &str) -> Map<String, Value> {
+        let mut cfg = Map::new();
+        cfg.insert("known_vaults".into(), json!([path]));
+        cfg.insert("vault_path".into(), json!(path));
+        cfg
+    }
+
+    #[test]
+    fn an_old_listing_follows_its_space_away_from_an_empty_folder() {
+        // Б2.2: the space X opened at A was renamed to B while Mine was
+        // closed, and an empty folder now stands at A. The derived store
+        // says A held X: X is found at B, and A is not taken for it.
+        let dir = tempfile::tempdir().unwrap();
+        let app_data = dir.path().join("app");
+        let old = dir.path().join("Mine").to_string_lossy().into_owned();
+        derived(&app_data, MINE, &old);
+        let moved = space(dir.path(), "Mine renamed", MINE);
+        std::fs::create_dir(&old).unwrap();
+        let cfg = settings_before_the_registry(&old);
+
+        assert_eq!(
+            locate_saved(&cfg, Some(&vaults_dir(&app_data)), &old),
+            Located::Moved { from: old.clone(), path: moved }
+        );
+        assert_eq!(std::fs::read_dir(&old).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn an_old_listing_does_not_take_another_space_at_its_path_for_its_own() {
+        // Б2.2: the folder at the listed path is another space now.
+        let dir = tempfile::tempdir().unwrap();
+        let app_data = dir.path().join("app");
+        let path = dir.path().join("Mine").to_string_lossy().into_owned();
+        derived(&app_data, MINE, &path);
+        space(dir.path(), "Mine", NSFV);
+        let cfg = settings_before_the_registry(&path);
+
+        assert_eq!(
+            locate_saved(&cfg, Some(&vaults_dir(&app_data)), &path),
+            Located::Lost { path: path.clone(), reason: LostReason::Replaced }
+        );
+        assert_eq!(read_space_id(Path::new(&path)).as_deref(), Some(NSFV));
+    }
+
+    #[test]
+    fn a_listed_folder_no_store_has_seen_opens_only_with_an_identity() {
+        // Б2.2: with no derived store naming the path, a folder carrying an
+        // identity is the space; a folder without one is none at all.
+        let dir = tempfile::tempdir().unwrap();
+        let app_data = dir.path().join("app");
+        let mine = space(dir.path(), "Mine", MINE);
+        assert_eq!(
+            locate_saved(&settings_before_the_registry(&mine), Some(&vaults_dir(&app_data)), &mine),
+            Located::Here { path: mine }
+        );
+
+        let empty = dir.path().join("Empty").to_string_lossy().into_owned();
+        std::fs::create_dir(&empty).unwrap();
+        let cfg = settings_before_the_registry(&empty);
+        assert_eq!(
+            locate_saved(&cfg, Some(&vaults_dir(&app_data)), &empty),
+            Located::Lost { path: empty.clone(), reason: LostReason::Replaced }
+        );
+        // A record saved with no identity is the same case.
+        let mut listed = Map::new();
+        add_space(&mut listed, None, &empty);
+        listed.insert("vault_path".into(), json!(empty.clone()));
+        assert_eq!(
+            locate_saved(&listed, Some(&vaults_dir(&app_data)), &empty),
+            Located::Lost { path: empty, reason: LostReason::Replaced }
+        );
+    }
+
+    #[test]
+    fn the_space_opened_last_at_a_path_is_the_one_it_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let app_data = dir.path().join("app");
+        let path = dir.path().join("Mine").to_string_lossy().into_owned();
+        derived(&app_data, NSFV, &path);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        derived(&app_data, MINE, &path);
+        derived(&app_data, "0123456789abcdef0123456789abcdef", "/elsewhere");
+        assert_eq!(derived_owners(&vaults_dir(&app_data), &path), vec![MINE, NSFV]);
     }
 
     #[test]

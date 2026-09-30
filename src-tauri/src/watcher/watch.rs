@@ -7,7 +7,6 @@
 use anyhow::Result;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
-use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
@@ -80,14 +79,48 @@ impl WatcherRecoveryTracker {
     }
 }
 
-/// Start watching a vault directory for changes.
+/// A running watcher of one space and index slot, with the timer that
+/// commits its deferred removals. Dropping it stops both.
+pub struct VaultWatcher {
+    _events: RecommendedWatcher,
+    _removals: RemovalTimer,
+    layout: VaultLayout,
+}
+
+impl VaultWatcher {
+    /// The space and the index slot this watcher writes to.
+    pub fn layout(&self) -> &VaultLayout {
+        &self.layout
+    }
+
+    /// A watcher of nothing, standing for `layout` in tests of whose
+    /// watcher ends up in the slot.
+    #[cfg(test)]
+    pub(crate) fn detached(layout: &VaultLayout) -> Self {
+        Self {
+            _events: notify::recommended_watcher(|_: notify::Result<notify::Event>| {})
+                .expect("an idle watcher needs no path"),
+            _removals: RemovalTimer(handler::RemovalTimerStop::default()),
+            layout: layout.clone(),
+        }
+    }
+}
+
+/// Owns a removal timer thread: dropping it ends the thread.
+struct RemovalTimer(handler::RemovalTimerStop);
+
+impl Drop for RemovalTimer {
+    fn drop(&mut self) {
+        self.0.stop();
+    }
+}
+
+/// Start watching a vault directory for changes, writing into the index
+/// slot `vault` names.
 ///
-/// Returns a `RecommendedWatcher` that must be kept alive. Dropping it stops watching.
-pub fn start_watching(
-    app: &AppHandle,
-    vault: &VaultLayout,
-    db_path: &Path,
-) -> Result<RecommendedWatcher> {
+/// Returns a [`VaultWatcher`] that must be kept alive. Dropping it stops watching.
+pub fn start_watching(app: &AppHandle, vault: &VaultLayout) -> Result<VaultWatcher> {
+    let db_path = vault.index_db_path();
     let started = Instant::now();
     append_startup_trace(
         app,
@@ -98,7 +131,7 @@ pub fn start_watching(
     let app_clone = app.clone();
 
     // Separate DB connection for the watcher thread (WAL mode allows this)
-    let conn = db::open_or_create(db_path)?;
+    let conn = db::open_or_create(&db_path)?;
     append_startup_trace(
         app,
         "watcher",
@@ -109,7 +142,7 @@ pub fn start_watching(
     let last_emit: Arc<Mutex<Instant>> =
         Arc::new(Mutex::new(Instant::now() - Duration::from_secs(10)));
     let recovery = Arc::new(Mutex::new(WatcherRecoveryTracker::default()));
-    let wake_removals = start_removal_timer(app, vault, db_path)?;
+    let removals = start_removal_timer(app, vault)?;
 
     let mut watcher =
         notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
@@ -147,13 +180,8 @@ pub fn start_watching(
 
             let mut any_changed = false;
             let mut any_error = false;
-            // A deletion waits for its rename window; the timer commits it.
-            if vault_events
-                .iter()
-                .any(|event| matches!(event, events::VaultEvent::BlockDeleted(_)))
-            {
-                let _ = wake_removals.send(());
-            }
+            // A deletion waits for its rename window: queuing it wakes the
+            // removal timer, which commits it when the window passes.
             for ve in &vault_events {
                 match handler::handle_event(&conn, &vault_clone, ve, Some(&app_clone)) {
                     Ok(changed) => any_changed |= changed,
@@ -203,27 +231,28 @@ pub fn start_watching(
         &format!("ready elapsed_ms={}", started.elapsed().as_millis()),
     );
 
-    Ok(watcher)
+    Ok(VaultWatcher {
+        _events: watcher,
+        _removals: removals,
+        layout: vault.clone(),
+    })
 }
 
-/// Put a recovered watcher in place, only while its space is still the open
-/// one: recovery of space A must not replace the watcher of space B opened
-/// meanwhile (SPEC_AUDIT_FIXES.md, Ф7). The open space and the watcher slot
-/// are locked in the order a space switch locks them.
-fn install_recovered_watcher(
-    app: &AppHandle,
-    vault: &VaultLayout,
-    replacement: RecommendedWatcher,
-) -> bool {
-    let state = app.state::<AppState>();
+/// Put a recovered watcher in place, only while its space and index slot are
+/// still the open ones: recovery of space A must not replace the watcher of
+/// space B opened meanwhile (`SPEC_AUDIT_FIXES.md`, Ф7), and a watcher of a
+/// retired slot must not replace the watcher of the slot that took its place
+/// (Б2.4). The open space and the watcher slot are locked in the order a
+/// space switch locks them.
+fn install_recovered_watcher(state: &AppState, replacement: VaultWatcher) -> bool {
     let Ok(open) = state.vault_state.lock() else {
         log::error!("vault state mutex poisoned during watcher recovery");
         return false;
     };
-    if !recovered_space_is_open(open.as_ref().map(|vs| vs.vault.root()), vault.root()) {
+    if !recovered_space_is_open(open.as_ref().map(|vs| &vs.vault), replacement.layout()) {
         log::info!(
-            "watcher recovery for {} dropped: another space is open",
-            vault.root().display()
+            "watcher recovery for {} dropped: another space or index slot is open",
+            replacement.layout().index_db_path().display()
         );
         return false;
     }
@@ -240,50 +269,76 @@ fn install_recovered_watcher(
     true
 }
 
-fn recovered_space_is_open(open: Option<&Path>, recovered: &Path) -> bool {
-    open == Some(recovered)
+/// Whether the open session is the space and index slot a watcher writes to.
+/// The root alone is not enough: recovery from a corrupt index moves the
+/// same space to a new slot.
+fn recovered_space_is_open(open: Option<&VaultLayout>, recovered: &VaultLayout) -> bool {
+    open.is_some_and(|open| {
+        open.root() == recovered.root() && open.index_db_path() == recovered.index_db_path()
+    })
+}
+
+/// Put a new watcher in place after a recovery pass over `watched`. When the
+/// pass moved a corrupt index to a new slot, the session adopts that slot and
+/// the watcher follows it: a watcher raised on the old slot would keep
+/// writing into the corrupt database, unseen, and fail again (Б2.4).
+/// Returns whether a watcher of the open slot is in place.
+fn restart_watcher_after_recovery(
+    state: &AppState,
+    watched: &VaultLayout,
+    recovered: Option<VaultLayout>,
+    start: impl Fn(&VaultLayout) -> Result<VaultWatcher>,
+) -> bool {
+    let Some(recovered) = recovered else {
+        return match start(watched) {
+            Ok(replacement) => install_recovered_watcher(state, replacement),
+            Err(error) => {
+                log::error!("failed to restart watcher after recovery: {error:#}");
+                false
+            }
+        };
+    };
+    if let Err(error) =
+        crate::commands::state::adopt_recovered_session(state, watched, recovered.clone(), &start)
+    {
+        log::info!(
+            "watcher recovery for {} dropped: {error}",
+            watched.root().display()
+        );
+        return false;
+    }
+    state.watcher.lock().is_ok_and(|slot| {
+        slot.as_ref()
+            .is_some_and(|watcher| recovered_space_is_open(Some(watcher.layout()), &recovered))
+    })
 }
 
 /// A deferred removal is committed when its rename window passes, not when
-/// some later file event happens to arrive (SPEC_AUDIT_FIXES.md, Ф7). The
-/// timer has its own index connection and ends with its watcher: dropping
-/// the watcher drops the only sender.
-fn start_removal_timer(
-    app: &AppHandle,
-    vault: &VaultLayout,
-    db_path: &Path,
-) -> Result<std::sync::mpsc::Sender<()>> {
-    use std::sync::mpsc::RecvTimeoutError;
-    let (wake, woken) = std::sync::mpsc::channel::<()>();
-    let conn = db::open_or_create(db_path)?;
+/// some later file event happens to arrive (`SPEC_AUDIT_FIXES.md`, Ф7). The
+/// timer has its own index connection and ends with its watcher.
+fn start_removal_timer(app: &AppHandle, vault: &VaultLayout) -> Result<RemovalTimer> {
+    let conn = db::open_or_create(&vault.index_db_path())?;
+    let stop = handler::RemovalTimerStop::default();
+    let timer = RemovalTimer(stop.clone());
     let app = app.clone();
     let vault = vault.clone();
     std::thread::Builder::new()
         .name("watcher-removals".to_string())
-        .spawn(move || loop {
-            let waited = match handler::next_pending_deadline(&vault) {
-                Some(deadline) => {
-                    woken.recv_timeout(deadline.saturating_duration_since(Instant::now()))
-                }
-                None => woken.recv().map_err(|_| RecvTimeoutError::Disconnected),
-            };
-            if matches!(waited, Err(RecvTimeoutError::Disconnected)) {
-                return;
-            }
-            match handler::commit_expired_removals(&conn, &vault, Some(&app)) {
+        .spawn(move || {
+            let path = vault.root().to_string_lossy().into_owned();
+            handler::run_removal_timer(&conn, &vault, &stop, Some(&app), |pass| match pass {
                 Ok(true) => {
-                    let _ = app.emit(
-                        "vault-changed",
-                        VaultChangedPayload {
-                            path: vault.root().to_string_lossy().into_owned(),
-                        },
-                    );
+                    let _ = app.emit("vault-changed", VaultChangedPayload { path: path.clone() });
                 }
                 Ok(false) => {}
-                Err(error) => log::warn!("deferred removals: {error:#}"),
-            }
+                Err(error) => {
+                    log::warn!("deferred removals: {error:#}");
+                    // The next reconciliation removes the cards instead.
+                    app.state::<AppState>().freshness.mark_dirty(&path);
+                }
+            });
         })?;
-    Ok(wake)
+    Ok(timer)
 }
 
 fn record_watcher_error(
@@ -326,19 +381,12 @@ fn record_watcher_error(
                 Ok(report) => (report.is_fresh(), report.errors.len()),
                 Err(_) => (false, 1),
             };
-            let watcher_restarted = match start_watching(
-                &app_for_recovery,
+            let watcher_restarted = restart_watcher_after_recovery(
+                &app_for_recovery.state::<AppState>(),
                 &vault_for_recovery,
-                &vault_for_recovery.index_db_path(),
-            ) {
-                Ok(replacement) => {
-                    install_recovered_watcher(&app_for_recovery, &vault_for_recovery, replacement)
-                }
-                Err(error) => {
-                    log::error!("failed to restart watcher after recovery: {error:#}");
-                    false
-                }
-            };
+                outcome.recovered_vault.clone(),
+                |layout| start_watching(&app_for_recovery, layout),
+            );
             tracker_for_recovery
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
@@ -409,11 +457,94 @@ mod tests {
 
     #[test]
     fn recovery_installs_its_watcher_only_for_the_open_space() {
-        let a = Path::new("/spaces/A");
-        let b = Path::new("/spaces/B");
-        assert!(recovered_space_is_open(Some(a), a));
-        assert!(!recovered_space_is_open(Some(b), a));
-        assert!(!recovered_space_is_open(None, a));
+        let a = VaultLayout::new(std::path::PathBuf::from("/spaces/A"));
+        let b = VaultLayout::new(std::path::PathBuf::from("/spaces/B"));
+        assert!(recovered_space_is_open(Some(&a), &a));
+        assert!(!recovered_space_is_open(Some(&b), &a));
+        assert!(!recovered_space_is_open(None, &a));
+    }
+
+    #[test]
+    fn a_watcher_of_a_retired_index_slot_is_not_the_open_space() {
+        // Б2.4: recovery from a corrupt index keeps the root and moves the
+        // index to a new slot.
+        let open = VaultLayout::new(std::path::PathBuf::from("/spaces/A"));
+        let retired = open
+            .clone()
+            .with_index_db_path(std::path::PathBuf::from("/derived/A/retired/index.db"));
+        assert!(!recovered_space_is_open(Some(&open), &retired));
+        assert!(!recovered_space_is_open(Some(&retired), &open));
+    }
+
+    #[test]
+    fn recovery_from_a_corrupt_index_leaves_the_watcher_on_the_new_slot() {
+        // Б2.4: the recovery pass moves the index to a new slot; the watcher
+        // restarted after it must write there, not into the corrupt file.
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("source");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("Card.md"), "A card the index must keep.\n").unwrap();
+        let watched = VaultLayout::with_derived_root(root.clone(), temp.path().join("derived"));
+        let watched = db::resolve_vault_index(watched).unwrap();
+        std::fs::create_dir_all(watched.index_generation_dir()).unwrap();
+        std::fs::write(watched.index_db_path(), b"not a SQLite database").unwrap();
+
+        let state = AppState::new();
+        *state.vault_state.lock().unwrap() = Some(crate::commands::state::VaultState {
+            conn: db::open_memory().unwrap(),
+            vault: watched.clone(),
+        });
+        *state.watcher.lock().unwrap() = Some(VaultWatcher::detached(&watched));
+
+        let outcome = state.freshness.reconcile(&watched);
+        let recovered = outcome
+            .recovered_vault
+            .clone()
+            .expect("the corrupt index is recovered");
+        assert_ne!(recovered.index_db_path(), watched.index_db_path());
+
+        assert!(restart_watcher_after_recovery(
+            &state,
+            &watched,
+            outcome.recovered_vault,
+            |layout| Ok(VaultWatcher::detached(layout)),
+        ));
+        let installed = state.watcher.lock().unwrap();
+        let installed = installed.as_ref().expect("a watcher is in place");
+        assert_eq!(installed.layout().index_db_path(), recovered.index_db_path());
+        let open = state.vault_state.lock().unwrap();
+        assert_eq!(
+            open.as_ref().unwrap().vault.index_db_path(),
+            recovered.index_db_path()
+        );
+    }
+
+    #[test]
+    fn a_watcher_of_the_retired_slot_does_not_replace_the_new_one() {
+        // Б2.4: a restart that still aims at the retired slot (its pass
+        // joined the one that moved the index) finds the session on the new
+        // slot and leaves that slot's watcher in place.
+        let temp = tempfile::tempdir().unwrap();
+        let retired =
+            VaultLayout::with_derived_root(temp.path().join("source"), temp.path().join("derived"));
+        let adopted = retired
+            .clone()
+            .with_index_db_path(temp.path().join("derived/recovered/index.db"));
+        let state = AppState::new();
+        *state.vault_state.lock().unwrap() = Some(crate::commands::state::VaultState {
+            conn: db::open_memory().unwrap(),
+            vault: adopted.clone(),
+        });
+        *state.watcher.lock().unwrap() = Some(VaultWatcher::detached(&adopted));
+
+        assert!(!restart_watcher_after_recovery(&state, &retired, None, |layout| Ok(
+            VaultWatcher::detached(layout)
+        )));
+        let installed = state.watcher.lock().unwrap();
+        assert_eq!(
+            installed.as_ref().unwrap().layout().index_db_path(),
+            adopted.index_db_path()
+        );
     }
 
     #[test]

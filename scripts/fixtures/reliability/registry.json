@@ -1041,6 +1041,20 @@
       "requirement": "SPEC_AUDIT_FIXES.md#| Б1.1 |",
       "tests": ["src-tauri/src/commands/blocks.rs", "src-tauri/src/storage/source_mutation.rs", "src-tauri/src/commands/settings.rs", "src-tauri/src/cli.rs", "mine-core/src/domain/source_patch.rs", "mine-core/src/domain/markdown.rs", "mine-core/src/domain/collection.rs"],
       "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src-tauri/src/commands/state.rs",
+        "src-tauri/src/commands/vault.rs",
+        "src-tauri/src/space_registry.rs",
+        "src-tauri/src/storage/search_engine.rs",
+        "src-tauri/src/storage/search_projection.rs",
+        "src-tauri/src/watcher/handler.rs",
+        "src-tauri/src/watcher/watch.rs"
+      ],
+      "requirement": "SPEC_AUDIT_FIXES.md#| Б2.1 |",
+      "tests": ["src-tauri/src/commands/vault.rs", "src-tauri/src/space_registry.rs", "src-tauri/src/watcher/handler.rs", "src-tauri/src/watcher/watch.rs", "src-tauri/src/storage/search_engine.rs", "src-tauri/src/storage/search_projection.rs", "src-tauri/src/commands/state.rs"],
+      "command": "test:rust"
     }
   ],
   "release": null

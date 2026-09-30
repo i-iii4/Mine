@@ -146,7 +146,7 @@ pub fn search_grid_blocks_with_provider(
     query: &str,
     semantic_provider: Option<&dyn SemanticEmbeddingProvider>,
 ) -> Result<(Vec<LightBlock>, bool)> {
-    sync_search_documents(conn)?;
+    sync_search_documents(conn)?.record_committed(conn);
     search_grid_blocks_prepared_with_provider(conn, tag, offset, limit, query, semantic_provider)
 }
 
@@ -235,7 +235,7 @@ pub fn warm_search_index(
     conn: &Connection,
     semantic_provider: Option<&dyn SemanticEmbeddingProvider>,
 ) -> Result<usize> {
-    let changed_chunks = sync_search_documents(conn)?;
+    let changed_chunks = sync_search_documents(conn)?.record_committed(conn);
     let embedded = match semantic_provider {
         Some(provider) => ensure_semantic_embeddings(conn, provider, None)?,
         None => 0,
@@ -376,7 +376,34 @@ fn synced_stamps() -> &'static std::sync::Mutex<std::collections::HashMap<String
     SYNCED.get_or_init(Default::default)
 }
 
-pub(crate) fn sync_search_documents(conn: &Connection) -> Result<usize> {
+/// Search documents a sync has written but this process does not yet count
+/// as synced. The stamps enter [`synced_stamps`] only once the writes are
+/// committed: a sync rolled back with its savepoint must be redone by the
+/// next one, not skipped as already done (`SPEC_AUDIT_FIXES.md`, Б2.5).
+#[must_use = "record the synced documents once their writes are committed"]
+pub(crate) struct SyncedSearchDocuments {
+    changed: usize,
+    stamps: Option<(String, BTreeMap<i64, String>)>,
+}
+
+impl SyncedSearchDocuments {
+    /// Record the synced stamps when nothing written on `conn` is left
+    /// uncommitted, and return how many chunks changed. Inside a transaction
+    /// whose outcome is still open nothing is recorded: the next sync checks
+    /// those documents again, which costs a read and never a stale result.
+    pub(crate) fn record_committed(self, conn: &Connection) -> usize {
+        if let Some((path, stamps)) = self.stamps {
+            if conn.is_autocommit() {
+                if let Ok(mut synced) = synced_stamps().lock() {
+                    synced.insert(path, stamps);
+                }
+            }
+        }
+        self.changed
+    }
+}
+
+pub(crate) fn sync_search_documents(conn: &Connection) -> Result<SyncedSearchDocuments> {
     let index_path = conn.path().filter(|path| !path.is_empty()).map(str::to_string);
     let stamps = load_search_stamps(conn)?;
     // Fewer stored documents than cards means the search tables were
@@ -397,7 +424,7 @@ pub(crate) fn sync_search_documents(conn: &Connection) -> Result<usize> {
         .map(|(id, _)| *id)
         .collect();
     if stale.is_empty() {
-        return Ok(0);
+        return Ok(SyncedSearchDocuments { changed: 0, stamps: None });
     }
     let documents = if known.is_none() || stale.len() == stamps.len() {
         load_search_documents(conn)?
@@ -405,12 +432,10 @@ pub(crate) fn sync_search_documents(conn: &Connection) -> Result<usize> {
         load_search_documents_for(conn, &stale)?
     };
     let changed = write_search_documents(conn, documents)?;
-    if let Some(path) = index_path {
-        if let Ok(mut synced) = synced_stamps().lock() {
-            synced.insert(path, stamps.into_iter().collect());
-        }
-    }
-    Ok(changed)
+    Ok(SyncedSearchDocuments {
+        changed,
+        stamps: index_path.map(|path| (path, stamps.into_iter().collect())),
+    })
 }
 
 fn write_search_documents(conn: &Connection, documents: Vec<SearchDocument>) -> Result<usize> {
@@ -2029,7 +2054,7 @@ mod tests {
         )
         .unwrap();
 
-        let changed = sync_search_documents(&conn).unwrap();
+        let changed = sync_search_documents(&conn).unwrap().record_committed(&conn);
         assert_eq!(changed, 2);
 
         let chunk_count: i64 = conn
@@ -2037,7 +2062,7 @@ mod tests {
             .unwrap();
         assert_eq!(chunk_count, 2);
 
-        let unchanged = sync_search_documents(&conn).unwrap();
+        let unchanged = sync_search_documents(&conn).unwrap().record_committed(&conn);
         assert_eq!(unchanged, 0);
     }
 
@@ -2053,13 +2078,13 @@ mod tests {
             )
             .unwrap();
         }
-        assert!(sync_search_documents(&conn).unwrap() > 0);
+        assert!(sync_search_documents(&conn).unwrap().record_committed(&conn) > 0);
         let path = conn.path().unwrap().to_string();
         let first = synced_stamps().lock().unwrap().get(&path).cloned().unwrap();
         assert_eq!(first.len(), 2);
 
         // Nothing changed: nothing is read or cut.
-        assert_eq!(sync_search_documents(&conn).unwrap(), 0);
+        assert_eq!(sync_search_documents(&conn).unwrap().record_committed(&conn), 0);
 
         // One card changed: only its document is rebuilt.
         upsert_block(
@@ -2075,11 +2100,40 @@ mod tests {
             .map(|(id, _)| *id)
             .collect();
         assert_eq!(stale.len(), 1);
-        assert!(sync_search_documents(&conn).unwrap() > 0);
+        assert!(sync_search_documents(&conn).unwrap().record_committed(&conn) > 0);
         let text: String = conn
             .query_row("SELECT group_concat(text, ' ') FROM search_chunks WHERE slug = 'two'", [], |row| row.get(0))
             .unwrap();
         assert!(text.contains("Edited"), "{text}");
+    }
+
+    #[test]
+    fn synced_documents_count_only_once_committed() {
+        // Б2.5: the stamps of a sync enter the cache only after its writes
+        // are committed, and a search snapshot still records its own sync.
+        let dir = tempfile::tempdir().unwrap();
+        let conn = db::open_or_create(&dir.path().join("index.db")).unwrap();
+        upsert_block(
+            &conn,
+            &make_block_full("one", "article", Some("one"), "2026-01-01T00:00:00Z", &[], "First body."),
+            None,
+        )
+        .unwrap();
+        let path = conn.path().unwrap().to_string();
+
+        conn.execute_batch("SAVEPOINT pending_sync").unwrap();
+        assert!(sync_search_documents(&conn).unwrap().record_committed(&conn) > 0);
+        assert!(synced_stamps().lock().unwrap().get(&path).is_none());
+        conn.execute_batch("ROLLBACK TO SAVEPOINT pending_sync; RELEASE SAVEPOINT pending_sync;")
+            .unwrap();
+
+        crate::storage::search_projection::read_search_snapshot(&conn, None, "first", 5, None)
+            .unwrap();
+        let recorded = synced_stamps().lock().unwrap().get(&path).cloned();
+        assert_eq!(
+            recorded,
+            Some(load_search_stamps(&conn).unwrap().into_iter().collect())
+        );
     }
 
     #[test]

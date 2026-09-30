@@ -134,14 +134,33 @@ pub async fn select_vault(
     // With the frontend's space_switch_requested these bound where a slow
     // switch spends its time: the IPC hop, the selection lock or the open.
     append_startup_trace(&app, "select_vault", "received");
-    tauri::async_runtime::spawn_blocking(move || open_space_blocking(&app, &path))
+    tauri::async_runtime::spawn_blocking(move || {
+        open_space_blocking(&app, &path, SpaceOpening::Chosen)
+    })
         .await
         .map_err(|error| CommandError::Internal(format!("vault selection worker failed: {error}")))?
 }
 
+/// Who asks for a space to open. Only the person's own choice of a folder
+/// may make it a space: lay out its folders and give it an identity
+/// (`SPEC_AUDIT_FIXES.md`, Ф8). The app reopening a space it knows finds the
+/// identity already there, or does not open the folder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpaceOpening {
+    /// The person picked this folder.
+    Chosen,
+    /// The app reopens a known space: at launch, after a move, for
+    /// background work on the open space.
+    Restored,
+}
+
 /// Open the space at `path`, record it and tell every window. Shared by the
 /// explicit selection and by following a space that moved (П30).
-fn open_space_blocking(app: &AppHandle, path: &str) -> Result<VaultOpenResult, CommandError> {
+fn open_space_blocking(
+    app: &AppHandle,
+    path: &str,
+    opening: SpaceOpening,
+) -> Result<VaultOpenResult, CommandError> {
     let state = app.state::<AppState>();
     let request = state.begin_vault_selection();
     let _selection = state
@@ -151,7 +170,7 @@ fn open_space_blocking(app: &AppHandle, path: &str) -> Result<VaultOpenResult, C
     append_startup_trace(app, "select_vault", "selection_locked");
     require_latest_selection(&state, request)?;
     let path = canonical_space_path(path)?;
-    let result = initialize_vault(app, &state, &path, request)?;
+    let result = initialize_vault(app, &state, &path, request, opening)?;
     require_latest_selection(&state, request)?;
     save_vault_path(app, &path);
     let _ = app.emit("vault-selected", VaultChangedPayload { path });
@@ -296,16 +315,19 @@ pub fn get_unavailable_vault(app: AppHandle) -> Result<Option<UnavailableVault>,
     }
 }
 
-/// Where the space saved in settings stands now (SPEC_AUDIT_FIXES.md, Ф8).
+/// Where the space saved in settings stands now (`SPEC_AUDIT_FIXES.md`, Ф8).
 /// The folder at the saved path counts only when it carries the identity the
-/// registry recorded for it; otherwise the space is looked for by identity
-/// (П30). A folder with no identity or another one is not this space.
+/// registry recorded for it, or, for a record without one, the identity its
+/// derived store last saw there; otherwise the space is looked for by
+/// identity (П30). A folder with no identity or another one is not this space.
 fn locate_saved_space(app: &AppHandle, saved_path: &str) -> Located {
-    let serde_json::Value::Object(cfg) = load_config(app) else {
-        return crate::space_registry::locate(&serde_json::Map::new(), None, saved_path);
+    let cfg = match load_config(app) {
+        serde_json::Value::Object(cfg) => cfg,
+        _ => serde_json::Map::new(),
     };
-    let vault_id = crate::space_registry::record_at(&cfg, saved_path).and_then(|record| record.vault_id);
-    crate::space_registry::locate(&cfg, vault_id.as_deref(), saved_path)
+    let vaults_dir = app_config(app)
+        .map(|config| crate::space_registry::vaults_dir(config.app_data_dir()));
+    crate::space_registry::locate_saved(&cfg, vaults_dir.as_deref(), saved_path)
 }
 
 /// Why a bound folder cannot be opened, or `None` when it can.
@@ -516,7 +538,7 @@ pub async fn open_vault(
                 "the saved space is no longer at {path}"
             )));
         }
-        initialize_vault(&app, &state, &path, request)
+        initialize_vault(&app, &state, &path, request, SpaceOpening::Restored)
     })
     .await
     .map_err(|error| CommandError::Internal(format!("vault opening worker failed: {error}")))?
@@ -780,6 +802,7 @@ fn initialize_vault(
     state: &AppState,
     path: &str,
     request: u64,
+    opening: SpaceOpening,
 ) -> Result<VaultOpenResult, CommandError> {
     let _write = crate::storage::source_mutation::begin_write()
         .map_err(|error| CommandError::Internal(error.to_string()))?;
@@ -832,7 +855,7 @@ fn initialize_vault(
     }
     drop(vault_state);
 
-    let vault = resolve_runtime_vault_layout(app, Path::new(path))?;
+    let vault = resolve_runtime_vault_layout(app, Path::new(path), opening)?;
     append_startup_trace(
         app,
         "initialize_vault",
@@ -932,9 +955,8 @@ fn initialize_vault(
     append_startup_trace(app, "startup", "milestone=local_snapshot_opened");
 
     // Prepare OS and database resources before the short publication boundary.
-    let db_path = vault.index_db_path();
     let watcher_started = Instant::now();
-    let prepared_watcher = match watch::start_watching(app, &vault, &db_path) {
+    let prepared_watcher = match watch::start_watching(app, &vault) {
         Ok(w) => {
             append_startup_trace(
                 app,
@@ -1068,7 +1090,7 @@ fn handle_space_root_lost(app: &AppHandle, root: &Path) {
     let path = root.to_string_lossy().into_owned();
     log::warn!("space folder is no longer there: {path}");
     if let Some(moved) = follow_moved_space(app, &path) {
-        match open_space_blocking(app, &moved) {
+        match open_space_blocking(app, &moved, SpaceOpening::Restored) {
             Ok(_) => return,
             Err(error) => log::warn!("cannot reopen the moved space at {moved}: {error}"),
         }
@@ -1140,7 +1162,11 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
         .spawn(move || {
             let Ok(_write)=crate::storage::source_mutation::begin_write() else {return;};
             let vault =
-                match resolve_runtime_vault_layout(&app_for_thread, Path::new(&path_for_thread)) {
+                match resolve_runtime_vault_layout(
+                    &app_for_thread,
+                    Path::new(&path_for_thread),
+                    SpaceOpening::Restored,
+                ) {
                     Ok(vault) => vault,
                     Err(err) => {
                         log::warn!(
@@ -1454,7 +1480,11 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
             let _write = write;
             let total = Instant::now();
             let vault =
-                match resolve_runtime_vault_layout(&app_for_thread, Path::new(&path_for_thread)) {
+                match resolve_runtime_vault_layout(
+                    &app_for_thread,
+                    Path::new(&path_for_thread),
+                    SpaceOpening::Restored,
+                ) {
                     Ok(vault) => vault,
                     Err(err) => {
                         log::error!(
@@ -1702,23 +1732,53 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
     }
 }
 
-fn resolve_runtime_vault_layout(app: &AppHandle, root: &Path) -> Result<VaultLayout, CommandError> {
+fn resolve_runtime_vault_layout(
+    app: &AppHandle,
+    root: &Path,
+    opening: SpaceOpening,
+) -> Result<VaultLayout, CommandError> {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| CommandError::Internal(format!("failed to resolve app data dir: {e}")))?;
+    resolve_space_layout(&crate::space_registry::vaults_dir(&app_data), root, opening)
+}
+
+/// The layout of the space at `root`, its derived store under `vaults_dir`
+/// and its index slot. A space the person chose may be created here; a
+/// space the app restores must already carry its identity.
+fn resolve_space_layout(
+    vaults_dir: &Path,
+    root: &Path,
+    opening: SpaceOpening,
+) -> Result<VaultLayout, CommandError> {
     let _write = crate::storage::source_mutation::begin_write()
         .map_err(|error| CommandError::Internal(error.to_string()))?;
     let base = VaultLayout::new(root.to_path_buf());
-    initialize_new_space_layout(&base)?;
-    std::fs::create_dir_all(base.mine_dir())
-        .map_err(|e| CommandError::Internal(format!("failed to create Mine metadata dir: {e}")))?;
-    let mut vault_id = ensure_vault_id(&base)?;
-    let derived_root = derived_store_root(app, &vault_id)?;
+    let mut vault_id = match opening {
+        SpaceOpening::Chosen => {
+            initialize_new_space_layout(&base)?;
+            std::fs::create_dir_all(base.mine_dir()).map_err(|e| {
+                CommandError::Internal(format!("failed to create Mine metadata dir: {e}"))
+            })?;
+            ensure_vault_id(&base)?
+        }
+        SpaceOpening::Restored => existing_vault_id(&base)?.ok_or_else(|| {
+            CommandError::Internal(format!(
+                "{} holds no space identity; only choosing the folder makes it a space",
+                root.display()
+            ))
+        })?,
+    };
+    let derived_root = vaults_dir.join(&vault_id);
 
     // A copied folder carries the original's identity (П22): the id travels
     // in `.mine/vault-id`, so two folders now claim one derived store, and
     // both would silently write into one index and one cache. The recorded
-    // owner path settles it: owner alive elsewhere — this is a copy and it
-    // gets its own identity; owner gone — this is the same space after a
-    // move, and it inherits everything.
-    match resolve_identity_claim(root, &derived_root) {
+    // owner path settles it: the same space alive there — this is a copy and
+    // it gets its own identity; no such space there — this is the same space
+    // after a move, and it inherits everything.
+    match resolve_identity_claim(root, &derived_root, &vault_id) {
         IdentityClaim::Owned | IdentityClaim::Adopted => {
             record_owner_path(&derived_root, root);
             let write_layout = load_write_layout(&base)?;
@@ -1730,17 +1790,12 @@ fn resolve_runtime_vault_layout(app: &AppHandle, root: &Path) -> Result<VaultLay
         }
         IdentityClaim::Copy { owner } => {
             let new_id = generate_vault_id()?;
-            files::write_atomically(
-                &base.vault_id_path(),
-                format!(
-                    "{new_id}
-"
-                )
-                .as_bytes(),
-            )
-            .map_err(|e| {
-                CommandError::Internal(format!("failed to write the copy's own vault-id: {e:#}"))
-            })?;
+            files::write_atomically(&base.vault_id_path(), format!("{new_id}\n").as_bytes())
+                .map_err(|e| {
+                    CommandError::Internal(format!(
+                        "failed to write the copy's own vault-id: {e:#}"
+                    ))
+                })?;
             log::info!(
                 "space at {} is a copy of {} — minted its own identity {}",
                 root.display(),
@@ -1748,7 +1803,7 @@ fn resolve_runtime_vault_layout(app: &AppHandle, root: &Path) -> Result<VaultLay
                 new_id
             );
             vault_id = new_id;
-            let fresh_derived = derived_store_root(app, &vault_id)?;
+            let fresh_derived = vaults_dir.join(&vault_id);
             record_owner_path(&fresh_derived, root);
             let write_layout = load_write_layout(&base)?;
             db::resolve_vault_index(
@@ -1792,9 +1847,11 @@ pub(crate) fn initialize_new_space_layout(vault: &VaultLayout) -> Result<(), Com
 enum IdentityClaim {
     /// The recorded owner is this very folder (or nothing was recorded yet).
     Owned,
-    /// The recorded owner is gone from its old path: a move, not a copy.
+    /// The space is no longer at the recorded owner path (the folder is gone,
+    /// or what stands there is not this space): a move, not a copy.
     Adopted,
-    /// The recorded owner is alive at another path: this folder is a copy.
+    /// The same space is alive at the recorded owner path: this folder is a
+    /// copy.
     Copy { owner: PathBuf },
 }
 
@@ -1802,7 +1859,7 @@ fn owner_path_file(derived_root: &Path) -> PathBuf {
     derived_root.join("owner-path.json")
 }
 
-fn resolve_identity_claim(root: &Path, derived_root: &Path) -> IdentityClaim {
+fn resolve_identity_claim(root: &Path, derived_root: &Path, vault_id: &str) -> IdentityClaim {
     let Ok(raw) = std::fs::read_to_string(owner_path_file(derived_root)) else {
         return IdentityClaim::Owned;
     };
@@ -1822,7 +1879,11 @@ fn resolve_identity_claim(root: &Path, derived_root: &Path) -> IdentityClaim {
     if same {
         return IdentityClaim::Owned;
     }
-    if owner.is_dir() {
+    // Only the same space at the old path makes this folder a copy (П26). A
+    // folder there without this identity (an empty one made after a rename,
+    // another space) is not the original, and taking it for one would give
+    // the moved space a new identity and orphan its derived store (Б2.1).
+    if owner.is_dir() && crate::space_registry::read_space_id(&owner).as_deref() == Some(vault_id) {
         IdentityClaim::Copy { owner }
     } else {
         IdentityClaim::Adopted
@@ -1874,28 +1935,41 @@ struct StoredWriteLayout {
 fn ensure_vault_id(vault: &VaultLayout) -> Result<String, CommandError> {
     let _write = crate::storage::source_mutation::begin_write()
         .map_err(|error| CommandError::Internal(error.to_string()))?;
+    if let Some(existing) = existing_vault_id(vault)? {
+        return Ok(existing);
+    }
+    let new_id = generate_vault_id()?;
+    files::write_atomically(&vault.vault_id_path(), format!("{new_id}\n").as_bytes())
+        .map_err(|e| CommandError::Internal(format!("failed to write vault-id: {e:#}")))?;
+    Ok(new_id)
+}
+
+/// The identity the space already carries, moved from the legacy `.arena`
+/// marker when only that one is there. Never mints one.
+fn existing_vault_id(vault: &VaultLayout) -> Result<Option<String>, CommandError> {
     let path = vault.vault_id_path();
     if let Ok(existing) = std::fs::read_to_string(&path) {
         let trimmed = existing.trim();
         if !trimmed.is_empty() {
-            return Ok(trimmed.to_string());
+            return Ok(Some(trimmed.to_string()));
         }
     }
 
     if let Ok(existing) = std::fs::read_to_string(vault.legacy_vault_id_path()) {
         let trimmed = existing.trim();
         if !trimmed.is_empty() {
+            let _write = crate::storage::source_mutation::begin_write()
+                .map_err(|error| CommandError::Internal(error.to_string()))?;
+            std::fs::create_dir_all(vault.mine_dir()).map_err(|e| {
+                CommandError::Internal(format!("failed to create Mine metadata dir: {e}"))
+            })?;
             files::write_atomically(&path, format!("{trimmed}\n").as_bytes()).map_err(|e| {
                 CommandError::Internal(format!("failed to migrate vault-id to .mine: {e:#}"))
             })?;
-            return Ok(trimmed.to_string());
+            return Ok(Some(trimmed.to_string()));
         }
     }
-
-    let new_id = generate_vault_id()?;
-    files::write_atomically(&path, format!("{new_id}\n").as_bytes())
-        .map_err(|e| CommandError::Internal(format!("failed to write vault-id: {e:#}")))?;
-    Ok(new_id)
+    Ok(None)
 }
 
 fn generate_vault_id() -> Result<String, CommandError> {
@@ -2110,35 +2184,37 @@ fn repair_space_registry(app: &AppHandle) {
     }
 }
 
-/// The saved space moved beside its old path: switch the registry to the new
-/// path and return it (П30). `None` when it cannot be found unambiguously.
 /// The saved space was found under another path: that path becomes the one
-/// to open next time too.
+/// to open next time too. A record without an identity learns it from the
+/// folder the space was found in: finding it there proved it.
 fn record_moved_space(app: &AppHandle, from: &str, to: &str) {
-    let serde_json::Value::Object(cfg) = load_config(app) else {
-        return;
+    let recorded = match load_config(app) {
+        serde_json::Value::Object(cfg) => {
+            crate::space_registry::record_at(&cfg, from).and_then(|record| record.vault_id)
+        }
+        _ => None,
     };
-    let Some(id) = crate::space_registry::record_at(&cfg, from).and_then(|record| record.vault_id)
-    else {
+    let Some(id) = recorded.or_else(|| crate::space_registry::read_space_id(Path::new(to))) else {
         return;
     };
     let now = now_ms();
-    if update_config(app, |cfg| crate::space_registry::record_open(cfg, &id, to, now)).is_ok() {
-        log::info!("space {id} moved from {from} to {to}");
+    match update_config(app, |cfg| crate::space_registry::record_open(cfg, &id, to, now)) {
+        Ok(()) => log::info!("space {id} moved from {from} to {to}"),
+        Err(error) => log::warn!("cannot record the move of space {id} to {to}: {error}"),
     }
 }
 
+/// The open space's folder is gone: find it by identity beside its old path
+/// (П30) and record where it went. `None` when it cannot be found
+/// unambiguously.
 fn follow_moved_space(app: &AppHandle, saved_path: &str) -> Option<String> {
-    let serde_json::Value::Object(cfg) = load_config(app) else {
-        return None;
-    };
-    let record = crate::space_registry::record_at(&cfg, saved_path)?;
-    let moved = crate::space_registry::find_moved(&record)?;
-    let id = record.vault_id?;
-    let now = now_ms();
-    update_config(app, |cfg| crate::space_registry::record_open(cfg, &id, &moved, now)).ok()?;
-    log::info!("space {id} moved from {saved_path} to {moved}");
-    Some(moved)
+    match locate_saved_space(app, saved_path) {
+        Located::Moved { path, .. } => {
+            record_moved_space(app, saved_path, &path);
+            Some(path)
+        }
+        Located::Here { .. } | Located::Lost { .. } => None,
+    }
 }
 
 #[cfg(test)]
@@ -2406,6 +2482,32 @@ mod tests {
 #[cfg(test)]
 mod identity_claim_tests {
     use super::*;
+    use crate::space_registry::{self, Located};
+
+    const ID: &str = "cea575682e5a4018991c0097fbedff66";
+    const OTHER: &str = "e7fc8f8bf1294aaa89f375ac9cfaf1b4";
+
+    fn carry_identity(folder: &Path, id: &str) {
+        std::fs::create_dir_all(folder.join(".mine")).unwrap();
+        std::fs::write(folder.join(".mine/vault-id"), format!("{id}\n")).unwrap();
+    }
+
+    fn owner_recorded(derived_root: &Path) -> String {
+        let raw = std::fs::read_to_string(owner_path_file(derived_root)).unwrap();
+        serde_json::from_str::<serde_json::Value>(&raw).unwrap()["path"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    fn derived_stores(vaults: &Path) -> Vec<String> {
+        let mut ids: Vec<String> = std::fs::read_dir(vaults)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        ids.sort();
+        ids
+    }
 
     #[test]
     fn a_folder_owns_its_identity_and_a_move_adopts_it() {
@@ -2413,15 +2515,16 @@ mod identity_claim_tests {
         let home = tempfile::tempdir().unwrap();
         let original = home.path().join("Mine");
         std::fs::create_dir(&original).unwrap();
+        carry_identity(&original, ID);
 
         // Nothing recorded yet: the first open owns the identity.
         assert!(matches!(
-            resolve_identity_claim(&original, derived.path()),
+            resolve_identity_claim(&original, derived.path(), ID),
             IdentityClaim::Owned
         ));
         record_owner_path(derived.path(), &original);
         assert!(matches!(
-            resolve_identity_claim(&original, derived.path()),
+            resolve_identity_claim(&original, derived.path(), ID),
             IdentityClaim::Owned
         ));
 
@@ -2429,7 +2532,7 @@ mod identity_claim_tests {
         let moved = home.path().join("Mine (archive)");
         std::fs::rename(&original, &moved).unwrap();
         assert!(matches!(
-            resolve_identity_claim(&moved, derived.path()),
+            resolve_identity_claim(&moved, derived.path(), ID),
             IdentityClaim::Adopted
         ));
     }
@@ -2440,15 +2543,139 @@ mod identity_claim_tests {
         let home = tempfile::tempdir().unwrap();
         let original = home.path().join("Mine");
         let copy = home.path().join("Mine copy");
-        std::fs::create_dir(&original).unwrap();
-        std::fs::create_dir(&copy).unwrap();
+        carry_identity(&original, ID);
+        carry_identity(&copy, ID);
         record_owner_path(derived.path(), &original);
 
-        // The original is alive at its recorded path: opening the twin is a
-        // copy, not a move — it must not share the derived store (П22).
-        match resolve_identity_claim(&copy, derived.path()) {
+        // The same space is alive at its recorded path: opening the twin is
+        // a copy, not a move — it must not share the derived store (П22).
+        match resolve_identity_claim(&copy, derived.path(), ID) {
             IdentityClaim::Copy { owner } => assert_eq!(owner, original),
             _ => panic!("a live original must make the twin a copy"),
+        }
+    }
+
+    #[test]
+    fn a_folder_at_the_old_path_without_the_identity_is_no_original() {
+        // Б2.1: after a rename, an empty folder with the old name, or another
+        // space moved in under it, does not make the moved space a copy.
+        let derived = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let old = home.path().join("Mine");
+        let moved = home.path().join("Mine renamed");
+        carry_identity(&moved, ID);
+        record_owner_path(derived.path(), &old);
+
+        std::fs::create_dir(&old).unwrap();
+        assert!(matches!(
+            resolve_identity_claim(&moved, derived.path(), ID),
+            IdentityClaim::Adopted
+        ));
+        carry_identity(&old, OTHER);
+        assert!(matches!(
+            resolve_identity_claim(&moved, derived.path(), ID),
+            IdentityClaim::Adopted
+        ));
+    }
+
+    #[test]
+    fn a_space_moved_while_mine_was_closed_keeps_its_identity_beside_an_empty_folder() {
+        // Б2.1: quit Mine, rename A to B, create an empty A, launch.
+        let home = tempfile::tempdir().unwrap();
+        let vaults = home.path().join("app/vaults");
+        let a = home.path().join("A");
+        let b = home.path().join("B");
+        std::fs::create_dir(&a).unwrap();
+        carry_identity(&a, ID);
+        std::fs::write(a.join("Card.md"), "A card.\n").unwrap();
+        let a_path = a.to_string_lossy().into_owned();
+        let b_path = b.to_string_lossy().into_owned();
+        let first = resolve_space_layout(&vaults, &a, SpaceOpening::Chosen).unwrap();
+        let mut cfg = serde_json::Map::new();
+        space_registry::record_open(&mut cfg, ID, &a_path, 1);
+
+        std::fs::rename(&a, &b).unwrap();
+        std::fs::create_dir(&a).unwrap();
+
+        // Launch: the saved path no longer holds the space; it is found at B.
+        let found = space_registry::locate_saved(&cfg, Some(&vaults), &a_path);
+        assert_eq!(found, Located::Moved { from: a_path.clone(), path: b_path.clone() });
+        space_registry::record_open(&mut cfg, ID, &b_path, 2);
+        // The app opens B: the same identity and the same derived store.
+        assert_eq!(
+            space_registry::locate_saved(&cfg, Some(&vaults), &b_path),
+            Located::Here { path: b_path.clone() }
+        );
+        let opened = resolve_space_layout(&vaults, &b, SpaceOpening::Restored).unwrap();
+        assert_eq!(space_registry::read_space_id(&b).as_deref(), Some(ID));
+        assert_eq!(opened.derived_root(), first.derived_root());
+        assert_eq!(opened.index_db_path(), first.index_db_path());
+        assert_eq!(derived_stores(&vaults), vec![ID.to_string()]);
+        assert_eq!(owner_recorded(opened.derived_root()), b_path);
+        let records = space_registry::records(&cfg);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].vault_id.as_deref(), Some(ID));
+        assert_eq!(records[0].path, b_path);
+        // The empty folder at A is left as it was.
+        assert_eq!(std::fs::read_dir(&a).unwrap().count(), 0);
+
+        // The next launch opens B again, in place.
+        assert_eq!(
+            space_registry::locate_saved(&cfg, Some(&vaults), &b_path),
+            Located::Here { path: b_path.clone() }
+        );
+        let again = resolve_space_layout(&vaults, &b, SpaceOpening::Restored).unwrap();
+        assert_eq!(again.derived_root(), first.derived_root());
+        assert_eq!(derived_stores(&vaults), vec![ID.to_string()]);
+    }
+
+    #[test]
+    fn an_old_listing_never_turns_an_empty_folder_into_a_space() {
+        // Б2.2: settings from before the registry list A; the space X opened
+        // there is now B, and A is an empty folder. The launch finds X at B;
+        // A gets no identity and no folders.
+        let home = tempfile::tempdir().unwrap();
+        let vaults = home.path().join("app/vaults");
+        let a = home.path().join("A");
+        let b = home.path().join("B");
+        std::fs::create_dir(&a).unwrap();
+        carry_identity(&a, ID);
+        let first = resolve_space_layout(&vaults, &a, SpaceOpening::Chosen).unwrap();
+        std::fs::rename(&a, &b).unwrap();
+        std::fs::create_dir(&a).unwrap();
+        let a_path = a.to_string_lossy().into_owned();
+        let b_path = b.to_string_lossy().into_owned();
+        let mut cfg = serde_json::Map::new();
+        cfg.insert("known_vaults".into(), serde_json::json!([a_path.clone()]));
+        cfg.insert("vault_path".into(), serde_json::json!(a_path.clone()));
+
+        assert_eq!(
+            space_registry::locate_saved(&cfg, Some(&vaults), &a_path),
+            Located::Moved { from: a_path.clone(), path: b_path.clone() }
+        );
+        let opened = resolve_space_layout(&vaults, &b, SpaceOpening::Restored).unwrap();
+        assert_eq!(opened.derived_root(), first.derived_root());
+        // Even asked directly, reopening A does not make it a space.
+        assert!(resolve_space_layout(&vaults, &a, SpaceOpening::Restored).is_err());
+        assert_eq!(std::fs::read_dir(&a).unwrap().count(), 0);
+        assert_eq!(derived_stores(&vaults), vec![ID.to_string()]);
+    }
+
+    #[test]
+    fn only_a_chosen_folder_becomes_a_new_space() {
+        let home = tempfile::tempdir().unwrap();
+        let vaults = home.path().join("app/vaults");
+        let folder = home.path().join("New");
+        std::fs::create_dir(&folder).unwrap();
+
+        assert!(resolve_space_layout(&vaults, &folder, SpaceOpening::Restored).is_err());
+        assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 0);
+
+        let chosen = resolve_space_layout(&vaults, &folder, SpaceOpening::Chosen).unwrap();
+        let id = space_registry::read_space_id(&folder).expect("a chosen folder gets an identity");
+        assert_eq!(chosen.derived_root(), vaults.join(&id));
+        for name in ["Cards", "Media", "Collections"] {
+            assert!(folder.join(name).is_dir());
         }
     }
 }

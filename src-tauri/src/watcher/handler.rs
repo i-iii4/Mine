@@ -9,7 +9,8 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -742,20 +743,42 @@ struct PendingRemove {
     deadline: Instant,
 }
 
-fn pending_queue() -> &'static Mutex<Vec<PendingRemove>> {
-    static QUEUE: Mutex<Vec<PendingRemove>> = Mutex::new(Vec::new());
+/// The deferred removals of every open watcher, and the signal their timers
+/// wait on. Queuing a removal is itself the signal, and a timer re-reads the
+/// earliest deadline under the lock after every wake-up: no timer can be
+/// woken too early to see the removal it was woken for (Ф7;
+/// `SPEC_AUDIT_FIXES.md`, Б2.3).
+struct PendingRemovals {
+    entries: Mutex<Vec<PendingRemove>>,
+    changed: Condvar,
+}
+
+fn pending_removals() -> &'static PendingRemovals {
+    static QUEUE: PendingRemovals = PendingRemovals {
+        entries: Mutex::new(Vec::new()),
+        changed: Condvar::new(),
+    };
     &QUEUE
 }
 
+/// The queue for reading or changing it. A panic elsewhere while holding
+/// the lock leaves a list of plain values, still valid to use.
+fn pending_entries() -> MutexGuard<'static, Vec<PendingRemove>> {
+    pending_removals()
+        .entries
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
+
 fn push_pending_remove(entry: PendingRemove) {
-    if let Ok(mut q) = pending_queue().lock() {
-        q.push(entry);
-    }
+    let mut entries = pending_entries();
+    entries.push(entry);
+    pending_removals().changed.notify_all();
 }
 
 /// Remove a pending deletion only for a move proven by source metadata.
 fn take_pending_by_slug(vault: &VaultLayout, slug: &str) -> Option<PendingRemove> {
-    let mut q = pending_queue().lock().ok()?;
+    let mut q = pending_entries();
     let pos = q
         .iter()
         .position(|p| p.vault_root == vault.root() && p.slug == slug)?;
@@ -765,13 +788,16 @@ fn take_pending_by_slug(vault: &VaultLayout, slug: &str) -> Option<PendingRemove
 /// Drain entries whose deadline has already passed. Caller commits each
 /// as a real block removal.
 fn drain_expired_pending(vault: &VaultLayout) -> Vec<PendingRemove> {
-    let now = Instant::now();
-    let mut q = match pending_queue().lock() {
-        Ok(g) => g,
-        Err(_) => return Vec::new(),
-    };
+    drain_due(&mut pending_entries(), vault, Instant::now())
+}
+
+fn drain_due(
+    entries: &mut Vec<PendingRemove>,
+    vault: &VaultLayout,
+    now: Instant,
+) -> Vec<PendingRemove> {
     let mut expired = Vec::new();
-    q.retain(|p| {
+    entries.retain(|p| {
         if p.vault_root == vault.root() && p.deadline <= now {
             expired.push(p.clone());
             false
@@ -782,29 +808,100 @@ fn drain_expired_pending(vault: &VaultLayout) -> Vec<PendingRemove> {
     expired
 }
 
-/// When the earliest deferred removal of `vault` falls due: the watcher's
-/// timer wakes then, without waiting for another file event (Ф7).
-pub fn next_pending_deadline(vault: &VaultLayout) -> Option<Instant> {
-    pending_queue()
-        .lock()
-        .ok()?
+fn earliest_deadline(entries: &[PendingRemove], vault: &VaultLayout) -> Option<Instant> {
+    entries
         .iter()
         .filter(|pending| pending.vault_root == vault.root())
         .map(|pending| pending.deadline)
         .min()
 }
 
-/// Commit every deferred removal of `vault` whose rename window has passed.
-/// Returns whether a card left the index.
-pub fn commit_expired_removals(
+/// When the earliest deferred removal of `vault` falls due.
+#[cfg(test)]
+fn next_pending_deadline(vault: &VaultLayout) -> Option<Instant> {
+    earliest_deadline(&pending_entries(), vault)
+}
+
+/// Ends one watcher's removal timer. Stopping takes the queue lock, so a
+/// timer between its check and its wait cannot miss it.
+#[derive(Debug, Clone, Default)]
+pub struct RemovalTimerStop(Arc<AtomicBool>);
+
+impl RemovalTimerStop {
+    pub fn stop(&self) {
+        let _entries = pending_entries();
+        self.0.store(true, Ordering::SeqCst);
+        pending_removals().changed.notify_all();
+    }
+
+    fn is_stopped(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+/// Wait until a deferred removal of `vault` falls due and take every due
+/// one off the queue; `None` once `stop` is set. The deadline is read again
+/// after each wake-up, so a removal queued at any moment is waited for with
+/// its own deadline.
+fn wait_for_due_removals(
+    vault: &VaultLayout,
+    stop: &RemovalTimerStop,
+) -> Option<Vec<PendingRemove>> {
+    let queue = pending_removals();
+    let mut entries = pending_entries();
+    loop {
+        if stop.is_stopped() {
+            return None;
+        }
+        let now = Instant::now();
+        entries = match earliest_deadline(&entries, vault) {
+            Some(deadline) if deadline <= now => {
+                return Some(drain_due(&mut entries, vault, now));
+            }
+            Some(deadline) => {
+                queue
+                    .changed
+                    .wait_timeout(entries, deadline - now)
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .0
+            }
+            None => queue
+                .changed
+                .wait(entries)
+                .unwrap_or_else(PoisonError::into_inner),
+        };
+    }
+}
+
+/// The watcher's removal timer (Ф7): commits every deferred removal of
+/// `vault` when its rename window passes, without waiting for another file
+/// event, until `stop`. `pass` hears the outcome of each commit: whether a
+/// card left the index, or why the removals could not be committed.
+pub fn run_removal_timer(
     conn: &Connection,
     vault: &VaultLayout,
+    stop: &RemovalTimerStop,
+    app: Option<&AppHandle>,
+    mut pass: impl FnMut(Result<bool>),
+) {
+    while let Some(due) = wait_for_due_removals(vault, stop) {
+        pass(commit_removals(conn, vault, &due, app));
+    }
+}
+
+/// Commit removals already taken off the queue. When writes are closed (an
+/// update preparing to quit) they are not committed here: the caller learns
+/// it, and the next reconciliation removes cards whose notes are gone.
+fn commit_removals(
+    conn: &Connection,
+    vault: &VaultLayout,
+    due: &[PendingRemove],
     app: Option<&AppHandle>,
 ) -> Result<bool> {
     let _write = crate::storage::source_mutation::begin_write()?;
     let mut removed = false;
-    for expired in drain_expired_pending(vault) {
-        removed |= commit_deferred_removal(conn, vault, &expired, app);
+    for pending in due {
+        removed |= commit_deferred_removal(conn, vault, pending, app);
     }
     Ok(removed)
 }
@@ -814,20 +911,18 @@ pub fn commit_expired_removals(
 /// state without sleeping for the rename-match window.
 #[cfg(test)]
 fn flush_pending_for_test(conn: &Connection, vault: &VaultLayout, app: Option<&AppHandle>) {
-    let pending: Vec<PendingRemove> = match pending_queue().lock() {
-        Ok(mut g) => {
-            let mut matching = Vec::new();
-            g.retain(|p| {
-                if p.vault_root == vault.root() {
-                    matching.push(p.clone());
-                    false
-                } else {
-                    true
-                }
-            });
-            matching
-        }
-        Err(_) => return,
+    let pending: Vec<PendingRemove> = {
+        let mut entries = pending_entries();
+        let mut matching = Vec::new();
+        entries.retain(|p| {
+            if p.vault_root == vault.root() {
+                matching.push(p.clone());
+                false
+            } else {
+                true
+            }
+        });
+        matching
     };
     for p in pending {
         commit_deferred_removal(conn, vault, &p, app);
@@ -1421,12 +1516,58 @@ mod tests {
         assert!(index::get_block(&conn, "note").unwrap().is_some());
     }
 
-    /// What the watcher's timer does: wait for the earliest deadline, then
+    /// One pass of the watcher's timer: wait for the earliest deadline, then
     /// commit what has expired. No other file event is involved (Ф7).
     fn run_removal_timer_once(conn: &Connection, vault: &VaultLayout) -> bool {
-        let due = next_pending_deadline(vault).expect("a removal is pending");
-        std::thread::sleep(due.saturating_duration_since(Instant::now()));
-        commit_expired_removals(conn, vault, None).unwrap()
+        assert!(next_pending_deadline(vault).is_some(), "a removal is pending");
+        let due = wait_for_due_removals(vault, &RemovalTimerStop::default())
+            .expect("a running timer takes the due removals");
+        commit_removals(conn, vault, &due, None).unwrap()
+    }
+
+    #[test]
+    fn a_deletion_queued_after_the_timer_woke_is_committed_by_the_timer() {
+        // Б2.3: the watcher used to wake its timer before the handler queued
+        // the deletion (after a database read); the timer found nothing and
+        // slept with no deadline. The deletion must leave the index when its
+        // window passes, with no further file event.
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        write_md_file_with_body(&vault, "gone", "link", &[], "timer-ordering-body");
+        let path = vault.block_path("gone");
+        index_md_file(&conn, &vault, &path, None).unwrap();
+
+        let stop = RemovalTimerStop::default();
+        let (removed_tx, removed_rx) = std::sync::mpsc::channel();
+        let timer = {
+            let vault = vault.clone();
+            let stop = stop.clone();
+            let timer_conn = db::open_or_create(&vault.index_db_path()).unwrap();
+            std::thread::spawn(move || {
+                run_removal_timer(&timer_conn, &vault, &stop, None, |pass| {
+                    if pass.expect("the removal commits") {
+                        let _ = removed_tx.send(Instant::now());
+                    }
+                });
+            })
+        };
+        // The timer waits with nothing queued; a wake-up reaches it first,
+        // the deletion is queued 5 ms later.
+        std::thread::sleep(Duration::from_millis(20));
+        pending_removals().changed.notify_all();
+        std::thread::sleep(Duration::from_millis(5));
+        std::fs::remove_file(&path).unwrap();
+        let queued = Instant::now();
+        handle_event(&conn, &vault, &VaultEvent::BlockDeleted(path), None).unwrap();
+
+        let committed = removed_rx
+            .recv_timeout(Duration::from_millis(RENAME_MATCH_WINDOW_MS + 1_000))
+            .expect("the timer commits the deletion without another event");
+        assert!(committed.duration_since(queued) >= Duration::from_millis(RENAME_MATCH_WINDOW_MS));
+        assert!(index::get_block(&conn, "gone").unwrap().is_none());
+        stop.stop();
+        timer.join().unwrap();
     }
 
     #[test]

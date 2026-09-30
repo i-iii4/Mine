@@ -53,8 +53,8 @@ pub fn read_search_snapshot(
     limit: usize,
     cursor: Option<&SearchPageToken>,
 ) -> Result<SearchSnapshot> {
-    projection::read_projection_snapshot(conn, |conn, generation| {
-        search_engine::sync_search_documents(conn)?;
+    let (snapshot, synced) = projection::read_projection_snapshot(conn, |conn, generation| {
+        let synced = search_engine::sync_search_documents(conn)?;
         let search_generation = current_revision(conn)?;
         let query_fingerprint = search_query_fingerprint(tag, query);
         let cursor_matches = cursor.is_some_and(|token| {
@@ -75,15 +75,19 @@ pub fn read_search_snapshot(
             query_fingerprint,
         });
 
-        Ok(SearchSnapshot {
+        let snapshot = SearchSnapshot {
             generation,
             search_generation,
             blocks,
             has_more,
             next_cursor,
             cursor_reset,
-        })
-    })
+        };
+        Ok((snapshot, synced))
+    })?;
+    // The savepoint is released: only now are the synced documents real.
+    synced.record_committed(conn);
+    Ok(snapshot)
 }
 
 fn search_query_fingerprint(tag: Option<&str>, query: &str) -> String {
@@ -193,6 +197,38 @@ mod tests {
         assert!(restarted.cursor_reset);
         assert!(restarted.generation > first.generation);
         assert_eq!(restarted.blocks.len(), 1);
+    }
+
+    #[test]
+    fn a_sync_rolled_back_with_its_snapshot_is_redone_by_the_next_search() {
+        // Б2.5: a search that synced an edited card and then failed rolls
+        // the new chunks back; the next search must write them again rather
+        // than trust that this process already synced them.
+        let dir = tempfile::tempdir().unwrap();
+        let conn = db::open_or_create(&dir.path().join("index.db")).unwrap();
+        let mut edited = block("alpha");
+        index::upsert_block(&conn, &edited, None).unwrap();
+        read_search_snapshot(&conn, None, "searchable", 5, None).unwrap();
+
+        edited.body = "rewritten lighthouse passage".to_string();
+        index::upsert_block(&conn, &edited, None).unwrap();
+        // The step after the sync fails inside the snapshot: its search
+        // revision cannot be read.
+        conn.execute("UPDATE search_state SET revision = -1000000 WHERE singleton = 1", [])
+            .unwrap();
+        assert!(read_search_snapshot(&conn, None, "lighthouse", 5, None).is_err());
+        conn.execute("UPDATE search_state SET revision = 0 WHERE singleton = 1", [])
+            .unwrap();
+
+        read_search_snapshot(&conn, None, "lighthouse", 5, None).unwrap();
+        let text: String = conn
+            .query_row(
+                "SELECT group_concat(text, ' ') FROM search_chunks WHERE slug = 'alpha'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(text.contains("rewritten lighthouse passage"), "{text}");
     }
 
     #[test]
