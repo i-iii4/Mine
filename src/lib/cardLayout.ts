@@ -100,6 +100,16 @@ function stripMarkdown(text: string): string {
     .trim();
 }
 
+/// Longest body slice a card previews when the index carries no preview text.
+const BODY_PREVIEW_MAX_CHARS = 400;
+
+/// The text a framed card shows under its title: the indexed preview, or the
+/// body's own words when the index has none. One rule for posts, collections
+/// and pictures framed by `Cards` (SPEC_FEED_DISPLAY.md, Д12).
+function contentPreviewText(block: CardLayoutBlock, indexedPreviewText: string): string {
+  return indexedPreviewText || stripMarkdown(block.body).slice(0, BODY_PREVIEW_MAX_CHARS).trim();
+}
+
 function isTwitterUrl(url: string): boolean {
   const lc = url.toLowerCase();
   return (lc.includes("twitter.com/") || lc.includes("x.com/")) && lc.includes("/status/");
@@ -355,7 +365,7 @@ function deriveArticleCardLayoutDescriptor(
   return {
     variant: hasVisualPreview ? "article-media" : "article-text",
     titleText,
-    previewText: indexedPreviewText || stripMarkdown(block.body).slice(0, 400).trim(),
+    previewText: contentPreviewText(block, indexedPreviewText),
     authorText,
     primaryAspectRatio,
     mediaItems,
@@ -379,8 +389,13 @@ function deriveLinkCardLayoutDescriptor(
       titleText,
       previewText: indexedPreviewText,
       authorText: "",
-      primaryAspectRatio:
+      // Clamped here, once, like every other card's media: `Media` shows the
+      // page picture alone and both its height and its painted surface read
+      // this ratio. The framed link keeps its fixed thumbnail slot
+      // (SPEC_CARD_MEDIA_GEOMETRY.md; SPEC_FEED_DISPLAY.md, Д13, Д14).
+      primaryAspectRatio: clampCardAspect(
         aspectRatioFromDimensions(previewManifest.width, previewManifest.height) ?? (16 / 9),
+      ),
       mediaItems,
       visibleMediaCount: mediaItems.length,
       totalMediaCount: mediaItems.length + previewManifest.overflowCount,
@@ -413,15 +428,17 @@ export function deriveCardLayoutDescriptor(
 }
 
 /// `Cards`: a picture or video card becomes a post card, its media inset in the
-/// frame and its name under it: the title, or the file name without one
-/// (Д12). Every other card is framed already.
+/// frame and under it its name (the title, or the file name without one), its
+/// text and its author when it has them (Д12). Every other card is framed
+/// already.
 function asPostCard(block: CardLayoutBlock, mixed: CardLayoutDescriptor): CardLayoutDescriptor {
   if (mixed.variant !== "image" && mixed.variant !== "video") return mixed;
   return {
     ...mixed,
     variant: "article-media",
     titleText: getNavigationLabel(block),
-    previewText: "",
+    previewText: contentPreviewText(block, block.preview_text?.trim() ?? ""),
+    authorText: block.author ?? "",
   };
 }
 
@@ -467,7 +484,7 @@ function deriveMixedCardLayoutDescriptor(block: CardLayoutBlock): CardLayoutDesc
       return {
         variant: "article-text",
         titleText,
-        previewText: indexedPreviewText || stripMarkdown(block.body).slice(0, 400).trim(),
+        previewText: contentPreviewText(block, indexedPreviewText),
         authorText: "",
         primaryAspectRatio: null,
         mediaItems: [],

@@ -89,6 +89,8 @@ vi.mock("@/lib/commands", () => ({
   completeFirstCardMarker: vi.fn(async () => null),
   getVaultPath: commandMocks.getVaultPath,
   getUnavailableVault: vi.fn(async () => null),
+  listSpaces: vi.fn(async () => []),
+  forgetUnavailableVault: vi.fn(async () => null),
   createBlock: commandMocks.createBlock,
   readClipboardPayload: commandMocks.readClipboardPayload,
   openVault: commandMocks.openVault,
@@ -210,6 +212,8 @@ vi.mock("@/components/Grid", () => ({
     onGroupSelectionStart,
     onSelectionCommandChange,
     onCardMenuShortcutChange,
+    onLoadMoreBlocks,
+    vaultIndexing,
   }: {
     blocks: LightBlock[];
     currentTag?: string;
@@ -223,9 +227,16 @@ vi.mock("@/components/Grid", () => ({
     onGroupSelectionStart?: () => void;
     onSelectionCommandChange?: (clear: (() => void) | null) => void;
     onCardMenuShortcutChange?: (activate: (() => void) | null) => void;
+    onLoadMoreBlocks?: () => void;
+    vaultIndexing?: boolean;
   }) => (
     <div>
       <div data-testid="grid">{`${currentTag ?? "__all__"}:${blocks.length}`}</div>
+      <div data-testid="grid-indexing">{String(Boolean(vaultIndexing))}</div>
+      <div data-testid="grid-slugs">{blocks.map((item) => item.slug).join(",")}</div>
+      <button type="button" onClick={() => onLoadMoreBlocks?.()}>
+        Load more blocks
+      </button>
       <div data-testid="grid-route-ready">{String(Boolean(routeSnapshotReady))}</div>
       <div data-testid="grid-detail-open">{String(Boolean(detailOpen))}</div>
       <div data-testid="grid-keyboard-disabled">{String(Boolean(keyboardNavigationDisabled))}</div>
@@ -614,6 +625,39 @@ describe("AppWithVault", () => {
     expect(commandMocks.listGridBlocks).toHaveBeenCalledTimes(1);
     expect(commandMocks.listTaxonomySnapshot).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("grid")).toHaveTextContent("__all__:1");
+  });
+
+  it("shows a lost space as unavailable only while it is the open one (В2.1)", async () => {
+    commandMocks.getVaultPath.mockResolvedValue("/spaces/A");
+    commandMocks.listGridBlocks.mockResolvedValue(gridSnapshot([block(90, "space-card")]));
+    commandMocks.listTaxonomySnapshot.mockResolvedValue({
+      generation: 1,
+      tags: [],
+      channels: [],
+      total_blocks: 1,
+    });
+
+    render(<App />);
+    await waitFor(() => expect(commandMocks.openVault).toHaveBeenCalledWith("/spaces/A"));
+    fireEvent(window, new CustomEvent("vault-selected", {
+      detail: { payload: { path: "/spaces/B" } },
+    }));
+    await waitFor(() => expect(commandMocks.openVault).toHaveBeenCalledWith("/spaces/B"));
+    await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:1"));
+
+    // A's folder watch reports its loss after the switch to B.
+    fireEvent(window, new CustomEvent("space-unavailable", {
+      detail: { payload: { path: "/spaces/A", reason: "missing" } },
+    }));
+    expect(document.querySelector("[data-space-unavailable]")).toBeNull();
+    expect(screen.getByTestId("grid")).toHaveTextContent("__all__:1");
+    expect(commandMocks.openVault).toHaveBeenLastCalledWith("/spaces/B");
+
+    fireEvent(window, new CustomEvent("space-unavailable", {
+      detail: { payload: { path: "/spaces/B", reason: "missing" } },
+    }));
+    await waitFor(() => expect(document.querySelector("[data-space-unavailable]")).not.toBeNull());
+    expect(document.querySelector("[data-space-unavailable-path]")).toHaveTextContent("/spaces/B");
   });
 
   it("reserves the app minimum from max sidebar plus right pane minimum", async () => {
@@ -2566,6 +2610,100 @@ describe("AppWithVault", () => {
       window.localStorage.clear();
       reloadFeedDisplay();
     }
+  });
+
+  it("keeps the feed continuous when the order changes with pages loaded (Д8, В5.1)", async () => {
+    const cards = Array.from({ length: 600 }, (_, index) => block(index + 1, `card-${index + 1}`));
+    const ordered = (order?: string) => (order === "oldest" ? cards : [...cards].reverse());
+    const slugsOf = (order: string, count: number) =>
+      ordered(order).slice(0, count).map((item) => item.slug).join(",");
+    // Pages of the new order wait until the test answers them, in the order it
+    // chooses; every other page is answered at once.
+    const held = new Map<number, () => void>();
+    let holdOldest = true;
+    commandMocks.listGridBlocks.mockImplementation(async (_tag, offset = 0, limit = 200, order) => {
+      if (isSearchOverlayQuery(limit, order)) return gridSnapshot([]);
+      const page = () => gridSnapshot(
+        ordered(order).slice(offset, offset + limit),
+        cards.length,
+        offset + limit < cards.length,
+      );
+      if (order === "oldest" && holdOldest) {
+        return new Promise<GridSnapshot>((resolve) => held.set(offset, () => resolve(page())));
+      }
+      return page();
+    });
+    try {
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      // The first page and the one warmed behind it.
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:400"));
+
+      act(() => setFeedSort("oldest"));
+      await waitFor(() => expect(held.has(0)).toBe(true));
+      // The feed asks for more while the new order's first page is on its way.
+      fireEvent.click(screen.getByRole("button", { name: "Load more blocks" }));
+
+      holdOldest = false;
+      await act(async () => {
+        held.get(0)?.();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        held.get(400)?.();
+        await Promise.resolve();
+      });
+
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:400"));
+      expect(screen.getByTestId("grid-slugs").textContent).toBe(slugsOf("oldest", 400));
+
+      // Paging goes on from where the new order's list ends.
+      fireEvent.click(screen.getByRole("button", { name: "Load more blocks" }));
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:600"));
+      expect(screen.getByTestId("grid-slugs").textContent).toBe(slugsOf("oldest", 600));
+    } finally {
+      window.localStorage.clear();
+      reloadFeedDisplay();
+    }
+  });
+
+  it.each([
+    ["with cards", [block(1, "indexed-card")]],
+    ["with no cards", []],
+  ])("counts an empty feed as indexing until it is read again after the index, %s (В5.6)", async (_case, found) => {
+    const reread = deferred<GridSnapshot>();
+    let reads = 0;
+    commandMocks.listGridBlocks.mockImplementation(async (_tag, _offset, limit, order) => {
+      if (isSearchOverlayQuery(limit, order)) return gridSnapshot([]);
+      reads += 1;
+      return reads === 1 ? gridSnapshot([], 0, false, 1) : reread.promise;
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:0"));
+    expect(screen.getByTestId("grid-indexing")).toHaveTextContent("true");
+
+    fireEvent(window, new CustomEvent("vault-sync-finished", {
+      detail: { payload: { path: "/vault", indexed: found.length, errors: 0, error: null } },
+    }));
+    // The feed is read again at once, not after the refresh debounce, and the
+    // snapshot from before the index is not the final picture meanwhile.
+    await waitFor(() => expect(reads).toBe(2));
+    expect(screen.getByTestId("grid-indexing")).toHaveTextContent("true");
+
+    await act(async () => {
+      reread.resolve(gridSnapshot(found, found.length, false, 2));
+      await reread.promise;
+    });
+    await waitFor(() => expect(screen.getByTestId("grid-indexing")).toHaveTextContent("false"));
+    expect(screen.getByTestId("grid")).toHaveTextContent(`__all__:${found.length}`);
   });
 
   it("marks the first saved card once, and only in a space that never had one", async () => {

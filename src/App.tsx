@@ -187,6 +187,7 @@ function fetchGridBlocks(
 }
 
 import type {
+  UnavailableVault,
   UnavailableVaultReason,
   DeleteBlockPlan,
   IndexedBlock,
@@ -482,11 +483,17 @@ export function App() {
   // The open space's folder disappeared while the app ran and could not be
   // found beside its old path: show the same screen as at startup
   // (SPEC_VAULT_LIFECYCLE.md, П15). A space found under a new name reopens
-  // through "vault-selected" above instead.
+  // through "vault-selected" above instead. The report names the lost space
+  // and counts only while that space is the open one: a loss of A detected
+  // after the switch to B leaves B on screen (SPEC_AUDIT_FIXES.md, В2.1).
+  // Paths compare as spelled, like every space-scoped event here: the
+  // backend reports the path the space was opened with.
+  const vaultPathRef = useRef(vaultPath);
+  vaultPathRef.current = vaultPath;
   useEffect(() => {
     let cancelled = false;
-    const unlisten = listen<{ path: string; reason: UnavailableVaultReason }>("space-unavailable", (event) => {
-      if (cancelled) return;
+    const unlisten = listen<UnavailableVault>("space-unavailable", (event) => {
+      if (cancelled || event.payload.path !== vaultPathRef.current) return;
       setUnavailablePath(event.payload.path);
       setUnavailableReason(event.payload.reason);
       setVaultPath(null);
@@ -600,6 +607,20 @@ export function AppWithVault({
   const [vaultStats, setVaultStats] = useState<VaultStats | null>(null);
   const [hasMoreBlocks, setHasMoreBlocks] = useState(false);
   const [loadingMoreBlocks, setLoadingMoreBlocks] = useState(false);
+  // The id of the latest route load whose answer is on screen. Paging continues
+  // the list on screen, so it waits while a newer load is in flight: an offset
+  // taken from the previous list (another order, a longer or shorter range)
+  // skips or repeats a page (SPEC_FEED_DISPLAY.md, Д8; SPEC_AUDIT_FIXES.md,
+  // В5.1). State rather than a ref: applying a load hands the feed a new
+  // `loadMoreBlocks`, so a request refused while the load was in flight is
+  // asked again against the new list.
+  const [appliedRouteLoadId, setAppliedRouteLoadId] = useState(0);
+  // An index pass is over and the feed on screen was read before it: the id of
+  // the last route load issued by then, or null. Only a later load reads what
+  // the pass found; until one lands the feed counts as indexing, so an old
+  // empty snapshot is neither marked as painted nor introduced as an empty
+  // space (SPEC_AUDIT_FIXES.md, Б5.4, В5.6).
+  const [indexRereadAfterLoadId, setIndexRereadAfterLoadId] = useState<number | null>(null);
   const [tags, setTags] = useState<TagCount[]>([]);
   const [channels, setChannels] = useState<ChannelDto[]>([]);
   const compactDetailTopMenuEnabled = false;
@@ -1162,6 +1183,8 @@ export function AppWithVault({
       if (!applyGridSnapshot(tagAtStart, grid)) {
         return false;
       }
+      setAppliedRouteLoadId(requestId);
+      setIndexRereadAfterLoadId((after) => (after !== null && requestId > after ? null : after));
       setLoadError(null);
       window.dispatchEvent(new Event("vault-refreshed"));
       console.info("[startup] loadGrid:done", {
@@ -1452,6 +1475,9 @@ export function AppWithVault({
 
   const loadMoreBlocks = useCallback(async () => {
     if (paginationRequestRef.current || !hasMoreBlocks) return;
+    // A newer route load has not landed: the list on screen is not the one the
+    // next page continues.
+    if (appliedRouteLoadId !== loadRequestIdRef.current) return;
     const requestToken = {};
     paginationRequestRef.current = requestToken;
     const pathAtStart = vaultPathRef.current;
@@ -1521,7 +1547,7 @@ export function AppWithVault({
         setLoadingMoreBlocks(false);
       }
     }
-  }, [hasMoreBlocks, invalidateRouteSnapshots, routeKeyFor]);
+  }, [appliedRouteLoadId, hasMoreBlocks, invalidateRouteSnapshots, routeKeyFor]);
 
   // Paint the first page immediately, then warm exactly one additional page
   // for the active route. Subsequent pages remain demand-driven by Grid's
@@ -1534,6 +1560,9 @@ export function AppWithVault({
       || !gridRouteSnapshotReady
       || blocks.length === 0
       || !hasMoreBlocks
+      // A cached list is on screen while its fresh read is in flight: the warm
+      // page waits for that read instead of being spent on a refused request.
+      || appliedRouteLoadId !== loadRequestIdRef.current
     ) {
       return;
     }
@@ -1542,6 +1571,7 @@ export function AppWithVault({
     warmRoutePageBufferRef.current.add(routeKey);
     void loadMoreBlocks();
   }, [
+    appliedRouteLoadId,
     blocks.length,
     currentTag,
     gridRouteSnapshotReady,
@@ -1896,17 +1926,20 @@ export function AppWithVault({
         return;
       }
       invalidateRouteSnapshots();
+      setIndexRereadAfterLoadId(loadRequestIdRef.current);
       if (migrationRequired) {
         void reloadAllSnapshots().finally(() => {
           setMigrationRequired(false);
         });
         return;
       }
+      // Read what the pass found at once rather than after the refresh
+      // debounce: until then the feed shows the snapshot from before it.
       scheduleRefresh({
         grid: true,
         taxonomy: true,
         previews: true,
-      });
+      }, 0, { force: true });
     }));
 
     return () => {
@@ -3659,7 +3692,7 @@ export function AppWithVault({
                 onInstallClipper={revealClipperExtensionFolder}
                 spaceOnboardingOwed={spaceOnboardingOwed}
                 firstIndexProgress={isSyncing ? syncProgress : null}
-                vaultIndexing={isSyncing}
+                vaultIndexing={isSyncing || indexRereadAfterLoadId !== null}
               />
             }
           >

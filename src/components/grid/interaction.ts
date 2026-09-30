@@ -4,6 +4,7 @@ import type { LightBlock } from "@/types";
 import type { WordWidths } from "@/types/fontMetrics";
 import type { MasonryLayout, MasonryPosition } from "@/lib/masonryLayout";
 import { blockHasExactDeterministicHeight } from "@/lib/gridLayoutReadiness";
+import type { FeedShow } from "@/lib/feedDisplay";
 
 const GRID_BOTTOM_INSET_PX = 32;
 const MARQUEE_DRAG_THRESHOLD_PX = 4;
@@ -282,12 +283,19 @@ export function scrollPositionIntoView(
   }
 }
 
+/// Whether a card may leave the skeleton: its height is exact in the feed's
+/// presentation, or the metrics pass is over. The presentation is required, not
+/// defaulted: a picture is text-free in `Mixed` and carries its name in `Cards`,
+/// and judging a `Cards` feed by `Mixed` rules lays the name out on its two-line
+/// allowance and shifts the column once it is measured
+/// (SPEC_FEED_DISPLAY.md, Д15; SPEC_AUDIT_FIXES.md, В5.4).
 export function blockCanRenderFromDeterministicHeight(
   block: LightBlock,
   wordWidthsMap: ReadonlyMap<number, WordWidths>,
   wordMetricsSettled: boolean,
+  show: FeedShow,
 ): boolean {
-  return blockHasExactDeterministicHeight(block, wordWidthsMap) || wordMetricsSettled;
+  return blockHasExactDeterministicHeight(block, wordWidthsMap, show) || wordMetricsSettled;
 }
 
 export function rectFromPoints(first: LayoutPoint, second: LayoutPoint): LayoutRect {

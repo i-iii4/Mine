@@ -759,4 +759,61 @@ describe("card presentation in the feed (SPEC_FEED_DISPLAY.md, Д10 to Д14)", (
     const file = makeBlock({ block_type: "file", media_file: "doc.pdf" });
     expect(deriveCardLayoutDescriptor(file, "media").variant).toBe("file");
   });
+
+  it("Cards keeps a picture's text and author under its name (Д12, В5.3)", () => {
+    const described = makeBlock({
+      block_type: "image",
+      media_file: "Media/Sunset.jpg",
+      fallback_label: "Sunset",
+      author: "@someone",
+      preview_text: "Evening over the bay",
+      preview_manifest: readyImageManifest({ previewWidth: 640, previewHeight: 480 }),
+    });
+    const descriptor = deriveCardLayoutDescriptor(described, "cards");
+    expect(descriptor.variant).toBe("article-media");
+    expect(descriptor.titleText).toBe("Sunset");
+    expect(descriptor.previewText).toBe("Evening over the bay");
+    expect(descriptor.authorText).toBe("@someone");
+    // Mixed still shows the picture bare.
+    const mixed = deriveCardLayoutDescriptor(described, "mixed");
+    expect([mixed.variant, mixed.previewText, mixed.authorText]).toEqual(["image", "", ""]);
+  });
+
+  it("Cards keeps a video's text and author under its name (Д12, В5.3)", () => {
+    const described = makeBlock({
+      block_type: "video",
+      media_file: "Media/Clip.mp4",
+      fallback_label: "Clip",
+      author: "@filmmaker",
+      preview_text: "Behind the scenes",
+      preview_manifest: JSON.stringify({
+        kind: "video_poster", primary_preview_path: "clip.jpg", width: null, height: null,
+        preview_width: 640, preview_height: 360,
+        tiles: [{ source_path: "Media/Clip.mp4", preview_path: "clip.jpg", width: null, height: null,
+          preview_width: 640, preview_height: 360, is_video: true, is_video_poster: true }],
+        overflow_count: 0,
+      }),
+    });
+    const descriptor = deriveCardLayoutDescriptor(described, "cards");
+    expect(descriptor.variant).toBe("article-media");
+    expect([descriptor.titleText, descriptor.previewText, descriptor.authorText])
+      .toEqual(["Clip", "Behind the scenes", "@filmmaker"]);
+  });
+
+  it("Media clamps a link's page picture into 1:2 to 2:1 (Д13, Д14, В5.2)", () => {
+    const tallPage = makeBlock({
+      block_type: "link",
+      title: "A tall page",
+      url: "https://example.com/scroll",
+      preview_manifest: JSON.stringify({
+        kind: "image", primary_preview_path: "page.jpg", width: 100, height: 1000,
+        tiles: [{ source_path: "https://example.com/og.jpg", preview_path: "page.jpg",
+          width: 100, height: 1000, is_video: false, is_video_poster: false }],
+        overflow_count: 0,
+      }),
+    });
+    const descriptor = deriveCardLayoutDescriptor(tallPage, "media");
+    expect(descriptor.variant).toBe("media-only");
+    expect(descriptor.primaryAspectRatio).toBe(0.5);
+  });
 });

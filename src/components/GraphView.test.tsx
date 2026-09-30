@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { createRef } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   GraphLink,
@@ -9,7 +10,7 @@ import type {
   IndexedBlock,
   LightBlock,
 } from "@/types";
-import { GraphView } from "./GraphView";
+import { GraphView, type GraphViewHandle } from "./GraphView";
 
 type MockGraphNode = GraphNode & {
   x?: number;
@@ -1501,6 +1502,53 @@ describe("GraphView", () => {
     await waitFor(() => {
       expect(graphMethodMocks.centerAt).toHaveBeenCalledWith(2_000, 100, 0);
     });
+  });
+
+  it("keeps the camera still when a gesture lands before the queued centring frame (В5.5)", async () => {
+    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshot(
+      graphCardNode("alpha-card", "Alpha card", { x: 2_000, y: 100 }),
+    ));
+    const { rerenderGraph } = renderGraph({ selectedSlug: "alpha-card", detailOpen: true });
+    await screen.findByRole("button", { name: "Alpha card" });
+
+    // Closing Detail queues the centring for the next frame; the person's
+    // wheel arrives first and owns the camera from then on.
+    rerenderGraph({ selectedSlug: "alpha-card", detailOpen: false });
+    fireEvent.wheel(document.querySelector("[data-graph-view]")!);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(graphMethodMocks.centerAt).not.toHaveBeenCalled();
+  });
+
+  it("drops a centring that could not run yet once a gesture takes the camera (В5.5)", async () => {
+    const graph = createRef<GraphViewHandle>();
+    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshot(
+      graphCardNode("alpha-card", "Alpha card", { x: 100, y: 100 }),
+    ));
+    const { rerenderGraph } = renderGraph({ ref: graph });
+    await screen.findByRole("button", { name: "Alpha card" });
+
+    // The node is not in the graph yet, so the request waits.
+    act(() => graph.current?.centerOnNode("card:late-card"));
+    fireEvent.pointerDown(document.querySelector("[data-graph-view]")!);
+
+    // The node arrives after the gesture: nothing may move the view for it.
+    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes([
+      graphCardNode("alpha-card", "Alpha card", { x: 100, y: 100 }),
+      graphCardNode("late-card", "Late card", { x: 3_000, y: 100 }),
+    ]));
+    rerenderGraph({
+      ref: graph,
+      graphPreferences: {
+        include_collections: true,
+        include_wikilinks: false,
+        include_related_notes: true,
+      },
+    });
+    await screen.findByRole("button", { name: "Late card" });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(graphMethodMocks.centerAt).not.toHaveBeenCalledWith(3_000, 100, 0);
   });
 
   it("lets a gesture stop a camera glide where it is (А5.2)", async () => {

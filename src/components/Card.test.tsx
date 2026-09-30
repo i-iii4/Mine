@@ -1,6 +1,7 @@
 import { CLOUD_BADGE_DELAY_MS, CLOUD_STATE_LABEL } from "@/lib/cloudContent";
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { Card, DragCardStackPreview, ReadOnlyCardPreview } from "./Card";
 import { FeedShowContext, type FeedShow } from "@/lib/feedDisplay";
 import { CARD_HOVER_ACTION_MIN_HEIGHT } from "@/lib/cardHeight";
@@ -1456,6 +1457,40 @@ describe("Card presentation in the feed (SPEC_FEED_DISPLAY.md, Д11 to Д13)", (
     expect(screen.getByText("Sunset")).toBeInTheDocument();
     expect(container.querySelector("[data-card-inset-media]")).not.toBeNull();
     expect(container.querySelector("[data-feed-card-frame]")).toHaveClass("feed-article-card");
+  });
+
+  it("Cards shows a picture's text and author under its name (Д12, В5.3)", () => {
+    const picture = block({
+      block_type: "image", title: null, url: null, media_file: "Media/Sunset.jpg",
+      fallback_label: "Sunset", author: "@someone", preview_text: "Evening over the bay",
+      preview_manifest: imageManifest,
+    });
+    inFeed("cards", picture);
+    expect(screen.getByText("Sunset")).toBeInTheDocument();
+    expect(screen.getByText("Evening over the bay")).toBeInTheDocument();
+    expect(screen.getByText("@someone")).toBeInTheDocument();
+  });
+
+  it("Media paints a link's tall page picture at the clamped shape it is laid out at (В5.2)", () => {
+    const tallPage = block({
+      block_type: "link", title: "A tall page", url: "https://example.com/scroll",
+      preview_manifest: JSON.stringify({
+        kind: "image", primary_preview_path: "page.jpg", width: 100, height: 1000,
+        tiles: [{ source_path: "https://example.com/og.jpg", preview_path: "page.jpg",
+          width: 100, height: 1000, is_video: false, is_video_poster: false }],
+        overflow_count: 0,
+      }),
+    });
+    // jsdom drops a unitless aspect-ratio from the style it keeps, so the
+    // surface is read from the markup React writes for it.
+    const markup = renderToStaticMarkup(
+      <FeedShowContext.Provider value="media">
+        <Card block={tallPage} vaultPath={VAULT} onClick={vi.fn()} />
+      </FeedShowContext.Provider>,
+    );
+    const surface = new DOMParser().parseFromString(markup, "text/html")
+      .querySelector("[data-card-graphic-surface]");
+    expect(surface?.getAttribute("style")).toContain("aspect-ratio:0.5");
   });
 
   it("Mixed keeps a picture bare, as before", () => {

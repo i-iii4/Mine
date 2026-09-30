@@ -383,13 +383,15 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     stopGlideRef.current = animateCamera(graph, target, motionDuration(durationMs));
   }, []);
 
-  /// The person takes the camera: the glide stops and the planned one for
-  /// this screen is dropped, so nothing moves the view out from under them.
+  /// The person takes the camera: the glide stops, and the planned one for
+  /// this screen and a queued centring are dropped, so nothing moves the view
+  /// out from under them (Ф12; SPEC_AUDIT_FIXES.md, В5.5).
   const yieldCameraToGesture = useCallback(() => {
     stopGlideRef.current?.();
     stopGlideRef.current = null;
     cameraPlanRef.current = null;
     pendingFitTicksRef.current = 0;
+    pendingCenterNodeIdRef.current = null;
   }, []);
 
   useEffect(() => () => stopGlideRef.current?.(), []);
@@ -437,11 +439,14 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     }
   }, [detailOpen, selectedNodeId]);
 
+  // A queued centring waits for its node and a frame, and only until the next
+  // gesture: the frame reads the queue again, so a wheel or a press between
+  // scheduling and the frame keeps the camera where the person put it.
   useEffect(() => {
-    const pendingNodeId = pendingCenterNodeIdRef.current;
-    if (!pendingNodeId || detailOpen || !graphViewportReady) return undefined;
+    if (!pendingCenterNodeIdRef.current || detailOpen || !graphViewportReady) return undefined;
     const frame = window.requestAnimationFrame(() => {
-      if (centerNodeIfNeeded(pendingNodeId)) {
+      const pendingNodeId = pendingCenterNodeIdRef.current;
+      if (pendingNodeId && centerNodeIfNeeded(pendingNodeId)) {
         pendingCenterNodeIdRef.current = null;
       }
     });

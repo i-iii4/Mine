@@ -202,9 +202,12 @@ interface GridProps {
   /// onboarding, because "this space is empty" is a falsehood about a space
   /// that is still being read. See SPEC_ONBOARDING.md О13.
   firstIndexProgress?: { processed: number; total: number } | null;
-  /// An index pass is running. Its progress arrives by event, possibly after
-  /// the first paint, so an empty feed counts as painted only once the pass
-  /// is over: until then it may be a space that is still being read.
+  /// An index pass is running, or it is over and the feed on screen was read
+  /// before it. Its progress arrives by event, possibly after the first paint,
+  /// so an empty feed is final only once the feed is read after the pass:
+  /// until then it may be a space that is still being read. Neither the
+  /// first-cards mark nor the empty-space onboarding takes it as final
+  /// (SPEC_AUDIT_FIXES.md, Б5.4, В5.6).
   vaultIndexing?: boolean;
   /// Open the Are.na import from the empty-space onboarding.
   /**
@@ -834,12 +837,12 @@ export function Grid({
     const ids = new Set<number>();
     if (parentWidth <= 0) return ids;
     for (const block of blocks) {
-      if (blockCanRenderFromDeterministicHeight(block, wordWidthsMap, wordMetricsSettled)) {
+      if (blockCanRenderFromDeterministicHeight(block, wordWidthsMap, wordMetricsSettled, show)) {
         ids.add(block.id);
       }
     }
     return ids;
-  }, [blocks, parentWidth, wordMetricsSettled, wordWidthsMap]);
+  }, [blocks, parentWidth, show, wordMetricsSettled, wordWidthsMap]);
 
   const committedEndIndex = useMemo(
     () => computeCommittedEndIndex(blocks, renderReadyBlockIds, parentWidth > 0),
@@ -1100,6 +1103,7 @@ export function Grid({
     routeSnapshotReady &&
     blocks.length === 0 &&
     !firstIndexProgress &&
+    !vaultIndexing &&
     spaceOnboardingOwed === true &&
     onInstallClipper,
   );

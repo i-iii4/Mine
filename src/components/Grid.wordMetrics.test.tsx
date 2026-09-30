@@ -24,6 +24,15 @@ vi.mock("@/lib/fontMetrics", async (importOriginal) => {
 });
 
 import { Grid } from "./Grid";
+import { computeCardHeight } from "@/lib/cardHeight";
+import { reloadFeedDisplay, setFeedShow } from "@/lib/feedDisplay";
+import { getMasonryColumnWidth } from "@/lib/masonryLayout";
+
+// Grid's column geometry for the firing observer's 400px feed; these match the
+// constants in Grid.tsx and the default spacing.
+const FEED_WIDTH = 400;
+const COLUMN_MIN_WIDTH = 220;
+const DEFAULT_GAP = 32;
 
 function makeBlock(id: number, overrides: Partial<LightBlock> = {}): LightBlock {
   return {
@@ -278,6 +287,63 @@ describe("Grid incremental word metrics", () => {
       });
       expect(liveState()).toBe("true");
     } finally {
+      firing.restore();
+    }
+  });
+
+  it("holds a picture framed by Cards as a skeleton until its name is measured (В5.4, Д15)", async () => {
+    const firing = installFiringResizeObserver(FEED_WIDTH);
+    setFeedShow("cards");
+    try {
+      const picture = makeBlock(60, {
+        card_kind: "media",
+        block_type: "image",
+        title: null,
+        body: "",
+        media_file: "Media/Sunset.jpg",
+        fallback_label: "Sunset",
+        preview_manifest: JSON.stringify({
+          kind: "image", primary_preview_path: "sunset.jpg", width: 1280, height: 960,
+          preview_width: 640, preview_height: 480,
+          tiles: [{ source_path: "Media/Sunset.jpg", preview_path: "sunset.jpg", width: 1280, height: 960,
+            preview_width: 640, preview_height: 480, is_video: false, is_video_poster: false }],
+          overflow_count: 0,
+        }),
+      });
+      const oneLineName: WordWidths = {
+        title: [48],
+        preview: [],
+        titleSpace: 4,
+        previewSpace: 4,
+        titleNoSpaceBefore: [false],
+        previewNoSpaceBefore: [],
+      };
+      const columnWidth = getMasonryColumnWidth(FEED_WIDTH, COLUMN_MIN_WIDTH, DEFAULT_GAP);
+      const exactHeight = computeCardHeight(picture, columnWidth, oneLineName, "cards");
+      // The name's two-line allowance is what a cold card would be laid out at.
+      expect(computeCardHeight(picture, columnWidth, null, "cards")).not.toBe(exactHeight);
+
+      let finish!: (widths: Map<number, WordWidths>) => void;
+      fetchWordWidthsMock.mockImplementationOnce(
+        () => new Promise<Map<number, WordWidths>>((resolve) => { finish = resolve; }),
+      );
+      render(<Grid {...BASE_PROPS} blocks={[picture]} currentTag="cards-cold" />);
+      await flush();
+
+      const item = () =>
+        document.querySelector<HTMLElement>('[data-feed-grid-item-slug="block-60"]');
+      expect(item()?.getAttribute("data-feed-grid-item-live")).toBe("false");
+
+      await act(async () => {
+        finish(new Map([[60, oneLineName]]));
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(item()?.getAttribute("data-feed-grid-item-live")).toBe("true");
+      expect(item()?.style.height).toBe(`${exactHeight}px`);
+    } finally {
+      window.localStorage.clear();
+      reloadFeedDisplay();
       firing.restore();
     }
   });

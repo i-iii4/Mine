@@ -541,6 +541,52 @@ describe("card presentation heights (SPEC_FEED_DISPLAY.md, Д15)", () => {
     expect(asCard).toBeGreaterThan(computeCardHeight(picture(), 320, null, "mixed"));
   });
 
+  it("Cards lays out a picture's text and author like the post card it looks like (В5.3)", () => {
+    const widths: WordWidths = {
+      title: [60],
+      preview: [70, 30, 40],
+      titleSpace: 4,
+      previewSpace: 4,
+      titleNoSpaceBefore: [false],
+      previewNoSpaceBefore: [false, false, false],
+    };
+    const described = makeBlock({
+      block_type: "image",
+      media_file: "photo.jpg",
+      fallback_label: "Sunset",
+      author: "@someone",
+      preview_text: "Evening over the bay",
+      preview_manifest: artifactManifest(640, 480),
+    });
+    const post = makeBlock({
+      block_type: "article",
+      title: "Sunset",
+      body: "Evening over the bay\n\n![](photo.jpg)",
+      media_urls: "[\"photo.jpg\"]",
+      author: "@someone",
+      preview_text: "Evening over the bay",
+      preview_manifest: artifactManifest(640, 480),
+    });
+    expect(computeCardHeight(described, 320, widths, "cards"))
+      .toBe(computeCardHeight(post, 320, widths, "mixed"));
+  });
+
+  it("Media holds a link's tall page picture at twice the width (В5.2)", () => {
+    const tallPage = makeBlock({
+      block_type: "link",
+      title: "A tall page",
+      url: "https://example.com/scroll",
+      preview_manifest: JSON.stringify({
+        kind: "image", primary_preview_path: "page.jpg", width: 100, height: 1000,
+        tiles: [{ source_path: "https://example.com/og.jpg", preview_path: "page.jpg",
+          width: 100, height: 1000, is_video: false, is_video_poster: false }],
+        overflow_count: 0,
+      }),
+    });
+    const innerWidth = 320 - CARD_BORDER;
+    expect(computeCardHeight(tallPage, 320, null, "media")).toBe(innerWidth * 2 + CARD_BORDER);
+  });
+
   it("Media gives a post exactly the height of its picture alone", () => {
     const post = makeBlock({
       block_type: "article",

@@ -152,4 +152,55 @@ describe("first cards painted (А8.2)", () => {
     await frames();
     expect(cardsRenderedReports).toHaveBeenCalledTimes(1);
   });
+
+  it("introduces the clipper only once an empty feed is final, not while the index may fill it (В5.6)", async () => {
+    cardsRenderedReports.mockClear();
+    fetchWordWidthsMock.mockResolvedValue(new Map([[7, EMPTY_WIDTHS]]));
+    const props = {
+      ...BASE_PROPS,
+      routeSnapshotReady: true,
+      spaceOnboardingOwed: true,
+      onInstallClipper: vi.fn(),
+      firstIndexProgress: null,
+    };
+    const onboarding = () => document.querySelector("[data-empty-space-onboarding]");
+
+    // The index is over but the feed on screen was read before it: still
+    // counted as indexing, so the old empty snapshot introduces nothing.
+    const { rerender } = render(<Grid {...props} blocks={[]} vaultIndexing />);
+    await frames();
+    expect(onboarding()).toBeNull();
+    expect(cardsRenderedReports).not.toHaveBeenCalled();
+
+    // Read again, it holds the index's cards: they are the first picture.
+    rerender(<Grid {...props} blocks={[makeBlock(7)]} vaultIndexing={false} />);
+    await frames();
+    expect(onboarding()).toBeNull();
+    // The widths land within those frames; the mark follows two frames later.
+    await frames();
+    expect(cardsRenderedReports).toHaveBeenCalledTimes(1);
+  });
+
+  it("introduces the clipper and marks once when the re-read after the index is empty (В5.6)", async () => {
+    cardsRenderedReports.mockClear();
+    const props = {
+      ...BASE_PROPS,
+      blocks: [],
+      routeSnapshotReady: true,
+      spaceOnboardingOwed: true,
+      onInstallClipper: vi.fn(),
+      firstIndexProgress: null,
+    };
+    const onboarding = () => document.querySelector("[data-empty-space-onboarding]");
+
+    const { rerender } = render(<Grid {...props} vaultIndexing />);
+    await frames();
+    expect(onboarding()).toBeNull();
+    expect(cardsRenderedReports).not.toHaveBeenCalled();
+
+    rerender(<Grid {...props} vaultIndexing={false} />);
+    await frames();
+    expect(onboarding()).not.toBeNull();
+    expect(cardsRenderedReports).toHaveBeenCalledTimes(1);
+  });
 });

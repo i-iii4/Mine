@@ -1073,6 +1073,25 @@
       "requirement": "SPEC_AUDIT_FIXES.md#| Б4.5 |",
       "tests": ["extension/lib/cropCapture.test.ts", "extension/background.messaging.test.ts"],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/App.tsx",
+        "src/App.test.tsx",
+        "src/components/Card.test.tsx",
+        "src/components/GraphView.tsx",
+        "src/components/GraphView.test.tsx",
+        "src/components/Grid.tsx",
+        "src/components/Grid.firstCards.test.tsx",
+        "src/components/Grid.wordMetrics.test.tsx",
+        "src/components/grid/interaction.ts",
+        "src/lib/cardLayout.ts",
+        "src/lib/cardLayout.test.ts",
+        "src/lib/cardHeight.test.ts"
+      ],
+      "requirement": "SPEC_AUDIT_FIXES.md#| В5.1 |",
+      "tests": ["src/App.test.tsx", "src/components/Card.test.tsx", "src/components/GraphView.test.tsx", "src/components/Grid.firstCards.test.tsx", "src/components/Grid.wordMetrics.test.tsx", "src/lib/cardLayout.test.ts", "src/lib/cardHeight.test.ts"],
+      "command": "test:frontend"
     }
   ],
   "release": null
