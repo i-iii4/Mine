@@ -39,6 +39,12 @@ pub const BROWSERS: &[BrowserTarget] = &[
         label: "Brave",
         manifest_dir: "Application Support/BraveSoftware/Brave-Browser/NativeMessagingHosts",
     },
+    // Chromium-based (at.studio.AsideBrowser); its user data sits directly in
+    // Application Support/Aside, with the profiles beside NativeMessagingHosts.
+    BrowserTarget {
+        label: "Aside",
+        manifest_dir: "Application Support/Aside/NativeMessagingHosts",
+    },
 ];
 
 /// The person's `~/Library`.
@@ -94,6 +100,20 @@ fn same_file(left: &Path, right: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn aside_gets_the_helper_where_it_looks_for_it() {
+        // Aside keeps its Chromium user data in Application Support/Aside.
+        let aside = BROWSERS
+            .iter()
+            .find(|browser| browser.label == "Aside")
+            .expect("Aside is a supported browser");
+        let library = Path::new("/Users/someone/Library");
+        assert_eq!(
+            manifest_path(library, aside),
+            library.join("Application Support/Aside/NativeMessagingHosts/com.mine.clipper.v1.json")
+        );
+    }
 
     fn register(library: &Path, browser: &BrowserTarget, helper: &Path) {
         let path = manifest_path(library, browser);

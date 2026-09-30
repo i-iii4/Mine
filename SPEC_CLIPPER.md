@@ -1828,10 +1828,12 @@ Pending upload хранит исходный payload, binding и свидете�
 подписью. Состояние `FilesVerified` подтверждает файлы, а не активное расширение.
 
 Тот же background pass восстанавливает точный путь и allowlist manifests
-обнаруженных Chrome, Dia, Arc, Edge и Brave. Настройки предлагают `Repair registration`
-и `Check registration`, без ручного ID. Статусы «helper установлен/совпадает
-с бандлом/зарегистрирован» не выдаются за проверенный browser handshake:
-проверку capabilities выполняет само расширение. После успешного `get_status`
+обнаруженных Chrome, Dia, Arc, Edge, Brave и Aside (добавлен 30.09.2026), а
+запущенный Mine повторяет это раз в 5 минут и при возврате в окно
+(SPEC_ONBOARDING.md, О5). Кнопок `Repair registration` и `Check registration`
+с 30.09.2026 нет, ручного ID тоже. Совпадение помощника с бандлом и его
+регистрация не выдаются за проверенный browser handshake: проверку
+capabilities выполняет само расширение. После успешного `get_status`
 background при `connection_check_v1` отправляет отдельный
 `confirm_connection_check {check_id}` по тому же native port. Это не запись
 внутри read-only `get_status` и не условие успешного Save. Host принимает

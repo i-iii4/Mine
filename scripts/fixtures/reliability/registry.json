@@ -940,6 +940,12 @@
       "requirement": "SPEC_CARD_MEDIA_GEOMETRY.md#**30.09.2026: видеокарточка принимает форму постера.**",
       "tests": ["src/lib/cardLayout.test.ts", "src/lib/cardHeight.test.ts", "src/components/Card.test.tsx"],
       "command": "test:frontend"
+    },
+    {
+      "paths": ["src-tauri/src/clipper_registration.rs"],
+      "requirement": "SPEC_CLIPPER.md#**К4. Рукопожатие версий.**",
+      "tests": ["src-tauri/src/clipper_registration.rs", "src-tauri/src/commands/clipper_setup.rs"],
+      "command": "test:rust"
     }
   ],
   "release": null
