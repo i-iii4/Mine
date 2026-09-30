@@ -18,11 +18,12 @@
 // disk. `--apply` downloads and rewrites in place. No backups are taken — the
 // user is responsible for git/iCloud/Time Machine before applying.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
+use mine_lib::markdown_images::{build_inline_wikilink, replaceable_body_images, BodyImage};
 use mine_lib::net::download_validated_to_file;
 
 /// How long a download may stall (connecting, or between reads), not a
@@ -148,8 +149,7 @@ fn run(vault_path: &Path, apply: bool) -> anyhow::Result<Report> {
         report.references += references.len();
         println!("{}", path.display());
 
-        let mut rewritten = original.clone();
-        let mut changed = false;
+        let mut stored = BTreeMap::new();
         for (index, url) in references.iter().enumerate() {
             // Not every embedded URL is media. Bodies also carry shortener
             // links (t.co and friends) that resolve to a page; downloading one
@@ -172,9 +172,8 @@ fn run(vault_path: &Path, apply: bool) -> anyhow::Result<Report> {
             match download_validated_to_file(url, &dest, REQUEST_TIMEOUT, &[]) {
                 Ok(()) => {
                     println!("  ✓ {name}");
-                    rewritten = replace_reference(&rewritten, url, &name);
+                    stored.insert(url.clone(), name);
                     report.downloaded += 1;
-                    changed = true;
                 }
                 Err(e) => {
                     println!("  ✗ {url}: {e:#}");
@@ -183,8 +182,8 @@ fn run(vault_path: &Path, apply: bool) -> anyhow::Result<Report> {
             }
         }
 
-        if changed {
-            std::fs::write(&path, rewritten)?;
+        if !stored.is_empty() {
+            std::fs::write(&path, replace_references(&original, &stored))?;
         }
     }
 
@@ -212,73 +211,67 @@ fn unique_name(existing: &BTreeSet<String>, stem: &str, index: usize, ext: &str)
     candidate
 }
 
-/// Collect the http(s) URLs a body still embeds directly.
-///
-/// Only `![...](url)` is considered: a plain link is a reference to a page, not
-/// media the note is supposed to own.
-fn remote_references(body: &str) -> Vec<String> {
-    let mut found = Vec::new();
-    let mut seen = BTreeSet::new();
-    let mut rest = body;
-
-    while let Some(open) = rest.find("![") {
-        let after = &rest[open + 2..];
-        let Some(bracket) = after.find("](") else {
-            rest = after;
-            continue;
-        };
-        let url_start = bracket + 2;
-        let Some(close) = after[url_start..].find(')') else {
-            rest = &after[url_start..];
-            continue;
-        };
-        let url = after[url_start..url_start + close].trim();
-        if (url.starts_with("http://") || url.starts_with("https://"))
-            && seen.insert(url.to_string())
-        {
-            found.push(url.to_string());
+/// Byte offset where a note's Markdown body begins: after the frontmatter
+/// when the note opens with a `---` line closed by another `---` line (the
+/// rule `parse_block` applies), otherwise the start of the file.
+fn body_start(content: &str) -> usize {
+    let Some(rest) = content.strip_prefix("---\n") else {
+        return 0;
+    };
+    let mut offset = "---\n".len();
+    for line in rest.split_inclusive('\n') {
+        offset += line.len();
+        if line.strip_suffix('\n').unwrap_or(line) == "---" {
+            return offset;
         }
-        rest = &after[url_start + close..];
     }
-
-    found
+    0
 }
 
-/// Rewrite every embed of `url` to a wikilink, preserving its alt text.
-fn replace_reference(body: &str, url: &str, name: &str) -> String {
-    let mut out = String::with_capacity(body.len());
-    let mut rest = body;
+/// Images of the note's body that still embed http(s) media directly, with
+/// their byte ranges in `content`.
+///
+/// The body is read as Markdown (`replaceable_body_images`): code, an escaped
+/// or unclosed `![`, ordinary links, titled and reference-style images and
+/// anything inside a wikilink are not candidates, so the rewrite touches only
+/// the bytes of real images (В4.1).
+fn remote_images(content: &str) -> Vec<BodyImage> {
+    let start = body_start(content);
+    replaceable_body_images(&content[start..])
+        .into_iter()
+        .filter(|image| image.url.starts_with("http://") || image.url.starts_with("https://"))
+        .map(|image| BodyImage {
+            range: image.range.start + start..image.range.end + start,
+            ..image
+        })
+        .collect()
+}
 
-    while let Some(open) = rest.find("![") {
-        let after = &rest[open + 2..];
-        let Some(bracket) = after.find("](") else {
-            out.push_str(&rest[..open + 2]);
-            rest = after;
+/// Each http(s) URL the note still embeds directly, once, in order of first
+/// appearance. A plain link is a reference to a page, not media the note is
+/// supposed to own.
+fn remote_references(content: &str) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    remote_images(content)
+        .into_iter()
+        .filter_map(|image| seen.insert(image.url.clone()).then_some(image.url))
+        .collect()
+}
+
+/// `content` with every embed of a stored URL rewritten to a wikilink to its
+/// local name, keeping the caption. Every other byte stays as it was.
+fn replace_references(content: &str, stored: &BTreeMap<String, String>) -> String {
+    let mut out = String::with_capacity(content.len());
+    let mut copied = 0;
+    for image in remote_images(content) {
+        let Some(name) = stored.get(&image.url) else {
             continue;
         };
-        let url_start = bracket + 2;
-        let Some(close) = after[url_start..].find(')') else {
-            out.push_str(&rest[..open + 2]);
-            rest = after;
-            continue;
-        };
-
-        let alt = &after[..bracket];
-        let found = after[url_start..url_start + close].trim();
-        out.push_str(&rest[..open]);
-        if found == url {
-            if alt.is_empty() {
-                out.push_str(&format!("![[{name}]]"));
-            } else {
-                out.push_str(&format!("![[{name}|{alt}]]"));
-            }
-        } else {
-            out.push_str(&rest[open..open + 2 + url_start + close + 1]);
-        }
-        rest = &after[url_start + close + 1..];
+        out.push_str(&content[copied..image.range.start]);
+        out.push_str(&build_inline_wikilink(name, image.caption.trim()));
+        copied = image.range.end;
     }
-
-    out.push_str(rest);
+    out.push_str(&content[copied..]);
     out
 }
 
@@ -332,11 +325,112 @@ mod tests {
     #[test]
     fn rewrites_every_embed_of_one_url_and_keeps_alt_text() {
         let body = "![](https://c.example/a.mp4) and ![clip](https://c.example/a.mp4) and ![](https://c.example/b.jpg)";
-        let out = replace_reference(body, "https://c.example/a.mp4", "Note (media 1).mp4");
+        let out = localized(body, &[("https://c.example/a.mp4", "Note (media 1).mp4")]);
         assert_eq!(
             out,
             "![[Note (media 1).mp4]] and ![[Note (media 1).mp4|clip]] and ![](https://c.example/b.jpg)"
         );
+    }
+
+    /// The note the tool writes once every URL in `stored` is downloaded
+    /// under the paired name.
+    fn localized(content: &str, stored: &[(&str, &str)]) -> String {
+        let stored = stored
+            .iter()
+            .map(|(url, name)| ((*url).to_string(), (*name).to_string()))
+            .collect();
+        replace_references(content, &stored)
+    }
+
+    #[test]
+    fn escaped_image_syntax_is_not_a_reference() {
+        // В4.1: `\![` is a literal `!` before a link, not an embed.
+        let content = "Write \\![not an image](https://h.com/x.jpg) literally.\n\n\
+                       ![real](https://h.com/r.jpg)";
+        assert_eq!(remote_references(content), ["https://h.com/r.jpg"]);
+        let stored = [
+            ("https://h.com/x.jpg", "N (media 1).jpg"),
+            ("https://h.com/r.jpg", "N (media 2).jpg"),
+        ];
+        let real = "![real](https://h.com/r.jpg)";
+        assert_eq!(
+            localized(content, &stored),
+            content.replacen(real, "![[N (media 2).jpg|real]]", 1)
+        );
+    }
+
+    #[test]
+    fn unclosed_image_before_a_link_is_not_a_reference() {
+        // В4.1: the target of an ordinary link is not media.
+        let content = "![ unclosed [t](https://example.com/a.png) text";
+        assert!(remote_references(content).is_empty());
+        let stored = [("https://example.com/a.png", "N (media 1).png")];
+        assert_eq!(localized(content, &stored), content);
+    }
+
+    #[test]
+    fn code_and_text_around_a_real_image_stay_byte_identical() {
+        // An example in code names the same file as the real image, and an
+        // unclosed `![` stands before paragraphs and code: only the real
+        // image changes.
+        let content = "Look ![ at this\n\nA paragraph.\n\n\
+                       ```markdown\n![example](https://h.com/e.jpg)\n```\n\n\
+                       Inline `![example](https://h.com/e.jpg)` too.\n\n\
+                       ![real](https://h.com/e.jpg)\n";
+        assert_eq!(remote_references(content), ["https://h.com/e.jpg"]);
+        let stored = [("https://h.com/e.jpg", "N (media 1).jpg")];
+        let real = "![real](https://h.com/e.jpg)\n";
+        assert_eq!(
+            localized(content, &stored),
+            content.replacen(real, "![[N (media 1).jpg|real]]\n", 1)
+        );
+    }
+
+    #[test]
+    fn titled_and_reference_images_stay_as_written() {
+        let content = "![t](https://h.com/t.jpg \"Hover text\")\n\n\
+                       ![r][ref] and ![ref]\n\n[ref]: https://h.com/r.jpg\n\n\
+                       ![plain](https://h.com/p.jpg)";
+        assert_eq!(remote_references(content), ["https://h.com/p.jpg"]);
+        let stored = [
+            ("https://h.com/t.jpg", "N (media 1).jpg"),
+            ("https://h.com/r.jpg", "N (media 2).jpg"),
+            ("https://h.com/p.jpg", "N (media 3).jpg"),
+        ];
+        let plain = "![plain](https://h.com/p.jpg)";
+        assert_eq!(
+            localized(content, &stored),
+            content.replacen(plain, "![[N (media 3).jpg|plain]]", 1)
+        );
+    }
+
+    #[test]
+    fn frontmatter_is_not_a_body() {
+        let content = "---\nsource: \"![x](https://h.com/fm.jpg)\"\n---\n\
+                       ![b](https://h.com/b.jpg)\n";
+        assert_eq!(remote_references(content), ["https://h.com/b.jpg"]);
+        let stored = [
+            ("https://h.com/fm.jpg", "N (media 1).jpg"),
+            ("https://h.com/b.jpg", "N (media 2).jpg"),
+        ];
+        assert_eq!(
+            localized(content, &stored),
+            "---\nsource: \"![x](https://h.com/fm.jpg)\"\n---\n![[N (media 2).jpg|b]]\n"
+        );
+    }
+
+    #[test]
+    fn wikilinks_of_a_localized_note_keep_what_they_hold() {
+        // A second run over a repaired note: the caption of a local embed and
+        // the text of a wikilink are not images of the page.
+        let content = "![[N (media 1).jpg|outer ![inner](https://h.com/i.jpg) text]]\n\n\
+                       [[Other|![a](https://h.com/a.jpg)]]";
+        assert!(remote_references(content).is_empty());
+        let stored = [
+            ("https://h.com/i.jpg", "N (media 2).jpg"),
+            ("https://h.com/a.jpg", "N (media 3).jpg"),
+        ];
+        assert_eq!(localized(content, &stored), content);
     }
 
     #[test]

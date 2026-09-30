@@ -24,6 +24,7 @@ use mine_lib::domain::block::{Block, BlockType, DateTime, Frontmatter};
 use mine_lib::domain::channel::Channel;
 use mine_lib::domain::collection::{normalize_collection_ref, validate_collection_ref};
 use mine_lib::domain::vault::VaultLayout;
+use mine_lib::markdown_images::{build_inline_wikilink, replaceable_body_images};
 use mine_lib::net;
 use mine_lib::storage::{clipper_uploads, db, file_identity, files, index, save_operations, thumbnails};
 use mine_lib::util::now_saved_at;
@@ -1971,67 +1972,6 @@ fn download_file(url: &str, dest: &std::path::Path, referer: &str) -> anyhow::Re
     net::download_validated_to_file(url, dest, INLINE_DOWNLOAD_IDLE_TIMEOUT, &headers)
 }
 
-/// Build an Obsidian wikilink embed for a locally-downloaded media file.
-///
-/// Format: `![[name]]` or `![[name|alt]]` when alt text is non-empty.
-///
-/// Phase 18.H.1: wikilink syntax removes the body-vs-disk asymmetry that
-/// the percent-encoded `![alt](url)` form introduced. `]]` is not a
-/// valid filename character on any supported platform, so parsers can
-/// find it unambiguously and the URL literally equals the filename.
-///
-/// Obsidian renders `![[file.jpg]]` as an embedded image natively, so
-/// the raw markdown source stays readable when the user inspects the
-/// `.md` file in Obsidian.
-fn build_inline_wikilink(name: &str, alt: &str) -> String {
-    // Defensive: if a filename ever contained `]]` it would confuse
-    // the reader. Filesystem normally rejects this, but fall back to
-    // the old encoded markdown form on the pathological case to keep
-    // the output valid markdown no matter what.
-    if name.contains("]]") {
-        let encoded = encode_markdown_url_component(name);
-        return format!("![{alt}]({encoded})");
-    }
-
-    if alt.is_empty() {
-        format!("![[{name}]]")
-    } else {
-        // Obsidian pipe separates alt/caption from filename.
-        // A literal `|` in a filename would break the split, so encode
-        // it as an entity equivalent. Practically rare in filenames.
-        let safe_alt = alt.replace('|', "&#124;").replace('\n', " ");
-        format!("![[{name}|{safe_alt}]]")
-    }
-}
-
-/// Percent-encode characters that would confuse a markdown parser's
-/// inline image URL parser: space, parentheses, and the percent sign
-/// itself (so it does not look like an encoding escape to humans).
-///
-/// Markdown readers require either balanced/escaped parens or an
-/// angle-bracket-wrapped URL for paths with parens. We keep the file on
-/// disk human-readable (`Title (image 1).jpg`) but write the encoded
-/// form in the markdown body so `![alt](url)` parses correctly both in
-/// Obsidian and in the in-app renderer.
-///
-/// Kept intentionally narrow: anything outside the problem set (letters,
-/// digits, unicode codepoints, dots, hyphens, underscores, `/`) is not
-/// encoded — encoding them would make wikilinks less readable for users
-/// inspecting the markdown source directly.
-fn encode_markdown_url_component(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    for c in name.chars() {
-        match c {
-            ' ' => out.push_str("%20"),
-            '(' => out.push_str("%28"),
-            ')' => out.push_str("%29"),
-            '%' => out.push_str("%25"),
-            c => out.push(c),
-        }
-    }
-    out
-}
-
 /// Kind of inline media embedded in an article body, used to produce
 /// human-readable filenames like `Название (image 1).jpg`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2097,9 +2037,8 @@ const MAX_PER_DOMAIN: usize = 2;
 /// Phase B downloads in parallel; Phase C dedups + rewrites the body.
 #[derive(Debug, Clone)]
 struct InlineTask {
-    img_start: usize, // offset of '!' in '![alt](url)'
-    paren_end: usize, // offset of ')' (inclusive)
-    alt: String,      // raw alt text between '[' and ']'
+    range: std::ops::Range<usize>, // source bytes of the whole `![alt](url)`
+    alt: String,                   // caption as written, line breaks as spaces
     url: String,
     host: String, // for per-domain throttling
     #[allow(dead_code)] // diagnostic only after Phase A
@@ -2179,9 +2118,10 @@ fn host_from_url(url: &str) -> String {
 }
 
 /// Phase A: scan the body, build the list of inline-media tasks with
-/// deterministic per-kind indices. Stops at MAX_INLINE_IMAGES successful
-/// http(s) matches; non-http URLs, malformed `![alt](...)` patterns and
-/// examples inside code are skipped without consuming the cap.
+/// deterministic per-kind indices. Stops at `MAX_INLINE_IMAGES` http(s)
+/// images; images with other destinations, and images the local form cannot
+/// replace (see [`replaceable_body_images`]), are skipped without consuming
+/// the cap.
 #[cfg(test)]
 fn scan_inline_tasks(body: &str, vault: &VaultLayout, slug: &str) -> Vec<InlineTask> {
     scan_inline_tasks_with(body, vault, slug, &|_| None)
@@ -2203,36 +2143,13 @@ fn scan_inline_tasks_with(
     let mut image_idx: u32 = 0;
     let mut video_idx: u32 = 0;
     let mut file_idx: u32 = 0;
-    let mut search_from = 0;
-    let code = markdown_code_ranges(body);
 
-    // An embed written inside code is an example of the syntax: it is neither
-    // downloaded nor rewritten (Ф5, Б4.4). Code spans bind before brackets
-    // (CommonMark), so every delimiter is looked for outside code.
-    while tasks.len() < MAX_INLINE_IMAGES as usize {
-        let Some(img_start) = find_outside_code(body, search_from, "![", &code) else {
+    for image in replaceable_body_images(body) {
+        if tasks.len() >= MAX_INLINE_IMAGES as usize {
             break;
-        };
-        let alt_start = img_start + 2;
-
-        let Some(bracket_pos) = find_outside_code(body, alt_start, "](", &code) else {
-            search_from = alt_start;
-            continue;
-        };
-
-        let url_start = bracket_pos + 2;
-        let Some(paren_end) = find_outside_code(body, url_start, ")", &code) else {
-            search_from = url_start;
-            continue;
-        };
-        if code_overlaps(&code, url_start..paren_end) {
-            search_from = alt_start;
-            continue;
         }
-
-        let url = &body[url_start..paren_end];
+        let url = image.url.as_str();
         if !(url.starts_with("http://") || url.starts_with("https://")) {
-            search_from = paren_end + 1;
             continue;
         }
 
@@ -2261,74 +2178,18 @@ fn scan_inline_tasks_with(
         let dest_path = vault.new_media_path(&basename);
         let dest_name = vault.new_media_stem(&basename);
         let host = host_from_url(url);
-        let alt = body[alt_start..bracket_pos].to_string();
 
         tasks.push(InlineTask {
-            img_start,
-            paren_end,
-            alt,
-            url: url.to_string(),
+            range: image.range,
+            alt: image.caption,
+            url: image.url,
             host,
             kind,
             dest_name,
             dest_path,
         });
-        search_from = paren_end + 1;
     }
     tasks
-}
-
-/// Byte ranges of Markdown code in `body`, sorted and disjoint: fenced and
-/// indented code blocks and inline code spans, inside block quotes and list
-/// items too. The inline-media scan passes over them.
-///
-/// A standard Markdown parser (`pulldown_cmark`) decides, so container rules
-/// (quote and list prefixes, indentation that continues a paragraph, unclosed
-/// fences) are the standard ones rather than an approximation. Table and
-/// strikethrough syntax is on to read clipped bodies the way the renderer
-/// with GitHub extensions shows them.
-fn markdown_code_ranges(body: &str) -> Vec<std::ops::Range<usize>> {
-    use pulldown_cmark::{Event, Options, Parser, Tag};
-    let options = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH;
-    let mut ranges: Vec<std::ops::Range<usize>> = Parser::new_ext(body, options)
-        .into_offset_iter()
-        .filter_map(|(event, range)| {
-            matches!(event, Event::Code(_) | Event::Start(Tag::CodeBlock(_))).then_some(range)
-        })
-        .collect();
-    // Events arrive in document order and code never nests, so this only
-    // guards the invariant the binary searches below rely on.
-    ranges.sort_by_key(|range| range.start);
-    ranges.dedup_by(|next, kept| {
-        let overlaps = next.start < kept.end;
-        if overlaps {
-            kept.end = kept.end.max(next.end);
-        }
-        overlaps
-    });
-    ranges
-}
-
-/// First `needle` at or after `from` that starts outside `code`.
-fn find_outside_code(
-    body: &str,
-    mut from: usize,
-    needle: &str,
-    code: &[std::ops::Range<usize>],
-) -> Option<usize> {
-    loop {
-        let at = from + body[from..].find(needle)?;
-        match code.get(code.partition_point(|range| range.end <= at)) {
-            Some(range) if range.start <= at => from = range.end,
-            _ => return Some(at),
-        }
-    }
-}
-
-/// Whether any of the sorted, disjoint `code` ranges intersects `span`.
-fn code_overlaps(code: &[std::ops::Range<usize>], span: std::ops::Range<usize>) -> bool {
-    code.get(code.partition_point(|range| range.end <= span.start))
-        .is_some_and(|range| range.start < span.end)
 }
 
 /// Phase B: spawn a fixed worker pool, drain a shared queue of task
@@ -2462,7 +2323,7 @@ fn apply_rewrites_with_links(
                     .unwrap_or_else(|| task.dest_name.clone());
                 let replacement = build_inline_wikilink(&target, task.alt.trim());
                 specs.push(RewriteSpec {
-                    range: task.img_start..task.paren_end + 1,
+                    range: task.range.clone(),
                     replacement,
                 });
             }
@@ -2472,7 +2333,7 @@ fn apply_rewrites_with_links(
                 let target = links.shortest_link(kept, false)
                     .unwrap_or_else(|| kept.clone());
                 specs.push(RewriteSpec {
-                    range: task.img_start..task.paren_end + 1,
+                    range: task.range.clone(),
                     replacement: build_inline_wikilink(&target, task.alt.trim()),
                 });
             }
@@ -2480,7 +2341,7 @@ fn apply_rewrites_with_links(
     }
 
     // Apply in reverse offset order so earlier ranges stay valid.
-    specs.sort_by(|a, b| b.range.start.cmp(&a.range.start));
+    specs.sort_by_key(|spec| std::cmp::Reverse(spec.range.start));
     let mut result = body.to_string();
     for spec in specs {
         // Defensive: ranges must lie within result. Skip pathological
@@ -5321,109 +5182,6 @@ mod tests {
         );
     }
 
-    // ── Markdown URL encoding ───────────────────────────────────────────
-
-    #[test]
-    fn encode_url_spaces_and_parens() {
-        assert_eq!(
-            encode_markdown_url_component("Hello World (image 1).jpg"),
-            "Hello%20World%20%28image%201%29.jpg"
-        );
-    }
-
-    #[test]
-    fn encode_url_ascii_safe_passthrough() {
-        assert_eq!(encode_markdown_url_component("photo.jpg"), "photo.jpg");
-        assert_eq!(
-            encode_markdown_url_component("sunset-tokyo.png"),
-            "sunset-tokyo.png"
-        );
-    }
-
-    #[test]
-    fn encode_url_preserves_unicode_chars() {
-        // Cyrillic passes through: modern markdown parsers accept Unicode
-        // in URLs, and keeping it readable is a Mine value.
-        assert_eq!(
-            encode_markdown_url_component("Закат (image 1).jpg"),
-            "Закат%20%28image%201%29.jpg"
-        );
-    }
-
-    #[test]
-    fn encode_url_escapes_bare_percent() {
-        // Paranoid: if a future filename ever contains a literal %, it
-        // must not look like a malformed escape to the markdown parser.
-        assert_eq!(encode_markdown_url_component("50%.jpg"), "50%25.jpg");
-    }
-
-    #[test]
-    fn encode_url_idempotent_on_no_special_chars() {
-        let input = "simple-name.mp4";
-        assert_eq!(encode_markdown_url_component(input), input);
-    }
-
-    // ── Wikilink builder (18.H.1) ───────────────────────────────────────
-
-    #[test]
-    fn wikilink_plain_name_without_alt() {
-        assert_eq!(
-            build_inline_wikilink("Title (image 1).jpg", ""),
-            "![[Title (image 1).jpg]]"
-        );
-    }
-
-    #[test]
-    fn wikilink_with_alt_uses_pipe_separator() {
-        assert_eq!(
-            build_inline_wikilink("Photo.jpg", "sunset on the beach"),
-            "![[Photo.jpg|sunset on the beach]]"
-        );
-    }
-
-    #[test]
-    fn wikilink_preserves_unicode_name() {
-        assert_eq!(
-            build_inline_wikilink("Закат (image 1).jpg", ""),
-            "![[Закат (image 1).jpg]]"
-        );
-    }
-
-    #[test]
-    fn wikilink_escapes_pipe_in_alt() {
-        // A literal `|` in alt text would split the wikilink early.
-        assert_eq!(
-            build_inline_wikilink("File.jpg", "before | after"),
-            "![[File.jpg|before &#124; after]]"
-        );
-    }
-
-    #[test]
-    fn wikilink_collapses_newlines_in_alt() {
-        // Alt text with a newline would split the wikilink across lines.
-        assert_eq!(
-            build_inline_wikilink("File.jpg", "line one\nline two"),
-            "![[File.jpg|line one line two]]"
-        );
-    }
-
-    #[test]
-    fn wikilink_falls_back_to_markdown_when_name_contains_close_delim() {
-        // `]]` inside the filename would corrupt the wikilink; fall
-        // back to the encoded markdown form so output stays valid.
-        let built = build_inline_wikilink("weird]]name.jpg", "");
-        assert!(built.starts_with("!["));
-        assert!(built.contains("](")); // markdown form
-        assert!(!built.contains("![["));
-    }
-
-    #[test]
-    fn wikilink_omits_alt_when_only_whitespace() {
-        // An alt that is whitespace-only should behave like empty alt
-        // (caller passes `alt.trim()` — this mirrors that).
-        assert_eq!(build_inline_wikilink("f.jpg", ""), "![[f.jpg]]");
-    }
-
     // ─── localize_body_images: scan + apply_rewrites ──────────────────
 
     fn vault_at(dir: &std::path::Path) -> VaultLayout {
@@ -5586,6 +5344,127 @@ mod tests {
         assert_eq!(
             surviving,
             vec![tmp.path().join("S (image 1).jpg"), tmp.path().join("S (image 2).jpg")]
+        );
+    }
+
+    /// The body a save writes when every scanned embed downloads, and the
+    /// URLs it fetched. Each file gets its own bytes, so none is deduplicated.
+    fn saved_body(body: &str) -> (String, Vec<String>) {
+        let tmp = TempDir::new().unwrap();
+        let tasks = scan_inline_tasks(body, &vault_at(tmp.path()), "S");
+        for task in &tasks {
+            std::fs::write(&task.dest_path, task.url.as_bytes()).unwrap();
+        }
+        let outcomes = vec![Ok(()); tasks.len()];
+        let fetched = tasks.iter().map(|task| task.url.clone()).collect();
+        (apply_rewrites(body, &tasks, &outcomes).0, fetched)
+    }
+
+    #[test]
+    fn escaped_image_syntax_stays_text() {
+        // В4.1: `\![` is a literal `!` before a link, not an embed.
+        let body = "Write \\![not an image](https://h.com/x.jpg) literally.\n\n\
+                    \\\\![real](https://h.com/r.jpg)";
+        let (saved, fetched) = saved_body(body);
+        assert_eq!(fetched, ["https://h.com/r.jpg"]);
+        let real = "![real](https://h.com/r.jpg)";
+        assert_eq!(saved, body.replacen(real, "![[S (image 1).jpg|real]]", 1));
+    }
+
+    #[test]
+    fn unclosed_image_leaves_paragraphs_and_code_byte_identical() {
+        // В4.1: an unclosed `![` does not borrow the brackets of a real image
+        // further down; only that image changes.
+        let body = "Look ![ at this\n\nA paragraph that follows.\n\n\
+                    ```\nlet a = [1](2);\n```\n\n\
+                    ![real](https://h.com/real.jpg)\n\nEnd.";
+        let (saved, fetched) = saved_body(body);
+        assert_eq!(fetched, ["https://h.com/real.jpg"]);
+        let real = "![real](https://h.com/real.jpg)";
+        assert_eq!(saved, body.replacen(real, "![[S (image 1).jpg|real]]", 1));
+    }
+
+    #[test]
+    fn unclosed_image_before_a_link_downloads_nothing() {
+        // В4.1: the target of an ordinary link is not media.
+        let body = "![ unclosed [t](https://example.com/a.png) text";
+        let (saved, fetched) = saved_body(body);
+        assert!(fetched.is_empty(), "{fetched:?}");
+        assert_eq!(saved, body);
+    }
+
+    #[test]
+    fn images_in_quotes_lists_tables_and_footnotes_are_localized_in_place() {
+        // A caption wrapped inside a quote keeps its words, not the `>` of
+        // the next line.
+        let body = "> Quote ![quoted\n> caption](https://h.com/q.jpg) end\n\n\
+                    - item ![listed](https://h.com/l.jpg)\n- next\n\n\
+                    | h |\n|---|\n| ![cell](https://h.com/c.jpg) |\n\n\
+                    Text[^1]\n\n[^1]: ![note](https://h.com/n.jpg)\n";
+        let (saved, fetched) = saved_body(body);
+        assert_eq!(
+            fetched,
+            [
+                "https://h.com/q.jpg",
+                "https://h.com/l.jpg",
+                "https://h.com/c.jpg",
+                "https://h.com/n.jpg"
+            ]
+        );
+        assert_eq!(
+            saved,
+            "> Quote ![[S (image 1).jpg|quoted caption]] end\n\n\
+             - item ![[S (image 2).jpg|listed]]\n- next\n\n\
+             | h |\n|---|\n| ![[S (image 3).jpg|cell]] |\n\n\
+             Text[^1]\n\n[^1]: ![[S (image 4).jpg|note]]\n"
+        );
+    }
+
+    #[test]
+    fn titled_and_reference_images_stay_as_written() {
+        // `![[name|alt]]` holds a file and a caption. A title would be lost,
+        // and a file named only by a reference definition is not seen as used
+        // by Mine, so both keep their remote form byte for byte.
+        let body = "![t](https://h.com/t.jpg \"Hover text\")\n\n\
+                    ![r][ref] and ![ref][] and ![ref]\n\n\
+                    [ref]: https://h.com/r.jpg\n\n\
+                    ![plain](https://h.com/p.jpg)";
+        let (saved, fetched) = saved_body(body);
+        assert_eq!(fetched, ["https://h.com/p.jpg"]);
+        let plain = "![plain](https://h.com/p.jpg)";
+        assert_eq!(saved, body.replacen(plain, "![[S (image 1).jpg|plain]]", 1));
+    }
+
+    #[test]
+    fn an_image_the_wikilink_cannot_replace_keeps_the_remote_form() {
+        // `]]` inside the caption, or `]` at its end, would close the
+        // wikilink early and spill the rest into the text. A wikilink in the
+        // label is read first, so that label is text and not an image. An
+        // image inside a wikilink would put a wikilink into a wikilink.
+        for body in [
+            "![Figure [1]](https://h.com/f.jpg)",
+            "![a `]]` b](https://h.com/c.jpg)",
+            "![a [[b]] c](https://h.com/g.jpg)",
+            "[[Note|![a](https://h.com/w.jpg)]]",
+        ] {
+            let (saved, fetched) = saved_body(body);
+            assert!(fetched.is_empty(), "{body:?} -> {fetched:?}");
+            assert_eq!(saved, body);
+        }
+    }
+
+    #[test]
+    fn only_the_shown_image_of_a_nested_embed_is_localized() {
+        // An image inside a link is shown; an image inside another image's
+        // caption is only caption text.
+        let body = "[![linked](https://h.com/l.jpg)](https://page.example)\n\n\
+                    ![outer ![inner](https://h.com/i.jpg) text](https://h.com/o.jpg)";
+        let (saved, fetched) = saved_body(body);
+        assert_eq!(fetched, ["https://h.com/l.jpg", "https://h.com/o.jpg"]);
+        assert_eq!(
+            saved,
+            "[![[S (image 1).jpg|linked]]](https://page.example)\n\n\
+             ![[S (image 2).jpg|outer ![inner](https://h.com/i.jpg) text]]"
         );
     }
 

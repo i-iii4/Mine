@@ -1114,6 +1114,18 @@
       "requirement": "SPEC_AUDIT_FIXES.md#| В4.2 |",
       "tests": ["extension/background.messaging.test.ts", "extension/lib/cropCapture.test.ts", "extension/popup/PopupApp.test.tsx", "extension/popup/overlay-entry.test.tsx", "extension/popup/hooks/useClipperState.standalone.test.tsx", "extension/popup/overlayCropEscape.test.tsx"],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src-tauri/src/markdown_images.rs",
+        "src-tauri/src/lib.rs",
+        "src-tauri/src/bin/native_host.rs",
+        "src-tauri/src/tooling/localize_remote_media.rs",
+        "src-tauri/Cargo.toml"
+      ],
+      "requirement": "SPEC_AUDIT_FIXES.md#| В4.1 |",
+      "tests": ["src-tauri/src/markdown_images.rs", "src-tauri/src/bin/native_host.rs", "src-tauri/src/tooling/localize_remote_media.rs"],
+      "command": "test:rust"
     }
   ],
   "release": null
