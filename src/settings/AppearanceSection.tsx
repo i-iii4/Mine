@@ -20,13 +20,6 @@ import {
   getStoredHoverCollectionPills,
 } from "@/lib/hoverCollectionPills";
 import {
-  DENSITY_STEPS,
-  DENSITY_STORAGE_KEY,
-  applyDensity,
-  getStoredDensity,
-  type DensityStep,
-} from "@/lib/density";
-import {
   CARD_RADIUS_OPTIONS,
   CARD_RADIUS_STORAGE_KEY,
   applyCardRadius,
@@ -51,11 +44,6 @@ const CARD_RADIUS_CONTROL_OPTIONS = CARD_RADIUS_OPTIONS.map((value) => ({
   label: value === 0 ? "Square" : String(value),
 }));
 
-const DENSITY_OPTIONS = DENSITY_STEPS.map((step) => ({
-  value: String(step),
-  label: String(step),
-}));
-
 export function AppearanceSection() {
   const [theme, setTheme] = useState<ThemeMode>(getStoredTheme);
   const [bottomActionBarHidden, setBottomActionBarHidden] = useState(
@@ -64,7 +52,6 @@ export function AppearanceSection() {
   const [scrollEdgeFade, setScrollEdgeFade] = useState(getStoredScrollEdgeFade);
   const [hoverCollectionPills, setHoverCollectionPills] = useState(getStoredHoverCollectionPills);
   const [cardRadius, setCardRadius] = useState<CardRadius>(getStoredCardRadius);
-  const [density, setDensity] = useState<DensityStep>(getStoredDensity);
 
   const handleThemeChange = (mode: ThemeMode) => {
     setTheme(mode);
@@ -76,13 +63,6 @@ export function AppearanceSection() {
     setBottomActionBarHidden(checked);
     localStorage.setItem(BOTTOM_ACTION_BAR_HIDDEN_STORAGE_KEY, checked ? "true" : "false");
     broadcastSettingsChange(BOTTOM_ACTION_BAR_HIDDEN_STORAGE_KEY);
-  };
-
-  const handleDensityChange = (raw: string) => {
-    const value = Number(raw) as DensityStep;
-    setDensity(value);
-    applyDensity(value);
-    broadcastSettingsChange(DENSITY_STORAGE_KEY);
   };
 
   const handleCardRadiusChange = (raw: string) => {
@@ -115,19 +95,6 @@ export function AppearanceSection() {
           value={theme}
           options={THEME_OPTIONS}
           onChange={handleThemeChange}
-        />
-      </SettingRow>
-
-      <SettingRow
-        label="Spacing"
-        caption="Distance from edges and chrome, and between cards: bars, sidebar, feed, expanded card"
-      >
-        <SegmentedControl
-          aria-label="Spacing"
-          size="default"
-          value={String(density)}
-          options={DENSITY_OPTIONS}
-          onChange={handleDensityChange}
         />
       </SettingRow>
 

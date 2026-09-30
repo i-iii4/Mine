@@ -9,6 +9,7 @@ import {
 import type {
   IndexedBlock,
   GridSnapshot,
+  FeedOrder,
   SearchPageToken,
   SearchSnapshot,
   GraphSnapshot,
@@ -174,11 +175,13 @@ export const listGridBlocks = (
   current_tag?: string,
   offset?: number,
   limit?: number,
+  order?: FeedOrder,
 ) =>
   invoke<GridSnapshot>("list_grid_blocks", {
     current_tag: current_tag ?? null,
     offset: offset ?? null,
     limit: limit ?? null,
+    order: order ?? null,
   });
 
 export const searchGridBlocks = (

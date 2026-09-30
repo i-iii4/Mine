@@ -10,6 +10,7 @@ import {
   SegmentedControl,
   type SegmentedControlOption,
 } from "./ui/segmented-control";
+import { FeedDisplayMenu } from "./FeedDisplayMenu";
 
 export type DetailLinkMode = "all" | "linked";
 export type MainViewMode = "grid" | "graph";
@@ -136,6 +137,13 @@ function MainSecondaryStatsRight({
         <span className="shrink-0 font-mono text-sm text-tertiary-foreground">View:</span>
         <MainViewModeSwitch value={viewMode} onChange={onViewModeChange} entered />
       </div>
+      {/* The feed's Display options, at the right edge under the Mine button.
+          None of them applies to the graph (SPEC_FEED_DISPLAY.md, Д1, Д4). */}
+      {viewMode === "grid" && (
+        <div className="ml-auto flex shrink-0 items-center" data-feed-display="">
+          <FeedDisplayMenu />
+        </div>
+      )}
     </div>
   );
 }

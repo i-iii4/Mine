@@ -2,6 +2,7 @@ import { CLOUD_BADGE_DELAY_MS, CLOUD_STATE_LABEL } from "@/lib/cloudContent";
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { Card, DragCardStackPreview, ReadOnlyCardPreview } from "./Card";
+import { FeedShowContext, type FeedShow } from "@/lib/feedDisplay";
 import { CARD_HOVER_ACTION_MIN_HEIGHT } from "@/lib/cardHeight";
 import type { LightBlock } from "@/types";
 
@@ -1423,3 +1424,62 @@ describe("unreadable preview artifact", () => {
     expect(container.querySelector("[data-card-preview-unreadable]")).toBeNull();
   });
 });
+
+describe("Card presentation in the feed (SPEC_FEED_DISPLAY.md, Д11 to Д13)", () => {
+  const imageManifest = JSON.stringify({
+    kind: "image",
+    primary_preview_path: "test-block.jpg",
+    width: 1280,
+    height: 960,
+    preview_width: 640,
+    preview_height: 480,
+    tiles: [{
+      source_path: "photo.jpg", preview_path: "test-block.preview-1.jpg",
+      width: 1280, height: 960, preview_width: 640, preview_height: 480,
+      is_video: false, is_video_poster: false,
+    }],
+    overflow_count: 0,
+  });
+  const inFeed = (show: FeedShow, value: LightBlock) =>
+    render(
+      <FeedShowContext.Provider value={show}>
+        <Card block={value} vaultPath={VAULT} onClick={vi.fn()} />
+      </FeedShowContext.Provider>,
+    );
+
+  it("Cards frames a picture as a post card with its name", () => {
+    const picture = block({
+      block_type: "image", title: null, url: null, media_file: "Media/Sunset.jpg",
+      fallback_label: "Sunset", preview_manifest: imageManifest,
+    });
+    const { container } = inFeed("cards", picture);
+    expect(screen.getByText("Sunset")).toBeInTheDocument();
+    expect(container.querySelector("[data-card-inset-media]")).not.toBeNull();
+    expect(container.querySelector("[data-feed-card-frame]")).toHaveClass("feed-article-card");
+  });
+
+  it("Mixed keeps a picture bare, as before", () => {
+    const picture = block({
+      block_type: "image", title: null, url: null, media_file: "Media/Sunset.jpg",
+      fallback_label: "Sunset", preview_manifest: imageManifest,
+    });
+    const { container } = inFeed("mixed", picture);
+    expect(screen.queryByText("Sunset")).not.toBeInTheDocument();
+    expect(container.querySelector("[data-card-inset-media]")).toBeNull();
+  });
+
+  it("Media shows a post's picture alone: no title, no text, no author, no inset", () => {
+    const post = block({
+      block_type: "article", title: "A post", url: null,
+      body: "Some words\n\n![](photo.jpg)", media_urls: "[\"photo.jpg\"]",
+      author: "@someone", preview_manifest: imageManifest,
+    });
+    const { container } = inFeed("media", post);
+    expect(screen.queryByText("A post")).not.toBeInTheDocument();
+    expect(screen.queryByText("@someone")).not.toBeInTheDocument();
+    expect(container.querySelector("[data-card-graphic-surface]")).not.toBeNull();
+    expect(container.querySelector("[data-card-inset-media]")).toBeNull();
+    expect(container.querySelector("[data-feed-card-frame]")).not.toHaveClass("feed-article-card");
+  });
+});
+

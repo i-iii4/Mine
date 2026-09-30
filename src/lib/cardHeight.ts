@@ -17,6 +17,7 @@ import { countLines } from "./wordWrap";
 import { deriveCardLayoutDescriptor, deriveContentCardSlots, getRuntimeCardKind, parsePreviewManifest } from "./cardLayout";
 import { CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX } from "./cardTypography";
 import { PROVISIONAL_MEDIA_ASPECT, clampCardAspect } from "./cardAspect";
+import type { FeedShow } from "./feedDisplay";
 
 export interface FeedPlaybackSurfaceEnvelope {
   topOffsetPx: number;
@@ -189,6 +190,16 @@ export function imageCardNeedsGeometryRefresh(block: LightBlock): boolean {
 }
 
 
+/// A `Media` card's surface fills the card: the media's shape, never shorter
+/// than a picture card, the provisional envelope while its preview is not
+/// made yet (SPEC_FEED_DISPLAY.md, Д13, Д15).
+function mediaOnlySurfaceHeight(columnWidth: number, aspectRatio: number | null): number {
+  return Math.max(
+    computeImageMinimumHeight(columnWidth),
+    Math.round(innerWidth(columnWidth) / Math.max(aspectRatio ?? PROVISIONAL_MEDIA_ASPECT, 0.01)),
+  );
+}
+
 function computeImageHeight(block: LightBlock, columnWidth: number): number {
   const iw = innerWidth(columnWidth);
   const aspectRatio = explicitImageAspectRatio(block);
@@ -210,8 +221,9 @@ function computeArticleHeight(
   block: LightBlock,
   columnWidth: number,
   wordWidths: WordWidths | null,
+  show: FeedShow = "mixed",
 ): number {
-  const descriptor = deriveCardLayoutDescriptor(block);
+  const descriptor = deriveCardLayoutDescriptor(block, show);
   const slots = deriveContentCardSlots(descriptor);
   // Width inside the card border. Article padding is applied inside this.
   const iw = innerWidth(columnWidth);
@@ -307,8 +319,9 @@ function computeSocialHeight(
   block: LightBlock,
   columnWidth: number,
   wordWidths: WordWidths | null,
+  show: FeedShow = "mixed",
 ): number {
-  const descriptor = deriveCardLayoutDescriptor(block);
+  const descriptor = deriveCardLayoutDescriptor(block, show);
   const slots = deriveContentCardSlots(descriptor);
   const iw = innerWidth(columnWidth);
   const contentWidth = Math.max(1, iw - SOCIAL_PADDING_X * 2);
@@ -363,61 +376,49 @@ function computeSocialHeight(
 export function computeFeedPlaybackSurfaceEnvelope(
   block: LightBlock,
   columnWidth: number,
+  show: FeedShow = "mixed",
 ): FeedPlaybackSurfaceEnvelope | null {
-  const descriptor = deriveCardLayoutDescriptor(block);
+  const descriptor = deriveCardLayoutDescriptor(block, show);
   const iw = innerWidth(columnWidth);
-  const cardKind = getRuntimeCardKind(block);
+  const primaryMedia = descriptor.mediaItems[0];
+  const singleVideo = descriptor.mediaItems.length === 1 && primaryMedia?.isVideo === true;
 
-  switch (cardKind) {
-    case "media":
-      if (descriptor.variant !== "video") {
-        return null;
-      }
+  switch (descriptor.variant) {
+    case "video":
       return {
         topOffsetPx: CARD_BORDER_TOP,
         heightPx: videoSurfaceHeight(iw, descriptor.primaryAspectRatio),
       };
 
-    case "article": {
-      const primaryMedia = descriptor.mediaItems[0];
-      const contentWidth = Math.max(1, iw - ARTICLE_PADDING_X * 2);
+    case "media-only":
+      return singleVideo
+        ? {
+            topOffsetPx: CARD_BORDER_TOP,
+            heightPx: mediaOnlySurfaceHeight(columnWidth, descriptor.primaryAspectRatio),
+          }
+        : null;
 
-      if (
-        descriptor.variant === "article-media" &&
-        descriptor.mediaItems.length === 1 &&
-        primaryMedia?.isVideo
-      ) {
-        return {
-          topOffsetPx: CARD_BORDER_TOP + ARTICLE_PADDING_TOP,
-          heightPx: Math.round(
-            contentWidth /
-              Math.max(descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT, 0.01),
-          ),
-        };
-      }
+    case "article-media":
+      return singleVideo
+        ? {
+            topOffsetPx: CARD_BORDER_TOP + ARTICLE_PADDING_TOP,
+            heightPx: Math.round(
+              Math.max(1, iw - ARTICLE_PADDING_X * 2) /
+                Math.max(descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT, 0.01),
+            ),
+          }
+        : null;
 
-      if (
-        descriptor.variant === "social-single-media" &&
-        descriptor.mediaItems.length === 1 &&
-        primaryMedia?.isVideo
-      ) {
-        return {
-          topOffsetPx: CARD_BORDER_TOP + SOCIAL_PADDING_TOP,
-          heightPx: Math.round(
-            contentWidth /
-              Math.max(descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT, 0.01),
-          ),
-        };
-      }
-
-      return null;
-    }
-
-    case "link":
-      return null;
-
-    case "channel":
-      return null;
+    case "social-single-media":
+      return singleVideo
+        ? {
+            topOffsetPx: CARD_BORDER_TOP + SOCIAL_PADDING_TOP,
+            heightPx: Math.round(
+              Math.max(1, iw - ARTICLE_PADDING_X * 2) /
+                Math.max(descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT, 0.01),
+            ),
+          }
+        : null;
 
     default:
       return null;
@@ -445,13 +446,22 @@ export function computeCardHeight(
   block: LightBlock,
   columnWidth: number,
   wordWidths: WordWidths | null,
+  show: FeedShow = "mixed",
 ): number {
-  const descriptor = deriveCardLayoutDescriptor(block);
+  const descriptor = deriveCardLayoutDescriptor(block, show);
   const cardKind = getRuntimeCardKind(block);
   const rawHeight = (() => {
+    // The presentation decides the card's shape before its kind does
+    // (SPEC_FEED_DISPLAY.md, Д15).
+    if (descriptor.variant === "media-only") {
+      return mediaOnlySurfaceHeight(columnWidth, descriptor.primaryAspectRatio) + CARD_BORDER_HEIGHT;
+    }
     switch (cardKind) {
       case "media":
         switch (descriptor.variant) {
+          case "article-media":
+            // `Cards`: a picture or video laid out as a post card.
+            return computeArticleHeight(block, columnWidth, wordWidths, show);
           case "image":
             return computeImageHeight(block, columnWidth);
           case "video":
@@ -472,9 +482,9 @@ export function computeCardHeight(
         }
       case "article":
         if (descriptor.variant.startsWith("social")) {
-          return computeSocialHeight(block, columnWidth, wordWidths);
+          return computeSocialHeight(block, columnWidth, wordWidths, show);
         }
-        return computeArticleHeight(block, columnWidth, wordWidths);
+        return computeArticleHeight(block, columnWidth, wordWidths, show);
 
       case "link":
         return descriptor.primaryAspectRatio !== null

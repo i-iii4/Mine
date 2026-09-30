@@ -1,3 +1,5 @@
+import { deriveCardLayoutDescriptor } from "@/lib/cardLayout";
+import type { FeedShow } from "@/lib/feedDisplay";
 import type { LightBlock } from "@/types";
 import type { MasonryPosition } from "@/lib/masonryLayout";
 
@@ -65,10 +67,22 @@ function distanceToViewport(
 export function blockHasExactDeterministicHeight(
   block: LightBlock,
   wordWidthsMap: ReadonlyMap<number, unknown>,
+  show: FeedShow = "mixed",
 ): boolean {
-  return block.card_kind === "media"
-    || block.card_kind === "link"
-    || wordWidthsMap.has(block.id);
+  if (wordWidthsMap.has(block.id)) return true;
+  // Text lines exist only where the presentation draws text: a picture in
+  // `Cards` carries its name, a post in `Media` carries none
+  // (SPEC_FEED_DISPLAY.md, Д15).
+  switch (deriveCardLayoutDescriptor(block, show).variant) {
+    case "image":
+    case "video":
+    case "file":
+    case "link":
+    case "media-only":
+      return true;
+    default:
+      return false;
+  }
 }
 
 /**
@@ -82,9 +96,10 @@ export function blockHasExactDeterministicHeight(
 export function generationHasExactDeterministicHeights(
   blocks: readonly LightBlock[],
   wordWidthsMap: ReadonlyMap<number, unknown>,
+  show: FeedShow = "mixed",
 ): boolean {
   for (const block of blocks) {
-    if (!blockHasExactDeterministicHeight(block, wordWidthsMap)) {
+    if (!blockHasExactDeterministicHeight(block, wordWidthsMap, show)) {
       return false;
     }
   }

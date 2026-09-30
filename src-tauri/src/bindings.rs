@@ -75,6 +75,7 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<TagCount>()
         .register::<ThumbFormat>()
         .register::<GridSnapshot>()
+        .register::<crate::storage::block_queries::FeedOrder>()
         .register::<GridRowsSnapshot>()
         .register::<ProjectionRevision>()
         .register::<SearchPageToken>()

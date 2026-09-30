@@ -3,7 +3,8 @@ import {
   normalizeFeedPreviewManifest,
   type NormalizedFeedPreviewTile,
 } from "@/lib/feedPreview";
-import { getDisplayTitle } from "@/lib/displayTitle";
+import { getDisplayTitle, getNavigationLabel } from "@/lib/displayTitle";
+import type { FeedShow } from "@/lib/feedDisplay";
 import { clampCardAspect } from "@/lib/cardAspect";
 import { parseYoutubeSource } from "@/lib/youtubeSource";
 
@@ -16,7 +17,10 @@ export type CardLayoutVariant =
   | "article-media"
   | "social-text"
   | "social-single-media"
-  | "social-media-grid";
+  | "social-media-grid"
+  /// `Media` presentation: the card's media alone, without frame text
+  /// (SPEC_FEED_DISPLAY.md, Д13).
+  | "media-only";
 
 export interface CardLayoutMediaItem {
   sourcePath: string;
@@ -395,7 +399,53 @@ function deriveLinkCardLayoutDescriptor(
   };
 }
 
-export function deriveCardLayoutDescriptor(block: CardLayoutBlock): CardLayoutDescriptor {
+/// The card's layout in the feed's presentation (SPEC_FEED_DISPLAY.md, Д10 to
+/// Д14). `mixed` is the feed as it has always been; the other two are derived
+/// from it, so each card keeps one geometry per presentation.
+export function deriveCardLayoutDescriptor(
+  block: CardLayoutBlock,
+  show: FeedShow = "mixed",
+): CardLayoutDescriptor {
+  const mixed = deriveMixedCardLayoutDescriptor(block);
+  if (show === "cards") return asPostCard(block, mixed);
+  if (show === "media") return asMediaOnly(mixed);
+  return mixed;
+}
+
+/// `Cards`: a picture or video card becomes a post card, its media inset in the
+/// frame and its name under it: the title, or the file name without one
+/// (Д12). Every other card is framed already.
+function asPostCard(block: CardLayoutBlock, mixed: CardLayoutDescriptor): CardLayoutDescriptor {
+  if (mixed.variant !== "image" && mixed.variant !== "video") return mixed;
+  return {
+    ...mixed,
+    variant: "article-media",
+    titleText: getNavigationLabel(block),
+    previewText: "",
+  };
+}
+
+const MEDIA_BEARING_VARIANTS: ReadonlySet<CardLayoutVariant> = new Set([
+  "article-media",
+  "social-single-media",
+  "social-media-grid",
+]);
+
+/// `Media`: a card with media shows only its media; several media stay the
+/// usual gallery. A link's page picture is media like any other (Д13, Д14).
+function asMediaOnly(mixed: CardLayoutDescriptor): CardLayoutDescriptor {
+  const linkPicture = mixed.variant === "link" && mixed.mediaItems.length > 0;
+  if (!MEDIA_BEARING_VARIANTS.has(mixed.variant) && !linkPicture) return mixed;
+  return {
+    ...mixed,
+    variant: "media-only",
+    titleText: "",
+    previewText: "",
+    authorText: "",
+  };
+}
+
+function deriveMixedCardLayoutDescriptor(block: CardLayoutBlock): CardLayoutDescriptor {
   const titleText = getDisplayTitle(block) ?? "";
   const authorText = block.author ?? "";
   const previewManifest = parsePreviewManifest(block);

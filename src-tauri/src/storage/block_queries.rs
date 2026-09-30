@@ -17,6 +17,29 @@ use crate::storage::index::{
 #[cfg(test)]
 use crate::storage::search_engine;
 
+/// Order of the feed (SPEC_FEED_DISPLAY.md, Д6): by save date, newest or
+/// oldest first; equal dates by card name the same way in both directions, so
+/// pages never overlap or skip.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum FeedOrder {
+    #[default]
+    Newest,
+    Oldest,
+}
+
+impl FeedOrder {
+    fn order_by(self, column_prefix: &str) -> String {
+        let direction = match self {
+            FeedOrder::Newest => "DESC",
+            FeedOrder::Oldest => "ASC",
+        };
+        format!(
+            "{column_prefix}saved_at {direction}, {column_prefix}slug COLLATE NOCASE ASC, {column_prefix}slug ASC"
+        )
+    }
+}
+
 /// List all blocks without description/source (lightweight for grid views).
 /// Body is truncated to a short preview to reduce IPC payload for large vaults.
 pub fn list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>> {
@@ -57,7 +80,18 @@ pub fn list_grid_blocks(
     offset: usize,
     limit: usize,
 ) -> Result<(Vec<LightBlock>, bool)> {
-    list_grid_blocks_filtered(conn, tag, offset, limit, None)
+    list_grid_blocks_filtered(conn, tag, offset, limit, None, FeedOrder::Newest)
+}
+
+/// The feed in the person's chosen order.
+pub fn list_grid_blocks_in_order(
+    conn: &Connection,
+    tag: Option<&str>,
+    offset: usize,
+    limit: usize,
+    order: FeedOrder,
+) -> Result<(Vec<LightBlock>, bool)> {
+    list_grid_blocks_filtered(conn, tag, offset, limit, None, order)
 }
 
 /// Fetch only requested rows using exactly the feed's preview visibility rules.
@@ -65,7 +99,7 @@ pub fn grid_rows_by_slug(conn: &Connection, slugs: &[String]) -> Result<Vec<Ligh
     if slugs.is_empty() {
         return Ok(Vec::new());
     }
-    Ok(list_grid_blocks_filtered(conn, None, 0, slugs.len(), Some(slugs))?.0)
+    Ok(list_grid_blocks_filtered(conn, None, 0, slugs.len(), Some(slugs), FeedOrder::Newest)?.0)
 }
 
 fn list_grid_blocks_filtered(
@@ -74,11 +108,14 @@ fn list_grid_blocks_filtered(
     offset: usize,
     limit: usize,
     slugs: Option<&[String]>,
+    order: FeedOrder,
 ) -> Result<(Vec<LightBlock>, bool)> {
     let fetch_limit = limit.saturating_add(1);
+    let tagged_order = order.order_by("b.");
+    let plain_order = order.order_by("");
     let sql = match tag {
         Some(_) => {
-            "SELECT b.id, b.slug, b.block_type, b.card_kind, b.title, b.content_heading, b.display_title, COALESCE(b.fallback_label, b.slug), b.url, b.media_file,
+            format!("SELECT b.id, b.slug, b.block_type, b.card_kind, b.title, b.content_heading, b.display_title, COALESCE(b.fallback_label, b.slug), b.url, b.media_file,
                     b.thumbnail, b.saved_at, b.width, b.height, b.author,
                     CASE WHEN b.card_kind = 'article' THEN SUBSTR(b.body, 1, ?1) ELSE '' END,
                     b.preview_text, b.first_image, b.media_urls, b.media_dimensions,
@@ -92,8 +129,8 @@ fn list_grid_blocks_filtered(
              FROM blocks b
              INNER JOIN block_tags bt ON bt.block_id = b.id
              WHERE b.card_kind != 'channel' AND bt.tag = ?2
-             ORDER BY b.saved_at DESC, b.slug COLLATE NOCASE ASC, b.slug ASC
-             LIMIT ?3 OFFSET ?4".to_string()
+             ORDER BY {tagged_order}
+             LIMIT ?3 OFFSET ?4")
         }
         None => {
             let filter = if slugs.is_some() { "AND slug IN (SELECT value FROM json_each(?4))" } else { "" };
@@ -111,7 +148,7 @@ fn list_grid_blocks_filtered(
              FROM blocks
              WHERE card_kind != 'channel'
                {filter}
-             ORDER BY saved_at DESC, slug COLLATE NOCASE ASC, slug ASC
+             ORDER BY {plain_order}
              LIMIT ?2 OFFSET ?3")
         }
     };

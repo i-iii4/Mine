@@ -510,3 +510,73 @@ describe("computeCardHeight — determinism", () => {
     expect(h2).toBe(h3);
   });
 });
+
+describe("card presentation heights (SPEC_FEED_DISPLAY.md, Д15)", () => {
+  const titleWidths: WordWidths = {
+    title: [60],
+    preview: [],
+    titleSpace: 4,
+    previewSpace: 4,
+    titleNoSpaceBefore: [false],
+    previewNoSpaceBefore: [],
+  };
+  const picture = () => makeBlock({
+    block_type: "image",
+    media_file: "photo.jpg",
+    fallback_label: "Sunset",
+    preview_manifest: artifactManifest(640, 480),
+  });
+
+  it("Cards lays a picture out exactly as the post card it looks like", () => {
+    const post = makeBlock({
+      block_type: "article",
+      title: "Sunset",
+      body: "![](photo.jpg)",
+      media_urls: "[\"photo.jpg\"]",
+      preview_manifest: artifactManifest(640, 480),
+    });
+    const asCard = computeCardHeight(picture(), 320, titleWidths, "cards");
+    expect(asCard).toBe(computeCardHeight(post, 320, titleWidths, "mixed"));
+    // The frame, the padding and the name make it taller than the bare picture.
+    expect(asCard).toBeGreaterThan(computeCardHeight(picture(), 320, null, "mixed"));
+  });
+
+  it("Media gives a post exactly the height of its picture alone", () => {
+    const post = makeBlock({
+      block_type: "article",
+      title: "A post with words",
+      body: "Some words\n\n![](photo.jpg)",
+      media_urls: "[\"photo.jpg\"]",
+      author: "@someone",
+      preview_manifest: artifactManifest(640, 480),
+    });
+    expect(computeCardHeight(post, 320, null, "media")).toBe(
+      computeCardHeight(picture(), 320, null, "mixed"),
+    );
+  });
+
+  it("Media plays a post's single video over the whole card", () => {
+    const post = makeBlock({
+      block_type: "article",
+      title: "Clip",
+      body: "words\n\n![](clip.mp4)",
+      media_urls: "[\"clip.mp4\"]",
+      preview_manifest: JSON.stringify({
+        kind: "video_poster",
+        primary_preview_path: "test.jpg",
+        width: 1080,
+        height: 1080,
+        preview_width: 640,
+        preview_height: 640,
+        tiles: [{
+          source_path: "clip.mp4", preview_path: "test.preview-1.jpg",
+          width: 1080, height: 1080, preview_width: 640, preview_height: 640,
+          is_video: true, is_video_poster: true,
+        }],
+        overflow_count: 0,
+      }),
+    });
+    expect(computeFeedPlaybackSurfaceEnvelope(post, 320, "media")).toEqual({ topOffsetPx: 1, heightPx: 318 });
+    expect(computeCardHeight(post, 320, null, "media")).toBe(318 + CARD_BORDER);
+  });
+});

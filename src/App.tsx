@@ -76,6 +76,7 @@ import {
   getStoredHoverCollectionPills,
 } from "@/lib/hoverCollectionPills";
 import { DENSITY_STORAGE_KEY, applyDensity, getStoredDensity } from "@/lib/density";
+import { getFeedDisplay, useFeedDisplay } from "@/lib/feedDisplay";
 import {
   CONTENT_FONT_STORAGE_KEY,
   INTERFACE_FONT_STORAGE_KEY,
@@ -181,7 +182,8 @@ function fetchGridBlocks(
   offset: number,
   limit: number,
 ) {
-  return listGridBlocks(tag, offset, limit);
+  // The feed's order, as chosen in the Display panel (SPEC_FEED_DISPLAY.md, Д8).
+  return listGridBlocks(tag, offset, limit, getFeedDisplay().sort);
 }
 
 import type {
@@ -1252,6 +1254,20 @@ export function AppWithVault({
 
   const loadGridSnapshotRef = useRef(loadGridSnapshot);
   loadGridSnapshotRef.current = loadGridSnapshot;
+
+  // A new order re-reads the feed from its first card. The load bumps the
+  // request id, so a page of the old order still in flight is dropped, and
+  // cached routes of the old order are discarded (SPEC_FEED_DISPLAY.md, Д8).
+  const { sort: feedSort } = useFeedDisplay();
+  const appliedFeedSortRef = useRef(feedSort);
+  useEffect(() => {
+    if (appliedFeedSortRef.current === feedSort) return;
+    appliedFeedSortRef.current = feedSort;
+    if (!vaultReady) return;
+    invalidateRouteSnapshots();
+    setScrollToTopSignal((n) => n + 1);
+    void loadGridSnapshotRef.current({ invalidateCachedRoutes: true });
+  }, [feedSort, invalidateRouteSnapshots, vaultReady]);
   const loadTaxonomySnapshotRef = useRef(loadTaxonomySnapshotState);
   loadTaxonomySnapshotRef.current = loadTaxonomySnapshotState;
   const loadVaultStatsRef = useRef(loadVaultStats);

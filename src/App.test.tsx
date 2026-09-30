@@ -1,4 +1,5 @@
 import { setCommandOverrides } from "@/lib/commandRegistry";
+import { reloadFeedDisplay, setFeedSort } from "@/lib/feedDisplay";
 import { reportCardsRendered } from "@/lib/startup";
 import type { ReactNode } from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -24,9 +25,12 @@ import { SEARCH_OVERLAY_RECENT_LIMIT, SEARCH_OVERLAY_RESULT_LIMIT } from "@/comp
 // also carry the overlay's result limit, and a recent-mode call its recent
 // limit, otherwise it falls through to the strict grid assertions.
 function isSearchOverlayQuery(limit: number, query?: string): boolean {
+  // The feed passes its order in the same position the search mock uses for
+  // its text; an order is not a search.
+  const searchText = query === "newest" || query === "oldest" ? undefined : query;
   return (
-    (query !== undefined && limit === SEARCH_OVERLAY_RESULT_LIMIT) ||
-    (query === undefined && limit === SEARCH_OVERLAY_RECENT_LIMIT)
+    (searchText !== undefined && limit === SEARCH_OVERLAY_RESULT_LIMIT) ||
+    (searchText === undefined && limit === SEARCH_OVERLAY_RECENT_LIMIT)
   );
 }
 
@@ -490,7 +494,8 @@ describe("AppWithVault", () => {
       }
       expect(offset).toBe(0);
       expect(limit).toBe(200);
-      expect(query).toBeUndefined();
+      // The feed reads in its default order; it never sends a search text.
+      expect(query).toBe("newest");
       return snapshots.get(tag ?? "__all__") ?? snapshots.get("__all__")!;
     });
     commandMocks.listTaxonomySnapshot.mockResolvedValue({
@@ -657,7 +662,7 @@ describe("AppWithVault", () => {
       expect(screen.getByTestId("grid")).toHaveTextContent("__all__:1");
     });
     await waitFor(() => {
-      expect(commandMocks.listGridBlocks).toHaveBeenCalledWith(undefined, 1, 200);
+      expect(commandMocks.listGridBlocks).toHaveBeenCalledWith(undefined, 1, 200, "newest");
     });
 
     warmPage.resolve(gridSnapshot([second], 2));
@@ -690,7 +695,7 @@ describe("AppWithVault", () => {
     );
 
     await waitFor(() => {
-      expect(commandMocks.listGridBlocks).toHaveBeenCalledWith(undefined, 1, 200);
+      expect(commandMocks.listGridBlocks).toHaveBeenCalledWith(undefined, 1, 200, "newest");
     });
 
     newerPage.resolve(gridSnapshot([second], 2, false, 2));
@@ -718,7 +723,7 @@ describe("AppWithVault", () => {
       expect(commandMocks.startVaultSync).toHaveBeenCalledTimes(1);
     });
     expect(commandMocks.listTaxonomySnapshot).toHaveBeenCalledTimes(1);
-    expect(commandMocks.listGridBlocks).toHaveBeenNthCalledWith(1, undefined, 0, 200);
+    expect(commandMocks.listGridBlocks).toHaveBeenNthCalledWith(1, undefined, 0, 200, "newest");
 
     fireEvent.click(screen.getByRole("link", { name: "alpha" }));
 
@@ -732,7 +737,7 @@ describe("AppWithVault", () => {
     });
     expect(commandMocks.startVaultSync).toHaveBeenCalledTimes(1);
     expect(commandMocks.listTaxonomySnapshot).toHaveBeenCalledTimes(1);
-    expect(commandMocks.listGridBlocks).toHaveBeenNthCalledWith(2, "alpha", 0, 200);
+    expect(commandMocks.listGridBlocks).toHaveBeenNthCalledWith(2, "alpha", 0, 200, "newest");
 
     fireEvent.click(screen.getByRole("link", { name: "beta" }));
 
@@ -741,7 +746,7 @@ describe("AppWithVault", () => {
     });
     expect(commandMocks.startVaultSync).toHaveBeenCalledTimes(1);
     expect(commandMocks.listTaxonomySnapshot).toHaveBeenCalledTimes(1);
-    expect(commandMocks.listGridBlocks).toHaveBeenNthCalledWith(3, "beta", 0, 200);
+    expect(commandMocks.listGridBlocks).toHaveBeenNthCalledWith(3, "beta", 0, 200, "newest");
 
     fireEvent.click(screen.getByRole("link", { name: /Everything 2/ }));
 
@@ -755,7 +760,7 @@ describe("AppWithVault", () => {
     });
     expect(commandMocks.startVaultSync).toHaveBeenCalledTimes(1);
     expect(commandMocks.listTaxonomySnapshot).toHaveBeenCalledTimes(1);
-    expect(commandMocks.listGridBlocks).toHaveBeenNthCalledWith(4, undefined, 0, 200);
+    expect(commandMocks.listGridBlocks).toHaveBeenNthCalledWith(4, undefined, 0, 200, "newest");
   });
 
   it("starts process maintenance only after the first route is committed", async () => {
@@ -875,7 +880,8 @@ describe("AppWithVault", () => {
       }
       expect(offset).toBe(0);
       expect(limit).toBe(200);
-      expect(query).toBeUndefined();
+      // The feed reads in its default order; it never sends a search text.
+      expect(query).toBe("newest");
       if ((tag ?? "__all__") === "__all__") {
         return gridSnapshot([]);
       }
@@ -953,8 +959,8 @@ describe("AppWithVault", () => {
     await waitFor(() => {
       expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1");
     });
-    expect(commandMocks.listGridBlocks).toHaveBeenNthCalledWith(1, undefined, 0, 200);
-    expect(commandMocks.listGridBlocks).toHaveBeenLastCalledWith("alpha", 0, 200);
+    expect(commandMocks.listGridBlocks).toHaveBeenNthCalledWith(1, undefined, 0, 200, "newest");
+    expect(commandMocks.listGridBlocks).toHaveBeenLastCalledWith("alpha", 0, 200, "newest");
   });
 
   it("closes Detail and switches channel with the keyboard shortcut", async () => {
@@ -978,7 +984,7 @@ describe("AppWithVault", () => {
     fireEvent.keyDown(window, { key: "ArrowDown", metaKey: true, altKey: true });
 
     await waitFor(() => {
-      expect(commandMocks.listGridBlocks).toHaveBeenLastCalledWith("alpha", 0, 200);
+      expect(commandMocks.listGridBlocks).toHaveBeenLastCalledWith("alpha", 0, 200, "newest");
     });
     await waitFor(() => {
       expect(screen.queryByTestId("detail-title")).not.toBeInTheDocument();
@@ -1808,7 +1814,8 @@ describe("AppWithVault", () => {
     };
     const gridBlocks = [block(1, "alpha-block"), block(2, "beta-block")];
     commandMocks.listGridBlocks.mockImplementation(async (tag, _offset, _limit, query) => {
-      if (query) {
+      // The feed's order is not a search text.
+      if (query && query !== "newest" && query !== "oldest") {
         expect(tag).toBeUndefined();
         return gridSnapshot([matched]);
       }
@@ -2468,6 +2475,36 @@ describe("AppWithVault", () => {
       expect(screen.getByTestId("detail-title")).toHaveTextContent("Renamed Alpha");
       expect(screen.getByTestId("grid-title-Renamed Alpha")).toHaveTextContent("Renamed Alpha");
     });
+  });
+
+  it("re-reads the feed from its first card in the chosen order (SPEC_FEED_DISPLAY.md, Д8)", async () => {
+    commandMocks.listGridBlocks.mockImplementation(async (_tag, _offset, limit, order) => {
+      if (isSearchOverlayQuery(limit, order)) return gridSnapshot([]);
+      return order === "oldest"
+        ? gridSnapshot([block(1, "oldest-card"), block(2, "newest-card")])
+        : gridSnapshot([block(2, "newest-card"), block(1, "oldest-card")]);
+    });
+    try {
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+      expect(commandMocks.listGridBlocks).toHaveBeenLastCalledWith(undefined, 0, 200, "newest");
+
+      act(() => setFeedSort("oldest"));
+
+      await waitFor(() => {
+        expect(commandMocks.listGridBlocks).toHaveBeenLastCalledWith(undefined, 0, 200, "oldest");
+      });
+      await waitFor(() => {
+        expect(screen.getByTestId("grid-previews").textContent?.startsWith("oldest-card")).toBe(true);
+      });
+    } finally {
+      window.localStorage.clear();
+      reloadFeedDisplay();
+    }
   });
 
   it("marks the first saved card once, and only in a space that never had one", async () => {

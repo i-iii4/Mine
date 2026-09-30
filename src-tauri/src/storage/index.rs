@@ -3121,6 +3121,44 @@ mod tests {
     }
 
     #[test]
+    fn the_feed_reads_newest_or_oldest_first_and_pages_without_gaps() {
+        // SPEC_FEED_DISPLAY.md, Д6 and Д8: equal dates by name in both orders,
+        // so a page boundary never repeats or skips a card.
+        use crate::storage::block_queries::{list_grid_blocks_in_order, FeedOrder};
+        let conn = test_conn();
+        for (slug, saved_at) in [
+            ("first", "2026-01-01T00:00:00Z"),
+            ("second", "2026-02-01T00:00:00Z"),
+            ("same-b", "2026-03-01T00:00:00Z"),
+            ("same-a", "2026-03-01T00:00:00Z"),
+        ] {
+            upsert_block(&conn, &make_block_full(slug, "article", None, saved_at, &[], "text"), None)
+                .unwrap();
+        }
+        let slugs = |order: FeedOrder, offset: usize, limit: usize| {
+            let (blocks, has_more) =
+                list_grid_blocks_in_order(&conn, None, offset, limit, order).unwrap();
+            (blocks.into_iter().map(|block| block.slug).collect::<Vec<_>>(), has_more)
+        };
+
+        assert_eq!(
+            slugs(FeedOrder::Newest, 0, 10).0,
+            ["same-a", "same-b", "second", "first"]
+        );
+        assert_eq!(
+            slugs(FeedOrder::Oldest, 0, 10).0,
+            ["first", "second", "same-a", "same-b"]
+        );
+        assert_eq!(slugs(FeedOrder::Oldest, 0, 2), (vec!["first".to_string(), "second".to_string()], true));
+        assert_eq!(slugs(FeedOrder::Oldest, 2, 2), (vec!["same-a".to_string(), "same-b".to_string()], false));
+        // The default stays newest first for every other reader.
+        assert_eq!(
+            list_grid_blocks(&conn, None, 0, 10).unwrap().0[0].slug,
+            "same-a"
+        );
+    }
+
+    #[test]
     fn list_grid_blocks_exposes_previews_only_after_ready_state() {
         let conn = test_conn();
         let mut block = make_block_full(

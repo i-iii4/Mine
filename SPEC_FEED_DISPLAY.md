@@ -4,8 +4,19 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTU
 
 ## Статус
 
-Требования записаны 30.09.2026 со слов пользователя. Реализация не начата.
-Все три решения приняты пользователем 30.09.2026.
+Требования записаны 30.09.2026 со слов пользователя, все три решения приняты
+пользователем, реализовано 30.09.2026. Приёмка в живом приложении и браузерные
+проверки ленты за пользователем.
+
+Где живёт: параметры в [feedDisplay.ts](src/lib/feedDisplay.ts), кнопка и панель
+в [FeedDisplayMenu.tsx](src/components/FeedDisplayMenu.tsx) на всплывающем блоке
+[popover.tsx](src/components/ui/popover.tsx), порядок в ядре
+(`FeedOrder`, [block_queries.rs](src-tauri/src/storage/block_queries.rs)),
+положение `Show` в описании карточки ([cardLayout.ts](src/lib/cardLayout.ts),
+вариант `media-only`), в высоте ([cardHeight.ts](src/lib/cardHeight.ts)) и в
+отрисовке ([Card.tsx](src/components/Card.tsx), общая поверхность
+`PostMediaSurface`). Замер шрифта всегда меряет текст так, как его рисует
+`Cards`, поэтому один замер обслуживает все три положения.
 
 ## Цель
 

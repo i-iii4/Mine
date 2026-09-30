@@ -694,3 +694,69 @@ describe("dedicated video card shape (30.09.2026)", () => {
     expect(videoCard(640, 200).primaryAspectRatio).toBe(2);
   });
 });
+
+describe("card presentation in the feed (SPEC_FEED_DISPLAY.md, Д10 to Д14)", () => {
+  const picture = () => makeBlock({
+    block_type: "image",
+    media_file: "Media/Sunset.jpg",
+    fallback_label: "Sunset",
+    preview_manifest: readyImageManifest({ previewWidth: 640, previewHeight: 480 }),
+  });
+  const postWithPicture = () => makeBlock({
+    block_type: "article",
+    title: "A post",
+    body: "Some words\n\n![](photo.jpg)",
+    media_urls: "[\"photo.jpg\"]",
+    author: "@someone",
+    preview_manifest: readyImageManifest({ previewWidth: 640, previewHeight: 480 }),
+  });
+  const socialGallery = () => makeBlock({
+    block_type: "article",
+    url: "https://instagram.com/p/1",
+    body: "hello\n![](a.jpg)\n![](b.jpg)\n![](c.jpg)",
+    media_urls: "[\"a.jpg\",\"b.jpg\",\"c.jpg\"]",
+    preview_manifest: JSON.stringify({
+      kind: "composite", primary_preview_path: "test.jpg", width: 1, height: 1,
+      tiles: ["a", "b", "c"].map((name, index) => ({
+        source_path: `${name}.jpg`, preview_path: `test.preview-${index + 1}.jpg`,
+        width: 1, height: 1, is_video: false, is_video_poster: false,
+      })),
+      overflow_count: 0,
+    }),
+  });
+
+  it("Mixed keeps the feed as it was", () => {
+    expect(deriveCardLayoutDescriptor(picture(), "mixed")).toEqual(deriveCardLayoutDescriptor(picture()));
+    expect(deriveCardLayoutDescriptor(postWithPicture(), "mixed").variant).toBe("article-media");
+  });
+
+  it("Cards shows a picture as a post card named by its file", () => {
+    const descriptor = deriveCardLayoutDescriptor(picture(), "cards");
+    expect(descriptor.variant).toBe("article-media");
+    expect(descriptor.titleText).toBe("Sunset");
+    expect(descriptor.primaryAspectRatio).toBeCloseTo(640 / 480);
+    expect(descriptor.mediaItems).toHaveLength(1);
+    // A post is framed already and stays as it is.
+    expect(deriveCardLayoutDescriptor(postWithPicture(), "cards")).toEqual(deriveCardLayoutDescriptor(postWithPicture()));
+  });
+
+  it("Media shows a post's media and nothing else", () => {
+    const descriptor = deriveCardLayoutDescriptor(postWithPicture(), "media");
+    expect(descriptor.variant).toBe("media-only");
+    expect([descriptor.titleText, descriptor.previewText, descriptor.authorText]).toEqual(["", "", ""]);
+    expect(descriptor.primaryAspectRatio).toBeCloseTo(640 / 480);
+  });
+
+  it("Media keeps several media as the gallery", () => {
+    const descriptor = deriveCardLayoutDescriptor(socialGallery(), "media");
+    expect(descriptor.variant).toBe("media-only");
+    expect(descriptor.totalMediaCount).toBe(3);
+  });
+
+  it("Media leaves a card without media a card", () => {
+    const text = makeBlock({ block_type: "article", title: "Only words", body: "Just text" });
+    expect(deriveCardLayoutDescriptor(text, "media").variant).toBe("article-text");
+    const file = makeBlock({ block_type: "file", media_file: "doc.pdf" });
+    expect(deriveCardLayoutDescriptor(file, "media").variant).toBe("file");
+  });
+});

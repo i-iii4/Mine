@@ -61,6 +61,7 @@ export function buildLayoutGenerationKey({
   columnWidth,
   columnCount,
   layoutGap,
+  show,
 }: {
   blocks: readonly LightBlock[];
   routeKey?: string;
@@ -77,6 +78,8 @@ export function buildLayoutGenerationKey({
   columnCount: number;
   /** Card gap the layout was computed with (design variants change it). */
   layoutGap?: number;
+  /** Card presentation (SPEC_FEED_DISPLAY.md): each has its own heights. */
+  show?: string;
 }): LayoutGenerationKey {
   const blockSignatures = blocks.map((block, index) => `${index}:${buildBlockLayoutSignature(block)}`);
   const orderedHash = hashString(blockSignatures.join("||"));
@@ -94,6 +97,7 @@ export function buildLayoutGenerationKey({
     `cw=${Math.round(columnWidth)}`,
     `cc=${columnCount}`,
     `gap=${layoutGap ?? 32}`,
+    `show=${show ?? "mixed"}`,
     `n=${blocks.length}`,
     `sig=${orderedHash}`,
     `edge=${hashString(edgeSample)}`,

@@ -132,6 +132,13 @@ export type ExtractInlineMediaParams = { source_slug: string; media_ref: string;
 
 export type ExtractTextSelectionParams = { source_slug: string; target_tag: string; selected_text: string; first_block_start: number; first_block_end: number; source_body_hash: string }
 
+/**
+ * Order of the feed (SPEC_FEED_DISPLAY.md, Д6): by save date, newest or
+ * oldest first; equal dates by card name the same way in both directions, so
+ * pages never overlap or skip.
+ */
+export type FeedOrder = "newest" | "oldest"
+
 export type FeedPlaybackContainer = "mp4" | "webm"
 
 export type FeedPlaybackDescriptor = { kind: FeedPlaybackKind; source_path: string; poster_preview_path: string; width: number | null; height: number | null; container: FeedPlaybackContainer; profile: FeedPlaybackProfile }

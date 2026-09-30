@@ -946,6 +946,37 @@
       "requirement": "SPEC_CLIPPER.md#**К4. Рукопожатие версий.**",
       "tests": ["src-tauri/src/clipper_registration.rs", "src-tauri/src/commands/clipper_setup.rs"],
       "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src-tauri/src/storage/block_queries.rs",
+        "src-tauri/src/storage/projection.rs",
+        "src-tauri/src/storage/cold_space_audit.rs"
+      ],
+      "requirement": "SPEC_FEED_DISPLAY.md#**Д8.**",
+      "tests": ["src-tauri/src/storage/index.rs", "src-tauri/src/storage/projection.rs"],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src/lib/feedDisplay.ts",
+        "src/lib/feedDisplay.test.ts",
+        "src/components/FeedDisplayMenu.tsx",
+        "src/components/FeedDisplayMenu.test.tsx",
+        "src/components/ui/popover.tsx",
+        "src/components/MainSecondaryChrome.tsx",
+        "src/components/MainSecondaryChrome.test.tsx",
+        "src/components/Grid.tsx",
+        "src/lib/fontMetrics.ts",
+        "src/lib/gridLayoutReadiness.ts",
+        "src/lib/gridLayoutReadiness.test.ts",
+        "src/lib/layoutGeneration.ts",
+        "src/settings/AppearanceSection.tsx",
+        "src/settings/AppearanceSection.test.tsx"
+      ],
+      "requirement": "SPEC_FEED_DISPLAY.md#**Д1.**",
+      "tests": ["src/lib/feedDisplay.test.ts", "src/components/FeedDisplayMenu.test.tsx", "src/components/MainSecondaryChrome.test.tsx", "src/lib/cardLayout.test.ts", "src/lib/cardHeight.test.ts", "src/components/Card.test.tsx", "src/lib/gridLayoutReadiness.test.ts", "src/App.test.tsx"],
+      "command": "test:frontend"
     }
   ],
   "release": null

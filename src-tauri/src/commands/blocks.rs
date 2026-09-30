@@ -426,6 +426,7 @@ pub async fn list_grid_blocks(
     current_tag: Option<String>,
     offset: Option<usize>,
     limit: Option<usize>,
+    order: Option<crate::storage::block_queries::FeedOrder>,
 ) -> Result<GridSnapshot, CommandError> {
     append_startup_trace(
         &app,
@@ -451,6 +452,7 @@ pub async fn list_grid_blocks(
                     current_tag_for_task.as_deref(),
                     page_offset,
                     page_limit,
+                    order.unwrap_or_default(),
                 )?)
             })
         })

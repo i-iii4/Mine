@@ -17,6 +17,7 @@ import {
 import type { LightBlock, TagCount } from "@/types";
 import { TopFadeScrim } from "./TopFadeScrim";
 import { useDensity } from "@/lib/density";
+import { FeedShowContext, useFeedDisplay, type FeedShow } from "@/lib/feedDisplay";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { Card, CardSkeleton } from "./Card";
 import { EmptySpaceOnboarding } from "./EmptySpaceOnboarding";
@@ -62,6 +63,7 @@ import {
   collectViewportFirstMeasurementBatch,
   computeCommittedEndIndex,
   createGridLayoutReadinessDiagnostics,
+  blockHasExactDeterministicHeight,
   generationHasExactDeterministicHeights,
 } from "@/lib/gridLayoutReadiness";
 import { createGridViewportPaintDiagnostics } from "@/lib/gridViewportDiagnostics";
@@ -118,6 +120,7 @@ declare global {
 // ─── Layout constants ───────────────────────────────────────────────────────
 
 const COLUMN_MIN_WIDTH = 220;
+const EMPTY_WORD_WIDTHS: ReadonlyMap<number, WordWidths> = new Map();
 // Card gap and container insets both follow the app-wide spacing setting; they
 // used to be design-variant constants baked into the alt design. See
 // src/lib/density.ts.
@@ -307,11 +310,12 @@ function buildLayout(
   parentWidth: number,
   wordWidthsMap: Map<number, WordWidths>,
   gap: number,
+  show: FeedShow,
 ): MasonryLayout {
   const columnWidth = deriveColumnWidth(parentWidth, gap);
 
   const heights = blocks.map((block) => {
-    return computeCardHeight(block, columnWidth, wordWidthsMap.get(block.id) ?? null);
+    return computeCardHeight(block, columnWidth, wordWidthsMap.get(block.id) ?? null, show);
   });
 
   return computeMasonryLayout(
@@ -471,6 +475,9 @@ export function Grid({
 }: GridProps) {
   const spacing = useDensity();
   const layoutGap = spacing;
+  // Presentation of the cards (SPEC_FEED_DISPLAY.md, Д10 to Д16): one value
+  // read by the layout, the heights and every card below.
+  const { show } = useFeedDisplay();
   const gridXInset = spacing;
   const gridTopInset = spacing;
   const parentRef = useRef<HTMLDivElement>(null);
@@ -771,10 +778,11 @@ export function Grid({
       columnWidth,
       columnCount,
       // The module-level layoutCache must never serve a layout computed with
-      // a different gap (design variants change it).
+      // a different gap (design variants change it) or presentation.
       layoutGap,
+      show,
     }),
-    [blocks, columnCount, columnWidth, currentTag, layoutGap],
+    [blocks, columnCount, columnWidth, currentTag, layoutGap, show],
   );
   const heightDriftBlocksById = useMemo(() => {
     const map = new Map<number, LightBlock>();
@@ -788,17 +796,20 @@ export function Grid({
     generationKey: LayoutGenerationKey;
     parentWidth: number;
     wordWidthsMap: Map<number, WordWidths>;
+    show: FeedShow;
   }>({
     blocksById: heightDriftBlocksById,
     generationKey,
     parentWidth,
     wordWidthsMap,
+    show,
   });
   heightDriftContextRef.current = {
     blocksById: heightDriftBlocksById,
     generationKey,
     parentWidth,
     wordWidthsMap,
+    show,
   };
   useEffect(() => {
     return () => {
@@ -843,8 +854,8 @@ export function Grid({
   // text fallback — otherwise the oversized fallback layout gets pinned in the
   // module-level cache and survives the later arrival of exact word widths.
   const allBlocksHaveExactHeights = useMemo(
-    () => generationHasExactDeterministicHeights(blocks, wordWidthsMap),
-    [blocks, wordWidthsMap],
+    () => generationHasExactDeterministicHeights(blocks, wordWidthsMap, show),
+    [blocks, show, wordWidthsMap],
   );
 
   const allCurrentGenerationDeterministic =
@@ -880,12 +891,12 @@ export function Grid({
             const block = driftContext.blocksById.get(result.id);
             if (!block) continue;
             const wordWidths = driftContext.wordWidthsMap.get(result.id) ?? null;
-            const wordMetricsRequired = block.card_kind !== "media";
+            const wordMetricsRequired = !blockHasExactDeterministicHeight(block, EMPTY_WORD_WIDTHS, driftContext.show);
             observations.push({
               block,
               measuredHeight: result.height,
               deterministicHeight: Math.ceil(
-                computeCardHeight(block, columnWidth, wordWidths),
+                computeCardHeight(block, columnWidth, wordWidths, driftContext.show),
               ),
               wordMetricsReady: !wordMetricsRequired || wordWidths !== null,
             });
@@ -920,16 +931,16 @@ export function Grid({
     }
 
     if (!allCurrentGenerationDeterministic) {
-      return buildLayout(blocks, parentWidth, wordWidthsMap, layoutGap);
+      return buildLayout(blocks, parentWidth, wordWidthsMap, layoutGap, show);
     }
 
     const cached = layoutCache.get(generationKey);
     if (cached) return cached;
 
-    const fresh = buildLayout(blocks, parentWidth, wordWidthsMap, layoutGap);
+    const fresh = buildLayout(blocks, parentWidth, wordWidthsMap, layoutGap, show);
     layoutCache.set(generationKey, fresh);
     return fresh;
-  }, [allCurrentGenerationDeterministic, blocks, generationKey, layoutGap, parentWidth, wordWidthsMap]);
+  }, [allCurrentGenerationDeterministic, blocks, generationKey, layoutGap, parentWidth, show, wordWidthsMap]);
 
   useEffect(() => {
     onColumnCountChange?.(layout.columnCount);
@@ -1944,6 +1955,7 @@ export function Grid({
       const playbackSurface = computeFeedPlaybackSurfaceEnvelope(
         block,
         item.width,
+        show,
       );
       if (!playbackSurface) continue;
 
@@ -2196,6 +2208,7 @@ export function Grid({
   return (
     // The band is a sibling of the scrollport, not a child: inside it, it would
     // inherit the scrollport's padding and add layout work to the scrolled tree.
+    <FeedShowContext.Provider value={show}>
     <div className="relative h-full">
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -2334,6 +2347,7 @@ export function Grid({
     </ContextMenu>
       <TopFadeScrim scrolled={topFade.scrolled} surface="feed" color="var(--background)" />
     </div>
+    </FeedShowContext.Provider>
   );
 }
 

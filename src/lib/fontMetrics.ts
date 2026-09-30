@@ -245,7 +245,10 @@ function hashString(input: string): string {
 export function createFontMetricsCacheIdentity(
   block: LightBlock,
 ): FontMetricsCacheIdentity {
-  const descriptor = deriveCardLayoutDescriptor(block);
+  // Measured as `Cards` shows it: the only presentation where a picture card
+  // carries its name, and for every other card the same text as `Mixed`.
+  // One measurement serves all three (SPEC_FEED_DISPLAY.md, Д15).
+  const descriptor = deriveCardLayoutDescriptor(block, "cards");
   const title = descriptor.titleText;
   const preview = descriptor.previewText.length > FONT_METRICS_PREVIEW_MAX_CHARS
     ? descriptor.previewText.slice(0, FONT_METRICS_PREVIEW_MAX_CHARS)

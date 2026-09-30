@@ -13,7 +13,9 @@ import {
   getRuntimeCardKind,
   parsePreviewManifest,
   type CardLayoutDescriptor,
+  type CardLayoutVariant,
 } from "@/lib/cardLayout";
+import { FeedShowContext } from "@/lib/feedDisplay";
 import { PROVISIONAL_MEDIA_ASPECT } from "@/lib/cardAspect";
 import { normalizeFeedPlayback } from "@/lib/feedPlayback";
 import { CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX } from "@/lib/cardTypography";
@@ -195,6 +197,12 @@ export function MeasuredCardFrame({
   );
 }
 
+/// A post card's surface: the dark-theme card background belongs to posts,
+/// including a picture `Cards` shows as a post, and not to bare media.
+function isPostVariant(variant: CardLayoutVariant): boolean {
+  return variant.startsWith("article") || variant.startsWith("social");
+}
+
 export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumbVersion, priority, allowPlayback = true, openMoreMenuRequestSequence = 0, hoverEnabled = true, dragBlocks: dragBlocksProp, clearSelectionOnDragStart, onKeyboardMoreMenuOpenChange, onMenuOpenChange, onModifiedClick, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete }: CardProps) {
   const dragBlocks = useMemo(() => {
     const candidateBlocks = dragBlocksProp && dragBlocksProp.length > 0
@@ -218,7 +226,8 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
       clearSelectionOnDragStart,
     } satisfies BlockDragData,
   });
-  const isArticleFeedCard = getRuntimeCardKind(block) === "article";
+  const show = useContext(FeedShowContext);
+  const isArticleFeedCard = isPostVariant(deriveCardLayoutDescriptor(block, show).variant);
 
   const handleClick = (event: ReactMouseEvent<HTMLDivElement>) => {
     if (onModifiedClick?.(block, event)) {
@@ -631,8 +640,10 @@ export const CardSkeleton = memo(function CardSkeleton({
 }: {
   block: LightBlock;
 }) {
-  const descriptor = useMemo(() => deriveCardLayoutDescriptor(block), [block]);
+  const show = useContext(FeedShowContext);
+  const descriptor = useMemo(() => deriveCardLayoutDescriptor(block, show), [block, show]);
   const hasMedia =
+    descriptor.variant === "media-only" ||
     descriptor.variant === "image" ||
     descriptor.variant === "video" ||
     (descriptor.variant === "link" && descriptor.primaryAspectRatio !== null) ||
@@ -682,7 +693,8 @@ export function CardContent({
   measurementMode?: boolean;
 }) {
   const resolvedThumbsRoot = thumbsRootPath ?? fallbackThumbsRoot(vaultPath);
-  const descriptor = useMemo(() => deriveCardLayoutDescriptor(block), [block]);
+  const show = useContext(FeedShowContext);
+  const descriptor = useMemo(() => deriveCardLayoutDescriptor(block, show), [block, show]);
   const previewManifest = useMemo(
     () => parsePreviewManifest(block),
     [block],
@@ -708,6 +720,8 @@ export function CardContent({
         return <VideoCard aspectRatio={descriptor.primaryAspectRatio} contentInCloud={block.content_in_cloud} previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} thumbVersion={thumbVersion} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
       case "file":
         return <FileCard block={block} />;
+      case "media-only":
+        return <PostMediaSurface inset={false} block={block} descriptor={descriptor} previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} thumbVersion={thumbVersion} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
     }
   })();
   return (
@@ -1203,6 +1217,102 @@ const SocialCard = memo(function SocialCard({
   );
 });
 
+/// A post's media: one picture, one video, or the gallery. Inset inside a
+/// post card; the whole card in `Media`, where the post shows its media and
+/// nothing else (SPEC_FEED_DISPLAY.md, Д13).
+function PostMediaSurface({
+  inset,
+  block,
+  descriptor,
+  previewManifest,
+  vaultPath,
+  thumbsRootPath,
+  thumbVersion,
+  playback,
+  allowPlayback,
+  measurementMode,
+}: {
+  inset: boolean;
+  block: LightBlock;
+  descriptor: CardLayoutDescriptor;
+  previewManifest: ReturnType<typeof parsePreviewManifest>;
+  vaultPath: string;
+  thumbsRootPath: string;
+  thumbVersion?: number;
+  playback: ReturnType<typeof normalizeFeedPlayback>;
+  allowPlayback: boolean;
+  measurementMode: boolean;
+}) {
+  const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
+  const primaryMedia = descriptor.mediaItems[0];
+  const rendersFeedVideo = descriptor.mediaItems.length === 1 && primaryMedia?.isVideo;
+  const shouldAutoplayVideo =
+    rendersFeedVideo && !measurementMode && allowPlayback && playback !== null;
+  const posterCandidates = buildFeedVideoPosterCandidates({
+    thumbsRootPath,
+    previewManifest,
+    playback,
+    primaryMedia,
+  }).map((url) => withThumbVersion(url, thumbVersion));
+
+  return (
+    // Exact aspect-ratio from the preview artifact; the provisional envelope
+    // while it is not made yet. Multi-image previews reserve a gallery slot;
+    // single images use object-cover to avoid letterboxing in feed cards.
+    <GraphicSurface
+      insetMedia={inset}
+      className={inset ? "w-full" : "h-full w-full"}
+      style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
+      data-card-preview-geometry={descriptor.primaryAspectRatio === null ? "pending" : undefined}
+    >
+      <CloudBadge active={block.content_in_cloud} />
+      {descriptor.totalMediaCount > 1 ? (
+        <GalleryTiles
+          items={descriptor.mediaItems}
+          thumbsRootPath={thumbsRootPath}
+          thumbVersion={thumbVersion}
+          measurementMode={measurementMode}
+        />
+      ) : rendersFeedVideo ? (
+        shouldAutoplayVideo ? (
+          <FeedVideoSurface
+            playback={playback}
+            allowPlayback={allowPlayback}
+            vaultPath={vaultPath}
+            thumbsRootPath={thumbsRootPath}
+            posterCandidates={posterCandidates}
+            className="absolute inset-0 h-full w-full object-cover"
+          />
+        ) : !measurementMode ? (
+          <FeedVideoPoster
+            candidateUrls={posterCandidates}
+            alt=""
+            className="absolute inset-0 h-full w-full object-cover"
+            loading={imgLoading}
+          />
+        ) : (
+          <div className="absolute inset-0 bg-card" />
+        )
+      ) : !measurementMode && (
+        // Grid never falls through to source media. A ready manifest owns
+        // the derived tile; an inconsistent descriptor renders a neutral
+        // surface until reconciliation repairs the preview set.
+        primaryMedia ? (
+          <GalleryTileImage
+            item={primaryMedia}
+            thumbsRootPath={thumbsRootPath}
+            thumbVersion={thumbVersion}
+            loading={imgLoading}
+          />
+        ) : (
+          <div className="absolute inset-0 bg-card" data-preview-unavailable="" />
+        )
+      )}
+      {rendersFeedVideo && !shouldAutoplayVideo && <PlayBadge />}
+    </GraphicSurface>
+  );
+}
+
 const ArticleCard = memo(function ArticleCard({
   block,
   descriptor,
@@ -1224,19 +1334,10 @@ const ArticleCard = memo(function ArticleCard({
   allowPlayback: boolean;
   measurementMode?: boolean;
 }) {
-  const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
   const hasPreview = descriptor.variant === "article-media";
-  const primaryMedia = descriptor.mediaItems[0];
-  const rendersFeedVideo = hasPreview && descriptor.mediaItems.length === 1 && primaryMedia?.isVideo;
-  const shouldAutoplayVideo =
-    rendersFeedVideo && !measurementMode && allowPlayback && playback !== null;
-  const posterCandidates = buildFeedVideoPosterCandidates({
-    thumbsRootPath,
-    previewManifest,
-    playback,
-    primaryMedia,
-  }).map((url) => withThumbVersion(url, thumbVersion));
-  const displayTitle = getDisplayTitle(block);
+  // The descriptor's title: the post's own, or a picture's file name when
+  // `Cards` shows it as a post (SPEC_FEED_DISPLAY.md, Д12).
+  const displayTitle = descriptor.titleText || null;
   const titleSearchMatch = block.search_match?.field === "title" ? block.search_match : null;
   const previewSearchMatch =
     block.search_match?.field === "description" || block.search_match?.field === "body" || block.search_match?.field === "semantic"
@@ -1250,62 +1351,18 @@ const ArticleCard = memo(function ArticleCard({
   return (
     <div className="p-4">
       {hasPreview && (
-        // Exact aspect-ratio from the indexer's media_dimensions when
-        // available (images extracted from body at index time), or
-        // aspect-video fallback for older/unreindexed blocks. Multi-image
-        // article previews reserve a square gallery slot; single-image
-        // previews use object-cover to avoid letterboxing in feed cards.
-        <GraphicSurface
-          insetMedia
-          className="w-full"
-          style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
-          data-card-preview-geometry={descriptor.primaryAspectRatio === null ? "pending" : undefined}
-        >
-          <CloudBadge active={block.content_in_cloud} />
-          {descriptor.totalMediaCount > 1 ? (
-            <GalleryTiles
-              items={descriptor.mediaItems}
-              thumbsRootPath={thumbsRootPath}
-              thumbVersion={thumbVersion}
-              measurementMode={measurementMode}
-            />
-          ) : rendersFeedVideo ? (
-            shouldAutoplayVideo ? (
-              <FeedVideoSurface
-                playback={playback}
-                allowPlayback={allowPlayback}
-                vaultPath={vaultPath}
-                thumbsRootPath={thumbsRootPath}
-                posterCandidates={posterCandidates}
-                className="absolute inset-0 h-full w-full object-cover"
-              />
-            ) : !measurementMode ? (
-              <FeedVideoPoster
-                candidateUrls={posterCandidates}
-                alt=""
-                className="absolute inset-0 h-full w-full object-cover"
-                loading={imgLoading}
-              />
-            ) : (
-              <div className="absolute inset-0 bg-card" />
-            )
-          ) : !measurementMode && (
-            // Grid never falls through to source media. A ready manifest owns
-            // the derived tile; an inconsistent descriptor renders a neutral
-            // surface until reconciliation repairs the preview set.
-            primaryMedia ? (
-              <GalleryTileImage
-                item={primaryMedia}
-                thumbsRootPath={thumbsRootPath}
-                thumbVersion={thumbVersion}
-                loading={imgLoading}
-              />
-            ) : (
-              <div className="absolute inset-0 bg-card" data-preview-unavailable="" />
-            )
-          )}
-          {rendersFeedVideo && !shouldAutoplayVideo && <PlayBadge />}
-        </GraphicSurface>
+        <PostMediaSurface
+          inset
+          block={block}
+          descriptor={descriptor}
+          previewManifest={previewManifest}
+          vaultPath={vaultPath}
+          thumbsRootPath={thumbsRootPath}
+          thumbVersion={thumbVersion}
+          playback={playback}
+          allowPlayback={allowPlayback}
+          measurementMode={measurementMode}
+        />
       )}
       {hasTextStack && (
         <div className={cn(hasPreview && "mt-3")}>

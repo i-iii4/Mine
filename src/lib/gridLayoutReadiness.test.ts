@@ -112,6 +112,14 @@ describe("exact deterministic heights", () => {
     expect(blockHasExactDeterministicHeight(media, new Map())).toBe(true);
   });
 
+  it("a picture waits for its name's metrics only where Cards draws the name", () => {
+    // SPEC_FEED_DISPLAY.md, Д15: the text a presentation draws decides it.
+    const picture = { ...block(1), card_kind: "media" as const, block_type: "image" as const, media_file: "a.jpg" };
+    expect(blockHasExactDeterministicHeight(picture, new Map(), "mixed")).toBe(true);
+    expect(blockHasExactDeterministicHeight(picture, new Map(), "cards")).toBe(false);
+    expect(blockHasExactDeterministicHeight(picture, new Map([[1, widths]]), "cards")).toBe(true);
+  });
+
   it("text cards are exact only once their word widths are computed", () => {
     const article = { ...block(2), card_kind: "article" as const };
     expect(blockHasExactDeterministicHeight(article, new Map())).toBe(false);

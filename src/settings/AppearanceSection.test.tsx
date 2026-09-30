@@ -36,17 +36,8 @@ describe("AppearanceSection", () => {
       expect(screen.queryByRole("group", { name: label })).not.toBeInTheDocument();
       expect(screen.queryByRole("checkbox", { name: label })).not.toBeInTheDocument();
     }
-    expect(screen.getByRole("group", { name: "Spacing" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "2" })).not.toBeInTheDocument();
-  });
-
-  it("offers only 32, 24 and 16 pixel spacing", () => {
-    render(<AppearanceSection />);
-    expect(screen.getByRole("button", { name: "32" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "24" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "16" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "24" }));
-    expect(localStorage.getItem("mine.spacing")).toBe("24");
+    // Spacing moved to the feed's Display panel (SPEC_FEED_DISPLAY.md, Д17).
+    expect(screen.queryByRole("group", { name: "Spacing" })).not.toBeInTheDocument();
   });
 
   it("persists the bottom menu visibility flag and broadcasts its key", () => {

@@ -6,13 +6,13 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTU
 
 ### Настройки отображения ленты
 
-Статус: требования записаны и все решения приняты 30.09.2026; реализация не начата. Контракт: [SPEC_FEED_DISPLAY.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_FEED_DISPLAY.md>).
+Статус: реализовано 30.09.2026; приёмка в живом приложении за пользователем. Контракт: [SPEC_FEED_DISPLAY.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_FEED_DISPLAY.md>).
 
-- [ ] Д1 по Д5. Кнопка `Display` (`SlidersHorizontal`) во втором уровне хрома справа и панель строк.
-- [ ] Д6 по Д9. `Sort`: `Newest first`, `Oldest first`; порядок в ядре, страницах и кэше маршрута.
-- [ ] Д10 по Д16. `Show`: `Cards`, `Mixed`, `Media` с однозначной геометрией.
-- [ ] Д17. `Spacing` переезжает из Settings → Appearance в панель.
-- [ ] Д18. Хранение между запусками.
+- [x] Д1 по Д5. Кнопка `Display` (`SlidersHorizontal`) во втором уровне хрома справа и панель строк.
+- [x] Д6 по Д9. `Sort`: `Newest first`, `Oldest first`; порядок в ядре, страницах и кэше маршрута.
+- [x] Д10 по Д16. `Show`: `Cards`, `Mixed`, `Media` с однозначной геометрией.
+- [x] Д17. `Spacing` переезжает из Settings → Appearance в панель.
+- [x] Д18. Хранение между запусками.
 
 ### Форма карточек с видео
 

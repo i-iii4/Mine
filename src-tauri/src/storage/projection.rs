@@ -104,9 +104,11 @@ pub fn read_grid_snapshot(
     tag: Option<&str>,
     offset: usize,
     limit: usize,
+    order: crate::storage::block_queries::FeedOrder,
 ) -> Result<GridSnapshot> {
     read_projection_snapshot(conn, |conn, generation| {
-        let (blocks, has_more) = index::list_grid_blocks(conn, tag, offset, limit)?;
+        let (blocks, has_more) =
+            crate::storage::block_queries::list_grid_blocks_in_order(conn, tag, offset, limit, order)?;
         Ok(GridSnapshot {
             generation,
             blocks,
@@ -182,7 +184,7 @@ mod tests {
         let after = read_grid_rows(&conn, "/vault".into(), &slugs).unwrap();
         assert!(after.generation > before.generation);
         assert_eq!(after.path, "/vault");
-        let full = read_grid_snapshot(&conn, None, 0, 20).unwrap();
+        let full = read_grid_snapshot(&conn, None, 0, 20, crate::storage::block_queries::FeedOrder::Newest).unwrap();
         assert_eq!(&after.blocks[0], full.blocks.iter().find(|row| row.slug == "one").unwrap());
         assert_eq!(after.blocks[0].preview_manifest.as_deref(), Some("{}"));
         index::remove_block(&conn, "one").unwrap();
@@ -195,7 +197,7 @@ mod tests {
         let conn = db::open_memory().unwrap();
         index::upsert_block(&conn, &block("one"), None).unwrap();
 
-        let snapshot = read_grid_snapshot(&conn, None, 0, 20).unwrap();
+        let snapshot = read_grid_snapshot(&conn, None, 0, 20, crate::storage::block_queries::FeedOrder::Newest).unwrap();
 
         assert_eq!(snapshot.generation, current_generation(&conn).unwrap());
         assert_eq!(snapshot.total_blocks, 1);

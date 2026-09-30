@@ -34,7 +34,11 @@ const BLOCK: LightBlock = {
   search_match: null,
 };
 
-function renderBar(placement: "top" | "bottom", detailBlock: LightBlock | null) {
+function renderBar(
+  placement: "top" | "bottom",
+  detailBlock: LightBlock | null,
+  viewMode: "grid" | "graph" = "grid",
+) {
   return render(
     <MainSecondaryTopBar
       sidebarCollapsed={false}
@@ -45,7 +49,7 @@ function renderBar(placement: "top" | "bottom", detailBlock: LightBlock | null) 
       detailEntered
       detailLinkMode="collections"
       onDetailLinkModeChange={vi.fn()}
-      viewMode="grid"
+      viewMode={viewMode}
       onViewModeChange={vi.fn()}
       vaultPath="/vault"
       tags={[]}
@@ -117,3 +121,17 @@ describe("MainSecondaryTopBar placement", () => {
     expect(screen.getByText("Collections:")).toBeInTheDocument();
   });
 });
+
+describe("Display options (SPEC_FEED_DISPLAY.md, Д1, Д4)", () => {
+  it("sit at the right edge of the feed's row in Grid", () => {
+    const { container } = renderBar("top", null, "grid");
+    expect(screen.getByRole("button", { name: "Display options" })).toBeInTheDocument();
+    expect(container.querySelector("[data-feed-display]")).toHaveClass("ml-auto");
+  });
+
+  it("are absent in Graph, where none of them applies", () => {
+    renderBar("top", null, "graph");
+    expect(screen.queryByRole("button", { name: "Display options" })).not.toBeInTheDocument();
+  });
+});
+

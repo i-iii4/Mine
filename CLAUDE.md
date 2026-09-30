@@ -26,7 +26,7 @@
 - `SPEC_MOBILE.md` — спецификация iOS-приложения: SwiftUI + Rust UniFFI, iCloud sync, Share Extension
 - `SPEC_GRID.md` — спецификация zero-jank masonry grid: Canvas measureText precomputation, dual-path (native grid-lanes + virtualized JS), детерминистические высоты
 - `SPEC_THUMBNAILS.md` — спецификация thumbnail pipeline: two-phase (Rust instant placeholder + WebView async upgrade), event-driven sidebar, виртуализация, поддержка всех форматов расширения через native decoder
-- [SPEC_FEED_DISPLAY.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_FEED_DISPLAY.md>): настройки отображения ленты: кнопка Display, порядок, вид карточек (Cards, Mixed, Media), расстояние; требования записаны 30.09.2026, реализация не начата
+- [SPEC_FEED_DISPLAY.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_FEED_DISPLAY.md>): настройки отображения ленты: кнопка Display, порядок, вид карточек (Cards, Mixed, Media), расстояние; реализовано 30.09.2026
 - `SPEC_DISPLAY_MODES.md` — спецификация display modes: архитектура переключения между masonry/grid/table/columns, принцип изоляции (display mode = только рендеринг), единый интерфейс `DisplayModeProps`
 - `SPEC_FEED_SCROLL_PERFORMANCE.md` — контракт canvas-feel бесконечной ленты: velocity-aware render runway, media preload/decode windows, лимиты, диагностика
 - `SPEC_GRID_LAYOUT_READINESS.md` — deterministic live geometry: render-ready gate, committed prefix, skeleton envelope, deep fast-scroll acceptance
@@ -95,6 +95,7 @@
 | src/lib/masonryLayout.ts | Кастомный virtualized masonry layout engine |
 | src/lib/cardAspect.ts | Политика кадрирования: кламп пропорции карточки `1:2 … 2:1` |
 | src/lib/motion.ts | Единая настройка уменьшения движения для программных анимаций и прокрутки |
+| src/lib/feedDisplay.ts | Параметры ленты: порядок и вид карточек (Cards, Mixed, Media), хранение между запусками |
 | ESLint 10 + typescript-eslint | Линтинг фронтенда (TypeScript) |
 | Vitest + Testing Library | Frontend-тесты (`bun run test:frontend`) |
 | Playwright + pngjs | Browser acceptance gates: Feed, Graph, cold-space, sidebar reorder |
@@ -221,6 +222,7 @@ local-arena/
 │   │   ├── graph/              # Canvas paint, physics, contracts, interactions
 │   │   ├── grid/               # Grid interaction geometry/controllers
 │   │   ├── MainSecondaryChrome.tsx # Main route secondary chrome
+│   │   ├── FeedDisplayMenu.tsx # Кнопка Display и панель: Sort, Show, Spacing (SPEC_FEED_DISPLAY)
 │   │   ├── Card.tsx            # Адаптивная карточка по типу блока (5 типов)
 │   │   ├── Sidebar.tsx         # Каналы, счётчики, навигация, кнопка импорта
 │   │   ├── Detail.tsx          # Lightbox: просмотр, коллекции, навигация стрелками
