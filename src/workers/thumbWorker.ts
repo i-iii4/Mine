@@ -17,9 +17,12 @@
 // crosses the thread boundary. Main thread then ships them to Rust via
 // the `save_thumb` IPC command.
 //
-// Concurrency: FIFO queue, four parallel in-flight requests. Main thread
-// can drain the queue and abort in-flight fetches with a single
-// `{ type: 'cancel' }` message (e.g. when the vault changes).
+// Concurrency: FIFO queue, four parallel in-flight requests, each limited in
+// time (see thumbQueue.ts). Main thread can drain the queue and abort
+// in-flight fetches with a single `{ type: 'cancel' }` message (e.g. when the
+// vault changes).
+
+import { createThumbQueue } from "./thumbQueue";
 
 declare const self: DedicatedWorkerGlobalScope;
 
@@ -46,76 +49,43 @@ export type ThumbWorkerResponse =
 // ─── Queue state ────────────────────────────────────────────────────────────
 
 const MAX_CONCURRENCY = 4;
+/** A request longer than this frees its place (SPEC_AUDIT_FIXES.md, А8.5). */
+const REQUEST_TIMEOUT_MS = 20_000;
 const DEFAULT_TARGET = 640;
 const JPEG_QUALITY = 0.85;
 
-interface QueueEntry {
-  req: ThumbWorkerRequest;
-  abort: AbortController;
-}
-
-const waiting: QueueEntry[] = [];
-const active = new Set<QueueEntry>();
+const queue = createThumbQueue<ThumbWorkerRequest>({
+  concurrency: MAX_CONCURRENCY,
+  timeoutMs: REQUEST_TIMEOUT_MS,
+  produce: produceThumb,
+  succeeded: (req, bytes) => postResponse({ id: req.id, slug: req.slug, ok: true, bytes }, [bytes]),
+  failed: (req, error) => postResponse({ id: req.id, slug: req.slug, ok: false, error }),
+});
 
 // ─── Message entry point ────────────────────────────────────────────────────
 
 self.addEventListener("message", (event: MessageEvent<IncomingMessage>) => {
   const msg = event.data;
   if ("type" in msg && msg.type === "cancel") {
-    cancelAll();
+    queue.cancelAll();
     return;
   }
-  // Enqueue and try to start work
-  const entry: QueueEntry = {
-    req: msg as ThumbWorkerRequest,
-    abort: new AbortController(),
-  };
-  waiting.push(entry);
-  pump();
+  queue.push(msg as ThumbWorkerRequest);
 });
-
-function cancelAll() {
-  // Abort every in-flight fetch; their error paths will clean up `active`
-  // and call pump() again, which will find `waiting` empty.
-  for (const entry of active) {
-    entry.abort.abort();
-  }
-  // Drop pending queue — they'll never be posted back to main
-  waiting.length = 0;
-}
-
-function pump() {
-  while (active.size < MAX_CONCURRENCY && waiting.length > 0) {
-    const entry = waiting.shift()!;
-    active.add(entry);
-    runEntry(entry).finally(() => {
-      active.delete(entry);
-      pump();
-    });
-  }
-}
 
 // ─── Per-request pipeline ───────────────────────────────────────────────────
 
-async function runEntry(entry: QueueEntry): Promise<void> {
-  const { req, abort } = entry;
+async function produceThumb(req: ThumbWorkerRequest, signal: AbortSignal): Promise<ArrayBuffer> {
   const targetSize = req.targetSize ?? DEFAULT_TARGET;
+  const blob = await fetchAsset(req.assetUrl, signal);
+  const bitmap =
+    req.kind === "image"
+      ? await decodeImage(blob)
+      : await decodeVideoFrame(blob);
   try {
-    const blob = await fetchAsset(req.assetUrl, abort.signal);
-    const bitmap =
-      req.kind === "image"
-        ? await decodeImage(blob)
-        : await decodeVideoFrame(blob);
-    const bytes = await encodeThumb(bitmap, targetSize);
+    return await encodeThumb(bitmap, targetSize);
+  } finally {
     bitmap.close();
-    postResponse({ id: req.id, slug: req.slug, ok: true, bytes }, [bytes]);
-  } catch (err) {
-    if (abort.signal.aborted) {
-      // Swallow — main thread requested cancel, no response expected
-      return;
-    }
-    const message = err instanceof Error ? err.message : String(err);
-    postResponse({ id: req.id, slug: req.slug, ok: false, error: message });
   }
 }
 

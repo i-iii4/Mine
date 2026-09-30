@@ -18,6 +18,7 @@ import type {
   WorkerBlockResult,
 } from "@/types/fontMetrics";
 import { FONT_METRICS_PREVIEW_MAX_CHARS } from "@/types/fontMetrics";
+import { computeWordWidths } from "@/lib/wordWidths";
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
@@ -63,6 +64,22 @@ let worker: Worker | null = null;
 let workerReady: Promise<void> | null = null;
 let nextRequestId = 1;
 const pending = new Map<number, PendingRequest>();
+
+/** How long the worker may take to start (font included) and to answer one
+ *  batch. A worker that never answers must not keep the feed on skeletons
+ *  (SPEC_AUDIT_FIXES.md, А8.1): past these, the page measures itself. */
+export const WORKER_INIT_TIMEOUT_MS = 5_000;
+export const WORKER_COMPUTE_TIMEOUT_MS = 20_000;
+/** A worker that failed once is not waited for again in this window. */
+let workerFailed = false;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} did not answer within ${ms} ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 
 async function fetchFontBuffer(): Promise<ArrayBuffer> {
   const response = await fetch(FONT_URL);
@@ -142,6 +159,8 @@ async function ensureWorkerReady(): Promise<void> {
         }
       };
       worker!.addEventListener("message", onMessage);
+      // A worker script that fails to load reports only this event.
+      worker!.addEventListener("error", (event) => reject(new Error(`Worker failed to start: ${event.message}`)));
     });
 
     const initMessage: WorkerInMessage = {
@@ -156,8 +175,9 @@ async function ensureWorkerReady(): Promise<void> {
   })();
 
   try {
-    await workerReady;
+    await withTimeout(workerReady, WORKER_INIT_TIMEOUT_MS, "Font-metrics worker start");
   } catch (err) {
+    worker?.terminate();
     workerReady = null;
     worker = null;
     throw err;
@@ -170,8 +190,12 @@ function computeInWorker(blocks: WorkerBlockInput[]): Promise<WorkerBlockResult[
     return Promise.reject(new Error("Worker not initialized"));
   }
   const requestId = nextRequestId++;
-  const promise = new Promise<WorkerBlockResult[]>((resolve, reject) => {
+  const answer = new Promise<WorkerBlockResult[]>((resolve, reject) => {
     pending.set(requestId, { resolve, reject });
+  });
+  const promise = withTimeout(answer, WORKER_COMPUTE_TIMEOUT_MS, "Font-metrics worker").catch((err: unknown) => {
+    pending.delete(requestId);
+    throw err;
   });
   const message: WorkerInMessage = {
     type: "compute",
@@ -408,18 +432,6 @@ export async function fetchWordWidths(
   const missing = blocks.filter((b) => !cached.has(b.id));
   if (missing.length === 0) return cached;
 
-  try {
-    await ensureWorkerReady();
-  } catch (err) {
-    // Worker/OffscreenCanvas absence is an expected capability fallback in
-    // JSDOM and older WebViews. Unexpected initialization failures still stay
-    // visible because they can indicate a broken font asset or worker bundle.
-    if (typeof Worker !== "undefined" && typeof OffscreenCanvas !== "undefined") {
-      console.warn("[fontMetrics] worker init failed, returning partial cache", err);
-    }
-    return cached;
-  }
-
   const workerInputs: WorkerBlockInput[] = missing.map((b) => {
     const identity = identitiesByBlockId.get(b.id);
     return {
@@ -429,13 +441,26 @@ export async function fetchWordWidths(
     };
   });
 
-  let computed: WorkerBlockResult[];
-  try {
-    computed = await computeInWorker(workerInputs);
-  } catch (err) {
-    console.warn("[fontMetrics] worker compute failed, returning partial cache", err);
+  // Worker/OffscreenCanvas absence is an expected capability fallback in
+  // JSDOM and older WebViews: the conservative height fallback applies.
+  if (typeof Worker === "undefined" || typeof OffscreenCanvas === "undefined") {
     return cached;
   }
+
+  let computed: WorkerBlockResult[] | null = null;
+  if (!workerFailed) {
+    try {
+      await ensureWorkerReady();
+      computed = await computeInWorker(workerInputs);
+    } catch (err) {
+      // A broken font asset or worker bundle stays visible in the log; the
+      // cards are measured anyway, on the page.
+      workerFailed = true;
+      console.warn("[fontMetrics] worker unavailable, measuring on the page", err);
+    }
+  }
+  computed ??= await measureOnPage(workerInputs);
+  if (!computed) return cached;
 
   // Fire-and-forget cache write — don't block on it
   void writeToCache(computed, identitiesByBlockId);
@@ -445,6 +470,31 @@ export async function fetchWordWidths(
     result.set(entry.id, entry.widths);
   }
   return result;
+}
+
+/** Cards measured on the page between two yields to the event loop. */
+const PAGE_MEASURE_CHUNK = 200;
+
+/**
+ * Measure on the page's own canvas: the fallback when the worker cannot help.
+ * The document font is the card font (`ensureFontLoaded` waited for it).
+ */
+async function measureOnPage(inputs: WorkerBlockInput[]): Promise<WorkerBlockResult[] | null> {
+  if (typeof document === "undefined") return null;
+  const context = document.createElement("canvas").getContext("2d");
+  if (!context) return null;
+  const results: WorkerBlockResult[] = [];
+  for (let i = 0; i < inputs.length; i += 1) {
+    const input = inputs[i]!;
+    results.push({
+      id: input.id,
+      widths: computeWordWidths(context, input, TITLE_FONT_SPEC, PREVIEW_FONT_SPEC),
+    });
+    if ((i + 1) % PAGE_MEASURE_CHUNK === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  }
+  return results;
 }
 
 /** How many cards from the top of the feed are measured before the rest. */

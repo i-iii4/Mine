@@ -894,3 +894,15 @@ uses DOM measurement only when a developer explicitly requests drift validation.
 5. DEVLOG entry с результатами проверки и benchmark numbers
 6. `ARCHITECTURE.md` обновлён: добавлено decision record про zero-jank masonry
 7. `PLAN.md` обновлён: phase mark как completed
+
+## Отказ потока замера шрифтов (30.09.2026)
+
+Поток замера получает 5 секунд на запуск вместе со шрифтом и 20 секунд на
+ответ по пакету. Не ответивший поток завершается, и карточки замеряются на
+холсте самой страницы тем же кодом (`src/lib/wordWidths.ts`), пакетами по
+200 с уступкой очереди событий; до конца сеанса поток больше не ждётся. Без
+Worker или OffscreenCanvas (JSDOM, старые WebView) остаётся прежний
+консервативный запасной расчёт высоты. Отметка запуска `first_cards_painted`
+ставится, когда лента показала карточки с содержимым (или пустую ленту), а не
+заготовки (SPEC_AUDIT_FIXES.md, А8.1, А8.2).
+

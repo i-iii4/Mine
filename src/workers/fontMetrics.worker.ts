@@ -12,10 +12,8 @@ import type {
   WorkerOutMessage,
   WorkerBlockInput,
   WorkerBlockResult,
-  WordWidths,
 } from "../types/fontMetrics";
-import { FONT_METRICS_PREVIEW_MAX_CHARS } from "../types/fontMetrics";
-import { splitWords } from "../lib/lineUnits";
+import { computeWordWidths } from "../lib/wordWidths";
 
 declare const self: DedicatedWorkerGlobalScope;
 
@@ -48,46 +46,6 @@ async function loadFont(family: string, buffer: ArrayBuffer): Promise<void> {
   await face.load();
   globalFonts.add(face);
   fontReady = true;
-}
-
-function measureWords(ctxLocal: OffscreenCanvasRenderingContext2D, words: string[]): number[] {
-  const widths = new Array<number>(words.length);
-  for (let i = 0; i < words.length; i += 1) {
-    widths[i] = ctxLocal.measureText(words[i]!).width;
-  }
-  return widths;
-}
-
-function computeWordWidthsForBlock(
-  ctxLocal: OffscreenCanvasRenderingContext2D,
-  block: WorkerBlockInput,
-  titleFontSpec: string,
-  previewFontSpec: string,
-): WordWidths {
-  const title = splitWords(block.title);
-  const previewText = block.body.length > FONT_METRICS_PREVIEW_MAX_CHARS
-    ? block.body.slice(0, FONT_METRICS_PREVIEW_MAX_CHARS)
-    : block.body;
-  const preview = splitWords(previewText);
-
-  // Title measurement pass (semibold)
-  ctxLocal.font = titleFontSpec;
-  const titleWidths = measureWords(ctxLocal, title.words);
-  const titleSpace = ctxLocal.measureText(" ").width;
-
-  // Preview measurement pass (regular)
-  ctxLocal.font = previewFontSpec;
-  const previewWidths = measureWords(ctxLocal, preview.words);
-  const previewSpace = ctxLocal.measureText(" ").width;
-
-  return {
-    title: titleWidths,
-    preview: previewWidths,
-    titleSpace,
-    previewSpace,
-    titleNoSpaceBefore: title.noSpaceBefore,
-    previewNoSpaceBefore: preview.noSpaceBefore,
-  };
 }
 
 function postResult(message: WorkerOutMessage): void {
@@ -130,7 +88,7 @@ function handleCompute(
     for (let i = 0; i < blocks.length; i += 1) {
       results[i] = {
         id: blocks[i]!.id,
-        widths: computeWordWidthsForBlock(
+        widths: computeWordWidths(
           ctxLocal,
           blocks[i]!,
           titleFontSpec,

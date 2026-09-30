@@ -18,9 +18,12 @@ use crate::domain::vault::{detect_icloud_conflict, VaultLayout};
 use crate::storage::{article_audio, db, file_identity, files, index, media_refs};
 use mine_core::links::LinkIndex;
 
-fn channel_ref_for_slug(vault: &VaultLayout, slug: &str) -> Result<String> {
-    let index: LinkIndex = media_refs::build_link_index(vault.root());
-    index
+/// The reference cards use for a collection page. `links` is the space's
+/// path index, built once per pass: building it walks every file, and doing
+/// that for each collection made a pass over a large space quadratic
+/// (SPEC_AUDIT_FIXES.md, А8.3).
+fn channel_ref_for_slug(links: &LinkIndex, slug: &str) -> Result<String> {
+    links
         .shortest_link(&format!("{slug}.md"), true)
         .ok_or_else(|| anyhow::anyhow!("collection document has no unambiguous link: {slug}"))
 }
@@ -411,8 +414,9 @@ fn reconcile_source_pass(
             .filter(|source| source.kind == SourceKind::Channel)
             .map(|source| source.slug.clone()),
     );
+    let links: LinkIndex = media_refs::build_link_index(vault.root());
     for slug in &channel_slugs {
-        live_channel_refs.insert(channel_ref_for_slug(vault, slug).map_err(ReconcileError::State)?);
+        live_channel_refs.insert(channel_ref_for_slug(&links, slug).map_err(ReconcileError::State)?);
     }
 
     let removed = indexed_kinds
@@ -452,7 +456,7 @@ fn reconcile_source_pass(
     }
 
     for source in prepared {
-        match apply_prepared_source(&tx, vault, &source) {
+        match apply_prepared_source(&tx, vault, &source, &links) {
             Ok(()) => {
                 if source.dependency_changed {
                     dependency_changed_slugs.push(source.slug.clone());
@@ -549,7 +553,8 @@ pub fn project_source_path(conn: &Connection, vault: &VaultLayout, path: &Path) 
     let mut media_resolver = media_refs::MediaResolver::new(vault);
     let source = prepare_source(vault, path, markdown_stamp, false, &mut media_resolver)
         .map_err(|error| anyhow::anyhow!("prepare source {}: {}", path.display(), error.message))?;
-    apply_prepared_source(conn, vault, &source)?;
+    let links: LinkIndex = media_refs::build_link_index(vault.root());
+    apply_prepared_source(conn, vault, &source, &links)?;
     Ok(source.block)
 }
 
@@ -650,6 +655,7 @@ fn apply_prepared_source(
     conn: &Connection,
     vault: &VaultLayout,
     source: &PreparedSource,
+    links: &LinkIndex,
 ) -> Result<()> {
     conn.execute_batch("SAVEPOINT reconcile_source")
         .context("begin source reconciliation savepoint")?;
@@ -672,7 +678,7 @@ fn apply_prepared_source(
                 index::remove_block(conn, &source.slug).with_context(|| {
                     format!("remove stale block projection for {}", source.slug)
                 })?;
-                let collection_ref = channel_ref_for_slug(vault, &source.slug)?;
+                let collection_ref = channel_ref_for_slug(links, &source.slug)?;
                 index::upsert_channel_from_block_with_ref(conn, &source.block, &collection_ref)
                     .with_context(|| format!("upsert channel {}", source.slug))?;
             }

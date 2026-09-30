@@ -343,8 +343,77 @@ fn search_light_block_from_row(
     Ok(block)
 }
 
+/// What decides a card's search document, read without its text: the fields
+/// results show and the hash of the body.
+fn load_search_stamps(conn: &Connection) -> Result<Vec<(i64, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, slug, title, content_heading, display_title,
+                COALESCE(fallback_label, slug), description, author, url, body_hash
+         FROM blocks
+         WHERE card_kind != 'channel'",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            let id: i64 = row.get(0)?;
+            let mut stamp = String::new();
+            for column in 1..=9 {
+                stamp.push_str(&row.get::<_, Option<String>>(column)?.unwrap_or_default());
+                stamp.push('\u{1f}');
+            }
+            Ok((id, stamp))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+/// Stamps of the documents this process has synced, per index file. A search
+/// reads and cuts only the texts whose stamp changed since, not every card on
+/// every query and page (SPEC_AUDIT_FIXES.md, А8.4). An index in memory has no
+/// path and is always synced whole.
+fn synced_stamps() -> &'static std::sync::Mutex<std::collections::HashMap<String, BTreeMap<i64, String>>> {
+    static SYNCED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, BTreeMap<i64, String>>>> =
+        std::sync::OnceLock::new();
+    SYNCED.get_or_init(Default::default)
+}
+
 pub(crate) fn sync_search_documents(conn: &Connection) -> Result<usize> {
-    let documents = load_search_documents(conn)?;
+    let index_path = conn.path().filter(|path| !path.is_empty()).map(str::to_string);
+    let stamps = load_search_stamps(conn)?;
+    // Fewer stored documents than cards means the search tables were
+    // emptied under this process (an index rebuilt in place): sync whole.
+    let stored: i64 = conn.query_row("SELECT count(*) FROM search_document_state", [], |row| row.get(0))?;
+    let known = index_path
+        .as_ref()
+        .filter(|_| usize::try_from(stored).is_ok_and(|stored| stored >= stamps.len()))
+        .and_then(|path| {
+            synced_stamps()
+                .lock()
+                .ok()
+                .and_then(|synced| synced.get(path).cloned())
+        });
+    let stale: Vec<i64> = stamps
+        .iter()
+        .filter(|(id, stamp)| known.as_ref().and_then(|known| known.get(id)) != Some(stamp))
+        .map(|(id, _)| *id)
+        .collect();
+    if stale.is_empty() {
+        return Ok(0);
+    }
+    let documents = if known.is_none() || stale.len() == stamps.len() {
+        load_search_documents(conn)?
+    } else {
+        load_search_documents_for(conn, &stale)?
+    };
+    let changed = write_search_documents(conn, documents)?;
+    if let Some(path) = index_path {
+        if let Ok(mut synced) = synced_stamps().lock() {
+            synced.insert(path, stamps.into_iter().collect());
+        }
+    }
+    Ok(changed)
+}
+
+fn write_search_documents(conn: &Connection, documents: Vec<SearchDocument>) -> Result<usize> {
     let mut changed = 0;
 
     for document in documents {
@@ -403,7 +472,30 @@ fn load_search_documents(conn: &Connection) -> Result<Vec<SearchDocument>> {
          WHERE card_kind != 'channel'",
     )?;
     let rows = stmt
-        .query_map([], |row| {
+        .query_map([], search_document_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    Ok(rows.into_iter().map(build_search_document).collect())
+}
+
+/// The documents of the given cards only.
+fn load_search_documents_for(conn: &Connection, ids: &[i64]) -> Result<Vec<SearchDocument>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, slug, title, content_heading, display_title,
+                COALESCE(fallback_label, slug), description, author, url, body
+         FROM blocks
+         WHERE id = ?1 AND card_kind != 'channel'",
+    )?;
+    let mut documents = Vec::with_capacity(ids.len());
+    for id in ids {
+        if let Some(row) = stmt.query_row([id], search_document_row).optional()? {
+            documents.push(build_search_document(row));
+        }
+    }
+    Ok(documents)
+}
+
+fn search_document_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SearchDocumentRow> {
             Ok(SearchDocumentRow {
                 block_id: row.get(0)?,
                 slug: row.get(1)?,
@@ -416,10 +508,6 @@ fn load_search_documents(conn: &Connection) -> Result<Vec<SearchDocument>> {
                 url: row.get(8)?,
                 body: row.get(9)?,
             })
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-
-    Ok(rows.into_iter().map(build_search_document).collect())
 }
 
 fn build_search_document(row: SearchDocumentRow) -> SearchDocument {
@@ -1951,6 +2039,47 @@ mod tests {
 
         let unchanged = sync_search_documents(&conn).unwrap();
         assert_eq!(unchanged, 0);
+    }
+
+    #[test]
+    fn a_search_reads_only_the_texts_that_changed() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = db::open_or_create(&dir.path().join("index.db")).unwrap();
+        for (slug, body) in [("one", "First body."), ("two", "Second body.")] {
+            upsert_block(
+                &conn,
+                &make_block_full(slug, "article", Some(slug), "2026-01-01T00:00:00Z", &[], body),
+                None,
+            )
+            .unwrap();
+        }
+        assert!(sync_search_documents(&conn).unwrap() > 0);
+        let path = conn.path().unwrap().to_string();
+        let first = synced_stamps().lock().unwrap().get(&path).cloned().unwrap();
+        assert_eq!(first.len(), 2);
+
+        // Nothing changed: nothing is read or cut.
+        assert_eq!(sync_search_documents(&conn).unwrap(), 0);
+
+        // One card changed: only its document is rebuilt.
+        upsert_block(
+            &conn,
+            &make_block_full("two", "article", Some("two"), "2026-01-01T00:00:00Z", &[], "Edited body."),
+            None,
+        )
+        .unwrap();
+        let stamps = load_search_stamps(&conn).unwrap();
+        let stale: Vec<i64> = stamps
+            .iter()
+            .filter(|(id, stamp)| first.get(id) != Some(stamp))
+            .map(|(id, _)| *id)
+            .collect();
+        assert_eq!(stale.len(), 1);
+        assert!(sync_search_documents(&conn).unwrap() > 0);
+        let text: String = conn
+            .query_row("SELECT group_concat(text, ' ') FROM search_chunks WHERE slug = 'two'", [], |row| row.get(0))
+            .unwrap();
+        assert!(text.contains("Edited"), "{text}");
     }
 
     #[test]

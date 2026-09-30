@@ -1,3 +1,4 @@
+import { reportCardsRendered } from "@/lib/startup";
 import type { ReactNode } from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { act, render, screen, waitFor, fireEvent, within } from "@testing-library/react";
@@ -770,7 +771,13 @@ describe("AppWithVault", () => {
       expect(commandMocks.startStartupMaintenance).toHaveBeenCalledTimes(1);
     });
     expect(commandMocks.recordStartupMilestone).toHaveBeenCalledWith("first_route_committed");
-    expect(commandMocks.recordStartupMilestone).toHaveBeenCalledWith("first_cards_painted");
+    // The mocked grid paints no cards: the milestone waits for the real
+    // grid's report (SPEC_AUDIT_FIXES.md, А8.2).
+    expect(commandMocks.recordStartupMilestone).not.toHaveBeenCalledWith("first_cards_painted");
+    reportCardsRendered();
+    await waitFor(() => {
+      expect(commandMocks.recordStartupMilestone).toHaveBeenCalledWith("first_cards_painted");
+    });
     expect(commandMocks.recordStartupMilestone).toHaveBeenCalledWith("interactive");
     expect(commandMocks.recordStartupMilestone).toHaveBeenCalledWith("update_ready");
   });

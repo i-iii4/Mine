@@ -1,3 +1,4 @@
+import { reportCardsRendered, scheduleAfterNextPaint } from "@/lib/startup";
 import {
   useRef,
   useState,
@@ -815,6 +816,14 @@ export function Grid({
     () => computeCommittedEndIndex(blocks, renderReadyBlockIds, parentWidth > 0),
     [blocks, parentWidth, renderReadyBlockIds],
   );
+
+  // The first real cards on screen: the startup milestone waits for them,
+  // not for the skeletons painted while word widths are measured.
+  const hasRenderedCards = committedEndIndex >= 0 || (routeSnapshotReady && blocks.length === 0);
+  useEffect(() => {
+    if (!hasRenderedCards || typeof window === "undefined") return;
+    return scheduleAfterNextPaint(reportCardsRendered);
+  }, [hasRenderedCards]);
 
   // Exactness is stricter than "settled": after the metrics promise resolves,
   // every block becomes render-ready (fallback heights keep the feed usable),

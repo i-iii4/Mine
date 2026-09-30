@@ -127,3 +127,34 @@ describe("measuring a newly opened space", () => {
     expect(calls).toEqual([FIRST_MEASURED_BLOCKS]);
   });
 });
+
+describe("a font-metrics worker that never answers (А8.1)", () => {
+  it("measures the cards on the page once the worker has had its time", async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+    const terminate = vi.fn();
+    class SilentWorker {
+      addEventListener() {}
+      postMessage() {}
+      terminate = terminate;
+    }
+    vi.stubGlobal("Worker", SilentWorker);
+    vi.stubGlobal("OffscreenCanvas", class {});
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) })));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const { fetchWordWidths, WORKER_INIT_TIMEOUT_MS } = await import("./fontMetrics");
+      const measuring = fetchWordWidths([makeBlock({ id: 7, title: "Two words", body: "Some preview" })]);
+      await vi.advanceTimersByTimeAsync(WORKER_INIT_TIMEOUT_MS + 1);
+      const widths = await measuring;
+      // The test canvas measures 7.5 px per character.
+      expect(widths.get(7)?.title).toEqual([22.5, 37.5]);
+      expect(terminate).toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
+  });
+});
+

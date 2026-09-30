@@ -232,7 +232,7 @@ import {
   readClipboardPayload
 } from "@/lib/commands";
 import { ArticleAudioGatewayProvider } from "@/lib/articleAudioGateway";
-import { scheduleAfterNextPaint } from "@/lib/startup";
+import { scheduleAfterNextPaint, whenCardsRendered } from "@/lib/startup";
 import { desktopArticleAudioGateway } from "@/lib/articleAudioDesktopGateway";
 import { ARTICLE_AUDIO_ENABLED } from "@/lib/featureFlags";
 import { pushRecentTag } from "@/lib/recentTags";
@@ -1584,7 +1584,11 @@ export function AppWithVault({
       cancelPostPaint = scheduleAfterNextPaint(() => {
         if (cancelled) return;
         if (routeCommitted && isTauri()) {
-          void recordStartupMilestone("first_cards_painted").catch(() => {});
+          // Recorded when the feed shows cards with their content, not when
+          // the route commits under skeletons (SPEC_AUDIT_FIXES.md, А8.2).
+          void whenCardsRendered()
+            .then(() => recordStartupMilestone("first_cards_painted"))
+            .catch(() => {});
           void recordStartupMilestone("interactive").catch(() => {});
           void recordStartupMilestone("update_ready").catch(() => {});
           void startStartupMaintenance().catch((error) => {
