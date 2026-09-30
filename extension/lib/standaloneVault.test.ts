@@ -107,6 +107,12 @@ describe("browser executor backed by actual WASM", () => {
     expect(markdown).toContain("[[Collections/Reference]]");
     expect(markdown).not.toContain("type:"); expect(markdown).not.toContain("title:");
   });
+  it("saves a selection as shown, without the page title above it (Ф5)", async () => {
+    expect(await vault.saveStandaloneBlock(request({ body: "Selected words", selection: true }), options()))
+      .toMatchObject({ ok: true, slug: "Cards/Article" });
+    const markdown = await folder.text("Cards/Article.md");
+    expect(markdown.endsWith("---\nSelected words")).toBe(true);
+  });
   it("walks nested configured folders one segment at a time", async () => {
     const mine = await folder.getDirectoryHandle(".mine", { create: true });
     mine.files.set("layout.json", new FakeFile(JSON.stringify({ cards: "Mine/Notes", media: "Mine/Files", collections: "Mine/Sets" })));
@@ -222,8 +228,23 @@ describe("browser executor backed by actual WASM", () => {
   });
   it("lists only parsed collection documents, including a flat vault", async () => {
     folder.files.set("Note.md", new FakeFile("Plain note"));
-    expect(await vault.createStandaloneChannel("Reference", options())).toMatchObject({ ok: true, tag: "Reference" });
+    expect(await vault.createStandaloneChannel("Reference", null, options())).toMatchObject({ ok: true, tag: "Reference" });
     expect(await vault.listStandaloneChannels(options())).toMatchObject({ ok: true, channels: [{ tag: "Reference" }] });
+  });
+  it("lists collections the way the app does: pages in order, card-only names, counts (А3.12)", async () => {
+    folder.files.set("Travel.md", new FakeFile("---\ntype: channel\nposition: 1\nsaved_at: 2026-08-31T12:00:00Z\n---\n"));
+    folder.files.set("Art.md", new FakeFile("---\ntype: channel\nposition: 0\nsaved_at: 2026-08-31T12:00:00Z\n---\n"));
+    folder.files.set("Trip.md", new FakeFile("---\nMine Collections:\n  - \"[[Travel]]\"\n  - \"[[Recipes]]\"\n---\nText"));
+    folder.files.set("Soup.md", new FakeFile("---\nMine Collections:\n  - \"[[Recipes]]\"\n---\nText"));
+    expect(await vault.listStandaloneChannels(options())).toEqual({ ok: true, channels: [
+      { tag: "Art", block_count: 0 }, { tag: "Travel", block_count: 1 }, { tag: "Recipes", block_count: 2 },
+    ] });
+  });
+  it("creates a collection only in the folder named when it was asked for (Ф6)", async () => {
+    expect(await vault.createStandaloneChannel("Reference", "another-folder", options()))
+      .toMatchObject({ ok: false, code: "binding_mismatch" });
+    expect([...folder.files.keys()].some((path) => path.includes("Reference"))).toBe(false);
+    expect(await vault.createStandaloneChannel("Reference", "test-vault", options())).toMatchObject({ ok: true });
   });
   it("exposes the real browser guarantee profile", async () => {
     expect(await vault.getStandaloneStatus(options())).toMatchObject({ configured: true, bindingId: "test-vault",

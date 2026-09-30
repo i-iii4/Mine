@@ -22,7 +22,8 @@ function nativeTransport() {
   const warn = vi.fn();
   const context = createContext({
     HOST_NAME: "test.mine",
-    chrome: { runtime: { connectNative } },
+    // A worker always has storage; no update is pending here.
+    chrome: { runtime: { connectNative }, storage: { session: { get: async () => ({}) } } },
     console: { warn },
     crypto: { randomUUID: () => checkId },
     setTimeout, clearTimeout,
@@ -152,11 +153,20 @@ describe("helper replaced during a session (SPEC_CLIPPER.md, К4)", () => {
 });
 
 describe("extension update applies itself (SPEC_CLIPPER.md, К4)", () => {
-  function updatableTransport(ownBuild: string, stored: Record<string, unknown> = {}) {
+  function updatableTransport(
+    ownBuild: string,
+    stored: Record<string, unknown> = {},
+    open: { pages?: number; overlays?: boolean[] } = {},
+  ) {
     let respond: (message: NativeResponse) => void = () => undefined;
     const local = { ...stored };
     const session: Record<string, unknown> = {};
     const reload = vi.fn();
+    const overlays = open.overlays ?? [];
+    const tabs = {
+      query: async () => overlays.map((_, id) => ({ id })),
+      sendMessage: async (id: number) => ({ open: overlays[id] }),
+    };
     const port = {
       onMessage: { addListener: (listener: typeof respond) => { respond = listener; } },
       onDisconnect: { addListener: () => undefined },
@@ -165,7 +175,13 @@ describe("extension update applies itself (SPEC_CLIPPER.md, К4)", () => {
     const context = createContext({
       HOST_NAME: "test.mine",
       chrome: {
-        runtime: { connectNative: () => port, getURL: (path: string) => `chrome-extension://id/${path}`, reload },
+        runtime: {
+          connectNative: () => port,
+          getURL: (path: string) => `chrome-extension://id/${path}`,
+          getContexts: async () => Array.from({ length: open.pages ?? 0 }, () => ({})),
+          reload,
+        },
+        tabs,
         storage: {
           local: { get: async (key: string) => ({ [key]: local[key] }), set: async (values: Record<string, unknown>) => { Object.assign(local, values); } },
           session: {
@@ -184,7 +200,9 @@ describe("extension update applies itself (SPEC_CLIPPER.md, К4)", () => {
     const send = (action: string): Promise<NativeResponse> =>
       runInContext(`sendNativeMessage({action:${JSON.stringify(action)}})`, context);
     const closed = (): Promise<void> => runInContext("reloadIfUpdated()", context);
-    return { send, closed, respond: (message: NativeResponse) => respond(message), reload, local, session };
+    const browserWrite = (work: () => Promise<unknown>): Promise<unknown> =>
+      (runInContext("trackBrowserWrite", context) as (w: () => Promise<unknown>) => Promise<unknown>)(work);
+    return { send, closed, browserWrite, respond: (message: NativeResponse) => respond(message), reload, local, session };
   }
 
   async function statusFrom(host: ReturnType<typeof updatableTransport>, installed: string) {
@@ -225,5 +243,42 @@ describe("extension update applies itself (SPEC_CLIPPER.md, К4)", () => {
     await host.closed();
     expect(host.reload).not.toHaveBeenCalled();
     expect(host.session.mineReloadPending).toBe("new-build");
+  });
+
+  it("keeps a clipper open in another tab", async () => {
+    const host = updatableTransport("old-build", {}, { overlays: [false, true] });
+    await statusFrom(host, "new-build");
+    await host.closed();
+    expect(host.reload).not.toHaveBeenCalled();
+    expect(host.session.mineReloadPending).toBe("new-build");
+  });
+
+  it("keeps the clipper window or the folder setup page open", async () => {
+    const host = updatableTransport("old-build", {}, { pages: 1 });
+    await statusFrom(host, "new-build");
+    await host.closed();
+    expect(host.reload).not.toHaveBeenCalled();
+  });
+
+  it("waits for a save into the browser folder and reloads after it", async () => {
+    vi.useFakeTimers();
+    try {
+      const host = updatableTransport("old-build");
+      const status = host.send("get_status");
+      host.respond({ _messageId: 1, ok: true, connected: true, features: [], extension_build_id: "new-build" });
+      await status;
+      await vi.waitFor(() => expect(host.session.mineReloadPending).toBe("new-build"));
+      let finish: (value: unknown) => void = () => undefined;
+      const save = host.browserWrite(() => new Promise((resolve) => { finish = resolve; }));
+      await Promise.resolve();
+      await host.closed();
+      expect(host.reload).not.toHaveBeenCalled();
+      finish({ ok: true });
+      await save;
+      await vi.advanceTimersByTimeAsync(1000);
+      await vi.waitFor(() => expect(host.reload).toHaveBeenCalledOnce());
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

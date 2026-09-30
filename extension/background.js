@@ -90,6 +90,31 @@ async function resolveClipperTarget(tab, fallbackUrl = null) {
   return { tabId, tabUrl };
 }
 
+/// Capture the viewport of `tabId` only while it is the tab in front of its
+/// window: `captureVisibleTab` takes whatever tab is in front, and a clip must
+/// never receive another page (SPEC_AUDIT_FIXES.md, Ф6).
+async function captureTabViewport(tabId) {
+  const tab = await chrome.tabs.get(tabId);
+  if (!tab.active) {
+    throw new Error("The page is not in front of its window. Bring it forward and retake the screenshot.");
+  }
+  await new Promise((resolve) => prepareTabForViewportCapture(tabId, resolve));
+  const dataUrl = await new Promise((resolve, reject) => {
+    chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 95 }, (url) => {
+      if (chrome.runtime.lastError || !url) {
+        reject(new Error(chrome.runtime.lastError?.message ?? "Capture failed"));
+        return;
+      }
+      resolve(url);
+    });
+  });
+  const [front] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
+  if (front?.id !== tabId) {
+    throw new Error("The page left the front while the screenshot was taken. Retake it.");
+  }
+  return dataUrl;
+}
+
 function prepareTabForViewportCapture(tabId, callback) {
   if (typeof tabId !== "number") {
     callback();
@@ -116,9 +141,107 @@ function showExistingClipperOverlay(tabId) {
   });
 }
 
+// ── Clipper launches (SPEC_AUDIT_FIXES.md, Ф6) ────────────────────────────
+//
+// What one opening of the clipper carries (the page it opened for, the
+// context-menu target, an Instagram post already read) belongs to that
+// opening. It is kept under the source tab and read by the clipper that opened
+// for that tab; a clipper anywhere else never sees it. The window used where
+// the overlay cannot run finds its source tab through its window id.
+
+const CLIPPER_LAUNCHES_KEY = "mineClipperLaunches";
+const CLIPPER_WINDOW_SOURCES_KEY = "mineClipperWindowSources";
+// Buffered page data older than this is a leftover, not the current opening.
+const CLIPPER_LAUNCH_TTL_MS = 10 * 60 * 1000;
+
+async function sessionRecord(key) {
+  const stored = await chrome.storage.session.get(key);
+  return stored[key] ?? {};
+}
+
+async function recordClipperLaunch(tab, source) {
+  if (typeof tab?.id !== "number") return;
+  const launches = await sessionRecord(CLIPPER_LAUNCHES_KEY);
+  launches[tab.id] = {
+    sourceTabId: tab.id,
+    sourceUrl: tab.url || source.fallbackUrl || null,
+    sourceTitle: tab.title || null,
+    contextMenu: source.contextMenu ?? null,
+    preloaded: source.preloaded ?? null,
+    createdAt: Date.now(),
+  };
+  await chrome.storage.session.set({ [CLIPPER_LAUNCHES_KEY]: launches });
+}
+
+async function forgetClipperLaunch(tabId) {
+  const launches = await sessionRecord(CLIPPER_LAUNCHES_KEY);
+  if (!(tabId in launches)) return;
+  delete launches[tabId];
+  await chrome.storage.session.set({ [CLIPPER_LAUNCHES_KEY]: launches });
+}
+
+async function rememberClipperWindowSource(windowId, tabId) {
+  const sources = await sessionRecord(CLIPPER_WINDOW_SOURCES_KEY);
+  sources[windowId] = tabId;
+  await chrome.storage.session.set({ [CLIPPER_WINDOW_SOURCES_KEY]: sources });
+}
+
+async function forgetClipperWindowSource(windowId) {
+  const sources = await sessionRecord(CLIPPER_WINDOW_SOURCES_KEY);
+  if (!(windowId in sources)) return;
+  delete sources[windowId];
+  await chrome.storage.session.set({ [CLIPPER_WINDOW_SOURCES_KEY]: sources });
+}
+
+function isExtensionPage(sender) {
+  return typeof sender?.url === "string" && sender.url.startsWith(chrome.runtime.getURL(""));
+}
+
+/// The source tab of the clipper that asks: an overlay asks from the page's
+/// own tab; the window asks from an extension page and is mapped to the tab
+/// it opened for. The window may ask before its source is written, so it
+/// waits a moment for it.
+async function clipperSourceTab(sender) {
+  if (!isExtensionPage(sender)) return sender.tab?.id ?? null;
+  const windowId = sender.tab?.windowId;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const sourceTabId = (await sessionRecord(CLIPPER_WINDOW_SOURCES_KEY))[windowId];
+    if (typeof sourceTabId === "number") return sourceTabId;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return null;
+}
+
+/// The launch of the asking clipper. Buffered page data is handed out once;
+/// the source stays for a remount of the same clipper.
+async function takeClipperLaunch(sender) {
+  const sourceTabId = await clipperSourceTab(sender);
+  if (typeof sourceTabId !== "number") return null;
+  const launches = await sessionRecord(CLIPPER_LAUNCHES_KEY);
+  const launch = launches[sourceTabId];
+  if (!launch) return null;
+  launches[sourceTabId] = { ...launch, contextMenu: null, preloaded: null };
+  await chrome.storage.session.set({ [CLIPPER_LAUNCHES_KEY]: launches });
+  if (Date.now() - launch.createdAt > CLIPPER_LAUNCH_TTL_MS) {
+    return { ...launch, contextMenu: null, preloaded: null };
+  }
+  return launch;
+}
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  void forgetClipperLaunch(tabId).catch(() => undefined);
+});
+
 async function openClipperUi(tab, options = {}) {
   const { tabId, tabUrl } = await resolveClipperTarget(tab, options.fallbackUrl ?? null);
   const allowWindowFallback = options.allowWindowFallback !== false;
+  // Every opening writes its own launch: a buffer left by an opening that
+  // failed never reaches this one.
+  await recordClipperLaunch(tab, {
+    fallbackUrl: tabUrl,
+    contextMenu: options.contextMenu ?? null,
+    preloaded: options.preloaded ?? null,
+  });
 
   if (tabId && isContentScriptCompatible(tabUrl)) {
     try {
@@ -157,7 +280,10 @@ async function openClipperUi(tab, options = {}) {
     type: "popup",
     ...bounds,
   });
-  if (win?.id) rememberPopupWindow(win.id);
+  if (win?.id) {
+    rememberPopupWindow(win.id);
+    if (typeof tab?.id === "number") await rememberClipperWindowSource(win.id, tab.id);
+  }
   return "window";
 }
 
@@ -255,6 +381,7 @@ chrome.windows.onBoundsChanged.addListener(async (win) => {
 chrome.windows.onRemoved.addListener(async (windowId) => {
   const ours = await isOurPopup(windowId);
   await forgetPopupWindow(windowId);
+  await forgetClipperWindowSource(windowId);
   if (ours) await reloadIfUpdated();
 });
 
@@ -288,8 +415,8 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 async function handleContextMenuClick(info, tab) {
-  // Store context info — useClipperState will read it via getContextMenuData()
-  // on mount and apply it to metadata (type=image from srcUrl, etc.)
+  // The clicked target travels with this opening only (Ф6); useClipperState
+  // reads it through getClipperLaunch and applies it to the metadata.
   const context = {
     menuItemId: info.menuItemId,
     srcUrl: info.srcUrl || null,
@@ -298,9 +425,7 @@ async function handleContextMenuClick(info, tab) {
     pageUrl: info.pageUrl || tab?.url || null,
     frameUrl: info.frameUrl || null,
   };
-  await chrome.storage.session.set({ contextMenuData: context });
-
-  await openClipperUi(tab, { fallbackUrl: bestContextMenuPageUrl(info, tab) });
+  await openClipperUi(tab, { fallbackUrl: bestContextMenuPageUrl(info, tab), contextMenu: context });
 }
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
@@ -369,6 +494,7 @@ function getNativePort() {
         confirmNativeConnection(msg, port);
         void noteInstalledExtension(msg).catch(() => undefined);
       }
+      if (action === "save_block") scheduleReloadCheck();
     } else {
       // An uncorrelated or late response must never acknowledge another save.
       console.warn("[Mine] Ignored uncorrelated native response");
@@ -418,13 +544,53 @@ async function noteInstalledExtension(status) {
 async function reloadIfUpdated() {
   const { mineReloadPending } = await chrome.storage.session.get("mineReloadPending");
   if (typeof mineReloadPending !== "string") return;
+  // A save in flight finishes first; its end checks again.
+  if (browserWritesInFlight > 0) return;
   for (const [, pending] of pendingCallbacks) {
-    // A save in flight finishes first; the next close reloads.
     if (pending.action === "save_block") return;
   }
+  // Closing one clipper must not take away another one still open.
+  if (await anyEditorOpen()) return;
   await chrome.storage.local.set({ mineReloadedFor: mineReloadPending });
   await chrome.storage.session.remove("mineReloadPending");
   chrome.runtime.reload();
+}
+
+// Writes into the folder chosen in the browser run inside this worker; a
+// reload would cut them off.
+let browserWritesInFlight = 0;
+
+function trackBrowserWrite(work) {
+  browserWritesInFlight += 1;
+  return Promise.resolve()
+    .then(work)
+    .finally(() => {
+      browserWritesInFlight -= 1;
+      scheduleReloadCheck();
+    });
+}
+
+// Check again once the answer has reached the page: a pending update waits
+// for the save, not for the next time a clipper happens to close.
+function scheduleReloadCheck() {
+  setTimeout(() => {
+    void reloadIfUpdated().catch((error) => console.warn("[Mine] extension reload failed:", String(error?.message ?? error)));
+  }, 1000);
+}
+
+// Whether a clipper is open anywhere: an extension page (the window used where
+// the overlay cannot run, the folder setup page) or the overlay in some tab.
+// A browser that cannot list extension pages is treated as having one open.
+async function anyEditorOpen() {
+  if (typeof chrome.runtime.getContexts !== "function") return true;
+  const pages = await chrome.runtime.getContexts({ contextTypes: ["TAB", "POPUP", "SIDE_PANEL"] });
+  if (pages.length > 0) return true;
+  const tabs = await chrome.tabs.query({});
+  const answers = await Promise.all(tabs.map((tab) => (typeof tab.id !== "number"
+    ? false
+    : chrome.tabs.sendMessage(tab.id, { action: "mineClipperIsOpen" }, { frameId: 0 })
+      .then((answer) => answer?.open === true, () => false))));
+  return answers.some(Boolean);
 }
 
 // A newer helper was installed while this connection stayed open (К4). The
@@ -886,7 +1052,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.action === "standaloneSave") {
-    globalThis.MineStandaloneVault.saveStandaloneBlock(msg.payload ?? {}).then((response) => {
+    trackBrowserWrite(() => globalThis.MineStandaloneVault.saveStandaloneBlock(msg.payload ?? {})).then((response) => {
       if (response?.ok && msg.payload?.tags) {
         void broadcastChannelsChanged(null);
       }
@@ -904,7 +1070,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.action === "standaloneCreateChannel") {
-    globalThis.MineStandaloneVault.createStandaloneChannel(msg.tag).then((response) => {
+    trackBrowserWrite(() => globalThis.MineStandaloneVault.createStandaloneChannel(msg.tag, msg.binding_id ?? null)).then((response) => {
       if (response?.ok) void broadcastChannelsChanged(response.tag ?? null);
       sendResponse(response);
     }, (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
@@ -935,9 +1101,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   // Content script asks background to show the overlay in its own tab.
-  // Used by the Instagram feed clip button where content script already has
-  // preloadedClipData in storage.session. This path is overlay-only: the
-  // page-injected button must not silently open a detached popup window.
+  // Used by the Instagram feed clip button, which has already read the post:
+  // the data travels in this message and is kept for this tab's opening only.
+  // This path is overlay-only: the page-injected button must not silently
+  // open a detached popup window.
   if (msg.action === "showOverlayInThisTab") {
     const tab = sender.tab;
     if (!tab) {
@@ -947,19 +1114,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     openClipperUi(tab, {
       fallbackUrl: typeof msg.pageUrl === "string" ? msg.pageUrl : null,
       allowWindowFallback: false,
+      preloaded: msg.preloaded ?? null,
     }).then(
       (mode) => sendResponse({ ok: mode === "overlay", mode }),
-      (err) => sendResponse({ ok: false, error: String(err) }),
+      async (err) => {
+        // The post read for a clipper that never opened is not kept for
+        // the next one.
+        await forgetClipperLaunch(tab.id).catch(() => undefined);
+        sendResponse({ ok: false, error: String(err) });
+      },
     );
     return true;
   }
 
-  if (msg.action === "getContextMenuData") {
-    chrome.storage.session.get("contextMenuData", (data) => {
-      sendResponse(data.contextMenuData || null);
-      // Clear after reading
-      chrome.storage.session.remove("contextMenuData");
-    });
+  if (msg.action === "getClipperLaunch") {
+    takeClipperLaunch(sender).then(sendResponse, () => sendResponse(null));
     return true;
   }
 
@@ -988,28 +1157,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true; // async
   }
 
-  // Content script asks background to capture the viewport (content scripts
-  // cannot call chrome.tabs.captureVisibleTab directly).
+  // A clipper asks background to capture its page's viewport (content scripts
+  // cannot call chrome.tabs.captureVisibleTab directly). An overlay captures
+  // its own tab; the clipper window names its source tab.
   if (msg.action === "captureForCrop") {
-    const tabId = sender.tab?.id;
-    const windowId = sender.tab?.windowId;
-    const capture = windowId !== undefined
-      ? (cb) => chrome.tabs.captureVisibleTab(windowId, { format: "jpeg", quality: 95 }, cb)
-      : (cb) => chrome.tabs.captureVisibleTab({ format: "jpeg", quality: 95 }, cb);
-    prepareTabForViewportCapture(tabId, () => {
-      capture((dataUrl) => {
-        if (chrome.runtime.lastError || !dataUrl) {
-          sendResponse({ ok: false, error: chrome.runtime.lastError?.message ?? "Capture failed" });
-          return;
-        }
-        const cached = cacheScreenshotUpload(dataUrl);
-        if (!cached.ok) {
-          sendResponse(cached);
-          return;
-        }
-        sendResponse({ ok: true, dataUrl, screenshotId: cached.screenshotId });
-      });
-    });
+    const tabId = isExtensionPage(sender) && typeof msg.tabId === "number" ? msg.tabId : sender.tab?.id;
+    if (typeof tabId !== "number") {
+      sendResponse({ ok: false, error: "No page to capture" });
+      return true;
+    }
+    captureTabViewport(tabId).then((dataUrl) => {
+      const cached = cacheScreenshotUpload(dataUrl);
+      sendResponse(cached.ok ? { ok: true, dataUrl, screenshotId: cached.screenshotId } : cached);
+    }, (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
     return true;
   }
 

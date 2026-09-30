@@ -1156,16 +1156,16 @@
           },
         };
 
-        // Write preloaded data to session storage, then show the overlay.
-        // useClipperState will pick this up in init() via preloadedClipData.
-        await chrome.storage.session.set({ preloadedClipData: preloadData });
-        // Ask background to show the in-page overlay. Instagram preloads
-        // overlay.js as a static content script because this page-injected
-        // button does not grant activeTab permission for executeScript.
+        // The post read here travels with this opening only: background keeps
+        // it for this tab, and the overlay that opens here reads it once.
+        // Instagram preloads overlay.js as a static content script because
+        // this page-injected button does not grant activeTab permission for
+        // executeScript.
         await chrome.runtime.sendMessage({
           target: "background",
           action: "showOverlayInThisTab",
           pageUrl: window.location.href,
+          preloaded: preloadData,
         });
 
         btn.style.opacity = "1";

@@ -417,6 +417,7 @@ export function PopupApp() {
           loading={clipper.channelsLoading}
           error={clipper.channelsError}
           notice={clipper.channelsNotice}
+          createError={clipper.collectionError}
           onRetry={clipper.retryChannels}
           selectedTags={clipper.selectedTags}
           onToggle={clipper.toggleTag}

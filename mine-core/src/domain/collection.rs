@@ -10,7 +10,8 @@ use crate::domain::source_patch::{
 };
 use crate::domain::vault::validate_slug;
 use crate::links::LinkIndex;
-use std::collections::BTreeSet;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 
 pub const MINE_COLLECTIONS_FIELD: &str = "Mine Collections";
 
@@ -72,6 +73,69 @@ pub fn validate_collection_ref(raw: &str) -> Result<String, String> {
     }
     validate_slug(&collection_ref).map_err(|error| error.to_string())?;
     Ok(collection_ref)
+}
+
+/// A collection page found among the notes, with its manual position.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct CollectionPage {
+    pub slug: String,
+    #[serde(default)]
+    pub position: Option<u32>,
+}
+
+/// One collection of a space: the reference cards use and how many name it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct CollectionCount {
+    pub tag: String,
+    pub block_count: usize,
+}
+
+/// The collections of a space from its notes alone, by the rule the index
+/// follows: collection pages in their manual order (position, then name),
+/// then collections that only cards name, most used first. `memberships`
+/// holds each card's `Mine Collections`. A space read without an index (the
+/// browser folder) lists the same collections the app does.
+pub fn list_collections(pages: &[CollectionPage], memberships: &[Vec<String>]) -> Vec<CollectionCount> {
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for card in memberships {
+        let refs: BTreeSet<String> = card
+            .iter()
+            .map(|raw| normalize_collection_ref(raw))
+            .filter(|collection_ref| !collection_ref.is_empty())
+            .collect();
+        for collection_ref in refs {
+            *counts.entry(collection_ref).or_insert(0) += 1;
+        }
+    }
+    let page_slugs: BTreeSet<String> = pages.iter().map(|page| page.slug.clone()).collect();
+    let mut listed: Vec<(u32, String)> = pages
+        .iter()
+        .map(|page| {
+            (
+                page.position.unwrap_or(u32::MAX),
+                collection_ref_for_slug(&page.slug, &page_slugs),
+            )
+        })
+        .collect();
+    listed.sort();
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::with_capacity(listed.len() + counts.len());
+    for (_, tag) in listed {
+        if seen.insert(tag.clone()) {
+            out.push(CollectionCount {
+                block_count: counts.get(&tag).copied().unwrap_or(0),
+                tag,
+            });
+        }
+    }
+    let mut named_only: Vec<(&String, &usize)> =
+        counts.iter().filter(|(tag, _)| !seen.contains(*tag)).collect();
+    named_only.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+    out.extend(named_only.into_iter().map(|(tag, count)| CollectionCount {
+        tag: tag.clone(),
+        block_count: *count,
+    }));
+    out
 }
 
 pub fn render_collections(collections: &[String]) -> String {
@@ -221,6 +285,30 @@ mod tests {
         assert_eq!(
             output,
             "---\ntags:\n  - old\nMine Collections: []\n---\nBody"
+        );
+    }
+
+    #[test]
+    fn collections_list_pages_in_manual_order_then_named_only_by_use() {
+        let pages = vec![
+            CollectionPage { slug: "Collections/Travel".into(), position: Some(1) },
+            CollectionPage { slug: "Collections/Art".into(), position: Some(0) },
+            CollectionPage { slug: "Collections/Empty".into(), position: None },
+        ];
+        let memberships = vec![
+            vec!["[[Travel]]".to_string(), "[[Recipes]]".to_string()],
+            vec!["Recipes".to_string(), "[[Travel|Trips]]".to_string()],
+            vec!["[[Books]]".to_string(), "[[Books]]".to_string()],
+        ];
+        assert_eq!(
+            list_collections(&pages, &memberships),
+            vec![
+                CollectionCount { tag: "Art".into(), block_count: 0 },
+                CollectionCount { tag: "Travel".into(), block_count: 2 },
+                CollectionCount { tag: "Empty".into(), block_count: 0 },
+                CollectionCount { tag: "Recipes".into(), block_count: 2 },
+                CollectionCount { tag: "Books".into(), block_count: 1 },
+            ]
         );
     }
 

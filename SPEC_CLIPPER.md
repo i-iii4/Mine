@@ -680,6 +680,8 @@ native host (см. Upload Server). Браузерный исполнитель �
 `screenshot_data_url` и сохраняет файл без приложения. Оба пути используют
 общий контракт операции и не переключают исполнителя после начала Save.
 
+Снимок экрана делает только background и только для исходной вкладки клиппера: overlay снимает свою вкладку, запасное окно называет вкладку, для которой открыто. Background снимает вкладку, только пока она впереди в своём окне, и после снимка проверяет, что она там осталась; иначе снимок отбрасывается с просьбой переснять (SPEC_AUDIT_FIXES.md, Ф6).
+
 Перед каждым реальным `chrome.tabs.captureVisibleTab(...)` background отправляет content script сообщение `prepareViewportCapture`. Content script скрывает все Mine-owned UI layers (`__mineOverlay`, crop overlay, crop toast) и отвечает только после clean-paint handshake (`requestAnimationFrame` ×2 + timeout fallback). Это обязательный инвариант: ни обычный Screenshot, ни Crop Area не должны вызывать `captureVisibleTab` сразу после `display:none` / DOM removal, потому что браузер может вернуть предыдущий compositor frame с видимым интерфейсом расширения.
 
 Повторный клик по extension icon при уже открытом overlay не должен заново инжектить `overlay.js`. Background сначала отправляет `showClipperOverlay` существующему listener'у и ждёт `{ok:true}`; новая инъекция разрешена только если listener не отвечает. Иначе в одной вкладке появляются два независимых module scope, и старый overlay host может остаться видимым во время capture.
@@ -689,10 +691,44 @@ Instagram content script. It must open the in-page overlay only; detached-window
 fallback is not a valid successful outcome for this path. Because clicking that
 page-injected button does not grant Chrome/Safari `activeTab` permission,
 `dist/overlay.js` is registered as a static content script for
-`https://www.instagram.com/*`. The button writes `preloadedClipData` and asks
-background for `showOverlayInThisTab`; background must first use the existing
-overlay listener and must return failure rather than opening `windows.create`
-when overlay is unavailable.
+`https://www.instagram.com/*`. The button sends the post it has read inside
+`showOverlayInThisTab`; background keeps it as this tab's launch, must first
+use the existing overlay listener and must return failure rather than opening
+`windows.create` when overlay is unavailable. A launch that did not open is
+dropped, so the post never reaches a later clipper.
+
+### Запуск клиппера (SPEC_AUDIT_FIXES.md, Ф6)
+
+Всё, что приносит одно открытие клиппера (исходная вкладка, её адрес и
+заголовок, цель контекстного меню, уже прочитанный пост Instagram), хранится
+как запуск этой вкладки в `chrome.storage.session`. Каждое открытие
+записывает свой запуск и тем самым отменяет оставшийся от прежнего.
+Клиппер читает запуск сообщением `getClipperLaunch`: overlay получает запуск
+своей вкладки, запасное окно получает запуск вкладки, для которой открыто
+(связь окна и вкладки записывается при создании окна). Данные страницы
+выдаются один раз; буфер старше 10 минут не выдаётся. Запасное окно без
+запуска не берёт активную вкладку, а просит открыть Mine со страницы.
+
+Создание коллекции в папке браузера несёт `binding_id` папки на момент
+действия; папка, выбранная за это время, отказывает. Ошибка создания
+коллекции показывается под списком и не убирает редактор.
+
+Сохранение в выданную папку браузера не ждёт помощника: статус помощника
+только обновляет индикаторы связи.
+
+Список коллекций папки браузера строится тем же правилом, что у приложения
+(`mine_core::domain::collection::list_collections`): страницы коллекций по
+ручному порядку, затем коллекции, которые называют только карточки, по
+числу карточек; у каждой счётчик карточек.
+
+### Что показано, то и сохранено (Ф5)
+
+Предпросмотр не склеивает изображения с одинаковым `alt`. Признак
+`selection: true` в запросе сохранения говорит обоим исполнителям, что тело
+выделено человеком: ядро не ставит над ним заголовок страницы, помощник не
+дописывает видео поста X. Помощник хранит побайтно одинаковые загруженные
+изображения одним файлом, но каждое место в тексте и его подпись остаются и
+ссылаются на этот файл.
 
 В overlay-context кнопка `Crop Area` запускает page-level crop overlay напрямую через `window.__mineCrop.start()`, который экспортируется из `content.js` в той же isolated world. Background `startCropMode` остаётся fallback для detached/window path. Основной overlay не должен зависеть от того, какой из нескольких `chrome.runtime.onMessage` listeners в вкладке первым обработает `startCropOverlay`.
 

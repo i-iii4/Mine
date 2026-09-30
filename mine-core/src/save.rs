@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::domain::block::{
-    derive_block_type, ensure_body_starts_with_h1, parse_block, serialize_block, suggest_slug,
+    derive_block_type, ensure_body_starts_with_h1, serialize_block, suggest_slug,
     Block, BlockType, DateTime, Frontmatter,
 };
 use crate::domain::collection::{normalize_collection_ref, validate_collection_ref};
@@ -40,6 +40,10 @@ pub struct CaptureRequest {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub author: Option<String>,
+    /// The body is text the person selected on the page. It is saved as it
+    /// was shown: no page title is put above it (SPEC_AUDIT_FIXES.md, Ф5).
+    #[serde(default)]
+    pub selection: bool,
 }
 
 /// The existing client intent, separate from the derived document type.
@@ -205,7 +209,9 @@ pub fn build_capture(request: &CaptureRequest) -> Result<Block, SaveError> {
     }
     let write_heading = match request.intent {
         CaptureIntent::WebClip => {
-            !request.body.trim().is_empty() && should_write_body_h1(kind, request.url.as_deref())
+            !request.selection
+                && !request.body.trim().is_empty()
+                && should_write_body_h1(kind, request.url.as_deref())
         }
         CaptureIntent::Desktop => false,
         CaptureIntent::Manual => request.file.is_none() || !request.body.trim().is_empty(),
@@ -455,6 +461,11 @@ pub enum CoreCommand {
         slug: String,
         markdown: String,
     },
+    /// The collection list of a space read without an index.
+    Collections {
+        pages: Vec<crate::domain::collection::CollectionPage>,
+        memberships: Vec<Vec<String>>,
+    },
     Advance {
         phase: SavePhase,
         evidence: SaveEvidence,
@@ -544,10 +555,22 @@ pub fn execute(command: CoreCommand) -> Result<serde_json::Value, SaveError> {
             Ok(json!({ "markdown": serialize_block(&block) }))
         }
         CoreCommand::Inspect { slug, markdown } => {
-            let block = parse_block(&slug, &markdown)
+            // Read the way the index reads: a note Obsidian accepts counts,
+            // with or without Mine's own properties.
+            let epoch = DateTime::new("1970-01-01T00:00:00Z")
                 .map_err(|e| failure(SaveErrorCode::InvalidRequest, e))?;
-            Ok(json!({ "collection": block.frontmatter.block_type == BlockType::Channel }))
+            let block = crate::domain::block::parse_markdown_document(&slug, &markdown, epoch)
+                .map_err(|e| failure(SaveErrorCode::InvalidRequest, e))?
+                .block;
+            Ok(json!({
+                "collection": block.frontmatter.block_type == BlockType::Channel,
+                "position": block.frontmatter.position,
+                "collections": block.frontmatter.tags,
+            }))
         }
+        CoreCommand::Collections { pages, memberships } => Ok(json!(
+            crate::domain::collection::list_collections(&pages, &memberships)
+        )),
         CoreCommand::Advance { phase, evidence } => Ok(json!(next_save_action(phase, &evidence))),
         CoreCommand::Fingerprint { value } => {
             let value = serde_json::from_str(&value)
@@ -603,6 +626,19 @@ mod tests {
             saved_at: "2026-08-31T12:00:00Z".into(),
             ..Default::default()
         }
+    }
+    #[test]
+    fn a_selection_is_saved_without_the_page_title_above_it() {
+        let mut input = request();
+        input.url = Some("https://example.com/article".into());
+        input.body = "Selected passage".into();
+        input.selection = true;
+        assert_eq!(build_capture(&input).expect("capture").body, "Selected passage");
+        input.selection = false;
+        assert_eq!(
+            build_capture(&input).expect("capture").body,
+            "# Example\n\nSelected passage"
+        );
     }
     #[test]
     fn capture_writes_no_source_even_when_a_client_sends_one() {

@@ -36,7 +36,12 @@ export type CaptureIntent =
 /**
  * A prepared capture. Resource acquisition belongs to the executor.
  */
-export type CaptureRequest = { slug?: string; block_type: string; intent?: CaptureIntent; title: string | null; description: string | null; url: string | null; body?: string; file: string | null; thumbnail: string | null; tags?: string[]; saved_at: string; width: number | null; height: number | null; author: string | null }
+export type CaptureRequest = { slug?: string; block_type: string; intent?: CaptureIntent; title: string | null; description: string | null; url: string | null; body?: string; file: string | null; thumbnail: string | null; tags?: string[]; saved_at: string; width: number | null; height: number | null; author: string | null;
+/**
+ * The body is text the person selected on the page. It is saved as it
+ * was shown: no page title is put above it (SPEC_AUDIT_FIXES.md, Ф5).
+ */
+selection?: boolean }
 
 /**
  * Runtime card category derived from the Markdown document shape.
@@ -128,6 +133,11 @@ export type CloudRecommendationState = {
  */
 due: boolean }
 
+/**
+ * A collection page found among the notes, with its manual position.
+ */
+export type CollectionPage = { slug: string; position?: number | null }
+
 export type CommandError = { kind: "no_vault" } |
 /**
  * The request was built for a space that is no longer the open one.
@@ -137,7 +147,11 @@ export type CommandError = { kind: "no_vault" } |
 /**
  * Commands supported by the JSON/WASM bridge, generated into TypeScript.
  */
-export type CoreCommand = { op: "capture"; request: CaptureRequest } | { op: "name"; title: string | null; url: string | null; layout: VaultWriteLayout; existing: string[] } | { op: "unique_file_name"; name: string; extension: string; existing: string[] } | { op: "shortest_link"; target: string; paths: string[]; omit_md_ext: boolean } | { op: "layout"; layout: VaultWriteLayout } | { op: "detect_layout"; stored: VaultWriteLayout | null; empty: boolean; cards: boolean; media: boolean; collections: boolean } | { op: "collection"; slug: string; saved_at: string } | { op: "inspect"; slug: string; markdown: string } | { op: "advance"; phase: SavePhase; evidence: SaveEvidence } | { op: "fingerprint"; value: string }
+export type CoreCommand = { op: "capture"; request: CaptureRequest } | { op: "name"; title: string | null; url: string | null; layout: VaultWriteLayout; existing: string[] } | { op: "unique_file_name"; name: string; extension: string; existing: string[] } | { op: "shortest_link"; target: string; paths: string[]; omit_md_ext: boolean } | { op: "layout"; layout: VaultWriteLayout } | { op: "detect_layout"; stored: VaultWriteLayout | null; empty: boolean; cards: boolean; media: boolean; collections: boolean } | { op: "collection"; slug: string; saved_at: string } | { op: "inspect"; slug: string; markdown: string } |
+/**
+ * The collection list of a space read without an index.
+ */
+{ op: "collections"; pages: CollectionPage[]; memberships: string[][] } | { op: "advance"; phase: SavePhase; evidence: SaveEvidence } | { op: "fingerprint"; value: string }
 
 export type CreateBlockParams = { block_type: string; title: string | null; url: string | null; tags: string[]; file_path: string | null;
 /**

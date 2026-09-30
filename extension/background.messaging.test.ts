@@ -8,7 +8,7 @@ type BrowserApiMode = "callback" | "promise";
 type Message = Record<string, unknown>;
 type MessageListener = (
   message: Message,
-  sender: { url?: string; tab?: { id: number } },
+  sender: { url?: string; tab?: { id: number; windowId?: number } },
   sendResponse: (response: Message) => void,
 ) => boolean | undefined;
 
@@ -69,6 +69,7 @@ function background(apiMode: BrowserApiMode) {
       get: vi.fn(async () => null),
       query: vi.fn(async () => [] as Array<{ id: number }>),
       sendMessage: vi.fn(),
+      onRemoved: eventSink(),
     },
     windows: {
       create: createWindow,
@@ -95,7 +96,7 @@ function background(apiMode: BrowserApiMode) {
   runInContext(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib/saveProtocol.js"), "utf8"), context);
   runInContext(source, context);
 
-  function dispatch(message: Message, sender: { url?: string; tab?: { id: number } } = {}) {
+  function dispatch(message: Message, sender: { url?: string; tab?: { id: number; windowId?: number } } = {}) {
     let resolveResponse: (response: Message) => void = () => undefined;
     const response = new Promise<Message>((resolve) => { resolveResponse = resolve; });
     const keepAlive = receiveRuntimeMessage(message, sender, resolveResponse);
@@ -104,6 +105,7 @@ function background(apiMode: BrowserApiMode) {
 
   return {
     chrome,
+    run: (code: string): Promise<unknown> => Promise.resolve(runInContext(code, context)),
     draftStore,
     createTab,
     createWindow,
@@ -233,5 +235,67 @@ describe("widget and background compatibility", () => {
     const request = worker.dispatch({ target: "background", action: "clipperHandshake", save_protocols: [1], required_capabilities: ["future_required"] });
     await expect(request.response).resolves.toMatchObject({ ok: false, code: "incompatible_protocol" });
     expect(worker.nativePort.postMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)", () => {
+  function launchWorker() {
+    const worker = background("promise");
+    const session: Record<string, unknown> = {};
+    worker.chrome.storage.session.get.mockImplementation(async (key: unknown) => ({ [key as string]: session[key as string] }));
+    worker.chrome.storage.session.set.mockImplementation(async (values: unknown) => { Object.assign(session, values); });
+    return worker;
+  }
+  const ask = (worker: ReturnType<typeof background>, sender: { url?: string; tab?: { id: number; windowId?: number } }) =>
+    worker.dispatch({ target: "background", action: "getClipperLaunch" }, sender).response;
+
+  it("hands the context-menu target only to the clipper of its tab, and once", async () => {
+    const worker = launchWorker();
+    await worker.run(`recordClipperLaunch({ id: 5, url: "https://a.example/", title: "A" },
+      { contextMenu: { menuItemId: "save-image", srcUrl: "https://a.example/i.jpg" } })`);
+    await expect(ask(worker, { url: "https://b.example/", tab: { id: 6 } })).resolves.toBeNull();
+    await expect(ask(worker, { url: "https://a.example/", tab: { id: 5 } }))
+      .resolves.toMatchObject({ sourceTabId: 5, contextMenu: { srcUrl: "https://a.example/i.jpg" } });
+    await expect(ask(worker, { url: "https://a.example/", tab: { id: 5 } }))
+      .resolves.toMatchObject({ sourceTabId: 5, contextMenu: null });
+  });
+
+  it("gives the clipper window the tab it was opened for, not its own", async () => {
+    const worker = launchWorker();
+    await worker.run(`recordClipperLaunch({ id: 5, url: "https://a.example/", title: "A" }, {})`);
+    await worker.run("rememberClipperWindowSource(77, 5)");
+    await expect(ask(worker, { url: "chrome-extension://test/dist/index.html", tab: { id: 900, windowId: 77 } }))
+      .resolves.toMatchObject({ sourceTabId: 5, sourceUrl: "https://a.example/", sourceTitle: "A" });
+  });
+
+  it("does not keep an Instagram post for a clipper that never opened", async () => {
+    const worker = launchWorker();
+    worker.chrome.tabs.sendMessage.mockImplementation((_id: unknown, _message: unknown, callback?: (r: unknown) => void) => { callback?.(undefined); });
+    const tab = { id: 5, url: "https://www.instagram.com/p/abc/" };
+    const opened = await worker.dispatch({ target: "background", action: "showOverlayInThisTab", pageUrl: tab.url,
+      preloaded: { metadata: { url: tab.url }, article: { content: "Post" } } }, { url: tab.url, tab }).response;
+    expect(opened).toMatchObject({ ok: false });
+    await expect(ask(worker, { url: tab.url, tab })).resolves.toBeNull();
+  });
+
+  it("captures the source tab only while it is in front of its window", async () => {
+    const worker = launchWorker();
+    const chrome = worker.chrome as unknown as { tabs: Record<string, ReturnType<typeof vi.fn>> };
+    chrome.tabs.sendMessage.mockImplementation((_id: unknown, _message: unknown, callback?: (r: unknown) => void) => { callback?.({ ok: true }); });
+    chrome.tabs.captureVisibleTab = vi.fn((_windowId: unknown, _options: unknown, callback: (url: string) => void) => callback("data:image/jpeg;base64,AA"));
+    const fromWindow = { url: "chrome-extension://test/dist/index.html", tab: { id: 900, windowId: 77 } };
+    const capture = () => worker.dispatch({ target: "background", action: "captureForCrop", tabId: 5 }, fromWindow).response;
+
+    chrome.tabs.get.mockResolvedValue({ id: 5, windowId: 3, active: false });
+    await expect(capture()).resolves.toMatchObject({ ok: false });
+    expect(chrome.tabs.captureVisibleTab).not.toHaveBeenCalled();
+
+    chrome.tabs.get.mockResolvedValue({ id: 5, windowId: 3, active: true });
+    chrome.tabs.query.mockResolvedValue([{ id: 6 }]);
+    await expect(capture()).resolves.toMatchObject({ ok: false });
+    expect(chrome.tabs.captureVisibleTab).toHaveBeenCalledWith(3, expect.anything(), expect.any(Function));
+
+    chrome.tabs.query.mockResolvedValue([{ id: 5 }]);
+    await expect(capture()).resolves.toMatchObject({ ok: true, dataUrl: "data:image/jpeg;base64,AA" });
   });
 });

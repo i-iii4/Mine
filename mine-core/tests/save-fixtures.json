@@ -208,7 +208,9 @@
     "expected": {
       "ok": true,
       "value": {
-        "collection": false
+        "collection": false,
+        "position": null,
+        "collections": []
       }
     }
   },
@@ -289,6 +291,48 @@
     "expected": {
       "ok": true,
       "value": "name_conflict"
+    }
+  },
+  {
+    "name": "collections from pages and card membership",
+    "command": {
+      "op": "collections",
+      "pages": [
+        {
+          "slug": "Collections/Travel",
+          "position": 1
+        },
+        {
+          "slug": "Collections/Art",
+          "position": 0
+        }
+      ],
+      "memberships": [
+        [
+          "[[Travel]]",
+          "[[Recipes]]"
+        ],
+        [
+          "[[Recipes]]"
+        ]
+      ]
+    },
+    "expected": {
+      "ok": true,
+      "value": [
+        {
+          "tag": "Art",
+          "block_count": 0
+        },
+        {
+          "tag": "Travel",
+          "block_count": 1
+        },
+        {
+          "tag": "Recipes",
+          "block_count": 2
+        }
+      ]
     }
   }
 ]

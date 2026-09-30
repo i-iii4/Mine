@@ -16,6 +16,8 @@ interface ChannelListProps {
   error?: string | null;
   /** A passing state shown under the list, such as indexing. */
   notice?: string | null;
+  /** A collection that could not be created; the list stays usable. */
+  createError?: string | null;
   onRetry?: () => void;
 }
 
@@ -27,6 +29,7 @@ export function ChannelList({
   loading = false,
   error = null,
   notice = null,
+  createError = null,
   onRetry,
 }: ChannelListProps) {
   // Canonical collection order: exactly what the backend returns — sidebar
@@ -57,6 +60,11 @@ export function ChannelList({
         autoFocusSearch={false}
         stopKeyPropagation
       />}
+      {createError && !loading && !error && (
+        <p className="px-3 pb-2 text-sm text-destructive" role="alert" data-clipper-collection-error="">
+          {createError}
+        </p>
+      )}
       {notice && !loading && !error && (
         <p className="px-3 pb-2 text-sm text-muted-foreground" role="status" data-clipper-channels-notice="">
           {notice}

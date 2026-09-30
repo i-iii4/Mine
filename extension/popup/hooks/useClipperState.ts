@@ -2,54 +2,13 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { normalizeArticleMedia } from "../lib/normalizeArticleMedia";
 import { hydrateTwitterPosts } from "../lib/twitterMedia";
 
-/** Remove duplicate images from markdown by comparing alt text.
- *  If two images have identical alt text, the second is a duplicate (e.g. OG hero + body image). */
-function deduplicateImages(markdown: string): string {
-  const imgRegex = /!\[([^\]]*)\]\([^)]+\)/g;
-  const matches = [...markdown.matchAll(imgRegex)];
-  if (matches.length < 2) return markdown;
-
-  const seen = new Set<string>();
-  let result = markdown;
-  for (const match of matches) {
-    const imageMarkdown = match[0];
-    const altText = match[1];
-    if (!imageMarkdown || altText === undefined) continue;
-    const alt = altText.trim();
-    if (!alt) continue;
-    if (seen.has(alt)) {
-      // Remove this duplicate line and its caption
-      const lines = result.split("\n");
-      const idx = lines.findIndex((l) => l.includes(imageMarkdown));
-      if (idx >= 0) {
-        lines.splice(idx, 1);
-        const lineAfterImage = lines[idx];
-        if (lineAfterImage !== undefined && lineAfterImage.trim() === "") {
-          lines.splice(idx, 1);
-        }
-        const captionLine = lines[idx];
-        if (captionLine !== undefined && captionLine.trim() === alt) {
-          lines.splice(idx, 1);
-          const spacerLine = lines[idx];
-          if (spacerLine !== undefined && spacerLine.trim() === "") {
-            lines.splice(idx, 1);
-          }
-        }
-        result = lines.join("\n");
-      }
-    } else {
-      seen.add(alt);
-    }
-  }
-  return result;
-}
 import {
   sendToNative,
   type NativeResponse,
   listKnownVaults,
   uploadFile,
   cacheScreenshotUpload,
-  getContextMenuData,
+  getClipperLaunch,
   extractMetadata,
   extractArticleAsync,
   getImageInfo,
@@ -118,6 +77,8 @@ export interface ClipperState {
   channelsError: string | null;
   /** A passing state of the collection list, such as indexing. */
   channelsNotice: string | null;
+  /** Why the last collection could not be created; the editor stays. */
+  collectionError: string | null;
   selectedTags: string[];
   currentType: ClipType;
   title: string;
@@ -140,6 +101,7 @@ export function useClipperState() {
   const [channelsLoading, setChannelsLoading] = useState(true);
   const [channelsError, setChannelsError] = useState<string | null>(null);
   const [channelsNotice, setChannelsNotice] = useState<string | null>(null);
+  const [collectionError, setCollectionError] = useState<string | null>(null);
   const channelsRecheckRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const channelsRequestRef = useRef(0);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -305,17 +267,25 @@ export function useClipperState() {
       });
       return;
     }
-    chrome.tabs.captureVisibleTab(
-      null as unknown as number,
-      { format: "jpeg", quality: 85 },
-      (dataUrl) => {
+    // The detached window captures the page it was opened for, and only
+    // while that page is in front (SPEC_AUDIT_FIXES.md, Ф6).
+    chrome.runtime.sendMessage(
+      { target: "background", action: "captureForCrop", tabId: tabIdRef.current },
+      (resp) => {
         if (chrome.runtime.lastError) {
           showError(`Screenshot failed: ${chrome.runtime.lastError.message}`);
           return;
         }
-        if (!dataUrl) return;
-        setScreenshotDataUrl(dataUrl);
-        cacheCapturedScreenshot(dataUrl);
+        if (resp?.ok && resp.dataUrl) {
+          setScreenshotDataUrl(resp.dataUrl);
+          if (resp.screenshotId) {
+            setScreenshotUploadId(resp.screenshotId);
+          } else {
+            cacheCapturedScreenshot(resp.dataUrl);
+          }
+        } else {
+          showError(resp?.error ?? "Screenshot capture failed");
+        }
       },
     );
   }, [cacheCapturedScreenshot, setScreenshotDataUrl, setScreenshotUploadId]);
@@ -359,10 +329,6 @@ export function useClipperState() {
         }
         const hydrated = await hydrateTwitterVideoPreviews(meta, asyncArticle);
         if (extractionEpochRef.current !== epoch) return null;
-        if (articleHasText(hydrated) && !hydrated.threadPostCount) {
-          hydrated.content = deduplicateImages(hydrated.content);
-        }
-
         if (articleHasText(hydrated) || articleHasPreviewMedia(hydrated) || hydrated.threadWarning) {
           setArticleDataValue(hydrated);
           if (hydrated.title) {
@@ -499,6 +465,21 @@ export function useClipperState() {
         if (!destinationRef.current && selected && typeof selected === "object"
           && "executor" in selected && selected.executor === "browser") {
           destinationRef.current = "browser";
+        }
+        // A granted browser folder needs nothing from the helper, and a
+        // previously selected browser folder is not replaced when Mine
+        // appears: the clipper saves at once instead of waiting for a helper
+        // that may hang (SPEC_AUDIT_FIXES.md, А3.11). The helper status only
+        // updates the connection indicators, in the background.
+        if (destinationRef.current !== "native" && standalone.configured && standalone.permission === "granted") {
+          if (operationRef.current || preparedOperationRef.current) return true;
+          enterStandaloneMode(standalone);
+          void sendToNative({ action: "get_status", vault_path: null, binding_id: null }).then((status) => {
+            if (generation !== destinationGenerationRef.current) return;
+            setNativeConnected(status.ok && status.connected !== false);
+            setCanOpenApp(status.ok && status.features?.includes("open_app_v1") === true);
+          }, () => undefined);
+          return true;
         }
         // The host finds the space by its identity; the path is where it
         // was last seen (SPEC_CLIPPER.md, К1).
@@ -971,12 +952,13 @@ export function useClipperState() {
 
       void ensureNativeStatus();
 
-      // Check for pre-loaded data (from Instagram feed button)
-      const preloaded = await chrome.storage.session.get("preloadedClipData");
-      if (preloaded.preloadedClipData) {
+      // This opening and what it brought: an Instagram post already read,
+      // a context-menu target. Only this clipper's source tab receives them.
+      const launch = await getClipperLaunch();
+      if (launch?.preloaded) {
         newCaptureRef.current = true;
-        const { metadata: preMeta, article: preArticle } = preloaded.preloadedClipData as { metadata: PageMetadata; article: ArticleData };
-        chrome.storage.session.remove("preloadedClipData");
+        const { metadata: preMeta, article: preArticle } = launch.preloaded;
+        tabIdRef.current = IS_CONTENT_SCRIPT_CONTEXT ? CONTENT_SCRIPT_CONTEXT : launch.sourceTabId;
 
         setMetadataValue(preMeta as PageMetadata);
         setArticleDataValue(preArticle as ArticleData);
@@ -1045,13 +1027,14 @@ export function useClipperState() {
         return;
       }
 
-      const ctxData = await getContextMenuData();
+      const ctxData = launch?.contextMenu ?? null;
       if (ctxData) newCaptureRef.current = true;
 
       // Resolve the target tab: in content-script context we ARE the tab,
       // so we use the sentinel tabId and read URL/title from window+document.
-      // In window-entry (detached popup) context we query Chrome for the
-      // currently active tab.
+      // The detached window works for the tab it was opened for, never for
+      // whatever tab is active when it asks (its own window's tab is the
+      // clipper itself).
       let tabId: number;
       let tabUrl: string | undefined;
       let tabTitle: string | undefined;
@@ -1060,14 +1043,13 @@ export function useClipperState() {
         tabUrl = window.location.href;
         tabTitle = document.title;
       } else {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (!tab?.id) {
-          showError("Cannot access current tab");
+        if (!launch) {
+          showError("Open Mine again from the page you want to save");
           return;
         }
-        tabId = tab.id;
-        tabUrl = tab.url;
-        tabTitle = tab.title;
+        tabId = launch.sourceTabId;
+        tabUrl = launch.sourceUrl ?? undefined;
+        tabTitle = launch.sourceTitle ?? undefined;
       }
       tabIdRef.current = tabId;
       applyCropCapability(tabUrl ?? null);
@@ -1286,12 +1268,17 @@ export function useClipperState() {
     const isCurrent = () => mountedRef.current && generation === destinationGenerationRef.current
       && mode === saveModeRef.current && vault === vaultRef.current && binding === bindingIdRef.current
       && !operationRef.current && !preparedOperationRef.current && !savingRef.current;
+    setCollectionError(null);
+    // The folder chosen now is where the collection goes, even if another
+    // one is chosen while the request runs (SPEC_AUDIT_FIXES.md, Ф6).
     const result = mode === "standalone"
-      ? await standaloneCreateChannel(name)
+      ? await standaloneCreateChannel(name, binding)
       : await sendToNative({ action: "create_channel", tag: name, vault_path: vault });
     if (!isCurrent()) return;
     if (!result.ok) {
-      showError(result.error ?? "Failed to create collection");
+      // A failed collection is not a failed clip: the editor, its Save and
+      // the collection name stay for another try.
+      setCollectionError(result.error ?? "Could not create the collection");
       return;
     }
     const tag = typeof result.tag === "string" ? result.tag : name;
@@ -1338,7 +1325,8 @@ export function useClipperState() {
       setPreviousOperation(previous);
       return { ok: false as const, error: "A previous clip from this page has an unresolved save. Review that clip first; checking it does not save this new draft." };
     }
-    if (!(await ensureNativeStatus())) {
+    // A browser folder saves without asking the helper first (А3.11).
+    if (saveModeRef.current !== "standalone" && !(await ensureNativeStatus())) {
       setSaving(false);
       return {
         ok: false as const,
@@ -1389,6 +1377,8 @@ export function useClipperState() {
         };
       }
       payload.body = resolved.text;
+      // Both executors save a selection as shown (SPEC_AUDIT_FIXES.md, Ф5).
+      if (resolved.source === "selection") payload.selection = true;
       if (resolved.source === "article" && resolved.byline) {
         payload.author = resolved.byline;
       }
@@ -1655,6 +1645,7 @@ export function useClipperState() {
     channelsLoading,
     channelsError,
     channelsNotice,
+    collectionError,
     retryChannels: () => { void refreshChannels(); },
     selectedTags,
     currentType,

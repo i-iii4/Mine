@@ -313,6 +313,16 @@ function onRuntimeMessage(msg: unknown) {
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  // A pending extension update asks before reloading (SPEC_CLIPPER.md, К4):
+  // a hidden overlay (screenshot, crop) is still an open editor.
+  if (
+    typeof msg === "object" &&
+    msg !== null &&
+    (msg as { action?: unknown }).action === "mineClipperIsOpen"
+  ) {
+    sendResponse({ open: current !== null });
+    return false;
+  }
   const handled = onRuntimeMessage(msg);
   if (handled) sendResponse({ ok: true });
   return false;

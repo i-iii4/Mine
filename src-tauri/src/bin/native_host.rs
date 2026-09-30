@@ -114,6 +114,10 @@ struct SaveBlockParams {
     /// Posters for the videos referenced in `body`, so a video that cannot be
     /// stored locally still leaves the block with a real preview.
     video_posters: Option<Vec<VideoPosterRef>>,
+    /// The body is text the person selected: saved as shown, with nothing
+    /// added (SPEC_AUDIT_FIXES.md, Ф5).
+    #[serde(default)]
+    selection: bool,
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -1123,6 +1127,16 @@ fn check_binding(params: &serde_json::Value, binding: &str) -> anyhow::Result<()
     Ok(())
 }
 
+/// The X post whose videos the helper adds to a saved post body: the content
+/// script cannot reach the syndication API. A selection is saved as shown, so
+/// a video the person did not select is never added to it (Ф5).
+fn tweet_to_complete_with_videos(block_type: BlockType, params: &SaveBlockParams) -> Option<String> {
+    if block_type != BlockType::Article || params.selection {
+        return None;
+    }
+    extract_twitter_video_id(params.url.as_deref()?)
+}
+
 fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
     if let Err(error) = mine_lib::runtime_protocol::validate_save_request(&params) {
         send_response(&incompatible_save_response(&params, error));
@@ -1471,25 +1485,22 @@ fn perform_save_block_with_publisher(
 
     // Download inline images (and videos) for article bodies
     let (body, inline_files, unresolved_videos) = {
+        let tweet_to_complete = tweet_to_complete_with_videos(bt, &p);
         let mut raw = p.body.unwrap_or_default();
 
         // For Twitter: fetch video MP4 URLs via syndication API.
         // Insert after the first tweet's text (before first "---"), not at end.
         // Content script can't call syndication API (CORS), so backend handles it.
-        if bt == BlockType::Article {
-            if let Some(ref url) = p.url {
-                if let Some(tweet_id) = extract_twitter_video_id(url) {
-                    if let Ok(video_urls) = fetch_tweet_videos(&tweet_id) {
-                        for video_url in &video_urls {
-                            if raw.contains(video_url.as_str()) {
-                                continue; // already present
-                            }
-                            // Insert after first tweet text, before first ---
-                            let insert_pos = raw.find("\n\n---\n").unwrap_or(raw.len());
-                            let markup = format!("\n\n![]({})", video_url);
-                            raw.insert_str(insert_pos, &markup);
-                        }
+        if let Some(tweet_id) = tweet_to_complete {
+            if let Ok(video_urls) = fetch_tweet_videos(&tweet_id) {
+                for video_url in &video_urls {
+                    if raw.contains(video_url.as_str()) {
+                        continue; // already present
                     }
+                    // Insert after first tweet text, before first ---
+                    let insert_pos = raw.find("\n\n---\n").unwrap_or(raw.len());
+                    let markup = format!("\n\n![]({})", video_url);
+                    raw.insert_str(insert_pos, &markup);
                 }
             }
         }
@@ -1555,6 +1566,7 @@ fn perform_save_block_with_publisher(
         width: p.width,
         height: p.height,
         author: p.author,
+        selection: p.selection,
     })?;
     let mut artifacts = inline_files
         .iter()
@@ -2301,8 +2313,10 @@ fn apply_rewrites_with_links(
     debug_assert_eq!(tasks.len(), outcomes.len());
 
     // Dedup: pair each successful task with the earliest other successful
-    // task whose downloaded file is byte-identical. Removed duplicates
-    // get their dest_file unlinked and trigger line-removal rewrites.
+    // task whose downloaded file is byte-identical. The duplicate file goes;
+    // its place in the text stays and points at the kept file. An author who
+    // shows one picture twice, each time with its own caption, gets both
+    // back (SPEC_AUDIT_FIXES.md, Ф5).
     let mut dedup_target: Vec<Option<usize>> = vec![None; tasks.len()];
     for j in 0..tasks.len() {
         if outcomes[j].is_err() {
@@ -2352,36 +2366,14 @@ fn apply_rewrites_with_links(
                     replacement,
                 });
             }
-            (Ok(()), Some(_)) => {
-                // Duplicate: remove the entire `![...](...)` plus
-                // surrounding blank lines and matching caption line.
-                let bytes = body.as_bytes();
-                let remove_end = task.paren_end + 1;
-                let mut line_start = task.img_start;
-                while line_start > 0 && bytes.get(line_start - 1) == Some(&b'\n') {
-                    line_start -= 1;
-                }
-                let mut line_end = remove_end;
-                while line_end < body.len() && bytes.get(line_end) == Some(&b'\n') {
-                    line_end += 1;
-                }
-                let alt_trim = task.alt.trim();
-                if !alt_trim.is_empty() && line_end < body.len() {
-                    let next_newline = body[line_end..]
-                        .find('\n')
-                        .map(|p| line_end + p)
-                        .unwrap_or(body.len());
-                    let next_line = body[line_end..next_newline].trim();
-                    if next_line == alt_trim {
-                        line_end = next_newline;
-                        while line_end < body.len() && bytes.get(line_end) == Some(&b'\n') {
-                            line_end += 1;
-                        }
-                    }
-                }
+            (Ok(()), Some(kept)) => {
+                // Byte-identical to an earlier file: the same embed, reused.
+                let kept = &tasks[kept].dest_name;
+                let target = links.shortest_link(kept, false)
+                    .unwrap_or_else(|| kept.clone());
                 specs.push(RewriteSpec {
-                    range: line_start..line_end,
-                    replacement: String::new(),
+                    range: task.img_start..task.paren_end + 1,
+                    replacement: build_inline_wikilink(&target, task.alt.trim()),
                 });
             }
         }
@@ -3499,6 +3491,29 @@ mod tests {
     fn sc2_link_request(id: &str) -> serde_json::Value {
         serde_json::json!({"operation_id":id,"block_type":"link","title":"Local link",
             "url":"https://example.com","body":"","tags":[]})
+    }
+
+    #[test]
+    fn a_selection_is_saved_as_shown_without_page_title_or_post_video() {
+        let (_tmp, vault) = sc2_temp_vault();
+        let request = serde_json::json!({"operation_id":"selection","block_type":"article",
+            "title":"Long article title","url":"https://example.com/article",
+            "body":"Selected words","tags":[],"selection":true});
+        let response = sc0_save_response(&vault, request);
+        assert_eq!(response["outcome"], "committed");
+        let path = vault.block_path(response["slug"].as_str().unwrap());
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(content.ends_with("---\nSelected words"), "{content}");
+
+        let post: SaveBlockParams = serde_json::from_value(serde_json::json!({
+            "block_type":"article","url":"https://x.com/author/status/123","body":"Selected words"}))
+            .unwrap();
+        assert!(tweet_to_complete_with_videos(BlockType::Article, &post).is_some());
+        let selected: SaveBlockParams = serde_json::from_value(serde_json::json!({
+            "block_type":"article","url":"https://x.com/author/status/123","body":"Selected words",
+            "selection":true}))
+            .unwrap();
+        assert_eq!(tweet_to_complete_with_videos(BlockType::Article, &selected), None);
     }
 
     #[test]
@@ -5273,9 +5288,9 @@ mod tests {
     }
 
     #[test]
-    fn apply_rewrites_dedup_removes_caption_line() {
-        // Two tasks point at byte-identical files: the second is dropped
-        // along with its caption-only follow-up line.
+    fn apply_rewrites_reuses_one_file_for_an_authors_repeat() {
+        // Ф5: the author shows one picture twice, each with its own caption.
+        // Both places stay in the text; the identical file is stored once.
         let tmp = TempDir::new().unwrap();
         std::fs::write(tmp.path().join("S (image 1).jpg"), b"PIXELS").unwrap();
         std::fs::write(tmp.path().join("S (image 2).jpg"), b"PIXELS").unwrap();
@@ -5284,14 +5299,14 @@ mod tests {
         let tasks = scan_inline_tasks(body, &vault_at(tmp.path()), "S");
         assert_eq!(tasks.len(), 2);
         let outcomes = vec![Ok(()), Ok(())];
-        let (rewritten, _) = apply_rewrites(body, &tasks, &outcomes);
-        // First image kept (with wikilink), second pair removed entirely.
-        assert!(rewritten.contains("![[S (image 1).jpg|first]]"));
-        assert!(!rewritten.contains("S (image 2).jpg"));
-        assert!(!rewritten.contains("second"));
-        // Dup file deleted from disk.
+        let (rewritten, surviving) = apply_rewrites(body, &tasks, &outcomes);
+        assert_eq!(
+            rewritten,
+            "intro\n![[S (image 1).jpg|first]]\nfirst\n\n![[S (image 1).jpg|second]]\nsecond\n\nend"
+        );
         assert!(!tmp.path().join("S (image 2).jpg").exists());
         assert!(tmp.path().join("S (image 1).jpg").exists());
+        assert_eq!(surviving, vec![tmp.path().join("S (image 1).jpg")]);
     }
 
     #[test]

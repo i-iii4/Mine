@@ -78,15 +78,27 @@ export async function sendToNative(payload: NativeRequest): Promise<NativeRespon
   });
 }
 
-export async function getContextMenuData(): Promise<ContextMenuData | null> {
+/// One opening of the clipper (SPEC_AUDIT_FIXES.md, Ф6): the page it opened
+/// for and what that opening brought along. Only the clipper that opened for
+/// the source tab receives it.
+export interface ClipperLaunch {
+  sourceTabId: number;
+  sourceUrl: string | null;
+  sourceTitle: string | null;
+  contextMenu: ContextMenuData | null;
+  preloaded: { metadata: PageMetadata; article: ArticleData } | null;
+}
+
+export async function getClipperLaunch(): Promise<ClipperLaunch | null> {
   return new Promise((resolve) => {
     const timer = setTimeout(() => resolve(null), 3_000);
 
     chrome.runtime.sendMessage(
-      { target: "background", action: "getContextMenuData" },
+      { target: "background", action: "getClipperLaunch" },
       (data) => {
         clearTimeout(timer);
-        resolve((data as ContextMenuData) ?? null);
+        void chrome.runtime.lastError;
+        resolve((data as ClipperLaunch | null) ?? null);
       },
     );
   });

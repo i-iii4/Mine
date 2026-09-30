@@ -301,7 +301,8 @@
           title: request.title ?? null, url: request.url ?? null, body: request.body ?? "", file,
           thumbnail: null, tags: request.tags ?? [], saved_at: request.saved_at ?? now(),
           author: request.author ?? null, description: request.description ?? null,
-          width: request.width ?? null, height: request.height ?? null } });
+          width: request.width ?? null, height: request.height ?? null,
+          selection: request.selection === true } });
       record = { id, binding: binding.id, fingerprint, kind, phase: "prepared", layout, newSpace,
         slug: named.slug, block_type: kind === "collection" ? "channel" : request.block_type,
         markdown: document.markdown, hash: await hash(document.markdown), media };
@@ -327,7 +328,10 @@
     const rejection = root.MineSaveProtocol.validate(request);
     return rejection ? Promise.resolve(rejection) : serialized(() => save(request, options));
   };
-  const createStandaloneChannel = (tag, options) => serialized(() => save({ title: tag, operation_id: newId() }, options, "collection"));
+  // The folder named at the action receives the collection; a folder chosen
+  // since then refuses it (SPEC_AUDIT_FIXES.md, Ф6).
+  const createStandaloneChannel = (tag, bindingId, options) => serialized(() => save(
+    { title: tag, operation_id: newId(), ...(bindingId ? { binding_id: bindingId } : {}) }, options, "collection"));
   async function lookupOperation(id, bindingId, options) {
     return serialized(async () => {
       try {
@@ -356,7 +360,10 @@
       const binding = await selectedBinding(options);
       if (!binding) throw error("folder_required", "Choose a folder first");
       await requirePermission(binding.handle);
-      const channels = [];
+      // The same list the app shows: collection pages in their manual order,
+      // collections only cards name, and how many cards each holds.
+      const pages = [];
+      const memberships = [];
       async function scan(handle, prefix = "") {
         for await (const [name, entry] of handle.entries()) {
           if (name.startsWith(".")) continue;
@@ -364,12 +371,15 @@
           if (!name.endsWith(".md")) continue;
           const slug = join(prefix, name.slice(0, -3));
           const markdown = await (await (await handle.getFileHandle(name)).getFile()).text();
-          try { if ((await core({ op: "inspect", slug, markdown })).collection) channels.push({ tag: slug, block_count: 0 }); }
-          catch (failure) { if (failure.code !== "invalid_request") throw failure; }
+          try {
+            const note = await core({ op: "inspect", slug, markdown });
+            if (note.collection) pages.push({ slug, position: note.position ?? null });
+            else if (note.collections?.length) memberships.push(note.collections);
+          } catch (failure) { if (failure.code !== "invalid_request") throw failure; }
         }
       }
       await scan(binding.handle);
-      channels.sort((a, b) => a.tag.localeCompare(b.tag));
+      const channels = await core({ op: "collections", pages, memberships });
       return { ok: true, channels };
     } catch (failure) { return failed(undefined, failure); }
   }

@@ -55,6 +55,8 @@ vi.mock("../lib/protocol", async (importOriginal) => ({
   negotiateWidgetProtocol: async () => undefined,
 }));
 
+// A launch set by a test; otherwise the clipper opened for the active tab.
+const clipperLaunch = vi.hoisted(() => ({ value: null as null | Record<string, unknown> }));
 const { sendToNative, standalone, threadArticle } = vi.hoisted(() => ({
   threadArticle: { value: null as null | Record<string, unknown> },
   sendToNative: vi.fn(),
@@ -76,7 +78,11 @@ vi.mock("../lib/messaging", async (importOriginal) => {
   return {
     ...original,
     sendToNative: (...args: unknown[]) => sendToNative(...args),
-    getContextMenuData: async () => null,
+    getClipperLaunch: async () => {
+      if (clipperLaunch.value) return clipperLaunch.value;
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      return tab?.id ? { sourceTabId: tab.id, sourceUrl: tab.url ?? null, sourceTitle: tab.title ?? null, contextMenu: null, preloaded: null } : null;
+    },
     extractMetadata: async () => threadArticle.value
       ? { url: threadArticle.value.pageUrl ?? "https://x.com/author/status/10", title: "Thread", selection: "", detectedType: "content" }
       : { url: "https://example.com", title: "Page" },
@@ -132,6 +138,7 @@ function mockChrome() {
 }
 
 beforeEach(() => {
+  clipperLaunch.value = null;
   drafts.clear();
   draftRecords.clear();
   threadArticle.value = null;
@@ -208,6 +215,35 @@ describe("standalone mode decision", () => {
     expect(result.current.selectedTags).toEqual(["New collection"]);
   });
 
+  it("saves into the browser folder while the helper does not answer (А3.11)", async () => {
+    standalone.getStandaloneStatus.mockResolvedValue({ configured: true, folderName: "Mine", permission: "granted", bindingId: "browser-original" });
+    standalone.standaloneSave.mockResolvedValue({ ok: true, outcome: "committed", slug: "Cards/Clip" });
+    await chrome.storage.local.set({ mineSaveDestination: { executor: "browser", bindingId: "browser-original" } });
+    sendToNative.mockImplementation(() => new Promise(() => undefined));
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.saveMode).toBe("standalone"));
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    act(() => result.current.setCurrentType("link"));
+    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+    expect(standalone.standaloneSave).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the editor and says why when a collection cannot be created (А3.10)", async () => {
+    browserDestination();
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    standalone.standaloneCreateChannel.mockResolvedValueOnce({ ok: false, error: "Restore access to the saved folder" });
+    await act(async () => { await result.current.createChannel("Reference"); });
+    expect(standalone.standaloneCreateChannel).toHaveBeenCalledWith("Reference", "browser-original");
+    expect(result.current.state).toBe("main");
+    expect(result.current.collectionError).toBe("Restore access to the saved folder");
+    expect(result.current.canSave).toBe(true);
+    standalone.standaloneCreateChannel.mockResolvedValueOnce({ ok: true, tag: "Reference" });
+    await act(async () => { await result.current.createChannel("Reference"); });
+    expect(result.current.collectionError).toBeNull();
+    expect(result.current.selectedTags).toEqual(["Reference"]);
+  });
+
   it("does not select a created collection after its destination was replaced", async () => {
     browserDestination();
     const { result } = renderHook(() => useClipperState());
@@ -239,8 +275,12 @@ describe("standalone mode decision", () => {
     const { result } = renderHook(() => useClipperState());
     await waitFor(() => expect(finishOld).toBeDefined());
     await waitFor(() => expect(result.current.draftReady).toBe(true));
-    vi.mocked(chrome.tabs.captureVisibleTab).mockImplementation((_windowId, _options, callback) => { callback?.(newBytes); });
+    // The window asks background to capture its source tab (Ф6).
+    const capture = vi.mocked(chrome.runtime.sendMessage).mockImplementation(((message: { action?: string }, callback?: (r: unknown) => void) => {
+      if (message.action === "captureForCrop") callback?.({ ok: true, dataUrl: newBytes });
+    }) as unknown as typeof chrome.runtime.sendMessage);
     act(() => result.current.retakeScreenshot());
+    expect(capture).toHaveBeenCalledWith({ target: "background", action: "captureForCrop", tabId: 7 }, expect.any(Function));
     await waitFor(() => expect(result.current.screenshotDataUrl).toBe(newBytes));
     await act(async () => { finishOld?.("old-upload"); });
     await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
@@ -584,17 +624,35 @@ describe("standalone mode decision", () => {
     });
   });
 
+  it("saves every product photo although they share one alt text (А3.1)", async () => {
+    browserDestination();
+    const meta: messaging.PageMetadata = { url: "https://shop.example/p", documentUrl: "https://shop.example/p", captureGeneration: "g:1",
+      title: "Meridian", description: "", image: null, author: null, ogType: null, favicon: null, selection: "", detectedType: "content", isArticle: true };
+    vi.spyOn(messaging, "extractMetadata").mockResolvedValue(meta);
+    const photos = Array.from({ length: 9 }, (_, i) => `![Meridian](https://shop.example/media/${i}.jpg)`).join("\n\n");
+    vi.spyOn(messaging, "extractArticleAsync").mockResolvedValue({ title: "Meridian", content: `${photos}\n\nA geometric book.`,
+      byline: null, excerpt: "", documentUrl: meta.documentUrl, sourceUrl: meta.url, captureGeneration: meta.captureGeneration });
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    act(() => result.current.setCurrentType("content"));
+    await waitFor(() => expect(result.current.articleExtractionState).toBe("ready"));
+    expect(result.current.articleData?.content.match(/!\[/g)).toHaveLength(9);
+    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+    const body = String(standalone.standaloneSave.mock.calls[0]?.[0].body);
+    expect([...body.matchAll(/media\/(\d)\.jpg/g)].map(match => match[1])).toEqual(["0", "1", "2", "3", "4", "5", "6", "7", "8"]);
+  });
+
   it("saves the preview selection without rereading a changed page selection", async () => {
     browserDestination();
-    vi.mocked(chrome.storage.session.get).mockImplementation(async (key) => key === "preloadedClipData" ? {
-      preloadedClipData: { metadata: { url: "https://example.com/article", title: "Selection", selection: "Shown selection", detectedType: "selection" }, article: { content: "Full article", title: "Article", byline: null, excerpt: "" } },
-    } : {});
+    clipperLaunch.value = { sourceTabId: 7, sourceUrl: "https://example.com/article", sourceTitle: "Selection", contextMenu: null,
+      preloaded: { metadata: { url: "https://example.com/article", title: "Selection", selection: "Shown selection", detectedType: "selection" }, article: { content: "Full article", title: "Article", byline: null, excerpt: "" } } };
     const read = vi.spyOn(messaging, "extractMetadata");
     const { result } = renderHook(() => useClipperState());
     await waitFor(() => expect(result.current.metadata?.selection).toBe("Shown selection"));
     await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
     expect(read).not.toHaveBeenCalled();
-    expect(standalone.standaloneSave.mock.calls[0][0]).toMatchObject({ body: "Shown selection", url: "https://example.com/article" });
+    // The selection mark tells both executors to save the text as shown (Ф5).
+    expect(standalone.standaloneSave.mock.calls[0][0]).toMatchObject({ body: "Shown selection", url: "https://example.com/article", selection: true });
   });
 
   it("discards extraction that completes after switching to Link", async () => {
@@ -647,12 +705,13 @@ describe("standalone mode decision", () => {
     ["browser", "async"], ["native", "async"],
   ])("normalizes HTML video before preview and %s save (%s extraction)", async (executor, extraction) => {
     if (extraction === "async") threadArticle.value = { ...objktVideo.article, pageUrl: objktVideo.pageUrl };
-    vi.mocked(chrome.storage.session.get).mockImplementation(async (keys) => extraction === "preloaded" && keys === "preloadedClipData" ? {
-      preloadedClipData: {
-        metadata: { url: objktVideo.pageUrl, title: objktVideo.article.title, selection: "", detectedType: "article" },
-        article: objktVideo.article,
-      },
-    } : {});
+    if (extraction === "preloaded") {
+      clipperLaunch.value = { sourceTabId: 7, sourceUrl: objktVideo.pageUrl, sourceTitle: objktVideo.article.title, contextMenu: null,
+        preloaded: {
+          metadata: { url: objktVideo.pageUrl, title: objktVideo.article.title, selection: "", detectedType: "article" },
+          article: objktVideo.article,
+        } };
+    }
     standalone.getStandaloneStatus.mockResolvedValue(executor === "browser"
       ? { configured: true, folderName: "Mine", permission: "granted", bindingId: "browser-original" }
       : { configured: false });
@@ -1043,7 +1102,9 @@ describe("space identity (SPEC_CLIPPER.md, К1, К3, К6)", () => {
   const routeRuntime = (respond: (request: Record<string, unknown>) => unknown) => {
     runtimeRequests.length = 0;
     const send = chrome.runtime.sendMessage as unknown as ReturnType<typeof vi.fn>;
-    send.mockImplementation((message: { payload: Record<string, unknown> }, callback?: (response: unknown) => void) => {
+    send.mockImplementation((message: { payload?: Record<string, unknown> }, callback?: (response: unknown) => void) => {
+      // Only native requests carry a payload; a screenshot request does not.
+      if (!message.payload) return;
       runtimeRequests.push(message.payload);
       callback?.(respond(message.payload));
     });

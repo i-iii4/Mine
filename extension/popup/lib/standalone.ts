@@ -102,12 +102,14 @@ export function standaloneListChannels(): Promise<{
   return toBackground({ action: "standaloneListChannels" });
 }
 
-export function standaloneCreateChannel(tag: string): Promise<{
+/** Create a collection in the folder `bindingId` names; a different folder
+ *  chosen meanwhile refuses it instead of receiving it. */
+export function standaloneCreateChannel(tag: string, bindingId: string | null): Promise<{
   ok: boolean;
   tag?: string;
   error?: string;
 }> {
-  return toBackground({ action: "standaloneCreateChannel", tag });
+  return toBackground({ action: "standaloneCreateChannel", tag, binding_id: bindingId });
 }
 
 /** Whether this surface can open the directory picker at all. */
