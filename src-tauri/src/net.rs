@@ -7,7 +7,7 @@
 //! `127.0.0.1` bypassed the filter entirely.
 
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::net::{IpAddr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::path::Path;
 use std::time::Duration;
 
@@ -74,26 +74,104 @@ pub fn validate_fetch_url(url: &str) -> Result<()> {
 }
 
 fn validate_public_ip(ip: IpAddr) -> Result<()> {
+    if !is_public_ip(ip) {
+        bail!("private/loopback addresses are not allowed: {}", ip);
+    }
+    Ok(())
+}
+
+/// Whether a fetch made on the person's behalf may reach `ip`: not this Mac,
+/// not the person's network or their provider's, not a service or reserved
+/// range (SPEC_AUDIT_FIXES.md, Ф10).
+pub fn is_public_ip(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(addr)
-            if addr.is_private()
-                || addr.is_loopback()
-                || addr.is_link_local()
-                || addr.is_broadcast()
-                || addr.is_unspecified() =>
-        {
-            bail!("private/loopback addresses are not allowed: {}", addr);
+        IpAddr::V4(addr) => is_public_v4(addr),
+        IpAddr::V6(addr) => is_public_v6(addr),
+    }
+}
+
+fn is_public_v4(addr: Ipv4Addr) -> bool {
+    let [a, b, c, _] = addr.octets();
+    let restricted = addr.is_private()
+        || addr.is_loopback()
+        || addr.is_link_local()
+        || addr.is_broadcast()
+        || addr.is_unspecified()
+        || addr.is_multicast()
+        // "This network".
+        || a == 0
+        // Shared address space of carrier-grade NAT.
+        || (a == 100 && (64..=127).contains(&b))
+        // IETF protocol assignments.
+        || (a == 192 && b == 0 && c == 0)
+        // Documentation.
+        || (a == 192 && b == 0 && c == 2)
+        || (a == 198 && b == 51 && c == 100)
+        || (a == 203 && b == 0 && c == 113)
+        // Benchmarking.
+        || (a == 198 && (b == 18 || b == 19))
+        // Reserved.
+        || a >= 240;
+    !restricted
+}
+
+fn is_public_v6(addr: Ipv6Addr) -> bool {
+    // An IPv4 address written as IPv6 reaches that IPv4 address.
+    if let Some(v4) = addr.to_ipv4_mapped() {
+        return is_public_v4(v4);
+    }
+    let s = addr.segments();
+    let embedded = |high: u16, low: u16| {
+        let [a, b] = high.to_be_bytes();
+        let [c, d] = low.to_be_bytes();
+        Ipv4Addr::new(a, b, c, d)
+    };
+    // IPv4-compatible addresses (deprecated) and `::`, `::1`.
+    if s[..6] == [0; 6] {
+        return false;
+    }
+    // NAT64 carries an IPv4 destination.
+    if s[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
+        return is_public_v4(embedded(s[6], s[7]));
+    }
+    // 6to4 carries an IPv4 relay.
+    if s[0] == 0x2002 && !is_public_v4(embedded(s[1], s[2])) {
+        return false;
+    }
+    let restricted = addr.is_loopback()
+        || addr.is_unspecified()
+        || addr.is_unique_local()
+        || addr.is_unicast_link_local()
+        || addr.is_multicast()
+        // Site-local (deprecated).
+        || (s[0] & 0xffc0) == 0xfec0
+        // Documentation.
+        || (s[0] == 0x2001 && s[1] == 0x0db8);
+    !restricted
+}
+
+/// Resolves names for the HTTP client and admits only public addresses. The
+/// check covers the address the connection is actually made to: a separate
+/// lookup before the request can be answered differently the second time
+/// (DNS rebinding) (SPEC_AUDIT_FIXES.md, Ф10).
+struct PublicOnlyResolver;
+
+impl ureq::Resolver for PublicOnlyResolver {
+    fn resolve(&self, netloc: &str) -> std::io::Result<Vec<SocketAddr>> {
+        let addrs: Vec<SocketAddr> = netloc.to_socket_addrs()?.collect();
+        if let Some(blocked) = addrs.iter().find(|addr| !is_public_ip(addr.ip())) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!("{netloc} resolves to a private or service address: {}", blocked.ip()),
+            ));
         }
-        IpAddr::V6(addr)
-            if addr.is_loopback()
-                || addr.is_unspecified()
-                || addr.is_unique_local()
-                || addr.is_unicast_link_local()
-                || addr.is_multicast() =>
-        {
-            bail!("private/loopback addresses are not allowed: {}", addr);
+        if addrs.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("{netloc} did not resolve"),
+            ));
         }
-        _ => Ok(()),
+        Ok(addrs)
     }
 }
 
@@ -156,6 +234,7 @@ fn fetch_validated(
             .timeout_write(idle),
     }
     .redirects(0)
+    .resolver(PublicOnlyResolver)
     .build();
     let mut current = url.to_string();
     for _ in 0..=MAX_REDIRECTS {
@@ -383,6 +462,55 @@ fn fill_with_attempts(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn service_and_translated_addresses_are_not_public() {
+        for blocked in [
+            "::ffff:127.0.0.1",
+            "::ffff:10.0.0.1",
+            "::127.0.0.1",
+            "100.64.0.1",
+            "100.127.255.254",
+            "224.0.0.1",
+            "239.255.255.250",
+            "0.1.2.3",
+            "240.0.0.1",
+            "192.0.0.8",
+            "198.18.0.1",
+            "64:ff9b::7f00:1",
+            "2002:7f00:1::",
+            "fec0::1",
+            "ff02::1",
+            "2001:db8::1",
+        ] {
+            assert!(!is_public_ip(blocked.parse().unwrap()), "{blocked} must be blocked");
+        }
+        for allowed in ["93.184.216.34", "100.128.0.1", "2606:2800:220:1::", "64:ff9b::5db8:d822", "::ffff:93.184.216.34"] {
+            assert!(is_public_ip(allowed.parse().unwrap()), "{allowed} must be allowed");
+        }
+    }
+
+    #[test]
+    fn the_connection_resolver_refuses_a_name_that_leads_inside() {
+        use ureq::Resolver;
+        let error = PublicOnlyResolver.resolve("localhost:80").unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        let error = PublicOnlyResolver.resolve("[::ffff:127.0.0.1]:80").unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        let error = PublicOnlyResolver.resolve("100.64.0.1:443").unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+    }
+
+    #[test]
+    fn a_fetch_never_connects_to_a_private_address_even_after_the_first_check() {
+        // A local server stands in for a rebinding DNS answer: the request is
+        // refused at connection time, whatever an earlier lookup said.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let agent = ureq::AgentBuilder::new().resolver(PublicOnlyResolver).build();
+        let error = agent.get(&format!("http://127.0.0.1:{port}/")).call().unwrap_err();
+        assert!(error.to_string().contains("private or service address"), "{error}");
+    }
+
     use super::*;
 
     #[test]
@@ -443,10 +571,14 @@ mod tests {
     }
 
     fn scratch() -> std::path::PathBuf {
+        // Parallel tests can read the same clock value; the counter keeps
+        // their folders apart.
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let dir = std::env::temp_dir().join(format!(
-            "mine-net-{}-{}",
+            "mine-net-{}-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("clip.mp4")
