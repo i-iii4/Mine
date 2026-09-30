@@ -84,7 +84,7 @@ describe("deriveCardLayoutDescriptor", () => {
     expect(descriptor.titleText).toBe("AI 2027");
   });
 
-  it("keeps a thumbnail-bearing link semantically link while using its image preview", () => {
+  it("keeps a thumbnail-bearing link semantically link in its fixed thumbnail slot", () => {
     const descriptor = deriveCardLayoutDescriptor(
       makeBlock({
         block_type: "link",
@@ -102,7 +102,9 @@ describe("deriveCardLayoutDescriptor", () => {
       }),
     );
     expect(descriptor.variant).toBe("link");
-    expect(descriptor.primaryAspectRatio).toBeCloseTo(1200 / 630);
+    // The framed link paints its page picture in a fixed 16:9 slot
+    // (SPEC_GRID.md); the source's 1200x630 is never card geometry.
+    expect(descriptor.primaryAspectRatio).toBe(16 / 9);
   });
 
   it("takes the image ratio from the artifact it paints", () => {
@@ -801,19 +803,58 @@ describe("card presentation in the feed (SPEC_FEED_DISPLAY.md, Д10 to Д14)", (
   });
 
   it("Media clamps a link's page picture into 1:2 to 2:1 (Д13, Д14, В5.2)", () => {
-    const tallPage = makeBlock({
-      block_type: "link",
-      title: "A tall page",
-      url: "https://example.com/scroll",
-      preview_manifest: JSON.stringify({
-        kind: "image", primary_preview_path: "page.jpg", width: 100, height: 1000,
-        tiles: [{ source_path: "https://example.com/og.jpg", preview_path: "page.jpg",
-          width: 100, height: 1000, is_video: false, is_video_poster: false }],
-        overflow_count: 0,
-      }),
-    });
+    const tallPage = pageLink({ source: [100, 1000], artifact: [100, 1000] });
     const descriptor = deriveCardLayoutDescriptor(tallPage, "media");
     expect(descriptor.variant).toBe("media-only");
     expect(descriptor.primaryAspectRatio).toBe(0.5);
   });
+
+  it("Media shapes a link's page picture from its artifact, not from its source (В5.7)", () => {
+    const link = pageLink({ source: [1200, 630], artifact: [600, 900] });
+    const descriptor = deriveCardLayoutDescriptor(link, "media");
+    expect(descriptor.variant).toBe("media-only");
+    expect(descriptor.primaryAspectRatio).toBeCloseTo(600 / 900);
+  });
+
+  it("Media leaves an unmeasured page picture's shape unknown, not the source's (В5.7)", () => {
+    const link = pageLink({ source: [1200, 630], artifact: null });
+    const descriptor = deriveCardLayoutDescriptor(link, "media");
+    expect(descriptor.variant).toBe("media-only");
+    expect(descriptor.primaryAspectRatio).toBeNull();
+  });
+
+  it("Mixed and Cards keep the link's fixed thumbnail slot whatever its picture's shape (В5.7)", () => {
+    const link = pageLink({ source: [1200, 630], artifact: [600, 900] });
+    for (const show of ["mixed", "cards"] as const) {
+      const descriptor = deriveCardLayoutDescriptor(link, show);
+      expect(descriptor.variant).toBe("link");
+      expect(descriptor.primaryAspectRatio).toBe(16 / 9);
+    }
+  });
 });
+
+/// A link whose page picture came from a 1200x630 source, say, and whose
+/// preview artifact is another shape, or not measured yet.
+function pageLink(options: {
+  source: [number, number];
+  artifact: [number, number] | null;
+}): LightBlock {
+  const [sourceWidth, sourceHeight] = options.source;
+  const artifactWidth = options.artifact?.[0] ?? null;
+  const artifactHeight = options.artifact?.[1] ?? null;
+  return makeBlock({
+    block_type: "link",
+    title: "A page",
+    url: "https://example.com/page",
+    preview_manifest: JSON.stringify({
+      kind: "image", primary_preview_path: "page.jpg",
+      width: sourceWidth, height: sourceHeight,
+      preview_width: artifactWidth, preview_height: artifactHeight,
+      tiles: [{ source_path: "https://example.com/og.jpg", preview_path: "page.preview-1.jpg",
+        width: sourceWidth, height: sourceHeight,
+        preview_width: artifactWidth, preview_height: artifactHeight,
+        is_video: false, is_video_poster: false }],
+      overflow_count: 0,
+    }),
+  });
+}

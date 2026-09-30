@@ -183,6 +183,25 @@ function imageSurfaceAspectRatio(
   );
 }
 
+/// Shape a card's single painted artifact gives it: the preview's own geometry
+/// (the whole preview, else its one tile), clamped into the card range, or null
+/// while that artifact is not measured. Source dimensions are never read.
+/// Shared by videos, posts with one media, and a link's page picture shown
+/// alone in `Media`. Contract: `SPEC_CARD_MEDIA_GEOMETRY.md`.
+function singleArtifactAspectRatio(
+  previewManifest: ReturnType<typeof parsePreviewManifest>,
+  mediaItems: readonly CardLayoutMediaItem[],
+): number | null {
+  const artifactAspect = imageSurfaceAspectRatio(previewManifest) ?? mediaItems[0]?.aspectRatio ?? null;
+  return artifactAspect === null ? null : clampCardAspect(artifactAspect);
+}
+
+/// The fixed slot a framed link paints its page picture in, whatever the
+/// picture's shape: `aspect-video` in `LinkCard`, `THUMBNAIL_ASPECT` in
+/// `cardHeight.ts` (SPEC_GRID.md). Only `Media` shows the picture at its own
+/// shape (SPEC_FEED_DISPLAY.md, Д11 to Д14).
+const LINK_THUMBNAIL_ASPECT = 16 / 9;
+
 function mediaItemsFromMediaMetadata(
   previewManifest: ReturnType<typeof parsePreviewManifest>,
 ): CardLayoutMediaItem[] {
@@ -230,13 +249,12 @@ function deriveMediaCardLayoutDescriptor(
     // cropped square and vertical videos to their middle (30.09.2026). The
     // artifact, or nothing; the source file's size is never read.
     // See SPEC_CARD_MEDIA_GEOMETRY.md.
-    const artifactAspect = imageSurfaceAspectRatio(previewManifest) ?? mediaItems[0]?.aspectRatio ?? null;
     return {
       variant: "video",
       titleText,
       previewText: "",
       authorText: "",
-      primaryAspectRatio: artifactAspect === null ? null : clampCardAspect(artifactAspect),
+      primaryAspectRatio: singleArtifactAspectRatio(previewManifest, mediaItems),
       mediaItems,
       visibleMediaCount: mediaItems.length,
       totalMediaCount: mediaItems.length,
@@ -278,7 +296,7 @@ function deriveMediaCardLayoutDescriptor(
       titleText,
       previewText: "",
       authorText: "",
-      primaryAspectRatio: 16 / 9,
+      primaryAspectRatio: LINK_THUMBNAIL_ASPECT,
       mediaItems,
       visibleMediaCount: mediaItems.length,
       totalMediaCount: mediaItems.length,
@@ -356,12 +374,9 @@ function deriveArticleCardLayoutDescriptor(
   // artifact that is painted, and by nothing else. Null when that artifact has
   // not been measured — the consumer picks a provisional envelope rather than
   // this function inventing one from the source file.
-  const singleArtifactAspect = imageSurfaceAspectRatio(previewManifest) ?? mediaItems[0]?.aspectRatio ?? null;
   const primaryAspectRatio = previewManifest?.kind === "composite"
     ? galleryAspectRatio(Math.min(4, totalMediaCount))
-    : singleArtifactAspect === null
-      ? null
-      : clampCardAspect(singleArtifactAspect);
+    : singleArtifactAspectRatio(previewManifest, mediaItems);
   return {
     variant: hasVisualPreview ? "article-media" : "article-text",
     titleText,
@@ -389,13 +404,10 @@ function deriveLinkCardLayoutDescriptor(
       titleText,
       previewText: indexedPreviewText,
       authorText: "",
-      // Clamped here, once, like every other card's media: `Media` shows the
-      // page picture alone and both its height and its painted surface read
-      // this ratio. The framed link keeps its fixed thumbnail slot
-      // (SPEC_CARD_MEDIA_GEOMETRY.md; SPEC_FEED_DISPLAY.md, Д13, Д14).
-      primaryAspectRatio: clampCardAspect(
-        aspectRatioFromDimensions(previewManifest.width, previewManifest.height) ?? (16 / 9),
-      ),
+      // The framed slot, not the picture's shape: `Media` reshapes it from the
+      // artifact (`asMediaOnly`), and the source's size is never card geometry
+      // (SPEC_CARD_MEDIA_GEOMETRY.md; SPEC_AUDIT_FIXES.md, В5.7).
+      primaryAspectRatio: LINK_THUMBNAIL_ASPECT,
       mediaItems,
       visibleMediaCount: mediaItems.length,
       totalMediaCount: mediaItems.length + previewManifest.overflowCount,
@@ -421,9 +433,10 @@ export function deriveCardLayoutDescriptor(
   block: CardLayoutBlock,
   show: FeedShow = "mixed",
 ): CardLayoutDescriptor {
-  const mixed = deriveMixedCardLayoutDescriptor(block);
+  const previewManifest = parsePreviewManifest(block);
+  const mixed = deriveMixedCardLayoutDescriptor(block, previewManifest);
   if (show === "cards") return asPostCard(block, mixed);
-  if (show === "media") return asMediaOnly(mixed);
+  if (show === "media") return asMediaOnly(mixed, previewManifest);
   return mixed;
 }
 
@@ -449,8 +462,13 @@ const MEDIA_BEARING_VARIANTS: ReadonlySet<CardLayoutVariant> = new Set([
 ]);
 
 /// `Media`: a card with media shows only its media; several media stay the
-/// usual gallery. A link's page picture is media like any other (Д13, Д14).
-function asMediaOnly(mixed: CardLayoutDescriptor): CardLayoutDescriptor {
+/// usual gallery. A link's page picture is media like any other (Д13, Д14):
+/// it leaves the framed link's fixed slot and takes its own artifact's shape,
+/// like a post's single media, the provisional envelope until it is measured.
+function asMediaOnly(
+  mixed: CardLayoutDescriptor,
+  previewManifest: ReturnType<typeof parsePreviewManifest>,
+): CardLayoutDescriptor {
   const linkPicture = mixed.variant === "link" && mixed.mediaItems.length > 0;
   if (!MEDIA_BEARING_VARIANTS.has(mixed.variant) && !linkPicture) return mixed;
   return {
@@ -459,13 +477,18 @@ function asMediaOnly(mixed: CardLayoutDescriptor): CardLayoutDescriptor {
     titleText: "",
     previewText: "",
     authorText: "",
+    primaryAspectRatio: linkPicture
+      ? singleArtifactAspectRatio(previewManifest, mixed.mediaItems)
+      : mixed.primaryAspectRatio,
   };
 }
 
-function deriveMixedCardLayoutDescriptor(block: CardLayoutBlock): CardLayoutDescriptor {
+function deriveMixedCardLayoutDescriptor(
+  block: CardLayoutBlock,
+  previewManifest: ReturnType<typeof parsePreviewManifest>,
+): CardLayoutDescriptor {
   const titleText = getDisplayTitle(block) ?? "";
   const authorText = block.author ?? "";
-  const previewManifest = parsePreviewManifest(block);
   const indexedPreviewText = block.preview_text?.trim() ?? "";
   const cardKind = getRuntimeCardKind(block);
 

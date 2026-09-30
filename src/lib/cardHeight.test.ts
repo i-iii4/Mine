@@ -5,6 +5,7 @@ import {
   computeFeedPlaybackSurfaceEnvelope,
   DEFAULT_CARD_HEIGHT,
 } from "./cardHeight";
+import { PROVISIONAL_MEDIA_ASPECT } from "./cardAspect";
 import type { LightBlock } from "@/types";
 import type { WordWidths } from "@/types/fontMetrics";
 
@@ -39,6 +40,32 @@ function makeBlock(overrides: Partial<LightBlock> & { block_type: LightBlock["bl
     preview_manifest: null,
     ...overrides,
   };
+}
+
+/// A link whose page picture came from a source of one shape, with a preview
+/// artifact of another shape, or not measured yet.
+function pageLink(options: {
+  source: [number, number];
+  artifact: [number, number] | null;
+}): LightBlock {
+  const [sourceWidth, sourceHeight] = options.source;
+  const artifactWidth = options.artifact?.[0] ?? null;
+  const artifactHeight = options.artifact?.[1] ?? null;
+  return makeBlock({
+    block_type: "link",
+    title: "A page",
+    url: "https://example.com/page",
+    preview_manifest: JSON.stringify({
+      kind: "image", primary_preview_path: "page.jpg",
+      width: sourceWidth, height: sourceHeight,
+      preview_width: artifactWidth, preview_height: artifactHeight,
+      tiles: [{ source_path: "https://example.com/og.jpg", preview_path: "page.preview-1.jpg",
+        width: sourceWidth, height: sourceHeight,
+        preview_width: artifactWidth, preview_height: artifactHeight,
+        is_video: false, is_video_poster: false }],
+      overflow_count: 0,
+    }),
+  });
 }
 
 function artifactManifest(previewWidth: number, previewHeight: number): string {
@@ -572,19 +599,32 @@ describe("card presentation heights (SPEC_FEED_DISPLAY.md, Д15)", () => {
   });
 
   it("Media holds a link's tall page picture at twice the width (В5.2)", () => {
-    const tallPage = makeBlock({
-      block_type: "link",
-      title: "A tall page",
-      url: "https://example.com/scroll",
-      preview_manifest: JSON.stringify({
-        kind: "image", primary_preview_path: "page.jpg", width: 100, height: 1000,
-        tiles: [{ source_path: "https://example.com/og.jpg", preview_path: "page.jpg",
-          width: 100, height: 1000, is_video: false, is_video_poster: false }],
-        overflow_count: 0,
-      }),
-    });
+    const tallPage = pageLink({ source: [100, 1000], artifact: [100, 1000] });
     const innerWidth = 320 - CARD_BORDER;
     expect(computeCardHeight(tallPage, 320, null, "media")).toBe(innerWidth * 2 + CARD_BORDER);
+  });
+
+  it("Media lays a link's page picture out at its artifact's shape, not its source's (В5.7)", () => {
+    const link = pageLink({ source: [1200, 630], artifact: [600, 900] });
+    const innerWidth = 320 - CARD_BORDER;
+    expect(computeCardHeight(link, 320, null, "media"))
+      .toBe(Math.round(innerWidth / (600 / 900)) + CARD_BORDER);
+  });
+
+  it("Media reserves the provisional envelope for an unmeasured page picture (В5.7)", () => {
+    const link = pageLink({ source: [1200, 630], artifact: null });
+    const innerWidth = 320 - CARD_BORDER;
+    expect(computeCardHeight(link, 320, null, "media"))
+      .toBe(Math.round(innerWidth / PROVISIONAL_MEDIA_ASPECT) + CARD_BORDER);
+  });
+
+  it("Mixed and Cards keep the link's 16:9 thumbnail slot whatever its picture's shape (В5.7)", () => {
+    const expected = Math.round(318 * 9 / 16) + 76 + CARD_BORDER;
+    for (const artifact of [[600, 900], null] as const) {
+      const link = pageLink({ source: [1200, 630], artifact: artifact ? [artifact[0], artifact[1]] : null });
+      expect(computeCardHeight(link, 320, null, "mixed")).toBe(expected);
+      expect(computeCardHeight(link, 320, null, "cards")).toBe(expected);
+    }
   });
 
   it("Media gives a post exactly the height of its picture alone", () => {

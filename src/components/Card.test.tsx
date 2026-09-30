@@ -4,7 +4,8 @@ import { render, screen, fireEvent, waitFor, act } from "@testing-library/react"
 import { renderToStaticMarkup } from "react-dom/server";
 import { Card, DragCardStackPreview, ReadOnlyCardPreview } from "./Card";
 import { FeedShowContext, type FeedShow } from "@/lib/feedDisplay";
-import { CARD_HOVER_ACTION_MIN_HEIGHT } from "@/lib/cardHeight";
+import { CARD_HOVER_ACTION_MIN_HEIGHT, computeCardHeight } from "@/lib/cardHeight";
+import { PROVISIONAL_MEDIA_ASPECT } from "@/lib/cardAspect";
 import type { LightBlock } from "@/types";
 
 vi.mock("@/lib/commands", () => ({
@@ -1471,26 +1472,59 @@ describe("Card presentation in the feed (SPEC_FEED_DISPLAY.md, Д11 to Д13)", (
     expect(screen.getByText("@someone")).toBeInTheDocument();
   });
 
-  it("Media paints a link's tall page picture at the clamped shape it is laid out at (В5.2)", () => {
-    const tallPage = block({
-      block_type: "link", title: "A tall page", url: "https://example.com/scroll",
-      preview_manifest: JSON.stringify({
-        kind: "image", primary_preview_path: "page.jpg", width: 100, height: 1000,
-        tiles: [{ source_path: "https://example.com/og.jpg", preview_path: "page.jpg",
-          width: 100, height: 1000, is_video: false, is_video_poster: false }],
-        overflow_count: 0,
-      }),
-    });
-    // jsdom drops a unitless aspect-ratio from the style it keeps, so the
-    // surface is read from the markup React writes for it.
+  /// A link whose page picture came from a source of one shape, with a
+  /// preview artifact of another shape, or not measured yet.
+  const pageLink = (source: [number, number], artifact: [number, number] | null) => block({
+    block_type: "link", title: "A page", url: "https://example.com/page",
+    preview_manifest: JSON.stringify({
+      kind: "image", primary_preview_path: "page.jpg",
+      width: source[0], height: source[1],
+      preview_width: artifact?.[0] ?? null, preview_height: artifact?.[1] ?? null,
+      tiles: [{ source_path: "https://example.com/og.jpg", preview_path: "page.preview-1.jpg",
+        width: source[0], height: source[1],
+        preview_width: artifact?.[0] ?? null, preview_height: artifact?.[1] ?? null,
+        is_video: false, is_video_poster: false }],
+      overflow_count: 0,
+    }),
+  });
+  /// The surface Media paints for a card. jsdom drops a unitless aspect-ratio
+  /// from the style it keeps, so it is read from the markup React writes.
+  const mediaSurface = (value: LightBlock) => {
     const markup = renderToStaticMarkup(
       <FeedShowContext.Provider value="media">
-        <Card block={tallPage} vaultPath={VAULT} onClick={vi.fn()} />
+        <Card block={value} vaultPath={VAULT} onClick={vi.fn()} />
       </FeedShowContext.Provider>,
     );
     const surface = new DOMParser().parseFromString(markup, "text/html")
       .querySelector("[data-card-graphic-surface]");
-    expect(surface?.getAttribute("style")).toContain("aspect-ratio:0.5");
+    const aspect = Number(/aspect-ratio:([0-9.]+)/.exec(surface?.getAttribute("style") ?? "")?.[1]);
+    return { surface, aspect };
+  };
+  /// Height of a full-width surface of that aspect in a 320px column, inside
+  /// the card's 1px border: what the browser paints for it.
+  const paintedHeight = (aspect: number) => Math.round((320 - 2) / aspect) + 2;
+
+  it("Media paints a link's tall page picture at the clamped shape it is laid out at (В5.2)", () => {
+    const tallPage = pageLink([100, 1000], [100, 1000]);
+    const { aspect } = mediaSurface(tallPage);
+    expect(aspect).toBe(0.5);
+    expect(computeCardHeight(tallPage, 320, null, "media")).toBe(paintedHeight(aspect));
+  });
+
+  it("Media paints a link's page picture at its artifact's shape, not its source's (В5.7)", () => {
+    const link = pageLink([1200, 630], [600, 900]);
+    const { surface, aspect } = mediaSurface(link);
+    expect(aspect).toBeCloseTo(600 / 900);
+    expect(surface?.getAttribute("data-card-preview-geometry")).toBeNull();
+    expect(computeCardHeight(link, 320, null, "media")).toBe(paintedHeight(aspect));
+  });
+
+  it("Media paints an unmeasured page picture in the marked provisional envelope (В5.7)", () => {
+    const link = pageLink([1200, 630], null);
+    const { surface, aspect } = mediaSurface(link);
+    expect(aspect).toBe(PROVISIONAL_MEDIA_ASPECT);
+    expect(surface?.getAttribute("data-card-preview-geometry")).toBe("pending");
+    expect(computeCardHeight(link, 320, null, "media")).toBe(paintedHeight(aspect));
   });
 
   it("Mixed keeps a picture bare, as before", () => {
