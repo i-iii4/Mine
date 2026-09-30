@@ -97,11 +97,16 @@ async function openClipperWindow(worker, preloaded) {
   const source = await context.newPage();
   await source.goto('about:blank');
   const opened = context.waitForEvent('page', { timeout: 15_000 });
-  await worker.evaluate(async (post) => {
-    const tab = (await chrome.tabs.query({})).filter((candidate) => candidate.url === 'about:blank').at(-1);
-    if (!tab) throw new Error('No source tab for the clipper window');
-    await openClipperUi(tab, { preloaded: post });
-  }, preloaded);
+  try {
+    await worker.evaluate(async (post) => {
+      const tab = (await chrome.tabs.query({})).filter((candidate) => candidate.url === 'about:blank').at(-1);
+      if (!tab) throw new Error('No source tab for the clipper window');
+      await openClipperUi(tab, { preloaded: post });
+    }, preloaded);
+  } catch (error) {
+    opened.catch(() => undefined);
+    throw error;
+  }
   const popup = await opened;
   await popup.waitForURL(/\/dist\/index\.html/, { timeout: 15_000 });
   return { popup, source };
@@ -311,9 +316,11 @@ try {
   });
   assert.ok(uiCapture.markdown.includes('Saved through the real popup button.'));
   assert.ok(uiCapture.markdown.includes('https://example.test/worker-ui-article'));
-  assert.ok(uiCapture.markdown.includes('[[Collections/Worker collection]]'));
+  // A card names its collection the way the app does: by the page's name
+  // when it is unique (SPEC_AUDIT_FIXES.md, А3.12).
+  assert.ok(uiCapture.markdown.includes('[[Worker collection]]'));
   assert.ok(uiCapture.collectionMarkdown.includes('type: channel'));
-  assert.ok(uiCapture.channels.channels.some(channel => channel.tag === 'Collections/Worker collection'));
+  assert.ok(uiCapture.channels.channels.some(channel => channel.tag === 'Worker collection' && channel.block_count === 1));
   assert.deepEqual(uiCapture.pending, []);
   assert.deepEqual(uiCapture.clipDrafts, []);
   await popup.close();
@@ -374,7 +381,7 @@ try {
   assert.ok(faultCapture.failures > 0, 'autosave fault must actually reach the shipped worker listener');
   assert.ok(faultCapture.markdown.includes('Visible edits survive autosave failure and Save commits them.'));
   assert.ok(faultCapture.markdown.includes('https://example.test/worker-ui-autosave-recovery'));
-  assert.ok(faultCapture.markdown.includes('[[Collections/Worker collection]]'));
+  assert.ok(faultCapture.markdown.includes('[[Worker collection]]'));
   assert.equal(faultCapture.operations.length, 1, 'failed draft cleanup retains the original committed recovery receipt');
   assert.equal(faultCapture.operations[0][1].terminalResult.outcome, 'committed');
   assert.deepEqual(faultCapture.lookup, faultCapture.operations[0][1].terminalResult);

@@ -275,11 +275,25 @@ async function openClipperUi(tab, options = {}) {
   // Fallback: detached popup window (service pages, CSP-restricted)
   const popupUrl = chrome.runtime.getURL("dist/index.html");
   const bounds = await resolvePopupBounds();
-  const win = await chrome.windows.create({
-    url: popupUrl,
-    type: "popup",
-    ...bounds,
-  });
+  let win;
+  try {
+    win = await chrome.windows.create({
+      url: popupUrl,
+      type: "popup",
+      ...bounds,
+    });
+  } catch (error) {
+    // A position remembered on a display that is gone, or a screen smaller
+    // than the window: the browser refuses it. Open where the browser
+    // chooses rather than not at all.
+    console.warn("[Mine] clipper window position refused, opening at default:", String(error?.message ?? error));
+    win = await chrome.windows.create({
+      url: popupUrl,
+      type: "popup",
+      width: bounds.width,
+      height: bounds.height,
+    });
+  }
   if (win?.id) {
     rememberPopupWindow(win.id);
     if (typeof tab?.id === "number") await rememberClipperWindowSource(win.id, tab.id);
