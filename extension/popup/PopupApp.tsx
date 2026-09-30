@@ -428,12 +428,16 @@ export function PopupApp() {
             </div>
           )}
 
-          {clipper.currentType === "screenshot" && clipper.screenshotDataUrl && (
+          {/* Shown before the first frame too: a failed first capture keeps
+              the editor and offers Retake beside its reason (Б4.6). */}
+          {clipper.currentType === "screenshot" && (
             <ScreenshotPreview
               dataUrl={clipper.screenshotDataUrl}
               onRetake={clipper.retakeScreenshot}
               onCrop={clipper.startCropMode}
               cropSupported={clipper.cropSupported}
+              capturing={clipper.capturing}
+              error={clipper.captureError}
             />
           )}
         </div>

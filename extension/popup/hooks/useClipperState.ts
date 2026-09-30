@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { flushSync } from "react-dom";
 import { normalizeArticleMedia } from "../lib/normalizeArticleMedia";
 import { hydrateTwitterPosts } from "../lib/twitterMedia";
 
@@ -72,6 +73,14 @@ import { localSavedAt } from "../lib/savedAt";
 
 export type ClipType = "content" | "link" | "image" | "video" | "screenshot";
 export type PopupState = "loading" | "error" | "main";
+
+/** What background answers to a screenshot request. */
+interface CaptureReply {
+  ok?: boolean;
+  dataUrl?: string;
+  screenshotId?: string;
+  error?: string;
+}
 
 export interface ClipperState {
   state: PopupState;
@@ -227,6 +236,22 @@ export function useClipperState() {
     }).catch(cause => console.warn("Screenshot cache unavailable; captured bytes retained", cause));
   }, [setScreenshotUploadId]);
 
+  // The page address this clipper opened for, until metadata names the
+  // document it was read from. Every screenshot and crop names it, and
+  // background refuses a tab that shows another page since
+  // (SPEC_AUDIT_FIXES.md, Ф6, Б4.5).
+  const captureDocumentRef = useRef<string | null>(null);
+  const captureDocumentUrl = useCallback(
+    () => metadataRef.current?.documentUrl ?? captureDocumentRef.current,
+    [],
+  );
+  // Screenshot requests are numbered; only the answer to the latest one is
+  // applied. A failure is shown in the editor, which keeps its state and the
+  // previous frame (SPEC_AUDIT_FIXES.md, Б4.6).
+  const captureRequestRef = useRef(0);
+  const [capturing, setCapturing] = useState(false);
+  const [captureError, setCaptureError] = useState<string | null>(null);
+
   const captureScreenshot = useCallback(() => {
     // Hide the overlay before capture so the clipper UI doesn't appear
     // in the screenshot. In overlay context __mineOverlay is exposed by
@@ -235,14 +260,41 @@ export function useClipperState() {
     const overlay = (globalThis as unknown as {
       __mineOverlay?: { hide: () => void; show: () => void };
     }).__mineOverlay;
+    const request = ++captureRequestRef.current;
+    const documentUrl = captureDocumentUrl();
+    const isLatest = () => mountedRef.current && request === captureRequestRef.current;
+    setCapturing(true);
+    setCaptureError(null);
 
-    function showAgain() {
-      if (overlay) {
-        // One animation frame so React + paint complete before we
-        // restore the overlay — avoids a visible flash mid-capture.
-        requestAnimationFrame(() => overlay.show());
-      }
-    }
+    const settle = (resp: CaptureReply | undefined) => {
+      // Read even for an answer no longer wanted, so the browser does not
+      // report the error as unchecked.
+      const transportError = chrome.runtime.lastError;
+      // An older answer arriving later, a failure included, neither replaces
+      // the newer frame nor shows the overlay while the newer capture still
+      // needs it hidden.
+      if (!isLatest()) return;
+      // Commit before the overlay comes back, so the keyboard returns to an
+      // enabled Retake (overlay-entry.tsx, Б4.9).
+      flushSync(() => {
+        setCapturing(false);
+        if (transportError) {
+          setCaptureError(`Screenshot failed: ${transportError.message ?? "the extension did not answer"}`);
+        } else if (!resp?.ok || !resp.dataUrl) {
+          setCaptureError(resp?.error ?? "Screenshot capture failed");
+        } else {
+          setScreenshotDataUrl(resp.dataUrl);
+          if (resp.screenshotId) {
+            setScreenshotUploadId(resp.screenshotId);
+          } else {
+            cacheCapturedScreenshot(resp.dataUrl);
+          }
+        }
+      });
+      // One animation frame so React + paint complete before we restore the
+      // overlay: avoids a visible flash mid-capture.
+      if (overlay) requestAnimationFrame(() => overlay.show());
+    };
 
     if (IS_CONTENT_SCRIPT_CONTEXT) {
       overlay?.hide();
@@ -251,26 +303,10 @@ export function useClipperState() {
       // then does captureVisibleTab see a clean viewport.
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          chrome.runtime.sendMessage(
-            { target: "background", action: "captureForCrop" },
-            (resp) => {
-              showAgain();
-              if (chrome.runtime.lastError) {
-                showError(`Screenshot failed: ${chrome.runtime.lastError.message}`);
-                return;
-              }
-              if (resp?.ok && resp.dataUrl) {
-                setScreenshotDataUrl(resp.dataUrl);
-                if (resp.screenshotId) {
-                  setScreenshotUploadId(resp.screenshotId);
-                } else {
-                  cacheCapturedScreenshot(resp.dataUrl);
-                }
-              } else {
-                showError(resp?.error ?? "Screenshot capture failed");
-              }
-            },
-          );
+          // Replaced before it was sent: one capture less against the
+          // browser's limit of two per second.
+          if (!isLatest()) return;
+          chrome.runtime.sendMessage({ target: "background", action: "captureForCrop", documentUrl }, settle);
         });
       });
       return;
@@ -278,25 +314,10 @@ export function useClipperState() {
     // The detached window captures the page it was opened for, and only
     // while that page is in front (SPEC_AUDIT_FIXES.md, Ф6).
     chrome.runtime.sendMessage(
-      { target: "background", action: "captureForCrop", tabId: tabIdRef.current },
-      (resp) => {
-        if (chrome.runtime.lastError) {
-          showError(`Screenshot failed: ${chrome.runtime.lastError.message}`);
-          return;
-        }
-        if (resp?.ok && resp.dataUrl) {
-          setScreenshotDataUrl(resp.dataUrl);
-          if (resp.screenshotId) {
-            setScreenshotUploadId(resp.screenshotId);
-          } else {
-            cacheCapturedScreenshot(resp.dataUrl);
-          }
-        } else {
-          showError(resp?.error ?? "Screenshot capture failed");
-        }
-      },
+      { target: "background", action: "captureForCrop", tabId: tabIdRef.current, documentUrl },
+      settle,
     );
-  }, [cacheCapturedScreenshot, setScreenshotDataUrl, setScreenshotUploadId]);
+  }, [cacheCapturedScreenshot, captureDocumentUrl, setScreenshotDataUrl, setScreenshotUploadId]);
 
   const retakeScreenshot = useCallback(() => {
     if (operationRef.current || preparedOperationRef.current || savingRef.current) return;
@@ -880,23 +901,45 @@ export function useClipperState() {
     if (operationRef.current || preparedOperationRef.current || savingRef.current) return;
     if (!cropSupported || tabIdRef.current === null) return;
 
+    // Background starts the crop overlay only while the page still shows the
+    // address this clipper opened for, and the crop's capture names it too
+    // (SPEC_AUDIT_FIXES.md, Ф6). A refusal is shown in the editor.
+    const documentUrl = captureDocumentUrl();
+    const requestCrop = () => new Promise<{ ok: true } | { ok: false; error: string }>((resolve) => {
+      chrome.runtime.sendMessage(
+        { target: "background", action: "startCropMode", tabId: tabIdRef.current, documentUrl },
+        (resp?: { ok?: boolean; error?: string }) => {
+          const transportError = chrome.runtime.lastError;
+          if (transportError) {
+            resolve({ ok: false, error: transportError.message ?? "The extension did not answer" });
+          } else if (resp?.ok === true) {
+            resolve({ ok: true });
+          } else {
+            resolve({ ok: false, error: resp?.error ?? "Could not start the crop. Reload the tab and try again." });
+          }
+        },
+      );
+    });
+    setCaptureError(null);
+
     if (IS_CONTENT_SCRIPT_CONTEXT) {
       // Overlay context: hide the clipper overlay, trigger the crop
       // overlay in the same content script. React state stays alive in
       // memory — no persist, no rehydrate, no toast. When crop completes,
       // content.js calls window.__mineOverlay.show() which reveals us
-      // again, and dispatches a mine-crop-result event we listen to.
-      const overlay = (globalThis as unknown as { __mineOverlay?: { hide: () => void } }).__mineOverlay;
+      // again, and dispatches a mine-crop-result event we listen to; a
+      // page that changed its address refuses the crop's capture there.
+      const overlay = (globalThis as unknown as { __mineOverlay?: { hide: () => void; show: () => void } }).__mineOverlay;
       overlay?.hide();
-      const crop = (globalThis as unknown as { __mineCrop?: { start: () => void } }).__mineCrop;
+      const crop = (globalThis as unknown as { __mineCrop?: { start: (documentUrl: string | null) => void } }).__mineCrop;
       if (crop) {
-        crop.start();
+        crop.start(documentUrl);
         return;
       }
-      chrome.runtime.sendMessage(
-        { target: "background", action: "startCropMode", tabId: tabIdRef.current },
-        () => void chrome.runtime.lastError,
-      );
+      const response = await requestCrop();
+      if (response.ok || !mountedRef.current) return;
+      overlay?.show();
+      setCaptureError(response.error);
       return;
     }
 
@@ -904,6 +947,7 @@ export function useClipperState() {
     await chrome.storage.session.set({
       cropPendingState: {
         tabId: tabIdRef.current,
+        documentUrl,
         metadata,
         articleData,
         selectedTags,
@@ -915,32 +959,18 @@ export function useClipperState() {
       },
     });
 
-    const response = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
-      chrome.runtime.sendMessage(
-        {
-          target: "background",
-          action: "startCropMode",
-          tabId: tabIdRef.current,
-        },
-        (resp) => {
-          if (chrome.runtime.lastError) {
-            resolve({ ok: false, error: chrome.runtime.lastError.message });
-          } else {
-            resolve(resp ?? { ok: false, error: "No response" });
-          }
-        },
-      );
-    });
-
+    const response = await requestCrop();
     if (!response.ok) {
+      // The editor stays as it is; only the reason is added (Б4.6).
       await chrome.storage.session.remove("cropPendingState");
-      showError(response.error ?? "Failed to start crop mode. Try reloading the tab.");
+      if (mountedRef.current) setCaptureError(response.error);
       return;
     }
 
     window.close();
   }, [
     cropSupported,
+    captureDocumentUrl,
     metadata,
     articleData,
     selectedTags,
@@ -954,8 +984,14 @@ export function useClipperState() {
   useEffect(() => {
     if (!IS_CONTENT_SCRIPT_CONTEXT) return;
     function onCropResult(e: Event) {
-      const { detail } = e as CustomEvent<{ dataUrl?: string; screenshotId?: string | null }>;
+      const { detail } = e as CustomEvent<{ dataUrl?: string; screenshotId?: string | null; error?: string }>;
+      if (detail?.error) {
+        // A refused crop keeps the previous frame (Б4.6).
+        setCaptureError(detail.error);
+        return;
+      }
       if (detail?.dataUrl && detail.screenshotId) {
+        setCaptureError(null);
         setScreenshotDataUrl(detail.dataUrl);
         setScreenshotUploadId(detail.screenshotId);
       }
@@ -987,6 +1023,7 @@ export function useClipperState() {
         newCaptureRef.current = true;
         const { metadata: preMeta, article: preArticle } = launch.preloaded;
         tabIdRef.current = IS_CONTENT_SCRIPT_CONTEXT ? CONTENT_SCRIPT_CONTEXT : launch.sourceTabId;
+        captureDocumentRef.current = IS_CONTENT_SCRIPT_CONTEXT ? window.location.href : launch.sourceUrl;
 
         setMetadataValue(preMeta as PageMetadata);
         setArticleDataValue(preArticle as ArticleData);
@@ -1002,6 +1039,7 @@ export function useClipperState() {
       if (cropData.cropPendingState && cropData.cropResult) {
         const pending = cropData.cropPendingState as {
           tabId: number;
+          documentUrl?: string | null;
           metadata: PageMetadata | null;
           articleData: ArticleData | null;
           selectedTags: string[];
@@ -1015,11 +1053,13 @@ export function useClipperState() {
           status: "done" | "cancelled";
           dataUrl?: string;
           screenshotId?: string;
+          error?: string;
         };
 
         chrome.storage.session.remove(["cropPendingState", "cropResult"]);
 
         tabIdRef.current = pending.tabId;
+        captureDocumentRef.current = pending.documentUrl ?? null;
         vaultRef.current = pending.selectedVault;
         setSelectedVault(pending.selectedVault);
         setMetadataValue(pending.metadata);
@@ -1037,9 +1077,11 @@ export function useClipperState() {
           setScreenshotDataUrl(result.dataUrl);
           setScreenshotUploadId(result.screenshotId ?? null);
         } else {
-          // Cancelled — keep previous (un-cropped) screenshot
+          // Cancelled — keep previous (un-cropped) screenshot, and say why
+          // when the crop was refused (the page changed under it).
           setScreenshotDataUrl(pending.screenshotDataUrl);
           setScreenshotUploadId(pending.screenshotUploadId);
+          if (result.error) setCaptureError(result.error);
         }
 
         // Re-check crop capability for the same tab (window-entry only —
@@ -1080,6 +1122,7 @@ export function useClipperState() {
         tabTitle = launch.sourceTitle ?? undefined;
       }
       tabIdRef.current = tabId;
+      captureDocumentRef.current = tabUrl ?? null;
       applyCropCapability(tabUrl ?? null);
 
       const meta = await extractMetadata(tabId);
@@ -1682,6 +1725,10 @@ export function useClipperState() {
     retakeScreenshot,
     startCropMode,
     cropSupported,
+    /** A screenshot request is in flight; Retake and Crop wait for it. */
+    capturing,
+    /** Why the last screenshot or crop failed; the editor and its frame stay. */
+    captureError,
     title,
     setTitle: (value: string) => {
       if (operationRef.current || preparedOperationRef.current || savingRef.current) return;

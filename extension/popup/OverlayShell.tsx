@@ -22,7 +22,8 @@ import { wrapTabFocus } from "./lib/focusCycle";
  * tabindex=-1 + .focus(), so the keyboard works without a first click.
  * Tab and Shift+Tab move between the panel's controls and wrap at its
  * edges instead of falling into the page behind it (А6.9). Escape hands
- * focus back to where it was on the page (overlay-entry.tsx).
+ * focus back to where it was on the page, and a hide for a screenshot or a
+ * crop gives it back to the panel on resume (overlay-entry.tsx, Б4.9).
  * `preventScroll: true` avoids jumping the page viewport.
  */
 export function OverlayShell({ portalContainer }: { portalContainer: HTMLElement | null }) {

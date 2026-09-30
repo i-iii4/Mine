@@ -1002,6 +1002,29 @@
       "requirement": "SPEC_AUDIT_FIXES.md#| Б5.1 |",
       "tests": ["src/lib/fontMetrics.test.ts", "src/components/SearchOverlay.test.tsx", "src/components/Grid.test.tsx", "src/components/Grid.firstCards.test.tsx", "src/App.test.tsx", "src/lib/shortcutOverrides.test.ts", "src/components/ImagePreviewOverlay.test.tsx", "src/components/VideoFromBlob.test.tsx"],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "extension/background.js",
+        "extension/background.messaging.test.ts",
+        "extension/content.js",
+        "extension/lib/standaloneVault.js",
+        "extension/lib/standaloneVault.test.ts",
+        "extension/lib/cropCapture.test.ts",
+        "extension/popup/OverlayShell.tsx",
+        "extension/popup/PopupApp.tsx",
+        "extension/popup/components/ScreenshotPreview.tsx",
+        "extension/popup/components/ScreenshotPreview.test.tsx",
+        "extension/popup/hooks/useClipperState.ts",
+        "extension/popup/hooks/useClipperState.standalone.test.tsx",
+        "extension/popup/overlay-entry.tsx",
+        "extension/popup/overlay-entry.test.tsx",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/background.js",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/standaloneVault.js"
+      ],
+      "requirement": "SPEC_AUDIT_FIXES.md#| Б4.1 |",
+      "tests": ["extension/background.messaging.test.ts", "extension/lib/standaloneVault.test.ts", "extension/lib/cropCapture.test.ts", "extension/popup/components/ScreenshotPreview.test.tsx", "extension/popup/hooks/useClipperState.standalone.test.tsx", "extension/popup/overlay-entry.test.tsx"],
+      "command": "test:frontend"
     }
   ],
   "release": null

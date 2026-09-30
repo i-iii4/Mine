@@ -19,6 +19,10 @@ interface OverlayHandle {
   onOutsidePointer: (e: MouseEvent | PointerEvent) => void;
   /// What had the keyboard on the page before the clipper took it.
   returnFocus: Element | null;
+  /// Whether the keyboard was in the clipper when it was hidden for a
+  /// screenshot or a crop, and on which of its elements.
+  hiddenWithKeyboard: boolean;
+  focusBeforeHide: Element | null;
 }
 
 let current: OverlayHandle | null = null;
@@ -236,7 +240,7 @@ async function mount(): Promise<OverlayHandle> {
   const reactRoot = createRoot(appRoot);
   reactRoot.render(<OverlayShell portalContainer={floatingRoot} />);
 
-  return { host, root: reactRoot, onOutsidePointer, returnFocus };
+  return { host, root: reactRoot, onOutsidePointer, returnFocus, hiddenWithKeyboard: false, focusBeforeHide: null };
 }
 
 /// Fresh invocation: context menu / toolbar icon / extension icon.
@@ -260,13 +264,44 @@ export async function showClipperOverlay(): Promise<void> {
 export async function resumeClipperOverlay(): Promise<void> {
   if (current) {
     current.host.style.display = "";
+    restoreKeyboard(current);
     return;
   }
   current = await mount();
 }
 
+/// Hiding the host (display:none) takes the keyboard from whatever had it in
+/// the panel, and the browser hands it to the page. Tab and the arrows then
+/// work only inside the panel, so the clipper remembers where the keyboard
+/// was and brings it back on resume (SPEC_AUDIT_FIXES.md, Б4.9).
 export function hideClipperOverlay(): void {
-  if (current) current.host.style.display = "none";
+  if (!current) return;
+  const { host } = current;
+  // Before a capture the page hides every Mine layer again; that second hide
+  // finds the keyboard already on the page and must not forget the first.
+  if (host.style.display !== "none") {
+    current.hiddenWithKeyboard = document.activeElement === host;
+    current.focusBeforeHide = current.hiddenWithKeyboard ? host.shadowRoot?.activeElement ?? null : null;
+  }
+  host.style.display = "none";
+}
+
+/// Give the keyboard back to the element that had it before the hide, or to
+/// the panel when that element is gone or cannot take focus now. The page
+/// keeps the keyboard if it was there, or if someone moved it there since.
+function restoreKeyboard(handle: OverlayHandle): void {
+  const { host, hiddenWithKeyboard, focusBeforeHide } = handle;
+  handle.hiddenWithKeyboard = false;
+  handle.focusBeforeHide = null;
+  const shadow = host.shadowRoot;
+  if (!hiddenWithKeyboard || !shadow) return;
+  const active = document.activeElement;
+  if (active !== null && active !== document.body && active !== host) return;
+  if (focusBeforeHide instanceof HTMLElement && focusBeforeHide.isConnected && shadow.contains(focusBeforeHide)) {
+    focusBeforeHide.focus({ preventScroll: true });
+    if (shadow.activeElement === focusBeforeHide) return;
+  }
+  shadow.querySelector<HTMLElement>("[data-mine-clipper-panel]")?.focus({ preventScroll: true });
 }
 
 export function closeClipperOverlay(): void {

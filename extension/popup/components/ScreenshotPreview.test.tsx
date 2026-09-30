@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ScreenshotPreview } from "./ScreenshotPreview";
 
@@ -26,5 +26,34 @@ describe("ScreenshotPreview", () => {
       .parentElement as HTMLElement;
     expect(actionRow).toHaveClass("shrink-0");
     expect(screen.getByRole("button", { name: /Retake/ })).toBeInTheDocument();
+  });
+
+  it("disables Retake and Crop while a capture is in flight (Б4.6)", () => {
+    const onRetake = vi.fn();
+    render(<ScreenshotPreview dataUrl="data:image/png;base64,x" onRetake={onRetake} onCrop={vi.fn()} cropSupported capturing />);
+    const retake = screen.getByRole("button", { name: /Retake/ });
+    expect(retake).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Crop Area/ })).toBeDisabled();
+    fireEvent.click(retake);
+    expect(onRetake).not.toHaveBeenCalled();
+  });
+
+  it("shows a failed capture next to the frame it keeps", () => {
+    const { container } = render(
+      <ScreenshotPreview dataUrl="data:image/png;base64,x" onRetake={vi.fn()} onCrop={vi.fn()} cropSupported
+        error="The page is not in front of its window. Bring it forward and retake the screenshot." />,
+    );
+    expect(container.querySelector("img")).toHaveAttribute("src", "data:image/png;base64,x");
+    expect(screen.getByRole("alert")).toHaveTextContent("not in front");
+    expect(screen.getByRole("button", { name: /Retake/ })).toBeEnabled();
+  });
+
+  it("offers Retake when the first capture failed and there is no frame yet", () => {
+    const { container } = render(
+      <ScreenshotPreview dataUrl={null} onRetake={vi.fn()} onCrop={vi.fn()} cropSupported error="Screenshot capture failed" />,
+    );
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent("Screenshot capture failed");
+    expect(screen.getByRole("button", { name: /Retake/ })).toBeEnabled();
   });
 });

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createContext, runInContext } from "node:vm";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 type BrowserApiMode = "callback" | "promise";
 type Message = Record<string, unknown>;
@@ -18,7 +18,7 @@ function eventSink(register?: (listener: unknown) => void) {
   return { addListener: vi.fn((listener: unknown) => register?.(listener)) };
 }
 
-function background(apiMode: BrowserApiMode) {
+function background(apiMode: BrowserApiMode, options: { realDraftStore?: boolean } = {}) {
   let receiveRuntimeMessage: MessageListener = () => undefined;
   let receiveNativeMessage: (message: Message) => void = () => undefined;
   let disconnectNative: () => void = () => undefined;
@@ -50,17 +50,20 @@ function background(apiMode: BrowserApiMode) {
     runtime: {
       lastError: undefined as { message: string } | undefined,
       connectNative: vi.fn(() => nativePort),
+      getContexts: vi.fn(async () => [] as unknown[]),
       getURL: (path: string) => `chrome-extension://test/${path}`,
+      reload: vi.fn(),
       onInstalled: eventSink(),
       onMessage: eventSink((listener) => { receiveRuntimeMessage = listener as MessageListener; }),
       sendMessage: vi.fn(() => Promise.resolve()),
     },
     scripting: { executeScript: vi.fn() },
     storage: {
-      local: { get: vi.fn(async () => ({})), set: vi.fn(async () => undefined) },
+      local: { get: vi.fn(async () => ({})), set: vi.fn(async () => undefined), remove: vi.fn(async () => undefined) },
       session: {
         get: vi.fn(async () => ({})),
         set: vi.fn(async () => undefined),
+        remove: vi.fn(async () => undefined),
         setAccessLevel: vi.fn(() => Promise.resolve()),
       },
     },
@@ -84,6 +87,7 @@ function background(apiMode: BrowserApiMode) {
   const draftStore = { attach: vi.fn(async () => ({ draft: null, draftId: "capture", generation: 1 })), writeOwned: vi.fn(async () => null) };
   const context = createContext({
     MineDraftStore: draftStore,
+    TextEncoder,
     URL,
     chrome,
     console,
@@ -94,6 +98,11 @@ function background(apiMode: BrowserApiMode) {
     fetch: vi.fn(async () => ({ ok: true, json: async () => ({ buildId: "worker-build", commit: "worker-commit" }) })),
   });
   runInContext(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib/saveProtocol.js"), "utf8"), context);
+  if (options.realDraftStore) {
+    // The worker's actual draft queue, over the storage the test controls.
+    runInContext(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib/storedValue.js"), "utf8"), context);
+    runInContext(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib/draftStore.js"), "utf8"), context);
+  }
   runInContext(source, context);
 
   function dispatch(message: Message, sender: { url?: string; tab?: { id: number; windowId?: number } } = {}) {
@@ -242,8 +251,10 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
   function launchWorker() {
     const worker = background("promise");
     const session: Record<string, unknown> = {};
-    worker.chrome.storage.session.get.mockImplementation(async (key: unknown) => ({ [key as string]: session[key as string] }));
-    worker.chrome.storage.session.set.mockImplementation(async (values: unknown) => { Object.assign(session, values); });
+    // Like the browser's storage: every read is a copy, so a change is seen
+    // only once it is written back.
+    worker.chrome.storage.session.get.mockImplementation(async (key: unknown) => ({ [key as string]: structuredClone(session[key as string]) }));
+    worker.chrome.storage.session.set.mockImplementation(async (values: unknown) => { Object.assign(session, structuredClone(values)); });
     return worker;
   }
   const ask = (worker: ReturnType<typeof background>, sender: { url?: string; tab?: { id: number; windowId?: number } }) =>
@@ -284,18 +295,226 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
     chrome.tabs.sendMessage.mockImplementation((_id: unknown, _message: unknown, callback?: (r: unknown) => void) => { callback?.({ ok: true }); });
     chrome.tabs.captureVisibleTab = vi.fn((_windowId: unknown, _options: unknown, callback: (url: string) => void) => callback("data:image/jpeg;base64,AA"));
     const fromWindow = { url: "chrome-extension://test/dist/index.html", tab: { id: 900, windowId: 77 } };
-    const capture = () => worker.dispatch({ target: "background", action: "captureForCrop", tabId: 5 }, fromWindow).response;
+    const page = "https://a.example/";
+    const capture = () => worker.dispatch({ target: "background", action: "captureForCrop", tabId: 5, documentUrl: page }, fromWindow).response;
 
-    chrome.tabs.get.mockResolvedValue({ id: 5, windowId: 3, active: false });
+    chrome.tabs.get.mockResolvedValue({ id: 5, windowId: 3, active: false, url: page });
     await expect(capture()).resolves.toMatchObject({ ok: false });
     expect(chrome.tabs.captureVisibleTab).not.toHaveBeenCalled();
 
-    chrome.tabs.get.mockResolvedValue({ id: 5, windowId: 3, active: true });
-    chrome.tabs.query.mockResolvedValue([{ id: 6 }]);
+    chrome.tabs.get.mockResolvedValue({ id: 5, windowId: 3, active: true, url: page });
+    chrome.tabs.query.mockResolvedValue([{ id: 6, url: "https://other.example/" }]);
     await expect(capture()).resolves.toMatchObject({ ok: false });
     expect(chrome.tabs.captureVisibleTab).toHaveBeenCalledWith(3, expect.anything(), expect.any(Function));
 
-    chrome.tabs.query.mockResolvedValue([{ id: 5 }]);
+    chrome.tabs.query.mockResolvedValue([{ id: 5, url: page }]);
     await expect(capture()).resolves.toMatchObject({ ok: true, dataUrl: "data:image/jpeg;base64,AA" });
+  });
+
+  describe("a screenshot belongs to the page address the clipper opened for (Б4.5)", () => {
+    const pageA = "https://a.example/story";
+    const pageB = "https://b.example/other";
+    const fromWindow = { url: "chrome-extension://test/dist/index.html", tab: { id: 900, windowId: 77 } };
+    function captureWorker() {
+      const worker = launchWorker();
+      const chrome = worker.chrome as unknown as { tabs: Record<string, ReturnType<typeof vi.fn>> };
+      chrome.tabs.sendMessage.mockImplementation((_id: unknown, _message: unknown, callback?: (r: unknown) => void) => { callback?.({ ok: true }); });
+      chrome.tabs.captureVisibleTab = vi.fn((_windowId: unknown, _options: unknown, callback: (url: string) => void) => callback("data:image/jpeg;base64,AA"));
+      return { worker, tabs: chrome.tabs };
+    }
+
+    it("refuses the window's screenshot once its source tab moved from A to B", async () => {
+      const { worker, tabs } = captureWorker();
+      tabs.get.mockResolvedValue({ id: 5, windowId: 3, active: true, url: pageB });
+      tabs.query.mockResolvedValue([{ id: 5, url: pageB }]);
+      const reply = await worker.dispatch({ target: "background", action: "captureForCrop", tabId: 5, documentUrl: pageA }, fromWindow).response;
+      expect(reply).toMatchObject({ ok: false, error: expect.stringContaining("another page") });
+      expect(reply).not.toHaveProperty("dataUrl");
+      expect(tabs.captureVisibleTab).not.toHaveBeenCalled();
+    });
+
+    it("refuses the overlay's screenshot after its page changed address in place", async () => {
+      const { worker, tabs } = captureWorker();
+      tabs.get.mockResolvedValue({ id: 5, windowId: 3, active: true, url: pageB });
+      tabs.query.mockResolvedValue([{ id: 5, url: pageB }]);
+      const reply = await worker.dispatch({ target: "background", action: "captureForCrop", documentUrl: pageA }, { url: pageB, tab: { id: 5 } }).response;
+      expect(reply).toMatchObject({ ok: false });
+      expect(tabs.captureVisibleTab).not.toHaveBeenCalled();
+    });
+
+    it("drops a frame taken while the page moved away", async () => {
+      const { worker, tabs } = captureWorker();
+      tabs.get.mockResolvedValue({ id: 5, windowId: 3, active: true, url: pageA });
+      tabs.query.mockResolvedValue([{ id: 5, url: pageB }]);
+      const reply = await worker.dispatch({ target: "background", action: "captureForCrop", tabId: 5, documentUrl: pageA }, fromWindow).response;
+      expect(reply).toMatchObject({ ok: false });
+      expect(reply).not.toHaveProperty("dataUrl");
+    });
+
+    it("refuses a request that names no page", async () => {
+      const { worker, tabs } = captureWorker();
+      tabs.get.mockResolvedValue({ id: 5, windowId: 3, active: true, url: pageA });
+      await expect(worker.dispatch({ target: "background", action: "captureForCrop", tabId: 5 }, fromWindow).response)
+        .resolves.toMatchObject({ ok: false });
+      expect(tabs.captureVisibleTab).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("a crop from the clipper window runs in its source tab (Б4.7)", () => {
+    const page = "https://a.example/story";
+    const fromWindow = { url: "chrome-extension://test/dist/index.html", tab: { id: 900, windowId: 77 } };
+    function cropWorker(tabUrl: string) {
+      const worker = launchWorker();
+      const chrome = worker.chrome as unknown as { tabs: Record<string, ReturnType<typeof vi.fn>> };
+      chrome.tabs.get.mockResolvedValue({ id: 5, windowId: 3, active: true, url: tabUrl });
+      chrome.tabs.sendMessage.mockImplementation((_id: unknown, _message: unknown, callback?: (r: unknown) => void) => { callback?.({ ok: true }); });
+      return { worker, tabs: chrome.tabs };
+    }
+
+    it("asks the page the window opened for, not the window's own tab", async () => {
+      const { worker, tabs } = cropWorker(page);
+      const reply = await worker.dispatch({ target: "background", action: "startCropMode", tabId: 5, documentUrl: page }, fromWindow).response;
+      expect(reply).toEqual({ ok: true });
+      expect(tabs.sendMessage).toHaveBeenCalledWith(5, { action: "startCropOverlay", documentUrl: page }, expect.any(Function));
+      expect(tabs.sendMessage).not.toHaveBeenCalledWith(900, expect.anything(), expect.anything());
+    });
+
+    it("does not start a crop once the source tab shows another page", async () => {
+      const { worker, tabs } = cropWorker("https://b.example/other");
+      const reply = await worker.dispatch({ target: "background", action: "startCropMode", tabId: 5, documentUrl: page }, fromWindow).response;
+      expect(reply).toMatchObject({ ok: false, error: expect.stringContaining("another page") });
+      expect(tabs.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("keeps an overlay's crop in the overlay's own tab", async () => {
+      const { worker, tabs } = cropWorker(page);
+      const reply = await worker.dispatch({ target: "background", action: "startCropMode", tabId: -1, documentUrl: page }, { url: page, tab: { id: 5 } }).response;
+      expect(reply).toEqual({ ok: true });
+      expect(tabs.sendMessage).toHaveBeenCalledWith(5, { action: "startCropOverlay", documentUrl: page }, expect.any(Function));
+    });
+  });
+
+  describe("launch records survive simultaneous events (Б4.8)", () => {
+    it("keeps both launches when two tabs open the clipper at once", async () => {
+      const worker = launchWorker();
+      await worker.run(`Promise.all([
+        recordClipperLaunch({ id: 5, url: "https://a.example/" }, { contextMenu: { menuItemId: "save-image", srcUrl: "https://a.example/i.jpg" } }),
+        recordClipperLaunch({ id: 6, url: "https://b.example/" }, { preloaded: { metadata: { url: "https://b.example/" } } }),
+      ])`);
+      await expect(ask(worker, { url: "https://a.example/", tab: { id: 5 } }))
+        .resolves.toMatchObject({ sourceTabId: 5, contextMenu: { srcUrl: "https://a.example/i.jpg" } });
+      await expect(ask(worker, { url: "https://b.example/", tab: { id: 6 } }))
+        .resolves.toMatchObject({ sourceTabId: 6, preloaded: { metadata: { url: "https://b.example/" } } });
+    });
+
+    it("keeps a new launch when another tab closes at the same moment", async () => {
+      const worker = launchWorker();
+      await worker.run(`recordClipperLaunch({ id: 6, url: "https://b.example/" }, {})`);
+      await worker.run(`Promise.all([
+        recordClipperLaunch({ id: 5, url: "https://a.example/" }, { contextMenu: { menuItemId: "save-page" } }),
+        forgetClipperLaunch(6),
+      ])`);
+      await expect(ask(worker, { url: "https://a.example/", tab: { id: 5 } }))
+        .resolves.toMatchObject({ sourceTabId: 5, contextMenu: { menuItemId: "save-page" } });
+      await expect(ask(worker, { url: "https://b.example/", tab: { id: 6 } })).resolves.toBeNull();
+    });
+
+    it("keeps both clipper windows when two open at once", async () => {
+      const worker = launchWorker();
+      await worker.run("Promise.all([rememberClipperWindowSource(77, 5), rememberClipperWindowSource(78, 6), rememberPopupWindow(77), rememberPopupWindow(78)])");
+      await expect(worker.run("Promise.all([isOurPopup(77), isOurPopup(78)])")).resolves.toEqual([true, true]);
+      await worker.run(`Promise.all([recordClipperLaunch({ id: 5, url: "https://a.example/" }, {}), recordClipperLaunch({ id: 6, url: "https://b.example/" }, {})])`);
+      await expect(ask(worker, { url: "chrome-extension://test/dist/index.html", tab: { id: 901, windowId: 78 } }))
+        .resolves.toMatchObject({ sourceTabId: 6 });
+    });
+  });
+});
+
+describe("an extension update waits for the draft queue (SPEC_AUDIT_FIXES.md, Б4.1)", () => {
+  afterEach(() => vi.useRealTimers());
+
+  const sourceUrl = "https://example.com/story";
+  const tab = { id: 7 };
+  const ownership = { ownerId: "editor", generation: 1 };
+
+  /// The actual worker and draft store over storage whose draft writes the
+  /// test holds, with an update waiting and no clipper left open.
+  function updatingWorker() {
+    vi.useFakeTimers();
+    const worker = background("promise", { realDraftStore: true });
+    const local = new Map<string, unknown>();
+    const session = new Map<string, unknown>([["mineReloadPending", "new-build"]]);
+    let holding = false;
+    let held: Array<() => void> = [];
+    const isDraft = (name: string) => name.startsWith("mineDurableDraft");
+    const read = (store: Map<string, unknown>, key: unknown) => key === null
+      ? Object.fromEntries([...store].map(([name, value]) => [name, structuredClone(value)]))
+      : { [key as string]: structuredClone(store.get(key as string)) };
+    const change = async (names: string[], apply: () => void) => {
+      if (holding && names.some(isDraft)) {
+        await new Promise<void>((resolve) => { held.push(() => { apply(); resolve(); }); });
+        return;
+      }
+      apply();
+    };
+    const storage = worker.chrome.storage as unknown as Record<"local" | "session", Record<string, ReturnType<typeof vi.fn>>>;
+    storage.local.get.mockImplementation(async (key: unknown) => read(local, key));
+    storage.local.set.mockImplementation((values: Record<string, unknown>) => change(Object.keys(values),
+      () => { for (const [name, value] of Object.entries(values)) local.set(name, structuredClone(value)); }));
+    storage.local.remove.mockImplementation((name: string) => change([name], () => { local.delete(name); }));
+    storage.session.get.mockImplementation(async (key: unknown) => read(session, key));
+    storage.session.set.mockImplementation(async (values: Record<string, unknown>) => {
+      for (const [name, value] of Object.entries(values)) session.set(name, structuredClone(value));
+    });
+    storage.session.remove.mockImplementation(async (name: string) => { session.delete(name); });
+    const send = (message: Message) => worker.dispatch({ target: "background", sourceUrl, ...message }, { tab }).response;
+    return {
+      worker, local, send,
+      hold: () => { holding = true; },
+      release: () => { holding = false; const waiting = held; held = []; waiting.forEach((finish) => finish()); },
+    };
+  }
+
+  const writeDraft = (host: ReturnType<typeof updatingWorker>, title: string, sequence: number) => host.send({
+    action: "draftWriteOwned", expectedRevision: sequence - 1,
+    draft: { schemaVersion: 1, revision: sequence, draftId: "capture", state: { title } },
+    ownership: { ...ownership, mutationId: `edit-${sequence}`, sequence },
+  });
+
+  it("keeps the last edit: no reload while it is stored, the reload once it is", async () => {
+    const host = updatingWorker();
+    await expect(host.send({ action: "draftAttach", options: { ownerId: "editor", captureId: "capture" } }))
+      .resolves.toMatchObject({ ok: true, draft: { draftId: "capture", generation: 1 } });
+    host.hold();
+    const written = writeDraft(host, "Latest edit", 1);
+    // Escape: the overlay closes and no editor is left open.
+    host.worker.dispatch({ target: "background", action: "mineClipperClosed" }, { tab });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(host.worker.chrome.runtime.reload).not.toHaveBeenCalled();
+
+    host.release();
+    await expect(written).resolves.toMatchObject({ ok: true, draft: { revision: 1, state: { title: "Latest edit" } } });
+    expect(host.worker.chrome.runtime.reload).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(host.worker.chrome.runtime.reload).toHaveBeenCalledOnce();
+    expect(host.local.get("mineDurableDraftRecord:capture")).toMatchObject({ draft: { state: { title: "Latest edit" } } });
+  });
+
+  it("removes the saved clip's draft before the reload, so it does not come back", async () => {
+    const host = updatingWorker();
+    await host.send({ action: "draftAttach", options: { ownerId: "editor", captureId: "capture" } });
+    await writeDraft(host, "Saved clip", 1);
+    host.hold();
+    const cleared = host.send({ action: "draftClearOwned", draftId: "capture", expectedRevision: 1, ownership });
+    host.worker.dispatch({ target: "background", action: "mineClipperClosed" }, { tab });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(host.worker.chrome.runtime.reload).not.toHaveBeenCalled();
+    expect(host.local.has("mineDurableDraftRecord:capture")).toBe(true);
+
+    host.release();
+    await expect(cleared).resolves.toMatchObject({ ok: true });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(host.worker.chrome.runtime.reload).toHaveBeenCalledOnce();
+    expect(host.local.has("mineDurableDraftRecord:capture")).toBe(false);
   });
 });

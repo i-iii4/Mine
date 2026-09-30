@@ -90,11 +90,29 @@ async function resolveClipperTarget(tab, fallbackUrl = null) {
   return { tabId, tabUrl };
 }
 
+const CAPTURE_PAGE_CHANGED = "This tab shows another page than the one Mine opened for. Open Mine again on the page you want to capture.";
+
+/// Whether the tab still shows the document the clipper opened for. The tab
+/// alone is not enough: after the tab moves from page A to page B (a link, or
+/// a single-page app changing its address), a screenshot of B would be saved
+/// with the link of A (SPEC_AUDIT_FIXES.md, Ф6, Б4.5). The address compares
+/// whole, fragment included, the same rule content extraction follows.
+function showsCaptureDocument(tabUrl, documentUrl) {
+  if (typeof tabUrl !== "string" || typeof documentUrl !== "string") return false;
+  try {
+    return new URL(tabUrl).href === new URL(documentUrl).href;
+  } catch {
+    return false;
+  }
+}
+
 /// Capture the viewport of `tabId` only while it is the tab in front of its
-/// window: `captureVisibleTab` takes whatever tab is in front, and a clip must
-/// never receive another page (SPEC_AUDIT_FIXES.md, Ф6).
-async function captureTabViewport(tabId) {
+/// window and still shows `documentUrl`: `captureVisibleTab` takes whatever
+/// tab is in front, and a clip must never receive another page
+/// (SPEC_AUDIT_FIXES.md, Ф6).
+async function captureTabViewport(tabId, documentUrl) {
   const tab = await chrome.tabs.get(tabId);
+  if (!showsCaptureDocument(tab?.url, documentUrl)) throw new Error(CAPTURE_PAGE_CHANGED);
   if (!tab.active) {
     throw new Error("The page is not in front of its window. Bring it forward and retake the screenshot.");
   }
@@ -112,7 +130,25 @@ async function captureTabViewport(tabId) {
   if (front?.id !== tabId) {
     throw new Error("The page left the front while the screenshot was taken. Retake it.");
   }
+  // The page may have moved while the frame was taken.
+  if (!showsCaptureDocument(front.url, documentUrl)) throw new Error(CAPTURE_PAGE_CHANGED);
   return dataUrl;
+}
+
+/// Start the crop overlay in `tabId` only while it still shows `documentUrl`
+/// (Ф6); the crop's own capture carries the same address.
+async function startCropInTab(tabId, documentUrl) {
+  const tab = await chrome.tabs.get(tabId);
+  if (!showsCaptureDocument(tab?.url, documentUrl)) return { ok: false, error: CAPTURE_PAGE_CHANGED };
+  return new Promise((resolve) => {
+    chrome.tabs.sendMessage(tabId, { action: "startCropOverlay", documentUrl }, (resp) => {
+      if (chrome.runtime.lastError) {
+        resolve({ ok: false, error: "Could not reach the page. Reload the tab after updating the extension." });
+        return;
+      }
+      resolve(resp || { ok: true });
+    });
+  });
 }
 
 function prepareTabForViewportCapture(tabId, callback) {
@@ -159,38 +195,64 @@ async function sessionRecord(key) {
   return stored[key] ?? {};
 }
 
-async function recordClipperLaunch(tab, source) {
-  if (typeof tab?.id !== "number") return;
-  const launches = await sessionRecord(CLIPPER_LAUNCHES_KEY);
-  launches[tab.id] = {
-    sourceTabId: tab.id,
-    sourceUrl: tab.url || source.fallbackUrl || null,
-    sourceTitle: tab.title || null,
-    contextMenu: source.contextMenu ?? null,
-    preloaded: source.preloaded ?? null,
-    createdAt: Date.now(),
-  };
-  await chrome.storage.session.set({ [CLIPPER_LAUNCHES_KEY]: launches });
+// Every change to a clipper session value runs alone: it reads the value,
+// changes it and writes it back before the next change reads. A worker woken
+// by several events at once (a tab closing, Alt+A on another tab, a window
+// closing) otherwise lets each write over the others' changes, and an opening
+// loses its context-menu target or Instagram post (SPEC_AUDIT_FIXES.md, Б4.8).
+let clipperSessionChanges = Promise.resolve();
+
+/// `change` receives the stored value and returns `{ next, result }`. `next`
+/// is written back unless it is `undefined`, which leaves storage untouched;
+/// `result` is what the returned promise resolves to.
+function changeSessionValue(key, change) {
+  const run = clipperSessionChanges.then(async () => {
+    const stored = await chrome.storage.session.get(key);
+    const { next, result } = change(stored[key]);
+    if (next !== undefined) await chrome.storage.session.set({ [key]: next });
+    return result;
+  });
+  clipperSessionChanges = run.catch(() => undefined);
+  return run;
 }
 
-async function forgetClipperLaunch(tabId) {
-  const launches = await sessionRecord(CLIPPER_LAUNCHES_KEY);
-  if (!(tabId in launches)) return;
-  delete launches[tabId];
-  await chrome.storage.session.set({ [CLIPPER_LAUNCHES_KEY]: launches });
+function recordClipperLaunch(tab, source) {
+  if (typeof tab?.id !== "number") return Promise.resolve();
+  return changeSessionValue(CLIPPER_LAUNCHES_KEY, (launches = {}) => ({
+    next: {
+      ...launches,
+      [tab.id]: {
+        sourceTabId: tab.id,
+        sourceUrl: tab.url || source.fallbackUrl || null,
+        sourceTitle: tab.title || null,
+        contextMenu: source.contextMenu ?? null,
+        preloaded: source.preloaded ?? null,
+        createdAt: Date.now(),
+      },
+    },
+  }));
 }
 
-async function rememberClipperWindowSource(windowId, tabId) {
-  const sources = await sessionRecord(CLIPPER_WINDOW_SOURCES_KEY);
-  sources[windowId] = tabId;
-  await chrome.storage.session.set({ [CLIPPER_WINDOW_SOURCES_KEY]: sources });
+function forgetClipperLaunch(tabId) {
+  return changeSessionValue(CLIPPER_LAUNCHES_KEY, (launches = {}) => {
+    if (!(tabId in launches)) return {};
+    const next = { ...launches };
+    delete next[tabId];
+    return { next };
+  });
 }
 
-async function forgetClipperWindowSource(windowId) {
-  const sources = await sessionRecord(CLIPPER_WINDOW_SOURCES_KEY);
-  if (!(windowId in sources)) return;
-  delete sources[windowId];
-  await chrome.storage.session.set({ [CLIPPER_WINDOW_SOURCES_KEY]: sources });
+function rememberClipperWindowSource(windowId, tabId) {
+  return changeSessionValue(CLIPPER_WINDOW_SOURCES_KEY, (sources = {}) => ({ next: { ...sources, [windowId]: tabId } }));
+}
+
+function forgetClipperWindowSource(windowId) {
+  return changeSessionValue(CLIPPER_WINDOW_SOURCES_KEY, (sources = {}) => {
+    if (!(windowId in sources)) return {};
+    const next = { ...sources };
+    delete next[windowId];
+    return { next };
+  });
 }
 
 function isExtensionPage(sender) {
@@ -217,11 +279,12 @@ async function clipperSourceTab(sender) {
 async function takeClipperLaunch(sender) {
   const sourceTabId = await clipperSourceTab(sender);
   if (typeof sourceTabId !== "number") return null;
-  const launches = await sessionRecord(CLIPPER_LAUNCHES_KEY);
-  const launch = launches[sourceTabId];
+  const launch = await changeSessionValue(CLIPPER_LAUNCHES_KEY, (launches = {}) => {
+    const taken = launches[sourceTabId];
+    if (!taken) return { result: null };
+    return { next: { ...launches, [sourceTabId]: { ...taken, contextMenu: null, preloaded: null } }, result: taken };
+  });
   if (!launch) return null;
-  launches[sourceTabId] = { ...launch, contextMenu: null, preloaded: null };
-  await chrome.storage.session.set({ [CLIPPER_LAUNCHES_KEY]: launches });
   if (Date.now() - launch.createdAt > CLIPPER_LAUNCH_TTL_MS) {
     return { ...launch, contextMenu: null, preloaded: null };
   }
@@ -362,11 +425,10 @@ async function resolvePopupBounds() {
   }
 }
 
-async function rememberPopupWindow(windowId) {
-  const stored = await chrome.storage.session.get(POPUP_WINDOW_IDS_KEY);
-  const ids = new Set(stored[POPUP_WINDOW_IDS_KEY] ?? []);
-  ids.add(windowId);
-  await chrome.storage.session.set({ [POPUP_WINDOW_IDS_KEY]: [...ids] });
+// The list is changed through the same queue as the clipper launches: a window
+// opening while another closes keeps both changes (Б4.8).
+function rememberPopupWindow(windowId) {
+  return changeSessionValue(POPUP_WINDOW_IDS_KEY, (ids = []) => ({ next: [...new Set([...ids, windowId])] }));
 }
 
 async function isOurPopup(windowId) {
@@ -374,10 +436,8 @@ async function isOurPopup(windowId) {
   return (stored[POPUP_WINDOW_IDS_KEY] ?? []).includes(windowId);
 }
 
-async function forgetPopupWindow(windowId) {
-  const stored = await chrome.storage.session.get(POPUP_WINDOW_IDS_KEY);
-  const ids = (stored[POPUP_WINDOW_IDS_KEY] ?? []).filter((id) => id !== windowId);
-  await chrome.storage.session.set({ [POPUP_WINDOW_IDS_KEY]: ids });
+function forgetPopupWindow(windowId) {
+  return changeSessionValue(POPUP_WINDOW_IDS_KEY, (ids = []) => ({ next: ids.filter((id) => id !== windowId) }));
 }
 
 chrome.windows.onBoundsChanged.addListener(async (win) => {
@@ -570,8 +630,10 @@ async function reloadIfUpdated() {
   chrome.runtime.reload();
 }
 
-// Writes into the folder chosen in the browser run inside this worker; a
-// reload would cut them off.
+// Writes into the folder chosen in the browser and the draft store's queue run
+// inside this worker; a reload would cut them off. A draft write cut off is
+// the last edit lost, a draft removal cut off brings a saved clip back as a
+// draft (SPEC_AUDIT_FIXES.md, Б4.1).
 let browserWritesInFlight = 0;
 
 function trackBrowserWrite(work) {
@@ -585,11 +647,16 @@ function trackBrowserWrite(work) {
 }
 
 // Check again once the answer has reached the page: a pending update waits
-// for the save, not for the next time a clipper happens to close.
+// for the save, not for the next time a clipper happens to close. A burst of
+// writes (autosave while typing) schedules one check after the last of them.
+const RELOAD_CHECK_DELAY_MS = 1000;
+let reloadCheckTimer = null;
 function scheduleReloadCheck() {
-  setTimeout(() => {
+  if (reloadCheckTimer !== null) clearTimeout(reloadCheckTimer);
+  reloadCheckTimer = setTimeout(() => {
+    reloadCheckTimer = null;
     void reloadIfUpdated().catch((error) => console.warn("[Mine] extension reload failed:", String(error?.message ?? error)));
-  }, 1000);
+  }, RELOAD_CHECK_DELAY_MS);
 }
 
 // Whether a clipper is open anywhere: an extension page (the window used where
@@ -1023,12 +1090,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const extensionPage = sender.url?.split("?")[0] === chrome.runtime.getURL("dist/index.html");
     const sourceTabId = extensionPage && Number.isInteger(msg.sourceTabId) && msg.sourceTabId >= 0
       ? msg.sourceTabId : sender.tab?.id ?? null;
-    const operation = msg.action === "draftAttach" ? attachClipperDraft(store, msg, sourceTabId)
+    // Counted from arrival until the store's queue answers it: a pending
+    // update reloads only once the queue has drained (Б4.1).
+    const operation = trackBrowserWrite(() => (msg.action === "draftAttach" ? attachClipperDraft(store, msg, sourceTabId)
       : msg.action === "draftWriteOwned" ? store.writeOwned(msg.sourceUrl, msg.draft, msg.expectedRevision, msg.ownership)
       : msg.action === "draftClearOwned" ? store.clearOwned(msg.sourceUrl, msg.draftId, msg.expectedRevision, msg.ownership)
       : msg.action === "draftRead" ? store.read(msg.sourceUrl)
       : msg.action === "draftWrite" ? store.write(msg.sourceUrl, msg.draft, msg.expectedRevision)
-      : store.clear(msg.sourceUrl, msg.draftId, msg.expectedRevision);
+      : store.clear(msg.sourceUrl, msg.draftId, msg.expectedRevision)));
     operation.then(draft => sendResponse({ ok: true, draft: draft ?? null }),
       error => sendResponse({ ok: false, code: error.code ?? "draft_storage_failed", error: String(error.message ?? error) }));
     return true;
@@ -1146,41 +1215,35 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  // Crop mode: popup asks background to trigger the crop overlay on
-  // the page. Target tab is taken from the sender, not from msg.tabId —
-  // in content-script (overlay) context the caller passes a sentinel
-  // value (-1) because it doesn't know its own tabId, and background
-  // is the only place that can resolve it via sender.tab.id.
+  // Crop mode: a clipper asks background to start the crop overlay on its
+  // page. An overlay asks from the page's own tab (it passes the sentinel -1
+  // because it cannot know its tab id). The clipper window asks from its own
+  // extension tab, which is not the page: it names its source tab, the same
+  // rule captureForCrop follows (SPEC_AUDIT_FIXES.md, Б4.7).
   if (msg.action === "startCropMode") {
-    const tabId = sender.tab?.id ?? (typeof msg.tabId === "number" && msg.tabId >= 0 ? msg.tabId : null);
+    const tabId = isExtensionPage(sender)
+      ? (Number.isInteger(msg.tabId) && msg.tabId >= 0 ? msg.tabId : null)
+      : sender.tab?.id ?? null;
     if (tabId == null) {
       sendResponse({ ok: false, error: "No target tab" });
       return true;
     }
-    chrome.tabs.sendMessage(tabId, { action: "startCropOverlay" }, (resp) => {
-      if (chrome.runtime.lastError) {
-        sendResponse({
-          ok: false,
-          error:
-            "Could not reach the page. Reload the tab after updating the extension.",
-        });
-        return;
-      }
-      sendResponse(resp || { ok: true });
-    });
+    startCropInTab(tabId, msg.documentUrl).then(sendResponse,
+      (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
     return true; // async
   }
 
   // A clipper asks background to capture its page's viewport (content scripts
   // cannot call chrome.tabs.captureVisibleTab directly). An overlay captures
-  // its own tab; the clipper window names its source tab.
+  // its own tab; the clipper window names its source tab. Either names the
+  // page address it opened for, and another page is never captured (Ф6).
   if (msg.action === "captureForCrop") {
     const tabId = isExtensionPage(sender) && typeof msg.tabId === "number" ? msg.tabId : sender.tab?.id;
     if (typeof tabId !== "number") {
       sendResponse({ ok: false, error: "No page to capture" });
       return true;
     }
-    captureTabViewport(tabId).then((dataUrl) => {
+    captureTabViewport(tabId, msg.documentUrl).then((dataUrl) => {
       const cached = cacheScreenshotUpload(dataUrl);
       sendResponse(cached.ok ? { ok: true, dataUrl, screenshotId: cached.screenshotId } : cached);
     }, (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
@@ -1194,7 +1257,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // shows an on-page toast asking the user to click the extension icon; popup
   // will rehydrate from chrome.storage.session on next open.
   if (msg.action === "cropDone") {
-    let result = { status: "cancelled" };
+    // A crop refused (the page changed under it) reaches the reopened window
+    // as its reason, shown in the editor.
+    let result = { status: "cancelled", ...(typeof msg.error === "string" ? { error: msg.error } : {}) };
     if (msg.status === "done") {
       const cached = cacheScreenshotUpload(msg.dataUrl);
       result = cached.ok

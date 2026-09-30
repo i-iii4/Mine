@@ -735,7 +735,7 @@ dropped, so the post never reaches a later clipper.
 изображения одним файлом, но каждое место в тексте и его подпись остаются и
 ссылаются на этот файл.
 
-В overlay-context кнопка `Crop Area` запускает page-level crop overlay напрямую через `window.__mineCrop.start()`, который экспортируется из `content.js` в той же isolated world. Background `startCropMode` остаётся fallback для detached/window path. Основной overlay не должен зависеть от того, какой из нескольких `chrome.runtime.onMessage` listeners в вкладке первым обработает `startCropOverlay`.
+В overlay-context кнопка `Crop Area` запускает page-level crop overlay напрямую через `window.__mineCrop.start(documentUrl)`, который экспортируется из `content.js` в той же isolated world. Background `startCropMode` остаётся fallback для detached/window path. Основной overlay не должен зависеть от того, какой из нескольких `chrome.runtime.onMessage` listeners в вкладке первым обработает `startCropOverlay`.
 
 | Field | Source |
 |---|---|
@@ -757,7 +757,9 @@ empty-body screenshot clips derive runtime card kind `media`.
 Скриншот можно захватить не целиком, а выделенной областью. В превью скриншота есть кнопка `Crop Area` рядом с `Retake`. При клике:
 
 1. Popup сериализует всё текущее состояние (метаданные, статью, выбранные коллекции, display heading/body H1 if present, vault, полный скриншот) в `chrome.storage.session` под ключом `cropPendingState` и вызывает `window.close()`.
-2. Background получает сообщение `startCropMode` и пересылает `startCropOverlay` в content script активной вкладки.
+2. Background получает сообщение `startCropMode` и пересылает `startCropOverlay` в content script исходной вкладки: оверлей называет свою вкладку отправителем, запасное окно передаёт `tabId` исходной вкладки (SPEC_AUDIT_FIXES.md, Б4.7).
+
+Каждый снимок и обрезка несут `documentUrl`, адрес страницы, для которой открыт клиппер. Background сверяет с ним полный адрес вкладки до съёмки и после неё и при расхождении отказывает: снимок страницы B никогда не получает ссылку страницы A (SPEC_AUDIT_FIXES.md, Ф6, Б4.5). Ошибка съёмки показывается в редакторе рядом с кадром и не убирает правки; применяется только ответ на последний запрос Retake, кнопки Retake и Crop заблокированы на время съёмки (Б4.6).
 3. Content script инжектит Shadow DOM overlay: полупрозрачное затемнение на всю страницу, crosshair-курсор, плавающая плашка `Click and drag to select area • Esc to cancel`.
 4. Пользователь тянет мышью прямоугольник. Подсветка выделенной области — через трюк `box-shadow: 0 0 0 9999px rgba(0,0,0,0.55)` на самой рамке (одна рамка = «окно в темноту», без четырёх div'ов вокруг).
 5. На mouseup при размере ≥ 20×20 px:

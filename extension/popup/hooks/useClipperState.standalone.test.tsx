@@ -280,7 +280,7 @@ describe("standalone mode decision", () => {
       if (message.action === "captureForCrop") callback?.({ ok: true, dataUrl: newBytes });
     }) as unknown as typeof chrome.runtime.sendMessage);
     act(() => result.current.retakeScreenshot());
-    expect(capture).toHaveBeenCalledWith({ target: "background", action: "captureForCrop", tabId: 7 }, expect.any(Function));
+    expect(capture).toHaveBeenCalledWith({ target: "background", action: "captureForCrop", tabId: 7, documentUrl: "https://example.com" }, expect.any(Function));
     await waitFor(() => expect(result.current.screenshotDataUrl).toBe(newBytes));
     await act(async () => { finishOld?.("old-upload"); });
     await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
@@ -1238,5 +1238,100 @@ describe("collections while the helper indexes (SPEC_CLIPPER.md, К3)", () => {
     await waitFor(() => expect(result.current.channelsError).toBe("Mine is busy with this space. Retry in a moment."));
     expect(result.current.channelsLoading).toBe(false);
     expect(result.current.canSave).toBe(true);
+  });
+});
+
+describe("screenshots in the editor (SPEC_AUDIT_FIXES.md, Б4.5, Б4.6)", () => {
+  const first = "data:image/jpeg;base64,AQID";
+  const second = "data:image/jpeg;base64,BAUG";
+  type Reply = (response: unknown) => void;
+  type Sent = Record<string, unknown>;
+
+  /// Background answers each request only when the test says so; a page
+  /// without a detected type opens as a screenshot and asks for one at once.
+  function answerLater(answers: Partial<Record<string, unknown>> = {}) {
+    const captures: Reply[] = [];
+    const sent: Sent[] = [];
+    vi.mocked(chrome.runtime.sendMessage).mockImplementation(((message: Sent, callback?: Reply) => {
+      sent.push(message);
+      if (message.action === "captureForCrop" && callback) captures.push(callback);
+      else if (typeof message.action === "string" && message.action in answers) callback?.(answers[message.action]);
+    }) as unknown as typeof chrome.runtime.sendMessage);
+    return { captures, sent };
+  }
+
+  beforeEach(() => {
+    sendToNative.mockResolvedValue({ ok: false, error: "No helper" });
+    standalone.getStandaloneStatus.mockResolvedValue({ configured: true, folderName: "Mine", permission: "granted", bindingId: "browser-original" });
+  });
+
+  it("applies only the latest answer: an older request failing later leaves the editor and the newer frame", async () => {
+    const { captures } = answerLater();
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(captures).toHaveLength(1));
+    act(() => result.current.retakeScreenshot());
+    expect(captures).toHaveLength(2);
+
+    act(() => captures[1]!({ ok: true, dataUrl: second, screenshotId: "shot-2" }));
+    act(() => captures[0]!({ ok: false, error: "This request exceeds the MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND quota." }));
+
+    expect(result.current.state).toBe("main");
+    expect(result.current.error).toBeNull();
+    expect(result.current.screenshotDataUrl).toBe(second);
+    expect(result.current.captureError).toBeNull();
+    expect(result.current.capturing).toBe(false);
+  });
+
+  it("does not let an older frame arriving later replace the newer one", async () => {
+    const { captures } = answerLater();
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(captures).toHaveLength(1));
+    act(() => result.current.retakeScreenshot());
+    act(() => captures[1]!({ ok: true, dataUrl: second, screenshotId: "shot-2" }));
+    act(() => captures[0]!({ ok: true, dataUrl: first, screenshotId: "shot-1" }));
+    expect(result.current.screenshotDataUrl).toBe(second);
+  });
+
+  it("shows a failed retake next to the frame it keeps, with the edits in place", async () => {
+    const { captures } = answerLater();
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(captures).toHaveLength(1));
+    act(() => captures[0]!({ ok: true, dataUrl: first, screenshotId: "shot-1" }));
+    act(() => result.current.setTitle("Edited before the retake"));
+    act(() => result.current.retakeScreenshot());
+    act(() => captures[1]!({ ok: false, error: "The page is not in front of its window. Bring it forward and retake the screenshot." }));
+
+    expect(result.current.state).toBe("main");
+    expect(result.current.screenshotDataUrl).toBe(first);
+    expect(result.current.title).toBe("Edited before the retake");
+    expect(result.current.captureError).toContain("not in front");
+    expect(result.current.capturing).toBe(false);
+  });
+
+  it("names the page address it opened for in every screenshot request", async () => {
+    const { sent } = answerLater();
+    renderHook(() => useClipperState());
+    await waitFor(() => expect(sent.some((message) => message.action === "captureForCrop")).toBe(true));
+    expect(sent.find((message) => message.action === "captureForCrop"))
+      .toEqual({ target: "background", action: "captureForCrop", tabId: 7, documentUrl: "https://example.com" });
+  });
+
+  it("keeps the editor when the page refuses a crop from the window, and says why", async () => {
+    const refusal = "This tab shows another page than the one Mine opened for. Open Mine again on the page you want to capture.";
+    const { captures, sent } = answerLater({ startCropMode: { ok: false, error: refusal } });
+    (chrome.storage.session as unknown as Record<string, unknown>).set = vi.fn(async () => undefined);
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(captures).toHaveLength(1));
+    act(() => captures[0]!({ ok: true, dataUrl: first, screenshotId: "shot-1" }));
+    await waitFor(() => expect(result.current.cropSupported).toBe(true));
+
+    await act(async () => { await result.current.startCropMode(); });
+
+    expect(sent.find((message) => message.action === "startCropMode"))
+      .toEqual({ target: "background", action: "startCropMode", tabId: 7, documentUrl: "https://example.com" });
+    expect(result.current.state).toBe("main");
+    expect(result.current.screenshotDataUrl).toBe(first);
+    expect(result.current.captureError).toBe(refusal);
+    expect(chrome.storage.session.remove).toHaveBeenCalledWith("cropPendingState");
   });
 });

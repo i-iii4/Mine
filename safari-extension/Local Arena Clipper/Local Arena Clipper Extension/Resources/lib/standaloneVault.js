@@ -175,10 +175,22 @@
     if (!blob.size) throw error("missing_media", "Downloaded media is empty");
     return { blob, extension: mediaExtension(blob.type), hash: await hash(blob) };
   }
+  // A collection answers with the reference cards name it by, not with the
+  // path of its page: `Collections/Reference` tagged on a card splits one
+  // collection into two rows (SPEC_AUDIT_FIXES.md, Б4.2).
   function result(record) {
     return { ok: true, outcome: "committed", operation_id: record.id, binding_id: record.binding,
       executor_id: "browser", standalone: true, slug: record.slug, block_type: record.block_type,
-      ...(record.kind === "collection" ? { tag: record.slug } : {}) };
+      ...(record.kind === "collection" && typeof record.tag === "string" ? { tag: record.tag } : {}) };
+  }
+  // The reference of a new collection page, by the rule the collection list
+  // follows (collection_ref_for_slug): the shortest Obsidian link that
+  // resolves to the page. Its name is free among every note of the folder, so
+  // the link is the bare name, whatever folder the layout puts it in.
+  async function collectionTag(slug, paths) {
+    const page = `${slug}.md`;
+    const notes = [...paths.filter(path => path.endsWith(".md")), page];
+    return (await core({ op: "shortest_link", target: page, paths: notes, omit_md_ext: true })).target;
   }
   function failed(id, failure, outcome = "not_committed") {
     return { ok: false, outcome, operation_id: id, executor_id: "browser", standalone: true,
@@ -239,7 +251,8 @@
       return advance(record, binding, store, options, true);
     }
     const receipt = { id: record.id, binding: record.binding, fingerprint: record.fingerprint,
-      phase: "committed", slug: record.slug, block_type: record.block_type, kind: record.kind };
+      phase: "committed", slug: record.slug, block_type: record.block_type, kind: record.kind,
+      ...(typeof record.tag === "string" ? { tag: record.tag } : {}) };
     await store.put("operations", record.id, receipt);
     return result(receipt);
   }
@@ -305,6 +318,7 @@
           selection: request.selection === true } });
       record = { id, binding: binding.id, fingerprint, kind, phase: "prepared", layout, newSpace,
         slug: named.slug, block_type: kind === "collection" ? "channel" : request.block_type,
+        ...(kind === "collection" ? { tag: await collectionTag(named.slug, paths) } : {}),
         markdown: document.markdown, hash: await hash(document.markdown), media };
       await store.put("operations", id, record);
       await options?.afterPrepared?.(record);

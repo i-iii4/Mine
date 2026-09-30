@@ -19,7 +19,7 @@ type Options = { directory: FakeDirectory; store: MemoryStore; binding_id?: stri
 const vault = (globalThis as unknown as { MineStandaloneVault: {
   saveStandaloneBlock: (request: Record<string, unknown>, options: Options) => Promise<Reply>;
   lookupOperation: (id: string, binding: string, options: Options) => Promise<Reply>;
-  createStandaloneChannel: (tag: string, options: Options) => Promise<Reply>;
+  createStandaloneChannel: (tag: string, bindingId: string | null, options: Options) => Promise<Reply>;
   listStandaloneChannels: (options: Options) => Promise<Reply>;
   resolveLayout: (directory: FakeDirectory) => Promise<unknown>;
   getStandaloneStatus: (options: Options) => Promise<unknown>;
@@ -230,6 +230,21 @@ describe("browser executor backed by actual WASM", () => {
     folder.files.set("Note.md", new FakeFile("Plain note"));
     expect(await vault.createStandaloneChannel("Reference", null, options())).toMatchObject({ ok: true, tag: "Reference" });
     expect(await vault.listStandaloneChannels(options())).toMatchObject({ ok: true, channels: [{ tag: "Reference" }] });
+  });
+  it.each([
+    ["an empty folder", async () => undefined],
+    ["a folder with the standard layout recorded", async () => {
+      const mine = await folder.getDirectoryHandle(".mine", { create: true });
+      mine.files.set("layout.json", new FakeFile(JSON.stringify({ cards: "Cards", media: "Media", collections: "Collections" })));
+      folder.files.set("Note.md", new FakeFile("Plain note"));
+    }],
+  ])("names a collection created in %s by its reference, so its cards count in one row (Б4.2)", async (_case, prepare) => {
+    await prepare();
+    const created = await vault.createStandaloneChannel("Reference", null, options());
+    expect(created).toMatchObject({ ok: true, slug: "Collections/Reference", tag: "Reference" });
+    expect(await vault.saveStandaloneBlock(request({ tags: [created.tag] }), options())).toMatchObject({ ok: true });
+    expect(await folder.text("Cards/Article.md")).toContain('"[[Reference]]"');
+    expect(await vault.listStandaloneChannels(options())).toEqual({ ok: true, channels: [{ tag: "Reference", block_count: 1 }] });
   });
   it("lists collections the way the app does: pages in order, card-only names, counts (А3.12)", async () => {
     folder.files.set("Travel.md", new FakeFile("---\ntype: channel\nposition: 1\nsaved_at: 2026-08-31T12:00:00Z\n---\n"));
