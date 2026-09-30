@@ -2,7 +2,7 @@
 // command menu with one radio group per option; new options arrive as new
 // groups (SPEC_FEED_DISPLAY.md, Д1 to Д3).
 
-import { SlidersHorizontal } from "lucide-react";
+import { Settings2 } from "lucide-react";
 import { useId } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -116,7 +116,7 @@ export function FeedDisplayMenu() {
           size="chrome-icon"
           data-feed-display-trigger=""
         >
-          <SlidersHorizontal aria-hidden="true" />
+          <Settings2 aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
