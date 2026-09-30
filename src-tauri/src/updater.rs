@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex, PoisonError};
 use std::time::{Duration, SystemTime};
 
 use base64::Engine;
@@ -92,6 +92,77 @@ impl UpdateStatus {
     }
     fn reopen_allowed(&self) -> bool {
         matches!(self.stage, UpdateStage::Idle | UpdateStage::Verified)
+    }
+    /// Show what a previous run left on disk: the verified download, then the
+    /// last activation outcome recorded for that same archive.
+    fn reopen(&mut self, persisted: Persisted) {
+        if let Some(journal) = persisted.journal {
+            self.stage = UpdateStage::Verified;
+            self.version = Some(journal.version);
+            self.downloaded_bytes = journal.bytes;
+            self.archive_sha256 = Some(journal.archive_sha256);
+            self.error = None;
+            self.activation_available = cfg!(target_os = "macos");
+        }
+        if let Some((phase, error)) = persisted.activation {
+            use crate::update_activation::ActivationPhase;
+            self.stage = match phase {
+                ActivationPhase::Verified => UpdateStage::Activated,
+                ActivationPhase::RolledBack => UpdateStage::RolledBack,
+                ActivationPhase::RecoveryRequired | ActivationPhase::LaunchIntent => {
+                    UpdateStage::RecoveryRequired
+                }
+                ActivationPhase::Installed | ActivationPhase::Launched => UpdateStage::Restarting,
+                ActivationPhase::Prepared => self.stage.clone(),
+            };
+            if !matches!(phase, ActivationPhase::Prepared) {
+                self.activation_available = false;
+            }
+            self.error = error.map(UpdateError::Activation);
+        }
+    }
+    /// Apply what an automatic check found (Ф13). Returns whether the status
+    /// now carries that answer. Work in progress and a verified archive are
+    /// never replaced; when nothing newer is out after an installation or a
+    /// rollback, that outcome stays on screen.
+    fn accept_automatic_offer(&mut self, version: Option<String>, notes: Option<String>) -> bool {
+        if !automatic_check_allowed(&self.stage)
+            || (version.is_none()
+                && matches!(self.stage, UpdateStage::Activated | UpdateStage::RolledBack))
+        {
+            return false;
+        }
+        self.checked_offer(version, notes);
+        true
+    }
+}
+
+/// What a previous run left on disk.
+struct Persisted {
+    journal: Option<DownloadJournal>,
+    activation: Option<(crate::update_activation::ActivationPhase, Option<String>)>,
+}
+
+/// Pair a verified download with the activation outcome recorded for it.
+fn persisted_state(root: &Path, journal: Option<DownloadJournal>) -> Result<Persisted, UpdateError> {
+    let activation = crate::update_activation::latest_phase(
+        root,
+        journal
+            .as_ref()
+            .map(|journal| journal.archive_sha256.as_str()),
+    )
+    .map_err(UpdateError::Journal)?;
+    Ok(Persisted {
+        journal,
+        activation,
+    })
+}
+
+/// Versions compare as semantic versions when both parse, else as text.
+fn same_version(left: &str, right: &str) -> bool {
+    match (semver::Version::parse(left), semver::Version::parse(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => left == right,
     }
 }
 
@@ -348,6 +419,48 @@ pub struct UpdateService {
     offer: Mutex<Option<Update>>,
     busy: AtomicBool,
     last_progress_event: Mutex<Option<std::time::Instant>>,
+    /// The version this Mac installed and then rolled back, read from the
+    /// activation journal. Automatic checks do not offer it again.
+    rolled_back: Mutex<Option<String>>,
+    startup: StartupGate,
+}
+
+/// Opens once startup has read back what the previous run left on disk. The
+/// automatic check waits for it: asking the channel earlier would put a fresh
+/// offer over a verified archive the status does not show yet (Б6.1).
+#[derive(Default)]
+struct StartupGate {
+    reopened: Mutex<bool>,
+    ready: Condvar,
+}
+
+impl StartupGate {
+    fn open(&self) {
+        *self
+            .reopened
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = true;
+        self.ready.notify_all();
+    }
+    fn wait(&self) {
+        let reopened = self
+            .reopened
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        drop(
+            self.ready
+                .wait_while(reopened, |reopened| !*reopened)
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+    }
+}
+
+/// Opens the gate however startup ends: success, error or panic.
+struct OpenOnDrop<'a>(&'a StartupGate);
+impl Drop for OpenOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.open();
+    }
 }
 
 struct Operation<'a>(&'a AtomicBool);
@@ -392,6 +505,79 @@ impl UpdateService {
             status.error = Some(error.clone());
         }
     }
+    /// Show the persisted state and remember a rolled-back version.
+    fn reopen(&self, persisted: Persisted) -> Result<(), UpdateError> {
+        let rolled_back = {
+            let mut status = self.status.lock().map_err(|_| UpdateError::Busy)?;
+            status.reopen(persisted);
+            (status.stage == UpdateStage::RolledBack)
+                .then(|| status.version.clone())
+                .flatten()
+        };
+        if let Some(version) = rolled_back {
+            *self.rolled_back.lock().map_err(|_| UpdateError::Busy)? = Some(version);
+        }
+        Ok(())
+    }
+    /// Apply what an automatic check found (Ф13). A version this Mac rolled
+    /// back is not offered again.
+    fn settle_automatic_answer<O>(
+        &self,
+        offer: Option<O>,
+        announced: impl Fn(&O) -> (String, Option<String>),
+    ) -> AutomaticAnswer<O> {
+        let answer = offer.as_ref().map(announced);
+        let Ok(rolled_back) = self.rolled_back.lock().map(|version| version.clone()) else {
+            return AutomaticAnswer::Kept;
+        };
+        if let (Some((version, _)), Some(rolled_back)) = (&answer, &rolled_back) {
+            if same_version(version, rolled_back) {
+                return AutomaticAnswer::Kept;
+            }
+        }
+        let (version, notes) =
+            answer.map_or((None, None), |(version, notes)| (Some(version), notes));
+        let shown = self
+            .status
+            .lock()
+            .is_ok_and(|mut status| status.accept_automatic_offer(version, notes));
+        if shown {
+            AutomaticAnswer::Shown(offer)
+        } else {
+            AutomaticAnswer::Kept
+        }
+    }
+}
+
+/// What an automatic check leaves in the status.
+#[derive(Debug, PartialEq, Eq)]
+enum AutomaticAnswer<O> {
+    /// The status keeps what it showed, and the kept offer stays.
+    Kept,
+    /// The status shows this answer; its offer is kept for Download.
+    Shown(Option<O>),
+}
+
+/// Startup half of the updater: finish an interrupted activation, then show
+/// what the previous run left on disk. Runs before the first automatic check.
+fn reopen_at_startup(service: &UpdateService, root: &Path, key: &str) -> Result<(), UpdateError> {
+    let journal = verified_journal(root, key)?;
+    if let Some(journal) = &journal {
+        let bytes = std::fs::read(archive_path(root, &journal.archive_sha256))
+            .map_err(|error| UpdateError::Storage(error.to_string()))?;
+        crate::update_activation::resume_startup(root, &journal.archive_sha256, &bytes)
+            .map_err(UpdateError::Activation)?;
+    }
+    let persisted = persisted_state(root, journal)?;
+    // An operation the person already started owns the status; `status()`
+    // reopens the journal once it ends.
+    let Ok(_operation) = service.begin() else {
+        return Ok(());
+    };
+    if service.status()?.reopen_allowed() {
+        service.reopen(persisted)?;
+    }
+    Ok(())
 }
 
 /// Configure without checking the network; absent/invalid release credentials never block startup.
@@ -407,23 +593,14 @@ pub fn initialize(app: &AppHandle) {
                 }
                 let _ = service.set_stage(UpdateStage::Idle);
                 tauri::async_runtime::spawn_blocking(move || {
-                    let result = (|| -> Result<(), UpdateError> {
-                        let root = update_root(&resume_app)?;
-                        if let Some(journal) = verified_journal(&root, &resume_key)? {
-                            let bytes = std::fs::read(archive_path(&root, &journal.archive_sha256))
-                                .map_err(|error| UpdateError::Storage(error.to_string()))?;
-                            crate::update_activation::resume_startup(
-                                &root,
-                                &journal.archive_sha256,
-                                &bytes,
-                            )
-                            .map_err(UpdateError::Activation)?;
-                        }
-                        Ok(())
-                    })();
+                    let service = resume_app.state::<UpdateService>();
+                    let _gate = OpenOnDrop(&service.startup);
+                    let result = update_root(&resume_app)
+                        .and_then(|root| reopen_at_startup(&service, &root, &resume_key));
                     if let Err(error) = result {
-                        resume_app.state::<UpdateService>().fail(&error);
+                        service.fail(&error);
                     }
+                    service.emit(&resume_app);
                 });
             }
             Err(error) => service.fail(&UpdateError::Configuration(error.to_string())),
@@ -459,44 +636,12 @@ pub async fn status(app: &AppHandle) -> Result<UpdateStatus, UpdateError> {
         Err(error) => return Err(error),
     };
     let root = update_root(app)?;
-    let (journal, activation) = tauri::async_runtime::spawn_blocking(move || {
-        let journal = verified_journal(&root, &channel.public_key)?;
-        let activation = crate::update_activation::latest_phase(
-            &root,
-            journal
-                .as_ref()
-                .map(|journal| journal.archive_sha256.as_str()),
-        )
-        .map_err(UpdateError::Journal)?;
-        Ok::<_, UpdateError>((journal, activation))
+    let persisted = tauri::async_runtime::spawn_blocking(move || {
+        persisted_state(&root, verified_journal(&root, &channel.public_key)?)
     })
     .await
     .map_err(|error| UpdateError::Storage(error.to_string()))??;
-    if let Some(journal) = journal {
-        let mut status = service.status.lock().map_err(|_| UpdateError::Busy)?;
-        status.stage = UpdateStage::Verified;
-        status.version = Some(journal.version);
-        status.downloaded_bytes = journal.bytes;
-        status.archive_sha256 = Some(journal.archive_sha256);
-        status.error = None;
-        status.activation_available = cfg!(target_os = "macos");
-    }
-    if let Some((phase, error)) = activation {
-        use crate::update_activation::ActivationPhase;
-        let mut status = service.status.lock().map_err(|_| UpdateError::Busy)?;
-        status.stage = match phase {
-            ActivationPhase::Verified => UpdateStage::Activated,
-            ActivationPhase::RolledBack => UpdateStage::RolledBack,
-            ActivationPhase::RecoveryRequired => UpdateStage::RecoveryRequired,
-            ActivationPhase::Installed | ActivationPhase::Launched => UpdateStage::Restarting,
-            ActivationPhase::LaunchIntent => UpdateStage::RecoveryRequired,
-            ActivationPhase::Prepared => status.stage.clone(),
-        };
-        if !matches!(phase, ActivationPhase::Prepared) {
-            status.activation_available = false;
-        }
-        status.error = error.map(UpdateError::Activation);
-    }
+    service.reopen(persisted)?;
     service.status()
 }
 
@@ -535,6 +680,8 @@ fn empty_channel_is_no_update<T>(
 /// hours (Ф13). A found version lands in the same status the Check button
 /// produces, so Settings shows it the same way; downloading and installing
 /// stay the person's action. Without a configured channel nothing starts.
+/// The first pass waits until startup has read back the previous run's
+/// download and activation journals.
 pub fn start_automatic_checks(app: &AppHandle) {
     if app.state::<UpdateService>().channel().is_err() {
         return;
@@ -543,6 +690,7 @@ pub fn start_automatic_checks(app: &AppHandle) {
     let spawned = std::thread::Builder::new()
         .name("mine-update-check".into())
         .spawn(move || {
+            app.state::<UpdateService>().startup.wait();
             let mut last_check: Option<SystemTime> = None;
             loop {
                 let now = SystemTime::now();
@@ -570,12 +718,17 @@ fn automatic_check_due(last: Option<SystemTime>, now: SystemTime) -> bool {
 }
 
 /// The automatic check never overrides work in progress: a download, a
-/// verified archive waiting for Install, an activation. It refreshes only an
-/// answer that a new check may replace.
+/// verified archive waiting for Install, an activation or a recovery. It
+/// refreshes an answer that a new check may replace, and it keeps looking
+/// after an installation or a rollback has finished (Ф13).
 fn automatic_check_allowed(stage: &UpdateStage) -> bool {
     matches!(
         stage,
-        UpdateStage::Idle | UpdateStage::Available | UpdateStage::Failed
+        UpdateStage::Idle
+            | UpdateStage::Available
+            | UpdateStage::Failed
+            | UpdateStage::Activated
+            | UpdateStage::RolledBack
     )
 }
 
@@ -591,16 +744,15 @@ async fn check_in_background(app: &AppHandle) {
     }
     match fetch_offer(app).await {
         Ok(offer) => {
-            if let Ok(mut status) = service.status.lock() {
-                status.checked_offer(
-                    offer.as_ref().map(|update| update.version.clone()),
-                    offer.as_ref().and_then(|update| update.body.clone()),
-                );
+            let settled = service.settle_automatic_answer(offer, |update| {
+                (update.version.clone(), update.body.clone())
+            });
+            if let AutomaticAnswer::Shown(offer) = settled {
+                if let Ok(mut slot) = service.offer.lock() {
+                    *slot = offer;
+                }
+                service.emit(app);
             }
-            if let Ok(mut slot) = service.offer.lock() {
-                *slot = offer;
-            }
-            service.emit(app);
         }
         // Offline or an unreachable channel: the person did not ask, so the
         // last answer stays on screen and the next pass asks again.
@@ -916,9 +1068,24 @@ mod automatic_check_tests {
         assert!(automatic_check_due(Some(launch), launch - Duration::from_secs(60)));
     }
 
+    /// What a test channel announces: version and release notes.
+    type Offer = (String, Option<String>);
+
+    fn offer(version: &str, notes: Option<&str>) -> Offer {
+        (version.into(), notes.map(Into::into))
+    }
+
     #[test]
-    fn never_overrides_a_download_or_an_install_in_progress() {
-        for stage in [UpdateStage::Idle, UpdateStage::Available, UpdateStage::Failed] {
+    fn never_overrides_work_in_progress_and_keeps_checking_after_it_ends() {
+        // Ф13 protects operations in progress only. A finished installation
+        // or rollback must not stop the daily check (Б6.2).
+        for stage in [
+            UpdateStage::Idle,
+            UpdateStage::Available,
+            UpdateStage::Failed,
+            UpdateStage::Activated,
+            UpdateStage::RolledBack,
+        ] {
             assert!(automatic_check_allowed(&stage), "{stage:?}");
         }
         for stage in [
@@ -928,12 +1095,89 @@ mod automatic_check_tests {
             UpdateStage::Verified,
             UpdateStage::Installing,
             UpdateStage::Restarting,
-            UpdateStage::Activated,
-            UpdateStage::RolledBack,
             UpdateStage::RecoveryRequired,
         ] {
             assert!(!automatic_check_allowed(&stage), "{stage:?}");
         }
+    }
+
+    #[test]
+    fn after_an_installation_the_automatic_check_finds_a_newer_version() {
+        let service = UpdateService::default();
+        *service.status.lock().unwrap() = UpdateStatus {
+            stage: UpdateStage::Activated,
+            version: Some("1.0.0".into()),
+            downloaded_bytes: 10,
+            archive_sha256: Some("a".repeat(64)),
+            ..UpdateStatus::default()
+        };
+        assert!(automatic_check_allowed(&service.status().unwrap().stage));
+
+        // Nothing newer yet: the finished installation stays on screen.
+        assert_eq!(
+            service.settle_automatic_answer(None::<Offer>, Clone::clone),
+            AutomaticAnswer::Kept
+        );
+        assert_eq!(service.status().unwrap().stage, UpdateStage::Activated);
+
+        let newer = offer("1.1.0", Some("Fixes"));
+        assert_eq!(
+            service.settle_automatic_answer(Some(newer.clone()), Clone::clone),
+            AutomaticAnswer::Shown(Some(newer))
+        );
+        let status = service.status().unwrap();
+        assert_eq!(status.stage, UpdateStage::Available);
+        assert_eq!(status.version.as_deref(), Some("1.1.0"));
+        assert_eq!(status.notes.as_deref(), Some("Fixes"));
+        assert!(status.archive_sha256.is_none());
+        assert!(!status.activation_available);
+    }
+
+    #[test]
+    fn an_automatic_answer_never_replaces_a_verified_archive() {
+        let service = UpdateService::default();
+        *service.status.lock().unwrap() = UpdateStatus {
+            stage: UpdateStage::Verified,
+            version: Some("1.0.0".into()),
+            archive_sha256: Some("b".repeat(64)),
+            ..UpdateStatus::default()
+        };
+        for answer in [None, Some(offer("1.0.0", None)), Some(offer("2.0.0", None))] {
+            assert_eq!(
+                service.settle_automatic_answer(answer, Clone::clone),
+                AutomaticAnswer::Kept
+            );
+        }
+        let status = service.status().unwrap();
+        assert_eq!(status.stage, UpdateStage::Verified);
+        assert_eq!(status.archive_sha256, Some("b".repeat(64)));
+    }
+
+    #[test]
+    fn the_first_automatic_check_waits_until_startup_has_reopened_the_journal() {
+        use std::sync::Arc;
+        let service = Arc::new(UpdateService::default());
+        let passed = Arc::new(AtomicBool::new(false));
+        let waiter = {
+            let service = Arc::clone(&service);
+            let passed = Arc::clone(&passed);
+            std::thread::spawn(move || {
+                service.startup.wait();
+                passed.store(true, Ordering::Release);
+            })
+        };
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(!passed.load(Ordering::Acquire), "checked before startup reopened");
+
+        // Even a startup that fails outright opens the gate: a broken
+        // journal must not stop automatic checks for the whole session.
+        let startup = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _gate = OpenOnDrop(&service.startup);
+            panic!("startup reconciliation failed");
+        }));
+        assert!(startup.is_err());
+        waiter.join().unwrap();
+        assert!(passed.load(Ordering::Acquire));
     }
 }
 
@@ -1085,6 +1329,124 @@ mod tests {
             unknown
         );
         assert!(!UpdateStatus::default().activation_available);
+    }
+
+    /// Record the outcome of activating `archive`, as the watchdog does.
+    fn record_activation(
+        root: &Path,
+        archive: &str,
+        version: &str,
+        phase: crate::update_activation::ActivationPhase,
+    ) {
+        use crate::update_activation::{ActivationJournal, BuildIdentity};
+        let directory = root.join("activation-fixture");
+        std::fs::create_dir_all(&directory).unwrap();
+        let identity = |version: &str| BuildIdentity {
+            version: version.into(),
+            build_id: "fixture".into(),
+            commit: "fixture".into(),
+            save_protocols: vec![1],
+        };
+        let journal = ActivationJournal {
+            schema_version: 1,
+            phase,
+            target: "/Applications/Mine.app".into(),
+            previous: directory.join("previous.app"),
+            candidate: directory.join("candidate/Mine.app"),
+            replacement: "/Applications/Mine-update-fixture.app".into(),
+            executable_relative: "Contents/MacOS/mine".into(),
+            candidate_sha256: "c".repeat(64),
+            previous_sha256: "d".repeat(64),
+            executable_sha256: "e".repeat(64),
+            archive_sha256: archive.into(),
+            identity: identity(version),
+            previous_identity: identity("0.9.0"),
+            old_pid: 1,
+            candidate_pid: None,
+            token: "f".repeat(64),
+            error: None,
+        };
+        let path = directory.join("activation-journal.json");
+        std::fs::write(&path, serde_json::to_vec(&journal).unwrap()).unwrap();
+        std::fs::write(
+            root.join("latest-activation.json"),
+            serde_json::to_vec(&path).unwrap(),
+        )
+        .unwrap();
+    }
+
+    type Offer = (String, Option<String>);
+
+    fn offer(version: &str) -> Offer {
+        (version.into(), None)
+    }
+
+    #[test]
+    fn a_verified_download_survives_restart_and_the_first_automatic_check() {
+        // Б6.1: downloaded, not installed, Mine restarted, then the daily
+        // check finds the same version. The archive stays verified.
+        let temporary = tempfile::tempdir().unwrap();
+        let (key, signature, bytes) = signed_archive(temporary.path());
+        let journal = stage_download(temporary.path(), &key, "1.0.0", &signature, &bytes).unwrap();
+        let service = UpdateService::default();
+        service.set_stage(UpdateStage::Idle).unwrap(); // what `initialize` leaves
+
+        reopen_at_startup(&service, temporary.path(), &key).unwrap();
+        assert!(!automatic_check_allowed(&service.status().unwrap().stage));
+        assert_eq!(
+            service.settle_automatic_answer(Some(offer("1.0.0")), Clone::clone),
+            AutomaticAnswer::Kept
+        );
+
+        let status = service.status().unwrap();
+        assert_eq!(status.stage, UpdateStage::Verified);
+        assert_eq!(status.version.as_deref(), Some("1.0.0"));
+        assert_eq!(status.archive_sha256, Some(journal.archive_sha256));
+        assert_eq!(status.downloaded_bytes, bytes.len() as u64);
+        assert_eq!(status.activation_available, cfg!(target_os = "macos"));
+    }
+
+    #[test]
+    fn after_a_rollback_the_automatic_check_skips_that_version_and_offers_a_newer_one() {
+        // Б6.2: the rollback is read back from the activation journal; the
+        // version it rolled back is not offered again, a newer one is.
+        let temporary = tempfile::tempdir().unwrap();
+        let (key, signature, bytes) = signed_archive(temporary.path());
+        let journal = stage_download(temporary.path(), &key, "1.0.0", &signature, &bytes).unwrap();
+        record_activation(
+            temporary.path(),
+            &journal.archive_sha256,
+            "1.0.0",
+            crate::update_activation::ActivationPhase::RolledBack,
+        );
+        let service = UpdateService::default();
+        service.set_stage(UpdateStage::Idle).unwrap();
+        reopen_at_startup(&service, temporary.path(), &key).unwrap();
+        assert_eq!(service.status().unwrap().stage, UpdateStage::RolledBack);
+        assert!(automatic_check_allowed(&UpdateStage::RolledBack));
+
+        for answer in [Some(offer("1.0.0")), None] {
+            assert_eq!(
+                service.settle_automatic_answer(answer, Clone::clone),
+                AutomaticAnswer::Kept
+            );
+        }
+        let status = service.status().unwrap();
+        assert_eq!(status.stage, UpdateStage::RolledBack);
+        assert_eq!(status.version.as_deref(), Some("1.0.0"));
+
+        assert_eq!(
+            service.settle_automatic_answer(Some(offer("1.1.0")), Clone::clone),
+            AutomaticAnswer::Shown(Some(offer("1.1.0")))
+        );
+        // A later pass that sees the rolled-back version again keeps the newer offer.
+        assert_eq!(
+            service.settle_automatic_answer(Some(offer("1.0.0")), Clone::clone),
+            AutomaticAnswer::Kept
+        );
+        let status = service.status().unwrap();
+        assert_eq!(status.stage, UpdateStage::Available);
+        assert_eq!(status.version.as_deref(), Some("1.1.0"));
     }
 
     #[test]
