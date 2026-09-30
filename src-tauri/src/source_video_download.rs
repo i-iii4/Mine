@@ -8,19 +8,22 @@
 //! mutation (`commands::blocks::attach_downloaded_source_video`) and embedded
 //! under the card's heading, as a saved post's video is. Progress,
 //! cancellation and failure are reported as
-//! `source-video-download` events. See SPEC_MEDIA_ASSET_ACTIONS.md
+//! `source-video-download` events. See `SPEC_MEDIA_ASSET_ACTIONS.md`
 //! «Download Media».
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::commands::blocks::{MediaAssetActionError, MediaAssetMutationResult};
 use crate::domain::vault::VaultLayout;
 
 /// Event carrying a download's state to the interface.
@@ -30,6 +33,9 @@ pub const EVENT: &str = "source-video-download";
 const MAX_HEIGHT: u64 = 720;
 /// Prefix of the progress lines this module asks `yt-dlp` to print.
 const PROGRESS_PREFIX: &str = "MINE-PROGRESS";
+/// How often a job looks whether its process has ended: short enough that a
+/// cancel feels immediate.
+const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
@@ -160,19 +166,40 @@ fn failure_message(stderr: &str) -> String {
 
 struct Job {
     cancel: AtomicBool,
+    /// The running process, kept here until it has ended so a cancel can
+    /// reach it at any moment (`SPEC_AUDIT_FIXES.md`, Б3.3).
     child: Mutex<Option<Child>>,
     state: Mutex<DownloadState>,
     /// The space the download was started in: its result goes there, even
-    /// if another space is open by then (SPEC_AUDIT_FIXES.md, Ф9).
+    /// if another space is open by then (`SPEC_AUDIT_FIXES.md`, Ф9).
     vault: VaultLayout,
 }
 
+/// Whether two layouts are one space: the same folder holding the same
+/// identity, which names the space's derived store. A space placed at the
+/// folder of another one is another space (`SPEC_AUDIT_FIXES.md`, Ф9, Б3.4).
+pub(crate) fn same_space(a: &VaultLayout, b: &VaultLayout) -> bool {
+    a.root() == b.root() && a.derived_root() == b.derived_root()
+}
+
 /// One download: a card of one space. Cards with the same name in two
-/// spaces are two downloads.
+/// spaces are two downloads, including two spaces that used one folder one
+/// after the other.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct JobKey {
     space: PathBuf,
+    identity: PathBuf,
     slug: String,
+}
+
+impl JobKey {
+    fn new(vault: &VaultLayout, slug: &str) -> Self {
+        Self {
+            space: vault.root().to_path_buf(),
+            identity: vault.derived_root().to_path_buf(),
+            slug: slug.to_owned(),
+        }
+    }
 }
 
 /// Running and finished downloads, by space and card.
@@ -190,9 +217,9 @@ fn open_space(app: &AppHandle) -> Option<VaultLayout> {
 
 impl SourceVideoDownloads {
     fn job(&self, app: &AppHandle, slug: &str) -> Option<Arc<Job>> {
-        let space = open_space(app)?.root().to_path_buf();
+        let key = JobKey::new(&open_space(app)?, slug);
         let jobs = self.jobs.lock().ok()?;
-        jobs.get(&JobKey { space, slug: slug.to_owned() }).cloned()
+        jobs.get(&key).cloned()
     }
 
     /// The last known state of a card's download in the open space, if one
@@ -211,10 +238,7 @@ impl SourceVideoDownloads {
         let source = mine_core::domain::video_source::parse_youtube_source(source_url)
             .ok_or_else(|| "The card has no supported source video.".to_owned())?;
         let vault = open_space(app).ok_or_else(|| "No space is open.".to_owned())?;
-        let key = JobKey {
-            space: vault.root().to_path_buf(),
-            slug: slug.clone(),
-        };
+        let key = JobKey::new(&vault, &slug);
         let job = {
             let mut jobs = self.jobs.lock().map_err(|error| error.to_string())?;
             if let Some(existing) = jobs.get(&key) {
@@ -262,43 +286,87 @@ impl SourceVideoDownloads {
     }
 }
 
+/// Run a download tool as the leader of a process group of its own, with the
+/// job's working folder `temp` as its temporary folder (see `kill_group`).
+fn spawn_tool(command: &mut Command, temp: &Path) -> std::io::Result<Child> {
+    command.env("TMPDIR", temp).process_group(0).spawn()
+}
+
+/// Kill the process group `child` leads.
+///
+/// What this guarantees, checked against the bundled `yt-dlp` on 30.09.2026:
+/// it is a `PyInstaller` one-file build, a launcher that unpacks Python (about
+/// 70 MB) into `TMPDIR` and runs it as a second process sharing the
+/// launcher's stdout and stderr. Killing the launcher alone leaves that
+/// second process downloading with the pipes open, so the reads of this
+/// module do not end, and leaves the unpacked copy behind. Every tool here
+/// is started by `spawn_tool`, so the signal reaches the whole group (the
+/// launcher, the Python process and whatever that one starts) and the
+/// unpacked copy lies in the job's working folder, which `Staging` removes.
+/// A process that leaves the group on its own (`setsid`) is out of reach;
+/// neither `yt-dlp` nor the joiner does that.
+fn kill_group(child: &Child) {
+    let Ok(group) = libc::pid_t::try_from(child.id()) else {
+        return;
+    };
+    // SAFETY: `killpg` takes plain integers and touches no memory. The child
+    // is not reaped while it is in the job's slot, so its id, which is also
+    // its group's id, cannot belong to any other process.
+    let reached_group = unsafe { libc::killpg(group, libc::SIGKILL) } == 0;
+    if !reached_group {
+        // SAFETY: as above. A child started without a group of its own is
+        // killed alone.
+        unsafe {
+            libc::kill(group, libc::SIGKILL);
+        }
+    }
+}
+
+fn lock_slot(slot: &Mutex<Option<Child>>) -> MutexGuard<'_, Option<Child>> {
+    slot.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 impl Job {
     /// Stop the download at whatever step it is: a process that is running
     /// is ended; one about to start is ended as soon as it is registered.
     fn stop(&self) {
         self.cancel.store(true, Ordering::SeqCst);
-        let mut slot = match self.child.lock() {
-            Ok(slot) => slot,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        if let Some(child) = slot.as_mut() {
-            let _ = child.kill();
+        if let Some(child) = lock_slot(&self.child).as_ref() {
+            kill_group(child);
         }
     }
 
     /// Hand a started process to the job so a cancel can end it. A cancel
     /// that came between the start and this moment found nothing to end; it
-    /// is honoured here (SPEC_AUDIT_FIXES.md, А7.5).
+    /// is honoured here (`SPEC_AUDIT_FIXES.md`, А7.5).
     fn register(&self, child: Child) {
-        let mut slot = match self.child.lock() {
-            Ok(slot) => slot,
-            Err(poisoned) => poisoned.into_inner(),
-        };
+        let mut slot = lock_slot(&self.child);
         *slot = Some(child);
         if self.cancel.load(Ordering::SeqCst) {
-            if let Some(child) = slot.as_mut() {
-                let _ = child.kill();
+            if let Some(child) = slot.as_ref() {
+                kill_group(child);
             }
         }
     }
 
-    /// Wait for the registered process to end.
-    fn wait(&self) -> Option<std::io::Result<std::process::ExitStatus>> {
-        let child = match self.child.lock() {
-            Ok(mut slot) => slot.take(),
-            Err(poisoned) => poisoned.into_inner().take(),
-        };
-        child.map(|mut child| child.wait())
+    /// Wait for the registered process to end. The process stays in the slot
+    /// the whole time, so `stop` reaches it while this waits
+    /// (`SPEC_AUDIT_FIXES.md`, Б3.3).
+    fn wait(&self) -> Option<std::io::Result<ExitStatus>> {
+        loop {
+            {
+                let mut slot = lock_slot(&self.child);
+                let child = slot.as_mut()?;
+                match child.try_wait() {
+                    Ok(None) => {}
+                    ended => {
+                        *slot = None;
+                        return ended.transpose();
+                    }
+                }
+            }
+            std::thread::sleep(PROCESS_POLL_INTERVAL);
+        }
     }
 }
 
@@ -322,7 +390,7 @@ fn report(app: &AppHandle, slug: &str, job: &Job, state: DownloadState) {
 /// Progress is shown for the open space only: a card of the same name in
 /// another space is another card.
 fn emit(app: &AppHandle, job: &Job, slug: &str, state: DownloadState) {
-    let shown = open_space(app).is_some_and(|open| open.root() == job.vault.root());
+    let shown = open_space(app).is_some_and(|open| same_space(&open, &job.vault));
     if !shown {
         return;
     }
@@ -341,7 +409,7 @@ impl Drop for Staging {
 }
 
 /// A working folder of its own for every download: two cards of one video
-/// never share files (SPEC_AUDIT_FIXES.md, А7.1).
+/// never share files (`SPEC_AUDIT_FIXES.md`, А7.1).
 fn staging_dir(video_id: &str) -> PathBuf {
     use std::sync::atomic::AtomicU64;
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -388,16 +456,43 @@ fn kept_list(vault: &VaultLayout) -> PathBuf {
     kept_dir(vault).join("kept.json")
 }
 
-/// The downloads kept for `vault`.
-pub fn kept_downloads(vault: &VaultLayout) -> Vec<KeptDownload> {
-    std::fs::read(kept_list(vault))
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .unwrap_or_default()
+/// Every change of a kept list is read, changed and written back under this
+/// lock: download jobs and the adoption of kept downloads run on threads of
+/// their own, and without it one writer drops what another has just added
+/// (`SPEC_AUDIT_FIXES.md`, Б3.2). One lock for all spaces: changes are rare
+/// and short.
+static KEPT_LIST: Mutex<()> = Mutex::new(());
+
+/// One adoption at a time: a space opened twice in quick succession must not
+/// attach one kept video twice.
+static ADOPTION: Mutex<()> = Mutex::new(());
+
+/// The kept list as stored. A missing list is an empty one; an unreadable
+/// one is an error, so no change is written over records it may still hold.
+fn read_kept(vault: &VaultLayout) -> Result<Vec<KeptDownload>, String> {
+    let path = kept_list(vault);
+    match std::fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .map_err(|error| format!("kept video list {} is unreadable: {error}", path.display())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(format!("kept video list {}: {error}", path.display())),
+    }
 }
 
-fn write_kept(vault: &VaultLayout, kept: &[KeptDownload]) -> Result<(), String> {
-    let bytes = serde_json::to_vec_pretty(kept).map_err(|error| error.to_string())?;
+/// The downloads kept for `vault`; none when the list cannot be read.
+pub fn kept_downloads(vault: &VaultLayout) -> Vec<KeptDownload> {
+    read_kept(vault).unwrap_or_else(|error| {
+        log::warn!("{error}");
+        Vec::new()
+    })
+}
+
+/// Apply `change` to the kept list of `vault` as one step (see `KEPT_LIST`).
+fn change_kept(vault: &VaultLayout, change: impl FnOnce(&mut Vec<KeptDownload>)) -> Result<(), String> {
+    let _list = KEPT_LIST.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut kept = read_kept(vault)?;
+    change(&mut kept);
+    let bytes = serde_json::to_vec_pretty(&kept).map_err(|error| error.to_string())?;
     crate::storage::files::write_atomically(&kept_list(vault), &bytes).map_err(|error| format!("{error:#}"))
 }
 
@@ -412,17 +507,76 @@ pub fn keep_download(vault: &VaultLayout, slug: &str, video_id: &str, finished: 
         .ok_or("no name for the kept video")?;
     let kept_path = dir.join(&name);
     crate::storage::files::move_exclusive(finished, &kept_path).map_err(|error| format!("{error:#}"))?;
-    let mut kept = kept_downloads(vault);
-    kept.push(KeptDownload {
+    let record = KeptDownload {
         slug: slug.to_owned(),
         video_id: video_id.to_owned(),
         file: name,
-    });
-    write_kept(vault, &kept)
+    };
+    if let Err(error) = change_kept(vault, |kept| kept.push(record)) {
+        // A video without its record would stay in the store for good, and
+        // nothing would ever attach it: the download reports the failure.
+        if let Err(removal) = std::fs::remove_file(&kept_path) {
+            log::warn!("unlisted kept video {}: {removal}", kept_path.display());
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
+/// Take a kept download off the list of `vault`.
+fn forget_kept(vault: &VaultLayout, kept: &KeptDownload) -> Result<(), String> {
+    change_kept(vault, |list| list.retain(|entry| entry != kept))
+}
+
+/// What one attempt to attach a kept download means for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeptFate {
+    /// Attached, kept again under a new record, or refused for good: the
+    /// video and its record go.
+    Settled,
+    /// A transient failure: the video and its record stay for the next
+    /// time the space opens.
+    Retry,
+}
+
+/// What attaching a downloaded video to its card came to.
+type AttachOutcome = Result<MediaAssetMutationResult, MediaAssetActionError>;
+
+fn kept_fate(outcome: &AttachOutcome) -> KeptFate {
+    match outcome {
+        // Attached, or for a space that closed meanwhile moved to a record
+        // of its own; or the card is gone, links another clip or has its own
+        // video now, an answer no later attempt changes.
+        Ok(_) | Err(MediaAssetActionError::InvalidMediaRef { .. }) => KeptFate::Settled,
+        // A busy index, a card edited in Obsidian between the read and the
+        // write, an unreadable folder: all pass (SPEC_AUDIT_FIXES.md, Б3.1).
+        Err(_) => KeptFate::Retry,
+    }
+}
+
+/// Act on the outcome of attaching `kept` to its card in `vault`.
+pub(crate) fn settle_kept_download(vault: &VaultLayout, kept: &KeptDownload, outcome: &AttachOutcome) {
+    if let Err(error) = outcome {
+        log::warn!("kept video for {} not attached: {error}", kept.slug);
+    }
+    if kept_fate(outcome) == KeptFate::Retry {
+        return;
+    }
+    let path = kept_dir(vault).join(&kept.file);
+    match std::fs::remove_file(&path) {
+        Ok(()) => {}
+        // Attaching moved it into the space.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => log::warn!("kept video {}: {error}", path.display()),
+    }
+    if let Err(error) = forget_kept(vault, kept) {
+        log::warn!("kept video list: {error}");
+    }
 }
 
 /// Attach the downloads kept for the space that has just opened, in the
-/// background. A kept video whose card no longer wants it is discarded.
+/// background. A kept video whose card no longer wants it is discarded; one
+/// that failed for a passing reason waits for the next opening.
 pub fn adopt_kept_downloads(app: AppHandle, vault: VaultLayout) {
     if kept_downloads(&vault).is_empty() {
         return;
@@ -430,8 +584,16 @@ pub fn adopt_kept_downloads(app: AppHandle, vault: VaultLayout) {
     let spawned = std::thread::Builder::new()
         .name("kept-source-videos".into())
         .spawn(move || {
+            let _adopting = ADOPTION.lock().unwrap_or_else(PoisonError::into_inner);
             for kept in kept_downloads(&vault) {
                 let path = kept_dir(&vault).join(&kept.file);
+                if !path.is_file() {
+                    // Attached by an earlier adoption, or lost: nothing to attach.
+                    if let Err(error) = forget_kept(&vault, &kept) {
+                        log::warn!("kept video list: {error}");
+                    }
+                    continue;
+                }
                 let outcome = crate::commands::blocks::attach_downloaded_source_video(
                     &app,
                     &vault,
@@ -439,19 +601,7 @@ pub fn adopt_kept_downloads(app: AppHandle, vault: VaultLayout) {
                     &kept.video_id,
                     &path,
                 );
-                if let Err(error) = &outcome {
-                    log::warn!("kept video for {} not attached: {error}", kept.slug);
-                }
-                // Attached, or no longer wanted by its card: either way it
-                // leaves the list. A space that closed meanwhile keeps it.
-                if open_space(&app).is_some_and(|open| open.root() == vault.root()) {
-                    let _ = std::fs::remove_file(&path);
-                    let rest: Vec<KeptDownload> =
-                        kept_downloads(&vault).into_iter().filter(|entry| entry != &kept).collect();
-                    if let Err(error) = write_kept(&vault, &rest) {
-                        log::warn!("kept video list: {error}");
-                    }
-                }
+                settle_kept_download(&vault, &kept, &outcome);
             }
         });
     if let Err(error) = spawned {
@@ -471,12 +621,12 @@ fn download_to_file(
     tools: &Tools,
     video_id: &str,
     staging: &Path,
-    mut on_state: impl FnMut(DownloadState),
+    mut on_state: impl FnMut(DownloadState) + Send,
 ) -> Result<PathBuf, String> {
     std::fs::create_dir_all(staging).map_err(|error| error.to_string())?;
     let watch_url = format!("https://www.youtube.com/watch?v={video_id}");
 
-    let meta = run_ytdlp(job, &tools.ytdlp, &["-J", "--no-playlist", &watch_url], |_| {})?;
+    let meta = run_ytdlp(job, &tools.ytdlp, staging, &["-J", "--no-playlist", &watch_url], |_| {})?;
     let meta: serde_json::Value =
         serde_json::from_str(&meta).map_err(|error| format!("Unreadable video details: {error}"))?;
     let choice = choose_formats(&meta).ok_or("YouTube offers no MP4 stream for this video.")?;
@@ -490,6 +640,7 @@ fn download_to_file(
     run_ytdlp(
         job,
         &tools.ytdlp,
+        staging,
         &[
             "--no-playlist", "--no-mtime", "--no-part", "--newline",
             "-f", &selection, "-o", &template,
@@ -521,74 +672,106 @@ fn download_to_file(
         .and_then(serde_json::Value::as_f64)
         .filter(|seconds| *seconds > 0.0)
         .ok_or("YouTube did not report the video's length.")?;
-    // The join can take a while on a long video: it is a registered process
-    // a cancel ends, like the download (А7.5).
+    join_streams(job, &tools.joiner, staging, &[file_for(0), file_for(1)], &joined, seconds)
+}
+
+/// Join the video and audio files into `output` with the `helper`. A long
+/// video takes a while: the helper is a registered process a cancel ends at
+/// any moment, like the download (`SPEC_AUDIT_FIXES.md`, А7.5, Б3.3).
+fn join_streams(
+    job: &Job,
+    helper: &Path,
+    temp: &Path,
+    streams: &[PathBuf],
+    output: &Path,
+    seconds: f64,
+) -> Result<PathBuf, String> {
     if job.cancel.load(Ordering::SeqCst) {
         return Err("cancelled".into());
     }
-    let mut joiner = Command::new(&tools.joiner)
-        .arg(file_for(0))
-        .arg(file_for(1))
-        .arg(&joined)
-        .arg(seconds.to_string())
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| error.to_string())?;
-    let mut stderr = joiner.stderr.take();
-    job.register(joiner);
-    let stderr = std::thread::spawn(move || {
-        let mut text = String::new();
-        if let Some(stderr) = stderr.as_mut() {
-            let _ = stderr.read_to_string(&mut text);
-        }
-        text
+    let mut process = spawn_tool(
+        Command::new(helper)
+            .args(streams)
+            .arg(output)
+            .arg(seconds.to_string())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped()),
+        temp,
+    )
+    .map_err(|error| error.to_string())?;
+    let stderr = process.stderr.take();
+    job.register(process);
+    let (status, stderr) = std::thread::scope(|scope| {
+        let stderr = scope.spawn(move || read_all(stderr));
+        let status = job.wait();
+        (status, stderr.join().unwrap_or_default())
     });
-    let status = job.wait();
-    let stderr = stderr.join().unwrap_or_default();
     if job.cancel.load(Ordering::SeqCst) {
         return Err("cancelled".into());
     }
     match status {
-        Some(Ok(status)) if status.success() => Ok(joined),
+        Some(Ok(status)) if status.success() => Ok(output.to_path_buf()),
         _ => Err(format!("Could not join video and sound: {}", stderr.trim())),
     }
 }
 
+/// Everything a process writes to one of its pipes, as text.
+fn read_all(stream: Option<impl Read>) -> String {
+    let mut text = String::new();
+    if let Some(mut stream) = stream {
+        if let Err(error) = stream.read_to_string(&mut text) {
+            log::warn!("reading a video tool's output: {error}");
+        }
+    }
+    text
+}
+
 /// Run `yt-dlp`, feeding stdout lines to `on_line`; returns all of stdout.
-fn run_ytdlp(job: &Job, ytdlp: &Path, args: &[&str], mut on_line: impl FnMut(&str)) -> Result<String, String> {
+///
+/// The output is read on threads of their own while this thread waits for
+/// the process, so a cancel ends the wait at once; the kill reaches every
+/// process that holds the pipes open (see `kill_group`), so the reads end
+/// too. `temp` is the job's working folder.
+fn run_ytdlp(
+    job: &Job,
+    ytdlp: &Path,
+    temp: &Path,
+    args: &[&str],
+    mut on_line: impl FnMut(&str) + Send,
+) -> Result<String, String> {
     if job.cancel.load(Ordering::SeqCst) {
         return Err("cancelled".into());
     }
-    let mut child = Command::new(ytdlp)
-        .args(args)
-        .env("PATH", tool_search_path())
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("Could not start the video downloader: {error}"))?;
+    let mut child = spawn_tool(
+        Command::new(ytdlp)
+            .args(args)
+            .env("PATH", tool_search_path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+        temp,
+    )
+    .map_err(|error| format!("Could not start the video downloader: {error}"))?;
     let stdout = child.stdout.take();
-    let mut stderr = child.stderr.take();
+    let stderr = child.stderr.take();
     job.register(child);
-    let stderr_reader = std::thread::spawn(move || {
-        let mut text = String::new();
-        if let Some(stderr) = stderr.as_mut() {
-            let _ = stderr.read_to_string(&mut text);
-        }
-        text
+    let (status, collected, stderr) = std::thread::scope(|scope| {
+        let stderr = scope.spawn(move || read_all(stderr));
+        let stdout = scope.spawn(|| {
+            let mut collected = String::new();
+            if let Some(stdout) = stdout {
+                for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                    on_line(&line);
+                    collected.push_str(&line);
+                    collected.push('\n');
+                }
+            }
+            collected
+        });
+        let status = job.wait();
+        (status, stdout.join().unwrap_or_default(), stderr.join().unwrap_or_default())
     });
-    let mut collected = String::new();
-    if let Some(stdout) = stdout {
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            on_line(&line);
-            collected.push_str(&line);
-            collected.push('\n');
-        }
-    }
-    let status = job.wait();
-    let stderr = stderr_reader.join().unwrap_or_default();
     if job.cancel.load(Ordering::SeqCst) {
         return Err("cancelled".into());
     }
@@ -632,24 +815,157 @@ mod tests {
         }
     }
 
+    /// A cancel must end the job's wait well before a 30 second process would.
+    const CANCEL_DEADLINE: Duration = Duration::from_secs(5);
+    /// Long enough for the waiting thread to be inside `wait`.
+    const WAITING: Duration = Duration::from_millis(300);
+
+    fn sleeper() -> Child {
+        spawn_tool(Command::new("/bin/sleep").arg("30"), &std::env::temp_dir()).unwrap()
+    }
+
     #[test]
     fn a_cancel_before_the_process_is_registered_still_ends_it() {
         let job = job();
         job.stop();
-        let child = Command::new("/bin/sleep").arg("30").spawn().unwrap();
-        let started = std::time::Instant::now();
-        job.register(child);
+        let started = Instant::now();
+        job.register(sleeper());
         let status = job.wait().unwrap().unwrap();
         assert!(!status.success());
-        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        assert!(started.elapsed() < CANCEL_DEADLINE);
     }
 
     #[test]
     fn a_cancel_ends_a_registered_process() {
         let job = job();
-        job.register(Command::new("/bin/sleep").arg("30").spawn().unwrap());
+        job.register(sleeper());
         job.stop();
         assert!(!job.wait().unwrap().unwrap().success());
+    }
+
+    /// Б3.3: the join is waited for with its process still reachable, so a
+    /// cancel that comes while the job waits ends it.
+    #[test]
+    fn a_cancel_ends_a_process_the_job_is_already_waiting_for() {
+        let job = job();
+        job.register(sleeper());
+        let started = Instant::now();
+        let status = std::thread::scope(|scope| {
+            let waiting = scope.spawn(|| job.wait());
+            std::thread::sleep(WAITING);
+            job.stop();
+            waiting.join().unwrap()
+        });
+        assert!(!status.unwrap().unwrap().success());
+        assert!(started.elapsed() < CANCEL_DEADLINE, "{:?}", started.elapsed());
+    }
+
+    /// Б3.3: a cancelled join returns at once, not when the joiner is done.
+    #[test]
+    fn a_cancelled_join_returns_before_the_joiner_finishes() {
+        let dir = tempfile::tempdir().unwrap();
+        let joiner = dir.path().join("joiner");
+        std::fs::write(&joiner, "#!/bin/sh\nexec /bin/sleep 30\n").unwrap();
+        std::fs::set_permissions(&joiner, <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755))
+            .unwrap();
+        let job = job();
+        let started = Instant::now();
+        let outcome = std::thread::scope(|scope| {
+            let joining = scope.spawn(|| {
+                join_streams(&job, &joiner, dir.path(), &[dir.path().join("v.mp4")], &dir.path().join("joined.mp4"), 19.0)
+            });
+            std::thread::sleep(WAITING);
+            job.stop();
+            joining.join().unwrap()
+        });
+        assert_eq!(outcome, Err("cancelled".to_owned()));
+        assert!(started.elapsed() < CANCEL_DEADLINE, "{:?}", started.elapsed());
+    }
+
+    /// Like the bundled `yt-dlp`, a launcher whose second process holds
+    /// stdout: the cancel reaches both, and the read ends.
+    #[test]
+    fn a_cancel_reaches_the_process_the_downloader_started() {
+        let dir = tempfile::tempdir().unwrap();
+        let job = job();
+        let started = Instant::now();
+        let outcome = std::thread::scope(|scope| {
+            let running = scope.spawn(|| {
+                run_ytdlp(&job, Path::new("/bin/sh"), dir.path(), &["-c", "/bin/sleep 30 & wait"], |_| {})
+            });
+            std::thread::sleep(WAITING);
+            job.stop();
+            running.join().unwrap()
+        });
+        assert_eq!(outcome, Err("cancelled".to_owned()));
+        assert!(started.elapsed() < CANCEL_DEADLINE, "{:?}", started.elapsed());
+    }
+
+    /// A process group that ignores `SIGTERM` is stopped all the same.
+    #[test]
+    fn a_process_group_that_ignores_termination_is_still_stopped() {
+        let dir = tempfile::tempdir().unwrap();
+        let job = job();
+        let started = Instant::now();
+        let outcome = std::thread::scope(|scope| {
+            let running = scope.spawn(|| {
+                run_ytdlp(&job, Path::new("/bin/sh"), dir.path(), &["-c", "trap '' TERM; /bin/sleep 30 & wait"], |_| {})
+            });
+            std::thread::sleep(WAITING);
+            job.stop();
+            running.join().unwrap()
+        });
+        assert_eq!(outcome, Err("cancelled".to_owned()));
+        assert!(started.elapsed() < CANCEL_DEADLINE, "{:?}", started.elapsed());
+    }
+
+    /// The bundled `yt-dlp` from `binaries/`, stopped while it waits for
+    /// input: its whole process group ends, and what its launcher unpacked
+    /// lies in the job's folder, not in the system temporary folder. Run by
+    /// hand with `cargo test -p mine --lib bundled_downloader -- --ignored`.
+    #[test]
+    #[ignore = "needs the bundled yt-dlp in binaries/"]
+    fn a_stopped_bundled_downloader_ends_whole_and_unpacks_into_the_job_folder() {
+        const UNPACKED_PREFIX: &str = "_MEI";
+        let unpacked = |folder: &Path| -> std::collections::BTreeSet<std::ffi::OsString> {
+            std::fs::read_dir(folder)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .filter(|name| name.to_string_lossy().starts_with(UNPACKED_PREFIX))
+                .collect()
+        };
+        let system_before = unpacked(&std::env::temp_dir());
+        let folder = tempfile::tempdir().unwrap();
+        let ytdlp = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries").join("yt-dlp");
+        let mut child = spawn_tool(
+            Command::new(ytdlp)
+                .args(["-a", "-", "--simulate"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+            folder.path(),
+        )
+        .unwrap();
+        // Kept open: the downloader waits for URLs on it.
+        let _input = child.stdin.take();
+        let group = libc::pid_t::try_from(child.id()).unwrap();
+        let job = job();
+        job.register(child);
+        let started = Instant::now();
+        while unpacked(folder.path()).is_empty() {
+            assert!(started.elapsed() < CANCEL_DEADLINE, "the launcher never unpacked");
+            std::thread::sleep(PROCESS_POLL_INTERVAL);
+        }
+        // Long enough for the launcher to start its second process.
+        std::thread::sleep(CANCEL_DEADLINE / 2);
+
+        job.stop();
+        let status = job.wait().unwrap().unwrap();
+
+        assert!(!status.success());
+        // SAFETY: signal 0 only asks whether a process of the group is left.
+        assert_ne!(unsafe { libc::killpg(group, 0) }, 0, "a process of the group survived");
+        assert_eq!(unpacked(&std::env::temp_dir()), system_before);
     }
 
     #[test]
@@ -657,10 +973,31 @@ mod tests {
         assert_ne!(staging_dir("abc"), staging_dir("abc"));
     }
 
+    /// Б3.4: a space that took the folder of another one is another space,
+    /// and so is each card's download there.
+    #[test]
+    fn two_spaces_at_one_folder_are_two_spaces() {
+        let first = VaultLayout::with_derived_root(PathBuf::from("/space"), PathBuf::from("/vaults/a"));
+        let second = VaultLayout::with_derived_root(PathBuf::from("/space"), PathBuf::from("/vaults/b"));
+        assert!(same_space(&first, &first.clone()));
+        assert!(!same_space(&first, &second));
+        assert_ne!(JobKey::new(&first, "Film"), JobKey::new(&second, "Film"));
+    }
+
+    fn kept_vault(dir: &Path) -> VaultLayout {
+        VaultLayout::with_derived_root(dir.join("space"), dir.join("derived"))
+    }
+
+    fn finished_video(dir: &Path, name: &str) -> PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, name.as_bytes()).unwrap();
+        path
+    }
+
     #[test]
     fn a_kept_download_is_listed_for_its_space() {
         let dir = tempfile::tempdir().unwrap();
-        let vault = VaultLayout::with_derived_root(dir.path().join("space"), dir.path().join("derived"));
+        let vault = kept_vault(dir.path());
         let finished = dir.path().join("joined.mp4");
         std::fs::write(&finished, b"video").unwrap();
         keep_download(&vault, "Cards/Film", "9KDDhAOyv9k", &finished).unwrap();
@@ -671,8 +1008,97 @@ mod tests {
         assert!(!finished.exists());
     }
 
+    /// Б3.2: downloads that end at once all stay on the list.
+    #[test]
+    fn downloads_kept_at_the_same_time_are_all_listed() {
+        const DOWNLOADS: usize = 16;
+        let dir = tempfile::tempdir().unwrap();
+        let vault = kept_vault(dir.path());
+        let finished: Vec<PathBuf> =
+            (0..DOWNLOADS).map(|index| finished_video(dir.path(), &format!("video-{index}.mp4"))).collect();
+        let start = std::sync::Barrier::new(DOWNLOADS);
+        std::thread::scope(|scope| {
+            for (index, file) in finished.iter().enumerate() {
+                let (vault, start) = (&vault, &start);
+                scope.spawn(move || {
+                    start.wait();
+                    keep_download(vault, &format!("Cards/Film {index}"), "9KDDhAOyv9k", file).unwrap();
+                });
+            }
+        });
+        let kept = kept_downloads(&vault);
+        assert_eq!(kept.len(), DOWNLOADS);
+        for entry in &kept {
+            assert!(kept_dir(&vault).join(&entry.file).is_file(), "{}", entry.file);
+        }
+    }
+
+    /// Б3.2: an adoption that takes attached videos off the list keeps the
+    /// ones a download adds meanwhile.
+    #[test]
+    fn taking_videos_off_the_list_keeps_the_ones_added_meanwhile() {
+        const EACH: usize = 8;
+        let dir = tempfile::tempdir().unwrap();
+        let vault = kept_vault(dir.path());
+        for index in 0..EACH {
+            keep_download(&vault, &format!("Cards/Old {index}"), "9KDDhAOyv9k", &finished_video(dir.path(), &format!("old-{index}.mp4")))
+                .unwrap();
+        }
+        let old = kept_downloads(&vault);
+        let fresh: Vec<PathBuf> =
+            (0..EACH).map(|index| finished_video(dir.path(), &format!("new-{index}.mp4"))).collect();
+        let start = std::sync::Barrier::new(EACH * 2);
+        std::thread::scope(|scope| {
+            for (index, (entry, file)) in old.iter().zip(&fresh).enumerate() {
+                let (vault, start) = (&vault, &start);
+                scope.spawn(move || {
+                    start.wait();
+                    forget_kept(vault, entry).unwrap();
+                });
+                scope.spawn(move || {
+                    start.wait();
+                    keep_download(vault, &format!("Cards/New {index}"), "9KDDhAOyv9k", file).unwrap();
+                });
+            }
+        });
+        let mut slugs: Vec<String> = kept_downloads(&vault).into_iter().map(|entry| entry.slug).collect();
+        slugs.sort();
+        let mut expected: Vec<String> = (0..EACH).map(|index| format!("Cards/New {index}")).collect();
+        expected.sort();
+        assert_eq!(slugs, expected);
+    }
+
+    /// Б3.1: a passing failure keeps the video and its record for the next
+    /// opening; a refusal for good removes both.
+    #[test]
+    fn only_a_final_answer_removes_a_kept_video() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = kept_vault(dir.path());
+        keep_download(&vault, "Cards/Film", "9KDDhAOyv9k", &finished_video(dir.path(), "joined.mp4")).unwrap();
+        let kept = kept_downloads(&vault).remove(0);
+        let file = kept_dir(&vault).join(&kept.file);
+
+        for passing in [
+            "database is locked",
+            "'Cards/Film.md' changed outside Mine; nothing was written",
+        ] {
+            settle_kept_download(&vault, &kept, &Err(MediaAssetActionError::Internal { message: passing.into() }));
+            assert_eq!(kept_downloads(&vault), vec![kept.clone()], "{passing}");
+            assert!(file.is_file(), "{passing}");
+        }
+
+        settle_kept_download(
+            &vault,
+            &kept,
+            &Err(MediaAssetActionError::InvalidMediaRef { reason: "the card no longer links to this video".into() }),
+        );
+        assert!(kept_downloads(&vault).is_empty());
+        assert!(!file.exists());
+    }
+
     use super::*;
     use serde_json::json;
+    use std::time::Instant;
 
     // Formats as `yt-dlp -J` listed them for a YouTube video on 27.09.2026.
     fn meta() -> serde_json::Value {

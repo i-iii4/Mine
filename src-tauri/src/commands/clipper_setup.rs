@@ -347,14 +347,9 @@ fn prepare_runtime_package(
     let packages = parent.join("packages");
     std::fs::create_dir_all(&packages)?;
     let destination = packages.join(&package_id);
-    if destination.exists() {
-        if runtime_package_matches(&destination, manifest) {
-            return Ok(package_id);
-        }
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "an immutable runtime package has changed and was preserved",
-        ));
+    let existing = std::fs::symlink_metadata(&destination).is_ok();
+    if existing && runtime_package_matches(&destination, manifest) {
+        return Ok(package_id);
     }
     let staged = tempfile::Builder::new()
         .prefix(".preparing-")
@@ -380,9 +375,41 @@ fn prepare_runtime_package(
         ));
     }
     std::fs::File::open(staged.path())?.sync_all()?;
-    std::fs::rename(staged.path(), &destination)?;
+    if existing {
+        // A package of this id holds exactly this manifest, and the bundle has
+        // just been verified to match it. A package that no longer does
+        // (changed bytes, a lost executable bit) is replaced in one step, so
+        // the path browsers launch never goes missing, and its damaged copy is
+        // set aside (SPEC_AUDIT_FIXES.md, Б3.6; SPEC_ONBOARDING.md, О5).
+        atomic_swap_directories(staged.path(), &destination)?;
+        let damaged = staged.keep();
+        if let Err(error) = quarantine_package(parent, &damaged, &package_id) {
+            // The package is whole again; the damaged copy stays under its
+            // `.preparing-` name, which no installation reads.
+            log::warn!("damaged clipper package {package_id} left at {}: {error}", damaged.display());
+        }
+    } else {
+        std::fs::rename(staged.path(), &destination)?;
+    }
     std::fs::File::open(&packages)?.sync_all()?;
     Ok(package_id)
+}
+
+/// Keep a damaged package out of the way for diagnosis: one copy per package
+/// id, so a helper damaged again and again cannot fill the disk.
+fn quarantine_package(parent: &Path, damaged: &Path, package_id: &str) -> std::io::Result<()> {
+    let quarantine = parent.join("quarantine");
+    std::fs::create_dir_all(&quarantine)?;
+    let target = quarantine.join(package_id);
+    match std::fs::symlink_metadata(&target) {
+        // An older damaged copy of the same package: the newer one says more.
+        Ok(metadata) if metadata.is_dir() => std::fs::remove_dir_all(&target)?,
+        Ok(_) => std::fs::remove_file(&target)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    std::fs::rename(damaged, &target)?;
+    std::fs::File::open(&quarantine)?.sync_all()
 }
 
 fn apply_runtime_journal(
@@ -903,14 +930,14 @@ fn install_extension_directory_checked(
         ));
     }
     if destination.exists() {
-        atomic_swap_extension(&staged, destination)?;
+        atomic_swap_directories(&staged, destination)?;
         if expected_previous
             .is_some_and(|expected| extension_manifest(&staged).as_ref() != Some(expected))
         {
             // An old installer does not participate in our lock. Restore an
             // unexpected exchanged tree if possible, otherwise retain both.
             if installed_extension_matches(source, destination) {
-                if let Err(error) = atomic_swap_extension(&staged, destination) {
+                if let Err(error) = atomic_swap_directories(&staged, destination) {
                     let _ = transaction.keep();
                     return Err(error);
                 }
@@ -929,8 +956,10 @@ fn install_extension_directory_checked(
     Ok(())
 }
 
+/// Exchange two existing directories in one step: `destination` gets the
+/// staged tree, and the staged path keeps the one it replaced.
 #[cfg(target_os = "macos")]
-fn atomic_swap_extension(staged: &Path, destination: &Path) -> std::io::Result<()> {
+fn atomic_swap_directories(staged: &Path, destination: &Path) -> std::io::Result<()> {
     use std::os::unix::ffi::OsStrExt;
     const RENAME_SWAP: u32 = 0x0000_0002;
     unsafe extern "C" {
@@ -954,10 +983,10 @@ fn atomic_swap_extension(staged: &Path, destination: &Path) -> std::io::Result<(
 }
 
 #[cfg(not(target_os = "macos"))]
-fn atomic_swap_extension(_staged: &Path, _destination: &Path) -> std::io::Result<()> {
+fn atomic_swap_directories(_staged: &Path, _destination: &Path) -> std::io::Result<()> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
-        "atomic managed extension activation is supported on macOS",
+        "atomic managed runtime activation is supported on macOS",
     ))
 }
 
@@ -1351,11 +1380,16 @@ pub fn maintain_installed_runtime(app: &AppHandle) -> Result<RuntimeMaintenanceM
             ))
         })?;
         let registered = registered_host_path(app)?;
-        verify_candidate_launch(&registered, &manifest).map_err(|error| {
-            CommandError::Internal(format!("installed helper launch probe failed: {error}"))
-        })?;
-        register_browser_manifests(&registered)?;
-        return Ok(RuntimeMaintenanceMode::FastRegistration);
+        match verify_candidate_launch(&registered, &manifest) {
+            Ok(()) => {
+                register_browser_manifests(&registered)?;
+                return Ok(RuntimeMaintenanceMode::FastRegistration);
+            }
+            // The registered helper no longer starts: its package is damaged.
+            // The verified installation below rebuilds it from the bundle
+            // (SPEC_AUDIT_FIXES.md, Б3.6); the locks are released first.
+            Err(error) => log::warn!("installed helper launch probe failed, repairing: {error}"),
+        }
     }
 
     install_clipper_runtime(app)?;
@@ -2477,6 +2511,95 @@ mod tests {
             .join(package_id)
             .join("native-host")
             .is_file());
+    }
+
+    /// Б3.6: the installed package browsers launch is damaged, its bytes or
+    /// its executable bit. Installing the same build repairs it from the
+    /// bundle, the browsers keep launching it, and the damaged copy is set
+    /// aside.
+    #[test]
+    fn a_damaged_installed_package_is_rebuilt_from_the_bundle() {
+        use std::os::unix::fs::PermissionsExt;
+        type Damage = fn(&Path);
+        let damages: [(&str, Damage); 2] = [
+            ("bytes", |host| std::fs::write(host, b"corrupted").unwrap()),
+            ("executable bit", |host| {
+                std::fs::set_permissions(host, std::fs::Permissions::from_mode(0o644)).unwrap();
+            }),
+        ];
+        for (damage, apply) in damages {
+            let tmp = TempDir::new().unwrap();
+            let parent = tmp.path().join("managed");
+            let registration = tmp.path().join("browser/host.json");
+            let register = |host: &Path| write_runtime_json(&registration, &host_manifest(host));
+            let (bundle, manifest) = runtime_fixture(tmp.path(), "bundle", "1.0.0");
+            let install = || {
+                install_runtime_from_sources(
+                    &parent,
+                    manifest.clone(),
+                    &bundle.join("native-host"),
+                    &bundle.join("extension"),
+                    Some(&bundle.join("yt-dlp")),
+                    register,
+                )
+            };
+            install().unwrap();
+            let package_id = read_runtime_journal(&parent).unwrap().unwrap().package_id;
+            let package = parent.join("packages").join(&package_id);
+            apply(&package.join("native-host"));
+            assert!(!runtime_package_matches(&package, &manifest), "{damage}");
+
+            install().unwrap_or_else(|error| panic!("{damage}: {error}"));
+
+            assert!(runtime_package_matches(&package, &manifest), "{damage}");
+            assert!(
+                installed_binary_matches(&bundle.join("native-host"), &package.join("native-host")),
+                "{damage}"
+            );
+            assert!(runtime_package_matches(&parent, &manifest), "{damage}");
+            assert!(
+                manifest_is_registered(&registration, &package.join("native-host")),
+                "{damage}"
+            );
+            assert!(
+                parent.join("quarantine").join(&package_id).join("native-host").is_file(),
+                "{damage}"
+            );
+        }
+    }
+
+    /// A package damaged again keeps one copy aside, not one per repair.
+    #[test]
+    fn a_package_damaged_twice_keeps_one_copy_aside() {
+        let tmp = TempDir::new().unwrap();
+        let parent = tmp.path().join("managed");
+        let (bundle, manifest) = runtime_fixture(tmp.path(), "bundle", "1.0.0");
+        let install = || {
+            install_runtime_from_sources(
+                &parent,
+                manifest.clone(),
+                &bundle.join("native-host"),
+                &bundle.join("extension"),
+                Some(&bundle.join("yt-dlp")),
+                |_| Ok(()),
+            )
+        };
+        install().unwrap();
+        let package_id = read_runtime_journal(&parent).unwrap().unwrap().package_id;
+        let host = parent.join("packages").join(&package_id).join("native-host");
+        for damage in [&b"first damage"[..], &b"second damage"[..]] {
+            std::fs::write(&host, damage).unwrap();
+            install().unwrap();
+        }
+        let quarantined: Vec<_> = std::fs::read_dir(parent.join("quarantine"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(quarantined, vec![std::ffi::OsString::from(&package_id)]);
+        assert_eq!(
+            std::fs::read(parent.join("quarantine").join(&package_id).join("native-host")).unwrap(),
+            b"second damage"
+        );
     }
 
     #[test]

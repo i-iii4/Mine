@@ -19,6 +19,7 @@ use crate::commands::state::{
 use crate::domain::block::{
     compute_body_hash, derive_card_kind, derive_title_fields, iter_inline_media_references,
     parse_markdown_document, suggest_slug, Block, BlockType, CardKind, DateTime, Frontmatter,
+    InlineMediaSyntax,
 };
 use crate::domain::collection::{normalize_collection_ref, validate_collection_ref};
 use crate::domain::markdown::{
@@ -985,9 +986,9 @@ pub fn delete_source_video(
 /// Publish a downloaded source video into the vault and embed it under the
 /// card's heading. Called by the download job once the file is complete; the
 /// card is re-read here, so edits made during the download are kept. See
-/// SPEC_MEDIA_ASSET_ACTIONS.md «Download Media».
+/// `SPEC_MEDIA_ASSET_ACTIONS.md` «Download Media».
 /// Publish a downloaded video into the space the download started in
-/// (SPEC_AUDIT_FIXES.md, Ф9): through the open index when that space is open;
+/// (`SPEC_AUDIT_FIXES.md`, Ф9): through the open index when that space is open;
 /// straight into its folder and index when another one is open; and when
 /// its folder is not there, kept in its derived store until it opens again.
 pub(crate) fn attach_downloaded_source_video(
@@ -998,20 +999,11 @@ pub(crate) fn attach_downloaded_source_video(
     downloaded: &Path,
 ) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
     let state = app.state::<AppState>();
-    let vault_state = state
-        .vault_state
-        .lock()
-        .map_err(|_| MediaAssetActionError::Internal {
-            message: "vault state mutex poisoned".into(),
-        })?;
-    let Some(vs) = vault_state.as_ref().filter(|vs| vs.vault.root() == vault.root()) else {
-        drop(vault_state);
-        return attach_into_closed_space(&state, vault, slug, video_id, downloaded);
+    let published = publish_downloaded_source_video(&state, vault, slug, video_id, downloaded)?;
+    let Some(open_root) = published.open_root else {
+        return Ok(published.result);
     };
-
-    let result =
-        attach_downloaded_source_video_inner(&state, &vs.conn, &vs.vault, slug, video_id, downloaded)?;
-    for slug in &result.affected_slugs {
+    for slug in &published.result.affected_slugs {
         app.emit(
             "thumb:updated",
             ThumbUpdatedPayload {
@@ -1026,13 +1018,55 @@ pub(crate) fn attach_downloaded_source_video(
     app.emit(
         "vault-changed",
         VaultChangedPayload {
-            path: vs.vault.root().to_string_lossy().to_string(),
+            path: open_root.to_string_lossy().to_string(),
         },
     )
     .map_err(|e| MediaAssetActionError::Internal {
         message: format!("failed to emit vault-changed: {e}"),
     })?;
-    Ok(result)
+    Ok(published.result)
+}
+
+/// A downloaded video published into its space.
+struct PublishedSourceVideo {
+    result: MediaAssetMutationResult,
+    /// The folder of the open space when the video went into it: the
+    /// interface is told about it. `None` for a space that is not open.
+    open_root: Option<PathBuf>,
+}
+
+/// The open space takes the video only when it is the space the download
+/// started in, the same folder holding the same identity; a space placed at
+/// that folder since is another space (`SPEC_AUDIT_FIXES.md`, Ф9, Б3.4).
+fn publish_downloaded_source_video(
+    state: &AppState,
+    vault: &VaultLayout,
+    slug: &str,
+    video_id: &str,
+    downloaded: &Path,
+) -> Result<PublishedSourceVideo, MediaAssetActionError> {
+    let vault_state = state
+        .vault_state
+        .lock()
+        .map_err(|_| MediaAssetActionError::Internal {
+            message: "vault state mutex poisoned".into(),
+        })?;
+    if let Some(vs) = vault_state
+        .as_ref()
+        .filter(|vs| crate::source_video_download::same_space(&vs.vault, vault))
+    {
+        let result =
+            attach_downloaded_source_video_inner(state, &vs.conn, &vs.vault, slug, video_id, downloaded)?;
+        return Ok(PublishedSourceVideo {
+            result,
+            open_root: Some(vs.vault.root().to_path_buf()),
+        });
+    }
+    drop(vault_state);
+    Ok(PublishedSourceVideo {
+        result: attach_into_closed_space(state, vault, slug, video_id, downloaded)?,
+        open_root: None,
+    })
 }
 
 /// The space the download started in is not the open one. While its folder
@@ -2240,13 +2274,23 @@ fn apply_merge_plan(
     if let Some(state) = state {
         state
             .suppress_paths(
-                suppressed_paths,
+                suppressed_paths.iter().cloned(),
                 Duration::from_millis(IN_APP_RENAME_WATCHER_SUPPRESSION_MS),
             )
             .map_err(internal_merge_error)?;
     }
 
-    let indexed = apply_merge_blocks(conn, vault, &merged_block, &sources, &reference_writes)?;
+    let indexed = match apply_merge_blocks(conn, vault, &merged_block, &sources, &reference_writes) {
+        Ok(indexed) => indexed,
+        Err(error) => {
+            let notes: Vec<PathBuf> = std::iter::once(merged_path)
+                .chain(sources.iter().map(|source| source.path.clone()))
+                .chain(reference_writes.iter().map(|write| write.path.clone()))
+                .collect();
+            follow_notes_after_refused_write(state, conn, vault, &suppressed_paths, &notes);
+            return Err(error);
+        }
+    };
     let merged_slug = indexed.slug.clone();
 
     Ok(MergeBlocksMutation {
@@ -2257,6 +2301,53 @@ fn apply_merge_plan(
         },
         removed_events,
     })
+}
+
+/// A write that did not go through leaves every note as it is on disk now,
+/// which may include an edit made outside Mine while the write ran: the very
+/// edit that made it refuse. The watcher events of that edit fell inside the
+/// suppression the write set up, so the index takes the notes from disk here,
+/// and the suppression is lifted for whatever comes next
+/// (`SPEC_AUDIT_FIXES.md`, Ф7, Б1.7).
+fn follow_notes_after_refused_write(
+    state: Option<&AppState>,
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    suppressed: &[PathBuf],
+    notes: &[PathBuf],
+) {
+    if let Some(state) = state {
+        match state.suppressed_paths.lock() {
+            Ok(mut paths) => {
+                for path in suppressed {
+                    paths.remove(path);
+                }
+            }
+            Err(_) => log::warn!("suppressed_paths mutex poisoned; watcher events resume at their deadline"),
+        }
+    }
+    if let Err(error) = project_notes_from_disk(conn, vault, notes) {
+        log::warn!("the index follows the refused write's notes at the next reconciliation: {error:#}");
+    }
+}
+
+/// Index each of `notes` as it is on disk: present ones are projected, absent
+/// ones removed, in one transaction.
+fn project_notes_from_disk(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    notes: &[PathBuf],
+) -> anyhow::Result<()> {
+    let transaction = conn.unchecked_transaction()?;
+    for path in notes {
+        if path.is_file() {
+            reconcile::project_source_path(&transaction, vault, path)?;
+        } else {
+            reconcile::remove_source_projection(&transaction, vault, &vault.slug_for_path(path)?)?;
+        }
+    }
+    transaction.commit()?;
+    Ok(())
 }
 
 fn apply_merge_blocks(
@@ -4386,29 +4477,39 @@ fn build_planned_block_writes(
     new_slug: &str,
     media_renames: &[FileRename],
 ) -> Result<Vec<PlannedBlockWrite>, RenameBlockError> {
-    let media_name_map: BTreeMap<String, String> = media_renames
-        .iter()
-        .filter_map(|rename| {
-            let old_name = rename.from.file_name()?.to_str()?.to_string();
-            let new_name = rename.to.file_name()?.to_str()?.to_string();
-            Some((old_name, new_name))
-        })
-        .collect();
-
     let old_path = vault.block_path(old_slug);
+    let mut relocations = vec![(format!("{old_slug}.md"), format!("{new_slug}.md"))];
+    for rename in media_renames {
+        let (Some(from), Some(to)) = (
+            vault.root_relative_reference(&rename.from),
+            vault.root_relative_reference(&rename.to),
+        ) else {
+            return Err(RenameBlockError::Internal {
+                message: format!("media {} is outside the space", rename.from.display()),
+            });
+        };
+        relocations.push((from, to));
+    }
+    // Wikilinks and embeds of the card and of its media are retargeted the
+    // way Obsidian resolves them.
     let moves = NoteMoves::new(
         files::scan_vault_file_paths(vault).map_err(internal_rename_error)?,
-        &[(format!("{old_slug}.md"), format!("{new_slug}.md"))],
+        &relocations,
     );
+    let moved_media_names: Vec<String> = media_renames
+        .iter()
+        .filter_map(|rename| Some(fold_media_name(rename.from.file_name()?.to_str()?)))
+        .collect();
+    let mut resolver = media_refs::MediaResolver::new(vault);
     let mut writes = Vec::new();
     for path in files::scan_md_files(vault).map_err(internal_rename_error)? {
         let is_root = path == old_path;
         let (slug, content) =
             files::read_block_file(vault, &path).map_err(internal_rename_error)?;
-        let should_consider = is_root
-            || moves.may_be_linked_from(&content)
-            || media_name_map.keys().any(|name| content.contains(name));
-        if !should_consider {
+        // A media name can hide behind percent-encoding or a YAML escape, so
+        // while media moves every note is parsed, as `media_users_on_disk`
+        // does (SPEC_AUDIT_FIXES.md, Ф4).
+        if !is_root && moved_media_names.is_empty() && !moves.may_be_linked_from(&content) {
             continue;
         }
         let block = parse_markdown_document(&slug, &content, file_saved_at(&path))
@@ -4417,7 +4518,13 @@ fn build_planned_block_writes(
             })?
             .block;
 
-        let mut rewritten = rewrite_block_references(&block, &moves, &media_name_map);
+        let mut rewritten = rewrite_note_links(&block, &moves);
+        let mentions_moved_media = media_reference_forms(&block)
+            .iter()
+            .any(|form| moved_media_names.iter().any(|name| form.contains(name.as_str())));
+        if mentions_moved_media {
+            retarget_moved_media(vault, &mut resolver, &block, &mut rewritten, media_renames, &moves);
+        }
         if is_root {
             rewritten.slug = new_slug.to_string();
         }
@@ -4440,30 +4547,73 @@ fn build_planned_block_writes(
     Ok(writes)
 }
 
-fn rewrite_block_references(
+/// Point `rewritten`, the note `block` with its wikilinks already retargeted,
+/// at the media a card rename moves: each Markdown image and the `file` and
+/// `thumbnail` properties are resolved from the note, and those that name a
+/// moved file follow it (`SPEC_AUDIT_FIXES.md`, Ф3, Б1.6). A Markdown path
+/// keeps its folder prefix and encoding, since the file stays in its folder.
+fn retarget_moved_media(
+    vault: &VaultLayout,
+    resolver: &mut media_refs::MediaResolver<'_>,
     block: &Block,
+    rewritten: &mut Block,
+    media_renames: &[FileRename],
     moves: &NoteMoves,
-    media_name_map: &BTreeMap<String, String>,
-) -> Block {
-    let mut rewritten = rewrite_note_links(block, moves);
-    rewritten.frontmatter.file =
-        rewrite_owned_filename_field(rewritten.frontmatter.file.as_deref(), media_name_map);
-    rewritten.frontmatter.thumbnail =
-        rewrite_owned_filename_field(rewritten.frontmatter.thumbnail.as_deref(), media_name_map);
-    rewritten.body = rename_inline_media_references(&rewritten.body, media_name_map);
-    rewritten
+) {
+    let moved_to = |path: &Path| {
+        media_renames
+            .iter()
+            .find(|rename| same_path(path, &rename.from))
+            .map(|rename| rename.to.clone())
+    };
+    let mut retarget_property = |reference: Option<&str>| -> Option<String> {
+        let reference = reference?;
+        let to = moved_to(&resolver.resolve_indexed_media(&block.slug, reference)?)?;
+        renamed_media_property(vault, reference, &to, moves)
+    };
+    if let Some(file) = retarget_property(block.frontmatter.file.as_deref()) {
+        rewritten.frontmatter.file = Some(file);
+    }
+    if let Some(thumbnail) = retarget_property(block.frontmatter.thumbnail.as_deref()) {
+        rewritten.frontmatter.thumbnail = Some(thumbnail);
+    }
+
+    let mut markdown_renames = BTreeMap::new();
+    for reference in iter_inline_media_references(&block.body) {
+        if !matches!(reference.syntax, InlineMediaSyntax::MarkdownImage) {
+            continue;
+        }
+        let Some(to) = resolver
+            .resolve_inline_media(&block.slug, &reference)
+            .and_then(|path| moved_to(&path))
+        else {
+            continue;
+        };
+        if let Some(name) = to.file_name().and_then(|name| name.to_str()) {
+            markdown_renames.insert(reference.source, name.to_string());
+        }
+    }
+    rewritten.body = rename_inline_media_references(&rewritten.body, &markdown_renames);
 }
 
-fn rewrite_owned_filename_field(
-    value: Option<&str>,
-    media_name_map: &BTreeMap<String, String>,
+/// The new value of a `file` or `thumbnail` property that named moved media:
+/// a note-relative path keeps its prefix; any other reference becomes the
+/// shortest link Obsidian resolves to the new file, or its path from the
+/// space's root when no shorter one is certain.
+fn renamed_media_property(
+    vault: &VaultLayout,
+    reference: &str,
+    to: &Path,
+    moves: &NoteMoves,
 ) -> Option<String> {
-    value.map(|current| {
-        media_name_map
-            .get(current)
-            .cloned()
-            .unwrap_or_else(|| current.to_string())
-    })
+    let name = to.file_name()?.to_str()?;
+    if reference.starts_with("./") || reference.starts_with("../") {
+        let prefix = reference.rfind('/').map_or("", |slash| &reference[..=slash]);
+        return Some(format!("{prefix}{name}"));
+    }
+    moves
+        .retarget(reference)
+        .or_else(|| vault.root_relative_reference(to))
 }
 
 fn article_audio_should_invalidate_after_rename(old_block: &Block, new_block: &Block) -> bool {
@@ -4477,57 +4627,68 @@ fn article_audio_should_invalidate_after_rename(old_block: &Block, new_block: &B
     }
 }
 
+/// The card's own media, which a rename renames with it: the files its
+/// references resolve to whose names follow the card's name (`Foo.jpg`,
+/// `Foo (image 1).jpg` for the card `Foo`). A card in a folder owns media
+/// named after its file name, wherever the media folder is
+/// (`VaultLayout::media_path`), and each file keeps its folder
+/// (`SPEC_AUDIT_FIXES.md`, Ф3, Б1.6).
 fn collect_mine_owned_media_renames(
     vault: &VaultLayout,
     block: &Block,
     old_slug: &str,
     new_slug: &str,
 ) -> Result<Vec<FileRename>, RenameBlockError> {
-    let mut by_source_name = BTreeMap::<String, FileRename>::new();
+    let old_name = old_slug.rsplit('/').next().unwrap_or(old_slug);
+    let new_name = new_slug.rsplit('/').next().unwrap_or(new_slug);
+    let mut resolver = media_refs::MediaResolver::new(vault);
+    let mut owned = BTreeSet::new();
+    for reference in [&block.frontmatter.file, &block.frontmatter.thumbnail]
+        .into_iter()
+        .flatten()
+    {
+        owned.extend(resolver.resolve_indexed_media(&block.slug, reference));
+    }
+    for reference in iter_inline_media_references(&block.body) {
+        owned.extend(resolver.resolve_inline_media(&block.slug, &reference));
+    }
 
-    let mut register = |name: &str| -> Result<(), RenameBlockError> {
-        let Some(new_name) = mine_owned_rename_family_target(name, old_slug, new_slug) else {
-            return Ok(());
+    let mut renames = Vec::new();
+    for from in owned {
+        let Some(file_name) = from.file_name().and_then(|name| name.to_str()) else {
+            continue;
         };
-        let from = vault.root().join(name);
-        if !from.exists() {
-            return Ok(());
+        let Some(target) = mine_owned_rename_family_target(file_name, old_name, new_name) else {
+            continue;
+        };
+        if target == file_name {
+            continue;
         }
-        let to = vault.root().join(&new_name);
+        let to = from.with_file_name(&target);
         if to.exists() {
             return Err(RenameBlockError::NameTaken {
-                requested: new_name,
+                requested: vault.root_relative_reference(&to).unwrap_or(target),
             });
         }
-        by_source_name.insert(name.to_string(), FileRename { from, to });
-        Ok(())
-    };
-
-    if let Some(file) = block.frontmatter.file.as_deref() {
-        register(file)?;
+        renames.push(FileRename { from, to });
     }
-    if let Some(thumbnail) = block.frontmatter.thumbnail.as_deref() {
-        register(thumbnail)?;
-    }
-    for source in crate::domain::block::iter_inline_media_sources(&block.body) {
-        register(&source)?;
-    }
-
-    Ok(by_source_name.into_values().collect())
+    Ok(renames)
 }
 
-fn mine_owned_rename_family_target(name: &str, old_slug: &str, new_slug: &str) -> Option<String> {
-    if let Some(ext) = primary_media_extension(name, old_slug) {
-        return Some(format!("{new_slug}.{ext}"));
+/// The new file name of `name` when it belongs to the rename family of the
+/// card file name `old_name`; `None` for any other file, and for notes.
+fn mine_owned_rename_family_target(name: &str, old_name: &str, new_name: &str) -> Option<String> {
+    if let Some(ext) = primary_media_extension(name, old_name) {
+        return Some(format!("{new_name}.{ext}"));
     }
-    generated_inline_target(name, old_slug, new_slug, "image")
-        .or_else(|| generated_inline_target(name, old_slug, new_slug, "video"))
+    generated_inline_target(name, old_name, new_name, "image")
+        .or_else(|| generated_inline_target(name, old_name, new_name, "video"))
 }
 
-fn primary_media_extension<'a>(name: &'a str, slug: &str) -> Option<&'a str> {
-    let rest = name.strip_prefix(slug)?;
+fn primary_media_extension<'a>(name: &'a str, card_name: &str) -> Option<&'a str> {
+    let rest = name.strip_prefix(card_name)?;
     let ext = rest.strip_prefix('.')?;
-    if ext.is_empty() || ext.contains('/') || ext.contains('\\') {
+    if ext.is_empty() || ext.contains('/') || ext.contains('\\') || ext.eq_ignore_ascii_case("md") {
         return None;
     }
     Some(ext)
@@ -4535,17 +4696,17 @@ fn primary_media_extension<'a>(name: &'a str, slug: &str) -> Option<&'a str> {
 
 fn generated_inline_target(
     name: &str,
-    old_slug: &str,
-    new_slug: &str,
+    old_name: &str,
+    new_name: &str,
     kind: &str,
 ) -> Option<String> {
-    let prefix = format!("{old_slug} ({kind} ");
+    let prefix = format!("{old_name} ({kind} ");
     let rest = name.strip_prefix(&prefix)?;
     let (index, ext) = rest.split_once(").")?;
     if index.is_empty() || !index.chars().all(|ch| ch.is_ascii_digit()) || ext.is_empty() {
         return None;
     }
-    Some(format!("{new_slug} ({kind} {index}).{ext}"))
+    Some(format!("{new_name} ({kind} {index}).{ext}"))
 }
 
 #[cfg(test)]
@@ -6546,6 +6707,53 @@ mod tests {
         assert!(index::get_block(&conn, "Cards/Bar").unwrap().is_some());
     }
 
+    /// Б1.6: in the standard layout a card's media sits in `Media/`, and a
+    /// note next to the card links it by a relative Markdown path, plain or
+    /// percent-encoded. Renaming the card renames the media, and each link
+    /// keeps its prefix and its encoding and still resolves.
+    #[test]
+    fn renaming_a_card_keeps_relative_markdown_links_to_its_media() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let photo = vault.root().join("Media/Фото.jpg");
+        std::fs::create_dir_all(photo.parent().unwrap()).unwrap();
+        std::fs::write(&photo, b"photo bytes").unwrap();
+        write_note(
+            &vault,
+            "Cards/Фото",
+            "---\nfile: \"[[Фото.jpg]]\"\nsaved_at: 2026-04-22T00:00:00Z\n---\n",
+        );
+        write_note(&vault, "Cards/Plain", "Look: ![](../Media/Фото.jpg)\n");
+        write_note(
+            &vault,
+            "Cards/Encoded",
+            "Look: ![](../Media/%D0%A4%D0%BE%D1%82%D0%BE.jpg)\n",
+        );
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        rename_block_file_inner(None, None, &conn, &vault, "Cards/Фото", "Снимок").unwrap();
+
+        let renamed = vault.root().join("Media/Снимок.jpg");
+        assert!(!photo.exists());
+        assert_eq!(std::fs::read(&renamed).unwrap(), b"photo bytes");
+        assert_eq!(read_note(&vault, "Cards/Plain"), "Look: ![](../Media/Снимок.jpg)\n");
+        assert_eq!(
+            read_note(&vault, "Cards/Encoded"),
+            "Look: ![](../Media/%D0%A1%D0%BD%D0%B8%D0%BC%D0%BE%D0%BA.jpg)\n"
+        );
+        for slug in ["Cards/Plain", "Cards/Encoded"] {
+            // Plain notes: the whole text is the body.
+            let reference = iter_inline_media_references(&read_note(&vault, slug)).remove(0);
+            assert_eq!(
+                media_refs::resolve_inline_media(&vault, slug, &reference),
+                Some(renamed.clone()),
+                "{slug}"
+            );
+        }
+        let card = read_note(&vault, "Cards/Снимок");
+        assert!(card.contains("[[Снимок.jpg]]"), "{card}");
+        assert!(!card.contains("Фото"), "{card}");
+    }
+
     #[test]
     fn rename_refuses_when_a_linking_note_was_edited_since_it_was_read() {
         let (_root, _derived, vault, conn) = make_vault();
@@ -6709,6 +6917,50 @@ mod tests {
         assert!(index::get_block(&conn, "Cards/Second").unwrap().is_some());
     }
 
+    /// Б1.7: the outside edit that made a merge refuse reaches the index at
+    /// once, without a watcher event, and the watcher is not held off the
+    /// notes any longer.
+    #[test]
+    fn a_refused_merge_leaves_the_outside_edit_in_the_index() {
+        let (_root, _derived, vault, conn) = make_vault();
+        write_note(
+            &vault,
+            "Cards/First",
+            "---\nsaved_at: 2026-04-22T00:00:00Z\n---\n# First\n\nAlpha.\n",
+        );
+        write_note(
+            &vault,
+            "Cards/Second",
+            "---\nsaved_at: 2026-04-22T00:00:00Z\n---\n# Second\n\nBeta.\n",
+        );
+        write_note(&vault, "Notes/External", "See [[First]].\n");
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        let state = AppState::new();
+        let plan = plan_merge_blocks(
+            &conn,
+            &vault,
+            vec!["Cards/First".to_string(), "Cards/Second".to_string()],
+        )
+        .unwrap();
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(vault.block_path("Cards/Second"))
+            .and_then(|mut file| {
+                std::io::Write::write_all(&mut file, b"\nWritten in Obsidian meanwhile.\n")
+            })
+            .unwrap();
+
+        let error = apply_merge_plan(Some(&state), &conn, &vault, plan).unwrap_err();
+
+        assert!(matches!(error, MergeBlocksError::SourceChanged { .. }), "{error}");
+        let indexed = index::get_block(&conn, "Cards/Second").unwrap().unwrap();
+        assert!(indexed.body.contains("Written in Obsidian meanwhile."), "{}", indexed.body);
+        for slug in ["Cards/First", "Cards/Second", "Notes/External"] {
+            assert!(!state.is_path_suppressed(&vault.block_path(slug)), "{slug}");
+        }
+        assert!(index::get_block(&conn, "Cards/First").unwrap().is_some());
+    }
+
     #[test]
     fn detaching_media_keeps_user_properties_and_blank_lines() {
         let (_root, _derived, vault, conn) = make_vault();
@@ -6840,5 +7092,63 @@ mod tests {
         assert_eq!(kept[0].slug, "Film");
         let (_, content) = files::read_block_file(&vault, &vault.block_path("Film")).unwrap();
         assert!(!content.contains(".mp4"), "the other space's card is untouched");
+    }
+
+    /// Б3.4: space A's folder now holds space B, which is open and has a card
+    /// of the same name and clip. A's video stays A's.
+    #[test]
+    fn a_video_for_a_space_whose_folder_another_open_space_took_is_kept_for_its_own() {
+        let dir = tempfile::tempdir().unwrap();
+        let (first, _) = identified_vault(dir.path(), "0123456789abcdef0123456789abcdef");
+        let (second, conn) = identified_vault(dir.path(), "fedcba9876543210fedcba9876543210");
+        assert_eq!(first.root(), second.root());
+        persist_block(&conn, &second, &youtube_card("Film", "poster.jpg"));
+        let card_before = std::fs::read(second.block_path("Film")).unwrap();
+        let state = AppState::new();
+        *state.vault_state.lock().unwrap() = Some(crate::commands::state::VaultState {
+            conn,
+            vault: second.clone(),
+        });
+        let downloaded = dir.path().join("joined.mp4");
+        std::fs::write(&downloaded, b"video-bytes").unwrap();
+
+        let published =
+            publish_downloaded_source_video(&state, &first, "Film", "9KDDhAOyv9k", &downloaded).unwrap();
+
+        assert!(published.open_root.is_none());
+        assert!(published.result.affected_slugs.is_empty());
+        assert_eq!(std::fs::read(second.block_path("Film")).unwrap(), card_before);
+        let kept = crate::source_video_download::kept_downloads(&first);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].slug, "Film");
+        assert!(crate::source_video_download::kept_downloads(&second).is_empty());
+        assert!(!downloaded.exists());
+    }
+
+    /// Б3.1: a kept video for a card that now links another clip is a final
+    /// answer: the video and its record go.
+    #[test]
+    fn a_kept_video_for_a_card_that_changed_clip_is_discarded() {
+        let dir = tempfile::tempdir().unwrap();
+        let (vault, conn) = identified_vault(dir.path(), "0123456789abcdef0123456789abcdef");
+        persist_block(&conn, &vault, &youtube_card("Film", "poster.jpg"));
+        let downloaded = dir.path().join("joined.mp4");
+        std::fs::write(&downloaded, b"video-bytes").unwrap();
+        crate::source_video_download::keep_download(&vault, "Film", "abcdefghijk", &downloaded).unwrap();
+        let kept = crate::source_video_download::kept_downloads(&vault).remove(0);
+
+        let outcome = attach_downloaded_source_video_inner(
+            &AppState::new(),
+            &conn,
+            &vault,
+            &kept.slug,
+            &kept.video_id,
+            &vault.derived_root().join("source-videos").join(&kept.file),
+        );
+        crate::source_video_download::settle_kept_download(&vault, &kept, &outcome);
+
+        assert!(matches!(outcome, Err(MediaAssetActionError::InvalidMediaRef { .. })));
+        assert!(crate::source_video_download::kept_downloads(&vault).is_empty());
+        assert!(!vault.derived_root().join("source-videos").join(&kept.file).exists());
     }
 }
