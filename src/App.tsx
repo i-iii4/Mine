@@ -267,6 +267,7 @@ import { useChannelPreviewsEvents } from "@/hooks/useChannelPreviewsEvents";
 import { useChromeDragGesture } from "@/hooks/useChromeDragGesture";
 import { useStaleDragRecovery } from "@/hooks/useStaleDragRecovery";
 import { useProjectionRevisionOwner } from "@/hooks/useProjectionRevisionOwner";
+import { useCommandOverrides } from "@/hooks/useCommandOverrides";
 import { VaultPicker } from "@/components/VaultPicker";
 import { SpaceUnavailable } from "@/components/SpaceUnavailable";
 import { CloudRecommendation } from "@/components/CloudRecommendation";
@@ -569,6 +570,8 @@ export function AppWithVault({
   const navigate = useNavigate();
   const location = useLocation();
   const projectionRevisionOwner = useProjectionRevisionOwner();
+  // The bar shows chords: a rebind in Settings re-renders them (Ф11).
+  useCommandOverrides();
 
   const currentTag = location.pathname.startsWith("/channel/")
     ? decodeURIComponent(location.pathname.slice("/channel/".length))
@@ -962,6 +965,11 @@ export function AppWithVault({
   const gridRouteSnapshotReady =
     gridSnapshotIdentity?.routeKey === routeKeyFor(currentTag);
   const renderedDetailBlock = selectedBlock ?? closingDetailBlock;
+  // The menu the bar's Command entry opens, and so the chord it shows: over an
+  // open element its own command, in the feed the selection's or the card's.
+  const barMenuCommand = commandById(
+    renderedDetailBlock ? "element-menu-open" : hasSelection ? "batch-menu" : "element-menu",
+  );
   const renderedLinkedBlockSlug = selectedBlock?.slug
     ?? (detailChromeClosing ? closingDetailBlock?.slug ?? null : null);
   const renderedLinkedTags = selectedBlock
@@ -2304,9 +2312,8 @@ export function AppWithVault({
   // dialogs, menus and overlays Tab stays native — those surfaces keep the
   // system's focus traversal.
   useEffect(() => {
-    const toggleView = commandById("toggle-view");
     const handler = (e: KeyboardEvent) => {
-      if (!toggleView.matches!(e)) return;
+      if (!commandPressed("toggle-view", e)) return;
       if (
         e.defaultPrevented
         || isEditableKeyboardTarget(e.target)
@@ -2333,9 +2340,10 @@ export function AppWithVault({
   // inputs, dialogs and over an open element ⌘V stays native.
   const pasteBusyRef = useRef(false);
   useEffect(() => {
-    const paste = commandById("paste");
+    // The chord is read at the keypress: a rebind in Settings changes the
+    // registry without re-rendering this window (SPEC_AUDIT_FIXES.md, Ф11).
     const handler = (e: KeyboardEvent) => {
-      if (!paste.matches!(e)) return;
+      if (!commandPressed("paste", e)) return;
       if (
         e.defaultPrevented
         || isEditableKeyboardTarget(e.target)
@@ -2372,9 +2380,8 @@ export function AppWithVault({
   // The list lives in the Shortcuts section, where it can also be changed;
   // a second copy of it as an overlay would be one more place to keep true.
   useEffect(() => {
-    const overlay = commandById("commands-overlay");
     const handler = (e: KeyboardEvent) => {
-      if (!overlay.matches?.(e)) return;
+      if (!commandPressed("commands-overlay", e)) return;
       if (e.defaultPrevented || isEditableKeyboardTarget(e.target)) return;
       e.preventDefault();
       void openSettingsWindow("shortcuts");
@@ -3652,6 +3659,7 @@ export function AppWithVault({
                 onInstallClipper={revealClipperExtensionFolder}
                 spaceOnboardingOwed={spaceOnboardingOwed}
                 firstIndexProgress={isSyncing ? syncProgress : null}
+                vaultIndexing={isSyncing}
               />
             }
           >
@@ -3868,7 +3876,9 @@ export function AppWithVault({
             </span>
           )}
           {/* Pressable: the menu opens at the focused element — in the feed at
-              its card, over an open element in its top menu. */}
+              its card, over an open element in its top menu. The chord shown
+              is the one that opens this menu here: each surface's command
+              has its own binding (Ф11). */}
           {(renderedDetailBlock !== null || feedCardMenuAvailable) && (
             <span
               data-bar-entry="element-menu"
@@ -3877,7 +3887,7 @@ export function AppWithVault({
             >
               <ActionButton
                 chrome
-                hotkey={commandById("element-menu").combo}
+                hotkey={barMenuCommand.combo}
                 onClick={() => {
                   if (renderedDetailBlock) {
                     setCompactDetailTopMenuRequestSequence((current) => current + 1);
@@ -3886,7 +3896,7 @@ export function AppWithVault({
                   cardMenuActivateRef.current?.();
                 }}
               >
-                {commandById("element-menu").name}
+                {barMenuCommand.name}
               </ActionButton>
             </span>
           )}
@@ -4078,6 +4088,7 @@ interface RouteContext {
   onInstallClipper: () => void;
   spaceOnboardingOwed: boolean | null;
   firstIndexProgress: { processed: number; total: number } | null;
+  vaultIndexing: boolean;
 }
 
 function PageShell(props: RouteContext) {

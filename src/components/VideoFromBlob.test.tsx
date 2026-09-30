@@ -97,6 +97,85 @@ describe("VideoFromBlob", () => {
     expect(container.querySelector("video")).toHaveAttribute("src", "asset://localhost//vault/long.mp4");
   });
 
+  it("learns the size with HEAD and reads nothing of a file over the limit (Б3.5)", async () => {
+    const body = vi.fn();
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => ({
+      ok: true,
+      headers: new Headers(
+        init?.method === "HEAD" ? { "Content-Length": String(200 * 1024 * 1024) } : {},
+      ),
+      get body() { return body(); },
+      blob: body,
+    } as unknown as Response));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { container } = render(<VideoFromBlob src="asset://localhost//vault/film.mp4" autoPlay muted loop />);
+    await act(async () => {
+      fireEvent.error(container.querySelector("video")!);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ method: "HEAD" }));
+    expect(body).not.toHaveBeenCalled();
+    expect(container.querySelector("video")).toHaveAttribute("src", "asset://localhost//vault/film.mp4");
+  });
+
+  it("a playback error after the refusal does not read the file again (Б3.5)", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      headers: new Headers({ "Content-Length": String(MAX_BLOB_VIDEO_BYTES + 1) }),
+      blob: vi.fn(),
+    } as unknown as Response));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { container } = render(<VideoFromBlob src="asset://localhost//vault/long.mp4" autoPlay muted loop />);
+    await act(async () => {
+      fireEvent.error(container.querySelector("video")!);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(container.querySelector("video")).toHaveAttribute("src", "asset://localhost//vault/long.mp4");
+
+    // WebKit cannot play it directly either: the same element errors again.
+    await act(async () => {
+      fireEvent.error(container.querySelector("video")!);
+      await vi.advanceTimersByTimeAsync(6000);
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(container.querySelector("video")).toHaveAttribute("src", "asset://localhost//vault/long.mp4");
+  });
+
+  it("stops a read without a declared size once it passes the limit (Б3.5)", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const chunk = new Uint8Array(8 * 1024 * 1024);
+    const read = vi.fn(async () => ({ done: false as const, value: chunk }));
+    let readSignal: AbortSignal | undefined;
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "HEAD") throw new TypeError("HEAD is not supported");
+      readSignal = init?.signal ?? undefined;
+      return {
+        ok: true,
+        headers: new Headers(),
+        body: { getReader: () => ({ read }) },
+      } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { container } = render(<VideoFromBlob src="asset://localhost//vault/stream.mp4" />);
+    await act(async () => {
+      fireEvent.error(container.querySelector("video")!);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // The read ends with the first chunk past the limit, not at the end of
+    // the file, and the request is cancelled.
+    expect(read).toHaveBeenCalledTimes(Math.floor(MAX_BLOB_VIDEO_BYTES / chunk.byteLength) + 1);
+    expect(readSignal?.aborted).toBe(true);
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+    expect(container.querySelector("video")).toHaveAttribute("src", "asset://localhost//vault/stream.mp4");
+  });
+
   it("stops reading the video when it is closed (А7.6)", async () => {
     let signal: AbortSignal | undefined;
     const fetchMock = vi.fn((_url: string, init?: RequestInit) => {

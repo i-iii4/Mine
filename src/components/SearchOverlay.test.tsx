@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import type { GridSnapshot, LightBlock, SearchMatch } from "@/types";
 import { TOP_FADE_HEIGHT } from "@/lib/edgeFade";
 import {
@@ -548,6 +548,48 @@ describe("SearchOverlay", () => {
 
     await waitFor(() => expect(onOpenBlock).toHaveBeenCalledWith(fresh));
     expect(onOpenBlock).toHaveBeenCalledTimes(1);
+  });
+
+  it("an Enter still waiting for results does not open a card after Escape (Б5.2)", async () => {
+    const stale = makeBlock(1, "stale");
+    const fresh = makeBlock(2, "fresh");
+    const freshAnswers: Array<() => void> = [];
+    listGridBlocksMock.mockImplementation((_tag, _offset, _limit, query) => (
+      query === "fresh"
+        ? new Promise<GridSnapshot>((resolve) => {
+          freshAnswers.push(() => resolve(snapshot([fresh])));
+        })
+        : Promise.resolve(snapshot([stale]))
+    ));
+    const onOpenBlock = vi.fn();
+    const props = {
+      vaultPath: "/vault",
+      onQueryChange: vi.fn(),
+      onClose: vi.fn(),
+      onOpenBlock,
+    };
+    const { rerender } = render(<SearchOverlay {...props} open query="stale" />);
+    await waitFor(() => expect(screen.getByText("Title stale")).toBeInTheDocument());
+
+    // Enter before the answer, then Escape before it lands.
+    rerender(<SearchOverlay {...props} open query="fresh" />);
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
+    expect(freshAnswers).toHaveLength(1);
+    rerender(<SearchOverlay {...props} open={false} query="fresh" />);
+    await act(async () => {
+      for (const answer of freshAnswers) answer();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(onOpenBlock).not.toHaveBeenCalled();
+
+    // Opened again, the overlay searches as usual and opens only on a new Enter.
+    rerender(<SearchOverlay {...props} open query="fresh" />);
+    await waitFor(() => expect(freshAnswers).toHaveLength(2));
+    await act(async () => { freshAnswers[1]!(); });
+    await waitFor(() => expect(screen.getByText("Title fresh")).toBeInTheDocument());
+    expect(onOpenBlock).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
+    expect(onOpenBlock).toHaveBeenCalledExactlyOnceWith(fresh);
   });
 
   it("renders the body-match excerpt with a mark and the semantic excerpt without one", async () => {

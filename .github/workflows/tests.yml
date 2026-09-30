@@ -21,6 +21,9 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The coverage gate compares the pushed range, which needs history.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -42,6 +45,21 @@ jobs:
       # Tests never package it, so the directory only has to exist.
       - name: Provide the clipper payload directory
         run: mkdir -p build/clipper-extension
+      # Every changed behavior file names a requirement and a check. After a
+      # push the automatic base is HEAD itself, so the pushed range is passed
+      # explicitly (SPEC_AUDIT_FIXES.md, Б6.3). A new branch has no previous
+      # revision and is compared with main.
+      - name: Changed behavior has a requirement and a check
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+          PULL_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          base="${PULL_BASE:-$PUSH_BEFORE}"
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            base=origin/main
+          fi
+          node scripts/reliability-gate.mjs --base "$base"
+          node --test scripts/reliability-gate.test.mjs
       - name: Lint
         run: bun run lint
       - name: Bindings match the Rust contract

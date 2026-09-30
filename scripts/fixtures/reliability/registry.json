@@ -979,6 +979,29 @@
       "requirement": "SPEC_FEED_DISPLAY.md#**Д1.**",
       "tests": ["src/lib/feedDisplay.test.ts", "src/components/FeedDisplayMenu.test.tsx", "src/components/MainSecondaryChrome.test.tsx", "src/lib/cardLayout.test.ts", "src/lib/cardHeight.test.ts", "src/components/Card.test.tsx", "src/lib/gridLayoutReadiness.test.ts", "src/App.test.tsx"],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/fontMetrics.ts",
+        "src/lib/fontMetrics.test.ts",
+        "src/components/SearchOverlay.tsx",
+        "src/components/SearchOverlay.test.tsx",
+        "src/components/Grid.tsx",
+        "src/components/Grid.test.tsx",
+        "src/components/Grid.firstCards.test.tsx",
+        "src/App.tsx",
+        "src/App.test.tsx",
+        "src/lib/shortcutOverrides.ts",
+        "src/lib/shortcutOverrides.test.ts",
+        "src/hooks/useCommandOverrides.ts",
+        "src/components/ImagePreviewOverlay.tsx",
+        "src/components/ImagePreviewOverlay.test.tsx",
+        "src/components/VideoFromBlob.tsx",
+        "src/components/VideoFromBlob.test.tsx"
+      ],
+      "requirement": "SPEC_AUDIT_FIXES.md#| Б5.1 |",
+      "tests": ["src/lib/fontMetrics.test.ts", "src/components/SearchOverlay.test.tsx", "src/components/Grid.test.tsx", "src/components/Grid.firstCards.test.tsx", "src/App.test.tsx", "src/lib/shortcutOverrides.test.ts", "src/components/ImagePreviewOverlay.test.tsx", "src/components/VideoFromBlob.test.tsx"],
+      "command": "test:frontend"
     }
   ],
   "release": null

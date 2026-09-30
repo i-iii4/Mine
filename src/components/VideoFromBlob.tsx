@@ -18,10 +18,40 @@ export const MAX_BLOB_VIDEO_BYTES = 150 * 1024 * 1024;
 
 class TooLargeForMemory extends Error {}
 
+/** The size a response declares, or `null` when it declares none. */
+function declaredLength(response: Response): number | null {
+  const header = response.headers?.get("Content-Length");
+  if (header === null || header === undefined || header.trim() === "") return null;
+  const length = Number(header);
+  return Number.isFinite(length) && length >= 0 ? length : null;
+}
+
+/**
+ * The file size from a HEAD request, which the asset protocol answers from
+ * the file's metadata without reading it. `null` when HEAD tells nothing;
+ * the read that follows then guards the limit itself.
+ */
+async function probeLength(src: string, signal: AbortSignal): Promise<number | null> {
+  let response: Response;
+  try {
+    response = await fetch(src, { method: "HEAD", signal });
+  } catch (error) {
+    if (signal.aborted) throw error;
+    // A source without HEAD support is still readable: the streamed read
+    // that follows stops at the limit.
+    console.warn("[VideoFromBlob] HEAD request failed, reading with a limit", error);
+    return null;
+  }
+  return response.ok ? declaredLength(response) : null;
+}
+
 /** Read a response into one blob, refusing past `limit` bytes. */
 async function readLimited(response: Response, limit: number, controller: AbortController): Promise<Blob> {
-  const declared = Number(response.headers?.get("Content-Length"));
-  if (Number.isFinite(declared) && declared > limit) throw new TooLargeForMemory();
+  const declared = declaredLength(response);
+  if (declared !== null && declared > limit) {
+    controller.abort();
+    throw new TooLargeForMemory();
+  }
   const reader = response.body?.getReader();
   if (!reader) {
     const blob = await response.blob();
@@ -96,7 +126,14 @@ export function VideoFromBlob({
     // Closing the video stops the read: nothing keeps loading for a card
     // that is gone.
     const controller = new AbortController();
-    fetch(src, { signal: controller.signal })
+    // The size is learned before any byte is read: a GET without a range
+    // makes the asset protocol load the whole file, however large
+    // (SPEC_AUDIT_FIXES.md, Б3.5).
+    probeLength(src, controller.signal)
+      .then((length) => {
+        if (length !== null && length > MAX_BLOB_VIDEO_BYTES) throw new TooLargeForMemory();
+        return fetch(src, { signal: controller.signal });
+      })
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return readLimited(r, MAX_BLOB_VIDEO_BYTES, controller);
@@ -139,7 +176,9 @@ export function VideoFromBlob({
           setError(null);
         }}
         onError={() => {
-          if (!directReady) {
+          // A file refused for memory stays on the direct source for good:
+          // its playback error is final, not a reason to read it again.
+          if (!directReady && blobAllowed) {
             setMode("blob");
           }
         }}

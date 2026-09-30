@@ -23,6 +23,7 @@ import { TOP_FADE_HEIGHT } from "@/lib/edgeFade";
 import { computeMasonryLayout } from "@/lib/masonryLayout";
 import { computeCardHeight } from "@/lib/cardHeight";
 import { HOVER_INTENT } from "@/lib/hoverIntent";
+import { commandById, setCommandOverrides } from "@/lib/commandRegistry";
 import {
   getCardSelectionSummary,
   isRowConnectedToHoveredCard,
@@ -1836,6 +1837,49 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(document.querySelector("[data-feed-grid-batch-menu]")).not.toBeInTheDocument();
     expect(document.querySelector("[data-feed-selection-action-bar]")).toBeInTheDocument();
     expect(gridItemForSlug("block-9531")).toHaveAttribute("data-feed-grid-item-selected", "true");
+  });
+
+  it("opens the batch menu with its own chord rebound after the feed rendered (Б5.3, Ф11)", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [makeBlock(9541), makeBlock(9542)];
+    setBlockHeight(9541, 200);
+    setBlockHeight(9542, 220);
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} />);
+    await flushAsync();
+
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    fireEvent.keyDown(window, { key: "Enter", shiftKey: true });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Settings rebinds the batch menu while the feed is on screen; nothing in
+    // the feed re-renders for it.
+    act(() => setCommandOverrides({ "batch-menu": { key: "j", meta: true } }));
+    try {
+      // The focused card's badge shows the chord the press will answer.
+      const badge = document.querySelector("[data-feed-grid-action-badge]");
+      expect(badge).toHaveTextContent(commandById("batch-menu").combo);
+      expect(badge).not.toHaveTextContent("⌘K");
+
+      const old = fireEvent.keyDown(window, { key: "k", metaKey: true });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(old).toBe(true);
+      expect(document.querySelector("[data-feed-grid-batch-menu]")).not.toBeInTheDocument();
+
+      const rebound = fireEvent.keyDown(window, { key: "j", metaKey: true });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(rebound).toBe(false);
+      expect(document.querySelector("[data-feed-grid-batch-menu]")).toBeInTheDocument();
+    } finally {
+      setCommandOverrides({});
+    }
   });
 
   it("right-clicks a selected card into a selection menu without single-card commands", async () => {

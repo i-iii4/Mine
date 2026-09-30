@@ -124,65 +124,87 @@ function handleWorkerMessage(event: MessageEvent<WorkerOutMessage>): void {
   }
 }
 
-async function ensureWorkerReady(): Promise<void> {
+/// Identity of the current start attempt. A start abandoned by its time limit
+/// must not install the worker it creates after the limit has passed.
+let startAttempt = 0;
+
+async function startWorker(attempt: number): Promise<void> {
+  if (typeof Worker === "undefined") {
+    throw new Error("Web Workers not supported in this environment");
+  }
+  if (typeof OffscreenCanvas === "undefined") {
+    throw new Error("OffscreenCanvas not supported in this environment");
+  }
+
+  const fontBuffer = await fetchFontBuffer();
+  if (attempt !== startAttempt) {
+    throw new Error("Font-metrics worker start was abandoned");
+  }
+  const started = createWorker();
+  worker = started;
+  started.addEventListener("message", handleWorkerMessage);
+  started.addEventListener("error", (e) => {
+    // Reject all pending requests on worker crash
+    const err = new Error(`Worker crashed: ${e.message}`);
+    for (const req of pending.values()) {
+      req.reject(err);
+    }
+    pending.clear();
+  });
+
+  const initRequestId = nextRequestId++;
+  const initPromise = new Promise<void>((resolve, reject) => {
+    const onMessage = (event: MessageEvent<WorkerOutMessage>) => {
+      if (event.data.type === "ready" && event.data.requestId === initRequestId) {
+        started.removeEventListener("message", onMessage);
+        resolve();
+      } else if (event.data.type === "error" && event.data.requestId === initRequestId) {
+        started.removeEventListener("message", onMessage);
+        reject(new Error(event.data.message));
+      }
+    };
+    started.addEventListener("message", onMessage);
+    // A worker script that fails to load reports only this event.
+    started.addEventListener("error", (event) => reject(new Error(`Worker failed to start: ${event.message}`)));
+  });
+
+  const initMessage: WorkerInMessage = {
+    type: "init",
+    requestId: initRequestId,
+    fontBuffer,
+    fontFamily: FONT_FAMILY,
+  };
+  started.postMessage(initMessage, [fontBuffer]);
+
+  await initPromise;
+}
+
+/**
+ * One start, shared by every caller, bounded once. The stored promise is the
+ * bounded one: a second measurement that arrives while the first waits (a
+ * collection switch, the next page) gives up at the same limit and measures
+ * on the page, instead of waiting for a `ready` that a stopped worker never
+ * sends (SPEC_AUDIT_FIXES.md, Б5.1).
+ */
+function ensureWorkerReady(): Promise<void> {
   if (workerReady) return workerReady;
 
-  workerReady = (async () => {
-    if (typeof Worker === "undefined") {
-      throw new Error("Web Workers not supported in this environment");
-    }
-    if (typeof OffscreenCanvas === "undefined") {
-      throw new Error("OffscreenCanvas not supported in this environment");
-    }
-
-    const fontBuffer = await fetchFontBuffer();
-    worker = createWorker();
-    worker.addEventListener("message", handleWorkerMessage);
-    worker.addEventListener("error", (e) => {
-      // Reject all pending requests on worker crash
-      const err = new Error(`Worker crashed: ${e.message}`);
-      for (const req of pending.values()) {
-        req.reject(err);
+  startAttempt += 1;
+  const attempt = startAttempt;
+  const bounded = withTimeout(startWorker(attempt), WORKER_INIT_TIMEOUT_MS, "Font-metrics worker start")
+    .catch((err: unknown) => {
+      if (attempt === startAttempt) {
+        // Abandon this start: a font fetch still in flight must not create a
+        // worker after the limit, and the next start begins from scratch.
+        startAttempt += 1;
+        worker?.terminate();
+        worker = null;
+        workerReady = null;
       }
-      pending.clear();
+      throw err;
     });
-
-    const initRequestId = nextRequestId++;
-    const initPromise = new Promise<void>((resolve, reject) => {
-      const onMessage = (event: MessageEvent<WorkerOutMessage>) => {
-        if (event.data.type === "ready" && event.data.requestId === initRequestId) {
-          worker?.removeEventListener("message", onMessage);
-          resolve();
-        } else if (event.data.type === "error" && event.data.requestId === initRequestId) {
-          worker?.removeEventListener("message", onMessage);
-          reject(new Error(event.data.message));
-        }
-      };
-      worker!.addEventListener("message", onMessage);
-      // A worker script that fails to load reports only this event.
-      worker!.addEventListener("error", (event) => reject(new Error(`Worker failed to start: ${event.message}`)));
-    });
-
-    const initMessage: WorkerInMessage = {
-      type: "init",
-      requestId: initRequestId,
-      fontBuffer,
-      fontFamily: FONT_FAMILY,
-    };
-    worker.postMessage(initMessage, [fontBuffer]);
-
-    await initPromise;
-  })();
-
-  try {
-    await withTimeout(workerReady, WORKER_INIT_TIMEOUT_MS, "Font-metrics worker start");
-  } catch (err) {
-    worker?.terminate();
-    workerReady = null;
-    worker = null;
-    throw err;
-  }
-  return workerReady;
+  workerReady = bounded;
+  return bounded;
 }
 
 function computeInWorker(blocks: WorkerBlockInput[]): Promise<WorkerBlockResult[]> {
@@ -553,6 +575,8 @@ export async function invalidateFontCache(): Promise<void> {
 
 /** Terminate the worker (for cleanup on unmount in tests or HMR). */
 export function disposeWorker(): void {
+  // A start still in flight belongs to the disposed worker.
+  startAttempt += 1;
   if (worker) {
     worker.terminate();
     worker = null;

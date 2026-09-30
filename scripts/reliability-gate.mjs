@@ -144,6 +144,15 @@ export function changeBase(root, requested, execute = spawnSync) {
     : 'Cannot find the base revision: pass --base <revision>');
 }
 
+/**
+ * After a push the automatic base is HEAD itself, so pushed commits are not
+ * compared. Say so instead of passing silently (SPEC_AUDIT_FIXES.md, Б6.3).
+ */
+export function automaticBaseNotice(paths, requested) {
+  if (requested || paths.length > 0) return null;
+  return 'No changes since the upstream revision: pushed commits are not compared. Pass --base <revision> to check them.';
+}
+
 /** Every path changed since `base`: commits, staged and unstaged edits, new files. */
 export function changedPaths(root, base, execute = spawnSync) {
   const changed = execute('git', ['diff', '--name-only', base], { cwd: root, encoding: 'utf8' });
@@ -259,8 +268,11 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     if (process.argv.includes('--release')) await verifyRelease(registry);
     const baseArgument = process.argv.indexOf('--base');
     requireCondition(baseArgument < 0 || process.argv[baseArgument + 1], 'Missing --base revision');
-    const base = changeBase(repository, baseArgument < 0 ? undefined : process.argv[baseArgument + 1]);
-    verifyChangeCoverage(registry, changedPaths(repository, base));
+    const requestedBase = baseArgument < 0 ? undefined : process.argv[baseArgument + 1];
+    const paths = changedPaths(repository, changeBase(repository, requestedBase));
+    verifyChangeCoverage(registry, paths);
+    const notice = automaticBaseNotice(paths, requestedBase);
+    if (notice) console.warn(notice);
     await verifyExtensionMirrors();
     console.log(process.argv.includes('--release') ? 'Release evidence verified.' : 'Registry and module boundaries verified. Release acceptance remains separate.');
   } catch (error) { console.error(error.message); process.exitCode = 1; }

@@ -188,7 +188,11 @@ export function ImagePreviewOverlay({
     scheduleControlsHide();
   }, [scheduleControlsHide]);
 
-  /// When the running zoom animation ends; zero when none runs.
+  /// An animated zoom is commanded but its frame has not written it yet.
+  const animationPendingRef = useRef(false);
+  /// When the running zoom animation ends; zero when none runs. Counted from
+  /// the frame that writes the transform, where the transition really starts:
+  /// a late frame moves the end with it (SPEC_AUDIT_FIXES.md, Б5.5).
   const animationEndRef = useRef(0);
 
   /// A gesture during the zoom animation continues from where the image is
@@ -196,7 +200,10 @@ export function ImagePreviewOverlay({
   /// the end point and back read as the image escaping the hand (А5.1).
   const settleRunningAnimation = useCallback(() => {
     const image = imageRef.current;
-    if (!image || performance.now() >= animationEndRef.current) return;
+    if (!image) return;
+    const mayBeMoving = animationPendingRef.current || performance.now() < animationEndRef.current;
+    if (!mayBeMoving) return;
+    animationPendingRef.current = false;
     animationEndRef.current = 0;
     const shown = visibleImagePreviewTransform(getComputedStyle(image).transform);
     image.style.transition = "none";
@@ -213,7 +220,8 @@ export function ImagePreviewOverlay({
     );
     // Reduced motion places the image at once (SPEC_AUDIT_FIXES.md, Ф12).
     const animate = animated && !prefersReducedMotion();
-    animationEndRef.current = animate ? performance.now() + IMAGE_PREVIEW_ANIMATION_MS : 0;
+    animationPendingRef.current = animate;
+    if (!animate) animationEndRef.current = 0;
     const image = imageRef.current;
     if (image) {
       image.style.transition = animate
@@ -225,6 +233,10 @@ export function ImagePreviewOverlay({
     }
     frameRef.current = window.requestAnimationFrame(() => {
       frameRef.current = null;
+      if (animationPendingRef.current) {
+        animationPendingRef.current = false;
+        animationEndRef.current = performance.now() + IMAGE_PREVIEW_ANIMATION_MS;
+      }
       const { scale, x, y } = transformRef.current;
       const currentImage = imageRef.current;
       if (currentImage) {

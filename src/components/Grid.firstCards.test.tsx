@@ -19,6 +19,20 @@ vi.mock("@/lib/fontMetrics", async (importOriginal) => {
   return { ...actual, fetchWordWidths: fetchWordWidthsMock };
 });
 
+const { cardsRenderedReports } = vi.hoisted(() => ({ cardsRenderedReports: vi.fn() }));
+
+// Counts every report while keeping the real once-per-session signal.
+vi.mock("@/lib/startup", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/startup")>();
+  return {
+    ...actual,
+    reportCardsRendered: () => {
+      cardsRenderedReports();
+      actual.reportCardsRendered();
+    },
+  };
+});
+
 import { Grid } from "./Grid";
 import { whenCardsRendered } from "@/lib/startup";
 
@@ -113,5 +127,29 @@ describe("first cards painted (А8.2)", () => {
     await act(async () => { finish(new Map([[1, EMPTY_WIDTHS], [2, EMPTY_WIDTHS]])); });
     await frames();
     expect(rendered).toBe(true);
+  });
+
+  it("does not count an empty feed as painted while the first index runs (Б5.4)", async () => {
+    cardsRenderedReports.mockClear();
+    const props = { ...BASE_PROPS, blocks: [], routeSnapshotReady: true };
+
+    // A new space: the snapshot is empty and the first index has begun, its
+    // progress not yet reported.
+    const { rerender } = render(<Grid {...props} vaultIndexing firstIndexProgress={null} />);
+    await frames();
+    expect(cardsRenderedReports).not.toHaveBeenCalled();
+
+    rerender(<Grid {...props} vaultIndexing firstIndexProgress={{ processed: 3, total: 10 }} />);
+    await frames();
+    expect(cardsRenderedReports).not.toHaveBeenCalled();
+
+    // The index finished and found nothing: the empty feed is the picture.
+    rerender(<Grid {...props} vaultIndexing={false} firstIndexProgress={null} />);
+    await frames();
+    expect(cardsRenderedReports).toHaveBeenCalledTimes(1);
+
+    rerender(<Grid {...props} vaultIndexing={false} firstIndexProgress={null} spaceOnboardingOwed={false} />);
+    await frames();
+    expect(cardsRenderedReports).toHaveBeenCalledTimes(1);
   });
 });

@@ -129,7 +129,7 @@ describe("measuring a newly opened space", () => {
 });
 
 describe("a font-metrics worker that never answers (А8.1)", () => {
-  it("measures the cards on the page once the worker has had its time", async () => {
+  function installSilentWorker() {
     vi.useFakeTimers();
     vi.resetModules();
     const terminate = vi.fn();
@@ -142,6 +142,17 @@ describe("a font-metrics worker that never answers (А8.1)", () => {
     vi.stubGlobal("OffscreenCanvas", class {});
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) })));
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    return { terminate };
+  }
+
+  function restoreGlobals() {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  }
+
+  it("measures the cards on the page once the worker has had its time", async () => {
+    const { terminate } = installSilentWorker();
     try {
       const { fetchWordWidths, WORKER_INIT_TIMEOUT_MS } = await import("./fontMetrics");
       const measuring = fetchWordWidths([makeBlock({ id: 7, title: "Two words", body: "Some preview" })]);
@@ -151,9 +162,38 @@ describe("a font-metrics worker that never answers (А8.1)", () => {
       expect(widths.get(7)?.title).toEqual([22.5, 37.5]);
       expect(terminate).toHaveBeenCalled();
     } finally {
-      vi.unstubAllGlobals();
-      vi.restoreAllMocks();
-      vi.useRealTimers();
+      restoreGlobals();
+    }
+  });
+
+  it("releases a second measurement that waits for the same start (Б5.1)", async () => {
+    installSilentWorker();
+    try {
+      const { fetchWordWidths, WORKER_INIT_TIMEOUT_MS } = await import("./fontMetrics");
+      const settled: number[] = [];
+      const first = fetchWordWidths([makeBlock({ id: 1, title: "First card" })]);
+      void first.then(() => settled.push(1));
+      // The feed moves on (a collection switch) while the worker still starts.
+      await vi.advanceTimersByTimeAsync(WORKER_INIT_TIMEOUT_MS / 2);
+      const second = fetchWordWidths([makeBlock({ id: 2, title: "Second card" })]);
+      void second.then(() => settled.push(2));
+
+      await vi.advanceTimersByTimeAsync(WORKER_INIT_TIMEOUT_MS / 2 + 1);
+      // Both measure on the page: the second is not left waiting for a
+      // `ready` the stopped worker never sends.
+      expect(settled.sort()).toEqual([1, 2]);
+      // The test canvas measures 7.5 px per character.
+      expect((await second).get(2)?.title).toEqual([45, 30]);
+
+      // A later measurement does not wait for the worker again.
+      let thirdDone = false;
+      const third = fetchWordWidths([makeBlock({ id: 3, title: "Third card" })]);
+      void third.then(() => { thirdDone = true; });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(thirdDone).toBe(true);
+      expect((await third).get(3)?.title).toEqual([37.5, 30]);
+    } finally {
+      restoreGlobals();
     }
   });
 });

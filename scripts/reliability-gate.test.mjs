@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { ACCEPTANCE, PRINCIPLES, artifactDigest, changeBase, changedPaths, registryPath, validateRegistry, verifyChangeCoverage, verifyModuleBoundaries, verifyRelease } from './reliability-gate.mjs';
+import { ACCEPTANCE, PRINCIPLES, artifactDigest, automaticBaseNotice, changeBase, changedPaths, registryPath, validateRegistry, verifyChangeCoverage, verifyModuleBoundaries, verifyRelease } from './reliability-gate.mjs';
 import { fixturePath, sha256 } from './reliability-source-guard.mjs';
 
 async function registry() { return JSON.parse(await readFile(registryPath, 'utf8')); }
@@ -86,6 +86,40 @@ test('committed work since the base revision is inspected, not only uncommitted 
     assert.ok(!git('diff', '--name-only', 'HEAD').split('\n').includes('style.css'));
 
     assert.throws(() => changeBase(repo, 'no-such-revision'), /Cannot find the base revision: no-such-revision/);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test('after a push the automatic base is HEAD and the gate says it compared nothing (Б6.3)', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'mine-gate-pushed-'));
+  const git = (...args) => {
+    const result = spawnSync('git', ['-c', 'user.name=Gate test', '-c', 'user.email=gate@test.invalid', ...args], { cwd: repo, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  try {
+    git('init', '-q', '-b', 'main');
+    await writeFile(join(repo, 'README.md'), 'base\n');
+    git('add', '.');
+    git('commit', '-q', '-m', 'base');
+    await writeFile(join(repo, 'style.css'), 'a { color: red }\n');
+    git('add', '.');
+    git('commit', '-q', '-m', 'pushed change');
+    // What `git push` leaves behind: the remote-tracking branch at HEAD.
+    git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+
+    const automatic = changeBase(repo);
+    assert.equal(automatic, git('rev-parse', 'HEAD'));
+    const nothing = changedPaths(repo, automatic);
+    assert.deepEqual(nothing, []);
+    assert.match(automaticBaseNotice(nothing, undefined), /pushed commits are not compared.*--base/);
+
+    // An explicit base sees the pushed commit, and needs no notice.
+    const explicit = changedPaths(repo, changeBase(repo, 'HEAD~1'));
+    assert.deepEqual(explicit, ['style.css']);
+    assert.equal(automaticBaseNotice(explicit, 'HEAD~1'), null);
+    assert.equal(automaticBaseNotice(nothing, 'HEAD~1'), null);
   } finally {
     await rm(repo, { recursive: true, force: true });
   }

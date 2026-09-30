@@ -1,4 +1,4 @@
-import { setCommandOverrides } from "@/lib/commandRegistry";
+import { commandById, setCommandOverrides } from "@/lib/commandRegistry";
 import { reloadFeedDisplay, setFeedSort } from "@/lib/feedDisplay";
 import { reportCardsRendered } from "@/lib/startup";
 import type { ReactNode } from "react";
@@ -1532,6 +1532,67 @@ describe("AppWithVault", () => {
     } finally {
       setCommandOverrides({});
     }
+  });
+
+  it("answers Paste and Commands rebound after the window rendered (Б5.3, Ф11)", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    // Settings rebinds both while this window is on screen; the registry
+    // changes without re-rendering anything here.
+    setCommandOverrides({
+      paste: { key: "b", meta: true, shift: true },
+      "commands-overlay": { key: "y", meta: true },
+    });
+    try {
+      const oldPaste = fireEvent.keyDown(window, { key: "v", code: "KeyV", metaKey: true });
+      const oldCommands = fireEvent.keyDown(window, { key: "/", code: "Slash", metaKey: true });
+      expect(oldPaste).toBe(true);
+      expect(oldCommands).toBe(true);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(commandMocks.readClipboardPayload).not.toHaveBeenCalled();
+      expect(commandMocks.openSettingsWindow).not.toHaveBeenCalled();
+
+      fireEvent.keyDown(window, { key: "B", code: "KeyB", metaKey: true, shiftKey: true });
+      const commands = fireEvent.keyDown(window, { key: "y", code: "KeyY", metaKey: true });
+      expect(commands).toBe(false);
+      await waitFor(() => {
+        expect(commandMocks.readClipboardPayload).toHaveBeenCalledTimes(1);
+        expect(commandMocks.openSettingsWindow).toHaveBeenCalledExactlyOnceWith("shortcuts");
+      });
+    } finally {
+      setCommandOverrides({});
+    }
+  });
+
+  it("relabels the bottom bar the moment a command is rebound (Ф11)", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+    const findEntry = () => document.querySelector("[data-bar-entry='find-elements']");
+    const before = findEntry()?.textContent ?? "";
+
+    act(() => setCommandOverrides({ "find-elements": { key: "g", meta: true } }));
+    try {
+      expect(findEntry()).toHaveTextContent(commandById("find-elements").combo);
+      expect(findEntry()?.textContent).not.toBe(before);
+    } finally {
+      act(() => setCommandOverrides({}));
+    }
+    expect(findEntry()?.textContent).toBe(before);
   });
 
   it("opens the settings window from the bottom action bar", async () => {

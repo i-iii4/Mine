@@ -10,10 +10,19 @@ import type { CommandBinding } from "./commandBinding";
 import { getCommandOverrides, setCommandOverrides, type CommandOverrides } from "./commandRegistry";
 import { listShortcutOverrides, saveShortcutOverrides } from "./commands";
 
+/// Not awaited before the first render: that would put an IPC round trip on
+/// the startup critical path (SPEC_STARTUP_PERFORMANCE.md), and every keydown
+/// handler reads the registry at the keypress, so the loaded chords apply from
+/// the moment they arrive.
 export async function hydrateCommandOverrides(): Promise<void> {
   if (!isTauri()) return;
+  const before = getCommandOverrides();
   try {
-    setCommandOverrides(await listShortcutOverrides());
+    const loaded = await listShortcutOverrides();
+    // A rebind that reached this window while the file was being read is
+    // newer than what was read; the stale answer must not undo it.
+    if (getCommandOverrides() !== before) return;
+    setCommandOverrides(loaded);
   } catch (error) {
     // A broken override file must not take the app down: defaults still work.
     console.error("Failed to load shortcut overrides:", error);

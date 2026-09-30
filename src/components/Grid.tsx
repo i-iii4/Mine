@@ -77,6 +77,7 @@ import {
   isOverlayKeyboardTarget,
 } from "@/lib/keyboardTargets";
 import { commandById } from "@/lib/commandRegistry";
+import { useCommandOverrides } from "@/hooks/useCommandOverrides";
 import { setHoveredCard, setSelectedCards, useCardLitByCollection } from "@/lib/collectionHover";
 import { HOVER_INTENT } from "@/lib/hoverIntent";
 import { HoverIntentDragWatch, useHoverIntent } from "@/hooks/useHoverIntent";
@@ -201,6 +202,10 @@ interface GridProps {
   /// onboarding, because "this space is empty" is a falsehood about a space
   /// that is still being read. See SPEC_ONBOARDING.md О13.
   firstIndexProgress?: { processed: number; total: number } | null;
+  /// An index pass is running. Its progress arrives by event, possibly after
+  /// the first paint, so an empty feed counts as painted only once the pass
+  /// is over: until then it may be a space that is still being read.
+  vaultIndexing?: boolean;
   /// Open the Are.na import from the empty-space onboarding.
   /**
    * Per-slug thumbnail cache-buster. Bumped by App on a `thumb:updated` event
@@ -443,6 +448,7 @@ export function Grid({
   onInstallClipper,
   spaceOnboardingOwed = true,
   firstIndexProgress = null,
+  vaultIndexing = false,
   thumbVersions,
   tags,
   currentTag,
@@ -841,8 +847,12 @@ export function Grid({
   );
 
   // The first real cards on screen: the startup milestone waits for them,
-  // not for the skeletons painted while word widths are measured.
-  const hasRenderedCards = committedEndIndex >= 0 || (routeSnapshotReady && blocks.length === 0);
+  // not for the skeletons painted while word widths are measured. An empty
+  // feed is the final picture only once no index pass can still fill it: a
+  // new space or a reset cache shows an empty snapshot, then the first index
+  // (SPEC_AUDIT_FIXES.md, Б5.4).
+  const hasRenderedCards = committedEndIndex >= 0
+    || (routeSnapshotReady && blocks.length === 0 && !vaultIndexing);
   useEffect(() => {
     if (!hasRenderedCards || typeof window === "undefined") return;
     return scheduleAfterNextPaint(reportCardsRendered);
@@ -1751,8 +1761,11 @@ export function Grid({
     if (keyboardNavigationDisabled) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      // The element menu answers the chord the registry holds, rebound or not.
-      const commandK = commandById("element-menu").matches?.(event) ?? false;
+      // The menu answers the chord the registry holds at this keypress,
+      // rebound or not: with a selection it is the batch menu and its own
+      // command, otherwise the element menu (SPEC_AUDIT_FIXES.md, Ф11).
+      const menuCommand = selectedSlugs.size > 0 ? "batch-menu" : "element-menu";
+      const commandK = commandById(menuCommand).matches?.(event) ?? false;
       const scrollElement = parentRef.current;
       const currentScrollTop = scrollElement?.scrollTop ?? scrollTop;
       const currentViewportHeight = scrollElement?.clientHeight || viewportHeight;
@@ -2353,6 +2366,20 @@ export function Grid({
 
 // ─── JS virtualized path (fallback for browsers without grid-lanes) ────────
 
+/// The chord that opens the focused card's menu, as the registry holds it now:
+/// a rebind in Settings relabels the badge at once (SPEC_AUDIT_FIXES.md, Ф11).
+function FocusedCardMenuBadge({ command }: { command: "element-menu" | "batch-menu" }) {
+  useCommandOverrides();
+  return (
+    <div
+      className="absolute left-2 top-2 flex h-6 items-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground"
+      data-feed-grid-action-badge=""
+    >
+      {commandById(command).combo}
+    </div>
+  );
+}
+
 function VirtualMasonryLayout({
   blocks,
   visibleItems,
@@ -2553,12 +2580,9 @@ const GridItem = memo(function GridItem({
             className="pointer-events-none absolute inset-px z-[6]"
             data-feed-grid-action-layer=""
           >
-            <div
-              className="absolute left-2 top-2 flex h-6 items-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground"
-              data-feed-grid-action-badge=""
-            >
-              ⌘K
-            </div>
+            <FocusedCardMenuBadge
+              command={context.selectedSlugs.size > 0 ? "batch-menu" : "element-menu"}
+            />
           </div>
         )}
         {isCommitted &&

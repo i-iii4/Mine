@@ -174,12 +174,14 @@ export function SearchOverlay({
   );
 
   useEffect(() => {
-    if (!open) return;
     // New text: a response still in flight answers the old text and must not
     // land while this one waits out the debounce (А6.11). An Enter pressed for
-    // the old text is dropped with it.
+    // the old text is dropped with it. Closing drops both the same way: the
+    // overlay stays mounted, and a late answer must not open a card after
+    // Escape (Б5.2).
     requestSequenceRef.current += 1;
     pendingOpenRef.current = null;
+    if (!open) return;
     if (isRecentMode) {
       // Recent mode loads immediately: the debounce exists for the typing
       // race, a static list has nothing to wait for (Р-16).
@@ -389,11 +391,11 @@ export function SearchOverlay({
   );
 
   useEffect(() => {
-    if (pendingOpenRef.current === null || !currentQuerySettled) return;
+    if (!open || pendingOpenRef.current === null || !currentQuerySettled) return;
     if (pendingOpenRef.current !== normalizedQuery) return;
     pendingOpenRef.current = null;
     if (activeBlock) onOpenBlock(activeBlock);
-  }, [activeBlock, currentQuerySettled, normalizedQuery, onOpenBlock]);
+  }, [activeBlock, currentQuerySettled, normalizedQuery, onOpenBlock, open]);
 
   const handleRowPointerMove = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>, index: number) => {

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ImagePreviewOverlay, visibleImagePreviewTransform } from "./ImagePreviewOverlay";
@@ -217,6 +217,60 @@ describe("ImagePreviewOverlay", () => {
       expect(readImageNumber(image, "data-detail-image-preview-translate-x")).toBeCloseTo(10, 3);
     });
     expect(image.style.transition).toBe("none");
+  });
+
+  it("times the zoom animation from its first frame, not from the command (Б5.5)", () => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    const frames: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+    const runFrames = () => {
+      act(() => {
+        for (const frame of frames.splice(0)) frame(now);
+      });
+    };
+    try {
+      const { container } = render(
+        <ImagePreviewOverlay preview={{ src: "asset://localhost/photo.jpg", mediaRef: "photo.jpg" }} onClose={vi.fn()} />,
+      );
+      const stage = container.querySelector("[data-image-preview-stage]");
+      const image = container.querySelector("[data-image-preview-image]") as HTMLElement;
+      setElementBox(stage!, { left: 0, top: 0, width: 800, height: 600 });
+      setImageLayout(image, { offsetLeft: 300, offsetTop: 200, offsetWidth: 200, offsetHeight: 100 });
+      runFrames();
+
+      // The zoom to 150% is commanded at 0 ms; its frame comes 100 ms late,
+      // so the image moves from 100 ms to 260 ms.
+      fireEvent.click(image, { clientX: 400, clientY: 250 });
+      now = 100;
+      runFrames();
+      expect(image).toHaveAttribute("data-detail-image-preview-scale", "1.500");
+
+      // At 170 ms the image is still on its way, at 140%.
+      now = 170;
+      const computed = vi.spyOn(window, "getComputedStyle").mockReturnValue({
+        transform: "matrix(1.4, 0, 0, 1.4, 0, 0)",
+      } as CSSStyleDeclaration);
+      try {
+        fireEvent.pointerDown(image, { pointerId: 1, button: 0, clientX: 400, clientY: 250 });
+        fireEvent.pointerMove(image, { pointerId: 1, clientX: 410, clientY: 250 });
+        fireEvent.pointerUp(image, { pointerId: 1, clientX: 410, clientY: 250 });
+      } finally {
+        computed.mockRestore();
+      }
+      runFrames();
+
+      // The drag continued from what was on screen, not from the end point.
+      expect(image).toHaveAttribute("data-detail-image-preview-scale", "1.400");
+      expect(readImageNumber(image, "data-detail-image-preview-translate-x")).toBeCloseTo(10, 3);
+      expect(image.style.transition).toBe("none");
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it("steps through a card's images with the arrow keys, starting at the clicked one", () => {
