@@ -1,3 +1,7 @@
+## 30.09.2026: клиппер в браузере Aside
+
+Пользователь перешёл на Aside (at.studio.AsideBrowser). Это браузер на Chromium, данные в `~/Library/Application Support/Aside`. Aside добавлен в список браузеров, где Mine регистрирует помощника клиппера. После установки Mine при запуске сам записал регистрацию в `Aside/NativeMessagingHosts`, путь указывает на установленный помощник. Расширение пользователь загружает в Aside сам через `Load unpacked` из `~/Library/Application Support/com.mine.app/clipper/managed-v1/extension`. В SPEC_CLIPPER.md заодно убраны снятые кнопки `Repair registration` и `Check registration`.
+
 ## 30.09.2026: спецификация настроек отображения ленты
 
 Со слов пользователя записана [SPEC_FEED_DISPLAY.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_FEED_DISPLAY.md>): кнопка `Display` с иконкой `SlidersHorizontal` во втором уровне хрома справа, под кнопкой Mine; в панели `Sort` (`Newest first`, `Oldest first`), `Show` (`Cards`: всё в рамке, медиа как карточка поста; `Mixed`: как сейчас; `Media`: только медиа без рамки и текста, несколько медиа галереей, чистый текст остаётся карточкой) и `Spacing`. Параметры общие для всей ленты и сохраняются между запусками. Ждут подтверждения: перенос существующей настройки `Spacing` из Appearance, ссылки в `Media`, кнопка в Graph. Реализация не начата.
