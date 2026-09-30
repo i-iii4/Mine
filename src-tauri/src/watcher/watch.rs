@@ -109,6 +109,7 @@ pub fn start_watching(
     let last_emit: Arc<Mutex<Instant>> =
         Arc::new(Mutex::new(Instant::now() - Duration::from_secs(10)));
     let recovery = Arc::new(Mutex::new(WatcherRecoveryTracker::default()));
+    let wake_removals = start_removal_timer(app, vault, db_path)?;
 
     let mut watcher =
         notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
@@ -146,6 +147,13 @@ pub fn start_watching(
 
             let mut any_changed = false;
             let mut any_error = false;
+            // A deletion waits for its rename window; the timer commits it.
+            if vault_events
+                .iter()
+                .any(|event| matches!(event, events::VaultEvent::BlockDeleted(_)))
+            {
+                let _ = wake_removals.send(());
+            }
             for ve in &vault_events {
                 match handler::handle_event(&conn, &vault_clone, ve, Some(&app_clone)) {
                     Ok(changed) => any_changed |= changed,
@@ -198,6 +206,86 @@ pub fn start_watching(
     Ok(watcher)
 }
 
+/// Put a recovered watcher in place, only while its space is still the open
+/// one: recovery of space A must not replace the watcher of space B opened
+/// meanwhile (SPEC_AUDIT_FIXES.md, Ф7). The open space and the watcher slot
+/// are locked in the order a space switch locks them.
+fn install_recovered_watcher(
+    app: &AppHandle,
+    vault: &VaultLayout,
+    replacement: RecommendedWatcher,
+) -> bool {
+    let state = app.state::<AppState>();
+    let Ok(open) = state.vault_state.lock() else {
+        log::error!("vault state mutex poisoned during watcher recovery");
+        return false;
+    };
+    if !recovered_space_is_open(open.as_ref().map(|vs| vs.vault.root()), vault.root()) {
+        log::info!(
+            "watcher recovery for {} dropped: another space is open",
+            vault.root().display()
+        );
+        return false;
+    }
+    let previous = match state.watcher.lock() {
+        Ok(mut slot) => slot.replace(replacement),
+        Err(_) => {
+            log::error!("watcher mutex poisoned during recovery");
+            return false;
+        }
+    };
+    // Like a space switch, the replaced watcher stops outside the locks.
+    drop(open);
+    drop(previous);
+    true
+}
+
+fn recovered_space_is_open(open: Option<&Path>, recovered: &Path) -> bool {
+    open == Some(recovered)
+}
+
+/// A deferred removal is committed when its rename window passes, not when
+/// some later file event happens to arrive (SPEC_AUDIT_FIXES.md, Ф7). The
+/// timer has its own index connection and ends with its watcher: dropping
+/// the watcher drops the only sender.
+fn start_removal_timer(
+    app: &AppHandle,
+    vault: &VaultLayout,
+    db_path: &Path,
+) -> Result<std::sync::mpsc::Sender<()>> {
+    use std::sync::mpsc::RecvTimeoutError;
+    let (wake, woken) = std::sync::mpsc::channel::<()>();
+    let conn = db::open_or_create(db_path)?;
+    let app = app.clone();
+    let vault = vault.clone();
+    std::thread::Builder::new()
+        .name("watcher-removals".to_string())
+        .spawn(move || loop {
+            let waited = match handler::next_pending_deadline(&vault) {
+                Some(deadline) => {
+                    woken.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                }
+                None => woken.recv().map_err(|_| RecvTimeoutError::Disconnected),
+            };
+            if matches!(waited, Err(RecvTimeoutError::Disconnected)) {
+                return;
+            }
+            match handler::commit_expired_removals(&conn, &vault, Some(&app)) {
+                Ok(true) => {
+                    let _ = app.emit(
+                        "vault-changed",
+                        VaultChangedPayload {
+                            path: vault.root().to_string_lossy().into_owned(),
+                        },
+                    );
+                }
+                Ok(false) => {}
+                Err(error) => log::warn!("deferred removals: {error:#}"),
+            }
+        })?;
+    Ok(wake)
+}
+
 fn record_watcher_error(
     app: &AppHandle,
     vault: &VaultLayout,
@@ -244,18 +332,7 @@ fn record_watcher_error(
                 &vault_for_recovery.index_db_path(),
             ) {
                 Ok(replacement) => {
-                    let state = app_for_recovery.state::<AppState>();
-                    let replaced = match state.watcher.lock() {
-                        Ok(mut slot) => {
-                            *slot = Some(replacement);
-                            true
-                        }
-                        Err(_) => {
-                            log::error!("watcher mutex poisoned during recovery");
-                            false
-                        }
-                    };
-                    replaced
+                    install_recovered_watcher(&app_for_recovery, &vault_for_recovery, replacement)
                 }
                 Err(error) => {
                     log::error!("failed to restart watcher after recovery: {error:#}");
@@ -328,6 +405,15 @@ mod tests {
             tracker.record_error(start + Duration::from_secs(40)),
             (1, false)
         );
+    }
+
+    #[test]
+    fn recovery_installs_its_watcher_only_for_the_open_space() {
+        let a = Path::new("/spaces/A");
+        let b = Path::new("/spaces/B");
+        assert!(recovered_space_is_open(Some(a), a));
+        assert!(!recovered_space_is_open(Some(b), a));
+        assert!(!recovered_space_is_open(None, a));
     }
 
     #[test]

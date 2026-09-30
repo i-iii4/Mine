@@ -60,8 +60,12 @@ pub fn classify_notify_event(event: &notify::Event, vault: &VaultLayout) -> Vec<
         event.kind,
         EventKind::Remove(RemoveKind::File) | EventKind::Remove(RemoveKind::Any)
     );
+    // A move reports a rename: moving a note to the Trash or out of the
+    // space, and moving one in. Each path names a place the file left or
+    // reached, often in separate events; the disk tells which (Ф7).
+    let is_rename = matches!(event.kind, EventKind::Modify(ModifyKind::Name(_)));
 
-    if !is_change && !is_delete {
+    if !is_change && !is_delete && !is_rename {
         return result;
     }
 
@@ -71,6 +75,7 @@ pub fn classify_notify_event(event: &notify::Event, vault: &VaultLayout) -> Vec<
         }
 
         let is_md = path.extension().and_then(|e| e.to_str()) == Some("md");
+        let is_change = if is_rename { path.exists() } else { is_change };
 
         let event = if is_md {
             if is_change {
@@ -265,5 +270,65 @@ mod tests {
             result[1],
             VaultEvent::MediaChanged(PathBuf::from("/vault/b.jpg"))
         );
+    }
+
+    #[test]
+    fn a_rename_is_a_deletion_where_the_file_left_and_a_change_where_it_arrived() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let arrived = dir.path().join("Arrived.md");
+        std::fs::write(&arrived, "text").unwrap();
+        let left = dir.path().join("Left.md");
+        let rename = |path: &Path| {
+            make_event(
+                EventKind::Modify(ModifyKind::Name(notify::event::RenameMode::Any)),
+                vec![path.to_path_buf()],
+            )
+        };
+        assert_eq!(
+            classify_notify_event(&rename(&left), &vault),
+            vec![VaultEvent::BlockDeleted(left)]
+        );
+        assert_eq!(
+            classify_notify_event(&rename(&arrived), &vault),
+            vec![VaultEvent::BlockChanged(arrived)]
+        );
+    }
+
+    /// The operating system's own report of a note moved out of the space,
+    /// as a move to the Trash is (А6.3): it must reach the index as a
+    /// deletion.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_note_moved_out_of_the_space_is_reported_as_deleted() {
+        use notify::Watcher;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let space = root.join("space");
+        let outside = root.join("outside");
+        std::fs::create_dir_all(&space).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let note = space.join("Note.md");
+        std::fs::write(&note, "text").unwrap();
+        let vault = VaultLayout::new(space.clone());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+            if let Ok(event) = event {
+                let _ = tx.send(event);
+            }
+        })
+        .unwrap();
+        watcher.watch(&space, notify::RecursiveMode::Recursive).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        std::fs::rename(&note, outside.join("Note.md")).unwrap();
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut deleted = false;
+        while !deleted {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            let Ok(event) = rx.recv_timeout(remaining) else { break };
+            deleted = classify_notify_event(&event, &vault).contains(&VaultEvent::BlockDeleted(note.clone()));
+        }
+        assert!(deleted, "a note moved out of the space was not reported as deleted");
     }
 }

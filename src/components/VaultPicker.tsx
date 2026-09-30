@@ -18,9 +18,13 @@ import { FolderConfirmation } from "@/components/FolderConfirmation";
 
 interface VaultPickerProps {
   onVaultSelected: (path: string) => void;
+  /** The way back when the picker was opened from another screen, such as
+   *  "Create new space" on an unavailable space: cancelling the folder dialog
+   *  must not leave the person here with no way out. */
+  onBack?: () => void;
 }
 
-export function VaultPicker({ onVaultSelected }: VaultPickerProps) {
+export function VaultPicker({ onVaultSelected, onBack }: VaultPickerProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<VaultOpenResult | null>(null);
@@ -106,6 +110,11 @@ export function VaultPicker({ onVaultSelected }: VaultPickerProps) {
           </div>
         ) : (
           <div className="flex items-center gap-2">
+            {onBack && (
+              <Button variant="secondary" onClick={onBack} disabled={loading}>
+                Back
+              </Button>
+            )}
             <Button onClick={() => void choose()} disabled={loading}>
               {loading ? "Opening…" : "Choose folder"}
             </Button>

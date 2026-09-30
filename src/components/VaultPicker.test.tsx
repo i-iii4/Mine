@@ -29,6 +29,16 @@ describe("VaultPicker", () => {
     vi.clearAllMocks();
   });
 
+  it("offers the way back only when opened from another screen (А6.7)", () => {
+    const { unmount } = render(<VaultPicker onVaultSelected={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Back" })).not.toBeInTheDocument();
+    unmount();
+    const onBack = vi.fn();
+    render(<VaultPicker onVaultSelected={vi.fn()} onBack={onBack} />);
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(onBack).toHaveBeenCalledOnce();
+  });
+
   it("explains the product before asking for a decision", () => {
     render(<VaultPicker onVaultSelected={vi.fn()} />);
     expect(screen.getByText("Mine")).toBeInTheDocument();

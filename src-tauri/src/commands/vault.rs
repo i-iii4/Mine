@@ -2047,9 +2047,20 @@ fn repair_space_registry(app: &AppHandle) {
         return;
     };
     let vaults_dir = crate::space_registry::vaults_dir(config.app_data_dir());
-    match config.update(|cfg| {
-        crate::space_registry::recover_from_derived_stores(cfg, &vaults_dir)
-    }) {
+    let recover = || {
+        config.update(|cfg| crate::space_registry::recover_from_derived_stores(cfg, &vaults_dir))
+    };
+    // Damaged settings are set aside by the first attempt, which then starts
+    // over from clean ones: the list comes back in this launch, not the next
+    // (SPEC_AUDIT_FIXES.md, А6.6).
+    let outcome = match recover() {
+        Err(crate::app_config::AppConfigError::Damaged { kept, .. }) => {
+            log::warn!("damaged settings kept at {}; recovering the space list", kept.display());
+            recover()
+        }
+        other => other,
+    };
+    match outcome {
         Ok(0) => {}
         Ok(added) => log::info!("recovered {added} space(s) from their derived stores"),
         Err(error) => log::warn!("space registry recovery skipped: {error}"),

@@ -89,6 +89,24 @@ async function restartWorker(page) {
   } finally { await devtools.detach(); }
 }
 
+// Open the clipper the way the product does where the overlay cannot run:
+// background opens its window for a source tab, and the window receives that
+// tab's launch (SPEC_AUDIT_FIXES.md, Ф6). The post read beforehand travels in
+// the launch, like the Instagram button's.
+async function openClipperWindow(worker, preloaded) {
+  const source = await context.newPage();
+  await source.goto('about:blank');
+  const opened = context.waitForEvent('page', { timeout: 15_000 });
+  await worker.evaluate(async (post) => {
+    const tab = (await chrome.tabs.query({})).filter((candidate) => candidate.url === 'about:blank').at(-1);
+    if (!tab) throw new Error('No source tab for the clipper window');
+    await openClipperUi(tab, { preloaded: post });
+  }, preloaded);
+  const popup = await opened;
+  await popup.waitForURL(/\/dist\/index\.html/, { timeout: 15_000 });
+  return { popup, source };
+}
+
 async function quietTransportPage() {
   const page = await context.newPage();
   await page.route('**/dist/assets/*', (route) => route.abort());
@@ -264,16 +282,14 @@ try {
     if (!collection.ok) throw new Error(JSON.stringify(collection));
     const status = await globalThis.MineStandaloneVault.getStandaloneStatus();
     await chrome.storage.local.set({ mineSaveDestination: { executor: 'browser', bindingId: status.bindingId } });
-    await chrome.storage.session.set({ preloadedClipData: {
-      metadata: { url: 'https://example.test/worker-ui-article', title: 'Worker UI article',
-        description: 'UI capture regression', image: null, author: null, ogType: 'article',
-        favicon: null, selection: '', detectedType: 'article', isArticle: true },
-      article: { title: 'Worker UI article', content: 'Saved through the real popup button.',
-        byline: null, excerpt: 'UI capture regression' },
-    } });
   });
-  const popup = await context.newPage();
-  await popup.goto(`chrome-extension://${extensionId}/dist/index.html`);
+  const { popup, source: popupSource } = await openClipperWindow(worker, {
+    metadata: { url: 'https://example.test/worker-ui-article', title: 'Worker UI article',
+      description: 'UI capture regression', image: null, author: null, ogType: 'article',
+      favicon: null, selection: '', detectedType: 'article', isArticle: true },
+    article: { title: 'Worker UI article', content: 'Saved through the real popup button.',
+      byline: null, excerpt: 'UI capture regression' },
+  });
   try {
     await popup.getByRole('button', { name: 'Connect Worker collection', exact: true }).click({ timeout: 15_000 });
     await popup.getByRole('button', { name: 'Save to 1 collection', exact: true }).click({ timeout: 15_000 });
@@ -301,6 +317,7 @@ try {
   assert.deepEqual(uiCapture.pending, []);
   assert.deepEqual(uiCapture.clipDrafts, []);
   await popup.close();
+  await popupSource.close();
 
   // Fail only the autosave boundary. The popup, Chrome storage, operation
   // journal, WASM executor and file publication still execute their real code.
@@ -317,16 +334,15 @@ try {
         return globalThis.__mineSmokeDraftStore.writeOwned(url, ...argumentsList);
       },
     };
-    await chrome.storage.session.set({ preloadedClipData: {
-      metadata: { url: sourceUrl, title: 'Worker UI autosave recovery',
-        description: 'Autosave failure regression', image: null, author: null, ogType: 'article',
-        favicon: null, selection: '', detectedType: 'article', isArticle: true },
-      article: { title: 'Worker UI autosave recovery', content: 'Visible edits survive autosave failure and Save commits them.',
-        byline: null, excerpt: 'Autosave failure regression' },
-    } });
   });
-  const faultPopup = await context.newPage();
-  await faultPopup.goto(`chrome-extension://${extensionId}/dist/index.html`);
+  const faultUrl = 'https://example.test/worker-ui-autosave-recovery';
+  const { popup: faultPopup } = await openClipperWindow(worker, {
+    metadata: { url: faultUrl, title: 'Worker UI autosave recovery',
+      description: 'Autosave failure regression', image: null, author: null, ogType: 'article',
+      favicon: null, selection: '', detectedType: 'article', isArticle: true },
+    article: { title: 'Worker UI autosave recovery', content: 'Visible edits survive autosave failure and Save commits them.',
+      byline: null, excerpt: 'Autosave failure regression' },
+  });
   try {
     await faultPopup.getByText('Edits are kept in this open clipper. Save will store the clip shown here.', { exact: true })
       .waitFor({ state: 'visible', timeout: 15_000 });

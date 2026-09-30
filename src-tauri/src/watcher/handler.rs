@@ -782,6 +782,33 @@ fn drain_expired_pending(vault: &VaultLayout) -> Vec<PendingRemove> {
     expired
 }
 
+/// When the earliest deferred removal of `vault` falls due: the watcher's
+/// timer wakes then, without waiting for another file event (Ф7).
+pub fn next_pending_deadline(vault: &VaultLayout) -> Option<Instant> {
+    pending_queue()
+        .lock()
+        .ok()?
+        .iter()
+        .filter(|pending| pending.vault_root == vault.root())
+        .map(|pending| pending.deadline)
+        .min()
+}
+
+/// Commit every deferred removal of `vault` whose rename window has passed.
+/// Returns whether a card left the index.
+pub fn commit_expired_removals(
+    conn: &Connection,
+    vault: &VaultLayout,
+    app: Option<&AppHandle>,
+) -> Result<bool> {
+    let _write = crate::storage::source_mutation::begin_write()?;
+    let mut removed = false;
+    for expired in drain_expired_pending(vault) {
+        removed |= commit_deferred_removal(conn, vault, &expired, app);
+    }
+    Ok(removed)
+}
+
 /// Test-only: drain the entire pending queue and commit every entry as a
 /// removal, regardless of deadline. Lets unit tests assert post-removal
 /// state without sleeping for the rename-match window.
@@ -809,17 +836,24 @@ fn flush_pending_for_test(conn: &Connection, vault: &VaultLayout, app: Option<&A
 
 /// Commit a deferred block removal as if it had been processed immediately.
 /// Used when the rename-match window expires without an incoming Create.
+/// Returns whether the card left the index.
 fn commit_deferred_removal(
     conn: &Connection,
     vault: &VaultLayout,
     pending: &PendingRemove,
     app: Option<&AppHandle>,
-) {
+) -> bool {
     // A folder renamed or unmounted reports every file as deleted. The card
     // is only removed while the space itself is still there (П29).
     if let Err(unavailable) = crate::storage::root_guard::ensure_root_present(vault) {
         log::warn!("deferred removal of {} skipped: {unavailable}", pending.slug);
-        return;
+        return false;
+    }
+    // The note came back (restored from the Trash, an editor's save that
+    // briefly removed it): the file on disk decides, not the old event (Ф7).
+    if vault.block_path(&pending.slug).exists() {
+        log::info!("deferred removal of {} dropped: the note is back", pending.slug);
+        return false;
     }
     if let Err(e) = index::remove_block(conn, &pending.slug) {
         log::warn!(
@@ -846,6 +880,7 @@ fn commit_deferred_removal(
             },
         );
     }
+    true
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -953,6 +988,9 @@ pub fn handle_event(
                         }
                     }
                 }
+                // The same note is back where it was: its earlier removal is
+                // void (Ф7).
+                take_pending_by_slug(vault, &new_slug);
             }
             return index_md_file(conn, vault, path, app);
         }
@@ -976,7 +1014,7 @@ pub fn handle_event(
                     deadline: Instant::now() + Duration::from_millis(RENAME_MATCH_WINDOW_MS),
                 });
                 // Treat as "no-change for now". If no match arrives, the
-                // next handle_event call will drain and commit it.
+                // watcher's timer commits it when the window passes.
                 return Ok(false);
             }
         }
@@ -1383,31 +1421,63 @@ mod tests {
         assert!(index::get_block(&conn, "note").unwrap().is_some());
     }
 
+    /// What the watcher's timer does: wait for the earliest deadline, then
+    /// commit what has expired. No other file event is involved (Ф7).
+    fn run_removal_timer_once(conn: &Connection, vault: &VaultLayout) -> bool {
+        let due = next_pending_deadline(vault).expect("a removal is pending");
+        std::thread::sleep(due.saturating_duration_since(Instant::now()));
+        commit_expired_removals(conn, vault, None).unwrap()
+    }
+
     #[test]
     fn handle_block_deleted() {
         let dir = tempfile::tempdir().unwrap();
         let vault = VaultLayout::new(dir.path().to_path_buf());
         let conn = test_conn();
-        flush_pending_for_test(&conn, &vault, None);
 
-        // First index a block
         write_md_file(&vault, "note", "link", &[]);
         let path = vault.block_path("note");
         index_md_file(&conn, &vault, &path, None).unwrap();
 
-        // BlockDeleted now defers removal into the rename-match queue
-        // (Phase 18.G). The row stays in the index for up to 500ms so a
-        // matching BlockChanged can rename identity. Flush the queue
-        // explicitly to observe the committed removal.
+        // BlockDeleted defers removal into the rename-match queue: the row
+        // stays so a matching BlockChanged can keep the card's identity.
+        std::fs::remove_file(&path).unwrap();
         handle_event(&conn, &vault, &VaultEvent::BlockDeleted(path), None).unwrap();
         assert!(
             index::get_block(&conn, "note").unwrap().is_some(),
-            "deferral preserves row until window expires or flush runs"
+            "deferral preserves row until the window expires"
         );
 
-        flush_pending_for_test(&conn, &vault, None);
+        // The timer commits it once the window passes, without another event.
+        assert!(run_removal_timer_once(&conn, &vault));
         assert!(index::get_block(&conn, "note").unwrap().is_none());
-        flush_pending_for_test(&conn, &vault, None);
+        assert_eq!(next_pending_deadline(&vault), None);
+    }
+
+    #[test]
+    fn a_restored_note_survives_its_earlier_deletion_event() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let conn = test_conn();
+        write_md_file_with_body(&vault, "back", "article", &[], "body");
+        let path = vault.block_path("back");
+        index_md_file(&conn, &vault, &path, None).unwrap();
+
+        // Restored without any event reaching the watcher.
+        let saved = std::fs::read(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        handle_event(&conn, &vault, &VaultEvent::BlockDeleted(path.clone()), None).unwrap();
+        std::fs::write(&path, &saved).unwrap();
+        assert!(!run_removal_timer_once(&conn, &vault));
+        assert!(index::get_block(&conn, "back").unwrap().is_some());
+
+        // Restored with its event: the pending removal is void at once.
+        std::fs::remove_file(&path).unwrap();
+        handle_event(&conn, &vault, &VaultEvent::BlockDeleted(path.clone()), None).unwrap();
+        std::fs::write(&path, &saved).unwrap();
+        handle_event(&conn, &vault, &VaultEvent::BlockChanged(path), None).unwrap();
+        assert_eq!(next_pending_deadline(&vault), None);
+        assert!(index::get_block(&conn, "back").unwrap().is_some());
     }
 
     #[test]
@@ -1570,9 +1640,10 @@ mod tests {
         let path = vault.block_path("solo");
         index_md_file(&conn, &vault, &path, None).unwrap();
 
+        std::fs::remove_file(&path).unwrap();
         handle_event(&conn, &vault, &VaultEvent::BlockDeleted(path), None).unwrap();
-        // No matching create: forcing a flush commits the deferred removal.
-        flush_pending_for_test(&conn, &vault, None);
+        // No matching create: the timer commits the deferred removal.
+        assert!(run_removal_timer_once(&conn, &vault));
         assert!(index::get_block(&conn, "solo").unwrap().is_none());
     }
 

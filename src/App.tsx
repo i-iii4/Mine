@@ -517,6 +517,7 @@ export function App() {
           setUnavailablePath(null);
           setVaultPath(path);
         }}
+        onBack={unavailablePath && creatingNewSpace ? () => setCreatingNewSpace(false) : undefined}
       />
     );
   }

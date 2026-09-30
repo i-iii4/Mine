@@ -97,6 +97,9 @@ handle_event(conn: &Connection, vault: &VaultLayout, event: &VaultEvent) -> Resu
 - `MediaChanged` → `storage::thumbnails::generate_thumbnail` для image media, эмитит `thumb:updated { slug }` по завершении. **Note:** текущий handler использует `path_to_slug(media_file)` который некорректен для articles с multiple inline images (slug ≠ media filename). См. SPEC_THUMBNAILS.md для правильного routing через block-aware lookup.
 - `MediaDeleted` → удаление thumbnail
 - External rename `.md` файла проходит через pending-remove queue + `body_hash` match (подробности в [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md)): при match handler вызывает `storage::index::rename_slug`, переносит derived artifacts и эмитит `block:renamed { old_slug, new_slug }`. Другие `.md` файлы и source media не переписываются.
+- Событие переименования (`Modify(Name)`) означает место, которое файл покинул или занял; какое из двух, решает диск: путь без файла становится `BlockDeleted`, путь с файлом `BlockChanged`. Так перемещение в Корзину или за пределы пространства доходит до индекса удалением (SPEC_AUDIT_FIXES.md, Ф7).
+- Отложенное удаление исполняет таймер наблюдателя по окончании окна переименования (500 мс), без ожидания следующего события. Перед удалением из индекса проверяется, что заметки на диске нет: восстановленная заметка остаётся, а её событие появления отменяет отложенное удаление.
+- Восстановление наблюдателя после серии ошибок ставит новый наблюдатель, только если его пространство всё ещё открыто.
 
 Watcher is a low-latency invalidation source, not the correctness boundary.
 Missing/coalesced platform events are repaired by `VaultReconciler` before final
@@ -434,9 +437,9 @@ targets:
 1. NFC-normalize `new_stem`, удалить опциональное `.md`, провалидировать как safe filename stem
 2. Если target имя уже занято — вернуть typed error `NameTaken`
 3. Спланировать source-vault rewrite:
-   - переименовать `.md` файл блока
+   - переименовать `.md` файл блока; без изменений внутри он переносится целиком
    - переименовать Mine-owned rename-family (`old_slug.ext`, `old_slug (image N).*`, `old_slug (video N).*`)
-   - переписать wikilinks и file references по parseable `.md` в vault
+   - переписать ссылки, которые разрешаются в переименованную заметку, включая короткую форму `[[Foo]]` (`NoteMoves`), и file references; правки переносятся в исходный текст (`apply_block_changes`), остальное остаётся байт в байт
 4. Временно suppress'ить затрагиваемые paths в `AppState`
 5. Записать переписанные `.md`, выполнить file renames, перенести derived artifacts
 6. Обновить индекс и эмитить `block:renamed { old_slug, new_slug }`

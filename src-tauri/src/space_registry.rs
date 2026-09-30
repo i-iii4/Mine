@@ -455,6 +455,15 @@ pub fn recover_from_derived_stores(cfg: &mut Map<String, Value>, vaults_dir: &Pa
         return 0;
     }
     found.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+    // Settings that lost the list lost the open space with it: the space
+    // opened last, of those that are here, opens again (SPEC_AUDIT_FIXES.md,
+    // А6.6). A person who closed every space keeps none open: then nothing
+    // was lost from the list and nothing is recovered.
+    if current_path(cfg).is_none() {
+        if let Some((_, latest)) = found.iter().find(|(_, record)| is_available(record)) {
+            cfg.insert(VAULT_PATH_KEY.into(), Value::from(latest.path.clone()));
+        }
+    }
     let added = found.len();
     records.extend(found.into_iter().map(|(_, record)| record));
     write_records(cfg, &records);
@@ -733,6 +742,22 @@ mod tests {
         assert!(!listed.iter().any(|status| status.record.path == "/somewhere/forgotten"));
         // Running again adds nothing.
         assert_eq!(recover_from_derived_stores(&mut cfg, &vaults_dir(&app_data)), 0);
+    }
+
+    #[test]
+    fn lost_settings_reopen_the_space_opened_last() {
+        let dir = tempfile::tempdir().unwrap();
+        let app_data = dir.path().join("app-data");
+        let mine = space(dir.path(), "Mine", MINE);
+        let nsfv = space(dir.path(), "NSFV", NSFV);
+        derived(&app_data, MINE, &mine);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        derived(&app_data, NSFV, &nsfv);
+
+        // The settings were damaged and set aside: nothing is left.
+        let mut cfg = Map::new();
+        assert_eq!(recover_from_derived_stores(&mut cfg, &vaults_dir(&app_data)), 2);
+        assert_eq!(current_path(&cfg), Some(nsfv));
     }
 
     #[test]
