@@ -124,7 +124,14 @@ function mockChrome() {
       },
     },
     runtime: {
-      sendMessage: vi.fn(),
+      // There is no page to capture here: background answers a screenshot
+      // request with a refusal, which leaves the editor and its frame as they
+      // are. Tests about screenshots answer requests themselves.
+      sendMessage: vi.fn((message: { action?: string }, callback?: (response: unknown) => void) => {
+        if (message?.action === "captureForCrop") {
+          setTimeout(() => callback?.({ ok: false, error: "No page to capture in this test" }), 0);
+        }
+      }),
       onMessage: { addListener: vi.fn(), removeListener: vi.fn() },
       lastError: undefined,
     },
@@ -1308,6 +1315,28 @@ describe("screenshots in the editor (SPEC_AUDIT_FIXES.md, Б4.5, Б4.6)", () => 
     expect(result.current.capturing).toBe(false);
   });
 
+  it("keeps Save unavailable during a retake and saves the new frame once it arrives (В4.5)", async () => {
+    standalone.standaloneSave.mockResolvedValue({ ok: true, outcome: "committed", slug: "Cards/Shot" });
+    const { captures } = answerLater();
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(captures).toHaveLength(1));
+    act(() => captures[0]!({ ok: true, dataUrl: first, screenshotId: "shot-1" }));
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    expect(result.current.canSave).toBe(true);
+
+    act(() => result.current.retakeScreenshot());
+    expect(result.current.capturing).toBe(true);
+    expect(result.current.canSave).toBe(false);
+    await act(async () => { expect(await result.current.save()).toBeUndefined(); });
+    expect(standalone.standaloneSave).not.toHaveBeenCalled();
+
+    act(() => captures[1]!({ ok: true, dataUrl: second, screenshotId: "shot-2" }));
+    expect(result.current.canSave).toBe(true);
+    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+    expect(standalone.standaloneSave).toHaveBeenCalledTimes(1);
+    expect(standalone.standaloneSave.mock.calls[0]![0]).toMatchObject({ block_type: "image", screenshot_data_url: second });
+  });
+
   it("names the page address it opened for in every screenshot request", async () => {
     const { sent } = answerLater();
     renderHook(() => useClipperState());
@@ -1333,5 +1362,119 @@ describe("screenshots in the editor (SPEC_AUDIT_FIXES.md, Б4.5, Б4.6)", () => 
     expect(result.current.screenshotDataUrl).toBe(first);
     expect(result.current.captureError).toBe(refusal);
     expect(chrome.storage.session.remove).toHaveBeenCalledWith("cropPendingState");
+  });
+});
+
+describe("a draft is never moved to another browser folder in silence (SPEC_AUDIT_FIXES.md, В4.4)", () => {
+  const url = "https://example.com";
+
+  function draftFor(bindingId: string, folderLabel?: string): DurableClipperDraft {
+    const draft = lifecycleDraft();
+    return { ...draft, state: { ...draft.state, bindingId, selectedTags: ["Collection of A"],
+      ...(folderLabel === undefined ? {} : { folderLabel }) } };
+  }
+
+  function selectedFolder(folderName: string, bindingId: string) {
+    standalone.getStandaloneStatus.mockResolvedValue({ configured: true, folderName, permission: "granted", bindingId });
+  }
+
+  beforeEach(() => {
+    sendToNative.mockResolvedValue({ ok: false, error: "No helper" });
+    standalone.standaloneSave.mockResolvedValue({ ok: true, outcome: "committed", slug: "Cards/Clip" });
+    selectedFolder("Folder B", "browser-b");
+  });
+
+  it("restores a draft made for folder A while B is selected: names both, drops A's collections, saves to B without them", async () => {
+    drafts.set(url, draftFor("browser-a", "Folder A"));
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    await waitFor(() => expect(result.current.destinationNotice)
+      .toBe("This draft was made for “Folder A”. It will be saved to “Folder B”."));
+    expect(result.current.title).toBe("Old edited title");
+    expect(result.current.selectedTags).toEqual([]);
+    expect(result.current.standaloneFolder).toBe("Folder B");
+
+    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+    expect(standalone.standaloneSave).toHaveBeenCalledTimes(1);
+    expect(standalone.standaloneSave.mock.calls[0]![0]).toMatchObject({ binding_id: "browser-b", tags: null, title: "Old edited title" });
+  });
+
+  it("keeps the collections of a draft made for the folder selected now", async () => {
+    drafts.set(url, draftFor("browser-b", "Folder B"));
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    await waitFor(() => expect(result.current.saveMode).toBe("standalone"));
+    await act(async () => { await result.current.retryConnection(true); });
+    expect(result.current.selectedTags).toEqual(["Collection of A"]);
+    expect(result.current.destinationNotice).toBeNull();
+  });
+
+  it("names another folder for a draft that did not keep the folder's name", async () => {
+    drafts.set(url, draftFor("browser-a"));
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.destinationNotice)
+      .toBe("This draft was made for another folder. It will be saved to “Folder B”."));
+    expect(result.current.selectedTags).toEqual([]);
+  });
+
+  it("drops the collections and names both folders when another folder is chosen elsewhere meanwhile", async () => {
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.saveMode).toBe("standalone"));
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    act(() => { result.current.setCurrentType("link"); result.current.toggleTag("Collection of B"); });
+    expect(result.current.selectedTags).toEqual(["Collection of B"]);
+
+    selectedFolder("Folder C", "browser-c");
+    const listener = vi.mocked(chrome.runtime.onMessage.addListener).mock.calls
+      .map(([registered]) => registered as unknown as (message: { action?: string }) => void);
+    await act(async () => { listener.forEach((receive) => receive({ action: "mineStandaloneFolderChanged" })); });
+    await waitFor(() => expect(result.current.standaloneFolder).toBe("Folder C"));
+    expect(result.current.selectedTags).toEqual([]);
+    expect(result.current.destinationNotice).toBe("This draft was made for “Folder B”. It will be saved to “Folder C”.");
+
+    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+    expect(standalone.standaloneSave.mock.calls[0]![0]).toMatchObject({ binding_id: "browser-c", tags: null });
+  });
+});
+
+describe("Save link clips the link, not the page it was clicked on (SPEC_AUDIT_FIXES.md, В4.2)", () => {
+  const pageA = "https://a.example/story";
+  const linkB = "https://b.example/article";
+
+  beforeEach(() => {
+    sendToNative.mockResolvedValue({ ok: false, error: "No helper" });
+    standalone.getStandaloneStatus.mockResolvedValue({ configured: true, folderName: "Mine", permission: "granted", bindingId: "browser-original" });
+    standalone.standaloneSave.mockResolvedValue({ ok: true, outcome: "committed", slug: "Cards/Link" });
+    clipperLaunch.value = { sourceTabId: 7, sourceUrl: pageA, sourceTitle: "Page A title", preloaded: null,
+      contextMenu: { menuItemId: "save-link", linkUrl: linkB, pageUrl: pageA } };
+    vi.spyOn(messaging, "extractMetadata").mockResolvedValue({ url: pageA, documentUrl: pageA, captureGeneration: "a:1",
+      title: "Page A title", description: "About page A", image: "https://a.example/cover.jpg", author: "Author of A",
+      ogType: "article", favicon: "https://a.example/favicon.ico", selection: "", detectedType: "link", isArticle: false });
+  });
+
+  const sentMessages = () => vi.mocked(chrome.runtime.sendMessage).mock.calls
+    .map(([message]) => message as unknown as Record<string, unknown>);
+
+  it("opens as Link without a screenshot of page A and saves link B with nothing of page A", async () => {
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
+
+    expect(result.current.currentType).toBe("link");
+    expect(sentMessages().some((message) => message.action === "captureForCrop")).toBe(false);
+    expect(result.current.title).toBe("");
+    expect(result.current.metadata).toMatchObject({ url: linkB, image: null, description: "", author: null });
+
+    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+    expect(standalone.standaloneSave).toHaveBeenCalledTimes(1);
+    expect(standalone.standaloneSave.mock.calls[0]![0]).toMatchObject({
+      block_type: "link", url: linkB, title: null, body: "", image_url: null, author: null,
+    });
+  });
+
+  it("names link B for a screenshot, so the tab showing page A is refused rather than saved as B", async () => {
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    act(() => result.current.setCurrentType("screenshot"));
+    expect(sentMessages().find((message) => message.action === "captureForCrop")).toMatchObject({ documentUrl: linkB });
   });
 });

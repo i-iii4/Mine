@@ -518,3 +518,116 @@ describe("an extension update waits for the draft queue (SPEC_AUDIT_FIXES.md, Б
     expect(host.local.has("mineDurableDraftRecord:capture")).toBe(false);
   });
 });
+
+describe("an extension update checks again right before the reload (SPEC_AUDIT_FIXES.md, В4.6)", () => {
+  afterEach(() => vi.useRealTimers());
+
+  const sourceUrl = "https://example.com/story";
+  const tab = { id: 7 };
+  const ownership = { ownerId: "editor", generation: 1 };
+
+  /// The actual worker and draft store with an update waiting, over storage
+  /// whose draft writes the test can hold.
+  function updatingWorker() {
+    vi.useFakeTimers();
+    const worker = background("promise", { realDraftStore: true });
+    const local = new Map<string, unknown>();
+    const session = new Map<string, unknown>([["mineReloadPending", "new-build"]]);
+    let holding = false;
+    let held: Array<() => void> = [];
+    const read = (store: Map<string, unknown>, key: unknown) => key === null
+      ? Object.fromEntries([...store].map(([name, value]) => [name, structuredClone(value)]))
+      : { [key as string]: structuredClone(store.get(key as string)) };
+    const change = async (names: string[], apply: () => void) => {
+      if (holding && names.some((name) => name.startsWith("mineDurableDraft"))) {
+        await new Promise<void>((resolve) => { held.push(() => { apply(); resolve(); }); });
+        return;
+      }
+      apply();
+    };
+    const storage = worker.chrome.storage as unknown as Record<"local" | "session", Record<string, ReturnType<typeof vi.fn>>>;
+    storage.local.get.mockImplementation(async (key: unknown) => read(local, key));
+    storage.local.set.mockImplementation((values: Record<string, unknown>) => change(Object.keys(values),
+      () => { for (const [name, value] of Object.entries(values)) local.set(name, structuredClone(value)); }));
+    storage.local.remove.mockImplementation((name: string) => change([name], () => { local.delete(name); }));
+    storage.session.get.mockImplementation(async (key: unknown) => read(session, key));
+    storage.session.set.mockImplementation(async (values: Record<string, unknown>) => {
+      for (const [name, value] of Object.entries(values)) session.set(name, structuredClone(value));
+    });
+    storage.session.remove.mockImplementation(async (name: string) => { session.delete(name); });
+    const send = (message: Message, sender: { tab?: { id: number; url?: string } } = { tab }) =>
+      worker.dispatch({ target: "background", sourceUrl, ...message }, sender).response;
+    return {
+      worker, session, send,
+      hold: () => { holding = true; },
+      release: () => { holding = false; const waiting = held; held = []; waiting.forEach((finish) => finish()); },
+    };
+  }
+
+  /// The update check that a clipper's Escape starts, held while it asks the
+  /// browser for open extension pages.
+  async function checkHeldAtPages(host: ReturnType<typeof updatingWorker>) {
+    let answerPages: (pages: unknown[]) => void = () => undefined;
+    host.worker.chrome.runtime.getContexts.mockImplementationOnce(() => new Promise((resolve) => { answerPages = resolve; }));
+    host.worker.dispatch({ target: "background", action: "mineClipperClosed" }, { tab });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(host.worker.chrome.runtime.getContexts).toHaveBeenCalledOnce();
+    return (pages: unknown[]) => answerPages(pages);
+  }
+
+  it("does not reload while a draft write that began during the check is still being stored", async () => {
+    const host = updatingWorker();
+    await host.send({ action: "draftAttach", options: { ownerId: "editor", captureId: "capture" } });
+    const answerPages = await checkHeldAtPages(host);
+
+    host.hold();
+    const written = host.send({ action: "draftWriteOwned", expectedRevision: 0,
+      draft: { schemaVersion: 1, revision: 1, draftId: "capture", state: { title: "Typed during the check" } },
+      ownership: { ...ownership, mutationId: "edit-1", sequence: 1 } });
+    answerPages([]);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(host.worker.chrome.runtime.reload).not.toHaveBeenCalled();
+    expect(host.session.get("mineReloadPending")).toBe("new-build");
+
+    host.release();
+    await expect(written).resolves.toMatchObject({ ok: true, draft: { state: { title: "Typed during the check" } } });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(host.worker.chrome.runtime.reload).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a clipper that opened after its tab answered the check, until it closes", async () => {
+    const host = updatingWorker();
+    const other = { id: 9, url: "https://c.example/post" };
+    let overlayOpen = false;
+    let answerTab: ((answer: { open: boolean }) => void) | null = null;
+    host.worker.chrome.tabs.query.mockResolvedValue([other]);
+    const tabs = host.worker.chrome.tabs.sendMessage as unknown as ReturnType<typeof vi.fn>;
+    tabs.mockImplementation((_id: number, message: Message, reply?: unknown) => {
+      if (message.action === "showClipperOverlay" && typeof reply === "function") {
+        overlayOpen = true;
+        reply({ ok: true });
+        return undefined;
+      }
+      if (message.action !== "mineClipperIsOpen") return undefined;
+      // The first answer is the one the tab gave before the clipper opened.
+      if (answerTab === null) return new Promise((resolve) => { answerTab = resolve; });
+      return Promise.resolve({ open: overlayOpen });
+    });
+    const answerPages = await checkHeldAtPages(host);
+    answerPages([]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(answerTab).not.toBeNull();
+
+    // The clip button of the page in tab 9 opens the clipper meanwhile.
+    await expect(host.send({ action: "showOverlayInThisTab", pageUrl: other.url }, { tab: other }))
+      .resolves.toMatchObject({ ok: true, mode: "overlay" });
+    answerTab!({ open: false });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(host.worker.chrome.runtime.reload).not.toHaveBeenCalled();
+
+    overlayOpen = false;
+    host.worker.dispatch({ target: "background", action: "mineClipperClosed" }, { tab: other });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(host.worker.chrome.runtime.reload).toHaveBeenCalledOnce();
+  });
+});

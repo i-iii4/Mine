@@ -12,6 +12,9 @@ export interface ClipperDraftState {
   screenshotUploadId?: string | null;
   executor: "native" | "browser" | null;
   bindingId: string | null;
+  /** The name of the folder `bindingId` names, for telling the person when
+   *  the draft is saved elsewhere; absent in drafts from before 30.09.2026. */
+  folderLabel?: string | null;
 }
 
 /** An acknowledged draft edition survives extension context replacement. */
@@ -74,6 +77,7 @@ function validateDraft(value: unknown): DurableClipperDraft | null {
     || !nullableString(state.selectedVault) || !nullableString(state.screenshotDataUrl)
     || (state.screenshotUploadId !== undefined && !nullableString(state.screenshotUploadId))
     || !["native", "browser", null].includes(state.executor as string | null) || !nullableString(state.bindingId)
+    || (state.folderLabel !== undefined && !nullableString(state.folderLabel))
     || (state.articleData !== null && (!object(state.articleData) || typeof state.articleData.title !== "string"
       || typeof state.articleData.content !== "string" || (state.articleData.embeddedVideos !== undefined && !Array.isArray(state.articleData.embeddedVideos))))) {
     throw new Error("The saved draft content is damaged and has been preserved");

@@ -154,6 +154,9 @@ error 2)» и вечным «Loading collections…», затем не мог с
 (`extension_build_id` из `dist/runtime-identity.json`). Если она отличается от
 запущенной, фон запоминает это и вызывает `chrome.runtime.reload()`, когда
 клиппер закрыт (оверлей или отдельное окно) и нет неотвеченного сохранения.
+Оверлей считается открытым с начала монтирования; незавершённые записи,
+открытия и сохранения перепроверяются синхронно непосредственно перед
+`reload()` (SPEC_AUDIT_FIXES.md, Б4.1, В4.6).
 Для одной установленной сборки перезагрузка бывает один раз: если браузер
 загружает другую папку, чем обновлённая, зацикливания нет. Ручная
 перезагрузка нужна последний раз, чтобы запустить фон с этой логикой.
@@ -772,6 +775,8 @@ empty-body screenshot clips derive runtime card kind `media`.
 
 Отмена (Esc до или во время drag'а): content script убивает overlay, пишет `cropResult = {status:"cancelled"}`, background переоткрывает popup. Popup восстанавливает прежний (не кропнутый) скриншот из persisted state.
 
+Обработчик клавиш обрезки ставится и снимается с одним и тем же `{ capture: true }`; после конца обрезки Escape снова принадлежит странице. Повторный старт при идущей обрезке или съёмке игнорируется. Пока оверлей клиппера скрыт для снимка или обрезки, клиппер не обрабатывает клавиши (Escape, Cmd+Enter, стрелки), поэтому Escape отменяет только обрезку (SPEC_AUDIT_FIXES.md, В4.3). Пока идёт съёмка, Save типа Screenshot недоступен и кнопкой, и Cmd+Enter (В4.5).
+
 Условия доступности: кнопка `Crop Area` disabled на страницах, где content script не инжектится — `chrome://*`, `chrome-extension://*`, `view-source:*`, Chrome Web Store. Проверка по `tab.url.protocol` и `hostname`, tooltip показывает причину.
 
 Ключевые инварианты:
@@ -798,8 +803,8 @@ Popup выбирает таб по умолчанию в два шага: сна
 Context-menu клики переопределяют этот выбор в `applyContextMenu` (см. раздел «Context Menu»):
 - `save-image`       → `detectedType = "image"`
 - `save-selection`   → `detectedType = "selection"`
-- `save-link` на твит → `detectedType = "article"`
-- `save-link` иначе  → `detectedType = "link"`
+- `save-link` на твит → `detectedType = "article"`; метаданные только от твита B, ничего со страницы A
+- `save-link` иначе  → `detectedType = "link"` без `captureScreenshot()`: метаданные это только адрес B (`url` и `documentUrl`), заголовок, описание, обложка и автор страницы A не переносятся; снимок, обрезка и извлечение вкладки отказывают по сверке адреса, потому что вкладка показывает A (SPEC_AUDIT_FIXES.md, В4.2)
 - `save-page` + открытый Twitter lightbox → `detectedType = "image"`
 
 **Twitter/X photo lightbox (любая активация).** URL вида
@@ -812,7 +817,7 @@ Context-menu клики переопределяют этот выбор в `app
 `/photo/<n>`. Источник изображения — точное N-е фото из syndication API
 (`media_url_https + "?name=large"`, `ext_alt_text`, `original_info`), с фолбэком
 на DOM-детектор лайтбокса (`detectTwitterLightboxImage`). Override не
-применяется, если context menu уже дал `image`/`selection`. Чистая логика —
+применяется, если context menu уже дал `image`/`selection`, и для `save-link`. Чистая логика —
 `extension/popup/lib/twitterPhotoLightbox.ts`, покрыта
 `twitterPhotoLightbox.test.ts`.
 
@@ -825,12 +830,13 @@ Context-menu клики переопределяют этот выбор в `app
 | `video` | **Content** | Видеоблок, транскрипт в body |
 | `content` | **Content** | Явный выбор из context menu |
 | `image` | **(image-only)** | TypeSwitcher **скрыт**, показывается только превью картинки |
+| `link` из Save link (не твит) | **Link** | Снимок не делается: сохраняется ссылка B без материала страницы A |
 | `link` / всё остальное | **Screenshot** | Автоматически вызывается `captureScreenshot()` при открытии popup |
 
 **Инварианты, которые нельзя потерять:**
 1. Selection → Content с цитатой. Проверяется сценарием: выделить текст на странице → нажать иконку расширения → должен открыться Content-таб с цитатой в превью, а не Screenshot.
 2. Image-режим (ПКМ на картинке) не показывает TypeSwitcher вообще — пользователь не переключает типы, только сохраняет.
-3. Default для «всего остального» — именно Screenshot, не Link. При открытии popup без явного типа расширение сразу делает capture и показывает превью.
+3. Default для «всего остального» — именно Screenshot, не Link. При открытии popup без явного типа расширение сразу делает capture и показывает превью. Исключение: явный Save link открывает Link.
 
 ### Startup performance contract
 
@@ -1238,6 +1244,13 @@ pending-операции идёт через `?mode=setup&binding_id=…`; вы�
 операции записать невозможно, запрос исполнителю не отправляется; нельзя
 выдавать успех или обещать восстановление несохранённых данных.
 
+Черновик автономного режима помнит свою папку (`folderLabel`). Если при его
+восстановлении, повторной выдаче доступа или смене папки при открытом клиппере
+выбрана другая папка, коллекции прежней папки очищаются, а над Save стоит строка
+«This draft was made for “A”. It will be saved to “B”.»: назначение меняется
+только явно. Явный выбор папки в этом редакторе тоже очищает коллекции, без
+уведомления (SPEC_AUDIT_FIXES.md, В4.4).
+
 Неудачная запись черновика не удаляет прежний подтверждённый черновик. Сохранение
 текущего материала не выдаёт этот прежний черновик за текущий. Очистка учитывает
 принадлежность и подтверждённую редакцию; оставшийся результат операции защищает
@@ -1270,6 +1283,7 @@ Background service worker регистрирует 4 пункта:
 | `save-page` | Save page to Mine | `page` | Всегда |
 | `save-image` | Save image to Mine | `image` | Правый клик по `<img>` |
 | `save-selection` | Save selection to Mine | `selection` | Есть выделенный текст |
+| `save-link` | Save link to Mine | `link` | Правый клик по ссылке |
 
 При выборе пункта открывается popup с предвыбранным типом и заполненными полями.
 
@@ -1278,7 +1292,7 @@ Background service worker регистрирует 4 пункта:
 | Shortcut | Context | Action |
 |---|---|---|
 | `Option+A` | Глобальный (настраиваемый через chrome://extensions/shortcuts) | Открыть popup |
-| `Cmd+Enter` | Popup | Сохранить (best-effort — из overlay срабатывает не всегда) |
+| `Cmd+Enter` | Popup | Сохранить, только когда Save доступен (best-effort — из overlay срабатывает не всегда); при скрытом для снимка или обрезки оверлее не действует |
 | `Escape` | Popup | Слоями, изнутри наружу: непустой поиск очищает запрос; открытый dropdown закрывается сам; и только свободный Escape закрывает окно расширения без сохранения и возвращает фокус странице |
 | `Tab` / `Shift+Tab` | Popup | Фокус между элементами панели, по кругу внутри неё |
 | `Left/Right` | Popup, фокус не в тексте и не в открытом списке | Предыдущий или следующий тип: Content, Screenshot, Link |

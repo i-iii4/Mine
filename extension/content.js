@@ -1377,6 +1377,10 @@
   // The page address the clipper opened for. The crop's capture names it, and
   // background refuses a page that has changed since (SPEC_AUDIT_FIXES.md, Ф6).
   let cropDocumentUrl = null;
+  // The crop under way, from its start until its result is handed over,
+  // capture included. One at a time: another start meanwhile is ignored
+  // (SPEC_AUDIT_FIXES.md, В4.3).
+  let cropInProgress = false;
 
   function afterViewportPaint(callback) {
     let done = false;
@@ -1494,6 +1498,8 @@
     });
   }
 
+  /// The crop's result: `{status:"done", dataUrl}` or `{status:"cancelled"}`
+  /// with the reason when the capture was refused.
   async function performCrop(rect) {
     // Ask background for a full viewport capture
     const captureResp = await new Promise((resolve) => {
@@ -1504,8 +1510,7 @@
     });
 
     if (!captureResp.ok || !captureResp.dataUrl) {
-      sendCropResult({ status: "cancelled", error: captureResp.error || "Screenshot capture failed" });
-      return;
+      return { status: "cancelled", error: captureResp.error || "Screenshot capture failed" };
     }
 
     const dpr = window.devicePixelRatio || 1;
@@ -1542,16 +1547,16 @@
         croppedDataUrl = canvas.toDataURL("image/jpeg", 0.9);
       }
 
-      sendCropResult({ status: "done", dataUrl: croppedDataUrl });
+      return { status: "done", dataUrl: croppedDataUrl };
     } catch (e) {
       console.error("[Mine] crop failed:", e);
-      sendCropResult({ status: "cancelled" });
+      return { status: "cancelled" };
     }
   }
 
   function startCropOverlay(documentUrl) {
-    // Guard against double-start
-    if (cropOverlayHost) return;
+    // A crop already under way, its capture included, is not started again.
+    if (cropInProgress) return;
     // No address named: background refuses the capture rather than guess.
     cropDocumentUrl = typeof documentUrl === "string" ? documentUrl : null;
 
@@ -1630,6 +1635,7 @@
 
     document.body.appendChild(host);
     cropOverlayHost = host;
+    cropInProgress = true;
 
     const overlay = shadow.querySelector(".overlay");
     const dim = shadow.querySelector(".dim");
@@ -1681,13 +1687,32 @@
       updateSelection();
     }
 
+    // Escape is taken in the capture phase, before the page sees it. The
+    // same options remove it: a listener removed without the capture flag
+    // stays, and every later Escape of the page would be taken, restore an
+    // old scroll lock and bring the clipper back (SPEC_AUDIT_FIXES.md, В4.3).
+    const keyListenerOptions = { capture: true };
+    let cleanedUp = false;
+    let finished = false;
+
+    // Takes the crop's layer and listeners away once, however it ends.
     function cleanup() {
+      if (cleanedUp) return;
+      cleanedUp = true;
       overlay.removeEventListener("mousedown", onMouseDown);
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
-      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keydown", onKeyDown, keyListenerOptions);
       document.documentElement.style.overflow = prevOverflow;
       destroyCropOverlay();
+    }
+
+    // Hands the result over once; the next crop may start after it.
+    function finish(payload) {
+      if (finished) return;
+      finished = true;
+      cropInProgress = false;
+      sendCropResult(payload);
     }
 
     function onMouseUp() {
@@ -1707,21 +1732,23 @@
       sizeLabel.classList.remove("visible");
       dim.classList.remove("active");
       cleanup();
-      performCrop(finalRect);
+      performCrop(finalRect).then(finish, (e) => {
+        console.error("[Mine] crop failed:", e);
+        finish({ status: "cancelled" });
+      });
     }
 
     function onKeyDown(e) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        cleanup();
-        sendCropResult({ status: "cancelled" });
-      }
+      if (e.key !== "Escape" || cleanedUp) return;
+      e.preventDefault();
+      cleanup();
+      finish({ status: "cancelled" });
     }
 
     overlay.addEventListener("mousedown", onMouseDown);
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
-    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keydown", onKeyDown, keyListenerOptions);
   }
 
   // The overlay clipper starts a crop directly, naming its page address.

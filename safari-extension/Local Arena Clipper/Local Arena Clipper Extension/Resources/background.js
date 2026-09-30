@@ -295,7 +295,13 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   void forgetClipperLaunch(tabId).catch(() => undefined);
 });
 
-async function openClipperUi(tab, options = {}) {
+// A pending extension update does not reload while a clipper is opening
+// (SPEC_AUDIT_FIXES.md, В4.6).
+function openClipperUi(tab, options = {}) {
+  return trackClipperOpening(() => openClipperUiNow(tab, options));
+}
+
+async function openClipperUiNow(tab, options) {
   const { tabId, tabUrl } = await resolveClipperTarget(tab, options.fallbackUrl ?? null);
   const allowWindowFallback = options.allowWindowFallback !== false;
   // Every opening writes its own launch: a buffer left by an opening that
@@ -616,17 +622,24 @@ async function noteInstalledExtension(status) {
 }
 
 async function reloadIfUpdated() {
+  const activity = clipperActivity;
   const { mineReloadPending } = await chrome.storage.session.get("mineReloadPending");
   if (typeof mineReloadPending !== "string") return;
   // A save in flight finishes first; its end checks again.
-  if (browserWritesInFlight > 0) return;
-  for (const [, pending] of pendingCallbacks) {
-    if (pending.action === "save_block") return;
-  }
+  if (reloadWaits(activity)) return;
   // Closing one clipper must not take away another one still open.
   if (await anyEditorOpen()) return;
+  if (reloadWaits(activity)) return;
   await chrome.storage.local.set({ mineReloadedFor: mineReloadPending });
   await chrome.storage.session.remove("mineReloadPending");
+  // Checked again with nothing awaited before the reload: a clipper opened,
+  // a draft written or a save sent while the tabs were asked or storage
+  // written would be cut off. The update stays pending, and the end of that
+  // work checks again (SPEC_AUDIT_FIXES.md, В4.6).
+  if (reloadWaits(activity)) {
+    await chrome.storage.session.set({ mineReloadPending });
+    return;
+  }
   chrome.runtime.reload();
 }
 
@@ -635,13 +648,42 @@ async function reloadIfUpdated() {
 // the last edit lost, a draft removal cut off brings a saved clip back as a
 // draft (SPEC_AUDIT_FIXES.md, Б4.1).
 let browserWritesInFlight = 0;
+// Clipper openings still under way, and a count of every opening and every
+// browser write begun. A reload check that saw this count change while it
+// waited has seen a clipper that it did not ask about (В4.6).
+let clipperOpeningsInFlight = 0;
+let clipperActivity = 0;
+
+/// Whether a pending update has to wait: a write or an opening under way, a
+/// save waiting for the helper, or any of them begun since `activity`.
+function reloadWaits(activity) {
+  if (browserWritesInFlight > 0 || clipperOpeningsInFlight > 0 || clipperActivity !== activity) return true;
+  for (const [, pending] of pendingCallbacks) {
+    if (pending.action === "save_block") return true;
+  }
+  return false;
+}
 
 function trackBrowserWrite(work) {
   browserWritesInFlight += 1;
+  clipperActivity += 1;
   return Promise.resolve()
     .then(work)
     .finally(() => {
       browserWritesInFlight -= 1;
+      scheduleReloadCheck();
+    });
+}
+
+/// An opening of the clipper holds a pending update until it has finished;
+/// the clipper it opened then holds it until it closes.
+function trackClipperOpening(work) {
+  clipperOpeningsInFlight += 1;
+  clipperActivity += 1;
+  return Promise.resolve()
+    .then(work)
+    .finally(() => {
+      clipperOpeningsInFlight -= 1;
       scheduleReloadCheck();
     });
 }

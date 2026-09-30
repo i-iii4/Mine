@@ -48,7 +48,7 @@ import {
   emptyContentMessage,
   type ArticleExtractionState,
 } from "../lib/articleExtractionState";
-import { applySaveImageContextMenu } from "../lib/contextMenuMetadata";
+import { applySaveImageContextMenu, linkTargetMetadata } from "../lib/contextMenuMetadata";
 import { pickImageCardUrl } from "../lib/postSourceUrl";
 import {
   parseTwitterPhotoUrl,
@@ -183,6 +183,11 @@ export function useClipperState() {
   const nativeStatusPromiseRef = useRef<Promise<boolean> | null>(null);
   const nativeStatusGenerationRef = useRef<number | null>(null);
   const bindingIdRef = useRef<string | null>(null);
+  // The name of the folder bindingIdRef names: the browser folder's name or
+  // the space's path. Tells the person where a draft was made when it is
+  // saved elsewhere (SPEC_AUDIT_FIXES.md, В4.4).
+  const destinationLabelRef = useRef<string | null>(null);
+  const [destinationNotice, setDestinationNotice] = useState<string | null>(null);
   // The app's settings generation seen last (SPEC_CLIPPER.md, К5).
   const configGenerationRef = useRef<number | null>(null);
   const saveProtocolRef = useRef<number | null>(null);
@@ -249,7 +254,16 @@ export function useClipperState() {
   // applied. A failure is shown in the editor, which keeps its state and the
   // previous frame (SPEC_AUDIT_FIXES.md, Б4.6).
   const captureRequestRef = useRef(0);
-  const [capturing, setCapturing] = useState(false);
+  const [capturing, setCapturingValue] = useState(false);
+  // A screenshot clip saves only once the frame being taken has arrived: it
+  // saves what the preview shows, never the previous frame beside a newer
+  // preview (SPEC_AUDIT_FIXES.md, Ф5, В4.5). Retake and Crop wait for a save
+  // in turn. Other types do not carry the frame and do not wait for it.
+  const capturingRef = useRef(false);
+  const setCapturing = useCallback((value: boolean) => {
+    capturingRef.current = value;
+    setCapturingValue(value);
+  }, []);
   const [captureError, setCaptureError] = useState<string | null>(null);
 
   const captureScreenshot = useCallback(() => {
@@ -317,7 +331,7 @@ export function useClipperState() {
       { target: "background", action: "captureForCrop", tabId: tabIdRef.current, documentUrl },
       settle,
     );
-  }, [cacheCapturedScreenshot, captureDocumentUrl, setScreenshotDataUrl, setScreenshotUploadId]);
+  }, [cacheCapturedScreenshot, captureDocumentUrl, setCapturing, setScreenshotDataUrl, setScreenshotUploadId]);
 
   const retakeScreenshot = useCallback(() => {
     if (operationRef.current || preparedOperationRef.current || savingRef.current) return;
@@ -457,15 +471,33 @@ export function useClipperState() {
     });
   }, []);
 
-  const enterStandaloneMode = useCallback((status: StandaloneStatus) => {
+  /// Save into the granted browser folder. `chosen` is a folder the person
+  /// picked in this editor; `found` is the folder selected at the moment,
+  /// which may differ from the one the draft was made for.
+  const enterStandaloneMode = useCallback((status: StandaloneStatus, change: "found" | "chosen" = "found") => {
+    const folderName = status.folderName ?? "Folder";
+    const binding = status.bindingId ?? null;
+    const previousBinding = bindingIdRef.current;
+    const previousLabel = destinationLabelRef.current;
     saveModeRef.current = "standalone";
     setSaveMode("standalone");
-    setStandaloneFolder(status.folderName ?? "Folder");
-    bindingIdRef.current = status.bindingId ?? null;
+    setStandaloneFolder(folderName);
+    bindingIdRef.current = binding;
+    destinationLabelRef.current = folderName;
     destinationRef.current = "browser";
     nativeStatusErrorRef.current = null;
     setNativeStatusError(null);
     setReconnecting(false);
+    if (previousBinding !== null && previousBinding !== binding) {
+      // Collections are pages of the folder they were chosen in and do not
+      // follow the clip into another one; a folder the person did not pick
+      // here is named, so the destination is never a silent move
+      // (SPEC_AUDIT_FIXES.md, Ф6, В4.4).
+      setSelectedTags([]);
+      setDestinationNotice(change === "chosen" ? null : movedDraftNotice(previousLabel, folderName));
+    } else if (change === "chosen") {
+      setDestinationNotice(null);
+    }
     void refreshChannels();
   }, [refreshChannels]);
 
@@ -491,6 +523,7 @@ export function useClipperState() {
           vaultRef.current = selected.vaultPath;
           setSelectedVault(selected.vaultPath);
           bindingIdRef.current = "bindingId" in selected && typeof selected.bindingId === "string" ? selected.bindingId : null;
+          destinationLabelRef.current = selected.vaultPath;
         }
         if (!destinationRef.current && selected && typeof selected === "object"
           && "executor" in selected && selected.executor === "browser") {
@@ -594,6 +627,7 @@ export function useClipperState() {
         }
         destinationRef.current = "native";
         bindingIdRef.current = status.binding_id;
+        destinationLabelRef.current = status.vault_path;
         vaultRef.current = status.vault_path;
         setSelectedVault(status.vault_path);
         saveModeRef.current = "app";
@@ -748,6 +782,7 @@ export function useClipperState() {
         destinationGenerationRef.current += 1;
         destinationRef.current = draft.state.executor;
         bindingIdRef.current = draft.state.bindingId;
+        destinationLabelRef.current = draft.state.folderLabel ?? draft.state.selectedVault;
         setScreenshotDataUrl(draft.state.screenshotDataUrl);
         // Worker cache IDs are ephemeral; restored bytes get a fresh upload ID.
         setScreenshotUploadId(null);
@@ -787,6 +822,7 @@ export function useClipperState() {
       metadata, articleData, title, selectedTags, currentType, selectedVault,
       // Keep the legacy schema slot for older widgets, never a cache identity.
       screenshotDataUrl, screenshotUploadId: null, executor: destinationRef.current, bindingId: bindingIdRef.current,
+      folderLabel: destinationLabelRef.current,
     };
     const previous = draftWriteQueueRef.current;
     const snapshotsSupported = draftSnapshotsSupportedRef.current;
@@ -1125,12 +1161,18 @@ export function useClipperState() {
       captureDocumentRef.current = tabUrl ?? null;
       applyCropCapability(tabUrl ?? null);
 
-      const meta = await extractMetadata(tabId);
+      // "Save link" clips the link, never the page it was clicked on: nothing
+      // is read from that page (SPEC_AUDIT_FIXES.md, Ф5, Ф6, В4.2).
+      const linkTarget = ctxData?.menuItemId === "save-link" && ctxData.linkUrl ? ctxData.linkUrl : null;
+      const meta = linkTarget ? linkTargetMetadata(linkTarget) : await extractMetadata(tabId);
       let article: ArticleData = { title: "", content: "", byline: null, excerpt: "" };
 
-      // Apply tab fallbacks
-      if (!meta.url && tabUrl) meta.url = tabUrl;
-      if (!meta.title && tabTitle) meta.title = tabTitle;
+      // Apply tab fallbacks; the tab's address and title are another page's
+      // for a link target.
+      if (!linkTarget) {
+        if (!meta.url && tabUrl) meta.url = tabUrl;
+        if (!meta.title && tabTitle) meta.title = tabTitle;
+      }
 
       // Apply context menu overrides
       if (ctxData) {
@@ -1140,8 +1182,10 @@ export function useClipperState() {
       // Twitter/X photo lightbox (/status/<id>/photo/<n>): clip the single
       // image the overlay shows, not the whole tweet thread. tabUrl is the raw
       // location (meta.url is canonicalized to /status/<id> without the photo
-      // suffix). Skip when the context menu already resolved an explicit type.
+      // suffix). Skip when the context menu already resolved an explicit type
+      // or named a link, whose clip is not the photo the tab shows.
       if (
+        !linkTarget &&
         meta.detectedType !== "image" &&
         meta.detectedType !== "selection" &&
         tabUrl
@@ -1173,6 +1217,7 @@ export function useClipperState() {
       //   image      → Image-only view (TypeSwitcher hidden in PopupApp)
       //   article    → Content
       //   video      → Content (video block, transcript in body)
+      //   Save link  → Link, with no screenshot: the tab shows another page
       //   link/other → Screenshot (default visual clip for everything else)
       let detected: ClipType;
       const dt = meta.detectedType;
@@ -1180,6 +1225,8 @@ export function useClipperState() {
         detected = "content";
       } else if (dt === "image") {
         detected = "image";
+      } else if (linkTarget) {
+        detected = "link";
       } else {
         detected = "screenshot";
       }
@@ -1254,7 +1301,7 @@ export function useClipperState() {
         meta.selection = ctx.selectionText ?? meta.selection;
         break;
       case "save-link":
-        if (ctx.linkUrl) meta.url = ctx.linkUrl;
+        // The metadata is already the link's own (linkTargetMetadata).
         // Twitter/X tweet links: fetch full tweet (text + images) via
         // syndication API directly from popup — no content script needed,
         // works even when current page is the feed, not the tweet page.
@@ -1272,8 +1319,6 @@ export function useClipperState() {
               // Fall through — save as article without media
             }
           }
-        } else {
-          meta.detectedType = "link";
         }
         break;
       case "save-page": {
@@ -1359,7 +1404,7 @@ export function useClipperState() {
   }, [refreshChannels]);
 
   const save = useCallback(async () => {
-    if (!metadata || savingRef.current) return;
+    if (!metadata || savingRef.current || (currentType === "screenshot" && capturingRef.current)) return;
 
     savingRef.current = true;
     setSaving(true);
@@ -1649,7 +1694,9 @@ export function useClipperState() {
     setChannelsLoading(true);
     setChannelsError(null);
     setSelectedTags([]);
+    setDestinationNotice(null);
     bindingIdRef.current = null;
+    destinationLabelRef.current = vaultPath;
     setSelectedVault(vaultPath);
     vaultRef.current = vaultPath;
     // A reachable space loads its collections from the status itself.
@@ -1690,7 +1737,7 @@ export function useClipperState() {
     if (status.configured && status.permission === "granted") {
       editorChangedRef.current = true;
       await chrome.storage.local.set({ mineSaveDestination: { executor: "browser", bindingId: status.bindingId } });
-      enterStandaloneMode(status);
+      enterStandaloneMode(status, "chosen");
       return { ok: true as const };
     }
     return { ok: false as const, error: status.error ?? null };
@@ -1736,7 +1783,9 @@ export function useClipperState() {
       setTitle(value);
     },
     saving,
-    canSave: state === "main" && metadata !== null,
+    canSave: state === "main" && metadata !== null && !(currentType === "screenshot" && capturing),
+    /** Where the draft was made and where Save now puts it, when they differ. */
+    destinationNotice,
     draftReady: Boolean(draftSourceUrl && draftReadySource === draftSourceUrl),
     draftLoading: Boolean(draftSourceUrl && draftReadySource !== draftSourceUrl && !draftError),
     draftError,
@@ -1781,6 +1830,16 @@ interface ResolveTwitterMediaResponse {
   ok: boolean;
   error?: string;
   media?: TwitterMediaPreview[];
+}
+
+/// One line naming both folders when a draft is saved elsewhere than where it
+/// was made. A space is named by its folder, not by its whole path.
+function movedDraftNotice(previousLabel: string | null, folderName: string): string {
+  const segments = previousLabel?.split("/").filter(Boolean) ?? [];
+  const previous = segments[segments.length - 1] ?? previousLabel;
+  return previous
+    ? `This draft was made for “${previous}”. It will be saved to “${folderName}”.`
+    : `This draft was made for another folder. It will be saved to “${folderName}”.`;
 }
 
 function isRecoverableDraftError(cause: unknown): boolean {

@@ -26,6 +26,11 @@ interface OverlayHandle {
 }
 
 let current: OverlayHandle | null = null;
+// Mounts under way. A pending extension update counts the clipper open from
+// the moment it starts mounting, not once the mount has finished: its draft
+// and its requests reach background right after (SPEC_CLIPPER.md, К4;
+// SPEC_AUDIT_FIXES.md, В4.6).
+let mounting = 0;
 let cachedCss: string | null = null;
 
 async function loadCss(): Promise<string> {
@@ -249,10 +254,32 @@ async function mount(): Promise<OverlayHandle> {
 /// metadata, title) is DESTROYED. Use this when the intent is
 /// "user opened the clipper with new input."
 export async function showClipperOverlay(): Promise<void> {
-  if (current) {
-    closeClipperOverlay();
+  // Counted before the previous overlay closes: that close asks background
+  // to apply a pending update, and this clipper is already opening.
+  await mountTracked(() => {
+    if (current) closeClipperOverlay();
+  });
+}
+
+async function mountTracked(beforeMount: () => void = () => undefined): Promise<void> {
+  mounting += 1;
+  try {
+    beforeMount();
+    current = await mount();
+  } finally {
+    mounting -= 1;
   }
-  current = await mount();
+}
+
+/// Whether a clipper is open or opening in this tab.
+export function isClipperOverlayOpen(): boolean {
+  return current !== null || mounting > 0;
+}
+
+/// Hidden for a screenshot or a crop: still open, but the keyboard belongs to
+/// the page and the crop until it comes back (SPEC_AUDIT_FIXES.md, В4.3).
+export function isClipperOverlayHidden(): boolean {
+  return current !== null && current.host.style.display === "none";
 }
 
 /// Resume after a transient hide: screenshot capture, crop flow.
@@ -267,7 +294,7 @@ export async function resumeClipperOverlay(): Promise<void> {
     restoreKeyboard(current);
     return;
   }
-  current = await mount();
+  await mountTracked();
 }
 
 /// Hiding the host (display:none) takes the keyboard from whatever had it in
@@ -341,11 +368,13 @@ interface MineOverlayApi {
   show: () => void;
   hide: () => void;
   close: () => void;
+  isHidden: () => boolean;
 }
 const api: MineOverlayApi = {
   show: () => void resumeClipperOverlay(),
   hide: hideClipperOverlay,
   close: closeClipperOverlay,
+  isHidden: isClipperOverlayHidden,
 };
 (globalThis as unknown as { __mineOverlay: MineOverlayApi }).__mineOverlay = api;
 
@@ -369,13 +398,13 @@ function onRuntimeMessage(msg: unknown) {
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   // A pending extension update asks before reloading (SPEC_CLIPPER.md, К4):
-  // a hidden overlay (screenshot, crop) is still an open editor.
+  // a hidden overlay (screenshot, crop) and a mounting one are open editors.
   if (
     typeof msg === "object" &&
     msg !== null &&
     (msg as { action?: unknown }).action === "mineClipperIsOpen"
   ) {
-    sendResponse({ open: current !== null });
+    sendResponse({ open: isClipperOverlayOpen() });
     return false;
   }
   const handled = onRuntimeMessage(msg);

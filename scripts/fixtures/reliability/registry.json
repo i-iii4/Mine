@@ -1092,6 +1092,28 @@
       "requirement": "SPEC_AUDIT_FIXES.md#| В5.1 |",
       "tests": ["src/App.test.tsx", "src/components/Card.test.tsx", "src/components/GraphView.test.tsx", "src/components/Grid.firstCards.test.tsx", "src/components/Grid.wordMetrics.test.tsx", "src/lib/cardLayout.test.ts", "src/lib/cardHeight.test.ts"],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "extension/background.js",
+        "extension/content.js",
+        "extension/popup/hooks/useClipperState.ts",
+        "extension/popup/PopupApp.tsx",
+        "extension/popup/overlay-entry.tsx",
+        "extension/popup/lib/contextMenuMetadata.ts",
+        "extension/popup/lib/draft.ts",
+        "extension/background.messaging.test.ts",
+        "extension/lib/cropCapture.test.ts",
+        "extension/popup/PopupApp.test.tsx",
+        "extension/popup/overlay-entry.test.tsx",
+        "extension/popup/hooks/useClipperState.standalone.test.tsx",
+        "extension/popup/overlayCropEscape.test.tsx",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/background.js",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/content.js"
+      ],
+      "requirement": "SPEC_AUDIT_FIXES.md#| В4.2 |",
+      "tests": ["extension/background.messaging.test.ts", "extension/lib/cropCapture.test.ts", "extension/popup/PopupApp.test.tsx", "extension/popup/overlay-entry.test.tsx", "extension/popup/hooks/useClipperState.standalone.test.tsx", "extension/popup/overlayCropEscape.test.tsx"],
+      "command": "test:frontend"
     }
   ],
   "release": null

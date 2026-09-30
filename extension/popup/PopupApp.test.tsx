@@ -134,6 +134,51 @@ describe("Mine out of reach", () => {
   });
 });
 
+describe("Save waits for the frame being taken (SPEC_AUDIT_FIXES.md, В4.5)", () => {
+  it("disables the button and ignores Cmd+Enter while a screenshot is being taken", () => {
+    state.canSave = false;
+    render(<PopupApp />);
+    expect(screen.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+    fireEvent.keyDown(window, { key: "Enter", metaKey: true });
+    expect(state.save).not.toHaveBeenCalled();
+  });
+
+  it("saves with Cmd+Enter once the frame has arrived", () => {
+    state.save.mockResolvedValue({ ok: false, error: "Not saved in this test" });
+    render(<PopupApp />);
+    fireEvent.keyDown(window, { key: "Enter", metaKey: true });
+    expect(state.save).toHaveBeenCalledOnce();
+  });
+});
+
+describe("a clipper hidden for a screenshot or a crop leaves the keyboard alone (SPEC_AUDIT_FIXES.md, В4.3)", () => {
+  const overlay = { close: vi.fn(), isHidden: vi.fn(() => true) };
+  beforeEach(() => {
+    overlay.close.mockReset();
+    (globalThis as unknown as { __mineOverlay?: typeof overlay }).__mineOverlay = overlay;
+  });
+  afterEach(() => {
+    delete (globalThis as unknown as { __mineOverlay?: typeof overlay }).__mineOverlay;
+  });
+
+  it("neither closes on Escape nor saves on Cmd+Enter while hidden", () => {
+    render(<PopupApp />);
+    const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    window.dispatchEvent(escape);
+    fireEvent.keyDown(window, { key: "Enter", metaKey: true });
+    expect(escape.defaultPrevented).toBe(false);
+    expect(overlay.close).not.toHaveBeenCalled();
+    expect(state.save).not.toHaveBeenCalled();
+  });
+
+  it("closes on Escape again once it is back", () => {
+    overlay.isHidden.mockReturnValue(false);
+    render(<PopupApp />);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(overlay.close).toHaveBeenCalledOnce();
+  });
+});
+
 describe("clipper keyboard (А6.9)", () => {
   beforeEach(() => {
     state.setCurrentType.mockReset();

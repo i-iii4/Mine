@@ -41,6 +41,16 @@ function VideoPosterPreview({
   );
 }
 
+/** The in-page overlay's controls (overlay-entry.tsx); absent in the window. */
+interface MineOverlayControls {
+  close: () => void;
+  isHidden: () => boolean;
+}
+
+function mineOverlay(): MineOverlayControls | undefined {
+  return (globalThis as unknown as { __mineOverlay?: MineOverlayControls }).__mineOverlay;
+}
+
 function TypeRow({
   current,
   onChange,
@@ -71,9 +81,7 @@ export function PopupApp() {
   // In window-entry fallback (detached popup window) __mineOverlay is
   // undefined and window.close() correctly closes the popup window.
   const closeClipper = useCallback(() => {
-    const overlay = (globalThis as unknown as {
-      __mineOverlay?: { close: () => void };
-    }).__mineOverlay;
+    const overlay = mineOverlay();
     if (overlay) overlay.close();
     else window.close();
   }, []);
@@ -168,9 +176,16 @@ export function PopupApp() {
       return scope.querySelector('[data-slot="dropdown-menu-content"]') !== null;
     }
     function onKeyDown(e: KeyboardEvent) {
+      // Hidden for a screenshot or a crop, the clipper is still open, but
+      // the keyboard belongs to the page and the crop until it comes back:
+      // Escape there cancels the crop, not the clipper (SPEC_AUDIT_FIXES.md,
+      // Ф6, В4.3).
+      if (mineOverlay()?.isHidden()) return;
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
         e.preventDefault();
-        handleSave();
+        // The same rule as the Save button: a screenshot waits for the frame
+        // being taken (В4.5).
+        if (clipper.canSave) void handleSave();
         return;
       }
       if (e.key === "Escape") {
@@ -211,7 +226,7 @@ export function PopupApp() {
     }
     window.addEventListener("keydown", onKeyDown, { capture: true });
     return () => window.removeEventListener("keydown", onKeyDown, { capture: true });
-  }, [handleSave, closeClipper, clipper.currentType, clipper.setCurrentType, clipper.metadata?.detectedType]);
+  }, [handleSave, closeClipper, clipper.canSave, clipper.currentType, clipper.setCurrentType, clipper.metadata?.detectedType]);
 
   const { metadata, articleData } = clipper;
   const capture = resolveCaptureResult(clipper.currentType, metadata, articleData);
@@ -467,6 +482,11 @@ export function PopupApp() {
             <Button variant="secondary" disabled={clipper.connectionChecking} onClick={() => void clipper.retryConnection(true)}>
               {clipper.connectionChecking ? "Connecting…" : "Retry connection"}
             </Button>
+          )}
+          {clipper.destinationNotice && !saved && (
+            <p role="status" className="text-sm text-muted-foreground" data-clipper-destination-notice="">
+              {clipper.destinationNotice}
+            </p>
           )}
           {clipper.draftError && !saved && (
             <p role="status" className="text-sm text-muted-foreground">{clipper.draftError}</p>
