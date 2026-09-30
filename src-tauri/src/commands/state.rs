@@ -80,6 +80,37 @@ impl AppState {
         self.vault_selection_request.load(Ordering::SeqCst) == request
     }
 
+    /// Begin the selection that follows `request`, only while `request` is
+    /// still the newest one. The app reopening a space on its own (found
+    /// after a move) never overrides a choice the person made meanwhile
+    /// (`SPEC_AUDIT_FIXES.md`, В2.1); `None` when one was made.
+    pub(crate) fn begin_vault_selection_after(&self, request: u64) -> Option<u64> {
+        let _publication = self
+            .vault_publication
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let next = request.checked_add(1)?;
+        self.vault_selection_request
+            .compare_exchange(request, next, Ordering::SeqCst, Ordering::SeqCst)
+            .ok()
+            .map(|_| next)
+    }
+
+    /// Run `act` only while `request` is still the newest selection. A
+    /// selection begun meanwhile waits for `act` to finish, so nothing `act`
+    /// announces can land after a newer choice (`SPEC_AUDIT_FIXES.md`, В2.1).
+    pub(crate) fn while_latest_vault_selection<T>(
+        &self,
+        request: u64,
+        act: impl FnOnce() -> T,
+    ) -> Option<T> {
+        let _publication = self
+            .vault_publication
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.is_latest_vault_selection(request).then(act)
+    }
+
     pub fn try_start_sweep(&self, vault: &VaultLayout) -> Option<SweepGuard> {
         self.thumbnail_sweeps.try_start(vault)
     }
@@ -363,6 +394,23 @@ mod tests {
         let latest = state.begin_vault_selection();
         assert!(!state.is_latest_vault_selection(old));
         assert!(state.is_latest_vault_selection(latest));
+    }
+
+    #[test]
+    fn a_reopen_of_its_own_never_overrides_a_newer_choice() {
+        let state = AppState::new();
+        let opened = state.begin_vault_selection();
+        let followed = state
+            .begin_vault_selection_after(opened)
+            .expect("nothing newer was chosen");
+        assert!(state.is_latest_vault_selection(followed));
+        assert_eq!(state.begin_vault_selection_after(opened), None);
+
+        let chosen = state.begin_vault_selection();
+        assert_eq!(state.begin_vault_selection_after(followed), None);
+        assert!(state.is_latest_vault_selection(chosen));
+        assert_eq!(state.while_latest_vault_selection(followed, || "announced"), None);
+        assert_eq!(state.while_latest_vault_selection(chosen, || "announced"), Some("announced"));
     }
 
     #[test]

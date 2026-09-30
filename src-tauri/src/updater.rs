@@ -453,6 +453,12 @@ impl StartupGate {
                 .unwrap_or_else(PoisonError::into_inner),
         );
     }
+    fn is_open(&self) -> bool {
+        *self
+            .reopened
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
 }
 
 /// Opens the gate however startup ends: success, error or panic.
@@ -561,12 +567,22 @@ enum AutomaticAnswer<O> {
 /// Startup half of the updater: finish an interrupted activation, then show
 /// what the previous run left on disk. Runs before the first automatic check.
 fn reopen_at_startup(service: &UpdateService, root: &Path, key: &str) -> Result<(), UpdateError> {
+    reopen_at_startup_with(service, root, key, crate::update_activation::resume_startup)
+}
+
+/// [`reopen_at_startup`] with the step that finishes an interrupted
+/// activation given, so a test can act while it runs.
+fn reopen_at_startup_with(
+    service: &UpdateService,
+    root: &Path,
+    key: &str,
+    resume: impl FnOnce(&Path, &str, &[u8]) -> Result<(), String>,
+) -> Result<(), UpdateError> {
     let journal = verified_journal(root, key)?;
     if let Some(journal) = &journal {
         let bytes = std::fs::read(archive_path(root, &journal.archive_sha256))
             .map_err(|error| UpdateError::Storage(error.to_string()))?;
-        crate::update_activation::resume_startup(root, &journal.archive_sha256, &bytes)
-            .map_err(UpdateError::Activation)?;
+        resume(root, &journal.archive_sha256, &bytes).map_err(UpdateError::Activation)?;
     }
     let persisted = persisted_state(root, journal)?;
     // An operation the person already started owns the status; `status()`
@@ -625,9 +641,34 @@ pub async fn status(app: &AppHandle) -> Result<UpdateStatus, UpdateError> {
         Err(UpdateError::Disabled) => return service.status(),
         Err(error) => return Err(error),
     };
+    let root = update_root(app)?;
+    let worker = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        reopen_on_request(&worker.state::<UpdateService>(), || {
+            persisted_state(&root, verified_journal(&root, &channel.public_key)?)
+        })
+    })
+    .await
+    .map_err(|error| UpdateError::Storage(error.to_string()))?
+}
+
+/// A status request shows what the previous run left on disk, read by
+/// `read`, when nothing else owns the status. Until startup has finished
+/// that same restore it only shows the status as it is: reading the
+/// activation journal before startup finishes the interrupted activation
+/// showed its earlier phase, `Restarting`, and kept it for the whole session
+/// (`SPEC_AUDIT_FIXES.md`, В2.5). Startup's restore alone decides; the
+/// `update-status` event it sends brings the answer to the open section.
+fn reopen_on_request(
+    service: &UpdateService,
+    read: impl FnOnce() -> Result<Persisted, UpdateError>,
+) -> Result<UpdateStatus, UpdateError> {
     // Polling must expose progress, not acquire ownership from a live download.
     let snapshot = service.status()?;
-    if service.busy.load(Ordering::Acquire) || !snapshot.reopen_allowed() {
+    if !service.startup.is_open()
+        || service.busy.load(Ordering::Acquire)
+        || !snapshot.reopen_allowed()
+    {
         return Ok(snapshot);
     }
     let _operation = match service.begin() {
@@ -635,13 +676,7 @@ pub async fn status(app: &AppHandle) -> Result<UpdateStatus, UpdateError> {
         Err(UpdateError::Busy) => return service.status(),
         Err(error) => return Err(error),
     };
-    let root = update_root(app)?;
-    let persisted = tauri::async_runtime::spawn_blocking(move || {
-        persisted_state(&root, verified_journal(&root, &channel.public_key)?)
-    })
-    .await
-    .map_err(|error| UpdateError::Storage(error.to_string()))??;
-    service.reopen(persisted)?;
+    service.reopen(read()?)?;
     service.status()
 }
 
@@ -1404,6 +1439,48 @@ mod tests {
         assert_eq!(status.archive_sha256, Some(journal.archive_sha256));
         assert_eq!(status.downloaded_bytes, bytes.len() as u64);
         assert_eq!(status.activation_available, cfg!(target_os = "macos"));
+    }
+
+    #[test]
+    fn a_status_request_while_startup_restores_leaves_the_state_to_that_restore() {
+        // В2.5: the Updates section asked for the status while startup was
+        // still finishing the previous run's activation. It read the phase
+        // left before that (the new build launched), showed Restarting and
+        // kept it: startup no longer reopened a non-idle status, Check was
+        // disabled and automatic checks skipped until Mine restarted.
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path();
+        let (key, signature, bytes) = signed_archive(root);
+        let journal = stage_download(root, &key, "1.0.0", &signature, &bytes).unwrap();
+        let archive = journal.archive_sha256.clone();
+        record_activation(root, &archive, "1.0.0", crate::update_activation::ActivationPhase::Launched);
+        let service = UpdateService::default();
+        service.set_stage(UpdateStage::Idle).unwrap(); // what `initialize` leaves
+        let request = |service: &UpdateService| {
+            reopen_on_request(service, || persisted_state(root, verified_journal(root, &key)?))
+        };
+
+        {
+            let _gate = OpenOnDrop(&service.startup);
+            reopen_at_startup_with(&service, root, &key, |_, _, _| {
+                let shown = request(&service).unwrap();
+                assert_ne!(shown.stage, UpdateStage::Restarting, "an unfinished restore decided");
+                record_activation(
+                    root,
+                    &archive,
+                    "1.0.0",
+                    crate::update_activation::ActivationPhase::RolledBack,
+                );
+                Ok(())
+            })
+            .unwrap();
+        }
+
+        let status = request(&service).unwrap();
+        assert_eq!(status.stage, UpdateStage::RolledBack);
+        assert_eq!(status.version.as_deref(), Some("1.0.0"));
+        assert!(automatic_check_allowed(&status.stage));
+        assert!(service.begin().is_ok(), "no operation is left holding the updater");
     }
 
     #[test]

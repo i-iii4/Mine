@@ -326,19 +326,33 @@ fn start_removal_timer(app: &AppHandle, vault: &VaultLayout) -> Result<RemovalTi
         .name("watcher-removals".to_string())
         .spawn(move || {
             let path = vault.root().to_string_lossy().into_owned();
-            handler::run_removal_timer(&conn, &vault, &stop, Some(&app), |pass| match pass {
-                Ok(true) => {
+            handler::run_removal_timer(&conn, &vault, &stop, Some(&app), |pass| {
+                if settle_removal_pass(&app.state::<AppState>(), &path, pass) {
                     let _ = app.emit("vault-changed", VaultChangedPayload { path: path.clone() });
-                }
-                Ok(false) => {}
-                Err(error) => {
-                    log::warn!("deferred removals: {error:#}");
-                    // The next reconciliation removes the cards instead.
-                    app.state::<AppState>().freshness.mark_dirty(&path);
                 }
             });
         })?;
     Ok(timer)
+}
+
+/// Take in one pass of the removal timer; returns whether the feed must
+/// reload. An index that refused a removal, or removals that could not be
+/// committed at all, leave it behind the files: the next freshness pass
+/// reconciles it (`SPEC_AUDIT_FIXES.md`, В2.3).
+fn settle_removal_pass(state: &AppState, path: &str, pass: Result<handler::RemovalPass>) -> bool {
+    match pass {
+        Ok(pass) => {
+            if pass.stale {
+                state.freshness.mark_dirty(path);
+            }
+            pass.removed
+        }
+        Err(error) => {
+            log::warn!("deferred removals: {error:#}");
+            state.freshness.mark_dirty(path);
+            false
+        }
+    }
 }
 
 fn record_watcher_error(

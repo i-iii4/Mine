@@ -93,19 +93,44 @@ fn known_space_id(folder: &Path) -> Option<String> {
 
 /// Whether `path` holds the space `record` stands for. An identity file
 /// still in iCloud cannot disprove it: the folder is where the space was.
+/// A record without an identity stands for the folder at its path.
 pub fn is_available(record: &SpaceRecord) -> bool {
+    is_available_in(record, None)
+}
+
+/// Whether `path` holds the space `record` stands for, with the derived
+/// stores in `vaults_dir` to say which space a record without an identity
+/// stands for: the one a store last saw at its path (П27). The folder there
+/// must carry that identity, so an empty folder left where a space used to
+/// be is not that space (`SPEC_AUDIT_FIXES.md`, В2.2). A record no store has
+/// seen a space at is a folder listed but never opened on this Mac, and
+/// stands for that folder.
+#[must_use]
+pub fn is_available_in(record: &SpaceRecord, vaults_dir: Option<&Path>) -> bool {
     let folder = Path::new(&record.path);
     if !folder.is_dir() {
         return false;
     }
-    match &record.vault_id {
-        Some(id) => match space_identity(folder) {
-            SpaceIdentity::Known(found) => &found == id,
-            SpaceIdentity::InCloud => true,
-            SpaceIdentity::Absent => false,
-        },
-        None => true,
+    let identity = record
+        .vault_id
+        .clone()
+        .or_else(|| last_seen_at(vaults_dir, &record.path));
+    identity.is_none_or(|id| holds_identity(folder, &id))
+}
+
+/// Whether `folder` carries the identity `id`. An identity only in iCloud
+/// cannot say otherwise.
+fn holds_identity(folder: &Path, id: &str) -> bool {
+    match space_identity(folder) {
+        SpaceIdentity::Known(found) => found == id,
+        SpaceIdentity::InCloud => true,
+        SpaceIdentity::Absent => false,
     }
+}
+
+/// The space a derived store in `vaults_dir` last saw at `path`.
+fn last_seen_at(vaults_dir: Option<&Path>, path: &str) -> Option<String> {
+    vaults_dir.and_then(|dir| derived_owners(dir, path).into_iter().next())
 }
 
 /// The records, in the person's order. Settings from before the registry
@@ -139,10 +164,18 @@ pub fn records(cfg: &Map<String, Value>) -> Vec<SpaceRecord> {
 
 /// Every record with its availability.
 pub fn statuses(cfg: &Map<String, Value>) -> Vec<SpaceStatus> {
+    statuses_in(cfg, None)
+}
+
+/// Every record with its availability, a record without an identity judged
+/// by the space the derived stores in `vaults_dir` last saw at its path
+/// ([`is_available_in`]).
+#[must_use]
+pub fn statuses_in(cfg: &Map<String, Value>, vaults_dir: Option<&Path>) -> Vec<SpaceStatus> {
     records(cfg)
         .into_iter()
         .map(|record| SpaceStatus {
-            available: is_available(&record),
+            available: is_available_in(&record, vaults_dir),
             record,
         })
         .collect()
@@ -159,39 +192,76 @@ pub fn current_path(cfg: &Map<String, Value>) -> Option<String> {
 /// П26). The same identity at another path means the space moved; the copy
 /// rule (П22) has already given a live copy its own identity by now.
 pub fn record_open(cfg: &mut Map<String, Value>, vault_id: &str, path: &str, now_ms: u64) {
+    place_record(cfg, vault_id, None, path, now_ms);
+    cfg.insert(VAULT_PATH_KEY.into(), Value::from(path));
+}
+
+/// The space `vault_id`, last recorded at `from`, was found at `to` (П30)
+/// and is about to open there. The record that stood for it follows it,
+/// including a record written before records carried identities, which only
+/// its old path names: it gains the identity found at `to` instead of
+/// staying behind beside a new record (`SPEC_AUDIT_FIXES.md`, В2.2). The
+/// current binding follows the space only when it pointed at `from`; a
+/// newer choice of another space stays current.
+pub fn record_moved(cfg: &mut Map<String, Value>, vault_id: &str, from: &str, to: &str, now_ms: u64) {
+    let followed = current_path(cfg).is_some_and(|current| same_path(&current, from));
+    place_record(cfg, vault_id, Some(from), to, now_ms);
+    if followed {
+        cfg.insert(VAULT_PATH_KEY.into(), Value::from(to));
+    }
+}
+
+/// Put `vault_id` at `path` in the list: its own record, else the record
+/// without an identity at `from` (the path it was last seen at), else the
+/// one without an identity at `path`, else a new record. A path, and the
+/// old path of a move, then stand for this space only.
+fn place_record(
+    cfg: &mut Map<String, Value>,
+    vault_id: &str,
+    from: Option<&str>,
+    path: &str,
+    now_ms: u64,
+) {
     let mut records = records(cfg);
+    let unidentified_at = |records: &[SpaceRecord], at: &str| {
+        records
+            .iter()
+            .position(|record| record.vault_id.is_none() && same_path(&record.path, at))
+    };
     let position = records
         .iter()
         .position(|record| record.vault_id.as_deref() == Some(vault_id))
-        .or_else(|| {
-            records
-                .iter()
-                .position(|record| record.vault_id.is_none() && same_path(&record.path, path))
-        });
+        .or_else(|| from.and_then(|from| unidentified_at(&records, from)))
+        .or_else(|| unidentified_at(&records, path));
     let record = SpaceRecord {
         vault_id: Some(vault_id.to_string()),
         path: path.to_string(),
         last_opened_ms: Some(now_ms),
     };
-    match position {
-        Some(index) => records[index] = record,
-        None => records.push(record),
-    }
-    // A path now belongs to one space only.
-    let mut seen_path = false;
+    let kept = if let Some(index) = position {
+        records[index] = record;
+        index
+    } else {
+        records.push(record);
+        records.len() - 1
+    };
+    let mut index = 0;
     records.retain(|entry| {
-        if !same_path(&entry.path, path) {
+        let this = index;
+        index += 1;
+        if this == kept {
             return true;
         }
-        if entry.vault_id.as_deref() == Some(vault_id) && !seen_path {
-            seen_path = true;
-            return true;
-        }
-        false
+        // A path now belongs to one space only, the space to one record,
+        // and a record without an identity at the old path stood for this
+        // very space.
+        let same_space = entry.vault_id.as_deref() == Some(vault_id);
+        let left_behind =
+            entry.vault_id.is_none() && from.is_some_and(|from| same_path(&entry.path, from));
+        !(same_space || left_behind || same_path(&entry.path, path))
     });
     unforget(cfg, vault_id);
     write_records(cfg, &records);
-    cfg.insert(VAULT_PATH_KEY.into(), Value::from(path));
 }
 
 /// A folder the app opened without an identity file (should not happen: the
@@ -343,11 +413,7 @@ fn lost_reason(here: &Path, readable: bool) -> LostReason {
 /// and write an identity nobody chose.
 #[must_use]
 pub fn locate_saved(cfg: &Map<String, Value>, vaults_dir: Option<&Path>, hint: &str) -> Located {
-    let recorded = record_at(cfg, hint).and_then(|record| record.vault_id);
-    let identity = recorded.or_else(|| {
-        vaults_dir.and_then(|dir| derived_owners(dir, hint).into_iter().next())
-    });
-    if let Some(id) = identity {
+    if let Some(id) = saved_identity(cfg, vaults_dir, hint) {
         return locate(cfg, Some(&id), hint);
     }
     let here = Path::new(hint);
@@ -359,6 +425,15 @@ pub fn locate_saved(cfg: &Map<String, Value>, vaults_dir: Option<&Path>, hint: &
         path: hint.to_string(),
         reason: lost_reason(here, readable),
     }
+}
+
+/// The identity of the space the app knows at `path`: the one its record
+/// carries, else the one a derived store in `vaults_dir` last saw there.
+#[must_use]
+pub fn saved_identity(cfg: &Map<String, Value>, vaults_dir: Option<&Path>, path: &str) -> Option<String> {
+    record_at(cfg, path)
+        .and_then(|record| record.vault_id)
+        .or_else(|| last_seen_at(vaults_dir, path))
 }
 
 /// The spaces whose derived stores last saw them at `path`, the one opened
@@ -927,6 +1002,92 @@ mod tests {
             locate_saved(&listed, Some(&vaults_dir(&app_data)), &empty),
             Located::Lost { path: empty, reason: LostReason::Replaced }
         );
+    }
+
+    /// В2.2: the space X was listed at A by settings from before the
+    /// registry, was renamed to B while Mine was closed, and an empty folder
+    /// now stands at A.
+    fn legacy_listing_moved_beside_an_empty_folder(
+        dir: &Path,
+    ) -> (Map<String, Value>, PathBuf, String, String) {
+        let app_data = dir.join("app");
+        let old = dir.join("Mine").to_string_lossy().into_owned();
+        derived(&app_data, MINE, &old);
+        let moved = space(dir, "Mine renamed", MINE);
+        std::fs::create_dir(&old).unwrap();
+        (settings_before_the_registry(&old), vaults_dir(&app_data), old, moved)
+    }
+
+    #[test]
+    fn a_legacy_record_follows_its_space_instead_of_staying_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut cfg, vaults, old, moved) = legacy_listing_moved_beside_an_empty_folder(dir.path());
+        assert_eq!(
+            locate_saved(&cfg, Some(&vaults), &old),
+            Located::Moved { from: old.clone(), path: moved.clone() }
+        );
+
+        record_moved(&mut cfg, MINE, &old, &moved, 7);
+
+        assert_eq!(
+            records(&cfg),
+            vec![SpaceRecord {
+                vault_id: Some(MINE.into()),
+                path: moved.clone(),
+                last_opened_ms: Some(7),
+            }]
+        );
+        assert_eq!(current_path(&cfg), Some(moved.clone()));
+        assert_eq!(cfg["known_vaults"], json!([moved]));
+    }
+
+    #[test]
+    fn a_move_leaves_the_current_space_alone_when_another_one_is_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut cfg, _, old, moved) = legacy_listing_moved_beside_an_empty_folder(dir.path());
+        let other = space(dir.path(), "NSFV", NSFV);
+        record_open(&mut cfg, NSFV, &other, 5);
+
+        record_moved(&mut cfg, MINE, &old, &moved, 7);
+
+        assert_eq!(current_path(&cfg), Some(other.clone()));
+        let paths: Vec<String> = records(&cfg).into_iter().map(|record| record.path).collect();
+        assert_eq!(paths, vec![moved, other]);
+    }
+
+    #[test]
+    fn an_empty_folder_left_at_a_legacy_path_is_not_an_available_space() {
+        let dir = tempfile::tempdir().unwrap();
+        let (cfg, vaults, old, _) = legacy_listing_moved_beside_an_empty_folder(dir.path());
+
+        let listed = statuses_in(&cfg, Some(&vaults));
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].record.path, old);
+        assert!(!listed[0].available, "the empty folder at A is not the space X");
+        assert_eq!(std::fs::read_dir(&old).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_legacy_record_is_available_where_its_space_still_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let app_data = dir.path().join("app");
+        let mine = space(dir.path(), "Mine", MINE);
+        derived(&app_data, MINE, &mine);
+        // Another space now stands where a store saw a third one.
+        let replaced = space(dir.path(), "Replaced", NSFV);
+        derived(&app_data, "0123456789abcdef0123456789abcdef", &replaced);
+        let vaults = vaults_dir(&app_data);
+
+        let cfg = settings_before_the_registry(&mine);
+        assert!(statuses_in(&cfg, Some(&vaults))[0].available);
+        let cfg = settings_before_the_registry(&replaced);
+        assert!(!statuses_in(&cfg, Some(&vaults))[0].available);
+        // A folder listed but never opened as a space on this Mac stands
+        // for itself: the person picks it from the list.
+        let fresh = dir.path().join("Fresh").to_string_lossy().into_owned();
+        std::fs::create_dir(&fresh).unwrap();
+        let cfg = settings_before_the_registry(&fresh);
+        assert!(statuses_in(&cfg, Some(&vaults))[0].available);
     }
 
     #[test]

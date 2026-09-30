@@ -103,7 +103,7 @@ fn space_entries(app: &AppHandle) -> Vec<SpaceEntry> {
         return Vec::new();
     };
     let current = crate::space_registry::current_path(&cfg);
-    crate::space_registry::statuses(&cfg)
+    crate::space_registry::statuses_in(&cfg, derived_stores_dir(app).as_deref())
         .into_iter()
         .map(|status| {
             let path = status.record.path;
@@ -154,8 +154,7 @@ enum SpaceOpening {
     Restored,
 }
 
-/// Open the space at `path`, record it and tell every window. Shared by the
-/// explicit selection and by following a space that moved (П30).
+/// Open the space the person chose at `path` as a new selection.
 fn open_space_blocking(
     app: &AppHandle,
     path: &str,
@@ -163,18 +162,56 @@ fn open_space_blocking(
 ) -> Result<VaultOpenResult, CommandError> {
     let state = app.state::<AppState>();
     let request = state.begin_vault_selection();
+    let result = open_selected_space(app, &state, request, path, opening, || {});
+    if result.is_err() {
+        keep_watching_open_space(app, &state, request);
+    }
+    result
+}
+
+/// Open the space at `path` for the selection `request`, record it and tell
+/// every window. Shared by the person's choice and by the app following a
+/// space that moved (П30). `prepare` runs under the selection lock, once
+/// `request` is known to be the newest selection, before the space opens.
+fn open_selected_space(
+    app: &AppHandle,
+    state: &AppState,
+    request: u64,
+    path: &str,
+    opening: SpaceOpening,
+    prepare: impl FnOnce(),
+) -> Result<VaultOpenResult, CommandError> {
     let _selection = state
         .vault_selection
         .lock()
         .map_err(|_| CommandError::Internal("vault selection mutex poisoned".into()))?;
     append_startup_trace(app, "select_vault", "selection_locked");
-    require_latest_selection(&state, request)?;
+    require_latest_selection(state, request)?;
+    prepare();
     let path = canonical_space_path(path)?;
-    let result = initialize_vault(app, &state, &path, request, opening)?;
-    require_latest_selection(&state, request)?;
+    let result = initialize_vault(app, state, &path, request, opening)?;
+    require_latest_selection(state, request)?;
     save_vault_path(app, &path);
     let _ = app.emit("vault-selected", VaultChangedPayload { path });
     Ok(result)
+}
+
+/// A selection that ended without opening its space leaves the open one
+/// open. The watch of that space's folder ended when the selection began;
+/// it resumes, bound to this selection, while no newer one has begun
+/// (`SPEC_AUDIT_FIXES.md`, В2.1).
+fn keep_watching_open_space(app: &AppHandle, state: &AppState, request: u64) {
+    if !state.is_latest_vault_selection(request) {
+        return;
+    }
+    let open = state
+        .vault_state
+        .lock()
+        .ok()
+        .and_then(|slot| slot.as_ref().map(|open| open.vault.clone()));
+    if let Some(layout) = open {
+        watch_space_root(app, layout, request);
+    }
 }
 
 fn require_latest_selection(state: &AppState, request: u64) -> Result<(), CommandError> {
@@ -269,9 +306,13 @@ fn count_folder(dir: &Path, preview: &mut FolderPreview, depth: usize) {
     }
 }
 
-/// A space that is bound but not reachable right now.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
+/// A space that is bound but not reachable right now. Also the payload of
+/// `space-unavailable`, which names the lost space so a window can ignore a
+/// report about a space it no longer shows (`SPEC_AUDIT_FIXES.md`, В2.1).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct UnavailableVault {
+    /// The path the space was opened with, spelled as `vault-selected` and
+    /// `get_vault_path` report it.
     pub path: String,
     /// Why the space cannot be opened: the folder is gone from this path, or
     /// it is right there and macOS refuses to let the app read it. The two
@@ -279,6 +320,8 @@ pub struct UnavailableVault {
     /// useless advice when the folder is visible and locked.
     /// See SPEC_ONBOARDING.md О11.
     pub reason: UnavailableVaultReason,
+    /// The lost space's identity, when the app knows it.
+    pub vault_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
@@ -306,6 +349,7 @@ pub fn get_unavailable_vault(app: AppHandle) -> Result<Option<UnavailableVault>,
         // means the saved space is not there: the same words as a missing
         // folder, and the same action, locate it.
         Located::Lost { reason, .. } => Ok(Some(UnavailableVault {
+            vault_id: saved_space_identity(&app, &saved_path),
             path: saved_path,
             reason: match reason {
                 LostReason::AccessDenied => UnavailableVaultReason::AccessDenied,
@@ -313,6 +357,20 @@ pub fn get_unavailable_vault(app: AppHandle) -> Result<Option<UnavailableVault>,
             },
         })),
     }
+}
+
+/// The identity of the space the app knows at `path` (its record, else its
+/// derived store).
+fn saved_space_identity(app: &AppHandle, path: &str) -> Option<String> {
+    let serde_json::Value::Object(cfg) = load_config(app) else {
+        return None;
+    };
+    crate::space_registry::saved_identity(&cfg, derived_stores_dir(app).as_deref(), path)
+}
+
+/// Where the derived stores of every space live (П27).
+fn derived_stores_dir(app: &AppHandle) -> Option<PathBuf> {
+    app_config(app).map(|config| crate::space_registry::vaults_dir(config.app_data_dir()))
 }
 
 /// Where the space saved in settings stands now (`SPEC_AUDIT_FIXES.md`, Ф8).
@@ -325,9 +383,7 @@ fn locate_saved_space(app: &AppHandle, saved_path: &str) -> Located {
         serde_json::Value::Object(cfg) => cfg,
         _ => serde_json::Map::new(),
     };
-    let vaults_dir = app_config(app)
-        .map(|config| crate::space_registry::vaults_dir(config.app_data_dir()));
-    crate::space_registry::locate_saved(&cfg, vaults_dir.as_deref(), saved_path)
+    crate::space_registry::locate_saved(&cfg, derived_stores_dir(app).as_deref(), saved_path)
 }
 
 /// Why a bound folder cannot be opened, or `None` when it can.
@@ -525,20 +581,26 @@ pub async fn open_vault(
     let request = state.begin_vault_selection();
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let _selection = state
-            .vault_selection
-            .lock()
-            .map_err(|_| CommandError::Internal("vault selection mutex poisoned".into()))?;
-        require_latest_selection(&state, request)?;
-        // Opening without a choice by the person: the folder must still be
-        // the saved space. Only an explicit selection may make a folder a
-        // space and give it an identity.
-        if !matches!(locate_saved_space(&app, &path), Located::Here { .. }) {
-            return Err(CommandError::Internal(format!(
-                "the saved space is no longer at {path}"
-            )));
+        let result = (|| {
+            let _selection = state
+                .vault_selection
+                .lock()
+                .map_err(|_| CommandError::Internal("vault selection mutex poisoned".into()))?;
+            require_latest_selection(&state, request)?;
+            // Opening without a choice by the person: the folder must still
+            // be the saved space. Only an explicit selection may make a
+            // folder a space and give it an identity.
+            if !matches!(locate_saved_space(&app, &path), Located::Here { .. }) {
+                return Err(CommandError::Internal(format!(
+                    "the saved space is no longer at {path}"
+                )));
+            }
+            initialize_vault(&app, &state, &path, request, SpaceOpening::Restored)
+        })();
+        if result.is_err() {
+            keep_watching_open_space(&app, &state, request);
         }
-        initialize_vault(&app, &state, &path, request, SpaceOpening::Restored)
+        result
     })
     .await
     .map_err(|error| CommandError::Internal(format!("vault opening worker failed: {error}")))?
@@ -841,6 +903,9 @@ fn initialize_vault(
                     ),
                 );
                 append_startup_trace(app, "startup", "milestone=local_snapshot_opened");
+                // The same space, chosen again: its folder is watched for
+                // this selection now, the previous watch ends with its own.
+                watch_space_root(app, vs.vault.clone(), request);
                 return Ok(VaultOpenResult {
                     indexed,
                     errors: 0,
@@ -1027,7 +1092,7 @@ fn initialize_vault(
     start_index_metadata_backfill(app.clone(), path.to_string());
     // Videos finished while this space was not reachable come in now (Ф9).
     crate::source_video_download::adopt_kept_downloads(app.clone(), root_watch_layout.clone());
-    watch_space_root(app, root_watch_layout);
+    watch_space_root(app, root_watch_layout, request);
 
     Ok(VaultOpenResult {
         indexed,
@@ -1050,53 +1115,132 @@ const SPACE_ROOT_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from
 /// [`SPACE_ROOT_CHECK_INTERVAL`] asks the root guard whether the folder is
 /// still this space. When it is not, the space is looked for beside its old
 /// path by identity and reopened there, or the unavailable screen is shown.
-/// Opening another space retires the previous check.
-fn watch_space_root(app: &AppHandle, layout: VaultLayout) {
-    static WATCHED: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
-    let root = layout.root().to_path_buf();
-    if let Ok(mut watched) = WATCHED.lock() {
-        *watched = Some(root.clone());
-    }
-    let app = app.clone();
+///
+/// The watch belongs to `selection`, the selection that opened the space,
+/// and ends as soon as a newer selection begins: the person choosing another
+/// space, or this one again. A space found after its move is then never
+/// reopened over that choice, and its loss never reported over the space
+/// that replaced it (`SPEC_AUDIT_FIXES.md`, В2.1).
+fn watch_space_root(app: &AppHandle, layout: VaultLayout, selection: u64) {
+    let host = AppSpaceRoot(app.clone());
     let spawned = std::thread::Builder::new()
         .name("space-root-watch".into())
         .spawn(move || loop {
             std::thread::sleep(SPACE_ROOT_CHECK_INTERVAL);
-            let still_watched = WATCHED
-                .lock()
-                .map(|watched| watched.as_deref() == Some(root.as_path()))
-                .unwrap_or(false);
-            if !still_watched {
+            if check_space_root(&host, &layout, selection) != RootWatch::Watching {
                 return;
             }
-            if !crate::storage::root_guard::root_gone(&layout) {
-                continue;
-            }
-            if let Ok(mut watched) = WATCHED.lock() {
-                if watched.as_deref() == Some(root.as_path()) {
-                    *watched = None;
-                }
-            }
-            handle_space_root_lost(&app, &root);
-            return;
         });
     if let Err(error) = spawned {
         log::warn!("cannot watch the space folder: {error}");
     }
 }
 
-/// The open space's folder is gone or is another space now.
-fn handle_space_root_lost(app: &AppHandle, root: &Path) {
+/// What watching the open space's folder needs from the app. Tests stand in
+/// for the windows and for opening a space.
+trait SpaceRootHost {
+    fn state(&self) -> &AppState;
+    /// Where the space last seen at `path` stands now (Ф8, П30).
+    fn locate(&self, path: &str) -> Located;
+    /// Open the space found at `to` for the selection `request`, recording
+    /// its move from `from`.
+    fn reopen_moved(&self, request: u64, from: &str, to: &str) -> Result<(), CommandError>;
+    /// Tell every window the open space is not there.
+    fn announce_unavailable(&self, lost: &UnavailableVault);
+}
+
+/// The running app as the host of the watch.
+struct AppSpaceRoot(AppHandle);
+
+impl SpaceRootHost for AppSpaceRoot {
+    fn state(&self) -> &AppState {
+        self.0.state::<AppState>().inner()
+    }
+
+    fn locate(&self, path: &str) -> Located {
+        locate_saved_space(&self.0, path)
+    }
+
+    fn reopen_moved(&self, request: u64, from: &str, to: &str) -> Result<(), CommandError> {
+        open_selected_space(&self.0, self.state(), request, to, SpaceOpening::Restored, || {
+            record_moved_space(&self.0, from, to);
+        })
+        .map(|_| ())
+    }
+
+    fn announce_unavailable(&self, lost: &UnavailableVault) {
+        let _ = self.0.emit("space-unavailable", lost.clone());
+    }
+}
+
+/// What one look at the open space's folder decided.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RootWatch {
+    /// The folder is there and is this space: keep watching.
+    Watching,
+    /// A newer selection began: the watch ends without acting.
+    Retired,
+    /// The space moved and opened at this path.
+    Followed(String),
+    /// The space is nowhere to be found, and every window was told.
+    Unavailable,
+}
+
+/// One look at the folder of the space `selection` opened.
+fn check_space_root(host: &impl SpaceRootHost, layout: &VaultLayout, selection: u64) -> RootWatch {
+    if !host.state().is_latest_vault_selection(selection) {
+        return RootWatch::Retired;
+    }
+    if !crate::storage::root_guard::root_gone(layout) {
+        return RootWatch::Watching;
+    }
+    handle_space_root_lost(host, layout, selection)
+}
+
+/// The open space's folder is gone or is another space now: follow the
+/// space to where it moved, or report it unavailable. Both happen only
+/// while `selection` is still the newest: following takes the very next
+/// selection or none, and the report goes out under the lock every new
+/// selection takes to begin, so a choice the person makes meanwhile either
+/// waits for the report or silences it.
+fn handle_space_root_lost(host: &impl SpaceRootHost, layout: &VaultLayout, selection: u64) -> RootWatch {
+    let root = layout.root();
     let path = root.to_string_lossy().into_owned();
     log::warn!("space folder is no longer there: {path}");
-    if let Some(moved) = follow_moved_space(app, &path) {
-        match open_space_blocking(app, &moved, SpaceOpening::Restored) {
-            Ok(_) => return,
+    let mut current = selection;
+    if let Located::Moved { path: moved, .. } = host.locate(&path) {
+        let Some(request) = host.state().begin_vault_selection_after(selection) else {
+            return RootWatch::Retired;
+        };
+        match host.reopen_moved(request, &path, &moved) {
+            Ok(()) => return RootWatch::Followed(moved),
             Err(error) => log::warn!("cannot reopen the moved space at {moved}: {error}"),
         }
+        current = request;
     }
-    let reason = unavailable_reason(root).unwrap_or(UnavailableVaultReason::Missing);
-    let _ = app.emit("space-unavailable", UnavailableVault { path, reason });
+    let lost = UnavailableVault {
+        reason: unavailable_reason(root).unwrap_or(UnavailableVaultReason::Missing),
+        vault_id: layout_space_id(layout),
+        path,
+    };
+    match host
+        .state()
+        .while_latest_vault_selection(current, || host.announce_unavailable(&lost))
+    {
+        Some(()) => RootWatch::Unavailable,
+        None => RootWatch::Retired,
+    }
+}
+
+/// The identity of the space `layout` serves, from the derived store named
+/// after it; readable after the folder itself is gone.
+fn layout_space_id(layout: &VaultLayout) -> Option<String> {
+    layout
+        .derived_root()
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| crate::space_registry::is_space_id(name))
+        .map(str::to_string)
 }
 
 /// Current thumb cache format version. Bump this when the thumbnail
@@ -2143,7 +2287,7 @@ pub(crate) fn load_known_vaults(app: &AppHandle) -> Vec<String> {
         return Vec::new();
     };
     let mut unique: Vec<String> = Vec::new();
-    for status in crate::space_registry::statuses(&cfg) {
+    for status in crate::space_registry::statuses_in(&cfg, derived_stores_dir(app).as_deref()) {
         if !status.available {
             continue;
         }
@@ -2185,8 +2329,9 @@ fn repair_space_registry(app: &AppHandle) {
 }
 
 /// The saved space was found under another path: that path becomes the one
-/// to open next time too. A record without an identity learns it from the
-/// folder the space was found in: finding it there proved it.
+/// to open next time too. The record that stood for it at `from` follows it,
+/// a record without an identity included, which learns it from the folder
+/// the space was found in: finding it there proved it (В2.2).
 fn record_moved_space(app: &AppHandle, from: &str, to: &str) {
     let recorded = match load_config(app) {
         serde_json::Value::Object(cfg) => {
@@ -2198,22 +2343,9 @@ fn record_moved_space(app: &AppHandle, from: &str, to: &str) {
         return;
     };
     let now = now_ms();
-    match update_config(app, |cfg| crate::space_registry::record_open(cfg, &id, to, now)) {
+    match update_config(app, |cfg| crate::space_registry::record_moved(cfg, &id, from, to, now)) {
         Ok(()) => log::info!("space {id} moved from {from} to {to}"),
         Err(error) => log::warn!("cannot record the move of space {id} to {to}: {error}"),
-    }
-}
-
-/// The open space's folder is gone: find it by identity beside its old path
-/// (П30) and record where it went. `None` when it cannot be found
-/// unambiguously.
-fn follow_moved_space(app: &AppHandle, saved_path: &str) -> Option<String> {
-    match locate_saved_space(app, saved_path) {
-        Located::Moved { path, .. } => {
-            record_moved_space(app, saved_path, &path);
-            Some(path)
-        }
-        Located::Here { .. } | Located::Lost { .. } => None,
     }
 }
 
@@ -2728,5 +2860,161 @@ mod space_onboarding_tests {
 
         // Every card deleted: an empty feed, not a new space (О15).
         assert!(!onboarding_owed(&root, 0).unwrap());
+    }
+}
+
+#[cfg(test)]
+mod space_root_watch_tests {
+    use super::*;
+    use crate::space_registry::{Located, LostReason};
+
+    const ID: &str = "cea575682e5a4018991c0097fbedff66";
+
+    fn carry_identity(folder: &Path, id: &str) {
+        std::fs::create_dir_all(folder.join(".mine")).unwrap();
+        std::fs::write(folder.join(".mine/vault-id"), format!("{id}\n")).unwrap();
+    }
+
+    /// The app around the watch of the open space's folder: the real
+    /// selection bookkeeping, a fixed answer to where the space went, and
+    /// the windows and openings it asked for.
+    struct RootHost {
+        state: AppState,
+        located: Located,
+        /// The person picks another space while the loss is looked into.
+        chooses_meanwhile: bool,
+        reopened: std::cell::RefCell<Vec<(u64, String, String)>>,
+        announced: std::cell::RefCell<Vec<UnavailableVault>>,
+    }
+
+    impl RootHost {
+        fn new(located: Located, chooses_meanwhile: bool) -> Self {
+            Self {
+                state: AppState::new(),
+                located,
+                chooses_meanwhile,
+                reopened: std::cell::RefCell::default(),
+                announced: std::cell::RefCell::default(),
+            }
+        }
+    }
+
+    impl SpaceRootHost for RootHost {
+        fn state(&self) -> &AppState {
+            &self.state
+        }
+
+        fn locate(&self, _path: &str) -> Located {
+            if self.chooses_meanwhile {
+                self.state.begin_vault_selection();
+            }
+            self.located.clone()
+        }
+
+        fn reopen_moved(&self, request: u64, from: &str, to: &str) -> Result<(), CommandError> {
+            self.reopened
+                .borrow_mut()
+                .push((request, from.to_string(), to.to_string()));
+            // Like the real opening: a superseded selection opens nothing.
+            require_latest_selection(&self.state, request)
+        }
+
+        fn announce_unavailable(&self, lost: &UnavailableVault) {
+            self.announced.borrow_mut().push(lost.clone());
+        }
+    }
+
+    /// Space A, opened by `selection`, whose folder is gone.
+    fn lost_space_a(dir: &Path) -> (VaultLayout, String, String) {
+        let root = dir.join("A");
+        let moved = dir.join("A renamed").to_string_lossy().into_owned();
+        let layout = VaultLayout::with_derived_root(root.clone(), dir.join("vaults").join(ID));
+        (layout, root.to_string_lossy().into_owned(), moved)
+    }
+
+    #[test]
+    fn a_space_found_after_its_move_is_not_reopened_over_a_newer_choice() {
+        // В2.1: the person chose B while A's watch was looking for A. The
+        // watch found A′ and took a selection of its own: B's opening failed
+        // as superseded and A′ opened in its place.
+        let dir = tempfile::tempdir().unwrap();
+        let (layout, a, moved) = lost_space_a(dir.path());
+        let host = RootHost::new(Located::Moved { from: a, path: moved }, true);
+        let selection = host.state.begin_vault_selection();
+
+        assert_eq!(check_space_root(&host, &layout, selection), RootWatch::Retired);
+
+        assert!(host.reopened.borrow().is_empty(), "A′ reopened over the choice of B");
+        assert!(host.announced.borrow().is_empty());
+        assert!(host.state.is_latest_vault_selection(selection + 1), "B is no longer the choice");
+    }
+
+    #[test]
+    fn a_loss_found_after_a_newer_choice_is_not_reported() {
+        // В2.1: "A unavailable" arrived after B was chosen and replaced it.
+        let dir = tempfile::tempdir().unwrap();
+        let (layout, a, _) = lost_space_a(dir.path());
+        let host = RootHost::new(
+            Located::Lost { path: a, reason: LostReason::Missing },
+            true,
+        );
+        let selection = host.state.begin_vault_selection();
+
+        assert_eq!(check_space_root(&host, &layout, selection), RootWatch::Retired);
+        assert!(host.announced.borrow().is_empty(), "A reported unavailable over B");
+    }
+
+    #[test]
+    fn a_newer_choice_ends_the_watch_before_it_looks() {
+        let dir = tempfile::tempdir().unwrap();
+        let (layout, _, moved) = lost_space_a(dir.path());
+        let host = RootHost::new(Located::Moved { from: String::new(), path: moved }, false);
+        let selection = host.state.begin_vault_selection();
+        host.state.begin_vault_selection();
+
+        assert_eq!(check_space_root(&host, &layout, selection), RootWatch::Retired);
+        assert!(host.reopened.borrow().is_empty());
+        assert!(host.announced.borrow().is_empty());
+    }
+
+    #[test]
+    fn with_no_newer_choice_the_watch_follows_the_move_or_reports_the_loss() {
+        let dir = tempfile::tempdir().unwrap();
+        let (layout, a, moved) = lost_space_a(dir.path());
+
+        let host = RootHost::new(Located::Moved { from: a.clone(), path: moved.clone() }, false);
+        let selection = host.state.begin_vault_selection();
+        assert_eq!(
+            check_space_root(&host, &layout, selection),
+            RootWatch::Followed(moved.clone())
+        );
+        assert_eq!(*host.reopened.borrow(), vec![(selection + 1, a.clone(), moved)]);
+        assert!(host.announced.borrow().is_empty());
+
+        let host = RootHost::new(
+            Located::Lost { path: a.clone(), reason: LostReason::Missing },
+            false,
+        );
+        let selection = host.state.begin_vault_selection();
+        assert_eq!(check_space_root(&host, &layout, selection), RootWatch::Unavailable);
+        assert_eq!(
+            *host.announced.borrow(),
+            vec![UnavailableVault {
+                path: a,
+                reason: UnavailableVaultReason::Missing,
+                vault_id: Some(ID.to_string()),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_folder_still_there_keeps_being_watched() {
+        let dir = tempfile::tempdir().unwrap();
+        let (layout, a, _) = lost_space_a(dir.path());
+        carry_identity(Path::new(&a), ID);
+        let host = RootHost::new(Located::Here { path: a }, false);
+        let selection = host.state.begin_vault_selection();
+        assert_eq!(check_space_root(&host, &layout, selection), RootWatch::Watching);
+        assert!(host.announced.borrow().is_empty());
     }
 }

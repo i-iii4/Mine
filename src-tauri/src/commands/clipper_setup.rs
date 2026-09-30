@@ -510,53 +510,131 @@ fn install_runtime_from_sources_with_probe(
 ) -> std::io::Result<()> {
     let _writer = crate::storage::source_mutation::begin_write().map_err(std::io::Error::other)?;
     let _lock = runtime_install_lock(parent)?;
-    if let Some(mut journal) = read_runtime_journal(parent)? {
-        if journal.stage != RuntimeInstallStage::FilesVerified {
-            let package = parent.join("packages").join(&journal.package_id);
-            if !runtime_package_matches(&package, &journal.candidate)
-                || probe(&package.join("native-host"), &journal.candidate).is_err()
-            {
-                if let Some(previous) = &journal.previous {
-                    let previous_id = format!(
-                        "{:x}",
-                        Sha256::digest(
-                            serde_json::to_vec(&previous.manifest)
-                                .map_err(std::io::Error::other)?
-                        )
-                    );
-                    let previous_package = parent.join("packages").join(&previous_id);
-                    if runtime_package_matches(&previous_package, &previous.manifest)
-                        && probe(&previous_package.join("native-host"), &previous.manifest).is_ok()
-                    {
-                        write_runtime_json(
-                            &parent.join(format!("failed-install-{}.json", journal.package_id)),
-                            &journal,
-                        )?;
-                        restore_legacy_extension(parent, &journal)?;
-                        // Register the last verified immutable executor first;
-                        // source documents and operation journals never roll back.
-                        register(&previous_package.join("native-host"))?;
-                        let mut rollback = RuntimeInstallJournal {
-                            schema_version: RUNTIME_MANIFEST_SCHEMA_VERSION,
-                            package_id: previous_id,
-                            candidate: previous.manifest.clone(),
-                            previous: None,
-                            legacy_extension_previous: journal
-                                .legacy_extension_previous
-                                .clone()
-                                .filter(|extension| *extension == previous.manifest.extension),
-                            stage: RuntimeInstallStage::Prepared,
-                        };
-                        write_runtime_json(&parent.join("install-journal.json"), &rollback)?;
-                        apply_runtime_journal(parent, &mut rollback, &mut register, |_| Ok(()))?;
-                        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "pending runtime package failed verification; the previous verified runtime was restored and the failed journal was preserved"));
-                    }
-                }
-                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "pending runtime package failed verification; resources and unknown operation outcomes were preserved"));
+    let abandoned = settle_unfinished_install(parent, &mut register, &mut probe)?;
+    let active = install_or_reuse_runtime(
+        parent,
+        candidate,
+        host,
+        extension,
+        video,
+        &mut register,
+        &mut probe,
+    )?;
+    if let Some(abandoned) = abandoned.filter(|package_id| *package_id != active) {
+        // Browsers now launch the repaired runtime; the package the
+        // interrupted installation left is kept aside for diagnosis.
+        let damaged = parent.join("packages").join(&abandoned);
+        if std::fs::symlink_metadata(&damaged).is_ok() {
+            if let Err(error) = quarantine_package(parent, &damaged, &abandoned) {
+                log::warn!("damaged clipper package {abandoned} left in place: {error}");
             }
-            apply_runtime_journal(parent, &mut journal, &mut register, |_| Ok(()))?;
         }
     }
+    Ok(())
+}
+
+/// Finish or undo an installation a previous run left unfinished. Returns the
+/// package of an unfinished installation that could be neither finished nor
+/// rolled back, which the installation from the bundle then replaces.
+///
+/// A package that still verifies and starts is activated. Otherwise the last
+/// verified runtime is restored, and the call fails so the caller learns
+/// the candidate was refused. Without one (a first installation, or a
+/// previous package damaged as well) the bundle is the only source to repair
+/// from: the failed journal is kept as a record and set aside, and the
+/// caller installs from the bundle, instead of refusing the same way on
+/// every self-repair pass until someone deletes the journal by hand
+/// (`SPEC_ONBOARDING.md`, О5; `SPEC_AUDIT_FIXES.md`, В2.4).
+fn settle_unfinished_install(
+    parent: &Path,
+    register: &mut impl FnMut(&Path) -> std::io::Result<()>,
+    probe: &mut impl FnMut(&Path, &RuntimeBuildManifest) -> std::io::Result<()>,
+) -> std::io::Result<Option<String>> {
+    let Some(mut journal) = read_runtime_journal(parent)? else {
+        return Ok(None);
+    };
+    if journal.stage == RuntimeInstallStage::FilesVerified {
+        return Ok(None);
+    }
+    let package = parent.join("packages").join(&journal.package_id);
+    if runtime_package_matches(&package, &journal.candidate)
+        && probe(&package.join("native-host"), &journal.candidate).is_ok()
+    {
+        apply_runtime_journal(parent, &mut journal, &mut *register, |_| Ok(()))?;
+        return Ok(None);
+    }
+    let failed_record = parent.join(format!("failed-install-{}.json", journal.package_id));
+    if let Some(previous) = verified_previous(parent, &journal, probe)? {
+        let previous_package = parent.join("packages").join(&previous.package_id);
+        write_runtime_json(&failed_record, &journal)?;
+        restore_legacy_extension(parent, &journal)?;
+        // Register the last verified immutable executor first;
+        // source documents and operation journals never roll back.
+        register(&previous_package.join("native-host"))?;
+        let mut rollback = RuntimeInstallJournal {
+            schema_version: RUNTIME_MANIFEST_SCHEMA_VERSION,
+            legacy_extension_previous: journal
+                .legacy_extension_previous
+                .clone()
+                .filter(|extension| *extension == previous.candidate.extension),
+            ..previous
+        };
+        write_runtime_json(&parent.join("install-journal.json"), &rollback)?;
+        apply_runtime_journal(parent, &mut rollback, &mut *register, |_| Ok(()))?;
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "pending runtime package failed verification; the previous verified runtime was restored and the failed journal was preserved"));
+    }
+    write_runtime_json(&failed_record, &journal)?;
+    restore_legacy_extension(parent, &journal)?;
+    std::fs::remove_file(parent.join("install-journal.json"))?;
+    std::fs::File::open(parent)?.sync_all()?;
+    log::warn!(
+        "unfinished clipper installation {} failed verification with no verified runtime to restore; reinstalling from the bundle",
+        journal.package_id
+    );
+    Ok(Some(journal.package_id))
+}
+
+/// The runtime an unfinished installation replaced, as a journal that
+/// reactivates it, when its package still verifies and starts.
+fn verified_previous(
+    parent: &Path,
+    journal: &RuntimeInstallJournal,
+    probe: &mut impl FnMut(&Path, &RuntimeBuildManifest) -> std::io::Result<()>,
+) -> std::io::Result<Option<RuntimeInstallJournal>> {
+    let Some(previous) = &journal.previous else {
+        return Ok(None);
+    };
+    let package_id = format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(&previous.manifest).map_err(std::io::Error::other)?)
+    );
+    let package = parent.join("packages").join(&package_id);
+    if !runtime_package_matches(&package, &previous.manifest)
+        || probe(&package.join("native-host"), &previous.manifest).is_err()
+    {
+        return Ok(None);
+    }
+    Ok(Some(RuntimeInstallJournal {
+        schema_version: RUNTIME_MANIFEST_SCHEMA_VERSION,
+        package_id,
+        candidate: previous.manifest.clone(),
+        previous: None,
+        legacy_extension_previous: None,
+        stage: RuntimeInstallStage::Prepared,
+    }))
+}
+
+/// Install `candidate` from the bundle, or keep a newer installed runtime.
+/// Returns the package browsers launch afterwards.
+fn install_or_reuse_runtime(
+    parent: &Path,
+    candidate: RuntimeBuildManifest,
+    host: &Path,
+    extension: &Path,
+    video: Option<&Path>,
+    register: &mut impl FnMut(&Path) -> std::io::Result<()>,
+    probe: &mut impl FnMut(&Path, &RuntimeBuildManifest) -> std::io::Result<()>,
+) -> std::io::Result<String> {
     let marker = match std::fs::read(parent.join("runtime-install.json")) {
         Ok(bytes) => Some(
             serde_json::from_slice::<RuntimeInstallMarker>(&bytes).map_err(|error| {
@@ -582,9 +660,8 @@ fn install_runtime_from_sources_with_probe(
             ));
         }
         let bytes = serde_json::to_vec(&installed.manifest).map_err(std::io::Error::other)?;
-        let package = parent
-            .join("packages")
-            .join(format!("{:x}", Sha256::digest(bytes)));
+        let package_id = format!("{:x}", Sha256::digest(bytes));
+        let package = parent.join("packages").join(&package_id);
         if !runtime_package_matches(&package, &installed.manifest) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -596,16 +673,18 @@ fn install_runtime_from_sources_with_probe(
         if legacy_extension_previous.is_some() {
             let mut journal = RuntimeInstallJournal {
                 schema_version: RUNTIME_MANIFEST_SCHEMA_VERSION,
-                package_id: package.file_name().unwrap().to_string_lossy().into_owned(),
+                package_id: package_id.clone(),
                 candidate: installed.manifest.clone(),
                 previous: marker.clone(),
                 legacy_extension_previous,
                 stage: RuntimeInstallStage::Prepared,
             };
             write_runtime_json(&parent.join("install-journal.json"), &journal)?;
-            return apply_runtime_journal(parent, &mut journal, register, |_| Ok(()));
+            apply_runtime_journal(parent, &mut journal, &mut *register, |_| Ok(()))?;
+        } else {
+            register(&package.join("native-host"))?;
         }
-        return register(&package.join("native-host"));
+        return Ok(package_id);
     }
     let package_id = prepare_runtime_package(parent, &candidate, host, extension, video)?;
     probe(
@@ -618,14 +697,15 @@ fn install_runtime_from_sources_with_probe(
     let legacy_extension_previous = plan_legacy_extension(parent, &candidate)?;
     let mut journal = RuntimeInstallJournal {
         schema_version: RUNTIME_MANIFEST_SCHEMA_VERSION,
-        package_id,
+        package_id: package_id.clone(),
         candidate,
         previous: marker,
         legacy_extension_previous,
         stage: RuntimeInstallStage::Prepared,
     };
     write_runtime_json(&parent.join("install-journal.json"), &journal)?;
-    apply_runtime_journal(parent, &mut journal, register, |_| Ok(()))
+    apply_runtime_journal(parent, &mut journal, &mut *register, |_| Ok(()))?;
+    Ok(package_id)
 }
 
 fn verify_candidate_launch(host: &Path, manifest: &RuntimeBuildManifest) -> std::io::Result<()> {
@@ -2511,6 +2591,140 @@ mod tests {
             .join(package_id)
             .join("native-host")
             .is_file());
+    }
+
+    /// В2.4: the first installation stopped part way, and the package it
+    /// was activating is damaged. There is no verified runtime to roll back
+    /// to; the bundle is the one source to repair from, and the next
+    /// installation must use it instead of refusing every time.
+    #[test]
+    fn an_interrupted_first_install_with_a_damaged_package_is_rebuilt_from_the_bundle() {
+        for stopped_at in [
+            RuntimeInstallStage::Prepared,
+            RuntimeInstallStage::HostActivated,
+            RuntimeInstallStage::ExtensionActivated,
+            RuntimeInstallStage::Registered,
+        ] {
+            let tmp = TempDir::new().unwrap();
+            let parent = tmp.path().join("managed");
+            let registration = tmp.path().join("browser/host.json");
+            let register = |host: &Path| write_runtime_json(&registration, &host_manifest(host));
+            let (bundle, manifest) = runtime_fixture(tmp.path(), "bundle", "1.0.0");
+            let package_id = prepare_runtime_package(
+                &parent,
+                &manifest,
+                &bundle.join("native-host"),
+                &bundle.join("extension"),
+                Some(&bundle.join("yt-dlp")),
+            )
+            .unwrap();
+            let mut journal = RuntimeInstallJournal {
+                schema_version: RUNTIME_MANIFEST_SCHEMA_VERSION,
+                package_id: package_id.clone(),
+                candidate: manifest.clone(),
+                previous: None,
+                legacy_extension_previous: None,
+                stage: RuntimeInstallStage::Prepared,
+            };
+            write_runtime_json(&parent.join("install-journal.json"), &journal).unwrap();
+            assert!(apply_runtime_journal(&parent, &mut journal, register, |stage| {
+                if stage == stopped_at {
+                    Err(std::io::Error::other("process stopped"))
+                } else {
+                    Ok(())
+                }
+            })
+            .is_err());
+            let package = parent.join("packages").join(&package_id);
+            std::fs::write(package.join("native-host"), b"corrupted").unwrap();
+
+            install_runtime_from_sources(
+                &parent,
+                manifest.clone(),
+                &bundle.join("native-host"),
+                &bundle.join("extension"),
+                Some(&bundle.join("yt-dlp")),
+                register,
+            )
+            .unwrap_or_else(|error| panic!("{stopped_at:?}: {error}"));
+
+            assert!(runtime_package_matches(&package, &manifest), "{stopped_at:?}");
+            assert!(runtime_package_matches(&parent, &manifest), "{stopped_at:?}");
+            assert!(
+                installed_binary_matches(&bundle.join("native-host"), &parent.join("native-host")),
+                "{stopped_at:?}"
+            );
+            assert!(
+                manifest_is_registered(&registration, &package.join("native-host")),
+                "{stopped_at:?}"
+            );
+            let settled = read_runtime_journal(&parent).unwrap().unwrap();
+            assert_eq!(settled.stage, RuntimeInstallStage::FilesVerified, "{stopped_at:?}");
+            assert_eq!(settled.package_id, package_id, "{stopped_at:?}");
+            assert!(
+                parent.join(format!("failed-install-{package_id}.json")).is_file(),
+                "{stopped_at:?}"
+            );
+            assert_eq!(
+                std::fs::read(parent.join("quarantine").join(&package_id).join("native-host"))
+                    .unwrap(),
+                b"corrupted",
+                "{stopped_at:?}"
+            );
+        }
+    }
+
+    /// В2.4, after an app update: the interrupted first installation was of
+    /// an older build. Its damaged package is set aside and this build's
+    /// runtime installed.
+    #[test]
+    fn an_interrupted_install_of_an_older_build_gives_way_to_the_bundle() {
+        let tmp = TempDir::new().unwrap();
+        let parent = tmp.path().join("managed");
+        let registration = tmp.path().join("browser/host.json");
+        let register = |host: &Path| write_runtime_json(&registration, &host_manifest(host));
+        let (old, old_manifest) = runtime_fixture(tmp.path(), "old", "1.0.0");
+        let old_id = prepare_runtime_package(
+            &parent,
+            &old_manifest,
+            &old.join("native-host"),
+            &old.join("extension"),
+            Some(&old.join("yt-dlp")),
+        )
+        .unwrap();
+        let journal = RuntimeInstallJournal {
+            schema_version: RUNTIME_MANIFEST_SCHEMA_VERSION,
+            package_id: old_id.clone(),
+            candidate: old_manifest,
+            previous: None,
+            legacy_extension_previous: None,
+            stage: RuntimeInstallStage::HostActivated,
+        };
+        write_runtime_json(&parent.join("install-journal.json"), &journal).unwrap();
+        std::fs::write(parent.join("packages").join(&old_id).join("yt-dlp"), b"truncated").unwrap();
+        let (bundle, manifest) = runtime_fixture(tmp.path(), "bundle", "1.1.0");
+
+        install_runtime_from_sources(
+            &parent,
+            manifest.clone(),
+            &bundle.join("native-host"),
+            &bundle.join("extension"),
+            Some(&bundle.join("yt-dlp")),
+            register,
+        )
+        .unwrap();
+
+        let settled = read_runtime_journal(&parent).unwrap().unwrap();
+        assert_eq!(settled.stage, RuntimeInstallStage::FilesVerified);
+        assert_eq!(settled.candidate, manifest);
+        assert!(runtime_package_matches(&parent, &manifest));
+        assert!(manifest_is_registered(
+            &registration,
+            &parent.join("packages").join(&settled.package_id).join("native-host")
+        ));
+        assert!(!parent.join("packages").join(&old_id).exists());
+        assert!(parent.join("quarantine").join(&old_id).join("yt-dlp").is_file());
+        assert!(parent.join(format!("failed-install-{old_id}.json")).is_file());
     }
 
     /// Б3.6: the installed package browsers launch is damaged, its bytes or

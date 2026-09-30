@@ -733,6 +733,15 @@ fn index_md_file_inner(
 /// BlockChanged before being committed as a real removal.
 const RENAME_MATCH_WINDOW_MS: u64 = 500;
 
+/// How many times a deferred removal the index refuses (a busy lock, a
+/// failed write) is attempted before it is left to the next reconciliation
+/// (`SPEC_AUDIT_FIXES.md`, В2.3).
+const REMOVAL_ATTEMPTS: u32 = 5;
+
+/// The wait before the first retry of a refused removal; each further retry
+/// waits twice as long.
+const REMOVAL_RETRY_DELAY: Duration = Duration::from_millis(500);
+
 #[derive(Debug, Clone)]
 struct PendingRemove {
     vault_root: PathBuf,
@@ -741,6 +750,8 @@ struct PendingRemove {
     /// tells the frontend which channels to invalidate.
     tags: Vec<String>,
     deadline: Instant,
+    /// Attempts the index has already refused.
+    failed_attempts: u32,
 }
 
 /// The deferred removals of every open watcher, and the signal their timers
@@ -875,35 +886,141 @@ fn wait_for_due_removals(
 
 /// The watcher's removal timer (Ф7): commits every deferred removal of
 /// `vault` when its rename window passes, without waiting for another file
-/// event, until `stop`. `pass` hears the outcome of each commit: whether a
-/// card left the index, or why the removals could not be committed.
+/// event, until `stop`. `pass` hears the outcome of each pass: whether a
+/// card left the index and whether the index fell behind the files, or why
+/// the removals could not be committed at all.
 pub fn run_removal_timer(
     conn: &Connection,
     vault: &VaultLayout,
     stop: &RemovalTimerStop,
     app: Option<&AppHandle>,
-    mut pass: impl FnMut(Result<bool>),
+    mut pass: impl FnMut(Result<RemovalPass>),
 ) {
     while let Some(due) = wait_for_due_removals(vault, stop) {
-        pass(commit_removals(conn, vault, &due, app));
+        pass(commit_removals(conn, vault, &due, &mut |removed| {
+            announce_removal(app, vault, removed);
+        }));
     }
 }
 
-/// Commit removals already taken off the queue. When writes are closed (an
+/// What one pass over due removals did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RemovalPass {
+    /// A card left the index.
+    pub removed: bool,
+    /// The index refused a removal: it lists a card whose note is gone until
+    /// a retry or the next reconciliation removes it (`SPEC_AUDIT_FIXES.md`,
+    /// В2.3).
+    pub stale: bool,
+}
+
+/// What became of one deferred removal.
+#[derive(Debug)]
+enum RemovalOutcome {
+    /// The card left the index and was announced.
+    Removed,
+    /// Nothing to remove: the space is not there (П29) or the note is back.
+    Kept,
+    /// The index refused the removal; it is queued again.
+    Retrying,
+    /// The index refused every attempt; the next reconciliation removes it.
+    GaveUp,
+}
+
+/// Commit removals already taken off the queue, announcing through
+/// `announce` each card that left the index. When writes are closed (an
 /// update preparing to quit) they are not committed here: the caller learns
 /// it, and the next reconciliation removes cards whose notes are gone.
 fn commit_removals(
     conn: &Connection,
     vault: &VaultLayout,
     due: &[PendingRemove],
-    app: Option<&AppHandle>,
-) -> Result<bool> {
+    announce: &mut dyn FnMut(&PendingRemove),
+) -> Result<RemovalPass> {
     let _write = crate::storage::source_mutation::begin_write()?;
-    let mut removed = false;
+    Ok(settle_removals(conn, vault, due.iter().cloned(), announce))
+}
+
+/// Settle each removal and sum up what the pass did.
+fn settle_removals(
+    conn: &Connection,
+    vault: &VaultLayout,
+    due: impl IntoIterator<Item = PendingRemove>,
+    announce: &mut dyn FnMut(&PendingRemove),
+) -> RemovalPass {
+    let mut pass = RemovalPass::default();
     for pending in due {
-        removed |= commit_deferred_removal(conn, vault, pending, app);
+        match settle_removal(conn, vault, pending, announce) {
+            RemovalOutcome::Removed => pass.removed = true,
+            RemovalOutcome::Kept => {}
+            RemovalOutcome::Retrying | RemovalOutcome::GaveUp => pass.stale = true,
+        }
     }
-    Ok(removed)
+    pass
+}
+
+/// Commit one deferred removal. Only a card that actually left the index is
+/// announced: announcing a refused removal made the card vanish from the
+/// feed and come back on the next reload (`SPEC_AUDIT_FIXES.md`, В2.3). A
+/// refused removal is queued again, with a growing wait, until it commits or
+/// [`REMOVAL_ATTEMPTS`] run out.
+fn settle_removal(
+    conn: &Connection,
+    vault: &VaultLayout,
+    pending: PendingRemove,
+    announce: &mut dyn FnMut(&PendingRemove),
+) -> RemovalOutcome {
+    match commit_deferred_removal(conn, vault, &pending) {
+        Ok(true) => {
+            announce(&pending);
+            RemovalOutcome::Removed
+        }
+        Ok(false) => RemovalOutcome::Kept,
+        Err(error) => {
+            let failed_attempts = pending.failed_attempts + 1;
+            if failed_attempts >= REMOVAL_ATTEMPTS {
+                log::warn!(
+                    "deferred removal of {} refused {failed_attempts} times, left to reconciliation: {error:#}",
+                    pending.slug
+                );
+                return RemovalOutcome::GaveUp;
+            }
+            log::warn!("deferred removal of {} refused, retrying: {error:#}", pending.slug);
+            push_pending_remove(PendingRemove {
+                deadline: Instant::now() + removal_retry_delay(failed_attempts),
+                failed_attempts,
+                ..pending
+            });
+            RemovalOutcome::Retrying
+        }
+    }
+}
+
+/// The wait before the next attempt after `failed_attempts` refusals.
+fn removal_retry_delay(failed_attempts: u32) -> Duration {
+    REMOVAL_RETRY_DELAY * 2u32.pow(failed_attempts.saturating_sub(1))
+}
+
+/// Tell the frontend a card left the index.
+fn announce_removal(app: Option<&AppHandle>, vault: &VaultLayout, pending: &PendingRemove) {
+    let Some(app) = app else {
+        return;
+    };
+    let _ = app.emit(
+        "block:removed",
+        BlockRemovedPayload {
+            slug: pending.slug.clone(),
+            tags: pending.tags.clone(),
+        },
+    );
+    let _ = app.emit(
+        "thumb:updated",
+        ThumbUpdatedPayload {
+            path: vault.root().to_string_lossy().into_owned(),
+            slug: pending.slug.clone(),
+            is_text: false,
+        },
+    );
 }
 
 /// Test-only: drain the entire pending queue and commit every entry as a
@@ -924,58 +1041,36 @@ fn flush_pending_for_test(conn: &Connection, vault: &VaultLayout, app: Option<&A
         });
         matching
     };
-    for p in pending {
-        commit_deferred_removal(conn, vault, &p, app);
-    }
+    settle_removals(conn, vault, pending, &mut |removed| {
+        announce_removal(app, vault, removed);
+    });
 }
 
 /// Commit a deferred block removal as if it had been processed immediately.
 /// Used when the rename-match window expires without an incoming Create.
-/// Returns whether the card left the index.
+/// Returns whether the card left the index; an error when the index refused
+/// the removal and still lists the card.
 fn commit_deferred_removal(
     conn: &Connection,
     vault: &VaultLayout,
     pending: &PendingRemove,
-    app: Option<&AppHandle>,
-) -> bool {
+) -> Result<bool> {
     // A folder renamed or unmounted reports every file as deleted. The card
     // is only removed while the space itself is still there (П29).
     if let Err(unavailable) = crate::storage::root_guard::ensure_root_present(vault) {
         log::warn!("deferred removal of {} skipped: {unavailable}", pending.slug);
-        return false;
+        return Ok(false);
     }
     // The note came back (restored from the Trash, an editor's save that
     // briefly removed it): the file on disk decides, not the old event (Ф7).
     if vault.block_path(&pending.slug).exists() {
         log::info!("deferred removal of {} dropped: the note is back", pending.slug);
-        return false;
+        return Ok(false);
     }
-    if let Err(e) = index::remove_block(conn, &pending.slug) {
-        log::warn!(
-            "deferred removal: index::remove_block for {} failed: {}",
-            pending.slug,
-            e
-        );
-    }
+    index::remove_block(conn, &pending.slug)
+        .with_context(|| format!("deferred removal of {} from the index", pending.slug))?;
     let _ = article_audio::delete_all_artifacts(vault, &pending.slug);
-    if let Some(app) = app {
-        let _ = app.emit(
-            "block:removed",
-            BlockRemovedPayload {
-                slug: pending.slug.clone(),
-                tags: pending.tags.clone(),
-            },
-        );
-        let _ = app.emit(
-            "thumb:updated",
-            ThumbUpdatedPayload {
-                path: vault.root().to_string_lossy().into_owned(),
-                slug: pending.slug.clone(),
-                is_text: false,
-            },
-        );
-    }
-    true
+    Ok(true)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1044,7 +1139,10 @@ fn perform_rename_match(
             );
             // Commit the deferred removal and fall through to normal
             // indexing so both blocks end up in a consistent state.
-            commit_deferred_removal(conn, vault, pending, app);
+            let pass = settle_removals(conn, vault, [pending.clone()], &mut |removed| {
+                announce_removal(app, vault, removed);
+            });
+            mark_stale_index(app, vault, pass);
         }
     }
 
@@ -1053,19 +1151,30 @@ fn perform_rename_match(
     index_md_file(conn, vault, new_path, app)
 }
 
+/// An index that refused a removal is behind the files: the next freshness
+/// pass reconciles it even if every retry fails (`SPEC_AUDIT_FIXES.md`, В2.3).
+fn mark_stale_index(app: Option<&AppHandle>, vault: &VaultLayout, pass: RemovalPass) {
+    if let (true, Some(app)) = (pass.stale, app) {
+        app.state::<AppState>()
+            .freshness
+            .mark_dirty(&vault.root().to_string_lossy());
+    }
+}
+
 pub fn handle_event(
     conn: &Connection,
     vault: &VaultLayout,
     event: &VaultEvent,
     app: Option<&AppHandle>,
 ) -> Result<bool> {
-    // Before any dispatch, commit removals whose rename-match window
     let _write = crate::storage::source_mutation::begin_write()?;
+    // Before any dispatch, commit removals whose rename-match window
     // expired. Keeps the pending queue bounded and ensures deferred
     // deletes are eventually visible to the frontend.
-    for expired in drain_expired_pending(vault) {
-        commit_deferred_removal(conn, vault, &expired, app);
-    }
+    let pass = settle_removals(conn, vault, drain_expired_pending(vault), &mut |removed| {
+        announce_removal(app, vault, removed);
+    });
+    mark_stale_index(app, vault, pass);
 
     match event {
         VaultEvent::BlockChanged(path) => {
@@ -1107,6 +1216,7 @@ pub fn handle_event(
                     slug,
                     tags,
                     deadline: Instant::now() + Duration::from_millis(RENAME_MATCH_WINDOW_MS),
+                    failed_attempts: 0,
                 });
                 // Treat as "no-change for now". If no match arrives, the
                 // watcher's timer commits it when the window passes.
@@ -1518,11 +1628,21 @@ mod tests {
 
     /// One pass of the watcher's timer: wait for the earliest deadline, then
     /// commit what has expired. No other file event is involved (Ф7).
-    fn run_removal_timer_once(conn: &Connection, vault: &VaultLayout) -> bool {
+    /// Returns the pass and the cards it announced as removed.
+    fn run_removal_timer_pass(conn: &Connection, vault: &VaultLayout) -> (RemovalPass, Vec<String>) {
         assert!(next_pending_deadline(vault).is_some(), "a removal is pending");
         let due = wait_for_due_removals(vault, &RemovalTimerStop::default())
             .expect("a running timer takes the due removals");
-        commit_removals(conn, vault, &due, None).unwrap()
+        let mut announced = Vec::new();
+        let pass = commit_removals(conn, vault, &due, &mut |removed| {
+            announced.push(removed.slug.clone());
+        })
+        .unwrap();
+        (pass, announced)
+    }
+
+    fn run_removal_timer_once(conn: &Connection, vault: &VaultLayout) -> bool {
+        run_removal_timer_pass(conn, vault).0.removed
     }
 
     #[test]
@@ -1546,7 +1666,7 @@ mod tests {
             let timer_conn = db::open_or_create(&vault.index_db_path()).unwrap();
             std::thread::spawn(move || {
                 run_removal_timer(&timer_conn, &vault, &stop, None, |pass| {
-                    if pass.expect("the removal commits") {
+                    if pass.expect("the removal commits").removed {
                         let _ = removed_tx.send(Instant::now());
                     }
                 });
@@ -1568,6 +1688,69 @@ mod tests {
         assert!(index::get_block(&conn, "gone").unwrap().is_none());
         stop.stop();
         timer.join().unwrap();
+    }
+
+    /// A card indexed in `vault`'s own index file, its note then deleted and
+    /// the deletion queued, and a second connection holding the index's
+    /// write lock: the removal is refused the way a busy index refuses it.
+    fn a_deletion_behind_a_locked_index(
+        slug: &str,
+    ) -> (tempfile::TempDir, VaultLayout, Connection, Connection) {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        conn.busy_timeout(Duration::from_millis(20)).unwrap();
+        write_md_file_with_body(&vault, slug, "link", &[], "busy-index-body");
+        let path = vault.block_path(slug);
+        index_md_file(&conn, &vault, &path, None).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        handle_event(&conn, &vault, &VaultEvent::BlockDeleted(path), None).unwrap();
+        let writer = db::open_or_create(&vault.index_db_path()).unwrap();
+        writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+        (dir, vault, conn, writer)
+    }
+
+    #[test]
+    fn a_refused_removal_is_not_announced_and_commits_once_the_index_frees() {
+        // В2.3: the index refused the deletion, yet `block:removed` went out
+        // and the pass counted a removal; the card vanished from the feed and
+        // came back on the next reload, until some unrelated reconciliation.
+        let (_dir, vault, conn, writer) = a_deletion_behind_a_locked_index("busy");
+
+        let (pass, announced) = run_removal_timer_pass(&conn, &vault);
+        assert_eq!(pass, RemovalPass { removed: false, stale: true });
+        assert!(announced.is_empty(), "a card still in the index is announced as removed");
+        assert!(index::get_block(&conn, "busy").unwrap().is_some());
+        let retry = next_pending_deadline(&vault).expect("the refused removal is queued again");
+
+        // The lock clears; the timer's retry converges with no file event.
+        writer.execute_batch("COMMIT").unwrap();
+        let (pass, announced) = run_removal_timer_pass(&conn, &vault);
+        assert!(Instant::now() >= retry);
+        assert_eq!(pass, RemovalPass { removed: true, stale: false });
+        assert_eq!(announced, vec!["busy".to_string()]);
+        assert!(index::get_block(&conn, "busy").unwrap().is_none());
+        assert_eq!(next_pending_deadline(&vault), None);
+    }
+
+    #[test]
+    fn a_removal_refused_on_every_attempt_is_left_to_reconciliation() {
+        let (_dir, vault, conn, _writer) = a_deletion_behind_a_locked_index("stuck");
+        let mut last = drain_due(&mut pending_entries(), &vault, Instant::now() + Duration::from_secs(60));
+        assert_eq!(last.len(), 1);
+        last[0].failed_attempts = REMOVAL_ATTEMPTS - 1;
+
+        let mut announced = Vec::new();
+        let pass = settle_removals(&conn, &vault, last, &mut |removed| {
+            announced.push(removed.slug.clone());
+        });
+
+        assert_eq!(pass, RemovalPass { removed: false, stale: true });
+        assert!(announced.is_empty());
+        assert!(index::get_block(&conn, "stuck").unwrap().is_some());
+        assert_eq!(next_pending_deadline(&vault), None, "the attempts are bounded");
+        assert_eq!(removal_retry_delay(1), REMOVAL_RETRY_DELAY);
+        assert_eq!(removal_retry_delay(REMOVAL_ATTEMPTS - 1), REMOVAL_RETRY_DELAY * 8);
     }
 
     #[test]

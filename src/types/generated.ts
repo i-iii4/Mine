@@ -455,9 +455,16 @@ export type TextSelectionExtractError = { kind: "no_vault" } | { kind: "source_n
 export type ThumbFormat = "jpeg" | "png"
 
 /**
- * A space that is bound but not reachable right now.
+ * A space that is bound but not reachable right now. Also the payload of
+ * `space-unavailable`, which names the lost space so a window can ignore a
+ * report about a space it no longer shows (`SPEC_AUDIT_FIXES.md`, В2.1).
  */
-export type UnavailableVault = { path: string;
+export type UnavailableVault = {
+/**
+ * The path the space was opened with, spelled as `vault-selected` and
+ * `get_vault_path` report it.
+ */
+path: string;
 /**
  * Why the space cannot be opened: the folder is gone from this path, or
  * it is right there and macOS refuses to let the app read it. The two
@@ -465,7 +472,11 @@ export type UnavailableVault = { path: string;
  * useless advice when the folder is visible and locked.
  * See SPEC_ONBOARDING.md О11.
  */
-reason: UnavailableVaultReason }
+reason: UnavailableVaultReason;
+/**
+ * The lost space's identity, when the app knows it.
+ */
+vault_id: string | null }
 
 export type UnavailableVaultReason =
 /**
