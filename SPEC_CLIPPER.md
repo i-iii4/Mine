@@ -315,6 +315,11 @@ Popup / overlay → background → выбранный исполнитель
 
 Результат: `.md` (без поля `type` — решение 044; body starts with H1 when a real page title exists) + миниатюра (если есть og:image). Runtime card kind derives `article` because body is non-empty. New link clips do not write `title:` frontmatter.
 
+Картинка страницы сохраняется собственным файлом карточки (`file:`). Пост,
+в тексте которого нет медиа, показывает свой `file:` как превью: до 30.09.2026
+план превью поста брал картинки только из текста, и сохранённая ссылка
+показывалась голым текстом ([SPEC_BLOCK.md](SPEC_BLOCK.md), CardKind).
+
 ### 2. Article (полная статья)
 
 Извлекает статью через Defuddle.

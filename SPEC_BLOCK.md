@@ -118,7 +118,9 @@ Derivation:
 
 1. `frontmatter.type == channel` → `CardKind::Channel`.
 2. Otherwise body **minus media embeds** non-empty → `CardKind::Article` —
-   the card has its own text and shows information (decision 044).
+   the card has its own text and shows information (decision 044). Its
+   preview comes from the media in its text; when the text holds none, from
+   its own `file:` (a saved link keeps the page's picture there, 30.09.2026).
 3. Otherwise `file:` or a body embed → `CardKind::Media`; image/video/file
    разделяются расширением.
 4. Otherwise URL → `CardKind::Link`.

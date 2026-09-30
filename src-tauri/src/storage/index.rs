@@ -55,7 +55,7 @@ pub use crate::storage::vault_conflicts::{
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-const MEDIA_INDEX_VERSION: i64 = 6;
+const MEDIA_INDEX_VERSION: i64 = 7;
 /// The media index version at which a `#` inside a media file name stopped
 /// reading as a heading fragment. Cards indexed before it hold a text
 /// placeholder where their media preview belongs; the backfill discards it.
@@ -622,6 +622,55 @@ fn extract_social_preview_tiles(
     tiles
 }
 
+/// A post whose text holds no picture shows its own `file` (a saved link
+/// keeps the page's picture there). Only body embeds used to count, so a
+/// saved link showed as bare text (30.09.2026). A body with media keeps its
+/// own plan; `thumbnail` stays reserved for the YouTube source poster.
+fn own_media_when_body_has_none(
+    block: &Block,
+    body_plan: FeedPreviewManifest,
+    dims: &std::collections::HashMap<String, [u32; 2]>,
+    width: Option<u32>,
+    height: Option<u32>,
+) -> FeedPreviewManifest {
+    if body_plan.kind != FeedPreviewKind::Text {
+        return body_plan;
+    }
+    let own = block
+        .frontmatter
+        .file
+        .as_deref()
+        .filter(|source| is_image_media(source) || is_video_media(source));
+    let Some(source) = own else {
+        return body_plan;
+    };
+    let (preview_width, preview_height) = dimensions_for_src(dims, Some(source), width, height);
+    let is_video = is_video_media(source);
+    FeedPreviewManifest {
+        kind: if is_video {
+            FeedPreviewKind::VideoPoster
+        } else {
+            FeedPreviewKind::Image
+        },
+        primary_preview_path: Some(primary_preview_path(&block.slug)),
+        width: preview_width,
+        height: preview_height,
+        preview_width: None,
+        preview_height: None,
+        tiles: vec![FeedPreviewTile {
+            source_path: source.to_string(),
+            preview_path: None,
+            width: preview_width,
+            height: preview_height,
+            preview_width: None,
+            preview_height: None,
+            is_video,
+            is_video_poster: is_video,
+        }],
+        overflow_count: 0,
+    }
+}
+
 fn serialize_feed_preview_manifest(
     block: &Block,
     width: Option<u32>,
@@ -910,7 +959,9 @@ fn serialize_feed_preview_manifest(
                 }
             }
         }
-        CardKind::Article => plan_from_body(),
+        CardKind::Article => {
+            own_media_when_body_has_none(block, plan_from_body(), &dims, width, height)
+        }
     };
 
     for (index, tile) in manifest.tiles.iter_mut().enumerate() {
@@ -3543,6 +3594,81 @@ mod tests {
             (manifest.tiles[0].width, manifest.tiles[0].height),
             (Some(588), Some(720))
         );
+    }
+
+    #[test]
+    fn a_saved_link_shows_the_page_picture_it_carries() {
+        // The Link clip of 30.09.2026: a heading as its text, the page's
+        // picture as its own file. It showed as bare text.
+        let mut block = make_block_full(
+            "Kevin – Product Designer",
+            "article",
+            None,
+            "2026-09-30T12:51:15Z",
+            &[],
+            "# Kevin – Product Designer",
+        );
+        block.frontmatter.url = Some("https://kevn.co/".to_string());
+        block.frontmatter.file = Some("Media/Kevin – Product Designer.jpg".to_string());
+        let manifest: FeedPreviewManifest = serde_json::from_str(
+            &serialize_feed_preview_manifest(
+                &block,
+                None,
+                None,
+                Some(r#"{"Media/Kevin – Product Designer.jpg":[1200,630]}"#),
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(derive_card_kind(&block), CardKind::Article);
+        assert_eq!(manifest.kind, FeedPreviewKind::Image);
+        assert_eq!(manifest.tiles.len(), 1);
+        assert_eq!(manifest.tiles[0].source_path, "Media/Kevin – Product Designer.jpg");
+        assert_eq!((manifest.width, manifest.height), (Some(1200), Some(630)));
+    }
+
+    #[test]
+    fn a_saved_x_post_shows_its_own_picture_too() {
+        // The social branch had the same gap: no body media, no thumbnail,
+        // an own file ignored.
+        let mut block = make_block_full(
+            "Dinkus",
+            "article",
+            None,
+            "2026-09-30T12:50:50Z",
+            &[],
+            "# By popular demand, I am adding draggable dividers",
+        );
+        block.frontmatter.url = Some("https://x.com/willmcgugan/status/2105290478795010239".to_string());
+        block.frontmatter.file = Some("Media/Dinkus.png".to_string());
+        let manifest: FeedPreviewManifest = serde_json::from_str(
+            &serialize_feed_preview_manifest(&block, Some(1202), Some(634), None, None).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(manifest.kind, FeedPreviewKind::Image);
+        assert_eq!((manifest.width, manifest.height), (Some(1202), Some(634)));
+    }
+
+    #[test]
+    fn a_post_with_pictures_in_its_text_keeps_them_over_its_own_file() {
+        let mut block = make_block_full(
+            "post",
+            "article",
+            None,
+            "2026-01-01T00:00:00Z",
+            &[],
+            "text\n\n![[a.jpg]]\n\n![[b.jpg]]",
+        );
+        block.frontmatter.file = Some("cover.jpg".to_string());
+        let manifest: FeedPreviewManifest = serde_json::from_str(
+            &serialize_feed_preview_manifest(&block, None, None, None, Some(r#"["a.jpg","b.jpg"]"#))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(manifest.kind, FeedPreviewKind::Composite);
+        assert!(manifest.tiles.iter().all(|tile| tile.source_path != "cover.jpg"));
     }
 
     #[test]
