@@ -78,6 +78,9 @@ type CardHoverMenuPropsWithState = CardHoverMenuProps & {
   onKeyboardMoreMenuOpenChange?: (open: boolean) => void;
   onInteractiveOpenChange?: (open: boolean) => void;
   onInteractionStart?: () => void;
+  /// A pointer-opened menu holds the bottom row shown, and the card's lift
+  /// with it (SPEC_CARD_STATES.md, С8).
+  onActionsPinnedChange?: (pinned: boolean) => void;
 };
 
 function stopProp(e: React.MouseEvent | React.PointerEvent) {
@@ -399,6 +402,7 @@ export const CardHoverMenu = memo(function CardHoverMenu({
   onKeyboardMoreMenuOpenChange,
   onInteractiveOpenChange,
   onInteractionStart,
+  onActionsPinnedChange,
 }: CardHoverMenuPropsWithState) {
   const hasUrl = block.url != null && isSafeUrl(block.url);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -420,6 +424,10 @@ export const CardHoverMenu = memo(function CardHoverMenu({
   useEffect(() => {
     onInteractiveOpenChange?.(anyMenuOpen);
   }, [anyMenuOpen, onInteractiveOpenChange]);
+
+  useEffect(() => {
+    onActionsPinnedChange?.(hoverActionsPinned);
+  }, [hoverActionsPinned, onActionsPinnedChange]);
 
   const shouldLoadTags = menuOpen || channelOpen;
 
@@ -499,14 +507,18 @@ export const CardHoverMenu = memo(function CardHoverMenu({
         />
       </div>
 
-      {/* Нижний ряд: Source (лево) + Connect (право) */}
+      {/* Нижний ряд: Source (лево) + Connect (право). It waits under the
+          bottom edge and rises with the card's lift, fading in as it comes
+          (SPEC_CARD_STATES.md, С8); the motion lives in global.css. Over
+          video its transform stays 3D for the layer of its own. */}
       <div
         className={cn(
-          "pointer-events-none absolute bottom-2 left-2 right-2 z-[5] flex gap-2 transition-opacity",
-          videoUnderneath && "transform-gpu",
+          "pointer-events-none absolute bottom-2 left-2 right-2 z-[5] flex gap-2",
           hoverEnabled && "group-hover:pointer-events-auto group-hover:opacity-100",
           hoverActionsPinned ? "pointer-events-auto opacity-100" : "opacity-0",
         )}
+        data-card-lift="tray"
+        data-card-lift-gpu={videoUnderneath ? "" : undefined}
         data-card-hover-bottom-actions=""
         data-card-hover-enabled={hoverEnabled ? "true" : undefined}
         onClick={stopProp}

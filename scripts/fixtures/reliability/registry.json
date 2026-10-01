@@ -1263,6 +1263,18 @@
       "requirement": "DESIGN_SYSTEM.md#CONTENT_CARD_TITLE_CLASSES",
       "tests": ["src/components/Card.test.tsx", "src/components/SearchOverlay.test.tsx", "src/lib/fontMetrics.test.ts"],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/components/Card.tsx",
+        "src/components/Card.test.tsx",
+        "src/components/CardHoverMenu.tsx",
+        "src/components/CardHoverMenu.test.tsx",
+        "src/styles/global.css"
+      ],
+      "requirement": "SPEC_CARD_STATES.md#С8. Подъём карточки при наведении",
+      "tests": ["src/components/Card.test.tsx", "src/components/CardHoverMenu.test.tsx"],
+      "command": "test:frontend"
     }
   ],
   "release": null

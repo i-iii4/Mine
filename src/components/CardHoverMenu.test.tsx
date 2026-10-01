@@ -110,8 +110,11 @@ describe("CardHoverMenu", () => {
   const HOVER_LAYERS = [
     "[data-card-hover-overlay]",
     "[data-card-hover-more-action]",
-    "[data-card-hover-bottom-actions]",
   ];
+  // The bottom row moves with the card's lift, so its layer comes from the
+  // lift's own 3D transform in global.css rather than from `transform-gpu`,
+  // which the lift transform would override (SPEC_CARD_STATES.md, С8).
+  const BOTTOM_ROW = "[data-card-hover-bottom-actions]";
 
   it("lifts every hover layer onto its own compositing layer over video", () => {
     const { container } = render(
@@ -134,6 +137,7 @@ describe("CardHoverMenu", () => {
     for (const selector of HOVER_LAYERS) {
       expect(container.querySelector(selector), selector).toHaveClass("transform-gpu");
     }
+    expect(container.querySelector(BOTTOM_ROW)).toHaveAttribute("data-card-lift-gpu");
   });
 
   it("asks for no layer of its own without video underneath", () => {
@@ -155,6 +159,27 @@ describe("CardHoverMenu", () => {
     for (const selector of HOVER_LAYERS) {
       expect(container.querySelector(selector), selector).not.toHaveClass("transform-gpu");
     }
+    expect(container.querySelector(BOTTOM_ROW)).not.toHaveAttribute("data-card-lift-gpu");
+  });
+
+  it("reports when a pointer menu holds the bottom row, the card lift's pin", async () => {
+    const onActionsPinnedChange = vi.fn();
+    render(
+      <CardHoverMenu
+        block={makeBlock()}
+        vaultPath="/vault"
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onActionsPinnedChange={onActionsPinnedChange}
+      />,
+    );
+
+    expect(onActionsPinnedChange).toHaveBeenLastCalledWith(false);
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Connect/ }), { button: 0, ctrlKey: false, pointerType: "mouse" });
+    await waitFor(() => expect(onActionsPinnedChange).toHaveBeenLastCalledWith(true));
   });
 
   it("copies the card path through the native clipboard, not the web API", async () => {

@@ -1492,8 +1492,12 @@ Content: `rounded-1 border bg-card p-1 text-card-foreground`, тень — ед�
 - **Source** (`ExternalLink`, `size="default"` 32px, текст «Source») — нижний левый угол
 - **Connect** (`Plus`, `size="default"` 32px, текст «Connect») — нижний правый угол
 
-**Появление:** `opacity-0 group-hover:opacity-100 transition-opacity`, только
-когда текущий interaction owner — pointer. В Grid keyboard mode карточка
+**Появление:** `opacity-0 group-hover:opacity-100`, только
+когда текущий interaction owner — pointer. Нижний ряд не ложится поверх
+текста: карточка поднимает содержимое на 40 px (48 px, где медиа доходит до
+нижней кромки), а ряд выезжает следом из-под края, картинка смещается на
+половину подъёма (SPEC_CARD_STATES.md, С8; правила в `global.css`,
+`[data-card-lift]`). В Grid keyboard mode карточка
 получает `hoverEnabled=false`: `group-hover:opacity-100` снимается с overlay,
 top `More` и bottom action row, но программное открытие `Cmd+K` всё равно
 может показать top `More`/overflow menu.

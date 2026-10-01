@@ -1,4 +1,5 @@
 import { CLOUD_BADGE_DELAY_MS, CLOUD_STATE_LABEL } from "@/lib/cloudContent";
+import { readFileSync } from "node:fs";
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -2322,3 +2323,66 @@ describe("Card titles differ from their text by color alone (01.10.2026)", () =>
   });
 });
 
+describe("Card lift on hover (SPEC_CARD_STATES.md, С8)", () => {
+  const menuProps = {
+    tags: [],
+    onToggleTag: vi.fn(),
+    onCreateAndAssign: vi.fn(),
+    onRequestRename: vi.fn(),
+    onRequestDelete: vi.fn(),
+  };
+  const frameOf = (container: HTMLElement) =>
+    container.querySelector<HTMLElement>("[data-feed-card-frame]")!;
+
+  it("lifts a card with hover actions, never one without them", () => {
+    const withMenu = render(<Card block={block()} vaultPath={VAULT} onClick={vi.fn()} {...menuProps} />);
+    expect(frameOf(withMenu.container)).toHaveAttribute("data-card-lift-hover");
+    withMenu.unmount();
+
+    const bare = render(<Card block={block()} vaultPath={VAULT} onClick={vi.fn()} />);
+    expect(frameOf(bare.container)).not.toHaveAttribute("data-card-lift-hover");
+  });
+
+  it("does not lift while hover is disabled, as in keyboard mode", () => {
+    const { container } = render(
+      <Card block={block()} vaultPath={VAULT} onClick={vi.fn()} hoverEnabled={false} {...menuProps} />,
+    );
+    expect(frameOf(container)).not.toHaveAttribute("data-card-lift-hover");
+  });
+
+  it("rises 8px further where media ends flush with the bottom edge", () => {
+    const picture = render(
+      <Card block={block({ block_type: "image", media_file: "photo.jpg" })} vaultPath={VAULT} onClick={vi.fn()} {...menuProps} />,
+    );
+    expect(frameOf(picture.container)).toHaveAttribute("data-card-lift-depth", "flush");
+    picture.unmount();
+
+    const post = render(
+      <Card block={block({ block_type: "article", body: "Some words" })} vaultPath={VAULT} onClick={vi.fn()} {...menuProps} />,
+    );
+    expect(frameOf(post.container)).toHaveAttribute("data-card-lift-depth", "padded");
+  });
+
+  it("moves the media window and its picture plane, and keeps the cloud badge outside them", () => {
+    const { container } = render(
+      <Card block={block({ block_type: "image", media_file: "photo.jpg" })} vaultPath={VAULT} onClick={vi.fn()} {...menuProps} />,
+    );
+    const surface = container.querySelector("[data-card-graphic-surface]")!;
+    const windowLayer = surface.querySelector(":scope > [data-card-lift='window']");
+    expect(windowLayer).not.toBeNull();
+    expect(windowLayer!.querySelector(":scope > [data-card-lift='plane']")).not.toBeNull();
+    expect(container.querySelector("[data-card-lift='tray']")).not.toBeNull();
+  });
+
+  it("styles the lift in global.css: text and window up, plane back by half, row up from under the edge", () => {
+    const css = readFileSync("src/styles/global.css", "utf8");
+    const rules = css.split("}");
+    const ruleFor = (selectorPart: string, declaration: string) =>
+      rules.some((rule) => rule.includes(selectorPart) && rule.includes(declaration));
+    expect(ruleFor('[data-card-lift-hover]:hover [data-card-lift="text"]', "translateY(calc(-1 * var(--card-lift)))")).toBe(true);
+    expect(ruleFor('[data-card-lift-pinned] [data-card-lift="window"]', "translateY(calc(-1 * var(--card-lift)))")).toBe(true);
+    expect(ruleFor('[data-card-lift-hover]:hover [data-card-lift="plane"]', "translateY(calc(var(--card-lift) / 2))")).toBe(true);
+    expect(ruleFor('[data-card-lift="tray"]', "transform: translateY(var(--card-lift))")).toBe(true);
+    expect(ruleFor('[data-feed-card-frame][data-card-lift-depth="flush"]', "--card-lift: 48px")).toBe(true);
+  });
+});

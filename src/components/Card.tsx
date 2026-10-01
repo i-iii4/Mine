@@ -99,6 +99,10 @@ interface CardFrameProps extends React.HTMLAttributes<HTMLDivElement> {
 interface GraphicSurfaceProps extends React.HTMLAttributes<HTMLDivElement> {
   children: React.ReactNode;
   insetMedia?: boolean;
+  /** Layout of the media plane the children are painted in. */
+  contentClassName?: string;
+  /** Whether the content is still in iCloud: the badge stays put on a lift. */
+  contentInCloud?: boolean;
 }
 
 const CardFrame = forwardRef<HTMLDivElement, CardFrameProps>(function CardFrame(
@@ -139,11 +143,12 @@ export function CardSourcelessSurface({
 }) {
   return (
     <GraphicSurface
-      className="flex h-full w-full items-center justify-center"
+      className="h-full w-full"
+      contentClassName="flex items-center justify-center"
+      contentInCloud={contentInCloud}
       style={style}
       data-card-preview-geometry={geometryPending ? "pending" : undefined}
     >
-      <CloudBadge active={contentInCloud} />
       {/* No icon: a crossed-out picture says nothing the sentence below does
           not, and this is the state where a name is worth more than a symbol —
           it is what the person will look for on disk. */}
@@ -167,10 +172,18 @@ export function CardSourcelessSurface({
   );
 }
 
+/// A media slot: the layout box, the window the media shows through, and the
+/// plane it is painted on. On a card lift (SPEC_CARD_STATES.md, С8) the window
+/// rises with the text under it, keeping its own corners, while the plane
+/// drifts back half that distance: the box's top edge holds still, the window
+/// shrinks from the bottom and the picture inside moves up by half the lift.
+/// The box clips the rest, so the outer geometry never changes.
 function GraphicSurface({
   children,
   className,
+  contentClassName,
   insetMedia = false,
+  contentInCloud,
   ...props
 }: GraphicSurfaceProps) {
   return (
@@ -180,7 +193,12 @@ function GraphicSurface({
       className={cn("relative overflow-hidden bg-card", insetMedia && "rounded-[var(--radius-card)]", className)}
       {...props}
     >
-      {children}
+      <div data-card-lift="window" className="absolute inset-0 overflow-hidden rounded-[inherit]">
+        <div data-card-lift="plane" className={cn("absolute inset-0", contentClassName)}>
+          {children}
+        </div>
+      </div>
+      <CloudBadge active={contentInCloud} />
     </div>
   );
 }
@@ -201,6 +219,27 @@ export function MeasuredCardFrame({
 /// including a picture `Cards` shows as a post, and not to bare media.
 function isPostVariant(variant: CardLayoutVariant): boolean {
   return variant.startsWith("article") || variant.startsWith("social");
+}
+
+/// How far a card's content rises on a lift (SPEC_CARD_STATES.md, С8): the
+/// action row and its 8px inset below it, plus an 8px gap above it where the
+/// content ends flush with the frame's bottom edge. Padded content brings its
+/// own bottom padding as that gap.
+function cardLiftDepth(descriptor: CardLayoutDescriptor): "flush" | "padded" {
+  switch (descriptor.variant) {
+    case "image":
+    case "video":
+    case "media-only":
+      return "flush";
+    default:
+      return descriptor.mediaPlacement === "edge"
+        && descriptor.mediaItems.length > 0
+        && !descriptor.titleText
+        && !descriptor.previewText
+        && !descriptor.authorText
+        ? "flush"
+        : "padded";
+  }
 }
 
 export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumbVersion, priority, allowPlayback = true, openMoreMenuRequestSequence = 0, hoverEnabled = true, dragBlocks: dragBlocksProp, clearSelectionOnDragStart, onKeyboardMoreMenuOpenChange, onMenuOpenChange, onModifiedClick, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete }: CardProps) {
@@ -227,7 +266,14 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
     } satisfies BlockDragData,
   });
   const show = useContext(FeedShowContext);
-  const isArticleFeedCard = isPostVariant(deriveCardLayoutDescriptor(block, show).variant);
+  const media = useContext(FeedMediaContext);
+  const descriptor = useMemo(
+    () => deriveCardLayoutDescriptor(block, show, media),
+    [block, media, show],
+  );
+  const isArticleFeedCard = isPostVariant(descriptor.variant);
+  const hasHoverMenu = Boolean(tags && onToggleTag && onCreateAndAssign && onRequestRename && onRequestDelete);
+  const [actionsPinned, setActionsPinned] = useState(false);
 
   const handleClick = (event: ReactMouseEvent<HTMLDivElement>) => {
     if (onModifiedClick?.(block, event)) {
@@ -260,6 +306,11 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
       tabIndex={0}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
+      // The lift follows the bottom action row exactly: pointer hover while
+      // hover is enabled, or a pointer-opened menu holding the row (С8).
+      data-card-lift-hover={hasHoverMenu && hoverEnabled ? "" : undefined}
+      data-card-lift-pinned={hasHoverMenu && actionsPinned ? "" : undefined}
+      data-card-lift-depth={cardLiftDepth(descriptor)}
       className={cn(
         "h-full",
         isArticleFeedCard && "feed-article-card",
@@ -283,6 +334,7 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
           videoUnderneath={allowPlayback && block.feed_playback !== null}
           onKeyboardMoreMenuOpenChange={onKeyboardMoreMenuOpenChange}
           onInteractiveOpenChange={onMenuOpenChange}
+          onActionsPinnedChange={setActionsPinned}
         />
       )}
       <CardContent block={block} vaultPath={vaultPath} thumbsRootPath={thumbsRootPath} thumbVersion={thumbVersion} priority={priority} allowPlayback={allowPlayback} />
@@ -602,9 +654,19 @@ export function InteractiveCardPreview({
   onInteractionStart?: () => void;
   onClick?: (block: LightBlock) => void;
 }) {
+  const show = useContext(FeedShowContext);
+  const media = useContext(FeedMediaContext);
+  const descriptor = useMemo(
+    () => deriveCardLayoutDescriptor(block, show, media),
+    [block, media, show],
+  );
+  const [actionsPinned, setActionsPinned] = useState(false);
   return (
     <CardFrame
       data-block-slug={block.slug}
+      data-card-lift-hover=""
+      data-card-lift-pinned={actionsPinned ? "" : undefined}
+      data-card-lift-depth={cardLiftDepth(descriptor)}
       role={onClick ? "button" : undefined}
       tabIndex={onClick ? 0 : undefined}
       className={cn("rounded-1 shadow-lg", !onClick && "cursor-default", className)}
@@ -629,6 +691,7 @@ export function InteractiveCardPreview({
         onRequestDelete={onRequestDelete}
         onInteractiveOpenChange={onInteractiveOpenChange}
         onInteractionStart={onInteractionStart}
+        onActionsPinnedChange={setActionsPinned}
       />
       <CardContent
         block={block}
@@ -957,8 +1020,8 @@ const ImageCard = memo(function ImageCard({
       className="h-full w-full"
       style={surfaceStyle}
       data-card-preview-geometry={geometryPending ? "pending" : undefined}
+      contentInCloud={block.content_in_cloud}
     >
-      <CloudBadge active={block.content_in_cloud} />
       {!measurementMode && (
         <img
           // Keyed by src so React remounts the element when we fall through to
@@ -1034,7 +1097,7 @@ const LinkCard = memo(function LinkCard({
   // No thumbnail — compact card (title + domain only)
   if (thumbError) {
     return (
-      <div className="p-3">
+      <div className="p-3" data-card-lift="text">
         <p className={cn("truncate", CONTENT_CARD_TITLE_CLASSES)} style={contentCardSingleLineTextStyle}>
           {navigationLabel}
         </p>
@@ -1079,7 +1142,7 @@ const LinkCard = memo(function LinkCard({
           />
         )}
       </GraphicSurface>
-      <div className="p-3">
+      <div className="p-3" data-card-lift="text">
         <p className={cn("truncate", CONTENT_CARD_TITLE_CLASSES)} style={contentCardSingleLineTextStyle}>
           {navigationLabel}
         </p>
@@ -1150,8 +1213,8 @@ const SocialCard = memo(function SocialCard({
         className={cn("w-full", !insetMedia && "rounded-b-[var(--radius-card)]")}
         style={{ aspectRatio: `${aspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
         data-card-preview-geometry={aspectRatio === null ? "pending" : undefined}
+        contentInCloud={block.content_in_cloud}
       >
-        <CloudBadge active={block.content_in_cloud} />
         {shouldAutoplay ? (
           <FeedVideoSurface
             playback={playback}
@@ -1193,8 +1256,8 @@ const SocialCard = memo(function SocialCard({
       insetMedia={insetMedia}
       className={cn("w-full", !insetMedia && "rounded-b-[var(--radius-card)]")}
       style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
+      contentInCloud={block.content_in_cloud}
     >
-      <CloudBadge active={block.content_in_cloud} />
       <GalleryTiles
         items={media}
         thumbsRootPath={thumbsRootPath}
@@ -1263,18 +1326,25 @@ function PostCardBody({
   const hasMedia = media !== null;
   const edgeToEdge = placement === "edge" && hasMedia;
   const text = textStack !== null && (
-    <div className={cn(hasMedia && (edgeToEdge ? "mt-2" : "mt-3"))}>{textStack}</div>
+    <div
+      data-card-lift={hasMedia && !edgeToEdge ? "text" : undefined}
+      className={cn(hasMedia && (edgeToEdge ? "mt-2" : "mt-3"))}
+    >
+      {textStack}
+    </div>
   );
   if (edgeToEdge) {
     return (
       <div>
         {media}
-        {text && <div className="px-2 pb-2">{text}</div>}
+        {text && <div data-card-lift="text" className="px-2 pb-2">{text}</div>}
       </div>
     );
   }
+  // Without media the whole body is text and rises past the top edge on a
+  // lift (SPEC_CARD_STATES.md, С8).
   return (
-    <div className="p-4">
+    <div className="p-4" data-card-lift={hasMedia ? undefined : "text"}>
       {media}
       {text}
     </div>
@@ -1335,8 +1405,8 @@ function PostMediaSurface({
       className={cn(fit === "fill" ? "h-full w-full" : "w-full", fit === "edge" && "rounded-b-[var(--radius-card)]")}
       style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
       data-card-preview-geometry={descriptor.primaryAspectRatio === null ? "pending" : undefined}
+      contentInCloud={block.content_in_cloud}
     >
-      <CloudBadge active={block.content_in_cloud} />
       {descriptor.totalMediaCount > 1 ? (
         <GalleryTiles
           items={descriptor.mediaItems}
@@ -1513,8 +1583,8 @@ const VideoCard = memo(function VideoCard({
     <GraphicSurface
       style={{ aspectRatio: `${aspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
       data-card-preview-geometry={aspectRatio === null ? "pending" : undefined}
+      contentInCloud={contentInCloud}
     >
-      <CloudBadge active={contentInCloud} />
       {shouldAutoplay ? (
         <FeedVideoSurface
           playback={playback}
@@ -1547,7 +1617,7 @@ const FileCard = memo(function FileCard({ block }: { block: LightBlock }) {
   const navigationLabel = getNavigationLabel(block);
 
   return (
-    <div className="flex items-center gap-3 p-4">
+    <div className="flex items-center gap-3 p-4" data-card-lift="text">
       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-1 bg-accent text-sm font-semibold text-muted-foreground">
         {ext ?? "FILE"}
       </div>
