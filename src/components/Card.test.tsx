@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { Card, DragCardStackPreview, ReadOnlyCardPreview } from "./Card";
 import { FeedShowContext, type FeedShow } from "@/lib/feedDisplay";
 import { CARD_HOVER_ACTION_MIN_HEIGHT, computeCardHeight } from "@/lib/cardHeight";
-import { PROVISIONAL_MEDIA_ASPECT } from "@/lib/cardAspect";
+import { PROVISIONAL_MEDIA_ASPECT, clampCardAspect } from "@/lib/cardAspect";
 import type { LightBlock } from "@/types";
 
 vi.mock("@/lib/commands", () => ({
@@ -1610,6 +1610,44 @@ describe("Card geometry, author and name (SPEC_AUDIT_FIXES.md, Г4.5 to Г4.7)",
     // Media: the picture is the whole card inside its border.
     expect(computeCardHeight(post, COLUMN, null, "media"))
       .toBe(Math.round((COLUMN - CARD_BORDER) / mediaAspect) + CARD_BORDER);
+  });
+
+  // Д1.2: the card's whole preview is built from `thumbnail`, here a 16:9
+  // video poster the helper kept for a video too large to save, while the card
+  // paints the body's own picture, an 800×1200 tile.
+  it.each([
+    ["X", "https://x.com/someone/status/1"],
+    ["Instagram", "https://instagram.com/p/1"],
+  ])("shapes a single %s picture by the tile it paints, not by the poster in its preview (Д1.2)", (_network, url) => {
+    const post = block({
+      block_type: "article", card_kind: "article", title: null, description: null, url,
+      thumbnail: "Media/post-poster.jpg",
+      body: "![](Media/post-1.jpg)", media_urls: "[\"Media/post-1.jpg\"]",
+      preview_manifest: JSON.stringify({
+        kind: "image", primary_preview_path: "post.jpg", width: 1600, height: 900,
+        preview_width: 1600, preview_height: 900,
+        tiles: [{ source_path: "Media/post-1.jpg", preview_path: "post.preview-1.jpg",
+          width: 800, height: 1200, preview_width: 800, preview_height: 1200,
+          is_video: false, is_video_poster: false }],
+        overflow_count: 0,
+      }),
+    });
+    const tileAspect = clampCardAspect(800 / 1200);
+    for (const show of ["mixed", "cards", "media"] as const) {
+      const doc = renderedMarkup(show, post);
+      // The tile is what the surface paints, and its shape is the surface's.
+      expect(doc.querySelector("[data-card-graphic-surface] img")?.getAttribute("src"))
+        .toContain("post.preview-1.jpg");
+      const aspect = paintedAspect(doc);
+      expect(aspect).toBeCloseTo(tileAspect, 4);
+      expect(computeCardHeight(post, COLUMN, null, show)).toBe(
+        show === "media"
+          // Media: the picture is the whole card inside its border.
+          ? Math.round((COLUMN - CARD_BORDER) / aspect) + CARD_BORDER
+          // Border, padding, the inset picture across the padded width, padding.
+          : CARD_BORDER + CARD_PADDING + Math.round(CONTENT_WIDTH / aspect) + CARD_PADDING,
+      );
+    }
   });
 
   const longAuthor = "An author whose name runs on far past the width of any column in the feed, and then some more";

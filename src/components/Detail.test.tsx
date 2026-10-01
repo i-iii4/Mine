@@ -2226,6 +2226,68 @@ describe("Detail", () => {
       expect(videos[0]).toHaveAttribute("data-muted", "true");
     });
 
+    // Д1.1: an image before the lead video in the body. Remove on the player
+    // names the video's own `![`, which the core removes only while it still
+    // shows that video.
+    it("removes the lead video when an image precedes it in the body", async () => {
+      const body = "![[a.jpg]]\n\n![[clip.mp4]]";
+      const failures: unknown[] = [];
+      // The core: the reference starting at that `![` goes, and only when it
+      // shows the media named.
+      const onRemoveMediaAssetFromCard = vi.fn(async (asset: MediaAssetRef) => {
+        const openers = [...body.matchAll(/!\[/g)].map((match) => match.index);
+        const start = asset.occurrence_index === null ? undefined : openers[asset.occurrence_index];
+        const fileName = asset.media_ref.split("/").pop() ?? asset.media_ref;
+        if (start === undefined || !body.startsWith(`![[${fileName}]]`, start)) {
+          const error = { kind: "invalid_media_ref", reason: "the image at that opener shows other media" };
+          failures.push(error);
+          throw error;
+        }
+      });
+      const { container } = render(
+        <Detail
+          block={block({
+            slug: "Cards/Post", card_kind: "media", block_type: "video", url: "https://x.com/a/status/1",
+            media_file: null, body,
+            preview_manifest: JSON.stringify({
+              kind: "video_poster",
+              primary_preview_path: "Cards/Post.jpg",
+              width: 540, height: 290,
+              tiles: [
+                { source_path: "Media/a.jpg", preview_path: "Cards/Post.preview-1.jpg", width: 800, height: 600, is_video: false, is_video_poster: false },
+                { source_path: "Media/clip.mp4", preview_path: "Cards/Post.preview-2.jpg", width: 540, height: 290, is_video: true, is_video_poster: true },
+              ],
+              overflow_count: 0,
+            }),
+          })}
+          vaultPath="/tmp/test-vault" thumbsRootPath="/tmp/thumbs" tags={[]}
+          onClose={vi.fn()} onNavigate={vi.fn()} onToggleTag={vi.fn()} onCreateAndAssign={vi.fn()}
+          onTagsChanged={vi.fn()} onRequestRename={vi.fn()} onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
+          onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
+        />,
+      );
+
+      // The player leads; the body under it keeps the image, not the video again.
+      const videos = screen.getAllByTestId("video-from-blob");
+      expect(videos).toHaveLength(1);
+      expect(videos[0]!.getAttribute("data-src")).toContain("clip.mp4");
+
+      fireEvent.contextMenu(container.querySelector("video")!, { clientX: 120, clientY: 80 });
+      const menu = await screen.findByRole("menu");
+      fireEvent.click(within(menu).getByText("Remove from Element"));
+      const dialog = await screen.findByRole("alertdialog");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Remove from Element" }));
+
+      await waitFor(() => expect(onRemoveMediaAssetFromCard).toHaveBeenCalledTimes(1));
+      expect(onRemoveMediaAssetFromCard).toHaveBeenCalledWith(expect.objectContaining({
+        media_ref: "Media/clip.mp4",
+        reference_kind: "body_embed",
+        occurrence_index: 1,
+      }));
+      await expect(onRemoveMediaAssetFromCard.mock.results[0]!.value).resolves.toBeUndefined();
+      expect(failures).toEqual([]);
+    });
+
     it("still shows the rest of the body under the lead video", () => {
       renderPost("![[Post (video 1).mp4]]\n\n![[Post (video 2).mp4]]", ["Media/Post (video 1).mp4", "Media/Post (video 2).mp4"]);
       const sources = screen.getAllByTestId("video-from-blob").map((video) => video.getAttribute("data-src"));

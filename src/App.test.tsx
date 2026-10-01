@@ -198,8 +198,13 @@ vi.mock("@/components/SidebarResizeHandle", () => ({
   SidebarResizeHandle: () => null,
 }));
 
-vi.mock("@/components/Grid", () => ({
-  Grid: ({
+// The feed scrolled to its end: like the real Grid there, the mock asks for the
+// next page whenever there is more and nothing is loading.
+const gridScroll = vi.hoisted(() => ({ atEnd: false }));
+
+vi.mock("@/components/Grid", async () => {
+  const { useEffect } = await vi.importActual<typeof import("react")>("react");
+  function MockGrid({
     blocks,
     currentTag,
     routeSnapshotReady,
@@ -212,6 +217,8 @@ vi.mock("@/components/Grid", () => ({
     onGroupSelectionStart,
     onSelectionCommandChange,
     onCardMenuShortcutChange,
+    hasMoreBlocks,
+    loadingMoreBlocks,
     onLoadMoreBlocks,
     vaultIndexing,
   }: {
@@ -227,49 +234,58 @@ vi.mock("@/components/Grid", () => ({
     onGroupSelectionStart?: () => void;
     onSelectionCommandChange?: (clear: (() => void) | null) => void;
     onCardMenuShortcutChange?: (activate: (() => void) | null) => void;
+    hasMoreBlocks?: boolean;
+    loadingMoreBlocks?: boolean;
     onLoadMoreBlocks?: () => void;
     vaultIndexing?: boolean;
-  }) => (
-    <div>
-      <div data-testid="grid">{`${currentTag ?? "__all__"}:${blocks.length}`}</div>
-      <div data-testid="grid-indexing">{String(Boolean(vaultIndexing))}</div>
-      <div data-testid="grid-slugs">{blocks.map((item) => item.slug).join(",")}</div>
-      <button type="button" onClick={() => onLoadMoreBlocks?.()}>
-        Load more blocks
-      </button>
-      <div data-testid="grid-route-ready">{String(Boolean(routeSnapshotReady))}</div>
-      <div data-testid="grid-detail-open">{String(Boolean(detailOpen))}</div>
-      <div data-testid="grid-keyboard-disabled">{String(Boolean(keyboardNavigationDisabled))}</div>
-      <div data-testid="grid-restore">{`${restoreFocusSlug ?? "none"}:${restoreFocusSequence ?? 0}`}</div>
-      <div data-testid="grid-thumb-versions">
-        {blocks.map((item) => `${item.slug}=${thumbVersions?.get(item.slug) ?? 0}`).join(",")}
-      </div>
-      <div data-testid="grid-previews">{blocks.map((item) => `${item.slug}:${item.preview_manifest ?? "none"}:${item.width ?? 0}`).join(",")}</div>
-      <button type="button" onClick={() => onGroupSelectionStart?.()}>
-        Start group selection
-      </button>
-      <button
-        type="button"
-        onClick={() => onSelectionCommandChange?.(() => onSelectionCommandChange?.(null))}
-      >
-        Report selection
-      </button>
-      <button type="button" onClick={() => onCardMenuShortcutChange?.(() => {})}>
-        Report card menu
-      </button>
-      {blocks.map((item) => (
-        <div key={`${item.slug}-title`} data-testid={`grid-title-${item.slug}`}>
-          {item.title ?? item.slug}
-        </div>
-      ))}
-      {blocks.map((item) => (
-        <button key={item.slug} type="button" onClick={() => onBlockClick(item)}>
-          {`Open ${item.slug}`}
+  }) {
+    useEffect(() => {
+      if (!gridScroll.atEnd || !hasMoreBlocks || loadingMoreBlocks || !onLoadMoreBlocks) return;
+      onLoadMoreBlocks();
+    }, [blocks.length, hasMoreBlocks, loadingMoreBlocks, onLoadMoreBlocks]);
+    return (
+      <div>
+        <div data-testid="grid">{`${currentTag ?? "__all__"}:${blocks.length}`}</div>
+        <div data-testid="grid-indexing">{String(Boolean(vaultIndexing))}</div>
+        <div data-testid="grid-slugs">{blocks.map((item) => item.slug).join(",")}</div>
+        <button type="button" onClick={() => onLoadMoreBlocks?.()}>
+          Load more blocks
         </button>
-      ))}
-    </div>
-  ),
-}));
+        <div data-testid="grid-route-ready">{String(Boolean(routeSnapshotReady))}</div>
+        <div data-testid="grid-detail-open">{String(Boolean(detailOpen))}</div>
+        <div data-testid="grid-keyboard-disabled">{String(Boolean(keyboardNavigationDisabled))}</div>
+        <div data-testid="grid-restore">{`${restoreFocusSlug ?? "none"}:${restoreFocusSequence ?? 0}`}</div>
+        <div data-testid="grid-thumb-versions">
+          {blocks.map((item) => `${item.slug}=${thumbVersions?.get(item.slug) ?? 0}`).join(",")}
+        </div>
+        <div data-testid="grid-previews">{blocks.map((item) => `${item.slug}:${item.preview_manifest ?? "none"}:${item.width ?? 0}`).join(",")}</div>
+        <button type="button" onClick={() => onGroupSelectionStart?.()}>
+          Start group selection
+        </button>
+        <button
+          type="button"
+          onClick={() => onSelectionCommandChange?.(() => onSelectionCommandChange?.(null))}
+        >
+          Report selection
+        </button>
+        <button type="button" onClick={() => onCardMenuShortcutChange?.(() => {})}>
+          Report card menu
+        </button>
+        {blocks.map((item) => (
+          <div key={`${item.slug}-title`} data-testid={`grid-title-${item.slug}`}>
+            {item.title ?? item.slug}
+          </div>
+        ))}
+        {blocks.map((item) => (
+          <button key={item.slug} type="button" onClick={() => onBlockClick(item)}>
+            {`Open ${item.slug}`}
+          </button>
+        ))}
+      </div>
+    );
+  }
+  return { Grid: MockGrid };
+});
 
 vi.mock("@/components/GraphView", () => ({
   GraphView: ({ currentCollection }: { currentCollection?: string }) => (
@@ -446,6 +462,7 @@ describe("AppWithVault", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    gridScroll.atEnd = false;
     commandMocks.getGridRows.mockResolvedValue({ path: "/vault", generation: 1, blocks: [] });
     vi.mocked(isTauri).mockReturnValue(false);
     vi.mocked(getCurrentWindow).mockReturnValue({
@@ -2688,7 +2705,7 @@ describe("AppWithVault", () => {
     }
   });
 
-  it("keeps a failed feed re-read visible, pages the list on screen and reads again (Г4.1)", async () => {
+  it("keeps a failed feed re-read visible, reads it again and then pages on (Г4.1, Д1.4)", async () => {
     const cards = Array.from({ length: 600 }, (_, index) => block(index + 1, `card-${index + 1}`));
     const page = (offset: number, limit: number) => gridSnapshot(
       cards.slice(offset, offset + limit),
@@ -2728,10 +2745,11 @@ describe("AppWithVault", () => {
       await taxonomy.promise;
     });
     expect(screen.getByText("Feed read failed")).toBeInTheDocument();
-
-    // The list on screen keeps paging: the next page continues it.
-    await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:600"));
-    expect(commandMocks.listGridBlocks.mock.calls.slice(readsBefore)).toContainEqual(
+    // The list on screen stays, and paging waits for the retry instead of
+    // asking a failing store again (Д1.4).
+    expect(screen.getByTestId("grid")).toHaveTextContent("__all__:400");
+    fireEvent.click(screen.getByRole("button", { name: "Load more blocks" }));
+    expect(commandMocks.listGridBlocks.mock.calls.slice(readsBefore)).not.toContainEqual(
       [undefined, 400, 200, "newest"],
     );
 
@@ -2741,11 +2759,199 @@ describe("AppWithVault", () => {
       { timeout: 3000 },
     );
     expect(commandMocks.listGridBlocks.mock.calls.slice(readsBefore)).toContainEqual(
-      [undefined, 0, 600, "newest"],
+      [undefined, 0, 400, "newest"],
+    );
+
+    // Then the list on screen pages on from where it ends.
+    await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:600"));
+    expect(commandMocks.listGridBlocks.mock.calls.slice(readsBefore)).toContainEqual(
+      [undefined, 400, 200, "newest"],
     );
     expect(screen.getByTestId("grid-slugs").textContent).toBe(
       cards.map((item) => item.slug).join(","),
     );
+  });
+
+  describe("a next page that fails while the feed stands at its end (Д1.4)", () => {
+    const cards = Array.from({ length: 1000 }, (_, index) => block(index + 1, `card-${index + 1}`));
+    /// The feed's reads: the route's first page always answers; each next
+    /// page is answered by `answerPage`, numbered from 1.
+    function serveFeed(answerPage: (request: number, offset: number, limit: number) => Promise<GridSnapshot>) {
+      let pageRequests = 0;
+      commandMocks.listGridBlocks.mockImplementation(async (_tag, offset = 0, limit = 200, order) => {
+        if (isSearchOverlayQuery(limit, order)) return gridSnapshot([]);
+        if (offset === 0) return gridSnapshot(cards.slice(0, limit), cards.length, limit < cards.length);
+        pageRequests += 1;
+        return answerPage(pageRequests, offset, limit);
+      });
+      return { pageRequests: () => pageRequests };
+    }
+    const page = (offset: number, limit: number) => gridSnapshot(
+      cards.slice(offset, offset + limit),
+      cards.length,
+      offset + limit < cards.length,
+    );
+    /// Simulated seconds, one at a time, so the feed renders between them.
+    async function advanceSeconds(seconds: number) {
+      for (let second = 0; second < seconds; second += 1) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1_000);
+        });
+      }
+    }
+
+    it("asks again only on its own bounded retries, not as fast as the store answers", async () => {
+      gridScroll.atEnd = true;
+      // A loop that asks on every answer stops here, so the test ends either way.
+      const LOOP_CAP = 50;
+      const firstPage = deferred<GridSnapshot>();
+      const feed = serveFeed((request) => {
+        if (request === 1) return firstPage.promise;
+        if (request > LOOP_CAP) return new Promise<GridSnapshot>(() => {});
+        return Promise.reject(new Error("Page read failed"));
+      });
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:200"));
+      await waitFor(() => expect(feed.pageRequests()).toBe(1));
+
+      vi.useFakeTimers();
+      try {
+        await act(async () => {
+          firstPage.reject(new Error("Page read failed"));
+          await vi.advanceTimersByTimeAsync(0);
+        });
+        await advanceSeconds(60);
+        // The failed page and its three retries, 1, 4 and 15 s apart. The
+        // feed's own requests at its end are refused meanwhile.
+        expect(feed.pageRequests()).toBe(4);
+        expect(screen.getByText("Page read failed")).toBeInTheDocument();
+        expect(screen.getByTestId("grid")).toHaveTextContent("__all__:200");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("pages on once a retry reads the failed page", async () => {
+      gridScroll.atEnd = true;
+      const firstPage = deferred<GridSnapshot>();
+      const feed = serveFeed((request, offset, limit) => {
+        if (request === 1) return firstPage.promise;
+        if (request === 2) return Promise.reject(new Error("Page read failed"));
+        return Promise.resolve(page(offset, limit));
+      });
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:200"));
+      await waitFor(() => expect(feed.pageRequests()).toBe(1));
+
+      vi.useFakeTimers();
+      try {
+        await act(async () => {
+          firstPage.reject(new Error("Page read failed"));
+          await vi.advanceTimersByTimeAsync(0);
+        });
+        // The first retry fails after 1 s, the second answers after 4 s more.
+        await advanceSeconds(1);
+        expect(feed.pageRequests()).toBe(2);
+        expect(screen.getByTestId("grid")).toHaveTextContent("__all__:200");
+        await advanceSeconds(4);
+      } finally {
+        vi.useRealTimers();
+      }
+      // The error is gone and the feed at its end pages on to the last card.
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:1000"));
+      expect(screen.queryByText("Page read failed")).not.toBeInTheDocument();
+      expect(feed.pageRequests()).toBe(6);
+    });
+  });
+
+  describe("errors over a feed that shows cards (Д2.2)", () => {
+    it.each([
+      ["a failed feed re-read", "Feed read failed", "feed"],
+      ["a failed collections read", "Collections read failed", "collections"],
+    ])("keeps the cards and shows %s as a notice", async (_case, message, source) => {
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+
+      if (source === "feed") {
+        commandMocks.listGridBlocks.mockImplementation(async (_tag, _offset, limit, order) => {
+          if (isSearchOverlayQuery(limit ?? 0, order)) return gridSnapshot([]);
+          throw new Error(message);
+        });
+      } else {
+        commandMocks.listTaxonomySnapshot.mockRejectedValue(new Error(message));
+      }
+      fireEvent(window, new CustomEvent("vault-sync-finished", {
+        detail: { payload: { path: "/vault", indexed: 2, errors: 0, error: null } },
+      }));
+
+      const error = await screen.findByText(message);
+      expect(error.closest("[data-notification-card]")).not.toBeNull();
+      expect(document.querySelector("[data-feed-error-block]")).toBeNull();
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    it("puts the error in the feed's place when the feed has nothing to show", async () => {
+      commandMocks.listGridBlocks.mockImplementation(async (_tag, _offset, limit, order) => {
+        if (isSearchOverlayQuery(limit ?? 0, order)) return gridSnapshot([]);
+        throw new Error("Feed read failed");
+      });
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+
+      const error = await screen.findByText("Feed read failed");
+      expect(error.closest("[data-feed-error-block]")).not.toBeNull();
+      expect(document.querySelector("[data-notification-card]")).toBeNull();
+    });
+  });
+
+  it("keeps a failed index pass through successful reads until a pass finishes (Д2.4)", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+    fireEvent(window, new CustomEvent("vault-sync-finished", {
+      detail: { payload: { path: "/vault", indexed: 0, errors: 1, error: "Index pass failed" } },
+    }));
+    expect(await screen.findByText("Index pass failed")).toBeInTheDocument();
+
+    // The feed and the collections are read again, and both answer.
+    const gridReads = commandMocks.listGridBlocks.mock.calls.length;
+    const taxonomyReads = commandMocks.listTaxonomySnapshot.mock.calls.length;
+    fireEvent.focus(window);
+    await waitFor(() => {
+      expect(commandMocks.listGridBlocks.mock.calls.length).toBeGreaterThan(gridReads);
+      expect(commandMocks.listTaxonomySnapshot.mock.calls.length).toBeGreaterThan(taxonomyReads);
+    });
+    await act(async () => {
+      await Promise.all([
+        ...commandMocks.listGridBlocks.mock.results.slice(gridReads).map((result) => result.value),
+        ...commandMocks.listTaxonomySnapshot.mock.results.slice(taxonomyReads).map((result) => result.value),
+      ]);
+    });
+    // A successful read is not a repaired index.
+    expect(screen.getByText("Index pass failed")).toBeInTheDocument();
+
+    fireEvent(window, new CustomEvent("vault-sync-finished", {
+      detail: { payload: { path: "/vault", indexed: 2, errors: 0, error: null } },
+    }));
+    await waitFor(() => expect(screen.queryByText("Index pass failed")).not.toBeInTheDocument());
   });
 
   it.each([

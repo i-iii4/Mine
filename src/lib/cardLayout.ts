@@ -338,18 +338,21 @@ function deriveArticleCardLayoutDescriptor(
       };
     }
     if (mediaItems.length === 1) {
+      const tileAspect = mediaItems[0]!.aspectRatio;
       return {
         variant: "social-single-media",
         titleText: "",
         previewText,
         authorText,
-        // The artifact's shape clamped into 1:2 to 2:1, like every other
-        // single media (SPEC_CARD_MEDIA_GEOMETRY.md; SPEC_AUDIT_FIXES.md,
-        // Г4.5). Null when the artifact has not been measured yet, and stays
-        // null: substituting the source's shape would lay the card out from a
-        // file it never paints; substituting 1 would state a square nobody
-        // knows.
-        primaryAspectRatio: singleArtifactAspectRatio(previewManifest, mediaItems),
+        // The shape of the tile the card paints, the body's own media, clamped
+        // into 1:2 to 2:1 like every other single media (SPEC_CARD_MEDIA_GEOMETRY.md;
+        // SPEC_AUDIT_FIXES.md, Г4.5). Not the card's whole preview: that one
+        // is built from `file`, then `thumbnail`, and a video poster there
+        // would frame a tall picture of the body in its own shape (Д1.2).
+        // Null when the tile has not been measured yet, and stays null:
+        // substituting the source's shape would lay the card out from a file
+        // it never paints; substituting 1 would state a square nobody knows.
+        primaryAspectRatio: tileAspect === null ? null : clampCardAspect(tileAspect),
         mediaItems,
         visibleMediaCount: 1,
         totalMediaCount: 1,

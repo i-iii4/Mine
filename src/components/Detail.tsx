@@ -1172,6 +1172,34 @@ function bodyHasMoreThanEmbed(
   return more;
 }
 
+/** Where the lead video's own image starts in `processedBody`: the first image
+ * whose source resolves to `source`, the one `bodyHasMoreThanEmbed` sets aside
+ * and the body under the player leaves out. `null` when the body has none.
+ */
+function leadEmbedImageOffset(
+  processedBody: string,
+  manifest: ReturnType<typeof normalizeDetailPreviewManifest>,
+  source: string,
+): number | null {
+  return firstImageOffset(processedBody, (url) => {
+    const decoded = decodeLocalMarkdownUrl(url);
+    return (findPreviewTileForSource(manifest, decoded)?.sourcePath ?? decoded) === source;
+  });
+}
+
+/** The lead video's place among the body's `![`, as Remove names it to the
+ * core: the same image the body under the player leaves out, so an image
+ * before it in the body does not shift it (SPEC_AUDIT_FIXES.md, Д1.1).
+ */
+function leadEmbedOccurrenceIndex(
+  body: string,
+  manifest: ReturnType<typeof normalizeDetailPreviewManifest>,
+  source: string,
+): number | null {
+  const offset = leadEmbedImageOffset(preprocessWikilinks(body), manifest, source);
+  return offset === null ? null : inlineMediaOccurrenceIndex(body, offset);
+}
+
 function detailPreviewImageSource({
   block,
   previewManifest,
@@ -1574,7 +1602,13 @@ function BlockContent({
                 <MediaAssetActionFrame
                   asset={videoSourcePath
                     ? leadIsBodyEmbed
-                      ? mediaAssetFromMediaRef(block.slug, videoSourcePath, "video", "body_embed", 0)
+                      ? mediaAssetFromMediaRef(
+                        block.slug,
+                        videoSourcePath,
+                        "video",
+                        "body_embed",
+                        leadEmbedOccurrenceIndex(body, previewManifest, videoSourcePath) ?? undefined,
+                      )
                       : mediaAssetFromMediaRef(block.slug, videoSourcePath, "video", "frontmatter_file")
                     : null}
                   vaultPath={vaultPath}
@@ -2901,15 +2935,12 @@ function ArticleBody({
   // transformed markdown.
   const processedBody = useMemo(() => preprocessWikilinks(body), [body]);
   // The lead video's own image in the body: the first one of its source, the
-  // one `bodyHasMoreThanEmbed` sets aside as well.
+  // one `bodyHasMoreThanEmbed` sets aside and the player's Remove names.
   const omittedSource = omittedEmbed?.source ?? null;
   const omittedImageOffset = useMemo(
     () => omittedSource === null
       ? null
-      : firstImageOffset(processedBody, (url) => {
-        const decoded = decodeLocalMarkdownUrl(url);
-        return (findPreviewTileForSource(previewManifest, decoded)?.sourcePath ?? decoded) === omittedSource;
-      }),
+      : leadEmbedImageOffset(processedBody, previewManifest, omittedSource),
     [omittedSource, previewManifest, processedBody],
   );
 

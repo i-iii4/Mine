@@ -275,7 +275,7 @@ import { VaultPicker } from "@/components/VaultPicker";
 import { SpaceUnavailable } from "@/components/SpaceUnavailable";
 import { CloudRecommendation } from "@/components/CloudRecommendation";
 import { FirstCardMarkerCard } from "@/components/FirstCardMarker";
-import { NotificationAnchor } from "@/components/NotificationCard";
+import { NotificationAnchor, NotificationCard } from "@/components/NotificationCard";
 import { VaultSwitcher } from "@/components/VaultSwitcher";
 import { TopCollectionSwitcher } from "@/components/TopCollectionSwitcher";
 import { Sidebar, SidebarTagRowDragPreview } from "@/components/Sidebar";
@@ -327,10 +327,11 @@ const DropZone = lazy(async () => {
 
 
 const GRID_PAGE_SIZE = 200;
-/// Delays before each automatic re-read after a failed feed read. The number of
+/// Delays before each automatic read after a failed feed read: the route's
+/// re-read and the next page each spend their own run of them. The number of
 /// entries bounds the retries: a store that keeps failing leaves its error on
-/// screen instead of being polled forever (SPEC_AUDIT_FIXES.md, Г4.1).
-const GRID_REREAD_RETRY_DELAYS_MS = [1_000, 4_000, 15_000] as const;
+/// screen instead of being polled forever (SPEC_AUDIT_FIXES.md, Г4.1, Д1.4).
+const FEED_READ_RETRY_DELAYS_MS = [1_000, 4_000, 15_000] as const;
 const DETAIL_SECONDARY_CHROME_EXIT_MS = 190;
 const DETAIL_COMPACT_CHROME_EXIT_MS = 260;
 
@@ -404,6 +405,18 @@ interface ThumbUpdatedEvent {
 /// The collection filter dissolves its overflow at the panel's right edge, the
 /// same way sidebar row names do, instead of cutting a letter in half.
 const SIDEBAR_SEARCH_MASK_STYLE = createRightFadeMaskStyle(EDGE_FADE_WIDTH, 0);
+
+/// Whether a source's error notice is open over the feed, and how the reader
+/// closes it. Closing hides that error and does not clear it: the source still
+/// owns it. A different error, or the same one after it cleared, opens again.
+function useErrorNotice(error: string | null): { open: boolean; dismiss: () => void } {
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  // Adjusted while rendering, before the stale value can show: an error that
+  // cleared forgets that it was closed.
+  if (error === null && dismissed !== null) setDismissed(null);
+  const dismiss = useCallback(() => setDismissed(error), [error]);
+  return { open: error !== null && error !== dismissed, dismiss };
+}
 
 function ExternalSpaceNavigation({ sequence }: { sequence: number }) {
   const navigate = useNavigate();
@@ -621,14 +634,18 @@ export function AppWithVault({
   // `loadMoreBlocks`, so a request refused while the load was in flight is
   // asked again against the new list.
   const [appliedRouteLoadId, setAppliedRouteLoadId] = useState(0);
-  // The route and order of the list on screen. A failed read leaves that list
-  // in place; paging may continue it only while it is the list the failed
-  // read asked for again (SPEC_AUDIT_FIXES.md, Г4.1).
+  // The route and order of the list on screen: the next page continues that
+  // list in that order (SPEC_AUDIT_FIXES.md, Г4.1).
   const shownListRef = useRef<{ routeKey: string; order: FeedOrder } | null>(null);
-  // The pending automatic re-read after a failed feed read, and how many of
+  // The pending automatic re-read after a failed route read, and how many of
   // the bounded retries the current failure has spent.
   const gridRetryTimerRef = useRef<number | null>(null);
   const gridRetryAttemptsRef = useRef(0);
+  // The same for a failed next page. Kept apart from the route's: a page that
+  // keeps failing neither restarts the route's retry nor spends its budget
+  // (SPEC_AUDIT_FIXES.md, Д1.4).
+  const pageRetryTimerRef = useRef<number | null>(null);
+  const pageRetryAttemptsRef = useRef(0);
   // An index pass is over and the feed on screen was read before it: the id of
   // the last route load issued by then, or null. Only a later load reads what
   // the pass found; until one lands the feed counts as indexing, so an old
@@ -1119,14 +1136,25 @@ export function AppWithVault({
   // bytes back through save_thumb. Mounts once vault is open.
   useThumbnailUpgrade(vaultReady);
 
-  // Errors are kept per source: the feed read, the collections read, and the
-  // space itself (opening, indexing, element creation). A read that succeeds
-  // clears only its own error, so a late collections answer never hides a
-  // failed feed read (SPEC_AUDIT_FIXES.md, Г4.1).
-  const [spaceError, setSpaceError] = useState<string | null>(null);
+  // Errors are kept per source, and only that source clears its own
+  // (SPEC_AUDIT_FIXES.md, Г4.1, Д2.4): a late collections answer never hides
+  // a failed feed read, and no successful read hides a failed index pass.
+  // - Opening the space: cleared by opening a space again.
+  // - The index pass: cleared by a pass that finishes without one, or a new
+  //   open. A read that succeeds reads the index as it is, not a repaired one.
+  // - The feed read (its route or its next page) and the collections read:
+  //   cleared by their own next successful answer.
+  // - Creating an element from a selection: cleared by closing its notice or
+  //   by a new open.
+  const [openError, setOpenError] = useState<string | null>(null);
+  const [indexingError, setIndexingError] = useState<string | null>(null);
   const [gridLoadError, setGridLoadError] = useState<string | null>(null);
   const [taxonomyLoadError, setTaxonomyLoadError] = useState<string | null>(null);
-  const loadError = spaceError ?? gridLoadError ?? taxonomyLoadError;
+  const [selectionCardError, setSelectionCardError] = useState<string | null>(null);
+  const loadError = openError ?? indexingError ?? gridLoadError ?? taxonomyLoadError;
+  const indexingNotice = useErrorNotice(indexingError);
+  const gridLoadNotice = useErrorNotice(gridLoadError);
+  const taxonomyLoadNotice = useErrorNotice(taxonomyLoadError);
 
   useEffect(() => {
     if (!loadError || !isTauri()) return;
@@ -1145,13 +1173,20 @@ export function AppWithVault({
     }
   }, []);
 
-  // A failed feed read is read again on its own, a bounded number of times.
+  const cancelPageRetry = useCallback(() => {
+    if (pageRetryTimerRef.current !== null) {
+      window.clearTimeout(pageRetryTimerRef.current);
+      pageRetryTimerRef.current = null;
+    }
+  }, []);
+
+  // A failed route read is read again on its own, a bounded number of times.
   // The retry re-reads the whole loaded range of the route that failed; any
   // newer read cancels it, and a route or space change leaves it unanswered.
   const scheduleGridRetry = useCallback((tag: string | undefined) => {
     cancelGridRetry();
     const attempt = gridRetryAttemptsRef.current;
-    const delay = GRID_REREAD_RETRY_DELAYS_MS[attempt];
+    const delay = FEED_READ_RETRY_DELAYS_MS[attempt];
     if (delay === undefined) return;
     gridRetryAttemptsRef.current = attempt + 1;
     const pathAtStart = vaultPathRef.current;
@@ -1197,6 +1232,9 @@ export function AppWithVault({
   } = {}) => {
     const requestId = ++loadRequestIdRef.current;
     cancelGridRetry();
+    // The route's list is read again from its first card: a page retry for
+    // the list on screen has nothing left to continue.
+    cancelPageRetry();
     if (!retry) gridRetryAttemptsRef.current = 0;
     paginationRequestRef.current = null;
     setLoadingMoreBlocks(false);
@@ -1215,7 +1253,6 @@ export function AppWithVault({
       if (cached && applyGridSnapshot(tagAtStart, cached)) {
         shownListRef.current = { routeKey, order: orderAtStart };
         setGridLoadError(null);
-        setSpaceError(null);
       }
     }
     console.info("[startup] loadGrid:start", {
@@ -1242,10 +1279,10 @@ export function AppWithVault({
       }
       shownListRef.current = { routeKey, order: orderAtStart };
       gridRetryAttemptsRef.current = 0;
+      pageRetryAttemptsRef.current = 0;
       setAppliedRouteLoadId(requestId);
       setIndexRereadAfterLoadId((after) => (after !== null && requestId > after ? null : after));
       setGridLoadError(null);
-      setSpaceError(null);
       window.dispatchEvent(new Event("vault-refreshed"));
       console.info("[startup] loadGrid:done", {
         requestId,
@@ -1261,15 +1298,9 @@ export function AppWithVault({
         && currentTagRef.current === tagAtStart
       ) {
         console.error("[LOAD_GRID] FAILED:", msg, err);
+        // The list on screen stays. Paging waits for the retry: the next page
+        // continues the list only once it is read again (Д1.4).
         setGridLoadError(msg);
-        // The list on screen stays. When it is this route's list in the order
-        // the failed read asked for, the next page continues it: paging is
-        // handed back to it instead of waiting for an answer that is not
-        // coming (Г4.1).
-        const shown = shownListRef.current;
-        if (shown?.routeKey === routeKey && shown.order === orderAtStart) {
-          setAppliedRouteLoadId(requestId);
-        }
         scheduleGridRetry(tagAtStart);
       }
       console.error("[startup] loadGrid:failed", {
@@ -1280,7 +1311,7 @@ export function AppWithVault({
       });
       return false;
     }
-  }, [applyGridSnapshot, cancelGridRetry, invalidateRouteSnapshots, routeKeyFor, scheduleGridRetry]);
+  }, [applyGridSnapshot, cancelGridRetry, cancelPageRetry, invalidateRouteSnapshots, routeKeyFor, scheduleGridRetry]);
 
   const loadTaxonomySnapshotState = useCallback(async () => {
     const requestId = ++taxonomyRequestIdRef.current;
@@ -1305,7 +1336,6 @@ export function AppWithVault({
       // pointer move (SPEC_CARD_STATES.md, С3 and С4).
       setCollectionMemberships(snapshot.memberships ?? []);
       setTaxonomyLoadError(null);
-      setSpaceError(null);
       console.info("[startup] loadTaxonomy:done", {
         requestId,
         tags: snapshot.tags.length,
@@ -1543,11 +1573,46 @@ export function AppWithVault({
     ]);
   }, [invalidateRouteSnapshots, loadGridSnapshot, loadPreviews, loadTaxonomySnapshotState, loadVaultStats]);
 
-  const loadMoreBlocks = useCallback(async () => {
+  // A failed next page is asked again on its own, a bounded number of times,
+  // while the route load it continues is still the one on screen. Any route
+  // read cancels it: that read brings the list again from its first card.
+  const schedulePageRetry = useCallback(() => {
+    cancelPageRetry();
+    const attempt = pageRetryAttemptsRef.current;
+    const delay = FEED_READ_RETRY_DELAYS_MS[attempt];
+    if (delay === undefined) return;
+    pageRetryAttemptsRef.current = attempt + 1;
+    const pathAtStart = vaultPathRef.current;
+    const tagAtStart = currentTagRef.current;
+    const routeLoadRequestIdAtStart = loadRequestIdRef.current;
+    pageRetryTimerRef.current = window.setTimeout(() => {
+      pageRetryTimerRef.current = null;
+      if (
+        vaultPathRef.current !== pathAtStart
+        || currentTagRef.current !== tagAtStart
+        || loadRequestIdRef.current !== routeLoadRequestIdAtStart
+      ) {
+        return;
+      }
+      void loadNextPageRef.current({ retry: true });
+    }, delay);
+  }, [cancelPageRetry]);
+
+  const loadNextPage = useCallback(async ({ retry }: { retry: boolean }) => {
     if (paginationRequestRef.current || !hasMoreBlocks) return;
     // A newer route load has not landed: the list on screen is not the one the
     // next page continues.
     if (appliedRouteLoadId !== loadRequestIdRef.current) return;
+    // A failed read is answered by its own bounded retry, not by the feed. The
+    // feed asks whenever it stands at its end and nothing is loading, so a
+    // request it makes after a failure would fail again at once, and again,
+    // as fast as the store answers (SPEC_AUDIT_FIXES.md, Д1.4).
+    if (
+      !retry
+      && (gridLoadError !== null || gridRetryTimerRef.current !== null || pageRetryTimerRef.current !== null)
+    ) {
+      return;
+    }
     const requestToken = {};
     paginationRequestRef.current = requestToken;
     const pathAtStart = vaultPathRef.current;
@@ -1597,6 +1662,10 @@ export function AppWithVault({
       });
       setTotalBlocks(grid.total_blocks);
       setHasMoreBlocks(grid.has_more);
+      pageRetryAttemptsRef.current = 0;
+      // Paging is refused while a feed read has failed, so the error a retried
+      // page answers is that page's own.
+      if (retry) setGridLoadError(null);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (
@@ -1605,8 +1674,10 @@ export function AppWithVault({
         && loadRequestIdRef.current === routeLoadRequestIdAtStart
       ) {
         console.error("[LOAD_MORE] FAILED:", msg, err);
+        // The route's own retry, its timer and its budget, are not the page's
+        // to restart or spend.
         setGridLoadError(msg);
-        scheduleGridRetry(tagAtStart);
+        schedulePageRetry();
       }
     } finally {
       if (paginationRequestRef.current === requestToken) {
@@ -1620,7 +1691,12 @@ export function AppWithVault({
         setLoadingMoreBlocks(false);
       }
     }
-  }, [appliedRouteLoadId, hasMoreBlocks, invalidateRouteSnapshots, routeKeyFor, scheduleGridRetry]);
+  }, [appliedRouteLoadId, gridLoadError, hasMoreBlocks, invalidateRouteSnapshots, routeKeyFor, schedulePageRetry]);
+  const loadNextPageRef = useRef(loadNextPage);
+  loadNextPageRef.current = loadNextPage;
+
+  // The feed's own request for the next page.
+  const loadMoreBlocks = useCallback(() => loadNextPage({ retry: false }), [loadNextPage]);
 
   // Paint the first page immediately, then warm exactly one additional page
   // for the active route. Subsequent pages remain demand-driven by Grid's
@@ -1636,6 +1712,8 @@ export function AppWithVault({
       // A cached list is on screen while its fresh read is in flight: the warm
       // page waits for that read instead of being spent on a refused request.
       || appliedRouteLoadId !== loadRequestIdRef.current
+      // A failed feed read refuses paging until its retry succeeds (Д1.4).
+      || gridLoadError !== null
     ) {
       return;
     }
@@ -1647,6 +1725,7 @@ export function AppWithVault({
     appliedRouteLoadId,
     blocks.length,
     currentTag,
+    gridLoadError,
     gridRouteSnapshotReady,
     hasMoreBlocks,
     loadMoreBlocks,
@@ -1685,10 +1764,13 @@ export function AppWithVault({
   useEffect(() => {
     let cancelled = false;
     setVaultReady(false);
-    setSpaceError(null);
+    setOpenError(null);
+    setIndexingError(null);
     setGridLoadError(null);
     setTaxonomyLoadError(null);
+    setSelectionCardError(null);
     cancelGridRetry();
+    cancelPageRetry();
     setVaultStats(null);
     setThumbsRootPath(null);
     invalidateRouteSnapshots();
@@ -1733,13 +1815,13 @@ export function AppWithVault({
           elapsedMs: Math.round(performance.now() - started),
           error: msg,
         });
-        setSpaceError(msg);
+        setOpenError(msg);
         setIsSyncing(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [cancelGridRetry, invalidateRouteSnapshots, vaultPath]);
+  }, [cancelGridRetry, cancelPageRetry, invalidateRouteSnapshots, vaultPath]);
 
   useEffect(() => {
     if (!vaultReady) {
@@ -1998,9 +2080,11 @@ export function AppWithVault({
       setSyncProgress(null);
       setCloudAdviceToken((token) => token + 1);
       if (event.payload.error) {
-        setSpaceError(event.payload.error);
+        setIndexingError(event.payload.error);
         return;
       }
+      // The only answer to a failed index pass is one that finishes (Д2.4).
+      setIndexingError(null);
       invalidateRouteSnapshots();
       setIndexRereadAfterLoadId(loadRequestIdRef.current);
       if (migrationRequired) {
@@ -2034,6 +2118,10 @@ export function AppWithVault({
       if (gridRetryTimerRef.current !== null) {
         window.clearTimeout(gridRetryTimerRef.current);
         gridRetryTimerRef.current = null;
+      }
+      if (pageRetryTimerRef.current !== null) {
+        window.clearTimeout(pageRetryTimerRef.current);
+        pageRetryTimerRef.current = null;
       }
       if (vaultStatsFrameRef.current !== null) {
         window.cancelAnimationFrame(vaultStatsFrameRef.current);
@@ -3122,7 +3210,7 @@ export function AppWithVault({
         }
         if (overId.startsWith("tag:")) {
           void handleTextSelectionDrop(textSelectionPayload, overId.slice(4)).catch((error) => {
-            setSpaceError(error instanceof Error ? error.message : "Could not create an element from this selection.");
+            setSelectionCardError(error instanceof Error ? error.message : "Could not create an element from this selection.");
           });
         }
         clearActiveMineTextSelectionDragPayload();
@@ -3444,6 +3532,24 @@ export function AppWithVault({
     && !loadError
     && (isSyncing || (blocks.length === 0 && tags.length === 0 && channels.length === 0));
 
+  // An error takes the feed's place only when the feed has nothing to show:
+  // with this route's cards on screen it is a notice over them and the cards
+  // stay (SPEC_AUDIT_FIXES.md, Д2.2). A space that did not open has nothing
+  // of its own to show, whatever an earlier space left in memory.
+  const feedShowsCards = gridRouteSnapshotReady && activeBlocks.length > 0;
+  const feedErrors = [
+    { key: "indexing", title: "Indexing failed", message: indexingError, notice: indexingNotice },
+    { key: "feed", title: "Could not read the feed", message: gridLoadError, notice: gridLoadNotice },
+    { key: "collections", title: "Could not read collections", message: taxonomyLoadError, notice: taxonomyLoadNotice },
+  ].flatMap(({ message, ...source }) => (message === null ? [] : [{ ...source, message }]));
+  const blockingError = openError ?? (feedShowsCards ? null : feedErrors[0]?.message ?? null);
+  const feedErrorNotices = openError !== null
+    ? []
+    : feedErrors.slice(feedShowsCards ? 0 : 1).filter(({ notice }) => notice.open);
+  const showNotifications = feedErrorNotices.length > 0
+    || selectionCardError !== null
+    || firstCardSlug !== null;
+
   const metadataRow = mainSecondaryTopBarVisible ? (
     <MainSecondaryTopBar
           sidebarCollapsed={sidebarCollapsed}
@@ -3704,9 +3810,9 @@ export function AppWithVault({
         className="relative isolate flex-1 overflow-hidden"
         style={{ minWidth: APP_MAIN_MIN_WIDTH_PX }}
       >
-        {loadError && (
-          <div className="flex h-full items-center justify-center p-8">
-            <p className="text-sm text-destructive">{loadError}</p>
+        {blockingError !== null && (
+          <div className="flex h-full items-center justify-center p-8" data-feed-error-block="">
+            <p className="text-sm text-destructive">{blockingError}</p>
           </div>
         )}
         {!loadError && showPreparingLibrary && (
@@ -3834,16 +3940,34 @@ export function AppWithVault({
 
       <CloudRecommendation vaultPath={vaultPath} refreshToken={cloudAdviceToken} />
 
-      {firstCardSlug && (
+      {showNotifications && (
         <NotificationAnchor>
-          <FirstCardMarkerCard
-            fileName={`${firstCardSlug.split("/").pop() ?? firstCardSlug}.md`}
-            onReveal={() => {
-              void revealItemInDir(`${vaultPath}/${firstCardSlug}.md`);
-              setFirstCardSlug(null);
-            }}
-            onClose={() => setFirstCardSlug(null)}
-          />
+          <div className="grid justify-items-end gap-2">
+            {feedErrorNotices.map(({ key, title, message, notice }) => (
+              <NotificationCard key={key} title={title} onClose={notice.dismiss}>
+                <p className="text-sm text-destructive" data-feed-error-notice={key}>{message}</p>
+              </NotificationCard>
+            ))}
+            {selectionCardError !== null && (
+              // An action's failure, never the feed's state: a notice whether
+              // or not the feed shows cards.
+              <NotificationCard title="Could not create an element" onClose={() => setSelectionCardError(null)}>
+                <p className="text-sm text-destructive" data-feed-error-notice="selection-card">
+                  {selectionCardError}
+                </p>
+              </NotificationCard>
+            )}
+            {firstCardSlug !== null && (
+              <FirstCardMarkerCard
+                fileName={`${firstCardSlug.split("/").pop() ?? firstCardSlug}.md`}
+                onReveal={() => {
+                  void revealItemInDir(`${vaultPath}/${firstCardSlug}.md`);
+                  setFirstCardSlug(null);
+                }}
+                onClose={() => setFirstCardSlug(null)}
+              />
+            )}
+          </div>
         </NotificationAnchor>
       )}
 
