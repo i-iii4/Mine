@@ -313,8 +313,15 @@ pub async fn ensure_vault_fresh(app: &AppHandle, vault: VaultLayout) -> Result<(
         FreshnessRouteAction::AwaitFirstGeneration => {
             let app_for_task = app.clone();
             let preview_vault = vault.clone();
+            // The feed waits on this pass with nothing to show: it counts out
+            // loud like the background sync, so the first-index screen has
+            // numbers from the first file (SPEC_ONBOARDING.md, О13).
+            let emit_progress = super::vault::sync_progress_emitter(app, vault_path.clone());
             match tauri::async_runtime::spawn_blocking(move || {
-                app_for_task.state::<AppState>().freshness.reconcile(&vault)
+                app_for_task
+                    .state::<AppState>()
+                    .freshness
+                    .reconcile_with_progress(&vault, &emit_progress)
             })
             .await
             {

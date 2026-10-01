@@ -1,4 +1,4 @@
-import type { ComponentPropsWithoutRef } from "react";
+import { useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef } from "react";
 import { thumbnailLevelUrl } from "@/lib/assets";
 import { parsePreviewManifest } from "@/lib/cardLayout";
 import { cn } from "@/lib/utils";
@@ -65,10 +65,25 @@ export function microPreviewFromLightBlock(
 export function MicroPreviewThumbnail({
   preview,
   className,
+  onLoad,
   ...imgProps
 }: Omit<ComponentPropsWithoutRef<"img">, "src"> & {
   preview: MicroPreviewModel;
 }) {
+  const imageRef = useRef<HTMLImageElement>(null);
+  // Whether the picture is in. Stays true when the URL is cache-busted: the
+  // browser keeps painting the old picture until the new one has loaded.
+  const [loaded, setLoaded] = useState(false);
+
+  // A picture already in the memory cache can be complete before the first
+  // paint; reading that here keeps such a tile from flashing the slot fill.
+  useLayoutEffect(() => {
+    const image = imageRef.current;
+    if (image?.complete && image.naturalWidth > 0) {
+      setLoaded(true);
+    }
+  }, []);
+
   if (!preview.hasThumb) {
     return null;
   }
@@ -80,10 +95,23 @@ export function MicroPreviewThumbnail({
   // `bg-card`. The fill lives on the wrapper, not on the image, because
   // `dark:invert` applies to the element it is on — a fill on the image would
   // invert along with the ink and turn white.
+  //
+  // The card fill arrives with its ink, not before it. Until the picture has
+  // decoded the slot shows the caller's own fill (the sidebar's placeholder
+  // tile, a result row's component fill), the same as a media thumb that is
+  // still on the way; an early card fill would read as a blank tile.
   return (
-    <span className={cn("block size-8 overflow-hidden", preview.text && "bg-card")}>
+    <span
+      className={cn("block size-8 overflow-hidden", preview.text && loaded && "bg-card")}
+      data-micro-preview-state={loaded ? "loaded" : "loading"}
+    >
       <img
         {...imgProps}
+        ref={imageRef}
+        onLoad={(event) => {
+          setLoaded(true);
+          onLoad?.(event);
+        }}
         src={preview.url}
         className={cn(
           "size-8 object-cover",

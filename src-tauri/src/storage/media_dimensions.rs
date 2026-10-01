@@ -20,7 +20,6 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 use crate::domain::block::iter_inline_media_references;
-use crate::domain::vault::VaultLayout;
 use crate::storage::media_refs;
 use image::ImageReader;
 use serde::{Deserialize, Serialize};
@@ -162,22 +161,24 @@ pub fn extract_video_dimensions(path: &Path) -> Option<(u32, u32)> {
 ///   - `primary_media`: the block's main `media_file` if it is an image or MP4 video
 ///   - every filename extracted from markdown image syntax in the body
 ///
-/// For each file we resolve its absolute path relative to `vault_root` and
-/// read the container header via [`extract_image_dimensions`] or
-/// [`extract_video_dimensions`] depending on the extension. Files that fail
-/// to open or have unsupported formats are silently skipped — their absence
-/// means the frontend will fall back to a fixed aspect.
+/// For each file we resolve its absolute path relative to the resolver's
+/// vault root and read the container header via [`extract_image_dimensions`]
+/// or [`extract_video_dimensions`] depending on the extension. Files that
+/// fail to open or have unsupported formats are silently skipped: their
+/// absence means the frontend will fall back to a fixed aspect.
+///
+/// Body references are resolved through `resolver`, so an indexing pass that
+/// shares one resolver across its cards walks the vault once in all.
 ///
 /// Returns `None` when no dimensions could be extracted at all (block has
 /// no media, or all files failed to read). The caller stores the result
 /// as a nullable TEXT column.
 pub fn build_media_dimensions_json(
-    vault_root: &Path,
+    resolver: &mut media_refs::MediaResolver<'_>,
     block_slug: &str,
     primary_media: Option<&str>,
     body: &str,
 ) -> Option<String> {
-    let vault = VaultLayout::new(vault_root.to_path_buf());
     let media_sources = iter_inline_media_references(body)
         .into_iter()
         .filter_map(|reference| {
@@ -185,13 +186,18 @@ pub fn build_media_dimensions_json(
                 return None;
             }
             Some(
-                media_refs::resolve_inline_media_root_relative(&vault, block_slug, &reference)
+                resolver
+                    .resolve_inline_media_root_relative(block_slug, &reference)
                     .unwrap_or(reference.source),
             )
         })
         .collect::<Vec<_>>();
 
-    build_media_dimensions_json_from_sources(vault_root, primary_media, &media_sources)
+    build_media_dimensions_json_from_sources(
+        resolver.vault().root(),
+        primary_media,
+        &media_sources,
+    )
 }
 
 /// Build the `media_dimensions` JSON string from already-resolved
@@ -291,8 +297,24 @@ fn collect_body_media(body: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::vault::VaultLayout;
     use std::fs;
     use tempfile::tempdir;
+
+    fn dimensions_json(
+        root: &Path,
+        block_slug: &str,
+        primary_media: Option<&str>,
+        body: &str,
+    ) -> Option<String> {
+        let vault = VaultLayout::new(root.to_path_buf());
+        build_media_dimensions_json(
+            &mut media_refs::MediaResolver::new(&vault),
+            block_slug,
+            primary_media,
+            body,
+        )
+    }
 
     #[test]
     fn collect_body_media_extracts_local_filenames() {
@@ -328,7 +350,7 @@ mod tests {
         img.save(&image_path).unwrap();
 
         let json =
-            build_media_dimensions_json(dir.path(), "Библиотека/Азбука", None, "![[01.jpg]]")
+            dimensions_json(dir.path(), "Библиотека/Азбука", None, "![[01.jpg]]")
                 .unwrap();
 
         assert_eq!(json, "{\"Библиотека/images/images/01.jpg\":[32,24]}");
@@ -357,14 +379,14 @@ mod tests {
     #[test]
     fn build_media_dimensions_returns_none_when_no_media() {
         let dir = tempdir().unwrap();
-        let result = build_media_dimensions_json(dir.path(), "note", None, "just plain text");
+        let result = dimensions_json(dir.path(), "note", None, "just plain text");
         assert!(result.is_none());
     }
 
     #[test]
     fn build_media_dimensions_returns_none_when_files_missing() {
         let dir = tempdir().unwrap();
-        let result = build_media_dimensions_json(
+        let result = dimensions_json(
             dir.path(),
             "note",
             Some("missing.jpg"),
@@ -381,7 +403,7 @@ mod tests {
         let path = dir.path().join("tiny.png");
         img.save(&path).unwrap();
 
-        let result = build_media_dimensions_json(dir.path(), "note", None, "![](tiny.png)");
+        let result = dimensions_json(dir.path(), "note", None, "![](tiny.png)");
         let json = result.expect("should return JSON for existing image");
         assert!(json.contains("\"tiny.png\""));
         assert!(json.contains("[2,3]"));
@@ -395,7 +417,7 @@ mod tests {
         let img_b = image::RgbImage::from_fn(30, 40, |_, _| image::Rgb([0, 0, 0]));
         img_b.save(dir.path().join("secondary.png")).unwrap();
 
-        let json = build_media_dimensions_json(
+        let json = dimensions_json(
             dir.path(),
             "note",
             Some("primary.png"),
@@ -415,7 +437,7 @@ mod tests {
         // extraction fails gracefully and the entry is skipped.
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("broken.mp4"), b"not really mp4").unwrap();
-        let result = build_media_dimensions_json(dir.path(), "note", None, "![](broken.mp4)");
+        let result = dimensions_json(dir.path(), "note", None, "![](broken.mp4)");
         assert!(result.is_none());
     }
 
@@ -423,7 +445,7 @@ mod tests {
     fn build_media_dimensions_skips_non_media_extensions() {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("doc.txt"), b"hello").unwrap();
-        let result = build_media_dimensions_json(dir.path(), "note", None, "![](doc.txt)");
+        let result = dimensions_json(dir.path(), "note", None, "![](doc.txt)");
         assert!(result.is_none());
     }
 
@@ -434,7 +456,7 @@ mod tests {
         img.save(dir.path().join("same.png")).unwrap();
 
         let json =
-            build_media_dimensions_json(dir.path(), "note", Some("same.png"), "![](same.png)")
+            dimensions_json(dir.path(), "note", Some("same.png"), "![](same.png)")
                 .unwrap();
 
         // Only one key in the JSON object.

@@ -313,6 +313,14 @@ fn reconcile_source_pass(
     // the ground truth the phantom-channel sweep below compares the table to.
     let mut live_channel_refs = BTreeSet::new();
     let mut prepared = Vec::new();
+    // One snapshot of the vault's file list serves every lookup of this pass:
+    // frontmatter and body media, the index row of each note, collection
+    // references. Walking the vault per reference made indexing quadratic.
+    // The snapshot is taken on first use, after the inventory above, so every
+    // note this pass reads is in it. A note that appears later fails the
+    // inventory check after the pass and gets another pass; a media file that
+    // appears later raises a watcher event, and the pass that event runs
+    // builds a snapshot of its own.
     let mut media_resolver = media_refs::MediaResolver::new(vault);
     let mut unchanged = 0usize;
     let mut errors = Vec::new();
@@ -414,9 +422,11 @@ fn reconcile_source_pass(
             .filter(|source| source.kind == SourceKind::Channel)
             .map(|source| source.slug.clone()),
     );
-    let links: LinkIndex = media_refs::build_link_index(vault.root());
     for slug in &channel_slugs {
-        live_channel_refs.insert(channel_ref_for_slug(&links, slug).map_err(ReconcileError::State)?);
+        live_channel_refs.insert(
+            channel_ref_for_slug(media_resolver.link_index(), slug)
+                .map_err(ReconcileError::State)?,
+        );
     }
 
     let removed = indexed_kinds
@@ -456,7 +466,7 @@ fn reconcile_source_pass(
     }
 
     for source in prepared {
-        match apply_prepared_source(&tx, vault, &source, &links) {
+        match apply_prepared_source(&tx, &source, &mut media_resolver) {
             Ok(()) => {
                 if source.dependency_changed {
                     dependency_changed_slugs.push(source.slug.clone());
@@ -489,7 +499,7 @@ fn reconcile_source_pass(
         index::remove_block(&tx, slug)
             .with_context(|| format!("remove stale block {slug}"))
             .map_err(ReconcileError::Commit)?;
-        remove_channel_if_orphaned(&tx, vault, slug)
+        remove_channel_if_orphaned(&tx, &mut media_resolver, slug)
             .with_context(|| format!("remove stale channel {slug}"))
             .map_err(ReconcileError::Commit)?;
         tx.execute("DELETE FROM source_index_state WHERE slug = ?1", [slug])
@@ -553,8 +563,7 @@ pub fn project_source_path(conn: &Connection, vault: &VaultLayout, path: &Path) 
     let mut media_resolver = media_refs::MediaResolver::new(vault);
     let source = prepare_source(vault, path, markdown_stamp, false, &mut media_resolver)
         .map_err(|error| anyhow::anyhow!("prepare source {}: {}", path.display(), error.message))?;
-    let links: LinkIndex = media_refs::build_link_index(vault.root());
-    apply_prepared_source(conn, vault, &source, &links)?;
+    apply_prepared_source(conn, &source, &mut media_resolver)?;
     Ok(source.block)
 }
 
@@ -625,7 +634,11 @@ pub(crate) fn rederive_source_dependencies(
 /// exactly what sorting a flat vault into folders produces — the cleanup for
 /// the vanished path would delete the collection that the moved document had
 /// just registered.
-fn remove_channel_if_orphaned(conn: &Connection, vault: &VaultLayout, slug: &str) -> Result<()> {
+fn remove_channel_if_orphaned(
+    conn: &Connection,
+    media_resolver: &mut media_refs::MediaResolver<'_>,
+    slug: &str,
+) -> Result<()> {
     let mut stmt = conn.prepare("SELECT tag FROM channels WHERE source_slug = ?1")?;
     let tags = stmt
         .query_map([slug], |row| row.get::<_, String>(0))?
@@ -638,7 +651,10 @@ fn remove_channel_if_orphaned(conn: &Connection, vault: &VaultLayout, slug: &str
         return Ok(());
     }
     let collection_ref = crate::domain::collection::collection_ref_from_slug(slug);
-    if crate::storage::media_refs::resolve_collection_document(vault, &collection_ref).is_some() {
+    if media_resolver
+        .resolve_collection_document(&collection_ref)
+        .is_some()
+    {
         return Ok(());
     }
     index::remove_channel(conn, &collection_ref)?;
@@ -650,7 +666,7 @@ fn remove_channel_if_orphaned(conn: &Connection, vault: &VaultLayout, slug: &str
 /// This is nestable inside a larger source mutation transaction.
 pub fn remove_source_projection(conn: &Connection, vault: &VaultLayout, slug: &str) -> Result<()> {
     index::remove_block(conn, slug).with_context(|| format!("remove stale block {slug}"))?;
-    remove_channel_if_orphaned(conn, vault, slug)
+    remove_channel_if_orphaned(conn, &mut media_refs::MediaResolver::new(vault), slug)
         .with_context(|| format!("remove stale channel {slug}"))?;
     conn.execute("DELETE FROM source_index_state WHERE slug = ?1", [slug])
         .with_context(|| format!("remove stale source state {slug}"))?;
@@ -687,7 +703,7 @@ fn prepare_source(
             .collect(),
     };
     let mut block = parsed.block;
-    files::normalize_block_media_refs_for_index(vault, &mut block);
+    files::normalize_block_media_refs_for_index(media_resolver, &mut block);
     let kind = if block.frontmatter.block_type == BlockType::Channel {
         SourceKind::Channel
     } else {
@@ -712,9 +728,8 @@ fn prepare_source(
 /// the ordinary delete-and-create path rather than guessing.
 fn apply_prepared_source(
     conn: &Connection,
-    vault: &VaultLayout,
     source: &PreparedSource,
-    links: &LinkIndex,
+    media_resolver: &mut media_refs::MediaResolver<'_>,
 ) -> Result<()> {
     conn.execute_batch("SAVEPOINT reconcile_source")
         .context("begin source reconciliation savepoint")?;
@@ -724,10 +739,10 @@ fn apply_prepared_source(
                 index::remove_channel(conn, &source.slug).with_context(|| {
                     format!("remove stale channel projection for {}", source.slug)
                 })?;
-                index::upsert_block_with_diagnostics(
+                index::upsert_block_with_resolver(
                     conn,
                     &source.block,
-                    Some(vault.root()),
+                    media_resolver,
                     Some(&source.origin),
                     source.index_warning.as_deref(),
                 )
@@ -737,7 +752,8 @@ fn apply_prepared_source(
                 index::remove_block(conn, &source.slug).with_context(|| {
                     format!("remove stale block projection for {}", source.slug)
                 })?;
-                let collection_ref = channel_ref_for_slug(links, &source.slug)?;
+                let collection_ref =
+                    channel_ref_for_slug(media_resolver.link_index(), &source.slug)?;
                 index::upsert_channel_from_block_with_ref(conn, &source.block, &collection_ref)
                     .with_context(|| format!("upsert channel {}", source.slug))?;
             }
@@ -773,7 +789,8 @@ fn collect_dependency_paths(
     .into_iter()
     .flatten()
     {
-        if let Some(path) = media_refs::resolve_frontmatter_media(vault, &block.slug, reference)
+        if let Some(path) = media_resolver
+            .resolve_frontmatter_media(&block.slug, reference)
             .or_else(|| vault.resolve_local_reference(&block.slug, reference))
         {
             insert_dependency(vault, &mut paths, path)?;
@@ -957,6 +974,75 @@ mod tests {
         assert!(seen.windows(2).all(|pair| pair[0].0 < pair[1].0));
         assert!(seen.iter().all(|(_, total)| *total == 7));
         assert_eq!(seen.last(), Some(&(7, 7)));
+    }
+
+    /// Resolving a note's media needs the list of every file in the space,
+    /// and building that list walks the whole tree. Built per reference, a
+    /// space of 673 notes and 1229 media files in iCloud Drive took minutes
+    /// to index. A pass builds it once, whatever it reads or removes.
+    #[test]
+    fn a_pass_walks_the_space_once_however_many_notes_it_indexes() {
+        const NOTES: usize = 6;
+        let (_dir, vault, conn) = setup();
+        for folder in ["Cards", "Media", "Collections"] {
+            std::fs::create_dir_all(vault.root().join(folder)).unwrap();
+        }
+        std::fs::write(
+            vault.root().join("Collections/Каталоги.md"),
+            "---\ntype: channel\nsaved_at: 2026-07-10T00:00:00Z\nposition: 1\n---\n",
+        )
+        .unwrap();
+        let note = |index: usize| {
+            format!(
+                "---\ntype: image\nfile: \"[[photo-{index}.jpg]]\"\n\
+                 thumbnail: cover-{index}.jpg\nsaved_at: 2026-07-10T00:00:00Z\n\
+                 Mine Collections:\n  - \"[[Каталоги]]\"\n---\n\
+                 ![[inline-{index}.png]] and ![](../Media/photo-{index}.jpg)\n"
+            )
+        };
+        for index in 0..NOTES {
+            for name in [
+                format!("photo-{index}.jpg"),
+                format!("cover-{index}.jpg"),
+                format!("inline-{index}.png"),
+            ] {
+                std::fs::write(vault.root().join("Media").join(name), b"media").unwrap();
+            }
+            std::fs::write(vault.root().join(format!("Cards/Note {index}.md")), note(index))
+                .unwrap();
+        }
+
+        let before = media_refs::link_index_builds();
+        let report = reconcile_vault(&conn, &vault).unwrap();
+        let walks = media_refs::link_index_builds() - before;
+
+        assert!(report.is_fresh(), "{report:?}");
+        assert_eq!(report.upserted.len(), NOTES + 1, "every note and the collection");
+        assert_eq!(walks, 1, "one walk for the pass, not one per reference");
+        // The shared snapshot resolves what a walk per reference resolved.
+        let indexed = index::get_block(&conn, "Cards/Note 3").unwrap().unwrap();
+        assert_eq!(indexed.media_file.as_deref(), Some("Media/photo-3.jpg"));
+        assert_eq!(indexed.thumbnail.as_deref(), Some("Media/cover-3.jpg"));
+        assert_eq!(
+            indexed.media_urls.as_deref(),
+            Some(r#"["Media/inline-3.png","Media/photo-3.jpg"]"#)
+        );
+        assert_eq!(index::list_channels(&conn).unwrap()[0].tag, "Каталоги");
+
+        // A later pass that reads one note and removes another walks once too.
+        std::fs::remove_file(vault.root().join("Cards/Note 0.md")).unwrap();
+        std::fs::write(
+            vault.root().join("Cards/Note 1.md"),
+            format!("{}\nEdited.\n", note(1)),
+        )
+        .unwrap();
+        let before = media_refs::link_index_builds();
+        let report = reconcile_vault(&conn, &vault).unwrap();
+        let walks = media_refs::link_index_builds() - before;
+
+        assert_eq!(report.upserted, vec!["Cards/Note 1".to_string()]);
+        assert_eq!(report.removed, vec!["Cards/Note 0".to_string()]);
+        assert_eq!(walks, 1);
     }
 
     fn write_note(vault: &VaultLayout, slug: &str, body: &str) {

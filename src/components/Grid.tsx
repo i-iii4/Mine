@@ -21,7 +21,6 @@ import { FeedMediaContext, FeedShowContext, useFeedDisplay, type FeedMedia, type
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { Card, CardSkeleton } from "./Card";
 import { EmptySpaceOnboarding } from "./EmptySpaceOnboarding";
-import { IndexingProgress } from "./IndexingProgress";
 import { MeasureCard } from "./MeasureCard";
 import { CardTagMenu } from "./CardContextMenu";
 import { createPortal } from "react-dom";
@@ -1127,9 +1126,6 @@ export function Grid({
     blocks.length === 0 &&
     !firstIndexProgress &&
     spaceOnboardingOwed === false,
-  );
-  const showFirstIndexProgress = Boolean(
-    !currentTag && blocks.length === 0 && firstIndexProgress,
   );
 
   useLayoutEffect(() => {
@@ -2307,13 +2303,6 @@ export function Grid({
             <EmptySpaceOnboarding
               viewportHeight={viewportHeight}
               onInstallClipper={onInstallClipper!}
-            />
-          )}
-          {parentWidth > 0 && showFirstIndexProgress && firstIndexProgress && (
-            <IndexingProgress
-              spaceName={vaultPath.replace(/\/+$/, "").split("/").pop() ?? vaultPath}
-              processed={firstIndexProgress.processed}
-              total={firstIndexProgress.total}
             />
           )}
           {parentWidth > 0 && heightDriftAuditBatch.length > 0 && (

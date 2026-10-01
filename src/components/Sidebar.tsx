@@ -51,6 +51,7 @@ import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 import {
   SIDEBAR_PREVIEW_DIVIDER_GAP_PX,
+  SIDEBAR_PREVIEW_SLOTS,
   SIDEBAR_ROW_ACTION_GAP_PX,
 } from "@/lib/appLayout";
 import { EDGE_FADE_WIDTH, createRightFadeMaskStyle } from "@/lib/edgeFade";
@@ -139,6 +140,13 @@ const SIDEBAR_PREVIEW_MASK_STYLE = createRightFadeMaskStyle(
   SIDEBAR_PREVIEW_MASK_CLEAR_TAIL,
 );
 
+/// One tile of the thumbnail strip, real or placeholder. Both draw from this
+/// single class, so a placeholder occupies exactly the box its thumbnail will
+/// take and nothing moves when the picture arrives. The fill is the feed
+/// skeleton's quiet `bg-accent`: it is what a placeholder shows, and what a
+/// real tile shows behind its image until that image has decoded.
+const SIDEBAR_PREVIEW_TILE_CLASS = "size-8 shrink-0 overflow-hidden bg-accent";
+
 type SidebarPreviewTarget = {
   key: string;
   rowKey: string;
@@ -187,6 +195,10 @@ interface SidebarProps {
   tags?: TagCount[];
   currentTag?: string;
   orderedTags: TagCount[];
+  /// Thumbnails per collection tag, plus `__all__` for Everything. A read
+  /// answers for every known collection, empty ones included, so a key that
+  /// is missing means the read has not answered for that row yet: the row
+  /// then draws placeholder tiles in place of its thumbnails.
   channelPreviews: Map<string, PreviewCard[]>;
   totalBlocks: number;
   isDropDragging: boolean;
@@ -881,7 +893,7 @@ const SidebarCore = memo(function SidebarCore({
               to="/"
               label="Everything"
               count={totalBlocks}
-              cards={channelPreviews.get("__all__") ?? []}
+              cards={channelPreviews.get("__all__")}
               previewKeyPrefix="all"
               onPreviewEnter={schedulePreviewOpen}
               onPreviewLeave={requestPreviewClose}
@@ -913,7 +925,7 @@ const SidebarCore = memo(function SidebarCore({
                   label={collectionRefLabel(tc.tag)}
                   count={tc.count}
                   tag={tc.tag}
-                  cards={channelPreviews.get(tc.tag) ?? EMPTY_PREVIEW_CARDS}
+                  cards={channelPreviews.get(tc.tag)}
                   previewKeyPrefix={`tag:${tc.tag}`}
                   onPreviewEnter={schedulePreviewOpen}
                   onPreviewLeave={requestPreviewClose}
@@ -1246,7 +1258,8 @@ function SidebarRowBody({
   end?: boolean;
   label: string;
   count: number;
-  cards: PreviewCard[];
+  /** `undefined` until the preview read has answered for this row. */
+  cards: PreviewCard[] | undefined;
   previewKeyPrefix: string;
   rowKey: string;
   onPreviewEnter: (target: SidebarPreviewTarget) => void;
@@ -1325,6 +1338,7 @@ function SidebarRowBody({
           <SidebarPreviewRail>
             <SidebarPreviewStrip
               cards={cards}
+              count={count}
               previewKeyPrefix={previewKeyPrefix}
               rowKey={rowKey}
               onPreviewEnter={onPreviewEnter}
@@ -1515,7 +1529,7 @@ const NavItem = memo(function NavItem({
   to,
   label,
   count,
-  cards = [],
+  cards,
   previewKeyPrefix,
   onPreviewEnter,
   onPreviewLeave,
@@ -1535,7 +1549,8 @@ const NavItem = memo(function NavItem({
   to: string;
   label: string;
   count: number;
-  cards?: PreviewCard[];
+  /** `undefined` until the preview read has answered for this row. */
+  cards: PreviewCard[] | undefined;
   previewKeyPrefix: string;
   onPreviewEnter: (target: SidebarPreviewTarget) => void;
   onPreviewLeave: () => void;
@@ -1588,10 +1603,6 @@ const NavItem = memo(function NavItem({
   );
 });
 
-/// One shared empty list for rows without previews — a fresh `[]` per render
-/// defeats the row memo just as surely as a fresh callback does.
-const EMPTY_PREVIEW_CARDS: PreviewCard[] = [];
-
 const TagNavItem = memo(function TagNavItem({
   to,
   label,
@@ -1624,7 +1635,8 @@ const TagNavItem = memo(function TagNavItem({
   label: string;
   count: number;
   tag: string;
-  cards: PreviewCard[];
+  /** `undefined` until the preview read has answered for this row. */
+  cards: PreviewCard[] | undefined;
   previewKeyPrefix: string;
   onPreviewEnter: (target: SidebarPreviewTarget) => void;
   onPreviewLeave: () => void;
@@ -1894,8 +1906,15 @@ function SidebarCreateChannelRowBody({
   );
 }
 
+/// How many placeholder tiles a row draws while its thumbnails are on the way:
+/// one per card, up to what the strip holds. A row with no cards draws none.
+function sidebarPreviewPlaceholderCount(count: number): number {
+  return Math.min(count, SIDEBAR_PREVIEW_SLOTS);
+}
+
 function SidebarPreviewStrip({
   cards,
+  count,
   previewKeyPrefix,
   rowKey,
   onPreviewEnter,
@@ -1906,7 +1925,10 @@ function SidebarPreviewStrip({
   activePreviewKey,
   allowHoverPreview = false,
 }: {
-  cards: PreviewCard[];
+  /** `undefined` until the preview read has answered for this row. */
+  cards: PreviewCard[] | undefined;
+  /** The row's card count; sizes the placeholder run while `cards` is pending. */
+  count: number;
   previewKeyPrefix: string;
   rowKey: string;
   onPreviewEnter: (target: SidebarPreviewTarget) => void;
@@ -1917,15 +1939,32 @@ function SidebarPreviewStrip({
   activePreviewKey: string | null;
   allowHoverPreview?: boolean;
 }) {
+  // The count reaches the row before the thumbnails do (startup, a space
+  // opening). Until they arrive the strip holds placeholder tiles in the
+  // thumbnails' own boxes rather than standing empty; the strip element itself
+  // stays the same, so its width, gap and fade never move.
+  const pending = cards === undefined;
   return (
     <div
       data-sidebar-thumbnail-strip=""
+      data-sidebar-previews={pending ? "pending" : "ready"}
       data-sidebar-preview-fade-width={String(SIDEBAR_PREVIEW_MASK_FADE_WIDTH)}
       data-sidebar-preview-protected-tail={SIDEBAR_PREVIEW_MASK_CLEAR_TAIL}
       className="flex h-8 min-w-0 flex-1 items-end gap-1 overflow-hidden"
       style={SIDEBAR_PREVIEW_MASK_STYLE}
     >
-      {cards.filter((card) => card.hasThumb).map((card, index) => {
+      {pending && Array.from(
+        { length: sidebarPreviewPlaceholderCount(count) },
+        (_, index) => (
+          <div
+            key={`placeholder:${index}`}
+            aria-hidden="true"
+            className={SIDEBAR_PREVIEW_TILE_CLASS}
+            data-sidebar-preview-placeholder=""
+          />
+        ),
+      )}
+      {!pending && cards.filter((card) => card.hasThumb).map((card, index) => {
         const previewKey = `${previewKeyPrefix}:${card.slug ?? index}:${index}`;
         const canPreview = allowHoverPreview
           && card.hasThumb
@@ -1940,7 +1979,7 @@ function SidebarPreviewStrip({
               }
             }}
             className={cn(
-              "size-8 shrink-0 overflow-hidden bg-accent",
+              SIDEBAR_PREVIEW_TILE_CLASS,
               canPreview &&
                 "outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover",
               isPreviewActive &&
@@ -2122,6 +2161,7 @@ export function SidebarTagRowDragPreview({
         <SidebarPreviewRail>
           <SidebarPreviewStrip
             cards={cards}
+            count={count}
             previewKeyPrefix="drag-preview"
             rowKey="drag-preview"
             onPreviewEnter={DRAG_PREVIEW_NOOP}

@@ -419,7 +419,11 @@ fn rust_decodable_primary_media(
 ) -> bool {
     let reference = block.media_file.as_deref().or(block.thumbnail.as_deref());
     reference.is_some()
-        && thumbnails::media_reference_is_rust_decodable(vault, &block.slug, reference)
+        && thumbnails::media_reference_is_rust_decodable(
+            &mut crate::storage::media_refs::MediaResolver::new(vault),
+            &block.slug,
+            reference,
+        )
 }
 
 /// Resolve every derived tile still missing for `block`. Rust handles formats

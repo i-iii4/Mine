@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { microPreviewFromIndexedBlock } from "./MicroPreviewThumbnail";
+import { describe, it, expect, vi } from "vitest";
+import { fireEvent, render } from "@testing-library/react";
+import { MicroPreviewThumbnail, microPreviewFromIndexedBlock } from "./MicroPreviewThumbnail";
 
 const THUMBS = "/tmp/thumbs";
 
@@ -44,5 +45,44 @@ describe("microPreviewFromIndexedBlock", () => {
       THUMBS,
     );
     expect(text.text).toBe(true);
+  });
+});
+
+describe("MicroPreviewThumbnail", () => {
+  const textPreview = { slug: "note", url: "/thumbs/note.png", text: true, hasThumb: true };
+  const mediaPreview = { slug: "photo", url: "/thumbs/photo.jpg", text: false, hasThumb: true };
+
+  it("brings a text thumb's card fill in with its ink, not before it", () => {
+    const { container } = render(<MicroPreviewThumbnail preview={textPreview} />);
+    const fill = container.querySelector("[data-micro-preview-state]") as HTMLElement;
+
+    // While the picture decodes the slot keeps the caller's own fill; an early
+    // card fill would read as a blank tile.
+    expect(fill).toHaveAttribute("data-micro-preview-state", "loading");
+    expect(fill).not.toHaveClass("bg-card");
+
+    fireEvent.load(container.querySelector("img") as HTMLImageElement);
+
+    expect(fill).toHaveAttribute("data-micro-preview-state", "loaded");
+    expect(fill).toHaveClass("bg-card");
+  });
+
+  it("never gives a media thumb a card fill", () => {
+    const { container } = render(<MicroPreviewThumbnail preview={mediaPreview} />);
+    const fill = container.querySelector("[data-micro-preview-state]") as HTMLElement;
+
+    fireEvent.load(container.querySelector("img") as HTMLImageElement);
+
+    expect(fill).toHaveAttribute("data-micro-preview-state", "loaded");
+    expect(fill).not.toHaveClass("bg-card");
+  });
+
+  it("still calls the caller's own load handler", () => {
+    const onLoad = vi.fn();
+    const { container } = render(<MicroPreviewThumbnail preview={textPreview} onLoad={onLoad} />);
+
+    fireEvent.load(container.querySelector("img") as HTMLImageElement);
+
+    expect(onLoad).toHaveBeenCalledTimes(1);
   });
 });

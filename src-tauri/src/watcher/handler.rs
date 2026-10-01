@@ -23,7 +23,7 @@ use crate::domain::block::{
 use crate::domain::vault::VaultLayout;
 use crate::storage::preview_plan::{resolve_upgrade_media, PreviewUpgradeInput};
 use crate::storage::reconcile::{self, ReconcileReport};
-use crate::storage::{article_audio, db, files, index, thumbnails};
+use crate::storage::{article_audio, db, files, index, media_refs, thumbnails};
 use crate::watcher::events::VaultEvent;
 
 // ─── Event payloads (Rust → Frontend) ───────────────────────────────────────
@@ -298,6 +298,11 @@ fn spawn_thumb_jobs_worker(
                             .is_current_vault(vault.root())
                     })
                 };
+                // One snapshot of the vault's file list for every job: a
+                // sweep checks every card, and resolving per card walked the
+                // whole vault for each. A media file that appears during the
+                // run is a watcher event that rebuilds its owners' previews.
+                let mut resolver = media_refs::MediaResolver::new(&vault);
                 for job in &thumb_jobs {
                     if !is_active_vault() {
                         cancelled = true;
@@ -305,11 +310,11 @@ fn spawn_thumb_jobs_worker(
                     }
                     let thumb_path = vault.thumb_path(&job.block.slug);
 
-                    if thumbnails::is_thumb_fresh(
+                    if thumbnails::is_thumb_fresh_with_resolver(
                         &thumb_path,
                         &job.source_path,
                         &job.block,
-                        &vault,
+                        &mut resolver,
                     ) {
                         skipped += 1;
                         if let Some(ref conn) = metadata_conn {
@@ -359,7 +364,8 @@ fn spawn_thumb_jobs_worker(
                         job.block.slug,
                         job.block.frontmatter.block_type
                     );
-                    let source = thumbnails::generate_for_block(&job.block, &vault);
+                    let source =
+                        thumbnails::generate_for_block_with_resolver(&job.block, &mut resolver);
                     if let Some(ref conn) = metadata_conn {
                         match index::sync_thumb_metadata(
                             conn,
@@ -679,7 +685,9 @@ fn index_md_file_inner(
     let parsed = parse_markdown_document(&slug, &content, file_saved_at(path))
         .with_context(|| format!("parsing {}", path.display()))?;
     let mut block = parsed.block;
-    files::normalize_block_media_refs_for_index(vault, &mut block);
+    // The note's frontmatter and its index row resolve against one snapshot.
+    let mut media_resolver = media_refs::MediaResolver::new(vault);
+    files::normalize_block_media_refs_for_index(&mut media_resolver, &mut block);
 
     // Channel files → index as channel, no thumbnail
     if block.frontmatter.block_type == BlockType::Channel {
@@ -693,10 +701,10 @@ fn index_md_file_inner(
         });
     }
 
-    index::upsert_block_with_diagnostics(
+    index::upsert_block_with_resolver(
         conn,
         &block,
-        Some(vault.root()),
+        &mut media_resolver,
         Some(parsed.origin.as_str()),
         parsed.index_warning.as_deref(),
     )

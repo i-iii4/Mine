@@ -113,7 +113,6 @@ pub fn run() {
             commands::vault::complete_first_card_marker,
             commands::vault::space_onboarding_pending,
             commands::clipper_setup::clipper_extension_folder,
-            commands::vault::preview_vault_folder,
             commands::vault::get_unavailable_vault,
             commands::vault::forget_unavailable_vault,
             commands::vault::get_vault_write_layout,

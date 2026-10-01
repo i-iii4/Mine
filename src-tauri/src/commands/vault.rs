@@ -58,6 +58,30 @@ struct VaultSyncProgressPayload {
     total: usize,
 }
 
+/// `vault-sync-progress` for one space, as the first-index screen reads it
+/// (SPEC_ONBOARDING.md, О13): the first file, every 25th and the last, enough
+/// for a live count and cheap on a small space. Both the background sync and
+/// the first generation a feed read waits on report through it.
+pub(crate) fn sync_progress_emitter(
+    app: &AppHandle,
+    path: String,
+) -> impl Fn(usize, usize) + Sync + Send + 'static {
+    let app = app.clone();
+    move |processed: usize, total: usize| {
+        if processed % 25 != 0 && processed != total && processed != 1 {
+            return;
+        }
+        let _ = app.emit(
+            "vault-sync-progress",
+            VaultSyncProgressPayload {
+                path: path.clone(),
+                processed,
+                total,
+            },
+        );
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct VaultSyncFinishedPayload {
     path: String,
@@ -235,79 +259,6 @@ pub(crate) fn canonical_space_path(path: &str) -> Result<String, CommandError> {
         .map_err(|error| CommandError::Internal(format!("cannot access space {path}: {error}")))
 }
 
-
-/// What a folder holds, before it becomes a space.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
-pub struct FolderPreview {
-    pub markdown_files: usize,
-    pub media_files: usize,
-    pub other_files: usize,
-}
-
-/// Look inside a folder without touching it.
-///
-/// Choosing a folder turns everything in it into cards, recursively — pick the
-/// wrong one and a whole document archive becomes a space. Counting first lets
-/// the app say what is about to happen instead of just doing it.
-/// See SPEC_ONBOARDING.md О12.
-#[tauri::command]
-pub fn preview_vault_folder(path: String) -> Result<FolderPreview, CommandError> {
-    let root = PathBuf::from(&path);
-    if !root.is_dir() {
-        return Err(CommandError::Internal(format!("not a folder: {path}")));
-    }
-
-    let mut preview = FolderPreview {
-        markdown_files: 0,
-        media_files: 0,
-        other_files: 0,
-    };
-    count_folder(&root, &mut preview, 0);
-    Ok(preview)
-}
-
-/// Depth is bounded: this runs before the user has committed to anything, and a
-/// deep tree must not make the confirmation itself feel slow.
-const FOLDER_PREVIEW_MAX_DEPTH: usize = 8;
-
-fn count_folder(dir: &Path, preview: &mut FolderPreview, depth: usize) {
-    if depth > FOLDER_PREVIEW_MAX_DEPTH {
-        return;
-    }
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Ok(kind) = entry.file_type() else {
-            continue;
-        };
-        if kind.is_dir() {
-            if !files::is_ignored_vault_dir(&path) {
-                count_folder(&path, preview, depth + 1);
-            }
-            continue;
-        }
-        if !kind.is_file() {
-            continue;
-        }
-        match path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .map(str::to_lowercase)
-            .as_deref()
-        {
-            Some("md") => preview.markdown_files += 1,
-            Some(ext) if crate::storage::preview_plan::is_image_ext(ext) => {
-                preview.media_files += 1
-            }
-            Some(ext) if crate::storage::preview_plan::is_video_ext(ext) => {
-                preview.media_files += 1
-            }
-            _ => preview.other_files += 1,
-        }
-    }
-}
 
 /// A space that is bound but not reachable right now. Also the payload of
 /// `space-unavailable`, which names the lost space so a window can ignore a
@@ -1740,21 +1691,8 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
                 // Numbers instead of an endless spinner (О13): every 25th
                 // file and the final one — enough for a live bar, cheap
                 // enough to be free on small spaces.
-                let app_for_progress = app_for_thread.clone();
-                let progress_path = path_for_thread.clone();
-                let emit_progress = move |processed: usize, total: usize| {
-                    if processed % 25 != 0 && processed != total && processed != 1 {
-                        return;
-                    }
-                    let _ = app_for_progress.emit(
-                        "vault-sync-progress",
-                        VaultSyncProgressPayload {
-                            path: progress_path.clone(),
-                            processed,
-                            total,
-                        },
-                    );
-                };
+                let emit_progress =
+                    sync_progress_emitter(&app_for_thread, path_for_thread.clone());
                 let outcome = sync_state
                     .freshness
                     .reconcile_with_progress(&vault, &emit_progress);

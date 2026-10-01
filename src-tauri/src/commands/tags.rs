@@ -14,7 +14,7 @@ use crate::domain::collection::{
 use crate::domain::vault::{validate_slug, VaultLayout};
 use crate::storage::index::{IndexedBlock, TagCount};
 use crate::storage::source_mutation::{SourceFileWrite, StagedSourceMutation};
-use crate::storage::{files, index};
+use crate::storage::{files, index, media_refs};
 use crate::util::append_startup_trace;
 
 // ─── Commands ───────────────────────────────────────────────────────────────
@@ -157,7 +157,10 @@ impl MembershipRewrite {
         let written = parse_markdown_document(slug, &patched, file_saved_at(&path))
             .map_err(|e| CommandError::Internal(e.to_string()))?;
         let mut block = written.block;
-        files::normalize_block_media_refs_for_index(vault, &mut block);
+        files::normalize_block_media_refs_for_index(
+            &mut media_refs::MediaResolver::new(vault),
+            &mut block,
+        );
         Ok(Self {
             path,
             expected: content.into_bytes(),

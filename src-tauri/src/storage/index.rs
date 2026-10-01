@@ -417,21 +417,36 @@ pub struct PreviewBlock {
 }
 
 /// Extract the first inline media reference from body text.
-fn extract_first_image(block: &Block, vault_root: Option<&Path>) -> Option<String> {
-    extract_media_sources(block, vault_root).into_iter().next()
+fn extract_first_image(
+    block: &Block,
+    resolver: Option<&mut media_refs::MediaResolver<'_>>,
+) -> Option<String> {
+    extract_media_sources(block, resolver).into_iter().next()
 }
 
 /// Extract all inline media references from body text as a JSON array.
-fn extract_media_urls(block: &Block, vault_root: Option<&Path>) -> Option<String> {
-    let urls = extract_media_sources(block, vault_root);
+fn extract_media_urls(
+    block: &Block,
+    resolver: Option<&mut media_refs::MediaResolver<'_>>,
+) -> Option<String> {
+    let urls = extract_media_sources(block, resolver);
     media_urls_from_sources(&urls)
 }
 
-fn extract_media_sources(block: &Block, vault_root: Option<&Path>) -> Vec<String> {
-    iter_inline_media_references(&block.body)
-        .into_iter()
-        .map(|reference| resolve_index_media_source(block, vault_root, &reference))
-        .collect()
+/// Every inline media source of the body, local ones vault-root-relative
+/// when they resolve. Without a vault to resolve against, sources stay as
+/// written.
+fn extract_media_sources(
+    block: &Block,
+    resolver: Option<&mut media_refs::MediaResolver<'_>>,
+) -> Vec<String> {
+    match resolver {
+        Some(resolver) => extract_media_sources_with_resolver(block, resolver),
+        None => iter_inline_media_references(&block.body)
+            .into_iter()
+            .map(|reference| reference.source)
+            .collect(),
+    }
 }
 
 fn extract_media_sources_with_resolver(
@@ -458,22 +473,6 @@ fn media_urls_from_sources(sources: &[String]) -> Option<String> {
     } else {
         serde_json::to_string(sources).ok()
     }
-}
-
-fn resolve_index_media_source(
-    block: &Block,
-    vault_root: Option<&Path>,
-    reference: &crate::domain::block::InlineMediaReference,
-) -> String {
-    if is_remote_media(&reference.source) {
-        return reference.source.clone();
-    }
-    let Some(root) = vault_root else {
-        return reference.source.clone();
-    };
-    let vault = VaultLayout::new(root.to_path_buf());
-    media_refs::resolve_inline_media_root_relative(&vault, &block.slug, reference)
-        .unwrap_or_else(|| reference.source.clone())
 }
 
 fn serialize_related_notes(related_notes: &[String]) -> Option<String> {
@@ -1320,12 +1319,40 @@ pub fn upsert_block_with_diagnostics(
     origin: Option<&str>,
     index_warning: Option<&str>,
 ) -> Result<i64> {
+    let vault = vault_root.map(|root| VaultLayout::new(root.to_path_buf()));
+    let mut resolver = vault.as_ref().map(media_refs::MediaResolver::new);
+    upsert_block_savepoint(conn, block, resolver.as_mut(), origin, index_warning)
+}
+
+/// Insert or update a block, resolving its media through `resolver`.
+///
+/// Same row as [`upsert_block_with_diagnostics`] with the resolver's vault
+/// root. A pass that indexes many notes hands each of them the same resolver,
+/// so the vault's file list is walked once per pass instead of once per
+/// media reference of every note.
+pub fn upsert_block_with_resolver(
+    conn: &Connection,
+    block: &Block,
+    resolver: &mut media_refs::MediaResolver<'_>,
+    origin: Option<&str>,
+    index_warning: Option<&str>,
+) -> Result<i64> {
+    upsert_block_savepoint(conn, block, Some(resolver), origin, index_warning)
+}
+
+fn upsert_block_savepoint(
+    conn: &Connection,
+    block: &Block,
+    resolver: Option<&mut media_refs::MediaResolver<'_>>,
+    origin: Option<&str>,
+    index_warning: Option<&str>,
+) -> Result<i64> {
     // Use SAVEPOINT via raw SQL for nestability — this works both standalone
     // and inside an outer transaction (e.g. full_scan).
     conn.execute_batch("SAVEPOINT upsert_block")
         .context("failed to begin savepoint for upsert_block")?;
 
-    let result = upsert_block_inner(conn, block, vault_root, origin, index_warning);
+    let result = upsert_block_inner(conn, block, resolver, origin, index_warning);
 
     match &result {
         Ok(_) => {
@@ -1344,19 +1371,22 @@ pub fn upsert_block_with_diagnostics(
 fn upsert_block_inner(
     conn: &Connection,
     block: &Block,
-    vault_root: Option<&Path>,
+    mut resolver: Option<&mut media_refs::MediaResolver<'_>>,
     origin: Option<&str>,
     index_warning: Option<&str>,
 ) -> Result<i64> {
+    let vault_root = resolver
+        .as_deref()
+        .map(|resolver| resolver.vault().root());
     let title_fields =
         derive_title_fields(&block.slug, block.frontmatter.title.as_deref(), &block.body);
     let card_kind = derive_card_kind(block);
     let preview_body = strip_first_markdown_h1(&block.body);
-    let first_image = extract_first_image(block, vault_root);
-    let media_urls = extract_media_urls(block, vault_root);
-    let media_dimensions = vault_root.and_then(|root| {
+    let first_image = extract_first_image(block, resolver.as_deref_mut());
+    let media_urls = extract_media_urls(block, resolver.as_deref_mut());
+    let media_dimensions = resolver.and_then(|resolver| {
         build_media_dimensions_json(
-            root,
+            resolver,
             &block.slug,
             block.frontmatter.file.as_deref(),
             &block.body,
@@ -5540,7 +5570,8 @@ mod tests {
             "![[01.jpg]]",
         );
 
-        let json = extract_media_urls(&block, Some(vault.root())).unwrap();
+        let mut resolver = media_refs::MediaResolver::new(&vault);
+        let json = extract_media_urls(&block, Some(&mut resolver)).unwrap();
 
         assert_eq!(json, "[\"Библиотека/images/images/01.jpg\"]");
     }

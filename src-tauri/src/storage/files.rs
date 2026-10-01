@@ -918,18 +918,23 @@ pub fn is_ignored_vault_dir(path: &Path) -> bool {
 /// Obsidian interprets local refs relative to the note. Mine's frontend and
 /// preview manifest consume root-relative paths, so the index stores resolved
 /// root-relative values without rewriting the source markdown.
-pub fn normalize_block_media_refs_for_index(vault: &VaultLayout, block: &mut Block) {
+///
+/// References resolve through `resolver`, so a pass that indexes many notes
+/// shares one snapshot of the vault's file list across all of them.
+pub fn normalize_block_media_refs_for_index(
+    resolver: &mut media_refs::MediaResolver<'_>,
+    block: &mut Block,
+) {
+    let vault = resolver.vault();
     if let Some(file) = block.frontmatter.file.clone() {
-        if let Some(resolved) = media_refs::resolve_frontmatter_media(vault, &block.slug, &file) {
+        if let Some(resolved) = resolver.resolve_frontmatter_media(&block.slug, &file) {
             if let Some(root_relative) = vault.root_relative_reference(&resolved) {
                 block.frontmatter.file = Some(root_relative);
             }
         }
     }
     if let Some(thumbnail) = block.frontmatter.thumbnail.clone() {
-        if let Some(resolved) =
-            media_refs::resolve_frontmatter_media(vault, &block.slug, &thumbnail)
-        {
+        if let Some(resolved) = resolver.resolve_frontmatter_media(&block.slug, &thumbnail) {
             if let Some(root_relative) = vault.root_relative_reference(&resolved) {
                 block.frontmatter.thumbnail = Some(root_relative);
             }

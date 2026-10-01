@@ -11,6 +11,7 @@ import {
   HOVER_PREVIEW_WARM_WINDOW_MS,
 } from "@/lib/hoverPreviewTiming";
 import { SIDEBAR_ROW_HOVER_SEAM_ENABLED } from "@/lib/featureFlags";
+import { SIDEBAR_PREVIEW_SLOTS } from "@/lib/appLayout";
 import { isCardLitByCollection, resetCollectionHover, setCollectionMemberships, setHoveredCard, setSelectedCards } from "@/lib/collectionHover";
 import { HOVER_INTENT } from "@/lib/hoverIntent";
 
@@ -1211,6 +1212,113 @@ describe("Sidebar", () => {
     expect(preview.querySelector('[data-sidebar-preview-thumbnail="trigger"]')).toBeNull();
   });
 
+});
+
+describe("sidebar thumbnail placeholders while previews load", () => {
+  const stripOf = (container: HTMLElement, rowKey: string) =>
+    container.querySelector(
+      `[data-sidebar-row-key="${rowKey}"] [data-sidebar-thumbnail-strip]`,
+    ) as HTMLElement;
+  const placeholdersIn = (container: HTMLElement, rowKey: string) =>
+    stripOf(container, rowKey).querySelectorAll("[data-sidebar-preview-placeholder]");
+  const tilesIn = (container: HTMLElement, rowKey: string) =>
+    stripOf(container, rowKey).querySelectorAll("[data-sidebar-preview-thumbnail]");
+  const thumb = (slug: string, text = false) => ({
+    slug,
+    url: `asset://localhost/thumbs/${slug}.jpg`,
+    text,
+    hasThumb: true,
+  });
+
+  it("fills each slot with a placeholder, one per card up to what the strip holds", () => {
+    const { container } = renderSidebar({
+      ...defaultProps,
+      orderedTags: [tag("alpha", 3), tag("crowded", SIDEBAR_PREVIEW_SLOTS + 15)],
+      totalBlocks: 17,
+    });
+
+    expect(stripOf(container, "tag:alpha")).toHaveAttribute("data-sidebar-previews", "pending");
+    expect(placeholdersIn(container, "tag:alpha")).toHaveLength(3);
+    expect(placeholdersIn(container, "tag:crowded")).toHaveLength(SIDEBAR_PREVIEW_SLOTS);
+    expect(placeholdersIn(container, "all")).toHaveLength(17);
+    expect(tilesIn(container, "tag:alpha")).toHaveLength(0);
+  });
+
+  it("draws no placeholder for a collection with no cards", () => {
+    const { container } = renderSidebar({
+      ...defaultProps,
+      orderedTags: [tag("empty", 0)],
+      totalBlocks: 0,
+    });
+
+    expect(placeholdersIn(container, "tag:empty")).toHaveLength(0);
+    expect(placeholdersIn(container, "all")).toHaveLength(0);
+  });
+
+  it("draws no placeholder once the read has answered, even with no thumbnails", () => {
+    const { container } = renderSidebar({
+      ...defaultProps,
+      orderedTags: [tag("alpha", 4)],
+      channelPreviews: new Map([["alpha", []]]),
+    });
+
+    expect(stripOf(container, "tag:alpha")).toHaveAttribute("data-sidebar-previews", "ready");
+    expect(placeholdersIn(container, "tag:alpha")).toHaveLength(0);
+  });
+
+  it("gives way to the real thumbnails in the same boxes without resizing the strip", () => {
+    const props = { ...defaultProps, orderedTags: [tag("alpha", 2)] };
+    const { container, rerender } = renderSidebar(props);
+    const strip = stripOf(container, "tag:alpha");
+    const stripClass = strip.className;
+    const stripStyle = strip.getAttribute("style");
+    const placeholders = Array.from(placeholdersIn(container, "tag:alpha"));
+    expect(placeholders).toHaveLength(2);
+    const placeholderClasses = Array.from(placeholders[0]?.classList ?? []);
+    expect(placeholderClasses).toEqual(expect.arrayContaining(["size-8", "shrink-0", "bg-accent"]));
+
+    rerender(sidebarTree({
+      ...props,
+      channelPreviews: new Map([["alpha", [thumb("alpha-a"), thumb("alpha-b", true)]]]),
+    }));
+
+    // The strip is the same element with the same box and fade: only its
+    // children change, so the row around it cannot move.
+    expect(stripOf(container, "tag:alpha")).toBe(strip);
+    expect(strip.className).toBe(stripClass);
+    expect(strip.getAttribute("style")).toBe(stripStyle);
+    expect(strip).toHaveAttribute("data-sidebar-previews", "ready");
+    expect(placeholdersIn(container, "tag:alpha")).toHaveLength(0);
+    const tiles = Array.from(tilesIn(container, "tag:alpha"));
+    expect(tiles).toHaveLength(placeholders.length);
+    // One tile class for both: the same size, no rounding, same fill.
+    for (const tile of tiles) {
+      expect(tile).toHaveClass(...placeholderClasses);
+      expect(tile.className).not.toMatch(/\brounded/);
+    }
+  });
+
+  it("keeps a thumbnail that is still decoding looking like its placeholder", () => {
+    const { container } = renderSidebar({
+      ...defaultProps,
+      orderedTags: [tag("alpha", 1)],
+      channelPreviews: new Map([["alpha", [thumb("alpha-text", true)]]]),
+    });
+    const tile = tilesIn(container, "tag:alpha")[0] as HTMLElement;
+    const textFill = tile.querySelector("[data-micro-preview-state]") as HTMLElement;
+    const image = tile.querySelector("img") as HTMLImageElement;
+
+    // Until the picture is in, only the placeholder fill shows: the text
+    // card's own fill would read as a blank tile.
+    expect(tile).toHaveClass("bg-accent");
+    expect(textFill).toHaveAttribute("data-micro-preview-state", "loading");
+    expect(textFill).not.toHaveClass("bg-card");
+
+    fireEvent.load(image);
+
+    expect(textFill).toHaveAttribute("data-micro-preview-state", "loaded");
+    expect(textFill).toHaveClass("bg-card");
+  });
 });
 
 describe("sidebar and the card under the pointer (SPEC_CARD_STATES.md)", () => {

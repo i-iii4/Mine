@@ -13,11 +13,22 @@ pub struct AmbiguousMediaReference(pub String);
 use crate::domain::block::{FileReference, InlineMediaReference, InlineMediaSyntax};
 use crate::domain::vault::VaultLayout;
 
-/// Cached resolver for bulk index migrations.
+/// Media resolver over one snapshot of the vault's file list.
 ///
-/// Single-block indexing can use the stateless helpers below. Backfills may
-/// resolve hundreds of Obsidian basename embeds, so this resolver builds the
-/// vault basename index lazily once and reuses it for every row in the pass.
+/// Resolving a bare name (`![[photo.jpg]]`, `file: "[[photo.jpg]]"`) needs
+/// the list of every file in the vault, and building that list walks the
+/// whole tree. The resolver walks at most once, on its first lookup that
+/// needs the list, and answers every later lookup from that snapshot. A bulk
+/// pass (reconcile, the preview pass, the thumbnail sweep) owns one resolver
+/// and hands it to every card it visits, so the pass walks the vault once,
+/// not once per reference: on a space of hundreds of notes in iCloud Drive
+/// the per-reference walk turned indexing into minutes of directory listing.
+///
+/// The free functions below are for one-off lookups outside a pass: each
+/// builds its own resolver and so its own snapshot.
+///
+/// A snapshot can miss a file that appears while the pass runs. Whoever
+/// creates a resolver for a pass states, at that point, why that is safe.
 pub struct MediaResolver<'a> {
     vault: &'a VaultLayout,
     link_index: Option<LinkIndex>,
@@ -31,6 +42,14 @@ impl<'a> MediaResolver<'a> {
         }
     }
 
+    /// The vault this resolver resolves against.
+    pub fn vault(&self) -> &'a VaultLayout {
+        self.vault
+    }
+
+    /// Resolve an inline media reference using syntax-specific rules:
+    /// Markdown images relative to the note, Obsidian embeds by Obsidian's
+    /// own link rule (a bare name anywhere in the vault, when unique).
     pub fn resolve_inline_media(
         &mut self,
         block_slug: &str,
@@ -67,6 +86,7 @@ impl<'a> MediaResolver<'a> {
         )
     }
 
+    /// Resolve an inline media reference and render it vault-root-relative.
     pub fn resolve_inline_media_root_relative(
         &mut self,
         block_slug: &str,
@@ -87,10 +107,13 @@ impl<'a> MediaResolver<'a> {
         }
     }
 
-    pub fn resolve_indexed_media(&mut self, block_slug: &str, reference: &str) -> Option<PathBuf> {
-        if let Some(path) = exact_indexed_root_path(self.vault.root(), reference) {
-            return Some(path);
-        }
+    /// Resolve a frontmatter media field as a normal local path: `./` and
+    /// `../` relative to the note, anything else by Obsidian's link rule.
+    pub fn resolve_frontmatter_media(
+        &mut self,
+        block_slug: &str,
+        reference: &str,
+    ) -> Option<PathBuf> {
         let syntax = if reference.starts_with("./") || reference.starts_with("../") {
             LinkSyntax::MarkdownPath
         } else {
@@ -106,7 +129,37 @@ impl<'a> MediaResolver<'a> {
         )
     }
 
-    fn link_index(&mut self) -> &LinkIndex {
+    /// Resolve a media path that already came from the SQLite index.
+    ///
+    /// Indexed media paths are normalized to vault-root-relative when
+    /// possible, so an exact root path is tried first and needs no snapshot;
+    /// legacy rows may still contain note-relative values.
+    pub fn resolve_indexed_media(&mut self, block_slug: &str, reference: &str) -> Option<PathBuf> {
+        if let Some(path) = exact_indexed_root_path(self.vault.root(), reference) {
+            return Some(path);
+        }
+        self.resolve_frontmatter_media(block_slug, reference)
+    }
+
+    /// Find the document of a collection, wherever it sits in the vault.
+    ///
+    /// A collection is referred to by name (`[[Каталоги]]`), while its
+    /// document is a file that may live in any folder. Returns `None` when
+    /// no such document exists: the caller decides whether that is an error
+    /// or an invitation to create one.
+    pub fn resolve_collection_document(&mut self, collection_ref: &str) -> Option<PathBuf> {
+        let vault = self.vault;
+        resolve_with_index(
+            vault,
+            self.link_index(),
+            "source.md",
+            collection_ref,
+            LinkSyntax::Obsidian,
+        )
+    }
+
+    /// The vault's path index, built from one walk on first use.
+    pub fn link_index(&mut self) -> &LinkIndex {
         self.link_index
             .get_or_insert_with(|| build_link_index(self.vault.root()))
     }
@@ -132,15 +185,10 @@ impl<'a> MediaResolver<'a> {
 /// own folder that assumption stopped holding.
 ///
 /// Returns `None` when no such document exists — the caller decides whether
-/// that is an error or an invitation to create one.
+/// that is an error or an invitation to create one. One-off lookup: a pass
+/// uses [`MediaResolver::resolve_collection_document`].
 pub fn resolve_collection_document(vault: &VaultLayout, collection_ref: &str) -> Option<PathBuf> {
-    resolve_with_index(
-        vault,
-        &build_link_index(vault.root()),
-        "source.md",
-        collection_ref,
-        LinkSyntax::Obsidian,
-    )
+    MediaResolver::new(vault).resolve_collection_document(collection_ref)
 }
 
 /// Enumerate every matching path for destructive collection operations.
@@ -189,78 +237,27 @@ pub fn collection_document_candidates(
     Ok(paths)
 }
 
-/// Resolve a frontmatter media field as a normal local path.
+/// Resolve a frontmatter media field as a normal local path. One-off lookup:
+/// a pass uses [`MediaResolver::resolve_frontmatter_media`].
 pub fn resolve_frontmatter_media(
     vault: &VaultLayout,
     block_slug: &str,
     reference: &str,
 ) -> Option<PathBuf> {
-    let syntax = if reference.starts_with("./") || reference.starts_with("../") {
-        LinkSyntax::MarkdownPath
-    } else {
-        LinkSyntax::Obsidian
-    };
-    resolve_with_index(
-        vault,
-        &build_link_index(vault.root()),
-        &format!("{block_slug}.md"),
-        reference,
-        syntax,
-    )
-}
-
-fn resolve_wikilink_media(
-    vault: &VaultLayout,
-    block_slug: &str,
-    reference: &str,
-) -> Option<PathBuf> {
-    resolve_with_index(
-        vault,
-        &build_link_index(vault.root()),
-        &format!("{block_slug}.md"),
-        reference,
-        LinkSyntax::Obsidian,
-    )
-}
-
-fn resolve_markdown_media(
-    vault: &VaultLayout,
-    block_slug: &str,
-    reference: &str,
-) -> Option<PathBuf> {
-    resolve_with_index(
-        vault,
-        &build_link_index(vault.root()),
-        &format!("{block_slug}.md"),
-        reference,
-        LinkSyntax::MarkdownPath,
-    )
+    MediaResolver::new(vault).resolve_frontmatter_media(block_slug, reference)
 }
 
 /// Resolve a media path that already came from the SQLite index.
 ///
 /// Indexed media paths are normalized to vault-root-relative when possible,
-/// but legacy rows may still contain note-relative values.
+/// but legacy rows may still contain note-relative values. One-off lookup: a
+/// pass uses [`MediaResolver::resolve_indexed_media`].
 pub fn resolve_indexed_media(
     vault: &VaultLayout,
     block_slug: &str,
     reference: &str,
 ) -> Option<PathBuf> {
-    if let Some(path) = exact_indexed_root_path(vault.root(), reference) {
-        return Some(path);
-    }
-    let syntax = if reference.starts_with("./") || reference.starts_with("../") {
-        LinkSyntax::MarkdownPath
-    } else {
-        LinkSyntax::Obsidian
-    };
-    resolve_with_index(
-        vault,
-        &build_link_index(vault.root()),
-        &format!("{block_slug}.md"),
-        reference,
-        syntax,
-    )
+    MediaResolver::new(vault).resolve_indexed_media(block_slug, reference)
 }
 
 fn exact_indexed_root_path(root: &Path, reference: &str) -> Option<PathBuf> {
@@ -287,38 +284,14 @@ fn exact_indexed_root_path(root: &Path, reference: &str) -> Option<PathBuf> {
         .then_some(path)
 }
 
-/// Resolve an inline media reference using syntax-specific rules.
+/// Resolve an inline media reference using syntax-specific rules. One-off
+/// lookup: a pass uses [`MediaResolver::resolve_inline_media`].
 pub fn resolve_inline_media(
     vault: &VaultLayout,
     block_slug: &str,
     reference: &InlineMediaReference,
 ) -> Option<PathBuf> {
-    match reference.syntax {
-        InlineMediaSyntax::MarkdownImage => {
-            resolve_markdown_media(vault, block_slug, &reference.source)
-        }
-        InlineMediaSyntax::ObsidianEmbed => {
-            resolve_obsidian_embed(vault, block_slug, &reference.source)
-        }
-    }
-}
-
-/// Resolve and render an inline media reference as vault-root-relative.
-pub fn resolve_inline_media_root_relative(
-    vault: &VaultLayout,
-    block_slug: &str,
-    reference: &InlineMediaReference,
-) -> Option<String> {
-    resolve_inline_media(vault, block_slug, reference)
-        .and_then(|path| vault.root_relative_reference(&path))
-}
-
-fn resolve_obsidian_embed(
-    vault: &VaultLayout,
-    block_slug: &str,
-    reference: &str,
-) -> Option<PathBuf> {
-    resolve_wikilink_media(vault, block_slug, reference)
+    MediaResolver::new(vault).resolve_inline_media(block_slug, reference)
 }
 
 fn resolve_with_index(
@@ -334,7 +307,26 @@ fn resolve_with_index(
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static LINK_INDEX_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many vault walks `build_link_index` has made on this thread. Tests use
+/// the difference across a pass to prove the pass walks once, not per note.
+#[cfg(test)]
+pub(crate) fn link_index_builds() -> usize {
+    LINK_INDEX_BUILDS.with(std::cell::Cell::get)
+}
+
+/// Walk the whole vault and index every file by path and basename.
+///
+/// The walk costs one directory listing per folder, which on iCloud Drive is
+/// far from free: a pass keeps the result in a [`MediaResolver`] instead of
+/// calling this per reference.
 pub fn build_link_index(root: &Path) -> LinkIndex {
+    #[cfg(test)]
+    LINK_INDEX_BUILDS.with(|builds| builds.set(builds.get() + 1));
     let mut files = Vec::new();
     collect_all_files(root, root, &mut files);
     LinkIndex::new(files)
@@ -644,6 +636,53 @@ mod tests {
         );
 
         assert_eq!(got, None);
+    }
+
+    #[test]
+    fn a_resolver_walks_the_vault_once_for_all_its_lookups() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        for folder in ["Cards", "Media", "Collections"] {
+            std::fs::create_dir_all(dir.path().join(folder)).unwrap();
+        }
+        std::fs::write(dir.path().join("Cards/Note.md"), "").unwrap();
+        let photo = dir.path().join("Media/photo.jpg");
+        let clip = dir.path().join("Media/clip.png");
+        let collection = dir.path().join("Collections/Каталоги.md");
+        std::fs::write(&photo, b"img").unwrap();
+        std::fs::write(&clip, b"img").unwrap();
+        std::fs::write(&collection, "").unwrap();
+        let mut resolver = MediaResolver::new(&vault);
+        let before = link_index_builds();
+
+        // An exact vault-root path needs no list of files at all.
+        assert_eq!(
+            resolver.resolve_indexed_media("Cards/Note", "Media/photo.jpg"),
+            Some(photo.clone())
+        );
+        assert_eq!(link_index_builds() - before, 0);
+
+        assert_eq!(
+            resolver.resolve_frontmatter_media("Cards/Note", "photo.jpg"),
+            Some(photo)
+        );
+        assert_eq!(
+            resolver.resolve_inline_media(
+                "Cards/Note",
+                &reference("clip.png", InlineMediaSyntax::ObsidianEmbed)
+            ),
+            Some(clip.clone())
+        );
+        assert_eq!(
+            resolver.resolve_inline_media_root_relative(
+                "Cards/Note",
+                &reference("../Media/clip.png", InlineMediaSyntax::MarkdownImage)
+            ),
+            Some("Media/clip.png".to_string())
+        );
+        assert_eq!(resolver.resolve_indexed_media("Cards/Note", "clip.png"), Some(clip));
+        assert_eq!(resolver.resolve_collection_document("Каталоги"), Some(collection));
+        assert_eq!(link_index_builds() - before, 1, "one walk serves every lookup");
     }
 
     #[test]

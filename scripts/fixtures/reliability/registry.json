@@ -1300,6 +1300,59 @@
       "requirement": "CLAUDE.md#bun run dev:side",
       "tests": ["src-tauri/src/commands/startup.rs"],
       "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src/components/VaultPicker.tsx",
+        "src/components/VaultPicker.test.tsx",
+        "src/components/FolderConfirmation.tsx",
+        "src/components/IndexingProgress.tsx",
+        "src/components/IndexingProgress.test.tsx",
+        "src/App.tsx",
+        "src/components/Grid.tsx",
+        "src/components/EdgeStatesSection.tsx",
+        "src/components/EdgeStatesSection.test.tsx",
+        "src/lib/commands.ts",
+        "src/types/generated.ts",
+        "src-tauri/src/bindings.rs",
+        "src-tauri/src/commands/vault.rs",
+        "src-tauri/src/commands/freshness.rs",
+        "src-tauri/src/lib.rs",
+        "scripts/edge-states-audit.mjs"
+      ],
+      "requirement": "SPEC_ONBOARDING.md#**О12.**",
+      "tests": ["src/components/VaultPicker.test.tsx", "src/components/IndexingProgress.test.tsx", "src/components/EdgeStatesSection.test.tsx"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src-tauri/src/storage/media_refs.rs",
+        "src-tauri/src/storage/reconcile.rs",
+        "src-tauri/src/storage/index.rs",
+        "src-tauri/src/storage/media_dimensions.rs",
+        "src-tauri/src/storage/files.rs",
+        "src-tauri/src/storage/derived_preview.rs",
+        "src-tauri/src/storage/thumbnails.rs",
+        "src-tauri/src/storage/preview_plan.rs",
+        "src-tauri/src/watcher/handler.rs",
+        "src-tauri/src/commands/tags.rs",
+        "src-tauri/src/commands/thumbnails.rs"
+      ],
+      "requirement": "SPEC_STORAGE.md#Один обход файлов пространства на проход",
+      "tests": ["src-tauri/src/storage/reconcile.rs", "src-tauri/src/storage/derived_preview.rs", "src-tauri/src/storage/media_refs.rs"],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src/components/Sidebar.tsx",
+        "src/components/Sidebar.test.tsx",
+        "src/components/MicroPreviewThumbnail.tsx",
+        "src/components/MicroPreviewThumbnail.test.tsx",
+        "src/lib/appLayout.ts"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#Заглушки до прихода миниатюр",
+      "tests": ["src/components/Sidebar.test.tsx", "src/components/MicroPreviewThumbnail.test.tsx"],
+      "command": "test:frontend"
     }
   ],
   "release": null

@@ -21,7 +21,6 @@ import { CloudRecommendationCard } from "@/components/CloudRecommendation";
 import { IndexingProgress } from "@/components/IndexingProgress";
 import { FirstCardMarkerCard } from "@/components/FirstCardMarker";
 import { EmptySpaceOnboarding } from "@/components/EmptySpaceOnboarding";
-import { FolderConfirmation } from "@/components/FolderConfirmation";
 import { SpaceUnavailable } from "@/components/SpaceUnavailable";
 import {
   CLOUD_BADGE_DELAY_MS,
@@ -229,11 +228,11 @@ export function EdgeStatesSection() {
         </StateCase>
 
         <StateCase
-          name="Прогресс первичной индексации"
-          when="Первое подключение большого пространства: числа вместо бесконечного индикатора, показывается вместо онбординга пустой ленты — «пространство пусто» было бы неправдой."
+          name="Прогресс индексации"
+          when="Индексация дольше секунды: уведомление в правом нижнем углу с числами вместо бесконечного индикатора. Пока лента пуста, рядом кнопка другой папки: папка открывается без подтверждения."
         >
           <div className="h-64">
-            <IndexingProgress spaceName="Mine" processed={1284} total={3000} />
+            <IndexingProgress spaceName="Mine" processed={1284} total={3000} onClose={() => {}} onChooseAnother={() => {}} />
           </div>
         </StateCase>
 
@@ -285,20 +284,6 @@ export function EdgeStatesSection() {
             reason="access_denied"
             onReopened={() => {}}
             onForgotten={() => {}}
-          />
-        </ScreenFrame>
-      </StateCase>
-
-      <StateCase
-        name="Подтверждение непустой папки"
-        when="Выбор папки рекурсивен и необратим, а ~/Documents — один промах. Счёт показывается до начала работы."
-      >
-        <ScreenFrame>
-          <FolderConfirmation
-            path="/Users/you/Documents"
-            preview={{ markdown_files: 120, media_files: 40, other_files: 8 }}
-            onConfirm={() => {}}
-            onChooseAnother={() => {}}
           />
         </ScreenFrame>
       </StateCase>

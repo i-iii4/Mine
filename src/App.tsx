@@ -45,7 +45,7 @@ import { collectionRefLabel } from "@/lib/collections";
 import { reconcileBlocks } from "@/lib/blockIdentity";
 import { refreshPageLimit } from "@/lib/gridPaging";
 import { createPreviewRowQueue } from "@/lib/previewRowQueue";
-import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
+import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX, SIDEBAR_PREVIEW_SLOTS } from "@/lib/appLayout";
 import { cn } from "@/lib/utils";
 import { commandById } from "@/lib/commandRegistry";
 import { EDGE_FADE_WIDTH, createRightFadeMaskStyle } from "@/lib/edgeFade";
@@ -276,6 +276,7 @@ import { SpaceUnavailable } from "@/components/SpaceUnavailable";
 import { CloudRecommendation } from "@/components/CloudRecommendation";
 import { FirstCardMarkerCard } from "@/components/FirstCardMarker";
 import { NotificationAnchor, NotificationCard } from "@/components/NotificationCard";
+import { IndexingProgress, useIndexingNotice } from "@/components/IndexingProgress";
 import { VaultSwitcher } from "@/components/VaultSwitcher";
 import { TopCollectionSwitcher } from "@/components/TopCollectionSwitcher";
 import { Sidebar, SidebarTagRowDragPreview } from "@/components/Sidebar";
@@ -837,6 +838,11 @@ export function AppWithVault({
   const [cloudAdviceToken, setCloudAdviceToken] = useState(0);
   // The first index counted out loud (О13); null once the pass lands.
   const [syncProgress, setSyncProgress] = useState<{ processed: number; total: number } | null>(null);
+  const indexingCountNotice = useIndexingNotice(isSyncing ? syncProgress : null);
+  // A count belongs to the pass that sent it: the next pass starts from none.
+  useEffect(() => {
+    if (!isSyncing) setSyncProgress(null);
+  }, [isSyncing]);
   // The first saved card's slug, while its one-time marker is on screen (О19).
   const [firstCardSlug, setFirstCardSlug] = useState<string | null>(null);
   const firstCardPendingRef = useRef(false);
@@ -1127,7 +1133,7 @@ export function AppWithVault({
 
   const { channelPreviews, refresh: loadPreviews, bumpThumbVersion } = useChannelPreviewsEvents({
     thumbsRootPath: vaultReady ? thumbsRootPath : null,
-    limit: 20,
+    limit: SIDEBAR_PREVIEW_SLOTS,
     revisionOwner: projectionRevisionOwner,
   });
 
@@ -3546,9 +3552,11 @@ export function AppWithVault({
   const feedErrorNotices = openError !== null
     ? []
     : feedErrors.slice(feedShowsCards ? 0 : 1).filter(({ notice }) => notice.open);
+  const indexingCount = isSyncing ? syncProgress : null;
   const showNotifications = feedErrorNotices.length > 0
     || selectionCardError !== null
-    || firstCardSlug !== null;
+    || firstCardSlug !== null
+    || (indexingCountNotice.visible && indexingCount !== null);
 
   const metadataRow = mainSecondaryTopBarVisible ? (
     <MainSecondaryTopBar
@@ -3957,6 +3965,18 @@ export function AppWithVault({
                 </p>
               </NotificationCard>
             )}
+            {indexingCountNotice.visible && indexingCount !== null && (
+              // Indexing counts out loud in the corner (О13). A folder whose
+              // feed is still empty may be the wrong one: it opened without a
+              // confirmation, so the way out sits next to its count (О12).
+              <IndexingProgress
+                spaceName={vaultPath.replace(/\/+$/, "").split("/").pop() ?? vaultPath}
+                processed={indexingCount.processed}
+                total={indexingCount.total}
+                onClose={indexingCountNotice.hide}
+                onChooseAnother={blocks.length === 0 ? () => void handleSwitchVault() : undefined}
+              />
+            )}
             {firstCardSlug !== null && (
               <FirstCardMarkerCard
                 fileName={`${firstCardSlug.split("/").pop() ?? firstCardSlug}.md`}
@@ -4168,9 +4188,6 @@ export function AppWithVault({
             </span>
           )}
           <div className="flex-1" data-bar-spacer="" />
-          {isSyncing && (
-            <span className="text-sm text-muted-foreground">Syncing…</span>
-          )}
           <span
             data-bar-entry="find-elements"
             className="inline-flex shrink-0 items-center"

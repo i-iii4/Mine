@@ -147,13 +147,16 @@ pub enum ExpectedThumb {
 /// Classify what thumb format is expected for `block`. Mirrors the
 /// cascade logic in `generate_for_block` but returns the CLASSIFICATION
 /// of the final result rather than producing a thumb.
-pub fn expected_thumb(block: &Block, vault: &VaultLayout) -> ExpectedThumb {
+pub fn expected_thumb(
+    block: &Block,
+    resolver: &mut media_refs::MediaResolver<'_>,
+) -> ExpectedThumb {
     // 1. Block has an explicit media file. Use the filename from
     //    frontmatter directly — it IS the source of truth per
     //    Markdown File First principle. Do not construct from slug.
     if let Some(ref file_name) = block.frontmatter.file {
         let ext = ext_lower(file_name);
-        if let Some(media_path) = resolve_block_media_path(block, vault, file_name) {
+        if let Some(media_path) = resolve_block_media_path(block, resolver, file_name) {
             if is_image_ext(&ext) {
                 if is_rust_decodable(&media_path) {
                     return ExpectedThumb::OnlyJpeg;
@@ -173,7 +176,7 @@ pub fn expected_thumb(block: &Block, vault: &VaultLayout) -> ExpectedThumb {
         .filter(|_| !preview_plan::body_precedes_source_poster(block)) {
         let ext = ext_lower(thumb_file);
         if is_image_ext(&ext) {
-            if let Some(media_path) = resolve_block_media_path(block, vault, thumb_file) {
+            if let Some(media_path) = resolve_block_media_path(block, resolver, thumb_file) {
                 if is_rust_decodable(&media_path) {
                     return ExpectedThumb::OnlyJpeg;
                 }
@@ -186,7 +189,7 @@ pub fn expected_thumb(block: &Block, vault: &VaultLayout) -> ExpectedThumb {
     //    article starts with a video and later includes images, the feed
     //    poster must still be derived from the video source.
     if preview_plan::has_body_media(block) {
-        if let Some(media) = preview_plan::find_first_existing_article_media(block, vault) {
+        if let Some(media) = preview_plan::find_first_existing_article_media(block, resolver) {
             if media.kind == PreviewMediaKind::Video {
                 return ExpectedThumb::Either;
             }
@@ -195,7 +198,7 @@ pub fn expected_thumb(block: &Block, vault: &VaultLayout) -> ExpectedThumb {
 
         let article_images = preview_plan::collect_article_preview_images(
             block,
-            vault,
+            resolver,
             MICRO_PREVIEW_IMAGE_LIMIT,
             is_rust_decodable,
         );
@@ -203,7 +206,7 @@ pub fn expected_thumb(block: &Block, vault: &VaultLayout) -> ExpectedThumb {
             return ExpectedThumb::OnlyJpeg;
         }
         // 4. Article body: first video.
-        if preview_plan::find_first_existing_body_media(block, vault, is_video_ext).is_some() {
+        if preview_plan::find_first_existing_body_media(block, resolver, is_video_ext).is_some() {
             // Video: Rust may succeed or fall through. Accept either.
             return ExpectedThumb::Either;
         }
@@ -216,22 +219,25 @@ pub fn expected_thumb(block: &Block, vault: &VaultLayout) -> ExpectedThumb {
 /// Resolve the media dependencies that actually feed the current preview
 /// cascade. Mirrors the precedence in `generate_for_block` / `expected_thumb`
 /// so freshness only depends on files that the current thumbnail would use.
-fn preview_dependency_paths(block: &Block, vault: &VaultLayout) -> Vec<std::path::PathBuf> {
+fn preview_dependency_paths(
+    block: &Block,
+    resolver: &mut media_refs::MediaResolver<'_>,
+) -> Vec<std::path::PathBuf> {
     if let Some(ref file_name) = block.frontmatter.file {
-        if let Some(media_path) = resolve_block_media_path(block, vault, file_name) {
+        if let Some(media_path) = resolve_block_media_path(block, resolver, file_name) {
             return vec![media_path];
         }
     }
 
     if let Some(thumb_file) = block.frontmatter.thumbnail.as_ref()
         .filter(|_| !preview_plan::body_precedes_source_poster(block)) {
-        if let Some(media_path) = resolve_block_media_path(block, vault, thumb_file) {
+        if let Some(media_path) = resolve_block_media_path(block, resolver, thumb_file) {
             return vec![media_path];
         }
     }
 
     if preview_plan::has_body_media(block) {
-        if let Some(media) = preview_plan::find_first_existing_article_media(block, vault) {
+        if let Some(media) = preview_plan::find_first_existing_article_media(block, resolver) {
             if media.kind == PreviewMediaKind::Video {
                 return vec![media.path];
             }
@@ -239,7 +245,7 @@ fn preview_dependency_paths(block: &Block, vault: &VaultLayout) -> Vec<std::path
 
         let article_images = preview_plan::collect_article_preview_images(
             block,
-            vault,
+            resolver,
             MICRO_PREVIEW_IMAGE_LIMIT,
             is_rust_decodable,
         );
@@ -247,7 +253,7 @@ fn preview_dependency_paths(block: &Block, vault: &VaultLayout) -> Vec<std::path
             return vec![media_path];
         }
         if let Some((_first_video, media_path)) =
-            preview_plan::find_first_existing_body_media(block, vault, is_video_ext)
+            preview_plan::find_first_existing_body_media(block, resolver, is_video_ext)
         {
             return vec![media_path];
         }
@@ -298,11 +304,30 @@ fn block_has_renderable_source(block: &Block) -> bool {
 /// the old cap. A version bump is likewise avoided: it would force-regenerate
 /// every thumb in one storm. Forward-only trades an eventual size upgrade for a
 /// cheap, storm-free sweep.
+///
+/// One-off check: a sweep over many blocks uses
+/// [`is_thumb_fresh_with_resolver`] with one resolver for all of them.
 pub fn is_thumb_fresh(
     thumb_path: &Path,
     source_path: &Path,
     block: &Block,
     vault: &VaultLayout,
+) -> bool {
+    is_thumb_fresh_with_resolver(
+        thumb_path,
+        source_path,
+        block,
+        &mut media_refs::MediaResolver::new(vault),
+    )
+}
+
+/// [`is_thumb_fresh`] resolving the block's media through `resolver`, so a
+/// sweep over every block walks the vault once rather than once per block.
+pub fn is_thumb_fresh_with_resolver(
+    thumb_path: &Path,
+    source_path: &Path,
+    block: &Block,
+    resolver: &mut media_refs::MediaResolver<'_>,
 ) -> bool {
     // A block with no renderable source can never produce a thumb, so treat it
     // as fresh — otherwise the sweep loops forever on it: thumb missing →
@@ -332,7 +357,7 @@ pub fn is_thumb_fresh(
         );
         return false;
     }
-    for dependency in preview_dependency_paths(block, vault) {
+    for dependency in preview_dependency_paths(block, resolver) {
         let Ok(dep_meta) = std::fs::metadata(&dependency) else {
             log::debug!(
                 "is_thumb_fresh({}): dependency missing: {}",
@@ -1090,12 +1115,24 @@ pub enum ThumbSource {
 /// Wrapped around the cascade rather than repeated inside it: the cascade has a
 /// dozen ways to finish, and levels must exist after every one of them that
 /// leaves a file on disk.
+///
+/// One-off generation: a pass over many blocks uses
+/// [`generate_for_block_with_resolver`] with one resolver for all of them.
 pub fn generate_for_block(block: &Block, vault: &VaultLayout) -> ThumbSource {
+    generate_for_block_with_resolver(block, &mut media_refs::MediaResolver::new(vault))
+}
+
+/// [`generate_for_block`] resolving the block's media through `resolver`, so
+/// a pass that generates many thumbnails walks the vault once in all.
+pub fn generate_for_block_with_resolver(
+    block: &Block,
+    resolver: &mut media_refs::MediaResolver<'_>,
+) -> ThumbSource {
     let Ok(_write) = crate::storage::source_mutation::begin_write() else {
         return ThumbSource::None;
     };
-    let source = generate_for_block_inner(block, vault);
-    generate_thumb_levels(vault, &block.slug);
+    let source = generate_for_block_inner(block, resolver);
+    generate_thumb_levels(resolver.vault(), &block.slug);
     source
 }
 
@@ -1216,7 +1253,11 @@ pub fn remove_thumb_levels(vault: &VaultLayout, slug: &str) {
     }
 }
 
-fn generate_for_block_inner(block: &Block, vault: &VaultLayout) -> ThumbSource {
+fn generate_for_block_inner(
+    block: &Block,
+    resolver: &mut media_refs::MediaResolver<'_>,
+) -> ThumbSource {
+    let vault = resolver.vault();
     let slug = &block.slug;
     let thumb_path = vault.thumb_path(slug);
     let title_fields = derive_title_fields(slug, block.frontmatter.title.as_deref(), &block.body);
@@ -1229,7 +1270,7 @@ fn generate_for_block_inner(block: &Block, vault: &VaultLayout) -> ThumbSource {
     //    and the block gets queued for WebView upgrade in Phase 2.
     if let Some(ref file_name) = block.frontmatter.file {
         let ext = ext_lower(file_name);
-        if let Some(media_path) = resolve_block_media_path(block, vault, file_name) {
+        if let Some(media_path) = resolve_block_media_path(block, resolver, file_name) {
             if is_image_ext(&ext) && is_rust_decodable(&media_path) {
                 match generate_thumbnail(&media_path, &thumb_path, DEFAULT_MAX_SIZE) {
                     Ok(_) => return ThumbSource::Image,
@@ -1250,7 +1291,7 @@ fn generate_for_block_inner(block: &Block, vault: &VaultLayout) -> ThumbSource {
         .filter(|_| !preview_plan::body_precedes_source_poster(block)) {
         let ext = ext_lower(thumb_file);
         if is_image_ext(&ext) {
-            if let Some(media_path) = resolve_block_media_path(block, vault, thumb_file) {
+            if let Some(media_path) = resolve_block_media_path(block, resolver, thumb_file) {
                 if is_rust_decodable(&media_path) {
                     match generate_thumbnail(&media_path, &thumb_path, DEFAULT_MAX_SIZE) {
                         Ok(_) => return ThumbSource::Image,
@@ -1266,7 +1307,7 @@ fn generate_for_block_inner(block: &Block, vault: &VaultLayout) -> ThumbSource {
     //      baked composite. Rich multi-tile rendering belongs to
     //      `preview_manifest`, not the hot sidebar/related-notes thumbnail.
     if preview_plan::has_body_media(block) {
-        if let Some(media) = preview_plan::find_first_existing_article_media(block, vault) {
+        if let Some(media) = preview_plan::find_first_existing_article_media(block, resolver) {
             if media.kind == PreviewMediaKind::Video {
                 match generate_video_thumbnail(&media.path, &thumb_path, DEFAULT_MAX_SIZE) {
                     Ok(_) => return ThumbSource::Video,
@@ -1281,7 +1322,7 @@ fn generate_for_block_inner(block: &Block, vault: &VaultLayout) -> ThumbSource {
 
         let article_images = preview_plan::collect_article_preview_images(
             block,
-            vault,
+            resolver,
             MICRO_PREVIEW_IMAGE_LIMIT,
             is_rust_decodable,
         );
@@ -1292,7 +1333,7 @@ fn generate_for_block_inner(block: &Block, vault: &VaultLayout) -> ThumbSource {
             }
         }
         if let Some((_first_video, media_path)) =
-            preview_plan::find_first_existing_body_media(block, vault, is_video_ext)
+            preview_plan::find_first_existing_body_media(block, resolver, is_video_ext)
         {
             match generate_video_thumbnail(&media_path, &thumb_path, DEFAULT_MAX_SIZE) {
                 Ok(_) => return ThumbSource::Video,
@@ -1330,7 +1371,7 @@ fn generate_for_block_inner(block: &Block, vault: &VaultLayout) -> ThumbSource {
         || block.frontmatter.thumbnail.is_some()
         || title_fields.display_title.is_some()
         || !preview_body.is_empty();
-    if has_preview_intent && !media_may_still_be_arriving(block, vault) {
+    if has_preview_intent && !media_may_still_be_arriving(block, resolver) {
         let title = title_fields
             .display_title
             .as_deref()
@@ -1371,7 +1412,11 @@ const MEDIA_ARRIVAL_GRACE: Duration = Duration::from_secs(30);
 /// placeholder is written as before, so a card whose media is genuinely gone
 /// still shows its name. The existence-backed preview reconciliation
 /// (storage/derived_preview.rs) revisits whatever stays without a thumb.
-fn media_may_still_be_arriving(block: &Block, vault: &VaultLayout) -> bool {
+fn media_may_still_be_arriving(
+    block: &Block,
+    resolver: &mut media_refs::MediaResolver<'_>,
+) -> bool {
+    let vault = resolver.vault();
     let declares_missing = block
         .frontmatter
         .file
@@ -1379,7 +1424,7 @@ fn media_may_still_be_arriving(block: &Block, vault: &VaultLayout) -> bool {
         .into_iter()
         .chain(block.frontmatter.thumbnail.as_deref())
         .filter(|reference| !preview_plan::is_remote_media(reference))
-        .any(|reference| resolve_block_media_path(block, vault, reference).is_none());
+        .any(|reference| resolve_block_media_path(block, resolver, reference).is_none());
     if !declares_missing {
         return false;
     }
@@ -1408,24 +1453,28 @@ fn media_may_still_be_arriving(block: &Block, vault: &VaultLayout) -> bool {
 /// Takes the reference rather than a parsed block so the hot path can answer
 /// without reading the `.md` again. No own media means nothing is waiting on a
 /// decoder, which counts as decodable.
+///
+/// Resolves through the caller's `resolver`: the preview pass and the upgrade
+/// queue ask this for every card they visit.
 pub fn media_reference_is_rust_decodable(
-    vault: &VaultLayout,
+    resolver: &mut media_refs::MediaResolver<'_>,
     slug: &str,
     reference: Option<&str>,
 ) -> bool {
     let Some(reference) = reference else {
         return true;
     };
-    media_refs::resolve_indexed_media(vault, slug, reference)
+    resolver
+        .resolve_indexed_media(slug, reference)
         .is_some_and(|path| is_rust_decodable(&path))
 }
 
 fn resolve_block_media_path(
     block: &Block,
-    vault: &VaultLayout,
+    resolver: &mut media_refs::MediaResolver<'_>,
     reference: &str,
 ) -> Option<std::path::PathBuf> {
-    media_refs::resolve_indexed_media(vault, &block.slug, reference)
+    resolver.resolve_indexed_media(&block.slug, reference)
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -1995,8 +2044,9 @@ mod tests {
         assert_eq!(generate_for_block(&block, &vault), ThumbSource::Image);
         let generated = image::open(vault.thumb_path(&block.slug)).unwrap();
         assert_eq!(generated.dimensions(), (120, 240));
-        assert_eq!(preview_dependency_paths(&block, &vault), vec![vault.root().join("body.jpg")]);
-        assert_eq!(expected_thumb(&block, &vault), ExpectedThumb::OnlyJpeg);
+        let mut resolver = media_refs::MediaResolver::new(&vault);
+        assert_eq!(preview_dependency_paths(&block, &mut resolver), vec![vault.root().join("body.jpg")]);
+        assert_eq!(expected_thumb(&block, &mut resolver), ExpectedThumb::OnlyJpeg);
     }
 
     #[test]
@@ -2009,7 +2059,8 @@ mod tests {
         block.frontmatter.thumbnail = Some("poster.jpg".into());
         assert_eq!(generate_for_block(&block, &vault), ThumbSource::Image);
         assert_eq!(image::open(vault.thumb_path(&block.slug)).unwrap().dimensions(), (640, 360));
-        assert_eq!(preview_dependency_paths(&block, &vault), vec![vault.root().join("poster.jpg")]);
+        let mut resolver = media_refs::MediaResolver::new(&vault);
+        assert_eq!(preview_dependency_paths(&block, &mut resolver), vec![vault.root().join("poster.jpg")]);
     }
 
     #[test]
@@ -2159,8 +2210,9 @@ mod tests {
 
         let block = make_article("video-first", "![](clip.mp4)\n\n![](later.jpg)\n");
 
-        assert_eq!(expected_thumb(&block, &vault), ExpectedThumb::Either);
-        assert_eq!(preview_dependency_paths(&block, &vault), vec![video]);
+        let mut resolver = media_refs::MediaResolver::new(&vault);
+        assert_eq!(expected_thumb(&block, &mut resolver), ExpectedThumb::Either);
+        assert_eq!(preview_dependency_paths(&block, &mut resolver), vec![video]);
     }
 
     #[test]

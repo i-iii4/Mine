@@ -191,11 +191,6 @@ export type FeedPreviewManifest = { kind: FeedPreviewKind; primary_preview_path:
  */
 export type FeedPreviewTile = { source_path: string; preview_path: string | null; width: number | null; height: number | null; preview_width?: number | null; preview_height?: number | null; is_video: boolean; is_video_poster: boolean }
 
-/**
- * What a folder holds, before it becomes a space.
- */
-export type FolderPreview = { markdown_files: number; media_files: number; other_files: number }
-
 export type GraphLink = { id: string; kind: GraphLinkKind; source: string; target: string; directed: boolean; count: number; target_ref: string | null }
 
 export type GraphLinkKind = "collection_membership" | "wikilink" | "related_note"

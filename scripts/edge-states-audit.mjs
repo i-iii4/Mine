@@ -67,7 +67,6 @@ async function main() {
         installStep: !!document.querySelector("[data-empty-space-install-step]"),
         disclaimers: document.querySelectorAll("[data-cloud-disclaimer]").length,
         spaceUnavailable: !!document.querySelector("[data-space-unavailable]"),
-        folderConfirmation: !!document.querySelector("[data-folder-confirmation]"),
         onboarding: !!document.querySelector("[data-empty-space-onboarding]"),
         activityIndicators: document.querySelectorAll(
           "[data-main-secondary-activity]:not([data-showcase-context] *)",
@@ -123,7 +122,6 @@ async function main() {
       `${report.disclaimers} of 2`,
     );
     check("the unavailable-space screen is drawn", report.spaceUnavailable);
-    check("the folder confirmation is drawn", report.folderConfirmation);
     check("the empty-space onboarding is drawn", report.onboarding);
     check(
       "all three indicator combinations are drawn",

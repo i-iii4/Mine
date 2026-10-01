@@ -30,6 +30,13 @@ export const SIDEBAR_ROW_ACTION_GAP_PX = 8;
 /// Clear pixels after the row's guideline, before the thumbnails begin.
 export const SIDEBAR_PREVIEW_DIVIDER_GAP_PX = 4;
 
+/// How many tiles one sidebar thumbnail strip holds: the preview read asks for
+/// this many cards per collection, and a strip still waiting for that read
+/// draws at most this many placeholder tiles. Even the widest panel shows
+/// fewer; the rest sit past the strip's clipped, faded edge, exactly where the
+/// real thumbnails will sit.
+export const SIDEBAR_PREVIEW_SLOTS = 20;
+
 /// The row's edge inset, per design variant: the space before the name and
 /// after the count.
 const SIDEBAR_ROW_PAD_PX: Record<DesignMode, number> = {

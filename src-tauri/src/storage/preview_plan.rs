@@ -260,12 +260,14 @@ fn find_local_media_refs(
     results
 }
 
+/// The first body media matching `ext_predicate` that resolves to a file,
+/// as `(source, path)`. Resolves through the caller's `resolver` so a pass
+/// over many cards shares one snapshot of the vault.
 pub fn find_first_existing_body_media(
     block: &Block,
-    vault: &VaultLayout,
+    resolver: &mut media_refs::MediaResolver<'_>,
     ext_predicate: fn(&str) -> bool,
 ) -> Option<(String, PathBuf)> {
-    let mut resolver = media_refs::MediaResolver::new(vault);
     for reference in find_local_media_refs(&block.body, ext_predicate, usize::MAX) {
         if let Some(path) = resolver.resolve_inline_media(&block.slug, &reference) {
             return Some((reference.source, path));
@@ -274,14 +276,14 @@ pub fn find_first_existing_body_media(
     None
 }
 
+/// The first body image or video that resolves to a file, in document order.
 pub fn find_first_existing_article_media(
     block: &Block,
-    vault: &VaultLayout,
+    resolver: &mut media_refs::MediaResolver<'_>,
 ) -> Option<ResolvedPreviewMedia> {
     if !has_body_media(block) {
         return None;
     }
-    let mut resolver = media_refs::MediaResolver::new(vault);
     for reference in iter_inline_media_references(&block.body) {
         if reference.source.is_empty() || is_remote_media(&reference.source) {
             continue;
@@ -305,9 +307,10 @@ pub fn find_first_existing_article_media(
     None
 }
 
+/// Up to `limit` decodable body images that resolve to files.
 pub fn collect_article_preview_images(
     block: &Block,
-    vault: &VaultLayout,
+    resolver: &mut media_refs::MediaResolver<'_>,
     limit: usize,
     is_decodable: fn(&Path) -> bool,
 ) -> Vec<PathBuf> {
@@ -317,7 +320,6 @@ pub fn collect_article_preview_images(
 
     let mut seen = std::collections::HashSet::<String>::new();
     let mut paths = Vec::new();
-    let mut resolver = media_refs::MediaResolver::new(vault);
     for reference in find_local_media_refs(&block.body, is_image_ext, limit.saturating_mul(3)) {
         if !seen.insert(reference.source.clone()) {
             continue;

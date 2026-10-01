@@ -153,6 +153,15 @@ pub fn reconcile_all_previews_with_progress(
         .collect::<std::result::Result<Vec<_>, _>>()?;
     drop(stmt);
 
+    // One snapshot of the vault's file list serves every card of this call,
+    // both passes included; resolving per card walked the whole vault for
+    // each of them. A media file that appears while the pass runs is a
+    // watcher event that reconciles the space and queues the cards showing
+    // it for another preview pass, which reads them with a fresh snapshot.
+    // iCloud keeps the names of files whose contents it holds, so fetching
+    // them in the second pass does not change the list.
+    let mut resolver = media_refs::MediaResolver::new(vault);
+
     // Two passes (SPEC_CLOUD_STORAGE.md, Х1, Х6, Х16). The first never waits
     // for iCloud: a card whose media is only in the cloud is marked as such
     // at once, so the feed shows why it waits and the wait is counted. The
@@ -161,7 +170,7 @@ pub fn reconcile_all_previews_with_progress(
     for batch in slugs.chunks(PREVIEW_RECONCILE_BATCH_SIZE) {
         let batch_report = reconcile_slugs(
             conn,
-            vault,
+            &mut resolver,
             batch.iter().map(String::as_str),
             should_continue,
             CloudSources::Defer,
@@ -179,7 +188,7 @@ pub fn reconcile_all_previews_with_progress(
         for batch in deferred.chunks(PREVIEW_RECONCILE_BATCH_SIZE) {
             let batch_report = reconcile_slugs(
                 conn,
-                vault,
+                &mut resolver,
                 batch.iter().map(String::as_str),
                 should_continue,
                 CloudSources::Fetch,
@@ -238,12 +247,15 @@ pub fn reconcile_preview_slugs_while<'a>(
     slugs: impl IntoIterator<Item = &'a str>,
     should_continue: &mut dyn FnMut() -> bool,
 ) -> Result<PreviewReconcileReport> {
-    reconcile_slugs(conn, vault, slugs, should_continue, CloudSources::Fetch)
+    // One snapshot for the cards of this call; see
+    // `reconcile_all_previews_with_progress` for why a snapshot is safe.
+    let mut resolver = media_refs::MediaResolver::new(vault);
+    reconcile_slugs(conn, &mut resolver, slugs, should_continue, CloudSources::Fetch)
 }
 
 fn reconcile_slugs<'a>(
     conn: &Connection,
-    vault: &VaultLayout,
+    resolver: &mut media_refs::MediaResolver<'_>,
     slugs: impl IntoIterator<Item = &'a str>,
     should_continue: &mut dyn FnMut() -> bool,
     cloud: CloudSources,
@@ -254,7 +266,7 @@ fn reconcile_slugs<'a>(
             report.cancelled = true;
             break;
         }
-        let outcome = match reconcile_slug(conn, vault, slug, cloud) {
+        let outcome = match reconcile_slug(conn, resolver, slug, cloud) {
             Ok(Some(outcome)) => outcome,
             Ok(None) => continue,
             Err(error) => {
@@ -290,15 +302,21 @@ pub fn reconcile_preview_for_slug(
     vault: &VaultLayout,
     slug: &str,
 ) -> Result<Option<PreviewReconcileOutcome>> {
-    reconcile_slug(conn, vault, slug, CloudSources::Fetch)
+    reconcile_slug(
+        conn,
+        &mut media_refs::MediaResolver::new(vault),
+        slug,
+        CloudSources::Fetch,
+    )
 }
 
 fn reconcile_slug(
     conn: &Connection,
-    vault: &VaultLayout,
+    resolver: &mut media_refs::MediaResolver<'_>,
     slug: &str,
     cloud: CloudSources,
 ) -> Result<Option<PreviewReconcileOutcome>> {
+    let vault = resolver.vault();
     let Some(record) = load_preview_record(conn, slug)? else {
         return Ok(None);
     };
@@ -417,7 +435,7 @@ fn reconcile_slug(
         .is_some_and(|stamp| stamp != source_stamp);
     if !source_changed && expected
         .iter()
-        .all(|path| is_ready_preview(vault, slug, record.media_file.as_deref(), path)) {
+        .all(|path| is_ready_preview(resolver, slug, record.media_file.as_deref(), path)) {
         // Nothing to generate, but the artifacts are on disk and therefore
         // measurable. This is where previews written before the manifest
         // carried artifact geometry get their dimensions: they reach this
@@ -452,7 +470,7 @@ fn reconcile_slug(
 
     if cloud == CloudSources::Defer {
         if let Some(reference) =
-            source_waiting_for_cloud(vault, slug, &block, &manifest, &record, source_changed)?
+            source_waiting_for_cloud(resolver, slug, &block, &manifest, &record, source_changed)?
         {
             record_cloud_wait(vault, slug);
             return mark_non_ready(
@@ -479,19 +497,19 @@ fn reconcile_slug(
     if let Some(primary_path) = manifest.primary_preview_path.as_deref() {
         let primary = preview_disk_path(vault, primary_path)?;
         if source_changed
-            || !is_ready_preview(vault, slug, record.media_file.as_deref(), &primary)
+            || !is_ready_preview(resolver, slug, record.media_file.as_deref(), &primary)
         {
-            let source = thumbnails::generate_for_block(&block, vault);
+            let source = thumbnails::generate_for_block_with_resolver(&block, resolver);
             regenerated |= matches!(
                 source,
                 thumbnails::ThumbSource::Image | thumbnails::ThumbSource::Video
             );
-            if !is_ready_preview(vault, slug, record.media_file.as_deref(), &primary) {
+            if !is_ready_preview(resolver, slug, record.media_file.as_deref(), &primary) {
                 // Distinguish "the file is not there" from "we cannot decode
                 // it here". Reporting a missing file as a decoding problem sent
                 // the reader looking for a format issue that does not exist.
                 // See SPEC_VAULT_LIFECYCLE.md П23.
-                generation_failure = Some(match primary_source_state(vault, &block) {
+                generation_failure = Some(match primary_source_state(resolver, &block) {
                     PrimarySourceState::Missing(reference) => (
                         PreviewErrorKind::MissingSource,
                         format!("media file is missing from the vault: {reference}"),
@@ -522,7 +540,7 @@ fn reconcile_slug(
         };
         let destination = preview_disk_path(vault, preview_path)?;
         if !source_changed
-            && is_ready_preview(vault, slug, record.media_file.as_deref(), &destination)
+            && is_ready_preview(resolver, slug, record.media_file.as_deref(), &destination)
         {
             continue;
         }
@@ -533,7 +551,7 @@ fn reconcile_slug(
             && primary_disk_path
                 .as_deref()
                 .is_some_and(|path| {
-                    is_ready_preview(vault, slug, record.media_file.as_deref(), path)
+                    is_ready_preview(resolver, slug, record.media_file.as_deref(), path)
                 });
         if can_copy_primary {
             let primary = primary_disk_path
@@ -554,7 +572,7 @@ fn reconcile_slug(
                 }
             }
         }
-        let Some(source) = media_refs::resolve_indexed_media(vault, slug, &tile.source_path) else {
+        let Some(source) = resolver.resolve_indexed_media(slug, &tile.source_path) else {
             generation_failure.get_or_insert((
                 PreviewErrorKind::MissingSource,
                 format!("preview source is missing: {}", tile.source_path),
@@ -592,7 +610,7 @@ fn reconcile_slug(
 
     let all_ready = expected
         .iter()
-        .all(|path| is_ready_preview(vault, slug, record.media_file.as_deref(), path));
+        .all(|path| is_ready_preview(resolver, slug, record.media_file.as_deref(), path));
     if all_ready && (!source_changed || generation_failure.is_none()) {
         return publish_ready(conn, vault, slug, &record, &manifest, &source_stamp, regenerated)
             .map(Some);
@@ -803,7 +821,7 @@ fn preview_disk_path(vault: &VaultLayout, relative: &str) -> Result<PathBuf> {
 /// the source can. A picture Rust decoded is done, whatever it was encoded as;
 /// a PNG standing in for media Rust cannot decode is still a placeholder.
 fn is_ready_preview(
-    vault: &VaultLayout,
+    resolver: &mut media_refs::MediaResolver<'_>,
     slug: &str,
     media_reference: Option<&str>,
     path: &Path,
@@ -811,7 +829,7 @@ fn is_ready_preview(
     match thumbnails::thumb_disk_state(path) {
         thumbnails::ThumbDiskState::Jpeg => true,
         thumbnails::ThumbDiskState::Png => {
-            thumbnails::media_reference_is_rust_decodable(vault, slug, media_reference)
+            thumbnails::media_reference_is_rust_decodable(resolver, slug, media_reference)
         }
         _ => false,
     }
@@ -830,20 +848,21 @@ fn record_cloud_wait(vault: &VaultLayout, slug: &str) {
 /// the block's own media, or a tile source, among the previews that still
 /// need building. Checked by allocation, never by reading (Х3).
 fn source_waiting_for_cloud(
-    vault: &VaultLayout,
+    resolver: &mut media_refs::MediaResolver<'_>,
     slug: &str,
     block: &Block,
     manifest: &FeedPreviewManifest,
     record: &PreviewRecord,
     source_changed: bool,
 ) -> Result<Option<String>> {
-    let needs = |relative: &str| -> Result<bool> {
-        let path = preview_disk_path(vault, relative)?;
-        Ok(source_changed || !is_ready_preview(vault, slug, record.media_file.as_deref(), &path))
+    let needs = |resolver: &mut media_refs::MediaResolver<'_>, relative: &str| -> Result<bool> {
+        let path = preview_disk_path(resolver.vault(), relative)?;
+        Ok(source_changed
+            || !is_ready_preview(resolver, slug, record.media_file.as_deref(), &path))
     };
     if let Some(primary) = manifest.primary_preview_path.as_deref() {
-        if needs(primary)? {
-            if let PrimarySourceState::InCloud(reference) = primary_source_state(vault, block) {
+        if needs(resolver, primary)? {
+            if let PrimarySourceState::InCloud(reference) = primary_source_state(resolver, block) {
                 return Ok(Some(reference));
             }
         }
@@ -852,10 +871,10 @@ fn source_waiting_for_cloud(
         let Some(preview) = tile.preview_path.as_deref() else {
             continue;
         };
-        if !needs(preview)? {
+        if !needs(resolver, preview)? {
             continue;
         }
-        if let Some(source) = media_refs::resolve_indexed_media(vault, slug, &tile.source_path) {
+        if let Some(source) = resolver.resolve_indexed_media(slug, &tile.source_path) {
             if media_dimensions::is_content_offloaded(&source) {
                 return Ok(Some(tile.source_path.clone()));
             }
@@ -878,11 +897,14 @@ enum PrimarySourceState {
 /// Three outcomes that used to be reported as one: a deleted file, contents
 /// parked in iCloud, and a format this build cannot decode all sent the reader
 /// looking for the wrong problem.
-fn primary_source_state(vault: &VaultLayout, block: &Block) -> PrimarySourceState {
+fn primary_source_state(
+    resolver: &mut media_refs::MediaResolver<'_>,
+    block: &Block,
+) -> PrimarySourceState {
     let Some(reference) = block.frontmatter.file.as_deref() else {
         return PrimarySourceState::Present;
     };
-    let Some(path) = media_refs::resolve_indexed_media(vault, &block.slug, reference) else {
+    let Some(path) = resolver.resolve_indexed_media(&block.slug, reference) else {
         return PrimarySourceState::Missing(reference.to_string());
     };
     if media_dimensions::is_content_offloaded(&path) {
@@ -1254,6 +1276,34 @@ mod tests {
         assert_eq!(report.failed.iter().filter(|failure| failure.slug == "Cloud").count(), 1);
         let waits = crate::storage::cloud_waits::load(vault.derived_root());
         assert_eq!(waits.sessions.last().unwrap().slugs, vec!["Cloud".to_string()]);
+    }
+
+    /// The preview pass that follows the first index resolves the media of
+    /// every card it builds. Resolving per card walked the whole space for
+    /// each of them; the pass walks it once.
+    #[test]
+    fn the_preview_pass_walks_the_space_once_however_many_cards_it_builds() {
+        const CARDS: usize = 5;
+        let (_source, vault, conn) = setup();
+        std::fs::create_dir_all(vault.root().join("Cards")).unwrap();
+        std::fs::create_dir_all(vault.root().join("Media")).unwrap();
+        for index in 0..CARDS {
+            let image = image::RgbImage::from_pixel(32, 24, image::Rgb([10, 20, 30]));
+            image
+                .save(vault.root().join(format!("Media/photo-{index}.png")))
+                .unwrap();
+            let block = image_block(&format!("Cards/Card {index}"), &format!("photo-{index}.png"));
+            files::write_block_file(&vault, &block).unwrap();
+        }
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        let before = media_refs::link_index_builds();
+        let report = reconcile_all_previews(&conn, &vault).unwrap();
+        let walks = media_refs::link_index_builds() - before;
+
+        assert_eq!(report.ready, CARDS, "{report:?}");
+        assert_eq!(report.regenerated, CARDS, "{report:?}");
+        assert_eq!(walks, 1, "one walk for the pass, not one per card");
     }
 
     #[test]
@@ -1800,7 +1850,12 @@ mod tests {
             let path = vault.thumbs_dir().join(relative);
             std::fs::write(&path, b"\xff\xd8\xffnot really a jpeg at all").unwrap();
             assert!(
-                is_ready_preview(&vault, "any-slug", None, &path),
+                is_ready_preview(
+                    &mut media_refs::MediaResolver::new(&vault),
+                    "any-slug",
+                    None,
+                    &path
+                ),
                 "the readiness check must still accept this file — that is the point"
             );
         }

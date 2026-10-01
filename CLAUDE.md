@@ -237,9 +237,8 @@ local-arena/
 │   │   ├── CloudRecommendation.tsx # Рекомендация Keep Downloaded по журналу ожиданий
 │   │   ├── CloudBadge.tsx      # Метка «содержимое в iCloud» в левом верхнем углу карточки
 │   │   ├── ActivityIndicators.tsx # Загрузка из iCloud и индексация в верхней панели
-│   │   ├── IndexingProgress.tsx # Числа первого индексирования вместо пустой ленты
+│   │   ├── IndexingProgress.tsx # Уведомление о ходе индексации в правом нижнем углу
 │   │   ├── SpaceUnavailable.tsx # Экран недоступной папки: missing и access_denied
-│   │   ├── FolderConfirmation.tsx # Подтверждение непустой папки при выборе пространства
 │   │   ├── EmptySpaceOnboarding.tsx # Два пути наполнения пустого пространства
 │   │   ├── ComponentTestBench.tsx # Витрина дизайн-системы: примитивы и токены вживую
 │   │   └── EdgeStatesSection.tsx # Витрина краевых состояний (гейт test:edge-states)
