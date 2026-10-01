@@ -74,6 +74,47 @@ describe("clipper overlay hands the keyboard back (А6.12)", () => {
     expect(document.activeElement).toBe(elsewhere);
     elsewhere.remove();
   });
+
+  // Escape and the close after Save close through closeClipperOverlay.
+  describe("when a second open replaces the editor (SPEC_AUDIT_FIXES.md, Д1.3)", () => {
+    it("returns focus to the page field the first editor took it from", async () => {
+      await open();
+      const host = await open();
+      expect(document.querySelectorAll("[data-mine-clipper-overlay]")).toHaveLength(1);
+      expect(document.activeElement).toBe(host);
+
+      act(() => closeClipperOverlay());
+
+      expect(document.activeElement).toBe(pageField);
+    });
+
+    it("returns focus to the page field the first editor took it from after a hide lost the keyboard", async () => {
+      const first = await open();
+      hideClipperOverlay();
+      (first.shadowRoot!.activeElement as HTMLElement).blur();
+      expect(document.activeElement).toBe(document.body);
+
+      const host = await open();
+      expect(document.activeElement).toBe(host);
+      act(() => closeClipperOverlay());
+
+      expect(document.activeElement).toBe(pageField);
+    });
+
+    it("returns focus to the page field that had it when the second open came", async () => {
+      await open();
+      const elsewhere = document.createElement("input");
+      document.body.appendChild(elsewhere);
+      elsewhere.focus();
+
+      const host = await open();
+      expect(document.activeElement).toBe(host);
+      act(() => closeClipperOverlay());
+
+      expect(document.activeElement).toBe(elsewhere);
+      elsewhere.remove();
+    });
+  });
 });
 
 describe("clipper overlay keeps the keyboard across a screenshot (Б4.9)", () => {

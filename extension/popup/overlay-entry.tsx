@@ -85,9 +85,9 @@ async function ensureFontsLoaded() {
 }
 
 /// The editor of mount `generation`, or `null` when a close came while the
-/// stylesheet was loading.
-async function mount(generation: number): Promise<OverlayHandle | null> {
-  const returnFocus = document.activeElement;
+/// stylesheet was loading. `returnFocus` is what had the keyboard on the page
+/// before this editor takes it.
+async function mount(generation: number, returnFocus: Element | null): Promise<OverlayHandle | null> {
   ensureFontsLoaded();
   const css = await loadCss();
   if (generation !== overlayGeneration) return null;
@@ -274,7 +274,7 @@ function beginMount(replace: boolean): Promise<void> {
   const previous = replace ? current : null;
   current = null;
   const generation = overlayGeneration;
-  const mounting = mount(generation).then((handle) => {
+  const mounting = mount(generation, pageKeyboardOwner(previous)).then((handle) => {
     if (handle && generation === overlayGeneration) current = handle;
     else if (handle) unmount(handle);
   }).finally(() => {
@@ -286,6 +286,17 @@ function beginMount(replace: boolean): Promise<void> {
     reportClosed();
   }
   return mounting;
+}
+
+/// What has the keyboard on the page for the editor about to open. The editor
+/// it replaces is closed only after the new one starts (В4.6): while that
+/// editor, or its hide, keeps the keyboard off the page, the keyboard still
+/// belongs to what that editor took it from (SPEC_AUDIT_FIXES.md, Д1.3).
+function pageKeyboardOwner(replaced: OverlayHandle | null): Element | null {
+  const active = document.activeElement;
+  if (!replaced) return active;
+  const onPage = active !== null && active !== document.body && !replaced.host.contains(active);
+  return onPage ? active : replaced.returnFocus;
 }
 
 /// Whether a clipper is open or opening in this tab.
