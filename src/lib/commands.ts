@@ -68,6 +68,7 @@ function isCommandError(error: unknown): error is CommandError {
     || kind === "space_changed"
     || kind === "source_changed"
     || kind === "frontmatter_not_writable"
+    || kind === "space_identity_unreadable"
     || kind === "internal";
 }
 
@@ -86,6 +87,8 @@ function commandErrorMessage(error: CommandError): string {
       return `“${noteName(error.message.path)}” changed outside Mine; nothing was changed. Try again.`;
     case "frontmatter_not_writable":
       return `The properties of “${noteName(error.message.path)}” are written in a form Mine cannot edit in place; nothing was changed.`;
+    case "space_identity_unreadable":
+      return `Mine cannot read the identity file of “${noteName(error.message.path)}”, so it did not open the space and changed nothing. Check access to the folder, or wait until iCloud downloads it.`;
     case "internal":
       return error.message;
   }

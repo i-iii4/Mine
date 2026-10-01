@@ -1193,6 +1193,59 @@ describe("space identity (SPEC_CLIPPER.md, К1, К3, К6)", () => {
     expect(result.current.channelsLoading).toBe(false);
   });
 
+  it("says why Mine cannot tell which space the folder is and keeps Save off until it can (Д2.1)", async () => {
+    await seedDestination("/Mine copy", "space-id");
+    const messages = {
+      identity_in_cloud: "This space is still downloading from iCloud. Try again in a moment.",
+      identity_unreadable: "Mine cannot read this space's identity file.",
+      identity_unwritable: "This folder is a copy and Mine could not give it its own identity.",
+    };
+    let folderState = "identity_in_cloud";
+    sendToNative.mockImplementation(async (request: { action: string }) => {
+      if (request.action === "get_status") {
+        return folderState === "ready"
+          ? { ...nativeStatus(), vault_path: "/Mine copy", binding_id: "space-id", binding_accepted: true }
+          : { ...nativeStatus(), vaultConfigured: false, vault_path: null, binding_id: null,
+            folder_state: folderState, binding_accepted: false, error: "The helper's own sentence" };
+      }
+      return { ok: true, channels: [], vaults: ["/Mine copy"] };
+    });
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.nativeStatusError).toBe(messages.identity_in_cloud));
+    await waitFor(() => expect(result.current.state).toBe("main"));
+    expect(result.current.saveMode).toBe("app");
+    expect(result.current.canSave).toBe(false);
+
+    for (const state of ["identity_unreadable", "identity_unwritable"] as const) {
+      folderState = state;
+      await act(async () => { await result.current.retryConnection(true); });
+      expect(result.current.nativeStatusError).toBe(messages[state]);
+      expect(result.current.canSave).toBe(false);
+    }
+    // Save asked anyway sends nothing to the helper.
+    let outcome: Awaited<ReturnType<typeof result.current.save>> | undefined;
+    await act(async () => { outcome = await result.current.save(); });
+    expect(outcome).toEqual({ ok: false, error: messages.identity_unwritable });
+    expect(sendToNative.mock.calls.some(([request]) => (request as { action: string }).action === "save_block")).toBe(false);
+
+    folderState = "ready";
+    await act(async () => { await result.current.retryConnection(true); });
+    expect(result.current.nativeStatusError).toBeNull();
+    await waitFor(() => expect(result.current.canSave).toBe(true));
+  });
+
+  it("shows the helper's own sentence for a state it does not know, without crashing", async () => {
+    await seedDestination("/Mine", "space-id");
+    sendToNative.mockImplementation(async (request: { action: string }) => request.action === "get_status"
+      ? { ...nativeStatus(), vaultConfigured: false, vault_path: null, binding_id: null,
+        folder_state: "a_state_from_a_newer_helper", binding_accepted: false, error: "The helper's own sentence" }
+      : { ok: true, channels: [], vaults: ["/Mine"] });
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.nativeStatusError).toBe("The helper's own sentence"));
+    await waitFor(() => expect(result.current.state).toBe("main"));
+    expect(result.current.saveMode).toBe("app");
+  });
+
   it("reports why Reveal in Finder could not open the space", async () => {
     sendToNative.mockImplementation(async (request: { action: string }) => {
       if (request.action === "get_status") return nativeStatus();

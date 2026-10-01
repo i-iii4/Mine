@@ -1373,8 +1373,23 @@ Readerability эвристика может использоваться тол�
 Ответ разделяет живое соединение, возможности протокола и состояние папки.
 Работающий host отвечает `ok:true, connected:true`, даже когда vault не выбран.
 `vaultConfigured:false` не означает отсутствие Mine. `folder_state` принимает
-`unconfigured`, `missing`, `access_denied`, `unavailable`, `ready`; `error`
+`unconfigured`, `missing`, `access_denied`, `unavailable`, `ready`,
+`identity_in_cloud`, `identity_unreadable`, `identity_unwritable`; `error`
 содержит причину проблем с выбранной папкой. Проверка статуса не создаёт папку.
+
+Помощник применяет правило копии и переезда (SPEC_VAULT_LIFECYCLE.md, П22) до
+выбора производного хранилища и не ждёт iCloud. Когда правило не может
+решить, он ничего не пишет и отвечает одним из трёх состояний, попап
+показывает строку и выключает Save (SPEC_AUDIT_FIXES.md, Д2.1):
+
+| `folder_state` | Строка в попапе |
+|---|---|
+| `identity_in_cloud` | This space is still downloading from iCloud. Try again in a moment. (помощник запускает загрузку файла идентификатора) |
+| `identity_unreadable` | Mine cannot read this space's identity file. |
+| `identity_unwritable` | This folder is a copy and Mine could not give it its own identity. |
+
+Неизвестное значение показывает текст помощника. Новый идентификатор никогда
+не пишется поверх нечитаемого или выгруженного файла.
 Необязательный `vault_path` позволяет проверить именно явно выбранный путь.
 
 ```json

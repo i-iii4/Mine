@@ -7,6 +7,7 @@ import {
   extractInlineMedia,
   getVaultPath,
   promoteOrphanMedia,
+  selectVault,
   setSidebarMenuCollapsed,
 } from "./commands";
 
@@ -39,6 +40,16 @@ describe("IPC command adapter", () => {
       message: { path: "/vault/Cards/Flow.md" },
     });
     await expect(getVaultPath()).rejects.toThrow("The properties of “Flow.md” are written in a form Mine cannot edit in place");
+  });
+
+  it("names the space whose identity file Mine cannot read (Д2.1)", async () => {
+    mockInvoke.mockRejectedValueOnce({
+      kind: "space_identity_unreadable",
+      message: { path: "/Users/me/Mine" },
+    });
+    await expect(selectVault("/Users/me/Mine")).rejects.toThrow(
+      "Mine cannot read the identity file of “Mine”, so it did not open the space and changed nothing.",
+    );
   });
 
   it("preserves specialized tagged errors for feature-specific handling", async () => {

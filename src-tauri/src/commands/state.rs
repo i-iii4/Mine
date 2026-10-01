@@ -376,6 +376,12 @@ pub enum CommandError {
     /// (`SPEC_AUDIT_FIXES.md`, Ф1).
     #[error("the properties of {path} cannot be changed in place; nothing was written")]
     FrontmatterNotWritable { path: String },
+    /// The identity file of the space at `path` is there but cannot be read,
+    /// even after waiting for iCloud. The space was not opened and nothing
+    /// was written: a new identity over the old one would split the space in
+    /// two (`SPEC_AUDIT_FIXES.md`, Д2.1).
+    #[error("the identity of the space at {path} cannot be read; nothing was changed")]
+    SpaceIdentityUnreadable { path: String },
     #[error("{0}")]
     Internal(String),
 }

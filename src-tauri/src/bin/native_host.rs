@@ -28,6 +28,7 @@ use mine_lib::markdown_images::{
     build_inline_wikilink, media_extension_for_content_type, replaceable_body_images,
 };
 use mine_lib::net;
+use mine_lib::space_registry::{CloudRead, IdentityUnreadable};
 use mine_lib::storage::{clipper_uploads, db, file_identity, files, index, save_operations, thumbnails};
 use mine_lib::util::now_saved_at;
 use percent_encoding::percent_decode_str;
@@ -302,7 +303,11 @@ struct RequestSpace {
     /// Where the space is now, when it was found.
     path: Option<String>,
     /// `ready`, `moved`, `missing`, `access_denied`, `unavailable`,
-    /// `unknown_space` or `unconfigured`.
+    /// `unknown_space`, `unconfigured`, or one of the identity states: which
+    /// space the folder is cannot be told now, because an identity is still
+    /// in iCloud (`identity_in_cloud`) or cannot be read
+    /// (`identity_unreadable`), or the folder is a copy that cannot be given
+    /// an identity of its own (`identity_unwritable`).
     state: &'static str,
     moved_from: Option<String>,
     /// The request's path binding from before К2, proven to be this space's:
@@ -342,8 +347,113 @@ impl RequestSpace {
                 "“{}” is not one of your Mine spaces.",
                 name(path)
             )),
+            (IDENTITY_IN_CLOUD, Some(path)) => Some(format!(
+                "Mine cannot tell yet which space “{}” is: its identity is still downloading from iCloud. Try again in a moment, or open Mine.",
+                name(path)
+            )),
+            (IDENTITY_UNREADABLE, Some(path)) => Some(format!(
+                "Mine cannot read which space “{}” is. Allow access to the folder or choose another space.",
+                name(path)
+            )),
+            (IDENTITY_UNWRITABLE, Some(path)) => Some(format!(
+                "“{}” is a copy of another space, and Mine cannot give it an identity of its own. Allow access to the folder or choose another space.",
+                name(path)
+            )),
             _ => None,
         }
+    }
+
+    /// The request cannot use the folder at `folder`: which space it is
+    /// cannot be told now (Д2.1). An identity in iCloud starts downloading,
+    /// so a later request can tell.
+    fn refused_identity(cause: &IdentityRefusal, folder: String) -> Self {
+        let state = match cause {
+            IdentityRefusal::Unreadable(IdentityUnreadable::InCloud { path }) => {
+                download_in_background(path);
+                IDENTITY_IN_CLOUD
+            }
+            IdentityRefusal::Unreadable(IdentityUnreadable::Unreadable { .. }) => IDENTITY_UNREADABLE,
+            IdentityRefusal::CopyIdentity { .. } => IDENTITY_UNWRITABLE,
+        };
+        Self {
+            path: None,
+            state,
+            moved_from: Some(folder),
+            accepted_legacy: None,
+            binding_accepted: false,
+            identity: None,
+        }
+    }
+}
+
+const IDENTITY_IN_CLOUD: &str = "identity_in_cloud";
+const IDENTITY_UNREADABLE: &str = "identity_unreadable";
+const IDENTITY_UNWRITABLE: &str = "identity_unwritable";
+
+/// Why which space a folder is cannot be settled now. The request is refused
+/// with a state saying so, never answered with a guess (Д2.1, П22).
+#[derive(Debug, thiserror::Error)]
+enum IdentityRefusal {
+    /// An identity that decides it is in iCloud or cannot be read.
+    #[error(transparent)]
+    Unreadable(#[from] IdentityUnreadable),
+    /// The folder is a copy of a space alive elsewhere (П22), and its own
+    /// identity could not be written.
+    #[error("cannot give the copy {} an identity of its own: {source}", .folder.display())]
+    CopyIdentity {
+        folder: PathBuf,
+        source: mine_lib::space_registry::MintIdentityError,
+    },
+}
+
+/// Why the helper does not open a folder as a space.
+#[derive(Debug, thiserror::Error)]
+enum OpenSpaceError {
+    #[error(transparent)]
+    Identity(#[from] IdentityRefusal),
+    #[error("{0}")]
+    Failed(String),
+}
+
+impl From<IdentityUnreadable> for OpenSpaceError {
+    fn from(cause: IdentityUnreadable) -> Self {
+        Self::Identity(cause.into())
+    }
+}
+
+/// Start downloading a file iCloud keeps off this Mac, without waiting for
+/// it: reading it brings its contents here, and the next request finds it.
+/// One download per file at a time.
+fn download_in_background(path: &Path) {
+    static DOWNLOADING: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+    let Ok(mut downloading) = DOWNLOADING.lock() else {
+        return;
+    };
+    if downloading.iter().any(|known| known == path) {
+        return;
+    }
+    downloading.push(path.to_path_buf());
+    drop(downloading);
+    let finish = |file: &Path| {
+        if let Ok(mut downloading) = DOWNLOADING.lock() {
+            downloading.retain(|known| known != file);
+        }
+    };
+    let file = path.to_path_buf();
+    let spawned = std::thread::Builder::new()
+        .name("icloud-download".into())
+        .spawn(move || {
+            // A file gone meanwhile has nothing left to download.
+            match std::fs::read(&file) {
+                Err(error) if error.kind() != io::ErrorKind::NotFound => {
+                    host_log(&format!("cannot download {} from iCloud: {error}", file.display()));
+                }
+                _ => {}
+            }
+            finish(&file);
+        });
+    if spawned.is_err() {
+        finish(path);
     }
 }
 
@@ -364,15 +474,15 @@ fn native_vaults_dir() -> Option<PathBuf> {
         .map(|dir| mine_lib::space_registry::vaults_dir(&dir))
 }
 
-fn resolve_request_space_in(
+/// The folder a request looks at first: the path the popup sent, else the
+/// path listed for the identity it names, else the current space.
+fn request_hint(
     cfg: &serde_json::Map<String, serde_json::Value>,
-    vaults_dir: Option<&Path>,
     requested: Option<String>,
-    binding: Option<&str>,
-) -> RequestSpace {
-    use mine_lib::space_registry::{self, Located, LostReason};
-    let identity = binding.filter(|value| !save_operations::is_legacy_binding(value));
-    let hint = requested
+    identity: Option<&str>,
+) -> Option<String> {
+    use mine_lib::space_registry;
+    requested
         .or_else(|| {
             let id = identity?;
             space_registry::records(cfg)
@@ -380,49 +490,127 @@ fn resolve_request_space_in(
                 .find(|record| record.vault_id.as_deref() == Some(id))
                 .map(|record| record.path)
         })
-        .or_else(|| space_registry::current_path(cfg));
-    let Some(hint) = hint else {
-        return RequestSpace {
-            path: None,
-            state: "unconfigured",
-            moved_from: None,
-            accepted_legacy: None,
-            binding_accepted: true,
-            identity: None,
-        };
-    };
-    // A request that names its space is found by that identity. One that
-    // does not (a popup from before К2) is found exactly as the app reopens
-    // its saved space: by the identity the registry or a derived store
-    // recorded for the path, and a folder without an identity of its own is
-    // never taken for the space (Ф8, Б2.2). The helper then writes only where
-    // the app would open.
+        .or_else(|| space_registry::current_path(cfg))
+}
+
+/// A request with no space chosen yet.
+fn unconfigured_space() -> RequestSpace {
+    RequestSpace {
+        path: None,
+        state: "unconfigured",
+        moved_from: None,
+        accepted_legacy: None,
+        binding_accepted: true,
+        identity: None,
+    }
+}
+
+/// Where the space a request names stands now, starting at `hint`: the
+/// folder and the path it moved from, or the answer for a space that cannot
+/// be reached. Writes nothing.
+///
+/// A request that names its space is found by that identity. One that does
+/// not (a popup from before К2) is found exactly as the app reopens its
+/// saved space: by the identity the registry or a derived store recorded for
+/// the path, and a folder without an identity of its own is never taken for
+/// the space (Ф8, Б2.2). The helper then writes only where the app would
+/// open.
+fn locate_request_space_in(
+    cfg: &serde_json::Map<String, serde_json::Value>,
+    vaults_dir: Option<&Path>,
+    hint: &str,
+    identity: Option<&str>,
+) -> Result<(String, Option<String>), RequestSpace> {
+    use mine_lib::space_registry::{self, Located, LostReason};
     let located = match identity {
-        Some(id) => space_registry::locate(cfg, Some(id), &hint),
-        None => space_registry::locate_saved(cfg, vaults_dir, &hint),
+        Some(id) => space_registry::locate(cfg, Some(id), hint),
+        None => space_registry::locate_saved(cfg, vaults_dir, hint),
     };
-    let (path, moved_from) = match located {
-        Located::Here { path } => (path, None),
-        Located::Moved { from, path } => (path, Some(from)),
-        Located::Lost { path, reason } => {
-            return RequestSpace {
-                path: None,
-                state: match reason {
-                    LostReason::Missing => "missing",
-                    LostReason::AccessDenied => "access_denied",
-                    LostReason::Replaced => "unavailable",
-                },
-                moved_from: Some(path),
-                accepted_legacy: None,
-                binding_accepted: false,
-                identity: None,
-            };
+    match located {
+        Located::Here { path } => Ok((path, None)),
+        Located::Moved { from, path } => Ok((path, Some(from))),
+        Located::Lost { path, reason } => Err(RequestSpace {
+            path: None,
+            state: match reason {
+                LostReason::Missing => "missing",
+                LostReason::AccessDenied => "access_denied",
+                LostReason::Replaced => "unavailable",
+            },
+            moved_from: Some(path),
+            accepted_legacy: None,
+            binding_accepted: false,
+            identity: None,
+        }),
+    }
+}
+
+/// The identity of the space at `folder`, settled by the app's copy rule
+/// (П22) against the derived stores in `vaults_dir` without waiting for
+/// iCloud: `None` for a folder without one. A copy of a space alive where
+/// its store last served it gets an identity and a store of its own now, as
+/// the app gives it when it opens a copy, so the copy never reads or writes
+/// the original's index (Д2.1). When the rule cannot tell, nothing is
+/// written and the request is refused.
+fn settled_identity(folder: &Path, vaults_dir: Option<&Path>) -> Result<Option<String>, IdentityRefusal> {
+    let Some(id) = mine_lib::space_registry::read_identity(folder, CloudRead::NoWait)? else {
+        return Ok(None);
+    };
+    match vaults_dir {
+        Some(vaults) => claim_space_identity(folder, vaults, id).map(Some),
+        None => Ok(Some(id)),
+    }
+}
+
+/// Apply the copy rule (П22) to the folder `folder`, which carries `id`:
+/// the identity whose derived store in `vaults_dir` serves it.
+fn claim_space_identity(folder: &Path, vaults_dir: &Path, id: String) -> Result<String, IdentityRefusal> {
+    use mine_lib::space_registry::{self, IdentityClaim};
+    match space_registry::identity_claim(folder, &vaults_dir.join(&id), &id, CloudRead::NoWait) {
+        IdentityClaim::Owned | IdentityClaim::Adopted => Ok(id),
+        IdentityClaim::Undecided { cause, .. } => Err(cause.into()),
+        IdentityClaim::Copy { owner } => {
+            let own = space_registry::mint_copy_identity(folder).map_err(|source| {
+                IdentityRefusal::CopyIdentity {
+                    folder: folder.to_path_buf(),
+                    source,
+                }
+            })?;
+            host_log(&format!(
+                "{} is a copy of the space at {}: it has an identity of its own now, {own}",
+                folder.display(),
+                owner.display()
+            ));
+            space_registry::record_owner_path(&vaults_dir.join(&own), folder);
+            Ok(own)
         }
+    }
+}
+
+fn resolve_request_space_in(
+    cfg: &serde_json::Map<String, serde_json::Value>,
+    vaults_dir: Option<&Path>,
+    requested: Option<String>,
+    binding: Option<&str>,
+) -> RequestSpace {
+    let identity = binding.filter(|value| !save_operations::is_legacy_binding(value));
+    let Some(hint) = request_hint(cfg, requested, identity) else {
+        return unconfigured_space();
     };
-    let identity = match space_registry::space_identity(Path::new(&path)) {
-        space_registry::SpaceIdentity::Known(id) => Some(id),
-        space_registry::SpaceIdentity::InCloud => identity.map(str::to_string),
-        space_registry::SpaceIdentity::Absent => None,
+    // The folder asked about is looked at first: one whose identity cannot
+    // be read now is refused, not passed over for another folder that
+    // carries the identity named (Д2.1).
+    if std::fs::read_dir(&hint).is_ok() {
+        if let Err(cause) = mine_lib::space_registry::read_identity(Path::new(&hint), CloudRead::NoWait) {
+            return RequestSpace::refused_identity(&cause.into(), hint);
+        }
+    }
+    let (path, moved_from) = match locate_request_space_in(cfg, vaults_dir, &hint, identity) {
+        Ok(found) => found,
+        Err(lost) => return lost,
+    };
+    let identity = match settled_identity(Path::new(&path), vaults_dir) {
+        Ok(identity) => identity,
+        Err(cause) => return RequestSpace::refused_identity(&cause, path),
     };
     let (binding_accepted, accepted_legacy) = match binding {
         None => (true, None),
@@ -457,7 +645,8 @@ enum SpaceRefusal {
 
 /// Open the space a request was resolved to. Only the located folder is
 /// touched: an unavailable one is never replaced by a new space at the same
-/// display path. `writes` lays out a brand-new empty space first.
+/// display path, and a folder whose space cannot be told now is refused
+/// with its state (Д2.1). `writes` lays out a brand-new empty space first.
 fn open_request_vault(
     space: &RequestSpace,
     writes: bool,
@@ -479,7 +668,12 @@ fn open_request_vault(
         initialize_native_new_space_layout(&VaultLayout::new(path.clone()))
             .map_err(SpaceRefusal::Failed)?;
     }
-    resolve_native_vault_layout_at(path, app_state).map_err(SpaceRefusal::Failed)
+    resolve_native_vault_layout_at(path, app_state).map_err(|error| match error {
+        OpenSpaceError::Identity(cause) => {
+            SpaceRefusal::Space(RequestSpace::refused_identity(&cause, located.clone()))
+        }
+        OpenSpaceError::Failed(error) => SpaceRefusal::Failed(error),
+    })
 }
 
 /// A request about a space that cannot be found answers with its state and
@@ -577,20 +771,28 @@ fn load_known_vaults_in(
 }
 
 fn resolve_native_vault_layout(root: PathBuf) -> Result<VaultLayout, String> {
-    resolve_native_vault_layout_at(root, native_app_data_dir()?)
+    resolve_native_vault_layout_at(root, native_app_data_dir()?).map_err(|error| error.to_string())
 }
 
+/// The space at `root` with its derived store under `app_state`, chosen by
+/// the same identity and copy rule as the app's (П22): a copy of a space
+/// alive elsewhere never shares its store (Д2.1).
 fn resolve_native_vault_layout_at(
     root: PathBuf,
     app_state: PathBuf,
-) -> Result<VaultLayout, String> {
+) -> Result<VaultLayout, OpenSpaceError> {
     let base = VaultLayout::new(root.clone());
     let vault_id = ensure_space_identity(&base)?;
-    let derived_root = app_state.join("vaults").join(vault_id);
-    let write_layout = files::load_vault_write_layout(&base).map_err(|error| error.to_string())?;
+    let vaults = mine_lib::space_registry::vaults_dir(&app_state);
+    let vault_id = claim_space_identity(&root, &vaults, vault_id)?;
+    let derived_root = vaults.join(vault_id);
+    mine_lib::space_registry::record_owner_path(&derived_root, &root);
+    let write_layout = files::load_vault_write_layout(&base)
+        .map_err(|error| OpenSpaceError::Failed(error.to_string()))?;
     let layout = VaultLayout::with_derived_root(root, derived_root).with_write_layout(write_layout);
 
-    db::resolve_vault_index(layout).map_err(|error| format!("index selection failed: {error:#}"))
+    db::resolve_vault_index(layout)
+        .map_err(|error| OpenSpaceError::Failed(format!("index selection failed: {error:#}")))
 }
 
 fn initialize_native_new_space_layout(vault: &VaultLayout) -> Result<(), String> {
@@ -649,38 +851,37 @@ fn native_app_data_dir() -> Result<PathBuf, String> {
 
 /// The space's identity, written first when the folder has none. Called only
 /// for a folder the person chose or a space located by identity.
-fn ensure_space_identity(base: &VaultLayout) -> Result<String, String> {
-    files::validate_vault_write_target(base, &base.mine_dir()).map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(base.mine_dir())
-        .map_err(|e| format!("failed to create Mine metadata dir: {e}"))?;
+fn ensure_space_identity(base: &VaultLayout) -> Result<String, OpenSpaceError> {
+    files::validate_vault_write_target(base, &base.mine_dir())
+        .map_err(|e| OpenSpaceError::Failed(e.to_string()))?;
     ensure_native_vault_id(base)
 }
 
-fn ensure_native_vault_id(vault: &VaultLayout) -> Result<String, String> {
+/// The identity the folder carries, moved from the legacy `.arena` file when
+/// only that one has it, else a new one. Never waits for iCloud, and never
+/// takes an identity it cannot read for none: a new identity written over it
+/// would split one space into two (Д2.1).
+fn ensure_native_vault_id(vault: &VaultLayout) -> Result<String, OpenSpaceError> {
+    use mine_lib::space_registry::read_identity_file;
+    let failed = OpenSpaceError::Failed;
     let path = vault.vault_id_path();
-    files::validate_vault_write_target(vault, &path).map_err(|e| e.to_string())?;
-    if let Ok(existing) = std::fs::read_to_string(&path) {
-        let trimmed = existing.trim();
-        if !trimmed.is_empty() {
-            save_operations::validate_id(trimmed).map_err(|e| e.to_string())?;
-            return Ok(trimmed.to_string());
-        }
+    files::validate_vault_write_target(vault, &path).map_err(|e| failed(e.to_string()))?;
+    if let Some(existing) = read_identity_file(&path, CloudRead::NoWait)? {
+        save_operations::validate_id(&existing).map_err(|e| failed(e.to_string()))?;
+        return Ok(existing);
     }
-
-    if let Ok(existing) = std::fs::read_to_string(vault.legacy_vault_id_path()) {
-        let trimmed = existing.trim();
-        if !trimmed.is_empty() {
-            save_operations::validate_id(trimmed).map_err(|e| e.to_string())?;
-            files::write_atomically(&path, format!("{trimmed}\n").as_bytes())
-                .map_err(|e| format!("failed to migrate vault-id to .mine: {e:#}"))?;
-            return Ok(trimmed.to_string());
+    let (id, written) = match read_identity_file(&vault.legacy_vault_id_path(), CloudRead::NoWait)? {
+        Some(legacy) => {
+            save_operations::validate_id(&legacy).map_err(|e| failed(e.to_string()))?;
+            (legacy, "failed to migrate vault-id to .mine")
         }
-    }
-
-    let new_id = generate_native_vault_id()?;
-    files::write_atomically(&path, format!("{new_id}\n").as_bytes())
-        .map_err(|e| format!("failed to write vault-id: {e:#}"))?;
-    Ok(new_id)
+        None => (generate_native_vault_id().map_err(failed)?, "failed to write vault-id"),
+    };
+    std::fs::create_dir_all(vault.mine_dir())
+        .map_err(|e| failed(format!("failed to create Mine metadata dir: {e}")))?;
+    files::write_atomically(&path, format!("{id}\n").as_bytes())
+        .map_err(|e| failed(format!("{written}: {e:#}")))?;
+    Ok(id)
 }
 
 fn generate_native_vault_id() -> Result<String, String> {
@@ -735,13 +936,18 @@ fn handle_list_known_vaults() {
 /// the lock the app uses too, changing only the space list, never over a file
 /// it cannot read (SPEC_VAULT_LIFECYCLE.md, П28). Returns the updated list.
 fn add_known_vault(path: &str) -> Result<Vec<String>, String> {
+    add_known_vault_in(&native_app_data_dir()?, path)
+}
+
+/// [`add_known_vault`] with the settings of the app data folder `app_data`.
+fn add_known_vault_in(app_data: &Path, path: &str) -> Result<Vec<String>, String> {
     let path = canonical_native_space_path(path)?;
     // Never wait for iCloud: an identity still in the cloud is learned later.
     let id = match mine_lib::space_registry::space_identity(std::path::Path::new(&path)) {
         mine_lib::space_registry::SpaceIdentity::Known(id) => Some(id),
         _ => None,
     };
-    let settings = mine_lib::app_config::AppConfig::in_dir(&native_app_data_dir()?);
+    let settings = mine_lib::app_config::AppConfig::in_dir(app_data);
     settings
         .update(|cfg| {
             mine_lib::space_registry::add_space(cfg, id.as_deref(), &path);
@@ -805,9 +1011,15 @@ fn handle_pick_vault_folder() {
     }
     // The person chose this folder: it becomes a space with its identity now,
     // as a folder chosen in the app does. Requests then find it by identity;
-    // a folder without one is never taken for a space (Ф8).
-    if let Err(error) = ensure_space_identity(&chosen) {
-        return send_error(&error);
+    // a folder without one is never taken for a space (Ф8). An identity
+    // still in iCloud is the folder's own: the folder is listed now, and
+    // requests can use it once the identity is here (Д2.1).
+    match ensure_space_identity(&chosen) {
+        Ok(_)
+        | Err(OpenSpaceError::Identity(IdentityRefusal::Unreadable(
+            IdentityUnreadable::InCloud { .. },
+        ))) => {}
+        Err(error) => return send_error(&error.to_string()),
     }
     match add_known_vault(&picked) {
         Ok(vaults) => send_response(&PickVaultResponse {
@@ -920,10 +1132,13 @@ fn reveal_target_in(
         .get("binding_id")
         .or_else(|| params.get("binding_id"))
         .and_then(serde_json::Value::as_str);
-    let space = resolve_request_space_in(cfg, vaults_dir, path, binding);
-    let Some(target) = space.path.clone() else {
-        return Err(space);
+    // Showing a folder needs only where it is: no identity is settled, and
+    // nothing is written.
+    let identity = binding.filter(|value| !save_operations::is_legacy_binding(value));
+    let Some(hint) = request_hint(cfg, path, identity) else {
+        return Err(unconfigured_space());
     };
+    let (target, _) = locate_request_space_in(cfg, vaults_dir, &hint, identity)?;
     let mut allowed = load_known_vaults_in(cfg, vaults_dir);
     allowed.extend(mine_lib::space_registry::current_path(cfg));
     if !allowed.iter().any(|vault| same_native_space(vault, &target)) {
@@ -931,7 +1146,9 @@ fn reveal_target_in(
             path: None,
             state: "unknown_space",
             moved_from: Some(target),
-            ..space
+            accepted_legacy: None,
+            binding_accepted: false,
+            identity: None,
         });
     }
     Ok(target)
@@ -4328,16 +4545,247 @@ mod tests {
         }
     }
 
-    fn files_under(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    /// Д2.1: the space X, opened by the app at A and indexed there with the
+    /// collection `Art`, and a copy B of it carrying X too, listed while its
+    /// identity could not be read (П22).
+    struct CopiedSpace {
+        _tmp: TempDir,
+        state: PathBuf,
+        vaults: PathBuf,
+        original: String,
+        copy: String,
+        cfg: serde_json::Map<String, serde_json::Value>,
+    }
+
+    impl CopiedSpace {
+        /// `in_cloud` puts the folders under an iCloud container, so an
+        /// identity file without data counts as one only in iCloud.
+        fn new(in_cloud: bool) -> Self {
+            let tmp = TempDir::new().unwrap();
+            let parent = if in_cloud {
+                tmp.path().join("Mobile Documents")
+            } else {
+                tmp.path().join("Spaces")
+            };
+            let original = k_space(&parent, "Mine");
+            for folder in ["Cards", "Collections"] {
+                std::fs::create_dir_all(Path::new(&original).join(folder)).unwrap();
+            }
+            std::fs::write(
+                Path::new(&original).join(".mine/layout.json"),
+                r#"{"cards":"Cards","media":"Media","collections":"Collections"}"#,
+            )
+            .unwrap();
+            std::fs::write(Path::new(&original).join("Collections/Art.md"), "---\ntype: channel\n---\n")
+                .unwrap();
+            let state = tmp.path().join("state");
+            let vaults = mine_lib::space_registry::vaults_dir(&state);
+            derived_owner(&state, K_SPACE_ID, &original);
+            {
+                let layout = VaultLayout::with_derived_root(
+                    PathBuf::from(&original),
+                    vaults.join(K_SPACE_ID),
+                )
+                .with_write_layout(mine_lib::domain::vault::VaultWriteLayout::standard());
+                let (layout, conn, _) = db::open_vault_index(layout).unwrap();
+                mine_lib::storage::reconcile::reconcile_vault(&conn, &layout).unwrap();
+                index::backfill_collection_index(&conn, &layout).unwrap();
+            }
+            // The copy was made before `Art`, and carries the same identity.
+            let copy = k_space(&parent, "Mine copy");
+            let mut cfg = serde_json::Map::new();
+            mine_lib::space_registry::record_open(&mut cfg, K_SPACE_ID, &original, 1);
+            mine_lib::space_registry::add_space(&mut cfg, None, &copy);
+            Self { _tmp: tmp, state, vaults, original, copy, cfg }
+        }
+
+        /// The cards the original's index lists.
+        fn original_rows(&self) -> Vec<String> {
+            let layout = VaultLayout::with_derived_root(
+                PathBuf::from(&self.original),
+                self.vaults.join(K_SPACE_ID),
+            );
+            let selected = db::existing_selected_index(&layout).unwrap().unwrap();
+            let conn = db::open_read_only(&selected.index_db_path()).unwrap();
+            let mut slugs: Vec<String> =
+                index::list_blocks(&conn).unwrap().into_iter().map(|block| block.slug).collect();
+            slugs.sort();
+            slugs
+        }
+
+        /// Leave only the data an identity file iCloud moved off this Mac
+        /// keeps: its name and size, no blocks.
+        fn evict_identity(folder: &str) {
+            let id = Path::new(folder).join(".mine/vault-id");
+            std::fs::remove_file(&id).unwrap();
+            std::fs::File::create(&id).unwrap().set_len(32).unwrap();
+        }
+    }
+
+    fn collection_names(response: &serde_json::Value) -> Vec<String> {
+        response["channels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|channel| channel["tag"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn a_copy_chosen_in_the_clipper_never_reads_or_writes_the_original_index() {
+        let space = CopiedSpace::new(false);
+        let rows_before = space.original_rows();
+
+        let request =
+            resolve_request_space_in(&space.cfg, Some(&space.vaults), Some(space.copy.clone()), None);
+        assert_eq!(request.path.as_deref(), Some(space.copy.as_str()), "{request:?}");
+        let own = request.identity.clone().expect("the copy answers with an identity");
+        assert_ne!(own, K_SPACE_ID, "the copy took the original's identity");
+
+        let Ok(listed) = open_request_vault(&request, false, space.state.clone()) else {
+            panic!("the copy opens as a space of its own");
+        };
+        assert_ne!(listed.derived_root(), space.vaults.join(K_SPACE_ID));
+        let collections = list_channels_response(&listed);
+        assert!(
+            !collection_names(&collections).contains(&"Art".to_string()),
+            "the copy lists the original's collections: {collections}"
+        );
+
+        let Ok(vault) = open_request_vault(&request, true, space.state.clone()) else {
+            panic!("the copy opens for a save");
+        };
+        let mut save = sc2_link_request("copy-save");
+        save["binding_id"] = serde_json::json!(own);
+        let response = sc0_save_response(&vault, save);
+        assert_eq!(response["outcome"], "committed", "{response}");
+        assert!(vault.block_path("Local link").starts_with(&space.copy));
+        assert_eq!(space.original_rows(), rows_before, "the copy wrote into the original's index");
+        assert_eq!(
+            mine_lib::space_registry::read_space_id(Path::new(&space.original)).as_deref(),
+            Some(K_SPACE_ID)
+        );
+        assert_eq!(
+            mine_lib::space_registry::read_space_id(Path::new(&space.copy)).as_deref(),
+            Some(own.as_str())
+        );
+    }
+
+    /// Д2.1: whatever the helper is asked, a folder whose identity, or the
+    /// identity of the space it may copy, cannot be read now is refused with a
+    /// state saying so; nothing is written to the folder or to any index.
+    fn assert_refused_without_writes(space: &CopiedSpace, state: &str) {
+        let rows_before = space.original_rows();
+        let copy_files = files_under(Path::new(&space.copy));
+        let stores = files_under(&space.vaults);
+
+        for binding in [None, Some(K_SPACE_ID)] {
+            let request = resolve_request_space_in(
+                &space.cfg,
+                Some(&space.vaults),
+                Some(space.copy.clone()),
+                binding,
+            );
+            assert_eq!(request.state, state, "{binding:?}: {request:?}");
+            assert!(request.path.is_none(), "{binding:?}: {request:?}");
+            assert!(request.message().is_some());
+        }
+        // A request resolved before the identity went unreadable.
+        let resolved_earlier = RequestSpace {
+            path: Some(space.copy.clone()),
+            state: "ready",
+            moved_from: None,
+            accepted_legacy: None,
+            binding_accepted: true,
+            identity: Some(K_SPACE_ID.into()),
+        };
+        for writes in [false, true] {
+            match open_request_vault(&resolved_earlier, writes, space.state.clone()) {
+                Err(SpaceRefusal::Space(refused)) => assert_eq!(refused.state, state),
+                Err(SpaceRefusal::Failed(error)) => panic!("untyped refusal: {error}"),
+                Ok(vault) => panic!("opened {}", vault.derived_root().display()),
+            }
+        }
+        assert_eq!(files_under(Path::new(&space.copy)), copy_files, "the copy was written");
+        assert_eq!(files_under(&space.vaults), stores, "a derived store was written");
+        assert_eq!(space.original_rows(), rows_before);
+    }
+
+    #[test]
+    fn a_copy_whose_identity_is_in_icloud_is_refused_until_it_arrives() {
+        let space = CopiedSpace::new(true);
+        CopiedSpace::evict_identity(&space.copy);
+        assert_refused_without_writes(&space, "identity_in_cloud");
+    }
+
+    #[test]
+    fn a_copy_of_a_space_whose_identity_is_in_icloud_is_refused_until_it_arrives() {
+        let space = CopiedSpace::new(true);
+        CopiedSpace::evict_identity(&space.original);
+        assert_refused_without_writes(&space, "identity_in_cloud");
+    }
+
+    #[test]
+    fn an_unreadable_identity_is_refused_and_never_replaced() {
+        use std::os::unix::fs::PermissionsExt;
+        let space = CopiedSpace::new(false);
+        let id = Path::new(&space.copy).join(".mine/vault-id");
+        std::fs::set_permissions(&id, std::fs::Permissions::from_mode(0o000)).unwrap();
+        assert!(std::fs::read(&id).is_err(), "the identity must be unreadable for this test");
+
+        assert_refused_without_writes(&space, "identity_unreadable");
+
+        std::fs::set_permissions(&id, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(std::fs::read_to_string(&id).unwrap(), K_SPACE_ID);
+    }
+
+    /// Д2.3 through the clipper's folder choice: the space X was listed at P,
+    /// and P now holds the space Y. Choosing P lists Y there, available; X's
+    /// record follows X to the folder beside P it was renamed to.
+    #[test]
+    fn choosing_a_listed_path_that_now_holds_another_space_lists_that_space() {
+        const OTHER_ID: &str = "fedcba9876543210fedcba9876543210";
+        let tmp = TempDir::new().unwrap();
+        let app = tmp.path().join("app");
+        let spaces = tmp.path().join("Spaces");
+        let p = k_space(&spaces, "Mine");
+        let settings = mine_lib::app_config::AppConfig::in_dir(&app);
+        settings
+            .update(|cfg| mine_lib::space_registry::record_open(cfg, K_SPACE_ID, &p, 1))
+            .unwrap();
+        let renamed = Path::new(&p).with_file_name("Mine old").to_string_lossy().into_owned();
+        std::fs::rename(&p, &renamed).unwrap();
+        std::fs::create_dir_all(Path::new(&p).join(".mine")).unwrap();
+        std::fs::write(Path::new(&p).join(".mine/vault-id"), OTHER_ID).unwrap();
+
+        let listed = add_known_vault_in(&app, &p).unwrap();
+
+        assert_eq!(listed, vec![renamed.clone(), p.clone()]);
+        let cfg = settings.read().unwrap();
+        let records = mine_lib::space_registry::records(&cfg);
+        assert_eq!(records.len(), 2, "{records:?}");
+        assert_eq!(records[0].vault_id.as_deref(), Some(K_SPACE_ID));
+        assert_eq!(records[0].path, renamed);
+        assert_eq!(records[1].vault_id.as_deref(), Some(OTHER_ID));
+        assert_eq!(records[1].path, p);
+        assert!(mine_lib::space_registry::statuses(&cfg).iter().all(|status| status.available));
+        assert_eq!(load_known_vaults_in(&cfg, None), vec![renamed, p]);
+    }
+
+    /// Every file under `root` with its bytes; `None` for a file that cannot
+    /// be read. The index database's `-wal` and `-shm` files are left out:
+    /// reading an index may create them, and its rows are compared instead.
+    fn files_under(root: &Path) -> Vec<(PathBuf, Option<Vec<u8>>)> {
         let mut found = Vec::new();
         let mut pending = vec![root.to_path_buf()];
         while let Some(folder) = pending.pop() {
             for entry in std::fs::read_dir(&folder).unwrap().flatten() {
                 let path = entry.path();
+                let name = entry.file_name().to_string_lossy().into_owned();
                 if path.is_dir() {
                     pending.push(path);
-                } else {
-                    found.push((path.clone(), std::fs::read(&path).unwrap()));
+                } else if !name.ends_with("-wal") && !name.ends_with("-shm") {
+                    found.push((path.clone(), std::fs::read(&path).ok()));
                 }
             }
         }

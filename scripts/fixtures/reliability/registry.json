@@ -1212,6 +1212,19 @@
       "requirement": "SPEC_AUDIT_FIXES.md#| Г3.1 |",
       "tests": ["extension/popup/hooks/useClipperState.overlayCrop.test.tsx", "extension/popup/overlay-entry.instance.test.tsx", "extension/popup/overlay-entry.test.tsx", "extension/background.messaging.test.ts", "extension/lib/cropCapture.test.ts", "extension/popup/hooks/useClipperState.standalone.test.tsx"],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "extension/popup/lib/folderState.ts",
+        "extension/popup/lib/folderState.test.ts",
+        "src-tauri/src/space_registry.rs",
+        "src-tauri/src/bin/native_host.rs",
+        "src-tauri/src/commands/vault.rs",
+        "src-tauri/src/commands/state.rs"
+      ],
+      "requirement": "SPEC_AUDIT_FIXES.md#| Д2.1 |",
+      "tests": ["extension/popup/lib/folderState.test.ts", "extension/popup/hooks/useClipperState.standalone.test.tsx", "src-tauri/src/space_registry.rs", "src-tauri/src/bin/native_host.rs", "src-tauri/src/commands/vault.rs"],
+      "command": "test:rust"
     }
   ],
   "release": null

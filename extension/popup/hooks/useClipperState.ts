@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { flushSync } from "react-dom";
 import { normalizeArticleMedia } from "../lib/normalizeArticleMedia";
 import { hydrateTwitterPosts } from "../lib/twitterMedia";
+import { folderStateBlocksSave, identityStateMessage } from "../lib/folderState";
 
 import {
   sendToNative,
@@ -155,6 +156,10 @@ export function useClipperState() {
   }, []);
   const [cropSupported, setCropSupported] = useState<boolean>(false);
   const [nativeStatusError, setNativeStatusError] = useState<string | null>(null);
+  // The helper's last word on the chosen space: a state in which it cannot
+  // tell which space the folder is keeps Save off until a check clears it
+  // (SPEC_AUDIT_FIXES.md, Д2.1).
+  const [nativeFolderState, setNativeFolderState] = useState<string | null>(null);
   const [nativeConnected, setNativeConnected] = useState(false);
   const [canOpenApp, setCanOpenApp] = useState(false);
   const [pendingOperation, setPendingOperation] = useState(false);
@@ -474,9 +479,14 @@ export function useClipperState() {
         }
       } else {
         setChannelsNotice(null);
-        setChannelsError("code" in result && result.code === "native_timeout"
+        const folderState = mode !== "standalone" && "folder_state" in result && typeof result.folder_state === "string"
+          ? result.folder_state
+          : null;
+        const identityMessage = identityStateMessage(folderState);
+        if (identityMessage) setNativeFolderState(folderState);
+        setChannelsError(identityMessage ?? ("code" in result && result.code === "native_timeout"
           ? "Mine is busy with this space. Retry in a moment."
-          : "Could not load collections.");
+          : "Could not load collections."));
       }
     } catch {
       if (isCurrent()) setChannelsError("Could not load collections.");
@@ -596,6 +606,7 @@ export function useClipperState() {
         setNativeConnected(status.ok && status.connected !== false);
         setCanOpenApp(status.ok && status.features?.includes("open_app_v1") === true);
         if (destinationHeld()) return true;
+        setNativeFolderState(typeof status.folder_state === "string" ? status.folder_state : null);
         saveProtocolRef.current = negotiateSaveProtocol(status);
         const compatible = saveProtocolRef.current !== null;
         uploadPortRef.current = typeof status.upload_port === "number" ? status.upload_port : null;
@@ -634,7 +645,9 @@ export function useClipperState() {
                 : MINE_NOT_CONNECTED
             : !compatible
               ? MINE_TOO_OLD
-              : status.error ?? "The Mine helper is connected. Choose a folder to save your clips.";
+              : identityStateMessage(status.folder_state)
+                ?? status.error
+                ?? "The Mine helper is connected. Choose a folder to save your clips.";
           nativeStatusErrorRef.current = message;
           setNativeStatusError(message);
           // Out of reach or too old repairs itself in Mine; a folder to choose
@@ -1498,7 +1511,7 @@ export function useClipperState() {
         setPendingOperation(false);
         return { ok: false as const, error: result.error ?? "This save was rejected before writing any files. You can edit the clip and try again." };
       }
-      return { ok: false as const, error: "Could not confirm the save. Please retry." };
+      return { ok: false as const, error: identityStateMessage(result.folder_state) ?? "Could not confirm the save. Please retry." };
     }
     const previous = previousOperation ?? await findPendingSave(
       resolveCaptureResult(currentType, metadata, articleDataRef.current).sourceUrl,
@@ -1737,7 +1750,7 @@ export function useClipperState() {
       setPendingOperation(false);
       return { ok: false as const, error: result.error ?? "This save was rejected before writing any files. You can edit the clip and try again." };
     }
-    return { ok: false as const, error: "Could not confirm the save. Please retry." };
+    return { ok: false as const, error: identityStateMessage(result.folder_state) ?? "Could not confirm the save. Please retry." };
     } catch (cause) {
       return { ok: false as const, error: cause instanceof Error ? cause.message : String(cause) };
     } finally {
@@ -1867,7 +1880,10 @@ export function useClipperState() {
     // while Mine is out of reach does not blink the button: Save waits for
     // that check itself and stops if it moved the clip.
     canSave: state === "main" && metadata !== null && !(currentType === "screenshot" && capturing)
-      && !(connectionChecking && !reconnecting),
+      && !(connectionChecking && !reconnecting)
+      // Mine cannot tell which space the folder is yet: nothing could be
+      // saved there until a check clears it (Д2.1).
+      && !(saveMode === "app" && folderStateBlocksSave(nativeFolderState)),
     /** Where the draft was made and where Save now puts it, when they differ. */
     destinationNotice,
     draftReady: Boolean(draftSourceUrl && draftReadySource === draftSourceUrl),

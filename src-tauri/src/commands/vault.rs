@@ -13,7 +13,10 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use rusqlite::Connection;
 use serde::Serialize;
 
-use crate::space_registry::{Located, LostReason};
+use crate::space_registry::{
+    identity_claim, read_identity_file, record_owner_path, CloudRead, IdentityClaim, Located,
+    LostReason,
+};
 use crate::commands::state::{
     current_vault_layout, schedule_preview_reconcile, AppState, CommandError, SweepGuard,
     VaultState,
@@ -1937,8 +1940,14 @@ fn resolve_space_layout(
     // both would silently write into one index and one cache. The recorded
     // owner path settles it: the same space alive there — this is a copy and
     // it gets its own identity; no such space there — this is the same space
-    // after a move, and it inherits everything.
-    match resolve_identity_claim(root, &derived_root, &vault_id) {
+    // after a move, and it inherits everything. The app may wait for iCloud
+    // to tell; an identity it still cannot read decides nothing.
+    match identity_claim(root, &derived_root, &vault_id, CloudRead::Wait) {
+        IdentityClaim::Undecided { owner, cause } => Err(CommandError::Internal(format!(
+            "cannot tell whether {} is the space last opened at {} or a copy of it: {cause}",
+            root.display(),
+            owner.display()
+        ))),
         IdentityClaim::Owned | IdentityClaim::Adopted => {
             record_owner_path(&derived_root, root);
             let write_layout = load_write_layout(&base)?;
@@ -2004,64 +2013,6 @@ pub(crate) fn initialize_new_space_layout(vault: &VaultLayout) -> Result<(), Com
     save_write_layout(vault, &standard)
 }
 
-enum IdentityClaim {
-    /// The recorded owner is this very folder (or nothing was recorded yet).
-    Owned,
-    /// The space is no longer at the recorded owner path (the folder is gone,
-    /// or what stands there is not this space): a move, not a copy.
-    Adopted,
-    /// The same space is alive at the recorded owner path: this folder is a
-    /// copy.
-    Copy { owner: PathBuf },
-}
-
-fn owner_path_file(derived_root: &Path) -> PathBuf {
-    derived_root.join("owner-path.json")
-}
-
-fn resolve_identity_claim(root: &Path, derived_root: &Path, vault_id: &str) -> IdentityClaim {
-    let Ok(raw) = std::fs::read_to_string(owner_path_file(derived_root)) else {
-        return IdentityClaim::Owned;
-    };
-    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) else {
-        return IdentityClaim::Owned;
-    };
-    let Some(owner) = parsed.get("path").and_then(|value| value.as_str()) else {
-        return IdentityClaim::Owned;
-    };
-    let owner = PathBuf::from(owner);
-    // Canonical comparison: symlinks and case quirks must not make a folder
-    // look like a copy of itself.
-    let same = match (owner.canonicalize(), root.canonicalize()) {
-        (Ok(a), Ok(b)) => a == b,
-        _ => owner == root,
-    };
-    if same {
-        return IdentityClaim::Owned;
-    }
-    // Only the same space at the old path makes this folder a copy (П26). A
-    // folder there without this identity (an empty one made after a rename,
-    // another space) is not the original, and taking it for one would give
-    // the moved space a new identity and orphan its derived store (Б2.1).
-    if owner.is_dir() && crate::space_registry::read_space_id(&owner).as_deref() == Some(vault_id) {
-        IdentityClaim::Copy { owner }
-    } else {
-        IdentityClaim::Adopted
-    }
-}
-
-/// Best effort: failing to record the owner must not fail the open — the next
-/// open records it again.
-fn record_owner_path(derived_root: &Path, root: &Path) {
-    let payload = serde_json::json!({ "path": root.to_string_lossy() });
-    if std::fs::create_dir_all(derived_root).is_ok() {
-        let _ = files::write_atomically(
-            &owner_path_file(derived_root),
-            payload.to_string().as_bytes(),
-        );
-    }
-}
-
 /// Use the same strict layout reader as capture and CLI; invalid settings
 /// must not silently redirect writes to a different folder.
 fn load_write_layout(vault: &VaultLayout) -> Result<VaultWriteLayout, CommandError> {
@@ -2105,31 +2056,32 @@ fn ensure_vault_id(vault: &VaultLayout) -> Result<String, CommandError> {
 }
 
 /// The identity the space already carries, moved from the legacy `.arena`
-/// marker when only that one is there. Never mints one.
+/// marker when only that one is there. Never mints one. An identity file
+/// still in iCloud is waited for; one that cannot be read even then refuses
+/// the open, and nothing is written over it (`SPEC_AUDIT_FIXES.md`, Д2.1).
 fn existing_vault_id(vault: &VaultLayout) -> Result<Option<String>, CommandError> {
+    let unreadable = |cause: crate::space_registry::IdentityUnreadable| {
+        log::warn!("space at {} not opened: {cause}", vault.root().display());
+        CommandError::SpaceIdentityUnreadable {
+            path: vault.root().to_string_lossy().into_owned(),
+        }
+    };
     let path = vault.vault_id_path();
-    if let Ok(existing) = std::fs::read_to_string(&path) {
-        let trimmed = existing.trim();
-        if !trimmed.is_empty() {
-            return Ok(Some(trimmed.to_string()));
-        }
+    if let Some(existing) = read_identity_file(&path, CloudRead::Wait).map_err(unreadable)? {
+        return Ok(Some(existing));
     }
-
-    if let Ok(existing) = std::fs::read_to_string(vault.legacy_vault_id_path()) {
-        let trimmed = existing.trim();
-        if !trimmed.is_empty() {
-            let _write = crate::storage::source_mutation::begin_write()
-                .map_err(|error| CommandError::Internal(error.to_string()))?;
-            std::fs::create_dir_all(vault.mine_dir()).map_err(|e| {
-                CommandError::Internal(format!("failed to create Mine metadata dir: {e}"))
-            })?;
-            files::write_atomically(&path, format!("{trimmed}\n").as_bytes()).map_err(|e| {
-                CommandError::Internal(format!("failed to migrate vault-id to .mine: {e:#}"))
-            })?;
-            return Ok(Some(trimmed.to_string()));
-        }
-    }
-    Ok(None)
+    let legacy = read_identity_file(&vault.legacy_vault_id_path(), CloudRead::Wait)
+        .map_err(unreadable)?;
+    let Some(legacy) = legacy else {
+        return Ok(None);
+    };
+    let _write = crate::storage::source_mutation::begin_write()
+        .map_err(|error| CommandError::Internal(error.to_string()))?;
+    std::fs::create_dir_all(vault.mine_dir())
+        .map_err(|e| CommandError::Internal(format!("failed to create Mine metadata dir: {e}")))?;
+    files::write_atomically(&path, format!("{legacy}\n").as_bytes())
+        .map_err(|e| CommandError::Internal(format!("failed to migrate vault-id to .mine: {e:#}")))?;
+    Ok(Some(legacy))
 }
 
 fn generate_vault_id() -> Result<String, CommandError> {
@@ -2640,8 +2592,13 @@ mod identity_claim_tests {
         std::fs::write(folder.join(".mine/vault-id"), format!("{id}\n")).unwrap();
     }
 
+    /// The copy rule as the app reads it: it may wait for iCloud.
+    fn resolve_identity_claim(root: &Path, derived_root: &Path, vault_id: &str) -> IdentityClaim {
+        identity_claim(root, derived_root, vault_id, CloudRead::Wait)
+    }
+
     fn owner_recorded(derived_root: &Path) -> String {
-        let raw = std::fs::read_to_string(owner_path_file(derived_root)).unwrap();
+        let raw = std::fs::read_to_string(space_registry::owner_path_file(derived_root)).unwrap();
         serde_json::from_str::<serde_json::Value>(&raw).unwrap()["path"]
             .as_str()
             .unwrap()
@@ -2701,6 +2658,76 @@ mod identity_claim_tests {
             IdentityClaim::Copy { owner } => assert_eq!(owner, original),
             _ => panic!("a live original must make the twin a copy"),
         }
+    }
+
+    /// Д2.1: the folder where the store last served the space is there, but
+    /// its identity cannot be read. Whether the second folder is a copy
+    /// cannot be told: it is not opened on the original's store, and keeps
+    /// its identity.
+    #[test]
+    fn an_original_whose_identity_cannot_be_read_never_lends_its_store() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = tempfile::tempdir().unwrap();
+        let vaults = home.path().join("app/vaults");
+        let original = home.path().join("Mine");
+        let copy = home.path().join("Mine copy");
+        carry_identity(&original, ID);
+        carry_identity(&copy, ID);
+        let first = resolve_space_layout(&vaults, &original, SpaceOpening::Restored).unwrap();
+        let locked = original.join(".mine/vault-id");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let opened = resolve_space_layout(&vaults, &copy, SpaceOpening::Restored);
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        assert!(opened.is_err(), "the copy opened on {:?}", opened.map(|vault| vault.derived_root().to_path_buf()));
+        assert_eq!(owner_recorded(first.derived_root()), original.to_string_lossy());
+        assert_eq!(space_registry::read_space_id(&copy).as_deref(), Some(ID));
+        assert_eq!(derived_stores(&vaults), vec![ID.to_string()]);
+    }
+
+    /// Д2.1: choosing or reopening a folder whose identity file cannot be
+    /// read refuses with a typed error; the file is never written over and
+    /// no derived store is made.
+    #[test]
+    fn a_space_whose_identity_cannot_be_read_is_refused_and_never_given_another() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = tempfile::tempdir().unwrap();
+        let vaults = home.path().join("app/vaults");
+        let folder = home.path().join("Mine");
+        carry_identity(&folder, ID);
+        std::fs::write(folder.join("Card.md"), "A card.\n").unwrap();
+        let id_file = folder.join(".mine/vault-id");
+        let before = std::fs::read(&id_file).unwrap();
+        std::fs::set_permissions(&id_file, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let entries = |folder: &Path| {
+            let mut names: Vec<String> = std::fs::read_dir(folder)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        };
+        let listed = entries(&folder);
+
+        let refusals: Vec<_> = [SpaceOpening::Chosen, SpaceOpening::Restored]
+            .into_iter()
+            .map(|opening| resolve_space_layout(&vaults, &folder, opening).err())
+            .collect();
+        let mode = std::fs::metadata(&id_file).unwrap().permissions().mode() & 0o777;
+        std::fs::set_permissions(&id_file, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let path = folder.to_string_lossy().into_owned();
+        for refused in refusals {
+            assert!(
+                matches!(&refused, Some(CommandError::SpaceIdentityUnreadable { path: named }) if *named == path),
+                "{refused:?}"
+            );
+        }
+        assert_eq!(mode, 0, "the identity file was replaced");
+        assert_eq!(std::fs::read(&id_file).unwrap(), before);
+        assert_eq!(entries(&folder), listed);
+        assert!(!vaults.exists(), "a derived store was made");
     }
 
     #[test]

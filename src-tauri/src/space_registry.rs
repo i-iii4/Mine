@@ -84,6 +84,156 @@ fn read_id_file(path: &Path) -> Option<String> {
     (!id.is_empty()).then(|| id.to_string())
 }
 
+/// How an identity file whose contents iCloud moved off this Mac is read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloudRead {
+    /// Wait for the download: the app opening a space may wait for it.
+    Wait,
+    /// Never wait: the clipper's helper answers at once, saying the identity
+    /// is in iCloud.
+    NoWait,
+}
+
+/// Why the identity a folder carries cannot be known now. Never taken for a
+/// folder without an identity: an identity nobody can read is never replaced
+/// by a new one, nor guessed (`SPEC_AUDIT_FIXES.md`, Д2.1).
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum IdentityUnreadable {
+    /// The identity file is there, its contents only in iCloud.
+    #[error("the space identity {} is still in iCloud", .path.display())]
+    InCloud { path: PathBuf },
+    /// The identity file is there but cannot be read.
+    #[error("cannot read the space identity {}: {reason}", .path.display())]
+    Unreadable { path: PathBuf, reason: String },
+}
+
+/// The identity `folder` carries: `None` only when it has no identity file
+/// (or an empty one). The current `.mine` file decides before the legacy
+/// `.arena` one.
+///
+/// # Errors
+///
+/// [`IdentityUnreadable`] when an identity file is there but its contents
+/// are only in iCloud (with [`CloudRead::NoWait`]) or cannot be read.
+pub fn read_identity(folder: &Path, read: CloudRead) -> Result<Option<String>, IdentityUnreadable> {
+    for name in ID_FILES {
+        if let Some(id) = read_identity_file(&folder.join(name), read)? {
+            return Ok(Some(id));
+        }
+    }
+    Ok(None)
+}
+
+/// The identity one identity file holds: `None` only when the file is not
+/// there or is empty.
+///
+/// # Errors
+///
+/// [`IdentityUnreadable`] when the file is there but its contents are only
+/// in iCloud (with [`CloudRead::NoWait`]) or cannot be read.
+pub fn read_identity_file(path: &Path, read: CloudRead) -> Result<Option<String>, IdentityUnreadable> {
+    let unreadable = |error: std::io::Error| IdentityUnreadable::Unreadable {
+        path: path.to_path_buf(),
+        reason: error.to_string(),
+    };
+    match std::fs::metadata(path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(unreadable(error)),
+    }
+    if read == CloudRead::NoWait && crate::storage::media_dimensions::is_content_offloaded(path) {
+        return Err(IdentityUnreadable::InCloud { path: path.to_path_buf() });
+    }
+    match std::fs::read_to_string(path) {
+        Ok(text) => {
+            let id = text.trim();
+            Ok((!id.is_empty()).then(|| id.to_string()))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(unreadable(error)),
+    }
+}
+
+/// What a folder carrying `vault_id` is to the derived store of that
+/// identity (П22): the space itself, the space moved, or a copy of it. One
+/// rule for the app and the clipper's helper, so both choose one store for
+/// one folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IdentityClaim {
+    /// The store last served this very folder, or has not served any yet.
+    Owned,
+    /// The space is no longer where the store last served it (no folder
+    /// there, or one that is not this space): a move, not a copy.
+    Adopted,
+    /// The same space is alive where the store last served it: this folder
+    /// is a copy and needs an identity and a store of its own.
+    Copy { owner: PathBuf },
+    /// A folder stands where the store last served the space, and its
+    /// identity cannot be read now: copy or move cannot be told.
+    Undecided {
+        owner: PathBuf,
+        cause: IdentityUnreadable,
+    },
+}
+
+/// The file in a derived store naming the folder it last served (П22, П27).
+#[must_use]
+pub fn owner_path_file(derived_root: &Path) -> PathBuf {
+    derived_root.join(OWNER_PATH_FILE)
+}
+
+const OWNER_PATH_FILE: &str = "owner-path.json";
+
+/// Whether the folder `root`, which carries `vault_id`, is the space the
+/// derived store `derived_root` serves, the same space moved, or a copy of it
+/// (П22). Only the same space alive at the recorded path makes `root` a copy
+/// (П26): a folder there without this identity (an empty one made after a
+/// rename, another space) is not the original, and taking it for one would
+/// give the moved space a new identity and orphan its store (Б2.1).
+#[must_use]
+pub fn identity_claim(root: &Path, derived_root: &Path, vault_id: &str, read: CloudRead) -> IdentityClaim {
+    let Some((owner, _)) = owner_path(derived_root) else {
+        return IdentityClaim::Owned;
+    };
+    let owner = PathBuf::from(owner);
+    // Canonical comparison: symlinks and case quirks must not make a folder
+    // look like a copy of itself.
+    let same = match (owner.canonicalize(), root.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => owner == root,
+    };
+    if same {
+        return IdentityClaim::Owned;
+    }
+    if !owner.is_dir() {
+        return IdentityClaim::Adopted;
+    }
+    match read_identity(&owner, read) {
+        Ok(Some(found)) if found == vault_id => IdentityClaim::Copy { owner },
+        Ok(_) => IdentityClaim::Adopted,
+        Err(cause) => IdentityClaim::Undecided { owner, cause },
+    }
+}
+
+/// Record that the derived store `derived_root` now serves the folder `root`
+/// (П22, П27). Best effort: failing to record the owner must not fail an
+/// open, and the next open records it again.
+pub fn record_owner_path(derived_root: &Path, root: &Path) {
+    let payload = serde_json::json!({ "path": root.to_string_lossy() });
+    if std::fs::create_dir_all(derived_root).is_ok() {
+        if let Err(error) = crate::storage::files::write_atomically(
+            &owner_path_file(derived_root),
+            payload.to_string().as_bytes(),
+        ) {
+            log::warn!(
+                "cannot record {} as the folder of {}: {error:#}",
+                root.display(),
+                derived_root.display()
+            );
+        }
+    }
+}
+
 /// The identity when it can be known without waiting.
 fn known_space_id(folder: &Path) -> Option<String> {
     match space_identity(folder) {
@@ -463,7 +613,7 @@ pub fn derived_owners(vaults_dir: &Path, path: &str) -> Vec<String> {
 /// The folder a derived store last served and when, in milliseconds since
 /// the epoch.
 fn owner_path(store: &Path) -> Option<(String, u64)> {
-    let file = store.join("owner-path.json");
+    let file = owner_path_file(store);
     let path = std::fs::read_to_string(&file)
         .ok()
         .and_then(|text| serde_json::from_str::<Value>(&text).ok())
@@ -534,6 +684,31 @@ pub enum AddedSpace {
     },
 }
 
+/// The folder at the path of `records[at]` now carries another identity, so
+/// the path is no longer that record's space's (Д2.3). The record follows its
+/// space to the folder beside the path it was renamed to (П30), along with
+/// the current binding that named the path; a path stands for one space only,
+/// so another record at the folder found goes. A space found nowhere leaves
+/// the list: the list, Forget and Reorder all go by path, and a second record
+/// at the path would show the space now there as unavailable. Its derived
+/// store stays, and adding its folder again lists it with its index.
+fn follow_displaced(cfg: &mut Map<String, Value>, records: &mut Vec<SpaceRecord>, at: usize) {
+    let displaced = records.remove(at);
+    let Some(found) = find_moved(&displaced) else {
+        log::info!(
+            "{} now holds another space; the space listed there was not found beside it",
+            displaced.path
+        );
+        return;
+    };
+    if current_path(cfg).is_some_and(|current| same_path(&current, &displaced.path)) {
+        cfg.insert(VAULT_PATH_KEY.into(), Value::from(found.clone()));
+    }
+    records.retain(|record| !same_path(&record.path, &found));
+    let at = at.min(records.len());
+    records.insert(at, SpaceRecord { path: found, ..displaced });
+}
+
 /// What stands at the path a record last saw its space at.
 enum OldPlace {
     /// No folder, or a folder that is another space or none at all.
@@ -560,7 +735,9 @@ fn old_place(path: &str, id: &str) -> OldPlace {
 /// clipper's folder choice). A space the person forgot and adds again is no
 /// longer forgotten.
 ///
-/// The identity decides, the path is only an address (П26). A folder whose
+/// The identity decides, the path is only an address (П26). A listed path
+/// whose folder now carries another identity is that other space's: the
+/// record that named the path follows its own space (Д2.3). A folder whose
 /// identity a record already carries at another path is that space moved
 /// there, when nothing at the old path is that space any more: the record
 /// follows it, along with the current binding that pointed at the old path
@@ -579,8 +756,27 @@ pub fn add_space(cfg: &mut Map<String, Value>, vault_id: Option<&str>, path: &st
         last_opened_ms: None,
     };
     if records.iter().any(|record| same_path(&record.path, path)) {
-        write_records(cfg, &records);
-        return AddedSpace::AlreadyListed;
+        let Some(id) = vault_id else {
+            write_records(cfg, &records);
+            return AddedSpace::AlreadyListed;
+        };
+        let mut displaced = false;
+        while let Some(at) = records.iter().position(|record| {
+            same_path(&record.path, path) && record.vault_id.as_deref().is_some_and(|listed| listed != id)
+        }) {
+            follow_displaced(cfg, &mut records, at);
+            displaced = true;
+        }
+        let listed_here = records
+            .iter()
+            .any(|record| same_path(&record.path, path) && record.vault_id.as_deref() == Some(id));
+        if !displaced || listed_here {
+            write_records(cfg, &records);
+            return AddedSpace::AlreadyListed;
+        }
+        // A record without an identity at the path stood for the folder
+        // there, which is the space added now: it gets that space's record.
+        records.retain(|record| !same_path(&record.path, path));
     }
     let Some(id) = vault_id else {
         records.push(unidentified(path));
@@ -639,7 +835,7 @@ pub fn add_space(cfg: &mut Map<String, Value>, vault_id: Option<&str>, path: &st
 
 /// Why a copy could not be given an identity of its own.
 #[derive(Debug, thiserror::Error)]
-enum MintIdentityError {
+pub enum MintIdentityError {
     #[error("no randomness for a new identity: {0}")]
     Random(getrandom::Error),
     #[error("cannot write {path}: {source:#}")]
@@ -650,8 +846,13 @@ enum MintIdentityError {
 }
 
 /// Give the copy at `folder` an identity of its own (П22): what the app
-/// does to a copy when it opens one, done here when the copy is listed.
-fn mint_copy_identity(folder: &Path) -> Result<String, MintIdentityError> {
+/// does to a copy when it opens one, done when the copy is listed or when
+/// the clipper's helper first reaches it.
+///
+/// # Errors
+///
+/// [`MintIdentityError`] when no new identity can be made or written.
+pub fn mint_copy_identity(folder: &Path) -> Result<String, MintIdentityError> {
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).map_err(MintIdentityError::Random)?;
     // A random (version 4) UUID, written as the 32 hex digits every space
@@ -1382,6 +1583,137 @@ mod tests {
         assert_eq!(read_space_id(Path::new(&original)).as_deref(), Some(MINE));
         assert!(statuses(&cfg).iter().all(|status| status.available));
         assert_eq!(current_path(&cfg), Some(original));
+    }
+
+    /// Д2.1: a folder without an identity, one whose identity is in iCloud and
+    /// one whose identity cannot be read are three different answers.
+    #[test]
+    fn an_identity_that_cannot_be_read_is_never_taken_for_none() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let mine = space(dir.path(), "Mine", MINE);
+        assert_eq!(read_identity(Path::new(&mine), CloudRead::NoWait), Ok(Some(MINE.into())));
+        let plain = dir.path().join("Plain");
+        std::fs::create_dir(&plain).unwrap();
+        assert_eq!(read_identity(&plain, CloudRead::NoWait), Ok(None));
+
+        let nsfv = space_in_cloud(dir.path(), "NSFV");
+        let file = Path::new(&nsfv).join(".mine/vault-id");
+        assert_eq!(
+            read_identity(Path::new(&nsfv), CloudRead::NoWait),
+            Err(IdentityUnreadable::InCloud { path: file.clone() })
+        );
+
+        let locked = Path::new(&mine).join(".mine/vault-id");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let unreadable = read_identity(Path::new(&mine), CloudRead::Wait);
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(
+            matches!(&unreadable, Err(IdentityUnreadable::Unreadable { path, .. }) if *path == locked),
+            "{unreadable:?}"
+        );
+    }
+
+    /// П22: one rule for the app and the clipper's helper. A store that last
+    /// served this folder owns it; the same space alive where the store last
+    /// served it makes the folder a copy; a folder there whose identity
+    /// cannot be read leaves it undecided (Д2.1), never a move.
+    #[test]
+    fn the_copy_rule_tells_the_space_its_move_and_its_copy_apart() {
+        let dir = tempfile::tempdir().unwrap();
+        let app_data = dir.path().join("app");
+        let store = vaults_dir(&app_data).join(MINE);
+        let original = space(dir.path(), "Mine", MINE);
+        let copy = space(dir.path(), "Mine copy", MINE);
+        let claim = |folder: &str| identity_claim(Path::new(folder), &store, MINE, CloudRead::NoWait);
+
+        assert_eq!(claim(&copy), IdentityClaim::Owned, "no folder recorded yet");
+        record_owner_path(&store, Path::new(&original));
+        assert_eq!(claim(&original), IdentityClaim::Owned);
+        assert_eq!(claim(&copy), IdentityClaim::Copy { owner: PathBuf::from(&original) });
+
+        std::fs::remove_dir_all(&original).unwrap();
+        assert_eq!(claim(&copy), IdentityClaim::Adopted, "the original moved away");
+
+        let in_cloud = space_in_cloud(dir.path(), "Mine");
+        record_owner_path(&store, Path::new(&in_cloud));
+        assert_eq!(
+            claim(&copy),
+            IdentityClaim::Undecided {
+                owner: PathBuf::from(&in_cloud),
+                cause: IdentityUnreadable::InCloud {
+                    path: Path::new(&in_cloud).join(".mine/vault-id"),
+                },
+            }
+        );
+    }
+
+    /// Д2.3, П16: the space X was listed at P and renamed beside it; P now
+    /// holds the space Y. Adding P lists Y there, available, and X's record
+    /// follows X, along with the current binding that named P.
+    #[test]
+    fn adding_another_space_at_a_listed_path_lists_it_and_the_old_space_follows_its_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = space(dir.path(), "Mine", MINE);
+        let mut cfg = Map::new();
+        record_open(&mut cfg, MINE, &p, 1);
+        let renamed = dir.path().join("Mine old").to_string_lossy().into_owned();
+        std::fs::rename(&p, &renamed).unwrap();
+        space(dir.path(), "Mine", NSFV);
+
+        assert_eq!(add_space(&mut cfg, Some(NSFV), &p), AddedSpace::Listed);
+
+        assert_eq!(
+            records(&cfg),
+            vec![
+                SpaceRecord { vault_id: Some(MINE.into()), path: renamed.clone(), last_opened_ms: Some(1) },
+                SpaceRecord { vault_id: Some(NSFV.into()), path: p.clone(), last_opened_ms: None },
+            ]
+        );
+        assert!(statuses(&cfg).iter().all(|status| status.available));
+        assert_eq!(current_path(&cfg), Some(renamed));
+        assert_eq!(read_space_id(Path::new(&p)).as_deref(), Some(NSFV));
+    }
+
+    /// Д2.3: X is nowhere to be found. Its record no longer names P, which
+    /// holds Y: a path stands for one space only, and every listing, Forget
+    /// and Reorder go by path. Y's record moves from where Y was listed.
+    #[test]
+    fn adding_another_space_at_a_listed_path_takes_the_path_from_a_space_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = space(dir.path(), "Mine", MINE);
+        let q = space(dir.path(), "NSFV", NSFV);
+        let mut cfg = Map::new();
+        record_open(&mut cfg, NSFV, &q, 1);
+        record_open(&mut cfg, MINE, &p, 2);
+        std::fs::remove_dir_all(&p).unwrap();
+        std::fs::rename(&q, &p).unwrap();
+
+        assert_eq!(add_space(&mut cfg, Some(NSFV), &p), AddedSpace::Moved { from: q });
+
+        assert_eq!(
+            records(&cfg),
+            vec![SpaceRecord { vault_id: Some(NSFV.into()), path: p.clone(), last_opened_ms: Some(1) }]
+        );
+        let listed = statuses(&cfg);
+        assert!(listed.iter().all(|status| status.available), "{listed:?}");
+        assert!(!listed.iter().any(|status| status.record.vault_id.as_deref() == Some(MINE)));
+        assert_eq!(cfg["known_vaults"], json!([p.clone()]));
+        assert_eq!(locate(&cfg, Some(NSFV), &p), Located::Here { path: p });
+    }
+
+    /// Д2.3: the folder at a listed path is the listed space, or its identity
+    /// cannot be read now: nothing changes.
+    #[test]
+    fn adding_a_listed_path_that_holds_its_space_keeps_the_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = space(dir.path(), "Mine", MINE);
+        let mut cfg = Map::new();
+        record_open(&mut cfg, MINE, &p, 1);
+        let before = records(&cfg);
+        assert_eq!(add_space(&mut cfg, Some(MINE), &p), AddedSpace::AlreadyListed);
+        assert_eq!(add_space(&mut cfg, None, &p), AddedSpace::AlreadyListed);
+        assert_eq!(records(&cfg), before);
     }
 
     /// П22, П26: whether the folder is a copy cannot be told while the

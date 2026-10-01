@@ -110,7 +110,14 @@ export type CommandError = { kind: "no_vault" } |
  * break them or take the user's comments out. Nothing was written
  * (`SPEC_AUDIT_FIXES.md`, Ф1).
  */
-{ kind: "frontmatter_not_writable"; message: { path: string } } | { kind: "internal"; message: string }
+{ kind: "frontmatter_not_writable"; message: { path: string } } |
+/**
+ * The identity file of the space at `path` is there but cannot be read,
+ * even after waiting for iCloud. The space was not opened and nothing
+ * was written: a new identity over the old one would split the space in
+ * two (`SPEC_AUDIT_FIXES.md`, Д2.1).
+ */
+{ kind: "space_identity_unreadable"; message: { path: string } } | { kind: "internal"; message: string }
 
 /**
  * Commands supported by the JSON/WASM bridge, generated into TypeScript.
