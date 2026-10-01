@@ -220,12 +220,15 @@ pub fn run() {
         })
         .setup(|app| {
             updater::initialize(app.handle());
+            // The lock is keyed by the build's identifier: a side instance
+            // (`bun run dev:side`, identifier `com.mine.app.dev`) runs next to
+            // the installed app with its own lock and its own data directory.
             let instance_id = if commands::native_shell_smoke::enabled() {
-                "com.mine.app.native-shell-smoke"
+                "com.mine.app.native-shell-smoke".to_string()
             } else {
-                "com.mine.app"
+                app.config().identifier.clone()
             };
-            match crate::util::acquire_single_instance(instance_id)? {
+            match crate::util::acquire_single_instance(&instance_id)? {
                 crate::util::SingleInstanceAcquire::Primary(guard) => {
                     app.state::<AppState>().set_instance_guard(guard)?;
                     crate::util::reset_startup_trace(app.handle());

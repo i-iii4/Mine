@@ -393,6 +393,7 @@ local-arena/
 ```bash
 bun install                    # Установка JS-зависимостей
 cargo tauri dev                # Запуск в режиме разработки (Rust + Vite)
+bun run dev:side               # Режим разработки рядом с установленным Mine: идентификатор com.mine.app.dev, своя папка данных, без обслуживания клиппера и обновлений
 cargo tauri build              # Сборка .dmg/.app
 bun run build:local-app        # Локальная сборка .app с проверкой клиппера и подписью ad-hoc
 bun run install:local-app      # Установить собранный .app: прежняя копия в Корзину, сборка снята с регистрации macOS

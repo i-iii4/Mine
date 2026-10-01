@@ -1289,6 +1289,17 @@
       "requirement": "SPEC_CARD_STATES.md#С8.6. Быстрый пролёт не поднимает",
       "tests": ["src/lib/hoverIntent.test.ts", "src/components/Card.test.tsx", "src/components/Grid.test.tsx"],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src-tauri/tauri.dev-side.conf.json",
+        "src-tauri/src/lib.rs",
+        "src-tauri/src/commands/startup.rs",
+        "package.json"
+      ],
+      "requirement": "CLAUDE.md#bun run dev:side",
+      "tests": ["src-tauri/src/commands/startup.rs"],
+      "command": "test:rust"
     }
   ],
   "release": null

@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "dev:side": "cargo tauri dev --config src-tauri/tauri.dev-side.conf.json",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "test": "bun run test:frontend && bun run test:rust && bun run test:startup-packaging",

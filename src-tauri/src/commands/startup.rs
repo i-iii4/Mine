@@ -137,6 +137,13 @@ pub fn start_startup_maintenance(app: AppHandle) -> Result<bool, CommandError> {
     if MAINTENANCE_STARTED.swap(true, Ordering::AcqRel) {
         return Ok(false);
     }
+    // The clipper helper, its browser registration and updates belong to the
+    // installed app. A side instance under another identifier leaves them
+    // alone, or the two would swap the helper back and forth every few minutes.
+    if app.config().identifier != crate::app_config::APP_DATA_DIR_NAME {
+        append_startup_trace(&app, "startup_maintenance", "skipped side instance");
+        return Ok(false);
+    }
 
     append_startup_trace(&app, "startup_maintenance", "scheduled");
     // After the first interactive frame, like the rest of maintenance (Ф13).
