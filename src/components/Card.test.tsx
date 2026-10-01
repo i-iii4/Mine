@@ -2050,10 +2050,13 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д24)", () => {
     const { surface } = paintCard(make(), show, "edge", COLUMN);
     // Right under the frame's top border, across its whole inner width.
     expect(surface).toMatchObject({ top: FRAME_BORDER_PX, left: FRAME_BORDER_PX, width: INNER });
-    // No outline of its own: the frame's rounded clip gives the media the
-    // card's top corners and leaves its bottom corners square.
+    // The frame's rounded clip gives the media the card's top corners; the
+    // media rounds its own bottom corners with the same card radius where the
+    // text starts (01.10.2026). It is not the inset outline.
     expect(surface?.element.hasAttribute("data-card-inset-media")).toBe(false);
-    expect(surface?.element.className).not.toMatch(/rounded/);
+    const classes = surface?.element.className.split(/\s+/) ?? [];
+    expect(classes).toContain("rounded-b-[var(--radius-card)]");
+    expect(classes.some((name) => name.startsWith("rounded-[") || name.startsWith("rounded-t-"))).toBe(false);
     const inset = paintCard(make(), show, "inset", COLUMN).surface;
     expect(inset).toMatchObject({ top: FRAME_BORDER_PX + PADDING, left: FRAME_BORDER_PX + PADDING, width: INNER - PADDING * 2 });
     expect(inset?.element.hasAttribute("data-card-inset-media")).toBe(true);

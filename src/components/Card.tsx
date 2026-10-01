@@ -1147,7 +1147,7 @@ const SocialCard = memo(function SocialCard({
     return (
       <GraphicSurface
         insetMedia={insetMedia}
-        className="w-full"
+        className={cn("w-full", !insetMedia && "rounded-b-[var(--radius-card)]")}
         style={{ aspectRatio: `${aspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
         data-card-preview-geometry={aspectRatio === null ? "pending" : undefined}
       >
@@ -1191,7 +1191,7 @@ const SocialCard = memo(function SocialCard({
     // surface, the seams between tiles stay straight (Д21).
     <GraphicSurface
       insetMedia={insetMedia}
-      className="w-full"
+      className={cn("w-full", !insetMedia && "rounded-b-[var(--radius-card)]")}
       style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
     >
       <CloudBadge active={block.content_in_cloud} />
@@ -1328,9 +1328,11 @@ function PostMediaSurface({
     // Exact aspect-ratio from the preview artifact; the provisional envelope
     // while it is not made yet. Multi-image previews reserve a gallery slot;
     // single images use object-cover to avoid letterboxing in feed cards.
+    // Edge to edge: the frame rounds the media's top corners; its bottom
+    // corners take the same card radius where the text starts (SPEC_FEED_DISPLAY.md, Д20).
     <GraphicSurface
       insetMedia={fit === "inset"}
-      className={fit === "fill" ? "h-full w-full" : "w-full"}
+      className={cn(fit === "fill" ? "h-full w-full" : "w-full", fit === "edge" && "rounded-b-[var(--radius-card)]")}
       style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
       data-card-preview-geometry={descriptor.primaryAspectRatio === null ? "pending" : undefined}
     >
