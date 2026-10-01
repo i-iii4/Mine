@@ -38,7 +38,10 @@ import { groupByRecency } from "@/lib/recencyBuckets";
 import { deriveSearchResultRow } from "@/lib/searchResultRow";
 import { renderSearchHighlightedText } from "@/lib/searchHighlight";
 import { SEARCH_INPUT_SUPPRESSION_PROPS } from "@/lib/searchInputSuppression";
-import { CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX } from "@/lib/cardTypography";
+import {
+  CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX,
+  CONTENT_CARD_TITLE_CLASSES,
+} from "@/lib/cardTypography";
 import { cn } from "@/lib/utils";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { TopFadeScrim } from "./TopFadeScrim";
@@ -60,7 +63,12 @@ const SEARCH_OVERLAY_DEBOUNCE_MS = 100;
 /** One typed character is too noisy for vault-wide body/hybrid search. */
 export const SEARCH_OVERLAY_MIN_QUERY_CHARS = 2;
 
-const snippetLineHeightStyle = {
+/**
+ * One line box for both lines of a result row. The title has the size and
+ * weight of the snippet and differs from it by color alone, so both lines sit
+ * on the card preview line, and a two-line row is two such lines tall.
+ */
+const resultRowLineHeightStyle = {
   lineHeight: `${CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX}px`,
 } as const;
 
@@ -476,13 +484,16 @@ export function SearchOverlay({
         />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-base font-semibold text-foreground">
+        <p
+          className={cn("truncate", CONTENT_CARD_TITLE_CLASSES)}
+          style={resultRowLineHeightStyle}
+        >
           {renderSearchHighlightedText(row.title, row.titleMatch)}
         </p>
         {row.snippet && (
           <p
             className="mt-0.5 line-clamp-1 text-sm text-muted-foreground"
-            style={snippetLineHeightStyle}
+            style={resultRowLineHeightStyle}
           >
             {renderSearchHighlightedText(row.snippet, row.snippetMatch)}
           </p>

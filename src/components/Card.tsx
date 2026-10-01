@@ -18,7 +18,7 @@ import {
 import { FeedMediaContext, FeedShowContext, type FeedMedia } from "@/lib/feedDisplay";
 import { PROVISIONAL_MEDIA_ASPECT } from "@/lib/cardAspect";
 import { normalizeFeedPlayback } from "@/lib/feedPlayback";
-import { CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX } from "@/lib/cardTypography";
+import { CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX, CONTENT_CARD_TITLE_CLASSES } from "@/lib/cardTypography";
 import { CARD_HOVER_ACTION_MIN_HEIGHT, computeCardHeight } from "@/lib/cardHeight";
 import { buildFeedVideoPosterCandidates } from "@/lib/feedVideoPoster";
 import { getDisplayTitle, getNavigationLabel } from "@/lib/displayTitle";
@@ -389,7 +389,7 @@ export function ReadOnlyCardPreview({
             <div className={cn(!isPureTextPreview && "mt-3")}>
               {title && (
                 <p
-                  className="line-clamp-2 text-sm font-semibold text-foreground"
+                  className={cn("line-clamp-2", CONTENT_CARD_TITLE_CLASSES)}
                   style={contentCardSingleLineTextStyle}
                 >
                   {matchRow ? renderSearchHighlightedText(title, matchRow.titleMatch) : title}
@@ -1035,7 +1035,7 @@ const LinkCard = memo(function LinkCard({
   if (thumbError) {
     return (
       <div className="p-3">
-        <p className="truncate text-sm font-semibold text-foreground" style={contentCardSingleLineTextStyle}>
+        <p className={cn("truncate", CONTENT_CARD_TITLE_CLASSES)} style={contentCardSingleLineTextStyle}>
           {navigationLabel}
         </p>
         {domain && (
@@ -1080,7 +1080,7 @@ const LinkCard = memo(function LinkCard({
         )}
       </GraphicSurface>
       <div className="p-3">
-        <p className="truncate text-sm font-semibold text-foreground" style={contentCardSingleLineTextStyle}>
+        <p className={cn("truncate", CONTENT_CARD_TITLE_CLASSES)} style={contentCardSingleLineTextStyle}>
           {navigationLabel}
         </p>
         {domain && (
@@ -1436,7 +1436,7 @@ const ArticleCard = memo(function ArticleCard({
       textStack={hasTextStack ? (
         <>
           <p
-            className="line-clamp-2 text-sm font-semibold text-foreground"
+            className={cn("line-clamp-2", CONTENT_CARD_TITLE_CLASSES)}
             style={contentCardSingleLineTextStyle}
           >
             {displayTitle ? renderSearchHighlightedText(displayTitle, titleSearchMatch) : null}
@@ -1549,7 +1549,7 @@ const FileCard = memo(function FileCard({ block }: { block: LightBlock }) {
         {ext ?? "FILE"}
       </div>
       <div className="min-w-0">
-        <p className="truncate text-sm font-semibold text-foreground" style={contentCardSingleLineTextStyle}>
+        <p className={cn("truncate", CONTENT_CARD_TITLE_CLASSES)} style={contentCardSingleLineTextStyle}>
           {navigationLabel}
         </p>
         {block.media_file && (

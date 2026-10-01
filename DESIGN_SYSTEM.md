@@ -324,7 +324,9 @@ typography must stay inside the 12/14/18px design-system scale.
 | Вес | Утилита | Где |
 |---|---|---|
 | 400 | по умолчанию | Основной текст |
-| 600 | `font-semibold` | Заголовки, активный элемент сайдбара, кнопки, метки |
+| 600 | `font-semibold` | Заголовки разделов и статей, активный элемент сайдбара, кнопки, метки |
+
+Заголовок карточки в ленте, во всех превью карточки и в строке поиска имеет вес 400 и тот же размер, что текст под ним (`text-sm`): от текста он отличается только цветом, `text-foreground` против `text-muted-foreground` (решение пользователя 01.10.2026; общий класс `CONTENT_CARD_TITLE_CLASSES` в `src/lib/cardTypography.ts`). Высота строки заголовка карточки 16 px.
 
 Базовый UI использует 400/600. `font-bold` (700) и прочие веса не
 используются.
@@ -1291,8 +1293,8 @@ normal card interaction contract.
   стандартный `MicroPreviewThumbnail` в слоте `size-8 shrink-0 overflow-hidden
   bg-component-fill` (тот же паттерн, что related-notes reference row;
   text-миниатюры получают `dark:invert`). Текстовая колонка: заголовок
-  `text-base font-semibold truncate`; сниппет `text-sm text-muted-foreground
-  line-clamp-2` (line-height 20px). Активная строка `bg-active`; один источник
+  `text-sm text-foreground truncate`, вес 400; сниппет `text-sm
+  text-muted-foreground line-clamp-1`; у обоих line-height 20px. Активная строка `bg-active`; один источник
   active state (стрелки + реальный pointermove), фокус всегда в инпуте
   (`aria-activedescendant`).
 - Подсветка — системный search mark (жёлтый текстовыделитель, см. «Search match

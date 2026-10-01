@@ -2099,3 +2099,79 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д24)", () => {
   });
 });
 
+describe("Card titles differ from their text by color alone (01.10.2026)", () => {
+  /// Any utility that sets a weight; a title carries none and paints at the
+  /// regular body weight its font metrics are measured with.
+  const WEIGHT_UTILITY = /(?:^|\s)font-(?:thin|extralight|light|normal|medium|semibold|bold|extrabold|black)(?:\s|$)/;
+
+  const expectBodySizedTitle = (title: HTMLElement) => {
+    expect(title).toHaveClass("text-sm", "text-foreground");
+    expect(title.className).not.toMatch(WEIGHT_UTILITY);
+    expect(title).not.toHaveClass("text-base");
+    expect(title).not.toHaveClass("text-lg");
+  };
+
+  const article = block({
+    block_type: "article", card_kind: "article", title: "Article title",
+    body: "Article text under the title.", preview_text: "Article text under the title.", url: null,
+  });
+  const pictureLink = block({
+    block_type: "link", title: "Linked page", url: "https://example.com/page",
+    preview_manifest: JSON.stringify({
+      kind: "image", primary_preview_path: "page.jpg", width: 1200, height: 630,
+      preview_width: 600, preview_height: 315, tiles: [], overflow_count: 0,
+    }),
+  });
+  const bareLink = block({ block_type: "link", title: "Bare page", url: "https://bare.example.com" });
+  const file = block({ block_type: "file", title: "Quarterly report", media_file: "report.pdf", url: null });
+
+  it.each([
+    ["an article card", article, "Article title", false],
+    ["a link card with its page picture", pictureLink, "Linked page", true],
+    ["a link card without a picture", bareLink, "Bare page", false],
+    ["a file card", file, "Quarterly report", false],
+  ])("sets the title of %s in the card text size and weight", (_surface, value, title, hasPicture) => {
+    const { container } = render(<Card block={value} vaultPath={VAULT} onClick={vi.fn()} />);
+    // Each case reaches its own title branch: the picture link is not the
+    // compact one.
+    expect(container.querySelector("[data-card-graphic-surface]") !== null).toBe(hasPicture);
+    expectBodySizedTitle(screen.getByText(title));
+  });
+
+  it("sets a picture's name in Cards like any other title", () => {
+    const picture = block({
+      block_type: "image", title: null, url: null, media_file: "Media/Sunset.jpg",
+      fallback_label: "Sunset",
+      preview_manifest: JSON.stringify({
+        kind: "image", primary_preview_path: "test-block.jpg", width: 1280, height: 960,
+        preview_width: 640, preview_height: 480, tiles: [], overflow_count: 0,
+      }),
+    });
+    render(
+      <FeedShowContext.Provider value="cards">
+        <Card block={picture} vaultPath={VAULT} onClick={vi.fn()} />
+      </FeedShowContext.Provider>,
+    );
+    expectBodySizedTitle(screen.getByText("Sunset"));
+  });
+
+  it.each([
+    ["the hover preview", "full"],
+    ["the search preview", "micro"],
+  ] as const)("sets the title in %s exactly as in the feed", (_surface, previewMode) => {
+    render(
+      <ReadOnlyCardPreview
+        block={article}
+        vaultPath={VAULT}
+        thumbsRootPath="/tmp/thumbs"
+        previewMode={previewMode}
+      />,
+    );
+    expectBodySizedTitle(screen.getByText("Article title"));
+    // The text under it has the same size; brightness alone tells them apart.
+    const text = screen.getByText("Article text under the title.");
+    expect(text).toHaveClass("text-sm", "text-muted-foreground");
+    expect(text.className).not.toMatch(WEIGHT_UTILITY);
+  });
+});
+

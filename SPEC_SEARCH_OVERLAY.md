@@ -160,7 +160,7 @@ selection невозможен — модальность забирает кл�
     thumb по slug (пайплайн миниатюр гарантирует файл), text-миниатюры
     определяются по `preview_manifest.kind === "text"` и получают
     `dark:invert`; ошибка загрузки скрывает `img`, остаётся placeholder-слот;
-  - **заголовок**: `text-base font-semibold text-foreground truncate`
+  - **заголовок**: `text-sm text-foreground truncate`, вес 400, line-height 20px (с 01.10.2026; от сниппета отличается только цветом)
     (одна строка). Текст — display title блока (display_title → fallback
     label, существующие хелперы `getDisplayTitle`/`getFallbackLabel`). При
     `search_match.field === "title"` — подсветка диапазонов через

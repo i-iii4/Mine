@@ -364,6 +364,23 @@ describe("SearchOverlay", () => {
     expect(screen.getAllByRole("option")[0]!.querySelector("img")).not.toBeNull();
   });
 
+  it("sets the row title in the snippet's size and weight, told apart by color alone (01.10.2026)", async () => {
+    listGridBlocksMock.mockResolvedValue(snapshot([makeBlock(1, "alpha")]));
+    renderOverlay({ query: "alpha" });
+
+    const option = await screen.findByRole("option");
+    const title = within(option).getByText("Title alpha");
+    const snippet = within(option).getByText("Preview alpha");
+
+    expect(title).toHaveClass("truncate", "text-sm", "text-foreground");
+    expect(title).not.toHaveClass("text-base");
+    expect(title.className).not.toMatch(/(?:^|\s)font-(?:medium|semibold|bold)(?:\s|$)/);
+    expect(snippet).toHaveClass("text-sm", "text-muted-foreground");
+    // Both lines sit on the same 20px line, so a two-line row keeps its height.
+    expect(title.style.lineHeight).toBe("20px");
+    expect(snippet.style.lineHeight).toBe("20px");
+  });
+
   it("adds a plus to the displayed-result count when more search rows exist", async () => {
     listGridBlocksMock.mockResolvedValue(
       snapshot([makeBlock(1, "alpha"), makeBlock(2, "beta")], 508, true),

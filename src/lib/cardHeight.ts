@@ -116,8 +116,9 @@ const SOCIAL_GAP_BEFORE_AUTHOR = 8;
 // ─── Article card constants (must match Card.tsx ArticleCard template) ─────
 
 /**
- * Line height of the title paragraph. text-sm in our theme has 16px line
- * height — font-semibold doesn't change that.
+ * Line height of the title paragraph: text-sm in our theme has a 16px line
+ * height. The title has the preview's size and regular weight and differs
+ * from it by color alone; its line box stays 16px.
  */
 const ARTICLE_TITLE_LINE_HEIGHT = 16;
 

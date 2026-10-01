@@ -19,17 +19,28 @@ import type {
 } from "@/types/fontMetrics";
 import { FONT_METRICS_PREVIEW_MAX_CHARS } from "@/types/fontMetrics";
 import { computeWordWidths } from "@/lib/wordWidths";
+import { CONTENT_CARD_TITLE_FONT_WEIGHT } from "@/lib/cardTypography";
+import { getStoredInterfaceFont } from "@/lib/fontChoice";
+
+/** FNV-1a: a short, stable fingerprint of a string for cache identities. */
+function hashString(input: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
 
 // ─── Configuration ──────────────────────────────────────────────────────────
-
-import { getStoredInterfaceFont } from "@/lib/fontChoice";
 
 /**
  * The interface font also renders the cards, so measurement follows the
  * stored choice. Resolved once at module load: switching fonts reloads the
  * main window (see App.tsx), which re-derives these constants.
  *
- * Title: text-sm font-semibold → 12px / 600 weight
+ * Title: text-sm, regular → 12px / CONTENT_CARD_TITLE_FONT_WEIGHT (400); the
+ *   title differs from the preview by color alone.
  * Preview: text-sm → 12px / 400 weight
  */
 const INTERFACE_FONT = getStoredInterfaceFont();
@@ -37,18 +48,36 @@ const FONT_URL = INTERFACE_FONT === "departure"
   ? "/fonts/DepartureMono-Regular.woff2"
   : "/fonts/Geist-Variable.woff2";
 const FONT_FAMILY = INTERFACE_FONT === "departure" ? "Departure Mono" : "Geist";
-const TITLE_FONT_SPEC = `600 12px '${FONT_FAMILY}', system-ui, sans-serif`;
+const TITLE_FONT_SPEC = `${CONTENT_CARD_TITLE_FONT_WEIGHT} 12px '${FONT_FAMILY}', system-ui, sans-serif`;
 const PREVIEW_FONT_SPEC = `400 12px '${FONT_FAMILY}', system-ui, sans-serif`;
 
 /**
- * Font hash keyed by the interface font. Bumped manually when the font file,
- * size, or spec changes in a way that affects measureText output. All cached
- * entries with a different hash are treated as stale and re-computed.
+ * Version of what the font specs do not show: the font file itself and the
+ * measured text model. Bumped manually when either changes.
  */
-const FONT_HASH: FontHash = `descriptor-preview-v2-${INTERFACE_FONT}`;
+const FONT_HASH_VERSION = "descriptor-preview-v3";
+
+/**
+ * Font hash: the identity of everything that shapes measureText output.
+ * Both measured font specs (weight, size, family) are part of it, so a change
+ * in how titles or previews are measured can never reuse widths measured the
+ * old way: a title measured semibold never sizes a title painted regular. All
+ * cached entries with a different hash are treated as stale and re-computed.
+ */
+export function deriveFontMetricsHash(
+  titleFontSpec: string,
+  previewFontSpec: string,
+): FontHash {
+  return `${FONT_HASH_VERSION}-${hashString(`${titleFontSpec}\u0000${previewFontSpec}`)}`;
+}
+
+const FONT_HASH: FontHash = deriveFontMetricsHash(TITLE_FONT_SPEC, PREVIEW_FONT_SPEC);
 
 const DB_NAME = "mine-font-metrics";
-const DB_VERSION = 2;
+// v3: drops the store of widths measured with the semibold title font. The
+// new font hash already keeps them from being read; the upgrade also frees
+// the space they hold.
+const DB_VERSION = 3;
 const STORE_NAME = "wordWidths";
 // v3: CJK text is measured per character with no spaces between them.
 const CACHE_KEY_VERSION = "v3";
@@ -246,15 +275,6 @@ async function ensureFontLoaded(): Promise<void> {
 }
 
 // ─── IndexedDB cache ────────────────────────────────────────────────────────
-
-function hashString(input: string): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < input.length; i += 1) {
-    hash ^= input.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(16).padStart(8, "0");
-}
 
 /**
  * Build the cache identity for one block's font metrics.

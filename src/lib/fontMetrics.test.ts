@@ -3,11 +3,12 @@ import type { LightBlock } from "@/types";
 import { FONT_METRICS_PREVIEW_MAX_CHARS } from "@/types/fontMetrics";
 import {
   createFontMetricsCacheIdentity,
+  deriveFontMetricsHash,
   FIRST_MEASURED_BLOCKS,
   getFontHash,
   measureTopFirst,
 } from "./fontMetrics";
-import type { WordWidths } from "@/types/fontMetrics";
+import type { WordWidths, WorkerInMessage, WorkerOutMessage } from "@/types/fontMetrics";
 
 function makeBlock(overrides: Partial<LightBlock> = {}): LightBlock {
   return {
@@ -195,6 +196,141 @@ describe("a font-metrics worker that never answers (А8.1)", () => {
     } finally {
       restoreGlobals();
     }
+  });
+});
+
+describe("card titles are measured with the weight they are painted with (01.10.2026)", () => {
+  /// A card title differs from its text by color alone: regular weight.
+  const REGULAR_WEIGHT = 400;
+  const REGULAR_SPEC = "400 12px 'Geist', system-ui, sans-serif";
+  const SEMIBOLD_SPEC = "600 12px 'Geist', system-ui, sans-serif";
+  /// The identity every width measured with the semibold title font was
+  /// stored under. Semibold words are wider than regular ones: such a width
+  /// must never size a regular title.
+  const SEMIBOLD_TITLE_FONT_HASH = "descriptor-preview-v2-geist";
+
+  const weightOf = (fontSpec: string) => Number(fontSpec.split(" ")[0]);
+  const emptyWidths: WordWidths = {
+    title: [],
+    preview: [],
+    titleSpace: 0,
+    previewSpace: 0,
+    titleNoSpaceBefore: [],
+    previewNoSpaceBefore: [],
+  };
+
+  function stubFontFetch() {
+    vi.stubGlobal("OffscreenCanvas", class {});
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) })));
+  }
+
+  function restoreGlobals() {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  }
+
+  it("sends the worker the regular title font and a cache hash that names it", async () => {
+    vi.resetModules();
+    type Listener = (event: { data: WorkerOutMessage }) => void;
+    const computeMessages: Array<Extract<WorkerInMessage, { type: "compute" }>> = [];
+    class AnsweringWorker {
+      private listeners: Listener[] = [];
+      addEventListener(type: string, listener: Listener) {
+        if (type === "message") this.listeners.push(listener);
+      }
+      removeEventListener(type: string, listener: Listener) {
+        this.listeners = this.listeners.filter((candidate) => candidate !== listener);
+      }
+      postMessage(message: WorkerInMessage) {
+        const reply = (data: WorkerOutMessage) => queueMicrotask(() => {
+          for (const listener of [...this.listeners]) listener({ data });
+        });
+        if (message.type === "init") {
+          reply({ type: "ready", requestId: message.requestId });
+          return;
+        }
+        computeMessages.push(message);
+        reply({
+          type: "result",
+          requestId: message.requestId,
+          results: message.blocks.map((input) => ({ id: input.id, widths: emptyWidths })),
+          fontHash: message.fontHash,
+        });
+      }
+      terminate() {}
+    }
+    vi.stubGlobal("Worker", AnsweringWorker);
+    stubFontFetch();
+    try {
+      const fresh = await import("./fontMetrics");
+      await fresh.fetchWordWidths([makeBlock({ id: 9, title: "Headline" })]);
+
+      expect(computeMessages).toHaveLength(1);
+      const compute = computeMessages[0]!;
+      expect(weightOf(compute.titleFontSpec)).toBe(REGULAR_WEIGHT);
+      expect(compute.titleFontSpec).toBe(compute.previewFontSpec);
+      expect(compute.fontHash).toBe(fresh.getFontHash());
+      expect(compute.fontHash).toBe(
+        fresh.deriveFontMetricsHash(compute.titleFontSpec, compute.previewFontSpec),
+      );
+    } finally {
+      restoreGlobals();
+    }
+  });
+
+  it("measures titles on the page with the regular weight, like the text under them", async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+    vi.stubGlobal("Worker", class {
+      addEventListener() {}
+      postMessage() {}
+      terminate() {}
+    });
+    stubFontFetch();
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fontByWord = new Map<string, string>();
+    const recordingContext = {
+      font: "",
+      measureText(text: string) {
+        fontByWord.set(text, this.font);
+        return { width: text.length * 7.5 };
+      },
+    };
+    const getContext = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, "getContext");
+    Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
+      configurable: true,
+      value: () => recordingContext,
+    });
+    try {
+      const { fetchWordWidths, WORKER_INIT_TIMEOUT_MS } = await import("./fontMetrics");
+      const measuring = fetchWordWidths([
+        makeBlock({ id: 7, title: "Headline", body: "paragraph", preview_text: "paragraph" }),
+      ]);
+      await vi.advanceTimersByTimeAsync(WORKER_INIT_TIMEOUT_MS + 1);
+      expect((await measuring).get(7)?.title).toEqual([60]);
+
+      const titleFont = fontByWord.get("Headline");
+      expect(titleFont).toBeDefined();
+      expect(weightOf(titleFont ?? "")).toBe(REGULAR_WEIGHT);
+      expect(titleFont).toBe(fontByWord.get("paragraph"));
+    } finally {
+      if (getContext) {
+        Object.defineProperty(HTMLCanvasElement.prototype, "getContext", getContext);
+      }
+      restoreGlobals();
+    }
+  });
+
+  it("never reads back widths measured with the semibold title font", () => {
+    const identity = createFontMetricsCacheIdentity(makeBlock({ id: 42 }));
+
+    expect(identity.fontHash).not.toBe(SEMIBOLD_TITLE_FONT_HASH);
+    expect(identity.cacheKey).not.toContain(`:${SEMIBOLD_TITLE_FONT_HASH}:`);
+    // The hash names the measured weight: measuring titles semibold again
+    // would open a different cache, not hit a stale one.
+    expect(getFontHash()).toBe(deriveFontMetricsHash(REGULAR_SPEC, REGULAR_SPEC));
+    expect(deriveFontMetricsHash(SEMIBOLD_SPEC, REGULAR_SPEC)).not.toBe(getFontHash());
   });
 });
 

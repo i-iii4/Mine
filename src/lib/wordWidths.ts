@@ -36,12 +36,12 @@ export function computeWordWidths(
     : block.body;
   const preview = splitWords(previewText);
 
-  // Title measurement pass (semibold)
+  // Title measurement pass (title font spec)
   measurer.font = titleFontSpec;
   const titleWidths = measureWords(measurer, title.words);
   const titleSpace = measurer.measureText(" ").width;
 
-  // Preview measurement pass (regular)
+  // Preview measurement pass (preview font spec)
   measurer.font = previewFontSpec;
   const previewWidths = measureWords(measurer, preview.words);
   const previewSpace = measurer.measureText(" ").width;

@@ -3,7 +3,7 @@
 
 /**
  * Font identity — a string that changes whenever anything affecting
- * measureText output changes (font file, font size, line height).
+ * measureText output changes (font file, font size, font weight).
  * When the hash changes, all cached word widths are considered stale.
  */
 export type FontHash = string;
@@ -20,9 +20,9 @@ export const FONT_METRICS_PREVIEW_MAX_CHARS = 480;
  * These are pure font metrics — they don't depend on columnWidth.
  * Word-wrap at any columnWidth is a pure function of these widths.
  *
- * Title and preview are measured with different font weights (title is
- * semibold, preview is regular in our card template), so each has its own
- * space width to support word-wrap correctly.
+ * Title and preview are measured with their own font specs (in our card
+ * template both are regular text-sm; the title differs by color alone), so
+ * each keeps its own space width and word wrap reads the matching one.
  */
 export interface WordWidths {
   /** Pixel widths of each word in the block's title (measured with title font) */
@@ -99,7 +99,7 @@ export type WorkerInMessage =
       requestId: number;
       blocks: WorkerBlockInput[];
       fontHash: FontHash;
-      /** Font spec used to measure titles (e.g., "600 12px 'Geist', ..."). */
+      /** Font spec used to measure titles (e.g., "400 12px 'Geist', ..."). */
       titleFontSpec: string;
       /** Font spec used to measure preview (e.g., "400 12px 'Geist', ..."). */
       previewFontSpec: string;

@@ -1246,6 +1246,23 @@
       "requirement": "SPEC_FEED_DISPLAY.md#**Д19.**",
       "tests": ["src/lib/feedDisplay.test.ts", "src/components/FeedDisplayMenu.test.tsx", "src/lib/cardLayout.test.ts", "src/lib/cardHeight.test.ts", "src/components/Card.test.tsx", "src/lib/layoutGeneration.test.ts"],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/cardTypography.ts",
+        "src/components/Card.tsx",
+        "src/components/Card.test.tsx",
+        "src/components/SearchOverlay.tsx",
+        "src/components/SearchOverlay.test.tsx",
+        "src/lib/fontMetrics.ts",
+        "src/lib/fontMetrics.test.ts",
+        "src/types/fontMetrics.ts",
+        "src/lib/wordWidths.ts",
+        "src/lib/cardHeight.ts"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#CONTENT_CARD_TITLE_CLASSES",
+      "tests": ["src/components/Card.test.tsx", "src/components/SearchOverlay.test.tsx", "src/lib/fontMetrics.test.ts"],
+      "command": "test:frontend"
     }
   ],
   "release": null
