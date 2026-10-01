@@ -11,6 +11,10 @@
 // - `chosen`: the target the pointer has attended to, after a short dwell at
 //   slow speed. The collection links (pills, the lit feed, a row's button, the
 //   big preview) answer this one.
+// - `raised`: the card the pointer has arrived on, at once below a looser
+//   speed, and held while the pointer stays on it at any speed. A card lifts
+//   and shows its buttons for this one (С8.6), so a sweep across the feed
+//   lifts nothing.
 //
 // Pure: no React, no DOM. Time and timers come from a clock, so every rule is
 // testable to the millisecond.
@@ -27,6 +31,13 @@ export const HOVER_INTENT = {
    * Deliberate aiming ends well below it; crossing the feed runs at 1 to 3.
    */
   maxSpeed: 0.25,
+  /**
+   * С8.6: the fastest the pointer may move, in px/ms, and still arrive on a
+   * card for its lift. Looser than `maxSpeed`: a card is a large target, and
+   * the lift must answer the moment the hand settles. Crossing the feed at 1
+   * to 3 still lifts nothing.
+   */
+  liftMaxSpeed: 0.5,
   /** С7.2: the stretch of recent movement the speed is measured over. */
   velocityWindowMs: 60,
   /**
@@ -59,6 +70,7 @@ export type HoverIntentTiming = typeof HOVER_INTENT;
 export interface HoverIntentState {
   slow: string | null;
   chosen: string | null;
+  raised: string | null;
 }
 
 export interface HoverIntentClock {
@@ -114,6 +126,7 @@ export class HoverIntent {
   private idleSince: number | null = null;
   private slow: string | null = null;
   private lastEmittedChosen: string | null = null;
+  private raised: string | null = null;
 
   private timer: unknown = null;
 
@@ -128,7 +141,7 @@ export class HoverIntent {
   }
 
   get state(): HoverIntentState {
-    return { slow: this.slow, chosen: this.chosen };
+    return { slow: this.slow, chosen: this.chosen, raised: this.raised };
   }
 
   /** Whether the pointer is slow enough to be attending right now. */
@@ -227,7 +240,7 @@ export class HoverIntent {
   }
 
   private evaluate(now: number): void {
-    const { dwellMs, maxSpeed, velocityWindowMs } = this.timing;
+    const { dwellMs, maxSpeed, liftMaxSpeed, velocityWindowMs } = this.timing;
     // Keep only what the speed can still read.
     const horizon = now - velocityWindowMs;
     while (this.samples.length > 1 && this.samples[1]!.t <= horizon) this.samples.shift();
@@ -235,6 +248,13 @@ export class HoverIntent {
     const speed = this.speed(now);
     const attending = this.inside && !this.suspended && !this.needsMove && now >= this.quietUntil;
     const slow = attending && this.under !== null && speed <= maxSpeed ? this.under : null;
+
+    // С8.6: a card stays raised while the pointer is on it, however fast it
+    // moves there; another card takes the lift only at lifting speed.
+    const keepsRaised = attending && this.raised !== null && this.under === this.raised;
+    const raised = keepsRaised
+      ? this.raised
+      : attending && this.under !== null && speed <= liftMaxSpeed ? this.under : null;
 
     if (slow === null) {
       this.candidate = null;
@@ -264,10 +284,11 @@ export class HoverIntent {
       this.chosen = null;
     }
 
-    if (slow !== this.slow || this.chosen !== this.lastEmittedChosen) {
+    if (slow !== this.slow || this.chosen !== this.lastEmittedChosen || raised !== this.raised) {
       this.slow = slow;
+      this.raised = raised;
       this.lastEmittedChosen = this.chosen;
-      this.onChange({ slow: this.slow, chosen: this.chosen });
+      this.onChange({ slow: this.slow, chosen: this.chosen, raised: this.raised });
     }
     this.schedule(now, speed);
   }
@@ -291,10 +312,13 @@ export class HoverIntent {
     this.timer = null;
     const { dwellMs, velocityWindowMs } = this.timing;
     const moments: number[] = [];
-    // Speed decays as samples age out: a resting pointer becomes slow.
+    // Speed decays as samples age out: a resting pointer becomes slow. The
+    // reading changes each time the oldest sample in the window ages out, so
+    // a pointer settling on a card lifts it the moment it is slow enough.
     if (speed > 0) {
-      const newest = this.samples[this.samples.length - 1];
-      if (newest) moments.push(newest.t + velocityWindowMs);
+      const from = now - velocityWindowMs;
+      const oldest = this.samples.find((sample) => sample.t > from);
+      if (oldest) moments.push(oldest.t + velocityWindowMs);
     }
     if (this.candidate && this.chosen !== this.candidate.target) {
       moments.push(this.candidate.since + dwellMs);

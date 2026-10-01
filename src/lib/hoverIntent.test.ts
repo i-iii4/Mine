@@ -218,3 +218,62 @@ describe("hover intent (SPEC_CARD_STATES.md, С7)", () => {
     expect(HOVER_INTENT.fadeOutMs).toBeLessThan(HOVER_INTENT.fadeInMs);
   });
 });
+
+describe("card lift arrival (SPEC_CARD_STATES.md, С8.6)", () => {
+  const raisedHistory = (changes: HoverIntentState[]) =>
+    changes.map((state) => state.raised).filter((value, index, all) => index === 0 || value !== all[index - 1]);
+
+  it("lifts nothing while the pointer sweeps across cards", () => {
+    const { glide, changes } = setup();
+    glide("a", 2, 80);
+    glide("b", 2, 80);
+    glide("c", 1.2, 80);
+    expect(changes.some((state) => state.raised !== null)).toBe(false);
+  });
+
+  it("lifts the card at once when the pointer arrives at lifting speed, with no dwell", () => {
+    const { glide, intent } = setup();
+    glide("a", HOVER_INTENT.liftMaxSpeed * 0.8, 8);
+    expect(intent.state.raised).toBe("a");
+    expect(intent.state.chosen).toBeNull();
+  });
+
+  it("lifts the card a fast pointer stops on within the velocity window", () => {
+    const { glide, time, intent } = setup();
+    glide("a", 2, 80);
+    expect(intent.state.raised).toBeNull();
+    time.advance(HOVER_INTENT.velocityWindowMs);
+    expect(intent.state.raised).toBe("a");
+  });
+
+  it("keeps the card raised while the pointer moves fast on it", () => {
+    const { glide, arrive, intent } = setup();
+    arrive("a");
+    expect(intent.state.raised).toBe("a");
+    glide("a", 3, 80);
+    expect(intent.state.raised).toBe("a");
+  });
+
+  it("drops the lift the moment the pointer leaves the card", () => {
+    const { arrive, intent, changes } = setup();
+    arrive("a");
+    arrive(null);
+    expect(intent.state.raised).toBeNull();
+    arrive("b");
+    intent.leave();
+    expect(raisedHistory(changes)).toEqual(["a", null, "b", null]);
+  });
+
+  it("drops the lift on a scroll and while anything is dragged or a menu is open", () => {
+    const { arrive, intent, time } = setup();
+    arrive("a");
+    intent.displace();
+    expect(intent.state.raised).toBeNull();
+    time.advance(HOVER_INTENT.scrollSettleMs);
+    arrive("a");
+    expect(intent.state.raised).toBe("a");
+    intent.setSuspended(true);
+    expect(intent.state.raised).toBeNull();
+  });
+});
+

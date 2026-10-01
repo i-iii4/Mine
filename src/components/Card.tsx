@@ -72,6 +72,11 @@ interface CardProps {
   allowPlayback?: boolean;
   openMoreMenuRequestSequence?: number;
   hoverEnabled?: boolean;
+  /// Whether the pointer has arrived on this card: only then do its hover
+  /// buttons and lift answer `:hover`. The feed arms the card a settling
+  /// pointer reached, never one a sweep crosses (SPEC_CARD_STATES.md, С8.6);
+  /// outside the feed a card is always armed.
+  hoverArmed?: boolean;
   dragBlocks?: readonly LightBlock[];
   clearSelectionOnDragStart?: () => void;
   onKeyboardMoreMenuOpenChange?: (open: boolean) => void;
@@ -89,7 +94,7 @@ interface CardProps {
 }
 
 const CARD_FRAME_CLASS =
-  "group relative overflow-hidden border border-border rounded-[var(--radius-card)] bg-card";
+  "relative overflow-hidden border border-border rounded-[var(--radius-card)] bg-card";
 const PREVIEW_RETRY_DELAYS_MS = [250, 1000] as const;
 
 interface CardFrameProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -242,7 +247,7 @@ function cardLiftDepth(descriptor: CardLayoutDescriptor): "flush" | "padded" {
   }
 }
 
-export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumbVersion, priority, allowPlayback = true, openMoreMenuRequestSequence = 0, hoverEnabled = true, dragBlocks: dragBlocksProp, clearSelectionOnDragStart, onKeyboardMoreMenuOpenChange, onMenuOpenChange, onModifiedClick, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete }: CardProps) {
+export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumbVersion, priority, allowPlayback = true, openMoreMenuRequestSequence = 0, hoverEnabled = true, hoverArmed = true, dragBlocks: dragBlocksProp, clearSelectionOnDragStart, onKeyboardMoreMenuOpenChange, onMenuOpenChange, onModifiedClick, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete }: CardProps) {
   const dragBlocks = useMemo(() => {
     const candidateBlocks = dragBlocksProp && dragBlocksProp.length > 0
       ? dragBlocksProp
@@ -308,11 +313,14 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
       onKeyDown={handleKeyDown}
       // The lift follows the bottom action row exactly: pointer hover while
       // hover is enabled, or a pointer-opened menu holding the row (С8).
-      data-card-lift-hover={hasHoverMenu && hoverEnabled ? "" : undefined}
+      data-card-lift-hover={hasHoverMenu && hoverEnabled && hoverArmed ? "" : undefined}
       data-card-lift-pinned={hasHoverMenu && actionsPinned ? "" : undefined}
       data-card-lift-depth={cardLiftDepth(descriptor)}
       className={cn(
         "h-full",
+        // `group` scopes the hover buttons' `group-hover`: an unarmed card is
+        // no group, so a sweep shows no buttons on it.
+        hoverArmed && "group",
         isArticleFeedCard && "feed-article-card",
         isDragging && "opacity-30",
       )}
@@ -669,7 +677,7 @@ export function InteractiveCardPreview({
       data-card-lift-depth={cardLiftDepth(descriptor)}
       role={onClick ? "button" : undefined}
       tabIndex={onClick ? 0 : undefined}
-      className={cn("rounded-1 shadow-lg", !onClick && "cursor-default", className)}
+      className={cn("group rounded-1 shadow-lg", !onClick && "cursor-default", className)}
       style={{ width, borderRadius: "var(--radius-1)" }}
       onClick={() => onClick?.(block)}
       onKeyDown={(event) => {

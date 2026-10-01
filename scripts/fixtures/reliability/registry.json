@@ -1275,6 +1275,20 @@
       "requirement": "SPEC_CARD_STATES.md#С8. Подъём карточки при наведении",
       "tests": ["src/components/Card.test.tsx", "src/components/CardHoverMenu.test.tsx"],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/hoverIntent.ts",
+        "src/lib/hoverIntent.test.ts",
+        "src/lib/cardLift.ts",
+        "src/components/Grid.tsx",
+        "src/components/Card.tsx",
+        "src/components/Card.test.tsx",
+        "src/styles/global.css"
+      ],
+      "requirement": "SPEC_CARD_STATES.md#С8.6. Быстрый пролёт не поднимает",
+      "tests": ["src/lib/hoverIntent.test.ts", "src/components/Card.test.tsx", "src/components/Grid.test.tsx"],
+      "command": "test:frontend"
     }
   ],
   "release": null

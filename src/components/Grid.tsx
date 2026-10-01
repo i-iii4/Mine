@@ -82,6 +82,7 @@ import { useCommandOverrides } from "@/hooks/useCommandOverrides";
 import { setHoveredCard, setSelectedCards, useCardLitByCollection } from "@/lib/collectionHover";
 import { HOVER_INTENT } from "@/lib/hoverIntent";
 import { HoverIntentDragWatch, useHoverIntent } from "@/hooks/useHoverIntent";
+import { createCardLiftStore, useCardRaised, type CardLiftStore } from "@/lib/cardLift";
 import {
   blockCanRenderFromDeterministicHeight,
   blockSlugFromKeyboardTarget,
@@ -268,6 +269,8 @@ interface GridContext {
   actionMenuRequest: { slug: string; sequence: number } | null;
   selectionBatchMenuRequest: { slug: string; sequence: number } | null;
   hoverEnabled: boolean;
+  /** The card the pointer has arrived on, for its lift (SPEC_CARD_STATES.md, С8.6). */
+  cardLift: CardLiftStore;
   onGridItemPointerMove: (slug: string, event: ReactPointerEvent<HTMLDivElement>) => void;
   onKeyboardActionMenuOpenChange: (slug: string, open: boolean) => void;
   onCardMenuOpenChange?: (slug: string, open: boolean) => void;
@@ -547,7 +550,9 @@ export function Grid({
   const pointerCardAnswer = useCallback((chosen: string | null) => (
     chosen === null || !hoverCollectionPillsRef.current ? null : Number(chosen)
   ), []);
-  const cardIntent = useHoverIntent(({ chosen }) => {
+  const [cardLift] = useState(createCardLiftStore);
+  const cardIntent = useHoverIntent(({ chosen, raised }) => {
+    cardLift.set(raised);
     if (!pointerDrivesCardHoverRef.current) return;
     clearKeyboardAnswerTimer();
     setHoveredCard(pointerCardAnswer(chosen));
@@ -2193,6 +2198,7 @@ export function Grid({
       actionMenuRequest,
       selectionBatchMenuRequest,
       hoverEnabled: feedInteractionMode !== "keyboard" && selectedSlugs.size === 0,
+      cardLift,
       onGridItemPointerMove: handleGridItemPointerMove,
       onKeyboardActionMenuOpenChange: handleKeyboardActionMenuOpenChange,
       onCardMenuOpenChange: handleCardMenuOpenChange,
@@ -2222,6 +2228,7 @@ export function Grid({
       actionMenuRequest,
       selectionBatchMenuRequest,
       feedInteractionMode,
+      cardLift,
       handleGridItemPointerMove,
       handleKeyboardActionMenuOpenChange,
       handleCardMenuOpenChange,
@@ -2511,6 +2518,9 @@ const GridItem = memo(function GridItem({
   // deps are all stable during a pure scroll, so scrolling never re-renders Card.
   // A hovered sidebar row lights the cards of its collection (SPEC_CARD_STATES.md, С3).
   const litByCollection = useCardLitByCollection(block.id);
+  // Hover answers only on the card a settling pointer reached, so a sweep
+  // across the feed lifts nothing (SPEC_CARD_STATES.md, С8.6).
+  const hoverArmed = useCardRaised(context.cardLift, block.id);
 
   const dragBlocks = useMemo(
     () =>
@@ -2584,6 +2594,7 @@ const GridItem = memo(function GridItem({
             allowPlayback={allowPlayback}
             openMoreMenuRequestSequence={openMoreMenuRequestSequence}
             hoverEnabled={context.hoverEnabled && !isPinnedActionMenuAnchor}
+            hoverArmed={hoverArmed}
             dragBlocks={dragBlocks}
             clearSelectionOnDragStart={clearSelectionOnDragStart}
             onKeyboardMoreMenuOpenChange={handleKeyboardMoreMenuOpenChange}

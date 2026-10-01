@@ -222,13 +222,14 @@ select,
    the card's text rises by --card-lift and the row slides up from under the
    bottom edge in lockstep, fading in, so the buttons never cover the text. A
    media window rises with the text and keeps its corners; the picture plane
-   inside drifts back half the lift, so the picture moves up half as far and
-   its crop stays centred in the shrunken window. The frame clips everything;
+   inside drifts back all but --card-lift-drift, so the picture itself only
+   hints at the motion (8px). The frame clips everything;
    its outer box never moves. Raising runs 200ms, settling 150ms, on the
    project's ease-out; the row fades in and out over the С7.6 durations.
    Reduced motion lands at once through the global rule (Ф12). */
 [data-feed-card-frame] {
   --card-lift: 40px;
+  --card-lift-drift: 8px;
 }
 
 [data-feed-card-frame][data-card-lift-depth="flush"] {
@@ -265,7 +266,7 @@ select,
 
 [data-card-lift-hover]:hover [data-card-lift="plane"],
 [data-card-lift-pinned] [data-card-lift="plane"] {
-  transform: translateY(calc(var(--card-lift) / 2));
+  transform: translateY(calc(var(--card-lift) - var(--card-lift-drift)));
 }
 
 [data-card-lift-hover]:hover [data-card-lift="tray"],

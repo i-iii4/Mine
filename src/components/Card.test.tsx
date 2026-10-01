@@ -2350,6 +2350,19 @@ describe("Card lift on hover (SPEC_CARD_STATES.md, С8)", () => {
     expect(frameOf(container)).not.toHaveAttribute("data-card-lift-hover");
   });
 
+  it("answers hover only on a card the pointer has arrived on (С8.6)", () => {
+    const unarmed = render(
+      <Card block={block()} vaultPath={VAULT} onClick={vi.fn()} hoverArmed={false} {...menuProps} />,
+    );
+    expect(frameOf(unarmed.container)).not.toHaveAttribute("data-card-lift-hover");
+    expect(frameOf(unarmed.container)).not.toHaveClass("group");
+    unarmed.unmount();
+
+    const armed = render(<Card block={block()} vaultPath={VAULT} onClick={vi.fn()} {...menuProps} />);
+    expect(frameOf(armed.container)).toHaveAttribute("data-card-lift-hover");
+    expect(frameOf(armed.container)).toHaveClass("group");
+  });
+
   it("rises 8px further where media ends flush with the bottom edge", () => {
     const picture = render(
       <Card block={block({ block_type: "image", media_file: "photo.jpg" })} vaultPath={VAULT} onClick={vi.fn()} {...menuProps} />,
@@ -2374,14 +2387,15 @@ describe("Card lift on hover (SPEC_CARD_STATES.md, С8)", () => {
     expect(container.querySelector("[data-card-lift='tray']")).not.toBeNull();
   });
 
-  it("styles the lift in global.css: text and window up, plane back by half, row up from under the edge", () => {
+  it("styles the lift in global.css: text and window up, picture only hinting, row up from under the edge", () => {
     const css = readFileSync("src/styles/global.css", "utf8");
     const rules = css.split("}");
     const ruleFor = (selectorPart: string, declaration: string) =>
       rules.some((rule) => rule.includes(selectorPart) && rule.includes(declaration));
     expect(ruleFor('[data-card-lift-hover]:hover [data-card-lift="text"]', "translateY(calc(-1 * var(--card-lift)))")).toBe(true);
     expect(ruleFor('[data-card-lift-pinned] [data-card-lift="window"]', "translateY(calc(-1 * var(--card-lift)))")).toBe(true);
-    expect(ruleFor('[data-card-lift-hover]:hover [data-card-lift="plane"]', "translateY(calc(var(--card-lift) / 2))")).toBe(true);
+    expect(ruleFor('[data-card-lift-hover]:hover [data-card-lift="plane"]', "translateY(calc(var(--card-lift) - var(--card-lift-drift)))")).toBe(true);
+    expect(ruleFor("[data-feed-card-frame]", "--card-lift-drift: 8px")).toBe(true);
     expect(ruleFor('[data-card-lift="tray"]', "transform: translateY(var(--card-lift))")).toBe(true);
     expect(ruleFor('[data-feed-card-frame][data-card-lift-depth="flush"]', "--card-lift: 48px")).toBe(true);
   });

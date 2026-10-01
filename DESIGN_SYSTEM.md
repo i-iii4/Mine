@@ -1495,9 +1495,10 @@ Content: `rounded-1 border bg-card p-1 text-card-foreground`, тень — ед�
 **Появление:** `opacity-0 group-hover:opacity-100`, только
 когда текущий interaction owner — pointer. Нижний ряд не ложится поверх
 текста: карточка поднимает содержимое на 40 px (48 px, где медиа доходит до
-нижней кромки), а ряд выезжает следом из-под края, картинка смещается на
-половину подъёма (SPEC_CARD_STATES.md, С8; правила в `global.css`,
-`[data-card-lift]`). В Grid keyboard mode карточка
+нижней кромки), а ряд выезжает следом из-под края, картинка смещается на 8 px
+(SPEC_CARD_STATES.md, С8; правила в `global.css`, `[data-card-lift]`). Кнопки
+и подъём отвечают только на карточке, куда курсор пришёл не быстрее 0,5 px/мс:
+в ленте рамка становится `group` только у такой карточки (С8.6). В Grid keyboard mode карточка
 получает `hoverEnabled=false`: `group-hover:opacity-100` снимается с overlay,
 top `More` и bottom action row, но программное открытие `Cmd+K` всё равно
 может показать top `More`/overflow menu.
