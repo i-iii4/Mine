@@ -98,7 +98,7 @@ vi.hoisted(() => {
   (globalThis as Record<string, unknown>).chrome = { tabs: {} };
 });
 
-import { CLIPPER_RECONNECT_INTERVAL_MS, MINE_NOT_CONNECTED, useClipperState } from "./useClipperState";
+import { CLIPPER_RECONNECT_INTERVAL_MS, DESTINATION_CHANGED_DURING_SAVE, MINE_NOT_CONNECTED, useClipperState } from "./useClipperState";
 import * as messaging from "../lib/messaging";
 import * as draftApi from "../lib/draft";
 import * as photoLightbox from "../lib/twitterPhotoLightbox";
@@ -1357,7 +1357,7 @@ describe("screenshots in the editor (SPEC_AUDIT_FIXES.md, Б4.5, Б4.6)", () => 
     await act(async () => { await result.current.startCropMode(); });
 
     expect(sent.find((message) => message.action === "startCropMode"))
-      .toEqual({ target: "background", action: "startCropMode", tabId: 7, documentUrl: "https://example.com" });
+      .toEqual({ target: "background", action: "startCropMode", tabId: 7, documentUrl: "https://example.com", cropId: null });
     expect(result.current.state).toBe("main");
     expect(result.current.screenshotDataUrl).toBe(first);
     expect(result.current.captureError).toBe(refusal);
@@ -1434,6 +1434,86 @@ describe("a draft is never moved to another browser folder in silence (SPEC_AUDI
 
     await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
     expect(standalone.standaloneSave.mock.calls[0]![0]).toMatchObject({ binding_id: "browser-c", tags: null });
+  });
+});
+
+describe("Save while the folder is being checked (SPEC_AUDIT_FIXES.md, Г3.2)", () => {
+  const url = "https://example.com";
+  const folder = (name: string, bindingId: string) => ({ configured: true, folderName: name, permission: "granted", bindingId });
+  const sentTags = () => standalone.standaloneSave.mock.calls.map(([request]) => (request as { tags?: unknown }).tags);
+
+  beforeEach(() => {
+    sendToNative.mockResolvedValue({ ok: false, error: "No helper" });
+    standalone.standaloneSave.mockResolvedValue({ ok: true, outcome: "committed", slug: "Cards/Clip" });
+  });
+
+  it("a Save pressed while a restored draft of folder A is checked against B refuses with the notice; the next one saves to B without A's collections", async () => {
+    const draft = lifecycleDraft();
+    drafts.set(url, { ...draft, state: { ...draft.state, bindingId: "browser-a", folderLabel: "Folder A", selectedTags: ["Collection of A"] } });
+    const held: Array<() => void> = [];
+    let checks = 0;
+    standalone.getStandaloneStatus.mockImplementation(() => {
+      checks += 1;
+      // The clipper's own first check answers at once; the check the restored
+      // draft starts is still out when Save is pressed.
+      if (checks === 1) return Promise.resolve(folder("Folder B", "browser-b"));
+      return new Promise((resolve) => { held.push(() => resolve(folder("Folder B", "browser-b"))); });
+    });
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(held).toHaveLength(1));
+    await waitFor(() => expect(result.current.selectedTags).toEqual(["Collection of A"]));
+    const canSaveDuringCheck = result.current.canSave;
+
+    let saving: ReturnType<typeof result.current.save> = Promise.resolve(undefined);
+    act(() => { saving = result.current.save(); });
+    await act(async () => { held.forEach((finish) => finish()); });
+    let refused: Awaited<typeof saving>;
+    await act(async () => { refused = await saving; });
+
+    // Nothing of folder A reached folder B.
+    expect(sentTags()).not.toContainEqual(["Collection of A"]);
+    expect(standalone.standaloneSave).not.toHaveBeenCalled();
+    expect(refused!).toEqual({ ok: false, error: DESTINATION_CHANGED_DURING_SAVE });
+    expect(canSaveDuringCheck).toBe(false);
+    expect(result.current.state).toBe("main");
+    expect(result.current.destinationNotice).toBe("This draft was made for “Folder A”. It will be saved to “Folder B”.");
+    expect(result.current.selectedTags).toEqual([]);
+    expect(result.current.title).toBe("Old edited title");
+    expect(result.current.canSave).toBe(true);
+
+    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+    expect(standalone.standaloneSave).toHaveBeenCalledTimes(1);
+    expect(standalone.standaloneSave.mock.calls[0]![0]).toMatchObject({ binding_id: "browser-b", tags: null, title: "Old edited title" });
+  });
+
+  it("a check that comes during a save does not move it; the editor follows the folder once the save ends", async () => {
+    standalone.getStandaloneStatus.mockResolvedValue(folder("Folder B", "browser-b"));
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.saveMode).toBe("standalone"));
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    act(() => { result.current.setCurrentType("link"); result.current.toggleTag("Collection of B"); });
+    let finishSave: (response: unknown) => void = () => undefined;
+    standalone.standaloneSave.mockImplementationOnce(() => new Promise((resolve) => { finishSave = resolve; }));
+
+    let saving: ReturnType<typeof result.current.save> = Promise.resolve(undefined);
+    act(() => { saving = result.current.save(); });
+    await waitFor(() => expect(standalone.standaloneSave).toHaveBeenCalledTimes(1));
+    // Folder C is chosen in another window; the folder row asks again meanwhile.
+    standalone.getStandaloneStatus.mockResolvedValue(folder("Folder C", "browser-c"));
+    await act(async () => { await result.current.retryConnection(true); });
+    expect(result.current.standaloneFolder).toBe("Folder B");
+    expect(result.current.selectedTags).toEqual(["Collection of B"]);
+    expect(result.current.destinationNotice).toBeNull();
+
+    // Folder B refuses: it is no longer the selected one.
+    await act(async () => {
+      finishSave({ ok: false, outcome: "not_committed", terminal_rejected: true, error: "The selected folder changed before this save began" });
+      expect(await saving).toMatchObject({ ok: false, error: "The selected folder changed before this save began" });
+    });
+    expect(standalone.standaloneSave.mock.calls[0]![0]).toMatchObject({ binding_id: "browser-b", tags: ["Collection of B"] });
+    await waitFor(() => expect(result.current.standaloneFolder).toBe("Folder C"));
+    expect(result.current.selectedTags).toEqual([]);
+    expect(result.current.destinationNotice).toBe("This draft was made for “Folder B”. It will be saved to “Folder C”.");
   });
 });
 

@@ -299,8 +299,11 @@ pub fn set_collection_membership(
         (false, true) => tags.push(collection_ref.clone()),
         (true, false) => tags.retain(|t| t != &collection_ref),
     }
-    let new_content =
-        patch_collections_frontmatter(&content, &tags).map_err(MutationError::Internal)?;
+    // The writer reads its result back and refuses properties it would break
+    // or rewrite in another layout (SPEC_AUDIT_FIXES.md, Ф1, Г1.5).
+    let new_content = patch_collections_frontmatter(&content, &tags).map_err(|error| {
+        MutationError::Refused(format!("{slug}: {error}; nothing was written"))
+    })?;
     let verb = if connected { "connect" } else { "disconnect" };
     guarded_write(
         vault,
@@ -331,4 +334,52 @@ pub fn restore(vault: &VaultLayout, slug: &str) -> Result<MutationOutcome, Mutat
         summary: format!("restored {slug} from the CLI backup"),
         dry_run: false,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn space_with_card(source: &str) -> (tempfile::TempDir, VaultLayout) {
+        let dir = tempfile::tempdir().unwrap();
+        let vault =
+            VaultLayout::with_derived_root(dir.path().join("space"), dir.path().join("derived"));
+        std::fs::create_dir_all(vault.root()).unwrap();
+        std::fs::write(vault.block_path("Note"), source).unwrap();
+        (dir, vault)
+    }
+
+    /// Г1.5: `mine connect` on a card whose properties are a flow mapping
+    /// writes the membership inside the braces; the file stays valid YAML.
+    #[test]
+    fn connect_keeps_flow_mapping_properties_valid() {
+        let (_dir, vault) =
+            space_with_card("---\n{aliases: [A], saved_at: 2026-07-10}\n---\nBody\n");
+
+        assert!(set_collection_membership(&vault, "Note", "Design", true, false).is_ok());
+
+        let written = std::fs::read_to_string(vault.block_path("Note")).unwrap();
+        assert_eq!(
+            written,
+            "---\n{aliases: [A], saved_at: 2026-07-10, Mine Collections: [\"[[Design]]\"]}\n---\nBody\n"
+        );
+        let read =
+            parse_markdown_document("Note", &written, DateTime::new("2000-01-01").unwrap())
+                .unwrap();
+        assert_eq!(read.origin, "partial_frontmatter");
+        assert_eq!(read.block.frontmatter.tags, vec!["Design"]);
+    }
+
+    /// Г1.5: properties the writer would break are refused; the card stays
+    /// byte for byte.
+    #[test]
+    fn connect_refuses_properties_it_would_break() {
+        let source = "---\n  aliases: [A]\n  saved_at: 2026-07-10\n---\nBody\n";
+        let (_dir, vault) = space_with_card(source);
+
+        let refused = set_collection_membership(&vault, "Note", "Design", true, false);
+
+        assert!(matches!(refused, Err(MutationError::Refused(_))));
+        assert_eq!(std::fs::read_to_string(vault.block_path("Note")).unwrap(), source);
+    }
 }

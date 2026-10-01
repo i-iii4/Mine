@@ -75,64 +75,81 @@ pub fn inline_link_at(text: &str, start: usize) -> Option<InlineLink> {
     })
 }
 
-/// Every inline link and image outside code, in document order: fenced code
-/// blocks and code spans are code, and so are links written inside them.
-/// Wikilinks are not Markdown links and are passed over, and so is a `[` or
-/// `!` escaped with a backslash. This is what a rewrite may touch.
+/// Every inline link and image outside code, in document order of their
+/// starts (`SPEC_AUDIT_FIXES.md`, Г1.6, Г1.7). Code is what `CommonMark` and
+/// Obsidian read as code: fenced and indented code blocks and code spans
+/// (`code_block_ranges`). An image inside a link's text is found as well
+/// (`[![x](a.jpg)](https://…)`): it is a reference of its own. Wikilinks are
+/// not Markdown links and are passed over, and so is a `[` or `!` escaped
+/// with a backslash. This is what a rewrite may touch.
 #[must_use]
 pub fn inline_links_outside_code(text: &str) -> Vec<InlineLink> {
+    scan_outside_code(text).links
+}
+
+/// One wikilink, `[[target#heading|alias]]` or the embed `![[…]]`, located by
+/// byte offsets into the text it was read from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Wikilink {
+    /// Offset of the `!` of an embed or of the first `[`.
+    pub start: usize,
+    /// Offset just past the closing `]]`.
+    pub end: usize,
+    /// Whether this is an embed, `![[…]]`.
+    pub embed: bool,
+    /// What stands between the brackets: the target, its heading and its
+    /// alias, as written.
+    pub inner: Range<usize>,
+}
+
+/// Every wikilink outside code, in document order (`SPEC_AUDIT_FIXES.md`,
+/// Г1.7): Obsidian reads no link in a code block or a code span, so a rename
+/// rewrites none there. A wikilink ends at the first `]]` on its line; one
+/// with no `]]` on its line is no link.
+#[must_use]
+pub fn wikilinks_outside_code(text: &str) -> Vec<Wikilink> {
+    scan_outside_code(text).wikilinks
+}
+
+/// The destinations of the link reference definitions of `text`
+/// (`[label]: destination "title"`), without angle brackets, in document
+/// order; `![a][label]` and `[a][label]` link through them. A definition is
+/// read wherever one may stand: after indentation, block quote markers and
+/// list markers, with its destination on the same line or the next one.
+/// Footnotes (`[^1]: …`) are no definitions. Code is not told apart here:
+/// the one caller asks what a note may refer to and errs towards more.
+#[must_use]
+pub fn reference_definition_destinations(text: &str) -> Vec<Range<usize>> {
     let bytes = text.as_bytes();
-    let mut links = Vec::new();
-    let mut index = 0;
-    let mut at_line_start = true;
-    // The end of the paragraph `index` is in, found once per paragraph: a
-    // code span never closes past it.
-    let mut paragraph_limit = 0;
-    while index < bytes.len() {
-        if at_line_start {
-            at_line_start = false;
-            let line_end = line_end(text, index);
-            if let Some((marker, width, _)) = fence_marker(text[index..line_end].trim_end_matches(['\n', '\r'])) {
-                index = fenced_block_end(text, line_end, marker, width);
-                at_line_start = true;
-                continue;
+    let mut destinations = Vec::new();
+    let mut line_start = 0;
+    while line_start < text.len() {
+        let next_line = line_end(text, line_start);
+        let open = line_start + definition_start(&bytes[line_start..next_line]);
+        if bytes.get(open) == Some(&b'[') && !matches!(bytes.get(open + 1), Some(b'[' | b'^')) {
+            if let Some(destination) = definition_destination(text, open) {
+                destinations.push(destination);
             }
         }
-        match bytes[index] {
-            b'\n' => {
-                index += 1;
-                at_line_start = true;
-            }
-            b'\\' => {
-                // A backslash before a line ending is a hard line break.
-                at_line_start = bytes.get(index + 1) == Some(&b'\n');
-                index += 2;
-            }
-            b'`' => {
-                if index >= paragraph_limit {
-                    paragraph_limit = paragraph_end(text, index);
-                }
-                let width = run_length(bytes, index, b'`');
-                index = closing_backticks(bytes, index + width, width, paragraph_limit)
-                    .map_or(index + width, |close| close + width);
-            }
-            b'[' if bytes.get(index + 1) == Some(&b'[') => {
-                let line_end = line_end(text, index);
-                index = text[index + 2..line_end]
-                    .find("]]")
-                    .map_or(index + 2, |offset| index + 2 + offset + 2);
-            }
-            b'!' | b'[' => match inline_link_at(text, index) {
-                Some(link) => {
-                    index = link.end;
-                    links.push(link);
-                }
-                None => index += 1,
-            },
-            _ => index += 1,
-        }
+        line_start = next_line;
     }
-    links
+    destinations
+}
+
+/// The path a local destination names, read once (`SPEC_AUDIT_FIXES.md`,
+/// Г1.2): backslash escapes resolved, a `#fragment` or `?query` cut where `#`
+/// or `?` is written, and the rest percent-decoded exactly once. So
+/// `photo%23tag.jpg` names `photo#tag.jpg` and `a%2520b.jpg` names
+/// `a%20b.jpg`: a decoded path is never decoded or cut again. `None` for a
+/// destination outside the space.
+#[must_use]
+pub fn local_destination_path(written: &str) -> Option<String> {
+    let unescaped = unescape_destination(written.trim());
+    if is_external_destination(&unescaped) {
+        return None;
+    }
+    let path = &unescaped[..unescaped.find(['#', '?']).unwrap_or(unescaped.len())];
+    Some(percent_encoding::percent_decode_str(path).decode_utf8_lossy().into_owned())
 }
 
 /// The path a destination names, as written without angle brackets: its
@@ -242,20 +259,389 @@ fn line_end(text: &str, index: usize) -> usize {
         .map_or(text.len(), |offset| index + offset + 1)
 }
 
-/// The offset past the line that closes a fenced block whose opening line
-/// ended at `index`, or the end of the text for a block never closed.
-fn fenced_block_end(text: &str, mut index: usize, marker: u8, width: usize) -> usize {
-    while index < text.len() {
-        let end = line_end(text, index);
-        let closes = fence_marker(text[index..end].trim_end_matches(['\n', '\r'])).is_some_and(
-            |(found, count, tail)| found == marker && count >= width && tail.trim().is_empty(),
-        );
-        if closes {
-            return end;
+/// Inline links and wikilinks found outside code.
+#[derive(Default)]
+struct OutsideCode {
+    links: Vec<InlineLink>,
+    wikilinks: Vec<Wikilink>,
+}
+
+fn scan_outside_code(text: &str) -> OutsideCode {
+    let blocks = code_block_ranges(text);
+    let mut found = OutsideCode::default();
+    scan_inline(text, 0..text.len(), &blocks, &mut found);
+    found
+}
+
+/// Walk `range` of `text` the way an inline parser does, skipping the code
+/// blocks in `blocks` and code spans, and collect links and wikilinks. A
+/// link's text is walked in turn: an image may stand inside it.
+fn scan_inline(text: &str, range: Range<usize>, blocks: &[Range<usize>], found: &mut OutsideCode) {
+    let bytes = text.as_bytes();
+    let mut index = range.start;
+    // The first code block that ends after `index`; `index` only grows.
+    let mut block = blocks.partition_point(|block| block.end <= index);
+    // Where a code span opened in the current paragraph may close at the
+    // latest: the paragraph's end, the next code block, the walked range.
+    let mut span_limit = index;
+    while index < range.end {
+        while blocks.get(block).is_some_and(|code| code.end <= index) {
+            block += 1;
         }
-        index = end;
+        if let Some(code) = blocks.get(block).filter(|code| code.start <= index) {
+            index = code.end;
+            continue;
+        }
+        match bytes[index] {
+            b'\\' => index += 2,
+            b'`' => {
+                if index >= span_limit {
+                    let next_block = blocks.get(block).map_or(text.len(), |code| code.start);
+                    span_limit = paragraph_end(text, index).min(next_block).min(range.end);
+                }
+                let width = run_length(bytes, index, b'`');
+                index = closing_backticks(bytes, index + width, width, span_limit)
+                    .map_or(index + width, |close| close + width);
+            }
+            b'!' if bytes[index + 1..].starts_with(b"[[") => {
+                match wikilink_at(text, index, range.end) {
+                    Some(wikilink) => {
+                        index = wikilink.end;
+                        found.wikilinks.push(wikilink);
+                    }
+                    None => index += 3,
+                }
+            }
+            b'[' if bytes.get(index + 1) == Some(&b'[') => match wikilink_at(text, index, range.end) {
+                Some(wikilink) => {
+                    index = wikilink.end;
+                    found.wikilinks.push(wikilink);
+                }
+                None => index += 2,
+            },
+            b'!' | b'[' => match inline_link_at(text, index).filter(|link| link.end <= range.end) {
+                Some(link) => {
+                    index = link.end;
+                    let link_text = (!link.image).then(|| link.text.clone());
+                    found.links.push(link);
+                    if let Some(link_text) = link_text {
+                        scan_inline(text, link_text, blocks, found);
+                    }
+                }
+                None => index += 1,
+            },
+            _ => index += 1,
+        }
     }
-    text.len()
+}
+
+/// The wikilink whose `!` or first `[` is at `start`, closed by the first
+/// `]]` on its line before `limit`.
+fn wikilink_at(text: &str, start: usize, limit: usize) -> Option<Wikilink> {
+    let embed = text.as_bytes()[start] == b'!';
+    let inner_start = start + if embed { 3 } else { 2 };
+    let search_end = line_end(text, inner_start.min(text.len())).min(limit);
+    let close = inner_start + text.get(inner_start..search_end)?.find("]]")?;
+    Some(Wikilink {
+        start,
+        end: close + 2,
+        embed,
+        inner: inner_start..close,
+    })
+}
+
+/// Columns a tab advances indentation to: the next multiple of four, as
+/// `CommonMark` counts it.
+const TAB_STOP: usize = 4;
+
+/// Indentation beyond its container's that makes a line code, not text.
+const CODE_INDENT: usize = 4;
+
+/// The digits an ordered list marker may have at most.
+const MAX_ORDERED_MARKER_DIGITS: usize = 9;
+
+/// A fenced code block not closed yet.
+struct OpenFence {
+    start: usize,
+    marker: u8,
+    width: usize,
+    /// The content column of the list item the fence opened in.
+    base: usize,
+    quote_depth: usize,
+}
+
+/// The code blocks of `text`, fenced and indented, each from the start of
+/// its first line to past its last line, in document order (`CommonMark`
+/// 4.4, 4.5; `SPEC_AUDIT_FIXES.md`, Г1.7).
+///
+/// Block quotes and list items are followed far enough to tell code from
+/// text: indentation counts from the content column of the list item a line
+/// belongs to, so a line indented inside a list item is the item's text, and
+/// an indented line that continues a paragraph is text too, since an
+/// indented code block cannot interrupt a paragraph. Where the reading is
+/// unsure, a line is text: a rewrite then still reaches its links.
+fn code_block_ranges(text: &str) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+    let mut fence: Option<OpenFence> = None;
+    let mut indented: Option<Range<usize>> = None;
+    // Content columns of the open list items, innermost last.
+    let mut lists: Vec<usize> = Vec::new();
+    let mut quote_depth = 0;
+    // Whether the previous line was paragraph text a line may continue.
+    let mut paragraph = false;
+    let mut line_start = 0;
+    while line_start < text.len() {
+        let next_line = line_end(text, line_start);
+        let line = text[line_start..next_line].trim_end_matches(['\n', '\r']);
+        let (depth, quoted) = block_quote_content(line);
+        let (indent, content) = indentation(quoted);
+        let blank = content.trim().is_empty();
+
+        if let Some(open) = fence.take() {
+            let container_ended = depth < open.quote_depth || (!blank && indent < open.base);
+            if !container_ended {
+                let closes = indent < open.base + CODE_INDENT
+                    && fence_marker(content).is_some_and(|(marker, width, tail)| {
+                        marker == open.marker && width >= open.width && tail.trim().is_empty()
+                    });
+                if closes {
+                    ranges.push(open.start..next_line);
+                    paragraph = false;
+                } else {
+                    fence = Some(open);
+                }
+                line_start = next_line;
+                continue;
+            }
+            ranges.push(open.start..line_start);
+        }
+
+        if depth != quote_depth {
+            if paragraph && !blank && depth < quote_depth && !starts_block(content) {
+                // A lazy continuation line of the quoted paragraph.
+                line_start = next_line;
+                continue;
+            }
+            ranges.extend(indented.take());
+            lists.clear();
+            quote_depth = depth;
+            paragraph = false;
+        }
+        if blank {
+            // An indented code block runs on across blank lines.
+            paragraph = false;
+            line_start = next_line;
+            continue;
+        }
+        if paragraph {
+            let base = lists.last().copied().unwrap_or(0);
+            if indent >= base + CODE_INDENT || !starts_block(content) {
+                if is_setext_underline(content) {
+                    paragraph = false;
+                }
+                line_start = next_line;
+                continue;
+            }
+        }
+        while lists.last().is_some_and(|column| *column > indent) {
+            lists.pop();
+        }
+        let base = lists.last().copied().unwrap_or(0);
+        if indent >= base + CODE_INDENT {
+            match &mut indented {
+                Some(run) => run.end = next_line,
+                None => indented = Some(line_start..next_line),
+            }
+            line_start = next_line;
+            continue;
+        }
+        ranges.extend(indented.take());
+        if let Some((marker, width, _)) = fence_marker(content) {
+            fence = Some(OpenFence {
+                start: line_start,
+                marker,
+                width,
+                base,
+                quote_depth: depth,
+            });
+            paragraph = false;
+        } else if is_thematic_break(content) || is_atx_heading(content) {
+            paragraph = false;
+        } else if let Some((column, has_text)) = list_item_content_column(content, indent) {
+            lists.push(column);
+            paragraph = has_text;
+        } else {
+            paragraph = true;
+        }
+        line_start = next_line;
+    }
+    if let Some(open) = fence {
+        ranges.push(open.start..text.len());
+    }
+    ranges.extend(indented);
+    ranges
+}
+
+/// How many block quote markers open `line`, and what follows them: each
+/// `>` after at most three spaces, with one space after it.
+fn block_quote_content(line: &str) -> (usize, &str) {
+    let bytes = line.as_bytes();
+    let mut depth = 0;
+    let mut offset = 0;
+    loop {
+        let spaces = bytes[offset..].iter().take_while(|byte| **byte == b' ').count();
+        if spaces >= CODE_INDENT || bytes.get(offset + spaces) != Some(&b'>') {
+            return (depth, &line[offset..]);
+        }
+        offset += spaces + 1;
+        depth += 1;
+        if matches!(bytes.get(offset), Some(b' ' | b'\t')) {
+            offset += 1;
+        }
+    }
+}
+
+/// The indentation of `line` in columns, and the line after it.
+fn indentation(line: &str) -> (usize, &str) {
+    let mut columns = 0;
+    for (offset, byte) in line.bytes().enumerate() {
+        match byte {
+            b' ' => columns += 1,
+            b'\t' => columns += TAB_STOP - columns % TAB_STOP,
+            _ => return (columns, &line[offset..]),
+        }
+    }
+    (columns, "")
+}
+
+/// Whether `content`, a line without its indentation, opens a block that
+/// ends a paragraph: a fence, a thematic break, a heading or a list item.
+fn starts_block(content: &str) -> bool {
+    fence_marker(content).is_some()
+        || is_thematic_break(content)
+        || is_atx_heading(content)
+        || list_item_content_column(content, 0).is_some_and(|(_, has_text)| has_text)
+}
+
+/// Three or more `-`, `*` or `_` alone on a line, spaces between allowed.
+fn is_thematic_break(content: &str) -> bool {
+    let mut marks = content.bytes().filter(|byte| !matches!(byte, b' ' | b'\t'));
+    let Some(first) = marks.next() else {
+        return false;
+    };
+    matches!(first, b'-' | b'*' | b'_') && marks.clone().all(|byte| byte == first) && marks.count() >= 2
+}
+
+/// A setext heading underline: `=` or `-` alone on a line.
+fn is_setext_underline(content: &str) -> bool {
+    let trimmed = content.trim_end();
+    !trimmed.is_empty() && (trimmed.bytes().all(|byte| byte == b'=') || trimmed.bytes().all(|byte| byte == b'-'))
+}
+
+/// `#` to `######` followed by a space or the end of the line.
+fn is_atx_heading(content: &str) -> bool {
+    let hashes = content.bytes().take_while(|byte| *byte == b'#').count();
+    (1..=6).contains(&hashes) && content[hashes..].chars().next().is_none_or(|ch| ch == ' ' || ch == '\t')
+}
+
+/// The content column of the list item `content` opens, `content` being a
+/// line indented by `indent` columns, and whether the item has text on this
+/// line. A bullet (`-`, `+`, `*`) or an ordered marker (`1.`, `1)`) must be
+/// followed by a space or the end of the line.
+fn list_item_content_column(content: &str, indent: usize) -> Option<(usize, bool)> {
+    let bytes = content.as_bytes();
+    let marker_width = match *bytes.first()? {
+        b'-' | b'+' | b'*' => 1,
+        b'0'..=b'9' => {
+            let digits = bytes.iter().take_while(|byte| byte.is_ascii_digit()).count();
+            if digits > MAX_ORDERED_MARKER_DIGITS || !matches!(bytes.get(digits), Some(b'.' | b')')) {
+                return None;
+            }
+            digits + 1
+        }
+        _ => return None,
+    };
+    let after = &content[marker_width..];
+    if !after.is_empty() && !after.starts_with([' ', '\t']) {
+        return None;
+    }
+    let (spaces, text) = indentation(after);
+    let marker_end = indent + marker_width;
+    if text.trim().is_empty() || spaces > CODE_INDENT {
+        // No text yet, or text that is itself indented code: the content
+        // column is one past the marker.
+        return Some((marker_end + 1, !text.trim().is_empty()));
+    }
+    Some((marker_end + spaces, true))
+}
+
+/// Where a link reference definition may begin on a line: past
+/// indentation, block quote markers and list markers.
+fn definition_start(line: &[u8]) -> usize {
+    let mut index = 0;
+    loop {
+        while matches!(line.get(index), Some(b' ' | b'\t')) {
+            index += 1;
+        }
+        match line.get(index) {
+            Some(b'>') => index += 1,
+            Some(b'-' | b'+' | b'*') if matches!(line.get(index + 1), Some(b' ' | b'\t')) => index += 2,
+            Some(b'0'..=b'9') => {
+                let digits = line[index..].iter().take_while(|byte| byte.is_ascii_digit()).count();
+                if digits <= MAX_ORDERED_MARKER_DIGITS
+                    && matches!(line.get(index + digits), Some(b'.' | b')'))
+                    && matches!(line.get(index + digits + 1), Some(b' ' | b'\t'))
+                {
+                    index += digits + 2;
+                } else {
+                    return index;
+                }
+            }
+            _ => return index,
+        }
+    }
+}
+
+/// The destination of the definition whose label opens at `open`: after the
+/// colon on the same line or, when nothing follows the colon, on the next
+/// line.
+fn definition_destination(text: &str, open: usize) -> Option<Range<usize>> {
+    let bytes = text.as_bytes();
+    let mut index = open + 1;
+    loop {
+        match *bytes.get(index)? {
+            b'\\' => index += 2,
+            b']' => break,
+            b'[' | b'\n' => return None,
+            _ => index += 1,
+        }
+    }
+    if index == open + 1 || bytes.get(index + 1) != Some(&b':') {
+        return None;
+    }
+    let mut start = index + 2;
+    while matches!(bytes.get(start), Some(b' ' | b'\t' | b'\r')) {
+        start += 1;
+    }
+    if bytes.get(start) == Some(&b'\n') {
+        start += 1;
+        while matches!(bytes.get(start), Some(b' ' | b'\t')) {
+            start += 1;
+        }
+    }
+    if start >= bytes.len() {
+        return None;
+    }
+    if bytes.get(start) == Some(&b'<') {
+        let end = angle_destination_end(bytes, start + 1)?;
+        return Some(start + 1..end);
+    }
+    let end = start
+        + bytes[start..]
+            .iter()
+            .take_while(|byte| !byte.is_ascii_whitespace() && !byte.is_ascii_control())
+            .count();
+    (end > start).then_some(start..end)
 }
 
 /// The offset of the `]` that closes link text starting at `index`: brackets
@@ -511,6 +897,100 @@ mod tests {
             .map(|link| &text[link.destination])
             .collect();
         assert_eq!(found, ["a.md", "e.jpg"]);
+    }
+
+    /// Г1.6: the image inside a link's text is found after the link itself.
+    #[test]
+    fn an_image_inside_a_link_is_found_too() {
+        let text = "[![x](a.jpg)](https://e.com) [`code` ![y](b.jpg)](c.md) ![![z](d.jpg)](e.jpg)";
+        let found: Vec<&str> = inline_links_outside_code(text)
+            .into_iter()
+            .map(|link| &text[link.destination])
+            .collect();
+        assert_eq!(found, ["https://e.com", "a.jpg", "c.md", "b.jpg", "e.jpg"]);
+    }
+
+    /// Г1.7: indented code is code; indentation inside a list item or a
+    /// paragraph's continuation is text; block quotes and fences inside list
+    /// items are followed.
+    #[test]
+    fn indented_code_is_told_from_indented_text() {
+        let text = "\
+[a](a.md)
+
+    [code](x.md)
+    [code](x.md)
+
+    [still code](x.md)
+text
+    [continues the paragraph](b.md)
+
+- item
+    [lazy](c.md)
+
+  [second paragraph](d.md)
+
+      [code in the item](x.md)
+
+  ```
+  [fenced in the item](x.md)
+  ```
+  [after the fence](e.md)
+
+1. one
+   - nested
+
+     [nested text](f.md)
+
+         [nested code](x.md)
+
+> quote
+>
+>     [quoted code](x.md)
+> [quoted text](g.md)
+
+# Heading
+    [code after a heading](x.md)
+";
+        let found: Vec<&str> = inline_links_outside_code(text)
+            .into_iter()
+            .map(|link| &text[link.destination])
+            .collect();
+        assert_eq!(found, ["a.md", "b.md", "c.md", "d.md", "e.md", "f.md", "g.md"]);
+    }
+
+    #[test]
+    fn wikilinks_outside_code_end_on_their_line() {
+        let text = "[[A]] ![[b.jpg|alt]] `[[C]]` \\[[D]] [[unclosed\n]] [[E#h|e]]\n```\n[[F]]\n```\n";
+        let found: Vec<(&str, bool)> = wikilinks_outside_code(text)
+            .into_iter()
+            .map(|link| (&text[link.inner], link.embed))
+            .collect();
+        assert_eq!(found, [("A", false), ("b.jpg|alt", true), ("E#h|e", false)]);
+    }
+
+    #[test]
+    fn reference_definitions_are_read_wherever_they_stand() {
+        let text = "![a][r]\n\n[r]: ../Media/a.jpg \"t\"\n  [s]:\n  <../Media/b c.jpg>\n> - [t]: c.pdf\n[^1]: footnote.pdf\n[[w]]: no.pdf\n[]: empty.pdf\n[u]:\n\n[v] no colon\n";
+        let found: Vec<&str> = reference_definition_destinations(text)
+            .into_iter()
+            .map(|range| &text[range])
+            .collect();
+        assert_eq!(found, ["../Media/a.jpg", "../Media/b c.jpg", "c.pdf"]);
+    }
+
+    /// Г1.2: a destination is read once: a written `#` or `?` ends the path,
+    /// an encoded one is part of it, and an encoded `%` stays `%`.
+    #[test]
+    fn a_local_destination_is_decoded_exactly_once() {
+        assert_eq!(local_destination_path("photo%23tag.jpg").as_deref(), Some("photo#tag.jpg"));
+        assert_eq!(local_destination_path("a%2520b.jpg").as_deref(), Some("a%20b.jpg"));
+        assert_eq!(local_destination_path("../Media/a.jpg#crop").as_deref(), Some("../Media/a.jpg"));
+        assert_eq!(local_destination_path("a.jpg?v=2").as_deref(), Some("a.jpg"));
+        assert_eq!(local_destination_path("Q%3F.jpg").as_deref(), Some("Q?.jpg"));
+        assert_eq!(local_destination_path("a\\(1\\).jpg").as_deref(), Some("a(1).jpg"));
+        assert_eq!(local_destination_path("https://e.com/a%20b.jpg"), None);
+        assert_eq!(local_destination_path("#part"), None);
     }
 
     #[test]

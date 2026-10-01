@@ -27,6 +27,20 @@ describe("IPC command adapter", () => {
     await expect(getVaultPath()).rejects.toThrow("database failed");
   });
 
+  it("names the note an outside edit or unwritable properties stopped (Г1.5, Г1.8)", async () => {
+    mockInvoke.mockRejectedValueOnce({
+      kind: "source_changed",
+      message: { path: "/vault/Cards/Note.md" },
+    });
+    await expect(getVaultPath()).rejects.toThrow("“Note.md” changed outside Mine; nothing was changed.");
+
+    mockInvoke.mockRejectedValueOnce({
+      kind: "frontmatter_not_writable",
+      message: { path: "/vault/Cards/Flow.md" },
+    });
+    await expect(getVaultPath()).rejects.toThrow("The properties of “Flow.md” are written in a form Mine cannot edit in place");
+  });
+
   it("preserves specialized tagged errors for feature-specific handling", async () => {
     mockInvoke.mockRejectedValueOnce({ kind: "no_vault" });
 

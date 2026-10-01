@@ -12,10 +12,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::domain::block::markdown_image_source;
+use crate::domain::block::{
+    inline_media_spans, markdown_image_source, InlineMediaReference, InlineMediaSyntax,
+};
 use crate::domain::markdown_link::{
     encode_destination_like, inline_link_at, inline_links_outside_code, is_external_destination,
-    unescape_destination,
+    unescape_destination, wikilinks_outside_code,
 };
 
 /// Rewrite markdown image embeds into Obsidian wikilinks for every
@@ -112,55 +114,41 @@ pub fn convert_markdown_images_to_wikilinks(body: &str) -> String {
     out
 }
 
-/// Rewrite the target of every wikilink for which `retarget` returns a new
-/// one.
+/// Rewrite the target of every wikilink outside code for which `retarget`
+/// returns a new one.
 ///
 /// Applies to both text links (`[[note]]`) and embeds (`![[note]]`).
 /// `retarget` receives the target without its `#...` fragment and alias; both
 /// are kept. The caller decides what a target means, typically by resolving
 /// it the way Obsidian does (SPEC_AUDIT_FIXES.md, Ф3): `[[Foo]]` names
-/// `Cards/Foo.md` as much as `[[Cards/Foo]]` does. Other wikilinks and all
-/// other text are left byte for byte.
+/// `Cards/Foo.md` as much as `[[Cards/Foo]]` does. A wikilink in code is no
+/// link to Obsidian and stays as written (Г1.7,
+/// `markdown_link::wikilinks_outside_code`); so do other wikilinks and all
+/// other text, byte for byte.
 pub fn retarget_wikilinks(body: &str, mut retarget: impl FnMut(&str) -> Option<String>) -> String {
     let mut out = String::with_capacity(body.len());
-    let mut i = 0usize;
-
-    while i < body.len() {
-        let Some(rel) = body[i..].find("[[") else {
-            out.push_str(&body[i..]);
-            break;
-        };
-        let start = i + rel;
-        out.push_str(&body[i..start]);
-        let inner_start = start + 2;
-        let Some(close_offset) = body[inner_start..].find("]]") else {
-            out.push_str(&body[start..]);
-            break;
-        };
-
-        let inner = &body[inner_start..inner_start + close_offset];
+    let mut cursor = 0;
+    for wikilink in wikilinks_outside_code(body) {
+        let inner = &body[wikilink.inner.clone()];
         let mut parts = inner.splitn(2, '|');
         let raw_target = parts.next().unwrap_or("").trim();
         let (target_base, target_fragment) = split_wikilink_fragment(raw_target);
-        if let Some(new_target) = retarget(target_base) {
-            out.push_str("[[");
-            out.push_str(&new_target);
-            if let Some(fragment) = target_fragment {
-                out.push('#');
-                out.push_str(fragment);
-            }
-            if let Some(alias) = parts.next() {
-                out.push('|');
-                out.push_str(alias);
-            }
-            out.push_str("]]");
-        } else {
-            out.push_str(&body[start..inner_start + close_offset + 2]);
+        let Some(new_target) = retarget(target_base) else {
+            continue;
+        };
+        out.push_str(&body[cursor..wikilink.inner.start]);
+        out.push_str(&new_target);
+        if let Some(fragment) = target_fragment {
+            out.push('#');
+            out.push_str(fragment);
         }
-
-        i = inner_start + close_offset + 2;
+        if let Some(alias) = parts.next() {
+            out.push('|');
+            out.push_str(alias);
+        }
+        cursor = wikilink.inner.end;
     }
-
+    out.push_str(&body[cursor..]);
     out
 }
 
@@ -266,7 +254,7 @@ fn renamed_markdown_url(raw_url: &str, new_name: &str, angle_brackets: bool) -> 
     let (prefix, rest) = raw_url
         .rfind('/')
         .map_or(("", raw_url), |slash| raw_url.split_at(slash + 1));
-    let (segment, fragment) = rest.find('#').map_or((rest, ""), |hash| rest.split_at(hash));
+    let (segment, fragment) = rest.find(['#', '?']).map_or((rest, ""), |hash| rest.split_at(hash));
     let file_name = new_name.rsplit('/').next().unwrap_or(new_name);
     format!(
         "{prefix}{}{fragment}",
@@ -283,14 +271,19 @@ fn renamed_markdown_url(raw_url: &str, new_name: &str, angle_brackets: bool) -> 
 /// without a fragment. The new path is written in the style of the old one
 /// (`encode_destination_like`); the fragment or query, the title, the link
 /// text and the angle brackets stay byte for byte. Destinations outside the
-/// space are never offered, and code is never rewritten.
+/// space are never offered, and code is never rewritten. An image inside a
+/// link's text is rewritten like any other (Г1.6).
 pub fn retarget_markdown_destinations(
     body: &str,
     mut retarget: impl FnMut(&str) -> Option<String>,
 ) -> String {
+    let mut links = inline_links_outside_code(body);
+    // A nested image's destination comes before its link's: rewrite in the
+    // order destinations stand in the text.
+    links.sort_by_key(|link| link.destination.start);
     let mut out = String::with_capacity(body.len());
     let mut cursor = 0;
-    for link in inline_links_outside_code(body) {
+    for link in links {
         let written = &body[link.destination.clone()];
         let destination = unescape_destination(written);
         if is_external_destination(&destination) {
@@ -317,85 +310,50 @@ pub fn retarget_markdown_destinations(
 /// do not retain an empty media row.
 #[must_use]
 pub fn remove_inline_media_references(body: &str, removals: &BTreeSet<String>) -> String {
-    remove_inline_media_references_impl(body, removals, None)
-}
-
-/// Remove only the `occurrence`-th (0-based, document order) inline media
-/// reference whose source is in `removals`. Used to delete a single duplicate
-/// embed from a card without touching its identical siblings. If that occurrence
-/// does not exist, the body is returned unchanged.
-#[must_use]
-pub fn remove_inline_media_reference_at(
-    body: &str,
-    removals: &BTreeSet<String>,
-    occurrence: usize,
-) -> String {
-    remove_inline_media_references_impl(body, removals, Some(occurrence))
-}
-
-fn remove_inline_media_references_impl(
-    body: &str,
-    removals: &BTreeSet<String>,
-    occurrence: Option<usize>,
-) -> String {
     if removals.is_empty() {
         return body.to_string();
     }
+    let ranges = inline_media_spans(body)
+        .into_iter()
+        .filter(|span| !is_remote_markdown_image(&span.reference))
+        .filter(|span| removals.contains(&span.reference.source))
+        .map(|span| expand_media_removal_range(body, span.range.start, span.range.end))
+        .collect();
+    remove_ranges(body, ranges)
+}
 
-    let mut ranges = Vec::new();
-    // Counts matching references in document order so `occurrence` can target one.
-    let mut match_index = 0usize;
-    let mut i = 0usize;
+/// Remove the one inline media reference whose `!` is the `opener`-th `![`
+/// of the body, counted from 0 in document order (`SPEC_AUDIT_FIXES.md`,
+/// Г1.4). Returns the new body and the removed reference, for the caller to
+/// check that it names the file it meant; `None` when no reference opens
+/// there.
+///
+/// The `![` count is the coordinate the reading view and the core share: the
+/// view finds the clicked image's `![` in the source and counts the ones
+/// before it, with no Markdown reading of its own to disagree with this one
+/// about titles, angle brackets, parentheses or spellings of a name. Every
+/// other reference stays byte for byte.
+#[must_use]
+pub fn remove_inline_media_reference_at_opener(
+    body: &str,
+    opener: usize,
+) -> Option<(String, InlineMediaReference)> {
+    let (start, _) = body.match_indices("![").nth(opener)?;
+    let span = inline_media_spans(body)
+        .into_iter()
+        .find(|span| span.range.start == start)?;
+    let range = expand_media_removal_range(body, span.range.start, span.range.end);
+    Some((remove_ranges(body, vec![range]), span.reference))
+}
 
-    while i < body.len() {
-        let Some(rel) = body[i..].find("![") else {
-            break;
-        };
-        let excl = i + rel;
-        let after_excl = excl + 2;
-        if after_excl >= body.len() {
-            break;
-        }
+/// A Markdown image of a remote URL: never a reference to remove by name.
+fn is_remote_markdown_image(reference: &InlineMediaReference) -> bool {
+    reference.syntax == InlineMediaSyntax::MarkdownImage
+        && (reference.source.starts_with("http://") || reference.source.starts_with("https://"))
+}
 
-        if body[after_excl..].starts_with('[') {
-            let name_start = after_excl + 1;
-            let Some(close_offset) = body[name_start..].find("]]") else {
-                break;
-            };
-
-            let end = name_start + close_offset + 2;
-            let inner = &body[name_start..name_start + close_offset];
-            let raw_name = inner.split('|').next().unwrap_or("").trim();
-            if removals.contains(raw_name) {
-                if occurrence.map_or(true, |target| target == match_index) {
-                    ranges.push(expand_media_removal_range(body, excl, end));
-                }
-                match_index += 1;
-            }
-            i = end;
-            continue;
-        }
-
-        let Some(link) = inline_link_at(body, excl) else {
-            i = after_excl;
-            continue;
-        };
-        let raw_url = &body[link.destination.clone()];
-        let end = link.end;
-        if raw_url.starts_with("http://") || raw_url.starts_with("https://") || raw_url.is_empty() {
-            i = end;
-            continue;
-        }
-
-        if markdown_image_source(raw_url).is_some_and(|decoded| removals.contains(&decoded)) {
-            if occurrence.map_or(true, |target| target == match_index) {
-                ranges.push(expand_media_removal_range(body, excl, end));
-            }
-            match_index += 1;
-        }
-        i = end;
-    }
-
+/// `body` without `ranges`, which may overlap.
+fn remove_ranges(body: &str, mut ranges: Vec<(usize, usize)>) -> String {
     if ranges.is_empty() {
         return body.to_string();
     }
@@ -629,7 +587,7 @@ mod tests {
         let renames = BTreeMap::from([
             ("../Media/old.jpg".to_string(), "Media/new name.jpg".to_string()),
             ("Media/old.jpg".to_string(), "Media/new name.jpg".to_string()),
-            ("/Media/old.jpg#crop".to_string(), "Media/new name.jpg".to_string()),
+            ("/Media/old.jpg".to_string(), "Media/new name.jpg".to_string()),
         ]);
         assert_eq!(
             rename_inline_media_references(input, &renames),
@@ -705,6 +663,72 @@ mod tests {
         assert_eq!(seen, ["Foo.md#Part", "Media/a b.jpg", "Foo", "Other.md"]);
     }
 
+    /// Г1.6: an image inside a link is a reference of its own: a move
+    /// rewrites its path and leaves the outer link as written.
+    #[test]
+    fn retarget_markdown_destinations_reaches_an_image_inside_a_link() {
+        let input = "[![x](../Media/a.jpg)](https://e.com/page) [![y](<../Media/b c.jpg> \"t\")](Foo.md)";
+        let output = retarget_markdown_destinations(input, |destination| match destination {
+            "../Media/a.jpg" => Some("Media/a.jpg".to_string()),
+            "../Media/b c.jpg" => Some("Media/b c.jpg".to_string()),
+            "Foo.md" => Some("Archive/Foo.md".to_string()),
+            _ => None,
+        });
+        assert_eq!(
+            output,
+            "[![x](Media/a.jpg)](https://e.com/page) [![y](<Media/b c.jpg> \"t\")](Archive/Foo.md)"
+        );
+    }
+
+    /// Г1.7: Obsidian reads no link in code, so a rename leaves fenced,
+    /// inline and indented code byte for byte. A line indented inside a list
+    /// item or continuing a paragraph is text, not code.
+    #[test]
+    fn retarget_wikilinks_leaves_code_alone() {
+        let input = "See [[Old Name]].\n\
+                     \n\
+                     ```\n\
+                     [[Old Name]] fenced\n\
+                     ```\n\
+                     \n\
+                     Inline `[[Old Name]]` and ``x [[Old Name]] y`` code, then [[Old Name|alias]].\n\
+                     \n    \
+                     [[Old Name]] indented code\n\
+                     \n\
+                     Text\n    \
+                     [[Old Name]] continues the paragraph\n\
+                     \n\
+                     - item\n\
+                     \n    \
+                     [[Old Name]] in the item's second paragraph\n\
+                     \n      \
+                     [[Old Name]] indented code inside the item\n\
+                     \n\
+                     > quote\n\
+                     >\n\
+                     >     [[Old Name]] indented code inside the quote\n";
+        let expected = input
+            .replacen("See [[Old Name]]", "See [[New Name]]", 1)
+            .replacen("[[Old Name|alias]]", "[[New Name|alias]]", 1)
+            .replacen("    [[Old Name]] continues", "    [[New Name]] continues", 1)
+            .replacen("    [[Old Name]] in the item's", "    [[New Name]] in the item's", 1);
+        assert_eq!(retarget_wikilinks(input, old_to_new), expected);
+    }
+
+    /// Г1.7: a Markdown link in indented code is code too; one indented
+    /// inside a list item is not.
+    #[test]
+    fn retarget_markdown_destinations_leaves_indented_code_alone() {
+        let input = "Text.\n\n    [code](Foo.md)\n\n1. item\n\n   [text](Foo.md)\n\n~~~\n[fenced](Foo.md)\n~~~\n";
+        let output = retarget_markdown_destinations(input, |destination| {
+            (destination == "Foo.md").then(|| "Bar.md".to_string())
+        });
+        assert_eq!(
+            output,
+            "Text.\n\n    [code](Foo.md)\n\n1. item\n\n   [text](Bar.md)\n\n~~~\n[fenced](Foo.md)\n~~~\n"
+        );
+    }
+
     #[test]
     fn rename_inline_media_references_leaves_remote_urls_unchanged() {
         let input = "![cap](https://cdn.example.com/Old%20Name.jpg)";
@@ -725,22 +749,44 @@ mod tests {
     }
 
     #[test]
-    fn remove_inline_media_reference_at_removes_only_the_indexed_occurrence() {
-        let mut removals = BTreeSet::new();
-        removals.insert("photo.png".to_string());
+    fn remove_inline_media_reference_at_opener_removes_only_that_reference() {
         let input = "a\n\n![[photo.png]]\n\nb\n\n![[photo.png]]\n\nc";
+        let embed = InlineMediaReference {
+            source: "photo.png".to_string(),
+            syntax: InlineMediaSyntax::ObsidianEmbed,
+        };
 
-        let first_gone = remove_inline_media_reference_at(input, &removals, 0);
-        assert_eq!(first_gone.matches("![[photo.png]]").count(), 1);
+        assert_eq!(
+            remove_inline_media_reference_at_opener(input, 0),
+            Some(("a\n\nb\n\n![[photo.png]]\n\nc".to_string(), embed.clone()))
+        );
+        assert_eq!(
+            remove_inline_media_reference_at_opener(input, 1),
+            Some(("a\n\n![[photo.png]]\n\nb\n\nc".to_string(), embed))
+        );
+        // No such opener.
+        assert_eq!(remove_inline_media_reference_at_opener(input, 5), None);
+    }
 
-        let second_gone = remove_inline_media_reference_at(input, &removals, 1);
-        assert_eq!(second_gone.matches("![[photo.png]]").count(), 1);
-        // The two outputs differ — the index targets a distinct embed.
-        assert_ne!(first_gone, second_gone);
-
-        // Out-of-range occurrence leaves the body unchanged.
-        let none_gone = remove_inline_media_reference_at(input, &removals, 5);
-        assert_eq!(none_gone.matches("![[photo.png]]").count(), 2);
+    /// Г1.4: the opener count names one image whatever its title, angle
+    /// brackets, parentheses or spelling; an opener that starts no reference
+    /// names nothing; every other image stays byte for byte.
+    #[test]
+    fn remove_inline_media_reference_at_opener_keeps_the_other_images_byte_for_byte() {
+        let cases = [
+            ("![a](p.jpg \"t1\")\n\n![b](p.jpg \"t2\")\n", 1, "![a](p.jpg \"t1\")\n", "p.jpg"),
+            ("![a](<p q.jpg>)\n\n![b](<p q.jpg> 't')\n", 1, "![a](<p q.jpg>)\n", "p q.jpg"),
+            ("![a](Foo (1).jpg)\n\n![b](Foo (1).jpg (t))\n", 1, "![a](Foo (1).jpg)\n", "Foo (1).jpg"),
+            ("x ![[p.jpg]] y ![](../p.jpg) z ![](./p%2Ejpg)", 2, "x ![[p.jpg]] y ![](../p.jpg) z ", "./p.jpg"),
+            ("`![` ![](p.jpg) ![](p.jpg)", 2, "`![` ![](p.jpg) ", "p.jpg"),
+        ];
+        for (body, opener, expected, source) in cases {
+            let (removed, reference) = remove_inline_media_reference_at_opener(body, opener).unwrap();
+            assert_eq!(removed, expected, "{body}");
+            assert_eq!(reference.source, source, "{body}");
+        }
+        assert_eq!(remove_inline_media_reference_at_opener("`![` ![](p.jpg)", 0), None);
+        assert_eq!(remove_inline_media_reference_at_opener("![[broken\n![](p.jpg)", 0), None);
     }
 
     #[test]

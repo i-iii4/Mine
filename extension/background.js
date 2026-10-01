@@ -136,12 +136,14 @@ async function captureTabViewport(tabId, documentUrl) {
 }
 
 /// Start the crop overlay in `tabId` only while it still shows `documentUrl`
-/// (Ф6); the crop's own capture carries the same address.
-async function startCropInTab(tabId, documentUrl) {
+/// (Ф6); the crop's own capture carries the same address. `cropId` names the
+/// crop of the editor that asked, and the crop reports under it: only that
+/// editor takes the result (SPEC_AUDIT_FIXES.md, Г3.3).
+async function startCropInTab(tabId, documentUrl, cropId) {
   const tab = await chrome.tabs.get(tabId);
   if (!showsCaptureDocument(tab?.url, documentUrl)) return { ok: false, error: CAPTURE_PAGE_CHANGED };
   return new Promise((resolve) => {
-    chrome.tabs.sendMessage(tabId, { action: "startCropOverlay", documentUrl }, (resp) => {
+    chrome.tabs.sendMessage(tabId, { action: "startCropOverlay", documentUrl, cropId }, (resp) => {
       if (chrome.runtime.lastError) {
         resolve({ ok: false, error: "Could not reach the page. Reload the tab after updating the extension." });
         return;
@@ -295,10 +297,29 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   void forgetClipperLaunch(tabId).catch(() => undefined);
 });
 
-// A pending extension update does not reload while a clipper is opening
-// (SPEC_AUDIT_FIXES.md, В4.6).
+// Openings of one tab, the last one under way. A second click or Alt+A while
+// the first opening still injects the overlay would find no listener and
+// inject the script again: two editors, one of them impossible to close. The
+// second opening waits for the first and then finds its overlay
+// (SPEC_AUDIT_FIXES.md, Г3.1). Other tabs open independently.
+const clipperOpeningsByTab = new Map();
+
+function oneOpeningPerTab(tabId, open) {
+  if (typeof tabId !== "number") return open();
+  const previous = clipperOpeningsByTab.get(tabId) ?? Promise.resolve();
+  const opening = previous.then(open);
+  const settled = opening.catch(() => undefined);
+  clipperOpeningsByTab.set(tabId, settled);
+  void settled.then(() => {
+    if (clipperOpeningsByTab.get(tabId) === settled) clipperOpeningsByTab.delete(tabId);
+  });
+  return opening;
+}
+
+// A pending extension update does not reload while a clipper is opening,
+// including one that waits for an earlier opening of its tab (В4.6).
 function openClipperUi(tab, options = {}) {
-  return trackClipperOpening(() => openClipperUiNow(tab, options));
+  return trackClipperOpening(() => oneOpeningPerTab(tab?.id, () => openClipperUiNow(tab, options)));
 }
 
 async function openClipperUiNow(tab, options) {
@@ -321,7 +342,8 @@ async function openClipperUiNow(tab, options) {
       // Inject the overlay bundle into the tab's isolated world.
       // Only inject when no overlay listener is already present. Re-injecting
       // while an overlay is open creates an independent module scope, leaving
-      // the old host visible and unowned during screenshot capture.
+      // the old host visible and unowned during screenshot capture; openings
+      // of one tab run one at a time, so a second one never races this one.
       await chrome.scripting.executeScript({
         target: { tabId },
         files: ["dist/overlay.js"],
@@ -1270,7 +1292,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: false, error: "No target tab" });
       return true;
     }
-    startCropInTab(tabId, msg.documentUrl).then(sendResponse,
+    const cropId = typeof msg.cropId === "string" ? msg.cropId : null;
+    startCropInTab(tabId, msg.documentUrl, cropId).then(sendResponse,
       (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
     return true; // async
   }

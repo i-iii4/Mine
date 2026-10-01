@@ -86,7 +86,7 @@ import type {
   TagCount,
 } from "@/types";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
-import { preprocessWikilinks, inlineMediaOccurrenceIndex, markdownSourceByteOffset } from "@/lib/markdownWikilinks";
+import { preprocessWikilinks, inlineMediaOccurrenceIndex, markdownSourceByteOffset, firstImageOffset } from "@/lib/markdownWikilinks";
 import { decodeLocalMarkdownUrl, decodeWikilinkHref } from "@/lib/markdownWikilinks";
 import {
   thumbnailUrl,
@@ -1547,7 +1547,7 @@ function BlockContent({
           && videoSourcePath !== block.media_file
           && bodyVideoReferences.includes(videoSourcePath);
         const omittedEmbed = leadIsBodyEmbed && videoSourcePath
-          ? { source: videoSourcePath, occurrence: 0 }
+          ? { source: videoSourcePath }
           : null;
         const showBody = !!body && (!omittedEmbed || bodyHasMoreThanEmbed(body, previewManifest, omittedEmbed.source));
         return (
@@ -2745,8 +2745,9 @@ function ArticleBody({
   onCreateChannelAndTextSelectionCard,
   onTextSelectionDelete,
 }: {
-  /** An embed already shown above the body (a media card's lead video): not drawn twice. */
-  omittedEmbed?: { source: string; occurrence: number } | null;
+  /** An embed already shown above the body (a media card's lead video): its
+   * first image in the body is not drawn twice. */
+  omittedEmbed?: { source: string } | null;
   body: string;
   vaultPath: string;
   thumbsRootPath: string;
@@ -2899,6 +2900,18 @@ function ArticleBody({
   // wikilink form for Obsidian; only the render pipeline sees the
   // transformed markdown.
   const processedBody = useMemo(() => preprocessWikilinks(body), [body]);
+  // The lead video's own image in the body: the first one of its source, the
+  // one `bodyHasMoreThanEmbed` sets aside as well.
+  const omittedSource = omittedEmbed?.source ?? null;
+  const omittedImageOffset = useMemo(
+    () => omittedSource === null
+      ? null
+      : firstImageOffset(processedBody, (url) => {
+        const decoded = decodeLocalMarkdownUrl(url);
+        return (findPreviewTileForSource(previewManifest, decoded)?.sourcePath ?? decoded) === omittedSource;
+      }),
+    [omittedSource, previewManifest, processedBody],
+  );
 
   useEffect(() => {
     if (!scrollAnchor || !articleRef.current) return;
@@ -2993,12 +3006,13 @@ function ArticleBody({
         const previewTile = findPreviewTileForSource(previewManifest, decodedSrc);
         const resolvedSrc = previewTile?.sourcePath ?? decodedSrc;
         const originalSrc = resolveImageSrc(resolvedSrc, vaultPath);
-        // Which duplicate of this embed in the body — lets removal target one copy.
+        // Where this image stands among the body's `![`: Remove takes away
+        // this one image and no other of the same file (Г1.4).
         const nodeStartOffset = (node as MarkdownPositionedNode | undefined)?.position?.start?.offset;
         const occurrenceIndex = typeof nodeStartOffset === "number"
-          ? inlineMediaOccurrenceIndex(processedBody, decodedSrc, nodeStartOffset)
+          ? inlineMediaOccurrenceIndex(body, nodeStartOffset) ?? undefined
           : undefined;
-        if (omittedEmbed && resolvedSrc === omittedEmbed.source && (occurrenceIndex ?? 0) === omittedEmbed.occurrence) {
+        if (omittedImageOffset !== null && nodeStartOffset === omittedImageOffset) {
           return null;
         }
         // Video/GIF (downloaded MP4) — render as inline autoplay video with controls.
@@ -3094,7 +3108,9 @@ function ArticleBody({
       },
     }),
     [
+      body,
       currentTag,
+      omittedImageOffset,
       onCreateMediaAssetCard,
       onCreateChannelAndMediaAssetCard,
       onDeleteMediaAsset,

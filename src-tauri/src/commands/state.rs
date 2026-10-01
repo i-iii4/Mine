@@ -365,6 +365,17 @@ pub enum CommandError {
     /// The request was built for a space that is no longer the open one.
     #[error("the open space changed; refresh and try again")]
     SpaceChanged,
+    /// A file changed on disk after the operation read it. Nothing was
+    /// overwritten or deleted; the other version stays (`SPEC_AUDIT_FIXES.md`,
+    /// Ф2). `path` is the file that changed.
+    #[error("{path} changed outside Mine; nothing was overwritten")]
+    SourceChanged { path: String },
+    /// The properties of the note at `path` cannot take the change in place:
+    /// they are not valid YAML properties, or writing into their layout would
+    /// break them or take the user's comments out. Nothing was written
+    /// (`SPEC_AUDIT_FIXES.md`, Ф1).
+    #[error("the properties of {path} cannot be changed in place; nothing was written")]
+    FrontmatterNotWritable { path: String },
     #[error("{0}")]
     Internal(String),
 }
@@ -372,6 +383,20 @@ pub enum CommandError {
 impl From<anyhow::Error> for CommandError {
     fn from(error: anyhow::Error) -> Self {
         Self::Internal(format!("{error:#}"))
+    }
+}
+
+impl From<crate::storage::source_mutation::SourceMutationError> for CommandError {
+    /// A refused source mutation, typed when an outside edit won.
+    fn from(error: crate::storage::source_mutation::SourceMutationError) -> Self {
+        match error {
+            crate::storage::source_mutation::SourceMutationError::Changed { path, .. } => {
+                Self::SourceChanged {
+                    path: path.display().to_string(),
+                }
+            }
+            error => Self::Internal(error.to_string()),
+        }
     }
 }
 

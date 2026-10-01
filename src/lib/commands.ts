@@ -64,7 +64,16 @@ import type {
 function isCommandError(error: unknown): error is CommandError {
   if (!error || typeof error !== "object" || !("kind" in error)) return false;
   const kind = (error as { kind?: unknown }).kind;
-  return kind === "no_vault" || kind === "space_changed" || kind === "internal";
+  return kind === "no_vault"
+    || kind === "space_changed"
+    || kind === "source_changed"
+    || kind === "frontmatter_not_writable"
+    || kind === "internal";
+}
+
+/// The note's name for a message: the last segment of its path.
+function noteName(path: string): string {
+  return path.split("/").filter(Boolean).pop() ?? path;
 }
 
 function commandErrorMessage(error: CommandError): string {
@@ -73,6 +82,10 @@ function commandErrorMessage(error: CommandError): string {
       return "no vault selected";
     case "space_changed":
       return "the open space changed; refresh and try again";
+    case "source_changed":
+      return `“${noteName(error.message.path)}” changed outside Mine; nothing was changed. Try again.`;
+    case "frontmatter_not_writable":
+      return `The properties of “${noteName(error.message.path)}” are written in a form Mine cannot edit in place; nothing was changed.`;
     case "internal":
       return error.message;
   }

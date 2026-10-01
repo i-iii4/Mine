@@ -1742,6 +1742,56 @@ describe("Detail", () => {
     });
   });
 
+  // Г1.4: Remove on the second of two titled images of one file names that
+  // image by its `![`, not the first one.
+  it("removes the clicked one of two images of the same file", async () => {
+    const onRemoveMediaAssetFromCard = vi.fn().mockResolvedValue(undefined);
+    const b = block({
+      card_kind: "article",
+      block_type: "article",
+      title: "Article",
+      url: null,
+      media_file: null,
+      body: "Intro\n\n![a](Media/p.jpg \"t1\")\n\n![b](Media/p.jpg \"t2\")",
+    });
+
+    const { container } = render(
+      <Detail
+        block={b}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
+      />,
+    );
+
+    const triggers = container.querySelectorAll("[data-detail-media-more-button]");
+    expect(triggers).toHaveLength(2);
+    fireEvent.pointerDown(triggers[1]!, { button: 0, ctrlKey: false });
+    fireEvent.click(triggers[1]!);
+    const dropdownMenu = await screen.findByRole("menu");
+    fireEvent.click(within(dropdownMenu).getByText("Remove from Element"));
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove from Element" }));
+
+    await waitFor(() => {
+      expect(onRemoveMediaAssetFromCard).toHaveBeenCalledWith(
+        expect.objectContaining({
+          media_ref: "Media/p.jpg",
+          reference_kind: "body_embed",
+          occurrence_index: 1,
+        }),
+      );
+    });
+  });
+
   it("opens the preview on image click and on Expand, and opens the media menu on right click", async () => {
     const onOpenImagePreview = vi.fn();
     const b = block({

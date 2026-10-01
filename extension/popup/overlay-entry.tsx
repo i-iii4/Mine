@@ -26,11 +26,15 @@ interface OverlayHandle {
 }
 
 let current: OverlayHandle | null = null;
-// Mounts under way. A pending extension update counts the clipper open from
-// the moment it starts mounting, not once the mount has finished: its draft
-// and its requests reach background right after (SPEC_CLIPPER.md, К4;
-// SPEC_AUDIT_FIXES.md, В4.6).
-let mounting = 0;
+// The mount under way, one per tab. An open that comes while it runs gets
+// this mount instead of a second editor: the editor has not read its launch
+// yet and opens with the latest one (SPEC_AUDIT_FIXES.md, Г3.1). A pending
+// extension update counts the clipper open from the moment the mount starts,
+// not once it has finished: its draft and its requests reach background right
+// after (SPEC_CLIPPER.md, К4; SPEC_AUDIT_FIXES.md, В4.6).
+let pendingMount: Promise<void> | null = null;
+// Moves on with every close. A mount that a close overtook shows nothing.
+let overlayGeneration = 0;
 let cachedCss: string | null = null;
 
 async function loadCss(): Promise<string> {
@@ -80,10 +84,13 @@ async function ensureFontsLoaded() {
   }
 }
 
-async function mount(): Promise<OverlayHandle> {
+/// The editor of mount `generation`, or `null` when a close came while the
+/// stylesheet was loading.
+async function mount(generation: number): Promise<OverlayHandle | null> {
   const returnFocus = document.activeElement;
   ensureFontsLoaded();
   const css = await loadCss();
+  if (generation !== overlayGeneration) return null;
 
   const host = document.createElement("div");
   host.setAttribute("data-mine-clipper-overlay", "");
@@ -236,8 +243,10 @@ async function mount(): Promise<OverlayHandle> {
     closeClipperOverlay();
   }
   // Defer listener registration by one frame so the click that OPENED
-  // the overlay doesn't immediately close it.
+  // the overlay doesn't immediately close it. An editor closed before then
+  // registers nothing: its listener would close the next editor.
   setTimeout(() => {
+    if (!host.isConnected) return;
     window.addEventListener("pointerdown", onOutsidePointer, { capture: true });
     window.addEventListener("mousedown", onOutsidePointer, { capture: true });
   }, 0);
@@ -249,31 +258,39 @@ async function mount(): Promise<OverlayHandle> {
 }
 
 /// Fresh invocation: context menu / toolbar icon / extension icon.
-/// Always remounts so PopupApp.init() runs fresh and consumes the
-/// latest contextMenuData. Any previous overlay state (currentType,
-/// metadata, title) is DESTROYED. Use this when the intent is
-/// "user opened the clipper with new input."
-export async function showClipperOverlay(): Promise<void> {
-  // Counted before the previous overlay closes: that close asks background
-  // to apply a pending update, and this clipper is already opening.
-  await mountTracked(() => {
-    if (current) closeClipperOverlay();
-  });
+/// Remounts so PopupApp.init() runs fresh and consumes the latest
+/// launch. Any previous overlay state (currentType, metadata, title)
+/// is DESTROYED. Use this when the intent is "user opened the clipper
+/// with new input." An open while a mount is under way gets that
+/// mount: its editor has not read its launch yet (Г3.1).
+export function showClipperOverlay(): Promise<void> {
+  return pendingMount ?? beginMount(true);
 }
 
-async function mountTracked(beforeMount: () => void = () => undefined): Promise<void> {
-  mounting += 1;
-  try {
-    beforeMount();
-    current = await mount();
-  } finally {
-    mounting -= 1;
+/// Start the one mount of this tab. `replace` closes the editor shown now;
+/// the new one counts as opening before that close tells background, which
+/// may otherwise apply a pending update in between (В4.6).
+function beginMount(replace: boolean): Promise<void> {
+  const previous = replace ? current : null;
+  current = null;
+  const generation = overlayGeneration;
+  const mounting = mount(generation).then((handle) => {
+    if (handle && generation === overlayGeneration) current = handle;
+    else if (handle) unmount(handle);
+  }).finally(() => {
+    if (pendingMount === mounting) pendingMount = null;
+  });
+  pendingMount = mounting;
+  if (previous) {
+    unmount(previous);
+    reportClosed();
   }
+  return mounting;
 }
 
 /// Whether a clipper is open or opening in this tab.
 export function isClipperOverlayOpen(): boolean {
-  return current !== null || mounting > 0;
+  return current !== null || pendingMount !== null;
 }
 
 /// Hidden for a screenshot or a crop: still open, but the keyboard belongs to
@@ -288,13 +305,13 @@ export function isClipperOverlayHidden(): boolean {
 /// is "the overlay was temporarily hidden and now should reappear
 /// with the same content." If the overlay was closed (not just
 /// hidden) or never mounted, falls back to a fresh mount.
-export async function resumeClipperOverlay(): Promise<void> {
+export function resumeClipperOverlay(): Promise<void> {
   if (current) {
     current.host.style.display = "";
     restoreKeyboard(current);
-    return;
+    return Promise.resolve();
   }
-  await mountTracked();
+  return pendingMount ?? beginMount(false);
 }
 
 /// Hiding the host (display:none) takes the keyboard from whatever had it in
@@ -331,15 +348,25 @@ function restoreKeyboard(handle: OverlayHandle): void {
   shadow.querySelector<HTMLElement>("[data-mine-clipper-panel]")?.focus({ preventScroll: true });
 }
 
+/// Close the editor of this tab, or the one still mounting: a mount that this
+/// close overtakes never shows (Г3.1).
 export function closeClipperOverlay(): void {
-  if (!current) return;
-  const { host, returnFocus } = current;
-  const keyboardInside = host.contains(document.activeElement);
-  window.removeEventListener("pointerdown", current.onOutsidePointer, { capture: true });
-  window.removeEventListener("mousedown", current.onOutsidePointer, { capture: true });
-  current.root.unmount();
-  host.remove();
+  const handle = current;
+  if (!handle && !pendingMount) return;
   current = null;
+  pendingMount = null;
+  overlayGeneration += 1;
+  if (handle) unmount(handle);
+  reportClosed();
+}
+
+function unmount(handle: OverlayHandle): void {
+  const { host, returnFocus } = handle;
+  const keyboardInside = host.contains(document.activeElement);
+  window.removeEventListener("pointerdown", handle.onOutsidePointer, { capture: true });
+  window.removeEventListener("mousedown", handle.onOutsidePointer, { capture: true });
+  handle.root.unmount();
+  host.remove();
   // Escape and the close after Save give the keyboard back to what had it
   // on the page (А6.12). A click outside moves focus where it lands itself.
   if (
@@ -350,7 +377,10 @@ export function closeClipperOverlay(): void {
   ) {
     returnFocus.focus({ preventScroll: true });
   }
-  // A pending extension update applies now that nothing is open (SPEC_CLIPPER.md, К4).
+}
+
+/// A pending extension update applies once nothing is open (SPEC_CLIPPER.md, К4).
+function reportClosed(): void {
   try {
     void chrome.runtime.sendMessage({ target: "background", action: "mineClipperClosed" }).catch(() => undefined);
   } catch {
@@ -376,7 +406,6 @@ const api: MineOverlayApi = {
   close: closeClipperOverlay,
   isHidden: isClipperOverlayHidden,
 };
-(globalThis as unknown as { __mineOverlay: MineOverlayApi }).__mineOverlay = api;
 
 function onRuntimeMessage(msg: unknown) {
   if (typeof msg !== "object" || msg === null) return false;
@@ -396,7 +425,7 @@ function onRuntimeMessage(msg: unknown) {
   return false;
 }
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+function onMessage(msg: unknown, _sender: unknown, sendResponse: (response: unknown) => void): boolean {
   // A pending extension update asks before reloading (SPEC_CLIPPER.md, К4):
   // a hidden overlay (screenshot, crop) and a mounting one are open editors.
   if (
@@ -410,4 +439,35 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   const handled = onRuntimeMessage(msg);
   if (handled) sendResponse({ ok: true });
   return false;
-});
+}
+
+// The bundle can run again in a page that already has it: two openings that
+// both inject it, or the static Instagram script and an injection. A second
+// instance would answer background beside the first and mount a second
+// editor with every open, so one instance per page answers (Г3.1). A script
+// left by a reloaded extension cannot reach it anymore and gives way.
+interface OverlayInstance {
+  /// Whether the extension that ran this instance is still the running one.
+  alive: () => boolean;
+}
+const INSTANCE_KEY = "__mineOverlayInstance";
+
+function claimPage(): boolean {
+  const page = globalThis as unknown as { [INSTANCE_KEY]?: OverlayInstance; __mineOverlay?: MineOverlayApi };
+  if (page[INSTANCE_KEY]?.alive()) return false;
+  const runtime = chrome.runtime;
+  page[INSTANCE_KEY] = {
+    alive: () => {
+      try {
+        return typeof runtime?.id === "string";
+      } catch {
+        // A context the browser has torn down may refuse even this read.
+        return false;
+      }
+    },
+  };
+  page.__mineOverlay = api;
+  return true;
+}
+
+if (claimPage()) chrome.runtime.onMessage.addListener(onMessage);

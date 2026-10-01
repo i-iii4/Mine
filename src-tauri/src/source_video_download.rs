@@ -175,9 +175,14 @@ struct Job {
     vault: VaultLayout,
 }
 
-/// Whether two layouts are one space: the same folder holding the same
-/// identity, which names the space's derived store. A space placed at the
-/// folder of another one is another space (`SPEC_AUDIT_FIXES.md`, Ф9, Б3.4).
+/// Whether two layouts are one space: the same folder and the same identity,
+/// which names the space's derived store. A space placed at the folder of
+/// another one is another space (`SPEC_AUDIT_FIXES.md`, Ф9, Б3.4).
+///
+/// Both layouts are what the app knew when they were made. Whether the
+/// folder still holds that space on disk is asked where a result is
+/// published into it (`root_guard`; Г2.2): a disconnected disk leaves the
+/// open session naming a folder that is not there.
 pub(crate) fn same_space(a: &VaultLayout, b: &VaultLayout) -> bool {
     a.root() == b.root() && a.derived_root() == b.derived_root()
 }

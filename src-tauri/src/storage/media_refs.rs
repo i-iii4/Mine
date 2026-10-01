@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 #[error("ambiguous media reference: {0}")]
 pub struct AmbiguousMediaReference(pub String);
 
-use crate::domain::block::{InlineMediaReference, InlineMediaSyntax};
+use crate::domain::block::{FileReference, InlineMediaReference, InlineMediaSyntax};
 use crate::domain::vault::VaultLayout;
 
 /// Cached resolver for bulk index migrations.
@@ -37,7 +37,7 @@ impl<'a> MediaResolver<'a> {
         reference: &InlineMediaReference,
     ) -> Option<PathBuf> {
         let syntax = match reference.syntax {
-            InlineMediaSyntax::MarkdownImage => LinkSyntax::Markdown,
+            InlineMediaSyntax::MarkdownImage => LinkSyntax::MarkdownPath,
             InlineMediaSyntax::ObsidianEmbed => LinkSyntax::Obsidian,
         };
         let source = format!("{block_slug}.md");
@@ -47,6 +47,23 @@ impl<'a> MediaResolver<'a> {
             &source,
             &reference.source,
             syntax,
+        )
+    }
+
+    /// The file a body reference of any link form names
+    /// (`block::iter_file_references`, SPEC_AUDIT_FIXES.md, Г1.1).
+    pub fn resolve_file_reference(
+        &mut self,
+        block_slug: &str,
+        reference: &FileReference,
+    ) -> Option<PathBuf> {
+        let source = format!("{block_slug}.md");
+        resolve_with_index(
+            self.vault,
+            self.link_index(),
+            &source,
+            &reference.target,
+            reference.syntax,
         )
     }
 
@@ -75,7 +92,7 @@ impl<'a> MediaResolver<'a> {
             return Some(path);
         }
         let syntax = if reference.starts_with("./") || reference.starts_with("../") {
-            LinkSyntax::Markdown
+            LinkSyntax::MarkdownPath
         } else {
             LinkSyntax::Obsidian
         };
@@ -179,7 +196,7 @@ pub fn resolve_frontmatter_media(
     reference: &str,
 ) -> Option<PathBuf> {
     let syntax = if reference.starts_with("./") || reference.starts_with("../") {
-        LinkSyntax::Markdown
+        LinkSyntax::MarkdownPath
     } else {
         LinkSyntax::Obsidian
     };
@@ -216,7 +233,7 @@ fn resolve_markdown_media(
         &build_link_index(vault.root()),
         &format!("{block_slug}.md"),
         reference,
-        LinkSyntax::Markdown,
+        LinkSyntax::MarkdownPath,
     )
 }
 
@@ -233,7 +250,7 @@ pub fn resolve_indexed_media(
         return Some(path);
     }
     let syntax = if reference.starts_with("./") || reference.starts_with("../") {
-        LinkSyntax::Markdown
+        LinkSyntax::MarkdownPath
     } else {
         LinkSyntax::Obsidian
     };

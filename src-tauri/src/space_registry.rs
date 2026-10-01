@@ -10,6 +10,7 @@
 //! path. The registry keeps those two keys (`known_vaults`, `vault_path`) as a
 //! projection of itself; nothing reads them back as the source of truth.
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -512,25 +513,166 @@ pub fn forget_record(cfg: &mut Map<String, Value>, path: &str, clear_current: bo
     }
 }
 
-/// List a space without opening it (the settings window's Add). A space the
-/// person forgot and adds again is no longer forgotten.
-pub fn add_space(cfg: &mut Map<String, Value>, vault_id: Option<&str>, path: &str) {
-    let mut records = records(cfg);
-    let known = records.iter().any(|record| {
-        same_path(&record.path, path)
-            || (vault_id.is_some() && record.vault_id.as_deref() == vault_id)
-    });
-    if !known {
-        records.push(SpaceRecord {
-            vault_id: vault_id.map(str::to_string),
-            path: path.to_string(),
-            last_opened_ms: None,
-        });
+/// What listing a folder came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AddedSpace {
+    /// A new record stands for the folder.
+    Listed,
+    /// A record already stood for the folder.
+    AlreadyListed,
+    /// The space was listed at `from`, where it is no longer: its record now
+    /// names the folder, and no second record is added (П16).
+    Moved { from: String },
+    /// The same space is alive at `original`: the folder is its copy. It is
+    /// listed as a space of its own, with the identity `vault_id` minted for
+    /// it (П22, П26). `None` when that identity could not be written: the
+    /// copy is listed without one, and the copy rule gives it its own when it
+    /// opens.
+    Copied {
+        original: String,
+        vault_id: Option<String>,
+    },
+}
+
+/// What stands at the path a record last saw its space at.
+enum OldPlace {
+    /// No folder, or a folder that is another space or none at all.
+    Gone,
+    /// The folder there carries the same identity.
+    Alive,
+    /// The identity there is only in iCloud: it cannot be told now.
+    Unknown,
+}
+
+fn old_place(path: &str, id: &str) -> OldPlace {
+    let folder = Path::new(path);
+    if !folder.is_dir() {
+        return OldPlace::Gone;
     }
+    match space_identity(folder) {
+        SpaceIdentity::Known(found) if found == id => OldPlace::Alive,
+        SpaceIdentity::Known(_) | SpaceIdentity::Absent => OldPlace::Gone,
+        SpaceIdentity::InCloud => OldPlace::Unknown,
+    }
+}
+
+/// List a space without opening it (the settings window's Add, the
+/// clipper's folder choice). A space the person forgot and adds again is no
+/// longer forgotten.
+///
+/// The identity decides, the path is only an address (П26). A folder whose
+/// identity a record already carries at another path is that space moved
+/// there, when nothing at the old path is that space any more: the record
+/// follows it, along with the current binding that pointed at the old path
+/// (П16). When the space is alive at the old path, the folder is a copy and
+/// becomes a space of its own, with its own identity and its own record
+/// (П22). An identity that cannot be read now (iCloud) decides nothing: the
+/// folder is listed without one, and opening it applies the same rules.
+pub fn add_space(cfg: &mut Map<String, Value>, vault_id: Option<&str>, path: &str) -> AddedSpace {
+    let mut records = records(cfg);
     if let Some(id) = vault_id {
         unforget(cfg, id);
     }
+    let unidentified = |path: &str| SpaceRecord {
+        vault_id: None,
+        path: path.to_string(),
+        last_opened_ms: None,
+    };
+    if records.iter().any(|record| same_path(&record.path, path)) {
+        write_records(cfg, &records);
+        return AddedSpace::AlreadyListed;
+    }
+    let Some(id) = vault_id else {
+        records.push(unidentified(path));
+        write_records(cfg, &records);
+        return AddedSpace::Listed;
+    };
+    let Some(index) = records
+        .iter()
+        .position(|record| record.vault_id.as_deref() == Some(id))
+    else {
+        records.push(SpaceRecord {
+            vault_id: Some(id.to_string()),
+            path: path.to_string(),
+            last_opened_ms: None,
+        });
+        write_records(cfg, &records);
+        return AddedSpace::Listed;
+    };
+    let from = records[index].path.clone();
+    let outcome = match old_place(&from, id) {
+        OldPlace::Gone => {
+            records[index].path = path.to_string();
+            if current_path(cfg).is_some_and(|current| same_path(&current, &from)) {
+                cfg.insert(VAULT_PATH_KEY.into(), Value::from(path));
+            }
+            AddedSpace::Moved { from }
+        }
+        OldPlace::Alive => {
+            let minted = match mint_copy_identity(Path::new(path)) {
+                Ok(minted) => Some(minted),
+                Err(error) => {
+                    log::warn!(
+                        "the copy at {path} keeps the identity of {from} until it opens: {error}"
+                    );
+                    None
+                }
+            };
+            records.push(SpaceRecord {
+                vault_id: minted.clone(),
+                path: path.to_string(),
+                last_opened_ms: None,
+            });
+            AddedSpace::Copied {
+                original: from,
+                vault_id: minted,
+            }
+        }
+        OldPlace::Unknown => {
+            records.push(unidentified(path));
+            AddedSpace::Listed
+        }
+    };
     write_records(cfg, &records);
+    outcome
+}
+
+/// Why a copy could not be given an identity of its own.
+#[derive(Debug, thiserror::Error)]
+enum MintIdentityError {
+    #[error("no randomness for a new identity: {0}")]
+    Random(getrandom::Error),
+    #[error("cannot write {path}: {source:#}")]
+    Write {
+        path: PathBuf,
+        source: anyhow::Error,
+    },
+}
+
+/// Give the copy at `folder` an identity of its own (П22): what the app
+/// does to a copy when it opens one, done here when the copy is listed.
+fn mint_copy_identity(folder: &Path) -> Result<String, MintIdentityError> {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).map_err(MintIdentityError::Random)?;
+    // A random (version 4) UUID, written as the 32 hex digits every space
+    // identity is.
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let id = bytes.iter().fold(String::with_capacity(32), |mut id, byte| {
+        // Writing into a `String` cannot fail.
+        let _ = write!(id, "{byte:02x}");
+        id
+    });
+    let path = folder.join(ID_FILES[0]);
+    // A copy of a space that still keeps its identity in the legacy
+    // `.arena` folder has no `.mine` folder yet.
+    let written = std::fs::create_dir_all(folder.join(".mine"))
+        .map_err(anyhow::Error::from)
+        .and_then(|()| {
+            crate::storage::files::write_atomically(&path, format!("{id}\n").as_bytes())
+        });
+    written.map_err(|source| MintIdentityError::Write { path, source })?;
+    Ok(id)
 }
 
 /// Put the records in the given path order; unknown paths are ignored and
@@ -1147,5 +1289,119 @@ mod tests {
         reorder(&mut cfg, &[nsfv.clone(), mine.clone()]);
         let paths: Vec<String> = records(&cfg).into_iter().map(|record| record.path).collect();
         assert_eq!(paths, vec![nsfv, mine]);
+    }
+
+    /// Г2.5, П16: the space X, listed at A, moved to B; nothing is at A. Adding
+    /// B moves X's record there: one record, available, still the current
+    /// space, and the other space untouched.
+    #[test]
+    fn adding_a_moved_space_moves_its_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let nsfv = space(dir.path(), "NSFV", NSFV);
+        let old = space(dir.path(), "Mine", MINE);
+        let mut cfg = Map::new();
+        record_open(&mut cfg, NSFV, &nsfv, 1);
+        record_open(&mut cfg, MINE, &old, 2);
+        let moved = dir.path().join("Mine moved").to_string_lossy().into_owned();
+        std::fs::rename(&old, &moved).unwrap();
+
+        assert_eq!(
+            add_space(&mut cfg, Some(MINE), &moved),
+            AddedSpace::Moved { from: old.clone() }
+        );
+
+        assert_eq!(
+            records(&cfg),
+            vec![
+                SpaceRecord { vault_id: Some(NSFV.into()), path: nsfv.clone(), last_opened_ms: Some(1) },
+                SpaceRecord { vault_id: Some(MINE.into()), path: moved.clone(), last_opened_ms: Some(2) },
+            ]
+        );
+        assert!(statuses(&cfg).iter().all(|status| status.available));
+        assert_eq!(current_path(&cfg), Some(moved));
+    }
+
+    /// Г2.5, П16: a folder at the old path that is another space, or no
+    /// space at all, is not where X lives: X's record still moves.
+    #[test]
+    fn adding_a_moved_space_moves_its_record_past_a_folder_that_took_its_old_path() {
+        for occupant in [Some(NSFV), None] {
+            let dir = tempfile::tempdir().unwrap();
+            let old = space(dir.path(), "Mine", MINE);
+            let mut cfg = Map::new();
+            record_open(&mut cfg, MINE, &old, 1);
+            let moved = dir.path().join("Mine moved").to_string_lossy().into_owned();
+            std::fs::rename(&old, &moved).unwrap();
+            match occupant {
+                Some(id) => {
+                    space(dir.path(), "Mine", id);
+                }
+                None => std::fs::create_dir(&old).unwrap(),
+            }
+
+            assert_eq!(
+                add_space(&mut cfg, Some(MINE), &moved),
+                AddedSpace::Moved { from: old.clone() }
+            );
+
+            let listed = records(&cfg);
+            assert_eq!(listed.len(), 1, "{occupant:?}: {listed:?}");
+            assert_eq!(listed[0].vault_id.as_deref(), Some(MINE));
+            assert_eq!(listed[0].path, moved);
+            assert_eq!(read_space_id(Path::new(&moved)).as_deref(), Some(MINE));
+        }
+    }
+
+    /// Г2.5, П22, П26: a copy of X added while X is alive at A. The copy is a
+    /// space of its own: its own identity and its own record; A keeps X.
+    #[test]
+    fn adding_a_copy_of_a_live_space_lists_it_as_a_space_of_its_own() {
+        let dir = tempfile::tempdir().unwrap();
+        let original = space(dir.path(), "Mine", MINE);
+        let mut cfg = Map::new();
+        record_open(&mut cfg, MINE, &original, 1);
+        let copy = space(dir.path(), "Mine copy", MINE);
+
+        let added = add_space(&mut cfg, Some(MINE), &copy);
+
+        let listed = records(&cfg);
+        assert_eq!(listed.len(), 2, "the copy was dropped: {listed:?}");
+        assert_eq!(
+            added,
+            AddedSpace::Copied { original: original.clone(), vault_id: listed[1].vault_id.clone() }
+        );
+        assert_eq!(
+            listed[0],
+            SpaceRecord { vault_id: Some(MINE.into()), path: original.clone(), last_opened_ms: Some(1) }
+        );
+        assert_eq!(listed[1].path, copy);
+        let own = listed[1].vault_id.clone().expect("the copy carries an identity");
+        assert!(is_space_id(&own), "{own}");
+        assert_ne!(own, MINE);
+        assert_eq!(read_space_id(Path::new(&copy)), Some(own));
+        assert_eq!(read_space_id(Path::new(&original)).as_deref(), Some(MINE));
+        assert!(statuses(&cfg).iter().all(|status| status.available));
+        assert_eq!(current_path(&cfg), Some(original));
+    }
+
+    /// П22, П26: whether the folder is a copy cannot be told while the
+    /// original's identity is only in iCloud. The folder is listed on its
+    /// own, keeps what it carries, and opening it applies the copy rule.
+    #[test]
+    fn a_copy_beside_an_original_only_in_icloud_is_listed_undecided() {
+        let dir = tempfile::tempdir().unwrap();
+        let original = space_in_cloud(dir.path(), "Mine");
+        let mut cfg = Map::new();
+        record_open(&mut cfg, MINE, &original, 1);
+        let copy = space(dir.path(), "Mine copy", MINE);
+
+        assert_eq!(add_space(&mut cfg, Some(MINE), &copy), AddedSpace::Listed);
+
+        let listed = records(&cfg);
+        assert_eq!(listed.len(), 2, "{listed:?}");
+        assert_eq!(listed[0].vault_id.as_deref(), Some(MINE));
+        assert_eq!(listed[0].path, original);
+        assert_eq!(listed[1], SpaceRecord { vault_id: None, path: copy.clone(), last_opened_ms: None });
+        assert_eq!(read_space_id(Path::new(&copy)).as_deref(), Some(MINE));
     }
 }

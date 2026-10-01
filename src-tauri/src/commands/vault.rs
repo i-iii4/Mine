@@ -858,6 +858,22 @@ impl Drop for SweepCompletion {
 
 // ─── Shared initialization ──────────────────────────────────────────────────
 
+/// Whether the open session `open` is still the space at `path`, so that
+/// choosing `path` again may reuse it (`SPEC_AUDIT_FIXES.md`, Ф8, Г2.1).
+///
+/// The path alone proves nothing: the session outlives its folder, and
+/// another space may stand at the path by now. Reusing the session then
+/// served the lost space's index for the new one, and two seconds later the
+/// folder watch found the wrong identity and declared the space unavailable
+/// again, round after round. The session is reused only while its folder
+/// passes the very test the folder watch applies
+/// ([`crate::storage::root_guard::root_gone`]), so the two never disagree;
+/// otherwise the choice takes the full opening path, which reads the
+/// folder's own identity.
+fn session_serves(open: &VaultLayout, path: &Path) -> bool {
+    open.root() == path && !crate::storage::root_guard::root_gone(open)
+}
+
 /// Initialize a vault: expand asset scope, create dirs, open DB and restore snapshot.
 fn initialize_vault(
     app: &AppHandle,
@@ -875,7 +891,7 @@ fn initialize_vault(
         .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     if let Some(ref vs) = *vault_state {
-        if vs.vault.root() == Path::new(path) {
+        if session_serves(&vs.vault, Path::new(path)) {
             let cached = (|| -> anyhow::Result<_> {
                 let indexed: i64 = vs
                     .conn
@@ -2791,6 +2807,36 @@ mod identity_claim_tests {
         assert!(resolve_space_layout(&vaults, &a, SpaceOpening::Restored).is_err());
         assert_eq!(std::fs::read_dir(&a).unwrap().count(), 0);
         assert_eq!(derived_stores(&vaults), vec![ID.to_string()]);
+    }
+
+    /// Г2.1: space A was open at P. A's folder was deleted and space B now
+    /// stands at P; the person chooses P. A's session must not be reused: P
+    /// opens as B, with B's own derived store, and the folder watch then
+    /// finds the space it expects there.
+    #[test]
+    fn choosing_a_path_another_space_took_opens_that_space_not_the_old_session() {
+        let home = tempfile::tempdir().unwrap();
+        let vaults = home.path().join("app/vaults");
+        let p = home.path().join("P");
+        std::fs::create_dir(&p).unwrap();
+        carry_identity(&p, ID);
+        let session_a = resolve_space_layout(&vaults, &p, SpaceOpening::Chosen).unwrap();
+        assert!(session_serves(&session_a, &p), "A, still at P, reuses its session");
+
+        std::fs::remove_dir_all(&p).unwrap();
+        std::fs::create_dir(&p).unwrap();
+        carry_identity(&p, OTHER);
+
+        assert!(!session_serves(&session_a, &p), "A's session was reused for B");
+        let opened = resolve_space_layout(&vaults, &p, SpaceOpening::Chosen).unwrap();
+        assert_eq!(opened.derived_root(), vaults.join(OTHER));
+        assert_ne!(opened.index_db_path(), session_a.index_db_path());
+        assert!(session_serves(&opened, &p));
+        assert!(!crate::storage::root_guard::root_gone(&opened));
+
+        // A's folder deleted and nothing at P: no session to reuse either.
+        std::fs::remove_dir_all(&p).unwrap();
+        assert!(!session_serves(&session_a, &p));
     }
 
     #[test]

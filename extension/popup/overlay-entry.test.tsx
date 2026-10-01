@@ -200,3 +200,59 @@ describe("a pending extension update sees a clipper that is still mounting (SPEC
     expect(answeredOnClose).toEqual([true]);
   });
 });
+
+describe("one editor per tab (SPEC_AUDIT_FIXES.md, Г3.1)", () => {
+  const editors = () => document.querySelectorAll("[data-mine-clipper-overlay]");
+  /// What background asks the tab, the way it asks: through every listener.
+  function ask(action: string): unknown {
+    let answer: unknown;
+    for (const listener of runtimeListeners) {
+      listener({ action }, {}, (response) => { answer = response; });
+    }
+    return answer;
+  }
+  /// The close button, Escape and Save close through the page's overlay API.
+  const closeButton = () => (globalThis as unknown as { __mineOverlay: { close: () => void } }).__mineOverlay.close();
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", () => Promise.resolve({ text: () => Promise.resolve("") }));
+  });
+
+  afterEach(() => {
+    act(() => closeClipperOverlay());
+    vi.unstubAllGlobals();
+  });
+
+  it("mounts one editor for two opens that arrive before the first mount finishes, and its close leaves none", async () => {
+    await act(async () => {
+      ask("showClipperOverlay");
+      ask("showClipperOverlay");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(editors()).toHaveLength(1);
+
+    act(() => closeButton());
+    expect(editors()).toHaveLength(0);
+    expect(ask("mineClipperIsOpen")).toEqual({ open: false });
+  });
+
+  it("does not show an editor whose mount a close overtook", async () => {
+    await act(async () => {
+      ask("showClipperOverlay");
+      expect(ask("mineClipperIsOpen")).toEqual({ open: true });
+      closeButton();
+      expect(ask("mineClipperIsOpen")).toEqual({ open: false });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(editors()).toHaveLength(0);
+    expect(ask("mineClipperIsOpen")).toEqual({ open: false });
+  });
+
+  it("opens the editor anew once the previous one finished mounting", async () => {
+    await act(async () => { await showClipperOverlay(); });
+    const first = editors()[0];
+    await act(async () => { await showClipperOverlay(); });
+    expect(editors()).toHaveLength(1);
+    expect(editors()[0]).not.toBe(first);
+  });
+});

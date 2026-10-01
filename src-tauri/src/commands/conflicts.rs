@@ -4,14 +4,15 @@
 // iCloud sync-conflict detection (Phase 18.G.3) as IPC endpoints the
 // frontend can list and resolve.
 
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::commands::state::{current_vault_layout, read_owned_projection, AppState, CommandError};
-use crate::domain::block::parse_markdown_document;
-use crate::domain::vault::validate_slug;
+use crate::domain::block::{parse_markdown_document, ParsedMarkdownBlock};
+use crate::domain::vault::{validate_slug, VaultLayout};
 use crate::storage::source_mutation::{SourceFileWrite, StagedSourceMutation};
 use crate::storage::{files, index};
 
@@ -81,108 +82,14 @@ pub fn resolve_vault_conflict(
         .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-    let vault_root = vs.vault.root().to_path_buf();
-    let derived_root = vs.vault.derived_root().to_path_buf();
 
-    let conflict_exists = index::vault_conflict_exists(&vs.conn, &base_slug, &conflict_slug)
-        .map_err(|e| CommandError::Internal(format!("vault_conflict_exists failed: {e:#}")))?;
-    if !conflict_exists {
-        return Err(CommandError::Internal(format!(
-            "vault conflict is no longer pending: {base_slug} / {conflict_slug}"
-        )));
-    }
-
-    let base_path: PathBuf = vault_root.join(format!("{base_slug}.md"));
-    let conflict_path: PathBuf = vault_root.join(format!("{conflict_slug}.md"));
-
-    let mut writes = Vec::new();
-    let mut promoted = None;
-    match &action {
-        ResolveAction::KeepOriginal => {
-            if conflict_path.exists() {
-                writes.push(SourceFileWrite::delete(conflict_path.clone()));
-            }
-        }
-        ResolveAction::KeepConflict => {
-            if !conflict_path.exists() {
-                return Err(CommandError::Internal(format!(
-                    "conflict file no longer exists: {}",
-                    conflict_path.display()
-                )));
-            }
-
-            let (_, conflict_content) = files::read_block_file(&vs.vault, &conflict_path)?;
-            promoted = Some(
-                parse_markdown_document(
-                    &base_slug,
-                    &conflict_content,
-                    file_saved_at(&conflict_path),
-                )
-                .map_err(|error| CommandError::Internal(error.to_string()))?,
-            );
-            if base_path.exists() {
-                let archive_dir = derived_root.join("conflicts-archive");
-                let archive_name = archive_filename(&base_slug);
-                let archive_path = archive_dir.join(archive_name);
-                let base_content = std::fs::read(&base_path).map_err(|error| {
-                    CommandError::Internal(format!(
-                        "failed to read conflict base {}: {error}",
-                        base_path.display()
-                    ))
-                })?;
-                writes.push(SourceFileWrite::create(archive_path, base_content.clone()));
-                writes.push(SourceFileWrite::replace(
-                    base_path.clone(),
-                    base_content,
-                    conflict_content.into_bytes(),
-                ));
-                writes.push(SourceFileWrite::delete(conflict_path.clone()));
-            } else {
-                // The conflict copy becomes the note as it is.
-                writes.push(SourceFileWrite::rename(
-                    conflict_path.clone(),
-                    base_path.clone(),
-                ));
-            }
-        }
-        ResolveAction::DismissForManualMerge => {
-            // User will reconcile in Obsidian. We only clear the DB
-            // surface so Mine stops showing the banner; files on disk
-            // remain in place.
-        }
-    }
-
+    let resolution =
+        ConflictResolution::plan(&vs.conn, &vs.vault, &base_slug, &conflict_slug, action)?;
     state.suppress_paths(
-        [base_path.clone(), conflict_path.clone()],
+        [resolution.base_path.clone(), resolution.conflict_path.clone()],
         Duration::from_millis(CONFLICT_MUTATION_WATCHER_SUPPRESSION_MS),
     )?;
-    let staged = StagedSourceMutation::stage(writes)
-        .map_err(|error| CommandError::Internal(error.to_string()))?;
-    staged
-        .commit_with_index(&vs.conn, "resolve_vault_conflict", |index_conn| {
-            match action {
-                ResolveAction::KeepOriginal => {
-                    index::remove_block(index_conn, &conflict_slug)?;
-                }
-                ResolveAction::KeepConflict => {
-                    let promoted = promoted
-                        .as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("promoted conflict projection missing"))?;
-                    index::upsert_block_with_diagnostics(
-                        index_conn,
-                        &promoted.block,
-                        Some(vs.vault.root()),
-                        Some(promoted.origin.as_str()),
-                        promoted.index_warning.as_deref(),
-                    )?;
-                    index::remove_block(index_conn, &conflict_slug)?;
-                }
-                ResolveAction::DismissForManualMerge => {}
-            }
-            index::clear_vault_conflict(index_conn, &base_slug, &conflict_slug)?;
-            Ok(())
-        })
-        .map_err(|error| CommandError::Internal(error.to_string()))?;
+    resolution.apply(&vs.conn, &vs.vault)?;
 
     // Notify listeners so any open sidebar banner / dialog refreshes.
     let _ = app.emit(
@@ -195,6 +102,163 @@ pub fn resolve_vault_conflict(
     );
 
     Ok(())
+}
+
+/// The source writes and index changes of one chosen conflict version,
+/// built from the files as they were read.
+struct ConflictResolution {
+    base_slug: String,
+    conflict_slug: String,
+    base_path: PathBuf,
+    conflict_path: PathBuf,
+    action: ResolveAction,
+    writes: Vec<SourceFileWrite>,
+    /// The conflict copy as the base note it becomes, for `KeepConflict`.
+    promoted: Option<ParsedMarkdownBlock>,
+}
+
+impl ConflictResolution {
+    /// Read the files the chosen version touches and plan the writes.
+    fn plan(
+        conn: &Connection,
+        vault: &VaultLayout,
+        base_slug: &str,
+        conflict_slug: &str,
+        action: ResolveAction,
+    ) -> Result<Self, CommandError> {
+        let conflict_exists = index::vault_conflict_exists(conn, base_slug, conflict_slug)
+            .map_err(|e| CommandError::Internal(format!("vault_conflict_exists failed: {e:#}")))?;
+        if !conflict_exists {
+            return Err(CommandError::Internal(format!(
+                "vault conflict is no longer pending: {base_slug} / {conflict_slug}"
+            )));
+        }
+
+        let base_path: PathBuf = vault.root().join(format!("{base_slug}.md"));
+        let conflict_path: PathBuf = vault.root().join(format!("{conflict_slug}.md"));
+
+        let mut writes = Vec::new();
+        let mut promoted = None;
+        // The conflict copy goes to the Trash only as it was read here: a
+        // version iCloud or an editor writes meanwhile stays, and the
+        // resolution refuses (`SPEC_AUDIT_FIXES.md`, Ф2, Г1.8).
+        match &action {
+            ResolveAction::KeepOriginal => match std::fs::read(&conflict_path) {
+                Ok(read) => writes.push(SourceFileWrite::delete_if_unchanged(
+                    conflict_path.clone(),
+                    read,
+                )),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(CommandError::Internal(format!(
+                        "failed to read conflict copy {}: {error}",
+                        conflict_path.display()
+                    )))
+                }
+            },
+            ResolveAction::KeepConflict => {
+                if !conflict_path.exists() {
+                    return Err(CommandError::Internal(format!(
+                        "conflict file no longer exists: {}",
+                        conflict_path.display()
+                    )));
+                }
+
+                let (_, conflict_content) = files::read_block_file(vault, &conflict_path)?;
+                promoted = Some(
+                    parse_markdown_document(
+                        base_slug,
+                        &conflict_content,
+                        file_saved_at(&conflict_path),
+                    )
+                    .map_err(|error| CommandError::Internal(error.to_string()))?,
+                );
+                if base_path.exists() {
+                    let archive_path = vault
+                        .derived_root()
+                        .join("conflicts-archive")
+                        .join(archive_filename(base_slug));
+                    let base_content = std::fs::read(&base_path).map_err(|error| {
+                        CommandError::Internal(format!(
+                            "failed to read conflict base {}: {error}",
+                            base_path.display()
+                        ))
+                    })?;
+                    let conflict_bytes = conflict_content.into_bytes();
+                    writes.push(SourceFileWrite::create(archive_path, base_content.clone()));
+                    writes.push(SourceFileWrite::replace(
+                        base_path.clone(),
+                        base_content,
+                        conflict_bytes.clone(),
+                    ));
+                    writes.push(SourceFileWrite::delete_if_unchanged(
+                        conflict_path.clone(),
+                        conflict_bytes,
+                    ));
+                } else {
+                    // The conflict copy becomes the note as it is.
+                    writes.push(SourceFileWrite::rename(
+                        conflict_path.clone(),
+                        base_path.clone(),
+                    ));
+                }
+            }
+            ResolveAction::DismissForManualMerge => {
+                // User will reconcile in Obsidian. We only clear the DB
+                // surface so Mine stops showing the banner; files on disk
+                // remain in place.
+            }
+        }
+        Ok(Self {
+            base_slug: base_slug.to_string(),
+            conflict_slug: conflict_slug.to_string(),
+            base_path,
+            conflict_path,
+            action,
+            writes,
+            promoted,
+        })
+    }
+
+    /// Publish the writes and the index changes as one operation.
+    fn apply(self, conn: &Connection, vault: &VaultLayout) -> Result<(), CommandError> {
+        let Self {
+            base_slug,
+            conflict_slug,
+            action,
+            writes,
+            promoted,
+            ..
+        } = self;
+        StagedSourceMutation::stage(writes)?.commit_with_index(
+            conn,
+            "resolve_vault_conflict",
+            |index_conn| {
+                match action {
+                    ResolveAction::KeepOriginal => {
+                        index::remove_block(index_conn, &conflict_slug)?;
+                    }
+                    ResolveAction::KeepConflict => {
+                        let promoted = promoted.as_ref().ok_or_else(|| {
+                            anyhow::anyhow!("promoted conflict projection missing")
+                        })?;
+                        index::upsert_block_with_diagnostics(
+                            index_conn,
+                            &promoted.block,
+                            Some(vault.root()),
+                            Some(promoted.origin.as_str()),
+                            promoted.index_warning.as_deref(),
+                        )?;
+                        index::remove_block(index_conn, &conflict_slug)?;
+                    }
+                    ResolveAction::DismissForManualMerge => {}
+                }
+                index::clear_vault_conflict(index_conn, &base_slug, &conflict_slug)?;
+                Ok(())
+            },
+        )?;
+        Ok(())
+    }
 }
 
 /// Build an archive filename for a retired base block. Appends an
@@ -219,6 +283,93 @@ fn file_saved_at(path: &std::path::Path) -> crate::domain::block::DateTime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::db;
+
+    const BASE: &str = "---\nsaved_at: 2026-07-10T00:00:00Z\n---\nThe original";
+    const CONFLICT: &str = "---\nsaved_at: 2026-07-10T00:00:00Z\n---\nThe conflict copy";
+    const EDITED: &str = "---\nsaved_at: 2026-07-10T00:00:00Z\n---\nThe conflict copy, edited meanwhile";
+
+    /// A space with a base note and its iCloud conflict copy, both indexed
+    /// and the conflict pending.
+    fn space_with_conflict() -> (tempfile::TempDir, VaultLayout, Connection) {
+        let dir = tempfile::tempdir().unwrap();
+        let vault =
+            VaultLayout::with_derived_root(dir.path().join("space"), dir.path().join("derived"));
+        std::fs::create_dir_all(vault.root()).unwrap();
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        for (slug, source) in [("Note", BASE), ("Note 2", CONFLICT)] {
+            let path = vault.block_path(slug);
+            std::fs::write(&path, source).unwrap();
+            let parsed = parse_markdown_document(slug, source, file_saved_at(&path)).unwrap();
+            index::upsert_block(&conn, &parsed.block, Some(vault.root())).unwrap();
+        }
+        index::record_vault_conflict(&conn, "Note", "Note 2").unwrap();
+        (dir, vault, conn)
+    }
+
+    /// Г1.8: the conflict copy is edited after the resolution read it. The
+    /// edit is not deleted: the resolution refuses and both files stay.
+    #[test]
+    fn keeping_the_conflict_refuses_when_the_copy_changed_after_it_was_read() {
+        let (_dir, vault, conn) = space_with_conflict();
+        let resolution =
+            ConflictResolution::plan(&conn, &vault, "Note", "Note 2", ResolveAction::KeepConflict)
+                .unwrap();
+        std::fs::write(vault.block_path("Note 2"), EDITED).unwrap();
+
+        let refused = resolution.apply(&conn, &vault);
+
+        assert!(matches!(refused, Err(CommandError::SourceChanged { .. })), "{refused:?}");
+        assert_eq!(std::fs::read_to_string(vault.block_path("Note")).unwrap(), BASE);
+        assert_eq!(std::fs::read_to_string(vault.block_path("Note 2")).unwrap(), EDITED);
+        assert_eq!(space_entries(&vault), vec!["Note 2.md", "Note.md"]);
+        let archive = vault.derived_root().join("conflicts-archive");
+        assert!(!archive.exists() || std::fs::read_dir(archive).unwrap().next().is_none());
+        assert!(index::vault_conflict_exists(&conn, "Note", "Note 2").unwrap());
+    }
+
+    /// Г1.8: keeping the original deletes the copy only as it was read.
+    #[test]
+    fn keeping_the_original_refuses_when_the_copy_changed_after_it_was_read() {
+        let (_dir, vault, conn) = space_with_conflict();
+        let resolution =
+            ConflictResolution::plan(&conn, &vault, "Note", "Note 2", ResolveAction::KeepOriginal)
+                .unwrap();
+        std::fs::write(vault.block_path("Note 2"), EDITED).unwrap();
+
+        let refused = resolution.apply(&conn, &vault);
+
+        assert!(matches!(refused, Err(CommandError::SourceChanged { .. })), "{refused:?}");
+        assert_eq!(std::fs::read_to_string(vault.block_path("Note")).unwrap(), BASE);
+        assert_eq!(std::fs::read_to_string(vault.block_path("Note 2")).unwrap(), EDITED);
+        assert_eq!(space_entries(&vault), vec!["Note 2.md", "Note.md"]);
+        assert!(index::vault_conflict_exists(&conn, "Note", "Note 2").unwrap());
+    }
+
+    /// Every entry of the space folder, hidden ones included, sorted.
+    fn space_entries(vault: &VaultLayout) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(vault.root())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn keeping_the_conflict_promotes_the_copy_it_read() {
+        let (_dir, vault, conn) = space_with_conflict();
+
+        ConflictResolution::plan(&conn, &vault, "Note", "Note 2", ResolveAction::KeepConflict)
+            .unwrap()
+            .apply(&conn, &vault)
+            .unwrap();
+
+        assert_eq!(std::fs::read_to_string(vault.block_path("Note")).unwrap(), CONFLICT);
+        assert!(!vault.block_path("Note 2").exists());
+        assert!(!index::vault_conflict_exists(&conn, "Note", "Note 2").unwrap());
+        assert!(index::get_block(&conn, "Note 2").unwrap().is_none());
+    }
 
     #[test]
     fn archive_filename_is_unique_per_second() {

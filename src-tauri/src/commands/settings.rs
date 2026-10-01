@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use unicode_normalization::UnicodeNormalization;
 
-use crate::commands::blocks::{collect_delete_media_for_block, media_users_on_disk};
+use crate::commands::blocks::{collect_used_media_for_block, media_users_on_disk};
 use crate::commands::state::{current_vault_layout, AppState, CommandError, VaultState};
 use crate::commands::vault::{
     canonical_space_path, derived_store_root, initialize_new_space_layout, load_config,
@@ -413,7 +413,8 @@ fn nfc(value: &str) -> String {
 }
 
 /// One pass over every indexed block: the set of media file names any block
-/// references (frontmatter file/thumbnail + inline body links).
+/// references (frontmatter file/thumbnail and every link form of the body
+/// Obsidian reads, `collect_used_media_for_block`; SPEC_AUDIT_FIXES.md, Г1.1).
 fn referenced_media_file_names(vs: &VaultState) -> Result<BTreeSet<String>, CommandError> {
     let blocks = index::list_blocks(&vs.conn).map_err(|e| CommandError::Internal(e.to_string()))?;
     Ok(referenced_media_file_names_from_blocks(&vs.vault, blocks))
@@ -426,7 +427,7 @@ fn referenced_media_file_names_from_blocks(
     let mut resolver = media_refs::MediaResolver::new(vault);
     let mut referenced: BTreeSet<String> = BTreeSet::new();
     for block in blocks {
-        for media in collect_delete_media_for_block(vault, &block, &mut resolver).values() {
+        for media in collect_used_media_for_block(vault, &block, &mut resolver).values() {
             referenced.insert(nfc(&media.file_name));
         }
     }
@@ -922,6 +923,51 @@ mod tests {
         let orphans = scan_orphans(&vs).expect("scan");
         let names: Vec<_> = orphans.iter().map(|orphan| orphan.file_name.as_str()).collect();
         assert_eq!(names, vec!["lonely.jpg"]);
+    }
+
+    /// Г1.1, Г1.2: a file a note links in any form Obsidian reads is no
+    /// orphan, and a destination decoded once names its own file: the decoy
+    /// `a b.jpg` is the orphan, not `a%20b.jpg`. The index and the notes on
+    /// disk answer alike.
+    #[test]
+    fn linked_files_are_not_orphans_and_a_decoy_name_is() {
+        let body = "[[wiki.png]] [[alias.png|alias]] [m](../Media/md.png) ![r][ref] [[heading.png#x]]\n\n\
+                    [ref]: ../Media/ref.png\n\n\
+                    ![](../Media/photo%23tag.jpg) ![](../Media/a%2520b.jpg)\n";
+        let names = [
+            "wiki.png", "alias.png", "md.png", "ref.png", "heading.png", "photo#tag.jpg",
+            "a%20b.jpg", "a b.jpg", "lonely.jpg",
+        ];
+        for indexed in [true, false] {
+            let (root, _derived, vs) = make_vault();
+            std::fs::create_dir_all(root.path().join("Media")).unwrap();
+            std::fs::create_dir_all(root.path().join("Cards")).unwrap();
+            for name in names {
+                write_media(&vs, &format!("Media/{name}"));
+            }
+            if indexed {
+                index_markdown(
+                    &vs,
+                    "Cards/Note",
+                    &format!("---\nsaved_at: 2026-01-01T00:00:00Z\n---\n{body}"),
+                );
+                let orphans = scan_orphans(&vs).expect("scan");
+                assert_eq!(
+                    orphans.iter().map(|orphan| orphan.file_name.as_str()).collect::<Vec<_>>(),
+                    vec!["Media/a b.jpg", "Media/lonely.jpg"]
+                );
+            } else {
+                std::fs::write(vs.vault.block_path("Cards/Note"), body).unwrap();
+            }
+
+            let result = delete_orphan_media_with(
+                &vs,
+                names.iter().map(|name| format!("Media/{name}")).collect(),
+                |_| Ok(()),
+            )
+            .expect("delete");
+            assert_eq!(result.deleted, vec!["Media/a b.jpg", "Media/lonely.jpg"], "indexed: {indexed}");
+        }
     }
 
     #[test]

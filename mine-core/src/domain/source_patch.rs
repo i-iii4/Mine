@@ -25,10 +25,19 @@ pub enum SourcePatchError {
     #[error("cannot change {field}: the note's frontmatter is not valid YAML")]
     MalformedFrontmatter { field: &'static str },
 
+    /// The properties are valid YAML written in a layout the in-place writer
+    /// cannot change without breaking it or taking the user's comments out.
+    #[error("cannot change {field}: the note's properties are written in a layout Mine cannot edit in place")]
+    UnsupportedLayout { field: &'static str },
+
     /// The patched text reads back differently from the intended model.
     #[error("the patched note reads back with a different {field}")]
     RoundTrip { field: &'static str },
 }
+
+/// The `field` of a round-trip mismatch in the user's own properties: a key
+/// the operation does not own came out different.
+const OTHER_PROPERTIES: &str = "properties";
 
 /// Where the frontmatter of a note sits, by byte offsets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,7 +116,7 @@ pub fn apply_block_changes(
             let mut yaml = source[yaml_start..yaml_end].to_string();
             let newline = if yaml.contains("\r\n") { "\r\n" } else { "\n" };
             for &index in &changed {
-                yaml = patch_field(&yaml, index, &after.frontmatter, &after_fields, newline);
+                yaml = patch_field(&yaml, index, &after.frontmatter, &after_fields, newline)?;
             }
             let body = if body_changed {
                 after.body.as_str()
@@ -133,7 +142,7 @@ pub fn apply_block_changes(
             } else {
                 let mut yaml = String::new();
                 for &index in &changed {
-                    yaml = patch_field(&yaml, index, &after.frontmatter, &after_fields, "\n");
+                    yaml = patch_field(&yaml, index, &after.frontmatter, &after_fields, "\n")?;
                 }
                 if yaml.is_empty() {
                     // The change removes a field the note never had.
@@ -146,11 +155,12 @@ pub fn apply_block_changes(
     };
 
     verify_round_trip(&patched, after)?;
+    verify_other_properties(source, &patched, &MINE_FRONTMATTER_KEYS)?;
     Ok(patched)
 }
 
 #[derive(Debug, Clone, Copy)]
-enum SourceShape {
+pub(crate) enum SourceShape {
     /// Fenced YAML properties followed by the body.
     Structured {
         yaml_start: usize,
@@ -164,7 +174,7 @@ enum SourceShape {
     Malformed,
 }
 
-fn source_shape(source: &str) -> SourceShape {
+pub(crate) fn source_shape(source: &str) -> SourceShape {
     match frontmatter_bounds(source) {
         FrontmatterBounds::None => SourceShape::Plain,
         FrontmatterBounds::Valid {
@@ -199,7 +209,7 @@ fn patch_field(
     frontmatter: &Frontmatter,
     rendered: &[Option<String>],
     newline: &str,
-) -> String {
+) -> Result<String, SourcePatchError> {
     let key = MINE_FRONTMATTER_KEYS[index];
     if key == MINE_COLLECTIONS_FIELD {
         // Membership has one writer, shared with the collection toggles.
@@ -208,7 +218,7 @@ fn patch_field(
     let replacement = rendered[index]
         .as_ref()
         .map(|value| format!("{}{newline}", value.replace('\n', newline)));
-    replace_top_level_key(yaml, key, replacement.as_deref(), newline)
+    Ok(replace_top_level_key(yaml, key, replacement.as_deref(), newline))
 }
 
 /// Replace the block of a top-level key (its line and value lines) with
@@ -630,6 +640,395 @@ pub(crate) fn is_top_level_key(line: &str, key: &str) -> bool {
     })
 }
 
+/// How the properties of a note are written.
+#[derive(Debug)]
+pub(crate) enum PropertiesLayout {
+    /// Keys at the start of their own lines (block style), or no keys.
+    Block,
+    /// One flow mapping, `{key: value, ...}`, on one line or several.
+    Flow(FlowMapping),
+    /// A flow mapping this reader cannot take apart into entries.
+    UnreadableFlow,
+}
+
+/// Tell block-style properties from a flow mapping. The line patcher finds
+/// keys only at the start of a line: inside `{aliases: [A]}` it finds none
+/// and would append a key after the closing brace, which YAML cannot read.
+pub(crate) fn properties_layout(yaml: &str) -> PropertiesLayout {
+    match first_node_byte(yaml) {
+        Some(open) if yaml.as_bytes()[open] == b'{' => {
+            FlowMapping::scan(yaml, open).map_or(PropertiesLayout::UnreadableFlow, PropertiesLayout::Flow)
+        }
+        _ => PropertiesLayout::Block,
+    }
+}
+
+/// First byte of the YAML document past blank space and comment lines.
+fn first_node_byte(yaml: &str) -> Option<usize> {
+    let bytes = yaml.as_bytes();
+    let mut index = 0;
+    while let Some(&byte) = bytes.get(index) {
+        match byte {
+            b' ' | b'\t' | b'\r' | b'\n' => index += 1,
+            // Only blank space precedes it, so `#` opens a comment.
+            b'#' => index = line_end(yaml, index),
+            _ => return Some(index),
+        }
+    }
+    None
+}
+
+/// The byte of the line break that ends the line holding `index`, or the end
+/// of the text.
+fn line_end(text: &str, index: usize) -> usize {
+    text[index..].find('\n').map_or(text.len(), |offset| index + offset)
+}
+
+/// A YAML document that is one flow mapping, taken apart by byte offsets.
+#[derive(Debug)]
+pub(crate) struct FlowMapping {
+    /// Byte of the opening `{`.
+    open: usize,
+    entries: Vec<FlowEntry>,
+    /// Bytes where comments start, between the braces.
+    comments: Vec<usize>,
+}
+
+/// One `key: value` of a flow mapping.
+#[derive(Debug)]
+struct FlowEntry {
+    /// First byte of the key.
+    start: usize,
+    /// The `:` between the key and its value, when written.
+    colon: Option<usize>,
+    /// First byte after the last byte of the value (of the key, without one).
+    end: usize,
+    /// The `,` after the entry.
+    separator: Option<usize>,
+    /// The key as YAML reads it, when it is a string.
+    key: Option<String>,
+}
+
+/// An entry while its bytes are being read.
+#[derive(Debug)]
+struct EntryBuilder {
+    start: usize,
+    colon: Option<usize>,
+    end: usize,
+}
+
+impl EntryBuilder {
+    fn finish(self, yaml: &str, separator: Option<usize>) -> FlowEntry {
+        let key_text = yaml[self.start..self.colon.unwrap_or(self.end)].trim_end();
+        // `? key` is an explicit key: never one Mine writes, so never matched.
+        let key = (!key_text.starts_with('?'))
+            .then(|| serde_yaml::from_str::<serde_yaml::Value>(key_text).ok())
+            .flatten()
+            .and_then(|value| value.as_str().map(str::to_string));
+        FlowEntry {
+            start: self.start,
+            colon: self.colon,
+            end: self.end,
+            separator,
+            key,
+        }
+    }
+}
+
+impl FlowMapping {
+    /// Take apart the flow mapping that opens at `open`. `None` when the text
+    /// is not one well-formed flow mapping followed only by blank space and
+    /// comments, or holds an empty entry (`{a: 1,, b: 2}`).
+    fn scan(yaml: &str, open: usize) -> Option<Self> {
+        let bytes = yaml.as_bytes();
+        let mut mapping = Self {
+            open,
+            entries: Vec::new(),
+            comments: Vec::new(),
+        };
+        let mut depth = 1_usize;
+        let mut previous = b'{';
+        let mut after_space = false;
+        let mut entry: Option<EntryBuilder> = None;
+        let mut index = open + 1;
+        let close = loop {
+            let &byte = bytes.get(index)?;
+            let mut next = index + 1;
+            match byte {
+                b' ' | b'\t' | b'\r' | b'\n' => {
+                    after_space = true;
+                    index = next;
+                    continue;
+                }
+                b'#' if after_space => {
+                    mapping.comments.push(index);
+                    index = line_end(yaml, index);
+                    continue;
+                }
+                b'"' | b'\'' if opens_flow_quote(previous) => {
+                    next = quoted_scalar_end(bytes, index)?;
+                }
+                b'{' | b'[' => depth += 1,
+                b'}' | b']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        if byte != b'}' {
+                            return None;
+                        }
+                        if let Some(open_entry) = entry.take() {
+                            mapping.entries.push(open_entry.finish(yaml, None));
+                        }
+                        break index;
+                    }
+                }
+                b',' if depth == 1 => {
+                    mapping.entries.push(entry.take()?.finish(yaml, Some(index)));
+                    previous = byte;
+                    after_space = false;
+                    index = next;
+                    continue;
+                }
+                b':' if depth == 1 => {
+                    if let Some(open_entry) = entry.as_mut() {
+                        if open_entry.colon.is_none()
+                            && separates_flow_value(previous, bytes.get(next).copied())
+                        {
+                            open_entry.colon = Some(index);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            entry
+                .get_or_insert(EntryBuilder {
+                    start: index,
+                    colon: None,
+                    end: index,
+                })
+                .end = next;
+            previous = bytes[next - 1];
+            after_space = false;
+            index = next;
+        };
+        let mut rest = close + 1;
+        while let Some(&byte) = bytes.get(rest) {
+            match byte {
+                b' ' | b'\t' | b'\r' | b'\n' => rest += 1,
+                b'#' if matches!(bytes[rest - 1], b' ' | b'\t' | b'\r' | b'\n') => {
+                    rest = line_end(yaml, rest);
+                }
+                _ => return None,
+            }
+        }
+        Some(mapping)
+    }
+
+    /// Whether the mapping holds `key`.
+    pub(crate) fn has_key(&self, key: &str) -> bool {
+        self.entries
+            .iter()
+            .any(|entry| entry.key.as_deref() == Some(key))
+    }
+
+    /// The one entry of `key`. `Err` when the key is written twice.
+    fn entry_of(&self, key: &str) -> Result<Option<usize>, ()> {
+        let mut found = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.key.as_deref() == Some(key))
+            .map(|(index, _)| index);
+        let first = found.next();
+        match found.next() {
+            Some(_) => Err(()),
+            None => Ok(first),
+        }
+    }
+
+    /// Set `key` to `value`, a flow node: its value is replaced in place, or
+    /// the entry is added after the last one. Every other byte stays. `None`
+    /// when the replaced value holds a comment or the key is written twice.
+    pub(crate) fn set_key(&self, yaml: &str, key: &str, value: &str) -> Option<String> {
+        let (start, end, insert) = match self.entry_of(key).ok()? {
+            Some(index) => {
+                let entry = &self.entries[index];
+                match entry.colon {
+                    Some(colon) => (colon + 1, entry.end, format!(" {value}")),
+                    None => (entry.end, entry.end, format!(": {value}")),
+                }
+            }
+            None => match self.entries.last() {
+                // A trailing comma already separates the new entry.
+                Some(FlowEntry {
+                    separator: Some(separator),
+                    ..
+                }) => (separator + 1, separator + 1, format!(" {key}: {value}")),
+                Some(last) => (last.end, last.end, format!(", {key}: {value}")),
+                None => (self.open + 1, self.open + 1, format!("{key}: {value}")),
+            },
+        };
+        self.splice(yaml, start, end, &insert)
+    }
+
+    /// Remove `key` with the comma that separates it, and the line it stood
+    /// on when nothing else is there. `None` when the removed text holds a
+    /// comment or the key is written twice.
+    pub(crate) fn remove_key(&self, yaml: &str, key: &str) -> Option<String> {
+        let Some(index) = self.entry_of(key).ok()? else {
+            return Some(yaml.to_string());
+        };
+        let entry = &self.entries[index];
+        let (start, end) = match (entry.separator, index.checked_sub(1)) {
+            (Some(separator), _) => widen_removed_entry(yaml, entry.start, separator + 1),
+            (None, Some(previous)) => (self.entries[previous].separator?, entry.end),
+            (None, None) => (entry.start, entry.end),
+        };
+        self.splice(yaml, start, end, "")
+    }
+
+    fn splice(&self, yaml: &str, start: usize, end: usize, insert: &str) -> Option<String> {
+        if self.comments.iter().any(|comment| (start..end).contains(comment)) {
+            return None;
+        }
+        let mut out = String::with_capacity(yaml.len() + insert.len());
+        out.push_str(&yaml[..start]);
+        out.push_str(insert);
+        out.push_str(&yaml[end..]);
+        Some(out)
+    }
+}
+
+/// The text a removed entry takes with it, given the entry and its comma:
+/// the blank space after the comma too, unless a comment follows it (the
+/// comment keeps the space it needs); and the whole line when the entry is
+/// the only thing on it.
+fn widen_removed_entry(yaml: &str, start: usize, end: usize) -> (usize, usize) {
+    let bytes = yaml.as_bytes();
+    let mut after = end;
+    while matches!(bytes.get(after), Some(b' ' | b'\t')) {
+        after += 1;
+    }
+    let line_start = yaml[..start].rfind('\n').map_or(0, |at| at + 1);
+    let alone_on_line = yaml[line_start..start].trim_matches([' ', '\t']).is_empty();
+    match bytes.get(after) {
+        Some(b'#') => (start, end),
+        Some(b'\n') if alone_on_line => (line_start, after + 1),
+        Some(b'\r') if alone_on_line && bytes.get(after + 1) == Some(&b'\n') => {
+            (line_start, after + 2)
+        }
+        _ => (start, after),
+    }
+}
+
+/// A quote opens a quoted scalar in flow context only where a node starts:
+/// after `{`, `[`, `,`, `:` or `?`. Elsewhere it is text of a plain scalar.
+fn opens_flow_quote(previous: u8) -> bool {
+    matches!(previous, b'{' | b'[' | b',' | b':' | b'?')
+}
+
+/// A `:` separates a key from its value when blank space or a flow indicator
+/// follows it, or right after a quoted key or a flow collection (JSON-like
+/// `"key":value`). Otherwise it is text of a plain scalar (`a:b`).
+fn separates_flow_value(previous: u8, next: Option<u8>) -> bool {
+    matches!(previous, b'"' | b'\'' | b']' | b'}')
+        || matches!(
+            next,
+            None | Some(b' ' | b'\t' | b'\r' | b'\n' | b',' | b'[' | b']' | b'{' | b'}')
+        )
+}
+
+/// First byte after the quoted scalar that opens at `start`.
+fn quoted_scalar_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let quote = bytes[start];
+    let mut index = start + 1;
+    while let Some(&byte) = bytes.get(index) {
+        if byte == b'\\' && quote == b'"' {
+            index += 2;
+        } else if byte == quote {
+            // `''` inside a single-quoted scalar is an escaped quote.
+            if quote == b'\'' && bytes.get(index + 1) == Some(&b'\'') {
+                index += 2;
+            } else {
+                return Some(index + 1);
+            }
+        } else {
+            index += 1;
+        }
+    }
+    None
+}
+
+/// What the fenced properties of a note hold, as YAML reads them.
+enum Properties {
+    /// A mapping of keys. A note without frontmatter, or with an empty one,
+    /// has an empty mapping.
+    Mapping(serde_yaml::Mapping),
+    /// Fences around text that is not a mapping of properties.
+    Unreadable,
+}
+
+fn read_properties(note: &str) -> Properties {
+    let FrontmatterBounds::Valid {
+        yaml_start,
+        yaml_end,
+        ..
+    } = frontmatter_bounds(note)
+    else {
+        return Properties::Mapping(serde_yaml::Mapping::new());
+    };
+    let yaml = &note[yaml_start..yaml_end];
+    if yaml.trim().is_empty() {
+        return Properties::Mapping(serde_yaml::Mapping::new());
+    }
+    match serde_yaml::from_str::<serde_yaml::Value>(yaml) {
+        Ok(serde_yaml::Value::Mapping(mapping)) => Properties::Mapping(mapping),
+        Ok(serde_yaml::Value::Null) => Properties::Mapping(serde_yaml::Mapping::new()),
+        _ => Properties::Unreadable,
+    }
+}
+
+/// The text after the frontmatter, or the whole note without one.
+pub(crate) fn body_of(note: &str) -> &str {
+    match frontmatter_bounds(note) {
+        FrontmatterBounds::None => note,
+        FrontmatterBounds::Valid { body_start, .. } => &note[body_start..],
+    }
+}
+
+/// Every property of `source` outside `own_keys`, the keys the operation
+/// writes, must read the same in `patched`, and `patched` must add none: the
+/// user's own properties are not the operation's to change (Ф1). Properties
+/// `source` holds as unreadable text are not compared; the patch leaves that
+/// text as it is.
+pub(crate) fn verify_other_properties(
+    source: &str,
+    patched: &str,
+    own_keys: &[&str],
+) -> Result<(), SourcePatchError> {
+    let Properties::Mapping(before) = read_properties(source) else {
+        return Ok(());
+    };
+    let Properties::Mapping(after) = read_properties(patched) else {
+        return Err(SourcePatchError::RoundTrip {
+            field: "frontmatter",
+        });
+    };
+    let is_other = |key: &serde_yaml::Value| !key.as_str().is_some_and(|key| own_keys.contains(&key));
+    let kept = before.iter().filter(|(key, _)| is_other(key)).count();
+    let found = after.iter().filter(|(key, _)| is_other(key)).count();
+    if kept != found
+        || before
+            .iter()
+            .filter(|(key, _)| is_other(key))
+            .any(|(key, value)| after.get(key) != Some(value))
+    {
+        return Err(SourcePatchError::RoundTrip {
+            field: OTHER_PROPERTIES,
+        });
+    }
+    Ok(())
+}
+
 /// Read the patched text back and compare it with the intended model.
 fn verify_round_trip(patched: &str, after: &Block) -> Result<(), SourcePatchError> {
     let parsed = parse_markdown_document(&after.slug, patched, after.frontmatter.saved_at.clone())
@@ -793,6 +1192,47 @@ mod tests {
         assert_eq!(
             apply_block_changes(source, &before, &after).unwrap(),
             "---\ntags:\n  - personal\nMine Collections:\n  - \"[[New]]\"\nrating: 5\nsaved_at: 2026-01-01\n---\n"
+        );
+    }
+
+    #[test]
+    fn flow_properties_take_a_membership_change_inside_the_braces() {
+        let source = "---\n{aliases: [A], saved_at: 2026-01-01}\n---\nBody";
+        let before = read("Note", source);
+        let mut after = before.clone();
+        after.frontmatter.tags = vec!["New".to_string()];
+        assert_eq!(
+            apply_block_changes(source, &before, &after).unwrap(),
+            "---\n{aliases: [A], saved_at: 2026-01-01, Mine Collections: [\"[[New]]\"]}\n---\nBody"
+        );
+    }
+
+    #[test]
+    fn flow_properties_refuse_a_field_the_line_writer_cannot_place() {
+        let source = "---\n{aliases: [A], saved_at: 2026-01-01}\n---\nBody";
+        let before = read("Note", source);
+        let mut after = before.clone();
+        after.frontmatter.thumbnail = Some("a.jpg".to_string());
+        assert!(matches!(
+            apply_block_changes(source, &before, &after),
+            Err(SourcePatchError::RoundTrip { .. })
+        ));
+    }
+
+    #[test]
+    fn user_properties_must_read_the_same_after_a_patch() {
+        let source = "---\naliases: [A]\nsaved_at: 2026-01-01\n---\nBody";
+        assert_eq!(
+            verify_other_properties(source, "---\naliases: [B]\nsaved_at: 2026-01-01\n---\nBody", &MINE_FRONTMATTER_KEYS),
+            Err(SourcePatchError::RoundTrip { field: OTHER_PROPERTIES })
+        );
+        assert_eq!(
+            verify_other_properties(source, "---\naliases: [A]\nsaved_at: 2026-02-02\n---\nBody", &MINE_FRONTMATTER_KEYS),
+            Ok(())
+        );
+        assert_eq!(
+            verify_other_properties(source, "---\naliases: [A]\nrating: 5\n---\nBody", &MINE_FRONTMATTER_KEYS),
+            Err(SourcePatchError::RoundTrip { field: OTHER_PROPERTIES })
         );
     }
 

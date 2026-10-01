@@ -375,7 +375,7 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
       const { worker, tabs } = cropWorker(page);
       const reply = await worker.dispatch({ target: "background", action: "startCropMode", tabId: 5, documentUrl: page }, fromWindow).response;
       expect(reply).toEqual({ ok: true });
-      expect(tabs.sendMessage).toHaveBeenCalledWith(5, { action: "startCropOverlay", documentUrl: page }, expect.any(Function));
+      expect(tabs.sendMessage).toHaveBeenCalledWith(5, { action: "startCropOverlay", documentUrl: page, cropId: null }, expect.any(Function));
       expect(tabs.sendMessage).not.toHaveBeenCalledWith(900, expect.anything(), expect.anything());
     });
 
@@ -386,11 +386,11 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
       expect(tabs.sendMessage).not.toHaveBeenCalled();
     });
 
-    it("keeps an overlay's crop in the overlay's own tab", async () => {
+    it("keeps an overlay's crop in the overlay's own tab, under the overlay's crop id (Г3.3)", async () => {
       const { worker, tabs } = cropWorker(page);
-      const reply = await worker.dispatch({ target: "background", action: "startCropMode", tabId: -1, documentUrl: page }, { url: page, tab: { id: 5 } }).response;
+      const reply = await worker.dispatch({ target: "background", action: "startCropMode", tabId: -1, documentUrl: page, cropId: "crop-1" }, { url: page, tab: { id: 5 } }).response;
       expect(reply).toEqual({ ok: true });
-      expect(tabs.sendMessage).toHaveBeenCalledWith(5, { action: "startCropOverlay", documentUrl: page }, expect.any(Function));
+      expect(tabs.sendMessage).toHaveBeenCalledWith(5, { action: "startCropOverlay", documentUrl: page, cropId: "crop-1" }, expect.any(Function));
     });
   });
 
@@ -426,6 +426,63 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
       await worker.run(`Promise.all([recordClipperLaunch({ id: 5, url: "https://a.example/" }, {}), recordClipperLaunch({ id: 6, url: "https://b.example/" }, {})])`);
       await expect(ask(worker, { url: "chrome-extension://test/dist/index.html", tab: { id: 901, windowId: 78 } }))
         .resolves.toMatchObject({ sourceTabId: 6 });
+    });
+  });
+
+  describe("two openings of one tab (SPEC_AUDIT_FIXES.md, Г3.1)", () => {
+    /// A tab whose overlay script answers only once it has been injected; the
+    /// injection finishes when the test says so.
+    function tabWithoutOverlay() {
+      const worker = launchWorker();
+      const chrome = worker.chrome as unknown as {
+        runtime: { lastError: { message: string } | undefined };
+        scripting: { executeScript: ReturnType<typeof vi.fn> };
+        tabs: Record<string, ReturnType<typeof vi.fn>>;
+      };
+      let injected = false;
+      const injections: Array<() => void> = [];
+      chrome.scripting.executeScript.mockImplementation(() => new Promise<void>((resolve) => {
+        injections.push(() => { injected = true; resolve(); });
+      }));
+      const shows: number[] = [];
+      chrome.tabs.sendMessage.mockImplementation((tabId: number, message: Message, reply?: (response: unknown) => void) => {
+        if (message.action !== "showClipperOverlay") return;
+        if (!injected) {
+          chrome.runtime.lastError = { message: "Could not establish connection. Receiving end does not exist." };
+          reply?.(undefined);
+          chrome.runtime.lastError = undefined;
+          return;
+        }
+        shows.push(tabId);
+        reply?.({ ok: true });
+      });
+      return { worker, executeScript: chrome.scripting.executeScript, injections, shows };
+    }
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    it("injects the overlay once when the second opening comes before the first injection finished", async () => {
+      const tab = tabWithoutOverlay();
+      const page = JSON.stringify({ id: 5, url: "https://a.example/", title: "A" });
+      const first = tab.worker.run(`openClipperUi(${page})`);
+      const second = tab.worker.run(`openClipperUi(${page})`);
+      await vi.waitFor(() => expect(tab.executeScript).toHaveBeenCalled());
+      await settle();
+      expect(tab.executeScript).toHaveBeenCalledTimes(1);
+
+      tab.injections.forEach((finish) => finish());
+      await expect(first).resolves.toBe("overlay");
+      await expect(second).resolves.toBe("overlay");
+      expect(tab.executeScript).toHaveBeenCalledTimes(1);
+      // Both openings reach the one overlay: the second reuses its editor.
+      expect(tab.shows).toEqual([5, 5]);
+    });
+
+    it("does not hold an opening of another tab behind it", async () => {
+      const tab = tabWithoutOverlay();
+      void tab.worker.run(`openClipperUi(${JSON.stringify({ id: 5, url: "https://a.example/" })})`);
+      void tab.worker.run(`openClipperUi(${JSON.stringify({ id: 6, url: "https://b.example/" })})`);
+      await vi.waitFor(() => expect(tab.executeScript).toHaveBeenCalledTimes(2));
+      expect(tab.executeScript.mock.calls.map(([options]) => (options as { target: { tabId: number } }).target.tabId)).toEqual([5, 6]);
     });
   });
 });

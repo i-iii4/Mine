@@ -97,7 +97,20 @@ export type CommandError = { kind: "no_vault" } |
 /**
  * The request was built for a space that is no longer the open one.
  */
-{ kind: "space_changed" } | { kind: "internal"; message: string }
+{ kind: "space_changed" } |
+/**
+ * A file changed on disk after the operation read it. Nothing was
+ * overwritten or deleted; the other version stays (`SPEC_AUDIT_FIXES.md`,
+ * Ф2). `path` is the file that changed.
+ */
+{ kind: "source_changed"; message: { path: string } } |
+/**
+ * The properties of the note at `path` cannot take the change in place:
+ * they are not valid YAML properties, or writing into their layout would
+ * break them or take the user's comments out. Nothing was written
+ * (`SPEC_AUDIT_FIXES.md`, Ф1).
+ */
+{ kind: "frontmatter_not_writable"; message: { path: string } } | { kind: "internal"; message: string }
 
 /**
  * Commands supported by the JSON/WASM bridge, generated into TypeScript.
@@ -339,7 +352,12 @@ export type PromoteOrphanResult = { created: IndexedBlock[]; skipped: string[] }
  */
 export type PublicationEvidence = "not_required" | "missing" | "matches" | "conflict" | "unreadable"
 
-export type RemoveMediaAssetFromCardParams = { media_ref: string; source_slug: string; reference_kind: MediaAssetReferenceKind; occurrence_index: number | null }
+export type RemoveMediaAssetFromCardParams = { media_ref: string; source_slug: string; reference_kind: MediaAssetReferenceKind;
+/**
+ * The clicked image of a `body_embed`: how many `![` precede its own
+ * `![` in the card's body. `null` removes every image of the media.
+ */
+occurrence_index: number | null }
 
 export type RenameBlockError = { kind: "no_vault" } | { kind: "block_not_found"; slug: string } | { kind: "invalid_filename"; reason: string } | { kind: "name_taken"; requested: string } | { kind: "internal"; message: string }
 

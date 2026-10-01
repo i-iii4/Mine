@@ -22,8 +22,7 @@ use crate::domain::block::{
 };
 use crate::domain::vault::VaultLayout;
 use crate::storage::preview_plan::{resolve_upgrade_media, PreviewUpgradeInput};
-#[cfg(test)]
-use crate::storage::reconcile;
+use crate::storage::reconcile::{self, ReconcileReport};
 use crate::storage::{article_audio, db, files, index, thumbnails};
 use crate::watcher::events::VaultEvent;
 
@@ -1067,8 +1066,25 @@ fn commit_deferred_removal(
         log::info!("deferred removal of {} dropped: the note is back", pending.slug);
         return Ok(false);
     }
-    index::remove_block(conn, &pending.slug)
-        .with_context(|| format!("deferred removal of {} from the index", pending.slug))?;
+    let is_card = index::get_block(conn, &pending.slug)
+        .with_context(|| format!("deferred removal of {}: read its row", pending.slug))?
+        .is_some();
+    let tx = conn
+        .unchecked_transaction()
+        .with_context(|| format!("deferred removal of {}: begin", pending.slug))?;
+    if is_card {
+        index::remove_block(&tx, &pending.slug)
+            .with_context(|| format!("deferred removal of {} from the index", pending.slug))?;
+    } else {
+        // A collection's document has no card row: what it projected is the
+        // collection itself and its source state. Removing a card row that
+        // was never there left a collection deleted outside Mine listed
+        // until some later reconciliation (`SPEC_AUDIT_FIXES.md`, Ф7, Г2.4).
+        reconcile::remove_source_projection(&tx, vault, &pending.slug)
+            .with_context(|| format!("deferred removal of {} from the index", pending.slug))?;
+    }
+    tx.commit()
+        .with_context(|| format!("deferred removal of {}: commit", pending.slug))?;
     let _ = article_audio::delete_all_artifacts(vault, &pending.slug);
     Ok(true)
 }
@@ -1224,67 +1240,163 @@ pub fn handle_event(
             }
         }
         VaultEvent::MediaChanged(path) => {
-            crate::storage::reconcile::reconcile_runtime_vault_with_progress(
-                conn,
-                vault,
-                &|_, _| {},
-            )?;
+            let report = reconcile::reconcile_runtime_vault_with_progress(conn, vault, &|_, _| {})?;
             let ext = path
                 .extension()
                 .and_then(|e| e.to_str())
                 .unwrap_or("")
                 .to_lowercase();
-            if thumbnails::is_image_ext(&ext) {
-                for slug in media_thumb_targets(conn, vault, path) {
-                    let thumb_path = vault.thumb_path(&slug);
-                    let path_owned = path.to_path_buf();
-                    let app_clone = app.cloned();
-                    let event_slug = slug.clone();
-                    let event_path = vault.root().to_string_lossy().into_owned();
-                    std::thread::Builder::new()
-                        .name(format!("thumb-media-{}", &slug))
-                        .spawn(move || {
-                            if let Err(e) = thumbnails::generate_thumbnail(
-                                &path_owned,
-                                &thumb_path,
-                                thumbnails::DEFAULT_MAX_SIZE,
-                            ) {
-                                log::warn!("thumbnail failed for {}: {}", event_slug, e);
-                                return;
-                            }
-                            // Notify frontend that the cached thumb for this
-                            // slug changed on disk — the sidebar otherwise
-                            // keeps showing the stale version until a full
-                            // vault refresh.
-                            if let Some(app) = app_clone {
-                                let _ = app.emit(
-                                    "thumb:updated",
-                                    ThumbUpdatedPayload {
-                                        path: event_path,
-                                        slug: event_slug,
-                                        is_text: false,
-                                    },
-                                );
-                            }
-                        })
-                        .ok();
-                }
+            // A picture is turned into its owners' thumbnails right here; any
+            // other preview of a card that shows this file (a video's frame,
+            // an article whose picture changed) is discarded and made again
+            // by the preview pass from what the file is now. A frame of the
+            // replaced video is never kept (`SPEC_AUDIT_FIXES.md`, Ф7, Г2.3).
+            let direct = if thumbnails::is_image_ext(&ext) {
+                media_thumb_targets(conn, vault, path)
+            } else {
+                Vec::new()
+            };
+            let owners = media_preview_owners(conn, vault, path, &report);
+            let mut discarded = false;
+            for slug in owners.iter().filter(|slug| !direct.contains(slug)) {
+                discarded |= discard_preview(vault, slug);
             }
-            return Ok(false);
+            schedule_owner_previews(app, vault, &report, &owners);
+            for slug in direct {
+                spawn_thumb_from_picture(vault, path, slug, app);
+            }
+            // The feed reloads whenever the index or a preview it reads moved:
+            // a re-projected owner (new dimensions, a new poster on the way),
+            // or a preview that is gone.
+            return Ok(discarded || report_changed(&report));
         }
         VaultEvent::MediaDeleted(path) => {
-            crate::storage::reconcile::reconcile_vault(conn, vault)?;
-            if let Some(slug) = path_to_slug(vault, path) {
-                let thumb_path = vault.thumb_path(&slug);
-                let had_thumb = thumb_path.exists();
-                if thumb_path.exists() {
-                    let _ = std::fs::remove_file(&thumb_path);
-                }
-                return Ok(had_thumb);
+            let report = reconcile::reconcile_vault(conn, vault)?;
+            // The preview of every card that showed the file goes, the
+            // owning card's included: in a space laid out in folders the
+            // file's own slug is `Media/x`, the card's `Cards/x`
+            // (`SPEC_AUDIT_FIXES.md`, Ф7, Г2.3).
+            let owners = media_preview_owners(conn, vault, path, &report);
+            let mut discarded = false;
+            for slug in &owners {
+                discarded |= discard_preview(vault, slug);
             }
+            schedule_owner_previews(app, vault, &report, &owners);
+            return Ok(discarded || report_changed(&report));
         }
     }
     Ok(false)
+}
+
+/// Whether a reconciliation changed what the index projects.
+fn report_changed(report: &ReconcileReport) -> bool {
+    !report.upserted.is_empty()
+        || !report.dependency_changed.is_empty()
+        || !report.removed.is_empty()
+}
+
+/// The cards whose preview may show the media file at `path`: those whose
+/// dependency on a media file the reconciliation just saw change, and the
+/// ones [`media_thumb_targets`] names (the cards that name it as their media
+/// file, and in a flat space the card that shares its name).
+fn media_preview_owners(
+    conn: &Connection,
+    vault: &VaultLayout,
+    path: &Path,
+    report: &ReconcileReport,
+) -> Vec<String> {
+    let mut owners = media_thumb_targets(conn, vault, path);
+    for slug in &report.dependency_changed {
+        if !owners.contains(slug) {
+            owners.push(slug.clone());
+        }
+    }
+    owners
+}
+
+/// Remove the preview standing for `slug` and its reduced levels, so no
+/// surface shows what a media file used to be. Returns whether there was
+/// one.
+fn discard_preview(vault: &VaultLayout, slug: &str) -> bool {
+    let preview = vault.thumb_path(slug);
+    let discarded = match std::fs::remove_file(&preview) {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => {
+            log::warn!("stale preview {} stays: {error}", preview.display());
+            false
+        }
+    };
+    thumbnails::remove_thumb_levels(vault, slug);
+    discarded
+}
+
+/// Queue the preview pass for the cards a media change touched, as a
+/// freshness pass does for the cards it re-projects: every owner and every
+/// changed card by name, the whole space when cards left the index. The
+/// pass makes what is missing or stale, and tells the feed.
+fn schedule_owner_previews(
+    app: Option<&AppHandle>,
+    vault: &VaultLayout,
+    report: &ReconcileReport,
+    owners: &[String],
+) {
+    let Some(app) = app else {
+        return;
+    };
+    let slugs = report
+        .upserted
+        .iter()
+        .chain(&report.dependency_changed)
+        .chain(owners)
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    if slugs.is_empty() && report.removed.is_empty() {
+        return;
+    }
+    if let Err(error) =
+        schedule_preview_reconcile(app, vault.clone(), slugs, !report.removed.is_empty())
+    {
+        log::warn!("failed to schedule previews after a media change: {error}");
+    }
+}
+
+/// Make the thumbnail of `slug` from the picture at `picture` in the
+/// background and tell the feed; a stale thumbnail otherwise stays on
+/// screen until a full refresh.
+fn spawn_thumb_from_picture(
+    vault: &VaultLayout,
+    picture: &Path,
+    slug: String,
+    app: Option<&AppHandle>,
+) {
+    let thumb_path = vault.thumb_path(&slug);
+    let picture = picture.to_path_buf();
+    let app = app.cloned();
+    let event_path = vault.root().to_string_lossy().into_owned();
+    let spawned = std::thread::Builder::new()
+        .name(format!("thumb-media-{slug}"))
+        .spawn(move || {
+            if let Err(error) =
+                thumbnails::generate_thumbnail(&picture, &thumb_path, thumbnails::DEFAULT_MAX_SIZE)
+            {
+                log::warn!("thumbnail failed for {slug}: {error}");
+                return;
+            }
+            if let Some(app) = app {
+                let _ = app.emit(
+                    "thumb:updated",
+                    ThumbUpdatedPayload {
+                        path: event_path,
+                        slug,
+                        is_text: false,
+                    },
+                );
+            }
+        });
+    if let Err(error) = spawned {
+        log::warn!("cannot start a thumbnail thread: {error}");
+    }
 }
 
 // ─── Private helpers ────────────────────────────────────────────────────────
@@ -2136,6 +2248,130 @@ mod tests {
         let media_path = vault.media_path("photo", "jpg");
         handle_event(&conn, &vault, &VaultEvent::MediaDeleted(media_path), None).unwrap();
         assert!(!thumb.exists());
+    }
+
+    /// A space in three folders: the card in `Cards/`, its media in
+    /// `Media/`, indexed, with a preview standing for the card.
+    fn card_with_media_in_folders(
+        card: &str,
+        frontmatter: &str,
+        body: &str,
+        media: &str,
+        bytes: &[u8],
+    ) -> (tempfile::TempDir, VaultLayout, Connection, PathBuf, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let conn = test_conn();
+        std::fs::create_dir_all(dir.path().join("Cards")).unwrap();
+        std::fs::create_dir_all(dir.path().join("Media")).unwrap();
+        let media_path = dir.path().join("Media").join(media);
+        std::fs::write(&media_path, bytes).unwrap();
+        std::fs::write(
+            dir.path().join("Cards").join(format!("{card}.md")),
+            format!("---\n{frontmatter}saved_at: 2026-07-10T00:00:00Z\n---\n{body}"),
+        )
+        .unwrap();
+        reconcile::reconcile_runtime_vault_with_progress(&conn, &vault, &|_, _| {}).unwrap();
+        let preview = vault.thumb_path(&format!("Cards/{card}"));
+        std::fs::create_dir_all(preview.parent().unwrap()).unwrap();
+        std::fs::write(&preview, b"preview of the first media").unwrap();
+        (dir, vault, conn, media_path, preview)
+    }
+
+    /// Г2.3: the video a card embeds is replaced outside Mine. The card's
+    /// preview is the old video's frame: it goes, so the poster is made
+    /// again from the new video, and the feed is told.
+    #[test]
+    fn a_replaced_video_invalidates_the_owning_cards_preview_and_notifies_the_feed() {
+        let (_dir, vault, conn, video, preview) = card_with_media_in_folders(
+            "Film",
+            "type: article\n",
+            "# Film\n\n![[clip.mp4]]\n",
+            "clip.mp4",
+            b"first video",
+        );
+
+        std::fs::write(&video, b"another, longer video").unwrap();
+        let changed = handle_event(&conn, &vault, &VaultEvent::MediaChanged(video), None).unwrap();
+
+        assert!(changed, "the feed is not told about the replaced video");
+        assert!(
+            !preview.exists(),
+            "the old video's frame still stands for the card"
+        );
+
+        // The preview pass the change queues makes the card's preview again,
+        // from the new video (here a stand-in the browser has to decode).
+        crate::storage::derived_preview::reconcile_preview_for_slug(&conn, &vault, "Cards/Film")
+            .unwrap()
+            .expect("the card has a preview to reconcile");
+        let remade = std::fs::read(&preview).expect("the preview is made again");
+        assert_ne!(remade, b"preview of the first media");
+    }
+
+    /// Г2.3: media deleted from `Media/`: the preview of the card that showed
+    /// it goes, though the media's own slug is `Media/shot`, not the card's.
+    #[test]
+    fn deleted_media_in_its_own_folder_removes_the_owning_cards_preview() {
+        let (_dir, vault, conn, media, preview) = card_with_media_in_folders(
+            "shot",
+            "type: image\nfile: \"[[shot.png]]\"\n",
+            "",
+            "shot.png",
+            b"not really a png",
+        );
+
+        std::fs::remove_file(&media).unwrap();
+        let changed = handle_event(&conn, &vault, &VaultEvent::MediaDeleted(media), None).unwrap();
+
+        assert!(changed, "the feed is not told the card lost its media");
+        assert!(
+            !preview.exists(),
+            "the deleted media still stands for the card"
+        );
+    }
+
+    /// Г2.4: a collection's document deleted outside Mine. No card row
+    /// stands for it; the collection itself leaves the index once the
+    /// removal timer commits the deletion, with no other event.
+    #[test]
+    fn a_collection_deleted_outside_leaves_the_index_when_the_timer_commits() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let conn = test_conn();
+        std::fs::create_dir_all(dir.path().join("Collections")).unwrap();
+        let path = dir.path().join("Collections/Research.md");
+        std::fs::write(
+            &path,
+            "---\ntype: channel\nsaved_at: 2026-07-10T00:00:00Z\nposition: 0\n---\n",
+        )
+        .unwrap();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+        let listed = |conn: &Connection| {
+            index::list_channels(conn)
+                .unwrap()
+                .into_iter()
+                .map(|channel| channel.tag)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(listed(&conn), vec!["Research".to_string()]);
+
+        std::fs::remove_file(&path).unwrap();
+        handle_event(&conn, &vault, &VaultEvent::BlockDeleted(path), None).unwrap();
+        assert!(run_removal_timer_once(&conn, &vault));
+
+        assert!(
+            listed(&conn).is_empty(),
+            "the deleted collection is still listed"
+        );
+        let source_state: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM source_index_state WHERE slug = ?1",
+                ["Collections/Research"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(source_state, 0);
     }
 
     #[test]

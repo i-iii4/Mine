@@ -47,10 +47,22 @@ fn names_a_file(target: &str) -> bool {
         })
 }
 
+/// How a link target reaches the resolver, and so which rules read it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkSyntax {
+    /// A wikilink target, `Note#Heading|alias`: resolved by Obsidian's
+    /// shortest-path rules.
     Obsidian,
+    /// A Markdown destination as written: backslash escapes, percent
+    /// encoding and any `#fragment` or `?query` still in it. Resolved from
+    /// the note's folder after one reading
+    /// (`markdown_link::local_destination_path`).
     Markdown,
+    /// A Markdown path already read from its destination: escapes resolved,
+    /// decoded once, without a fragment. Resolved from the note's folder as
+    /// it is, never decoded or cut again (`SPEC_AUDIT_FIXES.md`, Г1.2):
+    /// `a%20b.jpg` here is a file named with `%20`.
+    MarkdownPath,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -148,7 +160,7 @@ impl LinkIndex {
             return LinkResolution::Missing;
         };
         match syntax {
-            LinkSyntax::Markdown => {
+            LinkSyntax::Markdown | LinkSyntax::MarkdownPath => {
                 let Some(source) = normalize_path(source_path) else {
                     return LinkResolution::Missing;
                 };
@@ -367,7 +379,7 @@ impl NoteMoves {
             .moved
             .get(&target_key)
             .map_or(target_before.as_str(), String::as_str);
-        let file_part = destination.split('#').next().unwrap_or(destination).trim();
+        let file_part = destination.split(['#', '?']).next().unwrap_or(destination).trim();
         let mut path = if file_part.starts_with('/') {
             format!("/{}", target_after.trim_start_matches('/'))
         } else {
@@ -423,19 +435,20 @@ fn result_for(paths: &[String]) -> LinkResolution {
 
 fn parse_target(raw: &str, syntax: LinkSyntax) -> Option<String> {
     let target = match syntax {
-        LinkSyntax::Obsidian => link_file_part(raw.split('|').next()?).trim().to_string(),
-        LinkSyntax::Markdown => percent_encoding::percent_decode_str(
-            crate::domain::markdown_link::unescape_destination(raw.trim())
-                .split('#')
-                .next()?,
-        )
-        .decode_utf8()
-        .ok()?
-        .into_owned(),
+        LinkSyntax::Obsidian => {
+            let target = link_file_part(raw.split('|').next()?).trim();
+            if target.contains('?') {
+                return None;
+            }
+            target.to_string()
+        }
+        // A destination is read exactly once; a path read already is taken
+        // as it is (Г1.2).
+        LinkSyntax::Markdown => crate::domain::markdown_link::local_destination_path(raw)?,
+        LinkSyntax::MarkdownPath => raw.to_string(),
     };
     if target.is_empty()
         || target.contains('\0')
-        || target.contains('?')
         || target.contains("://")
         || target.starts_with("data:")
         || target.starts_with("mailto:")
@@ -635,6 +648,30 @@ mod tests {
             index.resolve("Notes/card.md", "../Media/no.jpg", LinkSyntax::Markdown),
             LinkResolution::Missing
         );
+    }
+
+    /// Г1.2: a destination is decoded once, whether the resolver reads it as
+    /// written or receives the path read from it: `%23` stays in the name and
+    /// `%2520` names `a%20b.jpg`, never the decoy `a b.jpg`.
+    #[test]
+    fn a_destination_and_its_read_path_resolve_alike_and_once() {
+        let index = LinkIndex::new(["Media/photo#tag.jpg", "Media/a%20b.jpg", "Media/a b.jpg", "Media/q.jpg"]);
+        let cases = [
+            ("../Media/photo%23tag.jpg", "../Media/photo#tag.jpg", "Media/photo#tag.jpg"),
+            ("../Media/a%2520b.jpg", "../Media/a%20b.jpg", "Media/a%20b.jpg"),
+            ("../Media/a%20b.jpg", "../Media/a b.jpg", "Media/a b.jpg"),
+            ("../Media/q.jpg#crop", "../Media/q.jpg", "Media/q.jpg"),
+            ("../Media/q.jpg?v=2", "../Media/q.jpg", "Media/q.jpg"),
+        ];
+        for (written, path, file) in cases {
+            assert_eq!(
+                crate::domain::markdown_link::local_destination_path(written).as_deref(),
+                Some(path)
+            );
+            let expected = LinkResolution::Resolved(file.into());
+            assert_eq!(index.resolve("Cards/x.md", written, LinkSyntax::Markdown), expected, "{written}");
+            assert_eq!(index.resolve("Cards/x.md", path, LinkSyntax::MarkdownPath), expected, "{path}");
+        }
     }
 
     #[test]

@@ -36,6 +36,9 @@ export const CLIPPER_RECONNECT_INTERVAL_MS = 3_000;
 export const MINE_NOT_CONNECTED = "Mine isn't connected to this browser. Open Mine and the clipper connects on its own.";
 export const MINE_NOT_ANSWERING = "Mine isn't answering. The clipper keeps trying.";
 export const MINE_TOO_OLD = "This clipper needs a newer Mine. Open the updated Mine and the clipper connects on its own.";
+/** Save stopped: the clip moved to another folder after Save was pressed, and
+ *  the collections of the folder it was in no longer go with it (Г3.2). */
+export const DESTINATION_CHANGED_DURING_SAVE = "The folder changed before this clip was saved. Nothing was saved: check the folder and collections, then save again.";
 
 import { resolveCaptureResult } from "../lib/captureResult";
 import {
@@ -119,7 +122,16 @@ export function useClipperState() {
   const [collectionError, setCollectionError] = useState<string | null>(null);
   const channelsRecheckRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const channelsRequestRef = useRef(0);
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [selectedTags, setSelectedTagsValue] = useState<string[]>([]);
+  // The collections chosen now, so that Save reads them in one snapshot with
+  // the destination after its awaits, not from the render it began in
+  // (SPEC_AUDIT_FIXES.md, Г3.2).
+  const selectedTagsRef = useRef<string[]>([]);
+  const setSelectedTags = useCallback((next: string[] | ((previous: string[]) => string[])) => {
+    const value = typeof next === "function" ? next(selectedTagsRef.current) : next;
+    selectedTagsRef.current = value;
+    setSelectedTagsValue(value);
+  }, []);
   const [currentType, setCurrentType] = useState<ClipType>("link");
   const [title, setTitle] = useState("");
   const [saving, setSaving] = useState(false);
@@ -196,6 +208,15 @@ export function useClipperState() {
   const savingRef = useRef(false);
   const destinationRef = useRef<"native" | "browser" | null>(null);
   const destinationGenerationRef = useRef(0);
+  // Moves of the clip to another folder. Each move clears the collections; a
+  // Save pressed before a move and finishing after it would carry the old
+  // folder's collections into the new one, so it stops instead (Г3.2).
+  const destinationMoveRef = useRef(0);
+  // From the moment a Save has read its destination until it ends, a
+  // destination check does not move the editor; a check that came meanwhile
+  // runs again once the Save is over (Г3.2).
+  const saveDestinationHeldRef = useRef(false);
+  const recheckAfterSaveRef = useRef(false);
 
   const tabIdRef = useRef<number | null>(null);
   const vaultRef = useRef<string | null>(null);
@@ -265,6 +286,15 @@ export function useClipperState() {
     setCapturingValue(value);
   }, []);
   const [captureError, setCaptureError] = useState<string | null>(null);
+  // The crop this editor started in the overlay and has not had back yet.
+  // An editor that closes cancels it, so the editor opened next never
+  // receives its frame (SPEC_AUDIT_FIXES.md, Г3.3).
+  const cropRequestRef = useRef<string | null>(null);
+  useEffect(() => () => {
+    const cropId = cropRequestRef.current;
+    cropRequestRef.current = null;
+    if (cropId !== null) pageCrop()?.cancel?.(cropId);
+  }, []);
 
   const captureScreenshot = useCallback(() => {
     // Hide the overlay before capture so the clipper UI doesn't appear
@@ -493,13 +523,23 @@ export function useClipperState() {
       // follow the clip into another one; a folder the person did not pick
       // here is named, so the destination is never a silent move
       // (SPEC_AUDIT_FIXES.md, Ф6, В4.4).
+      destinationMoveRef.current += 1;
       setSelectedTags([]);
       setDestinationNotice(change === "chosen" ? null : movedDraftNotice(previousLabel, folderName));
     } else if (change === "chosen") {
       setDestinationNotice(null);
     }
     void refreshChannels();
-  }, [refreshChannels]);
+  }, [refreshChannels, setSelectedTags]);
+
+  /// Whether the destination may not change now: a save operation is under
+  /// way or unresolved, or a running Save has read its destination. A check
+  /// held back by a running Save runs again when the Save ends (Г3.2).
+  const destinationHeld = useCallback((): boolean => {
+    const held = operationRef.current !== null || preparedOperationRef.current !== null || saveDestinationHeldRef.current;
+    if (held && savingRef.current) recheckAfterSaveRef.current = true;
+    return held;
+  }, []);
 
   const ensureNativeStatus = useCallback(async (refresh = false): Promise<boolean> => {
     if (nativeStatusPromiseRef.current) {
@@ -535,7 +575,7 @@ export function useClipperState() {
         // that may hang (SPEC_AUDIT_FIXES.md, А3.11). The helper status only
         // updates the connection indicators, in the background.
         if (destinationRef.current !== "native" && standalone.configured && standalone.permission === "granted") {
-          if (operationRef.current || preparedOperationRef.current) return true;
+          if (destinationHeld()) return true;
           enterStandaloneMode(standalone);
           void sendToNative({ action: "get_status", vault_path: null, binding_id: null }).then((status) => {
             if (generation !== destinationGenerationRef.current) return;
@@ -555,7 +595,7 @@ export function useClipperState() {
         if (typeof status.config_generation === "number") configGenerationRef.current = status.config_generation;
         setNativeConnected(status.ok && status.connected !== false);
         setCanOpenApp(status.ok && status.features?.includes("open_app_v1") === true);
-        if (operationRef.current || preparedOperationRef.current) return true;
+        if (destinationHeld()) return true;
         saveProtocolRef.current = negotiateSaveProtocol(status);
         const compatible = saveProtocolRef.current !== null;
         uploadPortRef.current = typeof status.upload_port === "number" ? status.upload_port : null;
@@ -658,6 +698,9 @@ export function useClipperState() {
         return false;
       })
       .finally(() => {
+        // Only the latest check ends the checking state: Save stays
+        // unavailable while any check may still move the destination (Г3.2).
+        if (nativeStatusPromiseRef.current !== promise) return;
         nativeStatusPromiseRef.current = null;
         setConnectionChecking(false);
       });
@@ -665,7 +708,7 @@ export function useClipperState() {
     nativeStatusPromiseRef.current = promise;
     nativeStatusGenerationRef.current = generation;
     return promise;
-  }, [enterStandaloneMode, refreshChannels, refreshKnownVaults]);
+  }, [destinationHeld, enterStandaloneMode, refreshChannels, refreshKnownVaults]);
 
   // Mine out of reach: ask again until it answers, so opening Mine is all it
   // takes (SPEC_CLIPPER.md, error table).
@@ -812,7 +855,7 @@ export function useClipperState() {
     });
     return () => { current = false; };
   }, [draftSourceUrl, state, setMetadataValue, setArticleDataValue, setArticleExtractionStateValue, ensureNativeStatus,
-    cacheCapturedScreenshot, setScreenshotDataUrl, setScreenshotUploadId]);
+    cacheCapturedScreenshot, setScreenshotDataUrl, setScreenshotUploadId, setSelectedTags]);
 
   const persistCurrentDraft = useCallback(async () => {
     if (!metadata || !draftSourceUrl || draftReadySource !== draftSourceUrl || !draftOwnedRef.current) {
@@ -941,9 +984,9 @@ export function useClipperState() {
     // address this clipper opened for, and the crop's capture names it too
     // (SPEC_AUDIT_FIXES.md, Ф6). A refusal is shown in the editor.
     const documentUrl = captureDocumentUrl();
-    const requestCrop = () => new Promise<{ ok: true } | { ok: false; error: string }>((resolve) => {
+    const requestCrop = (cropId: string | null) => new Promise<{ ok: true } | { ok: false; error: string }>((resolve) => {
       chrome.runtime.sendMessage(
-        { target: "background", action: "startCropMode", tabId: tabIdRef.current, documentUrl },
+        { target: "background", action: "startCropMode", tabId: tabIdRef.current, documentUrl, cropId },
         (resp?: { ok?: boolean; error?: string }) => {
           const transportError = chrome.runtime.lastError;
           if (transportError) {
@@ -964,16 +1007,21 @@ export function useClipperState() {
       // memory — no persist, no rehydrate, no toast. When crop completes,
       // content.js calls window.__mineOverlay.show() which reveals us
       // again, and dispatches a mine-crop-result event we listen to; a
-      // page that changed its address refuses the crop's capture there.
+      // page that changed its address refuses the crop's capture there. The
+      // crop is named: every editor of the tab hears the result, and only
+      // this one takes it (SPEC_AUDIT_FIXES.md, Г3.3).
       const overlay = (globalThis as unknown as { __mineOverlay?: { hide: () => void; show: () => void } }).__mineOverlay;
+      const cropId = crypto.randomUUID();
+      cropRequestRef.current = cropId;
       overlay?.hide();
-      const crop = (globalThis as unknown as { __mineCrop?: { start: (documentUrl: string | null) => void } }).__mineCrop;
+      const crop = pageCrop();
       if (crop) {
-        crop.start(documentUrl);
+        crop.start(documentUrl, cropId);
         return;
       }
-      const response = await requestCrop();
+      const response = await requestCrop(cropId);
       if (response.ok || !mountedRef.current) return;
+      if (cropRequestRef.current === cropId) cropRequestRef.current = null;
       overlay?.show();
       setCaptureError(response.error);
       return;
@@ -995,7 +1043,7 @@ export function useClipperState() {
       },
     });
 
-    const response = await requestCrop();
+    const response = await requestCrop(null);
     if (!response.ok) {
       // The editor stays as it is; only the reason is added (Б4.6).
       await chrome.storage.session.remove("cropPendingState");
@@ -1016,17 +1064,21 @@ export function useClipperState() {
     screenshotUploadId,
   ]);
 
-  // Overlay context: listen for crop result event dispatched by content.js
+  // Overlay context: listen for crop result event dispatched by content.js.
+  // Every editor of the tab hears it; the crop this editor started is the
+  // only one it takes, once (SPEC_AUDIT_FIXES.md, Г3.3).
   useEffect(() => {
     if (!IS_CONTENT_SCRIPT_CONTEXT) return;
     function onCropResult(e: Event) {
-      const { detail } = e as CustomEvent<{ dataUrl?: string; screenshotId?: string | null; error?: string }>;
-      if (detail?.error) {
+      const { detail } = e as CustomEvent<{ cropId?: string | null; dataUrl?: string; screenshotId?: string | null; error?: string }>;
+      if (cropRequestRef.current === null || detail?.cropId !== cropRequestRef.current) return;
+      cropRequestRef.current = null;
+      if (detail.error) {
         // A refused crop keeps the previous frame (Б4.6).
         setCaptureError(detail.error);
         return;
       }
-      if (detail?.dataUrl && detail.screenshotId) {
+      if (detail.dataUrl && detail.screenshotId) {
         setCaptureError(null);
         setScreenshotDataUrl(detail.dataUrl);
         setScreenshotUploadId(detail.screenshotId);
@@ -1372,7 +1424,7 @@ export function useClipperState() {
     setSelectedTags((prev) =>
       prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
     );
-  }, []);
+  }, [setSelectedTags]);
 
   const createChannel = useCallback(async (name: string) => {
     if (operationRef.current || preparedOperationRef.current || savingRef.current) return;
@@ -1401,13 +1453,27 @@ export function useClipperState() {
     await refreshChannels();
     if (!isCurrent()) return;
     setSelectedTags((prev) => (prev.includes(tag) ? prev : [...prev, tag]));
-  }, [refreshChannels]);
+  }, [refreshChannels, setSelectedTags]);
+
+  /// A Save has ended: a destination check held back during it runs now (Г3.2).
+  const endSaving = useCallback(() => {
+    savingRef.current = false;
+    saveDestinationHeldRef.current = false;
+    setSaving(false);
+    if (!recheckAfterSaveRef.current) return;
+    recheckAfterSaveRef.current = false;
+    if (mountedRef.current) void ensureNativeStatus(true);
+  }, [ensureNativeStatus]);
 
   const save = useCallback(async () => {
     if (!metadata || savingRef.current || (currentType === "screenshot" && capturingRef.current)) return;
 
     savingRef.current = true;
     setSaving(true);
+    // Folder moves seen when Save was pressed. A move before the clip is
+    // written takes the collections away from it: the Save stops and the
+    // editor names both folders, as В4.4 has it (Г3.2).
+    const movesWhenPressed = destinationMoveRef.current;
     try {
     await negotiateWidgetProtocol();
     const pending = operationRef.current ?? preparedOperationRef.current;
@@ -1449,17 +1515,30 @@ export function useClipperState() {
         error: nativeStatusErrorRef.current ?? "Cannot connect to Mine",
       };
     }
-    if (!bindingIdRef.current) {
-      return { ok: false as const, error: "The selected folder has no verified save binding. Choose it again before saving." };
-    }
-    const chosenExecutor = saveModeRef.current === "standalone" ? "browser" : "native";
-    const chosenBinding = bindingIdRef.current;
-    const chosenVault = chosenExecutor === "browser" ? null : vaultRef.current;
     const saveMetadata = metadata;
-
     if (currentType === "content" && contentModeNeedsArticleExtraction(saveMetadata)) {
       await ensureArticleLoaded();
     }
+    // A destination check still out, such as the one a restored draft starts,
+    // decides where the clip goes before Save reads it.
+    while (nativeStatusPromiseRef.current) await nativeStatusPromiseRef.current;
+    if (destinationMoveRef.current !== movesWhenPressed) {
+      return { ok: false as const, error: DESTINATION_CHANGED_DURING_SAVE };
+    }
+    if (saveModeRef.current === "unconfigured") {
+      return { ok: false as const, error: nativeStatusErrorRef.current ?? "Choose a folder before saving." };
+    }
+    if (!bindingIdRef.current) {
+      return { ok: false as const, error: "The selected folder has no verified save binding. Choose it again before saving." };
+    }
+    // One snapshot after the last wait: where the clip goes and the
+    // collections it carries. No check moves the editor from here on.
+    saveDestinationHeldRef.current = true;
+    const chosenExecutor = saveModeRef.current === "standalone" ? "browser" : "native";
+    const chosenBinding = bindingIdRef.current;
+    const chosenVault = chosenExecutor === "browser" ? null : vaultRef.current;
+    const chosenFolderLabel = chosenExecutor === "browser" ? destinationLabelRef.current ?? "Folder" : chosenVault ?? undefined;
+    const chosenTags = selectedTagsRef.current;
     const capture = resolveCaptureResult(currentType, saveMetadata, articleDataRef.current);
 
     let blockType: string;
@@ -1476,7 +1555,7 @@ export function useClipperState() {
       description: null,
       url: capture.sourceUrl || null,
       body: "",
-      tags: selectedTags.length > 0 ? selectedTags : null,
+      tags: chosenTags.length > 0 ? chosenTags : null,
       image_url: null,
       author: saveMetadata.author || null,
       width: null,
@@ -1624,7 +1703,7 @@ export function useClipperState() {
       draftId,
       draftRevision: draftRevisionRef.current,
       sourceUrl: capture.sourceUrl,
-      folderLabel: chosenExecutor === "browser" ? standaloneFolder ?? "Folder" : chosenVault ?? undefined,
+      folderLabel: chosenFolderLabel,
       executor: chosenExecutor,
       bindingId: chosenBinding,
       vaultPath: chosenVault,
@@ -1662,23 +1741,21 @@ export function useClipperState() {
     } catch (cause) {
       return { ok: false as const, error: cause instanceof Error ? cause.message : String(cause) };
     } finally {
-      savingRef.current = false;
-      setSaving(false);
+      endSaving();
     }
   }, [
     metadata,
     currentType,
     title,
-    selectedTags,
     ensureArticleLoaded,
     ensureNativeStatus,
+    endSaving,
     setMetadataValue,
     screenshotDataUrl,
     screenshotUploadId,
     previousOperation,
     allowDifferentDraft,
     draftId,
-    standaloneFolder,
     confirmSavedOperation,
     draftSourceUrl,
   ]);
@@ -1693,6 +1770,7 @@ export function useClipperState() {
     setNativeStatusError(null);
     setChannelsLoading(true);
     setChannelsError(null);
+    destinationMoveRef.current += 1;
     setSelectedTags([]);
     setDestinationNotice(null);
     bindingIdRef.current = null;
@@ -1701,7 +1779,7 @@ export function useClipperState() {
     vaultRef.current = vaultPath;
     // A reachable space loads its collections from the status itself.
     await ensureNativeStatus(true);
-  }, [ensureNativeStatus]);
+  }, [ensureNativeStatus, setSelectedTags]);
 
   /// Desktop parity for the space switcher: the host shows the system folder
   /// chooser, registers the folder in the shared config, and the clipper
@@ -1783,7 +1861,13 @@ export function useClipperState() {
       setTitle(value);
     },
     saving,
-    canSave: state === "main" && metadata !== null && !(currentType === "screenshot" && capturing),
+    // A screenshot waits for the frame being taken (В4.5); every clip waits
+    // while its destination is checked, which may move it to another folder
+    // and take its collections (Г3.2). The asking again every few seconds
+    // while Mine is out of reach does not blink the button: Save waits for
+    // that check itself and stops if it moved the clip.
+    canSave: state === "main" && metadata !== null && !(currentType === "screenshot" && capturing)
+      && !(connectionChecking && !reconnecting),
     /** Where the draft was made and where Save now puts it, when they differ. */
     destinationNotice,
     draftReady: Boolean(draftSourceUrl && draftReadySource === draftSourceUrl),
@@ -1830,6 +1914,17 @@ interface ResolveTwitterMediaResponse {
   ok: boolean;
   error?: string;
   media?: TwitterMediaPreview[];
+}
+
+/** The crop of content.js in this page; the overlay shares its world. */
+interface PageCrop {
+  start: (documentUrl: string | null, cropId: string) => void;
+  /** Absent in a page whose content script predates named crops. */
+  cancel?: (cropId: string) => void;
+}
+
+function pageCrop(): PageCrop | undefined {
+  return (globalThis as unknown as { __mineCrop?: PageCrop }).__mineCrop;
 }
 
 /// One line naming both folders when a draft is saved elsewhere than where it

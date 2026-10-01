@@ -12,6 +12,11 @@ const pageA = "https://a.example/story";
 const refusal = "This tab shows another page than the one Mine opened for. Open Mine again on the page you want to capture.";
 
 type Message = Record<string, unknown>;
+/// What content.js gives the overlay clipper in the same page.
+interface CropApi {
+  start: (documentUrl: string | null, cropId?: string) => void;
+  cancel: (cropId: string) => void;
+}
 type Listener = (message: Message, sender: unknown, sendResponse: (response: unknown) => void) => unknown;
 
 /// A page running the content script; background refuses the crop's capture
@@ -73,20 +78,27 @@ describe("page crop names the page it was started for", () => {
       .toMatchObject({ target: "background", status: "cancelled", error: refusal });
   });
 
-  it("hands the refusal to the overlay clipper instead of a silent cancel", async () => {
+  it("hands the refusal to the overlay clipper instead of a silent cancel, naming the clipper's crop", async () => {
     const tab = page();
     const overlay = { show: vi.fn(), hide: vi.fn() };
-    const win = tab.dom.window as unknown as { __mineOverlay: typeof overlay; __mineCrop: { start: (documentUrl: string | null) => void } };
+    const win = tab.dom.window as unknown as { __mineOverlay: typeof overlay; __mineCrop: CropApi };
     win.__mineOverlay = overlay;
     const results: unknown[] = [];
     tab.dom.window.addEventListener("mine-crop-result", (event) => results.push((event as CustomEvent).detail));
 
-    win.__mineCrop.start(pageA);
+    win.__mineCrop.start(pageA, "crop-1");
     await tab.dragSelection();
 
     expect(tab.sent.find((message) => message.action === "captureForCrop")).toMatchObject({ documentUrl: pageA });
     expect(overlay.show).toHaveBeenCalledOnce();
-    expect(results).toEqual([{ error: refusal }]);
+    expect(results).toEqual([{ cropId: "crop-1", error: refusal }]);
+  });
+
+  it("names the crop that a clipper started through background in what it reports", async () => {
+    const tab = page();
+    tab.receive({ action: "startCropOverlay", documentUrl: pageA, cropId: "crop-2" });
+    await tab.dragSelection();
+    expect(tab.sent.find((message) => message.action === "cropDone")).toMatchObject({ cropId: "crop-2", status: "cancelled", error: refusal });
   });
 
   it("names no address when the clipper named none, so background refuses rather than guesses", async () => {
@@ -103,7 +115,7 @@ describe("a crop gives Escape back to the page when it ends (SPEC_AUDIT_FIXES.md
   function overlayPage(options: { holdCapture?: boolean } = {}) {
     const tab = page(options);
     const overlay = { show: vi.fn(), hide: vi.fn() };
-    const win = tab.dom.window as unknown as { __mineOverlay: typeof overlay; __mineCrop: { start: (documentUrl: string | null) => void } };
+    const win = tab.dom.window as unknown as { __mineOverlay: typeof overlay; __mineCrop: CropApi };
     win.__mineOverlay = overlay;
     const pageEscapes: KeyboardEvent[] = [];
     tab.dom.window.addEventListener("keydown", (event) => pageEscapes.push(event));
@@ -113,7 +125,7 @@ describe("a crop gives Escape back to the page when it ends (SPEC_AUDIT_FIXES.md
       return event;
     };
     const cropLayers = () => tab.dom.window.document.body.children.length - 1;
-    return { tab, overlay, start: () => win.__mineCrop.start(pageA), escape, pageEscapes, cropLayers };
+    return { tab, overlay, start: () => win.__mineCrop.start(pageA, "crop-1"), escape, pageEscapes, cropLayers };
   }
 
   it("cancels on Escape, then leaves the page's Escape and scroll alone and does not bring the clipper back", () => {
@@ -174,5 +186,65 @@ describe("a crop gives Escape back to the page when it ends (SPEC_AUDIT_FIXES.md
     expect(page.overlay.show).toHaveBeenCalledOnce();
     page.start();
     expect(page.cropLayers()).toBe(1);
+  });
+});
+
+describe("a crop ends with the clipper that started it (SPEC_AUDIT_FIXES.md, Г3.3)", () => {
+  function overlayPage(options: { holdCapture?: boolean } = {}) {
+    const tab = page(options);
+    const overlay = { show: vi.fn(), hide: vi.fn() };
+    const win = tab.dom.window as unknown as { __mineOverlay: typeof overlay; __mineCrop: CropApi };
+    win.__mineOverlay = overlay;
+    const results: unknown[] = [];
+    tab.dom.window.addEventListener("mine-crop-result", (event) => results.push((event as CustomEvent).detail));
+    const escape = () => {
+      const event = new tab.dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+      tab.dom.window.document.body.dispatchEvent(event);
+      return event;
+    };
+    const cropLayers = () => tab.dom.window.document.body.children.length - 1;
+    return { tab, overlay, win, results, escape, cropLayers };
+  }
+
+  it("cancelled by its clipper, it leaves the page and reports nothing, and another crop may start", () => {
+    const page = overlayPage();
+    const html = page.tab.dom.window.document.documentElement;
+    page.win.__mineCrop.start(pageA, "crop-1");
+    expect(page.cropLayers()).toBe(1);
+
+    page.win.__mineCrop.cancel("crop-1");
+
+    expect(page.cropLayers()).toBe(0);
+    expect(html.style.overflow).toBe("");
+    expect(page.escape().defaultPrevented).toBe(false);
+    expect(page.overlay.show).not.toHaveBeenCalled();
+    expect(page.results).toEqual([]);
+    page.win.__mineCrop.start(pageA, "crop-2");
+    expect(page.cropLayers()).toBe(1);
+  });
+
+  it("cancelled while its capture is out, its frame is dropped and the clipper is not shown", async () => {
+    const page = overlayPage({ holdCapture: true });
+    page.win.__mineCrop.start(pageA, "crop-1");
+    await page.tab.dragSelection();
+    expect(page.tab.heldCaptures).toHaveLength(1);
+
+    page.win.__mineCrop.cancel("crop-1");
+    page.tab.heldCaptures[0]!();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(page.overlay.show).not.toHaveBeenCalled();
+    expect(page.results).toEqual([]);
+    page.win.__mineCrop.start(pageA, "crop-2");
+    expect(page.cropLayers()).toBe(1);
+  });
+
+  it("is not cancelled by a clipper that names another crop", () => {
+    const page = overlayPage();
+    page.win.__mineCrop.start(pageA, "crop-1");
+    page.win.__mineCrop.cancel("crop-0");
+    expect(page.cropLayers()).toBe(1);
+    expect(page.escape().defaultPrevented).toBe(true);
+    expect(page.results).toEqual([{ cropId: "crop-1" }]);
   });
 });

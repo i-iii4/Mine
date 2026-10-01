@@ -706,6 +706,10 @@ fn publish(file: &StagedSourceFile) -> std::result::Result<OriginalSource, Sourc
 /// only if it still holds the bytes the rewrite was built from. The source is
 /// moved aside in one step first, so an edit that lands meanwhile is never
 /// deleted: a mismatch moves it back and withdraws the new file.
+///
+/// Once the source is aside, every way out but success undoes the rename
+/// here: the caller's rollback knows only what publication returned, and an
+/// error leaves it nothing to restore (`SPEC_AUDIT_FIXES.md`, Ф2, Г1.9).
 fn publish_rewritten_rename(
     temp: &Path,
     source: &Path,
@@ -728,19 +732,34 @@ fn publish_rewritten_rename(
         })
         .with_context(|| format!("rename source vanished: {error}"));
     }
-    if std::fs::read(&aside)? == expected {
+    #[cfg(test)]
+    hooks::run_after_move_aside(&aside);
+    let read = std::fs::read(&aside);
+    if matches!(&read, Ok(bytes) if bytes == expected) {
         return Ok((aside, published));
     }
     let preserved = match files::rename_exclusive(&aside, source) {
         Ok(()) => None,
-        Err(_) => Some(aside),
+        Err(_) => Some(aside.clone()),
     };
     files::remove_if_unchanged(destination, &published)?;
-    Err(files::SourceChanged {
-        path: source.to_path_buf(),
-        preserved,
+    match read {
+        Ok(_) => Err(files::SourceChanged {
+            path: source.to_path_buf(),
+            preserved,
+        }
+        .into()),
+        Err(error) => {
+            let error = anyhow::Error::new(error)
+                .context(format!("read back rename source {}", aside.display()));
+            Err(match preserved {
+                None => error,
+                Some(kept) => {
+                    error.context(format!("the source is kept at {}", kept.display()))
+                }
+            })
+        }
     }
-    .into())
 }
 
 /// Refuse unless `path` still holds `expected`.
@@ -1107,6 +1126,24 @@ pub(crate) mod hooks {
     /// Run `hook` with the path of the next checked delete, at that moment.
     pub(crate) fn before_next_checked_trash(hook: impl FnOnce(&Path) + 'static) {
         BEFORE_CHECKED_TRASH.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+    }
+
+    thread_local! {
+        /// Runs once after a rewritten rename has published the new file and
+        /// moved the source aside, before it reads the source back.
+        static AFTER_MOVE_ASIDE: RefCell<Option<Hook>> = const { RefCell::new(None) };
+    }
+
+    pub(crate) fn run_after_move_aside(aside: &Path) {
+        if let Some(hook) = AFTER_MOVE_ASIDE.with(|slot| slot.borrow_mut().take()) {
+            hook(aside);
+        }
+    }
+
+    /// Run `hook` with the place the next rewritten rename moves its source
+    /// aside to, right after the move.
+    pub(crate) fn after_next_move_aside(hook: impl FnOnce(&Path) + 'static) {
+        AFTER_MOVE_ASIDE.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
     }
 }
 
@@ -1551,6 +1588,38 @@ mod tests {
 
         assert_eq!(std::fs::read(&old).unwrap(), b"original");
         assert!(!new.exists());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    /// Г1.9: the source, already moved aside, cannot be read back. The rename
+    /// is undone like a mismatch: the source returns to its name with its
+    /// bytes, the new file is withdrawn, nothing hidden is left.
+    #[test]
+    fn rewritten_rename_restores_the_source_when_it_cannot_be_read_back() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old.md");
+        let new = dir.path().join("new.md");
+        std::fs::write(&old, b"original").unwrap();
+        let readable = std::fs::metadata(&old).unwrap().permissions();
+        let staged = StagedSourceMutation::stage(vec![SourceFileWrite::rename_with_bytes(
+            old.clone(),
+            new.clone(),
+            b"original".to_vec(),
+            b"rewritten".to_vec(),
+        )])
+        .unwrap();
+        hooks::after_next_move_aside(|aside| {
+            std::fs::set_permissions(aside, std::fs::Permissions::from_mode(0o000)).unwrap();
+        });
+
+        let error = staged.commit().unwrap_err();
+
+        assert!(matches!(error, SourceMutationError::CommitFile { .. }), "{error}");
+        assert!(!new.exists());
+        std::fs::set_permissions(&old, readable).unwrap();
+        assert_eq!(std::fs::read(&old).unwrap(), b"original");
+        assert!(hidden_leftovers(dir.path()).is_empty(), "{:?}", hidden_leftovers(dir.path()));
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 

@@ -1,5 +1,55 @@
 import { describe, it, expect } from "vitest";
-import { decodeLocalMarkdownUrl, decodeWikilinkHref, preprocessWikilinks, markdownSourceByteOffset } from "./markdownWikilinks";
+import { fromMarkdown } from "mdast-util-from-markdown";
+import type { Nodes } from "mdast";
+import {
+  decodeLocalMarkdownUrl,
+  decodeWikilinkHref,
+  firstImageOffset,
+  inlineMediaOccurrenceIndex,
+  preprocessWikilinks,
+  markdownSourceByteOffset,
+} from "./markdownWikilinks";
+
+/** Where react-markdown's image nodes start in the rendered body, in order. */
+function renderedImageOffsets(body: string): number[] {
+  const offsets: number[] = [];
+  function visit(node: Nodes) {
+    if (node.type === "image" && node.position) offsets.push(node.position.start.offset ?? -1);
+    if ("children" in node) node.children.forEach(visit);
+  }
+  visit(fromMarkdown(preprocessWikilinks(body)));
+  return offsets;
+}
+
+describe("inlineMediaOccurrenceIndex", () => {
+  // Г1.4: each rendered image names its own `![` in the source, whatever its
+  // title, brackets, parentheses or spelling, and whatever stands before it.
+  it.each([
+    ["![a](p.jpg \"t1\")\n\n![b](p.jpg \"t2\")", [0, 1]],
+    ["![a](<p q.jpg>)\n\n![b](<p q.jpg> 't')", [0, 1]],
+    ["![a](Foo%20(1).jpg)\n\n![b](Foo%20(1).jpg (t))", [0, 1]],
+    ["Intro ![[p.jpg]] mid ![x](p.jpg) end ![y](./p%2Ejpg)", [0, 1, 2]],
+    ["[[Заметка]] 😀 `![` code ![a](p.jpg) ![[Фото (1).jpg|подпись]]", [1, 2]],
+  ])("names the clicked image of %s by its opener", (body, expected) => {
+    const offsets = renderedImageOffsets(body);
+    expect(offsets.map((offset) => inlineMediaOccurrenceIndex(body, offset))).toEqual(expected);
+  });
+
+  it("names no opener for an offset that is not an image", () => {
+    const body = "Text ![a](p.jpg)";
+    expect(inlineMediaOccurrenceIndex(body, 0)).toBeNull();
+  });
+});
+
+describe("firstImageOffset", () => {
+  it("finds the first image of a source in document order", () => {
+    const body = "![a](other.jpg) ![[clip.mp4|lead]]\n\n![b](clip.mp4 \"t\")";
+    const rendered = preprocessWikilinks(body);
+    const offset = firstImageOffset(rendered, (url) => url === "clip.mp4");
+    expect(offset).toBe(rendered.indexOf("![lead]"));
+    expect(firstImageOffset(rendered, (url) => url === "missing.mp4")).toBeNull();
+  });
+});
 
 describe("selection source offsets", () => {
   it.each(["![[Media/Камень (1).jpg]]", "[[Заметка|ссылка]]", "😀 русский текст"])("maps a repeated paragraph after %s to UTF-8 source bytes", (prefix) => {

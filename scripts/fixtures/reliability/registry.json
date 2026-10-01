@@ -1176,6 +1176,42 @@
       "requirement": "SPEC_AUDIT_FIXES.md#| Г4.1 |",
       "tests": ["src/App.test.tsx", "src/components/Grid.test.tsx", "src/components/Card.test.tsx", "src/components/SearchOverlay.test.tsx", "src/components/YoutubeSourcePlayer.test.tsx", "src/components/GraphView.test.tsx", "src/components/IndexingProgress.test.tsx", "src/components/ImagePreviewOverlay.test.tsx", "src/lib/cardLayout.test.ts", "src/lib/tagRowDragOverlay.test.ts"],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src-tauri/src/storage/media_refs.rs",
+        "src/lib/markdownWikilinks.ts",
+        "src/lib/markdownWikilinks.test.ts",
+        "src/types/index.ts",
+        "src/lib/commands.ts",
+        "src/lib/commands.test.ts",
+        "src/components/Detail.tsx",
+        "src/components/Detail.test.tsx"
+      ],
+      "requirement": "SPEC_AUDIT_FIXES.md#| Г1.4 |",
+      "tests": ["src/lib/markdownWikilinks.test.ts", "src/lib/commands.test.ts", "src/components/Detail.test.tsx", "src-tauri/src/storage/media_refs.rs"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src-tauri/src/swipe_gesture.rs"
+      ],
+      "requirement": "SPEC_AUDIT_FIXES.md#| Г5.3 |",
+      "tests": ["src-tauri/src/swipe_gesture.rs"],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "extension/popup/hooks/useClipperState.overlayCrop.test.tsx",
+        "extension/popup/overlay-entry.instance.test.tsx",
+        "extension/popup/overlay-entry.tsx",
+        "extension/popup/hooks/useClipperState.ts",
+        "extension/background.js",
+        "extension/content.js"
+      ],
+      "requirement": "SPEC_AUDIT_FIXES.md#| Г3.1 |",
+      "tests": ["extension/popup/hooks/useClipperState.overlayCrop.test.tsx", "extension/popup/overlay-entry.instance.test.tsx", "extension/popup/overlay-entry.test.tsx", "extension/background.messaging.test.ts", "extension/lib/cropCapture.test.ts", "extension/popup/hooks/useClipperState.standalone.test.tsx"],
+      "command": "test:frontend"
     }
   ],
   "release": null

@@ -7,8 +7,9 @@ export interface MediaAssetRef {
   media_kind: MediaAssetKind;
   source_slug: string;
   reference_kind: "frontmatter_file" | "body_embed";
-  // 0-based index of this embed among identical body refs to the same file.
-  // Lets removal target a single duplicate; null/undefined removes every match.
+  // The clicked image of a body embed: how many `![` precede its own `![` in
+  // the card's body (SPEC_AUDIT_FIXES.md, Г1.4). null/undefined removes every
+  // image of the media.
   occurrence_index?: number | null;
 }
 

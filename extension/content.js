@@ -1379,8 +1379,10 @@
   let cropDocumentUrl = null;
   // The crop under way, from its start until its result is handed over,
   // capture included. One at a time: another start meanwhile is ignored
-  // (SPEC_AUDIT_FIXES.md, В4.3).
-  let cropInProgress = false;
+  // (SPEC_AUDIT_FIXES.md, В4.3). It carries the id the clipper named it with:
+  // its result goes out under that id, only that clipper takes it, and that
+  // clipper cancels it when it closes (Г3.3).
+  let activeCrop = null;
 
   function afterViewportPaint(callback) {
     let done = false;
@@ -1459,41 +1461,43 @@
     }, 6000);
   }
 
-  function sendCropResult(payload) {
+  /// Hand `crop`'s result over, unless its clipper cancelled it meanwhile:
+  /// then nothing is shown and nothing is reported (Г3.3).
+  function sendCropResult(crop, payload) {
     // Restore clipper overlay (hidden on crop start). In the overlay
     // architecture the React state is still live — we just toggle the
     // host's display:none, no rehydrate needed, no toast needed.
     if (window.__mineOverlay) {
-      if (payload.status === "cancelled" && payload.error) {
+      const handOver = (detail) => {
+        if (activeCrop !== crop) return;
+        activeCrop = null;
         window.__mineOverlay.show();
-        window.dispatchEvent(new CustomEvent("mine-crop-result", { detail: { error: payload.error } }));
+        window.dispatchEvent(new CustomEvent("mine-crop-result", { detail: { cropId: crop.id, ...detail } }));
+      };
+      if (payload.status === "cancelled" && payload.error) {
+        handOver({ error: payload.error });
         return;
       }
       if (payload.status === "done" && payload.dataUrl) {
         chrome.runtime.sendMessage(
           { target: "background", action: "cacheScreenshotUpload", dataUrl: payload.dataUrl },
-          (resp) => {
-            window.__mineOverlay.show();
-            window.dispatchEvent(new CustomEvent("mine-crop-result", {
-              detail: {
-                dataUrl: payload.dataUrl,
-                screenshotId: resp?.ok ? resp.screenshotId : null,
-              },
-            }));
-          },
+          (resp) => handOver({ dataUrl: payload.dataUrl, screenshotId: resp?.ok ? resp.screenshotId : null }),
         );
         return;
       }
-      window.__mineOverlay.show();
+      // Cancelled on the page: the clipper learns that its crop is over.
+      handOver({});
       return;
     }
+    if (activeCrop !== crop) return;
+    activeCrop = null;
     // Fallback path (detached window): persist result + show toast so
     // user can reopen detached popup manually (used when overlay isn't
     // available, e.g. after chrome:// navigation that killed content script).
     if (payload.status === "done") {
       showCropToast("Screenshot ready — click the Mine icon to save");
     }
-    chrome.runtime.sendMessage({ target: "background", action: "cropDone", ...payload }, () => {
+    chrome.runtime.sendMessage({ target: "background", action: "cropDone", ...payload, cropId: crop.id }, () => {
       void chrome.runtime.lastError;
     });
   }
@@ -1554,11 +1558,13 @@
     }
   }
 
-  function startCropOverlay(documentUrl) {
+  /// `cropId` is the clipper's name for this crop; the result carries it.
+  function startCropOverlay(documentUrl, cropId) {
     // A crop already under way, its capture included, is not started again.
-    if (cropInProgress) return;
+    if (activeCrop) return;
     // No address named: background refuses the capture rather than guess.
     cropDocumentUrl = typeof documentUrl === "string" ? documentUrl : null;
+    const crop = { id: typeof cropId === "string" ? cropId : null, cancel: () => undefined };
 
     const host = document.createElement("div");
     host.style.cssText = "position:fixed;inset:0;z-index:2147483647;pointer-events:none;";
@@ -1635,7 +1641,7 @@
 
     document.body.appendChild(host);
     cropOverlayHost = host;
-    cropInProgress = true;
+    activeCrop = crop;
 
     const overlay = shadow.querySelector(".overlay");
     const dim = shadow.querySelector(".dim");
@@ -1711,9 +1717,17 @@
     function finish(payload) {
       if (finished) return;
       finished = true;
-      cropInProgress = false;
-      sendCropResult(payload);
+      sendCropResult(crop, payload);
     }
+
+    // The clipper that started this crop closed: the page gets its keyboard
+    // and scroll back, and a capture still out is dropped unreported.
+    crop.cancel = () => {
+      if (activeCrop !== crop) return;
+      activeCrop = null;
+      finished = true;
+      cleanup();
+    };
 
     function onMouseUp() {
       if (!dragging) return;
@@ -1751,9 +1765,16 @@
     window.addEventListener("keydown", onKeyDown, keyListenerOptions);
   }
 
-  // The overlay clipper starts a crop directly, naming its page address.
+  /// Cancel the crop under way when it is the one named `cropId`.
+  function cancelCropOverlay(cropId) {
+    if (activeCrop !== null && typeof cropId === "string" && activeCrop.id === cropId) activeCrop.cancel();
+  }
+
+  // The overlay clipper starts a crop directly, naming its page address and
+  // the crop, and cancels it when it closes.
   window.__mineCrop = {
     start: startCropOverlay,
+    cancel: cancelCropOverlay,
   };
 
   // ── Message handler ─────────────────────────────────────────────────────
@@ -1766,7 +1787,7 @@
 
     if (msg.action === "startCropOverlay") {
       try {
-        startCropOverlay(msg.documentUrl);
+        startCropOverlay(msg.documentUrl, msg.cropId);
         sendResponse({ ok: true });
       } catch (e) {
         sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) });

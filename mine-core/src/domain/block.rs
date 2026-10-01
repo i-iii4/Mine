@@ -8,6 +8,8 @@
 //
 // Contract: SPEC_BLOCK.md
 
+use std::ops::Range;
+
 use percent_encoding::percent_decode_str;
 use serde::Serialize;
 use serde_yaml::Value;
@@ -16,8 +18,20 @@ use thiserror::Error;
 use crate::domain::collection::{
     collection_ref_from_canonical_value, collection_wikilink_value, MINE_COLLECTIONS_FIELD,
 };
-use crate::domain::markdown_link::{inline_link_at, unescape_destination};
+use crate::domain::markdown_link::{
+    inline_link_at, local_destination_path, reference_definition_destinations,
+    unescape_destination,
+};
+use crate::links::LinkSyntax;
 use crate::domain::source_patch::{frontmatter_bounds, FrontmatterBounds};
+
+/// How `parse_markdown_document` read a note: without front matter, as an
+/// implicit article.
+pub const FOREIGN_MARKDOWN_ORIGIN: &str = "foreign_markdown";
+/// With front matter, its type derived from the body.
+pub const PARTIAL_FRONTMATTER_ORIGIN: &str = "partial_frontmatter";
+/// With front matter that does not parse, as an implicit article.
+pub const MALFORMED_FRONTMATTER_ORIGIN: &str = "malformed_frontmatter";
 
 pub const MINE_RELATED_NOTES_FIELD: &str = "Mine Related Notes";
 pub const MINE_SOURCE_MEDIA_FIELD: &str = "Mine Source Media";
@@ -377,7 +391,7 @@ pub fn parse_markdown_document(
     else {
         return Ok(ParsedMarkdownBlock {
             block: implicit_article_block(slug, content.to_string(), fallback_saved_at),
-            origin: "foreign_markdown".to_string(),
+            origin: FOREIGN_MARKDOWN_ORIGIN.to_string(),
             index_warning: None,
         });
     };
@@ -396,13 +410,13 @@ pub fn parse_markdown_document(
                     derive_block_type(&block.frontmatter, &block.body);
                 block
             },
-            origin: "partial_frontmatter".to_string(),
+            origin: PARTIAL_FRONTMATTER_ORIGIN.to_string(),
             index_warning: warning,
         }),
         Err(_) => Ok(ParsedMarkdownBlock {
             block: implicit_article_block(slug, content.to_string(), fallback_saved_at),
-            origin: "malformed_frontmatter".to_string(),
-            index_warning: Some("malformed_frontmatter".to_string()),
+            origin: MALFORMED_FRONTMATTER_ORIGIN.to_string(),
+            index_warning: Some(MALFORMED_FRONTMATTER_ORIGIN.to_string()),
         }),
     }
 }
@@ -1065,16 +1079,26 @@ pub struct InlineMediaReference {
     pub syntax: InlineMediaSyntax,
 }
 
-/// Extract every inline media reference from a markdown body in document order,
-/// preserving whether it came from an Obsidian embed or a Markdown image.
+/// An inline media reference and the bytes of the body it occupies.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InlineMediaSpan {
+    /// From the `!` to past the closing `]]` or `)`.
+    pub range: Range<usize>,
+    pub reference: InlineMediaReference,
+}
+
+/// Every inline media reference of a markdown body with the bytes it
+/// occupies, in document order: the one enumeration that reading, counting
+/// and removing references share (`SPEC_AUDIT_FIXES.md`, Г1.4).
 ///
-/// A Markdown image's destination is read the `CommonMark` way
-/// (`markdown_link::inline_link_at`): without its title and angle brackets,
-/// with balanced parentheses and backslash escapes resolved, then decoded
-/// when local (`SPEC_AUDIT_FIXES.md`, В1.1). Code is not skipped: a reference
-/// that only looks like one keeps its file from being called unused.
+/// An embed ends at the first `]]` on its line. A Markdown image's
+/// destination is read the `CommonMark` way (`markdown_link::inline_link_at`):
+/// without its title and angle brackets, with balanced parentheses and
+/// backslash escapes resolved, then decoded once when local
+/// (`markdown_image_source`). Code is not skipped: a reference that only
+/// looks like one keeps its file from being called unused.
 #[must_use]
-pub fn iter_inline_media_references(body: &str) -> Vec<InlineMediaReference> {
+pub fn inline_media_spans(body: &str) -> Vec<InlineMediaSpan> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < body.len() {
@@ -1089,28 +1113,36 @@ pub fn iter_inline_media_references(body: &str) -> Vec<InlineMediaReference> {
 
         if body[after_excl..].starts_with('[') {
             let name_start = after_excl + 1;
-            let Some(close_offset) = body[name_start..].find("]]") else {
+            let line_end = body[name_start..].find('\n').map_or(body.len(), |offset| name_start + offset);
+            let Some(close_offset) = body[name_start..line_end].find("]]") else {
                 i = name_start;
                 continue;
             };
             let inner = &body[name_start..name_start + close_offset];
             let name = inner.split('|').next().unwrap_or(inner).trim();
+            let end = name_start + close_offset + 2;
             if !name.is_empty() {
-                out.push(InlineMediaReference {
-                    source: name.to_string(),
-                    syntax: InlineMediaSyntax::ObsidianEmbed,
+                out.push(InlineMediaSpan {
+                    range: excl..end,
+                    reference: InlineMediaReference {
+                        source: name.to_string(),
+                        syntax: InlineMediaSyntax::ObsidianEmbed,
+                    },
                 });
             }
-            i = name_start + close_offset + 2;
+            i = end;
         } else {
             let Some(link) = inline_link_at(body, excl) else {
                 i = after_excl;
                 continue;
             };
             if let Some(source) = markdown_image_source(&body[link.destination]) {
-                out.push(InlineMediaReference {
-                    source,
-                    syntax: InlineMediaSyntax::MarkdownImage,
+                out.push(InlineMediaSpan {
+                    range: excl..link.end,
+                    reference: InlineMediaReference {
+                        source,
+                        syntax: InlineMediaSyntax::MarkdownImage,
+                    },
                 });
             }
             i = link.end;
@@ -1119,12 +1151,104 @@ pub fn iter_inline_media_references(body: &str) -> Vec<InlineMediaReference> {
     out
 }
 
+/// Extract every inline media reference from a markdown body in document order,
+/// preserving whether it came from an Obsidian embed or a Markdown image
+/// (`inline_media_spans`).
+#[must_use]
+pub fn iter_inline_media_references(body: &str) -> Vec<InlineMediaReference> {
+    inline_media_spans(body)
+        .into_iter()
+        .map(|span| span.reference)
+        .collect()
+}
+
 /// The file a Markdown image destination names, in the form references are
-/// compared: escapes resolved and a local path percent-decoded. `None` for an
-/// empty destination.
+/// compared and resolved (`LinkSyntax::MarkdownPath`): escapes resolved, a
+/// written `#fragment` or `?query` cut and a local path percent-decoded
+/// exactly once (`markdown_link::local_destination_path`; Г1.2). A
+/// destination outside the space keeps its form, escapes resolved. `None` for
+/// an empty destination.
 #[must_use]
 pub fn markdown_image_source(destination: &str) -> Option<String> {
-    (!destination.is_empty()).then(|| normalize_local_markdown_url(&unescape_destination(destination)))
+    if destination.is_empty() {
+        return None;
+    }
+    Some(
+        local_destination_path(destination)
+            .unwrap_or_else(|| unescape_destination(destination).into_owned()),
+    )
+}
+
+/// A reference a body makes to a file of the space, in a form Obsidian reads
+/// as a link to it (`iter_file_references`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileReference {
+    /// The target as the resolver takes it: a wikilink target with any
+    /// heading and without its alias, or a Markdown path read once from its
+    /// destination.
+    pub target: String,
+    /// The rules the target resolves by: `Obsidian` or `MarkdownPath`.
+    pub syntax: LinkSyntax,
+}
+
+/// Every reference a body makes to a file of the space, in document order,
+/// in each form Obsidian reads as a link to the file (`SPEC_AUDIT_FIXES.md`,
+/// Г1.1): wikilinks, embedded or not (`![[a.jpg]]`, `[[doc.pdf|alias]]`,
+/// `[[doc.pdf#page=2]]`); Markdown images and links, an image inside a link
+/// included (`[doc](../Media/doc.pdf)`, `[![x](a.jpg)](…)`); and link
+/// reference definitions (`[r]: ../Media/doc.pdf`), which `![a][r]` and
+/// `[a][r]` link through. Destinations outside the space are left out.
+///
+/// This is what decides whether a file is in use before it may be deleted,
+/// so code is read too: a reference that only looks like one keeps its file,
+/// the safe side of that decision.
+#[must_use]
+pub fn iter_file_references(body: &str) -> Vec<FileReference> {
+    let mut found: Vec<(usize, FileReference)> = Vec::new();
+    let mut line_start = 0;
+    for line in body.split_inclusive('\n') {
+        let mut offset = 0;
+        while let Some(open) = line[offset..].find("[[") {
+            let inner_start = offset + open + 2;
+            let Some(close) = line[inner_start..].find("]]") else {
+                break;
+            };
+            let inner = &line[inner_start..inner_start + close];
+            let target = inner.split('|').next().unwrap_or(inner).trim();
+            if !target.is_empty() {
+                found.push((
+                    line_start + inner_start,
+                    FileReference {
+                        target: target.to_string(),
+                        syntax: LinkSyntax::Obsidian,
+                    },
+                ));
+            }
+            offset = inner_start + close + 2;
+        }
+        line_start += line.len();
+    }
+    let bytes = body.as_bytes();
+    for (open, _) in body.match_indices('[') {
+        let start = if open > 0 && bytes[open - 1] == b'!' { open - 1 } else { open };
+        if let Some(link) = inline_link_at(body, start) {
+            found.extend(markdown_file_reference(&body[link.destination.clone()]).map(|reference| (link.destination.start, reference)));
+        }
+    }
+    for destination in reference_definition_destinations(body) {
+        found.extend(markdown_file_reference(&body[destination.clone()]).map(|reference| (destination.start, reference)));
+    }
+    found.sort_by_key(|(offset, _)| *offset);
+    found.into_iter().map(|(_, reference)| reference).collect()
+}
+
+fn markdown_file_reference(destination: &str) -> Option<FileReference> {
+    local_destination_path(destination)
+        .filter(|path| !path.is_empty())
+        .map(|target| FileReference {
+            target,
+            syntax: LinkSyntax::MarkdownPath,
+        })
 }
 
 /// Extract every inline media source from a markdown body in document order.
@@ -2656,6 +2780,61 @@ mod tests {
                 "../Media/Foo (image 1).jpg",
                 "../Media/Bar (image 2).jpg",
                 "../Media/esc(1).jpg",
+            ]
+        );
+    }
+
+    /// Г1.2: a destination is decoded once and a fragment exists only where
+    /// `#` is written: `%23` and `%25` stay in the file name.
+    #[test]
+    fn inline_media_sources_are_decoded_once() {
+        let body = "![](../Media/photo%23tag.jpg) ![](../Media/a%2520b.jpg) ![](a.jpg#crop) ![](https://e.com/a%20b.jpg)";
+        assert_eq!(
+            iter_inline_media_sources(body),
+            vec!["../Media/photo#tag.jpg", "../Media/a%20b.jpg", "a.jpg", "https://e.com/a%20b.jpg"]
+        );
+    }
+
+    /// Г1.4: each reference comes with the bytes it occupies; an embed ends
+    /// on its own line.
+    #[test]
+    fn inline_media_spans_locate_each_reference() {
+        let body = "a ![x](p.jpg \"t\") ![[q.jpg|y]] ![[broken\n![](<r s.jpg>)";
+        let found = inline_media_spans(body);
+        let spans: Vec<(&str, &str)> = found
+            .iter()
+            .map(|span| (&body[span.range.clone()], span.reference.source.as_str()))
+            .collect();
+        assert_eq!(
+            spans,
+            vec![("![x](p.jpg \"t\")", "p.jpg"), ("![[q.jpg|y]]", "q.jpg"), ("![](<r s.jpg>)", "r s.jpg")]
+        );
+    }
+
+    /// Г1.1: every form Obsidian reads as a link to a file is a reference to
+    /// it, code included; remote destinations are none.
+    #[test]
+    fn file_references_cover_every_link_form() {
+        let body = "[[doc.pdf]] [[alias.pdf|a]] [[page.pdf#page=2]] ![[e.jpg]]\n\
+                    [m](../Media/m.pdf) [![x](../Media/n%20o.jpg)](https://e.com) ![a][r]\n\
+                    [w](https://e.com/w.pdf) `[c](code.pdf)`\n\n\
+                    [r]: ../Media/r.pdf \"t\"\n";
+        let found = iter_file_references(body);
+        let references: Vec<(&str, LinkSyntax)> = found
+            .iter()
+            .map(|reference| (reference.target.as_str(), reference.syntax))
+            .collect();
+        assert_eq!(
+            references,
+            vec![
+                ("doc.pdf", LinkSyntax::Obsidian),
+                ("alias.pdf", LinkSyntax::Obsidian),
+                ("page.pdf#page=2", LinkSyntax::Obsidian),
+                ("e.jpg", LinkSyntax::Obsidian),
+                ("../Media/m.pdf", LinkSyntax::MarkdownPath),
+                ("../Media/n o.jpg", LinkSyntax::MarkdownPath),
+                ("code.pdf", LinkSyntax::MarkdownPath),
+                ("../Media/r.pdf", LinkSyntax::MarkdownPath),
             ]
         );
     }

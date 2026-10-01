@@ -4,9 +4,10 @@
 // `Mine Collections` frontmatter field. Runtime identity is the wikilink
 // target, not a normalized tag.
 
+use crate::domain::block::{parse_markdown_document, DateTime};
 use crate::domain::source_patch::{
-    frontmatter_bounds, is_top_level_key, replace_top_level_key, top_level_key_span,
-    FrontmatterBounds,
+    body_of, is_top_level_key, properties_layout, replace_top_level_key, source_shape,
+    top_level_key_span, verify_other_properties, PropertiesLayout, SourcePatchError, SourceShape,
 };
 use crate::domain::vault::validate_slug;
 use crate::links::LinkIndex;
@@ -159,47 +160,83 @@ pub fn render_collections(collections: &[String]) -> String {
     out
 }
 
+/// Write `collections` as the membership of the note `content`, keeping every
+/// other byte (`SPEC_AUDIT_FIXES.md`, Ф1).
+///
+/// The result is read back before it is returned: it must hold exactly the
+/// membership asked for, every other property and the body as they were.
+///
+/// # Errors
+///
+/// Properties that are not valid YAML properties (`MalformedFrontmatter`),
+/// that cannot take the change in their own layout (`UnsupportedLayout`), or
+/// whose patched text reads back differently (`RoundTrip`) are refused rather
+/// than rewritten in another form.
 pub fn patch_collections_frontmatter(
     content: &str,
     collections: &[String],
-) -> Result<String, String> {
-    match frontmatter_bounds(content) {
-        FrontmatterBounds::None => {
-            if collections.is_empty() {
-                return Ok(content.to_string());
-            }
-            Ok(format!(
-                "---\n{}---\n{}",
-                render_collections(collections),
-                content
-            ))
+) -> Result<String, SourcePatchError> {
+    let patched = match source_shape(content) {
+        SourceShape::Plain if collections.is_empty() => content.to_string(),
+        SourceShape::Plain => format!("---\n{}---\n{}", render_collections(collections), content),
+        SourceShape::Malformed => {
+            return Err(SourcePatchError::MalformedFrontmatter {
+                field: MINE_COLLECTIONS_FIELD,
+            })
         }
-        FrontmatterBounds::Valid {
+        SourceShape::Structured {
             yaml_start,
             yaml_end,
             ..
         } => {
-            let yaml = &content[yaml_start..yaml_end];
-            if !yaml.trim().is_empty() && serde_yaml::from_str::<serde_yaml::Value>(yaml).is_err() {
-                return Err("cannot safely patch collections: malformed frontmatter".to_string());
-            }
-            let patched_yaml = patch_collections_yaml(yaml, collections);
+            let patched_yaml = patch_collections_yaml(&content[yaml_start..yaml_end], collections)?;
             let mut out = String::with_capacity(content.len() + patched_yaml.len());
             out.push_str(&content[..yaml_start]);
             out.push_str(&patched_yaml);
             out.push_str(&content[yaml_end..]);
-            Ok(out)
+            out
         }
+    };
+    verify_membership_patch(content, &patched, collections)?;
+    Ok(patched)
+}
+
+/// Write the membership list into the YAML of a note. The value of the
+/// `Mine Collections` key is replaced in place, in the layout the properties
+/// are written in; user keys, comments and blank lines around it stay.
+pub(crate) fn patch_collections_yaml(
+    yaml: &str,
+    collections: &[String],
+) -> Result<String, SourcePatchError> {
+    let unsupported = SourcePatchError::UnsupportedLayout {
+        field: MINE_COLLECTIONS_FIELD,
+    };
+    match properties_layout(yaml) {
+        PropertiesLayout::Block => Ok(patch_block_collections(yaml, collections)),
+        PropertiesLayout::Flow(mapping) => {
+            let patched = if collections.is_empty() && !mapping.has_key(LEGACY_TAGS_FIELD) {
+                // Removing the entry would take a comment beside it out; an
+                // explicit empty list leaves the comment and says the same.
+                mapping
+                    .remove_key(yaml, MINE_COLLECTIONS_FIELD)
+                    .or_else(|| mapping.set_key(yaml, MINE_COLLECTIONS_FIELD, "[]"))
+            } else {
+                mapping.set_key(yaml, MINE_COLLECTIONS_FIELD, &render_collections_flow(collections))
+            };
+            patched.ok_or(unsupported)
+        }
+        PropertiesLayout::UnreadableFlow => Err(unsupported),
     }
 }
 
-/// Write the membership list into the YAML of a note. The block of the
-/// `Mine Collections` key is replaced in place; user keys, comments and blank
-/// lines around it stay.
-pub(crate) fn patch_collections_yaml(yaml: &str, collections: &[String]) -> String {
+/// The key that held membership before `Mine Collections`.
+const LEGACY_TAGS_FIELD: &str = "tags";
+
+/// Membership in block-style properties: the block of the key is replaced.
+fn patch_block_collections(yaml: &str, collections: &[String]) -> String {
     let newline = if yaml.contains("\r\n") { "\r\n" } else { "\n" };
     let lines: Vec<&str> = yaml.split_inclusive('\n').collect();
-    let has_legacy_tags = lines.iter().any(|line| is_top_level_key(line, "tags"));
+    let has_legacy_tags = lines.iter().any(|line| is_top_level_key(line, LEGACY_TAGS_FIELD));
     // Legacy `tags` once meant membership. An explicit empty list tells a
     // reader that membership now lives here and `tags` are the user's own.
     let replacement = (!collections.is_empty() || has_legacy_tags)
@@ -210,6 +247,50 @@ pub(crate) fn patch_collections_yaml(yaml: &str, collections: &[String]) -> Stri
     replace_top_level_key(yaml, MINE_COLLECTIONS_FIELD, replacement.as_deref(), newline)
 }
 
+/// The membership list as a flow sequence: `["[[A]]", "[[B]]"]`.
+fn render_collections_flow(collections: &[String]) -> String {
+    let items: Vec<String> = collections
+        .iter()
+        .map(|collection| normalize_collection_ref(collection))
+        .filter(|collection_ref| !collection_ref.is_empty())
+        .map(|collection_ref| yaml_quote(&collection_wikilink_value(&collection_ref)))
+        .collect();
+    format!("[{}]", items.join(", "))
+}
+
+/// Slug the patched note is read back under; the membership does not depend
+/// on it.
+const READ_BACK_SLUG: &str = "note";
+/// `saved_at` for reading back a note that has none; it is not compared.
+const READ_BACK_SAVED_AT: &str = "1970-01-01T00:00:00Z";
+
+/// Read `patched` back: Mine must read exactly `collections` as its
+/// membership, and every other property and the body must be as in `source`.
+fn verify_membership_patch(
+    source: &str,
+    patched: &str,
+    collections: &[String],
+) -> Result<(), SourcePatchError> {
+    let round_trip = |field| SourcePatchError::RoundTrip { field };
+    verify_other_properties(source, patched, &[MINE_COLLECTIONS_FIELD])?;
+    if body_of(source) != body_of(patched) {
+        return Err(round_trip("body"));
+    }
+    let saved_at = DateTime::new(READ_BACK_SAVED_AT).map_err(|_| round_trip("saved_at"))?;
+    let read = parse_markdown_document(READ_BACK_SLUG, patched, saved_at)
+        .map_err(|_| round_trip("frontmatter"))?;
+    let mut intended: Vec<String> = Vec::with_capacity(collections.len());
+    for collection_ref in collections.iter().map(|collection| normalize_collection_ref(collection)) {
+        if !collection_ref.is_empty() && !intended.contains(&collection_ref) {
+            intended.push(collection_ref);
+        }
+    }
+    if read.block.frontmatter.tags != intended {
+        return Err(round_trip(MINE_COLLECTIONS_FIELD));
+    }
+    Ok(())
+}
+
 fn yaml_quote(value: &str) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
@@ -217,6 +298,7 @@ fn yaml_quote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::source_patch::{frontmatter_bounds, FrontmatterBounds};
 
     #[test]
     fn canonical_value_extracts_target() {
@@ -300,6 +382,168 @@ mod tests {
             output,
             "---\ntags:\n  - old\nMine Collections: []\n---\nBody"
         );
+    }
+
+    /// The properties of `note` as YAML reads them, and the membership Mine
+    /// reads from the note.
+    fn read_back(note: &str) -> (serde_yaml::Mapping, Vec<String>) {
+        let FrontmatterBounds::Valid {
+            yaml_start,
+            yaml_end,
+            ..
+        } = frontmatter_bounds(note)
+        else {
+            panic!("the note lost its properties:\n{note}");
+        };
+        let properties = match serde_yaml::from_str::<serde_yaml::Value>(&note[yaml_start..yaml_end])
+        {
+            Ok(serde_yaml::Value::Mapping(mapping)) => mapping,
+            other => panic!("the properties are not valid YAML ({other:?}):\n{note}"),
+        };
+        let parsed = crate::domain::block::parse_markdown_document(
+            "Note",
+            note,
+            crate::domain::block::DateTime::new("2026-01-01").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(parsed.origin, "partial_frontmatter", "{note}");
+        (properties, parsed.block.frontmatter.tags)
+    }
+
+    #[test]
+    fn flow_mapping_properties_take_membership_inside_the_braces() {
+        let input = "---\n{aliases: [A]}\n---\nBody";
+        let output = patch_collections_frontmatter(input, &["Design".to_string()]).unwrap();
+        assert_eq!(
+            output,
+            "---\n{aliases: [A], Mine Collections: [\"[[Design]]\"]}\n---\nBody"
+        );
+        let (properties, membership) = read_back(&output);
+        assert_eq!(membership, vec!["Design"]);
+        assert_eq!(
+            properties.get("aliases"),
+            Some(&serde_yaml::Value::Sequence(vec!["A".into()]))
+        );
+    }
+
+    #[test]
+    fn flow_mapping_membership_is_replaced_in_place() {
+        let input = "---\n{\"Mine Collections\": [\"[[Old]]\"], aliases: [A]} # flow\n---\nBody";
+        let output = patch_collections_frontmatter(input, &["New".to_string(), "Old".to_string()])
+            .unwrap();
+        assert_eq!(
+            output,
+            "---\n{\"Mine Collections\": [\"[[New]]\", \"[[Old]]\"], aliases: [A]} # flow\n---\nBody"
+        );
+        assert_eq!(read_back(&output).1, vec!["New", "Old"]);
+    }
+
+    #[test]
+    fn multi_line_flow_mapping_keeps_its_lines_and_comments() {
+        let input = "---\n{\n  aliases: [A], # names\n  rating: 5\n}\n---\nBody";
+        let output = patch_collections_frontmatter(input, &["Design".to_string()]).unwrap();
+        assert_eq!(
+            output,
+            "---\n{\n  aliases: [A], # names\n  rating: 5, Mine Collections: [\"[[Design]]\"]\n}\n---\nBody"
+        );
+        assert_eq!(read_back(&output).1, vec!["Design"]);
+    }
+
+    #[test]
+    fn last_membership_leaves_a_flow_mapping_as_it_was_before() {
+        for (with, without) in [
+            ("{aliases: [A], Mine Collections: [\"[[Old]]\"]}", "{aliases: [A]}"),
+            ("{Mine Collections: [\"[[Old]]\"], aliases: [A]}", "{aliases: [A]}"),
+            ("{Mine Collections: [\"[[Old]]\"]}", "{}"),
+            (
+                "{\n  aliases: [A],\n  Mine Collections: [\"[[Old]]\"],\n  rating: 5\n}",
+                "{\n  aliases: [A],\n  rating: 5\n}",
+            ),
+            (
+                "{\n  aliases: [A],\n  Mine Collections: [\"[[Old]]\"]\n}",
+                "{\n  aliases: [A]\n}",
+            ),
+        ] {
+            let output = patch_collections_frontmatter(&format!("---\n{with}\n---\nBody"), &[]).unwrap();
+            assert_eq!(output, format!("---\n{without}\n---\nBody"));
+            assert!(read_back(&output).1.is_empty());
+        }
+    }
+
+    #[test]
+    fn flow_membership_next_to_a_comment_is_emptied_not_removed() {
+        let input = "---\n{\n  aliases: [A], # names\n  Mine Collections: [\"[[Old]]\"]\n}\n---\nBody";
+        let output = patch_collections_frontmatter(input, &[]).unwrap();
+        assert_eq!(
+            output,
+            "---\n{\n  aliases: [A], # names\n  Mine Collections: []\n}\n---\nBody"
+        );
+        assert!(read_back(&output).1.is_empty());
+    }
+
+    #[test]
+    fn flow_mapping_with_legacy_tags_gets_an_explicit_empty_membership() {
+        let input = "---\n{tags: [old]}\n---\nBody";
+        let output = patch_collections_frontmatter(input, &[]).unwrap();
+        assert_eq!(output, "---\n{tags: [old], Mine Collections: []}\n---\nBody");
+    }
+
+    #[test]
+    fn membership_value_holding_a_comment_is_refused_not_rewritten() {
+        let input = "---\n{\n  Mine Collections: [ # boards\n    \"[[Old]]\"],\n  aliases: [A]\n}\n---\nBody";
+        assert_eq!(
+            patch_collections_frontmatter(input, &["New".to_string()]),
+            Err(SourcePatchError::UnsupportedLayout {
+                field: MINE_COLLECTIONS_FIELD
+            })
+        );
+    }
+
+    #[test]
+    fn properties_the_writer_would_break_are_refused() {
+        // Valid YAML whose keys do not start their lines: an appended key
+        // would end the mapping early.
+        let input = "---\n  aliases: [A]\n  rating: 5\n---\nBody";
+        assert_eq!(
+            patch_collections_frontmatter(input, &["Design".to_string()]),
+            Err(SourcePatchError::RoundTrip {
+                field: "frontmatter"
+            })
+        );
+    }
+
+    #[test]
+    fn properties_that_are_not_a_mapping_are_refused() {
+        let input = "---\njust a line of text\n---\nBody";
+        assert_eq!(
+            patch_collections_frontmatter(input, &["Design".to_string()]),
+            Err(SourcePatchError::MalformedFrontmatter {
+                field: MINE_COLLECTIONS_FIELD
+            })
+        );
+    }
+
+    #[test]
+    fn membership_write_never_leaves_properties_yaml_cannot_read() {
+        let inputs = [
+            "---\n{aliases: [A]}\n---\nBody",
+            "---\n{}\n---\nBody",
+            "---\n{aliases: [A], Mine Collections: [\"[[Old]]\"]}\n---\nBody",
+            "---\n{\n  aliases: [A], # names\n  rating: 5\n}\n---\nBody",
+            "---\n{aliases: [A]} # flow\n---\nBody",
+            "---\n  aliases: [A]\n  rating: 5\n---\nBody",
+            "---\naliases: [A]\n---\nBody",
+        ];
+        for input in inputs {
+            for collections in [vec!["Design".to_string()], Vec::new()] {
+                // A refusal leaves the note to its owner; a write must read
+                // back as the membership asked for.
+                if let Ok(output) = patch_collections_frontmatter(input, &collections) {
+                    let (_, membership) = read_back(&output);
+                    assert_eq!(membership, collections, "{input:?} -> {output:?}");
+                }
+            }
+        }
     }
 
     #[test]

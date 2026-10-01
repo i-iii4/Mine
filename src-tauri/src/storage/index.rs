@@ -12,10 +12,11 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::domain::block::{
-    build_preview_text, derive_card_kind, derive_title_fields, extract_note_wikilinks,
-    iter_inline_media_references, markdown_image_source, parse_markdown_document,
-    strip_first_markdown_h1, Block, BlockType, CardKind, DateTime, Frontmatter,
-    FEED_PREVIEW_TEXT_BUFFER_CHARS,
+    build_preview_text, derive_block_type, derive_card_kind, derive_title_fields,
+    extract_note_wikilinks, iter_inline_media_references, markdown_image_source,
+    parse_markdown_document, strip_first_markdown_h1, Block, BlockType, CardKind, DateTime,
+    Frontmatter, FEED_PREVIEW_TEXT_BUFFER_CHARS, FOREIGN_MARKDOWN_ORIGIN,
+    MALFORMED_FRONTMATTER_ORIGIN,
 };
 #[cfg(test)]
 use crate::domain::channel::Channel;
@@ -55,11 +56,21 @@ pub use crate::storage::vault_conflicts::{
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-const MEDIA_INDEX_VERSION: i64 = 7;
+/// The version of everything the index derives from a card's body parse.
+/// Raise it with every change to that parse: `backfill_media_index`
+/// re-derives only rows of an older version, and the reconcile pass never
+/// reads an unchanged note again. A test pins the parse to this version.
+const MEDIA_INDEX_VERSION: i64 = 8;
 /// The media index version at which a `#` inside a media file name stopped
 /// reading as a heading fragment. Cards indexed before it hold a text
 /// placeholder where their media preview belongs; the backfill discards it.
 const HASH_IN_MEDIA_NAMES_VERSION: i64 = 6;
+/// The media index version at which Markdown destinations came to be read
+/// the `CommonMark` way and decoded once (SPEC_AUDIT_FIXES.md, В1.1, Г1.2,
+/// Г1.3). A card indexed before it may hold another type, kind, media and
+/// preview text; the backfill derives them again and discards the previews
+/// of a card whose reading changed.
+const COMMONMARK_DESTINATIONS_VERSION: i64 = 8;
 const COLLECTION_INDEX_VERSION: i64 = 1;
 pub const PREVIEW_SCHEMA_VERSION: i64 = 3;
 
@@ -1679,10 +1690,12 @@ pub fn backfill_missing_thumb_metadata(conn: &Connection, vault: &VaultLayout) -
 /// change. Source Markdown stays untouched; only the SQLite cache is updated.
 ///
 /// This is versioned because fields such as `media_urls` and
-/// `preview_manifest` may be non-null but stale after a resolver migration.
+/// `preview_manifest` may be non-null but stale after a resolver migration,
+/// and the type, kind and preview text after a change to the body parse.
 pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<usize> {
     let mut stmt = conn.prepare(
-        "SELECT slug, block_type, url, media_file, thumbnail, width, height, body, thumb_format, body_hash, media_index_version
+        "SELECT slug, block_type, url, media_file, thumbnail, width, height, body, thumb_format, body_hash,
+                media_index_version, origin, card_kind, media_urls, preview_manifest
          FROM blocks
          WHERE slug != ''
            AND card_kind != 'channel'
@@ -1691,19 +1704,23 @@ pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<us
 
     let rows = stmt
         .query_map([MEDIA_INDEX_VERSION], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Option<String>>(2)?,
-                row.get::<_, Option<String>>(3)?,
-                row.get::<_, Option<String>>(4)?,
-                row.get::<_, Option<i64>>(5)?,
-                row.get::<_, Option<i64>>(6)?,
-                row.get::<_, String>(7)?,
-                row.get::<_, Option<String>>(8)?,
-                row.get::<_, Option<String>>(9)?,
-                row.get::<_, Option<i64>>(10)?,
-            ))
+            Ok(MediaBackfillRow {
+                slug: row.get(0)?,
+                block_type: row.get(1)?,
+                url: row.get(2)?,
+                media_file: row.get(3)?,
+                thumbnail: row.get(4)?,
+                width: row.get(5)?,
+                height: row.get(6)?,
+                body: row.get(7)?,
+                thumb_format: row.get(8)?,
+                body_hash: row.get(9)?,
+                indexed_version: row.get(10)?,
+                origin: row.get(11)?,
+                card_kind: row.get(12)?,
+                media_urls: row.get(13)?,
+                preview_manifest: row.get(14)?,
+            })
         })?
         .collect::<Result<Vec<_>, _>>()?;
     drop(stmt);
@@ -1711,28 +1728,32 @@ pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<us
     let mut resolver = media_refs::MediaResolver::new(vault);
     let mut updated = 0usize;
 
-    for (
+    for MediaBackfillRow {
         slug,
-        raw_type,
+        block_type: raw_type,
         url,
         media_file,
         thumbnail,
         width,
         height,
         body,
-        raw_thumb_format,
+        thumb_format: raw_thumb_format,
         body_hash,
         indexed_version,
-    ) in rows
+        origin,
+        card_kind: indexed_card_kind,
+        media_urls: indexed_media_urls,
+        preview_manifest: indexed_preview_manifest,
+    } in rows
     {
-        let block_type = BlockType::from_str(&raw_type)
+        let stored_type = BlockType::from_str(&raw_type)
             .with_context(|| format!("unknown block_type in media index backfill: {raw_type}"))?;
         let width = width.map(|value| value as u32);
         let height = height.map(|value| value as u32);
-        let block = Block {
+        let mut block = Block {
             slug: slug.clone(),
             frontmatter: Frontmatter {
-                block_type,
+                block_type: stored_type,
                 title: None,
                 description: None,
                 url,
@@ -1752,6 +1773,16 @@ pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<us
             },
             body,
         };
+        // A note read as an implicit article keeps that type, as
+        // `parse_markdown_document` gives it; any other card's type follows
+        // its body.
+        if !origin.as_deref().is_some_and(is_implicit_article_origin) {
+            block.frontmatter.block_type = derive_block_type(&block.frontmatter, &block.body);
+        }
+        let preview_text = build_preview_text(
+            &strip_first_markdown_h1(&block.body),
+            FEED_PREVIEW_TEXT_BUFFER_CHARS,
+        );
         let media_sources = extract_media_sources_with_resolver(&block, &mut resolver);
         let first_image = media_sources.first().cloned();
         let media_urls = media_urls_from_sources(&media_sources);
@@ -1784,7 +1815,18 @@ pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<us
         // leave the fresh data (and its version stamp) in place. `IS` matches
         // NULL == NULL so legacy rows with no stored hash still backfill.
         let card_kind = derive_card_kind(&block);
-        if indexed_version.unwrap_or(0) < HASH_IN_MEDIA_NAMES_VERSION && names_media_with_hash(&block) {
+        let indexed_version = indexed_version.unwrap_or(0);
+        if indexed_version < HASH_IN_MEDIA_NAMES_VERSION && names_media_with_hash(&block) {
+            discard_derived_previews(vault, &block.slug, preview_manifest.as_deref());
+        }
+        // A preview built from the previous reading of the body is not
+        // adopted for another one: the preview pass builds it again. The
+        // reading is the card's kind and its media; a manifest only gains
+        // what the backfill measures anew.
+        let reading_changed = indexed_card_kind.as_deref() != Some(card_kind.as_str())
+            || indexed_media_urls != media_urls;
+        if indexed_version < COMMONMARK_DESTINATIONS_VERSION && reading_changed {
+            discard_derived_previews(vault, &block.slug, indexed_preview_manifest.as_deref());
             discard_derived_previews(vault, &block.slug, preview_manifest.as_deref());
         }
         updated += conn.execute(
@@ -1799,7 +1841,10 @@ pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<us
                  feed_playback = ?6,
                  media_index_version = ?7,
                  card_kind = ?9,
-                 preview_schema_version = ?10
+                 preview_schema_version = ?10,
+                 block_type = ?11,
+                 preview_text = ?12,
+                 preview_text_cap = ?13
              WHERE slug = ?1 AND body_hash IS ?8",
             params![
                 slug,
@@ -1812,11 +1857,40 @@ pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<us
                 body_hash,
                 card_kind.as_str(),
                 PREVIEW_SCHEMA_VERSION,
+                block.frontmatter.block_type.as_str(),
+                preview_text,
+                FEED_PREVIEW_TEXT_BUFFER_CHARS as i64,
             ],
         )?;
     }
 
     Ok(updated)
+}
+
+/// One row `backfill_media_index` derives again.
+struct MediaBackfillRow {
+    slug: String,
+    block_type: String,
+    url: Option<String>,
+    media_file: Option<String>,
+    thumbnail: Option<String>,
+    width: Option<i64>,
+    height: Option<i64>,
+    body: String,
+    thumb_format: Option<String>,
+    body_hash: Option<String>,
+    indexed_version: Option<i64>,
+    origin: Option<String>,
+    card_kind: Option<String>,
+    media_urls: Option<String>,
+    preview_manifest: Option<String>,
+}
+
+/// Whether a note indexed with this origin is read as an implicit article,
+/// whatever its body holds: a note without front matter, or with front
+/// matter that does not parse (`parse_markdown_document`).
+fn is_implicit_article_origin(origin: &str) -> bool {
+    origin == FOREIGN_MARKDOWN_ORIGIN || origin == MALFORMED_FRONTMATTER_ORIGIN
 }
 
 /// Whether the card names a media file with `#` in it: its own file or an
@@ -4317,14 +4391,14 @@ mod tests {
         std::fs::write(&untouched, b"a real preview").unwrap();
 
         let conn = test_conn();
-        for (slug, body) in [
-            ("Cards/Graph #touchdesigner", "![[Graph #touchdesigner (video 1).mp4]]"),
-            ("Cards/Plain", "Just text"),
+        for (slug, body, card_kind) in [
+            ("Cards/Graph #touchdesigner", "![[Graph #touchdesigner (video 1).mp4]]", "article"),
+            ("Cards/Plain", "Just text", "article"),
         ] {
             conn.execute(
-                "INSERT INTO blocks (slug, block_type, title, saved_at, body, media_index_version)
-                 VALUES (?1, 'article', NULL, '2026-04-24T15:53:13Z', ?2, 5)",
-                params![slug, body],
+                "INSERT INTO blocks (slug, block_type, card_kind, title, saved_at, body, media_index_version)
+                 VALUES (?1, 'article', ?3, NULL, '2026-04-24T15:53:13Z', ?2, 5)",
+                params![slug, body, card_kind],
             )
             .unwrap();
         }
@@ -4342,6 +4416,147 @@ mod tests {
             .unwrap();
         assert_eq!(media_urls.as_deref(), Some("[\"Media/Graph #touchdesigner (video 1).mp4\"]"));
         assert_eq!(state, "stale");
+    }
+
+    /// Everything the index derives from a card's body parse.
+    type BodyDerived = (
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        i64,
+    );
+
+    fn body_derived(conn: &Connection, slug: &str) -> BodyDerived {
+        conn.query_row(
+            "SELECT block_type, card_kind, first_image, media_urls, media_dimensions,
+                    preview_manifest, feed_playback, preview_text, media_index_version
+             FROM blocks WHERE slug = ?1",
+            [slug],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                ))
+            },
+        )
+        .unwrap()
+    }
+
+    /// Г1.3: stages 10 and 11 changed how a body is read (`CommonMark`
+    /// destinations, one decoding). A note indexed by the previous parse and
+    /// unchanged since holds that parse's derived data; on the next open the
+    /// backfill derives it again, to what a fresh index holds, and drops the
+    /// previews built from the old reading.
+    #[test]
+    fn backfill_media_index_rederives_notes_indexed_by_the_previous_parse() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        write_test_image(&vault, "image.jpg", 40, 30);
+        write_test_image(&vault, "Foo (image 1).jpg", 20, 10);
+        write_test_image(&vault, "a%20b.jpg", 10, 20);
+        write_test_image(&vault, "a b.jpg", 30, 30);
+        let card = "---\nsaved_at: 2026-04-22T00:00:00Z\n---\n";
+        let notes = [
+            ("Titled", "![x](image.jpg \"title\")".to_string()),
+            ("Parens", format!("{card}![x](Foo (image 1).jpg)")),
+            ("Encoded", format!("{card}Text ![x](a%2520b.jpg)")),
+            ("Plain", "Just text".to_string()),
+        ];
+        let fresh = test_conn();
+        let conn = test_conn();
+        for (slug, content) in &notes {
+            let parsed =
+                parse_markdown_document(slug, content, DateTime::new("2026-04-22T00:00:00Z").unwrap())
+                    .unwrap();
+            for target in [&fresh, &conn] {
+                upsert_block_with_diagnostics(target, &parsed.block, Some(vault.root()), Some(&parsed.origin), None)
+                    .unwrap();
+            }
+        }
+        std::fs::create_dir_all(vault.thumbs_dir()).unwrap();
+        for (slug, _) in &notes {
+            std::fs::write(vault.thumb_path(slug), b"old preview").unwrap();
+        }
+        // What the previous parse left in place.
+        conn.execute(
+            "UPDATE blocks
+             SET block_type = 'article', card_kind = 'article', first_image = 'stale',
+                 media_urls = '[\"stale\"]', media_dimensions = NULL, preview_manifest = NULL,
+                 preview_text = 'stale', media_index_version = 7
+             WHERE slug != 'Plain'",
+            [],
+        )
+        .unwrap();
+        conn.execute("UPDATE blocks SET media_index_version = 7 WHERE slug = 'Plain'", [])
+            .unwrap();
+
+        backfill_media_index(&conn, &vault).unwrap();
+
+        for (slug, _) in &notes {
+            assert_eq!(body_derived(&conn, slug), body_derived(&fresh, slug), "{slug}");
+        }
+        for slug in ["Titled", "Parens", "Encoded"] {
+            assert!(!vault.thumb_path(slug).exists(), "{slug}: rebuilt, not adopted");
+        }
+        assert!(vault.thumb_path("Plain").exists(), "an unchanged reading keeps its preview");
+    }
+
+    /// Г1.3: what the index derives from a body is pinned for the current
+    /// `MEDIA_INDEX_VERSION`. A change to the parse changes the fingerprint;
+    /// the version must rise with it, or unchanged notes keep the old
+    /// derived data (`backfill_media_index` re-derives only older versions).
+    #[test]
+    fn the_body_parse_is_pinned_to_the_media_index_version() {
+        const CORPUS: &[&str] = &[
+            "![x](image.jpg \"title\")",
+            "![x](image.jpg 'title') ![y](r.jpg (t))",
+            "![x](<p q.jpg>) ![x](<a (b).jpg> \"t\")",
+            "![x](Foo (image 1).jpg)",
+            "![x](Bar%20%28image%202%29.jpg) ![x](esc\\(1\\).jpg)",
+            "![x](photo%23tag.jpg) ![x](a%2520b.jpg) ![x](a.jpg#crop) ![x](a.jpg?v=2)",
+            "![[Title (image 1).jpg]] ![[clip #tag (video 1).mp4|alt]] ![[broken\n![[ok.png]]",
+            "Text ![](https://cdn.example.com/a%20b.jpg) [link](x.md) [[Note]]",
+            "# Heading\n\n```\n![x](code.jpg)\n```\n\n    ![x](indented.jpg)\n\n`![x](span.jpg)`",
+            "[![x](nested.jpg)](https://e.com) ![a][r]\n\n[r]: ref.jpg",
+            "- item ![x](list.jpg)\n> quote ![[quoted.jpg]]",
+            "",
+        ];
+        const PINNED: (i64, &str) = (8, "e52322d685d067fe");
+        let fallback = DateTime::new("2026-04-22T00:00:00Z").unwrap();
+        let mut outputs = String::new();
+        for body in CORPUS {
+            let block = parse_markdown_document("Card", body, fallback.clone()).unwrap().block;
+            let references: Vec<String> = iter_inline_media_references(body)
+                .into_iter()
+                .map(|reference| format!("{:?}:{}", reference.syntax, reference.source))
+                .collect();
+            outputs.push_str(&format!(
+                "{references:?}|{}|{}|{:?}|{}|{:?}\n",
+                block.frontmatter.block_type.as_str(),
+                derive_card_kind(&block).as_str(),
+                crate::domain::block::body_without_media_embeds(body),
+                build_preview_text(&strip_first_markdown_h1(body), FEED_PREVIEW_TEXT_BUFFER_CHARS),
+                body.lines().map(parse_inline_media_src).collect::<Vec<_>>(),
+            ));
+        }
+        let fingerprint = crate::domain::block::compute_body_hash(&outputs);
+        assert_eq!(
+            (MEDIA_INDEX_VERSION, fingerprint.as_str()),
+            PINNED,
+            "the body parse changed: raise MEDIA_INDEX_VERSION and pin the new fingerprint\n{outputs}"
+        );
     }
 
     #[test]

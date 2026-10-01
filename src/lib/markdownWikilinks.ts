@@ -10,6 +10,9 @@
 // rest. Encoding is isolated to the render boundary; the `.md` file on
 // disk stays human-readable in Obsidian and Finder.
 
+import { fromMarkdown } from "mdast-util-from-markdown";
+import type { Nodes } from "mdast";
+
 // Lazy up to the first `]]`, and never across a line break. Barring `]`
 // outright looked equivalent — filenames rarely hold one — until the clipper
 // saved a tweet whose title was itself a markdown link:
@@ -80,11 +83,12 @@ export function preprocessWikilinks(body: string): string {
     });
 }
 
-/** Map renderer UTF-16 positions back to original Markdown UTF-8 boundaries.
- * Rewrites are line-local; only unchanged spans and replacement boundaries
- * are addressable. A selection inside rewritten syntax must not guess offsets.
+/** Map a renderer UTF-16 position back to a UTF-16 position of the original
+ * Markdown. Rewrites are line-local; only unchanged spans and replacement
+ * boundaries are addressable: the start of a rewritten wikilink maps to the
+ * start of the wikilink. A position inside rewritten syntax is not guessed.
  */
-export function markdownSourceByteOffset(body: string, renderedOffset: number): number | null {
+export function markdownSourceOffset(body: string, renderedOffset: number): number | null {
   const lines = body.split("\n");
   let renderedStart = 0;
   let sourceStart = 0;
@@ -101,7 +105,7 @@ export function markdownSourceByteOffset(body: string, renderedOffset: number): 
         const start = match.index;
         const unchanged = start - sourceCursor;
         if (offset <= renderedCursor + unchanged) {
-          return new TextEncoder().encode(body.slice(0, sourceStart + sourceCursor + offset - renderedCursor)).length;
+          return sourceStart + sourceCursor + offset - renderedCursor;
         }
         renderedCursor += unchanged;
         const replacement = preprocessWikilinks(match[0]);
@@ -109,12 +113,20 @@ export function markdownSourceByteOffset(body: string, renderedOffset: number): 
         renderedCursor += replacement.length;
         sourceCursor = start + match[0].length;
       }
-      return new TextEncoder().encode(body.slice(0, sourceStart + sourceCursor + offset - renderedCursor)).length;
+      return sourceStart + sourceCursor + offset - renderedCursor;
     }
     renderedStart += rendered.length + 1;
     sourceStart += line.length + 1;
   }
   return null;
+}
+
+/** Map renderer UTF-16 positions back to original Markdown UTF-8 boundaries
+ * (`markdownSourceOffset`), the offsets the core addresses a body by.
+ */
+export function markdownSourceByteOffset(body: string, renderedOffset: number): number | null {
+  const offset = markdownSourceOffset(body, renderedOffset);
+  return offset === null ? null : new TextEncoder().encode(body.slice(0, offset)).length;
 }
 
 /**
@@ -137,28 +149,54 @@ export function decodeLocalMarkdownUrl(src: string): string {
   }
 }
 
+const IMAGE_OPENER = "![";
+
 /**
- * Count inline media references with the same decoded source that appear in
- * `processedBody` before `beforeOffset`. Gives the 0-based occurrence index of a
- * rendered embed, so a single duplicate can be removed without touching its
- * identical siblings. `processedBody` is the wikilink-rewritten body that
- * react-markdown parses; `preprocessWikilinks` rewrites each `![[name]]` into one
- * `![](name)` in place, so document order and count match the original `.md` 1:1
- * — the index is valid for the backend, which parses the original file.
+ * The clicked image's place in its card, as Remove names it to the core: how
+ * many `![` precede the image's own `![` in the original body
+ * (SPEC_AUDIT_FIXES.md, Г1.4). `renderedOffset` is where react-markdown's
+ * image node starts in `preprocessWikilinks(body)`; a rewritten `![[name]]`
+ * maps back to its own `!`.
+ *
+ * Counting openers needs no Markdown reading of its own, so it cannot
+ * disagree with the core's about titles, angle brackets, parentheses in a
+ * name or spellings of one file: the core finds the same `![` and removes the
+ * reference that starts there. `null` when the offset maps to no `![`.
  */
-export function inlineMediaOccurrenceIndex(
-  processedBody: string,
-  decodedSource: string,
-  beforeOffset: number,
-): number {
-  const slice = processedBody.slice(0, Math.max(0, beforeOffset));
-  const image = /!\[[^\]]*\]\(([^)]*)\)/g;
+export function inlineMediaOccurrenceIndex(body: string, renderedOffset: number): number | null {
+  const sourceOffset = markdownSourceOffset(body, renderedOffset);
+  if (sourceOffset === null || !body.startsWith(IMAGE_OPENER, sourceOffset)) {
+    return null;
+  }
   let count = 0;
-  let match: RegExpExecArray | null;
-  while ((match = image.exec(slice)) !== null) {
-    if (decodeLocalMarkdownUrl(match[1] ?? "") === decodedSource) {
-      count += 1;
-    }
+  for (
+    let index = body.indexOf(IMAGE_OPENER);
+    index !== -1 && index < sourceOffset;
+    index = body.indexOf(IMAGE_OPENER, index + IMAGE_OPENER.length)
+  ) {
+    count += 1;
   }
   return count;
+}
+
+/**
+ * Where the first image whose destination `matches` starts in
+ * `processedBody`, the body react-markdown renders; `null` when there is
+ * none. Images are visited in document order, as the reader sees them.
+ */
+export function firstImageOffset(
+  processedBody: string,
+  matches: (url: string) => boolean,
+): number | null {
+  let found: number | null = null;
+  function visit(node: Nodes) {
+    if (found !== null) return;
+    if (node.type === "image") {
+      if (matches(node.url)) found = node.position?.start.offset ?? null;
+      return;
+    }
+    if ("children" in node) node.children.forEach(visit);
+  }
+  visit(fromMarkdown(processedBody));
+  return found;
 }

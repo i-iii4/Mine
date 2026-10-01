@@ -10,7 +10,7 @@ use tauri::{AppHandle, Manager, State};
 use crate::commands::state::{
     current_vault_layout, ensure_vault_fresh, read_owned_projection, AppState, CommandError,
 };
-use crate::commands::tags::patch_collections_frontmatter;
+use crate::commands::tags::MembershipRewrite;
 use crate::domain::block::{
     parse_markdown_document, serialize_block, Block, BlockType, DateTime, Frontmatter,
 };
@@ -20,7 +20,7 @@ use crate::domain::source_patch::apply_block_changes;
 use crate::domain::vault::VaultLayout;
 #[cfg(test)]
 use crate::storage::db;
-use crate::storage::source_mutation::{SourceFileWrite, SourceMutationError, StagedSourceMutation};
+use crate::storage::source_mutation::{SourceFileWrite, StagedSourceMutation};
 use crate::storage::{files, index, projection};
 use crate::util::append_startup_trace;
 
@@ -195,12 +195,12 @@ pub(crate) fn create_channel_inner(
         path,
         serialize_block(&block).into_bytes(),
     )])
-    .map_err(source_mutation_command_error)?;
+    .map_err(CommandError::from)?;
     staged
         .commit_with_index(conn, "create_channel", |index_conn| {
             index::upsert_channel_with_source(index_conn, &channel, Some(source_slug.as_str()))
         })
-        .map_err(source_mutation_command_error)?;
+        .map_err(CommandError::from)?;
 
     // Get block count for this tag
     let tags = index::get_all_tags(conn)?;
@@ -315,8 +315,11 @@ fn reorder_channels_blocking(state: &AppState, items: Vec<ReorderItem>) -> Resul
                 .block;
             let mut after = before.clone();
             after.frontmatter.position = Some(channel.position);
-            let patched = apply_block_changes(&content, &before, &after)
-                .map_err(|error| CommandError::Internal(error.to_string()))?;
+            let patched = apply_block_changes(&content, &before, &after).map_err(|_| {
+                CommandError::FrontmatterNotWritable {
+                    path: path.display().to_string(),
+                }
+            })?;
             SourceFileWrite::replace(path, content.into_bytes(), patched.into_bytes())
         } else {
             SourceFileWrite::create(path, serialize_block(&channel_to_block(&channel)).into_bytes())
@@ -324,7 +327,7 @@ fn reorder_channels_blocking(state: &AppState, items: Vec<ReorderItem>) -> Resul
         planned_channels.push((channel, source_slug));
     }
 
-    let staged = StagedSourceMutation::stage(writes).map_err(source_mutation_command_error)?;
+    let staged = StagedSourceMutation::stage(writes).map_err(CommandError::from)?;
     staged
         .commit_with_index(&vs.conn, "reorder_channels", |index_conn| {
             for (channel, source_slug) in &planned_channels {
@@ -332,12 +335,8 @@ fn reorder_channels_blocking(state: &AppState, items: Vec<ReorderItem>) -> Resul
             }
             Ok(())
         })
-        .map_err(source_mutation_command_error)?;
+        .map_err(CommandError::from)?;
     Ok(())
-}
-
-fn source_mutation_command_error(error: SourceMutationError) -> CommandError {
-    CommandError::Internal(error.to_string())
 }
 
 /// Rename a channel: update the tag in all blocks' frontmatter files,
@@ -448,27 +447,23 @@ pub(crate) fn rename_channel_inner(
         let (_, content) = files::read_block_file(vault, &path)?;
         let parsed = parse_markdown_document(&indexed_block.slug, &content, file_saved_at(&path))
             .map_err(|error| CommandError::Internal(error.to_string()))?;
-        let mut block = parsed.block;
 
         // Replace old collection ref with new collection ref.
-        block.frontmatter.tags.retain(|t| t != &normalized_old);
-        if !block.frontmatter.tags.contains(&normalized_new) {
-            block.frontmatter.tags.push(normalized_new.clone());
+        let mut collections = parsed.block.frontmatter.tags;
+        collections.retain(|t| t != &normalized_old);
+        if !collections.contains(&normalized_new) {
+            collections.push(normalized_new.clone());
         }
-        files::normalize_block_media_refs_for_index(vault, &mut block);
-
-        let serialized = patch_collections_frontmatter(&content, &block.frontmatter.tags)
-            .map_err(CommandError::Internal)?;
-        if path == old_path {
-            page_rewrite = Some((content.into_bytes(), serialized.into_bytes()));
+        let is_page = path == old_path;
+        let rewrite =
+            MembershipRewrite::prepare(vault, &indexed_block.slug, path, content, &collections)?;
+        if is_page {
+            page_rewrite = Some((rewrite.expected, rewrite.bytes));
             continue;
         }
-        writes.push(SourceFileWrite::replace(
-            path,
-            content.into_bytes(),
-            serialized.into_bytes(),
-        ));
-        prepared_blocks.push((block, parsed.origin, parsed.index_warning));
+        let (write, projection) = rewrite.into_source_write();
+        writes.push(write);
+        prepared_blocks.push(projection);
     }
 
     // Create new channel with same metadata
@@ -514,23 +509,17 @@ pub(crate) fn rename_channel_inner(
             Duration::from_millis(SOURCE_MUTATION_WATCHER_SUPPRESSION_MS),
         )?;
     }
-    let staged = StagedSourceMutation::stage(writes).map_err(source_mutation_command_error)?;
+    let staged = StagedSourceMutation::stage(writes).map_err(CommandError::from)?;
     staged
         .commit_with_index(conn, "rename_channel", |index_conn| {
-            for (block, origin, index_warning) in &prepared_blocks {
-                index::upsert_block_with_diagnostics(
-                    index_conn,
-                    block,
-                    Some(vault.root()),
-                    Some(origin.as_str()),
-                    index_warning.as_deref(),
-                )?;
+            for projection in &prepared_blocks {
+                projection.upsert(index_conn, vault)?;
             }
             index::upsert_channel_with_source(index_conn, &new_channel, Some(new_slug.as_str()))?;
             index::remove_channel(index_conn, &normalized_old)?;
             Ok(())
         })
-        .map_err(source_mutation_command_error)?;
+        .map_err(CommandError::from)?;
 
     let tags = index::get_all_tags(conn)?;
     let count = tags
@@ -665,7 +654,7 @@ pub(crate) fn delete_channel_inner(
         writes.push(SourceFileWrite::delete(path));
         slugs.push(slug);
     }
-    let staged = StagedSourceMutation::stage(writes).map_err(source_mutation_command_error)?;
+    let staged = StagedSourceMutation::stage(writes).map_err(CommandError::from)?;
     staged
         .commit_with_index(conn, "delete_channel", |index_conn| {
             for slug in &slugs {
@@ -674,7 +663,7 @@ pub(crate) fn delete_channel_inner(
             let removed = index::remove_channel(index_conn, &tag)?;
             Ok(removed || !slugs.is_empty())
         })
-        .map_err(source_mutation_command_error)
+        .map_err(CommandError::from)
 }
 
 /// Resolve a collection mutation to one source page. A bare name shared by
@@ -1024,5 +1013,59 @@ mod tests {
             std::fs::read_to_string(vault.block_path("Cards/Sunset")).unwrap(),
             card.replace("[[Photos]]", "[[Pictures]]")
         );
+    }
+
+    /// Г1.5: a member card whose properties are a flow mapping is renamed
+    /// inside the braces and indexed as the file reads.
+    #[test]
+    fn a_rename_keeps_a_flow_mapping_card_valid() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = standard_space(dir.path());
+        std::fs::write(vault.block_path("Collections/Photos"), WRITTEN_PAGE).unwrap();
+        let card = "---\n{aliases: [Sunset], Mine Collections: [\"[[Photos]]\"], saved_at: 2026-04-25T14:00:40Z}\n---\nBody\n";
+        std::fs::write(vault.block_path("Cards/Sunset"), card).unwrap();
+        let state = app_state(&vault);
+        let guard = state.vault_state.lock().unwrap();
+        let vs = guard.as_ref().unwrap();
+
+        rename_channel_inner(None, &vs.conn, &vs.vault, "Photos", "Pictures").unwrap();
+
+        let written = std::fs::read_to_string(vault.block_path("Cards/Sunset")).unwrap();
+        assert_eq!(written, card.replace("[[Photos]]", "[[Pictures]]"));
+        let fallback = DateTime::new("2026-01-01").unwrap();
+        let read = parse_markdown_document("Cards/Sunset", &written, fallback).unwrap();
+        assert_eq!(read.origin, "partial_frontmatter");
+        assert_eq!(read.block.frontmatter.tags, vec!["Pictures"]);
+        assert_eq!(
+            index::get_block(&vs.conn, "Cards/Sunset").unwrap().unwrap().tags,
+            vec!["Pictures"]
+        );
+    }
+
+    /// Г1.5: a member card whose properties cannot take the rename refuses
+    /// the whole rename: no card, no page moves.
+    #[test]
+    fn a_rename_with_an_unwritable_member_card_changes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = standard_space(dir.path());
+        std::fs::write(vault.block_path("Collections/Photos"), WRITTEN_PAGE).unwrap();
+        let card = "---\n  Mine Collections: [\"[[Photos]]\"]\n  saved_at: 2026-04-25T14:00:40Z\n---\nBody\n";
+        std::fs::write(vault.block_path("Cards/Sunset"), card).unwrap();
+        let state = app_state(&vault);
+        let guard = state.vault_state.lock().unwrap();
+        let vs = guard.as_ref().unwrap();
+
+        let refused = rename_channel_inner(None, &vs.conn, &vs.vault, "Photos", "Pictures");
+
+        assert!(
+            matches!(refused, Err(CommandError::FrontmatterNotWritable { .. })),
+            "{refused:?}"
+        );
+        assert_eq!(std::fs::read_to_string(vault.block_path("Cards/Sunset")).unwrap(), card);
+        assert_eq!(
+            std::fs::read_to_string(vault.block_path("Collections/Photos")).unwrap(),
+            WRITTEN_PAGE
+        );
+        assert!(!vault.block_path("Collections/Pictures").exists());
     }
 }
