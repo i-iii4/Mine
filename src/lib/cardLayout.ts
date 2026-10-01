@@ -186,14 +186,30 @@ function imageSurfaceAspectRatio(
 /// Shape a card's single painted artifact gives it: the preview's own geometry
 /// (the whole preview, else its one tile), clamped into the card range, or null
 /// while that artifact is not measured. Source dimensions are never read.
-/// Shared by videos, posts with one media, and a link's page picture shown
-/// alone in `Media`. Contract: `SPEC_CARD_MEDIA_GEOMETRY.md`.
+/// Shared by videos, a post's or an article's one video, and a link's page
+/// picture shown alone in `Media`. Contract: `SPEC_CARD_MEDIA_GEOMETRY.md`.
 function singleArtifactAspectRatio(
   previewManifest: ReturnType<typeof parsePreviewManifest>,
   mediaItems: readonly CardLayoutMediaItem[],
 ): number | null {
   const artifactAspect = imageSurfaceAspectRatio(previewManifest) ?? mediaItems[0]?.aspectRatio ?? null;
   return artifactAspect === null ? null : clampCardAspect(artifactAspect);
+}
+
+/// Shape of the one media a post or an article paints, read from the image it
+/// paints and clamped into the card range; null while that image is not
+/// measured (SPEC_CARD_MEDIA_GEOMETRY.md; SPEC_AUDIT_FIXES.md, Д1.2, Д1.6).
+/// A picture paints its own tile (`GalleryTileImage`), never the card's whole
+/// preview: that one is built from `file`, then `thumbnail`, then the body, so
+/// a page picture or a video poster kept in `thumbnail` has its own shape. A
+/// video paints its poster, the whole preview first
+/// (`buildFeedVideoPosterCandidates`), so it keeps that preview's shape.
+function singleMediaAspectRatio(
+  previewManifest: ReturnType<typeof parsePreviewManifest>,
+  item: CardLayoutMediaItem,
+): number | null {
+  if (item.isVideo) return singleArtifactAspectRatio(previewManifest, [item]);
+  return item.aspectRatio === null ? null : clampCardAspect(item.aspectRatio);
 }
 
 /// The fixed slot a framed link paints its page picture in, whatever the
@@ -338,21 +354,17 @@ function deriveArticleCardLayoutDescriptor(
       };
     }
     if (mediaItems.length === 1) {
-      const tileAspect = mediaItems[0]!.aspectRatio;
       return {
         variant: "social-single-media",
         titleText: "",
         previewText,
         authorText,
-        // The shape of the tile the card paints, the body's own media, clamped
-        // into 1:2 to 2:1 like every other single media (SPEC_CARD_MEDIA_GEOMETRY.md;
-        // SPEC_AUDIT_FIXES.md, Г4.5). Not the card's whole preview: that one
-        // is built from `file`, then `thumbnail`, and a video poster there
-        // would frame a tall picture of the body in its own shape (Д1.2).
-        // Null when the tile has not been measured yet, and stays null:
-        // substituting the source's shape would lay the card out from a file
-        // it never paints; substituting 1 would state a square nobody knows.
-        primaryAspectRatio: tileAspect === null ? null : clampCardAspect(tileAspect),
+        // The shape of the image the card paints, clamped into 1:2 to 2:1 like
+        // every other single media (Г4.5, Д1.2). Null when that image has not
+        // been measured yet, and stays null: substituting the source's shape
+        // would lay the card out from a file it never paints; substituting 1
+        // would state a square nobody knows.
+        primaryAspectRatio: singleMediaAspectRatio(previewManifest, mediaItems[0]!),
         mediaItems,
         visibleMediaCount: 1,
         totalMediaCount: 1,
@@ -376,13 +388,16 @@ function deriveArticleCardLayoutDescriptor(
     ? mediaItems.length + previewManifest.overflowCount
     : 0;
   const hasVisualPreview = previewManifest?.kind !== undefined && previewManifest.kind !== "text";
-  // Collages keep their own arrangement; a single image is shaped by the
-  // artifact that is painted, and by nothing else. Null when that artifact has
-  // not been measured — the consumer picks a provisional envelope rather than
-  // this function inventing one from the source file.
+  // Collages keep their own arrangement; a single media is shaped by the image
+  // that is painted, and by nothing else (Д1.6). Null when that image has not
+  // been measured: the consumer picks a provisional envelope rather than this
+  // function inventing one from the source file.
+  const singleMedia = totalMediaCount === 1 ? mediaItems[0] : undefined;
   const primaryAspectRatio = previewManifest?.kind === "composite"
     ? galleryAspectRatio(Math.min(4, totalMediaCount))
-    : singleArtifactAspectRatio(previewManifest, mediaItems);
+    : singleMedia
+      ? singleMediaAspectRatio(previewManifest, singleMedia)
+      : singleArtifactAspectRatio(previewManifest, mediaItems);
   return {
     variant: hasVisualPreview ? "article-media" : "article-text",
     titleText,

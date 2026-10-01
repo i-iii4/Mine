@@ -1650,6 +1650,64 @@ describe("Card geometry, author and name (SPEC_AUDIT_FIXES.md, Г4.5 to Г4.7)",
     }
   });
 
+  /// A post or an article with one media whose whole preview, `post.jpg`, is
+  /// built from `thumbnail` at 1600×900, and whose one tile, from the body, is
+  /// 800×1200.
+  const oneMediaCard = (url: string, media: "picture" | "video") => block({
+    block_type: "article", card_kind: "article", title: null, description: null, url,
+    thumbnail: "Media/page-picture.jpg",
+    body: media === "picture" ? "![](Media/body-1.jpg)" : "![](Media/body-1.mp4)",
+    media_urls: media === "picture" ? "[\"Media/body-1.jpg\"]" : "[\"Media/body-1.mp4\"]",
+    feed_playback: null,
+    preview_manifest: JSON.stringify({
+      kind: media === "picture" ? "image" : "video_poster",
+      primary_preview_path: "post.jpg", width: 1600, height: 900,
+      preview_width: 1600, preview_height: 900,
+      tiles: [{ source_path: media === "picture" ? "Media/body-1.jpg" : "Media/body-1.mp4",
+        preview_path: "post.preview-1.jpg",
+        width: 800, height: 1200, preview_width: 800, preview_height: 1200,
+        is_video: media === "video", is_video_poster: media === "video" }],
+      overflow_count: 0,
+    }),
+  });
+  /// Height of a card in a presentation that paints one media at `aspect`:
+  /// in Media the media is the whole card inside its border; otherwise border,
+  /// padding, the inset media across the padded width, padding.
+  const oneMediaHeight = (show: FeedShow, aspect: number) => (show === "media"
+    ? Math.round((COLUMN - CARD_BORDER) / aspect) + CARD_BORDER
+    : CARD_BORDER + CARD_PADDING + Math.round(CONTENT_WIDTH / aspect) + CARD_PADDING);
+
+  it.each([
+    ["an article", "https://example.com/piece"],
+    ["an X post", "https://x.com/someone/status/1"],
+  ])("shapes %s's one picture by the tile it paints, not by its page picture (Д1.6)", (_card, url) => {
+    const card = oneMediaCard(url, "picture");
+    for (const show of ["mixed", "cards", "media"] as const) {
+      const doc = renderedMarkup(show, card);
+      expect(doc.querySelector("[data-card-graphic-surface] img")?.getAttribute("src"))
+        .toContain("post.preview-1.jpg");
+      const aspect = paintedAspect(doc);
+      expect(aspect).toBeCloseTo(clampCardAspect(800 / 1200), 4);
+      expect(computeCardHeight(card, COLUMN, null, show)).toBe(oneMediaHeight(show, aspect));
+    }
+  });
+
+  it.each([
+    ["an article", "https://example.com/piece"],
+    ["an X post", "https://x.com/someone/status/1"],
+  ])("shapes %s's one video by the poster it paints, the whole preview (Д1.6)", (_card, url) => {
+    const card = oneMediaCard(url, "video");
+    for (const show of ["mixed", "cards", "media"] as const) {
+      const doc = renderedMarkup(show, card);
+      const poster = doc.querySelector("[data-card-graphic-surface] img")?.getAttribute("src") ?? "";
+      expect(poster).toContain("post.jpg");
+      expect(poster).not.toContain("preview-1");
+      const aspect = paintedAspect(doc);
+      expect(aspect).toBeCloseTo(clampCardAspect(1600 / 900), 4);
+      expect(computeCardHeight(card, COLUMN, null, show)).toBe(oneMediaHeight(show, aspect));
+    }
+  });
+
   const longAuthor = "An author whose name runs on far past the width of any column in the feed, and then some more";
   /// The author line a card paints in Mixed, found by its text.
   const authorLine = (value: LightBlock, text: string) => {
