@@ -3119,7 +3119,7 @@ fn remove_media_asset_from_card_inner(
                         remove_inline_media_reference_at_opener(&block.body, opener).ok_or_else(
                             || MediaAssetActionError::InvalidMediaRef {
                                 reason: format!(
-                                    "no image starts at opener {opener} of {source_slug}: the card changed"
+                                    "no image outside code starts at opener {opener} of {source_slug}: the card changed"
                                 ),
                             },
                         )?;
@@ -6232,6 +6232,87 @@ mod tests {
         }
     }
 
+    /// Д2.5: a body written with code examples of the image, fenced,
+    /// indented and fenced right after a list marker, around two real
+    /// references.
+    const CARD_WITH_CODE_EXAMPLES: &str = "Real ![x](p.jpg) here.\n\n    ![x](p.jpg) indented\n\n```\n![x](p.jpg)\n```\n\n- ```md\n  ![x](p.jpg)\n  ```\n  Item ![[p.jpg|alt]] end.\n";
+
+    /// `CARD_WITH_CODE_EXAMPLES` without its two real references.
+    const CARD_WITHOUT_REFERENCES: &str = "Real  here.\n\n    ![x](p.jpg) indented\n\n```\n![x](p.jpg)\n```\n\n- ```md\n  ![x](p.jpg)\n  ```\n  Item  end.\n";
+
+    /// Д2.5: removing a media from a card removes its references and keeps
+    /// every code example byte for byte.
+    #[test]
+    fn removing_media_from_a_card_keeps_code_examples() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        std::fs::write(vault.root().join("p.jpg"), b"image-bytes").unwrap();
+        write_note(&vault, "Card", CARD_WITH_CODE_EXAMPLES);
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        remove_media_asset_from_card_inner(
+            &state,
+            &conn,
+            &vault,
+            "p.jpg".to_string(),
+            "Card".to_string(),
+            "body_embed".to_string(),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(read_note(&vault, "Card"), CARD_WITHOUT_REFERENCES);
+    }
+
+    /// Д2.5: deleting a media removes its references from every card and
+    /// keeps every code example byte for byte.
+    #[test]
+    fn deleting_media_keeps_code_examples() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        std::fs::write(vault.root().join("p.jpg"), b"image-bytes").unwrap();
+        write_note(&vault, "Card", CARD_WITH_CODE_EXAMPLES);
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        delete_media_asset_inner(&state, &conn, &vault, "p.jpg".to_string()).unwrap();
+
+        assert_eq!(read_note(&vault, "Card"), CARD_WITHOUT_REFERENCES);
+    }
+
+    /// Д2.5, Г1.4: the opener counts every `![`, code included, as the
+    /// reading view does; an opener inside code is refused and removes
+    /// nothing, and the clicked image after the examples is removed.
+    #[test]
+    fn removing_an_image_by_opener_never_removes_a_code_example() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        std::fs::write(vault.root().join("p.jpg"), b"image-bytes").unwrap();
+        write_note(&vault, "Card", CARD_WITH_CODE_EXAMPLES);
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        let remove_at = |opener| {
+            remove_media_asset_from_card_inner(
+                &state,
+                &conn,
+                &vault,
+                "p.jpg".to_string(),
+                "Card".to_string(),
+                "body_embed".to_string(),
+                Some(opener),
+            )
+        };
+
+        for opener in 1..4 {
+            let error = remove_at(opener).unwrap_err();
+            assert!(matches!(error, MediaAssetActionError::InvalidMediaRef { .. }), "{error}");
+            assert_eq!(read_note(&vault, "Card"), CARD_WITH_CODE_EXAMPLES);
+        }
+        remove_at(4).unwrap();
+        assert_eq!(
+            read_note(&vault, "Card"),
+            CARD_WITH_CODE_EXAMPLES.replacen("Item ![[p.jpg|alt]] end.", "Item  end.", 1)
+        );
+    }
+
     #[test]
     fn delete_plan_keeps_media_referenced_by_another_block() {
         let (_root, _derived, vault, conn) = make_vault();
@@ -7880,6 +7961,47 @@ mod tests {
             read_note(&vault, "Notes/Other"),
             other.replacen("See [[Foo]] and [f](../Cards/Foo.md)", "See [[Bar]] and [f](../Cards/Bar.md)", 1)
         );
+    }
+
+    /// Д2.5: a fence right after a list marker is code inside the item: a
+    /// rename leaves `[[Foo]]` in it as written and rewrites the real link
+    /// after the fence, still inside the item.
+    #[test]
+    fn renaming_a_card_leaves_its_name_in_a_fence_after_a_list_marker_alone() {
+        let (_root, _derived, vault, conn) = make_vault();
+        write_note(&vault, "Cards/Foo", "---\nsaved_at: 2026-04-22T00:00:00Z\n---\n# Foo\n");
+        let other = "- ```md\n  [[Foo]]\n  ```\n  See [[Foo]].\n";
+        write_note(&vault, "Notes/Other", other);
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        rename_block_file_inner(None, None, &conn, &vault, "Cards/Foo", "Bar").unwrap();
+
+        assert_eq!(
+            read_note(&vault, "Notes/Other"),
+            "- ```md\n  [[Foo]]\n  ```\n  See [[Bar]].\n"
+        );
+    }
+
+    /// Д2.5: a media rename rewrites the note's references and leaves the
+    /// same image written as an example in code byte for byte: in a fence of
+    /// its own and in a fence right after a list marker.
+    #[test]
+    fn renaming_media_leaves_examples_in_code_alone() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        write_media(&vault, "photo.jpg");
+        let note = "---\nsaved_at: 2026-04-22T00:00:00Z\n---\n![x](photo.jpg)\n\n```\n![x](photo.jpg)\n```\n\n- ```md\n  ![x](photo.jpg)\n  ```\n  ![y](photo.jpg)\n";
+        write_note(&vault, "Note", note);
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        rename_media_asset_inner(&state, &conn, &vault, "photo.jpg".to_string(), "renamed".to_string())
+            .unwrap();
+
+        assert_eq!(
+            read_note(&vault, "Note"),
+            "---\nsaved_at: 2026-04-22T00:00:00Z\n---\n![x](renamed.jpg)\n\n```\n![x](photo.jpg)\n```\n\n- ```md\n  ![x](photo.jpg)\n  ```\n  ![y](renamed.jpg)\n"
+        );
+        assert!(vault.root().join("renamed.jpg").exists());
     }
 
     /// Restores a folder's permissions however the test ends, so the

@@ -1692,6 +1692,15 @@ pub fn backfill_missing_thumb_metadata(conn: &Connection, vault: &VaultLayout) -
 /// This is versioned because fields such as `media_urls` and
 /// `preview_manifest` may be non-null but stale after a resolver migration,
 /// and the type, kind and preview text after a change to the body parse.
+/// The dependencies the card's source stamp records follow the new parse in
+/// the same savepoint, or an edit to a file only the new parse reads would go
+/// unnoticed (`reconcile::rederive_source_dependencies`; Д1.5).
+///
+/// # Errors
+///
+/// A read or write of the index fails, or a row holds a type or a source
+/// stamp that does not parse; the card being derived keeps its previous
+/// state.
 pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<usize> {
     let mut stmt = conn.prepare(
         "SELECT slug, block_type, url, media_file, thumbnail, width, height, body, thumb_format, body_hash,
@@ -1829,39 +1838,67 @@ pub fn backfill_media_index(conn: &Connection, vault: &VaultLayout) -> Result<us
             discard_derived_previews(vault, &block.slug, indexed_preview_manifest.as_deref());
             discard_derived_previews(vault, &block.slug, preview_manifest.as_deref());
         }
-        updated += conn.execute(
-            "UPDATE blocks
-             SET first_image = ?2,
-                 media_urls = ?3,
-                 media_dimensions = ?4,
-                 preview_manifest = ?5,
-                 preview_state = 'stale',
-                 preview_source_stamp = NULL,
-                 preview_error_kind = NULL,
-                 feed_playback = ?6,
-                 media_index_version = ?7,
-                 card_kind = ?9,
-                 preview_schema_version = ?10,
-                 block_type = ?11,
-                 preview_text = ?12,
-                 preview_text_cap = ?13
-             WHERE slug = ?1 AND body_hash IS ?8",
-            params![
-                slug,
-                first_image,
-                media_urls,
-                media_dimensions,
-                preview_manifest,
-                feed_playback,
-                MEDIA_INDEX_VERSION,
-                body_hash,
-                card_kind.as_str(),
-                PREVIEW_SCHEMA_VERSION,
-                block.frontmatter.block_type.as_str(),
-                preview_text,
-                FEED_PREVIEW_TEXT_BUFFER_CHARS as i64,
-            ],
-        )?;
+        // The card and the dependencies its source stamp records move to the
+        // new parse together, or neither does (Д1.5).
+        conn.execute_batch("SAVEPOINT media_backfill_card")
+            .context("begin media backfill savepoint")?;
+        let result = (|| -> Result<usize> {
+            let changed = conn.execute(
+                "UPDATE blocks
+                 SET first_image = ?2,
+                     media_urls = ?3,
+                     media_dimensions = ?4,
+                     preview_manifest = ?5,
+                     preview_state = 'stale',
+                     preview_source_stamp = NULL,
+                     preview_error_kind = NULL,
+                     feed_playback = ?6,
+                     media_index_version = ?7,
+                     card_kind = ?9,
+                     preview_schema_version = ?10,
+                     block_type = ?11,
+                     preview_text = ?12,
+                     preview_text_cap = ?13
+                 WHERE slug = ?1 AND body_hash IS ?8",
+                params![
+                    slug,
+                    first_image,
+                    media_urls,
+                    media_dimensions,
+                    preview_manifest,
+                    feed_playback,
+                    MEDIA_INDEX_VERSION,
+                    body_hash,
+                    card_kind.as_str(),
+                    PREVIEW_SCHEMA_VERSION,
+                    block.frontmatter.block_type.as_str(),
+                    preview_text,
+                    FEED_PREVIEW_TEXT_BUFFER_CHARS as i64,
+                ],
+            )?;
+            if changed > 0 {
+                crate::storage::reconcile::rederive_source_dependencies(
+                    conn,
+                    vault,
+                    &block,
+                    &mut resolver,
+                )
+                .with_context(|| format!("record the dependencies of {slug}"))?;
+            }
+            Ok(changed)
+        })();
+        match result {
+            Ok(changed) => {
+                conn.execute_batch("RELEASE SAVEPOINT media_backfill_card")
+                    .context("release media backfill savepoint")?;
+                updated += changed;
+            }
+            Err(error) => {
+                let _ = conn.execute_batch("ROLLBACK TO SAVEPOINT media_backfill_card");
+                let _ = conn.execute_batch("RELEASE SAVEPOINT media_backfill_card");
+                return Err(error);
+            }
+        }
     }
 
     Ok(updated)
@@ -4511,6 +4548,77 @@ mod tests {
             assert!(!vault.thumb_path(slug).exists(), "{slug}: rebuilt, not adopted");
         }
         assert!(vault.thumb_path("Plain").exists(), "an unchanged reading keeps its preview");
+    }
+
+    /// Д1.5: the dependencies a note's source stamp records come from the
+    /// parse that indexed it. After the backfill derives the card again, the
+    /// file the new parse reads is a dependency: editing it is noticed by the
+    /// next reconcile pass, which measures the card again and invalidates its
+    /// preview, though the note itself never changed.
+    #[test]
+    fn backfill_media_index_records_the_dependencies_of_the_new_parse() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        write_test_image(&vault, "a b.jpg", 30, 30);
+        std::fs::write(
+            vault.root().join("Note.md"),
+            "---\nsaved_at: 2026-04-22T00:00:00Z\n---\n![x](<a b.jpg> \"t\")\n",
+        )
+        .unwrap();
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        // What an index built by the previous parse holds: older derived
+        // data, and a source stamp whose dependency is a path that parse
+        // read from the destination and that names no file.
+        let stamp: String = conn
+            .query_row("SELECT source_stamp FROM source_index_state WHERE slug = 'Note'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let mut stamp: serde_json::Value = serde_json::from_str(&stamp).unwrap();
+        stamp["dependencies"] =
+            serde_json::json!([{ "vault_relative_path": "<a b.jpg> \"t\"", "file": null }]);
+        conn.execute(
+            "UPDATE source_index_state SET source_stamp = ?1 WHERE slug = 'Note'",
+            [stamp.to_string()],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE blocks SET media_urls = '[\"stale\"]', media_dimensions = NULL,
+                               preview_manifest = NULL, media_index_version = 7
+             WHERE slug = 'Note'",
+            [],
+        )
+        .unwrap();
+
+        backfill_media_index(&conn, &vault).unwrap();
+        let derived = || -> (Option<String>, String) {
+            conn.query_row(
+                "SELECT media_dimensions, preview_state FROM blocks WHERE slug = 'Note'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap()
+        };
+        assert_eq!(derived().0.as_deref(), Some("{\"a b.jpg\":[30,30]}"));
+        conn.execute(
+            "UPDATE blocks SET preview_state = 'ready' WHERE slug = 'Note'",
+            [],
+        )
+        .unwrap();
+        write_test_image(&vault, "a b.jpg", 60, 20);
+        let edited = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+        std::fs::File::options()
+            .write(true)
+            .open(vault.root().join("a b.jpg"))
+            .unwrap()
+            .set_modified(edited)
+            .unwrap();
+
+        let report = crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        assert_eq!(report.dependency_changed, ["Note"]);
+        assert_eq!(derived(), (Some("{\"a b.jpg\":[60,20]}".to_string()), "stale".to_string()));
     }
 
     /// Г1.3: what the index derives from a body is pinned for the current

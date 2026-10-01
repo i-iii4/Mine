@@ -378,8 +378,10 @@ struct OpenFence {
 /// text: indentation counts from the content column of the list item a line
 /// belongs to, so a line indented inside a list item is the item's text, and
 /// an indented line that continues a paragraph is text too, since an
-/// indented code block cannot interrupt a paragraph. Where the reading is
-/// unsure, a line is text: a rewrite then still reaches its links.
+/// indented code block cannot interrupt a paragraph. What follows a list
+/// marker is read as a line of its own, so code may open right after the
+/// marker (Д2.5). Where the reading is unsure, a line is text: a rewrite
+/// then still reaches its links.
 fn code_block_ranges(text: &str) -> Vec<Range<usize>> {
     let mut ranges = Vec::new();
     let mut fence: Option<OpenFence> = None;
@@ -456,23 +458,23 @@ fn code_block_ranges(text: &str) -> Vec<Range<usize>> {
             continue;
         }
         ranges.extend(indented.take());
-        if let Some((marker, width, _)) = fence_marker(content) {
-            fence = Some(OpenFence {
-                start: line_start,
-                marker,
-                width,
-                base,
-                quote_depth: depth,
-            });
-            paragraph = false;
-        } else if is_thematic_break(content) || is_atx_heading(content) {
-            paragraph = false;
-        } else if let Some((column, has_text)) = list_item_content_column(content, indent) {
-            lists.push(column);
-            paragraph = has_text;
-        } else {
-            paragraph = true;
-        }
+        paragraph = match open_blocks(content, indent, &mut lists) {
+            Opened::IndentedCode => {
+                indented = Some(line_start..next_line);
+                false
+            }
+            Opened::Fence { marker, width, base } => {
+                fence = Some(OpenFence {
+                    start: line_start,
+                    marker,
+                    width,
+                    base,
+                    quote_depth: depth,
+                });
+                false
+            }
+            Opened::NoCode { paragraph } => paragraph,
+        };
         line_start = next_line;
     }
     if let Some(open) = fence {
@@ -480,6 +482,51 @@ fn code_block_ranges(text: &str) -> Vec<Range<usize>> {
     }
     ranges.extend(indented);
     ranges
+}
+
+/// What a line opens, as far as telling code from text goes.
+enum Opened {
+    /// An indented code block, which may only open right after a list
+    /// marker here: a line indented as code on its own is read before.
+    IndentedCode,
+    /// A fenced code block, inside the list item whose content column is
+    /// `base`.
+    Fence { marker: u8, width: usize, base: usize },
+    /// No code: a paragraph a later line may continue, or a heading, a
+    /// thematic break or an empty list item.
+    NoCode { paragraph: bool },
+}
+
+/// What `content`, a line at column `indent` that neither continues a
+/// paragraph nor is indented code, opens; the content column of each list
+/// item it opens goes onto `lists`. What follows a list marker is read as a
+/// line of its own at the item's content column (`CommonMark` 5.2,
+/// `SPEC_AUDIT_FIXES.md`, Д2.5): `- ```js` opens a fence inside the item,
+/// `-     code` indented code, `- - item` a nested item.
+fn open_blocks(content: &str, indent: usize, lists: &mut Vec<usize>) -> Opened {
+    let mut column = indent;
+    let mut rest = content;
+    loop {
+        let base = lists.last().copied().unwrap_or(0);
+        if column >= base + CODE_INDENT {
+            return Opened::IndentedCode;
+        }
+        if let Some((marker, width, _)) = fence_marker(rest) {
+            return Opened::Fence { marker, width, base };
+        }
+        if is_thematic_break(rest) || is_atx_heading(rest) {
+            return Opened::NoCode { paragraph: false };
+        }
+        let Some(item) = list_item(rest, column) else {
+            return Opened::NoCode { paragraph: true };
+        };
+        lists.push(item.content_column);
+        let Some((text_column, text)) = item.text else {
+            return Opened::NoCode { paragraph: false };
+        };
+        column = text_column;
+        rest = text;
+    }
 }
 
 /// How many block quote markers open `line`, and what follows them: each
@@ -520,7 +567,7 @@ fn starts_block(content: &str) -> bool {
     fence_marker(content).is_some()
         || is_thematic_break(content)
         || is_atx_heading(content)
-        || list_item_content_column(content, 0).is_some_and(|(_, has_text)| has_text)
+        || list_item(content, 0).is_some_and(|item| item.text.is_some())
 }
 
 /// Three or more `-`, `*` or `_` alone on a line, spaces between allowed.
@@ -544,11 +591,19 @@ fn is_atx_heading(content: &str) -> bool {
     (1..=6).contains(&hashes) && content[hashes..].chars().next().is_none_or(|ch| ch == ' ' || ch == '\t')
 }
 
-/// The content column of the list item `content` opens, `content` being a
-/// line indented by `indent` columns, and whether the item has text on this
-/// line. A bullet (`-`, `+`, `*`) or an ordered marker (`1.`, `1)`) must be
-/// followed by a space or the end of the line.
-fn list_item_content_column(content: &str, indent: usize) -> Option<(usize, bool)> {
+/// The list item a line opens.
+struct ListItem<'a> {
+    /// The column the item's content starts at.
+    content_column: usize,
+    /// What follows the marker on this line, without the spaces before it,
+    /// and the column it starts at; `None` when nothing does.
+    text: Option<(usize, &'a str)>,
+}
+
+/// The list item `content` opens, `content` being a line indented by
+/// `indent` columns. A bullet (`-`, `+`, `*`) or an ordered marker (`1.`,
+/// `1)`) must be followed by a space or the end of the line.
+fn list_item(content: &str, indent: usize) -> Option<ListItem<'_>> {
     let bytes = content.as_bytes();
     let marker_width = match *bytes.first()? {
         b'-' | b'+' | b'*' => 1,
@@ -567,12 +622,18 @@ fn list_item_content_column(content: &str, indent: usize) -> Option<(usize, bool
     }
     let (spaces, text) = indentation(after);
     let marker_end = indent + marker_width;
-    if text.trim().is_empty() || spaces > CODE_INDENT {
-        // No text yet, or text that is itself indented code: the content
-        // column is one past the marker.
-        return Some((marker_end + 1, !text.trim().is_empty()));
-    }
-    Some((marker_end + spaces, true))
+    let text = (!text.trim().is_empty()).then_some((marker_end + spaces, text));
+    // No text yet, or text that is itself indented code: the content column
+    // is one past the marker.
+    let content_column = if text.is_none() || spaces > CODE_INDENT {
+        marker_end + 1
+    } else {
+        marker_end + spaces
+    };
+    Some(ListItem {
+        content_column,
+        text,
+    })
 }
 
 /// Where a link reference definition may begin on a line: past
@@ -957,6 +1018,32 @@ text
             .map(|link| &text[link.destination])
             .collect();
         assert_eq!(found, ["a.md", "b.md", "c.md", "d.md", "e.md", "f.md", "g.md"]);
+    }
+
+    /// Д2.5: what follows a list marker is read as a line of its own at the
+    /// item's content column: a fence there opens code inside the item, which
+    /// the item's closing fence closes, and five spaces after the marker open
+    /// indented code.
+    #[test]
+    fn code_right_after_a_list_marker_is_code() {
+        let text = "\
+- ```js
+  [fenced](x.md)
+  ```
+  [after the fence](a.md)
+- [next item](b.md)
+1. - ~~~
+     [nested fence](x.md)
+     ~~~
+   [after the nested fence](c.md)
+-     [indented code](x.md)
+- [last item](d.md)
+";
+        let found: Vec<&str> = inline_links_outside_code(text)
+            .into_iter()
+            .map(|link| &text[link.destination])
+            .collect();
+        assert_eq!(found, ["a.md", "b.md", "c.md", "d.md"]);
     }
 
     #[test]

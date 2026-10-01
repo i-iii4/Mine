@@ -278,7 +278,7 @@ fn reorder_channels_blocking(state: &AppState, items: Vec<ReorderItem>) -> Resul
         };
         channel.position = item.position;
         let path = match collection_document_for_mutation(&vs.conn, &vs.vault, &tag)? {
-            Some(path) => path,
+            Some(page) => page.path,
             None if !tag.contains('/') => vs.vault.block_path(&vs.vault.new_collection_slug(&tag)),
             None => {
                 return Err(CommandError::Internal(format!(
@@ -426,12 +426,10 @@ pub(crate) fn rename_channel_inner(
     // Rename in place: a collection that lives in its own folder must stay
     // there, so the new document is written beside the old one rather than in
     // the vault root.
-    let old_path =
-        collection_document_for_mutation(conn, vault, &normalized_old)?.ok_or_else(|| {
-            CommandError::Internal(format!(
-                "collection document '{}' not found",
-                normalized_old
-            ))
+    let old_path = collection_document_for_mutation(conn, vault, &normalized_old)?
+        .map(|page| page.path)
+        .ok_or_else(|| {
+            CommandError::Internal(format!("collection document '{normalized_old}' not found"))
         })?;
 
     let affected_blocks = index::list_blocks_by_tag(conn, &normalized_old)?;
@@ -623,8 +621,8 @@ pub async fn list_channel_previews(
     .map_err(|e| CommandError::Internal(format!("list_channel_previews task join failed: {e}")))?
 }
 
-/// Delete a channel: remove .md file and index entry.
-/// Blocks are not affected (tags stay in block frontmatter).
+/// Delete a channel: move its page to the Trash, as it was read, and remove
+/// its index entry. Blocks are not affected (tags stay in block frontmatter).
 #[tauri::command]
 pub fn delete_channel(state: State<'_, AppState>, tag: String) -> Result<bool, CommandError> {
     let vault_state = state
@@ -640,30 +638,62 @@ pub(crate) fn delete_channel_inner(
     vault: &VaultLayout,
     tag: &str,
 ) -> Result<bool, CommandError> {
-    let tag = normalize_collection_ref(tag);
-    if tag.is_empty() {
-        return Err(CommandError::Internal("collection ref is empty".into()));
-    }
-    validate_collection_ref(&tag).map_err(CommandError::Internal)?;
+    ChannelDeletion::plan(conn, vault, tag)?.apply(conn)
+}
 
-    let candidate = collection_document_for_mutation(conn, vault, &tag)?;
-    let mut writes = Vec::new();
-    let mut slugs = Vec::new();
-    if let Some(path) = candidate {
-        let (slug, _) = files::read_block_file(vault, &path)?;
-        writes.push(SourceFileWrite::delete(path));
-        slugs.push(slug);
+/// A collection deletion, planned from the collection's page as it was read
+/// (`SPEC_AUDIT_FIXES.md`, Ф2, Д2.6).
+struct ChannelDeletion {
+    tag: String,
+    page: Option<CollectionPage>,
+}
+
+impl ChannelDeletion {
+    fn plan(
+        conn: &rusqlite::Connection,
+        vault: &VaultLayout,
+        tag: &str,
+    ) -> Result<Self, CommandError> {
+        let tag = normalize_collection_ref(tag);
+        if tag.is_empty() {
+            return Err(CommandError::Internal("collection ref is empty".into()));
+        }
+        validate_collection_ref(&tag).map_err(CommandError::Internal)?;
+        let page = collection_document_for_mutation(conn, vault, &tag)?;
+        Ok(Self { tag, page })
     }
-    let staged = StagedSourceMutation::stage(writes).map_err(CommandError::from)?;
-    staged
-        .commit_with_index(conn, "delete_channel", |index_conn| {
-            for slug in &slugs {
-                index::remove_block(index_conn, slug)?;
-            }
-            let removed = index::remove_channel(index_conn, &tag)?;
-            Ok(removed || !slugs.is_empty())
-        })
-        .map_err(CommandError::from)
+
+    /// Send the page to the Trash only as the plan read it: an edit made
+    /// since, in Obsidian or by iCloud, stays, and the deletion refuses with
+    /// `SourceChanged`, leaving the page and the collection's record as they
+    /// are.
+    fn apply(self, conn: &rusqlite::Connection) -> Result<bool, CommandError> {
+        let mut writes = Vec::new();
+        let mut slugs = Vec::new();
+        if let Some(page) = self.page {
+            writes.push(SourceFileWrite::delete_if_unchanged(page.path, page.read));
+            slugs.push(page.slug);
+        }
+        let tag = self.tag;
+        let staged = StagedSourceMutation::stage(writes).map_err(CommandError::from)?;
+        staged
+            .commit_with_index(conn, "delete_channel", |index_conn| {
+                for slug in &slugs {
+                    index::remove_block(index_conn, slug)?;
+                }
+                let removed = index::remove_channel(index_conn, &tag)?;
+                Ok(removed || !slugs.is_empty())
+            })
+            .map_err(CommandError::from)
+    }
+}
+
+/// A collection's page as a mutation found it.
+struct CollectionPage {
+    path: std::path::PathBuf,
+    slug: String,
+    /// The bytes read and found to be a collection page.
+    read: Vec<u8>,
 }
 
 /// Resolve a collection mutation to one source page. A bare name shared by
@@ -672,7 +702,7 @@ fn collection_document_for_mutation(
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
     collection_ref: &str,
-) -> Result<Option<std::path::PathBuf>, CommandError> {
+) -> Result<Option<CollectionPage>, CommandError> {
     let candidates =
         crate::storage::media_refs::collection_document_candidates(vault, collection_ref).map_err(
             |error| CommandError::Internal(format!("find collection documents: {error}")),
@@ -685,26 +715,30 @@ fn collection_document_for_mutation(
         let parsed = parse_markdown_document(&slug, &content, fallback_date.clone())
             .map_err(|error| CommandError::Internal(error.to_string()))?;
         if parsed.block.frontmatter.block_type == BlockType::Channel {
-            pages.push((slug, path));
+            pages.push(CollectionPage {
+                path,
+                slug,
+                read: content.into_bytes(),
+            });
         }
     }
     if let Some(source_slug) = index::channel_source_slug(conn, collection_ref)? {
-        if let Some((_, path)) = pages.iter().find(|(slug, _)| slug == &source_slug) {
-            return Ok(Some(path.clone()));
+        if let Some(position) = pages.iter().position(|page| page.slug == source_slug) {
+            return Ok(Some(pages.swap_remove(position)));
         }
     }
     let page_count = pages.len();
     let mut slugs: std::collections::BTreeSet<String> =
-        pages.iter().map(|(slug, _)| slug.clone()).collect();
+        pages.iter().map(|page| page.slug.clone()).collect();
     for path in files::scan_vault_file_paths(vault)? {
         if let Some(slug) = path.strip_suffix(".md") {
             slugs.insert(slug.to_string());
         }
     }
-    let mut matches = pages.into_iter().filter(|(slug, _)| {
-        crate::domain::collection::collection_ref_for_slug(slug, &slugs) == collection_ref
+    let mut matches = pages.into_iter().filter(|page| {
+        crate::domain::collection::collection_ref_for_slug(&page.slug, &slugs) == collection_ref
     });
-    let result = matches.next().map(|(_, path)| path);
+    let result = matches.next();
     if matches.next().is_some()
         || (result.is_none() && page_count > 1 && !collection_ref.contains('/'))
     {
@@ -855,6 +889,35 @@ mod tests {
             assert!(index::list_channels(&conn).unwrap().is_empty());
         }
         assert!(!delete_channel_inner(&conn, &vault, "Design").unwrap());
+    }
+
+    /// Д2.6: the page is edited after the deletion read it. The edit is not
+    /// sent to the Trash: the deletion refuses, the page stays as edited and
+    /// the collection stays listed.
+    #[test]
+    fn deleting_a_collection_refuses_when_its_page_changed_after_it_was_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = standard_space(dir.path());
+        std::fs::write(vault.block_path("Collections/Photos"), WRITTEN_PAGE).unwrap();
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        let deletion = ChannelDeletion::plan(&conn, &vault, "Photos").unwrap();
+        let edited = WRITTEN_PAGE.replace("Why I keep these.", "Why I keep these, edited in Obsidian.");
+        std::fs::write(vault.block_path("Collections/Photos"), &edited).unwrap();
+
+        let refused = deletion.apply(&conn);
+
+        assert!(matches!(refused, Err(CommandError::SourceChanged { .. })), "{refused:?}");
+        assert_eq!(
+            std::fs::read_to_string(vault.block_path("Collections/Photos")).unwrap(),
+            edited
+        );
+        let listed: Vec<String> = index::list_channels(&conn)
+            .unwrap()
+            .into_iter()
+            .map(|channel| channel.tag)
+            .collect();
+        assert_eq!(listed, ["Photos"]);
     }
 
     #[test]

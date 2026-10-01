@@ -11,12 +11,14 @@
 // safely without corrupting already-converted bodies.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
 
 use crate::domain::block::{
-    inline_media_spans, markdown_image_source, InlineMediaReference, InlineMediaSyntax,
+    inline_media_spans_outside_code, markdown_image_source, InlineMediaReference,
+    InlineMediaSyntax,
 };
 use crate::domain::markdown_link::{
-    encode_destination_like, inline_link_at, inline_links_outside_code, is_external_destination,
+    encode_destination_like, inline_links_outside_code, is_external_destination,
     unescape_destination, wikilinks_outside_code,
 };
 
@@ -32,56 +34,27 @@ use crate::domain::markdown_link::{
 /// Decoding is percent-decode on local URLs only — the filename on
 /// disk is the decoded form. A `|` in alt text is escaped to `&#124;`
 /// so it does not split the wikilink. A `]]` inside a filename (rare)
-/// falls back to keeping the original markdown form.
+/// falls back to keeping the original markdown form. An image in code is an
+/// example, not an embed, and stays byte for byte (`SPEC_AUDIT_FIXES.md`,
+/// Д2.5; `markdown_link::inline_links_outside_code`).
 #[must_use]
 pub fn convert_markdown_images_to_wikilinks(body: &str) -> String {
+    let mut images: Vec<_> = inline_links_outside_code(body)
+        .into_iter()
+        .filter(|link| link.image)
+        .collect();
+    images.sort_by_key(|image| image.start);
     let mut out = String::with_capacity(body.len());
-    let mut i = 0usize;
-    while i < body.len() {
-        let Some(rel) = body[i..].find("![") else {
-            out.push_str(&body[i..]);
-            break;
-        };
-        let excl = i + rel;
-        out.push_str(&body[i..excl]);
-        let after_excl = excl + 2;
-        if after_excl >= body.len() {
-            out.push_str(&body[excl..]);
-            break;
-        }
-
-        if body[after_excl..].starts_with('[') {
-            // Already a wikilink — copy through unchanged.
-            let name_start = after_excl + 1;
-            let Some(close_offset) = body[name_start..].find("]]") else {
-                // Malformed — leave as-is.
-                out.push_str(&body[excl..]);
-                break;
-            };
-            let end = name_start + close_offset + 2;
-            out.push_str(&body[excl..end]);
-            i = end;
-            continue;
-        }
-
-        // Standard `![alt](url)` — try to rewrite.
-        let Some(link) = inline_link_at(body, excl) else {
-            // Broken inline image start — flush `![` and move on.
-            out.push_str(&body[excl..after_excl]);
-            i = after_excl;
-            continue;
-        };
-        let url = &body[link.destination.clone()];
-        let end = link.end;
+    let mut cursor = 0;
+    for image in images {
+        let url = &body[image.destination.clone()];
         // A title has no place in a wikilink: such an image keeps its form.
-        let titled = !body[link.destination.end..end]
+        let titled = !body[image.destination.end..image.end]
             .trim_start_matches('>')
             .trim_end_matches(')')
             .trim()
             .is_empty();
         if url.starts_with("http://") || url.starts_with("https://") || url.is_empty() || titled {
-            out.push_str(&body[excl..end]);
-            i = end;
             continue;
         }
 
@@ -90,27 +63,22 @@ pub fn convert_markdown_images_to_wikilinks(body: &str) -> String {
             .decode_utf8_lossy()
             .into_owned();
         if decoded.contains("]]") {
-            // Pathological filename — leave the original markdown form.
-            out.push_str(&body[excl..end]);
-            i = end;
+            // Pathological filename: leave the original markdown form.
             continue;
         }
 
-        let alt_trimmed = body[link.text].trim();
-        if alt_trimmed.is_empty() {
-            out.push_str("![[");
-            out.push_str(&decoded);
-            out.push_str("]]");
-        } else {
-            let safe_alt = alt_trimmed.replace('|', "&#124;").replace('\n', " ");
-            out.push_str("![[");
-            out.push_str(&decoded);
+        out.push_str(&body[cursor..image.start]);
+        out.push_str("![[");
+        out.push_str(&decoded);
+        let alt_trimmed = body[image.text].trim();
+        if !alt_trimmed.is_empty() {
             out.push('|');
-            out.push_str(&safe_alt);
-            out.push_str("]]");
+            out.push_str(&alt_trimmed.replace('|', "&#124;").replace('\n', " "));
         }
-        i = end;
+        out.push_str("]]");
+        cursor = image.end;
     }
+    out.push_str(&body[cursor..]);
     out
 }
 
@@ -169,81 +137,53 @@ fn split_wikilink_fragment(target: &str) -> (&str, Option<&str>) {
 /// folder (`SPEC_AUDIT_FIXES.md`, Ф3): a Markdown image keeps its written
 /// prefix (`../Media/`) and its encoding, and only its file-name segment
 /// becomes the file name of the new value.
+///
+/// Code is never rewritten (Д2.5): an image or an embed in a code block or
+/// a code span is an example, not a reference, and stays byte for byte
+/// (`markdown_link::inline_links_outside_code`, `wikilinks_outside_code`).
 #[must_use]
 pub fn rename_inline_media_references(body: &str, renames: &BTreeMap<String, String>) -> String {
     if renames.is_empty() {
         return body.to_string();
     }
 
-    let mut out = String::with_capacity(body.len());
-    let mut i = 0usize;
-
-    while i < body.len() {
-        let Some(rel) = body[i..].find("![") else {
-            out.push_str(&body[i..]);
-            break;
-        };
-        let excl = i + rel;
-        out.push_str(&body[i..excl]);
-        let after_excl = excl + 2;
-        if after_excl >= body.len() {
-            out.push_str(&body[excl..]);
-            break;
-        }
-
-        if body[after_excl..].starts_with('[') {
-            let name_start = after_excl + 1;
-            let Some(close_offset) = body[name_start..].find("]]") else {
-                out.push_str(&body[excl..]);
-                break;
-            };
-
-            let inner = &body[name_start..name_start + close_offset];
-            let mut parts = inner.splitn(2, '|');
-            let raw_name = parts.next().unwrap_or("").trim();
-            if let Some(new_name) = renames.get(raw_name) {
-                out.push_str("![[");
-                out.push_str(new_name);
-                if let Some(alias) = parts.next() {
-                    out.push('|');
-                    out.push_str(alias);
-                }
-                out.push_str("]]");
-            } else {
-                out.push_str(&body[excl..name_start + close_offset + 2]);
-            }
-
-            i = name_start + close_offset + 2;
-            continue;
-        }
-
-        let Some(link) = inline_link_at(body, excl) else {
-            out.push_str(&body[excl..after_excl]);
-            i = after_excl;
+    // Each rewritten span of the body and what it becomes.
+    let mut edits: Vec<(Range<usize>, String)> = Vec::new();
+    for embed in wikilinks_outside_code(body).into_iter().filter(|wikilink| wikilink.embed) {
+        let mut parts = body[embed.inner.clone()].splitn(2, '|');
+        let Some(new_name) = renames.get(parts.next().unwrap_or("").trim()) else {
             continue;
         };
-        let raw_url = &body[link.destination.clone()];
-        let end = link.end;
-
-        if raw_url.starts_with("http://") || raw_url.starts_with("https://") || raw_url.is_empty() {
-            out.push_str(&body[excl..end]);
-            i = end;
-            continue;
+        let mut inner = new_name.clone();
+        if let Some(alias) = parts.next() {
+            inner.push('|');
+            inner.push_str(alias);
         }
-
-        match markdown_image_source(raw_url).and_then(|decoded| renames.get(&decoded)) {
-            Some(new_name) => {
-                // Only the destination changes; the alt text, the angle
-                // brackets and the title stay as written.
-                out.push_str(&body[excl..link.destination.start]);
-                out.push_str(&renamed_markdown_url(raw_url, new_name, link.angle_brackets));
-                out.push_str(&body[link.destination.end..end]);
-            }
-            None => out.push_str(&body[excl..end]),
-        }
-        i = end;
+        edits.push((embed.inner, inner));
     }
+    for image in inline_links_outside_code(body).into_iter().filter(|link| link.image) {
+        let raw_url = &body[image.destination.clone()];
+        if is_external_destination(&unescape_destination(raw_url)) {
+            continue;
+        }
+        if let Some(new_name) = markdown_image_source(raw_url).and_then(|decoded| renames.get(&decoded)) {
+            // Only the destination changes; the alt text, the angle
+            // brackets and the title stay as written.
+            let destination = renamed_markdown_url(raw_url, new_name, image.angle_brackets);
+            edits.push((image.destination, destination));
+        }
+    }
+    // Both lists come from the same walk of the body: the spans are disjoint.
+    edits.sort_by_key(|(span, _)| span.start);
 
+    let mut out = String::with_capacity(body.len());
+    let mut cursor = 0;
+    for (span, replacement) in edits {
+        out.push_str(&body[cursor..span.start]);
+        out.push_str(&replacement);
+        cursor = span.end;
+    }
+    out.push_str(&body[cursor..]);
     out
 }
 
@@ -307,13 +247,15 @@ pub fn retarget_markdown_destinations(
 /// Supports both canonical Obsidian embeds (`![[file]]`, `![[file|alt]]`) and
 /// legacy markdown images (`![alt](file%20name.jpg)`). When a removed media
 /// reference occupies a whole line, the whole line is removed so article bodies
-/// do not retain an empty media row.
+/// do not retain an empty media row. An image or an embed in code is an
+/// example, not a reference, and stays byte for byte (`SPEC_AUDIT_FIXES.md`,
+/// Д2.5; `inline_media_spans_outside_code`).
 #[must_use]
 pub fn remove_inline_media_references(body: &str, removals: &BTreeSet<String>) -> String {
     if removals.is_empty() {
         return body.to_string();
     }
-    let ranges = inline_media_spans(body)
+    let ranges = inline_media_spans_outside_code(body)
         .into_iter()
         .filter(|span| !is_remote_markdown_image(&span.reference))
         .filter(|span| removals.contains(&span.reference.source))
@@ -333,13 +275,17 @@ pub fn remove_inline_media_references(body: &str, removals: &BTreeSet<String>) -
 /// before it, with no Markdown reading of its own to disagree with this one
 /// about titles, angle brackets, parentheses or spellings of a name. Every
 /// other reference stays byte for byte.
+///
+/// The count takes in every `![`, those in code too, as the view's does; but
+/// an opener inside code names no reference, since code is never shown as an
+/// image (Д2.5): `None` then, and nothing is removed.
 #[must_use]
 pub fn remove_inline_media_reference_at_opener(
     body: &str,
     opener: usize,
 ) -> Option<(String, InlineMediaReference)> {
     let (start, _) = body.match_indices("![").nth(opener)?;
-    let span = inline_media_spans(body)
+    let span = inline_media_spans_outside_code(body)
         .into_iter()
         .find(|span| span.range.start == start)?;
     let range = expand_media_removal_range(body, span.range.start, span.range.end);
@@ -726,6 +672,117 @@ mod tests {
         assert_eq!(
             output,
             "Text.\n\n    [code](Foo.md)\n\n1. item\n\n   [text](Bar.md)\n\n~~~\n[fenced](Foo.md)\n~~~\n"
+        );
+    }
+
+    /// Д2.5: a media rename rewrites references, not examples: an image or an
+    /// embed in fenced, indented or inline code stays byte for byte, a fence
+    /// right after a list marker included, and the reference after that
+    /// fence inside the item is rewritten.
+    #[test]
+    fn rename_inline_media_references_leaves_code_alone() {
+        let input = "\
+![x](photo.jpg) ![[photo.jpg|alt]]
+
+    ![x](photo.jpg) indented
+
+```
+![x](photo.jpg) ![[photo.jpg]]
+```
+
+- ```md
+  ![x](photo.jpg) ![[photo.jpg]]
+  ```
+  `![x](photo.jpg)` ![y](photo.jpg \"t\") ![[photo.jpg]]
+";
+        let renames = BTreeMap::from([("photo.jpg".to_string(), "Media/new.jpg".to_string())]);
+        let expected = input
+            .replacen(
+                "![x](photo.jpg) ![[photo.jpg|alt]]",
+                "![x](new.jpg) ![[Media/new.jpg|alt]]",
+                1,
+            )
+            .replacen(
+                "![y](photo.jpg \"t\") ![[photo.jpg]]",
+                "![y](new.jpg \"t\") ![[Media/new.jpg]]",
+                1,
+            );
+        assert_eq!(rename_inline_media_references(input, &renames), expected);
+    }
+
+    /// Д2.5: removing a media removes its references, not examples: an image
+    /// or an embed in fenced, indented, list-fenced or inline code stays byte
+    /// for byte.
+    #[test]
+    fn remove_inline_media_references_leaves_code_alone() {
+        let input = "\
+Real ![x](photo.jpg) and ![[photo.jpg|alt]].
+
+    ![x](photo.jpg) indented
+
+```
+![x](photo.jpg) ![[photo.jpg]]
+```
+
+- ```md
+  ![x](photo.jpg)
+  ```
+  Item ![y](photo.jpg \"t\") `![z](photo.jpg)` end.
+";
+        let removals = BTreeSet::from(["photo.jpg".to_string()]);
+        assert_eq!(
+            remove_inline_media_references(input, &removals),
+            "\
+Real  and .
+
+    ![x](photo.jpg) indented
+
+```
+![x](photo.jpg) ![[photo.jpg]]
+```
+
+- ```md
+  ![x](photo.jpg)
+  ```
+  Item  `![z](photo.jpg)` end.
+"
+        );
+    }
+
+    /// Д2.5, Г1.4: the opener still counts every `![` of the body, code
+    /// included, the way the reading view counts; an opener inside code
+    /// names no reference and removes nothing.
+    #[test]
+    fn remove_inline_media_reference_at_opener_never_removes_code() {
+        let input = "```\n![x](p.jpg)\n```\n\n- ```md\n  ![x](p.jpg)\n  ```\n  `![x](p.jpg)` ![y](p.jpg)\n";
+        for opener in 0..3 {
+            assert_eq!(remove_inline_media_reference_at_opener(input, opener), None, "{opener}");
+        }
+        let (removed, reference) = remove_inline_media_reference_at_opener(input, 3).unwrap();
+        assert_eq!(
+            removed,
+            "```\n![x](p.jpg)\n```\n\n- ```md\n  ![x](p.jpg)\n  ```\n  `![x](p.jpg)` \n"
+        );
+        assert_eq!(reference.source, "p.jpg");
+    }
+
+    /// Д2.5: the migration converts images, not examples in code.
+    #[test]
+    fn converting_to_wikilinks_leaves_code_alone() {
+        let input = "![a](a.jpg)\n\n    ![f](f.jpg)\n\n```\n![b](b.jpg)\n```\n\n- ```md\n  ![c](c.jpg)\n  ```\n  ![d](d.jpg) `![e](e.jpg)`\n";
+        assert_eq!(
+            convert_markdown_images_to_wikilinks(input),
+            "![[a.jpg|a]]\n\n    ![f](f.jpg)\n\n```\n![b](b.jpg)\n```\n\n- ```md\n  ![c](c.jpg)\n  ```\n  ![[d.jpg|d]] `![e](e.jpg)`\n"
+        );
+    }
+
+    /// Д2.5: a wikilink in a fence right after a list marker is code.
+    #[test]
+    fn retarget_wikilinks_leaves_a_fence_after_a_list_marker_alone() {
+        let input = "- ```md\n  [[Old Name]]\n  ```\n  See [[Old Name]].\n";
+        assert_eq!(
+            retarget_wikilinks(input, old_to_new),
+            "- ```md\n  [[Old Name]]\n  ```\n  See [[New Name]].\n"
         );
     }
 

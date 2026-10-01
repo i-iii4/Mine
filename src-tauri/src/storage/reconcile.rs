@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result};
 use fs2::FileExt;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -556,6 +556,65 @@ pub fn project_source_path(conn: &Connection, vault: &VaultLayout, path: &Path) 
     let links: LinkIndex = media_refs::build_link_index(vault.root());
     apply_prepared_source(conn, vault, &source, &links)?;
     Ok(source.block)
+}
+
+/// Record, in the source stamp of an indexed card, the dependencies the
+/// current parse of its indexed text names, after a migration derived the
+/// card again from that text (`index::backfill_media_index`;
+/// `SPEC_AUDIT_FIXES.md`, Д1.5).
+///
+/// A pass reads a note again only when its Markdown or a recorded dependency
+/// changes, so dependencies an older parse recorded would hide every edit to
+/// a file only the new parse reads. The Markdown stamp stays: the note was
+/// not read again. A file the new parse names is recorded as it is now, as
+/// the migration has just measured it; a dependency already recorded keeps
+/// its recorded state, so a change made before still reads as one; and the
+/// dependencies only the older parse named stay too: the index does not hold
+/// the front matter's `source_media`, and a dependency too many costs at most
+/// one more reading of the note. A card without a stamp is left to the next
+/// pass, which reads it anyway. A dependency outside the space drops the
+/// stamp, so the next pass reads the note and reports it as an index of the
+/// note from scratch would.
+pub(crate) fn rederive_source_dependencies(
+    conn: &Connection,
+    vault: &VaultLayout,
+    block: &Block,
+    media_resolver: &mut media_refs::MediaResolver<'_>,
+) -> Result<()> {
+    let stored: Option<(String, String)> = conn
+        .query_row(
+            "SELECT source_kind, source_stamp FROM source_index_state WHERE slug = ?1",
+            [&block.slug],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((kind_raw, stamp_raw)) = stored else {
+        return Ok(());
+    };
+    let kind = SourceKind::from_str(&kind_raw)
+        .with_context(|| format!("unknown source kind '{kind_raw}' for {}", block.slug))?;
+    let mut stamp: SourceStamp = serde_json::from_str(&stamp_raw)
+        .with_context(|| format!("invalid source stamp for {}", block.slug))?;
+    let Ok(current) = collect_dependency_paths(vault, block, media_resolver) else {
+        conn.execute("DELETE FROM source_index_state WHERE slug = ?1", [&block.slug])
+            .with_context(|| format!("drop the source state of {}", block.slug))?;
+        return Ok(());
+    };
+    let mut dependencies = stamp
+        .dependencies
+        .drain(..)
+        .map(|dependency| (dependency.vault_relative_path.clone(), dependency))
+        .collect::<BTreeMap<_, _>>();
+    for (relative, absolute) in current {
+        dependencies
+            .entry(relative.clone())
+            .or_insert_with(|| DependencyStamp {
+                vault_relative_path: relative,
+                file: FileStamp::read(&absolute).ok(),
+            });
+    }
+    stamp.dependencies = dependencies.into_values().collect();
+    write_source_state(conn, &block.slug, kind, &stamp)
 }
 
 /// Drop a channel row only when no document answers to that name any more.

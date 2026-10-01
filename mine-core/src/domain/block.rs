@@ -19,8 +19,8 @@ use crate::domain::collection::{
     collection_ref_from_canonical_value, collection_wikilink_value, MINE_COLLECTIONS_FIELD,
 };
 use crate::domain::markdown_link::{
-    inline_link_at, local_destination_path, reference_definition_destinations,
-    unescape_destination,
+    inline_link_at, inline_links_outside_code, local_destination_path,
+    reference_definition_destinations, unescape_destination, wikilinks_outside_code,
 };
 use crate::links::LinkSyntax;
 use crate::domain::source_patch::{frontmatter_bounds, FrontmatterBounds};
@@ -1096,7 +1096,8 @@ pub struct InlineMediaSpan {
 /// without its title and angle brackets, with balanced parentheses and
 /// backslash escapes resolved, then decoded once when local
 /// (`markdown_image_source`). Code is not skipped: a reference that only
-/// looks like one keeps its file from being called unused.
+/// looks like one keeps its file from being called unused. What a rewrite
+/// or a removal may touch is `inline_media_spans_outside_code`.
 #[must_use]
 pub fn inline_media_spans(body: &str) -> Vec<InlineMediaSpan> {
     let mut out = Vec::new();
@@ -1149,6 +1150,30 @@ pub fn inline_media_spans(body: &str) -> Vec<InlineMediaSpan> {
         }
     }
     out
+}
+
+/// The inline media references of `inline_media_spans` that stand outside
+/// code, in document order: what a rewrite or a removal may touch
+/// (`SPEC_AUDIT_FIXES.md`, Д2.5). An image or an embed in a code block or a
+/// code span is an example, not a reference; code is told apart the way
+/// `markdown_link::inline_links_outside_code` tells it.
+#[must_use]
+pub fn inline_media_spans_outside_code(body: &str) -> Vec<InlineMediaSpan> {
+    let starts = inline_links_outside_code(body)
+        .into_iter()
+        .filter(|link| link.image)
+        .map(|link| link.start)
+        .chain(
+            wikilinks_outside_code(body)
+                .into_iter()
+                .filter(|wikilink| wikilink.embed)
+                .map(|wikilink| wikilink.start),
+        )
+        .collect::<std::collections::BTreeSet<_>>();
+    inline_media_spans(body)
+        .into_iter()
+        .filter(|span| starts.contains(&span.range.start))
+        .collect()
 }
 
 /// Extract every inline media reference from a markdown body in document order,
