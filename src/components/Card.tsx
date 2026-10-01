@@ -1239,16 +1239,16 @@ const SocialCard = memo(function SocialCard({
 /// posts, articles, X and Instagram posts, and pictures `Cards` frames as
 /// posts.
 ///
-/// Inset: the body is padded on every side and the media sits inside the
-/// padding with its own rounded outline. Edge to edge: the media spans the
-/// frame's inner width from its top edge, with no outline of its own; the
-/// frame's rounded clip gives it the card's top corners and its bottom corners
-/// stay square. The padding moves to the text alone: 16px at its sides and
-/// bottom as before, and above it the inset layout's own 12px gap under the
-/// media (the stack's `mt-3`, which a padding-free wrapper passes through
-/// unchanged), so the text keeps its place, its width and its font metrics
-/// (SPEC_FEED_DISPLAY.md, Д20, Д23). Edge media with no text under it is the
-/// whole body. `postCardHeight` in cardHeight.ts reserves exactly this.
+/// Inset: the body is padded 16px on every side and the media sits inside the
+/// padding with its own rounded outline, the text 12px under it. Edge to edge:
+/// the media spans the frame's inner width from its top edge, with no outline
+/// of its own; the frame's rounded clip gives it the card's top corners and
+/// its bottom corners stay square. The text under it is padded 8px at its
+/// sides and bottom and sits 8px under the media (the stack's `mt-2`, which a
+/// padding-free top passes through unchanged), so its column is wider than
+/// inset and its lines wrap at that width (SPEC_FEED_DISPLAY.md, Д20, Д23).
+/// Edge media with no text under it is the whole body. Without media the body
+/// is the inset one. `postCardHeight` in cardHeight.ts reserves exactly this.
 function PostCardBody({
   placement,
   media,
@@ -1261,14 +1261,15 @@ function PostCardBody({
   textStack: ReactNode;
 }) {
   const hasMedia = media !== null;
+  const edgeToEdge = placement === "edge" && hasMedia;
   const text = textStack !== null && (
-    <div className={cn(hasMedia && "mt-3")}>{textStack}</div>
+    <div className={cn(hasMedia && (edgeToEdge ? "mt-2" : "mt-3"))}>{textStack}</div>
   );
-  if (placement === "edge" && hasMedia) {
+  if (edgeToEdge) {
     return (
       <div>
         {media}
-        {text && <div className="px-4 pb-4">{text}</div>}
+        {text && <div className="px-2 pb-2">{text}</div>}
       </div>
     );
   }

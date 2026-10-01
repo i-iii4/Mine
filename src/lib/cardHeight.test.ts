@@ -672,8 +672,13 @@ describe("card presentation heights (SPEC_FEED_DISPLAY.md, Д15)", () => {
 describe("media placement heights (SPEC_FEED_DISPLAY.md, Д20 to Д23)", () => {
   const COLUMN = 320;
   const INNER = COLUMN - CARD_BORDER;
+  /// Inset: the body's padding and the gap under the media.
   const PADDING = 16;
   const TEXT_GAP = 12;
+  /// Edge to edge: the text's padding at its sides and bottom and the gap
+  /// under the media (01.10.2026).
+  const EDGE_PADDING = 8;
+  const EDGE_TEXT_GAP = 8;
   const singleVideoManifest = JSON.stringify({
     kind: "video_poster",
     primary_preview_path: "test.jpg",
@@ -733,7 +738,7 @@ describe("media placement heights (SPEC_FEED_DISPLAY.md, Д20 to Д23)", () => {
     });
   });
 
-  it("gives an edge card the media's full width and keeps the text's lines and padding (Д20, Д23)", () => {
+  it("gives an edge card the media's full width and its text an 8px padding (Д20, 01.10.2026)", () => {
     const widths: WordWidths = {
       title: [60],
       preview: [70, 30, 40],
@@ -755,7 +760,51 @@ describe("media placement heights (SPEC_FEED_DISPLAY.md, Д20 to Д23)", () => {
       CARD_BORDER + PADDING + Math.round((INNER - PADDING * 2) / (640 / 480)) + TEXT_GAP + textStack + PADDING,
     );
     expect(computeCardHeight(post, COLUMN, widths, "mixed", "edge")).toBe(
-      CARD_BORDER + Math.round(INNER / (640 / 480)) + TEXT_GAP + textStack + PADDING,
+      CARD_BORDER + Math.round(INNER / (640 / 480)) + EDGE_TEXT_GAP + textStack + EDGE_PADDING,
+    );
+  });
+
+  it("wraps an edge card's text at the wider edge column (01.10.2026)", () => {
+    // 150 + 4 + 140 = 294px: one line in the edge column (318 − 16 = 302px),
+    // two in the inset one (318 − 32 = 286px).
+    const widths: WordWidths = {
+      title: [150, 140],
+      preview: [150, 140],
+      titleSpace: 4,
+      previewSpace: 4,
+      titleNoSpaceBefore: [false, false],
+      previewNoSpaceBefore: [false, false],
+    };
+    const article = makeBlock({
+      block_type: "article",
+      title: "Sunset",
+      body: "Evening over the bay\n\n![](photo.jpg)",
+      media_urls: "[\"photo.jpg\"]",
+      preview_text: "Evening over the bay",
+      preview_manifest: artifactManifest(640, 480),
+    });
+    const titleAndText = (titleLines: number, textLines: number) => 16 * titleLines + 6 + 20 * textLines;
+    expect(computeCardHeight(article, COLUMN, widths, "mixed", "edge")).toBe(
+      CARD_BORDER + Math.round(INNER / (640 / 480)) + EDGE_TEXT_GAP + titleAndText(1, 1) + EDGE_PADDING,
+    );
+    expect(computeCardHeight(article, COLUMN, widths, "mixed", "inset")).toBe(
+      CARD_BORDER + PADDING + Math.round((INNER - PADDING * 2) / (640 / 480)) + TEXT_GAP
+        + titleAndText(2, 2) + PADDING,
+    );
+
+    const xPost = makeBlock({
+      block_type: "article",
+      url: "https://x.com/someone/status/1",
+      body: "Evening over the bay\n\n![](photo.jpg)",
+      media_urls: "[\"photo.jpg\"]",
+      preview_text: "Evening over the bay",
+      preview_manifest: artifactManifest(640, 480),
+    });
+    expect(computeCardHeight(xPost, COLUMN, widths, "mixed", "edge")).toBe(
+      CARD_BORDER + Math.round(INNER / (640 / 480)) + EDGE_TEXT_GAP + 20 + EDGE_PADDING,
+    );
+    expect(computeCardHeight(xPost, COLUMN, widths, "mixed", "inset")).toBe(
+      CARD_BORDER + PADDING + Math.round((INNER - PADDING * 2) / (640 / 480)) + TEXT_GAP + 20 * 2 + PADDING,
     );
   });
 

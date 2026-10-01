@@ -1794,9 +1794,44 @@ describe("Card geometry, author and name (SPEC_AUDIT_FIXES.md, Г4.5 to Г4.7)",
 // the browser lays out the card body's block flow, from the classes and styles
 // React writes: the frame's 1px border, Tailwind padding and top margins,
 // surfaces as tall as their aspect-ratio makes them across the width they get,
-// and text lines at their line height. Every fixture's text fits on one line
-// at the test column, and the word widths handed to `computeCardHeight` say
-// the same, so both sides count the same lines.
+// and text lines at their line height. By default every paragraph is one line:
+// the fixtures' text fits on one line at the test column, and the word widths
+// handed to `computeCardHeight` say the same. Given a `TextMeasure`, the
+// painter breaks a paragraph's words into lines at the width its box gets, as
+// the browser does, so a test can prove the height wraps text at that width.
+
+/// How the painter sets text: the width of every word and of the space
+/// between two words.
+interface TextMeasure {
+  wordWidth: (word: string) => number;
+  spaceWidth: number;
+}
+
+/// Lines a paragraph takes at `width`: words fill a line while they fit, and
+/// `truncate` or `line-clamp-N` caps the count. Without a measure, one line.
+function paragraphLines(element: Element, width: number, measure: TextMeasure | undefined): number {
+  const words = (element.textContent ?? "").split(/\s+/).filter((word) => word.length > 0);
+  if (words.length === 0) return 0;
+  let lines = 1;
+  if (measure) {
+    let lineWidth = measure.wordWidth(words[0]!);
+    for (const word of words.slice(1)) {
+      const next = lineWidth + measure.spaceWidth + measure.wordWidth(word);
+      if (next <= width) {
+        lineWidth = next;
+      } else {
+        lines += 1;
+        lineWidth = measure.wordWidth(word);
+      }
+    }
+  }
+  if (element.classList.contains("truncate")) return 1;
+  for (const name of Array.from(element.classList)) {
+    const clamp = /^line-clamp-(\d+)$/.exec(name);
+    if (clamp) return Math.min(lines, Number(clamp[1]));
+  }
+  return lines;
+}
 
 interface PaintedBox {
   element: Element;
@@ -1851,6 +1886,7 @@ function layOutBox(
   left: number,
   width: number,
   boxes: PaintedBox[],
+  measure?: TextMeasure,
 ): number {
   const padding = paddingPx(element);
   const aspectRatio = aspectRatioOf(element);
@@ -1859,7 +1895,7 @@ function layOutBox(
     // The layout reserves whole pixels, as `computeCardHeight` does.
     height = Math.round(width / aspectRatio);
   } else if (element.tagName === "P") {
-    const lines = element.textContent?.trim() ? 1 : 0;
+    const lines = paragraphLines(element, width - padding.left - padding.right, measure);
     height = padding.top + lines * lineHeightPx(element) + padding.bottom;
   } else {
     let cursor = padding.top;
@@ -1873,6 +1909,7 @@ function layOutBox(
         left + padding.left,
         width - padding.left - padding.right,
         boxes,
+        measure,
       );
     }
     height = cursor + padding.bottom;
@@ -1882,7 +1919,14 @@ function layOutBox(
 }
 
 /// A feed card in a presentation and a media placement, laid out at a column.
-function paintCard(value: LightBlock, show: FeedShow, media: FeedMedia, column: number) {
+/// With `measure`, its paragraphs wrap at the width they get.
+function paintCard(
+  value: LightBlock,
+  show: FeedShow,
+  media: FeedMedia,
+  column: number,
+  measure?: TextMeasure,
+) {
   const markup = renderToStaticMarkup(
     <FeedShowContext.Provider value={show}>
       <FeedMediaContext.Provider value={media}>
@@ -1903,6 +1947,7 @@ function paintCard(value: LightBlock, show: FeedShow, media: FeedMedia, column: 
       FRAME_BORDER_PX,
       column - FRAME_BORDER_PX * 2,
       boxes,
+      measure,
     );
   }
   const height = Math.max(CARD_HOVER_ACTION_MIN_HEIGHT, contentHeight + FRAME_BORDER_PX * 2);
@@ -1917,8 +1962,13 @@ function paintCard(value: LightBlock, show: FeedShow, media: FeedMedia, column: 
 describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д24)", () => {
   const COLUMN = 320;
   const INNER = COLUMN - FRAME_BORDER_PX * 2;
+  /// Inset: the body's padding on every side and the gap under the media.
   const PADDING = 16;
   const TEXT_GAP = 12;
+  /// Edge to edge: the text's padding at its sides and bottom and the gap
+  /// under the media (01.10.2026).
+  const EDGE_PADDING = 8;
+  const EDGE_TEXT_GAP = 8;
   /// Every fixture's title and text fit on one line at this column.
   const ONE_LINE: WordWidths = {
     title: [60],
@@ -2009,26 +2059,94 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д24)", () => {
     expect(inset?.element.hasAttribute("data-card-inset-media")).toBe(true);
   });
 
-  it.each(framedCards)("keeps the text of %s where it was under the media (Д20, Д23)", (_card, make, show) => {
+  it.each(framedCards)("pads the text of %s 8px under edge media, at its sides and bottom (01.10.2026)", (_card, make, show) => {
     const edge = paintCard(make(), show, "edge", COLUMN);
-    const inset = paintCard(make(), show, "inset", COLUMN);
     expect(edge.text.length).toBeGreaterThan(0);
-    // Same lines at the same width and the same side padding, so the same
-    // font metrics serve both placements.
-    expect(edge.text.map(({ left, width, height }) => ({ left, width, height })))
-      .toEqual(inset.text.map(({ left, width, height }) => ({ left, width, height })));
+    // Every line starts 8px inside the frame's border and spans the inner
+    // width less 8px on each side.
     for (const line of edge.text) {
-      expect(line.left).toBe(FRAME_BORDER_PX + PADDING);
-      expect(line.width).toBe(INNER - PADDING * 2);
+      expect(line.left).toBe(FRAME_BORDER_PX + EDGE_PADDING);
+      expect(line.width).toBe(INNER - EDGE_PADDING * 2);
     }
-    // The same 12px under the media and 16px under the text as inset.
+    // 8px under the media, 8px under the text to the frame's bottom border.
     const first = edge.text[0]!;
     const last = edge.text[edge.text.length - 1]!;
     const surface = edge.surface!;
+    expect(first.top - (surface.top + surface.height)).toBe(EDGE_TEXT_GAP);
+    expect(edge.height - FRAME_BORDER_PX - (last.top + last.height)).toBe(EDGE_PADDING);
+    expect(edge.height).toBe(computeCardHeight(make(), COLUMN, ONE_LINE, show, "edge"));
+  });
+
+  it.each(framedCards)("keeps the text of %s inset as it was (Д20)", (_card, make, show) => {
+    const inset = paintCard(make(), show, "inset", COLUMN);
+    expect(inset.text.length).toBeGreaterThan(0);
+    for (const line of inset.text) {
+      expect(line.left).toBe(FRAME_BORDER_PX + PADDING);
+      expect(line.width).toBe(INNER - PADDING * 2);
+    }
+    const first = inset.text[0]!;
+    const last = inset.text[inset.text.length - 1]!;
+    const surface = inset.surface!;
     expect(first.top - (surface.top + surface.height)).toBe(TEXT_GAP);
-    expect(edge.height - FRAME_BORDER_PX - (last.top + last.height)).toBe(PADDING);
-    const insetSurface = inset.surface!;
-    expect(inset.text[0]!.top - (insetSurface.top + insetSurface.height)).toBe(TEXT_GAP);
+    expect(inset.height - FRAME_BORDER_PX - (last.top + last.height)).toBe(PADDING);
+    expect(inset.height).toBe(computeCardHeight(make(), COLUMN, ONE_LINE, show, "inset"));
+  });
+
+  it("reserves an edge article with one picture at its painted 323px, inset at 327px", () => {
+    // Edge: border 2 + media 318 × 3/4 (239) + gap 8 + title 16 + 6 +
+    // text 20 + 8 + author 16 + bottom 8. Inset: border 2 + 16 + media
+    // 286 × 3/4 (215) + gap 12 + the same 66px of text + 16.
+    const post = article(imageManifest(800, 600));
+    expect(computeCardHeight(post, COLUMN, ONE_LINE, "mixed", "edge")).toBe(323);
+    expect(paintCard(post, "mixed", "edge", COLUMN).height).toBe(323);
+    expect(computeCardHeight(post, COLUMN, ONE_LINE, "mixed", "inset")).toBe(327);
+    expect(paintCard(post, "mixed", "inset", COLUMN).height).toBe(327);
+  });
+
+  describe("text that wraps at one placement's width and not at the other's", () => {
+    /// Every character 6px wide, a space 3px.
+    const MEASURE: TextMeasure = { wordWidth: (word) => word.length * 6, spaceWidth: 3 };
+    /// 144 + 3 + 144 = 291px: one line in the edge column (318 − 16 = 302px),
+    /// two in the inset one (318 − 32 = 286px).
+    const LONG = `${"W".repeat(24)} ${"M".repeat(24)}`;
+    const widthsOf = (title: string, preview: string): WordWidths => {
+      const words = (text: string) => text.split(" ").filter((word) => word.length > 0);
+      return {
+        title: words(title).map(MEASURE.wordWidth),
+        preview: words(preview).map(MEASURE.wordWidth),
+        titleSpace: MEASURE.spaceWidth,
+        previewSpace: MEASURE.spaceWidth,
+        titleNoSpaceBefore: words(title).map(() => false),
+        previewNoSpaceBefore: words(preview).map(() => false),
+      };
+    };
+
+    const cases: Array<[string, () => LightBlock, WordWidths, number]> = [
+      [
+        "an article's title",
+        () => ({ ...article(imageManifest(800, 600)), title: LONG }),
+        widthsOf(LONG, "Short words"),
+        16,
+      ],
+      [
+        "an X post's text",
+        () => ({ ...xPost(galleryManifest(2)), preview_text: LONG, body: `${LONG}\n\n![](photo.jpg)` }),
+        widthsOf("", LONG),
+        20,
+      ],
+    ];
+
+    it.each(cases)("counts %s at the width each placement gives it", (_text, make, widths, lineHeight) => {
+      const edge = paintCard(make(), "mixed", "edge", COLUMN, MEASURE);
+      const inset = paintCard(make(), "mixed", "inset", COLUMN, MEASURE);
+      const paragraph = (painted: typeof edge) =>
+        painted.text.find((box) => box.element.textContent === LONG)!;
+
+      expect(paragraph(edge).height).toBe(lineHeight);
+      expect(paragraph(inset).height).toBe(lineHeight * 2);
+      expect(computeCardHeight(make(), COLUMN, widths, "mixed", "edge")).toBe(edge.height);
+      expect(computeCardHeight(make(), COLUMN, widths, "mixed", "inset")).toBe(inset.height);
+    });
   });
 
   it("lays a gallery's tiles edge to edge with straight seams (Д21)", () => {
@@ -2066,6 +2184,32 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д24)", () => {
         .toBe(paintCard(value, show, "inset", COLUMN).frame.outerHTML);
       expect(computeCardHeight(value, COLUMN, ONE_LINE, show, "edge"))
         .toBe(computeCardHeight(value, COLUMN, ONE_LINE, show, "inset"));
+    }
+  });
+
+  it("leaves cards without media in their 16px padding (Д22)", () => {
+    const textOnly: LightBlock[] = [
+      block({
+        block_type: "article", card_kind: "article", title: "A piece", description: null, url: null,
+        body: "Short words", preview_text: "Short words", author: "Ann",
+      }),
+      block({
+        block_type: "article", card_kind: "article", title: null, description: null,
+        url: "https://x.com/someone/status/2", body: "Hello there", preview_text: "Hello there",
+        author: "@someone",
+      }),
+    ];
+    for (const value of textOnly) {
+      const edge = paintCard(value, "mixed", "edge", COLUMN);
+      expect(edge.surface).toBeUndefined();
+      expect(edge.frame.outerHTML).toBe(paintCard(value, "mixed", "inset", COLUMN).frame.outerHTML);
+      for (const line of edge.text) {
+        expect(line.left).toBe(FRAME_BORDER_PX + PADDING);
+        expect(line.width).toBe(INNER - PADDING * 2);
+      }
+      expect(computeCardHeight(value, COLUMN, ONE_LINE, "mixed", "edge")).toBe(edge.height);
+      expect(computeCardHeight(value, COLUMN, ONE_LINE, "mixed", "edge"))
+        .toBe(computeCardHeight(value, COLUMN, ONE_LINE, "mixed", "inset"));
     }
   });
 

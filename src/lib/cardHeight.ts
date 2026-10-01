@@ -94,19 +94,27 @@ export const CARD_HOVER_ACTION_MIN_HEIGHT = 90;
 // frames as posts share one body: media on top, the text stack under it.
 
 /**
- * The body's padding on every side (p-4). It surrounds the whole body when
- * the media is inset, and the text stack alone when the media runs edge to
- * edge (SPEC_FEED_DISPLAY.md, Д20).
+ * The body's padding on every side (p-4) when the media is inset, and for a
+ * card without media.
  */
 const POST_PADDING = 16;
 
 /**
- * Gap between the media and the text stack under it (mt-3 = 12px). Edge to
- * edge keeps it: the text stack sits under edge media exactly as it sits
- * under inset media, with the same width, so only the media's own padding
- * goes (Д20, Д23).
+ * Gap between inset media and the text stack under it (mt-3 = 12px).
  */
 const POST_GAP_BEFORE_TEXT_STACK = 12;
+
+/**
+ * Edge to edge: the text stack's own padding at its sides and bottom
+ * (px-2 pb-2). The media fills the frame's top and sides, and the text under
+ * it keeps an 8px margin to the frame, half the inset body's
+ * (SPEC_FEED_DISPLAY.md, Д20; decision of 01.10.2026). The text column is
+ * therefore wider than inset, and its lines wrap at that width.
+ */
+const POST_EDGE_TEXT_PADDING = 8;
+
+/** Edge to edge: gap between the media and the text stack (mt-2 = 8px). */
+const POST_EDGE_GAP_BEFORE_TEXT_STACK = 8;
 
 const SOCIAL_PREVIEW_LINE_HEIGHT = CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX;
 const SOCIAL_AUTHOR_LINE_HEIGHT = 16;
@@ -238,14 +246,34 @@ function postMediaHeight(iw: number, placement: FeedMedia | null, aspectRatio: n
 }
 
 /**
+ * Whether a post card's body runs edge to edge: the edge placement with media
+ * on top. Edge placement without media lays the body out as inset, so the
+ * padding, the gap and the text width all follow this one answer.
+ */
+function postBodyIsEdge(placement: FeedMedia | null, hasMedia: boolean): boolean {
+  return placement === "edge" && hasMedia;
+}
+
+/**
+ * Width of a post card's text column, the width its lines wrap at: inside the
+ * body's 16px padding when the media is inset or absent, inside the text
+ * stack's own 8px padding edge to edge (SPEC_FEED_DISPLAY.md, Д20). Word
+ * widths are per word and serve either width.
+ */
+function postTextWidth(iw: number, placement: FeedMedia | null, hasMedia: boolean): number {
+  const padding = postBodyIsEdge(placement, hasMedia) ? POST_EDGE_TEXT_PADDING : POST_PADDING;
+  return Math.max(1, iw - padding * 2);
+}
+
+/**
  * Outer height of a post card's body: media on top, the text stack under it.
  *
- * Inset: the body is padded on every side and the media sits inside the
+ * Inset: the body is padded 16px on every side and the media sits inside the
  * padding, the text stack 12px under it. Edge to edge: the media starts at
- * the frame's top edge; the padding moves to the text stack alone, which
- * keeps its sides, its bottom and its 12px gap under the media, so it keeps
- * its place and its width. Edge media with no text under it is the whole
- * body. `textStackH` is the stack's own height, its inner gaps included.
+ * the frame's top edge and spans its inner width; the text stack under it is
+ * padded 8px at its sides and bottom and sits 8px under the media. Edge media
+ * with no text under it is the whole body. `textStackH` is the stack's own
+ * height, its inner gaps included, wrapped at `postTextWidth`.
  */
 function postCardHeight(
   placement: FeedMedia | null,
@@ -254,11 +282,13 @@ function postCardHeight(
   textStackH: number,
 ): number {
   const hasMedia = mediaH > 0;
-  if (placement === "edge" && hasMedia) {
+  if (postBodyIsEdge(placement, hasMedia)) {
     return (
       CARD_BORDER_HEIGHT +
       mediaH +
-      (hasTextStack ? POST_GAP_BEFORE_TEXT_STACK + textStackH + POST_PADDING : 0)
+      (hasTextStack
+        ? POST_EDGE_GAP_BEFORE_TEXT_STACK + textStackH + POST_EDGE_TEXT_PADDING
+        : 0)
     );
   }
   return (
@@ -283,10 +313,12 @@ function computeArticleHeight(
   const descriptor = deriveCardLayoutDescriptor(block, show, media);
   const slots = deriveContentCardSlots(descriptor);
   const iw = innerWidth(columnWidth);
-  // The text column sits inside the body's padding in either media placement,
-  // so its lines wrap the same way whatever the placement.
-  const contentWidth = Math.max(1, iw - POST_PADDING * 2);
   const hasImage = descriptor.variant === "article-media";
+  const imageH = hasImage
+    ? postMediaHeight(iw, descriptor.mediaPlacement, descriptor.primaryAspectRatio)
+    : 0;
+  // Lines wrap at the text column of the body's placement: wider edge to edge.
+  const contentWidth = postTextWidth(iw, descriptor.mediaPlacement, imageH > 0);
   const previewMax = hasImage
     ? ARTICLE_PREVIEW_MAX_LINES_WITH_IMAGE
     : ARTICLE_PREVIEW_MAX_LINES_NO_IMAGE;
@@ -313,13 +345,11 @@ function computeArticleHeight(
 
   const titleH = titleLines * ARTICLE_TITLE_LINE_HEIGHT;
   const previewH = previewLines * ARTICLE_PREVIEW_LINE_HEIGHT;
-  const imageH = hasImage
-    ? postMediaHeight(iw, descriptor.mediaPlacement, descriptor.primaryAspectRatio)
-    : 0;
   const authorH = descriptor.authorText ? ARTICLE_AUTHOR_LINE_HEIGHT : 0;
 
   // Gap structure mirroring Card.tsx mt-* classes:
-  //   image → text stack: mt-3 (12px), counted by `postCardHeight`
+  //   image → text stack: mt-3 (12px) inset, mt-2 (8px) edge to edge,
+  //     counted by `postCardHeight`
   //   title → preview: mt-1.5 (6px), only when preview exists
   //   (previous) → author: mt-2 (8px), only when author exists
   const hasTitle = titleH > 0;
@@ -351,8 +381,16 @@ function computeSocialHeight(
   const descriptor = deriveCardLayoutDescriptor(block, show, media);
   const slots = deriveContentCardSlots(descriptor);
   const iw = innerWidth(columnWidth);
-  // The text column, inside the body's padding in either media placement.
-  const contentWidth = Math.max(1, iw - POST_PADDING * 2);
+
+  // One picture or video, or the gallery: either way one surface of the
+  // descriptor's shape across the media width, as Card.tsx paints it. The
+  // gallery's tiles and their 2px seams are laid out inside that surface and
+  // add no height of their own.
+  const mediaH = descriptor.variant === "social-single-media" || descriptor.variant === "social-media-grid"
+    ? postMediaHeight(iw, descriptor.mediaPlacement, descriptor.primaryAspectRatio)
+    : 0;
+  // Lines wrap at the text column of the body's placement: wider edge to edge.
+  const contentWidth = postTextWidth(iw, descriptor.mediaPlacement, mediaH > 0);
 
   const previewLines = wordWidths
     ? (descriptor.previewText
@@ -365,14 +403,6 @@ function computeSocialHeight(
 
   const previewH = previewLines * SOCIAL_PREVIEW_LINE_HEIGHT;
   const authorH = descriptor.authorText ? SOCIAL_AUTHOR_LINE_HEIGHT : 0;
-
-  // One picture or video, or the gallery: either way one surface of the
-  // descriptor's shape across the media width, as Card.tsx paints it. The
-  // gallery's tiles and their 2px seams are laid out inside that surface and
-  // add no height of their own.
-  const mediaH = descriptor.variant === "social-single-media" || descriptor.variant === "social-media-grid"
-    ? postMediaHeight(iw, descriptor.mediaPlacement, descriptor.primaryAspectRatio)
-    : 0;
 
   const hasPreviewText = previewH > 0 && (slots?.hasTopContent ?? false);
   const hasBottomMeta = authorH > 0 && (slots?.hasBottomMeta ?? false);
