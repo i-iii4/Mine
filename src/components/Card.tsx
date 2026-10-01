@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, memo, createContext, useContext, forwardRef, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
+import { useState, useEffect, useMemo, memo, createContext, useContext, forwardRef, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import type { IndexedBlock, LightBlock } from "@/types";
 import {
@@ -15,7 +15,7 @@ import {
   type CardLayoutDescriptor,
   type CardLayoutVariant,
 } from "@/lib/cardLayout";
-import { FeedShowContext } from "@/lib/feedDisplay";
+import { FeedMediaContext, FeedShowContext, type FeedMedia } from "@/lib/feedDisplay";
 import { PROVISIONAL_MEDIA_ASPECT } from "@/lib/cardAspect";
 import { normalizeFeedPlayback } from "@/lib/feedPlayback";
 import { CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX } from "@/lib/cardTypography";
@@ -699,7 +699,11 @@ export function CardContent({
 }) {
   const resolvedThumbsRoot = thumbsRootPath ?? fallbackThumbsRoot(vaultPath);
   const show = useContext(FeedShowContext);
-  const descriptor = useMemo(() => deriveCardLayoutDescriptor(block, show), [block, show]);
+  const media = useContext(FeedMediaContext);
+  const descriptor = useMemo(
+    () => deriveCardLayoutDescriptor(block, show, media),
+    [block, media, show],
+  );
   const previewManifest = useMemo(
     () => parsePreviewManifest(block),
     [block],
@@ -726,7 +730,7 @@ export function CardContent({
       case "file":
         return <FileCard block={block} />;
       case "media-only":
-        return <PostMediaSurface inset={false} block={block} descriptor={descriptor} previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} thumbVersion={thumbVersion} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
+        return <PostMediaSurface fit="fill" block={block} descriptor={descriptor} previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} thumbVersion={thumbVersion} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
     }
   })();
   return (
@@ -1119,89 +1123,93 @@ const SocialCard = memo(function SocialCard({
   const hasPreviewText = text.length > 0;
   const hasBottomMeta = slots?.hasBottomMeta ?? false;
   const hasTextStack = hasPreviewText || hasBottomMeta;
+  const insetMedia = descriptor.mediaPlacement !== "edge";
 
-  return (
-    <div className="p-4">
-      {descriptor.variant === "social-single-media" && media.length === 1 && (() => {
-        // Shape comes from the descriptor: the artifact this slot paints,
-        // clamped into the card range, the same number the height was reserved
-        // from (Г4.5). When it has not been measured the slot takes the
-        // provisional envelope and says so in the markup, the same state an
-        // image card uses — a square here would be a proportion nobody knows.
-        // Feed cards use object-cover to avoid visible letterboxing inside the
-        // slot while scrolling.
-        const m = media[0]!;
-        const aspectRatio = descriptor.primaryAspectRatio;
-        const absClass = "absolute inset-0 h-full w-full object-cover";
-        const shouldAutoplay =
-          m.isVideo && !measurementMode && allowPlayback && playback !== null;
-        const posterCandidates = buildFeedVideoPosterCandidates({
-          thumbsRootPath,
-          previewManifest,
-          playback,
-          primaryMedia: m,
-        }).map((url) => withThumbVersion(url, thumbVersion));
-        return (
-          <GraphicSurface
-            insetMedia
-            className="w-full"
-            style={{ aspectRatio: `${aspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
-            data-card-preview-geometry={aspectRatio === null ? "pending" : undefined}
-          >
-            <CloudBadge active={block.content_in_cloud} />
-            {shouldAutoplay ? (
-              <FeedVideoSurface
-                playback={playback}
-                allowPlayback={allowPlayback}
-                vaultPath={vaultPath}
-                thumbsRootPath={thumbsRootPath}
-                posterCandidates={posterCandidates}
+  const mediaSurface = descriptor.variant === "social-single-media" && media.length === 1 ? (() => {
+    // Shape comes from the descriptor: the artifact this slot paints,
+    // clamped into the card range, the same number the height was reserved
+    // from (Г4.5). When it has not been measured the slot takes the
+    // provisional envelope and says so in the markup, the same state an
+    // image card uses — a square here would be a proportion nobody knows.
+    // Feed cards use object-cover to avoid visible letterboxing inside the
+    // slot while scrolling.
+    const m = media[0]!;
+    const aspectRatio = descriptor.primaryAspectRatio;
+    const absClass = "absolute inset-0 h-full w-full object-cover";
+    const shouldAutoplay =
+      m.isVideo && !measurementMode && allowPlayback && playback !== null;
+    const posterCandidates = buildFeedVideoPosterCandidates({
+      thumbsRootPath,
+      previewManifest,
+      playback,
+      primaryMedia: m,
+    }).map((url) => withThumbVersion(url, thumbVersion));
+    return (
+      <GraphicSurface
+        insetMedia={insetMedia}
+        className="w-full"
+        style={{ aspectRatio: `${aspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
+        data-card-preview-geometry={aspectRatio === null ? "pending" : undefined}
+      >
+        <CloudBadge active={block.content_in_cloud} />
+        {shouldAutoplay ? (
+          <FeedVideoSurface
+            playback={playback}
+            allowPlayback={allowPlayback}
+            vaultPath={vaultPath}
+            thumbsRootPath={thumbsRootPath}
+            posterCandidates={posterCandidates}
+            className={absClass}
+          />
+        ) : (
+          !measurementMode && (
+            m.isVideo ? (
+              <FeedVideoPoster
+                candidateUrls={posterCandidates}
+                alt=""
                 className={absClass}
+                loading={imgLoading}
               />
             ) : (
-              !measurementMode && (
-                m.isVideo ? (
-                  <FeedVideoPoster
-                    candidateUrls={posterCandidates}
-                    alt=""
-                    className={absClass}
-                    loading={imgLoading}
-                  />
-                ) : (
-                  <GalleryTileImage
-                    item={m}
-                    thumbsRootPath={thumbsRootPath}
-                    thumbVersion={thumbVersion}
-                    loading={imgLoading}
-                  />
-                )
-              )
-            )}
-            {measurementMode && (
-              <div className={cn("absolute inset-0 bg-card", absClass)} />
-            )}
-            {(m.isVideo || m.isVideoPoster) && !shouldAutoplay && <PlayBadge />}
-          </GraphicSurface>
-        );
-      })()}
-      {descriptor.variant === "social-media-grid" && media.length >= 2 && (
-        <GraphicSurface
-          insetMedia
-          className="w-full"
-          style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
-        >
-          <CloudBadge active={block.content_in_cloud} />
-          <GalleryTiles
-            items={media}
-            thumbsRootPath={thumbsRootPath}
-            thumbVersion={thumbVersion}
-            measurementMode={measurementMode}
-          />
-        </GraphicSurface>
-      )}
+              <GalleryTileImage
+                item={m}
+                thumbsRootPath={thumbsRootPath}
+                thumbVersion={thumbVersion}
+                loading={imgLoading}
+              />
+            )
+          )
+        )}
+        {measurementMode && (
+          <div className={cn("absolute inset-0 bg-card", absClass)} />
+        )}
+        {(m.isVideo || m.isVideoPoster) && !shouldAutoplay && <PlayBadge />}
+      </GraphicSurface>
+    );
+  })() : descriptor.variant === "social-media-grid" && media.length >= 2 ? (
+    // The same tile grid in either placement: edge to edge only widens the
+    // surface, the seams between tiles stay straight (Д21).
+    <GraphicSurface
+      insetMedia={insetMedia}
+      className="w-full"
+      style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
+    >
+      <CloudBadge active={block.content_in_cloud} />
+      <GalleryTiles
+        items={media}
+        thumbsRootPath={thumbsRootPath}
+        thumbVersion={thumbVersion}
+        measurementMode={measurementMode}
+      />
+    </GraphicSurface>
+  ) : null;
 
-      {hasTextStack && (
-        <div className={cn(media.length > 0 && "mt-3")}>
+  return (
+    <PostCardBody
+      placement={descriptor.mediaPlacement}
+      media={mediaSurface}
+      textStack={hasTextStack ? (
+        <>
           {text && (
             <p
               className="line-clamp-3 text-sm text-muted-foreground"
@@ -1221,17 +1229,67 @@ const SocialCard = memo(function SocialCard({
               by {block.author}
             </p>
           )}
-        </div>
-      )}
-    </div>
+        </>
+      ) : null}
+    />
   );
 });
 
-/// A post's media: one picture, one video, or the gallery. Inset inside a
-/// post card; the whole card in `Media`, where the post shows its media and
-/// nothing else (SPEC_FEED_DISPLAY.md, Д13).
+/// The body of a framed card with its media on top and its text under it:
+/// posts, articles, X and Instagram posts, and pictures `Cards` frames as
+/// posts.
+///
+/// Inset: the body is padded on every side and the media sits inside the
+/// padding with its own rounded outline. Edge to edge: the media spans the
+/// frame's inner width from its top edge, with no outline of its own; the
+/// frame's rounded clip gives it the card's top corners and its bottom corners
+/// stay square. The padding moves to the text alone: 16px at its sides and
+/// bottom as before, and above it the inset layout's own 12px gap under the
+/// media (the stack's `mt-3`, which a padding-free wrapper passes through
+/// unchanged), so the text keeps its place, its width and its font metrics
+/// (SPEC_FEED_DISPLAY.md, Д20, Д23). Edge media with no text under it is the
+/// whole body. `postCardHeight` in cardHeight.ts reserves exactly this.
+function PostCardBody({
+  placement,
+  media,
+  textStack,
+}: {
+  placement: FeedMedia | null;
+  /** The media surface, or null for a card without media. */
+  media: ReactNode;
+  /** The text under the media, or null when there is none. */
+  textStack: ReactNode;
+}) {
+  const hasMedia = media !== null;
+  const text = textStack !== null && (
+    <div className={cn(hasMedia && "mt-3")}>{textStack}</div>
+  );
+  if (placement === "edge" && hasMedia) {
+    return (
+      <div>
+        {media}
+        {text && <div className="px-4 pb-4">{text}</div>}
+      </div>
+    );
+  }
+  return (
+    <div className="p-4">
+      {media}
+      {text}
+    </div>
+  );
+}
+
+/// How a post's media surface sits in its card: `inset` inside the card's
+/// padding with its own rounded outline; `edge` across the frame's inner width
+/// with no outline of its own, the frame's clip rounding its top corners
+/// (SPEC_FEED_DISPLAY.md, Д20); `fill` the whole card, in `Media` (Д13).
+type PostMediaFit = FeedMedia | "fill";
+
+/// A post's media: one picture, one video, or the gallery, placed as `fit`
+/// says. In `Media` the post shows its media and nothing else (Д13).
 function PostMediaSurface({
-  inset,
+  fit,
   block,
   descriptor,
   previewManifest,
@@ -1242,7 +1300,7 @@ function PostMediaSurface({
   allowPlayback,
   measurementMode,
 }: {
-  inset: boolean;
+  fit: PostMediaFit;
   block: LightBlock;
   descriptor: CardLayoutDescriptor;
   previewManifest: ReturnType<typeof parsePreviewManifest>;
@@ -1270,8 +1328,8 @@ function PostMediaSurface({
     // while it is not made yet. Multi-image previews reserve a gallery slot;
     // single images use object-cover to avoid letterboxing in feed cards.
     <GraphicSurface
-      insetMedia={inset}
-      className={inset ? "w-full" : "h-full w-full"}
+      insetMedia={fit === "inset"}
+      className={fit === "fill" ? "h-full w-full" : "w-full"}
       style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
       data-card-preview-geometry={descriptor.primaryAspectRatio === null ? "pending" : undefined}
     >
@@ -1359,10 +1417,11 @@ const ArticleCard = memo(function ArticleCard({
   const hasTextStack = Boolean(displayTitle) || previewText.length > 0 || hasBottomMeta;
 
   return (
-    <div className="p-4">
-      {hasPreview && (
+    <PostCardBody
+      placement={descriptor.mediaPlacement}
+      media={hasPreview ? (
         <PostMediaSurface
-          inset
+          fit={descriptor.mediaPlacement ?? "inset"}
           block={block}
           descriptor={descriptor}
           previewManifest={previewManifest}
@@ -1373,9 +1432,9 @@ const ArticleCard = memo(function ArticleCard({
           allowPlayback={allowPlayback}
           measurementMode={measurementMode}
         />
-      )}
-      {hasTextStack && (
-        <div className={cn(hasPreview && "mt-3")}>
+      ) : null}
+      textStack={hasTextStack ? (
+        <>
           <p
             className="line-clamp-2 text-sm font-semibold text-foreground"
             style={contentCardSingleLineTextStyle}
@@ -1407,9 +1466,9 @@ const ArticleCard = memo(function ArticleCard({
               {block.author}
             </p>
           )}
-        </div>
-      )}
-    </div>
+        </>
+      ) : null}
+    />
   );
 });
 

@@ -1,6 +1,7 @@
 import type { LightBlock } from "@/types";
 import { normalizeFeedPreviewManifest } from "@/lib/feedPreview";
 import { getDisplayTitle, getFallbackLabel } from "@/lib/displayTitle";
+import type { FeedMedia } from "@/lib/feedDisplay";
 
 export type LayoutGenerationKey = string;
 export type BlockLayoutSignature = string;
@@ -62,6 +63,7 @@ export function buildLayoutGenerationKey({
   columnCount,
   layoutGap,
   show,
+  media,
 }: {
   blocks: readonly LightBlock[];
   routeKey?: string;
@@ -80,6 +82,8 @@ export function buildLayoutGenerationKey({
   layoutGap?: number;
   /** Card presentation (SPEC_FEED_DISPLAY.md): each has its own heights. */
   show?: string;
+  /** Media placement (SPEC_FEED_DISPLAY.md, Д23): each has its own heights. */
+  media?: FeedMedia;
 }): LayoutGenerationKey {
   const blockSignatures = blocks.map((block, index) => `${index}:${buildBlockLayoutSignature(block)}`);
   const orderedHash = hashString(blockSignatures.join("||"));
@@ -98,6 +102,7 @@ export function buildLayoutGenerationKey({
     `cc=${columnCount}`,
     `gap=${layoutGap ?? 32}`,
     `show=${show ?? "mixed"}`,
+    `media=${media ?? "inset"}`,
     `n=${blocks.length}`,
     `sig=${orderedHash}`,
     `edge=${hashString(edgeSample)}`,

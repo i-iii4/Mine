@@ -1,6 +1,6 @@
-// The feed's Display options: order, card presentation and spacing. A standard
-// command menu with one radio group per option; new options arrive as new
-// groups (SPEC_FEED_DISPLAY.md, Д1 to Д3).
+// The feed's Display options: order, card presentation, media placement and
+// spacing. A standard command menu with one radio group per option; new options
+// arrive as new groups (SPEC_FEED_DISPLAY.md, Д1 to Д3, Д19).
 
 import { Settings2 } from "lucide-react";
 import { useId } from "react";
@@ -21,7 +21,14 @@ import {
   useDensity,
   type DensityStep,
 } from "@/lib/density";
-import { setFeedShow, setFeedSort, useFeedDisplay, type FeedShow } from "@/lib/feedDisplay";
+import {
+  setFeedMedia,
+  setFeedShow,
+  setFeedSort,
+  useFeedDisplay,
+  type FeedMedia,
+  type FeedShow,
+} from "@/lib/feedDisplay";
 import { broadcastSettingsChange } from "@/lib/settingsChanged";
 import type { FeedOrder } from "@/types";
 
@@ -39,6 +46,11 @@ const SHOW_CHOICES: DisplayChoice<FeedShow>[] = [
   { value: "cards", label: "Cards" },
   { value: "mixed", label: "Mixed" },
   { value: "media", label: "Media" },
+];
+
+const MEDIA_CHOICES: DisplayChoice<FeedMedia>[] = [
+  { value: "inset", label: "Inset" },
+  { value: "edge", label: "Edge to edge" },
 ];
 
 const SPACING_CHOICES: DisplayChoice<string>[] = DENSITY_STEPS.map((step) => ({
@@ -101,7 +113,7 @@ function DisplayGroup<T extends string>({
 }
 
 export function FeedDisplayMenu() {
-  const { sort, show } = useFeedDisplay();
+  const { sort, show, media } = useFeedDisplay();
   const spacing = useDensity();
   const { triggerProps, handleCloseAutoFocus } =
     useTopChromeTriggerInteraction({ dragDisabled: true });
@@ -127,6 +139,8 @@ export function FeedDisplayMenu() {
         <DisplayGroup label="Sort" value={sort} choices={SORT_CHOICES} onChange={setFeedSort} />
         <DropdownMenuSeparator />
         <DisplayGroup label="Show" value={show} choices={SHOW_CHOICES} onChange={setFeedShow} />
+        <DropdownMenuSeparator />
+        <DisplayGroup label="Media" value={media} choices={MEDIA_CHOICES} onChange={setFeedMedia} />
         <DropdownMenuSeparator />
         <DisplayGroup
           label="Spacing"

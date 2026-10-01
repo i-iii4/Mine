@@ -512,8 +512,10 @@ describe("computeCardHeight — social", () => {
       preview_manifest: derivedPreviewManifest(["a.jpg", "b.jpg"]),
     });
     const h = computeCardHeight(block, 280, wordWidths);
-    // border 2 + top padding 16 + one media row 122 + text-stack gap 12 + author 16 + bottom padding 16
-    expect(h).toBe(184);
+    // border 2 + top padding 16 + the two-tile gallery at 2:1 across the
+    // padded width (246 / 2 = 123, the height its surface paints) + text-stack
+    // gap 12 + author 16 + bottom padding 16
+    expect(h).toBe(185);
   });
 
   it("enforces the interactive minimum for empty social cards", () => {
@@ -664,5 +666,121 @@ describe("card presentation heights (SPEC_FEED_DISPLAY.md, Д15)", () => {
     });
     expect(computeFeedPlaybackSurfaceEnvelope(post, 320, "media")).toEqual({ topOffsetPx: 1, heightPx: 318 });
     expect(computeCardHeight(post, 320, null, "media")).toBe(318 + CARD_BORDER);
+  });
+});
+
+describe("media placement heights (SPEC_FEED_DISPLAY.md, Д20 to Д23)", () => {
+  const COLUMN = 320;
+  const INNER = COLUMN - CARD_BORDER;
+  const PADDING = 16;
+  const TEXT_GAP = 12;
+  const singleVideoManifest = JSON.stringify({
+    kind: "video_poster",
+    primary_preview_path: "test.jpg",
+    width: 1280,
+    height: 720,
+    preview_width: 640,
+    preview_height: 360,
+    tiles: [{
+      source_path: "clip.mp4", preview_path: "test.preview-1.jpg",
+      width: 1280, height: 720, preview_width: 640, preview_height: 360,
+      is_video: true, is_video_poster: true,
+    }],
+    overflow_count: 0,
+  });
+  const playback = JSON.stringify({
+    kind: "single_video",
+    source_path: "clip.mp4",
+    poster_preview_path: "test.jpg",
+    width: 1280,
+    height: 720,
+    container: "mp4",
+  });
+
+  it("plays a post's single video over the media as it is placed (Д24)", () => {
+    const post = makeBlock({
+      block_type: "article",
+      title: "Clip",
+      body: "words\n\n![](clip.mp4)",
+      media_urls: "[\"clip.mp4\"]",
+      preview_manifest: singleVideoManifest,
+      feed_playback: playback,
+    });
+    // Inset: inside the border and the body's padding, across the padded width.
+    expect(computeFeedPlaybackSurfaceEnvelope(post, COLUMN, "mixed", "inset")).toEqual({
+      topOffsetPx: 1 + PADDING,
+      heightPx: Math.round((INNER - PADDING * 2) / (640 / 360)),
+    });
+    // Edge to edge: right under the border, across the frame's inner width.
+    expect(computeFeedPlaybackSurfaceEnvelope(post, COLUMN, "mixed", "edge")).toEqual({
+      topOffsetPx: 1,
+      heightPx: Math.round(INNER / (640 / 360)),
+    });
+  });
+
+  it("plays an X post's single video over the media as it is placed (Д24)", () => {
+    const post = makeBlock({
+      block_type: "article",
+      url: "https://x.com/someone/status/1",
+      body: "![](clip.mp4)",
+      media_urls: "[\"clip.mp4\"]",
+      preview_manifest: singleVideoManifest,
+      feed_playback: playback,
+    });
+    expect(computeFeedPlaybackSurfaceEnvelope(post, COLUMN, "mixed", "edge")).toEqual({
+      topOffsetPx: 1,
+      heightPx: Math.round(INNER / (640 / 360)),
+    });
+  });
+
+  it("gives an edge card the media's full width and keeps the text's lines and padding (Д20, Д23)", () => {
+    const widths: WordWidths = {
+      title: [60],
+      preview: [70, 30, 40],
+      titleSpace: 4,
+      previewSpace: 4,
+      titleNoSpaceBefore: [false],
+      previewNoSpaceBefore: [false, false, false],
+    };
+    const post = makeBlock({
+      block_type: "article",
+      title: "Sunset",
+      body: "Evening over the bay\n\n![](photo.jpg)",
+      media_urls: "[\"photo.jpg\"]",
+      preview_text: "Evening over the bay",
+      preview_manifest: artifactManifest(640, 480),
+    });
+    const textStack = 16 + 6 + 20;
+    expect(computeCardHeight(post, COLUMN, widths, "mixed", "inset")).toBe(
+      CARD_BORDER + PADDING + Math.round((INNER - PADDING * 2) / (640 / 480)) + TEXT_GAP + textStack + PADDING,
+    );
+    expect(computeCardHeight(post, COLUMN, widths, "mixed", "edge")).toBe(
+      CARD_BORDER + Math.round(INNER / (640 / 480)) + TEXT_GAP + textStack + PADDING,
+    );
+  });
+
+  it("leaves bare pictures, Media cards, links and text cards as they are (Д22)", () => {
+    const picture = makeBlock({ block_type: "image", media_file: "photo.jpg", preview_manifest: artifactManifest(640, 480) });
+    const post = makeBlock({
+      block_type: "article",
+      title: "A post",
+      body: "words\n\n![](photo.jpg)",
+      media_urls: "[\"photo.jpg\"]",
+      preview_manifest: artifactManifest(640, 480),
+    });
+    const text = makeBlock({ block_type: "article", title: "Only words", body: "Just text" });
+    const link = pageLink({ source: [1200, 630], artifact: [1200, 630] });
+    const unchanged: Array<[LightBlock, "mixed" | "cards" | "media"]> = [
+      [picture, "mixed"],
+      [post, "media"],
+      [picture, "media"],
+      [text, "cards"],
+      [link, "mixed"],
+      [link, "cards"],
+    ];
+    for (const [block, show] of unchanged) {
+      expect(computeCardHeight(block, COLUMN, null, show, "edge"))
+        .toBe(computeCardHeight(block, COLUMN, null, show, "inset"));
+    }
   });
 });

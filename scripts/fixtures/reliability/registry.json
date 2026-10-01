@@ -1225,6 +1225,27 @@
       "requirement": "SPEC_AUDIT_FIXES.md#| Д2.1 |",
       "tests": ["extension/popup/lib/folderState.test.ts", "extension/popup/hooks/useClipperState.standalone.test.tsx", "src-tauri/src/space_registry.rs", "src-tauri/src/bin/native_host.rs", "src-tauri/src/commands/vault.rs"],
       "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src/lib/feedDisplay.ts",
+        "src/lib/feedDisplay.test.ts",
+        "src/components/FeedDisplayMenu.tsx",
+        "src/components/FeedDisplayMenu.test.tsx",
+        "src/lib/cardLayout.ts",
+        "src/lib/cardLayout.test.ts",
+        "src/lib/cardHeight.ts",
+        "src/lib/cardHeight.test.ts",
+        "src/components/Card.tsx",
+        "src/components/Card.test.tsx",
+        "src/components/Grid.tsx",
+        "src/lib/layoutGeneration.ts",
+        "src/lib/layoutGeneration.test.ts",
+        "src/lib/gridLayoutReadiness.ts"
+      ],
+      "requirement": "SPEC_FEED_DISPLAY.md#**Д19.**",
+      "tests": ["src/lib/feedDisplay.test.ts", "src/components/FeedDisplayMenu.test.tsx", "src/lib/cardLayout.test.ts", "src/lib/cardHeight.test.ts", "src/components/Card.test.tsx", "src/lib/layoutGeneration.test.ts"],
+      "command": "test:frontend"
     }
   ],
   "release": null

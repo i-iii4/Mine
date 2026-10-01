@@ -3,10 +3,11 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Card, DragCardStackPreview, ReadOnlyCardPreview } from "./Card";
-import { FeedShowContext, type FeedShow } from "@/lib/feedDisplay";
+import { FeedMediaContext, FeedShowContext, type FeedMedia, type FeedShow } from "@/lib/feedDisplay";
 import { CARD_HOVER_ACTION_MIN_HEIGHT, computeCardHeight } from "@/lib/cardHeight";
 import { PROVISIONAL_MEDIA_ASPECT, clampCardAspect } from "@/lib/cardAspect";
 import type { LightBlock } from "@/types";
+import type { WordWidths } from "@/types/fontMetrics";
 
 vi.mock("@/lib/commands", () => ({
   getBlock: vi.fn(async () => ({ tags: [] })),
@@ -1784,6 +1785,317 @@ describe("Card geometry, author and name (SPEC_AUDIT_FIXES.md, Г4.5 to Г4.7)",
       </FeedShowContext.Provider>,
     );
     expect(screen.getByRole("button", { name: "Clip" })).toHaveAttribute("data-feed-card-frame");
+  });
+});
+
+// ─── Painted geometry ───────────────────────────────────────────────────────
+//
+// jsdom lays nothing out, so the tests below lay a card's markup out the way
+// the browser lays out the card body's block flow, from the classes and styles
+// React writes: the frame's 1px border, Tailwind padding and top margins,
+// surfaces as tall as their aspect-ratio makes them across the width they get,
+// and text lines at their line height. Every fixture's text fits on one line
+// at the test column, and the word widths handed to `computeCardHeight` say
+// the same, so both sides count the same lines.
+
+interface PaintedBox {
+  element: Element;
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+}
+
+/// Tailwind's spacing unit: `p-4` is 16px, `mt-1.5` is 6px.
+const SPACING_UNIT_PX = 4;
+/// The frame's `border`, 1px on every side.
+const FRAME_BORDER_PX = 1;
+
+function spacingPx(element: Element, utility: string): number {
+  const prefix = `${utility}-`;
+  for (const name of Array.from(element.classList)) {
+    if (!name.startsWith(prefix)) continue;
+    const value = Number(name.slice(prefix.length));
+    if (Number.isFinite(value)) return value * SPACING_UNIT_PX;
+  }
+  return 0;
+}
+
+function paddingPx(element: Element) {
+  const all = spacingPx(element, "p");
+  const x = spacingPx(element, "px") || all;
+  const y = spacingPx(element, "py") || all;
+  return {
+    top: spacingPx(element, "pt") || y,
+    bottom: spacingPx(element, "pb") || y,
+    left: spacingPx(element, "pl") || x,
+    right: spacingPx(element, "pr") || x,
+  };
+}
+
+function aspectRatioOf(element: Element): number | null {
+  if (element.classList.contains("aspect-video")) return 16 / 9;
+  const match = /aspect-ratio:\s*([0-9.]+)/.exec(element.getAttribute("style") ?? "");
+  return match ? Number(match[1]) : null;
+}
+
+function lineHeightPx(element: Element): number {
+  const match = /line-height:\s*([0-9.]+)px/.exec(element.getAttribute("style") ?? "");
+  if (!match) throw new Error(`Text without a line height: ${element.outerHTML}`);
+  return Number(match[1]);
+}
+
+function layOutBox(
+  element: Element,
+  top: number,
+  left: number,
+  width: number,
+  boxes: PaintedBox[],
+): number {
+  const padding = paddingPx(element);
+  const aspectRatio = aspectRatioOf(element);
+  let height: number;
+  if (aspectRatio !== null) {
+    // The layout reserves whole pixels, as `computeCardHeight` does.
+    height = Math.round(width / aspectRatio);
+  } else if (element.tagName === "P") {
+    const lines = element.textContent?.trim() ? 1 : 0;
+    height = padding.top + lines * lineHeightPx(element) + padding.bottom;
+  } else {
+    let cursor = padding.top;
+    for (const child of Array.from(element.children)) {
+      // Badges and overlays sit over the flow, not in it.
+      if (child.classList.contains("absolute")) continue;
+      cursor += spacingPx(child, "mt");
+      cursor += layOutBox(
+        child,
+        top + cursor,
+        left + padding.left,
+        width - padding.left - padding.right,
+        boxes,
+      );
+    }
+    height = cursor + padding.bottom;
+  }
+  boxes.push({ element, top, left, width, height });
+  return height;
+}
+
+/// A feed card in a presentation and a media placement, laid out at a column.
+function paintCard(value: LightBlock, show: FeedShow, media: FeedMedia, column: number) {
+  const markup = renderToStaticMarkup(
+    <FeedShowContext.Provider value={show}>
+      <FeedMediaContext.Provider value={media}>
+        <Card block={value} vaultPath={VAULT} onClick={vi.fn()} />
+      </FeedMediaContext.Provider>
+    </FeedShowContext.Provider>,
+  );
+  const frame = new DOMParser().parseFromString(markup, "text/html")
+    .querySelector("[data-feed-card-frame]");
+  if (!frame) throw new Error("The card painted no frame");
+  const boxes: PaintedBox[] = [];
+  let contentHeight = 0;
+  for (const child of Array.from(frame.children)) {
+    if (child.classList.contains("absolute")) continue;
+    contentHeight += layOutBox(
+      child,
+      FRAME_BORDER_PX + contentHeight,
+      FRAME_BORDER_PX,
+      column - FRAME_BORDER_PX * 2,
+      boxes,
+    );
+  }
+  const height = Math.max(CARD_HOVER_ACTION_MIN_HEIGHT, contentHeight + FRAME_BORDER_PX * 2);
+  const boxOf = (element: Element | null) => boxes.find((box) => box.element === element);
+  const surface = boxOf(frame.querySelector("[data-card-graphic-surface]"));
+  const text = boxes
+    .filter((box) => box.element.tagName === "P" && box.height > 0)
+    .sort((a, b) => a.top - b.top);
+  return { frame, height, surface, text };
+}
+
+describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д24)", () => {
+  const COLUMN = 320;
+  const INNER = COLUMN - FRAME_BORDER_PX * 2;
+  const PADDING = 16;
+  const TEXT_GAP = 12;
+  /// Every fixture's title and text fit on one line at this column.
+  const ONE_LINE: WordWidths = {
+    title: [60],
+    preview: [60],
+    titleSpace: 4,
+    previewSpace: 4,
+    titleNoSpaceBefore: [false],
+    previewNoSpaceBefore: [false],
+  };
+
+  const imageManifest = (width: number, height: number) => JSON.stringify({
+    kind: "image", primary_preview_path: "test-block.jpg", width, height,
+    preview_width: width, preview_height: height,
+    tiles: [{ source_path: "photo.jpg", preview_path: "test-block.preview-1.jpg",
+      width, height, preview_width: width, preview_height: height,
+      is_video: false, is_video_poster: false }],
+    overflow_count: 0,
+  });
+  const galleryManifest = (count: number) => JSON.stringify({
+    kind: "composite", primary_preview_path: "test-block.jpg", width: 1, height: 1,
+    preview_width: 640, preview_height: 640,
+    tiles: Array.from({ length: count }, (_unused, index) => ({
+      source_path: `photo-${index + 1}.jpg`, preview_path: `test-block.preview-${index + 1}.jpg`,
+      width: 640, height: 480, preview_width: 640, preview_height: 480,
+      is_video: false, is_video_poster: false,
+    })),
+    overflow_count: 0,
+  });
+  const videoManifest = JSON.stringify({
+    kind: "video_poster", primary_preview_path: "clip.jpg", width: null, height: null,
+    preview_width: 640, preview_height: 360,
+    tiles: [{ source_path: "Media/Clip.mp4", preview_path: "clip.jpg", width: null, height: null,
+      preview_width: 640, preview_height: 360, is_video: true, is_video_poster: true }],
+    overflow_count: 0,
+  });
+
+  const article = (manifest: string) => block({
+    block_type: "article", card_kind: "article", title: "A piece", description: null, url: null,
+    body: "Short words\n\n![](photo.jpg)", media_urls: "[\"photo.jpg\"]",
+    preview_text: "Short words", author: "Ann", preview_manifest: manifest,
+  });
+  const xPost = (manifest: string) => block({
+    block_type: "article", card_kind: "article", title: null, description: null,
+    url: "https://x.com/someone/status/1", body: "Hello there\n\n![](photo.jpg)",
+    media_urls: "[\"photo.jpg\"]", preview_text: "Hello there", author: "@someone",
+    preview_manifest: manifest,
+  });
+  const picture = () => block({
+    block_type: "image", title: null, url: null, media_file: "Media/Sunset.jpg",
+    fallback_label: "Sunset", preview_manifest: imageManifest(640, 480),
+  });
+  const video = () => block({
+    block_type: "video", title: null, url: null, media_file: "Media/Clip.mp4",
+    fallback_label: "Clip", author: "@filmmaker", preview_manifest: videoManifest,
+  });
+  const pageLink = () => block({
+    block_type: "link", title: "A page", url: "https://example.com/page",
+    preview_manifest: imageManifest(1200, 630),
+  });
+
+  const framedCards: Array<[string, () => LightBlock, FeedShow]> = [
+    ["an article with one picture", () => article(imageManifest(800, 600)), "mixed"],
+    ["an article with a gallery", () => article(galleryManifest(2)), "mixed"],
+    ["an X post with one picture", () => xPost(imageManifest(800, 1000)), "mixed"],
+    ["an X post with a two-tile gallery", () => xPost(galleryManifest(2)), "mixed"],
+    ["an X post with a four-tile gallery", () => xPost(galleryManifest(4)), "mixed"],
+    ["a picture Cards frames as a post", picture, "cards"],
+    ["a video Cards frames as a post", video, "cards"],
+  ];
+
+  it.each(framedCards)("reserves exactly the height %s paints, in either placement", (_card, make, show) => {
+    for (const media of ["inset", "edge"] as const) {
+      expect(paintCard(make(), show, media, COLUMN).height)
+        .toBe(computeCardHeight(make(), COLUMN, ONE_LINE, show, media));
+    }
+  });
+
+  it.each(framedCards)("runs the media of %s to the frame's top and sides, edge to edge (Д20)", (_card, make, show) => {
+    const { surface } = paintCard(make(), show, "edge", COLUMN);
+    // Right under the frame's top border, across its whole inner width.
+    expect(surface).toMatchObject({ top: FRAME_BORDER_PX, left: FRAME_BORDER_PX, width: INNER });
+    // No outline of its own: the frame's rounded clip gives the media the
+    // card's top corners and leaves its bottom corners square.
+    expect(surface?.element.hasAttribute("data-card-inset-media")).toBe(false);
+    expect(surface?.element.className).not.toMatch(/rounded/);
+    const inset = paintCard(make(), show, "inset", COLUMN).surface;
+    expect(inset).toMatchObject({ top: FRAME_BORDER_PX + PADDING, left: FRAME_BORDER_PX + PADDING, width: INNER - PADDING * 2 });
+    expect(inset?.element.hasAttribute("data-card-inset-media")).toBe(true);
+  });
+
+  it.each(framedCards)("keeps the text of %s where it was under the media (Д20, Д23)", (_card, make, show) => {
+    const edge = paintCard(make(), show, "edge", COLUMN);
+    const inset = paintCard(make(), show, "inset", COLUMN);
+    expect(edge.text.length).toBeGreaterThan(0);
+    // Same lines at the same width and the same side padding, so the same
+    // font metrics serve both placements.
+    expect(edge.text.map(({ left, width, height }) => ({ left, width, height })))
+      .toEqual(inset.text.map(({ left, width, height }) => ({ left, width, height })));
+    for (const line of edge.text) {
+      expect(line.left).toBe(FRAME_BORDER_PX + PADDING);
+      expect(line.width).toBe(INNER - PADDING * 2);
+    }
+    // The same 12px under the media and 16px under the text as inset.
+    const first = edge.text[0]!;
+    const last = edge.text[edge.text.length - 1]!;
+    const surface = edge.surface!;
+    expect(first.top - (surface.top + surface.height)).toBe(TEXT_GAP);
+    expect(edge.height - FRAME_BORDER_PX - (last.top + last.height)).toBe(PADDING);
+    const insetSurface = inset.surface!;
+    expect(inset.text[0]!.top - (insetSurface.top + insetSurface.height)).toBe(TEXT_GAP);
+  });
+
+  it("lays a gallery's tiles edge to edge with straight seams (Д21)", () => {
+    const edge = paintCard(xPost(galleryManifest(4)), "mixed", "edge", COLUMN);
+    const tiles = edge.frame.querySelectorAll("[data-card-media-tile]");
+    expect(tiles).toHaveLength(4);
+    // The same tile grid as inset, with no rounding of its own on any tile.
+    for (const tile of Array.from(tiles)) {
+      expect(tile.className).not.toMatch(/rounded/);
+    }
+    expect(edge.surface).toMatchObject({ width: INNER, height: INNER });
+  });
+
+  it("keeps a link's page picture where it always was: across the top, nothing to remove", () => {
+    for (const show of ["mixed", "cards"] as const) {
+      const edge = paintCard(pageLink(), show, "edge", COLUMN);
+      const inset = paintCard(pageLink(), show, "inset", COLUMN);
+      expect(edge.surface).toMatchObject({ top: FRAME_BORDER_PX, left: FRAME_BORDER_PX, width: INNER });
+      expect(edge.frame.outerHTML).toBe(inset.frame.outerHTML);
+      expect(computeCardHeight(pageLink(), COLUMN, null, show, "edge"))
+        .toBe(computeCardHeight(pageLink(), COLUMN, null, show, "inset"));
+    }
+  });
+
+  it("leaves frameless media and Media cards as they are (Д22)", () => {
+    const unchanged: Array<[LightBlock, FeedShow]> = [
+      [picture(), "mixed"],
+      [video(), "mixed"],
+      [picture(), "media"],
+      [article(imageManifest(800, 600)), "media"],
+      [xPost(galleryManifest(4)), "media"],
+    ];
+    for (const [value, show] of unchanged) {
+      expect(paintCard(value, show, "edge", COLUMN).frame.outerHTML)
+        .toBe(paintCard(value, show, "inset", COLUMN).frame.outerHTML);
+      expect(computeCardHeight(value, COLUMN, ONE_LINE, show, "edge"))
+        .toBe(computeCardHeight(value, COLUMN, ONE_LINE, show, "inset"));
+    }
+  });
+
+  it("keeps the hover controls over an edge card's media (Д24)", () => {
+    const post = article(imageManifest(800, 600));
+    const hoverProps = {
+      tags: [],
+      onToggleTag: vi.fn(),
+      onCreateAndAssign: vi.fn(),
+      onRequestRename: vi.fn(),
+      onRequestDelete: vi.fn(),
+    };
+    const controls = (media: FeedMedia) => {
+      const { container, unmount } = render(
+        <FeedMediaContext.Provider value={media}>
+          <Card block={post} vaultPath={VAULT} onClick={vi.fn()} {...hoverProps} />
+        </FeedMediaContext.Provider>,
+      );
+      const frame = container.querySelector("[data-feed-card-frame]");
+      // Everything over the body: the hover menu and whatever it positions.
+      // Radix numbers its triggers per render, which is not placement.
+      const overlay = Array.from(frame?.children ?? [])
+        .filter((child) => !child.contains(frame?.querySelector("[data-card-graphic-surface]") ?? null))
+        .map((child) => child.outerHTML.replace(/ id="radix-[^"]*"/g, ""));
+      unmount();
+      return overlay;
+    };
+    const edge = controls("edge");
+    expect(edge.length).toBeGreaterThan(0);
+    expect(edge).toEqual(controls("inset"));
   });
 });
 

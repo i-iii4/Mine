@@ -855,6 +855,83 @@ describe("card presentation in the feed (SPEC_FEED_DISPLAY.md, Д10 to Д14)", (
   });
 });
 
+describe("media placement (SPEC_FEED_DISPLAY.md, Д19 to Д23)", () => {
+  const picture = () => makeBlock({
+    block_type: "image",
+    media_file: "Media/Sunset.jpg",
+    fallback_label: "Sunset",
+    preview_manifest: readyImageManifest({ previewWidth: 640, previewHeight: 480 }),
+  });
+  const article = () => makeBlock({
+    block_type: "article",
+    title: "A post",
+    body: "Some words\n\n![](photo.jpg)",
+    media_urls: "[\"photo.jpg\"]",
+    preview_manifest: readyImageManifest({ previewWidth: 640, previewHeight: 480 }),
+  });
+  const xPost = () => makeBlock({
+    block_type: "article",
+    url: "https://x.com/someone/status/1",
+    body: "![](photo.jpg)",
+    media_urls: "[\"photo.jpg\"]",
+    preview_manifest: readyImageManifest({ previewWidth: 640, previewHeight: 480 }),
+  });
+  const xGallery = () => makeBlock({
+    block_type: "article",
+    url: "https://x.com/someone/status/2",
+    body: "![](a.jpg)\n![](b.jpg)",
+    media_urls: "[\"a.jpg\",\"b.jpg\"]",
+    preview_manifest: JSON.stringify({
+      kind: "composite", primary_preview_path: "test.jpg", width: 1, height: 1,
+      tiles: ["a", "b"].map((name, index) => ({
+        source_path: `${name}.jpg`, preview_path: `test.preview-${index + 1}.jpg`,
+        width: 1, height: 1, is_video: false, is_video_poster: false,
+      })),
+      overflow_count: 0,
+    }),
+  });
+  const textOnly = () => makeBlock({ block_type: "article", title: "Only words", body: "Just text" });
+
+  it("places the media of every framed card with media on top as the feed says (Д20)", () => {
+    const framed: Array<[string, LightBlock, "mixed" | "cards"]> = [
+      ["an article with a picture", article(), "mixed"],
+      ["an X post with one picture", xPost(), "mixed"],
+      ["an X post with a gallery", xGallery(), "mixed"],
+      ["a picture Cards frames as a post", picture(), "cards"],
+    ];
+    for (const [, block, show] of framed) {
+      expect(deriveCardLayoutDescriptor(block, show, "edge").mediaPlacement).toBe("edge");
+      expect(deriveCardLayoutDescriptor(block, show, "inset").mediaPlacement).toBe("inset");
+      // The default is the feed as it has always been.
+      expect(deriveCardLayoutDescriptor(block, show).mediaPlacement).toBe("inset");
+    }
+  });
+
+  it("changes nothing but the placement: content and shape stay (Д20, Д23)", () => {
+    for (const block of [article(), xPost(), xGallery()]) {
+      const { mediaPlacement: edgePlacement, ...edge } = deriveCardLayoutDescriptor(block, "mixed", "edge");
+      const { mediaPlacement: insetPlacement, ...inset } = deriveCardLayoutDescriptor(block, "mixed", "inset");
+      expect([edgePlacement, insetPlacement]).toEqual(["edge", "inset"]);
+      expect(edge).toEqual(inset);
+    }
+  });
+
+  it("leaves cards whose template places its media itself without a placement (Д22)", () => {
+    const unplaced: Array<[string, LightBlock, "mixed" | "cards" | "media"]> = [
+      ["a bare picture in Mixed", picture(), "mixed"],
+      ["a post's media alone in Media", article(), "media"],
+      ["a link's page picture", pageLink({ source: [1200, 630], artifact: [1200, 630] }), "mixed"],
+      ["a link's page picture in Cards", pageLink({ source: [1200, 630], artifact: [1200, 630] }), "cards"],
+      ["a text card", textOnly(), "cards"],
+    ];
+    for (const [, block, show] of unplaced) {
+      expect(deriveCardLayoutDescriptor(block, show, "edge"))
+        .toEqual(deriveCardLayoutDescriptor(block, show, "inset"));
+      expect(deriveCardLayoutDescriptor(block, show, "edge").mediaPlacement).toBeNull();
+    }
+  });
+});
+
 /// A link whose page picture came from a 1200x630 source, say, and whose
 /// preview artifact is another shape, or not measured yet.
 function pageLink(options: {

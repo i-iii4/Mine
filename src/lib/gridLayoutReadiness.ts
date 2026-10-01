@@ -72,7 +72,9 @@ export function blockHasExactDeterministicHeight(
   if (wordWidthsMap.has(block.id)) return true;
   // Text lines exist only where the presentation draws text: a picture in
   // `Cards` carries its name, a post in `Media` carries none
-  // (SPEC_FEED_DISPLAY.md, Д15).
+  // (SPEC_FEED_DISPLAY.md, Д15). The media placement takes no part: it moves a
+  // card's media and keeps its text and the text's width, so the same cards
+  // wait for word metrics in either placement (Д20, Д23).
   switch (deriveCardLayoutDescriptor(block, show).variant) {
     case "image":
     case "video":

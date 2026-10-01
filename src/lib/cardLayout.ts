@@ -4,7 +4,7 @@ import {
   type NormalizedFeedPreviewTile,
 } from "@/lib/feedPreview";
 import { getDisplayTitle, getNavigationLabel } from "@/lib/displayTitle";
-import type { FeedShow } from "@/lib/feedDisplay";
+import type { FeedMedia, FeedShow } from "@/lib/feedDisplay";
 import { clampCardAspect } from "@/lib/cardAspect";
 import { parseYoutubeSource } from "@/lib/youtubeSource";
 
@@ -39,7 +39,19 @@ export interface CardLayoutDescriptor {
   mediaItems: CardLayoutMediaItem[];
   visibleMediaCount: number;
   totalMediaCount: number;
+  /// Where a framed card's media on top sits (SPEC_FEED_DISPLAY.md, Д20 to
+  /// Д22): `inset` inside the card's padding, `edge` across the frame's inner
+  /// width from its top edge. Set for posts and articles with media, X and
+  /// Instagram posts, and pictures `Cards` frames as posts. Null for every
+  /// card whose template places its media itself: a link's page picture
+  /// already fills the frame's top with no padding of its own, bare pictures
+  /// and videos and `Media` cards fill the whole card, text cards have none.
+  mediaPlacement: FeedMedia | null;
 }
+
+/// A descriptor before the feed's media placement is applied: the card's
+/// content and shape, which no placement changes.
+type PlacementFreeDescriptor = Omit<CardLayoutDescriptor, "mediaPlacement">;
 
 export interface ContentCardSlots {
   hasTopContent: boolean;
@@ -257,7 +269,7 @@ function deriveMediaCardLayoutDescriptor(
   block: CardLayoutBlock,
   titleText: string,
   previewManifest: ReturnType<typeof parsePreviewManifest>,
-): CardLayoutDescriptor {
+): PlacementFreeDescriptor {
   const mediaItems = mediaItemsFromMediaMetadata(previewManifest);
 
   if (hasVideoMediaSignal(block, previewManifest, mediaItems)) {
@@ -337,7 +349,7 @@ function deriveArticleCardLayoutDescriptor(
   authorText: string,
   previewManifest: ReturnType<typeof parsePreviewManifest>,
   indexedPreviewText: string,
-): CardLayoutDescriptor {
+): PlacementFreeDescriptor {
   if (isSocialUrl(block.url)) {
     const previewText = indexedPreviewText || stripMarkdown((block.body.split(/^---+$/m)[0] ?? block.body).trim());
     const mediaItems = previewManifest ? mediaItemsFromManifestTiles(previewManifest.tiles) : [];
@@ -414,7 +426,7 @@ function deriveLinkCardLayoutDescriptor(
   titleText: string,
   previewManifest: ReturnType<typeof parsePreviewManifest>,
   indexedPreviewText: string,
-): CardLayoutDescriptor {
+): PlacementFreeDescriptor {
   const mediaItems = previewManifest ? mediaItemsFromManifestTiles(previewManifest.tiles) : [];
   const hasVisualPreview = previewManifest?.kind !== undefined
     && previewManifest.kind !== "text"
@@ -447,25 +459,44 @@ function deriveLinkCardLayoutDescriptor(
   };
 }
 
-/// The card's layout in the feed's presentation (SPEC_FEED_DISPLAY.md, Д10 to
-/// Д14). `mixed` is the feed as it has always been; the other two are derived
-/// from it, so each card keeps one geometry per presentation.
+/// Framed cards that carry media on top of their text: the cards `Media`
+/// reduces to their media (Д13) and the cards the media placement shapes
+/// (Д20).
+const MEDIA_BEARING_VARIANTS: ReadonlySet<CardLayoutVariant> = new Set([
+  "article-media",
+  "social-single-media",
+  "social-media-grid",
+]);
+
+/// The card's layout in the feed's presentation and media placement
+/// (SPEC_FEED_DISPLAY.md, Д10 to Д14, Д19 to Д23). `mixed` is the feed as it
+/// has always been; the other two are derived from it, so each card keeps one
+/// geometry per presentation. The placement changes no content and no shape,
+/// only where a framed card's media on top sits.
 export function deriveCardLayoutDescriptor(
   block: CardLayoutBlock,
   show: FeedShow = "mixed",
+  media: FeedMedia = "inset",
 ): CardLayoutDescriptor {
   const previewManifest = parsePreviewManifest(block);
   const mixed = deriveMixedCardLayoutDescriptor(block, previewManifest);
-  if (show === "cards") return asPostCard(block, mixed);
-  if (show === "media") return asMediaOnly(mixed, previewManifest);
-  return mixed;
+  const presented = show === "cards"
+    ? asPostCard(block, mixed)
+    : show === "media"
+      ? asMediaOnly(mixed, previewManifest)
+      : mixed;
+  return {
+    ...presented,
+    mediaPlacement: MEDIA_BEARING_VARIANTS.has(presented.variant) ? media : null,
+  };
 }
 
-/// `Cards`: a picture or video card becomes a post card, its media inset in the
-/// frame and under it its name (the title, or the file name without one), its
+/// `Cards`: a picture or video card becomes a post card, its media on top in
+/// the frame (inset or edge to edge, as the placement says) and under it its
+/// name (the title, or the file name without one), its
 /// text and its author when it has them (Д12). Every other card is framed
 /// already.
-function asPostCard(block: CardLayoutBlock, mixed: CardLayoutDescriptor): CardLayoutDescriptor {
+function asPostCard(block: CardLayoutBlock, mixed: PlacementFreeDescriptor): PlacementFreeDescriptor {
   if (mixed.variant !== "image" && mixed.variant !== "video") return mixed;
   return {
     ...mixed,
@@ -476,20 +507,14 @@ function asPostCard(block: CardLayoutBlock, mixed: CardLayoutDescriptor): CardLa
   };
 }
 
-const MEDIA_BEARING_VARIANTS: ReadonlySet<CardLayoutVariant> = new Set([
-  "article-media",
-  "social-single-media",
-  "social-media-grid",
-]);
-
 /// `Media`: a card with media shows only its media; several media stay the
 /// usual gallery. A link's page picture is media like any other (Д13, Д14):
 /// it leaves the framed link's fixed slot and takes its own artifact's shape,
 /// like a post's single media, the provisional envelope until it is measured.
 function asMediaOnly(
-  mixed: CardLayoutDescriptor,
+  mixed: PlacementFreeDescriptor,
   previewManifest: ReturnType<typeof parsePreviewManifest>,
-): CardLayoutDescriptor {
+): PlacementFreeDescriptor {
   const linkPicture = mixed.variant === "link" && mixed.mediaItems.length > 0;
   if (!MEDIA_BEARING_VARIANTS.has(mixed.variant) && !linkPicture) return mixed;
   return {
@@ -507,7 +532,7 @@ function asMediaOnly(
 function deriveMixedCardLayoutDescriptor(
   block: CardLayoutBlock,
   previewManifest: ReturnType<typeof parsePreviewManifest>,
-): CardLayoutDescriptor {
+): PlacementFreeDescriptor {
   const titleText = getDisplayTitle(block) ?? "";
   const authorText = block.author ?? "";
   const indexedPreviewText = block.preview_text?.trim() ?? "";

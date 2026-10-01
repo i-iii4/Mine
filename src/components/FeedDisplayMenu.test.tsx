@@ -43,17 +43,31 @@ describe("Display menu (SPEC_FEED_DISPLAY.md, Д1 to Д3)", () => {
     expect(menu).toHaveAttribute("data-align", "end");
   });
 
-  it("offers Sort, Show and Spacing as radio groups, each marking the current choice", async () => {
+  it("offers Sort, Show, Media and Spacing as radio groups, each marking the current choice", async () => {
     await openMenu();
-    expect(screen.getAllByRole("group").map((group) => group.textContent)).toEqual([
+    const groups = screen.getAllByRole("group");
+    // Each group is named by the caption above it, in this order (Д2, Д19).
+    expect(groups.map((group) =>
+      document.getElementById(group.getAttribute("aria-labelledby") ?? "")?.textContent,
+    )).toEqual(["Sort", "Show", "Media", "Spacing"]);
+    expect(groups.map((group) => group.textContent)).toEqual([
       "Newest firstOldest first",
       "CardsMixedMedia",
+      "InsetEdge to edge",
       "322416",
     ]);
     expect(checkedIn("Sort")).toEqual(["Newest first"]);
     expect(checkedIn("Show")).toEqual(["Mixed"]);
+    expect(checkedIn("Media")).toEqual(["Inset"]);
     expect(checkedIn("Spacing")).toEqual(["32"]);
-    expect(screen.getAllByRole("separator")).toHaveLength(2);
+    expect(screen.getAllByRole("separator")).toHaveLength(3);
+  });
+
+  it("marks the stored media placement when it opens (Д18, Д19)", async () => {
+    window.localStorage.setItem("mine.feed.media", "edge");
+    reloadFeedDisplay();
+    await openMenu();
+    expect(checkedIn("Media")).toEqual(["Edge to edge"]);
   });
 
   it("keeps every row on the menu's text column, the check in the leading icon slot", async () => {
@@ -73,15 +87,18 @@ describe("Display menu (SPEC_FEED_DISPLAY.md, Д1 to Д3)", () => {
     const user = await openMenu();
     await user.click(screen.getByRole("menuitemradio", { name: "Oldest first" }));
     await user.click(screen.getByRole("menuitemradio", { name: "Media" }));
+    await user.click(screen.getByRole("menuitemradio", { name: "Edge to edge" }));
     await user.click(screen.getByRole("menuitemradio", { name: "24" }));
 
-    expect(getFeedDisplay()).toEqual({ sort: "oldest", show: "media" });
+    expect(getFeedDisplay()).toEqual({ sort: "oldest", show: "media", media: "edge" });
     expect(window.localStorage.getItem("mine.feed.sort")).toBe("oldest");
     expect(window.localStorage.getItem("mine.feed.show")).toBe("media");
+    expect(window.localStorage.getItem("mine.feed.media")).toBe("edge");
     expect(window.localStorage.getItem("mine.spacing")).toBe("24");
     expect(screen.getByRole("menu")).toBeInTheDocument();
     expect(checkedIn("Sort")).toEqual(["Oldest first"]);
     expect(checkedIn("Show")).toEqual(["Media"]);
+    expect(checkedIn("Media")).toEqual(["Edge to edge"]);
     expect(checkedIn("Spacing")).toEqual(["24"]);
   });
 

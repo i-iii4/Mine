@@ -17,7 +17,7 @@ import {
 import type { LightBlock, TagCount } from "@/types";
 import { TopFadeScrim } from "./TopFadeScrim";
 import { useDensity } from "@/lib/density";
-import { FeedShowContext, useFeedDisplay, type FeedShow } from "@/lib/feedDisplay";
+import { FeedMediaContext, FeedShowContext, useFeedDisplay, type FeedMedia, type FeedShow } from "@/lib/feedDisplay";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { Card, CardSkeleton } from "./Card";
 import { EmptySpaceOnboarding } from "./EmptySpaceOnboarding";
@@ -320,11 +320,12 @@ function buildLayout(
   wordWidthsMap: Map<number, WordWidths>,
   gap: number,
   show: FeedShow,
+  media: FeedMedia,
 ): MasonryLayout {
   const columnWidth = deriveColumnWidth(parentWidth, gap);
 
   const heights = blocks.map((block) => {
-    return computeCardHeight(block, columnWidth, wordWidthsMap.get(block.id) ?? null, show);
+    return computeCardHeight(block, columnWidth, wordWidthsMap.get(block.id) ?? null, show, media);
   });
 
   return computeMasonryLayout(
@@ -485,9 +486,10 @@ export function Grid({
 }: GridProps) {
   const spacing = useDensity();
   const layoutGap = spacing;
-  // Presentation of the cards (SPEC_FEED_DISPLAY.md, Д10 to Д16): one value
-  // read by the layout, the heights and every card below.
-  const { show } = useFeedDisplay();
+  // Presentation of the cards and placement of their media
+  // (SPEC_FEED_DISPLAY.md, Д10 to Д16, Д19 to Д24): one pair of values read by
+  // the layout, the heights and every card below.
+  const { show, media } = useFeedDisplay();
   const gridXInset = spacing;
   const gridTopInset = spacing;
   const parentRef = useRef<HTMLDivElement>(null);
@@ -788,11 +790,13 @@ export function Grid({
       columnWidth,
       columnCount,
       // The module-level layoutCache must never serve a layout computed with
-      // a different gap (design variants change it) or presentation.
+      // a different gap (design variants change it), presentation or media
+      // placement (Д23).
       layoutGap,
       show,
+      media,
     }),
-    [blocks, columnCount, columnWidth, currentTag, layoutGap, show],
+    [blocks, columnCount, columnWidth, currentTag, layoutGap, media, show],
   );
   const heightDriftBlocksById = useMemo(() => {
     const map = new Map<number, LightBlock>();
@@ -807,12 +811,14 @@ export function Grid({
     parentWidth: number;
     wordWidthsMap: Map<number, WordWidths>;
     show: FeedShow;
+    media: FeedMedia;
   }>({
     blocksById: heightDriftBlocksById,
     generationKey,
     parentWidth,
     wordWidthsMap,
     show,
+    media,
   });
   heightDriftContextRef.current = {
     blocksById: heightDriftBlocksById,
@@ -820,6 +826,7 @@ export function Grid({
     parentWidth,
     wordWidthsMap,
     show,
+    media,
   };
   useEffect(() => {
     return () => {
@@ -910,7 +917,7 @@ export function Grid({
               block,
               measuredHeight: result.height,
               deterministicHeight: Math.ceil(
-                computeCardHeight(block, columnWidth, wordWidths, driftContext.show),
+                computeCardHeight(block, columnWidth, wordWidths, driftContext.show, driftContext.media),
               ),
               wordMetricsReady: !wordMetricsRequired || wordWidths !== null,
             });
@@ -945,16 +952,16 @@ export function Grid({
     }
 
     if (!allCurrentGenerationDeterministic) {
-      return buildLayout(blocks, parentWidth, wordWidthsMap, layoutGap, show);
+      return buildLayout(blocks, parentWidth, wordWidthsMap, layoutGap, show, media);
     }
 
     const cached = layoutCache.get(generationKey);
     if (cached) return cached;
 
-    const fresh = buildLayout(blocks, parentWidth, wordWidthsMap, layoutGap, show);
+    const fresh = buildLayout(blocks, parentWidth, wordWidthsMap, layoutGap, show, media);
     layoutCache.set(generationKey, fresh);
     return fresh;
-  }, [allCurrentGenerationDeterministic, blocks, generationKey, layoutGap, parentWidth, show, wordWidthsMap]);
+  }, [allCurrentGenerationDeterministic, blocks, generationKey, layoutGap, media, parentWidth, show, wordWidthsMap]);
 
   useEffect(() => {
     onColumnCountChange?.(layout.columnCount);
@@ -1983,6 +1990,7 @@ export function Grid({
         block,
         item.width,
         show,
+        media,
       );
       if (!playbackSurface) continue;
 
@@ -2031,8 +2039,10 @@ export function Grid({
   }, [
     autoplayEligibleBySlug,
     blocks,
+    media,
     renderReadyBlockIds,
     scrollTop,
+    show,
     viewportHeight,
     visibleItems,
   ]);
@@ -2236,6 +2246,7 @@ export function Grid({
     // The band is a sibling of the scrollport, not a child: inside it, it would
     // inherit the scrollport's padding and add layout work to the scrolled tree.
     <FeedShowContext.Provider value={show}>
+    <FeedMediaContext.Provider value={media}>
     <div className="relative h-full">
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -2374,6 +2385,7 @@ export function Grid({
     </ContextMenu>
       <TopFadeScrim scrolled={topFade.scrolled} surface="feed" color="var(--background)" />
     </div>
+    </FeedMediaContext.Provider>
     </FeedShowContext.Provider>
   );
 }

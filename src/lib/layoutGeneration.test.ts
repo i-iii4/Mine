@@ -127,4 +127,20 @@ describe("buildLayoutGenerationKey", () => {
       generationKey([makeBlock(1, { author: "B" })]),
     );
   });
+
+  it("changes with the media placement, so the cache never serves the other one's heights (SPEC_FEED_DISPLAY.md, Д23)", () => {
+    const blocks = [makeBlock(1), makeBlock(2)];
+    const keyFor = (media: "inset" | "edge" | undefined) => buildLayoutGenerationKey({
+      blocks,
+      routeKey: "__all__",
+      columnWidth: getMasonryColumnWidth(1200, 220, 32),
+      columnCount: getMasonryColumnCount(1200, 220, 32),
+      layoutGap: 32,
+      show: "cards",
+      media,
+    });
+    expect(keyFor("edge")).not.toBe(keyFor("inset"));
+    // Inset is the default placement: an unset placement is the same layout.
+    expect(keyFor(undefined)).toBe(keyFor("inset"));
+  });
 });

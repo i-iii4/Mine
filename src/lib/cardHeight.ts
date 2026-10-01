@@ -17,7 +17,7 @@ import { countLines } from "./wordWrap";
 import { deriveCardLayoutDescriptor, deriveContentCardSlots, getRuntimeCardKind, parsePreviewManifest } from "./cardLayout";
 import { CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX } from "./cardTypography";
 import { PROVISIONAL_MEDIA_ASPECT, clampCardAspect } from "./cardAspect";
-import type { FeedShow } from "./feedDisplay";
+import type { FeedMedia, FeedShow } from "./feedDisplay";
 
 export interface FeedPlaybackSurfaceEnvelope {
   topOffsetPx: number;
@@ -88,27 +88,32 @@ const FILE_CARD_HEIGHT = 88;
  */
 export const CARD_HOVER_ACTION_MIN_HEIGHT = 90;
 
-/** Social cards use p-4 container. */
-const SOCIAL_PADDING_X = 16;
-const SOCIAL_PADDING_TOP = 16;
-const SOCIAL_PADDING_BOTTOM = 16;
+// ─── Post card body constants (must match PostCardBody in Card.tsx) ───────
+//
+// Posts, articles, collections, X and Instagram posts and pictures `Cards`
+// frames as posts share one body: media on top, the text stack under it.
+
+/**
+ * The body's padding on every side (p-4). It surrounds the whole body when
+ * the media is inset, and the text stack alone when the media runs edge to
+ * edge (SPEC_FEED_DISPLAY.md, Д20).
+ */
+const POST_PADDING = 16;
+
+/**
+ * Gap between the media and the text stack under it (mt-3 = 12px). Edge to
+ * edge keeps it: the text stack sits under edge media exactly as it sits
+ * under inset media, with the same width, so only the media's own padding
+ * goes (Д20, Д23).
+ */
+const POST_GAP_BEFORE_TEXT_STACK = 12;
+
 const SOCIAL_PREVIEW_LINE_HEIGHT = CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX;
 const SOCIAL_AUTHOR_LINE_HEIGHT = 16;
 const SOCIAL_PREVIEW_MAX_LINES = 3;
-const SOCIAL_GAP_BEFORE_TEXT_STACK = 12;
 const SOCIAL_GAP_BEFORE_AUTHOR = 8;
-const SOCIAL_GRID_GAP = 2;
 
 // ─── Article card constants (must match Card.tsx ArticleCard template) ─────
-
-/** Horizontal padding on each side of the article card (p-4). */
-const ARTICLE_PADDING_X = 16;
-
-/** Vertical padding at top of article card (p-4). */
-const ARTICLE_PADDING_TOP = 16;
-
-/** Vertical padding at bottom of article card (p-4). */
-const ARTICLE_PADDING_BOTTOM = 16;
 
 /**
  * Line height of the title paragraph. text-sm in our theme has 16px line
@@ -128,9 +133,6 @@ const ARTICLE_AUTHOR_LINE_HEIGHT = 16;
 /** Margin between title and preview (mt-1.5 = 6px). */
 const ARTICLE_GAP_TITLE_TO_PREVIEW = 6;
 
-/** Margin between media and the following text stack (mt-3 = 12px). */
-const ARTICLE_GAP_BEFORE_TEXT_STACK = 12;
-
 /** Margin from previous block to author (mt-2 = 8px). */
 const ARTICLE_GAP_BEFORE_AUTHOR = 8;
 
@@ -142,11 +144,6 @@ const ARTICLE_PREVIEW_MAX_LINES_WITH_IMAGE = 3;
 
 /** Maximum preview lines without image (line-clamp-8). */
 const ARTICLE_PREVIEW_MAX_LINES_NO_IMAGE = 8;
-
-/**
- * Fixed aspect ratio for article first_image. Card.tsx forces aspect-video
- * (16:9) on the image so height is deterministic without metadata.
- */
 
 // ─── Image-card fallback when no width/height metadata ──────────────────────
 
@@ -215,6 +212,64 @@ function computeImageHeight(block: LightBlock, columnWidth: number): number {
   return DEFAULT_CARD_HEIGHT;
 }
 
+// ─── Post card body ─────────────────────────────────────────────────────────
+
+/**
+ * Width a post card's media is painted at: the frame's inner width when it
+ * runs edge to edge, that width less the body's padding when it is inset
+ * (SPEC_FEED_DISPLAY.md, Д20).
+ */
+function postMediaWidth(iw: number, placement: FeedMedia | null): number {
+  return placement === "edge" ? iw : Math.max(1, iw - POST_PADDING * 2);
+}
+
+/** Top of a post card's media inside the card's outer box. */
+function postMediaTop(placement: FeedMedia | null): number {
+  return CARD_BORDER_TOP + (placement === "edge" ? 0 : POST_PADDING);
+}
+
+/** Height of a post card's media surface at the shape the descriptor gives
+ *  it: one picture, one video or a whole gallery alike. */
+function postMediaHeight(iw: number, placement: FeedMedia | null, aspectRatio: number | null): number {
+  return Math.round(
+    postMediaWidth(iw, placement) / Math.max(aspectRatio ?? PROVISIONAL_MEDIA_ASPECT, 0.01),
+  );
+}
+
+/**
+ * Outer height of a post card's body: media on top, the text stack under it.
+ *
+ * Inset: the body is padded on every side and the media sits inside the
+ * padding, the text stack 12px under it. Edge to edge: the media starts at
+ * the frame's top edge; the padding moves to the text stack alone, which
+ * keeps its sides, its bottom and its 12px gap under the media, so it keeps
+ * its place and its width. Edge media with no text under it is the whole
+ * body. `textStackH` is the stack's own height, its inner gaps included.
+ */
+function postCardHeight(
+  placement: FeedMedia | null,
+  mediaH: number,
+  hasTextStack: boolean,
+  textStackH: number,
+): number {
+  const hasMedia = mediaH > 0;
+  if (placement === "edge" && hasMedia) {
+    return (
+      CARD_BORDER_HEIGHT +
+      mediaH +
+      (hasTextStack ? POST_GAP_BEFORE_TEXT_STACK + textStackH + POST_PADDING : 0)
+    );
+  }
+  return (
+    CARD_BORDER_HEIGHT +
+    POST_PADDING +
+    mediaH +
+    (hasMedia && hasTextStack ? POST_GAP_BEFORE_TEXT_STACK : 0) +
+    textStackH +
+    POST_PADDING
+  );
+}
+
 // ─── Article-card computation ───────────────────────────────────────────────
 
 function computeArticleHeight(
@@ -222,96 +277,66 @@ function computeArticleHeight(
   columnWidth: number,
   wordWidths: WordWidths | null,
   show: FeedShow = "mixed",
+  media: FeedMedia = "inset",
 ): number {
-  const descriptor = deriveCardLayoutDescriptor(block, show);
+  const descriptor = deriveCardLayoutDescriptor(block, show, media);
   const slots = deriveContentCardSlots(descriptor);
-  // Width inside the card border. Article padding is applied inside this.
   const iw = innerWidth(columnWidth);
-  const contentWidth = Math.max(1, iw - ARTICLE_PADDING_X * 2);
+  // The text column sits inside the body's padding in either media placement,
+  // so its lines wrap the same way whatever the placement.
+  const contentWidth = Math.max(1, iw - POST_PADDING * 2);
+  const hasImage = descriptor.variant === "article-media";
+  const previewMax = hasImage
+    ? ARTICLE_PREVIEW_MAX_LINES_WITH_IMAGE
+    : ARTICLE_PREVIEW_MAX_LINES_NO_IMAGE;
 
-  if (wordWidths) {
-    // Precise path: known word widths, exact line count.
-    const titleLines = descriptor.titleText
+  // Known word widths give the exact line count. Without them the card
+  // reserves the worst clamped geometry of its template, so visible cards
+  // never overlap while exact font metrics are still loading.
+  const titleLines = !descriptor.titleText
+    ? 0
+    : wordWidths
       ? Math.min(
           ARTICLE_TITLE_MAX_LINES,
           Math.max(1, countLines(wordWidths.title, wordWidths.titleSpace, contentWidth, wordWidths.titleNoSpaceBefore)),
         )
-      : 0;
-    const previewMax = descriptor.variant === "article-media"
-      ? ARTICLE_PREVIEW_MAX_LINES_WITH_IMAGE
-      : ARTICLE_PREVIEW_MAX_LINES_NO_IMAGE;
-    const previewLines = descriptor.previewText
+      : ARTICLE_TITLE_MAX_LINES;
+  const previewLines = !descriptor.previewText
+    ? 0
+    : wordWidths
       ? Math.min(
           previewMax,
           Math.max(0, countLines(wordWidths.preview, wordWidths.previewSpace, contentWidth, wordWidths.previewNoSpaceBefore)),
         )
-      : 0;
+      : previewMax;
 
-    const titleH = titleLines * ARTICLE_TITLE_LINE_HEIGHT;
-    const previewH = previewLines * ARTICLE_PREVIEW_LINE_HEIGHT;
-    // Image width = card inner width - article padding on both sides.
-    // Height = that width × aspect-video ratio (9/16).
-    const imageH = descriptor.variant === "article-media"
-      ? Math.round(contentWidth / Math.max(descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT, 0.01))
-      : 0;
-    const authorH = descriptor.authorText ? ARTICLE_AUTHOR_LINE_HEIGHT : 0;
-
-    // Gap structure mirroring Card.tsx mt-* classes:
-    //   image → title: mt-3 (12px), only when image exists
-    //   title → preview: mt-1.5 (6px), only when preview exists
-    //   (previous) → author: mt-2 (8px), only when author exists
-    const hasTitle = titleH > 0;
-    const hasPreview = previewH > 0;
-    const hasMedia = imageH > 0;
-    const hasBottomMeta = authorH > 0;
-    const gaps =
-      (hasMedia && (hasTitle || hasPreview || hasBottomMeta) ? ARTICLE_GAP_BEFORE_TEXT_STACK : 0) +
-      (hasTitle && hasPreview ? ARTICLE_GAP_TITLE_TO_PREVIEW : 0) +
-      ((hasTitle || hasPreview || hasMedia) && hasBottomMeta ? ARTICLE_GAP_BEFORE_AUTHOR : 0);
-
-    return (
-      CARD_BORDER_HEIGHT +
-      ARTICLE_PADDING_TOP +
-      titleH +
-      previewH +
-      imageH +
-      authorH +
-      gaps +
-      ARTICLE_PADDING_BOTTOM
-    );
-  }
-
-  // Fallback path: reserve enough space for the worst clamped text/image
-  // geometry of this template so visible cards never overlap while exact
-  // font metrics are still loading.
-  const titleLines = descriptor.titleText ? ARTICLE_TITLE_MAX_LINES : 0;
-  const previewLines = descriptor.previewText
-    ? (descriptor.variant === "article-media"
-      ? ARTICLE_PREVIEW_MAX_LINES_WITH_IMAGE
-      : ARTICLE_PREVIEW_MAX_LINES_NO_IMAGE)
-    : 0;
-  const imageH = descriptor.variant === "article-media"
-    ? Math.round(contentWidth / Math.max(descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT, 0.01))
+  const titleH = titleLines * ARTICLE_TITLE_LINE_HEIGHT;
+  const previewH = previewLines * ARTICLE_PREVIEW_LINE_HEIGHT;
+  const imageH = hasImage
+    ? postMediaHeight(iw, descriptor.mediaPlacement, descriptor.primaryAspectRatio)
     : 0;
   const authorH = descriptor.authorText ? ARTICLE_AUTHOR_LINE_HEIGHT : 0;
-  const hasTitle = descriptor.titleText.length > 0;
-  const hasPreviewText = descriptor.previewText.length > 0 && previewLines > 0;
+
+  // Gap structure mirroring Card.tsx mt-* classes:
+  //   image → text stack: mt-3 (12px), counted by `postCardHeight`
+  //   title → preview: mt-1.5 (6px), only when preview exists
+  //   (previous) → author: mt-2 (8px), only when author exists
+  const hasTitle = titleH > 0;
+  const hasPreview = previewH > 0;
   const hasMedia = imageH > 0;
   const hasBottomMeta = authorH > 0 && (slots?.hasBottomMeta ?? false);
-  const gaps =
-    (hasMedia && (hasTitle || hasPreviewText || hasBottomMeta) ? ARTICLE_GAP_BEFORE_TEXT_STACK : 0) +
-    (hasTitle && hasPreviewText ? ARTICLE_GAP_TITLE_TO_PREVIEW : 0) +
-    ((hasTitle || hasPreviewText || hasMedia) && hasBottomMeta ? ARTICLE_GAP_BEFORE_AUTHOR : 0);
-
-  return (
-    CARD_BORDER_HEIGHT +
-    ARTICLE_PADDING_TOP +
-    titleLines * ARTICLE_TITLE_LINE_HEIGHT +
-    previewLines * ARTICLE_PREVIEW_LINE_HEIGHT +
-    imageH +
+  const textStackH =
+    titleH +
+    previewH +
     authorH +
-    gaps +
-    ARTICLE_PADDING_BOTTOM
+    (hasTitle && hasPreview ? ARTICLE_GAP_TITLE_TO_PREVIEW : 0) +
+    ((hasTitle || hasPreview || hasMedia) && hasBottomMeta ? ARTICLE_GAP_BEFORE_AUTHOR : 0);
+
+  return postCardHeight(
+    descriptor.mediaPlacement,
+    imageH,
+    hasTitle || hasPreview || hasBottomMeta,
+    textStackH,
   );
 }
 
@@ -320,11 +345,13 @@ function computeSocialHeight(
   columnWidth: number,
   wordWidths: WordWidths | null,
   show: FeedShow = "mixed",
+  media: FeedMedia = "inset",
 ): number {
-  const descriptor = deriveCardLayoutDescriptor(block, show);
+  const descriptor = deriveCardLayoutDescriptor(block, show, media);
   const slots = deriveContentCardSlots(descriptor);
   const iw = innerWidth(columnWidth);
-  const contentWidth = Math.max(1, iw - SOCIAL_PADDING_X * 2);
+  // The text column, inside the body's padding in either media placement.
+  const contentWidth = Math.max(1, iw - POST_PADDING * 2);
 
   const previewLines = wordWidths
     ? (descriptor.previewText
@@ -338,32 +365,26 @@ function computeSocialHeight(
   const previewH = previewLines * SOCIAL_PREVIEW_LINE_HEIGHT;
   const authorH = descriptor.authorText ? SOCIAL_AUTHOR_LINE_HEIGHT : 0;
 
-  let mediaH = 0;
-  if (descriptor.variant === "social-single-media") {
-    mediaH = Math.round(
-      contentWidth / Math.max(descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT, 0.01),
-    );
-  } else if (descriptor.variant === "social-media-grid") {
-    const rows = Math.ceil(descriptor.visibleMediaCount / 2);
-    const cell = Math.max(1, Math.round((contentWidth - SOCIAL_GRID_GAP) / 2));
-    mediaH = rows * cell + Math.max(0, rows - 1) * SOCIAL_GRID_GAP;
-  }
+  // One picture or video, or the gallery: either way one surface of the
+  // descriptor's shape across the media width, as Card.tsx paints it. The
+  // gallery's tiles and their 2px seams are laid out inside that surface and
+  // add no height of their own.
+  const mediaH = descriptor.variant === "social-single-media" || descriptor.variant === "social-media-grid"
+    ? postMediaHeight(iw, descriptor.mediaPlacement, descriptor.primaryAspectRatio)
+    : 0;
 
   const hasPreviewText = previewH > 0 && (slots?.hasTopContent ?? false);
-  const hasMedia = mediaH > 0;
   const hasBottomMeta = authorH > 0 && (slots?.hasBottomMeta ?? false);
-  const gaps =
-    (hasMedia && (hasPreviewText || hasBottomMeta) ? SOCIAL_GAP_BEFORE_TEXT_STACK : 0) +
+  const textStackH =
+    previewH +
+    authorH +
     (hasPreviewText && hasBottomMeta ? SOCIAL_GAP_BEFORE_AUTHOR : 0);
 
-  return (
-    CARD_BORDER_HEIGHT +
-    SOCIAL_PADDING_TOP +
-    previewH +
-    mediaH +
-    authorH +
-    gaps +
-    SOCIAL_PADDING_BOTTOM
+  return postCardHeight(
+    descriptor.mediaPlacement,
+    mediaH,
+    hasPreviewText || hasBottomMeta,
+    textStackH,
   );
 }
 
@@ -377,8 +398,9 @@ export function computeFeedPlaybackSurfaceEnvelope(
   block: LightBlock,
   columnWidth: number,
   show: FeedShow = "mixed",
+  media: FeedMedia = "inset",
 ): FeedPlaybackSurfaceEnvelope | null {
-  const descriptor = deriveCardLayoutDescriptor(block, show);
+  const descriptor = deriveCardLayoutDescriptor(block, show, media);
   const iw = innerWidth(columnWidth);
   const primaryMedia = descriptor.mediaItems[0];
   const singleVideo = descriptor.mediaItems.length === 1 && primaryMedia?.isVideo === true;
@@ -399,24 +421,11 @@ export function computeFeedPlaybackSurfaceEnvelope(
         : null;
 
     case "article-media":
-      return singleVideo
-        ? {
-            topOffsetPx: CARD_BORDER_TOP + ARTICLE_PADDING_TOP,
-            heightPx: Math.round(
-              Math.max(1, iw - ARTICLE_PADDING_X * 2) /
-                Math.max(descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT, 0.01),
-            ),
-          }
-        : null;
-
     case "social-single-media":
       return singleVideo
         ? {
-            topOffsetPx: CARD_BORDER_TOP + SOCIAL_PADDING_TOP,
-            heightPx: Math.round(
-              Math.max(1, iw - ARTICLE_PADDING_X * 2) /
-                Math.max(descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT, 0.01),
-            ),
+            topOffsetPx: postMediaTop(descriptor.mediaPlacement),
+            heightPx: postMediaHeight(iw, descriptor.mediaPlacement, descriptor.primaryAspectRatio),
           }
         : null;
 
@@ -440,6 +449,8 @@ export function computeFeedPlaybackSurfaceEnvelope(
  *                    not yet computed. When null, reserves the worst clamped
  *                    geometry for the template so the card envelope remains
  *                    overlap-safe while exact metrics are still loading.
+ * @param show        The feed's presentation (SPEC_FEED_DISPLAY.md, Д10).
+ * @param media       Where a framed card's media on top sits (Д19 to Д23).
  * @returns Integer pixel height, always positive.
  */
 export function computeCardHeight(
@@ -447,8 +458,9 @@ export function computeCardHeight(
   columnWidth: number,
   wordWidths: WordWidths | null,
   show: FeedShow = "mixed",
+  media: FeedMedia = "inset",
 ): number {
-  const descriptor = deriveCardLayoutDescriptor(block, show);
+  const descriptor = deriveCardLayoutDescriptor(block, show, media);
   const cardKind = getRuntimeCardKind(block);
   const rawHeight = (() => {
     // The presentation decides the card's shape before its kind does
@@ -461,7 +473,7 @@ export function computeCardHeight(
         switch (descriptor.variant) {
           case "article-media":
             // `Cards`: a picture or video laid out as a post card.
-            return computeArticleHeight(block, columnWidth, wordWidths, show);
+            return computeArticleHeight(block, columnWidth, wordWidths, show, media);
           case "image":
             return computeImageHeight(block, columnWidth);
           case "video":
@@ -482,9 +494,9 @@ export function computeCardHeight(
         }
       case "article":
         if (descriptor.variant.startsWith("social")) {
-          return computeSocialHeight(block, columnWidth, wordWidths, show);
+          return computeSocialHeight(block, columnWidth, wordWidths, show, media);
         }
-        return computeArticleHeight(block, columnWidth, wordWidths, show);
+        return computeArticleHeight(block, columnWidth, wordWidths, show, media);
 
       case "link":
         return descriptor.primaryAspectRatio !== null
