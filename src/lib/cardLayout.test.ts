@@ -823,6 +823,28 @@ describe("card presentation in the feed (SPEC_FEED_DISPLAY.md, Д10 to Д14)", (
     expect(descriptor.primaryAspectRatio).toBeNull();
   });
 
+  it.each([
+    ["X", "https://x.com/someone/status/1"],
+    ["Instagram", "https://instagram.com/p/1"],
+  ])("clamps a single %s post picture into 1:2 to 2:1 in every presentation (Г4.5)", (_network, url) => {
+    const tallPost = makeBlock({
+      block_type: "article",
+      url,
+      body: "![](tall.jpg)",
+      media_urls: "[\"tall.jpg\"]",
+      preview_manifest: readyImageManifest({ previewWidth: 100, previewHeight: 1000 }),
+    });
+    expect(deriveCardLayoutDescriptor(tallPost, "mixed")).toMatchObject({
+      variant: "social-single-media", primaryAspectRatio: 0.5,
+    });
+    expect(deriveCardLayoutDescriptor(tallPost, "cards")).toMatchObject({
+      variant: "social-single-media", primaryAspectRatio: 0.5,
+    });
+    expect(deriveCardLayoutDescriptor(tallPost, "media")).toMatchObject({
+      variant: "media-only", primaryAspectRatio: 0.5,
+    });
+  });
+
   it("Mixed and Cards keep the link's fixed thumbnail slot whatever its picture's shape (В5.7)", () => {
     const link = pageLink({ source: [1200, 630], artifact: [600, 900] });
     for (const show of ["mixed", "cards"] as const) {

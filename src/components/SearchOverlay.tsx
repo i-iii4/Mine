@@ -109,6 +109,9 @@ export function SearchOverlay({
   const [results, setResults] = useState<LightBlock[] | null>(null);
   const [resultHasMore, setResultHasMore] = useState(false);
   const [settledQueryKey, setSettledQueryKey] = useState<string | null>(null);
+  // The text whose request failed, with the reason. The error belongs to that
+  // text only: typing on hides it, and a later answer replaces it (Г4.3).
+  const [failedQuery, setFailedQuery] = useState<{ key: string; message: string } | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
   // Collections for the metadata block: lazy per active row, cached per slug,
   // invalidated together with the result set on vault mutations.
@@ -164,10 +167,24 @@ export function SearchOverlay({
           });
           setResultHasMore(snapshot.has_more);
           setSettledQueryKey(queryKey);
+          setFailedQuery(null);
         })
-        .catch((error) => {
+        .catch((error: unknown) => {
           if (requestSequenceRef.current !== sequence) return;
           console.error("Search overlay query failed:", error);
+          // The rows on screen answer an older text or an older vault: none
+          // of them is this text's answer, so none stays to be clicked or
+          // opened with Enter. An Enter waiting for this answer is dropped
+          // with it rather than firing on a later silent refresh (Г4.3).
+          pendingOpenRef.current = null;
+          setResults(null);
+          setResultHasMore(false);
+          setSettledQueryKey(null);
+          setActiveIndex(0);
+          setFailedQuery({
+            key: queryKey,
+            message: error instanceof Error ? error.message : String(error),
+          });
         });
     },
     [],
@@ -193,6 +210,7 @@ export function SearchOverlay({
       setResults(null);
       setResultHasMore(false);
       setSettledQueryKey(null);
+      setFailedQuery(null);
       setActiveIndex(0);
       return;
     }
@@ -422,6 +440,9 @@ export function SearchOverlay({
     && currentQuerySettled
     && results !== null
     && results.length === 0;
+  // Recent mode fails the same way: an error is not an empty answer.
+  const queryError =
+    queryReadyForSearch && failedQuery?.key === normalizedQuery ? failedQuery.message : null;
 
   // One row template for both modes; `index` is always the flat results
   // index, so the active row and arrow keys ignore section grouping.
@@ -548,6 +569,16 @@ export function SearchOverlay({
             {showNoResults && (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                 No results
+              </div>
+            )}
+            {queryError !== null && (
+              <div
+                role="alert"
+                className="flex h-full flex-col items-center justify-center gap-1 px-4 text-center text-sm"
+                data-search-overlay-error=""
+              >
+                <p className="text-destructive">Search failed. Press Enter to try again.</p>
+                <p className="text-muted-foreground">{queryError}</p>
               </div>
             )}
             {recentGroups

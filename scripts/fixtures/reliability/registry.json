@@ -1147,6 +1147,35 @@
       "requirement": "SPEC_AUDIT_FIXES.md#| В1.1 |",
       "tests": ["mine-core/src/domain/markdown_link.rs", "mine-core/src/domain/block.rs", "mine-core/src/domain/markdown.rs", "mine-core/src/links.rs", "src-tauri/src/commands/blocks.rs", "src-tauri/src/commands/settings.rs", "src-tauri/src/source_video_download.rs", "src-tauri/src/storage/source_mutation.rs", "src-tauri/src/storage/reference_spans.rs"],
       "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src/App.tsx",
+        "src/App.test.tsx",
+        "src/components/Grid.tsx",
+        "src/components/Grid.test.tsx",
+        "src/components/Card.tsx",
+        "src/components/Card.test.tsx",
+        "src/components/SearchOverlay.tsx",
+        "src/components/SearchOverlay.test.tsx",
+        "src/components/YoutubeSourcePlayer.tsx",
+        "src/components/YoutubeSourcePlayer.test.tsx",
+        "src/components/GraphView.tsx",
+        "src/components/GraphView.test.tsx",
+        "src/components/IndexingProgress.tsx",
+        "src/components/IndexingProgress.test.tsx",
+        "src/components/ImagePreviewOverlay.tsx",
+        "src/components/ImagePreviewOverlay.test.tsx",
+        "src/lib/cardLayout.ts",
+        "src/lib/cardLayout.test.ts",
+        "src/lib/keyboardTargets.ts",
+        "src/lib/tagRowDragOverlay.ts",
+        "src/lib/tagRowDragOverlay.test.ts",
+        "src/dev/SidebarReorderAuditRoute.tsx"
+      ],
+      "requirement": "SPEC_AUDIT_FIXES.md#| Г4.1 |",
+      "tests": ["src/App.test.tsx", "src/components/Grid.test.tsx", "src/components/Card.test.tsx", "src/components/SearchOverlay.test.tsx", "src/components/YoutubeSourcePlayer.test.tsx", "src/components/GraphView.test.tsx", "src/components/IndexingProgress.test.tsx", "src/components/ImagePreviewOverlay.test.tsx", "src/lib/cardLayout.test.ts", "src/lib/tagRowDragOverlay.test.ts"],
+      "command": "test:frontend"
     }
   ],
   "release": null

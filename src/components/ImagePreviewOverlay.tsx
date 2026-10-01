@@ -507,8 +507,13 @@ export function ImagePreviewOverlay({
       </div>
       <div
         className={cn(
-          "absolute bottom-6 left-1/2 z-20 flex h-8 -translate-x-1/2 items-center gap-1 rounded-1 border border-border bg-accent/90 px-1 backdrop-blur-sm backdrop-saturate-150 transition-opacity duration-500",
-          controlsVisible ? "opacity-100" : "pointer-events-none opacity-0",
+          "absolute bottom-6 left-1/2 z-20 flex h-8 -translate-x-1/2 items-center gap-1 rounded-1 border border-border bg-accent/90 px-1 backdrop-blur-sm backdrop-saturate-150 transition-opacity",
+          // The app's answer-to-the-pointer timing: in over the fade-in token,
+          // out over the shorter fade-out token, both zero under reduced
+          // motion (global.css; SPEC_AUDIT_FIXES.md, Г5.5).
+          controlsVisible
+            ? "opacity-100 duration-[var(--hover-intent-fade-in)]"
+            : "pointer-events-none opacity-0 duration-[var(--hover-intent-fade-out)]",
         )}
         data-image-preview-controls
         data-visible={controlsVisible ? "true" : "false"}

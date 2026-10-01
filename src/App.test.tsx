@@ -1822,6 +1822,24 @@ describe("AppWithVault", () => {
     expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
   });
 
+  it("takes the feed keyboard away while the search overlay is open (Г4.2)", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+    expect(screen.getByTestId("grid-keyboard-disabled")).toHaveTextContent("false");
+
+    fireEvent(window, new CustomEvent("surface-search-shortcut", { detail: { payload: "main" } }));
+    expect(document.querySelector("[data-search-overlay]")).not.toBeNull();
+    expect(screen.getByTestId("grid-keyboard-disabled")).toHaveTextContent("true");
+
+    fireEvent(window, new CustomEvent("surface-search-shortcut", { detail: { payload: "main" } }));
+    await waitFor(() => expect(document.querySelector("[data-search-overlay]")).toBeNull());
+    expect(screen.getByTestId("grid-keyboard-disabled")).toHaveTextContent("false");
+  });
+
   it("toggles the search overlay with the native main accelerator event", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
@@ -2668,6 +2686,66 @@ describe("AppWithVault", () => {
       window.localStorage.clear();
       reloadFeedDisplay();
     }
+  });
+
+  it("keeps a failed feed re-read visible, pages the list on screen and reads again (Г4.1)", async () => {
+    const cards = Array.from({ length: 600 }, (_, index) => block(index + 1, `card-${index + 1}`));
+    const page = (offset: number, limit: number) => gridSnapshot(
+      cards.slice(offset, offset + limit),
+      cards.length,
+      offset + limit < cards.length,
+    );
+    let failReread = false;
+    commandMocks.listGridBlocks.mockImplementation(async (_tag, offset = 0, limit = 200, order) => {
+      if (isSearchOverlayQuery(limit, order)) return gridSnapshot([]);
+      if (offset === 0 && failReread) {
+        failReread = false;
+        throw new Error("Feed read failed");
+      }
+      return page(offset, limit);
+    });
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    // The first page and the one warmed behind it.
+    await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:400"));
+
+    // The re-read of the feed fails while the collections read is still out.
+    const taxonomy = deferred<TaxonomySnapshot>();
+    commandMocks.listTaxonomySnapshot.mockReturnValueOnce(taxonomy.promise);
+    failReread = true;
+    const readsBefore = commandMocks.listGridBlocks.mock.calls.length;
+    fireEvent(window, new CustomEvent("vault-sync-finished", {
+      detail: { payload: { path: "/vault", indexed: 600, errors: 0, error: null } },
+    }));
+    await waitFor(() => expect(screen.getByText("Feed read failed")).toBeInTheDocument());
+
+    // The collections answer later: the feed's error is not theirs to clear.
+    await act(async () => {
+      taxonomy.resolve({ generation: 2, tags: [], channels: [], total_blocks: 600 });
+      await taxonomy.promise;
+    });
+    expect(screen.getByText("Feed read failed")).toBeInTheDocument();
+
+    // The list on screen keeps paging: the next page continues it.
+    await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:600"));
+    expect(commandMocks.listGridBlocks.mock.calls.slice(readsBefore)).toContainEqual(
+      [undefined, 400, 200, "newest"],
+    );
+
+    // The failed read is retried on its own and its answer clears the error.
+    await waitFor(
+      () => expect(screen.queryByText("Feed read failed")).not.toBeInTheDocument(),
+      { timeout: 3000 },
+    );
+    expect(commandMocks.listGridBlocks.mock.calls.slice(readsBefore)).toContainEqual(
+      [undefined, 0, 600, "newest"],
+    );
+    expect(screen.getByTestId("grid-slugs").textContent).toBe(
+      cards.map((item) => item.slug).join(","),
+    );
   });
 
   it.each([

@@ -73,6 +73,7 @@ import {
   type CardHeightDriftReport,
 } from "@/lib/cardHeightDrift";
 import {
+  isDialogKeyboardTarget,
   isEditableKeyboardTarget,
   isOverlayKeyboardTarget,
 } from "@/lib/keyboardTargets";
@@ -1775,7 +1776,16 @@ export function Grid({
       const currentViewportHeight = scrollElement?.clientHeight || viewportHeight;
 
       if (commandK) {
-        if (event.defaultPrevented) return;
+        // A text field or a dialog above the feed owns the chord. The card's own
+        // menu does not: ⌘K pressed inside it closes it again, so popper
+        // content stays allowed here (SPEC_AUDIT_FIXES.md, Г4.2).
+        if (
+          event.defaultPrevented
+          || isEditableKeyboardTarget(event.target)
+          || isDialogKeyboardTarget(event.target)
+        ) {
+          return;
+        }
         if (openFocusedElementMenu()) {
           event.preventDefault();
           event.stopPropagation();

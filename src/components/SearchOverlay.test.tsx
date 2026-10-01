@@ -622,6 +622,49 @@ describe("SearchOverlay", () => {
     expect(options[2]!.textContent).not.toContain("@hidden-author");
   });
 
+  it("shows a failed query as an error and leaves no older row to open (Г4.3)", async () => {
+    const stale = makeBlock(1, "stale");
+    const fresh = makeBlock(2, "fresh");
+    let freshFails = true;
+    listGridBlocksMock.mockImplementation(async (_tag, _offset, _limit, query) => {
+      if (query === "stale") return snapshot([stale]);
+      if (freshFails) throw new Error("index is busy");
+      return snapshot([fresh]);
+    });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const onOpenBlock = vi.fn();
+    const props = {
+      open: true,
+      vaultPath: "/vault",
+      onQueryChange: vi.fn(),
+      onClose: vi.fn(),
+      onOpenBlock,
+    };
+    try {
+      const { rerender } = render(<SearchOverlay {...props} query="stale" />);
+      await waitFor(() => expect(screen.getByText("Title stale")).toBeInTheDocument());
+
+      rerender(<SearchOverlay {...props} query="fresh" />);
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent("Search failed");
+      expect(alert).toHaveTextContent("index is busy");
+      // Nothing from the older text is left to click or to open with Enter.
+      expect(screen.queryAllByRole("option")).toHaveLength(0);
+      expect(screen.queryByTestId("overlay-preview")).not.toBeInTheDocument();
+      expect(screen.queryByText("No results")).not.toBeInTheDocument();
+      expect(document.querySelector("[data-search-overlay-result-count]")).toBeNull();
+
+      // Enter asks again for the current text and opens its answer.
+      freshFails = false;
+      fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
+      await waitFor(() => expect(onOpenBlock).toHaveBeenCalledWith(fresh));
+      expect(onOpenBlock).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it("shows No results for a non-empty query with an empty response", async () => {
     listGridBlocksMock.mockResolvedValue(snapshot([], 508));
     renderOverlay({ query: "nothing" });

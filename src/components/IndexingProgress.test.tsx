@@ -11,12 +11,27 @@ describe("IndexingProgress", () => {
     expect(screen.getByText("1284 / 3000")).toBeInTheDocument();
   });
 
+  it("draws the bar with the shared Progress, moved by transform (Г5.4)", () => {
+    render(<IndexingProgress spaceName="Mine" processed={1500} total={3000} />);
+    const bar = screen.getByRole("progressbar", { name: "Indexing “Mine”" });
+    expect(bar).toHaveAttribute("data-slot", "progress");
+    expect(bar).toHaveAttribute("data-progress-mode", "determinate");
+    const fill = bar.querySelector<HTMLElement>('[data-slot="progress-indicator"]');
+    expect(fill).not.toBeNull();
+    // A pill fill inside a pill track, and the fill slides rather than
+    // resizing: no width is animated (DESIGN_SYSTEM.md, Progress).
+    expect(bar.className).toContain("rounded-pill");
+    expect(fill?.className).toContain("rounded-pill");
+    expect(fill?.style.transform).toBe("translateX(-50%)");
+    expect(fill?.style.width).toBe("");
+    expect(fill?.className).not.toContain("transition-[width]");
+  });
+
   it("never draws past the end, whatever the numbers say", () => {
-    const { container } = render(
-      <IndexingProgress spaceName="Mine" processed={5000} total={3000} />,
-    );
-    const bar = container.querySelector('[data-indexing-progress] .bg-foreground') as HTMLElement;
-    expect(bar.style.width).toBe("100%");
+    render(<IndexingProgress spaceName="Mine" processed={5000} total={3000} />);
+    const fill = screen.getByRole("progressbar")
+      .querySelector<HTMLElement>('[data-slot="progress-indicator"]');
+    expect(fill?.style.transform).toBe("translateX(-0%)");
   });
 
   it("is a progress bar a screen reader can read (А6.14)", () => {
@@ -41,9 +56,10 @@ describe("IndexingProgress", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Indexing “Mine”: 50%");
   });
 
-  it("stays at zero width for an empty total instead of dividing by it", () => {
-    const { container } = render(<IndexingProgress spaceName="Mine" processed={0} total={0} />);
-    const bar = container.querySelector('[data-indexing-progress] .bg-foreground') as HTMLElement;
-    expect(bar.style.width).toBe("0%");
+  it("stays empty for an empty total instead of dividing by it", () => {
+    render(<IndexingProgress spaceName="Mine" processed={0} total={0} />);
+    const fill = screen.getByRole("progressbar")
+      .querySelector<HTMLElement>('[data-slot="progress-indicator"]');
+    expect(fill?.style.transform).toBe("translateX(-100%)");
   });
 });

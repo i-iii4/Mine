@@ -252,6 +252,11 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
       {...attributes}
       {...listeners}
       role="button"
+      // The card's own name in every presentation: `Media` clears the title
+      // and text, pictures carry an empty alt, and the hover menu is always in
+      // the tree, so without it a screen reader names the card only by its
+      // actions (Г4.7).
+      aria-label={getNavigationLabel(block)}
       tabIndex={0}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
@@ -1118,12 +1123,15 @@ const SocialCard = memo(function SocialCard({
   return (
     <div className="p-4">
       {descriptor.variant === "social-single-media" && media.length === 1 && (() => {
-        // Shape comes from the artifact this slot paints. When it has not been
-        // measured the slot takes the provisional envelope and says so in the
-        // markup, the same state an image card uses — a square here would be a
-        // proportion nobody knows. Feed cards use object-cover to avoid visible
-        // letterboxing inside the slot while scrolling.
+        // Shape comes from the descriptor: the artifact this slot paints,
+        // clamped into the card range, the same number the height was reserved
+        // from (Г4.5). When it has not been measured the slot takes the
+        // provisional envelope and says so in the markup, the same state an
+        // image card uses — a square here would be a proportion nobody knows.
+        // Feed cards use object-cover to avoid visible letterboxing inside the
+        // slot while scrolling.
         const m = media[0]!;
+        const aspectRatio = descriptor.primaryAspectRatio;
         const absClass = "absolute inset-0 h-full w-full object-cover";
         const shouldAutoplay =
           m.isVideo && !measurementMode && allowPlayback && playback !== null;
@@ -1137,8 +1145,8 @@ const SocialCard = memo(function SocialCard({
           <GraphicSurface
             insetMedia
             className="w-full"
-            style={{ aspectRatio: `${m.aspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
-            data-card-preview-geometry={m.aspectRatio === null ? "pending" : undefined}
+            style={{ aspectRatio: `${aspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
+            data-card-preview-geometry={aspectRatio === null ? "pending" : undefined}
           >
             <CloudBadge active={block.content_in_cloud} />
             {shouldAutoplay ? (
@@ -1204,8 +1212,10 @@ const SocialCard = memo(function SocialCard({
           )}
 
           {hasBottomMeta && (
+            // One line, as the height reserves it: a longer name ends in an
+            // ellipsis instead of wrapping under the frame's edge (Г4.6).
             <p
-              className={cn("text-sm text-muted-foreground", hasPreviewText && "mt-2")}
+              className={cn("truncate text-sm text-muted-foreground", hasPreviewText && "mt-2")}
               style={contentCardSingleLineTextStyle}
             >
               by {block.author}
@@ -1385,9 +1395,11 @@ const ArticleCard = memo(function ArticleCard({
             </p>
           )}
           {hasBottomMeta && (
+            // One line, as the height reserves it: a longer name ends in an
+            // ellipsis instead of wrapping under the frame's edge (Г4.6).
             <p
               className={cn(
-                "text-sm text-muted-foreground",
+                "truncate text-sm text-muted-foreground",
                 (previewText.length > 0 || (displayTitle ?? "").length > 0) && "mt-2",
               )}
               style={contentCardSingleLineTextStyle}

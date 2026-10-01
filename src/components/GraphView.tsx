@@ -195,6 +195,12 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   const nodePositionsRef = useRef(new Map<string, { x: number; y: number }>());
   const focusPositionRef = useRef<{ x: number; y: number } | null>(null);
   const cameraPlanRef = useRef<GraphCameraPlan>(null);
+  // Whether the person has moved the camera on this route. A later snapshot
+  // of the same route (the async load, a refresh after a clipper save) must
+  // not arm a plan again and fly the view away from where they put it; only
+  // a new route is a new screen with its own camera (Ф12; SPEC_AUDIT_FIXES.md,
+  // Г5.1).
+  const cameraHeldByGestureRef = useRef(false);
 
   const loadedBlocksBySlug = useMemo(() => {
     return new Map(loadedBlocks.map((block) => [block.slug, block]));
@@ -389,6 +395,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   const yieldCameraToGesture = useCallback(() => {
     stopGlideRef.current?.();
     stopGlideRef.current = null;
+    cameraHeldByGestureRef.current = true;
     cameraPlanRef.current = null;
     pendingFitTicksRef.current = 0;
     pendingCenterNodeIdRef.current = null;
@@ -599,6 +606,12 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     graphScaleRef.current = Number.isFinite(scale) && scale > 0 ? scale : 1;
   }, []);
 
+  // A new route hands the camera back to its plan. Declared before the effect
+  // that arms the plan, so on a route change the release lands first.
+  useEffect(() => {
+    cameraHeldByGestureRef.current = false;
+  }, [routeKey]);
+
   useEffect(() => {
     if (!graphViewportReady || graphData.nodes.length === 0) return;
     let frame = 0;
@@ -659,9 +672,12 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       // Decided by the route, not by whether the snapshot for it has arrived
       // yet. Keying this on the node meant that during the load the plan was
       // briefly a fit — which then consumed the tick budget, and the glide to
-      // the collection never ran. A collection route always glides.
-      cameraPlanRef.current = currentCollection ? { kind: "focus" } : { kind: "fit" };
-      pendingFitTicksRef.current = GRAPH_INITIAL_FIT_TICKS;
+      // the collection never ran. A collection route always glides, unless
+      // the person has already moved the camera on it.
+      if (!cameraHeldByGestureRef.current) {
+        cameraPlanRef.current = currentCollection ? { kind: "focus" } : { kind: "fit" };
+        pendingFitTicksRef.current = GRAPH_INITIAL_FIT_TICKS;
+      }
       graph.d3ReheatSimulation();
     };
     frame = requestAnimationFrame(applyForces);

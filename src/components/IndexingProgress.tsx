@@ -7,6 +7,8 @@
 // onboarding while the first pass runs, because "this space is empty" is a
 // falsehood about a space that is still being read.
 
+import { Progress } from "@/components/ui/progress";
+
 interface IndexingProgressProps {
   /** The space's folder name — the thing being indexed, by name. */
   spaceName: string;
@@ -32,20 +34,16 @@ export function IndexingProgress({ spaceName, processed, total }: IndexingProgre
             {processed} / {total}
           </p>
         </div>
-        <div
-          className="h-1 overflow-hidden rounded-full bg-component-fill"
-          role="progressbar"
+        {/* The shared bar draws the share as a percentage; a screen reader
+            hears the count itself, so the count overrides the percentage the
+            primitive would announce. */}
+        <Progress
+          value={share * 100}
           aria-label={`Indexing “${spaceName}”`}
-          aria-valuemin={0}
           aria-valuemax={total}
           aria-valuenow={shown}
           aria-valuetext={`${shown} of ${total}`}
-        >
-          <div
-            className="h-full bg-foreground transition-[width] duration-300"
-            style={{ width: `${share * 100}%` }}
-          />
-        </div>
+        />
         <p className="sr-only" role="status" aria-live="polite" data-indexing-progress-announcement="">
           {`Indexing “${spaceName}”: ${tenths}%`}
         </p>

@@ -49,6 +49,32 @@ describe("ImagePreviewOverlay", () => {
     copyMediaAssetToClipboardMock.mockResolvedValue(undefined);
   });
 
+  it("fades the viewer controls over the app's hover-intent tokens, not a slow fade of its own (Г5.5)", () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render(
+        <ImagePreviewOverlay
+          preview={{ src: "asset://localhost/photo.jpg", mediaRef: "photo.jpg" }}
+          onClose={vi.fn()}
+        />,
+      );
+      const controls = container.querySelector("[data-image-preview-controls]")!;
+      expect(controls).toHaveAttribute("data-visible", "true");
+      expect(controls).toHaveClass("transition-opacity", "duration-[var(--hover-intent-fade-in)]");
+      expect(controls.className).not.toMatch(/\bduration-\d+\b/);
+
+      // Idle: the controls leave over the shorter fade-out token.
+      act(() => {
+        vi.advanceTimersByTime(3_001);
+      });
+      expect(controls).toHaveAttribute("data-visible", "false");
+      expect(controls).toHaveClass("duration-[var(--hover-intent-fade-out)]");
+      expect(controls.className).not.toMatch(/\bduration-\d+\b/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("covers the app below the top bar and keeps zoom controls in a bottom island", async () => {
     const onClose = vi.fn();
 

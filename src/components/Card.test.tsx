@@ -1552,3 +1552,142 @@ describe("Card presentation in the feed (SPEC_FEED_DISPLAY.md, Д11 to Д13)", (
   });
 });
 
+describe("Card geometry, author and name (SPEC_AUDIT_FIXES.md, Г4.5 to Г4.7)", () => {
+  const COLUMN = 320;
+  const CARD_BORDER = 2;
+  const CARD_PADDING = 16;
+  const AUTHOR_LINE = 16;
+  const AUTHOR_GAP = 8;
+  const MEDIA_GAP = 12;
+  const CONTENT_WIDTH = COLUMN - CARD_BORDER - CARD_PADDING * 2;
+
+  /// A single-picture post from X or Instagram whose preview artifact is a
+  /// 100×1000 strip: ten times taller than wide, far past the card's 1:2.
+  const tallPost = (url: string, author: string | null = null) => block({
+    block_type: "article", card_kind: "article", title: null, description: null, url,
+    body: "![](tall.jpg)", media_urls: "[\"tall.jpg\"]", author,
+    preview_manifest: JSON.stringify({
+      kind: "image", primary_preview_path: "tall.jpg", width: 100, height: 1000,
+      preview_width: 100, preview_height: 1000,
+      tiles: [{ source_path: "tall.jpg", preview_path: "tall.preview-1.jpg",
+        width: 100, height: 1000, preview_width: 100, preview_height: 1000,
+        is_video: false, is_video_poster: false }],
+      overflow_count: 0,
+    }),
+  });
+
+  /// The card as the feed renders it in a presentation. jsdom drops a unitless
+  /// aspect-ratio from the style it keeps, so the card is read from the markup
+  /// React writes.
+  const renderedMarkup = (show: FeedShow, value: LightBlock) => new DOMParser().parseFromString(
+    renderToStaticMarkup(
+      <FeedShowContext.Provider value={show}>
+        <Card block={value} vaultPath={VAULT} onClick={vi.fn()} />
+      </FeedShowContext.Provider>,
+    ),
+    "text/html",
+  );
+  const paintedAspect = (doc: Document) => Number(
+    /aspect-ratio:([0-9.]+)/.exec(
+      doc.querySelector("[data-card-graphic-surface]")?.getAttribute("style") ?? "",
+    )?.[1],
+  );
+
+  it.each([
+    ["X", "https://x.com/someone/status/1"],
+    ["Instagram", "https://instagram.com/p/1"],
+  ])("paints a tall single %s picture at 1:2 and reserves the height it paints (Г4.5)", (_network, url) => {
+    const post = tallPost(url);
+    for (const show of ["mixed", "cards"] as const) {
+      const aspect = paintedAspect(renderedMarkup(show, post));
+      expect(aspect).toBe(0.5);
+      // Border, padding, the inset picture across the padded width, padding.
+      expect(computeCardHeight(post, COLUMN, null, show))
+        .toBe(CARD_BORDER + CARD_PADDING + Math.round(CONTENT_WIDTH / aspect) + CARD_PADDING);
+    }
+    const mediaAspect = paintedAspect(renderedMarkup("media", post));
+    expect(mediaAspect).toBe(0.5);
+    // Media: the picture is the whole card inside its border.
+    expect(computeCardHeight(post, COLUMN, null, "media"))
+      .toBe(Math.round((COLUMN - CARD_BORDER) / mediaAspect) + CARD_BORDER);
+  });
+
+  const longAuthor = "An author whose name runs on far past the width of any column in the feed, and then some more";
+  /// The author line a card paints in Mixed, found by its text.
+  const authorLine = (value: LightBlock, text: string) => {
+    render(
+      <FeedShowContext.Provider value="mixed">
+        <Card block={value} vaultPath={VAULT} onClick={vi.fn()} />
+      </FeedShowContext.Provider>,
+    );
+    return screen.getByText(text);
+  };
+
+  it("keeps a long post author on one truncated line inside the height it reserves (Г4.6)", () => {
+    const post = tallPost("https://x.com/someone/status/1", longAuthor);
+    const author = authorLine(post, `by ${longAuthor}`);
+    // One line of 16px that ends in an ellipsis, never a second line.
+    expect(author).toHaveClass("truncate");
+    expect(author).toHaveStyle({ lineHeight: "16px" });
+    expect(computeCardHeight(post, COLUMN, null, "mixed")).toBe(
+      CARD_BORDER + CARD_PADDING + Math.round(CONTENT_WIDTH / 0.5)
+        + MEDIA_GAP + AUTHOR_LINE + CARD_PADDING,
+    );
+  });
+
+  it("keeps a long article author on one truncated line inside the height it reserves (Г4.6)", () => {
+    // The tall picture puts the card above the hover-action minimum, so the
+    // author's share of the height is visible in the total.
+    const article = { ...tallPost("https://example.com/piece", longAuthor), title: "A piece" };
+    const author = authorLine(article, longAuthor);
+    expect(author).toHaveClass("truncate");
+    expect(author).toHaveStyle({ lineHeight: "16px" });
+    // The author adds exactly one line and its gap, however long it is.
+    const withoutAuthor = computeCardHeight({ ...article, author: null }, COLUMN, null, "mixed");
+    expect(computeCardHeight(article, COLUMN, null, "mixed"))
+      .toBe(withoutAuthor + AUTHOR_GAP + AUTHOR_LINE);
+  });
+
+  it("names a Media card after its card, not only its actions (Г4.7)", () => {
+    const post = block({
+      block_type: "article", card_kind: "article", title: "Harbour at dusk", url: null,
+      body: "Some words\n\n![](photo.jpg)", media_urls: "[\"photo.jpg\"]",
+      preview_manifest: JSON.stringify({
+        kind: "image", primary_preview_path: "test-block.jpg", width: 1280, height: 960,
+        preview_width: 640, preview_height: 480,
+        tiles: [{ source_path: "photo.jpg", preview_path: "test-block.preview-1.jpg",
+          width: 1280, height: 960, preview_width: 640, preview_height: 480,
+          is_video: false, is_video_poster: false }],
+        overflow_count: 0,
+      }),
+    });
+    render(
+      <FeedShowContext.Provider value="media">
+        <Card block={post} vaultPath={VAULT} onClick={vi.fn()} />
+      </FeedShowContext.Provider>,
+    );
+    expect(screen.queryByText("Harbour at dusk")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Harbour at dusk" }))
+      .toHaveAttribute("data-feed-card-frame");
+  });
+
+  it("names a video card in Mixed after its card (Г4.7)", () => {
+    const video = block({
+      block_type: "video", title: null, url: null, media_file: "Media/Clip.mp4",
+      fallback_label: "Clip", preview_manifest: JSON.stringify({
+        kind: "video_poster", primary_preview_path: "clip.jpg", width: null, height: null,
+        preview_width: 640, preview_height: 360,
+        tiles: [{ source_path: "Media/Clip.mp4", preview_path: "clip.jpg", width: null, height: null,
+          preview_width: 640, preview_height: 360, is_video: true, is_video_poster: true }],
+        overflow_count: 0,
+      }),
+    });
+    render(
+      <FeedShowContext.Provider value="mixed">
+        <Card block={video} vaultPath={VAULT} onClick={vi.fn()} />
+      </FeedShowContext.Provider>,
+    );
+    expect(screen.getByRole("button", { name: "Clip" })).toHaveAttribute("data-feed-card-frame");
+  });
+});
+

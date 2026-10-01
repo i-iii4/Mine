@@ -13,7 +13,7 @@ import { MemoryRouter } from "react-router";
 import { Sidebar, SidebarTagRowDragPreview } from "@/components/Sidebar";
 import { sidebarPointerWithin } from "@/lib/sidebarDndCollision";
 import {
-  TAG_ROW_DROP_ANIMATION,
+  tagRowDropAnimation,
   TAG_ROW_OVERLAY_MODIFIERS,
 } from "@/lib/tagRowDragOverlay";
 import type { PreviewCard, TagCount } from "@/types";
@@ -109,7 +109,7 @@ function SidebarReorderAuditScene() {
         <main className="flex-1" />
       </div>
       <DragOverlay
-        dropAnimation={TAG_ROW_DROP_ANIMATION}
+        dropAnimation={tagRowDropAnimation()}
         modifiers={TAG_ROW_OVERLAY_MODIFIERS}
         style={{ pointerEvents: "none" }}
       >

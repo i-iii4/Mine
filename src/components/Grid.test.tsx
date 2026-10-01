@@ -863,6 +863,48 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(screen.queryByText("Rename…")).not.toBeInTheDocument();
   });
 
+  it("leaves Command-K to a dialog or a text field above the focused card (Г4.2)", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [makeBlock(9253), makeBlock(9254)];
+    setBlockHeight(9253, 200);
+    setBlockHeight(9254, 220);
+
+    render(<Grid {...BASE_PROPS} blocks={blocks} />);
+    await flushAsync();
+
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(gridItemForSlug("block-9253")).toHaveAttribute("data-feed-grid-item-focused", "true");
+
+    // A modal above the feed — the search overlay — holds the keyboard.
+    const dialog = document.createElement("div");
+    dialog.setAttribute("role", "dialog");
+    const dialogInput = document.createElement("input");
+    const dialogButton = document.createElement("button");
+    dialog.append(dialogInput, dialogButton);
+    // A text field outside any dialog.
+    const looseInput = document.createElement("input");
+    document.body.append(dialog, looseInput);
+    try {
+      for (const target of [dialogInput, dialogButton, looseInput]) {
+        target.focus();
+        fireEvent.keyDown(target, { key: "k", metaKey: true });
+        await flushAsync();
+        expect(screen.queryByText("Rename…")).not.toBeInTheDocument();
+      }
+    } finally {
+      dialog.remove();
+      looseInput.remove();
+    }
+
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    await flushAsync();
+    expect(screen.getByText("Rename…")).toBeInTheDocument();
+  });
+
   it("keeps the keyboard-opened menu anchor visually pinned while pointer hover moves elsewhere", async () => {
     vi.useFakeTimers();
 

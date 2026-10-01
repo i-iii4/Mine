@@ -50,6 +50,15 @@ function isRunning(download: SourceVideoDownloadState | null) {
   return download?.state === "preparing" || download?.state === "downloading" || download?.state === "finishing";
 }
 
+/** What the shell remembers that the row under the player still has to say on
+ *  mount: a download in progress, or why the last one failed. Its event may
+ *  have fired while no card was open (SPEC_AUDIT_FIXES.md, Г4.4). A finished
+ *  download is already in the card the reopen reads, and a cancel says
+ *  nothing. */
+function restoredDownload(status: SourceVideoDownloadState | null) {
+  return isRunning(status) || status?.state === "failed" ? status : null;
+}
+
 /** The player loads as soon as the card opens and waits for the user to start it.
  *  It lives in a local page, not in this document: YouTube needs a referrer
  *  that the interface origin cannot send (player error 153).
@@ -110,16 +119,20 @@ export function YoutubeSourcePlayer({ slug, source, poster, title, onDelete, onD
     };
   }, []);
 
-  // A download keeps running when the card closes; reopening it shows where it is.
+  // A download keeps running when the card closes; reopening it shows where it
+  // is, or why it failed.
   useEffect(() => {
     let cancelled = false;
+    // An event that lands before the stored state answers is newer than it.
+    let eventSeen = false;
     setDownload(null);
     sourceVideoDownloadStatus(slug).then(
-      (status) => { if (!cancelled && isRunning(status)) setDownload(status); },
+      (status) => { if (!cancelled && !eventSeen) setDownload(restoredDownload(status)); },
       (error: unknown) => console.error("Could not read the download state:", error),
     );
     const unlisten = listen<SourceVideoDownloadState & { slug: string }>(SOURCE_VIDEO_DOWNLOAD_EVENT, (event) => {
       if (cancelled || event.payload.slug !== slug) return;
+      eventSeen = true;
       const { slug: _slug, ...state } = event.payload;
       setDownload(state);
       if (state.state === "done") {

@@ -1572,4 +1572,90 @@ describe("GraphView", () => {
       motionMocks.glide = false;
     }
   });
+
+  it("keeps the camera where a gesture left it when a later snapshot of the same route arrives (Г5.1)", async () => {
+    const collection = (ref: string): GraphNode => ({
+      id: `collection:${ref}`,
+      kind: "collection",
+      label: ref,
+      slug: null,
+      collection_ref: ref,
+      card_kind: null,
+      block_type: null,
+      thumbnail: null,
+      preview_manifest: null,
+      degree: 1,
+    });
+    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes([
+      graphCardNode("alpha-card", "Alpha card"),
+      collection("Design"),
+    ]));
+    const { rerenderGraph } = renderGraph({ currentCollection: "Design" });
+    await screen.findByRole("button", { name: "Alpha card" });
+    // The opened collection arms the glide to its pill; the person's wheel
+    // takes the camera before the glide runs.
+    await waitFor(() => expect(graphMethodMocks.d3ReheatSimulation).toHaveBeenCalled());
+    fireEvent.wheel(document.querySelector("[data-graph-view]")!);
+
+    // A clipper save refreshes the vault: the same route, a different layout.
+    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes([
+      graphCardNode("alpha-card", "Alpha card"),
+      graphCardNode("saved-card", "Saved card"),
+      collection("Design"),
+    ]));
+    graphMethodMocks.d3ReheatSimulation.mockReset();
+    act(() => {
+      window.dispatchEvent(new Event("vault-refreshed"));
+    });
+    await screen.findByRole("button", { name: "Saved card" });
+    await waitFor(() => expect(graphMethodMocks.d3ReheatSimulation).toHaveBeenCalled());
+    const tick = screen.getByTestId("graph-engine-tick");
+    for (let index = 0; index < 25; index += 1) fireEvent.click(tick);
+
+    expect(graphMethodMocks.centerAt).not.toHaveBeenCalled();
+    expect(graphMethodMocks.zoom).not.toHaveBeenCalled();
+
+    // Another route is a new screen: its camera plan runs again.
+    graphMethodMocks.d3ReheatSimulation.mockReset();
+    rerenderGraph({ currentCollection: undefined });
+    await waitFor(() => expect(graphMethodMocks.d3ReheatSimulation).toHaveBeenCalled());
+    for (let index = 0; index < 25; index += 1) fireEvent.click(tick);
+
+    expect(graphMethodMocks.centerAt).toHaveBeenCalledWith(100, 50, 0);
+  });
+
+  it("arms the camera again when the person returns to a route they had moved in (Г5.1)", async () => {
+    const collection = (ref: string): GraphNode => ({
+      id: `collection:${ref}`,
+      kind: "collection",
+      label: ref,
+      slug: null,
+      collection_ref: ref,
+      card_kind: null,
+      block_type: null,
+      thumbnail: null,
+      preview_manifest: null,
+      degree: 1,
+    });
+    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes([
+      graphCardNode("alpha-card", "Alpha card"),
+      collection("Design"),
+    ]));
+    const { rerenderGraph } = renderGraph();
+    await screen.findByRole("button", { name: "Alpha card" });
+    await waitFor(() => expect(graphMethodMocks.d3ReheatSimulation).toHaveBeenCalled());
+    fireEvent.wheel(document.querySelector("[data-graph-view]")!);
+
+    graphMethodMocks.d3ReheatSimulation.mockReset();
+    rerenderGraph({ currentCollection: "Design" });
+    await waitFor(() => expect(graphMethodMocks.d3ReheatSimulation).toHaveBeenCalled());
+    graphMethodMocks.d3ReheatSimulation.mockReset();
+    graphMethodMocks.centerAt.mockReset();
+    rerenderGraph({ currentCollection: undefined });
+    await waitFor(() => expect(graphMethodMocks.d3ReheatSimulation).toHaveBeenCalled());
+    const tick = screen.getByTestId("graph-engine-tick");
+    for (let index = 0; index < 25; index += 1) fireEvent.click(tick);
+
+    expect(graphMethodMocks.centerAt).toHaveBeenCalledWith(100, 50, 0);
+  });
 });

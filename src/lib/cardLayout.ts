@@ -343,10 +343,13 @@ function deriveArticleCardLayoutDescriptor(
         titleText: "",
         previewText,
         authorText,
-        // Null when the artifact has not been measured yet, and stays null.
-        // Substituting the source's shape would lay the card out from a file
-        // it never paints; substituting 1 would state a square nobody knows.
-        primaryAspectRatio: mediaItems[0]?.aspectRatio ?? null,
+        // The artifact's shape clamped into 1:2 to 2:1, like every other
+        // single media (SPEC_CARD_MEDIA_GEOMETRY.md; SPEC_AUDIT_FIXES.md,
+        // Г4.5). Null when the artifact has not been measured yet, and stays
+        // null: substituting the source's shape would lay the card out from a
+        // file it never paints; substituting 1 would state a square nobody
+        // knows.
+        primaryAspectRatio: singleArtifactAspectRatio(previewManifest, mediaItems),
         mediaItems,
         visibleMediaCount: 1,
         totalMediaCount: 1,

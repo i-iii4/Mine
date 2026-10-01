@@ -36,7 +36,7 @@ import {
   type Modifier,
 } from "@dnd-kit/core";
 import {
-  TAG_ROW_DROP_ANIMATION,
+  tagRowDropAnimation,
   TAG_ROW_OVERLAY_MODIFIERS,
 } from "@/lib/tagRowDragOverlay";
 import { arrayMove } from "@dnd-kit/sortable";
@@ -181,15 +181,17 @@ function fetchGridBlocks(
   tag: string | undefined,
   offset: number,
   limit: number,
-) {
   // The feed's order, as chosen in the Display panel (SPEC_FEED_DISPLAY.md, Д8).
-  return listGridBlocks(tag, offset, limit, getFeedDisplay().sort);
+  order: FeedOrder = getFeedDisplay().sort,
+) {
+  return listGridBlocks(tag, offset, limit, order);
 }
 
 import type {
   UnavailableVault,
   UnavailableVaultReason,
   DeleteBlockPlan,
+  FeedOrder,
   IndexedBlock,
   LightBlock,
   TagCount,
@@ -325,6 +327,10 @@ const DropZone = lazy(async () => {
 
 
 const GRID_PAGE_SIZE = 200;
+/// Delays before each automatic re-read after a failed feed read. The number of
+/// entries bounds the retries: a store that keeps failing leaves its error on
+/// screen instead of being polled forever (SPEC_AUDIT_FIXES.md, Г4.1).
+const GRID_REREAD_RETRY_DELAYS_MS = [1_000, 4_000, 15_000] as const;
 const DETAIL_SECONDARY_CHROME_EXIT_MS = 190;
 const DETAIL_COMPACT_CHROME_EXIT_MS = 260;
 
@@ -615,6 +621,14 @@ export function AppWithVault({
   // `loadMoreBlocks`, so a request refused while the load was in flight is
   // asked again against the new list.
   const [appliedRouteLoadId, setAppliedRouteLoadId] = useState(0);
+  // The route and order of the list on screen. A failed read leaves that list
+  // in place; paging may continue it only while it is the list the failed
+  // read asked for again (SPEC_AUDIT_FIXES.md, Г4.1).
+  const shownListRef = useRef<{ routeKey: string; order: FeedOrder } | null>(null);
+  // The pending automatic re-read after a failed feed read, and how many of
+  // the bounded retries the current failure has spent.
+  const gridRetryTimerRef = useRef<number | null>(null);
+  const gridRetryAttemptsRef = useRef(0);
   // An index pass is over and the feed on screen was read before it: the id of
   // the last route load issued by then, or null. Only a later load reads what
   // the pass found; until one lands the feed counts as indexing, so an old
@@ -1017,10 +1031,13 @@ export function AppWithVault({
   const compactDetailCardTitle = renderedDetailBlock
     ? renderedDetailBlock.title ?? renderedDetailBlock.media_file ?? `${renderedDetailBlock.slug}.md`
     : "";
+  // The search overlay is modal: while it is open the feed answers no key,
+  // ⌘K included (SPEC_SEARCH_OVERLAY.md; SPEC_AUDIT_FIXES.md, Г4.2).
   const gridKeyboardNavigationDisabled = Boolean(renderedDetailBlock)
     || renamingBlock !== null
     || deleteTargetSlug !== null
-    || isCreatingChannel;
+    || isCreatingChannel
+    || searchOverlayOpen;
   useNativeWindowChromeSurface(topChromeSurfaceToken);
 
   useEffect(() => {
@@ -1102,7 +1119,14 @@ export function AppWithVault({
   // bytes back through save_thumb. Mounts once vault is open.
   useThumbnailUpgrade(vaultReady);
 
-  const [loadError, setLoadError] = useState<string | null>(null);
+  // Errors are kept per source: the feed read, the collections read, and the
+  // space itself (opening, indexing, element creation). A read that succeeds
+  // clears only its own error, so a late collections answer never hides a
+  // failed feed read (SPEC_AUDIT_FIXES.md, Г4.1).
+  const [spaceError, setSpaceError] = useState<string | null>(null);
+  const [gridLoadError, setGridLoadError] = useState<string | null>(null);
+  const [taxonomyLoadError, setTaxonomyLoadError] = useState<string | null>(null);
+  const loadError = spaceError ?? gridLoadError ?? taxonomyLoadError;
 
   useEffect(() => {
     if (!loadError || !isTauri()) return;
@@ -1113,6 +1137,30 @@ export function AppWithVault({
       });
     });
   }, [loadError]);
+
+  const cancelGridRetry = useCallback(() => {
+    if (gridRetryTimerRef.current !== null) {
+      window.clearTimeout(gridRetryTimerRef.current);
+      gridRetryTimerRef.current = null;
+    }
+  }, []);
+
+  // A failed feed read is read again on its own, a bounded number of times.
+  // The retry re-reads the whole loaded range of the route that failed; any
+  // newer read cancels it, and a route or space change leaves it unanswered.
+  const scheduleGridRetry = useCallback((tag: string | undefined) => {
+    cancelGridRetry();
+    const attempt = gridRetryAttemptsRef.current;
+    const delay = GRID_REREAD_RETRY_DELAYS_MS[attempt];
+    if (delay === undefined) return;
+    gridRetryAttemptsRef.current = attempt + 1;
+    const pathAtStart = vaultPathRef.current;
+    gridRetryTimerRef.current = window.setTimeout(() => {
+      gridRetryTimerRef.current = null;
+      if (vaultPathRef.current !== pathAtStart || currentTagRef.current !== tag) return;
+      void loadGridSnapshotRef.current({ tag, preserveLoadedRange: true, retry: true });
+    }, delay);
+  }, [cancelGridRetry]);
 
   const invalidateRoutesForTags = useCallback((affectedTags: readonly string[]) => {
     const allRouteKey = routeKeyFor(undefined);
@@ -1131,6 +1179,7 @@ export function AppWithVault({
     preferCachedRoute = false,
     invalidateCachedRoutes = false,
     preserveLoadedRange = false,
+    retry = false,
   }: {
     tag?: string;
     preferCachedRoute?: boolean;
@@ -1143,22 +1192,30 @@ export function AppWithVault({
      * scroll position.
      */
     preserveLoadedRange?: boolean;
+    /** The read is an automatic retry of a failed one and spends its budget. */
+    retry?: boolean;
   } = {}) => {
     const requestId = ++loadRequestIdRef.current;
+    cancelGridRetry();
+    if (!retry) gridRetryAttemptsRef.current = 0;
     paginationRequestRef.current = null;
     setLoadingMoreBlocks(false);
     const pathAtStart = vaultPathRef.current;
     const tagAtStart = tag;
     const routeKey = routeKeyFor(tagAtStart);
+    const orderAtStart = getFeedDisplay().sort;
     const started = performance.now();
     if (invalidateCachedRoutes) {
       invalidateRouteSnapshots();
     }
     if (preferCachedRoute) {
       const cached = routeSnapshotCacheRef.current.get(routeKey);
-      if (cached) {
-        applyGridSnapshot(tagAtStart, cached);
-        setLoadError(null);
+      // Cached routes are dropped whenever the order changes, so a cached list
+      // is a list in the current order.
+      if (cached && applyGridSnapshot(tagAtStart, cached)) {
+        shownListRef.current = { routeKey, order: orderAtStart };
+        setGridLoadError(null);
+        setSpaceError(null);
       }
     }
     console.info("[startup] loadGrid:start", {
@@ -1172,7 +1229,7 @@ export function AppWithVault({
     const loadedCount = preserveLoadedRange ? blocksRef.current.length : 0;
     const pageLimit = refreshPageLimit(loadedCount, GRID_PAGE_SIZE);
     try {
-      const grid = await fetchGridBlocks(tagAtStart, 0, pageLimit);
+      const grid = await fetchGridBlocks(tagAtStart, 0, pageLimit, orderAtStart);
       if (
         loadRequestIdRef.current !== requestId
         || vaultPathRef.current !== pathAtStart
@@ -1183,9 +1240,12 @@ export function AppWithVault({
       if (!applyGridSnapshot(tagAtStart, grid)) {
         return false;
       }
+      shownListRef.current = { routeKey, order: orderAtStart };
+      gridRetryAttemptsRef.current = 0;
       setAppliedRouteLoadId(requestId);
       setIndexRereadAfterLoadId((after) => (after !== null && requestId > after ? null : after));
-      setLoadError(null);
+      setGridLoadError(null);
+      setSpaceError(null);
       window.dispatchEvent(new Event("vault-refreshed"));
       console.info("[startup] loadGrid:done", {
         requestId,
@@ -1201,7 +1261,16 @@ export function AppWithVault({
         && currentTagRef.current === tagAtStart
       ) {
         console.error("[LOAD_GRID] FAILED:", msg, err);
-        setLoadError(msg);
+        setGridLoadError(msg);
+        // The list on screen stays. When it is this route's list in the order
+        // the failed read asked for, the next page continues it: paging is
+        // handed back to it instead of waiting for an answer that is not
+        // coming (Г4.1).
+        const shown = shownListRef.current;
+        if (shown?.routeKey === routeKey && shown.order === orderAtStart) {
+          setAppliedRouteLoadId(requestId);
+        }
+        scheduleGridRetry(tagAtStart);
       }
       console.error("[startup] loadGrid:failed", {
         requestId,
@@ -1211,7 +1280,7 @@ export function AppWithVault({
       });
       return false;
     }
-  }, [applyGridSnapshot, invalidateRouteSnapshots, routeKeyFor]);
+  }, [applyGridSnapshot, cancelGridRetry, invalidateRouteSnapshots, routeKeyFor, scheduleGridRetry]);
 
   const loadTaxonomySnapshotState = useCallback(async () => {
     const requestId = ++taxonomyRequestIdRef.current;
@@ -1235,7 +1304,8 @@ export function AppWithVault({
       // Kept outside React state: hovering cards and rows reads it on every
       // pointer move (SPEC_CARD_STATES.md, С3 and С4).
       setCollectionMemberships(snapshot.memberships ?? []);
-      setLoadError(null);
+      setTaxonomyLoadError(null);
+      setSpaceError(null);
       console.info("[startup] loadTaxonomy:done", {
         requestId,
         tags: snapshot.tags.length,
@@ -1249,7 +1319,7 @@ export function AppWithVault({
         && vaultPathRef.current === pathAtStart
       ) {
         console.error("[LOAD_TAXONOMY] FAILED:", msg, err);
-        setLoadError(msg);
+        setTaxonomyLoadError(msg);
       }
       console.error("[startup] loadTaxonomy:failed", {
         requestId,
@@ -1485,9 +1555,11 @@ export function AppWithVault({
     const offsetAtStart = blocksRef.current.length;
     const routeLoadRequestIdAtStart = loadRequestIdRef.current;
     const generationAtStart = gridGenerationRef.current;
+    // The next page continues the list on screen, in that list's order.
+    const orderAtStart = shownListRef.current?.order ?? getFeedDisplay().sort;
     setLoadingMoreBlocks(true);
     try {
-      const grid = await fetchGridBlocks(tagAtStart, offsetAtStart, GRID_PAGE_SIZE);
+      const grid = await fetchGridBlocks(tagAtStart, offsetAtStart, GRID_PAGE_SIZE, orderAtStart);
       if (
         vaultPathRef.current !== pathAtStart
         || currentTagRef.current !== tagAtStart
@@ -1533,7 +1605,8 @@ export function AppWithVault({
         && loadRequestIdRef.current === routeLoadRequestIdAtStart
       ) {
         console.error("[LOAD_MORE] FAILED:", msg, err);
-        setLoadError(msg);
+        setGridLoadError(msg);
+        scheduleGridRetry(tagAtStart);
       }
     } finally {
       if (paginationRequestRef.current === requestToken) {
@@ -1547,7 +1620,7 @@ export function AppWithVault({
         setLoadingMoreBlocks(false);
       }
     }
-  }, [appliedRouteLoadId, hasMoreBlocks, invalidateRouteSnapshots, routeKeyFor]);
+  }, [appliedRouteLoadId, hasMoreBlocks, invalidateRouteSnapshots, routeKeyFor, scheduleGridRetry]);
 
   // Paint the first page immediately, then warm exactly one additional page
   // for the active route. Subsequent pages remain demand-driven by Grid's
@@ -1612,7 +1685,10 @@ export function AppWithVault({
   useEffect(() => {
     let cancelled = false;
     setVaultReady(false);
-    setLoadError(null);
+    setSpaceError(null);
+    setGridLoadError(null);
+    setTaxonomyLoadError(null);
+    cancelGridRetry();
     setVaultStats(null);
     setThumbsRootPath(null);
     invalidateRouteSnapshots();
@@ -1657,13 +1733,13 @@ export function AppWithVault({
           elapsedMs: Math.round(performance.now() - started),
           error: msg,
         });
-        setLoadError(msg);
+        setSpaceError(msg);
         setIsSyncing(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [invalidateRouteSnapshots, vaultPath]);
+  }, [cancelGridRetry, invalidateRouteSnapshots, vaultPath]);
 
   useEffect(() => {
     if (!vaultReady) {
@@ -1922,7 +1998,7 @@ export function AppWithVault({
       setSyncProgress(null);
       setCloudAdviceToken((token) => token + 1);
       if (event.payload.error) {
-        setLoadError(event.payload.error);
+        setSpaceError(event.payload.error);
         return;
       }
       invalidateRouteSnapshots();
@@ -1954,6 +2030,10 @@ export function AppWithVault({
       if (refreshTimerRef.current !== null) {
         window.clearTimeout(refreshTimerRef.current);
         refreshTimerRef.current = null;
+      }
+      if (gridRetryTimerRef.current !== null) {
+        window.clearTimeout(gridRetryTimerRef.current);
+        gridRetryTimerRef.current = null;
       }
       if (vaultStatsFrameRef.current !== null) {
         window.cancelAnimationFrame(vaultStatsFrameRef.current);
@@ -3042,7 +3122,7 @@ export function AppWithVault({
         }
         if (overId.startsWith("tag:")) {
           void handleTextSelectionDrop(textSelectionPayload, overId.slice(4)).catch((error) => {
-            setLoadError(error instanceof Error ? error.message : "Could not create an element from this selection.");
+            setSpaceError(error instanceof Error ? error.message : "Could not create an element from this selection.");
           });
         }
         clearActiveMineTextSelectionDragPayload();
@@ -4015,7 +4095,7 @@ export function AppWithVault({
     </ChromeShell>
 
     <DragOverlay
-      dropAnimation={overlayDressing === "row" ? TAG_ROW_DROP_ANIMATION : null}
+      dropAnimation={overlayDressing === "row" ? tagRowDropAnimation() : null}
       modifiers={overlayDressing === "row" ? TAG_ROW_OVERLAY_MODIFIERS : POINT_OVERLAY_MODIFIERS}
       style={{ pointerEvents: "none" }}
     >
