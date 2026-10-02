@@ -25,8 +25,8 @@ use crate::domain::search::{SearchFilter, SearchQuery};
 use crate::domain::vault::{validate_slug, VaultLayout};
 use crate::storage::db;
 use crate::storage::media_dimensions::{
-    build_media_dimensions_json, build_media_dimensions_json_from_sources, PreviewDimensions,
-    SourceDimensions,
+    build_media_dimensions_json, build_media_dimensions_json_from_sources,
+    extract_preview_dimensions, PreviewDimensions, SourceDimensions,
 };
 use crate::storage::media_refs;
 use crate::storage::preview_plan::{
@@ -1683,7 +1683,47 @@ pub fn sync_thumb_metadata(
          WHERE slug = ?1",
         params![slug, next_format, next_mtime, feed_playback],
     )?;
+    restamp_primary_preview_dimensions(conn, slug, thumb_path)?;
     Ok(true)
+}
+
+/// Carry the size of a rewritten thumb into the manifest that paints it.
+///
+/// The thumb is the card's primary preview artifact (`primary_preview_path`
+/// names the same file), and the card takes its shape from that artifact's
+/// size (SPEC_CARD_MEDIA_GEOMETRY.md). The sweep rewrites it in place, so
+/// the size recorded for the file it replaced must not outlive it. Guarded
+/// by the manifest it replaces: a writer that changed the plan meanwhile wins.
+fn restamp_primary_preview_dimensions(conn: &Connection, slug: &str, thumb_path: &Path) -> Result<()> {
+    let raw = conn
+        .query_row(
+            "SELECT preview_manifest FROM blocks WHERE slug = ?1",
+            [slug],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()?
+        .flatten();
+    let Some(mut manifest) = parse_feed_preview_manifest(raw.as_deref()) else {
+        return Ok(());
+    };
+    if manifest.primary_preview_path.as_deref() != Some(primary_preview_path(slug).as_str()) {
+        return Ok(());
+    }
+    // A thumb that is gone or unreadable leaves the size unknown, and the
+    // preview pass measures again what it writes next.
+    let measured = extract_preview_dimensions(thumb_path);
+    let next = (measured.map(|d| d.width), measured.map(|d| d.height));
+    if (manifest.preview_width, manifest.preview_height) == next {
+        return Ok(());
+    }
+    (manifest.preview_width, manifest.preview_height) = next;
+    let stamped = serde_json::to_string(&manifest)
+        .context("failed to serialize preview manifest with the thumb's size")?;
+    conn.execute(
+        "UPDATE blocks SET preview_manifest = ?3 WHERE slug = ?1 AND preview_manifest IS ?2",
+        params![slug, raw, stamped],
+    )?;
+    Ok(())
 }
 
 /// Clear thumbnail metadata for an indexed block. Returns true when changed.
@@ -4419,6 +4459,41 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["alpha", "Beta", "Zulu"]
         );
+    }
+
+    #[test]
+    fn sync_thumb_metadata_carries_a_rewritten_thumbs_size_into_the_manifest() {
+        let conn = test_conn();
+        upsert_block(&conn, &make_block("clip", &[]), None).unwrap();
+        // The size of the 480x480 text preview the thumb used to be.
+        let manifest = FeedPreviewManifest {
+            kind: FeedPreviewKind::VideoPoster,
+            primary_preview_path: Some(primary_preview_path("clip")),
+            width: Some(1280),
+            height: Some(720),
+            preview_width: Some(480),
+            preview_height: Some(480),
+            tiles: Vec::new(),
+            overflow_count: 0,
+        };
+        conn.execute(
+            "UPDATE blocks SET preview_manifest = ?2 WHERE slug = ?1",
+            params!["clip", serde_json::to_string(&manifest).unwrap()],
+        )
+        .unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let thumb = dir.path().join("clip.jpg");
+        image::RgbImage::from_pixel(640, 360, image::Rgb([10, 20, 30])).save(&thumb).unwrap();
+        assert!(sync_thumb_metadata(&conn, "clip", &thumb, None).unwrap());
+
+        let raw: String = conn
+            .query_row("SELECT preview_manifest FROM blocks WHERE slug = 'clip'", [], |row| row.get(0))
+            .unwrap();
+        let stamped: FeedPreviewManifest = serde_json::from_str(&raw).unwrap();
+        assert_eq!(stamped.preview_dimensions().map(|d| (d.width, d.height)), Some((640, 360)));
+        // The source's own size is not the artifact's and stays as it was.
+        assert_eq!((stamped.width, stamped.height), (Some(1280), Some(720)));
     }
 
     #[test]

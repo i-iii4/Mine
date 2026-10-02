@@ -1050,23 +1050,20 @@ fn publish_stamped_dimensions(
     record: &PreviewRecord,
     manifest: &FeedPreviewManifest,
 ) -> Result<StampOutcome> {
-    // Measuring opens every artifact. Once a manifest carries its geometry
-    // there is nothing to learn, so a settled vault costs nothing per sweep.
-    if !manifest_needs_dimensions(manifest) {
-        return Ok(StampOutcome {
-            manifest: record.manifest.clone(),
-            unmeasurable: false,
-        });
-    }
-
+    // Every publish measures, even a manifest that already carries geometry:
+    // an artifact is rewritten in place by this pass and by the thumbnail
+    // sweep alike, and a size kept from the file it replaced shaped a 16:9
+    // video as a square (SPEC_CARD_MEDIA_GEOMETRY.md). Measuring reads each
+    // artifact's header only, about 20 µs warm.
     let stamped = stamp_preview_dimensions(vault, manifest)?;
     let Some(stamped) = stamped else {
-        // Every artifact was opened and none gave up its size: the files are
-        // present but unusable. Reporting `ready` here is what turned a broken
-        // artifact into a card that merely looked oddly shaped.
+        // Nothing changed. Where geometry is still missing, every artifact
+        // was opened and none gave up its size: the files are present but
+        // unusable. Reporting `ready` there is what turned a broken artifact
+        // into a card that merely looked oddly shaped.
         return Ok(StampOutcome {
             manifest: record.manifest.clone(),
-            unmeasurable: true,
+            unmeasurable: manifest_needs_dimensions(manifest),
         });
     };
 
@@ -1934,6 +1931,60 @@ mod tests {
 
         // And the settled manifest is left alone on the next pass.
         assert!(!manifest_needs_dimensions(&stamped));
+    }
+
+    /// An artifact rewritten in place after its size was recorded.
+    ///
+    /// A card saved before its cover arrived got a 480x480 text preview; the
+    /// poster that replaced it at the same path is 16:9, and the manifest kept
+    /// 480x480, so the card stayed square. The next pass must carry the size
+    /// of the file now on disk.
+    #[test]
+    fn ready_preview_rewritten_in_place_is_measured_again() {
+        let (_source, vault, conn) = setup();
+        let block = image_block("Rewritten", "rewritten.png");
+        let image = image::RgbImage::from_pixel(1000, 500, image::Rgb([10, 20, 30]));
+        image.save(vault.root().join("rewritten.png")).unwrap();
+        files::write_block_file(&vault, &block).unwrap();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+        reconcile_preview_for_slug(&conn, &vault, "Rewritten").unwrap();
+
+        let read_manifest = |conn: &Connection| -> FeedPreviewManifest {
+            let raw: String = conn
+                .query_row(
+                    "SELECT preview_manifest FROM blocks WHERE slug = 'Rewritten'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            serde_json::from_str(&raw).unwrap()
+        };
+        let mut stale = read_manifest(&conn);
+        assert_eq!(stale.preview_dimensions().map(|d| (d.width, d.height)), Some((640, 320)));
+
+        // The size an earlier artifact at the same paths had.
+        stale.preview_width = Some(480);
+        stale.preview_height = Some(480);
+        for tile in &mut stale.tiles {
+            tile.preview_width = Some(480);
+            tile.preview_height = Some(480);
+        }
+        conn.execute(
+            "UPDATE blocks SET preview_manifest = ?2 WHERE slug = ?1",
+            params!["Rewritten", serde_json::to_string(&stale).unwrap()],
+        )
+        .unwrap();
+
+        let outcome = reconcile_preview_for_slug(&conn, &vault, "Rewritten")
+            .unwrap()
+            .expect("the block is known");
+        assert_eq!(outcome.state, DerivedPreviewState::Ready);
+        assert!(!outcome.regenerated, "measuring must not redecode the artifact");
+
+        let measured = read_manifest(&conn);
+        assert_eq!(measured.preview_dimensions().map(|d| (d.width, d.height)), Some((640, 320)));
+        let tile = measured.tiles.first().expect("single media tile");
+        assert_eq!(tile.preview_dimensions().map(|d| (d.width, d.height)), Some((640, 320)));
     }
 
     /// An artifact that passes the readiness check and yields no geometry.
