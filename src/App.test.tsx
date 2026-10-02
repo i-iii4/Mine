@@ -12,6 +12,7 @@ import type { ChannelDto, DeleteBlockPlan, GridSnapshot, IndexedBlock, LightBloc
 import { App, AppWithVault } from "./App";
 import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
 import { SEARCH_OVERLAY_RECENT_LIMIT, SEARCH_OVERLAY_RESULT_LIMIT } from "@/components/SearchOverlay";
+import { INDEXING_NOTICE_DELAY_MS } from "@/components/IndexingProgress";
 
 // The search overlay shares the list_grid_blocks command: recent mode passes
 // SEARCH_OVERLAY_RECENT_LIMIT without a query, query mode passes a query string
@@ -2952,6 +2953,46 @@ describe("AppWithVault", () => {
       detail: { payload: { path: "/vault", indexed: 2, errors: 0, error: null } },
     }));
     await waitFor(() => expect(screen.queryByText("Index pass failed")).not.toBeInTheDocument());
+  });
+
+  it("carries one opening notice from the notes to the previews (О13)", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+    const notices = () => document.querySelectorAll("[data-indexing-progress]");
+    const send = (name: string, payload: object) => {
+      fireEvent(window, new CustomEvent(name, { detail: { payload } }));
+    };
+
+    vi.useFakeTimers();
+    try {
+      send("vault-sync-progress", { path: "/vault", processed: 10, total: 643 });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(INDEXING_NOTICE_DELAY_MS);
+      });
+      expect(screen.getByText("Indexing “vault”")).toBeInTheDocument();
+
+      // The preview pass is queued before the index pass reports its end,
+      // so the card changes its title and never leaves the corner.
+      send("derived-preview-queued", { path: "/vault" });
+      send("vault-sync-finished", { path: "/vault", indexed: 643, errors: 0, error: null });
+      expect(notices()).toHaveLength(1);
+      expect(notices()[0]).toHaveAttribute("data-indexing-phase", "previews");
+      expect(screen.queryByText("Indexing “vault”")).toBeNull();
+
+      send("derived-preview-progress", { path: "/elsewhere", processed: 5, total: 9 });
+      send("derived-preview-progress", { path: "/vault", processed: 120, total: 643 });
+      expect(notices()).toHaveLength(1);
+      expect(screen.getByText("120 / 643")).toBeInTheDocument();
+
+      send("derived-preview-finished", { path: "/vault" });
+      expect(notices()).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it.each([

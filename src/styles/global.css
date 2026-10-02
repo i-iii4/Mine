@@ -269,6 +269,17 @@ select,
   transform: translateY(calc(var(--card-lift) - var(--card-lift-drift)));
 }
 
+/* `Media`: the caption waits under the bottom edge and rises with the row
+   (С8.7); the lift is its height, set on the frame by the caption itself. */
+[data-card-lift="caption"] {
+  transform: translateY(100%);
+}
+
+[data-card-lift-hover]:hover [data-card-lift="caption"],
+[data-card-lift-pinned] [data-card-lift="caption"] {
+  transform: translateY(0);
+}
+
 [data-card-lift-hover]:hover [data-card-lift="tray"],
 [data-card-lift-pinned] [data-card-lift="tray"] {
   transform: translateY(0);

@@ -15,8 +15,11 @@
 import type { ReactNode } from "react";
 import { CloudDownload, Play, RefreshCw } from "lucide-react";
 import { ActivityIndicators } from "@/components/ActivityIndicators";
-import { CardSourcelessSurface } from "@/components/Card";
-import { CloudBadge } from "@/components/CloudBadge";
+import { Card, CardPreviewPendingSurface, CardSourcelessSurface } from "@/components/Card";
+import { SidebarTagRowDragPreview } from "@/components/Sidebar";
+import { computeCardHeight } from "@/lib/cardHeight";
+import { FeedMediaContext, FeedShowContext, type FeedMedia } from "@/lib/feedDisplay";
+import type { LightBlock, PreviewCard } from "@/types";
 import { CloudRecommendationCard } from "@/components/CloudRecommendation";
 import { IndexingProgress } from "@/components/IndexingProgress";
 import { FirstCardMarkerCard } from "@/components/FirstCardMarker";
@@ -69,6 +72,139 @@ function ScreenFrame({ children }: { children: ReactNode }) {
   return <div className="h-96 overflow-hidden rounded-1 border border-border">{children}</div>;
 }
 
+/// Pictures served with the app, so showcase cards paint real images.
+const SHOWCASE_PICTURES = [
+  "/feed-scroll-audit/audit-0.svg",
+  "/feed-scroll-audit/audit-1.svg",
+  "/feed-scroll-audit/audit-2.svg",
+  "/feed-scroll-audit/audit-3.svg",
+  "/feed-scroll-audit/audit-4.svg",
+  "/feed-scroll-audit/audit-5.svg",
+];
+
+const SHOWCASE_WIDTH = 224;
+
+function showcaseBlock(id: number, overrides: Partial<LightBlock>): LightBlock {
+  return {
+    id,
+    slug: `design-showcase-${id}`,
+    card_kind: "article",
+    block_type: "article",
+    title: null,
+    content_heading: null,
+    display_title: null,
+    fallback_label: `Showcase ${id}`,
+    url: "https://example.test/design-showcase",
+    media_file: null,
+    thumbnail: null,
+    saved_at: "2026-10-01T00:00:00Z",
+    width: null,
+    height: null,
+    author: null,
+    body: "",
+    preview_text: null,
+    first_image: null,
+    media_urls: null,
+    media_dimensions: null,
+    preview_manifest: null,
+    feed_playback: null,
+    search_match: null,
+    ...overrides,
+  };
+}
+
+/// A post with one picture under its title and text.
+function showcasePost(id: number, picture: string): LightBlock {
+  return showcaseBlock(id, {
+    title: "Lunar Orbiter 2, frame 2021",
+    preview_text: "The first oblique photograph of the Moon, taken from orbit in 1966.",
+    body: "The first oblique photograph of the Moon, taken from orbit in 1966.",
+    author: "@orbiter",
+    first_image: picture,
+    media_urls: JSON.stringify([picture]),
+    preview_manifest: JSON.stringify({
+      kind: "image",
+      primary_preview_path: picture,
+      width: 800,
+      height: 600,
+      preview_width: 800,
+      preview_height: 600,
+      tiles: [{
+        source_path: picture, preview_path: picture, width: 800, height: 600,
+        preview_width: 800, preview_height: 600, is_video: false, is_video_poster: false,
+      }],
+      overflow_count: 0,
+    }),
+  });
+}
+
+const SHOWCASE_TEXT_POST = showcaseBlock(9103, {
+  title: "Notes on calm interfaces",
+  preview_text: "A calm interface answers when asked and stays still otherwise. Motion is a reply, never decoration.",
+  body: "A calm interface answers when asked and stays still otherwise. Motion is a reply, never decoration.",
+  author: "@mine",
+});
+
+const SHOWCASE_PICTURE = showcaseBlock(9104, {
+  card_kind: "media",
+  block_type: "image",
+  media_file: "Media/orbit.jpg",
+  preview_manifest: JSON.stringify({
+    kind: "image",
+    primary_preview_path: SHOWCASE_PICTURES[2],
+    width: 600,
+    height: 800,
+    preview_width: 600,
+    preview_height: 800,
+    tiles: [],
+    overflow_count: 0,
+  }),
+});
+
+/// A real feed card at the size the feed would lay it out, with its hover
+/// buttons, so the lift answers the pointer here exactly as in the feed.
+function ShowcaseCard({ block, media = "inset" }: { block: LightBlock; media?: FeedMedia }) {
+  const height = computeCardHeight(block, SHOWCASE_WIDTH, null, "mixed", media);
+  return (
+    <FeedShowContext.Provider value="mixed">
+      <FeedMediaContext.Provider value={media}>
+        <div style={{ width: SHOWCASE_WIDTH, height }}>
+          <Card
+            block={block}
+            vaultPath=""
+            thumbsRootPath=""
+            onClick={() => {}}
+            tags={[]}
+            onToggleTag={() => {}}
+            onCreateAndAssign={() => {}}
+            onRequestRename={() => {}}
+            onRequestDelete={() => {}}
+          />
+        </div>
+      </FeedMediaContext.Provider>
+    </FeedShowContext.Provider>
+  );
+}
+
+function showcaseThumbnails(count: number): PreviewCard[] {
+  return Array.from({ length: count }, (_, index) => ({
+    slug: `design-showcase-thumb-${index}`,
+    url: SHOWCASE_PICTURES[index % SHOWCASE_PICTURES.length]!,
+    text: false,
+    hasThumb: true,
+  }));
+}
+
+/// One variant of a showcase case, captioned.
+function Variant({ caption, children }: { caption: string; children: ReactNode }) {
+  return (
+    <div className="grid content-start gap-2">
+      {children}
+      <span className="font-mono text-sm text-muted-foreground">{caption}</span>
+    </div>
+  );
+}
+
 export function EdgeStatesSection() {
   return (
     <section className="grid gap-4" data-design-edge-states="">
@@ -86,20 +222,19 @@ export function EdgeStatesSection() {
       <div className="grid gap-4 xl:grid-cols-2">
         <StateCase
           name="Карточка ждёт содержимое"
-          when="Превью ещё не построено. Пустая поверхность без иконок и слов — это норма, а не ошибка, и продакшен рисует именно её."
+          when="Превью ещё не построено: идёт фоновый проход превью пространства. Заливка скелета ленты без иконок и слов, в той же геометрии. Это норма, а не ошибка."
         >
           <CardFrame>
-            <div className="absolute inset-0 bg-component-fill/40" />
+            <CardPreviewPendingSurface />
           </CardFrame>
         </StateCase>
 
         <StateCase
           name="Та же карточка, содержимое в iCloud"
-          when={`Метка в левом верхнем углу — правый занят hover-действиями карточки. Появляется после ${CLOUD_BADGE_DELAY_MS / 1000} с ожидания; здесь настоящий компонент, она проявится сама.`}
+          when={`Метка в левом верхнем углу, потому что правый занят hover-действиями карточки. Появляется после ${CLOUD_BADGE_DELAY_MS / 1000} с ожидания; здесь настоящий компонент, она проявится сама.`}
         >
           <CardFrame>
-            <div className="absolute inset-0 bg-component-fill/40" />
-            <CloudBadge active />
+            <CardPreviewPendingSurface contentInCloud />
           </CardFrame>
         </StateCase>
 
@@ -228,11 +363,71 @@ export function EdgeStatesSection() {
         </StateCase>
 
         <StateCase
-          name="Прогресс индексации"
-          when="Индексация дольше секунды: уведомление в правом нижнем углу с числами вместо бесконечного индикатора. Пока лента пуста, рядом кнопка другой папки: папка открывается без подтверждения."
+          name="Тост открытия пространства"
+          when="Открытие дольше секунды: одна карточка в правом нижнем углу ведёт обе фазы, сначала индексацию заметок, затем подготовку превью. Числа вместо бесконечного индикатора. Пока лента пуста, есть кнопка другой папки: папка открывается без подтверждения."
         >
-          <div className="h-64">
-            <IndexingProgress spaceName="Mine" processed={1284} total={3000} onClose={() => {}} onChooseAnother={() => {}} />
+          <div className="grid gap-4">
+            <Variant caption="заметки, лента пуста">
+              <IndexingProgress
+                spaceName="Mine"
+                step={{ phase: "notes", count: { processed: 284, total: 674 } }}
+                onClose={() => {}}
+                onChooseAnother={() => {}}
+              />
+            </Variant>
+            <Variant caption="между фазами: превью ещё считают работу">
+              <IndexingProgress spaceName="Mine" step={{ phase: "previews", count: null }} onClose={() => {}} />
+            </Variant>
+            <Variant caption="превью, лента уже с карточками">
+              <IndexingProgress
+                spaceName="Mine"
+                step={{ phase: "previews", count: { processed: 312, total: 643 } }}
+                onClose={() => {}}
+              />
+            </Variant>
+          </div>
+        </StateCase>
+
+        <StateCase
+          name="Полоса миниатюр в левом меню"
+          when="Число карточек приходит раньше миниатюр. Пока их нет или превью ещё строятся, свободные места заполняют заглушки той же геометрии, до 20 штук: строка не выглядит пустой и не сдвигается, когда миниатюры приходят."
+        >
+          <div className="grid w-full max-w-md gap-4">
+            <Variant caption="готово: только настоящие миниатюры">
+              <div className="h-12">
+                <SidebarTagRowDragPreview label="Органика" count={11} cards={showcaseThumbnails(6)} />
+              </div>
+            </Variant>
+            <Variant caption="превью строятся: 3 готовы, остальные места заглушки">
+              <div className="h-12">
+                <SidebarTagRowDragPreview label="Периферия" count={51} cards={showcaseThumbnails(3)} previewsPending />
+              </div>
+            </Variant>
+            <Variant caption="превью строятся, готовых нет">
+              <div className="h-12">
+                <SidebarTagRowDragPreview label="Игры" count={6} cards={[]} previewsPending />
+              </div>
+            </Variant>
+          </div>
+        </StateCase>
+
+        <StateCase
+          name="Подъём карточки при наведении"
+          when="Наведите курсор: текст и окно медиа поднимаются, ряд кнопок выезжает из-под нижнего края, картинка смещается на 8 px. Внешний размер карточки не меняется. У текстовой карточки текст уходит за верхний край."
+        >
+          <div className="flex flex-wrap items-start gap-4">
+            <Variant caption="Inset">
+              <ShowcaseCard block={showcasePost(9101, SHOWCASE_PICTURES[0]!)} />
+            </Variant>
+            <Variant caption="Edge to edge">
+              <ShowcaseCard block={showcasePost(9102, SHOWCASE_PICTURES[1]!)} media="edge" />
+            </Variant>
+            <Variant caption="текст">
+              <ShowcaseCard block={SHOWCASE_TEXT_POST} />
+            </Variant>
+            <Variant caption="картинка">
+              <ShowcaseCard block={SHOWCASE_PICTURE} />
+            </Variant>
           </div>
         </StateCase>
 

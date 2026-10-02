@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, memo, createContext, useContext, forwardRef, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, memo, createContext, useContext, forwardRef, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import type { IndexedBlock, LightBlock } from "@/types";
 import {
@@ -17,8 +17,22 @@ import {
 } from "@/lib/cardLayout";
 import { FeedMediaContext, FeedShowContext, type FeedMedia } from "@/lib/feedDisplay";
 import { PROVISIONAL_MEDIA_ASPECT } from "@/lib/cardAspect";
+import {
+  PreviewsPendingContext,
+  cardPreviewState,
+  type CardPreviewState,
+} from "@/lib/cardPreviewState";
 import { normalizeFeedPlayback } from "@/lib/feedPlayback";
-import { CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX, CONTENT_CARD_TITLE_CLASSES } from "@/lib/cardTypography";
+import {
+  CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX,
+  CONTENT_CARD_TITLE_CLASSES,
+  EDGE_TEXT_SIDE_PX,
+  cardTextGap,
+  edgeTextBottom,
+  edgeTextTop,
+  type CardTextLine,
+  type CardTextPlacement,
+} from "@/lib/cardTypography";
 import { CARD_HOVER_ACTION_MIN_HEIGHT, computeCardHeight } from "@/lib/cardHeight";
 import { buildFeedVideoPosterCandidates } from "@/lib/feedVideoPoster";
 import { getDisplayTitle, getNavigationLabel } from "@/lib/displayTitle";
@@ -37,6 +51,10 @@ import { CloudBadge } from "./CloudBadge";
 
 const PriorityContext = createContext(false);
 const usePriority = () => useContext(PriorityContext);
+/// What the card's media slots paint when they have no preview to show,
+/// resolved once per card in `CardContent` (see `cardPreviewState`).
+const PreviewStateContext = createContext<CardPreviewState>("missing");
+const usePreviewState = () => useContext(PreviewStateContext);
 const contentCardPreviewTextStyle = {
   lineHeight: `${CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX}px`,
 } as const;
@@ -106,6 +124,9 @@ interface GraphicSurfaceProps extends React.HTMLAttributes<HTMLDivElement> {
   insetMedia?: boolean;
   /** Layout of the media plane the children are painted in. */
   contentClassName?: string;
+  /** The window's fill under the media: it moves with the window on a lift,
+   *  so it never shows behind the text that rises past the slot. */
+  windowClassName?: string;
   /** Whether the content is still in iCloud: the badge stays put on a lift. */
   contentInCloud?: boolean;
 }
@@ -127,10 +148,57 @@ const CardFrame = forwardRef<HTMLDivElement, CardFrameProps>(function CardFrame(
   );
 });
 
-/// The card's surface when there is no image to paint: the media file is gone,
-/// or its preview cannot be read. Exported so the design-system showcase draws
-/// this state from the product rather than from a copy of it — a copy is what
-/// let the showcase drift out of date unnoticed.
+/// The fill a media slot shows while its preview is on the way: the feed
+/// skeleton's `bg-accent` (`CardSkeleton`), no icon and no words, so the card
+/// reads as loading. It lies in the picture's plane, under any image that may
+/// still arrive, and covers exactly the box the picture would.
+function PreviewPendingFill() {
+  return (
+    <div
+      aria-hidden="true"
+      className="absolute inset-0 bg-accent"
+      data-card-preview-pending=""
+    />
+  );
+}
+
+/// The pending fill, only while the card's preview is on the way: what a
+/// video poster or a post's picture leaves when it has nothing to show. In any
+/// other state the slot keeps its own surface, as it always has.
+function PendingPreviewFallback() {
+  return usePreviewState() === "pending" ? <PreviewPendingFill /> : null;
+}
+
+/// An image card whose preview is not built yet (SPEC_CARD_MEDIA_GEOMETRY.md,
+/// «Карточка без превью»): the same box `CardSourcelessSurface` fills, the
+/// quiet fill instead of the card's name and file. Exported so the
+/// design-system showcase draws this state from the product.
+export function CardPreviewPendingSurface({
+  contentInCloud,
+  style,
+  geometryPending,
+}: {
+  contentInCloud?: boolean;
+  style?: CSSProperties;
+  geometryPending?: boolean;
+}) {
+  return (
+    <GraphicSurface
+      className="h-full w-full"
+      windowClassName={FILL_WINDOW_CLASS}
+      contentInCloud={contentInCloud}
+      style={style}
+      data-card-preview-geometry={geometryPending ? "pending" : undefined}
+    >
+      <PreviewPendingFill />
+    </GraphicSurface>
+  );
+}
+
+/// The card's surface when there is no image to paint and none is on the way:
+/// the media file is gone, or its preview cannot be read. Exported so the
+/// design-system showcase draws this state from the product rather than from a
+/// copy of it: a copy is what let the showcase drift out of date unnoticed.
 export function CardSourcelessSurface({
   label,
   mediaFile,
@@ -149,6 +217,7 @@ export function CardSourcelessSurface({
   return (
     <GraphicSurface
       className="h-full w-full"
+      windowClassName={FILL_WINDOW_CLASS}
       contentClassName="flex items-center justify-center"
       contentInCloud={contentInCloud}
       style={style}
@@ -183,10 +252,16 @@ export function CardSourcelessSurface({
 /// drifts back half that distance: the box's top edge holds still, the window
 /// shrinks from the bottom and the picture inside moves up by half the lift.
 /// The box clips the rest, so the outer geometry never changes.
+/// A media window that fills its card keeps the card's bottom corners: on a
+/// lift its bottom edge rises above the action row and stays rounded, as the
+/// media over the text does edge to edge (SPEC_CARD_STATES.md, С8.3).
+const FILL_WINDOW_CLASS = "rounded-b-[var(--radius-card)]";
+
 function GraphicSurface({
   children,
   className,
   contentClassName,
+  windowClassName,
   insetMedia = false,
   contentInCloud,
   ...props
@@ -195,10 +270,16 @@ function GraphicSurface({
     <div
       data-card-graphic-surface=""
       data-card-inset-media={insetMedia ? "" : undefined}
-      className={cn("relative overflow-hidden bg-card", insetMedia && "rounded-[var(--radius-card)]", className)}
+      // No fill of its own: the slot stays put on a lift while its window
+      // rises, and a fill here would show behind the risen text as a panel
+      // with the slot's corners (С8.3).
+      className={cn("relative overflow-hidden", insetMedia && "rounded-[var(--radius-card)]", className)}
       {...props}
     >
-      <div data-card-lift="window" className="absolute inset-0 overflow-hidden rounded-[inherit]">
+      <div
+        data-card-lift="window"
+        className={cn("absolute inset-0 overflow-hidden rounded-[inherit] bg-card", windowClassName)}
+      >
         <div data-card-lift="plane" className={cn("absolute inset-0", contentClassName)}>
           {children}
         </div>
@@ -346,9 +427,105 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
         />
       )}
       <CardContent block={block} vaultPath={vaultPath} thumbsRootPath={thumbsRootPath} thumbVersion={thumbVersion} priority={priority} allowPlayback={allowPlayback} />
+      {/* Bare media in any presentation (a picture or a video without a
+          frame, or anything `Media` shows as media alone) says what it is
+          when it lifts (С8.7). */}
+      {hasHoverMenu && isBareMediaVariant(descriptor.variant) && <MediaLiftCaption block={block} />}
     </CardFrame>
   );
 });
+
+/// A card that shows media with no frame and no text of its own: a picture or
+/// a video in `Mixed`, and every media card in `Media`.
+function isBareMediaVariant(variant: CardLayoutVariant): boolean {
+  return variant === "image" || variant === "video" || variant === "media-only";
+}
+
+/// The row of action buttons and the 8px under it: the part of a lift that
+/// is not the card's own text (SPEC_CARD_STATES.md, С8.1).
+const CARD_ACTION_ROW_PX = 40;
+
+/// `Media` shows a card's media alone. A lift reveals what the card says
+/// under it, rising with the action row: a picture's or a video's name in
+/// muted text, or a post's title, text and author, clamped shorter than in
+/// `Cards` (title and author one line, text two) so the media keeps the card
+/// (SPEC_CARD_STATES.md, С8.7). The lift is as tall as this caption, so its
+/// height is handed to the frame as `--card-lift`; it never takes more than
+/// 60% of the card, and text past that is cut.
+function MediaLiftCaption({ block }: { block: LightBlock }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  // `Media` clears a card's text from its descriptor; the caption says what
+  // the same card says in `Mixed`.
+  const descriptor = useMemo(() => deriveCardLayoutDescriptor(block, "mixed"), [block]);
+  useLayoutEffect(() => {
+    const panel = panelRef.current;
+    const frame = panel?.closest<HTMLElement>("[data-feed-card-frame]");
+    if (!panel || !frame) return;
+    const apply = () => frame.style.setProperty("--card-lift", `${panel.offsetHeight}px`);
+    apply();
+    if (typeof ResizeObserver === "undefined") {
+      return () => frame.style.removeProperty("--card-lift");
+    }
+    const observer = new ResizeObserver(apply);
+    observer.observe(panel);
+    return () => {
+      observer.disconnect();
+      frame.style.removeProperty("--card-lift");
+    };
+  }, []);
+
+  const isPost = isPostVariant(descriptor.variant) || Boolean(descriptor.previewText || descriptor.authorText);
+  const title = descriptor.titleText || (isPost ? "" : getNavigationLabel(block));
+  const lines: CardTextLine[] = [];
+  if (title) lines.push("title");
+  if (isPost && descriptor.previewText) lines.push("preview");
+  if (isPost && descriptor.authorText) lines.push("author");
+  const first = lines[0];
+  const last = lines[lines.length - 1];
+  const gapBefore = textGapsFor("edge", lines);
+
+  return (
+    <div
+      ref={panelRef}
+      aria-hidden="true"
+      data-card-lift="caption"
+      className="pointer-events-none absolute inset-x-0 bottom-0 flex max-h-[60%] flex-col justify-end overflow-hidden"
+    >
+      {first && last && (
+        <div
+          className="min-h-0 overflow-hidden"
+          style={{ paddingInline: EDGE_TEXT_SIDE_PX, paddingTop: edgeTextTop(first), paddingBottom: edgeTextBottom(last) }}
+        >
+          {title && (
+            <p
+              className={cn("truncate", isPost ? CONTENT_CARD_TITLE_CLASSES : "text-sm text-muted-foreground")}
+              style={contentCardSingleLineTextStyle}
+            >
+              {title}
+            </p>
+          )}
+          {isPost && descriptor.previewText && (
+            <p
+              className="line-clamp-2 text-sm text-muted-foreground"
+              style={{ ...contentCardPreviewTextStyle, marginTop: gapBefore("preview") }}
+            >
+              {descriptor.previewText}
+            </p>
+          )}
+          {isPost && descriptor.authorText && (
+            <p
+              className="truncate text-sm text-muted-foreground"
+              style={{ ...contentCardSingleLineTextStyle, marginTop: gapBefore("author") }}
+            >
+              {descriptor.authorText}
+            </p>
+          )}
+        </div>
+      )}
+      <div className="shrink-0" style={{ height: CARD_ACTION_ROW_PX }} />
+    </div>
+  );
+}
 
 export function ReadOnlyCardPreview({
   block: sourceBlock,
@@ -783,12 +960,14 @@ export function CardContent({
     () => normalizeFeedPlayback(block.feed_playback),
     [block.feed_playback],
   );
+  const previewsPending = useContext(PreviewsPendingContext);
+  const previewState = cardPreviewState(block, previewsPending);
   const content = (() => {
     switch (descriptor.variant) {
       case "image":
         return <ImageCard block={block} descriptor={descriptor} previewManifest={previewManifest} thumbsRootPath={resolvedThumbsRoot} thumbVersion={thumbVersion} measurementMode={measurementMode} />;
       case "link":
-        return <LinkCard block={block} previewManifest={previewManifest} thumbsRootPath={resolvedThumbsRoot} thumbVersion={thumbVersion} measurementMode={measurementMode} />;
+        return <LinkCard block={block} reservesThumbnail={descriptor.primaryAspectRatio !== null} previewManifest={previewManifest} thumbsRootPath={resolvedThumbsRoot} thumbVersion={thumbVersion} measurementMode={measurementMode} />;
       case "article-text":
       case "article-media":
         return <ArticleCard block={block} descriptor={descriptor} previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} thumbVersion={thumbVersion} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
@@ -806,7 +985,9 @@ export function CardContent({
   })();
   return (
     <PriorityContext.Provider value={!!priority}>
-      {content}
+      <PreviewStateContext.Provider value={previewState}>
+        {content}
+      </PreviewStateContext.Provider>
     </PriorityContext.Provider>
   );
 }
@@ -834,6 +1015,7 @@ function GalleryTileImage({
   loading: "eager" | "lazy";
 }) {
   const [failed, setFailed] = useState(false);
+  const previewState = usePreviewState();
   const previewSrc = item.previewPath
     ? withThumbVersion(previewAssetUrl(thumbsRootPath, item.previewPath), thumbVersion)
     : null;
@@ -843,7 +1025,9 @@ function GalleryTileImage({
   }, [previewSrc]);
 
   if (!previewSrc || failed) {
-    return <div className="absolute inset-0 bg-card" data-preview-unavailable="" />;
+    return previewState === "pending"
+      ? <PreviewPendingFill />
+      : <div className="absolute inset-0 bg-card" data-preview-unavailable="" />;
   }
 
   return (
@@ -941,6 +1125,7 @@ const ImageCard = memo(function ImageCard({
   measurementMode?: boolean;
 }) {
   const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
+  const previewState = usePreviewState();
   const [retryCount, setRetryCount] = useState(0);
   useEffect(() => { setRetryCount(0); }, [previewManifest?.primaryPreviewPath, thumbVersion]);
 
@@ -1003,11 +1188,21 @@ const ImageCard = memo(function ImageCard({
     : { aspectRatio: `${descriptor.primaryAspectRatio}` };
 
   if (currentSrc === null) {
-    return (
+    // A preview on the way is a fill, not a card that names its file: during
+    // a space's first preview pass every picture is here, and a file name on
+    // each reads as breakage. The name and file stay for a preview that is
+    // not coming (SPEC_CARD_MEDIA_GEOMETRY.md, «Карточка без превью»).
+    return previewState === "pending" ? (
+      <CardPreviewPendingSurface
+        contentInCloud={block.content_in_cloud}
+        style={surfaceStyle}
+        geometryPending={geometryPending}
+      />
+    ) : (
       <CardSourcelessSurface
         label={navigationLabel}
         mediaFile={block.media_file}
-        previewUnreadable={block.preview_unreadable}
+        previewUnreadable={previewState === "unreadable"}
         contentInCloud={block.content_in_cloud}
         style={surfaceStyle}
         geometryPending={geometryPending}
@@ -1026,6 +1221,7 @@ const ImageCard = memo(function ImageCard({
   return (
     <GraphicSurface
       className="h-full w-full"
+      windowClassName={FILL_WINDOW_CLASS}
       style={surfaceStyle}
       data-card-preview-geometry={geometryPending ? "pending" : undefined}
       contentInCloud={block.content_in_cloud}
@@ -1058,18 +1254,22 @@ const LINK_COLORS = [
 
 const LinkCard = memo(function LinkCard({
   block,
+  reservesThumbnail,
   previewManifest,
   thumbsRootPath,
   thumbVersion,
   measurementMode = false,
 }: {
   block: LightBlock;
+  /** The layout reserved the page picture's slot above the text. */
+  reservesThumbnail: boolean;
   previewManifest: ReturnType<typeof parsePreviewManifest>;
   thumbsRootPath: string;
   thumbVersion?: number;
   measurementMode?: boolean;
 }) {
   const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
+  const previewState = usePreviewState();
   const [thumbLoaded, setThumbLoaded] = useState(false);
   const domain = block.url ? domainFromUrl(block.url) : null;
   const navigationLabel = getNavigationLabel(block);
@@ -1102,16 +1302,30 @@ const LinkCard = memo(function LinkCard({
     return () => window.removeEventListener("vault-refreshed", handler);
   }, [thumbError]);
 
-  // No thumbnail — compact card (title + domain only)
+  const textFooter = (
+    <div className="p-3" data-card-lift="text">
+      <p className={cn("truncate", CONTENT_CARD_TITLE_CLASSES)} style={contentCardSingleLineTextStyle}>
+        {navigationLabel}
+      </p>
+      {domain && (
+        <p className="mt-0.5 truncate text-sm text-muted-foreground" style={contentCardSingleLineTextStyle}>{domain}</p>
+      )}
+    </div>
+  );
+
+  // No thumbnail. While the page picture is on the way, the slot the layout
+  // reserved for it holds the quiet fill above the text; otherwise the card
+  // is compact, title and domain only.
   if (thumbError) {
+    if (previewState !== "pending" || !reservesThumbnail) {
+      return textFooter;
+    }
     return (
-      <div className="p-3" data-card-lift="text">
-        <p className={cn("truncate", CONTENT_CARD_TITLE_CLASSES)} style={contentCardSingleLineTextStyle}>
-          {navigationLabel}
-        </p>
-        {domain && (
-          <p className="mt-0.5 truncate text-sm text-muted-foreground" style={contentCardSingleLineTextStyle}>{domain}</p>
-        )}
+      <div className="flex flex-col">
+        <GraphicSurface className="aspect-video">
+          <PreviewPendingFill />
+        </GraphicSurface>
+        {textFooter}
       </div>
     );
   }
@@ -1122,7 +1336,7 @@ const LinkCard = memo(function LinkCard({
 
   return (
     <div className="flex flex-col">
-      <GraphicSurface className={cn("aspect-video", bgColor)}>
+      <GraphicSurface className="aspect-video" windowClassName={bgColor}>
         {!thumbLoaded && (
           <div className="flex h-full flex-col items-center justify-center gap-1">
             <span className="text-lg font-semibold text-white/40">{initial}</span>
@@ -1150,14 +1364,7 @@ const LinkCard = memo(function LinkCard({
           />
         )}
       </GraphicSurface>
-      <div className="p-3" data-card-lift="text">
-        <p className={cn("truncate", CONTENT_CARD_TITLE_CLASSES)} style={contentCardSingleLineTextStyle}>
-          {navigationLabel}
-        </p>
-        {domain && (
-          <p className="mt-0.5 truncate text-sm text-muted-foreground" style={contentCardSingleLineTextStyle}>{domain}</p>
-        )}
-      </div>
+      {textFooter}
     </div>
   );
 });
@@ -1240,6 +1447,7 @@ const SocialCard = memo(function SocialCard({
                 alt=""
                 className={absClass}
                 loading={imgLoading}
+                fallback={<PendingPreviewFallback />}
               />
             ) : (
               <GalleryTileImage
@@ -1275,10 +1483,16 @@ const SocialCard = memo(function SocialCard({
     </GraphicSurface>
   ) : null;
 
+  const lines: CardTextLine[] = [];
+  if (text) lines.push("preview");
+  if (hasBottomMeta) lines.push("author");
+  const gapBefore = textGapsFor(postTextPlacement(descriptor.mediaPlacement, mediaSurface !== null), lines);
+
   return (
     <PostCardBody
       placement={descriptor.mediaPlacement}
       media={mediaSurface}
+      textLines={lines}
       textStack={hasTextStack ? (
         <>
           {text && (
@@ -1294,8 +1508,8 @@ const SocialCard = memo(function SocialCard({
             // One line, as the height reserves it: a longer name ends in an
             // ellipsis instead of wrapping under the frame's edge (Г4.6).
             <p
-              className={cn("truncate text-sm text-muted-foreground", hasPreviewText && "mt-2")}
-              style={contentCardSingleLineTextStyle}
+              className="truncate text-sm text-muted-foreground"
+              style={{ ...contentCardSingleLineTextStyle, marginTop: gapBefore("author") }}
             >
               by {block.author}
             </p>
@@ -1305,6 +1519,22 @@ const SocialCard = memo(function SocialCard({
     />
   );
 });
+
+/// Where a post card's text sits: edge to edge only under edge media.
+function postTextPlacement(placement: FeedMedia | null, hasMedia: boolean): CardTextPlacement {
+  return placement === "edge" && hasMedia ? "edge" : "inset";
+}
+
+/// The box gap above each line of a text stack: none above the first line,
+/// the typography's gap between neighbours otherwise. `computeCardHeight`
+/// counts the same gaps (cardHeight.ts, `cardTextStackHeight`).
+function textGapsFor(placement: CardTextPlacement, lines: readonly CardTextLine[]) {
+  return (line: CardTextLine): number => {
+    const index = lines.indexOf(line);
+    const above = index > 0 ? lines[index - 1] : undefined;
+    return above ? cardTextGap(placement, above, line) : 0;
+  };
+}
 
 /// The body of a framed card with its media on top and its text under it:
 /// posts, articles, X and Instagram posts, and pictures `Cards` frames as
@@ -1323,32 +1553,50 @@ const SocialCard = memo(function SocialCard({
 function PostCardBody({
   placement,
   media,
+  textLines,
   textStack,
 }: {
   placement: FeedMedia | null;
   /** The media surface, or null for a card without media. */
   media: ReactNode;
+  /** The lines the text stack paints, top to bottom. */
+  textLines: readonly CardTextLine[];
   /** The text under the media, or null when there is none. */
   textStack: ReactNode;
 }) {
   const hasMedia = media !== null;
   const edgeToEdge = placement === "edge" && hasMedia;
+  const first = textLines[0];
+  const last = textLines[textLines.length - 1];
+  if (edgeToEdge) {
+    // Every gap reads as 8px from letter to letter: the boxes are spaced by
+    // that less the half-leading of the lines that meet (Д25).
+    return (
+      <div>
+        {media}
+        {textStack !== null && first && last && (
+          <div
+            data-card-lift="text"
+            style={{
+              paddingInline: EDGE_TEXT_SIDE_PX,
+              paddingTop: edgeTextTop(first),
+              paddingBottom: edgeTextBottom(last),
+            }}
+          >
+            {textStack}
+          </div>
+        )}
+      </div>
+    );
+  }
   const text = textStack !== null && (
     <div
-      data-card-lift={hasMedia && !edgeToEdge ? "text" : undefined}
-      className={cn(hasMedia && (edgeToEdge ? "mt-2" : "mt-3"))}
+      data-card-lift={hasMedia ? "text" : undefined}
+      className={cn(hasMedia && "mt-3")}
     >
       {textStack}
     </div>
   );
-  if (edgeToEdge) {
-    return (
-      <div>
-        {media}
-        {text && <div data-card-lift="text" className="px-2 pb-2">{text}</div>}
-      </div>
-    );
-  }
   // Without media the whole body is text and rises past the top edge on a
   // lift (SPEC_CARD_STATES.md, С8).
   return (
@@ -1391,6 +1639,7 @@ function PostMediaSurface({
   measurementMode: boolean;
 }) {
   const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
+  const previewState = usePreviewState();
   const primaryMedia = descriptor.mediaItems[0];
   const rendersFeedVideo = descriptor.mediaItems.length === 1 && primaryMedia?.isVideo;
   const shouldAutoplayVideo =
@@ -1411,6 +1660,7 @@ function PostMediaSurface({
     <GraphicSurface
       insetMedia={fit === "inset"}
       className={cn(fit === "fill" ? "h-full w-full" : "w-full", fit === "edge" && "rounded-b-[var(--radius-card)]")}
+      windowClassName={fit === "fill" ? FILL_WINDOW_CLASS : undefined}
       style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
       data-card-preview-geometry={descriptor.primaryAspectRatio === null ? "pending" : undefined}
       contentInCloud={block.content_in_cloud}
@@ -1438,14 +1688,17 @@ function PostMediaSurface({
             alt=""
             className="absolute inset-0 h-full w-full object-cover"
             loading={imgLoading}
+            fallback={<PendingPreviewFallback />}
           />
         ) : (
           <div className="absolute inset-0 bg-card" />
         )
       ) : !measurementMode && (
         // Grid never falls through to source media. A ready manifest owns
-        // the derived tile; an inconsistent descriptor renders a neutral
-        // surface until reconciliation repairs the preview set.
+        // the derived tile. Without one (a picture `Cards` frames before its
+        // preview is built, or an inconsistent descriptor until
+        // reconciliation repairs the preview set) the slot is the pending
+        // fill while the preview is on the way and a neutral surface otherwise.
         primaryMedia ? (
           <GalleryTileImage
             item={primaryMedia}
@@ -1453,6 +1706,8 @@ function PostMediaSurface({
             thumbVersion={thumbVersion}
             loading={imgLoading}
           />
+        ) : previewState === "pending" ? (
+          <PreviewPendingFill />
         ) : (
           <div className="absolute inset-0 bg-card" data-preview-unavailable="" />
         )
@@ -1496,10 +1751,18 @@ const ArticleCard = memo(function ArticleCard({
   const slots = deriveContentCardSlots(descriptor);
   const hasBottomMeta = slots?.hasBottomMeta ?? false;
   const hasTextStack = Boolean(displayTitle) || previewText.length > 0 || hasBottomMeta;
+  // The lines this card paints, in order: an absent title takes no line and
+  // no gap with it, exactly as the reserved height counts it.
+  const lines: CardTextLine[] = [];
+  if (displayTitle) lines.push("title");
+  if (previewText) lines.push("preview");
+  if (hasBottomMeta) lines.push("author");
+  const gapBefore = textGapsFor(postTextPlacement(descriptor.mediaPlacement, hasPreview), lines);
 
   return (
     <PostCardBody
       placement={descriptor.mediaPlacement}
+      textLines={lines}
       media={hasPreview ? (
         <PostMediaSurface
           fit={descriptor.mediaPlacement ?? "inset"}
@@ -1516,20 +1779,21 @@ const ArticleCard = memo(function ArticleCard({
       ) : null}
       textStack={hasTextStack ? (
         <>
-          <p
-            className={cn("line-clamp-2", CONTENT_CARD_TITLE_CLASSES)}
-            style={contentCardSingleLineTextStyle}
-          >
-            {displayTitle ? renderSearchHighlightedText(displayTitle, titleSearchMatch) : null}
-          </p>
+          {displayTitle && (
+            <p
+              className={cn("line-clamp-2", CONTENT_CARD_TITLE_CLASSES)}
+              style={contentCardSingleLineTextStyle}
+            >
+              {renderSearchHighlightedText(displayTitle, titleSearchMatch)}
+            </p>
+          )}
           {previewText && (
             <p
               className={cn(
                 "text-sm text-muted-foreground",
                 hasPreview ? "line-clamp-3" : "line-clamp-8",
-                "mt-1.5",
               )}
-              style={contentCardPreviewTextStyle}
+              style={{ ...contentCardPreviewTextStyle, marginTop: gapBefore("preview") }}
             >
               {renderSearchHighlightedText(previewText, previewSearchMatch)}
             </p>
@@ -1538,11 +1802,8 @@ const ArticleCard = memo(function ArticleCard({
             // One line, as the height reserves it: a longer name ends in an
             // ellipsis instead of wrapping under the frame's edge (Г4.6).
             <p
-              className={cn(
-                "truncate text-sm text-muted-foreground",
-                (previewText.length > 0 || (displayTitle ?? "").length > 0) && "mt-2",
-              )}
-              style={contentCardSingleLineTextStyle}
+              className="truncate text-sm text-muted-foreground"
+              style={{ ...contentCardSingleLineTextStyle, marginTop: gapBefore("author") }}
             >
               {block.author}
             </p>
@@ -1590,6 +1851,7 @@ const VideoCard = memo(function VideoCard({
     // is computed from the same ratio (SPEC_CARD_MEDIA_GEOMETRY.md).
     <GraphicSurface
       style={{ aspectRatio: `${aspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
+      windowClassName={FILL_WINDOW_CLASS}
       data-card-preview-geometry={aspectRatio === null ? "pending" : undefined}
       contentInCloud={contentInCloud}
     >
@@ -1608,6 +1870,7 @@ const VideoCard = memo(function VideoCard({
           alt=""
           className="h-full w-full object-cover"
           loading={imgLoading}
+          fallback={<PendingPreviewFallback />}
         />
       ) : (
         <div className="h-full w-full bg-card" />

@@ -276,7 +276,13 @@ import { SpaceUnavailable } from "@/components/SpaceUnavailable";
 import { CloudRecommendation } from "@/components/CloudRecommendation";
 import { FirstCardMarkerCard } from "@/components/FirstCardMarker";
 import { NotificationAnchor, NotificationCard } from "@/components/NotificationCard";
-import { IndexingProgress, useIndexingNotice } from "@/components/IndexingProgress";
+import {
+  IndexingProgress,
+  openingStep,
+  useIndexingNotice,
+  type IndexingCount,
+} from "@/components/IndexingProgress";
+import { PreviewsPendingContext } from "@/lib/cardPreviewState";
 import { VaultSwitcher } from "@/components/VaultSwitcher";
 import { TopCollectionSwitcher } from "@/components/TopCollectionSwitcher";
 import { Sidebar, SidebarTagRowDragPreview } from "@/components/Sidebar";
@@ -355,6 +361,23 @@ interface VaultSyncFinishedEvent {
   indexed: number;
   errors: number;
   error: string | null;
+}
+
+/** A full preview pass waits or runs for the space. */
+interface DerivedPreviewQueuedEvent {
+  path: string;
+}
+
+/** How far the running full preview pass has come (О13). */
+interface DerivedPreviewProgressEvent {
+  path: string;
+  processed: number;
+  total: number;
+}
+
+/** No full preview pass waits or runs for the space any more. */
+interface DerivedPreviewFinishedEvent {
+  path: string;
 }
 
 interface BlockAddedEvent {
@@ -837,8 +860,22 @@ export function AppWithVault({
   // Keep Downloaded card re-evaluates on it.
   const [cloudAdviceToken, setCloudAdviceToken] = useState(0);
   // The first index counted out loud (О13); null once the pass lands.
-  const [syncProgress, setSyncProgress] = useState<{ processed: number; total: number } | null>(null);
-  const indexingCountNotice = useIndexingNotice(isSyncing ? syncProgress : null);
+  const [syncProgress, setSyncProgress] = useState<IndexingCount | null>(null);
+  // The full preview pass that follows the index, from the moment it is
+  // queued until the backend says none is left; its count is null until the
+  // pass has counted its cards.
+  const [previewPass, setPreviewPass] = useState<{ count: IndexingCount | null } | null>(null);
+  // Whether the previews of this space are still being prepared: a full
+  // preview pass is queued or running.
+  const previewsPending = previewPass !== null;
+  // One opening, two phases in order, one notice (О13): notes while the index
+  // pass counts, then previews. The notice's delay and hiding span both.
+  const indexingStep = openingStep(
+    isSyncing ? syncProgress : null,
+    previewsPending,
+    previewPass?.count ?? null,
+  );
+  const indexingCountNotice = useIndexingNotice(indexingStep !== null);
   // A count belongs to the pass that sent it: the next pass starts from none.
   useEffect(() => {
     if (!isSyncing) setSyncProgress(null);
@@ -2076,6 +2113,23 @@ export function AppWithVault({
     unlistenFns.push(listen<VaultSyncProgressEvent>("vault-sync-progress", (event) => {
       if (event.payload.path !== vaultPathRef.current) return;
       setSyncProgress({ processed: event.payload.processed, total: event.payload.total });
+    }));
+
+    // Queued arrives before the index pass's `vault-sync-finished`, so the
+    // opening notice passes from notes to previews without a gap.
+    unlistenFns.push(listen<DerivedPreviewQueuedEvent>("derived-preview-queued", (event) => {
+      if (event.payload.path !== vaultPathRef.current) return;
+      setPreviewPass((pass) => pass ?? { count: null });
+    }));
+
+    unlistenFns.push(listen<DerivedPreviewProgressEvent>("derived-preview-progress", (event) => {
+      if (event.payload.path !== vaultPathRef.current) return;
+      setPreviewPass({ count: { processed: event.payload.processed, total: event.payload.total } });
+    }));
+
+    unlistenFns.push(listen<DerivedPreviewFinishedEvent>("derived-preview-finished", (event) => {
+      if (event.payload.path !== vaultPathRef.current) return;
+      setPreviewPass(null);
     }));
 
     unlistenFns.push(listen<VaultSyncFinishedEvent>("vault-sync-finished", (event) => {
@@ -3552,11 +3606,10 @@ export function AppWithVault({
   const feedErrorNotices = openError !== null
     ? []
     : feedErrors.slice(feedShowsCards ? 0 : 1).filter(({ notice }) => notice.open);
-  const indexingCount = isSyncing ? syncProgress : null;
   const showNotifications = feedErrorNotices.length > 0
     || selectionCardError !== null
     || firstCardSlug !== null
-    || (indexingCountNotice.visible && indexingCount !== null);
+    || (indexingCountNotice.visible && indexingStep !== null);
 
   const metadataRow = mainSecondaryTopBarVisible ? (
     <MainSecondaryTopBar
@@ -3589,6 +3642,8 @@ export function AppWithVault({
   ) : null;
 
   return (
+    // Cards tell a preview still being built from a lost file (SPEC_CARD_MEDIA_GEOMETRY.md).
+    <PreviewsPendingContext.Provider value={previewsPending}>
     <DndContext
       sensors={sensors}
       collisionDetection={sidebarPointerWithin}
@@ -3749,6 +3804,7 @@ export function AppWithVault({
       <div className="flex min-h-0 flex-1">
       <Sidebar
         width={sidebarWidth}
+        previewsPending={previewsPending}
         collapsed={sidebarCollapsed}
         isResizing={sidebarResizing}
         vaultPath={vaultPath}
@@ -3965,14 +4021,14 @@ export function AppWithVault({
                 </p>
               </NotificationCard>
             )}
-            {indexingCountNotice.visible && indexingCount !== null && (
-              // Indexing counts out loud in the corner (О13). A folder whose
-              // feed is still empty may be the wrong one: it opened without a
-              // confirmation, so the way out sits next to its count (О12).
+            {indexingCountNotice.visible && indexingStep !== null && (
+              // The opening counts out loud in the corner (О13): one card,
+              // notes and then previews. A folder whose feed is still empty
+              // may be the wrong one: it opened without a confirmation, so
+              // the way out sits next to its count (О12).
               <IndexingProgress
                 spaceName={vaultPath.replace(/\/+$/, "").split("/").pop() ?? vaultPath}
-                processed={indexingCount.processed}
-                total={indexingCount.total}
+                step={indexingStep}
                 onClose={indexingCountNotice.hide}
                 onChooseAnother={blocks.length === 0 ? () => void handleSwitchVault() : undefined}
               />
@@ -4283,10 +4339,12 @@ export function AppWithVault({
           label={collectionRefLabel(activeDragTag)}
           count={orderedTags.find((tc) => tc.tag === activeDragTag)?.count ?? 0}
           cards={channelPreviews.get(activeDragTag) ?? []}
+          previewsPending={previewsPending}
         />
       )}
     </DragOverlay>
     </DndContext>
+    </PreviewsPendingContext.Provider>
   );
 }
 

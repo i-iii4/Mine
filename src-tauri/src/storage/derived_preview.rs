@@ -97,6 +97,18 @@ pub struct PreviewReconcileReport {
     pub cancelled: bool,
 }
 
+/// How far a full preview pass has come: cards whose preview this pass has
+/// settled, out of every card it checks.
+///
+/// A card whose media is only in iCloud settles in the second pass, after its
+/// download, so the count reaches `total` only when the last preview is built
+/// (SPEC_ONBOARDING.md, О13).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PreviewPassProgress {
+    pub processed: usize,
+    pub total: usize,
+}
+
 #[derive(Debug, Clone)]
 pub struct PreviewReconcileOutcome {
     pub slug: String,
@@ -132,14 +144,22 @@ pub fn reconcile_all_previews_while(
     vault: &VaultLayout,
     should_continue: &mut dyn FnMut() -> bool,
 ) -> Result<PreviewReconcileReport> {
-    reconcile_all_previews_with_progress(conn, vault, should_continue, &mut |_| {})
+    reconcile_all_previews_with_progress(conn, vault, should_continue, &mut |_| {}, &mut |_| {})
 }
 
+/// Reconcile every card of the vault, reporting as it goes.
+///
+/// `on_batch` receives each finished batch, so its changed cards can be
+/// published before the whole pass ends. `on_progress` receives `0 / total`
+/// once the cards are counted, then the count after every card that settles;
+/// the caller decides how often to pass it on. The count comes from the same
+/// card list the pass walks: nothing is read twice to know the total.
 pub fn reconcile_all_previews_with_progress(
     conn: &Connection,
     vault: &VaultLayout,
     should_continue: &mut dyn FnMut() -> bool,
     on_batch: &mut dyn FnMut(&PreviewReconcileReport),
+    on_progress: &mut dyn FnMut(PreviewPassProgress),
 ) -> Result<PreviewReconcileReport> {
     index::backfill_missing_preview_manifest(conn)?;
     let mut stmt = conn.prepare(
@@ -162,6 +182,17 @@ pub fn reconcile_all_previews_with_progress(
     // them in the second pass does not change the list.
     let mut resolver = media_refs::MediaResolver::new(vault);
 
+    let total = slugs.len();
+    on_progress(PreviewPassProgress {
+        processed: 0,
+        total,
+    });
+    let mut processed = 0;
+    let mut settle = || {
+        processed += 1;
+        on_progress(PreviewPassProgress { processed, total });
+    };
+
     // Two passes (SPEC_CLOUD_STORAGE.md, Х1, Х6, Х16). The first never waits
     // for iCloud: a card whose media is only in the cloud is marked as such
     // at once, so the feed shows why it waits and the wait is counted. The
@@ -174,6 +205,7 @@ pub fn reconcile_all_previews_with_progress(
             batch.iter().map(String::as_str),
             should_continue,
             CloudSources::Defer,
+            &mut settle,
         )?;
         on_batch(&batch_report);
         merge_report(&mut report, batch_report);
@@ -192,6 +224,7 @@ pub fn reconcile_all_previews_with_progress(
                 batch.iter().map(String::as_str),
                 should_continue,
                 CloudSources::Fetch,
+                &mut settle,
             )?;
             on_batch(&batch_report);
             merge_report(&mut report, batch_report);
@@ -250,15 +283,27 @@ pub fn reconcile_preview_slugs_while<'a>(
     // One snapshot for the cards of this call; see
     // `reconcile_all_previews_with_progress` for why a snapshot is safe.
     let mut resolver = media_refs::MediaResolver::new(vault);
-    reconcile_slugs(conn, &mut resolver, slugs, should_continue, CloudSources::Fetch)
+    reconcile_slugs(
+        conn,
+        &mut resolver,
+        slugs,
+        should_continue,
+        CloudSources::Fetch,
+        &mut || {},
+    )
 }
 
+/// Reconcile `slugs` in order. `on_settled` runs once for every card whose
+/// preview this call settles: built, ready, failed or gone. A card left
+/// waiting for iCloud in a deferring pass is not settled yet; the pass that
+/// fetches it settles it.
 fn reconcile_slugs<'a>(
     conn: &Connection,
     resolver: &mut media_refs::MediaResolver<'_>,
     slugs: impl IntoIterator<Item = &'a str>,
     should_continue: &mut dyn FnMut() -> bool,
     cloud: CloudSources,
+    on_settled: &mut dyn FnMut(),
 ) -> Result<PreviewReconcileReport> {
     let mut report = PreviewReconcileReport::default();
     for slug in slugs {
@@ -268,7 +313,10 @@ fn reconcile_slugs<'a>(
         }
         let outcome = match reconcile_slug(conn, resolver, slug, cloud) {
             Ok(Some(outcome)) => outcome,
-            Ok(None) => continue,
+            Ok(None) => {
+                on_settled();
+                continue;
+            }
             Err(error) => {
                 report.checked += 1;
                 report.failed.push(PreviewFailure {
@@ -277,9 +325,18 @@ fn reconcile_slugs<'a>(
                     retryable: true,
                     message: error.to_string(),
                 });
+                on_settled();
                 continue;
             }
         };
+        let waits_for_fetch = cloud == CloudSources::Defer
+            && outcome
+                .failure
+                .as_ref()
+                .is_some_and(|failure| failure.error_kind == PreviewErrorKind::ContentInCloud);
+        if !waits_for_fetch {
+            on_settled();
+        }
         report.checked += 1;
         if outcome.state == DerivedPreviewState::Ready {
             report.ready += 1;
@@ -1256,13 +1313,23 @@ mod tests {
         files::write_block_file(&vault, &text_block("Local")).unwrap();
         reconcile::reconcile_vault(&conn, &vault).unwrap();
 
-        let mut batches = Vec::new();
-        let report =
-            reconcile_all_previews_with_progress(&conn, &vault, &mut || true, &mut |batch| {
-                batches.push(batch.clone());
-            })
-            .unwrap();
+        // Each count is recorded with the number of batches published by then.
+        let batches = std::cell::RefCell::new(Vec::new());
+        let mut counts = Vec::new();
+        let report = reconcile_all_previews_with_progress(
+            &conn,
+            &vault,
+            &mut || true,
+            &mut |batch| batches.borrow_mut().push(batch.clone()),
+            &mut |progress| counts.push((progress.processed, batches.borrow().len())),
+        )
+        .unwrap();
+        let batches = batches.into_inner();
 
+        // The local card settles in the first pass; the cloud card only once
+        // the second pass has fetched it, so the count never claims a preview
+        // that is still waiting for its download.
+        assert_eq!(counts, vec![(0, 0), (1, 0), (2, 1)]);
         let first = &batches[0];
         assert_eq!(first.checked, 2);
         assert_eq!(first.ready, 1, "the local card is ready in the first pass");
@@ -1315,16 +1382,81 @@ mod tests {
         reconcile::reconcile_vault(&conn, &vault).unwrap();
 
         let mut batch_sizes = Vec::new();
-        let report =
-            reconcile_all_previews_with_progress(&conn, &vault, &mut || true, &mut |batch| {
-                batch_sizes.push(batch.checked)
-            })
-            .unwrap();
+        let report = reconcile_all_previews_with_progress(
+            &conn,
+            &vault,
+            &mut || true,
+            &mut |batch| batch_sizes.push(batch.checked),
+            &mut |_| {},
+        )
+        .unwrap();
 
         assert_eq!(batch_sizes, vec![PREVIEW_RECONCILE_BATCH_SIZE, 6]);
         assert_eq!(report.checked, 30);
         assert_eq!(report.ready, 30);
         assert!(!report.cancelled);
+    }
+
+    /// SPEC_ONBOARDING.md, О13: a full pass counts its cards out loud, from
+    /// `0 / total` before the first card to `total / total` after the last,
+    /// one step per card, with the total the pass itself walks.
+    #[test]
+    fn full_reconcile_counts_every_card_against_the_cards_it_checks() {
+        const CARDS: usize = 30;
+        let (_source, vault, conn) = setup();
+        for index in 0..CARDS {
+            files::write_block_file(&vault, &text_block(&format!("Note {index:02}"))).unwrap();
+        }
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        let mut counts = Vec::new();
+        reconcile_all_previews_with_progress(
+            &conn,
+            &vault,
+            &mut || true,
+            &mut |_| {},
+            &mut |progress| counts.push(progress),
+        )
+        .unwrap();
+
+        let expected = (0..=CARDS)
+            .map(|processed| PreviewPassProgress {
+                processed,
+                total: CARDS,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(counts, expected);
+    }
+
+    /// A cancelled pass stops counting with the card it stopped before: it
+    /// never reports a total it did not reach.
+    #[test]
+    fn a_cancelled_pass_stops_counting_where_it_stopped() {
+        let (_source, vault, conn) = setup();
+        for index in 0..5 {
+            files::write_block_file(&vault, &text_block(&format!("Note {index}"))).unwrap();
+        }
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        let mut allowed = 3;
+        let mut counts = Vec::new();
+        let report = reconcile_all_previews_with_progress(
+            &conn,
+            &vault,
+            &mut || {
+                if allowed == 0 {
+                    return false;
+                }
+                allowed -= 1;
+                true
+            },
+            &mut |_| {},
+            &mut |progress| counts.push(progress.processed),
+        )
+        .unwrap();
+
+        assert!(report.cancelled);
+        assert_eq!(counts, vec![0, 1, 2, 3]);
     }
 
     /// A screenshot with transparent corners produces a PNG artifact by rule

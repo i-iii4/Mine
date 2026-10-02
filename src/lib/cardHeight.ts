@@ -15,7 +15,17 @@ import type { LightBlock } from "@/types";
 import type { WordWidths } from "@/types/fontMetrics";
 import { countLines } from "./wordWrap";
 import { deriveCardLayoutDescriptor, deriveContentCardSlots, getRuntimeCardKind, parsePreviewManifest } from "./cardLayout";
-import { CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX } from "./cardTypography";
+import {
+  CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX,
+  CONTENT_CARD_SINGLE_LINE_HEIGHT_PX,
+  EDGE_TEXT_SIDE_PX,
+  cardTextStackHeight,
+  edgeTextBottom,
+  edgeTextTop,
+  type CardTextLine,
+  type CardTextPlacement,
+} from "./cardTypography";
+import { domainFromUrl } from "./assets";
 import { PROVISIONAL_MEDIA_ASPECT, clampCardAspect } from "./cardAspect";
 import type { FeedMedia, FeedShow } from "./feedDisplay";
 
@@ -69,8 +79,15 @@ function videoSurfaceHeight(width: number, aspectRatio: number | null): number {
   return Math.round(width / Math.max(aspectRatio ?? PROVISIONAL_MEDIA_ASPECT, 0.01));
 }
 
-/** Height of the text footer below link thumbnails (padding + title + domain). */
-const LINK_FOOTER_HEIGHT = 76;
+/**
+ * Height of the text footer below a link thumbnail, as LinkCard paints it:
+ * 12px padding above and below (p-3), the title line, and the domain line 2px
+ * under it (mt-0.5) when the link has one.
+ */
+function linkFooterHeight(block: LightBlock): number {
+  const domain = block.url ? domainFromUrl(block.url) : "";
+  return 12 + CONTENT_CARD_SINGLE_LINE_HEIGHT_PX + (domain ? 2 + CONTENT_CARD_SINGLE_LINE_HEIGHT_PX : 0) + 12;
+}
 
 /** Fixed file card height. */
 const FILE_CARD_HEIGHT = 88;
@@ -105,21 +122,16 @@ const POST_PADDING = 16;
 const POST_GAP_BEFORE_TEXT_STACK = 12;
 
 /**
- * Edge to edge: the text stack's own padding at its sides and bottom
- * (px-2 pb-2). The media fills the frame's top and sides, and the text under
- * it keeps an 8px margin to the frame, half the inset body's
- * (SPEC_FEED_DISPLAY.md, Д20; decision of 01.10.2026). The text column is
- * therefore wider than inset, and its lines wrap at that width.
+ * Edge to edge: the text stack's inset at the frame's sides. Above and below
+ * it the gaps read as 8px from letter to letter (`edgeTextTop`,
+ * `edgeTextBottom` in cardTypography.ts; SPEC_FEED_DISPLAY.md, Д20, Д25).
+ * The text column is wider than inset, and its lines wrap at that width.
  */
-const POST_EDGE_TEXT_PADDING = 8;
-
-/** Edge to edge: gap between the media and the text stack (mt-2 = 8px). */
-const POST_EDGE_GAP_BEFORE_TEXT_STACK = 8;
+const POST_EDGE_TEXT_PADDING = EDGE_TEXT_SIDE_PX;
 
 const SOCIAL_PREVIEW_LINE_HEIGHT = CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX;
 const SOCIAL_AUTHOR_LINE_HEIGHT = 16;
 const SOCIAL_PREVIEW_MAX_LINES = 3;
-const SOCIAL_GAP_BEFORE_AUTHOR = 8;
 
 // ─── Article card constants (must match Card.tsx ArticleCard template) ─────
 
@@ -139,11 +151,6 @@ const ARTICLE_PREVIEW_LINE_HEIGHT = CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX;
 /** Height of the author line (text-sm plain, 16px line-height). */
 const ARTICLE_AUTHOR_LINE_HEIGHT = 16;
 
-/** Margin between title and preview (mt-1.5 = 6px). */
-const ARTICLE_GAP_TITLE_TO_PREVIEW = 6;
-
-/** Margin from previous block to author (mt-2 = 8px). */
-const ARTICLE_GAP_BEFORE_AUTHOR = 8;
 
 /** Maximum title lines (clamped via line-clamp-2 in CSS). */
 const ARTICLE_TITLE_MAX_LINES = 2;
@@ -278,17 +285,19 @@ function postTextWidth(iw: number, placement: FeedMedia | null, hasMedia: boolea
 function postCardHeight(
   placement: FeedMedia | null,
   mediaH: number,
-  hasTextStack: boolean,
-  textStackH: number,
+  lines: ReadonlyArray<{ line: CardTextLine; height: number }>,
 ): number {
   const hasMedia = mediaH > 0;
-  if (postBodyIsEdge(placement, hasMedia)) {
+  const textPlacement: CardTextPlacement = postBodyIsEdge(placement, hasMedia) ? "edge" : "inset";
+  const hasTextStack = lines.length > 0;
+  const textStackH = cardTextStackHeight(textPlacement, lines);
+  if (textPlacement === "edge") {
+    const first = lines[0];
+    const last = lines[lines.length - 1];
     return (
       CARD_BORDER_HEIGHT +
       mediaH +
-      (hasTextStack
-        ? POST_EDGE_GAP_BEFORE_TEXT_STACK + textStackH + POST_EDGE_TEXT_PADDING
-        : 0)
+      (first && last ? edgeTextTop(first.line) + textStackH + edgeTextBottom(last.line) : 0)
     );
   }
   return (
@@ -347,28 +356,16 @@ function computeArticleHeight(
   const previewH = previewLines * ARTICLE_PREVIEW_LINE_HEIGHT;
   const authorH = descriptor.authorText ? ARTICLE_AUTHOR_LINE_HEIGHT : 0;
 
-  // Gap structure mirroring Card.tsx mt-* classes:
-  //   image → text stack: mt-3 (12px) inset, mt-2 (8px) edge to edge,
-  //     counted by `postCardHeight`
-  //   title → preview: mt-1.5 (6px), only when preview exists
-  //   (previous) → author: mt-2 (8px), only when author exists
-  const hasTitle = titleH > 0;
-  const hasPreview = previewH > 0;
-  const hasMedia = imageH > 0;
+  // The lines Card.tsx paints, in order; the gaps between them and around
+  // them come from cardTypography.ts, the same numbers the render uses. A
+  // line that is absent takes no gap with it.
   const hasBottomMeta = authorH > 0 && (slots?.hasBottomMeta ?? false);
-  const textStackH =
-    titleH +
-    previewH +
-    authorH +
-    (hasTitle && hasPreview ? ARTICLE_GAP_TITLE_TO_PREVIEW : 0) +
-    ((hasTitle || hasPreview || hasMedia) && hasBottomMeta ? ARTICLE_GAP_BEFORE_AUTHOR : 0);
+  const lines: Array<{ line: CardTextLine; height: number }> = [];
+  if (titleH > 0) lines.push({ line: "title", height: titleH });
+  if (previewH > 0) lines.push({ line: "preview", height: previewH });
+  if (hasBottomMeta) lines.push({ line: "author", height: authorH });
 
-  return postCardHeight(
-    descriptor.mediaPlacement,
-    imageH,
-    hasTitle || hasPreview || hasBottomMeta,
-    textStackH,
-  );
+  return postCardHeight(descriptor.mediaPlacement, imageH, lines);
 }
 
 function computeSocialHeight(
@@ -406,17 +403,11 @@ function computeSocialHeight(
 
   const hasPreviewText = previewH > 0 && (slots?.hasTopContent ?? false);
   const hasBottomMeta = authorH > 0 && (slots?.hasBottomMeta ?? false);
-  const textStackH =
-    previewH +
-    authorH +
-    (hasPreviewText && hasBottomMeta ? SOCIAL_GAP_BEFORE_AUTHOR : 0);
+  const lines: Array<{ line: CardTextLine; height: number }> = [];
+  if (hasPreviewText) lines.push({ line: "preview", height: previewH });
+  if (hasBottomMeta) lines.push({ line: "author", height: authorH });
 
-  return postCardHeight(
-    descriptor.mediaPlacement,
-    mediaH,
-    hasPreviewText || hasBottomMeta,
-    textStackH,
-  );
+  return postCardHeight(descriptor.mediaPlacement, mediaH, lines);
 }
 
 /**
@@ -515,7 +506,7 @@ export function computeCardHeight(
           case "link":
             return (
               Math.round(innerWidth(columnWidth) * THUMBNAIL_ASPECT) +
-              LINK_FOOTER_HEIGHT +
+              linkFooterHeight(block) +
               CARD_BORDER_HEIGHT
             );
           case "file":
@@ -532,7 +523,7 @@ export function computeCardHeight(
       case "link":
         return descriptor.primaryAspectRatio !== null
           ? Math.round(innerWidth(columnWidth) * THUMBNAIL_ASPECT)
-            + LINK_FOOTER_HEIGHT
+            + linkFooterHeight(block)
             + CARD_BORDER_HEIGHT
           : CARD_HOVER_ACTION_MIN_HEIGHT;
 

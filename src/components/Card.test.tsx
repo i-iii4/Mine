@@ -7,6 +7,7 @@ import { Card, DragCardStackPreview, ReadOnlyCardPreview } from "./Card";
 import { FeedMediaContext, FeedShowContext, type FeedMedia, type FeedShow } from "@/lib/feedDisplay";
 import { CARD_HOVER_ACTION_MIN_HEIGHT, computeCardHeight } from "@/lib/cardHeight";
 import { PROVISIONAL_MEDIA_ASPECT, clampCardAspect } from "@/lib/cardAspect";
+import { PreviewsPendingContext } from "@/lib/cardPreviewState";
 import type { LightBlock } from "@/types";
 import type { WordWidths } from "@/types/fontMetrics";
 
@@ -581,7 +582,10 @@ describe("Card", () => {
 
     const graphicSurface = container.querySelector("[data-card-graphic-surface]");
     expect(graphicSurface).toBeInTheDocument();
-    expect(graphicSurface).toHaveClass("bg-card");
+    // The fill belongs to the window that moves on a lift, never to the slot
+    // that stays: a slot fill showed behind the risen text (С8.3).
+    expect(graphicSurface).not.toHaveClass("bg-card");
+    expect(graphicSurface?.querySelector("[data-card-lift='window']")).toHaveClass("bg-card");
     expect(graphicSurface?.querySelector("img")).toBeInTheDocument();
     expect(screen.getByRole("button")).not.toHaveAttribute("data-feed-card-focused");
 
@@ -1857,13 +1861,24 @@ function spacingPx(element: Element, utility: string): number {
   return 0;
 }
 
+/// A length the card sets inline, in px, or null: the text stack's gaps come
+/// from the typography module as numbers, not as utility classes.
+function stylePx(element: Element, property: string): number | null {
+  const match = new RegExp(`(?:^|;)\\s*${property}:\\s*([0-9.]+)px`).exec(element.getAttribute("style") ?? "");
+  return match ? Number(match[1]) : null;
+}
+
+function marginTopPx(element: Element): number {
+  return stylePx(element, "margin-top") ?? spacingPx(element, "mt");
+}
+
 function paddingPx(element: Element) {
   const all = spacingPx(element, "p");
-  const x = spacingPx(element, "px") || all;
+  const x = stylePx(element, "padding-inline") ?? (spacingPx(element, "px") || all);
   const y = spacingPx(element, "py") || all;
   return {
-    top: spacingPx(element, "pt") || y,
-    bottom: spacingPx(element, "pb") || y,
+    top: stylePx(element, "padding-top") ?? (spacingPx(element, "pt") || y),
+    bottom: stylePx(element, "padding-bottom") ?? (spacingPx(element, "pb") || y),
     left: spacingPx(element, "pl") || x,
     right: spacingPx(element, "pr") || x,
   };
@@ -1903,7 +1918,7 @@ function layOutBox(
     for (const child of Array.from(element.children)) {
       // Badges and overlays sit over the flow, not in it.
       if (child.classList.contains("absolute")) continue;
-      cursor += spacingPx(child, "mt");
+      cursor += marginTopPx(child);
       cursor += layOutBox(
         child,
         top + cursor,
@@ -1966,10 +1981,10 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д24)", () => {
   /// Inset: the body's padding on every side and the gap under the media.
   const PADDING = 16;
   const TEXT_GAP = 12;
-  /// Edge to edge: the text's padding at its sides and bottom and the gap
-  /// under the media (01.10.2026).
+  /// Edge to edge: the text's inset at the frame's sides, and the gap every
+  /// vertical seam of the text reads as, letter to letter (01.10.2026, Д25).
   const EDGE_PADDING = 8;
-  const EDGE_TEXT_GAP = 8;
+  const EDGE_VISUAL_GAP = 12;
   /// Every fixture's title and text fit on one line at this column.
   const ONE_LINE: WordWidths = {
     title: [60],
@@ -2063,7 +2078,7 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д24)", () => {
     expect(inset?.element.hasAttribute("data-card-inset-media")).toBe(true);
   });
 
-  it.each(framedCards)("pads the text of %s 8px under edge media, at its sides and bottom (01.10.2026)", (_card, make, show) => {
+  it.each(framedCards)("spaces the text of %s 12px from letter to letter under edge media (Д25)", (_card, make, show) => {
     const edge = paintCard(make(), show, "edge", COLUMN);
     expect(edge.text.length).toBeGreaterThan(0);
     // Every line starts 8px inside the frame's border and spans the inner
@@ -2072,12 +2087,19 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д24)", () => {
       expect(line.left).toBe(FRAME_BORDER_PX + EDGE_PADDING);
       expect(line.width).toBe(INNER - EDGE_PADDING * 2);
     }
-    // 8px under the media, 8px under the text to the frame's bottom border.
+    // The air a 12px line keeps above and below its letters inside its box.
+    const air = (box: PaintedBox) => (lineHeightPx(box.element) - 12) / 2;
     const first = edge.text[0]!;
     const last = edge.text[edge.text.length - 1]!;
     const surface = edge.surface!;
-    expect(first.top - (surface.top + surface.height)).toBe(EDGE_TEXT_GAP);
-    expect(edge.height - FRAME_BORDER_PX - (last.top + last.height)).toBe(EDGE_PADDING);
+    // 12px from the media to the first letters, between every two groups,
+    // and from the last letters to the frame's bottom border.
+    expect(first.top + air(first) - (surface.top + surface.height)).toBe(EDGE_VISUAL_GAP);
+    edge.text.slice(1).forEach((line, index) => {
+      const above = edge.text[index]!;
+      expect(line.top + air(line) - (above.top + above.height - air(above))).toBe(EDGE_VISUAL_GAP);
+    });
+    expect(edge.height - FRAME_BORDER_PX - (last.top + last.height - air(last))).toBe(EDGE_VISUAL_GAP);
     expect(edge.height).toBe(computeCardHeight(make(), COLUMN, ONE_LINE, show, "edge"));
   });
 
@@ -2096,15 +2118,50 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д24)", () => {
     expect(inset.height).toBe(computeCardHeight(make(), COLUMN, ONE_LINE, show, "inset"));
   });
 
-  it("reserves an edge article with one picture at its painted 323px, inset at 327px", () => {
-    // Edge: border 2 + media 318 × 3/4 (239) + gap 8 + title 16 + 6 +
-    // text 20 + 8 + author 16 + bottom 8. Inset: border 2 + 16 + media
-    // 286 × 3/4 (215) + gap 12 + the same 66px of text + 16.
+  it("reserves an edge article with one picture at its painted 325px, inset at 327px", () => {
+    // Edge: border 2 + media 318 × 3/4 (239) + 10 + title 16 + 6 + text 20
+    // + 6 + author 16 + 10: every gap 12px from letter to letter (Д25). Inset:
+    // border 2 + 16 + media 286 × 3/4 (215) + gap 12 + title 16 + 6 + text
+    // 20 + 8 + author 16 + 16.
     const post = article(imageManifest(800, 600));
-    expect(computeCardHeight(post, COLUMN, ONE_LINE, "mixed", "edge")).toBe(323);
-    expect(paintCard(post, "mixed", "edge", COLUMN).height).toBe(323);
+    expect(computeCardHeight(post, COLUMN, ONE_LINE, "mixed", "edge")).toBe(325);
+    expect(paintCard(post, "mixed", "edge", COLUMN).height).toBe(325);
     expect(computeCardHeight(post, COLUMN, ONE_LINE, "mixed", "inset")).toBe(327);
     expect(paintCard(post, "mixed", "inset", COLUMN).height).toBe(327);
+  });
+
+  it.each([
+    ["a link with a picture and a domain", () => block({
+      block_type: "link",
+      url: "https://example.com/page",
+      preview_manifest: JSON.stringify({
+        kind: "image", primary_preview_path: "link.jpg", width: 1600, height: 900,
+        preview_width: 1600, preview_height: 900, tiles: [], overflow_count: 0,
+      }),
+    })],
+    ["a post with a picture and an author only", () => block({
+      block_type: "article",
+      title: null,
+      description: null,
+      body: "![](photo.jpg)",
+      preview_text: null,
+      author: "@someone",
+      media_urls: "[\"photo.jpg\"]",
+      preview_manifest: imageManifest(800, 600),
+    })],
+    ["a text post without a title", () => block({
+      block_type: "article",
+      title: null,
+      description: null,
+      body: "Just a few words",
+      preview_text: "Just a few words",
+      url: null,
+    })],
+  ] as const)("reserves exactly what %s paints, its bottom gap included (01.10.2026)", (_name, make) => {
+    for (const media of ["inset", "edge"] as const) {
+      expect(paintCard(make(), "mixed", media, COLUMN).height)
+        .toBe(computeCardHeight(make(), COLUMN, ONE_LINE, "mixed", media));
+    }
   });
 
   describe("text that wraps at one placement's width and not at the other's", () => {
@@ -2398,5 +2455,275 @@ describe("Card lift on hover (SPEC_CARD_STATES.md, С8)", () => {
     expect(ruleFor("[data-feed-card-frame]", "--card-lift-drift: 8px")).toBe(true);
     expect(ruleFor('[data-card-lift="tray"]', "transform: translateY(var(--card-lift))")).toBe(true);
     expect(ruleFor('[data-feed-card-frame][data-card-lift-depth="flush"]', "--card-lift: 48px")).toBe(true);
+  });
+});
+
+describe("Card without a preview: pending, missing, unreadable (SPEC_CARD_MEDIA_GEOMETRY.md, «Карточка без превью»)", () => {
+  const COLUMN = 320;
+  const CARD_BORDER = 2;
+
+  /// The card as the feed paints it, inside or outside a running preview pass.
+  const tree = (value: LightBlock, previewsPending: boolean, show: FeedShow = "mixed") => (
+    <PreviewsPendingContext.Provider value={previewsPending}>
+      <FeedShowContext.Provider value={show}>
+        <Card block={value} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" onClick={vi.fn()} />
+      </FeedShowContext.Provider>
+    </PreviewsPendingContext.Provider>
+  );
+  const renderCard = (value: LightBlock, previewsPending: boolean, show: FeedShow = "mixed") =>
+    render(tree(value, previewsPending, show));
+  const markupOf = (value: LightBlock, previewsPending: boolean) =>
+    new DOMParser().parseFromString(renderToStaticMarkup(tree(value, previewsPending)), "text/html");
+
+  /// A picture the index knows, before any preview of it exists: the row
+  /// carries no manifest and no flag, exactly like one whose file is gone.
+  const freshPicture = (overrides: Partial<LightBlock> = {}) => block({
+    block_type: "image", url: null, title: "Strategist Index Cards",
+    media_file: "Media/Strategist Index Cards.jpg", preview_manifest: null, ...overrides,
+  });
+  /// A picture whose preview is measured but whose file is not there to paint.
+  const measuredPicture = () => block({
+    block_type: "image", url: null, title: "Tall", media_file: "Media/Tall.jpg",
+    preview_manifest: JSON.stringify({
+      kind: "image", primary_preview_path: null, width: 1200, height: 1600,
+      preview_width: 480, preview_height: 640, tiles: [], overflow_count: 0,
+    }),
+  });
+  const pendingFill = (container: ParentNode) =>
+    container.querySelector("[data-card-graphic-surface] [data-card-preview-pending]");
+
+  describe("image card", () => {
+    it("names the picture and its file when no preview is coming", () => {
+      const { container } = renderCard(freshPicture(), false);
+      expect(screen.getByText("Strategist Index Cards")).toBeInTheDocument();
+      expect(container.querySelector("[data-card-missing-media]"))
+        .toHaveTextContent("Media/Strategist Index Cards.jpg");
+      expect(pendingFill(container)).toBeNull();
+    });
+
+    it("draws a picture whose preview is being built as the skeleton fill, with no name and no file", () => {
+      const { container } = renderCard(freshPicture(), true);
+      const fill = pendingFill(container);
+      expect(fill).not.toBeNull();
+      expect(fill).toHaveClass("absolute", "inset-0", "bg-accent");
+      const surface = container.querySelector("[data-card-graphic-surface]")!;
+      expect(surface).toHaveTextContent("");
+      expect(surface).toHaveAttribute("data-card-preview-geometry", "pending");
+      expect(screen.queryByText("Strategist Index Cards")).not.toBeInTheDocument();
+      expect(container.querySelector("[data-card-missing-media]")).toBeNull();
+      expect(container.querySelector("[data-card-preview-unreadable]")).toBeNull();
+    });
+
+    it("keeps the unreadable wording while the pass runs: a broken file is a recorded fact", () => {
+      const { container } = renderCard(freshPicture({ preview_unreadable: true }), true);
+      expect(container.querySelector("[data-card-preview-unreadable]"))
+        .toHaveTextContent("Preview file can’t be read");
+      expect(screen.getByText("Strategist Index Cards")).toBeInTheDocument();
+      expect(pendingFill(container)).toBeNull();
+    });
+
+    it("treats content held by iCloud as pending with no pass, and marks it with the cloud (Х6)", () => {
+      vi.useFakeTimers();
+      try {
+        const { container } = renderCard(freshPicture({ content_in_cloud: true }), false);
+        expect(pendingFill(container)).not.toBeNull();
+        expect(container.querySelector("[data-card-missing-media]")).toBeNull();
+        expect(screen.queryByText("Strategist Index Cards")).not.toBeInTheDocument();
+        act(() => { vi.advanceTimersByTime(CLOUD_BADGE_DELAY_MS); });
+        expect(container.querySelector("[data-card-cloud-badge]")).toHaveAttribute("title", CLOUD_STATE_LABEL);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("paints the fill in exactly the box the named surface takes, the height the layout reserved", () => {
+      const picture = measuredPicture();
+      const pending = markupOf(picture, true).querySelector("[data-card-graphic-surface]");
+      const missing = markupOf(picture, false).querySelector("[data-card-graphic-surface]");
+      expect(pending?.querySelector("[data-card-preview-pending]")).not.toBeNull();
+      expect(missing?.querySelector("[data-card-missing-media]")).not.toBeNull();
+      expect(pending?.getAttribute("class")).toBe(missing?.getAttribute("class"));
+      expect(pending?.getAttribute("style")).toBe(missing?.getAttribute("style"));
+      const aspect = Number(/aspect-ratio:([0-9.]+)/.exec(pending?.getAttribute("style") ?? "")?.[1]);
+      expect(aspect).toBe(0.75);
+      expect(computeCardHeight(picture, COLUMN, null))
+        .toBe(Math.round((COLUMN - CARD_BORDER) / aspect) + CARD_BORDER);
+    });
+
+    it("turns a preview file that fails to load into the fill while the pass runs, and back into the name after it", () => {
+      const picture = block({ block_type: "image", url: null, title: "Sunset", media_file: "Media/Sunset.jpg" });
+      const { container, rerender } = renderCard(picture, true);
+      fireEvent.error(screen.getByRole("img"));
+      expect(pendingFill(container)).not.toBeNull();
+      expect(screen.queryByText("Sunset")).not.toBeInTheDocument();
+
+      rerender(tree(picture, false));
+      expect(pendingFill(container)).toBeNull();
+      expect(screen.getByText("Sunset")).toBeInTheDocument();
+      expect(container.querySelector("[data-card-missing-media]")).toHaveTextContent("Media/Sunset.jpg");
+    });
+  });
+
+  describe("post media", () => {
+    const oneImagePost = () => block({
+      block_type: "article", title: "A post", url: null, body: "Words\n\n![](Media/one.jpg)",
+      preview_manifest: JSON.stringify({
+        kind: "image", primary_preview_path: "post.jpg", width: 800, height: 600,
+        preview_width: 800, preview_height: 600,
+        tiles: [{ source_path: "Media/one.jpg", preview_path: "post.preview-1.jpg",
+          width: 800, height: 600, preview_width: 800, preview_height: 600,
+          is_video: false, is_video_poster: false }],
+        overflow_count: 0,
+      }),
+    });
+
+    it("fills a post's picture slot while its preview is on the way, keeps the neutral surface otherwise", () => {
+      const pending = renderCard(oneImagePost(), true);
+      fireEvent.error(pending.container.querySelector("[data-card-graphic-surface] img")!);
+      expect(pendingFill(pending.container)).not.toBeNull();
+      expect(pending.container.querySelector("[data-preview-unavailable]")).toBeNull();
+      expect(screen.getByText("A post")).toBeInTheDocument();
+      pending.unmount();
+
+      const missing = renderCard(oneImagePost(), false);
+      fireEvent.error(missing.container.querySelector("[data-card-graphic-surface] img")!);
+      expect(pendingFill(missing.container)).toBeNull();
+      expect(missing.container.querySelector("[data-preview-unavailable]")).toHaveClass("bg-card");
+    });
+
+    it("fills the slot of a picture `Cards` frames before its preview exists", () => {
+      const pending = renderCard(freshPicture(), true, "cards");
+      expect(pendingFill(pending.container)).not.toBeNull();
+      expect(pending.container.querySelector("[data-preview-unavailable]")).toBeNull();
+      pending.unmount();
+
+      const missing = renderCard(freshPicture(), false, "cards");
+      expect(pendingFill(missing.container)).toBeNull();
+      expect(missing.container.querySelector("[data-preview-unavailable]")).not.toBeNull();
+    });
+  });
+
+  describe("gallery tiles", () => {
+    const gallery = () => block({
+      block_type: "article", title: "Gallery", url: null, body: "Three pictures",
+      preview_manifest: JSON.stringify({
+        kind: "composite", primary_preview_path: "gallery.jpg", width: 1, height: 1,
+        tiles: ["a", "b", "c"].map((name) => ({
+          source_path: `Media/${name}.jpg`, preview_path: `${name}.jpg`, width: 800, height: 600,
+          is_video: false, is_video_poster: false,
+        })),
+        overflow_count: 0,
+      }),
+    });
+    const failEveryTile = (container: HTMLElement) => {
+      for (const image of Array.from(container.querySelectorAll("[data-card-media-tile] img"))) {
+        fireEvent.error(image);
+      }
+    };
+
+    it("fills every tile whose preview is on the way, and only those", () => {
+      const { container } = renderCard(gallery(), true);
+      const tiles = Array.from(container.querySelectorAll("[data-card-media-tile]"));
+      expect(tiles).toHaveLength(3);
+      fireEvent.error(tiles[0]!.querySelector("img")!);
+      expect(tiles[0]!.querySelector("[data-card-preview-pending]")).not.toBeNull();
+      expect(tiles[1]!.querySelector("img")).not.toBeNull();
+      failEveryTile(container);
+      for (const tile of tiles) {
+        expect(tile.querySelector("[data-card-preview-pending]")).toHaveClass("bg-accent");
+        expect(tile.querySelector("[data-preview-unavailable]")).toBeNull();
+      }
+    });
+
+    it("keeps the neutral tile surface when no preview is coming", () => {
+      const { container } = renderCard(gallery(), false);
+      failEveryTile(container);
+      const tiles = Array.from(container.querySelectorAll("[data-card-media-tile]"));
+      for (const tile of tiles) {
+        expect(tile.querySelector("[data-card-preview-pending]")).toBeNull();
+        expect(tile.querySelector("[data-preview-unavailable]")).toHaveClass("bg-card");
+      }
+    });
+  });
+
+  describe("video poster", () => {
+    const freshVideo = () => block({
+      block_type: "video", url: null, title: "Clip", media_file: "Media/clip.mp4", preview_manifest: null,
+    });
+
+    it("fills a video whose poster is being built, keeping its play badge and its envelope", () => {
+      const { container } = renderCard(freshVideo(), true);
+      const surface = container.querySelector("[data-card-graphic-surface]")!;
+      expect(pendingFill(container)).not.toBeNull();
+      expect(surface).toHaveAttribute("data-card-preview-geometry", "pending");
+      expect(surface.querySelector("svg")).not.toBeNull();
+      expect(screen.queryByText("Clip")).not.toBeInTheDocument();
+    });
+
+    it("leaves a video without a poster on its own surface when no poster is coming", () => {
+      const { container } = renderCard(freshVideo(), false);
+      expect(pendingFill(container)).toBeNull();
+      expect(container.querySelector("[data-card-graphic-surface] svg")).not.toBeNull();
+    });
+
+    it("fills the slot once every poster candidate has failed during the pass", () => {
+      const video = block({
+        block_type: "video", url: null, title: "Clip", media_file: "Media/clip.mp4",
+        preview_manifest: JSON.stringify({
+          kind: "video_poster", primary_preview_path: "clip.jpg", width: 1280, height: 720,
+          preview_width: 640, preview_height: 360,
+          tiles: [{ source_path: "Media/clip.mp4", preview_path: "clip.preview-1.jpg", width: 1280,
+            height: 720, preview_width: 640, preview_height: 360, is_video: true, is_video_poster: true }],
+          overflow_count: 0,
+        }),
+      });
+      const { container } = renderCard(video, true);
+      expect(pendingFill(container)).toBeNull();
+      let poster = container.querySelector("[data-feed-video-poster]");
+      while (poster) {
+        fireEvent.error(poster);
+        poster = container.querySelector("[data-feed-video-poster]");
+      }
+      expect(pendingFill(container)).not.toBeNull();
+    });
+  });
+
+  describe("link thumbnail", () => {
+    const pageLink = () => block({
+      block_type: "link", title: "A page", url: "https://example.com/page",
+      preview_manifest: JSON.stringify({
+        kind: "image", primary_preview_path: "page.jpg", width: 1200, height: 630,
+        preview_width: 600, preview_height: 315,
+        tiles: [{ source_path: "https://example.com/og.jpg", preview_path: "page.preview-1.jpg",
+          width: 1200, height: 630, preview_width: 600, preview_height: 315,
+          is_video: false, is_video_poster: false }],
+        overflow_count: 0,
+      }),
+    });
+
+    it("holds the reserved picture slot with the fill above the text while the picture is on the way", () => {
+      const { container } = renderCard(pageLink(), true);
+      fireEvent.error(container.querySelector("img")!);
+      const surface = container.querySelector("[data-card-graphic-surface]");
+      expect(surface).toHaveClass("aspect-video");
+      expect(surface?.querySelector("[data-card-preview-pending]")).not.toBeNull();
+      expect(surface).toHaveTextContent("");
+      expect(screen.getByText("A page")).toBeInTheDocument();
+      expect(screen.getByText("example.com")).toBeInTheDocument();
+    });
+
+    it("falls back to the compact card when no picture is coming", () => {
+      const { container } = renderCard(pageLink(), false);
+      fireEvent.error(container.querySelector("img")!);
+      expect(container.querySelector("[data-card-graphic-surface]")).toBeNull();
+      expect(screen.getByText("A page")).toBeInTheDocument();
+    });
+
+    it("stays compact without a manifest even during the pass: the layout reserved no slot", () => {
+      const link = block({ block_type: "link", title: "Bare page", url: "https://example.com/bare" });
+      const { container } = renderCard(link, true);
+      expect(container.querySelector("[data-card-graphic-surface]")).toBeNull();
+      expect(computeCardHeight(link, COLUMN, null)).toBe(CARD_HOVER_ACTION_MIN_HEIGHT);
+    });
   });
 });

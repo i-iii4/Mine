@@ -1353,6 +1353,18 @@
       "requirement": "DESIGN_SYSTEM.md#Заглушки до прихода миниатюр",
       "tests": ["src/components/Sidebar.test.tsx", "src/components/MicroPreviewThumbnail.test.tsx"],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/cardPreviewState.ts",
+        "src/lib/cardPreviewState.test.ts",
+        "src/components/FeedVideoPoster.tsx",
+        "src/components/Card.tsx",
+        "src/components/Card.test.tsx"
+      ],
+      "requirement": "SPEC_CARD_MEDIA_GEOMETRY.md#Карточка без превью",
+      "tests": ["src/lib/cardPreviewState.test.ts", "src/components/Card.test.tsx"],
+      "command": "test:frontend"
     }
   ],
   "release": null

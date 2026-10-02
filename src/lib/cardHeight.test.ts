@@ -277,7 +277,8 @@ describe("computeCardHeight — video / link / file", () => {
         overflow_count: 0,
       }),
     });
-    const expected = Math.round(318 * 9 / 16) + 76 + CARD_BORDER;
+    // 12 + title 16 + 2 + domain 16 + 12: the footer LinkCard paints.
+    const expected = Math.round(318 * 9 / 16) + 58 + CARD_BORDER;
     expect(computeCardHeight(block, 320, null)).toBe(expected);
   });
 
@@ -621,7 +622,8 @@ describe("card presentation heights (SPEC_FEED_DISPLAY.md, Д15)", () => {
   });
 
   it("Mixed and Cards keep the link's 16:9 thumbnail slot whatever its picture's shape (В5.7)", () => {
-    const expected = Math.round(318 * 9 / 16) + 76 + CARD_BORDER;
+    // 12 + title 16 + 2 + domain 16 + 12: the footer LinkCard paints.
+    const expected = Math.round(318 * 9 / 16) + 58 + CARD_BORDER;
     for (const artifact of [[600, 900], null] as const) {
       const link = pageLink({ source: [1200, 630], artifact: artifact ? [artifact[0], artifact[1]] : null });
       expect(computeCardHeight(link, 320, null, "mixed")).toBe(expected);
@@ -677,8 +679,13 @@ describe("media placement heights (SPEC_FEED_DISPLAY.md, Д20 to Д23)", () => {
   const TEXT_GAP = 12;
   /// Edge to edge: the text's padding at its sides and bottom and the gap
   /// under the media (01.10.2026).
-  const EDGE_PADDING = 8;
-  const EDGE_TEXT_GAP = 8;
+  /// Edge to edge every vertical gap reads as 12px from letter to letter
+  /// (Д25): the box gap is 12 less the half-leading of the lines that meet.
+  /// A 12px title or author on a 16px line has 2px of it, a 20px text line 4px.
+  const EDGE_TOP_TITLE = 10;
+  const EDGE_TOP_TEXT = 8;
+  const EDGE_BOTTOM_TEXT = 8;
+  const EDGE_TITLE_TO_TEXT = 6;
   const singleVideoManifest = JSON.stringify({
     kind: "video_poster",
     primary_preview_path: "test.jpg",
@@ -760,7 +767,7 @@ describe("media placement heights (SPEC_FEED_DISPLAY.md, Д20 to Д23)", () => {
       CARD_BORDER + PADDING + Math.round((INNER - PADDING * 2) / (640 / 480)) + TEXT_GAP + textStack + PADDING,
     );
     expect(computeCardHeight(post, COLUMN, widths, "mixed", "edge")).toBe(
-      CARD_BORDER + Math.round(INNER / (640 / 480)) + EDGE_TEXT_GAP + textStack + EDGE_PADDING,
+      CARD_BORDER + Math.round(INNER / (640 / 480)) + EDGE_TOP_TITLE + 16 + EDGE_TITLE_TO_TEXT + 20 + EDGE_BOTTOM_TEXT,
     );
   });
 
@@ -785,7 +792,7 @@ describe("media placement heights (SPEC_FEED_DISPLAY.md, Д20 to Д23)", () => {
     });
     const titleAndText = (titleLines: number, textLines: number) => 16 * titleLines + 6 + 20 * textLines;
     expect(computeCardHeight(article, COLUMN, widths, "mixed", "edge")).toBe(
-      CARD_BORDER + Math.round(INNER / (640 / 480)) + EDGE_TEXT_GAP + titleAndText(1, 1) + EDGE_PADDING,
+      CARD_BORDER + Math.round(INNER / (640 / 480)) + EDGE_TOP_TITLE + 16 + EDGE_TITLE_TO_TEXT + 20 + EDGE_BOTTOM_TEXT,
     );
     expect(computeCardHeight(article, COLUMN, widths, "mixed", "inset")).toBe(
       CARD_BORDER + PADDING + Math.round((INNER - PADDING * 2) / (640 / 480)) + TEXT_GAP
@@ -801,7 +808,7 @@ describe("media placement heights (SPEC_FEED_DISPLAY.md, Д20 to Д23)", () => {
       preview_manifest: artifactManifest(640, 480),
     });
     expect(computeCardHeight(xPost, COLUMN, widths, "mixed", "edge")).toBe(
-      CARD_BORDER + Math.round(INNER / (640 / 480)) + EDGE_TEXT_GAP + 20 + EDGE_PADDING,
+      CARD_BORDER + Math.round(INNER / (640 / 480)) + EDGE_TOP_TEXT + 20 + EDGE_BOTTOM_TEXT,
     );
     expect(computeCardHeight(xPost, COLUMN, widths, "mixed", "inset")).toBe(
       CARD_BORDER + PADDING + Math.round((INNER - PADDING * 2) / (640 / 480)) + TEXT_GAP + 20 * 2 + PADDING,

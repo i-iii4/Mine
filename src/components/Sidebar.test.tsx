@@ -1319,6 +1319,111 @@ describe("sidebar thumbnail placeholders while previews load", () => {
     expect(textFill).toHaveAttribute("data-micro-preview-state", "loaded");
     expect(textFill).toHaveClass("bg-card");
   });
+
+  describe("while the space's previews are being built", () => {
+    /// The strip's children in order: what each slot holds.
+    const slotsIn = (container: HTMLElement, rowKey: string) =>
+      Array.from(stripOf(container, rowKey).children).map((child) =>
+        child.hasAttribute("data-sidebar-preview-placeholder") ? "placeholder" : "thumbnail",
+      );
+
+    it("puts the real thumbnails first and fills the rest of the cards' slots with placeholders", () => {
+      const { container } = renderSidebar({
+        ...defaultProps,
+        orderedTags: [tag("alpha", 5)],
+        totalBlocks: 5,
+        channelPreviews: new Map([
+          ["alpha", [thumb("alpha-a"), thumb("alpha-b")]],
+          ["__all__", []],
+        ]),
+        previewsPending: true,
+      });
+
+      expect(stripOf(container, "tag:alpha")).toHaveAttribute("data-sidebar-previews", "ready");
+      expect(slotsIn(container, "tag:alpha")).toEqual([
+        "thumbnail", "thumbnail", "placeholder", "placeholder", "placeholder",
+      ]);
+      // The read answered with nothing yet: every card's slot is a placeholder.
+      expect(placeholdersIn(container, "all")).toHaveLength(5);
+    });
+
+    it("draws no more slots than the strip holds", () => {
+      const { container } = renderSidebar({
+        ...defaultProps,
+        orderedTags: [tag("crowded", SIDEBAR_PREVIEW_SLOTS + 15)],
+        channelPreviews: new Map([["crowded", [thumb("c-1"), thumb("c-2"), thumb("c-3")]]]),
+        previewsPending: true,
+      });
+
+      expect(tilesIn(container, "tag:crowded")).toHaveLength(3);
+      expect(placeholdersIn(container, "tag:crowded")).toHaveLength(SIDEBAR_PREVIEW_SLOTS - 3);
+      expect(slotsIn(container, "tag:crowded")).toHaveLength(SIDEBAR_PREVIEW_SLOTS);
+    });
+
+    it("draws no placeholder for a row whose thumbnails are all in", () => {
+      const { container } = renderSidebar({
+        ...defaultProps,
+        orderedTags: [tag("alpha", 2)],
+        channelPreviews: new Map([["alpha", [thumb("alpha-a"), thumb("alpha-b")]]]),
+        previewsPending: true,
+      });
+
+      expect(placeholdersIn(container, "tag:alpha")).toHaveLength(0);
+      expect(tilesIn(container, "tag:alpha")).toHaveLength(2);
+    });
+
+    it("hands each arriving thumbnail the next slot: same strip, same number of slots", () => {
+      const props = { ...defaultProps, orderedTags: [tag("alpha", 3)], previewsPending: true };
+      const { container, rerender } = renderSidebar({
+        ...props,
+        channelPreviews: new Map([["alpha", [thumb("alpha-a")]]]),
+      });
+      const strip = stripOf(container, "tag:alpha");
+      const stripClass = strip.className;
+      const stripStyle = strip.getAttribute("style");
+      expect(slotsIn(container, "tag:alpha")).toEqual(["thumbnail", "placeholder", "placeholder"]);
+
+      rerender(sidebarTree({
+        ...props,
+        channelPreviews: new Map([["alpha", [thumb("alpha-a"), thumb("alpha-b")]]]),
+      }));
+
+      expect(stripOf(container, "tag:alpha")).toBe(strip);
+      expect(strip.className).toBe(stripClass);
+      expect(strip.getAttribute("style")).toBe(stripStyle);
+      expect(slotsIn(container, "tag:alpha")).toEqual(["thumbnail", "thumbnail", "placeholder"]);
+      const placeholderClasses = Array.from(placeholdersIn(container, "tag:alpha")[0]?.classList ?? []);
+      for (const tile of Array.from(tilesIn(container, "tag:alpha"))) {
+        expect(tile).toHaveClass(...placeholderClasses);
+      }
+    });
+
+    it("shows only the thumbnails that exist once the pass is over", () => {
+      const props = {
+        ...defaultProps,
+        orderedTags: [tag("alpha", 5)],
+        channelPreviews: new Map([["alpha", [thumb("alpha-a"), thumb("alpha-b")]]]),
+      };
+      const { container, rerender } = renderSidebar({ ...props, previewsPending: true });
+      expect(placeholdersIn(container, "tag:alpha")).toHaveLength(3);
+
+      rerender(sidebarTree({ ...props, previewsPending: false }));
+      expect(placeholdersIn(container, "tag:alpha")).toHaveLength(0);
+      expect(tilesIn(container, "tag:alpha")).toHaveLength(2);
+
+      rerender(sidebarTree(props));
+      expect(placeholdersIn(container, "tag:alpha")).toHaveLength(0);
+    });
+
+    it("keeps the row's placeholders in the copy a reorder lifts", () => {
+      const { container } = render(
+        <SidebarTagRowDragPreview label="alpha" count={4} cards={[thumb("alpha-a")]} previewsPending />,
+      );
+      const strip = container.querySelector("[data-sidebar-thumbnail-strip]") as HTMLElement;
+      expect(strip.querySelectorAll("[data-sidebar-preview-thumbnail]")).toHaveLength(1);
+      expect(strip.querySelectorAll("[data-sidebar-preview-placeholder]")).toHaveLength(3);
+    });
+  });
 });
 
 describe("sidebar and the card under the pointer (SPEC_CARD_STATES.md)", () => {

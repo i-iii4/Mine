@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 interface FeedVideoPosterProps {
   candidateUrls: string[];
   alt?: string;
   className?: string;
   loading?: "eager" | "lazy";
+  /** Painted in the poster's place when no candidate loads, or there is none. */
+  fallback?: ReactNode;
 }
 
 export function FeedVideoPoster({
@@ -12,6 +14,7 @@ export function FeedVideoPoster({
   alt = "",
   className,
   loading = "lazy",
+  fallback = null,
 }: FeedVideoPosterProps) {
   const candidates = useMemo(() => {
     const urls: string[] = [];
@@ -33,12 +36,12 @@ export function FeedVideoPoster({
   }, [candidates]);
 
   if (exhausted) {
-    return null;
+    return fallback;
   }
 
   const src = candidates[index];
   if (!src) {
-    return null;
+    return fallback;
   }
 
   return (
