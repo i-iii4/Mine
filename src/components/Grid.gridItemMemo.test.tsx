@@ -73,6 +73,7 @@ function makeImageBlock(id: number): LightBlock {
       ],
       overflow_count: 0,
     }),
+    collections: [],
     feed_playback: null,
     tags: ["test"],
   } as LightBlock;

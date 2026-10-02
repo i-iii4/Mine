@@ -40,17 +40,46 @@ impl FeedOrder {
     }
 }
 
+/// Name of the column every `LightBlock` query selects its collections into.
+/// [`light_block_from_row`] reads it by name, so it does not depend on where a
+/// query puts it among its positional columns.
+const COLLECTIONS_COLUMN: &str = "collections";
+
+/// The `collections` column of a `LightBlock` query: the card's membership
+/// refs as a JSON array in sidebar order, by the collection's `position` and
+/// then by name, with a ref that has no collection page after every listed
+/// one. Name order is SQLite's binary order, the same byte order the sidebar
+/// list (`list_channels`) breaks position ties with.
+///
+/// One correlated aggregate per row over `block_tags`' `(block_id, tag)` key
+/// and the unique `channels.tag`, so a page of cards stays one statement and
+/// never one more query per card.
+///
+/// `block_id` is the outer query's qualified block id (`blocks.id`, `b.id`):
+/// unqualified, `id` would bind to `channels.id` inside the subquery.
+pub(crate) fn collections_column_sql(block_id: &str) -> String {
+    format!(
+        "(SELECT json_group_array(membership.tag
+                    ORDER BY collection.position IS NULL, collection.position, membership.tag)
+          FROM block_tags membership
+          LEFT JOIN channels collection ON collection.tag = membership.tag
+          WHERE membership.block_id = {block_id}) AS {COLLECTIONS_COLUMN}"
+    )
+}
+
 /// List all blocks without description/source (lightweight for grid views).
 /// Body is truncated to a short preview to reduce IPC payload for large vaults.
 pub fn list_blocks_light(conn: &Connection) -> Result<Vec<LightBlock>> {
-    let mut stmt = conn.prepare(
+    let collections = collections_column_sql("blocks.id");
+    let mut stmt = conn.prepare(&format!(
         "SELECT id, slug, block_type, card_kind, title, content_heading, display_title, COALESCE(fallback_label, slug), url, media_file,
                 thumbnail, saved_at, width, height, author,
                 SUBSTR(body, 1, ?1), preview_text, first_image, media_urls, media_dimensions, preview_manifest, feed_playback,
-                CASE WHEN preview_state != 'ready' THEN preview_error_kind END
+                CASE WHEN preview_state != 'ready' THEN preview_error_kind END,
+                {collections}
          FROM blocks
-         ORDER BY saved_at DESC, slug COLLATE NOCASE ASC, slug ASC",
-    )?;
+         ORDER BY saved_at DESC, slug COLLATE NOCASE ASC, slug ASC"
+    ))?;
 
     let blocks: Vec<LightBlock> = stmt
         .query_map([LIGHT_BLOCK_BODY_PREVIEW_CHARS], light_block_from_row)?
@@ -115,6 +144,7 @@ fn list_grid_blocks_filtered(
     let plain_order = order.order_by("");
     let sql = match tag {
         Some(_) => {
+            let collections = collections_column_sql("b.id");
             format!("SELECT b.id, b.slug, b.block_type, b.card_kind, b.title, b.content_heading, b.display_title, COALESCE(b.fallback_label, b.slug), b.url, b.media_file,
                     b.thumbnail, b.saved_at, b.width, b.height, b.author,
                     CASE WHEN b.card_kind = 'article' THEN SUBSTR(b.body, 1, ?1) ELSE '' END,
@@ -125,7 +155,8 @@ fn list_grid_blocks_filtered(
                     CASE WHEN b.preview_state = 'ready'
                               OR (b.preview_state = 'stale' AND b.preview_source_stamp IS NOT NULL)
                          THEN b.feed_playback END,
-                    CASE WHEN b.preview_state != 'ready' THEN b.preview_error_kind END
+                    CASE WHEN b.preview_state != 'ready' THEN b.preview_error_kind END,
+                    {collections}
              FROM blocks b
              INNER JOIN block_tags bt ON bt.block_id = b.id
              WHERE b.card_kind != 'channel' AND bt.tag = ?2
@@ -134,6 +165,7 @@ fn list_grid_blocks_filtered(
         }
         None => {
             let filter = if slugs.is_some() { "AND slug IN (SELECT value FROM json_each(?4))" } else { "" };
+            let collections = collections_column_sql("blocks.id");
             format!("SELECT id, slug, block_type, card_kind, title, content_heading, display_title, COALESCE(fallback_label, slug), url, media_file,
                     thumbnail, saved_at, width, height, author,
                     CASE WHEN card_kind = 'article' THEN SUBSTR(body, 1, ?1) ELSE '' END,
@@ -144,7 +176,8 @@ fn list_grid_blocks_filtered(
                     CASE WHEN preview_state = 'ready'
                               OR (preview_state = 'stale' AND preview_source_stamp IS NOT NULL)
                          THEN feed_playback END,
-                    CASE WHEN preview_state != 'ready' THEN preview_error_kind END
+                    CASE WHEN preview_state != 'ready' THEN preview_error_kind END,
+                    {collections}
              FROM blocks
              WHERE card_kind != 'channel'
                {filter}
@@ -549,7 +582,19 @@ pub(crate) fn light_block_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<
             == Some("content_in_cloud"),
         preview_unreadable: row.get::<_, Option<String>>(22).unwrap_or(None).as_deref()
             == Some("unreadable_artifact"),
+        collections: collections_from_row(row)?,
         search_match: None,
+    })
+}
+
+/// Decode the [`collections_column_sql`] column. SQLite built the array, so a
+/// value that is not one is a broken query, reported rather than shown as a
+/// card in no collection.
+fn collections_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Vec<String>> {
+    let index = row.as_ref().column_index(COLLECTIONS_COLUMN)?;
+    let raw: String = row.get(index)?;
+    serde_json::from_str(&raw).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(index, rusqlite::types::Type::Text, Box::new(error))
     })
 }
 

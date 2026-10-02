@@ -609,7 +609,7 @@ iOS UI contract:
 
 ### Frontend rendering model
 
-- `App.tsx` больше не хранит в памяти весь корпус `LightBlock` ради клиентской фильтрации. Горячий путь — `list_grid_blocks(current_tag)`: backend сразу отдаёт карточки текущего маршрута, исключает channel-документы и не передаёт per-block tag arrays. Полные теги блока догружаются через `get_block(slug)` только когда открыт hover/context menu или Detail.
+- `App.tsx` больше не хранит в памяти весь корпус `LightBlock` ради клиентской фильтрации. Горячий путь: `list_grid_blocks(current_tag)`, backend сразу отдаёт карточки текущего маршрута и исключает channel-документы. Каждая строка несёт `collections`: ссылки коллекций карточки в порядке бокового меню, одним подзапросом на страницу, для ряда коллекций карточки (SPEC_CARD_STATES.md, С8.9). Полный блок догружается через `get_block(slug)` только когда открыт Connect, context menu или Detail.
 - Surface Search имеет отдельный route-facing read model: `Cmd+F` открывает overlay, непустой query идёт в `search_grid_blocks`, а обычный `list_grid_blocks` и Grid snapshot под overlay не меняются. `SearchSnapshot` несёт `ProjectionRevision`, независимый `SearchRevision` и opaque cursor, связанный также с query fingerprint; несовпадение любой части сбрасывает pagination на offset zero. Retrieval остаётся в `storage::search_engine`: SQLite FTS5 lexical/alias retrieval, searchable metadata chunks (`author`, `url` без видимого highlight), chunk-based fuzzy matching, local multilingual `fastembed` semantic vectors и deterministic fusion/rerank. Single-token Latin queries are strict, bypass semantic embedding work and do not inject semantic-only cards without a visible match; semantic-only retrieval is reserved for Cyrillic cross-language and multi-token semantic queries. Отдельной Search route/palette нет; `Shift+Cmd+F` фильтрует только sidebar taxonomy. Полный контракт: [SPEC_SEARCH.md](SPEC_SEARCH.md).
 - Открытие vault двухфазное: `select_vault` / `get_vault_path` поднимают SQLite,
   watcher и последний индексированный snapshot сразу, а единый
@@ -1636,7 +1636,7 @@ Phase-2 тайловые постеры галерейных видео до у�
 
 | Approach | Problem |
 |---|---|
-| Build graph from frontend `LightBlock[]` | `LightBlock` intentionally omits collection arrays and relation edges; frontend would need hidden refetches or stale ad-hoc joins |
+| Build graph from frontend `LightBlock[]` | `LightBlock` carries only the card's own collection refs, not relation edges; frontend would need hidden refetches or stale ad-hoc joins |
 | `@xyflow/react` / SVG flow editor | Good for node editors and DAG-like canvases, not dense knowledge graphs with pan/zoom/physics |
 | Sigma.js + Graphology | Strong WebGL graph stack, but custom Mine node rendering would move into shader/WebGL complexity too early |
 | Handwritten D3-force + Canvas | Maximum control, but repeats zoom, pan, hit-testing and pointer-area infrastructure |

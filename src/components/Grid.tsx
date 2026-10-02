@@ -17,7 +17,7 @@ import {
 import type { LightBlock, TagCount } from "@/types";
 import { TopFadeScrim } from "./TopFadeScrim";
 import { useDensity } from "@/lib/density";
-import { FeedMediaContext, FeedShowContext, useFeedDisplay, type FeedMedia, type FeedShow } from "@/lib/feedDisplay";
+import { FeedShowContext, useFeedDisplay, type FeedShow } from "@/lib/feedDisplay";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { Card, CardSkeleton } from "./Card";
 import { EmptySpaceOnboarding } from "./EmptySpaceOnboarding";
@@ -82,6 +82,7 @@ import { setHoveredCard, setSelectedCards, useCardLitByCollection } from "@/lib/
 import { HOVER_INTENT } from "@/lib/hoverIntent";
 import { HoverIntentDragWatch, useHoverIntent } from "@/hooks/useHoverIntent";
 import { createCardLiftStore, useCardRaised, type CardLiftStore } from "@/lib/cardLift";
+import { CardCollectionsContext, type CardCollectionsNavigation } from "@/lib/cardCollections";
 import {
   blockCanRenderFromDeterministicHeight,
   blockSlugFromKeyboardTarget,
@@ -220,6 +221,9 @@ interface GridProps {
   thumbVersions?: ReadonlyMap<string, number>;
   tags: TagCount[];
   currentTag?: string;
+  /** Opens a collection, as its sidebar row does; a card's collection pill
+   *  calls it (SPEC_CARD_STATES.md, С9). */
+  onNavigateCollection?: (collectionRef?: string) => void;
   routeSnapshotReady?: boolean;
   scrollToTop: number;
   blockDragActive?: boolean;
@@ -253,7 +257,6 @@ interface GridProps {
    * Whether the card under the pointer marks its collections in the sidebar
    * (SPEC_CARD_STATES.md, С4). The keyboard-focused card always does.
    */
-  hoverCollectionPills?: boolean;
 }
 
 interface GridContext {
@@ -322,12 +325,11 @@ function buildLayout(
   wordWidthsMap: Map<number, WordWidths>,
   gap: number,
   show: FeedShow,
-  media: FeedMedia,
 ): MasonryLayout {
   const columnWidth = deriveColumnWidth(parentWidth, gap);
 
   const heights = blocks.map((block) => {
-    return computeCardHeight(block, columnWidth, wordWidthsMap.get(block.id) ?? null, show, media);
+    return computeCardHeight(block, columnWidth, wordWidthsMap.get(block.id) ?? null, show);
   });
 
   return computeMasonryLayout(
@@ -459,6 +461,7 @@ export function Grid({
   thumbVersions,
   tags,
   currentTag,
+  onNavigateCollection,
   routeSnapshotReady = true,
   scrollToTop,
   blockDragActive = false,
@@ -484,14 +487,12 @@ export function Grid({
   loadingMoreBlocks = false,
   onLoadMoreBlocks,
   scrollEdgeFade = false,
-  hoverCollectionPills = true,
 }: GridProps) {
   const spacing = useDensity();
   const layoutGap = spacing;
-  // Presentation of the cards and placement of their media
-  // (SPEC_FEED_DISPLAY.md, Д10 to Д16, Д19 to Д24): one pair of values read by
-  // the layout, the heights and every card below.
-  const { show, media } = useFeedDisplay();
+  // Presentation of the cards (SPEC_FEED_DISPLAY.md, Д10 to Д16): read by the
+  // layout, the heights and every card below.
+  const { show } = useFeedDisplay();
   const gridXInset = spacing;
   const gridTopInset = spacing;
   const parentRef = useRef<HTMLDivElement>(null);
@@ -543,18 +544,14 @@ export function Grid({
     if (keyboardAnswerTimerRef.current !== null) window.clearTimeout(keyboardAnswerTimerRef.current);
     keyboardAnswerTimerRef.current = null;
   }, []);
-  const hoverCollectionPillsRef = useRef(hoverCollectionPills);
-  hoverCollectionPillsRef.current = hoverCollectionPills;
-  /** The pointer's answer for the sidebar, or none when the setting is off. */
-  const pointerCardAnswer = useCallback((chosen: string | null) => (
-    chosen === null || !hoverCollectionPillsRef.current ? null : Number(chosen)
-  ), []);
   const [cardLift] = useState(createCardLiftStore);
-  const cardIntent = useHoverIntent(({ chosen, raised }) => {
+  const cardIntent = useHoverIntent(({ raised }) => {
     cardLift.set(raised);
     if (!pointerDrivesCardHoverRef.current) return;
     clearKeyboardAnswerTimer();
-    setHoveredCard(pointerCardAnswer(chosen));
+    // The pointer marks no collections in the sidebar: only the keyboard's
+    // focused card and a selection do (SPEC_CARD_STATES.md, С4).
+    setHoveredCard(null);
   });
   const cardIntentRef = useRef(cardIntent);
   cardIntentRef.current = cardIntent;
@@ -794,13 +791,11 @@ export function Grid({
       columnWidth,
       columnCount,
       // The module-level layoutCache must never serve a layout computed with
-      // a different gap (design variants change it), presentation or media
-      // placement (Д23).
+      // a different gap (design variants change it) or presentation.
       layoutGap,
       show,
-      media,
     }),
-    [blocks, columnCount, columnWidth, currentTag, layoutGap, media, show],
+    [blocks, columnCount, columnWidth, currentTag, layoutGap, show],
   );
   const heightDriftBlocksById = useMemo(() => {
     const map = new Map<number, LightBlock>();
@@ -815,14 +810,12 @@ export function Grid({
     parentWidth: number;
     wordWidthsMap: Map<number, WordWidths>;
     show: FeedShow;
-    media: FeedMedia;
   }>({
     blocksById: heightDriftBlocksById,
     generationKey,
     parentWidth,
     wordWidthsMap,
     show,
-    media,
   });
   heightDriftContextRef.current = {
     blocksById: heightDriftBlocksById,
@@ -830,7 +823,6 @@ export function Grid({
     parentWidth,
     wordWidthsMap,
     show,
-    media,
   };
   useEffect(() => {
     return () => {
@@ -921,7 +913,7 @@ export function Grid({
               block,
               measuredHeight: result.height,
               deterministicHeight: Math.ceil(
-                computeCardHeight(block, columnWidth, wordWidths, driftContext.show, driftContext.media),
+                computeCardHeight(block, columnWidth, wordWidths, driftContext.show),
               ),
               wordMetricsReady: !wordMetricsRequired || wordWidths !== null,
             });
@@ -956,16 +948,16 @@ export function Grid({
     }
 
     if (!allCurrentGenerationDeterministic) {
-      return buildLayout(blocks, parentWidth, wordWidthsMap, layoutGap, show, media);
+      return buildLayout(blocks, parentWidth, wordWidthsMap, layoutGap, show);
     }
 
     const cached = layoutCache.get(generationKey);
     if (cached) return cached;
 
-    const fresh = buildLayout(blocks, parentWidth, wordWidthsMap, layoutGap, show, media);
+    const fresh = buildLayout(blocks, parentWidth, wordWidthsMap, layoutGap, show);
     layoutCache.set(generationKey, fresh);
     return fresh;
-  }, [allCurrentGenerationDeterministic, blocks, generationKey, layoutGap, media, parentWidth, show, wordWidthsMap]);
+  }, [allCurrentGenerationDeterministic, blocks, generationKey, layoutGap, parentWidth, show, wordWidthsMap]);
 
   useEffect(() => {
     onColumnCountChange?.(layout.columnCount);
@@ -1991,7 +1983,6 @@ export function Grid({
         block,
         item.width,
         show,
-        media,
       );
       if (!playbackSurface) continue;
 
@@ -2040,7 +2031,6 @@ export function Grid({
   }, [
     autoplayEligibleBySlug,
     blocks,
-    media,
     renderReadyBlockIds,
     scrollTop,
     show,
@@ -2150,20 +2140,15 @@ export function Grid({
     }
     const { chosen } = cardIntent.current();
     if (chosen !== null) {
-      setHoveredCard(pointerCardAnswer(chosen));
+      setHoveredCard(null);
       return;
     }
     keyboardAnswerTimerRef.current = window.setTimeout(() => {
       keyboardAnswerTimerRef.current = null;
       if (cardIntent.current().chosen === null) setHoveredCard(null);
     }, HOVER_INTENT.warmMs);
-  }, [cardIntent, clearKeyboardAnswerTimer, feedInteractionMode, keyboardFocusedBlockId, pointerCardAnswer]);
+  }, [cardIntent, clearKeyboardAnswerTimer, feedInteractionMode, keyboardFocusedBlockId]);
 
-  // Turning the setting over applies at once to the card under the pointer.
-  useEffect(() => {
-    if (!pointerDrivesCardHoverRef.current) return;
-    setHoveredCard(pointerCardAnswer(cardIntent.current().chosen));
-  }, [cardIntent, hoverCollectionPills, pointerCardAnswer]);
 
   useEffect(() => () => {
     clearKeyboardAnswerTimer();
@@ -2245,13 +2230,23 @@ export function Grid({
     ],
   );
 
+  // The open collection marks its pill on every card, and a pill opens its
+  // collection (С9).
+  const cardCollections = useMemo<CardCollectionsNavigation>(() => ({
+    currentTag: currentTag ?? null,
+    open: (tag: string) => onNavigateCollection?.(tag),
+  }), [currentTag, onNavigateCollection]);
+
   return (
     // The band is a sibling of the scrollport, not a child: inside it, it would
     // inherit the scrollport's padding and add layout work to the scrolled tree.
     <FeedShowContext.Provider value={show}>
-    <FeedMediaContext.Provider value={media}>
+    <CardCollectionsContext.Provider value={cardCollections}>
     <div className="relative h-full">
-    <ContextMenu>
+    {/* An open right-click menu holds the pointer's answers like the card's
+        own menus do (С7.8): the card under it drops its hover and its lift
+        at once, though WebKit keeps `:hover` until the pointer moves. */}
+    <ContextMenu onOpenChange={(open) => cardIntent.suspend("context-menu", open)}>
       <ContextMenuTrigger asChild>
         <div
           ref={topFade.ref}
@@ -2381,7 +2376,7 @@ export function Grid({
     </ContextMenu>
       <TopFadeScrim scrolled={topFade.scrolled} surface="feed" color="var(--background)" />
     </div>
-    </FeedMediaContext.Provider>
+    </CardCollectionsContext.Provider>
     </FeedShowContext.Provider>
   );
 }

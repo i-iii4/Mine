@@ -199,7 +199,10 @@ select,
   transition-duration: var(--hover-intent-fade-in);
 }
 
-[data-card-graphic-surface]::after {
+/* The wash lives on the media window, not on the slot: a card lift moves the
+   window up while the slot stays, and a wash on the slot fell on the text
+   that rose into it (С8). On the window it covers the picture alone. */
+[data-card-graphic-surface] > [data-card-lift="window"]::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -213,31 +216,50 @@ select,
 /* The wash is for pictures only; a text card shows the border alone. A row
    lights many cards at once, so its highlight is the border without the wash
    (С3, С7). */
-[data-grid-scroll][data-feed-grid-focus-mode="true"] [data-feed-grid-item-focused="true"] [data-card-graphic-surface]::after,
-[data-grid-scroll] [data-feed-grid-item-selected="true"] [data-card-graphic-surface]::after {
+[data-grid-scroll][data-feed-grid-focus-mode="true"] [data-feed-grid-item-focused="true"] [data-card-graphic-surface] > [data-card-lift="window"]::after,
+[data-grid-scroll] [data-feed-grid-item-selected="true"] [data-card-graphic-surface] > [data-card-lift="window"]::after {
   opacity: 1;
 }
 
-/* The card lift (SPEC_CARD_STATES.md, С8). While the bottom action row shows,
-   the card's text rises by --card-lift and the row slides up from under the
-   bottom edge in lockstep, fading in, so the buttons never cover the text. A
-   media window rises with the text and keeps its corners; the picture plane
+/* The card lift (SPEC_CARD_STATES.md, С8, С8.7). Every card rises for its
+   row of collections waiting under the bottom edge: its text and its media
+   window rise together and the window keeps its corners; the picture plane
    inside drifts back all but --card-lift-drift, so the picture itself only
-   hints at the motion (8px). The frame clips everything;
-   its outer box never moves. Raising runs 200ms, settling 150ms, on the
-   project's ease-out; the row fades in and out over the С7.6 durations.
-   Reduced motion lands at once through the global rule (Ф12). */
+   hints at the motion (8px). Bare media (a picture or a video without a
+   frame, or a card `Media` shows as media alone) brings up its caption too,
+   and the caption sets --card-lift to its own height on the frame. The frame
+   clips everything; its outer box never moves. Raising runs 200ms, settling
+   150ms, on the project's ease-out. Reduced motion lands at once through the
+   global rule (Ф12). */
 [data-feed-card-frame] {
-  --card-lift: 40px;
   --card-lift-drift: 8px;
-}
-
-[data-feed-card-frame][data-card-lift-depth="flush"] {
-  --card-lift: 48px;
 }
 
 [data-card-lift] {
   transition: transform 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+[data-card-lift-hover]:hover [data-card-lift],
+[data-card-lift-pinned] [data-card-lift] {
+  transition-duration: 200ms;
+}
+
+[data-card-lift-hover]:hover [data-card-lift="window"],
+[data-card-lift-pinned] [data-card-lift="window"] {
+  transform: translateY(calc(-1 * var(--card-lift)));
+}
+
+[data-card-lift-hover]:hover [data-card-lift="plane"],
+[data-card-lift-pinned] [data-card-lift="plane"] {
+  transform: translateY(calc(var(--card-lift) - var(--card-lift-drift)));
+}
+
+/* Every card rises for its row of collections: the card sets --card-lift
+   inline from its own bottom space (Card.tsx, collectionsRowLiftStyle), a
+   caption sets it to its own height. */
+[data-card-lift-hover]:hover [data-card-lift="text"],
+[data-card-lift-pinned] [data-card-lift="text"] {
+  transform: translateY(calc(-1 * var(--card-lift)));
 }
 
 [data-card-lift="tray"] {
@@ -252,34 +274,6 @@ select,
   transform: translate3d(0, var(--card-lift), 0);
 }
 
-[data-card-lift-hover]:hover [data-card-lift],
-[data-card-lift-pinned] [data-card-lift] {
-  transition-duration: 200ms;
-}
-
-[data-card-lift-hover]:hover [data-card-lift="text"],
-[data-card-lift-pinned] [data-card-lift="text"],
-[data-card-lift-hover]:hover [data-card-lift="window"],
-[data-card-lift-pinned] [data-card-lift="window"] {
-  transform: translateY(calc(-1 * var(--card-lift)));
-}
-
-[data-card-lift-hover]:hover [data-card-lift="plane"],
-[data-card-lift-pinned] [data-card-lift="plane"] {
-  transform: translateY(calc(var(--card-lift) - var(--card-lift-drift)));
-}
-
-/* `Media`: the caption waits under the bottom edge and rises with the row
-   (С8.7); the lift is its height, set on the frame by the caption itself. */
-[data-card-lift="caption"] {
-  transform: translateY(100%);
-}
-
-[data-card-lift-hover]:hover [data-card-lift="caption"],
-[data-card-lift-pinned] [data-card-lift="caption"] {
-  transform: translateY(0);
-}
-
 [data-card-lift-hover]:hover [data-card-lift="tray"],
 [data-card-lift-pinned] [data-card-lift="tray"] {
   transform: translateY(0);
@@ -289,6 +283,37 @@ select,
 [data-card-lift-hover]:hover [data-card-lift="tray"][data-card-lift-gpu],
 [data-card-lift-pinned] [data-card-lift="tray"][data-card-lift-gpu] {
   transform: translate3d(0, 0, 0);
+}
+
+/* A rising text post fades out at the top edge (С8.2). The mask sits on a
+   wrapper that stays put; at rest its ramp waits just above the edge, so the
+   card is untouched, and it slides into place with the lift. */
+[data-card-lift-fade] {
+  -webkit-mask-size: 100% calc(100% + 24px);
+  mask-size: 100% calc(100% + 24px);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: 0 -24px;
+  mask-position: 0 -24px;
+  transition:
+    -webkit-mask-position 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    mask-position 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+[data-card-lift-hover]:hover [data-card-lift-fade],
+[data-card-lift-pinned] [data-card-lift-fade] {
+  -webkit-mask-position: 0 0;
+  mask-position: 0 0;
+  transition-duration: 200ms;
+}
+
+[data-card-lift="caption"] {
+  transform: translateY(100%);
+}
+
+[data-card-lift-hover]:hover [data-card-lift="caption"],
+[data-card-lift-pinned] [data-card-lift="caption"] {
+  transform: translateY(0);
 }
 
 [data-feed-grid-marquee-selection] {
@@ -651,7 +676,7 @@ body {
     transition: none;
   }
 
-  [data-card-graphic-surface]::after {
+  [data-card-graphic-surface] > [data-card-lift="window"]::after {
     transition: none;
   }
 }
@@ -673,7 +698,7 @@ body {
      font: switching the UI to Departure Mono leaves reading text alone. */
   --font-content: "Geist", ui-sans-serif, system-ui, sans-serif;
   --radius-0: 0px;
-  --radius-1: 3px;
+  --radius-1: 4px;
   --radius-2: 5px;
   --radius-pill: 9999px;
   --radius-round: 50%;

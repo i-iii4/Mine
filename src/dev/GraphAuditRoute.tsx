@@ -81,6 +81,7 @@ function auditBlock(index: number): LightBlock {
     }),
     feed_playback: null,
     search_match: null,
+  collections: [],
   };
 }
 

@@ -4,10 +4,17 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Card, DragCardStackPreview, ReadOnlyCardPreview } from "./Card";
-import { FeedMediaContext, FeedShowContext, type FeedMedia, type FeedShow } from "@/lib/feedDisplay";
+import { FeedShowContext, type FeedShow } from "@/lib/feedDisplay";
 import { CARD_HOVER_ACTION_MIN_HEIGHT, computeCardHeight } from "@/lib/cardHeight";
 import { PROVISIONAL_MEDIA_ASPECT, clampCardAspect } from "@/lib/cardAspect";
 import { PreviewsPendingContext } from "@/lib/cardPreviewState";
+import {
+  EDGE_TEXT_SIDE_PX,
+  EDGE_VISUAL_GAP_PX,
+  cardTextGap,
+  edgeTextBottom,
+  edgeTextTop,
+} from "@/lib/cardTypography";
 import type { LightBlock } from "@/types";
 import type { WordWidths } from "@/types/fontMetrics";
 
@@ -83,6 +90,7 @@ function block(overrides: Partial<LightBlock> = {}): LightBlock {
     media_urls: null,
     media_dimensions: null,
     preview_manifest: null,
+    collections: [],
     feed_playback: null,
     tags: ["test"],
     ...overrides,
@@ -178,7 +186,7 @@ describe("Card", () => {
     // which misses the case this exists for: unchecking the current collection
     // in Connect, by pointer.
     const onMenuOpenChange = vi.fn();
-    render(
+    const { container } = render(
       <Card
         block={block()}
         vaultPath={VAULT}
@@ -193,11 +201,9 @@ describe("Card", () => {
       />,
     );
 
-    // The card itself is a draggable button whose label includes its actions,
-    // so the trigger is picked by its own text rather than by accessible name.
-    const connect = screen
-      .getAllByRole("button")
-      .find((element) => element.textContent?.trim() === "Connect");
+    // Connect is the plus at the end of the card's bottom row of collections.
+    const connect = container.querySelector<HTMLElement>("[data-card-hover-connect]");
+    expect(connect).toHaveAttribute("aria-label", "Connect");
     fireEvent.pointerDown(connect!, { button: 0, ctrlKey: false });
     fireEvent.click(connect!);
     await waitFor(() => expect(onMenuOpenChange).toHaveBeenCalledWith(true));
@@ -789,8 +795,8 @@ describe("Card", () => {
         media_urls: JSON.stringify(sources),
       });
       const { container, unmount } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
-      const surface = container.querySelector('[data-card-inset-media]');
-      expect(surface).toHaveClass('overflow-hidden', 'rounded-[var(--radius-card)]');
+      const surface = container.querySelector('[data-card-graphic-surface]');
+      expect(surface).toHaveClass('overflow-hidden', 'rounded-b-[var(--radius-card)]');
       expect(surface?.querySelectorAll('img')).toHaveLength(count);
       for (const tile of container.querySelectorAll('[data-card-media-tile]')) {
         expect(tile.className).not.toContain('rounded');
@@ -805,7 +811,7 @@ describe("Card", () => {
     const b = block({ block_type: "article", url: "https://x.com/a/status/1",
       body: sources.map(src => `![](${src})`).join("\n"), media_urls: JSON.stringify(sources) });
     const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
-    expect(container.querySelector('[data-card-inset-media]')).toHaveClass('overflow-hidden', 'rounded-[var(--radius-card)]');
+    expect(container.querySelector('[data-card-graphic-surface]')).toHaveClass('overflow-hidden', 'rounded-b-[var(--radius-card)]');
     for (const tile of container.querySelectorAll('[data-card-media-tile]')) expect(tile.className).not.toContain('rounded');
   });
 
@@ -1059,6 +1065,7 @@ describe("Card", () => {
         ],
         overflow_count: 0,
       }),
+      collections: [],
       feed_playback: JSON.stringify({
         kind: "single_video",
         source_path: "demo.mp4",
@@ -1177,6 +1184,7 @@ describe("Card", () => {
         ],
         overflow_count: 0,
       }),
+      collections: [],
       feed_playback: null,
     });
     const { container } = render(
@@ -1202,6 +1210,7 @@ describe("Card", () => {
         ],
         overflow_count: 0,
       }),
+      collections: [],
       feed_playback: JSON.stringify({
         kind: "single_video",
         source_path: "demo.mp4",
@@ -1237,6 +1246,7 @@ describe("Card", () => {
         ],
         overflow_count: 0,
       }),
+      collections: [],
       feed_playback: null,
     });
     const { container } = render(
@@ -1263,6 +1273,7 @@ describe("Card", () => {
         ],
         overflow_count: 0,
       }),
+      collections: [],
       feed_playback: JSON.stringify({
         kind: "single_video",
         source_path: "clip.mp4",
@@ -1458,19 +1469,30 @@ describe("Card presentation in the feed (SPEC_FEED_DISPLAY.md, Д11 to Д13)", (
   it("Cards frames a picture as a post card with its name", () => {
     const picture = block({
       block_type: "image", title: null, url: null, media_file: "Media/Sunset.jpg",
-      fallback_label: "Sunset", preview_manifest: imageManifest,
+      content_heading: "Sunset", fallback_label: "Sunset", preview_manifest: imageManifest,
     });
     const { container } = inFeed("cards", picture);
     expect(screen.getByText("Sunset")).toBeInTheDocument();
-    expect(container.querySelector("[data-card-inset-media]")).not.toBeNull();
+    expect(container.querySelector("[data-card-graphic-surface]")).not.toBeNull();
     expect(container.querySelector("[data-feed-card-frame]")).toHaveClass("feed-article-card");
+  });
+
+  it("Cards names a picture only by a heading of its own, never by its file", () => {
+    const picture = block({
+      block_type: "image", title: "Sunset title", url: null, media_file: "Media/Sunset.jpg",
+      content_heading: null, fallback_label: "Sunset", preview_manifest: imageManifest,
+    });
+    inFeed("cards", picture);
+    expect(screen.queryByText("Sunset")).not.toBeInTheDocument();
+    expect(screen.queryByText("Sunset title")).not.toBeInTheDocument();
+    expect(screen.queryByText("Media/Sunset.jpg")).not.toBeInTheDocument();
   });
 
   it("Cards shows a picture's text and author under its name (Д12, В5.3)", () => {
     const picture = block({
       block_type: "image", title: null, url: null, media_file: "Media/Sunset.jpg",
-      fallback_label: "Sunset", author: "@someone", preview_text: "Evening over the bay",
-      preview_manifest: imageManifest,
+      content_heading: "Sunset", fallback_label: "Sunset", author: "@someone",
+      preview_text: "Evening over the bay", preview_manifest: imageManifest,
     });
     inFeed("cards", picture);
     expect(screen.getByText("Sunset")).toBeInTheDocument();
@@ -1540,10 +1562,11 @@ describe("Card presentation in the feed (SPEC_FEED_DISPLAY.md, Д11 to Д13)", (
     });
     const { container } = inFeed("mixed", picture);
     expect(screen.queryByText("Sunset")).not.toBeInTheDocument();
-    expect(container.querySelector("[data-card-inset-media]")).toBeNull();
+    expect(container.querySelector("[data-card-graphic-surface]")).not.toBeNull();
+    expect(container.querySelector("[data-feed-card-frame]")).not.toHaveClass("feed-article-card");
   });
 
-  it("Media shows a post's picture alone: no title, no text, no author, no inset", () => {
+  it("Media shows a post's picture alone: no title, no text, no author", () => {
     const post = block({
       block_type: "article", title: "A post", url: null,
       body: "Some words\n\n![](photo.jpg)", media_urls: "[\"photo.jpg\"]",
@@ -1553,7 +1576,6 @@ describe("Card presentation in the feed (SPEC_FEED_DISPLAY.md, Д11 to Д13)", (
     expect(screen.queryByText("A post")).not.toBeInTheDocument();
     expect(screen.queryByText("@someone")).not.toBeInTheDocument();
     expect(container.querySelector("[data-card-graphic-surface]")).not.toBeNull();
-    expect(container.querySelector("[data-card-inset-media]")).toBeNull();
     expect(container.querySelector("[data-feed-card-frame]")).not.toHaveClass("feed-article-card");
   });
 });
@@ -1561,11 +1583,10 @@ describe("Card presentation in the feed (SPEC_FEED_DISPLAY.md, Д11 to Д13)", (
 describe("Card geometry, author and name (SPEC_AUDIT_FIXES.md, Г4.5 to Г4.7)", () => {
   const COLUMN = 320;
   const CARD_BORDER = 2;
-  const CARD_PADDING = 16;
   const AUTHOR_LINE = 16;
-  const AUTHOR_GAP = 8;
-  const MEDIA_GAP = 12;
-  const CONTENT_WIDTH = COLUMN - CARD_BORDER - CARD_PADDING * 2;
+  /// The frame's inner width: a post's media runs across it, from the
+  /// frame's top edge (SPEC_FEED_DISPLAY.md, Д20).
+  const INNER_WIDTH = COLUMN - CARD_BORDER;
 
   /// A single-picture post from X or Instagram whose preview artifact is a
   /// 100×1000 strip: ten times taller than wide, far past the card's 1:2.
@@ -1604,18 +1625,14 @@ describe("Card geometry, author and name (SPEC_AUDIT_FIXES.md, Г4.5 to Г4.7)",
     ["Instagram", "https://instagram.com/p/1"],
   ])("paints a tall single %s picture at 1:2 and reserves the height it paints (Г4.5)", (_network, url) => {
     const post = tallPost(url);
-    for (const show of ["mixed", "cards"] as const) {
+    for (const show of ["mixed", "cards", "media"] as const) {
       const aspect = paintedAspect(renderedMarkup(show, post));
       expect(aspect).toBe(0.5);
-      // Border, padding, the inset picture across the padded width, padding.
+      // With no text under it, the picture across the frame's inner width is
+      // the whole card inside its border, in every presentation.
       expect(computeCardHeight(post, COLUMN, null, show))
-        .toBe(CARD_BORDER + CARD_PADDING + Math.round(CONTENT_WIDTH / aspect) + CARD_PADDING);
+        .toBe(Math.round(INNER_WIDTH / aspect) + CARD_BORDER);
     }
-    const mediaAspect = paintedAspect(renderedMarkup("media", post));
-    expect(mediaAspect).toBe(0.5);
-    // Media: the picture is the whole card inside its border.
-    expect(computeCardHeight(post, COLUMN, null, "media"))
-      .toBe(Math.round((COLUMN - CARD_BORDER) / mediaAspect) + CARD_BORDER);
   });
 
   // Д1.2: the card's whole preview is built from `thumbnail`, here a 16:9
@@ -1646,13 +1663,9 @@ describe("Card geometry, author and name (SPEC_AUDIT_FIXES.md, Г4.5 to Г4.7)",
         .toContain("post.preview-1.jpg");
       const aspect = paintedAspect(doc);
       expect(aspect).toBeCloseTo(tileAspect, 4);
-      expect(computeCardHeight(post, COLUMN, null, show)).toBe(
-        show === "media"
-          // Media: the picture is the whole card inside its border.
-          ? Math.round((COLUMN - CARD_BORDER) / aspect) + CARD_BORDER
-          // Border, padding, the inset picture across the padded width, padding.
-          : CARD_BORDER + CARD_PADDING + Math.round(CONTENT_WIDTH / aspect) + CARD_PADDING,
-      );
+      // The picture across the frame's inner width is the whole card.
+      expect(computeCardHeight(post, COLUMN, null, show))
+        .toBe(Math.round(INNER_WIDTH / aspect) + CARD_BORDER);
     }
   });
 
@@ -1664,6 +1677,7 @@ describe("Card geometry, author and name (SPEC_AUDIT_FIXES.md, Г4.5 to Г4.7)",
     thumbnail: "Media/page-picture.jpg",
     body: media === "picture" ? "![](Media/body-1.jpg)" : "![](Media/body-1.mp4)",
     media_urls: media === "picture" ? "[\"Media/body-1.jpg\"]" : "[\"Media/body-1.mp4\"]",
+    collections: [],
     feed_playback: null,
     preview_manifest: JSON.stringify({
       kind: media === "picture" ? "image" : "video_poster",
@@ -1676,12 +1690,10 @@ describe("Card geometry, author and name (SPEC_AUDIT_FIXES.md, Г4.5 to Г4.7)",
       overflow_count: 0,
     }),
   });
-  /// Height of a card in a presentation that paints one media at `aspect`:
-  /// in Media the media is the whole card inside its border; otherwise border,
-  /// padding, the inset media across the padded width, padding.
-  const oneMediaHeight = (show: FeedShow, aspect: number) => (show === "media"
-    ? Math.round((COLUMN - CARD_BORDER) / aspect) + CARD_BORDER
-    : CARD_BORDER + CARD_PADDING + Math.round(CONTENT_WIDTH / aspect) + CARD_PADDING);
+  /// Height of a card that paints one media at `aspect` and no text: the
+  /// media across the frame's inner width is the whole card inside its
+  /// border, in every presentation.
+  const oneMediaHeight = (aspect: number) => Math.round(INNER_WIDTH / aspect) + CARD_BORDER;
 
   it.each([
     ["an article", "https://example.com/piece"],
@@ -1694,7 +1706,7 @@ describe("Card geometry, author and name (SPEC_AUDIT_FIXES.md, Г4.5 to Г4.7)",
         .toContain("post.preview-1.jpg");
       const aspect = paintedAspect(doc);
       expect(aspect).toBeCloseTo(clampCardAspect(800 / 1200), 4);
-      expect(computeCardHeight(card, COLUMN, null, show)).toBe(oneMediaHeight(show, aspect));
+      expect(computeCardHeight(card, COLUMN, null, show)).toBe(oneMediaHeight(aspect));
     }
   });
 
@@ -1710,7 +1722,7 @@ describe("Card geometry, author and name (SPEC_AUDIT_FIXES.md, Г4.5 to Г4.7)",
       expect(poster).not.toContain("preview-1");
       const aspect = paintedAspect(doc);
       expect(aspect).toBeCloseTo(clampCardAspect(1600 / 900), 4);
-      expect(computeCardHeight(card, COLUMN, null, show)).toBe(oneMediaHeight(show, aspect));
+      expect(computeCardHeight(card, COLUMN, null, show)).toBe(oneMediaHeight(aspect));
     }
   });
 
@@ -1731,9 +1743,11 @@ describe("Card geometry, author and name (SPEC_AUDIT_FIXES.md, Г4.5 to Г4.7)",
     // One line of 16px that ends in an ellipsis, never a second line.
     expect(author).toHaveClass("truncate");
     expect(author).toHaveStyle({ lineHeight: "16px" });
+    // The picture, then the author's one line 14px from it and from the
+    // bottom edge, letter to letter (Д25).
     expect(computeCardHeight(post, COLUMN, null, "mixed")).toBe(
-      CARD_BORDER + CARD_PADDING + Math.round(CONTENT_WIDTH / 0.5)
-        + MEDIA_GAP + AUTHOR_LINE + CARD_PADDING,
+      CARD_BORDER + Math.round(INNER_WIDTH / 0.5)
+        + edgeTextTop("author") + AUTHOR_LINE + edgeTextBottom("author"),
     );
   });
 
@@ -1744,10 +1758,12 @@ describe("Card geometry, author and name (SPEC_AUDIT_FIXES.md, Г4.5 to Г4.7)",
     const author = authorLine(article, longAuthor);
     expect(author).toHaveClass("truncate");
     expect(author).toHaveStyle({ lineHeight: "16px" });
-    // The author adds exactly one line and its gap, however long it is.
+    // The author adds exactly one line and its gap under the title, however
+    // long it is; the gap to the bottom edge reads the same under either.
     const withoutAuthor = computeCardHeight({ ...article, author: null }, COLUMN, null, "mixed");
+    expect(edgeTextBottom("author")).toBe(edgeTextBottom("title"));
     expect(computeCardHeight(article, COLUMN, null, "mixed"))
-      .toBe(withoutAuthor + AUTHOR_GAP + AUTHOR_LINE);
+      .toBe(withoutAuthor + cardTextGap("title", "author") + AUTHOR_LINE);
   });
 
   it("names a Media card after its card, not only its actions (Г4.7)", () => {
@@ -1934,20 +1950,17 @@ function layOutBox(
   return height;
 }
 
-/// A feed card in a presentation and a media placement, laid out at a column.
-/// With `measure`, its paragraphs wrap at the width they get.
+/// A feed card in a presentation, laid out at a column. With `measure`, its
+/// paragraphs wrap at the width they get.
 function paintCard(
   value: LightBlock,
   show: FeedShow,
-  media: FeedMedia,
   column: number,
   measure?: TextMeasure,
 ) {
   const markup = renderToStaticMarkup(
     <FeedShowContext.Provider value={show}>
-      <FeedMediaContext.Provider value={media}>
-        <Card block={value} vaultPath={VAULT} onClick={vi.fn()} />
-      </FeedMediaContext.Provider>
+      <Card block={value} vaultPath={VAULT} onClick={vi.fn()} />
     </FeedShowContext.Provider>,
   );
   const frame = new DOMParser().parseFromString(markup, "text/html")
@@ -1975,16 +1988,13 @@ function paintCard(
   return { frame, height, surface, text };
 }
 
-describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д24)", () => {
+describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д25)", () => {
   const COLUMN = 320;
   const INNER = COLUMN - FRAME_BORDER_PX * 2;
-  /// Inset: the body's padding on every side and the gap under the media.
-  const PADDING = 16;
-  const TEXT_GAP = 12;
-  /// Edge to edge: the text's inset at the frame's sides, and the gap every
-  /// vertical seam of the text reads as, letter to letter (01.10.2026, Д25).
-  const EDGE_PADDING = 8;
-  const EDGE_VISUAL_GAP = 12;
+  /// The text's inset at the frame's sides, and the gap every vertical seam
+  /// of the text reads as, letter to letter (Д25).
+  const EDGE_PADDING = EDGE_TEXT_SIDE_PX;
+  const EDGE_VISUAL_GAP = EDGE_VISUAL_GAP_PX;
   /// Every fixture's title and text fit on one line at this column.
   const ONE_LINE: WordWidths = {
     title: [60],
@@ -1994,6 +2004,8 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д24)", () => {
     titleNoSpaceBefore: [false],
     previewNoSpaceBefore: [false],
   };
+  /// The air a 12px line keeps above and below its letters inside its box.
+  const air = (box: PaintedBox) => (lineHeightPx(box.element) - 12) / 2;
 
   const imageManifest = (width: number, height: number) => JSON.stringify({
     kind: "image", primary_preview_path: "test-block.jpg", width, height,
@@ -2032,9 +2044,11 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д24)", () => {
     media_urls: "[\"photo.jpg\"]", preview_text: "Hello there", author: "@someone",
     preview_manifest: manifest,
   });
+  /// A picture whose body opens with its own heading: the name `Cards` sets
+  /// under it.
   const picture = () => block({
     block_type: "image", title: null, url: null, media_file: "Media/Sunset.jpg",
-    fallback_label: "Sunset", preview_manifest: imageManifest(640, 480),
+    content_heading: "Sunset", fallback_label: "Sunset", preview_manifest: imageManifest(640, 480),
   });
   const video = () => block({
     block_type: "video", title: null, url: null, media_file: "Media/Clip.mp4",
@@ -2055,79 +2069,52 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д24)", () => {
     ["a video Cards frames as a post", video, "cards"],
   ];
 
-  it.each(framedCards)("reserves exactly the height %s paints, in either placement", (_card, make, show) => {
-    for (const media of ["inset", "edge"] as const) {
-      expect(paintCard(make(), show, media, COLUMN).height)
-        .toBe(computeCardHeight(make(), COLUMN, ONE_LINE, show, media));
-    }
+  it.each(framedCards)("reserves exactly the height %s paints", (_card, make, show) => {
+    expect(paintCard(make(), show, COLUMN).height)
+      .toBe(computeCardHeight(make(), COLUMN, ONE_LINE, show));
   });
 
-  it.each(framedCards)("runs the media of %s to the frame's top and sides, edge to edge (Д20)", (_card, make, show) => {
-    const { surface } = paintCard(make(), show, "edge", COLUMN);
+  it.each(framedCards)("runs the media of %s to the frame's top and sides (Д20)", (_card, make, show) => {
+    const { surface } = paintCard(make(), show, COLUMN);
     // Right under the frame's top border, across its whole inner width.
     expect(surface).toMatchObject({ top: FRAME_BORDER_PX, left: FRAME_BORDER_PX, width: INNER });
     // The frame's rounded clip gives the media the card's top corners; the
     // media rounds its own bottom corners with the same card radius where the
-    // text starts (01.10.2026). It is not the inset outline.
-    expect(surface?.element.hasAttribute("data-card-inset-media")).toBe(false);
+    // text starts (01.10.2026), and has no outline of its own.
     const classes = surface?.element.className.split(/\s+/) ?? [];
     expect(classes).toContain("rounded-b-[var(--radius-card)]");
     expect(classes.some((name) => name.startsWith("rounded-[") || name.startsWith("rounded-t-"))).toBe(false);
-    const inset = paintCard(make(), show, "inset", COLUMN).surface;
-    expect(inset).toMatchObject({ top: FRAME_BORDER_PX + PADDING, left: FRAME_BORDER_PX + PADDING, width: INNER - PADDING * 2 });
-    expect(inset?.element.hasAttribute("data-card-inset-media")).toBe(true);
   });
 
-  it.each(framedCards)("spaces the text of %s 12px from letter to letter under edge media (Д25)", (_card, make, show) => {
-    const edge = paintCard(make(), show, "edge", COLUMN);
-    expect(edge.text.length).toBeGreaterThan(0);
+  it.each(framedCards)("spaces the text of %s 14px from letter to letter under the media (Д25)", (_card, make, show) => {
+    const painted = paintCard(make(), show, COLUMN);
+    expect(painted.text.length).toBeGreaterThan(0);
     // Every line starts 8px inside the frame's border and spans the inner
     // width less 8px on each side.
-    for (const line of edge.text) {
+    for (const line of painted.text) {
       expect(line.left).toBe(FRAME_BORDER_PX + EDGE_PADDING);
       expect(line.width).toBe(INNER - EDGE_PADDING * 2);
     }
-    // The air a 12px line keeps above and below its letters inside its box.
-    const air = (box: PaintedBox) => (lineHeightPx(box.element) - 12) / 2;
-    const first = edge.text[0]!;
-    const last = edge.text[edge.text.length - 1]!;
-    const surface = edge.surface!;
-    // 12px from the media to the first letters, between every two groups,
+    const first = painted.text[0]!;
+    const last = painted.text[painted.text.length - 1]!;
+    const surface = painted.surface!;
+    // 14px from the media to the first letters, between every two groups,
     // and from the last letters to the frame's bottom border.
     expect(first.top + air(first) - (surface.top + surface.height)).toBe(EDGE_VISUAL_GAP);
-    edge.text.slice(1).forEach((line, index) => {
-      const above = edge.text[index]!;
+    painted.text.slice(1).forEach((line, index) => {
+      const above = painted.text[index]!;
       expect(line.top + air(line) - (above.top + above.height - air(above))).toBe(EDGE_VISUAL_GAP);
     });
-    expect(edge.height - FRAME_BORDER_PX - (last.top + last.height - air(last))).toBe(EDGE_VISUAL_GAP);
-    expect(edge.height).toBe(computeCardHeight(make(), COLUMN, ONE_LINE, show, "edge"));
+    expect(painted.height - FRAME_BORDER_PX - (last.top + last.height - air(last))).toBe(EDGE_VISUAL_GAP);
+    expect(painted.height).toBe(computeCardHeight(make(), COLUMN, ONE_LINE, show));
   });
 
-  it.each(framedCards)("keeps the text of %s inset as it was (Д20)", (_card, make, show) => {
-    const inset = paintCard(make(), show, "inset", COLUMN);
-    expect(inset.text.length).toBeGreaterThan(0);
-    for (const line of inset.text) {
-      expect(line.left).toBe(FRAME_BORDER_PX + PADDING);
-      expect(line.width).toBe(INNER - PADDING * 2);
-    }
-    const first = inset.text[0]!;
-    const last = inset.text[inset.text.length - 1]!;
-    const surface = inset.surface!;
-    expect(first.top - (surface.top + surface.height)).toBe(TEXT_GAP);
-    expect(inset.height - FRAME_BORDER_PX - (last.top + last.height)).toBe(PADDING);
-    expect(inset.height).toBe(computeCardHeight(make(), COLUMN, ONE_LINE, show, "inset"));
-  });
-
-  it("reserves an edge article with one picture at its painted 325px, inset at 327px", () => {
-    // Edge: border 2 + media 318 × 3/4 (239) + 10 + title 16 + 6 + text 20
-    // + 6 + author 16 + 10: every gap 12px from letter to letter (Д25). Inset:
-    // border 2 + 16 + media 286 × 3/4 (215) + gap 12 + title 16 + 6 + text
-    // 20 + 8 + author 16 + 16.
+  it("reserves an article with one picture at its painted 333px", () => {
+    // Border 2 + media 318 × 3/4 (239) + 12 + title 16 + 8 + text 20 + 8
+    // + author 16 + 12: every gap 14px from letter to letter (Д25).
     const post = article(imageManifest(800, 600));
-    expect(computeCardHeight(post, COLUMN, ONE_LINE, "mixed", "edge")).toBe(325);
-    expect(paintCard(post, "mixed", "edge", COLUMN).height).toBe(325);
-    expect(computeCardHeight(post, COLUMN, ONE_LINE, "mixed", "inset")).toBe(327);
-    expect(paintCard(post, "mixed", "inset", COLUMN).height).toBe(327);
+    expect(computeCardHeight(post, COLUMN, ONE_LINE, "mixed")).toBe(333);
+    expect(paintCard(post, "mixed", COLUMN).height).toBe(333);
   });
 
   it.each([
@@ -2158,18 +2145,17 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д24)", () => {
       url: null,
     })],
   ] as const)("reserves exactly what %s paints, its bottom gap included (01.10.2026)", (_name, make) => {
-    for (const media of ["inset", "edge"] as const) {
-      expect(paintCard(make(), "mixed", media, COLUMN).height)
-        .toBe(computeCardHeight(make(), COLUMN, ONE_LINE, "mixed", media));
-    }
+    expect(paintCard(make(), "mixed", COLUMN).height)
+      .toBe(computeCardHeight(make(), COLUMN, ONE_LINE, "mixed"));
   });
 
-  describe("text that wraps at one placement's width and not at the other's", () => {
+  describe("text that wraps at the text column, 8px inside each side", () => {
     /// Every character 6px wide, a space 3px.
     const MEASURE: TextMeasure = { wordWidth: (word) => word.length * 6, spaceWidth: 3 };
-    /// 144 + 3 + 144 = 291px: one line in the edge column (318 − 16 = 302px),
-    /// two in the inset one (318 − 32 = 286px).
-    const LONG = `${"W".repeat(24)} ${"M".repeat(24)}`;
+    /// The text column: 318 − 16 = 302px. 144 + 3 + 144 = 291px fits on one
+    /// line; 156 + 3 + 150 = 309px takes two.
+    const FITS = `${"W".repeat(24)} ${"M".repeat(24)}`;
+    const WRAPS = `${"W".repeat(26)} ${"M".repeat(25)}`;
     const widthsOf = (title: string, preview: string): WordWidths => {
       const words = (text: string) => text.split(" ").filter((word) => word.length > 0);
       return {
@@ -2182,73 +2168,69 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д24)", () => {
       };
     };
 
-    const cases: Array<[string, () => LightBlock, WordWidths, number]> = [
+    const cases: Array<[string, (text: string) => LightBlock, (text: string) => WordWidths, number]> = [
       [
         "an article's title",
-        () => ({ ...article(imageManifest(800, 600)), title: LONG }),
-        widthsOf(LONG, "Short words"),
+        (text) => ({ ...article(imageManifest(800, 600)), title: text }),
+        (text) => widthsOf(text, "Short words"),
         16,
       ],
       [
         "an X post's text",
-        () => ({ ...xPost(galleryManifest(2)), preview_text: LONG, body: `${LONG}\n\n![](photo.jpg)` }),
-        widthsOf("", LONG),
+        (text) => ({ ...xPost(galleryManifest(2)), preview_text: text, body: `${text}\n\n![](photo.jpg)` }),
+        (text) => widthsOf("", text),
         20,
       ],
     ];
 
-    it.each(cases)("counts %s at the width each placement gives it", (_text, make, widths, lineHeight) => {
-      const edge = paintCard(make(), "mixed", "edge", COLUMN, MEASURE);
-      const inset = paintCard(make(), "mixed", "inset", COLUMN, MEASURE);
-      const paragraph = (painted: typeof edge) =>
-        painted.text.find((box) => box.element.textContent === LONG)!;
-
-      expect(paragraph(edge).height).toBe(lineHeight);
-      expect(paragraph(inset).height).toBe(lineHeight * 2);
-      expect(computeCardHeight(make(), COLUMN, widths, "mixed", "edge")).toBe(edge.height);
-      expect(computeCardHeight(make(), COLUMN, widths, "mixed", "inset")).toBe(inset.height);
+    it.each(cases)("counts %s at the width the column gives it", (_text, make, widths, lineHeight) => {
+      for (const [text, lines] of [[FITS, 1], [WRAPS, 2]] as const) {
+        const painted = paintCard(make(text), "mixed", COLUMN, MEASURE);
+        const paragraph = painted.text.find((box) => box.element.textContent === text)!;
+        expect(paragraph.width).toBe(INNER - EDGE_PADDING * 2);
+        expect(paragraph.height).toBe(lineHeight * lines);
+        expect(computeCardHeight(make(text), COLUMN, widths(text), "mixed")).toBe(painted.height);
+      }
     });
   });
 
-  it("lays a gallery's tiles edge to edge with straight seams (Д21)", () => {
-    const edge = paintCard(xPost(galleryManifest(4)), "mixed", "edge", COLUMN);
-    const tiles = edge.frame.querySelectorAll("[data-card-media-tile]");
+  it("lays a gallery's tiles across the frame with 1px straight seams (Д21)", () => {
+    const painted = paintCard(xPost(galleryManifest(4)), "mixed", COLUMN);
+    const tiles = painted.frame.querySelectorAll("[data-card-media-tile]");
     expect(tiles).toHaveLength(4);
-    // The same tile grid as inset, with no rounding of its own on any tile.
+    // No rounding of its own on any tile; the seams are the grid's 1px gap.
     for (const tile of Array.from(tiles)) {
       expect(tile.className).not.toMatch(/rounded/);
     }
-    expect(edge.surface).toMatchObject({ width: INNER, height: INNER });
+    const grid = tiles[0]!.closest(".grid");
+    expect(grid?.classList.contains("gap-px")).toBe(true);
+    expect(painted.surface).toMatchObject({ width: INNER, height: INNER });
   });
 
-  it("keeps a link's page picture where it always was: across the top, nothing to remove", () => {
+  it("runs a link's page picture across the frame's top, as it always was", () => {
     for (const show of ["mixed", "cards"] as const) {
-      const edge = paintCard(pageLink(), show, "edge", COLUMN);
-      const inset = paintCard(pageLink(), show, "inset", COLUMN);
-      expect(edge.surface).toMatchObject({ top: FRAME_BORDER_PX, left: FRAME_BORDER_PX, width: INNER });
-      expect(edge.frame.outerHTML).toBe(inset.frame.outerHTML);
-      expect(computeCardHeight(pageLink(), COLUMN, null, show, "edge"))
-        .toBe(computeCardHeight(pageLink(), COLUMN, null, show, "inset"));
+      const painted = paintCard(pageLink(), show, COLUMN);
+      expect(painted.surface).toMatchObject({ top: FRAME_BORDER_PX, left: FRAME_BORDER_PX, width: INNER });
+      expect(painted.height).toBe(computeCardHeight(pageLink(), COLUMN, null, show));
     }
   });
 
-  it("leaves frameless media and Media cards as they are (Д22)", () => {
-    const unchanged: Array<[LightBlock, FeedShow]> = [
+  it("fills the card with frameless media and Media cards from the frame's top (Д22)", () => {
+    const filling: Array<[LightBlock, FeedShow]> = [
       [picture(), "mixed"],
       [video(), "mixed"],
       [picture(), "media"],
       [article(imageManifest(800, 600)), "media"],
       [xPost(galleryManifest(4)), "media"],
     ];
-    for (const [value, show] of unchanged) {
-      expect(paintCard(value, show, "edge", COLUMN).frame.outerHTML)
-        .toBe(paintCard(value, show, "inset", COLUMN).frame.outerHTML);
-      expect(computeCardHeight(value, COLUMN, ONE_LINE, show, "edge"))
-        .toBe(computeCardHeight(value, COLUMN, ONE_LINE, show, "inset"));
+    for (const [value, show] of filling) {
+      const painted = paintCard(value, show, COLUMN);
+      expect(painted.surface).toMatchObject({ top: FRAME_BORDER_PX, left: FRAME_BORDER_PX, width: INNER });
+      expect(painted.text).toHaveLength(0);
     }
   });
 
-  it("leaves cards without media in their 16px padding (Д22)", () => {
+  it("sets a text post 8px from the sides and 14px from both edges, letter to letter (Д25)", () => {
     const textOnly: LightBlock[] = [
       block({
         block_type: "article", card_kind: "article", title: "A piece", description: null, url: null,
@@ -2261,46 +2243,52 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д24)", () => {
       }),
     ];
     for (const value of textOnly) {
-      const edge = paintCard(value, "mixed", "edge", COLUMN);
-      expect(edge.surface).toBeUndefined();
-      expect(edge.frame.outerHTML).toBe(paintCard(value, "mixed", "inset", COLUMN).frame.outerHTML);
-      for (const line of edge.text) {
-        expect(line.left).toBe(FRAME_BORDER_PX + PADDING);
-        expect(line.width).toBe(INNER - PADDING * 2);
+      const painted = paintCard(value, "mixed", COLUMN);
+      expect(painted.surface).toBeUndefined();
+      for (const line of painted.text) {
+        expect(line.left).toBe(FRAME_BORDER_PX + EDGE_PADDING);
+        expect(line.width).toBe(INNER - EDGE_PADDING * 2);
       }
-      expect(computeCardHeight(value, COLUMN, ONE_LINE, "mixed", "edge")).toBe(edge.height);
-      expect(computeCardHeight(value, COLUMN, ONE_LINE, "mixed", "edge"))
-        .toBe(computeCardHeight(value, COLUMN, ONE_LINE, "mixed", "inset"));
+      const first = painted.text[0]!;
+      const last = painted.text[painted.text.length - 1]!;
+      expect(first.top + air(first) - FRAME_BORDER_PX).toBe(EDGE_VISUAL_GAP);
+      painted.text.slice(1).forEach((line, index) => {
+        const above = painted.text[index]!;
+        expect(line.top + air(line) - (above.top + above.height - air(above))).toBe(EDGE_VISUAL_GAP);
+      });
+      const bottomGap = painted.height - FRAME_BORDER_PX - (last.top + last.height - air(last));
+      if (painted.height > CARD_HOVER_ACTION_MIN_HEIGHT) {
+        expect(bottomGap).toBe(EDGE_VISUAL_GAP);
+      } else {
+        // A short card is held at the hover actions' minimum height.
+        expect(bottomGap).toBeGreaterThan(EDGE_VISUAL_GAP);
+      }
+      expect(computeCardHeight(value, COLUMN, ONE_LINE, "mixed")).toBe(painted.height);
     }
   });
 
-  it("keeps the hover controls over an edge card's media (Д24)", () => {
+  it("keeps the hover controls over the card, out of its body's flow (Д24)", () => {
     const post = article(imageManifest(800, 600));
-    const hoverProps = {
-      tags: [],
-      onToggleTag: vi.fn(),
-      onCreateAndAssign: vi.fn(),
-      onRequestRename: vi.fn(),
-      onRequestDelete: vi.fn(),
-    };
-    const controls = (media: FeedMedia) => {
-      const { container, unmount } = render(
-        <FeedMediaContext.Provider value={media}>
-          <Card block={post} vaultPath={VAULT} onClick={vi.fn()} {...hoverProps} />
-        </FeedMediaContext.Provider>,
-      );
-      const frame = container.querySelector("[data-feed-card-frame]");
-      // Everything over the body: the hover menu and whatever it positions.
-      // Radix numbers its triggers per render, which is not placement.
-      const overlay = Array.from(frame?.children ?? [])
-        .filter((child) => !child.contains(frame?.querySelector("[data-card-graphic-surface]") ?? null))
-        .map((child) => child.outerHTML.replace(/ id="radix-[^"]*"/g, ""));
-      unmount();
-      return overlay;
-    };
-    const edge = controls("edge");
-    expect(edge.length).toBeGreaterThan(0);
-    expect(edge).toEqual(controls("inset"));
+    const { container } = render(
+      <Card
+        block={post}
+        vaultPath={VAULT}
+        onClick={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+      />,
+    );
+    const frame = container.querySelector("[data-feed-card-frame]")!;
+    const surface = frame.querySelector("[data-card-graphic-surface]");
+    // Everything but the body: the hover menu and what it positions.
+    const overlay = Array.from(frame.children).filter((child) => !child.contains(surface));
+    expect(overlay.length).toBeGreaterThan(0);
+    for (const child of overlay) {
+      expect(child.classList.contains("absolute")).toBe(true);
+    }
   });
 });
 
@@ -2346,7 +2334,7 @@ describe("Card titles differ from their text by color alone (01.10.2026)", () =>
   it("sets a picture's name in Cards like any other title", () => {
     const picture = block({
       block_type: "image", title: null, url: null, media_file: "Media/Sunset.jpg",
-      fallback_label: "Sunset",
+      content_heading: "Sunset", fallback_label: "Sunset",
       preview_manifest: JSON.stringify({
         kind: "image", primary_preview_path: "test-block.jpg", width: 1280, height: 960,
         preview_width: 640, preview_height: 480, tiles: [], overflow_count: 0,
@@ -2420,17 +2408,37 @@ describe("Card lift on hover (SPEC_CARD_STATES.md, С8)", () => {
     expect(frameOf(armed.container)).toHaveClass("group");
   });
 
-  it("rises 8px further where media ends flush with the bottom edge", () => {
-    const picture = render(
+  it("rises by the row of collections' reach less the card's own space under its last letters", () => {
+    /// The --card-lift a card sets on its frame, as React writes it.
+    const liftOf = (value: LightBlock) => {
+      const markup = renderToStaticMarkup(
+        <Card block={value} vaultPath={VAULT} onClick={vi.fn()} {...menuProps} />,
+      );
+      const frame = new DOMParser().parseFromString(markup, "text/html")
+        .querySelector("[data-feed-card-frame]");
+      const match = /--card-lift:\s*([0-9.]+)px/.exec(frame?.getAttribute("style") ?? "");
+      return match ? Number(match[1]) : null;
+    };
+    // The row stands 8px above the bottom edge and is 24px tall, its 12px
+    // letters centred: from the edge to 14px above them is 8 + 24 − 6 + 14.
+    const reach = 8 + 24 - 6 + EDGE_VISUAL_GAP_PX;
+    // A post's last letters stand 14px above the edge already.
+    expect(liftOf(block({ block_type: "article", body: "Some words" }))).toBe(reach - EDGE_VISUAL_GAP_PX);
+    // Media with no text under it ends at the edge: the whole reach.
+    expect(liftOf(block({
+      block_type: "article", title: null, description: null, body: "![](photo.jpg)",
+      media_urls: "[\"photo.jpg\"]",
+    }))).toBe(reach);
+    // A link's footer: p-3 under its last 16px line, 2px of it air.
+    expect(liftOf(block())).toBe(reach - 12 - 2);
+    // A file card: p-4 under its 16px name.
+    expect(liftOf(block({ block_type: "file", media_file: "report.pdf", url: null }))).toBe(reach - 16 - 2);
+    // A bare picture rises by its caption's height, which the caption sets.
+    const pictureMarkup = renderToStaticMarkup(
       <Card block={block({ block_type: "image", media_file: "photo.jpg" })} vaultPath={VAULT} onClick={vi.fn()} {...menuProps} />,
     );
-    expect(frameOf(picture.container)).toHaveAttribute("data-card-lift-depth", "flush");
-    picture.unmount();
-
-    const post = render(
-      <Card block={block({ block_type: "article", body: "Some words" })} vaultPath={VAULT} onClick={vi.fn()} {...menuProps} />,
-    );
-    expect(frameOf(post.container)).toHaveAttribute("data-card-lift-depth", "padded");
+    expect(pictureMarkup).toContain('data-card-lift="caption"');
+    expect(liftOf(block({ block_type: "image", media_file: "photo.jpg" }))).toBeNull();
   });
 
   it("moves the media window and its picture plane, and keeps the cloud badge outside them", () => {
@@ -2454,7 +2462,9 @@ describe("Card lift on hover (SPEC_CARD_STATES.md, С8)", () => {
     expect(ruleFor('[data-card-lift-hover]:hover [data-card-lift="plane"]', "translateY(calc(var(--card-lift) - var(--card-lift-drift)))")).toBe(true);
     expect(ruleFor("[data-feed-card-frame]", "--card-lift-drift: 8px")).toBe(true);
     expect(ruleFor('[data-card-lift="tray"]', "transform: translateY(var(--card-lift))")).toBe(true);
-    expect(ruleFor('[data-feed-card-frame][data-card-lift-depth="flush"]', "--card-lift: 48px")).toBe(true);
+    expect(ruleFor('[data-card-lift-hover]:hover [data-card-lift-fade]', "mask-position: 0 0")).toBe(true);
+    // The lift is the card's own, never a depth class.
+    expect(css).not.toContain("data-card-lift-depth");
   });
 });
 

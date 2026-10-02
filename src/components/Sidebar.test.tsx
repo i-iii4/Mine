@@ -106,6 +106,7 @@ function previewBlock(slug: string, overrides: Partial<IndexedBlock> = {}): Inde
     media_urls: null,
     media_dimensions: null,
     preview_manifest: null,
+    collections: [],
     feed_playback: null,
     thumb_format: "jpeg",
     thumb_mtime: 0,
@@ -1532,7 +1533,7 @@ describe("sidebar and the card under the pointer (SPEC_CARD_STATES.md)", () => {
       expect(alpha).not.toHaveAttribute("data-sidebar-row-intent");
     });
 
-    it("a fast sweep lights no row, shows no button and lights no card", () => {
+    it("a fast sweep lights each row it crosses at once, but no card (02.10.2026)", () => {
       const { container } = renderSidebar({
         ...defaultProps,
         width: 600,
@@ -1544,9 +1545,15 @@ describe("sidebar and the card under the pointer (SPEC_CARD_STATES.md)", () => {
       const rows = ["all", "tag:alpha", "tag:beta"].map((key) => container.querySelector(`[data-sidebar-row-key="${key}"]`)!);
       pointerTo(rows[0]!, 0, 10);
       for (let index = 1; index <= 30; index += 1) {
-        pointerTo(rows[index % 3]!, index * 12, 8);
-        expect(nav).not.toHaveAttribute("data-sidebar-row-focus-mode");
-        expect(container.querySelector("[data-sidebar-row-intent]")).toBeNull();
+        const row = rows[index % 3]!;
+        pointerTo(row, index * 12, 8);
+        // The row's own name, count and button answer at once.
+        expect(nav).toHaveAttribute("data-sidebar-row-focus-mode", "true");
+        // Collection rows carry the button; Everything has none to show.
+        if (row.getAttribute("data-sidebar-row-key") !== "all") {
+          expect(row).toHaveAttribute("data-sidebar-row-intent", "true");
+        }
+        // What the row lights elsewhere still waits for attention (С7.1).
         expect(isCardLitByCollection(7)).toBe(false);
       }
     });

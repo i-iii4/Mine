@@ -756,8 +756,11 @@ text+media paragraphs remain block `<div>` wrappers to avoid invalid
 
 ### CardHoverMenu
 
-- Hover overlay содержит `Source` и `Connect`; `Connect` открывает
-  `CollectionPicker` для связи карточки с каналами.
+- Hover overlay содержит сверху справа `Source` (только при безопасном
+  адресе) и `…`, снизу ряд коллекций карточки обычным текстом и `Connect`
+  плюсом; `Connect` открывает `CollectionPicker` для связи карточки с
+  каналами, имя коллекции открывает её. Все кнопки `icon-xs`. Ряд выезжает с
+  подъёмом карточки (SPEC_CARD_STATES.md, С8, С8.8, С8.9).
 - Overflow `…` menu содержит `Connect` submenu, `Source`, `Reveal in Finder`,
   `Copy Path`, `Rename…`, collection-scoped `Disconnect from “…”` и `Delete`.
   Правый клик (`CardTagMenu`) зеркалит этот контракт.
@@ -1290,7 +1293,7 @@ Image media expansion:
   значения — `text-sm leading-4 text-foreground`, matching feed-card text scale.
 - `FILENAME`, `Rename…` и `TAGS` не рендерятся в metadata panel. Metadata
   table и action row живут в одном framed rail card:
-  `overflow-hidden rounded-1 border border-border bg-accent`. Радиус 3px
+  `overflow-hidden rounded-1 border border-border bg-accent`. Радиус 4px
   следует interface-surface contract; surface использует тот же `bg-accent`,
   что нижний action bar.
   Metadata content использует `px-2 pb-4 pt-4`: horizontal inset matches the
@@ -1424,9 +1427,9 @@ Image media expansion:
   Badge находится внутри `data-feed-grid-action-layer` (`absolute inset-px`),
   чтобы компенсировать 1px Card frame и считать offsets из той же внутренней
   плоскости карточки, что и Card Hover Menu. Сам badge использует
-  `absolute left-2 top-2` и interface radius `rounded-1` (3px): `top-2`
-  зеркалит `More` (`top-2 right-2`), `left-2` зеркалит bottom action row
-  (`left-2 right-2 bottom-2`).
+  `absolute left-2 top-2` и interface radius `rounded-1` (4px): `top-2`
+  зеркалит верхние кнопки (`top-2 right-2`), `left-2` зеркалит нижний ряд
+  коллекций (`left-2 right-2 bottom-2`).
 - `Cmd+K` — scoped Grid shortcut: если Grid keyboard focus активен и focused
   committed-card видна в текущем viewport, Grid показывает/pin-ит top-right
   `…` action button и toggles overflow menu этой карточки: первое нажатие

@@ -190,6 +190,14 @@ pub struct LightBlock {
     /// decision. See SPEC_CARD_MEDIA_GEOMETRY.md.
     #[serde(default)]
     pub preview_unreadable: bool,
+    /// The collections the card is in, exactly as the membership table stores
+    /// them (the refs `TagCount::tag` and a route's current tag use), in
+    /// sidebar order: by the collection's `position`, then by name. A
+    /// membership whose collection has no page sorts after every listed one.
+    ///
+    /// It travels with the row because the feed lays cards out from block
+    /// data alone: the pills are part of a card's height.
+    pub collections: Vec<String>,
     pub search_match: Option<SearchMatch>,
 }
 
@@ -3295,6 +3303,77 @@ mod tests {
             list_grid_blocks(&conn, None, 0, 10).unwrap().0[0].slug,
             "same-a"
         );
+    }
+
+    /// The feed lays cards out from block data alone, so a card's collection
+    /// pills arrive with its row: in sidebar order, and fresh on the read that
+    /// follows a membership write or a reorder.
+    #[test]
+    fn a_feed_card_carries_its_collections_in_sidebar_order() {
+        use crate::storage::block_queries::{grid_rows_by_slug, FeedOrder};
+        use crate::storage::projection::{current_generation, read_grid_snapshot};
+
+        let conn = test_conn();
+        let created = DateTime::new("2026-01-01T00:00:00Z").unwrap();
+        // Sidebar order: Zines, then Art and Cities tied on position, by name.
+        for (name, position) in [("Zines", 0), ("Cities", 1), ("Art", 1)] {
+            let mut channel = Channel::new(name, created.clone()).unwrap();
+            channel.position = position;
+            upsert_channel(&conn, &channel).unwrap();
+        }
+        let member = |tags: &[&str]| {
+            make_block_full("member", "article", None, "2026-02-01T00:00:00Z", tags, "Aristotle notes")
+        };
+        // "Pageless" has no collection page: it follows every listed collection.
+        upsert_block(&conn, &member(&["Cities", "Pageless", "Art", "Zines"]), None).unwrap();
+        upsert_block(
+            &conn,
+            &make_block_full("loose", "article", None, "2026-01-01T00:00:00Z", &[], "Aristotle draft"),
+            None,
+        )
+        .unwrap();
+        let collections_of = |blocks: &[LightBlock], slug: &str| {
+            blocks
+                .iter()
+                .find(|block| block.slug == slug)
+                .unwrap_or_else(|| panic!("{slug} missing from the read"))
+                .collections
+                .clone()
+        };
+        let feed = |tag: Option<&str>| {
+            read_grid_snapshot(&conn, tag, 0, 10, FeedOrder::Newest).unwrap().blocks
+        };
+        let sidebar_order = ["Zines", "Art", "Cities", "Pageless"];
+
+        assert_eq!(collections_of(&feed(None), "member"), sidebar_order);
+        assert!(collections_of(&feed(None), "loose").is_empty());
+
+        // Every reader that builds a feed row carries the same list.
+        assert_eq!(collections_of(&feed(Some("Art")), "member"), sidebar_order);
+        assert_eq!(
+            collections_of(&grid_rows_by_slug(&conn, &["member".to_string()]).unwrap(), "member"),
+            sidebar_order
+        );
+        assert_eq!(collections_of(&list_blocks_light(&conn).unwrap(), "member"), sidebar_order);
+        let (found, _) =
+            list_grid_blocks_with_query(&conn, None, 0, 10, Some("Aristotle")).unwrap();
+        assert_eq!(collections_of(&found, "member"), sidebar_order);
+        assert!(collections_of(&found, "loose").is_empty());
+
+        // Disconnecting moves the projection revision the feed reloads on,
+        // and the next read has the new list.
+        let before_disconnect = current_generation(&conn).unwrap();
+        upsert_block(&conn, &member(&["Cities", "Zines"]), None).unwrap();
+        assert!(current_generation(&conn).unwrap() > before_disconnect);
+        assert_eq!(collections_of(&feed(None), "member"), ["Zines", "Cities"]);
+        assert!(feed(Some("Art")).is_empty());
+
+        // A reorder in the sidebar reorders the pills on the next read.
+        let before_reorder = current_generation(&conn).unwrap();
+        update_channel_positions(&conn, &[("Cities".to_string(), 0), ("Zines".to_string(), 2)])
+            .unwrap();
+        assert!(current_generation(&conn).unwrap() > before_reorder);
+        assert_eq!(collections_of(&feed(None), "member"), ["Cities", "Zines"]);
     }
 
     #[test]

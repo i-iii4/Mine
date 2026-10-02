@@ -50,6 +50,7 @@ import {
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 import {
+  CONNECT_ACTION_BUTTON_CLASS,
   SIDEBAR_PREVIEW_DIVIDER_GAP_PX,
   SIDEBAR_PREVIEW_SLOTS,
   SIDEBAR_ROW_ACTION_GAP_PX,
@@ -128,8 +129,7 @@ const ROW_INTENT_SHOWS = cn(
 );
 /** Two labels stacked in one cell, so swapping them never moves the button's text. */
 const ROW_INTENT_LABEL_STACK = "grid place-items-center [&>*]:[grid-area:1/1]";
-const SIDEBAR_ROW_ACTION_BUTTON_CLASS =
-  "inline-flex h-6 items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover";
+const SIDEBAR_ROW_ACTION_BUTTON_CLASS = CONNECT_ACTION_BUTTON_CLASS;
 const SIDEBAR_ROW_TEXT_MASK_STYLE = createRightFadeMaskStyle(
   SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH,
   SIDEBAR_PREVIEW_DIVIDER_GAP,
@@ -353,11 +353,26 @@ const SidebarCore = memo(function SidebarCore({
     const pathname = pathnameRef.current;
     return pathname === route || pathname.startsWith(`${route}/`) ? null : rowKey;
   }, []);
-  const rowIntent = useHoverIntent(({ slow, chosen }) => {
-    applyPointerRowFocusRef.current(slow);
-    setIntentRowKey(slow);
+  // The engine calms only what a row lights elsewhere: the feed's cards of
+  // its collection (С3) and the big preview of a thumbnail. The row's own
+  // name, count and button answer the pointer at once (С7.10, user's
+  // decision of 02.10.2026): they are the most responsive part of the list.
+  const rowIntent = useHoverIntent(({ chosen }) => {
     setHoveredCollectionRow(feedRowKey(chosen));
   });
+  // The row under the pointer, set on every move without delay or speed gate.
+  // After the list scrolls, a report at the pointer's same point is the list
+  // moving, not the pointer (WebKit repeats it): no row lights until the
+  // pointer really moves (С7.5).
+  const pointerRowKeyRef = useRef<string | null>(null);
+  const lastPointerPointRowRef = useRef<{ x: number; y: number } | null>(null);
+  const listSlidRef = useRef(false);
+  const setPointerRow = useCallback((rowKey: string | null) => {
+    if (pointerRowKeyRef.current === rowKey) return;
+    pointerRowKeyRef.current = rowKey;
+    applyPointerRowFocusRef.current(rowKey);
+    setIntentRowKey(rowKey);
+  }, []);
   useEffect(() => () => setHoveredCollectionRow(null), []);
   // Opening a collection under the pointer stops its row lighting the feed.
   useEffect(() => {
@@ -575,13 +590,21 @@ const SidebarCore = memo(function SidebarCore({
       : null;
     const rowKey = row && event.currentTarget.contains(row) ? row.dataset.sidebarRowKey ?? null : null;
     rowIntent.move(rowKey, event.clientX, event.clientY);
-  }, [rowIntent]);
+    const last = lastPointerPointRowRef.current;
+    const still = last !== null && last.x === event.clientX && last.y === event.clientY;
+    lastPointerPointRowRef.current = { x: event.clientX, y: event.clientY };
+    if (listSlidRef.current && still) return;
+    listSlidRef.current = false;
+    setPointerRow(rowKey);
+  }, [rowIntent, setPointerRow]);
 
   const handleSidebarPointerLeave = useCallback(() => {
+    setPointerRow(null);
+    lastPointerPointRowRef.current = null;
     pointerRowFocusRef.current = false;
     deactivateSidebarRowFocusMode();
     rowIntent.leave();
-  }, [deactivateSidebarRowFocusMode, rowIntent]);
+  }, [deactivateSidebarRowFocusMode, rowIntent, setPointerRow]);
 
   const handleSidebarFocusCapture = useCallback((event: ReactFocusEvent<HTMLElement>) => {
     focusSidebarRowFromTarget(event.target, event.currentTarget);
@@ -870,7 +893,12 @@ const SidebarCore = memo(function SidebarCore({
         data-sidebar-row-switching={sidebarRowSwitching ? "true" : undefined}
         onPointerMove={handleSidebarPointerMove}
         onPointerLeave={handleSidebarPointerLeave}
-        onScroll={rowIntent.displace}
+        onScroll={() => {
+          // The list slid under the pointer: the next real move names the row.
+          listSlidRef.current = true;
+          setPointerRow(null);
+          rowIntent.displace();
+        }}
         onFocusCapture={handleSidebarFocusCapture}
         onBlurCapture={handleSidebarBlurCapture}
       >

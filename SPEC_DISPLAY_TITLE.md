@@ -69,6 +69,15 @@ Card title slot:
 4. If the block is a social/tweet card or a text-selection quote with no H1,
    do not create a title slot from the body. Show the normal preview/body
    content instead.
+5. Медиакарточка (картинка или видео) показывает в слоте заголовка только
+   настоящий заголовок: первый H1 тела (`content_heading`, функция
+   `getMediaOwnTitle` в `src/lib/displayTitle.ts`). Старый
+   `frontmatter.title` (клиппер раньше писал на картинку заголовок страницы)
+   и имя файла в этом слоте не показываются, как их не показывает над
+   содержимым развёрнутая карточка (решение пользователя 02.10.2026). Правило
+   действует в `Cards` и в подписи, которая выезжает при подъёме
+   (SPEC_CARD_STATES.md, С8.7). Без H1 слота нет. Доступным именем карточки
+   остаётся `getNavigationLabel`, с прежней цепочкой запасных вариантов.
 
 Detail:
 
@@ -190,7 +199,8 @@ Unsafe migration cases:
    - Physical `blocks.title` remains legacy metadata only.
 
 3. Frontend title surfaces consume derived titles.
-   - Card title slot reads `display_title`.
+   - Card title slot reads `display_title`; слот медиакарточки читает только
+     `content_heading` (пункт 5 выше).
    - Search labels use `display_title`, then fallback label.
    - Detail renders body H1 through Markdown and does not create a duplicate
      metadata heading.

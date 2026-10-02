@@ -21,6 +21,7 @@ function block(overrides: Partial<LightBlock> = {}): LightBlock {
     media_urls: null,
     media_dimensions: null,
     preview_manifest: null,
+    collections: [],
     feed_playback: null,
     search_match: null,
     ...overrides,
@@ -59,6 +60,7 @@ describe("feedMediaCandidatesForBlock", () => {
           ],
           overflow_count: 0,
         }),
+        collections: [],
         feed_playback: JSON.stringify({
           kind: "single_video",
           source_path: "clip.mp4",
@@ -138,6 +140,7 @@ describe("feedMediaCandidatesForBlock", () => {
           ],
           overflow_count: 0,
         }),
+        collections: [],
         feed_playback: JSON.stringify({
           kind: "single_video",
           source_path: "clip.mp4",

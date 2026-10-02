@@ -247,7 +247,15 @@ struct LightBlock {
     author: Option<String>,
     body: String,
     preview_text: Option<String>,
-    tags: Vec<String>,
+    first_image: Option<String>,
+    media_urls: Option<String>,
+    media_dimensions: Option<String>,
+    preview_manifest: Option<String>,
+    feed_playback: Option<String>,
+    content_in_cloud: bool,   // SPEC_CLOUD_STORAGE.md, Х5 и Х6
+    preview_unreadable: bool, // SPEC_CARD_MEDIA_GEOMETRY.md
+    collections: Vec<String>, // membership refs in sidebar order
+    search_match: Option<SearchMatch>,
 }
 
 struct TagCount {
@@ -255,6 +263,22 @@ struct TagCount {
     count: usize,
 }
 ```
+
+`collections` несёт коллекции карточки так, как их хранит таблица связей
+(`block_tags.tag`, те же ссылки, что `TagCount::tag` и текущая коллекция
+маршрута), в порядке бокового меню: по `channels.position`, затем по имени в
+байтовом порядке SQLite; связь без страницы коллекции идёт последней. Каждый
+запрос `LightBlock` собирает их одним коррелированным подзапросом
+`json_group_array` (`collections_column_sql` в
+[block_queries.rs](src-tauri/src/storage/block_queries.rs)), поэтому страница
+ленты остаётся одним запросом, без запроса на карточку. Колонка читается по
+имени `collections`, не по позиции. Значение, которое не разбирается как
+массив JSON, это ошибка запроса, а не карточка без коллекций. Строка ленты
+несёт коллекции, потому что ряд коллекций входит в карточку
+([SPEC_CARD_STATES.md](SPEC_CARD_STATES.md), С8.9). Фронтенд сравнивает
+строки ленты с учётом `collections`, `content_in_cloud` и
+`preview_unreadable` (`lightBlockContentEqual` в `src/lib/blockIdentity.ts`),
+поэтому присоединение карточки сразу обновляет её ряд.
 
 `preview_text_cap` is currently `768` characters. The number is derived from
 the frontend's widest single-column article card: 8 preview lines × ~478px

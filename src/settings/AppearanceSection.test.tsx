@@ -67,30 +67,16 @@ describe("AppearanceSection", () => {
     expect(localStorage.getItem("mine.scrollEdgeFade")).toBe("false");
   });
 
-  it("persists the hover collection pills switch, on by default, and broadcasts its key", () => {
-    render(<AppearanceSection />);
-
-    const checkbox = screen.getByRole("checkbox", { name: "Show collections on card hover" });
-    expect(checkbox).toHaveAttribute("data-state", "checked");
-
-    fireEvent.click(checkbox);
-    expect(localStorage.getItem("mine.hoverCollectionPills")).toBe("false");
-    expect(emit).toHaveBeenCalledWith("settings-changed", { key: "mine.hoverCollectionPills", value: "false" });
-
-    fireEvent.click(checkbox);
-    expect(localStorage.getItem("mine.hoverCollectionPills")).toBe("true");
-  });
-
   it("applies the card corner radius and broadcasts it", () => {
     render(<AppearanceSection />);
 
-    fireEvent.click(screen.getByRole("button", { name: "3" }));
+    fireEvent.click(screen.getByRole("button", { name: "4" }));
 
     const root = document.documentElement;
-    expect(root.style.getPropertyValue("--radius-card")).toBe("3px");
+    expect(root.style.getPropertyValue("--radius-card")).toBe("4px");
     // Feed-card media is out of scope and stays square.
     expect(root.style.getPropertyValue("--radius-media")).toBe("");
-    expect(localStorage.getItem("mine.cardRadius")).toBe("3");
+    expect(localStorage.getItem("mine.cardRadius")).toBe("4");
     expect(emit).toHaveBeenCalledWith("settings-changed", expect.objectContaining({ key: "mine.cardRadius" }));
   });
 

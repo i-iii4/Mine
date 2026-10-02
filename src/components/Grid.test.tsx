@@ -60,6 +60,7 @@ function makeBlock(id: number, overrides: Partial<LightBlock> = {}): LightBlock 
     media_urls: null,
     media_dimensions: null,
     preview_manifest: null,
+    collections: [],
     feed_playback: null,
     tags: ["test"],
     ...overrides,
@@ -91,6 +92,7 @@ function makeVideoBlock(id: number, overrides: Partial<LightBlock> = {}): LightB
       ],
       overflow_count: 0,
     }),
+    collections: [],
     feed_playback: JSON.stringify({
       kind: "single_video",
       source_path: `clip-${id}.mp4`,
@@ -181,6 +183,7 @@ function makeArticleVideoBlock(
       ],
       overflow_count: 0,
     }),
+    collections: [],
     feed_playback: JSON.stringify({
       kind: "single_video",
       source_path: `clip-${id}.mp4`,
@@ -387,6 +390,13 @@ function gridItemForSlug(slug: string): HTMLElement | null {
   const card = document.querySelector(`[data-block-slug="${slug}"]`);
   if (!card) return null;
   return card.closest("[data-feed-grid-item]") as HTMLElement | null;
+}
+
+/** Where a rendered card sits in the feed, from its wrapper's transform. */
+function renderedTopOf(slug: string): number {
+  const position = readRenderedPositions().find((item) => item.slug === slug);
+  if (!position || !Number.isFinite(position.top)) throw new Error(`${slug} is not rendered`);
+  return position.top;
 }
 
 /**
@@ -853,9 +863,11 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(
       focusedWrapper?.querySelector("[data-card-hover-more-action]"),
     ).toHaveClass("opacity-100");
+    // The keyboard never lifts the card (SPEC_CARD_STATES.md, С8): its row of
+    // collections stays under the bottom edge, where the lift would raise it.
     expect(
-      focusedWrapper?.querySelector("[data-card-hover-bottom-actions]"),
-    ).toHaveClass("opacity-0");
+      focusedWrapper?.querySelector("[data-feed-card-frame]"),
+    ).not.toHaveAttribute("data-card-lift-pinned");
 
     fireEvent.keyDown(window, { key: "k", metaKey: true });
     await flushAsync();
@@ -1167,6 +1179,7 @@ describe("Grid — no collapse after add / revisit", () => {
     await flushAsync();
 
     expect(gridItemForSlug("block-9603")).toBeTruthy();
+    const anchorTopBefore = renderedTopOf("block-9603");
 
     rerender(
       <Grid
@@ -1177,7 +1190,11 @@ describe("Grid — no collapse after add / revisit", () => {
     );
     await flushAsync();
 
-    expect(scrollEl?.scrollTop).toBe(264);
+    // The card above it left: the anchor moved up by that card and its gap,
+    // and the viewport moved with it. The card below it changed nothing.
+    const anchorShift = anchorTopBefore - renderedTopOf("block-9603");
+    expect(anchorShift).toBeGreaterThan(0);
+    expect(scrollEl?.scrollTop).toBe(528 - anchorShift);
     expect(gridItemForSlug("block-9603")).toBeTruthy();
   });
 
@@ -1271,6 +1288,7 @@ describe("Grid — no collapse after add / revisit", () => {
 
     const scrollToMock = vi.mocked(Element.prototype.scrollTo);
     scrollToMock.mockClear();
+    const anchorTopBefore = renderedTopOf("block-9614");
 
     rerender(
       <Grid
@@ -1281,7 +1299,10 @@ describe("Grid — no collapse after add / revisit", () => {
     );
     await flushAsync();
 
-    expect(scrollEl?.scrollTop).toBe(496);
+    // The viewport follows the card in view, not the stale focus above it.
+    const anchorShift = anchorTopBefore - renderedTopOf("block-9614");
+    expect(anchorShift).toBeGreaterThan(0);
+    expect(scrollEl?.scrollTop).toBe(760 - anchorShift);
     expect(scrollToMock).not.toHaveBeenCalled();
   });
 
@@ -1324,7 +1345,7 @@ describe("Grid — no collapse after add / revisit", () => {
     resetCollectionHover();
   });
 
-  describe("the card the pointer attends to (SPEC_CARD_STATES.md, С7)", () => {
+  describe("the card the pointer attends to (SPEC_CARD_STATES.md, С7, С8.6)", () => {
     const at = { x: 0 };
     /** One pointer step over `element`, `dx` pixels on, `ms` after the last. */
     const step = (element: Element, dx: number, ms: number) => {
@@ -1332,6 +1353,9 @@ describe("Grid — no collapse after add / revisit", () => {
       at.x += dx;
       fireEvent.pointerMove(element, { clientX: at.x, clientY: 50 });
     };
+    /** Whether the card answers the pointer's hover: it lifts and shows its buttons. */
+    const raised = (slug: string) =>
+      gridItemForSlug(slug)?.querySelector("[data-feed-card-frame]")?.hasAttribute("data-card-lift-hover") ?? false;
 
     beforeEach(() => {
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "performance", "Date", "requestAnimationFrame", "cancelAnimationFrame"] });
@@ -1346,70 +1370,53 @@ describe("Grid — no collapse after add / revisit", () => {
     });
     afterEach(() => resetCollectionHover());
 
-    it("answers a card only after the pointer rests on it", async () => {
+    it("lifts the card the pointer arrives on, and marks no collections for it", async () => {
       render(<Grid {...BASE_PROPS} blocks={[makeBlock(9451), makeBlock(9452)]} />);
       await flushAsync();
+      expect(raised("block-9452")).toBe(false);
       const card = gridItemForSlug("block-9452")!;
       step(card, 0, 10);
       step(card, 1, 100);
-      expect(isRowConnectedToHoveredCard("tag:beta")).toBe(false);
+      expect(raised("block-9452")).toBe(true);
+      expect(raised("block-9451")).toBe(false);
+      // Resting on it never reaches the sidebar: only the arrow keys' focused
+      // card and a selection mark collections (02.10.2026).
       act(() => { vi.advanceTimersByTime(HOVER_INTENT.velocityWindowMs + HOVER_INTENT.dwellMs + 20); });
-      expect(isRowConnectedToHoveredCard("tag:beta")).toBe(true);
-      // Leaving the feed clears it after the leave grace.
+      expect(isRowConnectedToHoveredCard("all")).toBe(false);
+      // Leaving the feed lowers it.
       fireEvent.pointerLeave(document.querySelector("[data-grid-scroll]")!);
       act(() => { vi.advanceTimersByTime(HOVER_INTENT.leaveGraceMs + 10); });
-      expect(isRowConnectedToHoveredCard("tag:beta")).toBe(false);
+      expect(raised("block-9452")).toBe(false);
     });
 
-    it("answers nothing for a pointer sweeping across the cards", async () => {
+    it("lifts nothing for a pointer sweeping across the cards", async () => {
       render(<Grid {...BASE_PROPS} blocks={[makeBlock(9451), makeBlock(9452)]} />);
       await flushAsync();
       const first = gridItemForSlug("block-9451")!;
       const second = gridItemForSlug("block-9452")!;
       step(first, 0, 10);
       for (let index = 0; index < 20; index += 1) step(index % 2 ? second : first, 12, 8);
+      expect(raised("block-9451")).toBe(false);
+      expect(raised("block-9452")).toBe(false);
       expect(isRowConnectedToHoveredCard("all")).toBe(false);
     });
 
-    it("stays silent while the feed scrolls under a still pointer", async () => {
+    it("lowers the card while the feed scrolls under a still pointer", async () => {
       render(<Grid {...BASE_PROPS} blocks={[makeBlock(9451), makeBlock(9452)]} />);
       await flushAsync();
       const card = gridItemForSlug("block-9451")!;
       step(card, 0, 10);
       step(card, 1, 100);
-      act(() => { vi.advanceTimersByTime(500); });
-      expect(isRowConnectedToHoveredCard("tag:alpha")).toBe(true);
+      expect(raised("block-9451")).toBe(true);
       const scroller = document.querySelector("[data-grid-scroll]")!;
       fireEvent.scroll(scroller);
-      expect(isRowConnectedToHoveredCard("tag:alpha")).toBe(false);
+      expect(raised("block-9451")).toBe(false);
       // WebKit repeats the still pointer's point over the card now under it.
       fireEvent.pointerMove(gridItemForSlug("block-9452")!, { clientX: at.x, clientY: 50 });
       act(() => { vi.advanceTimersByTime(2000); });
+      expect(raised("block-9451")).toBe(false);
+      expect(raised("block-9452")).toBe(false);
       expect(isRowConnectedToHoveredCard("all")).toBe(false);
-    });
-
-    it("with the hover switch off, the pointer marks nothing while the arrow keys still do", async () => {
-      const { rerender } = render(
-        <Grid {...BASE_PROPS} blocks={[makeBlock(9451), makeBlock(9452)]} hoverCollectionPills={false} />,
-      );
-      await flushAsync();
-      const second = gridItemForSlug("block-9452")!;
-      step(second, 0, 10);
-      step(second, 1, 100);
-      act(() => { vi.advanceTimersByTime(500); });
-      expect(isRowConnectedToHoveredCard("all")).toBe(false);
-
-      // Turning it on applies at once to the card under the pointer.
-      rerender(<Grid {...BASE_PROPS} blocks={[makeBlock(9451), makeBlock(9452)]} hoverCollectionPills />);
-      expect(isRowConnectedToHoveredCard("tag:beta")).toBe(true);
-      rerender(<Grid {...BASE_PROPS} blocks={[makeBlock(9451), makeBlock(9452)]} hoverCollectionPills={false} />);
-      expect(isRowConnectedToHoveredCard("all")).toBe(false);
-
-      fireEvent.keyDown(window, { key: "ArrowLeft" });
-      await flushAsync();
-      const focused = document.querySelector('[data-feed-grid-item-focused="true"]');
-      expect(focused).not.toBeNull();
-      expect(isRowConnectedToHoveredCard("all")).toBe(true);
     });
 
     it("marks the focused card's collections under the arrow keys at once, not the card under the hidden pointer", async () => {
@@ -1419,9 +1426,9 @@ describe("Grid — no collapse after add / revisit", () => {
       step(second, 0, 10);
       step(second, 1, 100);
       act(() => { vi.advanceTimersByTime(500); });
-      expect(isRowConnectedToHoveredCard("tag:beta")).toBe(true);
+      expect(isRowConnectedToHoveredCard("all")).toBe(false);
 
-      // The pointer left the second card focused; the arrows move to the first.
+      // The pointer rests on the second card; the arrows move to the first.
       fireEvent.keyDown(window, { key: "ArrowLeft" });
       await flushAsync();
       if (!gridItemForSlug("block-9451")?.hasAttribute("data-feed-grid-item-focused")) {

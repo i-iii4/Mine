@@ -30,6 +30,7 @@ const BLOCK: LightBlock = {
   media_urls: JSON.stringify(["a.jpg", "b.jpg", "c.jpg"]),
   media_dimensions: null,
   preview_manifest: null,
+  collections: [],
   feed_playback: null,
   search_match: null,
 };

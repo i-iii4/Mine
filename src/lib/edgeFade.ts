@@ -78,6 +78,25 @@ export function createRightFadeMaskStyle(
   } as CSSProperties;
 }
 
+/// Build a mask that fades content out toward the top edge, with the right
+/// edge's curve: a rising text card dissolves past the frame's top instead of
+/// being cut by it (SPEC_CARD_STATES.md, С8.2).
+export function createTopFadeMaskStyle(fadeWidth: number): CSSProperties {
+  const stops = [
+    "rgba(0, 0, 0, 0) 0px",
+    ...[...EDGE_FADE_STOPS]
+      .reverse()
+      .map(({ alpha, progress }) => `rgba(0, 0, 0, ${alpha}) ${rampOffset(fadeWidth, progress)}px`),
+    `rgba(0, 0, 0, 1) ${fadeWidth}px`,
+    "rgba(0, 0, 0, 1) 100%",
+  ].join(", ");
+  const gradient = `linear-gradient(to bottom, ${stops})`;
+  return {
+    maskImage: gradient,
+    WebkitMaskImage: gradient,
+  } as CSSProperties;
+}
+
 // ─── Top edge: extends the chrome ───────────────────────────────────────────
 
 /// Smootherstep: `6t⁵ − 15t⁴ + 10t³`.

@@ -53,6 +53,7 @@ function makeBlock(id: number, overrides: Partial<LightBlock> = {}): LightBlock 
     media_urls: null,
     media_dimensions: null,
     preview_manifest: null,
+    collections: [],
     feed_playback: null,
     ...overrides,
   };
@@ -299,7 +300,9 @@ describe("Grid incremental word metrics", () => {
         card_kind: "media",
         block_type: "image",
         title: null,
-        body: "",
+        // A picture's name in Cards is the heading its body opens with.
+        content_heading: "Sunset",
+        body: "# Sunset",
         media_file: "Media/Sunset.jpg",
         fallback_label: "Sunset",
         preview_manifest: JSON.stringify({

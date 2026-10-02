@@ -1365,6 +1365,56 @@
       "requirement": "SPEC_CARD_MEDIA_GEOMETRY.md#Карточка без превью",
       "tests": ["src/lib/cardPreviewState.test.ts", "src/components/Card.test.tsx"],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/components/CollectionPicker.tsx",
+        "src/lib/cardCollections.ts",
+        "src/hooks/useHoverIntent.tsx",
+        "src/lib/hoverCollectionPills.ts",
+        "src/lib/edgeFade.ts",
+        "src/lib/settingsChanged.test.ts",
+        "src/lib/selectionRing.test.ts",
+        "src/lib/appLayout.ts"
+      ],
+      "requirement": "SPEC_CARD_STATES.md#С8. Подъём карточки при наведении",
+      "tests": ["src/components/CardHoverMenu.test.tsx", "src/components/Card.test.tsx", "src/components/Sidebar.test.tsx", "src/lib/settingsChanged.test.ts"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/cardRadius.ts",
+        "src/lib/cardRadius.test.ts",
+        "src/components/graph/contracts.ts",
+        "src/components/ComponentTestBench.tsx"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#Скругления",
+      "tests": ["src/lib/cardRadius.test.ts", "src/settings/AppearanceSection.test.tsx"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/displayTitle.ts"
+      ],
+      "requirement": "SPEC_DISPLAY_TITLE.md#Image, Video, And File Blocks",
+      "tests": ["src/lib/cardLayout.test.ts"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/blockIdentity.ts",
+        "src/lib/blockIdentity.test.ts",
+        "src/lib/blockDrag.test.ts",
+        "src/lib/cardHeightDrift.test.ts",
+        "src/lib/feedMediaCandidates.test.ts",
+        "src/lib/searchResultRow.test.ts",
+        "src/components/Grid.gridItemMemo.test.tsx",
+        "src/dev/FeedScrollAuditRoute.tsx",
+        "src/dev/GraphAuditRoute.tsx"
+      ],
+      "requirement": "SPEC_STORAGE.md#storage/index",
+      "tests": ["src/lib/blockIdentity.test.ts"],
+      "command": "test:frontend"
     }
   ],
   "release": null

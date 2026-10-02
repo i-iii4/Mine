@@ -3,7 +3,7 @@ import { useDndContext } from "@dnd-kit/core";
 import { HoverIntent, type HoverIntentState } from "@/lib/hoverIntent";
 
 /** Why a surface is not answering the pointer right now (С7.8). */
-export type HoverIntentSuspension = "window" | "drag" | "menu";
+export type HoverIntentSuspension = "window" | "drag" | "menu" | "context-menu";
 
 export interface HoverIntentHandle {
   /** Report the pointer over the surface above `target` (or a gap). */

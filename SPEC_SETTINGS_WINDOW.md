@@ -142,13 +142,19 @@ Settings и `Cmd+,` сохраняются. Прежняя условная те
 | Настройка | Контрол | Ключ |
 |---|---|---|
 | Theme: System / Light / Dark | `SegmentedControl` (size default) | `theme` |
-| Card corners | `SegmentedControl` | `mine.cardRadius` |
+| Card corners: Square / 4 | `SegmentedControl` | `mine.cardRadius` |
 | Fade content under the chrome | `Checkbox` + подпись | `mine.scrollEdgeFade` |
-| Show collections on card hover | `Checkbox` + подпись, по умолчанию включено | `mine.hoverCollectionPills` |
 | Hide bottom menu | `Checkbox` + подпись | `mine.bottomActionBarHidden` |
 
 `Spacing` (`mine.spacing`) с 30.09.2026 живёт в панели `Display` ленты
 ([SPEC_FEED_DISPLAY.md](SPEC_FEED_DISPLAY.md), Д17).
+
+Скругление карточек `4` совпадает со скруглением интерфейса (`--radius-1`);
+сохранённое прежнее значение `3` читается как `4`. Настройки показа коллекций
+карточки при наведении нет: коллекции видны в нижнем ряду самой карточки, а
+пилюли `Connected` в боковом меню показывает только клавиатурный фокус
+([SPEC_CARD_STATES.md](SPEC_CARD_STATES.md), С4, С8.9). Ключ
+`mine.hoverCollectionPills` больше не читается.
 
 Оформление использует только Alt 1, шрифт интерфейса Geist и шрифт статьи
 Geist Sans. Нижняя панель использует только стандартные кнопки. Сохранённые

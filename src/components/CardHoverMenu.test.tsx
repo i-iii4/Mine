@@ -36,6 +36,7 @@ function makeBlock(): LightBlock {
     media_urls: null,
     media_dimensions: null,
     preview_manifest: null,
+    collections: [],
     feed_playback: null,
   };
 }
@@ -227,7 +228,7 @@ describe("CardHoverMenu", () => {
       />,
     );
 
-    const trigger = screen.getAllByRole("button")[0]!;
+    const trigger = screen.getByRole("button", { name: "Card actions" });
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
     fireEvent.click(trigger);
 

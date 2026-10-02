@@ -65,8 +65,16 @@ export function lightBlockContentEqual(a: LightBlock, b: LightBlock): boolean {
     a.media_dimensions === b.media_dimensions &&
     a.preview_manifest === b.preview_manifest &&
     a.feed_playback === b.feed_playback &&
+    (a.content_in_cloud ?? false) === (b.content_in_cloud ?? false) &&
+    (a.preview_unreadable ?? false) === (b.preview_unreadable ?? false) &&
+    stringListEqual(a.collections, b.collections) &&
     searchMatchEqual(a.search_match, b.search_match)
   );
+}
+
+/// A card's collections, in order: connecting it to one changes the card.
+function stringListEqual(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((item, index) => item === b[index]);
 }
 
 /**

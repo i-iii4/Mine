@@ -9,12 +9,12 @@
 // on the root element rather than touching components. `--radius-media`, which
 // drives feed-card media, is left at its stylesheet value.
 
-export type CardRadius = 0 | 3;
+export type CardRadius = 0 | 4;
 
 export const CARD_RADIUS_STORAGE_KEY = "mine.cardRadius";
 
 /// Available steps. `0` is the design-system default — square cards.
-export const CARD_RADIUS_OPTIONS: readonly CardRadius[] = [0, 3];
+export const CARD_RADIUS_OPTIONS: readonly CardRadius[] = [0, 4];
 
 const DEFAULT_CARD_RADIUS: CardRadius = 0;
 
@@ -25,6 +25,8 @@ function isCardRadius(value: number): value is CardRadius {
 export function getStoredCardRadius(): CardRadius {
   if (typeof window === "undefined") return DEFAULT_CARD_RADIUS;
   const raw = Number(window.localStorage.getItem(CARD_RADIUS_STORAGE_KEY));
+  // Rounded cards were 3px until the interface radius became 4px (02.10.2026).
+  if (raw === 3) return 4;
   return isCardRadius(raw) ? raw : DEFAULT_CARD_RADIUS;
 }
 

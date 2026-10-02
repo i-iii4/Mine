@@ -340,6 +340,7 @@ describe("computeFeedPlaybackSurfaceEnvelope", () => {
         ],
         overflow_count: 0,
       }),
+      collections: [],
       feed_playback: JSON.stringify({
         kind: "single_video",
         source_path: "clip.mp4",
@@ -350,9 +351,10 @@ describe("computeFeedPlaybackSurfaceEnvelope", () => {
       }),
     });
 
+    // Right under the border, across the frame's inner width (Д20).
     expect(computeFeedPlaybackSurfaceEnvelope(block, 280)).toEqual({
-      topOffsetPx: 17,
-      heightPx: Math.round(246 / (1144 / 720)),
+      topOffsetPx: 1,
+      heightPx: Math.round(278 / (1144 / 720)),
     });
   });
 
@@ -387,6 +389,7 @@ describe("computeFeedPlaybackSurfaceEnvelope", () => {
         ],
         overflow_count: 0,
       }),
+      collections: [],
       feed_playback: null,
     });
 
@@ -513,10 +516,10 @@ describe("computeCardHeight — social", () => {
       preview_manifest: derivedPreviewManifest(["a.jpg", "b.jpg"]),
     });
     const h = computeCardHeight(block, 280, wordWidths);
-    // border 2 + top padding 16 + the two-tile gallery at 2:1 across the
-    // padded width (246 / 2 = 123, the height its surface paints) + text-stack
-    // gap 12 + author 16 + bottom padding 16
-    expect(h).toBe(185);
+    // border 2 + the two-tile gallery at 2:1 across the inner width (278 / 2
+    // = 139, the height its surface paints) + 14px to the author's letters
+    // (box 12) + author 16 + 14px under them (box 12)
+    expect(h).toBe(181);
   });
 
   it("enforces the interactive minimum for empty social cards", () => {
@@ -565,10 +568,14 @@ describe("card presentation heights (SPEC_FEED_DISPLAY.md, Д15)", () => {
       media_urls: "[\"photo.jpg\"]",
       preview_manifest: artifactManifest(640, 480),
     });
-    const asCard = computeCardHeight(picture(), 320, titleWidths, "cards");
+    const titled = { ...picture(), content_heading: "Sunset" };
+    const asCard = computeCardHeight(titled, 320, titleWidths, "cards");
     expect(asCard).toBe(computeCardHeight(post, 320, titleWidths, "mixed"));
-    // The frame, the padding and the name make it taller than the bare picture.
+    // Its own title makes it taller than the bare picture.
     expect(asCard).toBeGreaterThan(computeCardHeight(picture(), 320, null, "mixed"));
+    // A file name is no title: without a heading the card is its media alone.
+    expect(computeCardHeight(picture(), 320, titleWidths, "cards"))
+      .toBe(computeCardHeight(picture(), 320, null, "mixed"));
   });
 
   it("Cards lays out a picture's text and author like the post card it looks like (В5.3)", () => {
@@ -584,6 +591,7 @@ describe("card presentation heights (SPEC_FEED_DISPLAY.md, Д15)", () => {
       block_type: "image",
       media_file: "photo.jpg",
       fallback_label: "Sunset",
+      content_heading: "Sunset",
       author: "@someone",
       preview_text: "Evening over the bay",
       preview_manifest: artifactManifest(640, 480),
@@ -671,21 +679,16 @@ describe("card presentation heights (SPEC_FEED_DISPLAY.md, Д15)", () => {
   });
 });
 
-describe("media placement heights (SPEC_FEED_DISPLAY.md, Д20 to Д23)", () => {
+describe("post card geometry (SPEC_FEED_DISPLAY.md, Д20, Д25)", () => {
   const COLUMN = 320;
   const INNER = COLUMN - CARD_BORDER;
-  /// Inset: the body's padding and the gap under the media.
-  const PADDING = 16;
-  const TEXT_GAP = 12;
-  /// Edge to edge: the text's padding at its sides and bottom and the gap
-  /// under the media (01.10.2026).
-  /// Edge to edge every vertical gap reads as 12px from letter to letter
-  /// (Д25): the box gap is 12 less the half-leading of the lines that meet.
-  /// A 12px title or author on a 16px line has 2px of it, a 20px text line 4px.
-  const EDGE_TOP_TITLE = 10;
-  const EDGE_TOP_TEXT = 8;
-  const EDGE_BOTTOM_TEXT = 8;
-  const EDGE_TITLE_TO_TEXT = 6;
+  /// Every vertical gap reads as 14px from letter to letter (Д25): the box gap
+  /// is 14 less the half-leading of the lines that meet. A 12px title or author
+  /// on a 16px line has 2px of it, a 20px text line 4px.
+  const TOP_TITLE = 12;
+  const TOP_TEXT = 10;
+  const BOTTOM_TEXT = 10;
+  const TITLE_TO_TEXT = 8;
   const singleVideoManifest = JSON.stringify({
     kind: "video_poster",
     primary_preview_path: "test.jpg",
@@ -709,43 +712,35 @@ describe("media placement heights (SPEC_FEED_DISPLAY.md, Д20 to Д23)", () => {
     container: "mp4",
   });
 
-  it("plays a post's single video over the media as it is placed (Д24)", () => {
-    const post = makeBlock({
-      block_type: "article",
-      title: "Clip",
-      body: "words\n\n![](clip.mp4)",
-      media_urls: "[\"clip.mp4\"]",
-      preview_manifest: singleVideoManifest,
-      feed_playback: playback,
-    });
-    // Inset: inside the border and the body's padding, across the padded width.
-    expect(computeFeedPlaybackSurfaceEnvelope(post, COLUMN, "mixed", "inset")).toEqual({
-      topOffsetPx: 1 + PADDING,
-      heightPx: Math.round((INNER - PADDING * 2) / (640 / 360)),
-    });
-    // Edge to edge: right under the border, across the frame's inner width.
-    expect(computeFeedPlaybackSurfaceEnvelope(post, COLUMN, "mixed", "edge")).toEqual({
-      topOffsetPx: 1,
-      heightPx: Math.round(INNER / (640 / 360)),
-    });
+  it("plays a post's single video over its media, right under the border (Д24)", () => {
+    for (const post of [
+      makeBlock({
+        block_type: "article",
+        title: "Clip",
+        body: "words\n\n![](clip.mp4)",
+        media_urls: "[\"clip.mp4\"]",
+        preview_manifest: singleVideoManifest,
+        collections: [],
+        feed_playback: playback,
+      }),
+      makeBlock({
+        block_type: "article",
+        url: "https://x.com/someone/status/1",
+        body: "![](clip.mp4)",
+        media_urls: "[\"clip.mp4\"]",
+        preview_manifest: singleVideoManifest,
+        collections: [],
+        feed_playback: playback,
+      }),
+    ]) {
+      expect(computeFeedPlaybackSurfaceEnvelope(post, COLUMN, "mixed")).toEqual({
+        topOffsetPx: 1,
+        heightPx: Math.round(INNER / (640 / 360)),
+      });
+    }
   });
 
-  it("plays an X post's single video over the media as it is placed (Д24)", () => {
-    const post = makeBlock({
-      block_type: "article",
-      url: "https://x.com/someone/status/1",
-      body: "![](clip.mp4)",
-      media_urls: "[\"clip.mp4\"]",
-      preview_manifest: singleVideoManifest,
-      feed_playback: playback,
-    });
-    expect(computeFeedPlaybackSurfaceEnvelope(post, COLUMN, "mixed", "edge")).toEqual({
-      topOffsetPx: 1,
-      heightPx: Math.round(INNER / (640 / 360)),
-    });
-  });
-
-  it("gives an edge card the media's full width and its text an 8px padding (Д20, 01.10.2026)", () => {
+  it("gives a post's media the frame's full width and its text an 8px side padding (Д20)", () => {
     const widths: WordWidths = {
       title: [60],
       preview: [70, 30, 40],
@@ -762,18 +757,13 @@ describe("media placement heights (SPEC_FEED_DISPLAY.md, Д20 to Д23)", () => {
       preview_text: "Evening over the bay",
       preview_manifest: artifactManifest(640, 480),
     });
-    const textStack = 16 + 6 + 20;
-    expect(computeCardHeight(post, COLUMN, widths, "mixed", "inset")).toBe(
-      CARD_BORDER + PADDING + Math.round((INNER - PADDING * 2) / (640 / 480)) + TEXT_GAP + textStack + PADDING,
-    );
-    expect(computeCardHeight(post, COLUMN, widths, "mixed", "edge")).toBe(
-      CARD_BORDER + Math.round(INNER / (640 / 480)) + EDGE_TOP_TITLE + 16 + EDGE_TITLE_TO_TEXT + 20 + EDGE_BOTTOM_TEXT,
+    expect(computeCardHeight(post, COLUMN, widths, "mixed")).toBe(
+      CARD_BORDER + Math.round(INNER / (640 / 480)) + TOP_TITLE + 16 + TITLE_TO_TEXT + 20 + BOTTOM_TEXT,
     );
   });
 
-  it("wraps an edge card's text at the wider edge column (01.10.2026)", () => {
-    // 150 + 4 + 140 = 294px: one line in the edge column (318 − 16 = 302px),
-    // two in the inset one (318 − 32 = 286px).
+  it("wraps a post's text at its 302px column (Д20)", () => {
+    // 150 + 4 + 140 = 294px: one line in the 318 − 16 = 302px column.
     const widths: WordWidths = {
       title: [150, 140],
       preview: [150, 140],
@@ -790,13 +780,8 @@ describe("media placement heights (SPEC_FEED_DISPLAY.md, Д20 to Д23)", () => {
       preview_text: "Evening over the bay",
       preview_manifest: artifactManifest(640, 480),
     });
-    const titleAndText = (titleLines: number, textLines: number) => 16 * titleLines + 6 + 20 * textLines;
-    expect(computeCardHeight(article, COLUMN, widths, "mixed", "edge")).toBe(
-      CARD_BORDER + Math.round(INNER / (640 / 480)) + EDGE_TOP_TITLE + 16 + EDGE_TITLE_TO_TEXT + 20 + EDGE_BOTTOM_TEXT,
-    );
-    expect(computeCardHeight(article, COLUMN, widths, "mixed", "inset")).toBe(
-      CARD_BORDER + PADDING + Math.round((INNER - PADDING * 2) / (640 / 480)) + TEXT_GAP
-        + titleAndText(2, 2) + PADDING,
+    expect(computeCardHeight(article, COLUMN, widths, "mixed")).toBe(
+      CARD_BORDER + Math.round(INNER / (640 / 480)) + TOP_TITLE + 16 + TITLE_TO_TEXT + 20 + BOTTOM_TEXT,
     );
 
     const xPost = makeBlock({
@@ -807,36 +792,30 @@ describe("media placement heights (SPEC_FEED_DISPLAY.md, Д20 to Д23)", () => {
       preview_text: "Evening over the bay",
       preview_manifest: artifactManifest(640, 480),
     });
-    expect(computeCardHeight(xPost, COLUMN, widths, "mixed", "edge")).toBe(
-      CARD_BORDER + Math.round(INNER / (640 / 480)) + EDGE_TOP_TEXT + 20 + EDGE_BOTTOM_TEXT,
-    );
-    expect(computeCardHeight(xPost, COLUMN, widths, "mixed", "inset")).toBe(
-      CARD_BORDER + PADDING + Math.round((INNER - PADDING * 2) / (640 / 480)) + TEXT_GAP + 20 * 2 + PADDING,
+    expect(computeCardHeight(xPost, COLUMN, widths, "mixed")).toBe(
+      CARD_BORDER + Math.round(INNER / (640 / 480)) + TOP_TEXT + 20 + BOTTOM_TEXT,
     );
   });
 
-  it("leaves bare pictures, Media cards, links and text cards as they are (Д22)", () => {
-    const picture = makeBlock({ block_type: "image", media_file: "photo.jpg", preview_manifest: artifactManifest(640, 480) });
-    const post = makeBlock({
+  it("keeps a text post's letters 14px from the frame's top and bottom (Д25)", () => {
+    // Three 300px words wrap to three lines: tall enough to clear the card's
+    // 90px interactive minimum.
+    const widths: WordWidths = {
+      title: [60],
+      preview: [300, 300, 300],
+      titleSpace: 4,
+      previewSpace: 4,
+      titleNoSpaceBefore: [false],
+      previewNoSpaceBefore: [false, false, false],
+    };
+    const text = makeBlock({
       block_type: "article",
-      title: "A post",
-      body: "words\n\n![](photo.jpg)",
-      media_urls: "[\"photo.jpg\"]",
-      preview_manifest: artifactManifest(640, 480),
+      title: "Only words",
+      body: "Evening over the bay",
+      preview_text: "Evening over the bay",
     });
-    const text = makeBlock({ block_type: "article", title: "Only words", body: "Just text" });
-    const link = pageLink({ source: [1200, 630], artifact: [1200, 630] });
-    const unchanged: Array<[LightBlock, "mixed" | "cards" | "media"]> = [
-      [picture, "mixed"],
-      [post, "media"],
-      [picture, "media"],
-      [text, "cards"],
-      [link, "mixed"],
-      [link, "cards"],
-    ];
-    for (const [block, show] of unchanged) {
-      expect(computeCardHeight(block, COLUMN, null, show, "edge"))
-        .toBe(computeCardHeight(block, COLUMN, null, show, "inset"));
-    }
+    expect(computeCardHeight(text, COLUMN, widths, "mixed")).toBe(
+      CARD_BORDER + TOP_TITLE + 16 + TITLE_TO_TEXT + 20 * 3 + BOTTOM_TEXT,
+    );
   });
 });

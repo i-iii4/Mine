@@ -43,11 +43,11 @@ describe("card state styles", () => {
       '[data-feed-grid-item-selected="true"]',
       '[data-feed-grid-item-focused="true"]',
     ]) {
-      expect(ruleFor(`${state} [data-card-graphic-surface]::after`, "opacity: 1")).toBe(true);
+      expect(ruleFor(`${state} [data-card-graphic-surface] > [data-card-lift="window"]::after`, "opacity: 1")).toBe(true);
     }
   });
 
   it("lights a chosen collection's cards with the border only, never the wash (С3, С7)", () => {
-    expect(ruleFor('[data-feed-grid-item-collection-lit="true"] [data-card-graphic-surface]::after', "opacity: 1")).toBe(false);
+    expect(ruleFor('[data-feed-grid-item-collection-lit="true"] [data-card-graphic-surface] > [data-card-lift="window"]::after', "opacity: 1")).toBe(false);
   });
 });

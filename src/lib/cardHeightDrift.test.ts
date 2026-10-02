@@ -26,6 +26,7 @@ function block(id: number, overrides: Partial<LightBlock> = {}): LightBlock {
     media_urls: null,
     media_dimensions: null,
     preview_manifest: null,
+    collections: [],
     feed_playback: null,
     ...overrides,
   };

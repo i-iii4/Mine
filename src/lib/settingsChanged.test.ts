@@ -10,7 +10,7 @@ import {
   adoptSettingsChange,
   broadcastSettingsChange,
 } from "./settingsChanged";
-import { getStoredHoverCollectionPills, HOVER_COLLECTION_PILLS_STORAGE_KEY } from "./hoverCollectionPills";
+import { getStoredScrollEdgeFade, SCROLL_EDGE_FADE_STORAGE_KEY } from "./scrollEdgeFade";
 
 describe("settings changes across windows", () => {
   beforeEach(() => {
@@ -19,19 +19,19 @@ describe("settings changes across windows", () => {
   });
 
   it("carries the stored value with the key", () => {
-    localStorage.setItem(HOVER_COLLECTION_PILLS_STORAGE_KEY, "false");
-    broadcastSettingsChange(HOVER_COLLECTION_PILLS_STORAGE_KEY);
+    localStorage.setItem(SCROLL_EDGE_FADE_STORAGE_KEY, "false");
+    broadcastSettingsChange(SCROLL_EDGE_FADE_STORAGE_KEY);
     expect(emitted).toEqual([
-      { event: SETTINGS_CHANGED_EVENT, payload: { key: HOVER_COLLECTION_PILLS_STORAGE_KEY, value: "false" } },
+      { event: SETTINGS_CHANGED_EVENT, payload: { key: SCROLL_EDGE_FADE_STORAGE_KEY, value: "false" } },
     ]);
   });
 
   it("a window whose storage has not caught up reads the new value", () => {
     // The main window still holds the old value: the write from the settings
     // window has not reached its WebKit process yet.
-    localStorage.setItem(HOVER_COLLECTION_PILLS_STORAGE_KEY, "true");
-    adoptSettingsChange({ key: HOVER_COLLECTION_PILLS_STORAGE_KEY, value: "false" });
-    expect(getStoredHoverCollectionPills()).toBe(false);
+    localStorage.setItem(SCROLL_EDGE_FADE_STORAGE_KEY, "false");
+    adoptSettingsChange({ key: SCROLL_EDGE_FADE_STORAGE_KEY, value: "true" });
+    expect(getStoredScrollEdgeFade()).toBe(true);
   });
 
   it("follows a removal and ignores senders without a value", () => {

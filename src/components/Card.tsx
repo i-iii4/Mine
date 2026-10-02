@@ -15,7 +15,7 @@ import {
   type CardLayoutDescriptor,
   type CardLayoutVariant,
 } from "@/lib/cardLayout";
-import { FeedMediaContext, FeedShowContext, type FeedMedia } from "@/lib/feedDisplay";
+import { FeedShowContext } from "@/lib/feedDisplay";
 import { PROVISIONAL_MEDIA_ASPECT } from "@/lib/cardAspect";
 import {
   PreviewsPendingContext,
@@ -28,14 +28,15 @@ import {
   CONTENT_CARD_TITLE_CLASSES,
   EDGE_TEXT_SIDE_PX,
   cardTextGap,
+  EDGE_VISUAL_GAP_PX,
   edgeTextBottom,
   edgeTextTop,
+  halfLeading,
   type CardTextLine,
-  type CardTextPlacement,
 } from "@/lib/cardTypography";
 import { CARD_HOVER_ACTION_MIN_HEIGHT, computeCardHeight } from "@/lib/cardHeight";
 import { buildFeedVideoPosterCandidates } from "@/lib/feedVideoPoster";
-import { getDisplayTitle, getNavigationLabel } from "@/lib/displayTitle";
+import { getDisplayTitle, getMediaOwnTitle, getNavigationLabel } from "@/lib/displayTitle";
 import { renderSearchHighlightedText, searchExcerptText } from "@/lib/searchHighlight";
 import { deriveSearchResultRow } from "@/lib/searchResultRow";
 import {
@@ -44,6 +45,10 @@ import {
 } from "@/lib/blockDrag";
 import { cn } from "@/lib/utils";
 import { CardHoverMenu } from "./CardHoverMenu";
+import { EDGE_FADE_WIDTH, createTopFadeMaskStyle } from "@/lib/edgeFade";
+import { buttonVariants } from "@/components/ui/button";
+import { collectionRefLabel } from "@/lib/collections";
+import { CardCollectionsContext, shownCollections } from "@/lib/cardCollections";
 import { FeedVideoSurface } from "./FeedVideoSurface";
 import { FeedVideoPoster } from "./FeedVideoPoster";
 import { PlayBadge } from "./PlayBadge";
@@ -121,7 +126,6 @@ interface CardFrameProps extends React.HTMLAttributes<HTMLDivElement> {
 
 interface GraphicSurfaceProps extends React.HTMLAttributes<HTMLDivElement> {
   children: React.ReactNode;
-  insetMedia?: boolean;
   /** Layout of the media plane the children are painted in. */
   contentClassName?: string;
   /** The window's fill under the media: it moves with the window on a lift,
@@ -262,18 +266,16 @@ function GraphicSurface({
   className,
   contentClassName,
   windowClassName,
-  insetMedia = false,
   contentInCloud,
   ...props
 }: GraphicSurfaceProps) {
   return (
     <div
       data-card-graphic-surface=""
-      data-card-inset-media={insetMedia ? "" : undefined}
       // No fill of its own: the slot stays put on a lift while its window
       // rises, and a fill here would show behind the risen text as a panel
       // with the slot's corners (С8.3).
-      className={cn("relative overflow-hidden", insetMedia && "rounded-[var(--radius-card)]", className)}
+      className={cn("relative overflow-hidden", className)}
       {...props}
     >
       <div
@@ -307,27 +309,6 @@ function isPostVariant(variant: CardLayoutVariant): boolean {
   return variant.startsWith("article") || variant.startsWith("social");
 }
 
-/// How far a card's content rises on a lift (SPEC_CARD_STATES.md, С8): the
-/// action row and its 8px inset below it, plus an 8px gap above it where the
-/// content ends flush with the frame's bottom edge. Padded content brings its
-/// own bottom padding as that gap.
-function cardLiftDepth(descriptor: CardLayoutDescriptor): "flush" | "padded" {
-  switch (descriptor.variant) {
-    case "image":
-    case "video":
-    case "media-only":
-      return "flush";
-    default:
-      return descriptor.mediaPlacement === "edge"
-        && descriptor.mediaItems.length > 0
-        && !descriptor.titleText
-        && !descriptor.previewText
-        && !descriptor.authorText
-        ? "flush"
-        : "padded";
-  }
-}
-
 export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumbVersion, priority, allowPlayback = true, openMoreMenuRequestSequence = 0, hoverEnabled = true, hoverArmed = true, dragBlocks: dragBlocksProp, clearSelectionOnDragStart, onKeyboardMoreMenuOpenChange, onMenuOpenChange, onModifiedClick, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete }: CardProps) {
   const dragBlocks = useMemo(() => {
     const candidateBlocks = dragBlocksProp && dragBlocksProp.length > 0
@@ -352,13 +333,17 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
     } satisfies BlockDragData,
   });
   const show = useContext(FeedShowContext);
-  const media = useContext(FeedMediaContext);
   const descriptor = useMemo(
-    () => deriveCardLayoutDescriptor(block, show, media),
-    [block, media, show],
+    () => deriveCardLayoutDescriptor(block, show),
+    [block, show],
   );
   const isArticleFeedCard = isPostVariant(descriptor.variant);
   const hasHoverMenu = Boolean(tags && onToggleTag && onCreateAndAssign && onRequestRename && onRequestDelete);
+  // Every card lifts to bring its row of collections up from under the
+  // bottom edge (С8); bare media lifts its caption with it (С8.7).
+  const liftsCaption = hasHoverMenu && isBareMediaVariant(descriptor.variant);
+  const liftsTray = hasHoverMenu;
+  const lifts = liftsCaption || liftsTray;
   const [actionsPinned, setActionsPinned] = useState(false);
 
   const handleClick = (event: ReactMouseEvent<HTMLDivElement>) => {
@@ -394,9 +379,9 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
       onKeyDown={handleKeyDown}
       // The lift follows the bottom action row exactly: pointer hover while
       // hover is enabled, or a pointer-opened menu holding the row (С8).
-      data-card-lift-hover={hasHoverMenu && hoverEnabled && hoverArmed ? "" : undefined}
-      data-card-lift-pinned={hasHoverMenu && actionsPinned ? "" : undefined}
-      data-card-lift-depth={cardLiftDepth(descriptor)}
+      data-card-lift-hover={lifts && hoverEnabled && hoverArmed ? "" : undefined}
+      data-card-lift-pinned={lifts && actionsPinned ? "" : undefined}
+      style={liftsTray && !liftsCaption ? collectionsRowLiftStyle(descriptor) : undefined}
       className={cn(
         "h-full",
         // `group` scopes the hover buttons' `group-hover`: an unarmed card is
@@ -430,20 +415,54 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
       {/* Bare media in any presentation (a picture or a video without a
           frame, or anything `Media` shows as media alone) says what it is
           when it lifts (С8.7). */}
-      {hasHoverMenu && isBareMediaVariant(descriptor.variant) && <MediaLiftCaption block={block} />}
+      {liftsCaption && (
+        <MediaLiftCaption
+          block={block}
+          trayHeight={liftsTray ? COLLECTIONS_ROW_REACH_PX - EDGE_VISUAL_GAP_PX : 0}
+          // With no caption the row stands below the media's edge itself.
+          bareTrayHeight={liftsTray ? COLLECTIONS_ROW_REACH_PX : 0}
+        />
+      )}
     </CardFrame>
   );
 });
+
+/// The row of collections sits 8px above the bottom edge and is 24px
+/// tall (its plus is an `xs` button); its 12px text is centred in it, so the
+/// letters stand 14px above the edge, the edge-to-edge gap (Д25). From the
+/// edge to the gap above the row's letters is this reach: 8 + 24 − 6 + 14.
+const COLLECTIONS_ROW_REACH_PX = 8 + 24 - 6 + EDGE_VISUAL_GAP_PX;
+
+/// How far a card rises so the gap from its last line to the
+/// row's letters is the same 14px: the reach less the card's own space under
+/// its last letters at rest.
+function collectionsRowLiftStyle(descriptor: CardLayoutDescriptor): CSSProperties {
+  const hasText = Boolean(descriptor.titleText || descriptor.previewText || descriptor.authorText);
+  const ownSpace = (() => {
+    switch (descriptor.variant) {
+      case "image":
+      case "video":
+      case "media-only":
+        return 0;
+      case "link":
+        // The footer's p-3 under its last 16px line.
+        return 12 + halfLeading("title");
+      case "file":
+        return 16 + halfLeading("title");
+      default:
+        return hasText ? EDGE_VISUAL_GAP_PX : 0;
+    }
+  })();
+  // `--card-lift`: the CSS custom property the lift rules in global.css read.
+  return { "--card-lift": `${COLLECTIONS_ROW_REACH_PX - ownSpace}px` } as CSSProperties;
+}
+
 
 /// A card that shows media with no frame and no text of its own: a picture or
 /// a video in `Mixed`, and every media card in `Media`.
 function isBareMediaVariant(variant: CardLayoutVariant): boolean {
   return variant === "image" || variant === "video" || variant === "media-only";
 }
-
-/// The row of action buttons and the 8px under it: the part of a lift that
-/// is not the card's own text (SPEC_CARD_STATES.md, С8.1).
-const CARD_ACTION_ROW_PX = 40;
 
 /// `Media` shows a card's media alone. A lift reveals what the card says
 /// under it, rising with the action row: a picture's or a video's name in
@@ -452,7 +471,19 @@ const CARD_ACTION_ROW_PX = 40;
 /// (SPEC_CARD_STATES.md, С8.7). The lift is as tall as this caption, so its
 /// height is handed to the frame as `--card-lift`; it never takes more than
 /// 60% of the card, and text past that is cut.
-function MediaLiftCaption({ block }: { block: LightBlock }) {
+function MediaLiftCaption({
+  block,
+  trayHeight,
+  bareTrayHeight,
+}: {
+  block: LightBlock;
+  /** Room for the action row under a caption, whose own bottom padding
+   *  already reads as the gap above the row. */
+  trayHeight: number;
+  /** Room for the row when there is no caption: the gap from the media's edge
+   *  comes on top. */
+  bareTrayHeight: number;
+}) {
   const panelRef = useRef<HTMLDivElement>(null);
   // `Media` clears a card's text from its descriptor; the caption says what
   // the same card says in `Mixed`.
@@ -475,25 +506,28 @@ function MediaLiftCaption({ block }: { block: LightBlock }) {
   }, []);
 
   const isPost = isPostVariant(descriptor.variant) || Boolean(descriptor.previewText || descriptor.authorText);
-  const title = descriptor.titleText || (isPost ? "" : getNavigationLabel(block));
+  // A media card never shows its file's name: only a title of its own.
+  const title = descriptor.titleText || (isPost ? "" : (getMediaOwnTitle(block) ?? ""));
   const lines: CardTextLine[] = [];
   if (title) lines.push("title");
   if (isPost && descriptor.previewText) lines.push("preview");
   if (isPost && descriptor.authorText) lines.push("author");
+  if (shownCollections(block).length > 0) lines.push("pills");
   const first = lines[0];
   const last = lines[lines.length - 1];
-  const gapBefore = textGapsFor("edge", lines);
+  const gapBefore = textGapsFor(lines);
 
   return (
     <div
       ref={panelRef}
-      aria-hidden="true"
       data-card-lift="caption"
-      className="pointer-events-none absolute inset-x-0 bottom-0 flex max-h-[60%] flex-col justify-end overflow-hidden"
+      className="absolute inset-x-0 bottom-0 flex max-h-[60%] flex-col justify-end overflow-hidden"
     >
       {first && last && (
         <div
-          className="min-h-0 overflow-hidden"
+          // Never shrinks: past the 60% cap the panel clips its top, so the last
+          // line, its gap and the row under it keep their places.
+          className="shrink-0"
           style={{ paddingInline: EDGE_TEXT_SIDE_PX, paddingTop: edgeTextTop(first), paddingBottom: edgeTextBottom(last) }}
         >
           {title && (
@@ -520,9 +554,12 @@ function MediaLiftCaption({ block }: { block: LightBlock }) {
               {descriptor.authorText}
             </p>
           )}
+          <CardCollectionPills collections={shownCollections(block)} style={{ marginTop: gapBefore("pills") }} />
         </div>
       )}
-      <div className="shrink-0" style={{ height: CARD_ACTION_ROW_PX }} />
+      {(first ? trayHeight : bareTrayHeight) > 0 && (
+        <div className="shrink-0" style={{ height: first ? trayHeight : bareTrayHeight }} />
+      )}
     </div>
   );
 }
@@ -549,7 +586,8 @@ export function ReadOnlyCardPreview({
   const block: LightBlock & Partial<Pick<IndexedBlock, "thumb_format" | "thumb_mtime">> =
     "search_match" in sourceBlock
       ? sourceBlock
-      : { ...sourceBlock, search_match: null };
+      // A full block names its collections as `tags`.
+      : { ...sourceBlock, search_match: null, collections: sourceBlock.tags };
   const shadowClassName =
     shadow === "none"
       ? null
@@ -839,19 +877,9 @@ export function InteractiveCardPreview({
   onInteractionStart?: () => void;
   onClick?: (block: LightBlock) => void;
 }) {
-  const show = useContext(FeedShowContext);
-  const media = useContext(FeedMediaContext);
-  const descriptor = useMemo(
-    () => deriveCardLayoutDescriptor(block, show, media),
-    [block, media, show],
-  );
-  const [actionsPinned, setActionsPinned] = useState(false);
   return (
     <CardFrame
       data-block-slug={block.slug}
-      data-card-lift-hover=""
-      data-card-lift-pinned={actionsPinned ? "" : undefined}
-      data-card-lift-depth={cardLiftDepth(descriptor)}
       role={onClick ? "button" : undefined}
       tabIndex={onClick ? 0 : undefined}
       className={cn("group rounded-1 shadow-lg", !onClick && "cursor-default", className)}
@@ -876,7 +904,6 @@ export function InteractiveCardPreview({
         onRequestDelete={onRequestDelete}
         onInteractiveOpenChange={onInteractiveOpenChange}
         onInteractionStart={onInteractionStart}
-        onActionsPinnedChange={setActionsPinned}
       />
       <CardContent
         block={block}
@@ -947,10 +974,9 @@ export function CardContent({
 }) {
   const resolvedThumbsRoot = thumbsRootPath ?? fallbackThumbsRoot(vaultPath);
   const show = useContext(FeedShowContext);
-  const media = useContext(FeedMediaContext);
   const descriptor = useMemo(
-    () => deriveCardLayoutDescriptor(block, show, media),
-    [block, media, show],
+    () => deriveCardLayoutDescriptor(block, show),
+    [block, show],
   );
   const previewManifest = useMemo(
     () => parsePreviewManifest(block),
@@ -1068,7 +1094,7 @@ function GalleryTiles({
       : { gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr" };
 
   return (
-    <div className="absolute inset-0 grid gap-[2px] bg-card" style={gridStyle}>
+    <div className="absolute inset-0 grid gap-px bg-card" style={gridStyle}>
       {visibleItems.map((item, index) => {
         const tileStyle = count === 3 && index === 0 ? { gridRow: "1 / span 2" } : undefined;
 
@@ -1310,6 +1336,7 @@ const LinkCard = memo(function LinkCard({
       {domain && (
         <p className="mt-0.5 truncate text-sm text-muted-foreground" style={contentCardSingleLineTextStyle}>{domain}</p>
       )}
+      <CardCollectionPills collections={shownCollections(block)} style={{ marginTop: 8 }} />
     </div>
   );
 
@@ -1400,8 +1427,7 @@ const SocialCard = memo(function SocialCard({
   const slots = deriveContentCardSlots(descriptor);
   const hasPreviewText = text.length > 0;
   const hasBottomMeta = slots?.hasBottomMeta ?? false;
-  const hasTextStack = hasPreviewText || hasBottomMeta;
-  const insetMedia = descriptor.mediaPlacement !== "edge";
+  const hasTextStack = hasPreviewText || hasBottomMeta || shownCollections(block).length > 0;
 
   const mediaSurface = descriptor.variant === "social-single-media" && media.length === 1 ? (() => {
     // Shape comes from the descriptor: the artifact this slot paints,
@@ -1424,8 +1450,7 @@ const SocialCard = memo(function SocialCard({
     }).map((url) => withThumbVersion(url, thumbVersion));
     return (
       <GraphicSurface
-        insetMedia={insetMedia}
-        className={cn("w-full", !insetMedia && "rounded-b-[var(--radius-card)]")}
+        className="w-full rounded-b-[var(--radius-card)]"
         style={{ aspectRatio: `${aspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
         data-card-preview-geometry={aspectRatio === null ? "pending" : undefined}
         contentInCloud={block.content_in_cloud}
@@ -1466,11 +1491,10 @@ const SocialCard = memo(function SocialCard({
       </GraphicSurface>
     );
   })() : descriptor.variant === "social-media-grid" && media.length >= 2 ? (
-    // The same tile grid in either placement: edge to edge only widens the
-    // surface, the seams between tiles stay straight (Д21).
+    // The tile grid across the frame's width; the seams between tiles stay
+    // straight (Д21).
     <GraphicSurface
-      insetMedia={insetMedia}
-      className={cn("w-full", !insetMedia && "rounded-b-[var(--radius-card)]")}
+      className="w-full rounded-b-[var(--radius-card)]"
       style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
       contentInCloud={block.content_in_cloud}
     >
@@ -1486,11 +1510,11 @@ const SocialCard = memo(function SocialCard({
   const lines: CardTextLine[] = [];
   if (text) lines.push("preview");
   if (hasBottomMeta) lines.push("author");
-  const gapBefore = textGapsFor(postTextPlacement(descriptor.mediaPlacement, mediaSurface !== null), lines);
+  if (shownCollections(block).length > 0) lines.push("pills");
+  const gapBefore = textGapsFor(lines);
 
   return (
     <PostCardBody
-      placement={descriptor.mediaPlacement}
       media={mediaSurface}
       textLines={lines}
       textStack={hasTextStack ? (
@@ -1514,49 +1538,85 @@ const SocialCard = memo(function SocialCard({
               by {block.author}
             </p>
           )}
+          <CardCollectionPills collections={shownCollections(block)} style={{ marginTop: gapBefore("pills") }} />
         </>
       ) : null}
     />
   );
 });
 
-/// Where a post card's text sits: edge to edge only under edge media.
-function postTextPlacement(placement: FeedMedia | null, hasMedia: boolean): CardTextPlacement {
-  return placement === "edge" && hasMedia ? "edge" : "inset";
+/// A card's collections as one row of pills under its text, in the sidebar's
+/// order (SPEC_CARD_STATES.md, С9). The open collection's pill is marked;
+/// pressing a pill opens its collection, as the sidebar row does, and never
+/// the card. One row only, so the reserved height is fixed: pills past the
+/// card's width fade out at its edge.
+function CardCollectionPills({ collections, style }: { collections: readonly string[]; style?: CSSProperties }) {
+  const navigation = useContext(CardCollectionsContext);
+  if (collections.length === 0) return null;
+  return (
+    <div
+      data-card-collections=""
+      className="flex h-6 gap-1 overflow-hidden [mask-image:linear-gradient(to_right,black_calc(100%-24px),transparent)]"
+      style={style}
+    >
+      {collections.map((tag) => {
+        const current = navigation?.currentTag === tag;
+        return (
+          <button
+            key={tag}
+            type="button"
+            data-card-collection-pill={tag}
+            data-card-collection-current={current ? "" : undefined}
+            className={cn(
+              buttonVariants({ variant: "reference", size: "xs" }),
+              "h-6 shrink-0 font-mono font-normal",
+              current ? "text-foreground outline-[var(--border-accent)]" : "text-muted-foreground",
+            )}
+            onPointerDown={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              navigation?.open(tag);
+            }}
+          >
+            {collectionRefLabel(tag)}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
+
+/// The top-edge fade a rising text post dissolves into (global.css slides it
+/// into place with the lift).
+const TOP_LIFT_FADE_MASK_STYLE = createTopFadeMaskStyle(EDGE_FADE_WIDTH);
 
 /// The box gap above each line of a text stack: none above the first line,
 /// the typography's gap between neighbours otherwise. `computeCardHeight`
 /// counts the same gaps (cardHeight.ts, `cardTextStackHeight`).
-function textGapsFor(placement: CardTextPlacement, lines: readonly CardTextLine[]) {
+function textGapsFor(lines: readonly CardTextLine[]) {
   return (line: CardTextLine): number => {
     const index = lines.indexOf(line);
     const above = index > 0 ? lines[index - 1] : undefined;
-    return above ? cardTextGap(placement, above, line) : 0;
+    return above ? cardTextGap(above, line) : 0;
   };
 }
 
 /// The body of a framed card with its media on top and its text under it:
 /// posts, articles, X and Instagram posts, and pictures `Cards` frames as
-/// posts.
-///
-/// Inset: the body is padded 16px on every side and the media sits inside the
-/// padding with its own rounded outline, the text 12px under it. Edge to edge:
-/// the media spans the frame's inner width from its top edge, with no outline
-/// of its own; the frame's rounded clip gives it the card's top corners and
-/// its bottom corners stay square. The text under it is padded 8px at its
-/// sides and bottom and sits 8px under the media (the stack's `mt-2`, which a
-/// padding-free top passes through unchanged), so its column is wider than
-/// inset and its lines wrap at that width (SPEC_FEED_DISPLAY.md, Д20, Д23).
-/// Edge media with no text under it is the whole body. Without media the body
-/// is the inset one. `postCardHeight` in cardHeight.ts reserves exactly this.
+/// posts. The media spans the frame's inner width from its top edge, with no
+/// outline of its own; the frame's clip gives it the card's top corners and
+/// its bottom corners take the card radius where the text starts. The text
+/// under it is padded 8px at its sides, and every vertical gap reads 14px
+/// from letter to letter: the boxes are spaced by the gap less the
+/// half-leading of the lines that meet (SPEC_FEED_DISPLAY.md, Д20, Д25). Media
+/// with no text under it is the whole body. `postCardHeight` in cardHeight.ts
+/// reserves exactly this.
 function PostCardBody({
-  placement,
   media,
   textLines,
   textStack,
 }: {
-  placement: FeedMedia | null;
   /** The media surface, or null for a card without media. */
   media: ReactNode;
   /** The lines the text stack paints, top to bottom. */
@@ -1565,53 +1625,37 @@ function PostCardBody({
   textStack: ReactNode;
 }) {
   const hasMedia = media !== null;
-  const edgeToEdge = placement === "edge" && hasMedia;
   const first = textLines[0];
   const last = textLines[textLines.length - 1];
-  if (edgeToEdge) {
-    // Every gap reads as 8px from letter to letter: the boxes are spaced by
-    // that less the half-leading of the lines that meet (Д25).
-    return (
-      <div>
-        {media}
-        {textStack !== null && first && last && (
-          <div
-            data-card-lift="text"
-            style={{
-              paddingInline: EDGE_TEXT_SIDE_PX,
-              paddingTop: edgeTextTop(first),
-              paddingBottom: edgeTextBottom(last),
-            }}
-          >
-            {textStack}
-          </div>
-        )}
-      </div>
-    );
-  }
-  const text = textStack !== null && (
-    <div
-      data-card-lift={hasMedia ? "text" : undefined}
-      className={cn(hasMedia && "mt-3")}
-    >
-      {textStack}
-    </div>
-  );
-  // Without media the whole body is text and rises past the top edge on a
-  // lift (SPEC_CARD_STATES.md, С8).
-  return (
-    <div className="p-4" data-card-lift={hasMedia ? undefined : "text"}>
+  const body = (
+    <div>
       {media}
-      {text}
+      {textStack !== null && first && last && (
+        <div
+          data-card-lift="text"
+          style={{
+            paddingInline: EDGE_TEXT_SIDE_PX,
+            paddingTop: edgeTextTop(first),
+            paddingBottom: edgeTextBottom(last),
+          }}
+        >
+          {textStack}
+        </div>
+      )}
     </div>
   );
+  // A text post's body rises past the top edge on a lift; it dissolves there
+  // with the sidebar strip's fade curve.
+  return !hasMedia
+    ? <div data-card-lift-fade="" style={TOP_LIFT_FADE_MASK_STYLE}>{body}</div>
+    : body;
 }
 
-/// How a post's media surface sits in its card: `inset` inside the card's
-/// padding with its own rounded outline; `edge` across the frame's inner width
-/// with no outline of its own, the frame's clip rounding its top corners
-/// (SPEC_FEED_DISPLAY.md, Д20); `fill` the whole card, in `Media` (Д13).
-type PostMediaFit = FeedMedia | "fill";
+/// How a post's media surface sits in its card: `edge` across the frame's
+/// inner width with no outline of its own, the frame's clip rounding its top
+/// corners (SPEC_FEED_DISPLAY.md, Д20); `fill` the whole card, in `Media`
+/// (Д13).
+type PostMediaFit = "edge" | "fill";
 
 /// A post's media: one picture, one video, or the gallery, placed as `fit`
 /// says. In `Media` the post shows its media and nothing else (Д13).
@@ -1658,7 +1702,6 @@ function PostMediaSurface({
     // Edge to edge: the frame rounds the media's top corners; its bottom
     // corners take the same card radius where the text starts (SPEC_FEED_DISPLAY.md, Д20).
     <GraphicSurface
-      insetMedia={fit === "inset"}
       className={cn(fit === "fill" ? "h-full w-full" : "w-full", fit === "edge" && "rounded-b-[var(--radius-card)]")}
       windowClassName={fit === "fill" ? FILL_WINDOW_CLASS : undefined}
       style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
@@ -1750,22 +1793,23 @@ const ArticleCard = memo(function ArticleCard({
   const previewText = searchExcerptText(previewSearchMatch, descriptor.previewText);
   const slots = deriveContentCardSlots(descriptor);
   const hasBottomMeta = slots?.hasBottomMeta ?? false;
-  const hasTextStack = Boolean(displayTitle) || previewText.length > 0 || hasBottomMeta;
+  const hasTextStack = Boolean(displayTitle) || previewText.length > 0 || hasBottomMeta
+    || shownCollections(block).length > 0;
   // The lines this card paints, in order: an absent title takes no line and
   // no gap with it, exactly as the reserved height counts it.
   const lines: CardTextLine[] = [];
   if (displayTitle) lines.push("title");
   if (previewText) lines.push("preview");
   if (hasBottomMeta) lines.push("author");
-  const gapBefore = textGapsFor(postTextPlacement(descriptor.mediaPlacement, hasPreview), lines);
+  if (shownCollections(block).length > 0) lines.push("pills");
+  const gapBefore = textGapsFor(lines);
 
   return (
     <PostCardBody
-      placement={descriptor.mediaPlacement}
       textLines={lines}
       media={hasPreview ? (
         <PostMediaSurface
-          fit={descriptor.mediaPlacement ?? "inset"}
+          fit="edge"
           block={block}
           descriptor={descriptor}
           previewManifest={previewManifest}
@@ -1808,6 +1852,7 @@ const ArticleCard = memo(function ArticleCard({
               {block.author}
             </p>
           )}
+          <CardCollectionPills collections={shownCollections(block)} style={{ marginTop: gapBefore("pills") }} />
         </>
       ) : null}
     />

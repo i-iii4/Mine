@@ -128,19 +128,19 @@ describe("buildLayoutGenerationKey", () => {
     );
   });
 
-  it("changes with the media placement, so the cache never serves the other one's heights (SPEC_FEED_DISPLAY.md, Д23)", () => {
+  it("changes with the presentation, so the cache never serves another one's heights (SPEC_FEED_DISPLAY.md, Д15)", () => {
     const blocks = [makeBlock(1), makeBlock(2)];
-    const keyFor = (media: "inset" | "edge" | undefined) => buildLayoutGenerationKey({
+    const keyFor = (show: "cards" | "mixed" | "media" | undefined) => buildLayoutGenerationKey({
       blocks,
       routeKey: "__all__",
       columnWidth: getMasonryColumnWidth(1200, 220, 32),
       columnCount: getMasonryColumnCount(1200, 220, 32),
       layoutGap: 32,
-      show: "cards",
-      media,
+      show,
     });
-    expect(keyFor("edge")).not.toBe(keyFor("inset"));
-    // Inset is the default placement: an unset placement is the same layout.
-    expect(keyFor(undefined)).toBe(keyFor("inset"));
+    expect(keyFor("cards")).not.toBe(keyFor("mixed"));
+    expect(keyFor("media")).not.toBe(keyFor("mixed"));
+    // Mixed is the default presentation: an unset one is the same layout.
+    expect(keyFor(undefined)).toBe(keyFor("mixed"));
   });
 });

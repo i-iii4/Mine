@@ -16,6 +16,7 @@ use std::{
 #[cfg(all(not(target_os = "ios"), not(test)))]
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 
+use crate::storage::block_queries::collections_column_sql;
 use crate::storage::index::{
     is_social_url, light_block_from_row, LightBlock, SearchMatch, SearchMatchField,
     SearchMatchKind, SearchTextRange, LIGHT_BLOCK_BODY_PREVIEW_CHARS,
@@ -276,7 +277,8 @@ fn grid_search_sql(
     fetch_limit: usize,
     plan: &SearchPlan,
 ) -> (String, Vec<Value>) {
-    let mut sql = String::from(
+    let collections = collections_column_sql("b.id");
+    let mut sql = format!(
         "SELECT b.id, b.slug, b.block_type, b.card_kind, b.title, b.content_heading, b.display_title, COALESCE(b.fallback_label, b.slug), b.url, b.media_file,
                     b.thumbnail, b.saved_at, b.width, b.height, b.author,
                     CASE WHEN b.card_kind = 'article' THEN SUBSTR(b.body, 1, ?1) ELSE '' END,
@@ -293,9 +295,10 @@ fn grid_search_sql(
                                   WHERE source.slug = b.slug
                               )
                          THEN b.feed_playback END,
-                    b.description, b.body
+                    b.description, b.body,
+                    {collections}
              FROM blocks b
-             JOIN blocks_fts ON blocks_fts.rowid = b.id",
+             JOIN blocks_fts ON blocks_fts.rowid = b.id"
     );
     let mut params = vec![
         Value::Integer(LIGHT_BLOCK_BODY_PREVIEW_CHARS),
@@ -1239,7 +1242,11 @@ fn compare_ranked_blocks(a: &RankedBlock, b: &RankedBlock) -> Ordering {
 }
 
 fn load_light_block_by_slug(conn: &Connection, slug: &str) -> Result<Option<LightBlock>> {
-    let mut stmt = conn.prepare(
+    // Column 22 is the preview error kind `light_block_from_row` reads by
+    // position; this reader reports none, as before the collections column
+    // followed it.
+    let collections = collections_column_sql("blocks.id");
+    let mut stmt = conn.prepare(&format!(
         "SELECT id, slug, block_type, card_kind, title, content_heading, display_title, COALESCE(fallback_label, slug), url, media_file,
                 thumbnail, saved_at, width, height, author,
                 CASE WHEN card_kind = 'article' THEN SUBSTR(body, 1, ?1) ELSE '' END,
@@ -1255,10 +1262,12 @@ fn load_light_block_by_slug(conn: &Connection, slug: &str) -> Result<Option<Ligh
                               SELECT source.source_stamp FROM source_index_state source
                               WHERE source.slug = blocks.slug
                           )
-                     THEN feed_playback END
+                     THEN feed_playback END,
+                NULL,
+                {collections}
          FROM blocks
-         WHERE slug = ?2 AND card_kind != 'channel'",
-    )?;
+         WHERE slug = ?2 AND card_kind != 'channel'"
+    ))?;
     let block = stmt
         .query_row(
             params![LIGHT_BLOCK_BODY_PREVIEW_CHARS, slug],

@@ -285,7 +285,17 @@ content_in_cloud?: boolean;
  * own name on the card, a damaged cache file looks like a design
  * decision. See SPEC_CARD_MEDIA_GEOMETRY.md.
  */
-preview_unreadable?: boolean; search_match: SearchMatch | null }
+preview_unreadable?: boolean;
+/**
+ * The collections the card is in, exactly as the membership table stores
+ * them (the refs `TagCount::tag` and a route's current tag use), in
+ * sidebar order: by the collection's `position`, then by name. A
+ * membership whose collection has no page sorts after every listed one.
+ *
+ * It travels with the row because the feed lays cards out from block
+ * data alone: the pills are part of a card's height.
+ */
+collections: string[]; search_match: SearchMatch | null }
 
 export type MediaAssetActionError = { kind: "no_vault" } | { kind: "invalid_media_ref"; reason: string } | { kind: "media_not_found"; media_ref: string } | { kind: "unsupported_media_kind"; media_ref: string } | { kind: "name_taken"; target: string } | { kind: "invalid_filename"; reason: string } | { kind: "clipboard_unsupported"; media_ref: string } | { kind: "internal"; message: string }
 

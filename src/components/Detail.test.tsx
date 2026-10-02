@@ -98,6 +98,7 @@ function block(overrides: Partial<IndexedBlock> = {}): IndexedBlock {
     media_urls: null,
     media_dimensions: null,
     preview_manifest: null,
+    collections: [],
     feed_playback: null,
     thumb_format: null,
     thumb_mtime: 0,

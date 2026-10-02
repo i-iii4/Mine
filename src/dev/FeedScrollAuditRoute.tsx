@@ -108,6 +108,7 @@ function makeRatioMismatchBlock(index: number): LightBlock {
     }),
     feed_playback: null,
     search_match: null,
+  collections: [],
   };
 }
 
@@ -168,6 +169,7 @@ function makeArticleRatioMismatchBlock(index: number): LightBlock {
     }),
     feed_playback: null,
     search_match: null,
+  collections: [],
   };
 }
 
@@ -224,6 +226,7 @@ function makeUnmeasuredArticleBlock(index: number): LightBlock {
     }),
     feed_playback: null,
     search_match: null,
+  collections: [],
   };
 }
 
@@ -277,6 +280,7 @@ function makeAuditBlock(index: number): LightBlock {
     preview_manifest: previewManifest,
     feed_playback: null,
     search_match: null,
+  collections: [],
   };
 }
 

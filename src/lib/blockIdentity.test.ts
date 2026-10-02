@@ -21,7 +21,9 @@ function makeBlock(id: number, overrides: Partial<LightBlock> = {}): LightBlock 
     media_urls: null,
     media_dimensions: null,
     preview_manifest: null,
+    collections: [],
     feed_playback: null,
+    collections: [],
     ...overrides,
   };
 }
@@ -171,3 +173,19 @@ describe("lightBlockContentEqual", () => {
     ).toBe(false);
   });
 });
+
+describe("lightBlockContentEqual and a card's collections (02.10.2026)", () => {
+  it("sees a card connected to one more collection as changed", () => {
+    const before = makeBlock(1);
+    const after = { ...before, collections: [...before.collections, "Органика"] };
+    expect(lightBlockContentEqual(before, after)).toBe(false);
+    expect(reconcileBlocks([before], [after])[0]).toBe(after);
+  });
+
+  it("sees the cloud and unreadable flags as content", () => {
+    const before = makeBlock(1);
+    expect(lightBlockContentEqual(before, { ...before, content_in_cloud: true })).toBe(false);
+    expect(lightBlockContentEqual(before, { ...before, preview_unreadable: true })).toBe(false);
+  });
+});
+

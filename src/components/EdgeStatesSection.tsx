@@ -18,7 +18,7 @@ import { ActivityIndicators } from "@/components/ActivityIndicators";
 import { Card, CardPreviewPendingSurface, CardSourcelessSurface } from "@/components/Card";
 import { SidebarTagRowDragPreview } from "@/components/Sidebar";
 import { computeCardHeight } from "@/lib/cardHeight";
-import { FeedMediaContext, FeedShowContext, type FeedMedia } from "@/lib/feedDisplay";
+import { FeedShowContext } from "@/lib/feedDisplay";
 import type { LightBlock, PreviewCard } from "@/types";
 import { CloudRecommendationCard } from "@/components/CloudRecommendation";
 import { IndexingProgress } from "@/components/IndexingProgress";
@@ -109,6 +109,7 @@ function showcaseBlock(id: number, overrides: Partial<LightBlock>): LightBlock {
     preview_manifest: null,
     feed_playback: null,
     search_match: null,
+    collections: [],
     ...overrides,
   };
 }
@@ -120,6 +121,7 @@ function showcasePost(id: number, picture: string): LightBlock {
     preview_text: "The first oblique photograph of the Moon, taken from orbit in 1966.",
     body: "The first oblique photograph of the Moon, taken from orbit in 1966.",
     author: "@orbiter",
+    collections: ["Экзопланеты", "Интерфейсы"],
     first_image: picture,
     media_urls: JSON.stringify([picture]),
     preview_manifest: JSON.stringify({
@@ -163,25 +165,23 @@ const SHOWCASE_PICTURE = showcaseBlock(9104, {
 
 /// A real feed card at the size the feed would lay it out, with its hover
 /// buttons, so the lift answers the pointer here exactly as in the feed.
-function ShowcaseCard({ block, media = "inset" }: { block: LightBlock; media?: FeedMedia }) {
-  const height = computeCardHeight(block, SHOWCASE_WIDTH, null, "mixed", media);
+function ShowcaseCard({ block }: { block: LightBlock }) {
+  const height = computeCardHeight(block, SHOWCASE_WIDTH, null, "mixed");
   return (
     <FeedShowContext.Provider value="mixed">
-      <FeedMediaContext.Provider value={media}>
-        <div style={{ width: SHOWCASE_WIDTH, height }}>
-          <Card
-            block={block}
-            vaultPath=""
-            thumbsRootPath=""
-            onClick={() => {}}
-            tags={[]}
-            onToggleTag={() => {}}
-            onCreateAndAssign={() => {}}
-            onRequestRename={() => {}}
-            onRequestDelete={() => {}}
-          />
-        </div>
-      </FeedMediaContext.Provider>
+      <div style={{ width: SHOWCASE_WIDTH, height }}>
+        <Card
+          block={block}
+          vaultPath=""
+          thumbsRootPath=""
+          onClick={() => {}}
+          tags={[]}
+          onToggleTag={() => {}}
+          onCreateAndAssign={() => {}}
+          onRequestRename={() => {}}
+          onRequestDelete={() => {}}
+        />
+      </div>
     </FeedShowContext.Provider>
   );
 }
@@ -413,14 +413,11 @@ export function EdgeStatesSection() {
 
         <StateCase
           name="Подъём карточки при наведении"
-          when="Наведите курсор: текст и окно медиа поднимаются, ряд кнопок выезжает из-под нижнего края, картинка смещается на 8 px. Внешний размер карточки не меняется. У текстовой карточки текст уходит за верхний край."
+          when="Наведите курсор: текст и окно медиа поднимаются, ряд коллекций выезжает из-под нижнего края, картинка смещается на 8 px. Внешний размер карточки не меняется. У текстовой карточки текст уходит за верхний край."
         >
           <div className="flex flex-wrap items-start gap-4">
-            <Variant caption="Inset">
-              <ShowcaseCard block={showcasePost(9101, SHOWCASE_PICTURES[0]!)} />
-            </Variant>
-            <Variant caption="Edge to edge">
-              <ShowcaseCard block={showcasePost(9102, SHOWCASE_PICTURES[1]!)} media="edge" />
+            <Variant caption="пост">
+              <ShowcaseCard block={showcasePost(9102, SHOWCASE_PICTURES[1]!)} />
             </Variant>
             <Variant caption="текст">
               <ShowcaseCard block={SHOWCASE_TEXT_POST} />

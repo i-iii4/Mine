@@ -63,36 +63,35 @@ source of truth; допустимы только небольшие static compo
 | Токен | Значение | Утилита | Где |
 |---|---|---|---|
 | `--radius-0` | 0 | `rounded-0` | Карточки контента, изображения, текстовые блоки |
-| `--radius-1` | 3px | `rounded-1` | Основные элементы интерфейса: кнопки, инпуты, попапы, меню, тултипы, диалоги |
+| `--radius-1` | 4px | `rounded-1` | Основные элементы интерфейса: кнопки, инпуты, попапы, меню, тултипы, диалоги |
 | — | 2px | `rounded-[2px]` | Чекбоксы (16px, компенсация масштаба) |
 | `--radius-pill` | 9999px | `rounded-pill` | Переключатели, тоглы, прогресс-бар |
 | `--radius-round` | 50% | `rounded-round` | Аватары, индикаторы статуса |
 
-**Правило:** содержимое — без скругления (`rounded-0`), интерфейс — 3px (`rounded-1`), бейджи и pill-контролы — капсулы (`rounded-pill`), чекбоксы — 2px.
+**Правило:** содержимое без скругления (`rounded-0`), интерфейс 4px (`rounded-1`), бейджи и pill-контролы капсулами (`rounded-pill`), чекбоксы 2px.
 
 ### Скругление карточек — настройка
 
-Appearance → `Card corners`: `Square` (по умолчанию) или `3` пикселя.
+Appearance → `Card corners`: `Square` (по умолчанию) или `4` пикселя, как у интерфейса. Сохранённое прежнее значение `3` читается как `4`.
 
 Область действия выбрана намеренно:
 
 | Поверхность | Скругление |
 |---|---|
 | Рамка карточки | по настройке |
-| Медиаблок внутри карточки с контентом | внешний контур по настройке; стыки сетки прямые |
-| Медиа карточки с рамкой в режиме `Edge to edge` (SPEC_FEED_DISPLAY.md, Д20) | верхние углы обрезает рамка карточки, нижние скруглены тем же радиусом карточки (`rounded-b-[var(--radius-card)]`) |
+| Медиа сверху в карточке с рамкой (SPEC_FEED_DISPLAY.md, Д20) | верхние углы обрезает рамка карточки, нижние скруглены тем же радиусом карточки (`rounded-b-[var(--radius-card)]`); стыки сетки прямые |
 | Изображение в развёрнутой карточке | по настройке |
 | Карточка метаданных в просмотре статьи | по настройке |
 
-Внутри карточки с контентом одиночное медиа или вся сетка имеют один внешний
-контур с радиусом карточки. Скругление и clipping принадлежат общему
-`GraphicSurface insetMedia`, не отдельным плиткам. Внутренние стыки сетки
-остаются прямыми при любом числе плиток. Это относится и к видео/постерам.
-Одиночное открытое изображение берёт тот же угол, что и рамка карточки.
+Внутри карточки с контентом одиночное медиа или вся сетка имеют один общий
+контур: скругление и обрезку держит общий слот `GraphicSurface`, а не
+отдельные плитки. Внутренние стыки сетки остаются прямыми при любом числе
+плиток, шов между плитками 1px (`gap-px`) цвета фона карточки. Это относится и
+к видео и постерам. Одиночное открытое изображение берёт тот же угол, что и
+рамка карточки.
 
-Технически настройка переопределяет только `--radius-card`. Общая обёртка
-вложенного медиаблока читает этот токен; отдельные плитки используют нулевой
-`--radius-media`. Изображения развёрнутой карточки читают
+Технически настройка переопределяет только `--radius-card`. Общий слот медиа
+читает этот токен; отдельные плитки используют нулевой `--radius-media`. Изображения развёрнутой карточки читают
 `--radius-card` через правило по `[data-detail-article-column]`.
 Карточка с датой, источником и автором также читает `--radius-card`.
 
@@ -809,7 +808,7 @@ base является отдельной миграцией, а не обнов�
 
 ### Button
 
-Базовые свойства всех кнопок: `rounded-1` (3px), `font-semibold`, `select-none`.
+Базовые свойства всех кнопок: `rounded-1` (4px), `font-semibold`, `select-none`.
 Курсор кнопка не меняет — см. «Интерактивные состояния → Курсор»; исключение
 только для кнопок, уводящих в браузер.
 
@@ -881,18 +880,18 @@ Network» — остаются `secondary`: красный цвет, приме�
 Input и Command по умолчанию — 32px (`h-8`). Clipper использует
 `Input controlSize="clipper"` (`h-10`) только внутри popup/overlay строк.
 
-**Скругление основных элементов интерфейса — 3px (`rounded-1`).** Button,
+**Скругление основных элементов интерфейса: 4px (`rounded-1`).** Button,
 ActionButton (обе пули), DropdownMenu, Tooltip, Input используют этот радиус.
 `Badge` является отдельным pill-примитивом и использует `rounded-pill`.
 
 **Семантические токены скругления** (управляются из `global.css`):
-- `--radius-card` → скругление карточек и контура вложенного медиаблока (по умолчанию `var(--radius-0)` = 0px; меняется настройкой)
+- `--radius-card` → скругление карточек и нижних углов медиа сверху (по умолчанию `var(--radius-0)` = 0px; меняется настройкой)
 - `--radius-media` → скругление медиа внутри карточек (по умолчанию `var(--radius-0)` = 0px)
 
 Карточки: `rounded-[var(--radius-card)]` на обёртке `[data-block-slug]`.
 Плитки медиа: глобальное CSS-правило `[data-block-slug] img, [data-block-slug] video { border-radius: var(--radius-media) }`.
-Общий контур вложенного медиаблока: `GraphicSurface insetMedia`,
-`overflow-hidden rounded-[var(--radius-card)]`. Это сохраняет прямые стыки сетки.
+Общий контур медиа сверху: слот `GraphicSurface` с
+`overflow-hidden rounded-b-[var(--radius-card)]`. Это сохраняет прямые стыки сетки.
 
 ### ActionButton: действующее представление
 
@@ -1308,9 +1307,10 @@ normal card interaction contract.
   (`rounded-1 border border-border bg-accent`, строки — общий `MetadataRow`):
   Date, Type, Source (домен, кликабельный `MetadataLinkValue`), Author,
   Collections (lazy, оптимистичное обновление при Connect); пустые строки
-  скрываются. Контекстные действия — настоящий `CardHoverMenu` поверх
-  превью-карточки (тот же компонент, что на главной): `More` (⋯) + `Source` +
-  `Connect`, со всем наследуемым поведением hover/pin/stopPropagation.
+  скрываются. Контекстные действия: настоящий `CardHoverMenu` поверх
+  превью-карточки (тот же компонент, что на главной): `Source` и `More` сверху,
+  ряд коллекций и плюс `Connect` снизу, со всем наследуемым поведением
+  hover/pin/stopPropagation.
 - Пустые состояния: пустой query → пустые панели; нет результатов —
   центрированная `No results` (`text-sm text-muted-foreground`). Спиннеров нет.
 
@@ -1480,35 +1480,48 @@ Content: `rounded-1 border bg-card p-1 text-card-foreground`, тень — ед�
 
 ### Card Hover Menu
 
-При hover на карточку появляются три кнопки. Карточка при этом не затеняется
-и не меняет рамку: наведение показывает только кнопки (SPEC_CARD_STATES.md).
-Слой `[data-card-hover-overlay]` остаётся носителем кнопок, его фон
+При hover на карточку появляются кнопки сверху и ряд коллекций снизу
+(итоговый вид выбран пользователем 02.10.2026, SPEC_CARD_STATES.md, С8.8 и
+С8.9). Карточка при этом не затеняется и не меняет рамку. Слой
+`[data-card-hover-overlay]` остаётся носителем кнопок, его фон
 `--card-hover-overlay` прозрачен в обеих темах.
 
-**Кнопки:** стандартные `Button variant="default"` из дизайн-системы (`bg-component-fill`, `rounded-1`). Адаптируются к теме автоматически.
+**Кнопки:** стандартные `Button variant="default" size="icon-xs"` (24px,
+`bg-component-fill`, `rounded-1`). Адаптируются к теме автоматически.
 
 **Расположение:**
-- **More** (`MoreHorizontal`, `size="icon"` 32px) — верхний правый угол (`absolute right-2 top-2`)
-- **Source** (`ExternalLink`, `size="default"` 32px, текст «Source») — нижний левый угол
-- **Connect** (`Plus`, `size="default"` 32px, текст «Connect») — нижний правый угол
+- **Сверху справа** (`absolute right-2 top-2`, `gap-1`): **Source**
+  (`ExternalLink`, только если у карточки есть безопасный адрес) и **More**
+  (`MoreHorizontal`) с меню карточки.
+- **Снизу** (`absolute left-2 right-2 bottom-2`): слева коллекции карточки,
+  справа **Connect** плюсом (`Plus`) с `CollectionPicker`.
+- Коллекции в ряду обычный текст интерфейса, не кнопки с плашкой:
+  `font-mono text-sm text-muted-foreground`, при наведении `text-foreground`,
+  без фона и обводки; нажатие открывает коллекцию. Порядок как в ручном
+  порядке бокового меню, открытая сейчас коллекция тоже показывается.
+  Переполнение растворяется у плюса (`createRightFadeMaskStyle`). Пустой ряд:
+  `No collections` цветом `text-tertiary-foreground`.
+- Плашки коллекций в теле карточки выключены (`CARD_COLLECTION_PILLS_ENABLED`).
 
-**Появление:** `opacity-0 group-hover:opacity-100`, только
-когда текущий interaction owner — pointer. Нижний ряд не ложится поверх
-текста: карточка поднимает содержимое на 40 px (48 px, где медиа доходит до
-нижней кромки), а ряд выезжает следом из-под края, картинка смещается на 8 px
-(SPEC_CARD_STATES.md, С8; правила в `global.css`, `[data-card-lift]`). Кнопки
-и подъём отвечают только на карточке, куда курсор пришёл не быстрее 0,5 px/мс:
-в ленте рамка становится `group` только у такой карточки (С8.6). В Grid keyboard mode карточка
-получает `hoverEnabled=false`: `group-hover:opacity-100` снимается с overlay,
-top `More` и bottom action row, но программное открытие `Cmd+K` всё равно
-может показать top `More`/overflow menu.
+**Появление:** `opacity-0 group-hover:opacity-100`, только когда текущий
+interaction owner pointer. Нижний ряд не ложится поверх текста: карточка
+поднимает содержимое так, чтобы от последней строки до букв ряда было 14px,
+а ряд выезжает следом из-под края; картинка смещается на 8px
+(SPEC_CARD_STATES.md, С8.1; правила в `global.css`, `[data-card-lift]`).
+Кнопки и подъём отвечают только на карточке, куда курсор пришёл не быстрее
+0,5 px/мс: в ленте рамка становится `group` только у такой карточки (С8.6).
+Правый клик опускает карточку на время контекстного меню. В Grid keyboard
+mode карточка получает `hoverEnabled=false`: `group-hover:opacity-100`
+снимается с overlay, верхних кнопок и нижнего ряда, карточка не поднимается,
+но программное открытие `Cmd+K` всё равно может показать верхний
+`More`/overflow menu.
 
 **Поведение:**
 - Parent card открывается по keyboard только когда `keydown` пришёл с самой
   card surface (`event.target === event.currentTarget`); вложенные action
   buttons не должны keyboard-bubble в open Detail.
 - `stopPropagation` на контейнере — клик по кнопкам не открывает Detail
-- Source: `window.open(url)`. Disabled если `block.url` нет
+- Source: `openUrl(url)` в браузере. Без безопасного `block.url` кнопки нет
 - Connect: `DropdownMenu` со списком каналов (`CollectionPicker`)
 - More / right-click menu: `DropdownMenu` / `ContextMenu` — Connect
   (подменю), Source, Reveal in Finder, Copy Path, Rename…, Disconnect from
@@ -1672,7 +1685,7 @@ feed surface.
 ### Hover Preview Surfaces
 
 Всплывающие preview-карточки используют ту же визуальную модель, что feed card
-preview при drag: `rounded-1` (3px), `border border-border`, `bg-card`,
+preview при drag: `rounded-1` (4px), `border border-border`, `bg-card`,
 утилитарная `shadow-lg`. Ordinary feed cards остаются на `--radius-card`.
 
 **Один владелец размера.** В media drag-превью (DragOverlay) геометрию задаёт
@@ -1691,8 +1704,9 @@ Related notes preview:
 - Если preview не помещается вниз, он раскрывается вверх, сохраняя связь с trigger.
 - Между trigger и preview есть невидимое hover-поле, чтобы курсор можно было
   перевести без схлопывания.
-- При наведении на preview появляются стандартные `Source`, `Connect`, `More`;
-  interaction с ними закрепляет preview до outside click.
+- При наведении на preview появляются стандартные кнопки карточки (`Source`,
+  `More`, ряд коллекций с плюсом `Connect`); interaction с ними закрепляет
+  preview до outside click.
 
 Article inline image hover preview:
 - Это отдельный функциональный блок, не часть текущего Related notes preview.
@@ -2014,7 +2028,7 @@ Traffic-light reserve размечается как `data-traffic-light-reserve`
 алиасом `--component-fill`.
 
 - Структура: `<div role="button">` (внешняя пуля) → `<span hotkey>` + `<span label>` (внутренняя пуля)
-- Внешняя пуля: `rounded-1` (3px), `h-6` (24px), `p-[2px]`, `overflow-hidden`
+- Внешняя пуля: `rounded-1` (4px), `h-6` (24px), `p-[2px]`, `overflow-hidden`
 - Внутренняя пуля: `rounded-[2px]`, `bg-component-fill-inner`, `h-5`, `inline-flex items-center`, `px-[1ch]`, `leading-none`
 - Hotkey: текст на фоне внешней пули, `h-5`, `inline-flex items-center`, `px-[1ch]`, `leading-none`
 - Зазор между внешней и внутренней пулей: 2px (все стороны, через `p-[2px]` на внешней)
@@ -2526,7 +2540,7 @@ do not appear under an open keyboard menu.
 
 Графические поверхности карточек помечаются единым `GraphicSurface`/`data-card-graphic-surface` контрактом. При keyboard focus GridItem применяет только к этим surfaces дополнительный wash: light theme `oklch(0 0 0 / 14%)` затемняет, dark theme `oklch(1 0 0 / 18%)` высветляет. Текстовые карточки и текстовые области mixed cards не получают этот state.
 
-Focused GridItem дополнительно показывает shortcut badge в левом верхнем углу: `data-feed-grid-action-badge`, внутри `data-feed-grid-action-layer` (`absolute inset-px`), затем `absolute left-2 top-2`, `h-6`, `px-[1ch]`, `rounded-1` (3px), `bg-component-fill`, `text-sm font-semibold text-foreground`, `pointer-events-none`. Action layer компенсирует 1px Card frame, поэтому offsets badge считаются из той же внутренней плоскости карточки, что и Card Hover Menu controls: `top-2` как у верхнего `More`, `left-2` как у нижнего action row. Текст badge — `⌘K`; он сообщает scoped action shortcut для открытия card overflow menu и не является hover affordance. `Cmd+K` toggles top-right `More`/overflow menu; нижние `Source`/`Connect` не появляются.
+Focused GridItem дополнительно показывает shortcut badge в левом верхнем углу: `data-feed-grid-action-badge`, внутри `data-feed-grid-action-layer` (`absolute inset-px`), затем `absolute left-2 top-2`, `h-6`, `px-[1ch]`, `rounded-1` (4px), `bg-component-fill`, `text-sm font-semibold text-foreground`, `pointer-events-none`. Action layer компенсирует 1px Card frame, поэтому offsets badge считаются из той же внутренней плоскости карточки, что и Card Hover Menu controls: `top-2` как у верхних кнопок, `left-2` как у нижнего ряда коллекций. Текст badge `⌘K`; он сообщает scoped action shortcut для открытия card overflow menu и не является hover affordance. `Cmd+K` toggles top-right `More`/overflow menu; нижний ряд коллекций не появляется, карточка не поднимается.
 
 Состояния карточки ленты сведены в одну систему
 ([SPEC_CARD_STATES.md](SPEC_CARD_STATES.md), 28.09.2026). Наведение мышью
@@ -2534,10 +2548,13 @@ Focused GridItem дополнительно показывает shortcut badge 
 границу карточки в `--border-accent`, картинка при этом получает затенение
 `--graphic-card-focus-overlay`, текстовая карточка только границу. Подсветка
 от строки коллекции в боковом меню красит только границу, без затенения:
-строка зажигает много карточек разом. Ответы на курсор (подсветка от строки
-и пилюли `Connected` от карточки) включаются только при задержке и медленном
-курсоре, молчат при прокрутке и сменяются растворением (С7); ответ на
-клавиатурный фокус мгновенный.
+строка зажигает много карточек разом. Подсветка ленты от строки включается
+только при задержке и медленном курсоре, молчит при прокрутке и сменяется
+растворением (С7). Сама строка (название, число, кнопка) отвечает курсору
+сразу (С7.10). Пилюли `Connected` у коллекций карточки показывает только
+клавиатурный фокус, мгновенно (С4); курсор мыши меню не меняет.
+Затенение лежит на окне медиа (`[data-card-graphic-surface] >
+[data-card-lift="window"]::after`) и поднимается с ним при подъёме карточки.
 Выделенная карточка (`data-feed-grid-item-selected="true"`) красит ту же
 границу в `--feed-selection-frame` (`oklch(0.145 0 0)` в светлой теме,
 `oklch(0.985 0 0)` в тёмной) и тоже затеняет картинку. Ничего не рисуется

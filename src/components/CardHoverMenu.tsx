@@ -2,7 +2,9 @@ import { commandById } from "@/lib/commandRegistry";
 import {
   memo,
   useCallback,
+  useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -33,6 +35,8 @@ import {
   CollectionPicker,
 } from "./CollectionPicker";
 import { copyTextToClipboard } from "@/lib/clipboard";
+import { CardCollectionsContext } from "@/lib/cardCollections";
+import { EDGE_FADE_WIDTH, createRightFadeMaskStyle } from "@/lib/edgeFade";
 
 interface CardMenuActionsProps<TBlock extends LightBlock | IndexedBlock> {
   block: TBlock;
@@ -51,6 +55,7 @@ interface CardMoreMenuProps<TBlock extends LightBlock | IndexedBlock> extends Ca
   openRequestSequence?: number;
   topChromeInteraction?: boolean;
   triggerVariant?: ComponentProps<typeof Button>["variant"];
+  triggerSize?: ComponentProps<typeof Button>["size"];
 }
 
 interface CardPointMenuProps<TBlock extends LightBlock | IndexedBlock> extends CardMenuActionsProps<TBlock> {
@@ -83,6 +88,57 @@ type CardHoverMenuPropsWithState = CardHoverMenuProps & {
   onActionsPinnedChange?: (pinned: boolean) => void;
 };
 
+/// The card's collections in its bottom row, left-aligned, as
+/// plain clickable text: no plate, no outline. A name opens its collection.
+/// The order is always the sidebar's manual one, read from the live list the
+/// sidebar draws, so a reorder there shows here at once; a collection the
+/// list does not hold goes last. Names past the row's end dissolve into the
+/// edge before the plus, the sidebar strip's fade.
+function CardCollectionsRow({
+  collections,
+  order,
+}: {
+  collections: readonly string[];
+  /** The sidebar's collections in their manual order. */
+  order: readonly TagCount[];
+}) {
+  const navigation = useContext(CardCollectionsContext);
+  const ordered = useMemo(() => {
+    const rank = new Map(order.map((entry, index) => [entry.tag, index]));
+    return [...collections].sort(
+      (a, b) => (rank.get(a) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b) ?? Number.MAX_SAFE_INTEGER),
+    );
+  }, [collections, order]);
+  return (
+    <div
+      className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden"
+      style={COLLECTIONS_ROW_FADE_STYLE}
+      data-card-collections-row=""
+    >
+      {ordered.length === 0 && (
+        // A card in no collection says so, in the quietest interface tone.
+        <span className="whitespace-nowrap font-mono text-sm text-tertiary-foreground" data-card-no-collections="">
+          No collections
+        </span>
+      )}
+      {ordered.map((tag) => (
+        <button
+          key={tag}
+          type="button"
+          className="shrink-0 whitespace-nowrap bg-transparent p-0 font-mono text-sm font-normal text-muted-foreground outline-0 hover:text-foreground focus-visible:text-foreground"
+          data-card-collection-pill={tag}
+          onClick={() => navigation?.open(tag)}
+        >
+          {collectionRefLabel(tag)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/// The row's right edge fades over the shared edge width (lib/edgeFade.ts).
+const COLLECTIONS_ROW_FADE_STYLE = createRightFadeMaskStyle(EDGE_FADE_WIDTH, 0);
+
 function stopProp(e: React.MouseEvent | React.PointerEvent) {
   e.stopPropagation();
 }
@@ -106,6 +162,7 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
   openRequestSequence = 0,
   topChromeInteraction = false,
   triggerVariant = "default",
+  triggerSize,
 }: CardMoreMenuProps<TBlock>) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuOpenRef = useRef(false);
@@ -145,7 +202,7 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
       <DropdownMenuTrigger asChild>
         <Button
           variant={triggerVariant}
-          size={triggerVariant === "chrome" ? "chrome-icon" : "icon"}
+          size={triggerSize ?? (triggerVariant === "chrome" ? "chrome-icon" : "icon")}
           aria-label="Card actions"
           className={className}
           {...(topChromeInteraction ? topChromeTrigger.triggerProps : {})}
@@ -404,16 +461,22 @@ export const CardHoverMenu = memo(function CardHoverMenu({
   onInteractionStart,
   onActionsPinnedChange,
 }: CardHoverMenuPropsWithState) {
+  // The card's hover controls (chosen 02.10.2026 from four versions tried
+  // side by side): Source and More at the top right; the card's collections
+  // and Connect as a plus in a row at the bottom, sliding out with the card's
+  // lift (SPEC_CARD_STATES.md, С8).
   const hasUrl = block.url != null && isSafeUrl(block.url);
   const [menuOpen, setMenuOpen] = useState(false);
   const [channelOpen, setChannelOpen] = useState(false);
-  const [keyboardMenuOpen, setKeyboardMenuOpen] = useState(false);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [keyboardMenuOpen, setKeyboardMenuOpen] = useState(false);
   const lastOpenMoreMenuRequestSequenceRef = useRef(0);
   const keyboardMenuRequestPending =
     openMoreMenuRequestSequence > lastOpenMoreMenuRequestSequenceRef.current;
   const effectiveKeyboardMenuOpen = keyboardMenuOpen || keyboardMenuRequestPending;
   const anyMenuOpen = menuOpen || channelOpen;
+  // A pointer-opened menu holds the card's hover state (С8); a keyboard one
+  // does not.
   const hoverActionsPinned = channelOpen || (menuOpen && !effectiveKeyboardMenuOpen);
 
   useEffect(() => {
@@ -429,20 +492,17 @@ export const CardHoverMenu = memo(function CardHoverMenu({
     onActionsPinnedChange?.(hoverActionsPinned);
   }, [hoverActionsPinned, onActionsPinnedChange]);
 
-  const shouldLoadTags = menuOpen || channelOpen;
-
+  // Connect shows the card's collections ticked: read them when it opens.
   useEffect(() => {
-    if (!shouldLoadTags) return;
+    if (!channelOpen) return;
     let cancelled = false;
     void getBlock(block.slug).then((full) => {
-      if (!cancelled) {
-        setSelectedTags(full?.tags ?? []);
-      }
+      if (!cancelled) setSelectedTags(full?.tags ?? []);
     });
     return () => {
       cancelled = true;
     };
-  }, [block.slug, shouldLoadTags]);
+  }, [block.slug, channelOpen]);
 
   return (
     <>
@@ -458,7 +518,7 @@ export const CardHoverMenu = memo(function CardHoverMenu({
         data-card-hover-enabled={hoverEnabled ? "true" : undefined}
       />
 
-      {/* More (···) — верхний правый. A layer of its own is load-bearing over
+      {/* Source and More (···) at the top right. A layer of its own is load-bearing over
           video: WKWebView promotes <video> to its own compositing layer, and a
           plain positioned sibling loses to it in paint order despite the higher
           z-index — the button drew underneath feed videos.
@@ -469,7 +529,8 @@ export const CardHoverMenu = memo(function CardHoverMenu({
           video has nothing to lose the fight to. */}
       <div
         className={cn(
-          "pointer-events-none absolute right-2 top-2 z-[5] transition-opacity",
+          // The card menu at the top right, the link's button to its left.
+          "pointer-events-none absolute right-2 top-2 z-[5] flex items-center gap-1 transition-opacity",
           videoUnderneath && "transform-gpu",
           hoverEnabled && "group-hover:pointer-events-auto group-hover:opacity-100",
           anyMenuOpen ? "pointer-events-auto opacity-100" : "opacity-0",
@@ -479,6 +540,22 @@ export const CardHoverMenu = memo(function CardHoverMenu({
         onClick={stopProp}
         onPointerDown={stopProp}
       >
+        {hasUrl && (
+          <Button
+            variant="default"
+            size="icon-xs"
+            aria-label="Source"
+            // Leaves the app for the browser: the one case that keeps the
+            // pointing hand under the native cursor contract.
+            className="cursor-pointer"
+            onClick={() => {
+              onInteractionStart?.();
+              if (block.url) openUrl(block.url);
+            }}
+          >
+            <ExternalLink aria-hidden="true" />
+          </Button>
+        )}
         <CardMoreMenu
           block={block}
           vaultPath={vaultPath}
@@ -489,6 +566,7 @@ export const CardHoverMenu = memo(function CardHoverMenu({
           onRequestRename={onRequestRename}
           onRequestDelete={onRequestDelete}
           openRequestSequence={openMoreMenuRequestSequence}
+          triggerSize="icon-xs"
           onOpenChange={(open) => {
             if (open) {
               if (keyboardMenuRequestPending) {
@@ -507,13 +585,14 @@ export const CardHoverMenu = memo(function CardHoverMenu({
         />
       </div>
 
-      {/* Нижний ряд: Source (лево) + Connect (право). It waits under the
-          bottom edge and rises with the card's lift, fading in as it comes
-          (SPEC_CARD_STATES.md, С8); the motion lives in global.css. Over
-          video its transform stays 3D for the layer of its own. */}
+      {/* The card's collections, left-aligned, and Connect as a plus at the
+          right; the row rises with the card's lift (SPEC_CARD_STATES.md, С8).
+          It shows only where the card lifts: under the pointer, or held by a
+          menu the pointer opened. A menu the keyboard opens lifts nothing,
+          so the row stays hidden rather than cover the card's text. */}
       <div
         className={cn(
-          "pointer-events-none absolute bottom-2 left-2 right-2 z-[5] flex gap-2",
+          "pointer-events-none absolute bottom-2 left-2 right-2 z-[5] flex items-center gap-1",
           hoverEnabled && "group-hover:pointer-events-auto group-hover:opacity-100",
           hoverActionsPinned ? "pointer-events-auto opacity-100" : "opacity-0",
         )}
@@ -524,38 +603,23 @@ export const CardHoverMenu = memo(function CardHoverMenu({
         onClick={stopProp}
         onPointerDown={stopProp}
       >
-        {/* Source — низ лево */}
-        {hasUrl && (
-          <Button
-            variant="default"
-            size="default"
-            // Leaves the app for the browser — the one case that keeps the
-            // pointing hand under the native cursor contract.
-            className="flex-1 cursor-pointer"
-            onClick={() => {
-              onInteractionStart?.();
-              if (block.url) openUrl(block.url);
-            }}
-          >
-            Source
-            <ExternalLink className="size-3" />
-          </Button>
-        )}
-
-        {/* Connect — низ право */}
+        <CardCollectionsRow collections={block.collections} order={tags} />
         <DropdownMenu
           onOpenChange={(open) => {
-            if (open) {
-              onInteractionStart?.();
-            }
+            if (open) onInteractionStart?.();
             setChannelOpen(open);
           }}
           modal={false}
         >
           <DropdownMenuTrigger asChild>
-            <Button variant="default" size="default" className="flex-1">
-              Connect
-              <Plus className="size-3" />
+            <Button
+              variant="default"
+              size="icon-xs"
+              aria-label="Connect"
+              className="ml-auto"
+              data-card-hover-connect=""
+            >
+              <Plus aria-hidden="true" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent widthRole="picker" className={COLLECTION_PICKER_CONTENT_CLASS} align="end">

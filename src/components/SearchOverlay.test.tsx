@@ -91,6 +91,7 @@ function makeBlock(id: number, slug: string, overrides: Partial<LightBlock> = {}
     media_urls: null,
     media_dimensions: null,
     preview_manifest: null,
+    collections: [],
     feed_playback: null,
     ...overrides,
   };
