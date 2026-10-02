@@ -42,7 +42,7 @@ export function ActivityIndicators({
           data-activity-indicator="indexing"
           title="Indexing this space"
         >
-          <RefreshCw className="size-3.5 animate-spin" aria-hidden="true" />
+          <RefreshCw className="size-[13px] animate-spin" aria-hidden="true" />
         </span>
       )}
 
@@ -56,7 +56,7 @@ export function ActivityIndicators({
               data-activity-indicator="cloud"
               aria-label={CLOUD_STATE_LABEL}
             >
-              <CloudDownload className="size-3.5" aria-hidden="true" />
+              <CloudDownload className="size-[13px]" aria-hidden="true" />
             </button>
             </ChromeControl>
           </DropdownMenuTrigger>

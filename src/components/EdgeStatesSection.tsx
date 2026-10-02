@@ -245,7 +245,7 @@ export function EdgeStatesSection() {
           <CardFrame>
             <div className="absolute inset-0 bg-component-fill" />
             <div className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-card/90 px-3 py-2">
-              <CloudDownload className="size-3.5 text-muted-foreground" aria-hidden="true" />
+              <CloudDownload className="size-[13px] text-muted-foreground" aria-hidden="true" />
               <span className="text-sm text-muted-foreground">{CLOUD_DOWNLOADING_LABEL} · 42%</span>
             </div>
           </CardFrame>
@@ -253,7 +253,7 @@ export function EdgeStatesSection() {
             <CardFrame>
               <div className="absolute inset-0 bg-component-fill" />
               <div className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-card/90 px-3 py-2">
-                <CloudDownload className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                <CloudDownload className="size-[13px] text-muted-foreground" aria-hidden="true" />
                 <span className="text-sm text-muted-foreground">{CLOUD_DOWNLOADING_LABEL}</span>
               </div>
             </CardFrame>
@@ -267,7 +267,7 @@ export function EdgeStatesSection() {
           <CardFrame>
             <div className="absolute inset-0 bg-component-fill" />
             <div className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-card/90 px-3 py-2">
-              <CloudDownload className="size-3.5 text-muted-foreground" aria-hidden="true" />
+              <CloudDownload className="size-[13px] text-muted-foreground" aria-hidden="true" />
               <span className="text-sm text-muted-foreground">{CLOUD_DOWNLOADING_LABEL}</span>
             </div>
           </CardFrame>
@@ -293,7 +293,7 @@ export function EdgeStatesSection() {
           <CardFrame>
             <div className="absolute inset-0 bg-component-fill" />
             <span className="absolute left-1/2 top-1/2 flex size-9 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-card/80">
-              <Play className="ml-0.5 size-4 fill-foreground text-foreground" aria-hidden="true" />
+              <Play className="ml-0.5 size-[13px] fill-foreground text-foreground" aria-hidden="true" />
             </span>
           </CardFrame>
         </StateCase>
@@ -507,7 +507,7 @@ export function EdgeStatesSection() {
 
       <div className="rounded-1 border border-border p-4">
         <p className="flex items-center gap-2 text-base font-semibold text-foreground">
-          <RefreshCw className="size-4" aria-hidden="true" />
+          <RefreshCw className="size-[13px]" aria-hidden="true" />
           Правило приёмки
         </p>
         <p className="mt-1 max-w-3xl text-base text-muted-foreground">

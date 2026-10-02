@@ -107,7 +107,7 @@ export function GroupSelectionCardMenu({
             className="pointer-events-none absolute right-2 top-2 z-[7] opacity-0 data-[state=open]:pointer-events-auto data-[state=open]:opacity-100"
             data-feed-grid-batch-menu-trigger=""
           >
-            <MoreHorizontal className="size-4" />
+            <MoreHorizontal className="size-[13px]" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent
@@ -124,7 +124,7 @@ export function GroupSelectionCardMenu({
           <DropdownMenuSub open={actions.connectOpen} onOpenChange={actions.setConnectOpen}>
             <DropdownMenuSubTrigger ref={connectTriggerRef}>
               <MenuIconSlot>
-                <Plus className="size-3" />
+                <Plus className="size-[13px]" />
               </MenuIconSlot>
               Connect
             </DropdownMenuSubTrigger>
@@ -145,7 +145,7 @@ export function GroupSelectionCardMenu({
           {currentTag && (
             <DropdownMenuItem variant="detach" onSelect={handleDisconnectFromCollection}>
               <MenuIconSlot>
-                <Unlink className="size-3" />
+                <Unlink className="size-[13px]" />
               </MenuIconSlot>
               Disconnect
             </DropdownMenuItem>
@@ -164,7 +164,7 @@ export function GroupSelectionCardMenu({
             }}
           >
             <MenuIconSlot>
-              <Trash2 className="size-3" />
+              <Trash2 className="size-[13px]" />
             </MenuIconSlot>
             Delete
           </DropdownMenuItem>

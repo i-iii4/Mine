@@ -68,7 +68,7 @@ export function CardTagMenu({
       <ContextMenuSub>
         <ContextMenuSubTrigger>
           <MenuIconSlot>
-            <Plus className="size-3" />
+            <Plus className="size-[13px]" />
           </MenuIconSlot>
           Connect
         </ContextMenuSubTrigger>
@@ -88,7 +88,7 @@ export function CardTagMenu({
       {hasUrl && (
         <ContextMenuItem onSelect={() => openUrl(block.url!)}>
           <MenuIconSlot>
-            <ExternalLink className="size-3" />
+            <ExternalLink className="size-[13px]" />
           </MenuIconSlot>
           Source
         </ContextMenuItem>
@@ -116,7 +116,7 @@ export function CardTagMenu({
       {currentTag && selectedTags.includes(currentTag) && (
         <ContextMenuItem variant="detach" onSelect={() => onToggleTag(block.slug, currentTag, true)}>
           <MenuIconSlot>
-            <Unlink className="size-3" />
+            <Unlink className="size-[13px]" />
           </MenuIconSlot>
           Disconnect from &ldquo;{collectionRefLabel(currentTag)}&rdquo;
         </ContextMenuItem>
@@ -127,7 +127,7 @@ export function CardTagMenu({
         onSelect={() => onRequestDelete(block.slug)}
       >
         <MenuIconSlot>
-          <Trash2 className="size-3" />
+          <Trash2 className="size-[13px]" />
         </MenuIconSlot>
         Delete
       </ContextMenuItem>

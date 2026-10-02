@@ -192,7 +192,7 @@ function MergeCardsDialogRow({
             {...attributes}
             {...listeners}
           >
-            <GripVertical className="size-4" />
+            <GripVertical className="size-[13px]" />
           </button>
         }
         className={cn(isDragging && "opacity-60")}

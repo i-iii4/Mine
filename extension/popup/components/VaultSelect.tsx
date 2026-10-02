@@ -240,7 +240,7 @@ export function VaultSelect({ value, options, onChange, onReveal, onAddSpace, on
               }}
             >
               <MenuIconSlot>
-                <FolderOpen className="size-3" />
+                <FolderOpen className="size-[13px]" />
               </MenuIconSlot>
               Reveal in Finder
             </SearchMenuAction>
@@ -255,7 +255,7 @@ export function VaultSelect({ value, options, onChange, onReveal, onAddSpace, on
               }}
             >
               <MenuIconSlot>
-                <FolderPlus className="size-3" />
+                <FolderPlus className="size-[13px]" />
               </MenuIconSlot>
               Add space
             </SearchMenuAction>

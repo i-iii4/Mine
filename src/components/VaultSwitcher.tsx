@@ -454,7 +454,7 @@ export function VaultSwitcher({
               onPress={handleRevealCurrent}
             >
               <MenuIconSlot>
-                <FolderOpen className="size-3" />
+                <FolderOpen className="size-[13px]" />
               </MenuIconSlot>
               Reveal in Finder
             </SearchMenuAction>
@@ -467,7 +467,7 @@ export function VaultSwitcher({
               }}
             >
               <MenuIconSlot>
-                <FolderPlus className="size-3" />
+                <FolderPlus className="size-[13px]" />
               </MenuIconSlot>
               Add space
             </SearchMenuAction>
@@ -477,7 +477,7 @@ export function VaultSwitcher({
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={handleRevealCurrent}>
               <MenuIconSlot>
-                <FolderOpen className="size-3" />
+                <FolderOpen className="size-[13px]" />
               </MenuIconSlot>
               Reveal in Finder
             </DropdownMenuItem>
@@ -487,7 +487,7 @@ export function VaultSwitcher({
               }}
             >
               <MenuIconSlot>
-                <FolderPlus className="size-3" />
+                <FolderPlus className="size-[13px]" />
               </MenuIconSlot>
               Add space
             </DropdownMenuItem>

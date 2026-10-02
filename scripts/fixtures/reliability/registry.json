@@ -1423,6 +1423,33 @@
       "requirement": "DESIGN_SYSTEM.md#Тулбар",
       "tests": ["src/App.test.tsx"],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "extension/popup/components/ClipperOverflowMenu.tsx",
+        "extension/popup/components/VaultSelect.tsx",
+        "src/components/ActivityIndicators.tsx",
+        "src/components/ArticleAudioControls.tsx",
+        "src/components/CardContextMenu.tsx",
+        "src/components/CloudBadge.tsx",
+        "src/components/GroupSelectionCardMenu.tsx",
+        "src/components/GroupSelectionCommands.tsx",
+        "src/components/GroupSelectionContextMenu.tsx",
+        "src/components/MenuTextTrigger.tsx",
+        "src/components/NotificationCard.tsx",
+        "src/components/Sidebar.classic.tsx",
+        "src/components/VaultConflictsBanner.tsx",
+        "src/components/VaultSwitcher.tsx",
+        "src/components/ui/badge.tsx",
+        "src/components/ui/button.tsx",
+        "src/components/ui/checkbox.tsx",
+        "src/components/ui/dialog.tsx",
+        "src/components/ui/menu-icon-slot.tsx",
+        "src/settings/SpacesSection.tsx"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#Иконки 13 px",
+      "tests": ["src/components/FeedDisplayMenu.test.tsx", "src/App.test.tsx"],
+      "command": "test:frontend"
     }
   ],
   "release": null

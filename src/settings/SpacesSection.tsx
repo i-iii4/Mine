@@ -138,13 +138,13 @@ function SpaceRow({ path, isActive, stats, available, onSwitch, onRemove }: Spac
                     : "opacity-0 group-hover/space:opacity-100 group-focus-within/space:opacity-100",
                 )}
               >
-                <MoreHorizontal className="size-4" />
+                <MoreHorizontal className="size-[13px]" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem variant="detach" onSelect={() => onRemove(path)}>
                 <MenuIconSlot>
-                  <Unlink className="size-3" />
+                  <Unlink className="size-[13px]" />
                 </MenuIconSlot>
                 <span className="flex flex-col">
                   <span>Remove Space</span>

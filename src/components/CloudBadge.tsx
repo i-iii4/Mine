@@ -42,7 +42,7 @@ export function CloudBadge({ active, className }: CloudBadgeProps) {
       data-card-cloud-badge=""
       title={CLOUD_STATE_LABEL}
     >
-      <Cloud className="size-3" aria-hidden="true" />
+      <Cloud className="size-[13px]" aria-hidden="true" />
     </span>
   );
 }

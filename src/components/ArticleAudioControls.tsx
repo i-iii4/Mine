@@ -509,7 +509,7 @@ export function ArticleAudioControls({
   return (
     <div className="flex flex-col gap-2.5">
       <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-muted-foreground">
-        <Volume2 className="size-3.5" />
+        <Volume2 className="size-[13px]" />
         <span>AUDIO</span>
       </div>
 
@@ -522,7 +522,7 @@ export function ArticleAudioControls({
             disabled={isRemoving}
             className="justify-start gap-2 px-0 font-mono"
           >
-            <Trash2 className="size-3.5" />
+            <Trash2 className="size-[13px]" />
             {isRemoving ? "Removing Audio…" : "Remove Audio"}
           </Button>
 
@@ -533,7 +533,7 @@ export function ArticleAudioControls({
             disabled={isPreparingPlayback && !audioBufferRef.current}
             className="justify-start gap-2 font-mono"
           >
-            {isPlaying ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
+            {isPlaying ? <Pause className="size-[13px]" /> : <Play className="size-[13px]" />}
             {isPlaying ? "Pause" : isPreparingPlayback && !audioBufferRef.current ? "Preparing Audio…" : "Play"}
           </Button>
 
@@ -559,8 +559,8 @@ export function ArticleAudioControls({
           disabled={isLoading || isGenerating}
           className="justify-start gap-2 font-mono"
         >
-          {(isLoading || isGenerating) && <LoaderCircle className="size-3.5 animate-spin" />}
-          {!isLoading && !isGenerating && <Volume2 className="size-3.5" />}
+          {(isLoading || isGenerating) && <LoaderCircle className="size-[13px] animate-spin" />}
+          {!isLoading && !isGenerating && <Volume2 className="size-[13px]" />}
           {isLoading ? "Loading…" : isGenerating ? "Creating Audio…" : errorMessage ? "Retry" : "Create Audio"}
         </Button>
       )}

@@ -330,6 +330,32 @@ Mine набирает:
 Остаются 12 px: числа в строках бокового меню, текст карточек ленты и нижняя
 панель с подсказками клавиш.
 
+### Иконки 13 px
+
+Все иконки lucide во всём интерфейсе набраны 13 px (`size-[13px]`), как текст
+интерфейса 13 px и как значки в меню macOS: там значок пункта меню это символ
+SF Symbols того же кегля, 13 pt (замер AppKit 02.10.2026). Размер один для
+всех мест: кнопки всех размеров (`default`, `sm`, `xs`, `icon`, `icon-xs`,
+`chrome-icon`), пункты выпадающих меню и меню правого клика, слот иконки меню
+`MenuIconSlot` (13×13px, чтобы колонка текста оставалась ровной), бейдж,
+диалог, кнопки на карточке, верхняя панель.
+
+Линия ровно 1 px. Lucide рисует на сетке 24 единицы с обводкой 2, и при 13 px
+линия вышла бы 1,08 px, с размытым краем на любом экране. Одно правило в
+`src/styles/global.css`: `svg.lucide { stroke-width: 1.8462 }`, это 24/13
+единицы сетки, ровно 1 px при 13 px. Собственных обводок у иконок нет.
+
+Исключения:
+
+- логотип Mine в меню настроек и значок «плей» на видео не из lucide и
+  сохраняют свой рисунок; кнопка `chrome-icon` держит не-lucide SVG в 16×16px;
+- крупная иконка в шапке `AlertDialog` 32px.
+
+Решение пользователя 02.10.2026 после проб: 16 px в меню и на кнопках карточки
+отвергнуто (иконке тесно в плашке 24 px, плюс тяжелее текста рядом), 12 px
+везде отвергнуто (иконки верхней панели резко мельчают), принято 13 px с
+линией 1 px.
+
 ### Markdown headings in articles
 
 Article prose does not inherit heading sizes from `@tailwindcss/typography`
@@ -895,14 +921,17 @@ Network» — остаются `secondary`: красный цвет, приме�
 
 Размеры (`size`):
 
-| Размер | Высота | Паддинги | Шрифт |
-|---|---|---|---|
-| `default` | `h-8` (32px) | `px-3` | `text-base` (14px) |
-| `clipper` | `h-10` (40px) | `px-3` | `text-base` (14px) |
-| `sm` | `h-7` (28px) | `px-2.5` | `text-base` (14px) |
-| `xs` | `h-6` (24px) | `px-2` | `text-sm` (12px) |
-| `icon` | `size-8` (32px) | — | — |
-| `icon-xs` | `size-6` (24px) | — | — |
+| Размер | Высота | Паддинги | Шрифт | Иконка |
+|---|---|---|---|---|
+| `default` | `h-8` (32px) | `px-3` | `text-base` (14px) | 13px |
+| `clipper` | `h-10` (40px) | `px-3` | `text-base` (14px) | 13px |
+| `sm` | `h-7` (28px) | `px-2.5` | `text-base` (14px) | 13px |
+| `xs` | `h-6` (24px) | `px-2` | `text-sm` (12px) | 13px |
+| `icon` | `size-8` (32px) | нет | нет | 13px |
+| `icon-xs` | `size-6` (24px) | нет | нет | 13px |
+| `chrome-icon` | плашка 24×24px, область 24×30px | нет | нет | 13px, не-lucide SVG 16px |
+
+Иконка во всех размерах одна, 13px с линией 1px (раздел «Иконки 13 px»).
 
 Input и Command по умолчанию — 32px (`h-8`). Clipper использует
 `Input controlSize="clipper"` (`h-10`) только внутри popup/overlay строк.
@@ -1011,7 +1040,7 @@ Shortcut `Cmd+,` продолжает открывать то же окно на
 из которых 12px — внешний отступ и 4px — внутреннее поле кнопки.
 Штатный `Button variant="chrome" size="chrome-icon"` имеет область нажатия 24×30px
 и отдельную центрированную видимую плашку 24×24px;
-SVG-область — 16×16px. Рисунок центрирован в `viewBox="-100 -250 1000 1000"`
+логотип не из lucide, поэтому его SVG-область остаётся 16×16px. Рисунок центрирован в `viewBox="-100 -250 1000 1000"`
 и занимает 12,8×8px без искажения исходного контура. Внутренние поля SVG
 снижают визуальную массу залитого знака рядом с контурными Lucide-иконками.
 `currentColor` наследуется от общего Button: muted в покое, foreground при
@@ -1022,7 +1051,7 @@ Hover/open/keyboard focus используют
 остаётся последней справа при открытой карточке и скрытом bottom bar.
 
 Иконки действий chrome используют тот же вариант Button: область 24×30px,
-плашка 24×24px, SVG 16×16px. Кнопка `Display` ленты
+плашка 24×24px, иконка lucide 13×13px с линией 1px. Кнопка `Display` ленты
 ([SPEC_FEED_DISPLAY.md](SPEC_FEED_DISPLAY.md), Д1) стоит во втором уровне под
 логотипом в собственной `ChromeActions`: правая половина строки держит только
 левый отступ `--main-secondary-pad-x`, правый край отдан `ChromeActions`, и ось
@@ -1140,7 +1169,7 @@ Space dropdown не показывает текущий space повторно �
 или другие selected markers. Внутри есть `Search spaces` input, список только
 destination spaces и два pinned action под разделителем: `Reveal in Finder`
 (`FolderOpen`) и `Add space` (`FolderPlus`), именно в этом порядке. Оба несут
-иконку в leading slot (`MenuIconSlot`, `size-3`) слева от текста; строки
+иконку в leading slot (`MenuIconSlot`, 13×13px) слева от текста; строки
 destination spaces и placeholder `No other spaces` получают тот же слот пустым,
 чтобы текстовая колонка меню была одна. `Reveal in Finder` действует на текущий
 space, а не на строку, и закрывает меню — окно уходит в Finder, и оставленный
@@ -1469,7 +1498,7 @@ primitive.
 
 Выбор из нескольких значений (`DropdownMenuRadioItem`, `ContextMenuRadioItem`)
 не сдвигает текст на `pl-8` и не рисует кружок: текущий пункт несёт галочку
-`Check size-3` в обычном `MenuIconSlot`, у остальных слот пустой, как в меню
+`Check` 13px в обычном `MenuIconSlot`, у остальных слот пустой, как в меню
 macOS. Текстовая колонка совпадает с остальными строками меню. Подпись группы
 выбора повторяет заголовок меню выделения: `px-2 py-1.5 font-mono text-sm
 text-muted-foreground`; группы разделены `DropdownMenuSeparator`. Меню, где
@@ -1514,7 +1543,8 @@ Content: `rounded-1 border bg-card p-1 text-card-foreground`, тень — ед�
 `--card-hover-overlay` прозрачен в обеих темах.
 
 **Кнопки:** стандартные `Button variant="default" size="icon-xs"` (24px,
-`bg-component-fill`, `rounded-1`). Адаптируются к теме автоматически.
+`bg-component-fill`, `rounded-1`), иконка 13px с линией 1px. Адаптируются к
+теме автоматически.
 
 **Расположение:**
 - **Сверху справа** (`absolute right-2 top-2`, `gap-1`): **Source**
@@ -1577,7 +1607,7 @@ Media Asset Hover Menu — отдельный contract от Card Hover Menu. О�
 на карточке.
 
 **Кнопка:** стандартный `Button variant="default" size="icon"` с
-`MoreHorizontal size-4`. Фон непрозрачный `bg-component-fill`; hover-состояние
+`MoreHorizontal` 13px. Фон непрозрачный `bg-component-fill`; hover-состояние
 идёт из базового Button: inset outline `hover:outline-component-fill-hover`.
 
 **Расположение:** `absolute right-2 top-2` относительно прямоугольника самого
@@ -1673,11 +1703,11 @@ near the first selected rendered Markdown block.
   foreground only on hover/active. It carries the `dnd-kit` draggable payload
   `type: "text_selection"`. The native highlighted text itself is never a Mine
   drag source.
-- `Create Element`: standard `Button size="xs"` with `Plus size-3` inside the bar;
+- `Create Element`: standard `Button size="xs"` with a 13px `Plus` inside the bar;
   opens the same searchable channel picker contract as media asset `Create Element`
   (`Everything`, channels, shared `SearchMenuInput`, `QuantizedMenuScrollArea`,
   optional create channel).
-- `Delete Text`: destructive `Button size="xs"` with `Trash2 size-3`; removes
+- `Delete Text`: destructive `Button size="xs"` with a 13px `Trash2`; removes
   the selected text fragment from the source article, not the source card.
 - `Clear text selection`: ghost icon button with `X`, same close affordance
   family as the main grid group-selection bar.
@@ -2206,8 +2236,8 @@ slot всегда показывает count в `font-mono`. Rename/Delete до�
 
 Строки создания коллекции (`Create New Collection +`,
 `data-sidebar-new-channel-row`) в покое нет: команда живёт во втором ряду
-верхней панели (`+` после числа коллекций, а при открытой карточке после
-`All / Connected`) и на ⇧⌘N. Строка появляется внизу списка только пока у неё
+верхней панели (`+` у правого края ячейки над меню, а при открытой карточке
+после `All / Connected`) и на ⇧⌘N. Строка появляется внизу списка только пока у неё
 есть работа: пока новую коллекцию называют, тогда она становится полем ввода;
 и пока тащат карточку, тогда это цель броска, которая создаёт коллекцию сразу с
 этой карточкой. Пока строки нет, клавиатурная навигация по списку её не
@@ -2331,21 +2361,22 @@ deltas, cards, pills, uppercase labels и любые hover/focus states, кро�
 боковым меню.
 
 Левый segment (`data-main-secondary-top-bar-sidebar-segment`) это шапка списка
-коллекций под ним (`data-main-secondary-stats-left`): `px-[--chrome-edge-pad]`,
-`h-full`, `items-center`, `overflow-hidden`, `gap-5`. Текстовый режим:
+коллекций под ним (`data-main-secondary-stats-left`), устроенная как правая
+половина над лентой: только левый отступ `pl-[--chrome-edge-pad]`, `h-full`,
+`items-center`, `overflow-hidden`, `gap-5`. Текстовый режим:
 `font-mono text-tertiary-foreground leading-none`, regular weight, кегль 13 px
-(«Текст интерфейса 13 px»). Содержимое слева направо:
+(«Текст интерфейса 13 px»). Содержимое:
 
-- число коллекций (`data-main-secondary-collection-count`): `1 collection`,
-  иначе `N collections`; число берётся из того же списка коллекций, что рисует
-  боковое меню;
-- сразу за ним иконочная кнопка `+` (`data-main-secondary-new-collection`,
-  `aria-label="New Collection"`): стандартная кнопка верхней панели, то же
-  действие, что ⇧⌘N. Зазор от числа тот же `gap-5`, что между `651 elements`
-  и `View:` над лентой, и отсчитан до знака, а не до края подложки: воздух
-  подложки в 4 px уходит внутрь зазора (`-ml-1`);
-- индикаторы загрузки из iCloud и индексации (`ActivityIndicators`), видимые
-  только во время работы.
+- слева число коллекций (`data-main-secondary-collection-count`):
+  `1 collection`, иначе `N collections`; число берётся из того же списка
+  коллекций, что рисует боковое меню;
+- за ним индикаторы загрузки из iCloud и индексации (`ActivityIndicators`),
+  видимые только во время работы;
+- у правого края ячейки иконочная кнопка `+` (`data-main-secondary-new-collection`,
+  `aria-label="New Collection"`): стандартная кнопка верхней панели в
+  `ChromeActions className="ml-auto"`, то же действие, что ⇧⌘N. Правый отступ
+  держит `ChromeActions` (`--chrome-icon-edge-pad`), как у кнопки `Display`
+  над лентой. Если команды нет, ячейка получает правый отступ сама.
 
 Статистики файлов пространства (`files`, `.md`, `media`, объём) в этой строке
 больше нет.

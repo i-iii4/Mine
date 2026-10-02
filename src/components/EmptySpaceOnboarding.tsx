@@ -62,7 +62,7 @@ export function EmptySpaceOnboarding({
               onInstallClipper();
             }}
           >
-            <Download className="size-4" />
+            <Download className="size-[13px]" />
             Install the extension
           </Button>
         </div>

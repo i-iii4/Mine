@@ -64,35 +64,37 @@ function MainSecondaryStatsLeft({
   return (
     <div
       data-main-secondary-stats-left=""
-      // Over the sidebar column: the header of the list below it. The count of
-      // its collections on the rows' edge pad, the button that adds one right
-      // after it, the gap the elements half over the feed keeps between its
-      // count and View.
-      className="flex h-full min-w-0 items-center justify-start gap-5 overflow-hidden px-[var(--chrome-edge-pad)] font-mono text-sm leading-none text-tertiary-foreground"
+      // Over the sidebar column: the header of the list below it, laid out
+      // like the elements half over the feed. The count of its collections on
+      // the rows' edge pad at the left; the button that adds one at the right
+      // edge, where ChromeActions owns the inset, as it does for Display.
+      className={cn(
+        "flex h-full min-w-0 items-center justify-start gap-5 overflow-hidden pl-[var(--chrome-edge-pad)] font-mono text-sm leading-none text-tertiary-foreground",
+        !onCreateCollection && "pr-[var(--chrome-edge-pad)]",
+      )}
     >
       <span data-main-secondary-collection-count="" className="min-w-0 truncate whitespace-nowrap">
         {formatPluralCount(collectionCount, "collection", "collections")}
       </span>
-      {onCreateCollection && (
-        <Button
-          type="button"
-          variant="chrome"
-          size="chrome-icon"
-          aria-label="New Collection"
-          onClick={onCreateCollection}
-          // The plate's 4px of air sits inside the gap: the glyph, not the
-          // plate, stands one gap from the count.
-          className="-ml-1"
-          data-main-secondary-new-collection=""
-        >
-          <Plus />
-        </Button>
-      )}
       <ActivityIndicators
         cloudPending={cloudPending}
         indexing={indexing}
         onRevealSpace={onRevealSpace}
       />
+      {onCreateCollection && (
+        <ChromeActions className="ml-auto">
+          <Button
+            type="button"
+            variant="chrome"
+            size="chrome-icon"
+            aria-label="New Collection"
+            onClick={onCreateCollection}
+            data-main-secondary-new-collection=""
+          >
+            <Plus />
+          </Button>
+        </ChromeActions>
+      )}
     </div>
   );
 }

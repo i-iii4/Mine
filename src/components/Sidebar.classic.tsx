@@ -137,7 +137,7 @@ export function Sidebar({
             onClick={() => setIsCreating(true)}
             className="mt-1 w-full justify-start rounded-1 text-muted-foreground hover:bg-accent"
           >
-            <Plus className="size-3" />
+            <Plus className="size-[13px]" />
             <span>New collection</span>
           </Button>
         )}
@@ -281,7 +281,7 @@ function TagNavItem({
                         onPointerDown={(e) => e.stopPropagation()}
                         className="shrink-0 text-muted-foreground hover:text-hover-foreground"
                       >
-                        <MoreHorizontal className="size-3" />
+                        <MoreHorizontal className="size-[13px]" />
                       </Button>
                     </DropdownMenuTrigger>
                   </TooltipTrigger>
@@ -289,14 +289,14 @@ function TagNavItem({
                 </Tooltip>
                 <DropdownMenuContent align="start">
               <DropdownMenuItem onSelect={onDoubleClick}>
-                <Pencil className="size-3" />
+                <Pencil className="size-[13px]" />
                 Rename
               </DropdownMenuItem>
               <DropdownMenuItem
                 variant="destructive"
                 onSelect={() => setDeleteOpen(true)}
               >
-                <Trash2 className="size-3" />
+                <Trash2 className="size-[13px]" />
                 Delete
               </DropdownMenuItem>
               </DropdownMenuContent>

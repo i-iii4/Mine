@@ -97,7 +97,7 @@ export function VaultConflictsBanner({ vaultReady }: VaultConflictsBannerProps) 
         onClick={() => setOpen(true)}
         className="mb-4 flex w-full items-center gap-2 rounded-1 border border-destructive/40 bg-destructive/10 px-3 py-2 text-left text-sm text-destructive-foreground hover:bg-destructive/15"
       >
-        <AlertTriangle className="size-4 shrink-0" />
+        <AlertTriangle className="size-[13px] shrink-0" />
         <span className="flex-1 truncate">
           {count === 1
             ? "1 iCloud sync conflict"
@@ -143,7 +143,7 @@ export function VaultConflictsBanner({ vaultReady }: VaultConflictsBannerProps) 
                       disabled={busy}
                       onClick={() => handleResolve(item, "keep_original")}
                     >
-                      <Trash2 className="mr-1 size-3.5" />
+                      <Trash2 className="mr-1 size-[13px]" />
                       Keep original
                     </Button>
                     <Button
@@ -152,7 +152,7 @@ export function VaultConflictsBanner({ vaultReady }: VaultConflictsBannerProps) 
                       disabled={busy}
                       onClick={() => handleResolve(item, "keep_conflict")}
                     >
-                      <Check className="mr-1 size-3.5" />
+                      <Check className="mr-1 size-[13px]" />
                       Keep conflict version
                     </Button>
                     <Button
@@ -163,7 +163,7 @@ export function VaultConflictsBanner({ vaultReady }: VaultConflictsBannerProps) 
                         handleResolve(item, "dismiss_for_manual_merge")
                       }
                     >
-                      <Edit3 className="mr-1 size-3.5" />
+                      <Edit3 className="mr-1 size-[13px]" />
                       I'll merge manually
                     </Button>
                   </div>
@@ -174,7 +174,7 @@ export function VaultConflictsBanner({ vaultReady }: VaultConflictsBannerProps) 
 
           <div className="mt-4 flex justify-end">
             <Button variant="secondary" onClick={() => setOpen(false)}>
-              <X className="mr-1 size-3.5" />
+              <X className="mr-1 size-[13px]" />
               Close
             </Button>
           </div>

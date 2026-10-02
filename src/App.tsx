@@ -3744,7 +3744,7 @@ export function AppWithVault({
                       data-sidebar-top-search-clear=""
                     >
                       <ChromePlate className="w-6 rounded-1 group-hover:bg-component-fill-hover group-focus-visible:bg-component-fill-hover">
-                      <X aria-hidden="true" className="size-3" />
+                      <X aria-hidden="true" className="size-[13px]" />
                       </ChromePlate>
                     </button>
                     </ChromeControl>

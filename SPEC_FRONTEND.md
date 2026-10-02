@@ -576,10 +576,12 @@ Sidebar и Detail body не должны рендерить свои допол�
 
 В main browsing state этот второй bar рендерит `MainSecondaryTopBar`, а не
 общий toolbar. Левый segment (`data-main-secondary-top-bar-sidebar-segment`)
-это шапка списка коллекций: число коллекций (`tags.length`, тот же список, что
-рисует боковое меню) и сразу за ним иконочная кнопка `+`, которая вызывает
-`onCreateCollection` (в `App` это `beginCreateCollection`, то же, что ⇧⌘N).
-Индикаторы iCloud и индексации стоят после кнопки. Правый segment
+это шапка списка коллекций: слева число коллекций (`tags.length`, тот же
+список, что рисует боковое меню) и за ним индикаторы iCloud и индексации; у
+правого края ячейки иконочная кнопка `+` в `ChromeActions className="ml-auto"`,
+которая вызывает `onCreateCollection` (в `App` это `beginCreateCollection`, то
+же, что ⇧⌘N). У ячейки только левый отступ, правый держит `ChromeActions`, как
+у кнопки `Display` над лентой. Правый segment
 (`data-main-secondary-top-bar-content-segment`) получает
 `currentCollectionCardCount`: в `Everything` это все non-channel карточки, в
 канале это карточки, прикреплённые к этому каналу. Active Grid search не меняет

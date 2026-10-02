@@ -538,7 +538,7 @@ export function ImagePreviewOverlay({
           onClick={() => stepScale(-1)}
           className="text-muted-foreground hover:text-foreground"
         >
-          <Minus className="size-4" />
+          <Minus className="size-[13px]" />
         </Button>
         <span
           className="min-w-[5ch] text-center font-mono text-sm text-muted-foreground"
@@ -555,7 +555,7 @@ export function ImagePreviewOverlay({
           onClick={() => stepScale(1)}
           className="text-muted-foreground hover:text-foreground"
         >
-          <Plus className="size-4" />
+          <Plus className="size-[13px]" />
         </Button>
         <div className="h-6 w-px bg-border" />
         <Button
@@ -567,7 +567,7 @@ export function ImagePreviewOverlay({
           onClick={copyImage}
           className="text-muted-foreground hover:text-foreground"
         >
-          <Copy className="size-4" />
+          <Copy className="size-[13px]" />
         </Button>
         <div className="h-6 w-px bg-border" />
         <Button
@@ -579,7 +579,7 @@ export function ImagePreviewOverlay({
           onClick={onClose}
           className="text-muted-foreground hover:text-foreground"
         >
-          <Minimize2 className="size-4" />
+          <Minimize2 className="size-[13px]" />
         </Button>
         {copyError && (
           <span className="sr-only" data-image-preview-copy-error>

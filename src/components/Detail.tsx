@@ -958,7 +958,7 @@ function DetailActionRow({
           onClick={() => openUrl(block.url!)}
         >
           Source
-          <ExternalLink className="size-3" />
+          <ExternalLink className="size-[13px]" />
         </Button>
       )}
 
@@ -971,7 +971,7 @@ function DetailActionRow({
             className="min-w-0 flex-1 bg-component-fill-inner"
           >
             Connect
-            <Plus className="size-3" />
+            <Plus className="size-[13px]" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent widthRole="picker" className={COLLECTION_PICKER_CONTENT_CLASS} align="start">
@@ -1852,7 +1852,7 @@ function MediaAssetActionFrame({
                 className="absolute inset-x-0 bottom-0 z-10 flex items-center gap-2 bg-card/90 px-3 py-2"
                 data-detail-copy-waiting=""
               >
-                <CloudDownload className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                <CloudDownload className="size-[13px] text-muted-foreground" aria-hidden="true" />
                 <span className="text-sm text-muted-foreground">{CLOUD_DOWNLOADING_LABEL}</span>
               </div>
             )}
@@ -1886,7 +1886,7 @@ function MediaAssetActionFrame({
                       });
                     }}
                   >
-                    <Expand className="size-4" />
+                    <Expand className="size-[13px]" />
                   </Button>
                 )}
                 <MediaAssetMoreMenu
@@ -2001,7 +2001,7 @@ function MediaAssetMenuItems({
       <Sub open={connectSubmenuOpen} onOpenChange={onConnectSubmenuOpenChange}>
         <SubTrigger>
           <MenuIconSlot>
-            <Plus className="size-3" />
+            <Plus className="size-[13px]" />
           </MenuIconSlot>
           Create Element
         </SubTrigger>
@@ -2054,13 +2054,13 @@ function MediaAssetMenuItems({
       </Item>
       <Item variant="detach" onSelect={() => onRequestDialog("remove")}>
         <MenuIconSlot>
-          <Unlink className="size-3" />
+          <Unlink className="size-[13px]" />
         </MenuIconSlot>
         Remove from Element
       </Item>
       <Item variant="destructive" onSelect={() => onRequestDialog("delete")}>
         <MenuIconSlot>
-          <Trash2 className="size-3" />
+          <Trash2 className="size-[13px]" />
         </MenuIconSlot>
         Delete Media
       </Item>
@@ -2097,7 +2097,7 @@ function MediaAssetMoreMenu({
           aria-label="Media actions"
           data-detail-media-more-button
         >
-          <MoreHorizontal className="size-4" />
+          <MoreHorizontal className="size-[13px]" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
@@ -2260,7 +2260,7 @@ function CreateCardCollectionPicker<TPayload>({
               void connect(trimmed, true);
             }}
           >
-            <Plus className="size-4 shrink-0" />
+            <Plus className="size-[13px] shrink-0" />
             <span>Create &ldquo;{trimmed}&rdquo;</span>
           </DropdownMenuItem>
         )}
@@ -3337,7 +3337,7 @@ function TextSelectionActionBar({
         aria-label="Drag selected text to a collection"
         title="Drag selected text to a collection"
       >
-        <GripVertical className="size-4" aria-hidden="true" />
+        <GripVertical className="size-[13px]" aria-hidden="true" />
       </Button>
 
       {onCreateCard && (
@@ -3351,7 +3351,7 @@ function TextSelectionActionBar({
                 event.preventDefault();
               }}
             >
-              <Plus className="size-3" aria-hidden="true" />
+              <Plus className="size-[13px]" aria-hidden="true" />
               Create Element
             </Button>
           </DropdownMenuTrigger>
@@ -3402,7 +3402,7 @@ function TextSelectionActionBar({
             }
           }}
         >
-          <Trash2 className="size-3" aria-hidden="true" />
+          <Trash2 className="size-[13px]" aria-hidden="true" />
           Delete Text
         </Button>
       )}
@@ -3420,7 +3420,7 @@ function TextSelectionActionBar({
         }}
         onClick={onDismiss}
       >
-        <X className="size-4" aria-hidden="true" />
+        <X className="size-[13px]" aria-hidden="true" />
       </Button>
     </div>
   );
@@ -3589,7 +3589,7 @@ function DetailImage({
           className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-card/90 px-3 py-2"
           data-detail-cloud-state="downloading"
         >
-          <CloudDownload className="size-3.5 text-muted-foreground" aria-hidden="true" />
+          <CloudDownload className="size-[13px] text-muted-foreground" aria-hidden="true" />
           <span className="text-sm text-muted-foreground">
             {percent === null
               ? CLOUD_DOWNLOADING_LABEL

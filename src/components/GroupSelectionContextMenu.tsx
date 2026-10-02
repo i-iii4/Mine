@@ -76,7 +76,7 @@ export function GroupSelectionContextMenu({
       <ContextMenuSub open={actions.connectOpen} onOpenChange={actions.setConnectOpen}>
         <ContextMenuSubTrigger>
           <MenuIconSlot>
-            <Plus className="size-3" />
+            <Plus className="size-[13px]" />
           </MenuIconSlot>
           Connect
         </ContextMenuSubTrigger>
@@ -94,7 +94,7 @@ export function GroupSelectionContextMenu({
       {currentTag && (
         <ContextMenuItem variant="detach" onSelect={handleDisconnectFromCollection}>
           <MenuIconSlot>
-            <Unlink className="size-3" />
+            <Unlink className="size-[13px]" />
           </MenuIconSlot>
           Disconnect
         </ContextMenuItem>
@@ -107,7 +107,7 @@ export function GroupSelectionContextMenu({
       )}
       <ContextMenuItem variant="destructive" onSelect={onRequestDeleteSelected}>
         <MenuIconSlot>
-          <Trash2 className="size-3" />
+          <Trash2 className="size-[13px]" />
         </MenuIconSlot>
         Delete
       </ContextMenuItem>

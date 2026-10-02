@@ -1190,3 +1190,12 @@ header.chrome-row .text-sm,
 [data-sidebar-scroll] .text-base {
   font-size: var(--text-interface);
 }
+
+/* Interface icons (DESIGN_SYSTEM.md, «Иконки 13 px»): lucide draws on a
+   24-unit grid at stroke 2, which at the 13px every icon is set in comes to
+   a line of 1.08px, soft on any screen. 24 / 13 units is exactly one pixel.
+   Custom glyphs (the Mine logo, the play badge) are not lucide and keep
+   their own drawing. */
+svg.lucide {
+  stroke-width: 1.8462;
+}

@@ -115,7 +115,7 @@ export function StandaloneFolderRow({
       className="flex h-10 shrink-0 items-center gap-2 border-b border-border bg-accent px-3"
       data-clipper-standalone-row=""
     >
-      <FolderOpen className="size-3.5 text-muted-foreground" aria-hidden="true" />
+      <FolderOpen className="size-[13px] text-muted-foreground" aria-hidden="true" />
       <span className="min-w-0 truncate text-base text-foreground">
         {folderName ?? "Folder"}
       </span>

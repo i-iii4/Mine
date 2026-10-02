@@ -1825,11 +1825,11 @@ const TagNavItem = memo(function TagNavItem({
         </ContextMenuTrigger>
         <ContextMenuContent>
           <ContextMenuItem onSelect={startRename}>
-            <Pencil className="size-3" />
+            <Pencil className="size-[13px]" />
             Rename
           </ContextMenuItem>
           <ContextMenuItem variant="destructive" onSelect={() => setDeleteOpen(true)}>
-            <Trash2 className="size-3" />
+            <Trash2 className="size-[13px]" />
             Delete
           </ContextMenuItem>
         </ContextMenuContent>

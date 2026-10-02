@@ -77,9 +77,9 @@ export const MenuTextTrigger = React.forwardRef<HTMLButtonElement, MenuTextTrigg
             </Plate>
             {showChevron && chromeLike ? (
               isClipperHeader ? (
-                <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform duration-150 group-hover:text-foreground group-data-[state=open]:rotate-90 group-data-[state=open]:text-foreground" />
+                <ChevronRight className="size-[13px] shrink-0 text-muted-foreground transition-transform duration-150 group-hover:text-foreground group-data-[state=open]:rotate-90 group-data-[state=open]:text-foreground" />
               ) : (
-                <ChevronDown className="size-4 shrink-0 text-muted-foreground group-hover:text-foreground group-data-[state=open]:text-foreground" />
+                <ChevronDown className="size-[13px] shrink-0 text-muted-foreground group-hover:text-foreground group-data-[state=open]:text-foreground" />
               )
             ) : null}
           </>

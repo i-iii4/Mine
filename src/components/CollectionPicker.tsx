@@ -472,7 +472,7 @@ export function CollectionPicker({
             data-collection-picker-create=""
             data-collection-picker-create-active={createActive ? "true" : undefined}
           >
-            <Plus className="size-4 shrink-0" />
+            <Plus className="size-[13px] shrink-0" />
             <span>
               Create &ldquo;{trimmed}&rdquo;
             </span>
@@ -770,7 +770,7 @@ export function BatchCollectionPicker({
             data-collection-picker-create=""
             data-collection-picker-create-active={createActive ? "true" : undefined}
           >
-            <Plus className="size-4 shrink-0" />
+            <Plus className="size-[13px] shrink-0" />
             <span>
               Create &ldquo;{trimmed}&rdquo;
             </span>

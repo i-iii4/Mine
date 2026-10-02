@@ -35,7 +35,7 @@ export function ClipperOverflowMenu({ canOpenApp, vaultPath, onRetryConnection, 
           aria-label="More"
           data-clipper-overflow-trigger=""
         >
-          <MoreHorizontal className="size-3.5" />
+          <MoreHorizontal className="size-[13px]" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" side="bottom" sideOffset={4}>
@@ -50,7 +50,7 @@ export function ClipperOverflowMenu({ canOpenApp, vaultPath, onRetryConnection, 
             }}
           >
             <MenuIconSlot>
-              <AppWindow className="size-3" />
+              <AppWindow className="size-[13px]" />
             </MenuIconSlot>
             Open app
           </DropdownMenuItem>
@@ -74,7 +74,7 @@ export function ClipperOverflowMenu({ canOpenApp, vaultPath, onRetryConnection, 
             }}
           >
             <MenuIconSlot>
-              <Download className="size-3" />
+              <Download className="size-[13px]" />
             </MenuIconSlot>
             Download app
           </DropdownMenuItem>

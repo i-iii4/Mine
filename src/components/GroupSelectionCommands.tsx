@@ -158,7 +158,7 @@ export function GroupSelectionCommands({
                 size="xs"
                 className="shrink-0"
               >
-                <Plus className="size-3" />
+                <Plus className="size-[13px]" />
                 Connect
               </Button>
             </DropdownMenuTrigger>
@@ -242,7 +242,7 @@ export function GroupSelectionCommands({
             className="size-8 shrink-0 text-muted-foreground hover:text-foreground"
             onClick={onClearSelection}
           >
-            <X className="size-4" />
+            <X className="size-[13px]" />
           </Button>
         </div>
       </div>

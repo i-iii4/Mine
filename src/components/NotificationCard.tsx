@@ -47,7 +47,7 @@ export function NotificationCard({
           className="-mr-1 -mt-1 shrink-0"
           onClick={onClose}
         >
-          <X className="size-3.5" />
+          <X className="size-[13px]" />
         </Button>
       </div>
       <div className="mt-1 grid gap-2 text-left">{children}</div>

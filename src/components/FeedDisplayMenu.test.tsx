@@ -77,7 +77,7 @@ describe("Display menu (SPEC_FEED_DISPLAY.md, Д1 to Д3)", () => {
       expect(item.firstElementChild).toHaveAttribute("data-card-menu-icon-slot");
     }
     const newest = screen.getByRole("menuitemradio", { name: "Newest first" });
-    expect(newest.querySelector("[data-card-menu-icon-slot] svg")).toHaveClass("size-3");
+    expect(newest.querySelector("[data-card-menu-icon-slot] svg")).toHaveClass("size-[13px]");
     const oldest = screen.getByRole("menuitemradio", { name: "Oldest first" });
     expect(oldest.querySelector("[data-card-menu-icon-slot] svg")).toBeNull();
   });

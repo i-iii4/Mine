@@ -562,7 +562,7 @@ export function SearchOverlay({
               onClick={handleClear}
               className="flex h-6 w-6 shrink-0 items-center justify-center rounded-1 text-muted-foreground hover:bg-component-fill-hover hover:text-foreground focus-visible:bg-component-fill-hover focus-visible:text-foreground focus-visible:outline-none"
             >
-              <X className="size-4" />
+              <X className="size-[13px]" />
             </button>
           )}
         </div>

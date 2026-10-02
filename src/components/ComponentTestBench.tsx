@@ -457,7 +457,7 @@ function CoreComponentSection() {
           { prop: "ghost", value: "только иконные контролы" },
           { prop: "link", value: "underline · инлайн-ссылки" },
           { prop: "Hover", value: "outline 1px · --component-fill-hover" },
-          { prop: "SVG", value: "size-4 (16) · xs size-3 (12)" },
+          { prop: "SVG", value: "size-[13px] · линия 1 px" },
         ]}
       >
         <Button variant="default"><Plus />Connect</Button>
@@ -658,7 +658,7 @@ function FloatingUiSection() {
           { prop: "Hover", value: "bg --active · text --accent-foreground" },
           { prop: "destructive", value: "text --destructive" },
           { prop: "Разделитель", value: "h-px · bg --border · my-1" },
-          { prop: "SVG", value: "size-4 (16) · --muted-foreground" },
+          { prop: "SVG", value: "size-[13px] · --muted-foreground" },
         ]}
       >
         <DropdownMenu>
@@ -668,7 +668,7 @@ function FloatingUiSection() {
           <DropdownMenuContent widthRole="command">
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
-                <Plus className="size-3" />
+                <Plus className="size-[13px]" />
                 Connect
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent widthRole="picker" className="p-0">
@@ -683,7 +683,7 @@ function FloatingUiSection() {
               </DropdownMenuSubContent>
             </DropdownMenuSub>
             <DropdownMenuItem>
-              <ExternalLink className="size-3" />
+              <ExternalLink className="size-[13px]" />
               Source
             </DropdownMenuItem>
             <DropdownMenuSeparator />
@@ -771,7 +771,7 @@ function DialogPrimitivesSection() {
           { prop: "Фон / рамка", value: "--background / border" },
           { prop: "Отступы", value: "p-6 (24) · gap-4 (16)" },
           { prop: "Оверлей", value: "bg-black/50 · fixed inset-0" },
-          { prop: "Close", value: "top/right 16 · X size-4 (16)" },
+          { prop: "Close", value: "top/right 16 · X size-[13px]" },
           { prop: "Title / Desc", value: "18px 600 / 14px --muted-foreground" },
         ]}
       >
@@ -1006,10 +1006,10 @@ function CardPatternSection() {
         ]}
       >
         <div className="inline-flex h-8 items-center gap-1 rounded-1 border border-border bg-accent px-1 shadow-md">
-          <Button size="xs"><Plus className="size-3" />Create Element</Button>
-          <Button size="xs" variant="destructive"><Strikethrough className="size-3" />Delete Text</Button>
+          <Button size="xs"><Plus className="size-[13px]" />Create Element</Button>
+          <Button size="xs" variant="destructive"><Strikethrough className="size-[13px]" />Delete Text</Button>
           <Button size="icon-xs" variant="ghost" aria-label="Close text selection menu">
-            <X className="size-3" />
+            <X className="size-[13px]" />
           </Button>
         </div>
       </ComponentSpec>
@@ -1021,7 +1021,7 @@ function CardPatternSection() {
           { prop: "Карточка", value: "border --border · bg --card · rounded-1 · shadow-md" },
           { prop: "Смещение", value: "left ~9 · top ~7 на слой" },
           { prop: "Поворот", value: "−1°…+1.6° на слой" },
-          { prop: "Иконка", value: "GripVertical size-4 (16) · --muted-foreground" },
+          { prop: "Иконка", value: "GripVertical size-[13px] · --muted-foreground" },
         ]}
       >
         <div className="relative h-28 w-72">
@@ -1036,7 +1036,7 @@ function CardPatternSection() {
               }}
             >
               <div className="flex h-full items-center gap-3 p-3">
-                <GripVertical className="size-4 text-muted-foreground" />
+                <GripVertical className="size-[13px] text-muted-foreground" />
                 <div>
                   <p className="text-base font-semibold">3 selected cards</p>
                   <p className="text-sm text-muted-foreground">Drag stack preview</p>
@@ -1132,13 +1132,13 @@ function ClipperStandaloneRowFrame() {
       <div className="flex gap-3">
         <div className="w-40 rounded-1 border border-border bg-popover p-1 text-popover-foreground shadow-md">
           <div className="flex h-7 items-center gap-2 rounded-[2px] px-2 text-base">
-            <AppWindow className="size-3 text-muted-foreground" aria-hidden="true" />
+            <AppWindow className="size-[13px] text-muted-foreground" aria-hidden="true" />
             Open app
           </div>
         </div>
         <div className="w-40 rounded-1 border border-border bg-popover p-1 text-popover-foreground shadow-md">
           <div className="flex h-7 items-center gap-2 rounded-[2px] px-2 text-base">
-            <Download className="size-3 text-muted-foreground" aria-hidden="true" />
+            <Download className="size-[13px] text-muted-foreground" aria-hidden="true" />
             Download app
           </div>
         </div>

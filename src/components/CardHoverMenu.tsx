@@ -273,7 +273,7 @@ function CardMenuDropdownContent<TBlock extends LightBlock | IndexedBlock>({
       <DropdownMenuSub open={connectSubmenuOpen} onOpenChange={setConnectSubmenuOpen}>
         <DropdownMenuSubTrigger ref={connectTriggerRef}>
           <MenuIconSlot>
-            <Plus className="size-3" />
+            <Plus className="size-[13px]" />
           </MenuIconSlot>
           Connect
         </DropdownMenuSubTrigger>
@@ -301,7 +301,7 @@ function CardMenuDropdownContent<TBlock extends LightBlock | IndexedBlock>({
       {hasUrl && (
         <DropdownMenuItem onSelect={() => openUrl(block.url!)}>
           <MenuIconSlot>
-            <ExternalLink className="size-3" />
+            <ExternalLink className="size-[13px]" />
           </MenuIconSlot>
           Source
         </DropdownMenuItem>
@@ -332,7 +332,7 @@ function CardMenuDropdownContent<TBlock extends LightBlock | IndexedBlock>({
           onSelect={() => onToggleTag(block.slug, currentTag, true)}
         >
           <MenuIconSlot>
-            <Unlink className="size-3" />
+            <Unlink className="size-[13px]" />
           </MenuIconSlot>
           Disconnect from &ldquo;{collectionRefLabel(currentTag)}&rdquo;
         </DropdownMenuItem>
@@ -343,7 +343,7 @@ function CardMenuDropdownContent<TBlock extends LightBlock | IndexedBlock>({
         onSelect={() => onRequestDelete(block.slug)}
       >
         <MenuIconSlot>
-          <Trash2 className="size-3" />
+          <Trash2 className="size-[13px]" />
         </MenuIconSlot>
         Delete
       </DropdownMenuItem>

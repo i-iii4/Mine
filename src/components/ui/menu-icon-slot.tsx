@@ -6,7 +6,7 @@ export function MenuIconSlot({ children }: { children?: ReactNode }) {
   return (
     <span
       aria-hidden="true"
-      className="flex size-3 shrink-0 items-center justify-center"
+      className="flex size-[13px] shrink-0 items-center justify-center"
       data-card-menu-icon-slot=""
     >
       {children}

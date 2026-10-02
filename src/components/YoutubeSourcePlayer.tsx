@@ -199,7 +199,7 @@ export function YoutubeSourcePlayer({ slug, source, poster, title, onDelete, onD
           <ContextMenuSeparator />
           <ContextMenuItem variant="destructive" onSelect={() => setDeleteOpen(true)}>
             <MenuIconSlot>
-              <Trash2 className="size-3" />
+              <Trash2 className="size-[13px]" />
             </MenuIconSlot>
             Delete Embed
           </ContextMenuItem>
