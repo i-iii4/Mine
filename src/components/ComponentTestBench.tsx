@@ -164,7 +164,7 @@ const COLOR_TOKEN_GROUPS: readonly TokenGroup[] = [
 
 const RADIUS_TOKENS = [
   { token: "--radius-0", label: "0px / контент, изображения, текст" },
-  { token: "--radius-1", label: "4px / кнопки, меню, контролы, диалоги" },
+  { token: "--radius-1", label: "3px / кнопки, меню, контролы, диалоги" },
   { token: "--radius-2", label: "5px / стопка превью каналов" },
   { token: "--radius-round", label: "50% / круглые контролы расширения" },
   { token: "--radius-card", label: "алиас рамки карточки (= 0)" },
@@ -433,7 +433,7 @@ function CoreComponentSection() {
         specs={[
           { prop: "Высота", value: "24 · 28 · 32 · 40 (h-6/7/8/10)" },
           { prop: "Icon", value: "size-8 (32) · size-6 (24, icon-xs)" },
-          { prop: "Скругление", value: "4px · rounded-1 · --radius-1" },
+          { prop: "Скругление", value: "3px · rounded-1 · --radius-1" },
           { prop: "Фон", value: "--component-fill" },
           { prop: "Текст", value: "--foreground · 14px · 600" },
           { prop: "Отступы", value: "px-3 (12) · gap-2 (8)" },
@@ -528,7 +528,7 @@ function CoreComponentSection() {
         summary="Текстовое поле. Default 32, clipper 40. Ghost — без рамки и фона для встройки в меню."
         specs={[
           { prop: "Высота", value: "32 (h-8) · clipper 40 (h-10)" },
-          { prop: "Скругление", value: "4px · rounded-1 · --radius-1" },
+          { prop: "Скругление", value: "3px · rounded-1 · --radius-1" },
           { prop: "Фон / рамка", value: "--background / --input" },
           { prop: "Отступы", value: "px-3 py-2 (12 · 8)" },
           { prop: "Текст", value: "--foreground · 14px" },

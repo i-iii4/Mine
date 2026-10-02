@@ -63,16 +63,16 @@ source of truth; допустимы только небольшие static compo
 | Токен | Значение | Утилита | Где |
 |---|---|---|---|
 | `--radius-0` | 0 | `rounded-0` | Карточки контента, изображения, текстовые блоки |
-| `--radius-1` | 4px | `rounded-1` | Основные элементы интерфейса: кнопки, инпуты, попапы, меню, тултипы, диалоги |
+| `--radius-1` | 3px | `rounded-1` | Основные элементы интерфейса: кнопки, инпуты, попапы, меню, тултипы, диалоги |
 | — | 2px | `rounded-[2px]` | Чекбоксы (16px, компенсация масштаба) |
 | `--radius-pill` | 9999px | `rounded-pill` | Переключатели, тоглы, прогресс-бар |
 | `--radius-round` | 50% | `rounded-round` | Аватары, индикаторы статуса |
 
-**Правило:** содержимое без скругления (`rounded-0`), интерфейс 4px (`rounded-1`), бейджи и pill-контролы капсулами (`rounded-pill`), чекбоксы 2px.
+**Правило:** содержимое без скругления (`rounded-0`), интерфейс 3px (`rounded-1`), бейджи и pill-контролы капсулами (`rounded-pill`), чекбоксы 2px.
 
 ### Скругление карточек — настройка
 
-Appearance → `Card corners`: `Square` (по умолчанию) или `4` пикселя, как у интерфейса. Сохранённое прежнее значение `3` читается как `4`.
+Appearance → `Card corners`: `Square` (по умолчанию) или `3` пикселя, как у интерфейса. Значение `4`, сохранённое 02.10.2026, когда интерфейс на день стал 4px, читается как `3`.
 
 Область действия выбрана намеренно:
 
@@ -808,7 +808,7 @@ base является отдельной миграцией, а не обнов�
 
 ### Button
 
-Базовые свойства всех кнопок: `rounded-1` (4px), `font-semibold`, `select-none`.
+Базовые свойства всех кнопок: `rounded-1` (3px), `font-semibold`, `select-none`.
 Курсор кнопка не меняет — см. «Интерактивные состояния → Курсор»; исключение
 только для кнопок, уводящих в браузер.
 
@@ -880,7 +880,7 @@ Network» — остаются `secondary`: красный цвет, приме�
 Input и Command по умолчанию — 32px (`h-8`). Clipper использует
 `Input controlSize="clipper"` (`h-10`) только внутри popup/overlay строк.
 
-**Скругление основных элементов интерфейса: 4px (`rounded-1`).** Button,
+**Скругление основных элементов интерфейса: 3px (`rounded-1`).** Button,
 ActionButton (обе пули), DropdownMenu, Tooltip, Input используют этот радиус.
 `Badge` является отдельным pill-примитивом и использует `rounded-pill`.
 
@@ -1685,7 +1685,7 @@ feed surface.
 ### Hover Preview Surfaces
 
 Всплывающие preview-карточки используют ту же визуальную модель, что feed card
-preview при drag: `rounded-1` (4px), `border border-border`, `bg-card`,
+preview при drag: `rounded-1` (3px), `border border-border`, `bg-card`,
 утилитарная `shadow-lg`. Ordinary feed cards остаются на `--radius-card`.
 
 **Один владелец размера.** В media drag-превью (DragOverlay) геометрию задаёт
@@ -2028,7 +2028,7 @@ Traffic-light reserve размечается как `data-traffic-light-reserve`
 алиасом `--component-fill`.
 
 - Структура: `<div role="button">` (внешняя пуля) → `<span hotkey>` + `<span label>` (внутренняя пуля)
-- Внешняя пуля: `rounded-1` (4px), `h-6` (24px), `p-[2px]`, `overflow-hidden`
+- Внешняя пуля: `rounded-1` (3px), `h-6` (24px), `p-[2px]`, `overflow-hidden`
 - Внутренняя пуля: `rounded-[2px]`, `bg-component-fill-inner`, `h-5`, `inline-flex items-center`, `px-[1ch]`, `leading-none`
 - Hotkey: текст на фоне внешней пули, `h-5`, `inline-flex items-center`, `px-[1ch]`, `leading-none`
 - Зазор между внешней и внутренней пулей: 2px (все стороны, через `p-[2px]` на внешней)
@@ -2540,7 +2540,7 @@ do not appear under an open keyboard menu.
 
 Графические поверхности карточек помечаются единым `GraphicSurface`/`data-card-graphic-surface` контрактом. При keyboard focus GridItem применяет только к этим surfaces дополнительный wash: light theme `oklch(0 0 0 / 14%)` затемняет, dark theme `oklch(1 0 0 / 18%)` высветляет. Текстовые карточки и текстовые области mixed cards не получают этот state.
 
-Focused GridItem дополнительно показывает shortcut badge в левом верхнем углу: `data-feed-grid-action-badge`, внутри `data-feed-grid-action-layer` (`absolute inset-px`), затем `absolute left-2 top-2`, `h-6`, `px-[1ch]`, `rounded-1` (4px), `bg-component-fill`, `text-sm font-semibold text-foreground`, `pointer-events-none`. Action layer компенсирует 1px Card frame, поэтому offsets badge считаются из той же внутренней плоскости карточки, что и Card Hover Menu controls: `top-2` как у верхних кнопок, `left-2` как у нижнего ряда коллекций. Текст badge `⌘K`; он сообщает scoped action shortcut для открытия card overflow menu и не является hover affordance. `Cmd+K` toggles top-right `More`/overflow menu; нижний ряд коллекций не появляется, карточка не поднимается.
+Focused GridItem дополнительно показывает shortcut badge в левом верхнем углу: `data-feed-grid-action-badge`, внутри `data-feed-grid-action-layer` (`absolute inset-px`), затем `absolute left-2 top-2`, `h-6`, `px-[1ch]`, `rounded-1` (3px), `bg-component-fill`, `text-sm font-semibold text-foreground`, `pointer-events-none`. Action layer компенсирует 1px Card frame, поэтому offsets badge считаются из той же внутренней плоскости карточки, что и Card Hover Menu controls: `top-2` как у верхних кнопок, `left-2` как у нижнего ряда коллекций. Текст badge `⌘K`; он сообщает scoped action shortcut для открытия card overflow menu и не является hover affordance. `Cmd+K` toggles top-right `More`/overflow menu; нижний ряд коллекций не появляется, карточка не поднимается.
 
 Состояния карточки ленты сведены в одну систему
 ([SPEC_CARD_STATES.md](SPEC_CARD_STATES.md), 28.09.2026). Наведение мышью

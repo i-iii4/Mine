@@ -70,13 +70,13 @@ describe("AppearanceSection", () => {
   it("applies the card corner radius and broadcasts it", () => {
     render(<AppearanceSection />);
 
-    fireEvent.click(screen.getByRole("button", { name: "4" }));
+    fireEvent.click(screen.getByRole("button", { name: "3" }));
 
     const root = document.documentElement;
-    expect(root.style.getPropertyValue("--radius-card")).toBe("4px");
+    expect(root.style.getPropertyValue("--radius-card")).toBe("3px");
     // Feed-card media is out of scope and stays square.
     expect(root.style.getPropertyValue("--radius-media")).toBe("");
-    expect(localStorage.getItem("mine.cardRadius")).toBe("4");
+    expect(localStorage.getItem("mine.cardRadius")).toBe("3");
     expect(emit).toHaveBeenCalledWith("settings-changed", expect.objectContaining({ key: "mine.cardRadius" }));
   });
 

@@ -1293,7 +1293,7 @@ Image media expansion:
   значения — `text-sm leading-4 text-foreground`, matching feed-card text scale.
 - `FILENAME`, `Rename…` и `TAGS` не рендерятся в metadata panel. Metadata
   table и action row живут в одном framed rail card:
-  `overflow-hidden rounded-1 border border-border bg-accent`. Радиус 4px
+  `overflow-hidden rounded-1 border border-border bg-accent`. Радиус 3px
   следует interface-surface contract; surface использует тот же `bg-accent`,
   что нижний action bar.
   Metadata content использует `px-2 pb-4 pt-4`: horizontal inset matches the
@@ -1427,7 +1427,7 @@ Image media expansion:
   Badge находится внутри `data-feed-grid-action-layer` (`absolute inset-px`),
   чтобы компенсировать 1px Card frame и считать offsets из той же внутренней
   плоскости карточки, что и Card Hover Menu. Сам badge использует
-  `absolute left-2 top-2` и interface radius `rounded-1` (4px): `top-2`
+  `absolute left-2 top-2` и interface radius `rounded-1` (3px): `top-2`
   зеркалит верхние кнопки (`top-2 right-2`), `left-2` зеркалит нижний ряд
   коллекций (`left-2 right-2 bottom-2`).
 - `Cmd+K` — scoped Grid shortcut: если Grid keyboard focus активен и focused

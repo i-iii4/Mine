@@ -698,7 +698,7 @@ body {
      font: switching the UI to Departure Mono leaves reading text alone. */
   --font-content: "Geist", ui-sans-serif, system-ui, sans-serif;
   --radius-0: 0px;
-  --radius-1: 4px;
+  --radius-1: 3px;
   --radius-2: 5px;
   --radius-pill: 9999px;
   --radius-round: 50%;

@@ -142,15 +142,16 @@ Settings и `Cmd+,` сохраняются. Прежняя условная те
 | Настройка | Контрол | Ключ |
 |---|---|---|
 | Theme: System / Light / Dark | `SegmentedControl` (size default) | `theme` |
-| Card corners: Square / 4 | `SegmentedControl` | `mine.cardRadius` |
+| Card corners: Square / 3 | `SegmentedControl` | `mine.cardRadius` |
 | Fade content under the chrome | `Checkbox` + подпись | `mine.scrollEdgeFade` |
 | Hide bottom menu | `Checkbox` + подпись | `mine.bottomActionBarHidden` |
 
 `Spacing` (`mine.spacing`) с 30.09.2026 живёт в панели `Display` ленты
 ([SPEC_FEED_DISPLAY.md](SPEC_FEED_DISPLAY.md), Д17).
 
-Скругление карточек `4` совпадает со скруглением интерфейса (`--radius-1`);
-сохранённое прежнее значение `3` читается как `4`. Настройки показа коллекций
+Скругление карточек `3` совпадает со скруглением интерфейса (`--radius-1`);
+значение `4`, сохранённое 02.10.2026, когда интерфейс на день стал 4px,
+читается как `3`. Настройки показа коллекций
 карточки при наведении нет: коллекции видны в нижнем ряду самой карточки, а
 пилюли `Connected` в боковом меню показывает только клавиатурный фокус
 ([SPEC_CARD_STATES.md](SPEC_CARD_STATES.md), С4, С8.9). Ключ
