@@ -279,6 +279,7 @@ import {
   type IndexingCount,
 } from "@/components/IndexingProgress";
 import { PreviewsPendingContext } from "@/lib/cardPreviewState";
+import { SidebarToggleButton } from "@/components/SidebarToggleButton";
 import { VaultSwitcher } from "@/components/VaultSwitcher";
 import { TopCollectionSwitcher } from "@/components/TopCollectionSwitcher";
 import { Sidebar, SidebarTagRowDragPreview } from "@/components/Sidebar";
@@ -3608,6 +3609,7 @@ export function AppWithVault({
     <MainSecondaryTopBar
           sidebarCollapsed={sidebarCollapsed}
           sidebarResizing={sidebarResizing}
+          onCreateCollection={beginCreateCollection}
           stats={vaultStats}
           cloudPending={blocks.filter((item) => item.content_in_cloud).length}
           indexing={isSyncing}
@@ -3668,6 +3670,9 @@ export function AppWithVault({
             data-traffic-light-reserve=""
             className={cn("w-20 max-w-full shrink-0", topChromeSurfaceClass)}
           />
+          <div data-tauri-drag-region className="flex h-full shrink-0 items-center pr-2">
+            <SidebarToggleButton collapsed={sidebarCollapsed} onToggle={toggleCollapsed} />
+          </div>
           <div
             aria-hidden="true"
             className="h-full w-px shrink-0 bg-border"

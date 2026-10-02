@@ -1193,19 +1193,20 @@ describe("AppWithVault", () => {
     expect(sidebarSegment).toHaveStyle({ width: "var(--sidebar-width)" });
     expect(sidebarSegment).toHaveClass("border-r", "border-sidebar-border");
     expect(contentSegment).toHaveClass("flex-1");
-    expect(sidebarSegment).toHaveTextContent("1 464 files260 .md1 204 media4,8 GB");
+    // Over the sidebar: the count of collections and the command that adds
+    // one, right after it; the space's file statistics are gone.
+    expect(sidebarSegment?.querySelector("[data-main-secondary-collection-count]")).toHaveTextContent(
+      /^\d+ collections?$/,
+    );
+    expect(sidebarSegment).not.toHaveTextContent("files");
     expect(contentSegment).toHaveTextContent("2 elements");
-    expect(sidebarSegment?.querySelector("[data-main-secondary-stats-left] > div")).toHaveClass(
-      "gap-5",
-    );
-    expect(sidebarSegment?.querySelector("[data-main-secondary-stat-atom='files']")).toHaveTextContent(
-      "1 464 files",
-    );
-    expect(sidebarSegment?.querySelector("[data-main-secondary-stat-atom='markdown']")).toHaveTextContent(
-      "260 .md",
-    );
     expect(sidebarSegment?.querySelector("[data-main-secondary-stats-left]")).toHaveClass(
+      "gap-5",
       "text-tertiary-foreground",
+    );
+    expect(within(sidebarSegment!).getByRole("button", { name: "New Collection" })).toHaveAttribute(
+      "data-main-secondary-new-collection",
+      "",
     );
     expect(contentSegment?.querySelector("[data-main-secondary-stats-right]")).toHaveClass(
       "gap-5",
@@ -1228,6 +1229,47 @@ describe("AppWithVault", () => {
     expect(viewSwitcher?.querySelector("[data-main-view-mode-control]")).toHaveClass(
       "text-muted-foreground",
     );
+  });
+
+  it("hides and shows the sidebar from the top chrome, the button staying in place", async () => {
+    sidebarResizeState.toggleCollapsed.mockClear();
+    const { unmount } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    const header = document.querySelector("header") as HTMLElement;
+    const toggle = within(header).getByRole("button", { name: "Hide Sidebar" });
+    expect(toggle).toHaveAttribute("data-top-chrome-sidebar-toggle", "");
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    // Right of the traffic lights, ahead of the space name.
+    expect(toggle.closest("[data-app-top-sidebar-segment]")).not.toBeNull();
+    // The same command as View → Hide Sidebar and the bottom bar.
+    fireEvent.click(toggle);
+    expect(sidebarResizeState.toggleCollapsed).toHaveBeenCalledTimes(1);
+    unmount();
+
+    sidebarResizeState.collapsed = true;
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+    const collapsedHeader = document.querySelector("header") as HTMLElement;
+    const shown = within(collapsedHeader).getByRole("button", { name: "Show Sidebar" });
+    expect(shown).toHaveAttribute("aria-pressed", "false");
+    // Still in the sidebar's segment of the top row: the collapsed segment
+    // keeps it where it was.
+    expect(shown.closest("[data-app-top-sidebar-segment]")).not.toBeNull();
+    sidebarResizeState.collapsed = false;
   });
 
   it("switches the main view through the secondary segmented control", async () => {

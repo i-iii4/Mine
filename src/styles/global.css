@@ -603,28 +603,6 @@ body {
   outline: 1px solid rgb(255 255 255 / 0.08);
 }
 
-[data-main-secondary-top-bar-sidebar-segment] {
-  container-type: inline-size;
-}
-
-@container (max-width: 440px) {
-  [data-main-secondary-stat-atom="storage"] {
-    display: none;
-  }
-}
-
-@container (max-width: 340px) {
-  [data-main-secondary-stat-atom="media"] {
-    display: none;
-  }
-}
-
-@container (max-width: 220px) {
-  [data-main-secondary-stat-atom="markdown"] {
-    display: none;
-  }
-}
-
 /* Progress without a known length (components/ui/progress.tsx): a pill
    segment crosses the track from outside to outside, easing in and out, so
    the motion reads as work under way rather than as a value. */
@@ -1191,4 +1169,24 @@ body {
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* Interface text at 13px, the size macOS sets its window titles, menus and
+   sidebars in (DESIGN_SYSTEM.md, «Текст интерфейса 13 px»): both chrome rows
+   (12px utilities there), every menu with its submenus and what it holds,
+   and the sidebar's collection list (14px utilities there). The size only:
+   each place keeps the line box its utility gives, so no row changes height.
+   A runtime variable, unlike the theme's inlined text sizes. */
+:root {
+  --text-interface: 13px;
+}
+
+header.chrome-row .text-sm,
+[data-main-secondary-top-bar] .text-sm,
+[data-slot="dropdown-menu-content"] .text-base,
+[data-slot="dropdown-menu-sub-content"] .text-base,
+[data-slot="context-menu-content"] .text-base,
+[data-slot="context-menu-sub-content"] .text-base,
+[data-sidebar-scroll] .text-base {
+  font-size: var(--text-interface);
 }

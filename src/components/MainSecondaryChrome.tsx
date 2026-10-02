@@ -1,4 +1,6 @@
 import { useDraggable } from "@dnd-kit/core";
+import { Plus } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useChromeDragGesture } from "@/hooks/useChromeDragGesture";
 import type { IndexedBlock, LightBlock, TagCount, VaultStats } from "@/types";
@@ -29,7 +31,6 @@ const MAIN_VIEW_MODE_STORAGE_KEY = "mine.mainViewMode";
 const RU_INTEGER_FORMATTER = new Intl.NumberFormat("ru-RU", {
   maximumFractionDigits: 0,
 });
-const STORAGE_UNITS = ["B", "KB", "MB", "GB", "TB"] as const;
 
 export function getStoredMainViewMode(): MainViewMode {
   return window.localStorage.getItem(MAIN_VIEW_MODE_STORAGE_KEY) === "graph" ? "graph" : "grid";
@@ -39,36 +40,20 @@ export function persistMainViewMode(mode: MainViewMode) {
   window.localStorage.setItem(MAIN_VIEW_MODE_STORAGE_KEY, mode);
 }
 
-function formatCompactCount(count: number, label: string): string {
-  return `${RU_INTEGER_FORMATTER.format(count)} ${label}`;
-}
-
 function formatPluralCount(count: number, singular: string, plural: string): string {
   return `${RU_INTEGER_FORMATTER.format(count)} ${count === 1 ? singular : plural}`;
 }
 
-function formatStorageBytes(bytes: number): string {
-  let value = Math.max(0, bytes);
-  let unitIndex = 0;
-  while (value >= 1000 && unitIndex < STORAGE_UNITS.length - 1) {
-    value /= 1000;
-    unitIndex += 1;
-  }
-  const formatter = new Intl.NumberFormat("ru-RU", {
-    maximumFractionDigits: value > 0 && value < 10 && unitIndex > 0 ? 1 : 0,
-    minimumFractionDigits: 0,
-  });
-  return `${formatter.format(value)} ${STORAGE_UNITS[unitIndex]!}`;
-}
-
 function MainSecondaryStatsLeft({
-  stats,
+  collectionCount,
+  onCreateCollection,
   sidebarCollapsed,
   cloudPending,
   indexing,
   onRevealSpace,
 }: {
-  stats: VaultStats | null;
+  collectionCount: number;
+  onCreateCollection?: () => void;
   sidebarCollapsed: boolean;
   cloudPending: number;
   indexing: boolean;
@@ -79,32 +64,35 @@ function MainSecondaryStatsLeft({
   return (
     <div
       data-main-secondary-stats-left=""
-      // Over the sidebar column: same edge pad as the rows below it and the
-      // bottom bar. The right half of this row keeps the app-wide rhythm — it
-      // stands over the feed and lines up with the cards instead.
-      className="flex h-full min-w-0 items-center overflow-hidden px-[var(--chrome-edge-pad)] font-mono text-sm leading-none text-tertiary-foreground"
+      // Over the sidebar column: the header of the list below it. The count of
+      // its collections on the rows' edge pad, the button that adds one right
+      // after it, the gap the elements half over the feed keeps between its
+      // count and View.
+      className="flex h-full min-w-0 items-center justify-start gap-5 overflow-hidden px-[var(--chrome-edge-pad)] font-mono text-sm leading-none text-tertiary-foreground"
     >
-      {stats && (
-        <div className="flex min-w-0 items-center gap-5 overflow-hidden whitespace-nowrap">
-          <span data-main-secondary-stat-atom="files" className="shrink-0">
-            {formatPluralCount(stats.totalFileCount, "file", "files")}
-          </span>
-          <span data-main-secondary-stat-atom="markdown" className="shrink-0">
-            {formatCompactCount(stats.markdownFileCount, ".md")}
-          </span>
-          <span data-main-secondary-stat-atom="media" className="shrink-0">
-            {formatCompactCount(stats.mediaFileCount, "media")}
-          </span>
-          <span data-main-secondary-stat-atom="storage" className="shrink-0">
-            {formatStorageBytes(stats.sourceBytes)}
-          </span>
-          <ActivityIndicators
-            cloudPending={cloudPending}
-            indexing={indexing}
-            onRevealSpace={onRevealSpace}
-          />
-        </div>
+      <span data-main-secondary-collection-count="" className="min-w-0 truncate whitespace-nowrap">
+        {formatPluralCount(collectionCount, "collection", "collections")}
+      </span>
+      {onCreateCollection && (
+        <Button
+          type="button"
+          variant="chrome"
+          size="chrome-icon"
+          aria-label="New Collection"
+          onClick={onCreateCollection}
+          // The plate's 4px of air sits inside the gap: the glyph, not the
+          // plate, stands one gap from the count.
+          className="-ml-1"
+          data-main-secondary-new-collection=""
+        >
+          <Plus />
+        </Button>
       )}
+      <ActivityIndicators
+        cloudPending={cloudPending}
+        indexing={indexing}
+        onRevealSpace={onRevealSpace}
+      />
     </div>
   );
 }
@@ -223,6 +211,7 @@ function countMediaUrls(raw: string | null): number {
 export function MainSecondaryTopBar({
   sidebarCollapsed,
   sidebarResizing,
+  onCreateCollection,
   stats,
   detailBlock,
   detailTitle,
@@ -249,6 +238,8 @@ export function MainSecondaryTopBar({
 }: {
   sidebarCollapsed: boolean;
   sidebarResizing: boolean;
+  /// Starts naming a new collection in the sidebar list (⇧⌘N).
+  onCreateCollection?: () => void;
   stats: VaultStats | null;
   /// Cards whose content iCloud is currently holding.
   cloudPending?: number;
@@ -331,7 +322,8 @@ export function MainSecondaryTopBar({
           data-main-secondary-main-layer=""
         >
           <MainSecondaryStatsLeft
-            stats={stats}
+            collectionCount={tags.length}
+            onCreateCollection={onCreateCollection}
             sidebarCollapsed={sidebarCollapsed}
             cloudPending={cloudPending}
             indexing={indexing}
@@ -344,13 +336,26 @@ export function MainSecondaryTopBar({
             data-entered={detailLayerEntered ? "true" : "false"}
             data-secondary-sidebar-link-mode-bar=""
           >
-            <span className="shrink-0 font-mono text-sm text-muted-foreground">Collections:</span>
+            {/* A label in the voice of View: over the feed. */}
+            <span className="shrink-0 font-mono text-sm text-tertiary-foreground">Collections:</span>
             <CompactDetailLinkModeSwitch
               value={detailLinkMode}
               onChange={onDetailLinkModeChange}
               chromeDragEnabled={false}
               entered={detailEntered}
             />
+            {onCreateCollection && (
+              <Button
+                type="button"
+                variant="chrome"
+                size="chrome-icon"
+                aria-label="New Collection"
+                onClick={onCreateCollection}
+                data-secondary-link-mode-new-collection=""
+              >
+                <Plus />
+              </Button>
+            )}
           </div>
         )}
       </div>

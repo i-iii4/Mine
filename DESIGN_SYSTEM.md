@@ -181,7 +181,7 @@ Connect / Connected / Disconnect занимают одну плашку: шир�
 
 | Что | Default / Alt 1 | Alt 2 |
 |---|---|---|
-| Строка метаданных (файлы, счётчик элементов, Grid/Graph) | под верхним меню | под контентом, поверхность `--accent`, граница сверху |
+| Строка метаданных (число коллекций, счётчик элементов, Grid/Graph) | под верхним меню | под контентом, поверхность `--accent`, граница сверху |
 | Нижняя панель с кнопками | есть | нет |
 | Разворот карточки: название, меню карточки, крестик | в строке метаданных | в верхнем меню |
 | Разворот карточки: переключатель `All/Connected` | в строке метаданных | там же, внизу |
@@ -297,11 +297,38 @@ Grid gap (32px) задан JS-константой `GAP` в `Grid.tsx`, пото
 
 | Токен | Значение | line-height | Утилита | Где |
 |---|---|---|---|---|
-| `--text-sm` | 12px | 16px | `text-sm` | Мета: даты, счётчики, подписи. Карточки контента |
-| `--text-base` | 14px | 20px | `text-base` | Основной текст интерфейса |
+| `--text-sm` | 12px | 16px | `text-sm` | Мета: даты, счётчики, подписи. Карточки контента, нижняя панель, числа в строках бокового меню |
+| `--text-interface` | 13px | высота строки утилиты места | правило в `global.css` | Оба ряда верхней панели, все меню, список коллекций в боковом меню |
+| `--text-base` | 14px | 20px | `text-base` | Кнопки с текстом, поля, диалоги, уведомления, окно настроек, результаты поиска |
 | `--text-lg` | 18px | 24px | `text-lg` | Заголовки |
 
-**Только три размера.** `text-xs`, `text-xl`, `text-2xl` и т.д. не используются.
+**Четыре размера, утилит три.** `text-xs`, `text-xl`, `text-2xl` и т.д. не
+используются. У 13 px нет своей утилиты: его задаёт одно правило по месту
+(раздел ниже).
+
+### Текст интерфейса 13 px
+
+13 px это размер, которым macOS набирает заголовки окон, меню и боковые
+панели. Замер из AppKit 02.10.2026: заголовок окна 13 pt жирный, пункты меню
+13 pt, системный текст 13 pt; 1 pt в macOS равен 1 px вёрстки. Этим размером
+Mine набирает:
+
+- оба ряда верхней панели: название пространства, текущую коллекцию, поле
+  фильтра коллекций, число коллекций, `651 elements`, `View:` и переключатели;
+- все выпадающие меню и меню правого клика вместе с подменю и тем, что в них
+  лежит: выбор коллекций, список пространств;
+- названия коллекций в боковом меню и поле их переименования.
+
+Реализация: одно правило в `src/styles/global.css` с переменной
+`--text-interface: 13px` поверх утилит этих мест (`text-sm` в рядах панели,
+`text-base` в меню и списке коллекций). Меняется только кегль: высота строки
+остаётся той, что даёт утилита, поэтому ни ряд, ни строка меню не меняют
+высоту. Переменная объявлена в `:root`, а не в `@theme`: размеры темы
+подставляются в утилиты при сборке и в работающем приложении как переменные
+недоступны.
+
+Остаются 12 px: числа в строках бокового меню, текст карточек ленты и нижняя
+панель с подсказками клавиш.
 
 ### Markdown headings in articles
 
@@ -2015,6 +2042,20 @@ Traffic-light reserve размечается как `data-traffic-light-reserve`
 интерактивных DOM-кнопок. Видимость inactive native traffic lights управляется
 только AppKit-слоем, не CSS.
 
+Сразу после reserve стоит кнопка бокового меню (`SidebarToggleButton`,
+`data-top-chrome-sidebar-toggle`): стандартная иконочная кнопка верхней панели
+(`variant="chrome"`, `size="chrome-icon"`) с lucide `Columns2`. Подпись для
+экранного диктора `Hide Sidebar` или `Show Sidebar`, `aria-pressed` пока меню
+открыто. Действие то же, что у пункта View → Hide Sidebar (⌃⌘S), у кнопки
+`Hide Sidebar` в нижней панели и у свайпа двумя пальцами; состояние одно,
+`useSidebarResize.collapsed`. Кнопка живёт в сегменте бокового меню верхнего
+ряда, поэтому при свёрнутом меню остаётся в той же точке окна.
+
+Почему `Columns2`, а не `PanelLeft` (решение пользователя 02.10.2026):
+`PanelLeft` рисует узкую колонку у края, а левая панель Mine держит коллекции
+с превью и часто шириной с ленту. Окно Mine состоит из двух панелей, и знак
+двух равных колонок изображает именно его.
+
 ### Нижняя панель действий (Action Bar)
 
 `h-8 bg-accent border-t border-border px-8`. Отступы 32px с обеих сторон.
@@ -2163,6 +2204,15 @@ card minimum plus two `32px` side insets. Desktop `minWidth` is `904px`
 slot всегда показывает count в `font-mono`. Rename/Delete доступны через
 `ContextMenu` строки, а не через hover-многоточие.
 
+Строки создания коллекции (`Create New Collection +`,
+`data-sidebar-new-channel-row`) в покое нет: команда живёт во втором ряду
+верхней панели (`+` после числа коллекций, а при открытой карточке после
+`All / Connected`) и на ⇧⌘N. Строка появляется внизу списка только пока у неё
+есть работа: пока новую коллекцию называют, тогда она становится полем ввода;
+и пока тащат карточку, тогда это цель броска, которая создаёт коллекцию сразу с
+этой карточкой. Пока строки нет, клавиатурная навигация по списку её не
+проходит.
+
 #### Перетаскивание строк (reorder)
 
 Контракт жеста — переупорядочивание в боковых списках macOS (Finder, Notes,
@@ -2249,12 +2299,13 @@ Sidebar/Detail в App shell запрещены: они создают трети
 
 Non-compact Detail close не должен распадаться на несколько визуальных шагов.
 Второй top-bar level держит два абсолютных слоя внутри тех же sidebar/content
-segments: main statistics layer (`data-main-secondary-main-layer`) и
+segments: main layer (`data-main-secondary-main-layer`, число коллекций и
+счётчик элементов) и
 Detail/link-editor layer (`data-secondary-sidebar-link-mode-bar`,
 `data-secondary-detail-top-menu`). Surface bar привязан к entered-state
 Detail-layer, а не к наличию closing snapshot: как только close начинается,
 bar сразу переходит в main surface, Detail controls уходят через
-`opacity + translateY(-8px)`, а statistics layer возвращается через
+`opacity + translateY(-8px)`, а main layer возвращается через
 `opacity + translateY(6px)`. Snapshot открытой карточки остаётся только для
 анимации текста/кнопок; он не удерживает `bg-accent` после начала закрытия.
 Обычный non-compact close использует короткий shell-exit budget около `190ms`;
@@ -2262,51 +2313,44 @@ compact Detail top chrome сохраняет отдельный `260ms` budget, 
 анимируются элементы permanent top chrome.
 
 В main browsing state второй top-bar level — тихая информационная строка, а не
-общий toolbar. Она показывает статистику текущего пространства и текущего
-канала; в content segment допускается только один shared compact
-`SegmentedControl` для режима `View: Grid / Graph`. Этот switcher использует
+общий toolbar. Над боковым меню она показывает число коллекций и кнопку `+`,
+над лентой число элементов текущей коллекции; в content segment допускается
+только один shared compact `SegmentedControl` для режима `View: Grid / Graph`. Этот switcher использует
 тот же визуальный контракт, что `Collections: All / Connected` в expanded card
 chrome, и стоит сразу после счётчика текущей коллекции по левой оси content
 segment. Зазор между счётчиком и switcher равен spacing-only gap левой
-статистики (`gap-5`). Отдельные
+ячейки (`gap-5`). Отдельные
 `ActionButton`-переключатели `Graph/Grid` в bottom action bar или top fallback
 запрещены.
 
-Левая часть использует компактный англоязычный metadata contract:
-`1 464 files    260 .md    1 204 media    4,8 GB`. `files` — счётчик
-пользовательского content layer в source vault и должен равняться `.md + media`;
-скрытые и служебные файлы вроде `.mine/vault-id`, `.obsidian` и legacy `.arena`
-не входят. Точка не рисуется отдельным separator:
-она является частью label `.md`, как расширение файла; промежутки задаются
-layout gap. Правая часть пишет `cards` только для `Everything`; в конкретном
-канале строка получает уточнение `cards in channel`.
-
 Art direction: это ambient metadata, а не dashboard. Строка должна считываться
 как часть системного chrome: ровная, низкоконтрастная, без KPI-акцента и без
-визуального соревнования с карточками. Запрещены icons, badges, bold numbers,
-colored deltas, cards, pills, uppercase labels и любые hover/focus states кроме
-состояний единственного shared `SegmentedControl` для view-mode.
+визуального соревнования с карточками. Запрещены badges, bold numbers, colored
+deltas, cards, pills, uppercase labels и любые hover/focus states, кроме
+состояний shared `SegmentedControl` для view-mode и иконочной кнопки `+` над
+боковым меню.
 
-Левый segment (`data-main-secondary-top-bar-sidebar-segment`) показывает
-статистику пространства и выравнивается с колонкой Sidebar: `px-8`, `h-full`,
-`items-center`, `overflow-hidden`. Текстовый режим:
-`font-mono text-sm text-tertiary-foreground leading-none`, regular weight.
-Строка собирается как spacing-only inline cluster:
-`260 .md    1 204 media    4,8 GB`. Между показателями нет отдельной пунктуации,
-иконок или вертикальных разделителей; группы разделяет только стабильный
-`gap-5`. Названия показателей не выделяются жирным; числа и слова находятся в
-самом слабом текстовом уровне, потому что это secondary metadata, а не KPI.
+Левый segment (`data-main-secondary-top-bar-sidebar-segment`) это шапка списка
+коллекций под ним (`data-main-secondary-stats-left`): `px-[--chrome-edge-pad]`,
+`h-full`, `items-center`, `overflow-hidden`, `gap-5`. Текстовый режим:
+`font-mono text-tertiary-foreground leading-none`, regular weight, кегль 13 px
+(«Текст интерфейса 13 px»). Содержимое слева направо:
 
-Текстовый контракт левого segment:
+- число коллекций (`data-main-secondary-collection-count`): `1 collection`,
+  иначе `N collections`; число берётся из того же списка коллекций, что рисует
+  боковое меню;
+- сразу за ним иконочная кнопка `+` (`data-main-secondary-new-collection`,
+  `aria-label="New Collection"`): стандартная кнопка верхней панели, то же
+  действие, что ⇧⌘N. Зазор от числа тот же `gap-5`, что между `651 elements`
+  и `View:` над лентой, и отсчитан до знака, а не до края подложки: воздух
+  подложки в 4 px уходит внутрь зазора (`-ml-1`);
+- индикаторы загрузки из iCloud и индексации (`ActivityIndicators`), видимые
+  только во время работы.
 
-- Markdown files: compact label `.md`, пример `260 .md`
-- Media files: compact label `media`, пример `1 204 media`
-- storage size без дополнительного слова `used`: `4,8 GB`, не `used 4,8 GB`
+Статистики файлов пространства (`files`, `.md`, `media`, объём) в этой строке
+больше нет.
 
-Числа форматируются по `ru-RU`: группировка пробелами, десятичная запятая.
-Storage units — compact decimal units: `B`, `KB`, `MB`, `GB`, `TB`.
-Для значений меньше `10` в текущей единице показывается один десятичный знак
-(`4,8 GB`), дальше целое значение (`18 GB`).
+Числа форматируются по `ru-RU`: группировка пробелами.
 
 Правый segment (`data-main-secondary-top-bar-content-segment`) показывает
 количество элементов в текущем route scope у левой оси контентной области и
@@ -2327,21 +2371,21 @@ Search/filter state не меняет этот счётчик: это стати
   title в permanent top chrome
 
 Responsive contract: строка не переносится и не меняет высоту. Если левому
-segment не хватает ширины, показатели скрываются справа налево по приоритету:
-сначала storage size, затем media count; Markdown count остаётся последним.
-Нельзя частично обрезать число или слово внутри одного показателя. В collapsed
-Sidebar state левый statistics cluster скрывается целиком, segment остаётся
-пустой drag region. Правый count остаётся на левой оси content segment; на
+segment не хватает ширины, число коллекций обрезается многоточием как единый
+блок, кнопка `+` не сжимается. В collapsed Sidebar state левая ячейка не
+рендерится, segment остаётся пустой drag region. Правый count остаётся на левой оси content segment; на
 экстремально узкой ширине он может truncate только как единый текстовый блок.
 
-Realtime contract: обновление статистики не анимирует числа и не показывает
+Realtime contract: обновление чисел не анимирует их и не показывает
 loading/skeleton text. Пока snapshot не загружен, segment рендерит пустое место
 на той же геометрии. После backend event строка меняется атомарно в следующий
 React commit; запрещены промежуточные `calculating`, `rendering layout` и
 прочие служебные сообщения в chrome.
 
-Содержимое surface: `Collections:` + selector `All / Connected`. `Collections:`
-использует `font-mono text-sm text-muted-foreground`. Selector повторяет
+Содержимое surface: `Collections:` + selector `All / Connected` + иконочная
+кнопка `+` (`data-secondary-link-mode-new-collection`, `aria-label="New
+Collection"`), то же действие, что ⇧⌘N. `Collections:` использует
+`font-mono text-tertiary-foreground`, как `View:` над лентой. Selector повторяет
 ActionButton geometry: outer `h-6 p-[2px] rounded-1`, segments `h-5
 px-[1ch] rounded-[2px] text-muted-foreground`. Hover заливает только outer
 control через общий `hover:bg-active`. Неактивные segments

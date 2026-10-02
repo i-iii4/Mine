@@ -157,8 +157,16 @@ describe("Sidebar", () => {
     expect(screen.queryByRole("link", { name: /alpha/ })).not.toBeInTheDocument();
   });
 
-  it("renders the new-channel row outside the guided channel grid", () => {
+  it("shows no new-channel row at rest: the command lives in the row above the list", () => {
     const { container } = renderSidebar({ ...defaultProps, width: 600 });
+
+    expect(screen.queryByRole("button", { name: "Create New Collection" })).not.toBeInTheDocument();
+    expect(container.querySelector("[data-sidebar-new-channel-row]")).toBeNull();
+    expect(container.querySelector('[data-sidebar-row-key="create-channel"]')).toBeNull();
+  });
+
+  it("renders the new-channel row outside the guided channel grid while a card is dragged", () => {
+    const { container } = renderSidebar({ ...defaultProps, width: 600, isDropDragging: true });
 
     const button = screen.getByRole("button", { name: "Create New Collection" });
     const row = button.closest("[data-sidebar-new-channel-row]") as HTMLElement;
@@ -178,26 +186,18 @@ describe("Sidebar", () => {
     expect(row.querySelector("[data-sidebar-empty-preview-rail]")).not.toBeInTheDocument();
   });
 
-  it("starts and submits new-channel creation inline", () => {
+  it("names a new channel inline once creation starts", () => {
     const onSetCreatingChannel = vi.fn();
     const onCreateChannel = vi.fn();
-    const { container, rerender } = renderSidebar({
-      ...defaultProps,
-      width: 600,
-      onSetCreatingChannel,
-      onCreateChannel,
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Create New Collection" }));
-    expect(onSetCreatingChannel).toHaveBeenCalledWith(true);
-
-    rerender(sidebarTree({
+    // Creation starts from the row above the list or ⇧⌘N; the list only
+    // takes the name.
+    const { container } = renderSidebar({
       ...defaultProps,
       width: 600,
       isCreatingChannel: true,
       onSetCreatingChannel,
       onCreateChannel,
-    }));
+    });
 
     const input = screen.getByRole("textbox", { name: "Имя нового канала" });
     const createRow = input.closest("[data-sidebar-new-channel-row]");

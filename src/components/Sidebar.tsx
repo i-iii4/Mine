@@ -466,7 +466,11 @@ const SidebarCore = memo(function SidebarCore({
     : isCreatingChannel
       ? "create-channel"
       : null;
-  const orderedRowKeys = buildSidebarRowOrder(visibleTags, showEverythingRow, true);
+  // The create row exists only while it has a job: naming a new collection,
+  // or taking a dragged card to found one. The command itself lives in the
+  // row above the list and on ⇧⌘N.
+  const showCreateRow = isCreatingChannel || isDropDragging;
+  const orderedRowKeys = buildSidebarRowOrder(visibleTags, showEverythingRow, showCreateRow);
   const activePreviewRowKey = hoveredPreview?.rowKey ?? null;
   const overId = dropOverId;
   const dropOverRowKey = overId?.startsWith("tag:")
@@ -994,7 +998,7 @@ const SidebarCore = memo(function SidebarCore({
 
         </div>
 
-        <NewChannelRow
+        {showCreateRow && <NewChannelRow
           compact={compact}
           isEditing={isCreatingChannel}
           isSidebarRowFocused={effectiveSidebarRowFocusKey === "create-channel"}
@@ -1005,7 +1009,7 @@ const SidebarCore = memo(function SidebarCore({
             onSetCreatingChannel(false);
           }}
           onCancel={() => onSetCreatingChannel(false)}
-        />
+        />}
 
       </nav>
       <TopFadeScrim scrolled={topFade.scrolled} surface="sidebar" color="var(--sidebar)" />

@@ -1415,6 +1415,14 @@
       "requirement": "SPEC_STORAGE.md#storage/index",
       "tests": ["src/lib/blockIdentity.test.ts"],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/components/SidebarToggleButton.tsx"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#Тулбар",
+      "tests": ["src/App.test.tsx"],
+      "command": "test:frontend"
     }
   ],
   "release": null

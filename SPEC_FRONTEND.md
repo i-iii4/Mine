@@ -112,6 +112,11 @@ interface VaultStats {
 }
 ```
 
+С 02.10.2026 интерфейс показывает из `VaultStats` только
+`currentCollectionCardCount`. Поля `totalFileCount`, `markdownFileCount`,
+`mediaFileCount` и `sourceBytes` бэкенд по-прежнему считает и отдаёт, но ни одна
+поверхность их не рисует: левая ячейка второго ряда показывает число коллекций.
+
 ### ChannelDto
 
 ```typescript
@@ -563,21 +568,21 @@ scroll-content использует `pt-8` (32px), поэтому вместе �
 опциональных баннеров: если banner component возвращает `null`, над списком не
 должно оставаться фиксированной белой плашки, которая обрезает scroll-content.
 Когда Detail открыт в non-compact режиме, этот же второй bar становится
-App-level Detail chrome: sidebar segment показывает `Channels:` + `All /
-Connected`, content segment показывает title/filename, `CardMoreMenu` и close.
+App-level Detail chrome: sidebar segment показывает `Collections:` + `All /
+Connected` + иконочную кнопку `+` (New Collection), content segment показывает
+title/filename, `CardMoreMenu` и close.
 Sidebar и Detail body не должны рендерить свои дополнительные top overlays в
 этот момент; иначе получается третий слой chrome под вторым bar.
 
-В main browsing state этот второй bar рендерит `MainSecondaryStatsBar`, а не
+В main browsing state этот второй bar рендерит `MainSecondaryTopBar`, а не
 общий toolbar. Левый segment (`data-main-secondary-top-bar-sidebar-segment`)
-получает space-level stats из `VaultStats`: total source content file count,
-Markdown file count, media file count и source vault byte size.
-`totalFileCount` — счётчик пользовательского content layer внутри source vault:
-он равен `markdownFileCount + mediaFileCount` и исключает hidden/service
-директории вроде `.mine/`, `.obsidian/`, `.git/` и legacy `.arena/`. Правый
-segment (`data-main-secondary-top-bar-content-segment`) получает
+это шапка списка коллекций: число коллекций (`tags.length`, тот же список, что
+рисует боковое меню) и сразу за ним иконочная кнопка `+`, которая вызывает
+`onCreateCollection` (в `App` это `beginCreateCollection`, то же, что ⇧⌘N).
+Индикаторы iCloud и индексации стоят после кнопки. Правый segment
+(`data-main-secondary-top-bar-content-segment`) получает
 `currentCollectionCardCount`: в `Everything` это все non-channel карточки, в
-канале — карточки, прикреплённые к этому каналу. Active Grid search не меняет
+канале это карточки, прикреплённые к этому каналу. Active Grid search не меняет
 этот счётчик.
 
 Тот же правый segment держит единственный main view-mode switcher:
@@ -588,28 +593,21 @@ expanded card chrome, и пишет выбранный режим в `mine.mainV
 `ActionButton`-переключатели `Graph/Grid` в bottom action bar или top fallback
 не рендерятся.
 
-Форматирование принадлежит frontend helper layer, а не JSX inline logic:
+Форматирование принадлежит одному helper `formatPluralCount(count, singular,
+plural)` в `MainSecondaryChrome.tsx`, а не JSX inline logic:
 
-- `formatFileCount(totalFileCount)` returns `1 file`, otherwise `files`
-- `formatMarkdownCount(markdownFileCount)` returns compact `.md`
-- `formatMediaCount(mediaFileCount)` returns compact `media`
-- `formatCardCount(currentCollectionCardCount, inChannel)` returns `1 element` /
-  `elements` in `Everything`, and `1 element in collection` /
-  `elements in collection` in concrete collection routes
-- `formatStorageBytes(sourceBytes)` with decimal units `B`, `KB`, `MB`, `GB`,
-  `TB`
+- левый segment: `1 collection`, иначе `N collections`;
+- правый segment: `1 element`, иначе `N elements`; в коллекции с уточнением
+  `in collection`.
 
-Числа форматируются через `Intl.NumberFormat("ru-RU")`; storage size показывает
-один десятичный знак только для значений меньше `10` в выбранной единице.
-Строка левого segment: `1 464 files    260 .md    1 204 media    4,8 GB`.
-Dot не является отдельным separator atom: она является частью label `.md`,
-как расширение файла. Разделение между группами делается layout gap, а не
-серией символов-разделителей. Строка element count внутри правого segment:
-`260 elements` в `Everything` или `260 elements in collection` в коллекции;
-`View: Grid / Graph` стоит сразу после неё по той же левой оси.
+Числа форматируются через `Intl.NumberFormat("ru-RU")`. Строка element count
+внутри правого segment: `260 elements` в `Everything` или `260 elements in
+collection` в коллекции; `View: Grid / Graph` стоит сразу после неё по той же
+левой оси.
 
-Realtime behavior: `MainSecondaryStatsBar` resolves all data through
-`getVaultStats(currentCollection)`. It loads once after vault open, refreshes on
+Realtime behavior: правый count приходит через
+`getVaultStats(currentCollection)`, число коллекций обновляется вместе со
+списком коллекций. It loads once after vault open, refreshes on
 route changes that alter `currentCollection`, and reuses existing
 grid/taxonomy/vault invalidation paths as stats invalidation signals. The
 frontend may coalesce multiple invalidations into one animation frame, but must
@@ -618,12 +616,10 @@ future backend path emits `vault:stats-updated`, the payload must be a complete
 `VaultStats` snapshot, not a delta. Until the first snapshot is available, the
 bar keeps its fixed geometry and renders empty text slots.
 
-Responsive behavior: stats never wrap and never increase the `h-8` bar height.
-The left cluster hides whole atoms from right to left when space is tight:
-storage size, then media count, then Markdown count. The right card count has
-higher priority than the left cluster and remains visible while any meaningful
-content width exists. When Sidebar is collapsed, the left stats cluster is not
-rendered; its segment remains an inert drag region.
+Responsive behavior: ряд не переносится и не меняет высоту. Число коллекций
+обрезается многоточием как единый блок, кнопка `+` не сжимается. Правый count
+остаётся видимым, пока есть содержательная ширина. Когда Sidebar свёрнут, левая
+ячейка не рендерится; её segment остаётся пустой областью перетаскивания окна.
 
 **Thumbnail upgrade.** Для блоков с inline media которое Rust не умеет декодировать (WebP VP8X, HEIC, AVIF, HEVC), Rust Phase 1 пишет text placeholder на диск. Main app через `useThumbnailUpgrade` hook подписан на `thumb:upgrade-requested` event и отправляет работу в Web Worker (`src/workers/thumbWorker.ts`). Worker декодирует через `createImageBitmap` (native browser decoder, поддерживает все форматы которые WebView рендерит) → `OffscreenCanvas.convertToBlob('image/jpeg', 0.85)` → IPC `save_thumb` → Rust пишет поверх placeholder. После `thumb:updated` event sidebar cache-bust'ит `<img>` URL. Полная архитектура: [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md).
 
@@ -1060,7 +1056,9 @@ Image media expansion:
 - While Sidebar channel search is focused, unmodified `ArrowUp`/`ArrowDown`
   navigate visible Sidebar rows through `aria-activedescendant`; DOM focus
   stays in the input, so typing can continue without re-focusing the field.
-  `Enter` activates the active row, including the create-channel row.
+  `Enter` активирует активную строку. Строка создания коллекции входит в
+  порядок только пока видна: пока новую коллекцию называют или пока тащат
+  карточку.
 - All search inputs suppress native browser/WebKit typing suggestions through
   shared `SEARCH_INPUT_SUPPRESSION_PROPS`: `autoComplete="off"`,
   `autoCorrect="off"`, `autoCapitalize="none"`, `spellCheck={false}`. This
@@ -1225,12 +1223,12 @@ Image media expansion:
   пространства остаётся в подсказке `title`.
 - Внешний non-compact Detail chrome закрывается как единый top-bar transition,
   а не как серия независимых переключений. `MainSecondaryTopBar` держит main
-  statistics layer и Detail/link-editor layer в одних и тех же sidebar/content
+  layer (число коллекций, счётчик элементов) и Detail/link-editor layer в одних и тех же sidebar/content
   segments. При close `detailEntered` сразу становится `false`, surface второго
   bar возвращается в main state, Detail controls получают
-  `data-entered="false"`, statistics layer получает `data-entered="true"`.
+  `data-entered="false"`, main layer получает `data-entered="true"`.
   Closing snapshot может оставаться смонтированным до конца exit-анимации, но
-  он не имеет права удерживать `bg-accent` или откладывать возврат статистики.
+  он не имеет права удерживать `bg-accent` или откладывать возврат main layer.
   Non-compact close budget — `190ms`; compact Detail top chrome использует
   отдельный `260ms` budget.
 - Если Detail получает `topChromeMode="external"`, внутреннее верхнее меню не
