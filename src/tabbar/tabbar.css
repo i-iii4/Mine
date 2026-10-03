@@ -1,10 +1,10 @@
-/* The tab bar page is chrome from edge to edge (SPEC_TABS.md, В43): its own
-   surface is the chrome token, not the page background global.css gives
-   every other page. The attribute outranks that rule whatever the order. */
+/* The tab bar page is one surface from edge to edge (SPEC_TABS.md, В43): the
+   bottom panel's accent, not the page background global.css gives every
+   other page. The attribute outranks that rule whatever the order. */
 html[data-tab-bar-page],
 html[data-tab-bar-page] body,
 html[data-tab-bar-page] #root {
-  background: var(--chrome);
+  background: var(--accent);
 }
 
 /* The strip scrolls sideways when the tabs do not fit; its edges dissolve
@@ -16,4 +16,66 @@ html[data-tab-bar-page] #root {
 
 [data-tab-strip]::-webkit-scrollbar {
   display: none;
+}
+
+/* A label longer than its tab dissolves at the right edge, and the close
+   button, shown on hover, takes its room from the label: the dissolve slides
+   left to clear it (В46). Registered lengths so the mask can move. */
+@property --tab-fade {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+@property --tab-close-room {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+[data-tab-label] {
+  mask-image: linear-gradient(
+    to right,
+    #000 calc(100% - var(--tab-close-room) - var(--tab-fade)),
+    transparent calc(100% - var(--tab-close-room))
+  );
+  transition: --tab-close-room 100ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+[data-tab-label][data-overflow="true"] {
+  --tab-fade: 24px;
+}
+
+[role="tab"]:hover [data-tab-label],
+[role="tab"]:focus-visible [data-tab-label] {
+  --tab-close-room: 24px;
+}
+
+[data-tab-close] {
+  opacity: 0;
+  scale: 0.9;
+  pointer-events: none;
+  transition:
+    opacity 100ms cubic-bezier(0.23, 1, 0.32, 1),
+    scale 100ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+[role="tab"]:hover [data-tab-close],
+[role="tab"]:focus-visible [data-tab-close] {
+  opacity: 1;
+  scale: 1;
+  pointer-events: auto;
+}
+
+/* A tab dragged along the row hides its close button: the press is a drag. */
+[data-reordering="true"] [data-tab-close] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-tab-label],
+  [data-tab-close] {
+    transition: none;
+  }
 }

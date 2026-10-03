@@ -1,8 +1,9 @@
-// The tab bar of one window (SPEC_TABS.md, В43 по В50, В55, В56, В60 по В64).
+// The tab bar of one window (SPEC_TABS.md, В43 по В50, В55, В56, В60 по В64, В81).
 //
 // A row of its own above the tab's chrome: the traffic-light reserve, the
-// window's sidebar button, the tabs, `+` after the last tab, and the rest of
-// the row to drag the window by. The backend owns every decision about tabs
+// window's sidebar button, back and forward through the visible tab's places,
+// the tabs, `+` after the last tab, and the rest of the row to drag the window
+// by. The backend owns every decision about tabs
 // and windows; this page shows the state it sends and hands each gesture back
 // as a command. Outside the tabs a press drags the window with the chrome's
 // threshold gesture, which asks the backend to start the drag (В23).
@@ -19,11 +20,10 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { Plus, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, X } from "lucide-react";
 import { ChromeRow } from "@/components/ChromeRow";
 import { SidebarToggleButton } from "@/components/SidebarToggleButton";
 import { Button } from "@/components/ui/button";
-import { ChromeControl, ChromePlate } from "@/components/ui/chrome-control";
 import { useChromeDragGesture } from "@/hooks/useChromeDragGesture";
 import {
   activateAdjacentTab,
@@ -36,6 +36,7 @@ import {
   newTab,
   reportDropSlot,
   setWindowSidebar,
+  stepTabHistory,
 } from "@/lib/commands";
 import { motionDuration } from "@/lib/motion";
 import { cn } from "@/lib/utils";
@@ -68,6 +69,8 @@ import { createTabMenu, type TabMenu } from "./tabMenu";
 export const NEW_TAB_LABEL = "New Tab";
 export const CLOSE_TAB_BUTTON_LABEL = "Close Tab";
 export const TAB_LIST_LABEL = "Tabs";
+export const BACK_LABEL = "Back";
+export const FORWARD_LABEL = "Forward";
 
 const PRIMARY_BUTTON = 0;
 const MIDDLE_BUTTON = 1;
@@ -113,6 +116,28 @@ function orderedTabs(source: TabBarTab[], local: LocalOrder | null): TabBarTab[]
   return ordered.length === source.length ? ordered : source;
 }
 
+/** A tab's label: one line that dissolves at the right edge when it does
+ *  not fit (В46). Whether it fits is measured, since the dissolve must not
+ *  eat the end of a label that does. */
+function TabTitle({ text, width }: { text: string; width: number }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [overflow, setOverflow] = useState(false);
+  useLayoutEffect(() => {
+    const node = ref.current;
+    if (node) setOverflow(node.scrollWidth > node.clientWidth);
+  }, [text, width]);
+  return (
+    <span
+      ref={ref}
+      data-tab-label=""
+      data-overflow={overflow ? "true" : undefined}
+      className="min-w-0 flex-1 overflow-hidden whitespace-nowrap font-mono text-sm leading-none"
+    >
+      {text}
+    </span>
+  );
+}
+
 interface TabBarProps {
   bar: TabBarState;
   /** A tab from another window held over this bar (В63). */
@@ -126,6 +151,7 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
   const tabs = useMemo(() => orderedTabs(sourceTabs, localOrder), [sourceTabs, localOrder]);
   const count = tabs.length;
   const activeIndex = tabs.findIndex((tab) => tab.id === activeTab);
+  const history = tabs[activeIndex]?.history ?? { back: false, forward: false };
 
   const zoneRef = useRef<HTMLDivElement>(null);
   const plusSlotRef = useRef<HTMLDivElement>(null);
@@ -452,18 +478,41 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
       separator="bottom"
       data-tab-bar=""
       data-fullscreen={fullscreen ? "true" : undefined}
-      className="bg-chrome"
+      className="bg-accent"
       onPointerLeave={() => setFrozen(null)}
     >
       {/* The traffic lights sit over this spot; in full screen they are
           gone, and the spot stays so nothing shifts. */}
       <div {...windowDrag} data-traffic-light-reserve="" className="h-full w-20 shrink-0" />
-      <div {...windowDrag} className="flex h-full shrink-0 items-center pr-2">
+      <div {...windowDrag} className="flex h-full shrink-0 items-center gap-0.5 pr-2">
         <SidebarToggleButton
           collapsed={sidebar.collapsed}
           onToggle={() =>
             run(setWindowSidebar({ ...sidebar, collapsed: !sidebar.collapsed }), "toggle the sidebar")}
         />
+        {/* Back and forward through the visible tab's places (В81). */}
+        <Button
+          type="button"
+          variant="chrome"
+          size="chrome-icon"
+          aria-label={BACK_LABEL}
+          data-tab-history="back"
+          disabled={!history.back}
+          onClick={() => run(stepTabHistory(false), "go back")}
+        >
+          <ChevronLeft />
+        </Button>
+        <Button
+          type="button"
+          variant="chrome"
+          size="chrome-icon"
+          aria-label={FORWARD_LABEL}
+          data-tab-history="forward"
+          disabled={!history.forward}
+          onClick={() => run(stepTabHistory(true), "go forward")}
+        >
+          <ChevronRight />
+        </Button>
       </div>
       <div ref={zoneRef} data-tab-zone="" className="flex h-full min-w-0 flex-1 items-center">
         <div
@@ -490,108 +539,83 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
             const label = tabLabel(tab);
             const { offset, follows } = tabShift(index, tab.id);
             return (
-              <ChromeControl key={tab.id}>
-                <div
-                  ref={(node) => {
-                    if (node) tabNodes.current.set(tab.id, node);
-                    else tabNodes.current.delete(tab.id);
-                  }}
-                  role="tab"
-                  aria-selected={active}
-                  tabIndex={tab.id === rovingId ? 0 : -1}
-                  title={label.title}
-                  data-tab-id={tab.id}
-                  data-active={active ? "true" : undefined}
-                  data-dragging={follows ? "true" : undefined}
-                  className={cn(
-                    "group/tab relative flex flex-none items-center px-[2px] outline-none",
-                    follows && "z-10",
-                  )}
-                  style={{
-                    width,
-                    transform: offset === 0 ? undefined : `translateX(${offset}px)`,
-                    transition: follows ? undefined : shiftTransition,
-                  }}
-                  // A click shows the tab and hands it the focus; the bar
-                  // keeps focus only for keyboard work (В49).
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    middlePress.current = event.button === MIDDLE_BUTTON ? tab.id : null;
-                  }}
-                  // The middle button closes the tab it was pressed and
-                  // released on (В53).
-                  onMouseUp={(event) => {
-                    if (event.button !== MIDDLE_BUTTON) return;
-                    const pressedTab = middlePress.current;
-                    middlePress.current = null;
-                    if (pressedTab !== tab.id) return;
-                    event.preventDefault();
+              <div
+                key={tab.id}
+                ref={(node) => {
+                  if (node) tabNodes.current.set(tab.id, node);
+                  else tabNodes.current.delete(tab.id);
+                }}
+                role="tab"
+                aria-selected={active}
+                tabIndex={tab.id === rovingId ? 0 : -1}
+                title={label}
+                data-tab-id={tab.id}
+                data-active={active ? "true" : undefined}
+                data-dragging={follows ? "true" : undefined}
+                // Square tabs the full height of the row, outlined by the
+                // row's lines. The visible tab takes the chrome below it, a
+                // line still parting them; the others take the row's surface
+                // and light up under the pointer (В46).
+                className={cn(
+                  "relative flex h-full flex-none items-center border-r border-border pr-1 pl-3 outline-none",
+                  "focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-ring",
+                  index === 0 && "border-l",
+                  active
+                    ? "bg-chrome text-foreground"
+                    : "text-muted-foreground hover:bg-active hover:text-foreground",
+                  follows && "z-10",
+                  follows && !active && "bg-accent",
+                )}
+                style={{
+                  width,
+                  transform: offset === 0 ? undefined : `translateX(${offset}px)`,
+                  transition: follows ? undefined : shiftTransition,
+                }}
+                // A click shows the tab and hands it the focus; the bar
+                // keeps focus only for keyboard work (В49).
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  middlePress.current = event.button === MIDDLE_BUTTON ? tab.id : null;
+                }}
+                // The middle button closes the tab it was pressed and
+                // released on (В53).
+                onMouseUp={(event) => {
+                  if (event.button !== MIDDLE_BUTTON) return;
+                  const pressedTab = middlePress.current;
+                  middlePress.current = null;
+                  if (pressedTab !== tab.id) return;
+                  event.preventDefault();
+                  closeByPointer(tab.id);
+                }}
+                onFocus={() => setFocusedId(tab.id)}
+                onClick={() => {
+                  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+                  run(activateTab(tab.id), "show the tab");
+                }}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  openMenu(tab.id);
+                }}
+              >
+                <TabTitle text={label} width={width} />
+                {/* Shown on hover only, over the label's dissolved end; a
+                    chrome button like the rest of the row (В46). */}
+                <Button
+                  type="button"
+                  variant="chrome"
+                  size="chrome-icon"
+                  tabIndex={-1}
+                  aria-label={CLOSE_TAB_BUTTON_LABEL}
+                  data-tab-close=""
+                  className="absolute inset-y-0 right-0.5"
+                  onClick={(event) => {
+                    event.stopPropagation();
                     closeByPointer(tab.id);
                   }}
-                  onFocus={() => setFocusedId(tab.id)}
-                  onClick={() => {
-                    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-                    run(activateTab(tab.id), "show the tab");
-                  }}
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    openMenu(tab.id);
-                  }}
                 >
-                  <ChromePlate
-                    className={cn(
-                      "w-full justify-start gap-1 rounded-1 pl-2 pr-[2px]",
-                      "group-focus-visible/tab:outline-1 group-focus-visible/tab:-outline-offset-1 group-focus-visible/tab:outline-ring",
-                      active ? "bg-component-fill" : "group-hover/tab:bg-active",
-                    )}
-                  >
-                    <span className="flex min-w-0 flex-1 overflow-hidden whitespace-nowrap font-mono text-sm leading-none">
-                      {/* The collection keeps its room; the space gives way first (В47). */}
-                      <span
-                        data-tab-label-primary=""
-                        className={cn(
-                          "max-w-full shrink-0 truncate",
-                          active ? "text-foreground" : "text-muted-foreground group-hover/tab:text-foreground",
-                        )}
-                      >
-                        {label.primary}
-                      </span>
-                      {label.secondary !== null && (
-                        <span
-                          data-tab-label-secondary=""
-                          className={cn(
-                            "ml-1.5 min-w-0 truncate",
-                            active
-                              ? "text-muted-foreground"
-                              : "text-tertiary-foreground group-hover/tab:text-muted-foreground",
-                          )}
-                        >
-                          {label.secondary}
-                        </span>
-                      )}
-                    </span>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-xs"
-                      tabIndex={-1}
-                      aria-label={CLOSE_TAB_BUTTON_LABEL}
-                      data-tab-close=""
-                      data-visible={active ? "always" : "hover"}
-                      className={cn(
-                        "size-5 rounded-[2px] text-muted-foreground",
-                        active ? "visible" : "invisible group-hover/tab:visible",
-                      )}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        closeByPointer(tab.id);
-                      }}
-                    >
-                      <X />
-                    </Button>
-                  </ChromePlate>
-                </div>
-              </ChromeControl>
+                  <X />
+                </Button>
+              </div>
             );
           })}
           {incomingSlot !== null && (
@@ -632,7 +656,7 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
 export function TabBarPending() {
   const windowDrag = useChromeDragGesture();
   return (
-    <ChromeRow as="header" separator="bottom" data-tab-bar="" data-tab-bar-pending="" className="bg-chrome">
+    <ChromeRow as="header" separator="bottom" data-tab-bar="" data-tab-bar-pending="" className="bg-accent">
       <div {...windowDrag} data-traffic-light-reserve="" className="h-full w-20 shrink-0" />
       <div {...windowDrag} data-tab-bar-drag-area="" className="h-full min-w-0 flex-1" />
     </ChromeRow>

@@ -27,6 +27,19 @@ pub fn report_tab_view(app: AppHandle, webview: Webview, view: TabView) {
     tabs::report_view(&app, webview.label(), view);
 }
 
+/// Where the calling tab can step through its places (В81).
+#[tauri::command]
+pub fn report_tab_history(app: AppHandle, webview: Webview, back: bool, forward: bool) {
+    tabs::report_history(&app, webview.label(), tabs::TabHistory { back, forward });
+}
+
+/// The calling tab bar's back or forward button: its window's visible tab
+/// steps through its places (В81).
+#[tauri::command]
+pub fn step_tab_history(app: AppHandle, webview: Webview, forward: bool) {
+    tabs::step_history(&app, webview.label(), forward);
+}
+
 /// The calling tab drew its first frame since it was shown (В5).
 #[tauri::command]
 pub fn tab_painted(app: AppHandle, webview: Webview) {

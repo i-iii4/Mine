@@ -33,7 +33,9 @@ use crate::domain::windows::{
     TabSpace, TabView, WindowId,
 };
 use crate::tabs::drag::DropHover;
-use crate::tabs::{SpaceLead, TabBarState, TabBarTab, TabBootstrap, TabVisibility};
+use crate::tabs::{
+    SpaceLead, TabBarState, TabBarTab, TabBootstrap, TabHistory, TabHistoryStep, TabVisibility,
+};
 use crate::updater::{UpdateError, UpdateStage, UpdateStatus};
 use crate::commands::cloud_recommendation::CloudRecommendationState;
 use crate::commands::icloud_progress::{IcloudDownloadProgress, IcloudDownloadStatus};
@@ -76,6 +78,8 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<SidebarLayout>()
         .register::<TabBarState>()
         .register::<TabBarTab>()
+        .register::<TabHistory>()
+        .register::<TabHistoryStep>()
         .register::<TabBootstrap>()
         .register::<TabVisibility>()
         .register::<SpaceLead>()

@@ -12,10 +12,10 @@
 export const TAB_BAR_HEIGHT_PX = 31;
 
 /** Narrowest a tab gets before the strip scrolls (domain/windows.rs `TAB_MIN_WIDTH_PX`, В48). */
-export const TAB_MIN_WIDTH_PX = 96;
+export const TAB_MIN_WIDTH_PX = 72;
 
 /** Widest a tab gets (domain/windows.rs `TAB_MAX_WIDTH_PX`, В48). */
-export const TAB_MAX_WIDTH_PX = 240;
+export const TAB_MAX_WIDTH_PX = 200;
 
 /** How far below the bar the pointer goes before a dragged tab tears off
  *  (domain/windows.rs `TAB_DETACH_THRESHOLD_PX`, В61). */

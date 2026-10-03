@@ -686,6 +686,13 @@ export const reportTabView = (view: TabView) => invoke<void>("report_tab_view", 
 /** This tab drew its first frame since it was shown (В5). */
 export const tabPainted = () => invoke<void>("tab_painted");
 
+/** Where this tab can step through its places (В81). */
+export const reportTabHistory = (back: boolean, forward: boolean) =>
+  invoke<void>("report_tab_history", { back, forward });
+
+/** The bar's back or forward button: the window's visible tab steps (В81). */
+export const stepTabHistory = (forward: boolean) => invoke<void>("step_tab_history", { forward });
+
 /** Show the tab `tabId` in its window. */
 export const activateTab = (tabId: TabId) => invoke<void>("activate_tab", { tabId });
 

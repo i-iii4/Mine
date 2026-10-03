@@ -24,9 +24,11 @@ import { ChromeRow, ChromeShell } from "@/components/ChromeRow";
 import type { SettingsSection } from "@/lib/settingsSections";
 import { isTauri } from "@tauri-apps/api/core";
 import { listenPage } from "@/lib/pageEvents";
+import { getNavigationLabel } from "@/lib/displayTitle";
 import {
   SPACE_LEAD_CHANGED_EVENT,
   TAB_GO_EVERYTHING_EVENT,
+  TAB_HISTORY_GO_EVENT,
   TAB_REFRESH_REQUESTED_EVENT,
   TAB_SPACE_FORGOTTEN_EVENT,
   WINDOW_SIDEBAR_CHANGED_EVENT,
@@ -42,6 +44,16 @@ import {
   pauseTabMedia,
   setTabVisible,
 } from "@/lib/tabVisibility";
+import {
+  EMPTY_PLACE_HISTORY,
+  historyDirections,
+  recordPlace,
+  samePlace,
+  settlePlace,
+  stepPlace,
+  type Place,
+  type PlaceHistory,
+} from "@/lib/placeHistory";
 // The tab bar's own reading of ⌃Tab and ⌃⇧Tab from the command registry:
 // both pages of a window answer them the same way (SPEC_TABS.md, В57).
 import { adjacentTabDirection } from "@/lib/adjacentTab";
@@ -219,6 +231,7 @@ import type {
   SpaceMovedPayload,
   SpaceRename,
   TabBootstrap,
+  TabHistoryStep,
   TabView,
   TabVisibility,
   VaultChangedPayload,
@@ -269,6 +282,7 @@ import {
   readClipboardPayload,
   getTabBootstrap,
   activateAdjacentTab,
+  reportTabHistory,
   reportTabView,
   tabPainted,
   setWindowSidebar,
@@ -491,6 +505,12 @@ interface TabRestore {
   view: TabView;
   saved: TabView;
 }
+
+/// The title a card shows when open in the compact detail.
+function cardTitle(block: Pick<LightBlock, "title" | "media_file" | "slug">): string {
+  return block.title ?? block.media_file ?? `${block.slug}.md`;
+}
+
 
 /// What this page needs from the backend as a tab: none for a page that is
 /// not a tab (a dev browser route), which then behaves as before tabs.
@@ -1350,9 +1370,7 @@ export function AppWithVault({
   const sidebarSearchActiveSurfaceClass = sidebarSearchHasActiveQuery
     ? "bg-accent"
     : "";
-  const compactDetailCardTitle = renderedDetailBlock
-    ? renderedDetailBlock.title ?? renderedDetailBlock.media_file ?? `${renderedDetailBlock.slug}.md`
-    : "";
+  const compactDetailCardTitle = renderedDetailBlock ? cardTitle(renderedDetailBlock) : "";
   // The search overlay is modal: while it is open the feed answers no key,
   // ⌘K included (SPEC_SEARCH_OVERLAY.md; SPEC_AUDIT_FIXES.md, Г4.2).
   const gridKeyboardNavigationDisabled = Boolean(renderedDetailBlock)
@@ -2324,6 +2342,102 @@ export function AppWithVault({
     };
   }, [initialLoadsDone, openDetailBlock, restoreView, viewRestored]);
 
+  // ── Back and forward through the tab's places (SPEC_TABS.md, В81) ───────
+  // Every place the tab comes to by itself is recorded. A step asked by the
+  // tab bar goes to its place and records nothing on the way; a place that
+  // is gone (a card deleted, a collection renamed) settles the step where it
+  // landed.
+  const placeHistoryRef = useRef<PlaceHistory>(EMPTY_PLACE_HISTORY);
+  const stepTargetRef = useRef<Place | null>(null);
+  const reportedHistoryRef = useRef<{ back: boolean; forward: boolean } | null>(null);
+  const handleDetailCloseRef = useRef<() => void>(() => {});
+  const selectedSlug = selectedBlock?.slug ?? null;
+  const placeRef = useRef<Place>({ tag: null, card: null });
+  placeRef.current = { tag: currentTag ?? null, card: selectedSlug };
+
+  const reportPlaceHistory = useCallback(() => {
+    if (!tabPage) return;
+    const directions = historyDirections(placeHistoryRef.current);
+    const reported = reportedHistoryRef.current;
+    if (reported?.back === directions.back && reported.forward === directions.forward) return;
+    reportedHistoryRef.current = directions;
+    void reportTabHistory(directions.back, directions.forward).catch((error: unknown) => {
+      console.error("Could not report the tab's history:", error);
+    });
+  }, [tabPage]);
+
+  // A place is read once the page settles: a route change closes the open
+  // card a render later, and the new route with the old card is no place.
+  useEffect(() => {
+    if (!viewRestored) return;
+    return afterTwoFrames(() => {
+      const place = placeRef.current;
+      const target = stepTargetRef.current;
+      if (target !== null) {
+        // On the way to a step's place only its arrival counts.
+        if (!samePlace(target, place)) return;
+        stepTargetRef.current = null;
+      } else {
+        placeHistoryRef.current = recordPlace(placeHistoryRef.current, place);
+      }
+      reportPlaceHistory();
+    });
+  }, [currentTag, reportPlaceHistory, selectedSlug, viewRestored]);
+
+  /// Go to `target`, unless a later step took over while its card was read.
+  const goToPlace = useCallback(async (target: Place, latest: () => boolean) => {
+    const block = target.card === null
+      ? null
+      : await getBlock(target.card).catch((error: unknown) => {
+        console.error("Could not read the card of a place:", error);
+        return null;
+      });
+    if (!latest()) return;
+    const current = placeRef.current;
+    const routeChanges = target.tag !== current.tag;
+    if (routeChanges) {
+      // The place's card opens over its route instead of being closed by it.
+      if (block) keepDetailOnRouteChangeRef.current = true;
+      navigate(tabLocationPath(tabLocationOf(target.tag ?? undefined)));
+    }
+    if (block) openDetailBlock(block);
+    else if (!routeChanges && current.card !== null) handleDetailCloseRef.current();
+  }, [navigate, openDetailBlock]);
+
+  useEffect(() => {
+    if (!tabPage || !viewRestored) return;
+    let disposed = false;
+    let cancelSettle: (() => void) | null = null;
+    // Steps come one after another, a quick second click before the first
+    // has landed included: the latest step's place is the one gone to.
+    let steps = 0;
+    const subscription = listenPage<TabHistoryStep>(TAB_HISTORY_GO_EVENT, (event) => {
+      const step = stepPlace(placeHistoryRef.current, event.payload.forward);
+      if (step === null) return;
+      const seq = ++steps;
+      const latest = () => !disposed && seq === steps;
+      placeHistoryRef.current = step.history;
+      stepTargetRef.current = step.target;
+      reportPlaceHistory();
+      cancelSettle?.();
+      void goToPlace(step.target, latest).finally(() => {
+        if (!latest()) return;
+        // Whatever the step reached is on screen two frames later.
+        cancelSettle = afterTwoFrames(() => {
+          if (!latest() || stepTargetRef.current === null) return;
+          stepTargetRef.current = null;
+          placeHistoryRef.current = settlePlace(placeHistoryRef.current, placeRef.current);
+          reportPlaceHistory();
+        });
+      });
+    });
+    return () => {
+      disposed = true;
+      cancelSettle?.();
+      void subscription.then((stop) => stop());
+    };
+  }, [goToPlace, reportPlaceHistory, tabPage, viewRestored]);
+
   // The scroll comes back once its card is in the feed: pages are read on
   // until it is, and a card that is gone leaves the feed at its top (В18).
   // Another place or Graph before that drops it.
@@ -2389,7 +2503,13 @@ export function AppWithVault({
       location: tabLocationOf(input.currentTag),
       mode: input.mainViewMode,
       open_card: input.selectedBlock
-        ? { slug: input.selectedBlock.slug, link_mode: input.detailLinkMode }
+        ? {
+          slug: input.selectedBlock.slug,
+          link_mode: input.detailLinkMode,
+          // The card's visible title, else its label without folder or
+          // extension (SPEC_DISPLAY_TITLE.md; SPEC_TABS.md, В47).
+          title: getNavigationLabel(input.selectedBlock),
+        }
         : null,
       // A scroll still on its way back is what the tab remembers.
       scroll_anchor: pendingScrollRef.current?.anchor ?? readScrollPositionRef.current?.() ?? null,
@@ -2894,6 +3014,7 @@ export function AppWithVault({
     requestGridFocusRestore,
     detailChromeCloseDuration,
   ]);
+  handleDetailCloseRef.current = handleDetailClose;
 
   const handleScrollToTop = useCallback(() => {
     if (selectedBlock) {

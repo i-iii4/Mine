@@ -68,9 +68,30 @@ pub struct TabBarTab {
     pub space_name: Option<String>,
     /// The collection the tab is in; `None` on Everything.
     pub collection: Option<String>,
+    /// The title of the card open in the tab; `None` with no card open.
+    pub card: Option<String>,
     /// The tab has a page now.
     pub live: bool,
+    /// The tab's page has places to go back and forward to (В81). An
+    /// unloaded tab has neither: its history went with its page.
+    pub history: TabHistory,
 }
+
+/// Whether a tab's page can go back and forward through its places (В81).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, specta::Type)]
+pub struct TabHistory {
+    pub back: bool,
+    pub forward: bool,
+}
+
+/// Which way the tab bar asks a tab to step through its places (В81).
+#[derive(Debug, Clone, Copy, Serialize, specta::Type)]
+pub struct TabHistoryStep {
+    pub forward: bool,
+}
+
+/// The event that tells a tab page to step through its places (В81).
+pub const TAB_HISTORY_GO_EVENT: &str = "tab-history-go";
 
 /// What one window's tab bar shows (`tabbar-state`).
 #[derive(Debug, Clone, Serialize, specta::Type)]
@@ -124,6 +145,8 @@ struct Live {
     current_space: Option<String>,
     /// The tab whose page is shown in each window.
     shown: BTreeMap<WindowId, TabId>,
+    /// Where each page can step through its places (В81).
+    history: BTreeMap<TabId, TabHistory>,
 }
 
 /// The tab windows of the running app.
@@ -596,7 +619,10 @@ pub fn bar_state(app: &AppHandle, window_id: &WindowId) -> Option<TabBarState> {
     let snapshot = shell.snapshot();
     let window = snapshot.window(window_id)?;
     let paths = space_paths(app);
-    let live: BTreeSet<TabId> = lock(&shell.live).pages.iter().cloned().collect();
+    let (live, history): (BTreeSet<TabId>, BTreeMap<TabId, TabHistory>) = {
+        let live = lock(&shell.live);
+        (live.pages.iter().cloned().collect(), live.history.clone())
+    };
     let tabs = window
         .tabs
         .iter()
@@ -610,7 +636,9 @@ pub fn bar_state(app: &AppHandle, window_id: &WindowId) -> Option<TabBarState> {
                 crate::domain::windows::TabLocation::Collection { tag } => Some(tag.clone()),
                 crate::domain::windows::TabLocation::Everything => None,
             },
+            card: open_card_title(&tab.view),
             live: live.contains(&tab.id),
+            history: history.get(&tab.id).copied().unwrap_or_default(),
         })
         .collect();
     Some(TabBarState {
@@ -620,6 +648,14 @@ pub fn bar_state(app: &AppHandle, window_id: &WindowId) -> Option<TabBarState> {
         sidebar: window.sidebar,
         fullscreen: window.fullscreen,
     })
+}
+
+/// The title a tab is labelled with while a card is open in it.
+fn open_card_title(view: &TabView) -> Option<String> {
+    view.open_card
+        .as_ref()
+        .map(|card| card.title.trim().to_string())
+        .filter(|title| !title.is_empty())
 }
 
 /// Send the tab bar of `window_id` what it shows now.
@@ -762,6 +798,7 @@ fn close_page(app: &AppHandle, tab: &TabId) {
         let mut live = lock(&shell.live);
         live.pages.retain(|candidate| candidate != tab);
         live.shown.retain(|_, shown| shown != tab);
+        live.history.remove(tab);
     }
     let label = tab.label();
     crate::frame_context_menu::unregister_page(&label);
@@ -1022,16 +1059,41 @@ pub fn report_view(app: &AppHandle, label: &str, view: TabView) {
         return;
     };
     let shell = shell(app);
-    let location_changed = shell
-        .snapshot()
-        .tab(&tab)
-        .is_some_and(|saved| saved.view.location != view.location);
+    // The label follows the place and the open card (В47).
+    let label_changed = shell.snapshot().tab(&tab).is_some_and(|saved| {
+        saved.view.location != view.location || open_card_title(&saved.view) != open_card_title(&view)
+    });
     shell.change(|model| model.set_view(&tab, view));
-    if location_changed {
+    if label_changed {
         if let Some(window) = window_of(app, &tab) {
             emit_bar_state(app, &window);
         }
     }
+}
+
+/// Where the page `label` can step through its places now (В81).
+pub fn report_history(app: &AppHandle, label: &str, history: TabHistory) {
+    let Some(tab) = TabId::from_label(label) else {
+        return;
+    };
+    let shell = shell(app);
+    let changed = lock(&shell.live).history.insert(tab.clone(), history) != Some(history);
+    if changed {
+        if let Some(window) = window_of(app, &tab) {
+            emit_bar_state(app, &window);
+        }
+    }
+}
+
+/// The bar of a window asks its visible tab to step back or forward (В81).
+pub fn step_history(app: &AppHandle, bar_label: &str, forward: bool) {
+    let Some(window) = WindowId::from_label(bar_label) else {
+        return;
+    };
+    let Some(tab) = shell(app).snapshot().window(&window).map(|window| window.active_tab.clone()) else {
+        return;
+    };
+    space_events::emit_to_labels(app, [tab.label()], TAB_HISTORY_GO_EVENT, TabHistoryStep { forward });
 }
 
 /// The tab `label` shows the space `vault_id` now (В10).

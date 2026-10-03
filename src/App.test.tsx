@@ -74,6 +74,7 @@ const commandMocks = vi.hoisted(() => ({
   // The page as a tab (SPEC_TABS.md, «Команды»).
   getTabBootstrap: vi.fn<() => Promise<TabBootstrap | null>>(async () => null),
   reportTabView: vi.fn<(view: TabView) => Promise<void>>(async () => {}),
+  reportTabHistory: vi.fn<(back: boolean, forward: boolean) => Promise<void>>(async () => {}),
   tabPainted: vi.fn<() => Promise<void>>(async () => {}),
   setWindowSidebar: vi.fn<(sidebar: SidebarLayout) => Promise<void>>(async () => {}),
   startWindowDrag: vi.fn<() => Promise<void>>(async () => {}),
@@ -150,6 +151,7 @@ vi.mock("@/lib/commands", () => ({
   openSettingsWindow: commandMocks.openSettingsWindow,
   getTabBootstrap: commandMocks.getTabBootstrap,
   reportTabView: commandMocks.reportTabView,
+  reportTabHistory: commandMocks.reportTabHistory,
   tabPainted: commandMocks.tabPainted,
   setWindowSidebar: commandMocks.setWindowSidebar,
   startWindowDrag: commandMocks.startWindowDrag,
@@ -3454,7 +3456,7 @@ describe("AppWithVault", () => {
     it("returns to its place, mode, card, link mode and filter, read first (В40, В78)", async () => {
       const view = tabView({
         location: { kind: "collection", tag: "alpha" },
-        open_card: { slug: "alpha-block", link_mode: "linked" },
+        open_card: { slug: "alpha-block", link_mode: "linked", title: "alpha-block" },
         collection_filter: "al",
       });
       const onRestored = vi.fn();
@@ -3488,7 +3490,7 @@ describe("AppWithVault", () => {
       ));
       const view = tabView({
         location: { kind: "collection", tag: "gone" },
-        open_card: { slug: "gone-card", link_mode: "all" },
+        open_card: { slug: "gone-card", link_mode: "all", title: "Gone card" },
         scroll_anchor: { slug: "gone-card", offset_px: 40 },
       });
       const onRestored = vi.fn();
@@ -3615,6 +3617,49 @@ describe("AppWithVault", () => {
       // The collections are read again at once when the index pass lands.
       send("vault-sync-finished", { path: "/vault", indexed: 2, errors: 0, error: null });
       await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:"));
+    });
+
+    it("steps back and forward through its places when the tab bar asks (В81)", async () => {
+      commandMocks.getBlock.mockImplementation(async (slug: string) => indexedBlock(1, slug, slug));
+      renderTab({}, "/channel/alpha");
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1"));
+      await waitFor(() => expect(commandMocks.reportTabHistory).toHaveBeenLastCalledWith(false, false));
+
+      fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+      await waitFor(() => expect(commandMocks.reportTabHistory).toHaveBeenLastCalledWith(true, false));
+      send("tab-go-everything");
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+      // The place is read two frames after it settles; its directions are
+      // the same as before, so nothing new is reported.
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      });
+      expect(commandMocks.reportTabHistory).toHaveBeenLastCalledWith(true, false);
+
+      // Back to the card over its collection, not to the collection alone.
+      send("tab-history-go", { forward: false });
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1"));
+      await waitFor(() => expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block"));
+      await waitFor(() => expect(commandMocks.reportTabHistory).toHaveBeenLastCalledWith(true, true));
+
+      send("tab-history-go", { forward: false });
+      await waitFor(() => expect(screen.queryByTestId("detail-title")).toBeNull());
+      await waitFor(() => expect(commandMocks.reportTabHistory).toHaveBeenLastCalledWith(false, true));
+
+      send("tab-history-go", { forward: true });
+      await waitFor(() => expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block"));
+      await waitFor(() => expect(commandMocks.reportTabHistory).toHaveBeenLastCalledWith(true, true));
+    });
+
+    it("labels its tab with the open card's title (В47)", async () => {
+      renderTab({}, "/channel/alpha");
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1"));
+      fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+      await waitFor(() => {
+        expect(commandMocks.reportTabView).toHaveBeenLastCalledWith(expect.objectContaining({
+          open_card: expect.objectContaining({ slug: "alpha-block", title: "alpha-block" }),
+        }));
+      }, { timeout: 2000 });
     });
 
     it("goes to Everything with nothing open when the space is opened from outside (В72)", async () => {

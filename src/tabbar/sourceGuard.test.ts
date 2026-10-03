@@ -58,11 +58,11 @@ describe("tab bar page boundaries", () => {
     expect(config).toContain('tabbar: path.resolve(__dirname, "tabbar.html")');
     const html = readFileSync("tabbar.html", "utf8");
     expect(html).toContain('src="/src/tabbar/main.tsx"');
-    // The first paint is the chrome surface in both themes, with the
-    // token's own values.
+    // The first paint is the bar's surface, the bottom panel's accent, in
+    // both themes, with the token's own values (В43).
     const css = readFileSync("src/styles/global.css", "utf8");
-    for (const value of ["oklch(0.99 0 0)", "oklch(0.17 0 0)"]) {
-      expect(css).toContain(`--chrome: ${value};`);
+    for (const value of ["oklch(0.98 0 0)", "oklch(0.2 0 0)"]) {
+      expect(css).toContain(`--accent: ${value};`);
       expect(html).toContain(value);
     }
     expect(html).not.toMatch(/background:\s*#[0-9a-f]{3,8}/i);

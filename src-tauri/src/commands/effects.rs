@@ -130,6 +130,8 @@ pub const COMMAND_EFFECTS: &[(&str, Effect)] = &[
     ("get_tabbar_bootstrap", Effect::Reads),
     ("report_tab_view", Effect::Reads),
     ("tab_painted", Effect::Reads),
+    ("report_tab_history", Effect::Reads),
+    ("step_tab_history", Effect::Reads),
     ("activate_tab", Effect::Reads),
     ("activate_adjacent_tab", Effect::Reads),
     ("new_tab", Effect::Reads),

@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import type { DropHover, TabBarState, TabBarTab } from "@/types";
 import { TAB_BAR_HEIGHT_PX, TAB_DETACH_THRESHOLD_PX, TAB_MAX_WIDTH_PX, TAB_MIN_WIDTH_PX } from "./constants";
-import { CLOSE_TAB_BUTTON_LABEL, NEW_TAB_LABEL, TAB_LIST_LABEL, TabBar } from "./TabBar";
+import { BACK_LABEL, CLOSE_TAB_BUTTON_LABEL, FORWARD_LABEL, NEW_TAB_LABEL, TAB_LIST_LABEL, TabBar } from "./TabBar";
 import type { TabMenuActions } from "./tabMenu";
 
 const commands = vi.hoisted(() => ({
@@ -17,6 +17,7 @@ const commands = vi.hoisted(() => ({
   reportDropSlot: vi.fn(async () => undefined),
   setWindowSidebar: vi.fn(async () => undefined),
   startWindowDrag: vi.fn(async () => undefined),
+  stepTabHistory: vi.fn(async () => undefined),
 }));
 
 vi.mock("@/lib/commands", () => commands);
@@ -40,8 +41,13 @@ const NEW_TAB_SLOT_PX = 32;
 let zoneWidth = 1000;
 const available = () => zoneWidth - NEW_TAB_SLOT_PX;
 
-function tab(id: string, space_name: string | null = "Mine", collection: string | null = null): TabBarTab {
-  return { id, space_name, collection, live: true };
+function tab(
+  id: string,
+  space_name: string | null = "Mine",
+  collection: string | null = null,
+  overrides: Partial<TabBarTab> = {},
+): TabBarTab {
+  return { id, space_name, collection, card: null, live: true, history: { back: false, forward: false }, ...overrides };
 }
 
 function barState(tabs: TabBarTab[], overrides: Partial<TabBarState> = {}): TabBarState {
@@ -100,15 +106,18 @@ afterEach(() => {
 });
 
 describe("tab bar row (В43)", () => {
-  it("lays out the reserve, the sidebar button, the tabs and + after them", () => {
+  it("lays out the reserve, the sidebar button, back and forward, the tabs and + after them", () => {
     const { container } = renderBar(barState([tab("a"), tab("b")]));
 
     const header = container.querySelector("header[data-tab-bar]");
     expect(header).not.toBeNull();
+    expect(header?.className).toContain("bg-accent");
     const reserve = header?.querySelector("[data-traffic-light-reserve]");
     const toggle = screen.getByRole("button", { name: "Hide Sidebar" });
+    const back = screen.getByRole("button", { name: BACK_LABEL });
+    const forward = screen.getByRole("button", { name: FORWARD_LABEL });
     const newTabButton = screen.getByRole("button", { name: NEW_TAB_LABEL });
-    const order = [reserve, toggle, strip(), newTabButton, header?.querySelector("[data-tab-bar-drag-area]")];
+    const order = [reserve, toggle, back, forward, strip(), newTabButton, header?.querySelector("[data-tab-bar-drag-area]")];
     for (let index = 1; index < order.length; index += 1) {
       const before = order[index - 1];
       const after = order[index];
@@ -149,28 +158,20 @@ describe("tab bar row (В43)", () => {
 });
 
 describe("tab labels (В46, В47)", () => {
-  it("shows the space on Everything and the collection with its space inside one", () => {
-    renderBar(barState([tab("a", "Mine"), tab("b", "Mine", "Beautiful web")]));
+  it("names the space on Everything, the collection inside one and the open card deepest of all", () => {
+    renderBar(barState([
+      tab("a", "Mine"),
+      tab("b", "Mine", "Beautiful web"),
+      tab("c", "Mine", "Beautiful web", { card: "Stripe homepage" }),
+    ]));
 
-    const everything = tabById("a");
-    expect(everything).toHaveTextContent("Mine");
-    expect(everything).toHaveAttribute("title", "Mine");
-    expect(everything.querySelector("[data-tab-label-secondary]")).toBeNull();
-
-    const collection = tabById("b");
-    expect(collection.querySelector("[data-tab-label-primary]")).toHaveTextContent("Beautiful web");
-    expect(collection.querySelector("[data-tab-label-secondary]")).toHaveTextContent("Mine");
-    expect(collection).toHaveAttribute("title", "Beautiful web · Mine");
-  });
-
-  it("lets the space name give way before the collection", () => {
-    renderBar(barState([tab("b", "Mine", "Beautiful web")]));
-    const primary = tabById("b").querySelector("[data-tab-label-primary]");
-    const secondary = tabById("b").querySelector("[data-tab-label-secondary]");
-    expect(primary?.className).toContain("shrink-0");
-    expect(primary?.className).toContain("max-w-full");
-    expect(secondary?.className).toContain("min-w-0");
-    expect(secondary?.className).toContain("truncate");
+    expect(tabById("a")).toHaveTextContent("Mine");
+    expect(tabById("a")).toHaveAttribute("title", "Mine");
+    expect(tabById("b")).toHaveTextContent("Beautiful web");
+    expect(tabById("b")).not.toHaveTextContent("Mine");
+    expect(tabById("b")).toHaveAttribute("title", "Beautiful web");
+    expect(tabById("c")).toHaveTextContent("Stripe homepage");
+    expect(tabById("c")).toHaveAttribute("title", "Stripe homepage");
   });
 
   it("asks for a space on a tab without one", () => {
@@ -178,23 +179,80 @@ describe("tab labels (В46, В47)", () => {
     expect(tabById("a")).toHaveTextContent("Choose Space");
   });
 
-  it("marks the visible tab selected, styled as the chosen segment", () => {
+  it("dissolves a label that does not fit, and only such a label", () => {
+    const scroll = vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(function (this: HTMLElement) {
+      return this.textContent === "A label far too long for its tab" ? 500 : 0;
+    });
+    try {
+      renderBar(barState([tab("a", "Mine"), tab("b", "Mine", "A label far too long for its tab")]));
+      expect(tabById("a").querySelector("[data-tab-label]")).not.toHaveAttribute("data-overflow");
+      expect(tabById("b").querySelector("[data-tab-label]")).toHaveAttribute("data-overflow", "true");
+    } finally {
+      scroll.mockRestore();
+    }
+  });
+});
+
+describe("tab look (В46)", () => {
+  it("draws square tabs the height of the row, outlined by its lines", () => {
+    renderBar(barState([tab("a"), tab("b"), tab("c")]));
+    for (const node of tabsShown()) {
+      expect(node.className).toContain("h-full");
+      expect(node.className).toContain("border-r");
+      expect(node.className).not.toMatch(/rounded/);
+    }
+    expect(tabById("a").className).toContain("border-l");
+    expect(tabById("b").className).not.toContain("border-l");
+  });
+
+  it("gives the visible tab the chrome below it and no hover, the others the row's surface and a hover", () => {
     renderBar(barState([tab("a"), tab("b")], { active_tab: "b" }));
     expect(tabById("a")).toHaveAttribute("aria-selected", "false");
     expect(tabById("b")).toHaveAttribute("aria-selected", "true");
-    expect(tabById("b").querySelector("[data-chrome-plate]")?.className).toContain("bg-component-fill");
-    expect(tabById("a").querySelector("[data-chrome-plate]")?.className).toContain("group-hover/tab:bg-active");
+    expect(tabById("b").className).toContain("bg-chrome");
+    expect(tabById("b").className).not.toContain("hover:");
+    expect(tabById("a").className).not.toContain("bg-chrome");
+    expect(tabById("a").className).toContain("hover:bg-active");
   });
 
-  it("shows the close button on the visible tab and on hover only", () => {
+  it("gives every tab a close button that its hover shows", () => {
     renderBar(barState([tab("a"), tab("b")]));
-    const visibleClose = within(tabById("a")).getByRole("button", { name: CLOSE_TAB_BUTTON_LABEL });
-    const hoverClose = within(tabById("b")).getByRole("button", { name: CLOSE_TAB_BUTTON_LABEL });
-    expect(visibleClose).toHaveAttribute("data-visible", "always");
-    expect(visibleClose.className).not.toContain("invisible");
-    expect(hoverClose).toHaveAttribute("data-visible", "hover");
-    expect(hoverClose.className).toContain("invisible");
-    expect(hoverClose.className).toContain("group-hover/tab:visible");
+    for (const id of ["a", "b"]) {
+      const close = within(tabById(id)).getByRole("button", { name: CLOSE_TAB_BUTTON_LABEL });
+      expect(close).toHaveAttribute("data-tab-close");
+      expect(close).not.toHaveAttribute("data-visible");
+      expect(close.className).toContain("absolute");
+    }
+  });
+});
+
+describe("back and forward (В81)", () => {
+  it("follows the visible tab's places and asks it to step", () => {
+    const { update } = renderBar(barState([
+      tab("a", "Mine", null, { history: { back: true, forward: false } }),
+      tab("b", "Mine", null, { history: { back: false, forward: true } }),
+    ]));
+
+    const back = screen.getByRole("button", { name: BACK_LABEL });
+    const forward = screen.getByRole("button", { name: FORWARD_LABEL });
+    expect(back).toBeEnabled();
+    expect(forward).toBeDisabled();
+    fireEvent.click(back);
+    expect(commands.stepTabHistory).toHaveBeenCalledWith(false);
+
+    update(barState([
+      tab("a", "Mine", null, { history: { back: true, forward: false } }),
+      tab("b", "Mine", null, { history: { back: false, forward: true } }),
+    ], { active_tab: "b" }));
+    expect(screen.getByRole("button", { name: BACK_LABEL })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: FORWARD_LABEL }));
+    expect(commands.stepTabHistory).toHaveBeenLastCalledWith(true);
+  });
+
+  it("has nowhere to go on a tab without history", () => {
+    renderBar(barState([tab("a")]));
+    expect(screen.getByRole("button", { name: BACK_LABEL })).toBeDisabled();
+    expect(screen.getByRole("button", { name: FORWARD_LABEL })).toBeDisabled();
   });
 });
 
@@ -212,12 +270,12 @@ describe("tab widths (В48)", () => {
   });
 
   it("scrolls at the minimum width, keeps the visible tab in view and fades the hidden edges", () => {
-    const tabs = letters(12);
-    const { update } = renderBar(barState(tabs, { active_tab: "t11" }));
+    const tabs = letters(16);
+    const { update } = renderBar(barState(tabs, { active_tab: "t15" }));
 
     for (const node of tabsShown()) expect(widthOf(node)).toBe(TAB_MIN_WIDTH_PX);
     expect(widthOf(strip())).toBe(available());
-    expect(strip().scrollLeft).toBe(12 * TAB_MIN_WIDTH_PX - available());
+    expect(strip().scrollLeft).toBe(16 * TAB_MIN_WIDTH_PX - available());
     expect(strip()).toHaveAttribute("data-fade-left", "true");
     expect(strip()).not.toHaveAttribute("data-fade-right");
 
@@ -228,7 +286,7 @@ describe("tab widths (В48)", () => {
   });
 
   it("updates the faded edges as the strip is scrolled", () => {
-    renderBar(barState(letters(12)));
+    renderBar(barState(letters(16)));
     strip().scrollLeft = 100;
     fireEvent.scroll(strip());
     expect(strip()).toHaveAttribute("data-fade-left", "true");
@@ -488,9 +546,10 @@ describe("tear off (В61, В62)", () => {
     expect(commands.beginTabDrag).not.toHaveBeenCalled();
 
     gesture.move(310, TAB_BAR_HEIGHT_PX + TAB_DETACH_THRESHOLD_PX + 1);
-    // Tab b starts at 240: it was grabbed 60 px in, so the new window keeps
-    // the pointer 60 px into its first tab.
-    expect(commands.beginTabDrag).toHaveBeenCalledWith("b", 60, 10);
+    // Tab b starts one maximum width in: it was grabbed 300 px from the
+    // strip's start, so the new window keeps the pointer as far into its
+    // first tab.
+    expect(commands.beginTabDrag).toHaveBeenCalledWith("b", 300 - TAB_MAX_WIDTH_PX, 10);
     for (const node of tabsShown()) expect(transformOf(node)).toBe("");
 
     gesture.move(320, 200);
@@ -569,8 +628,8 @@ describe("a tab from another window (В63)", () => {
     expect(marker(container)).toBeNull();
     expect(commands.reportDropSlot).not.toHaveBeenCalled();
 
-    // Centres stand at 120, 360 and 600.
-    update(barState(tabs), { tab_id: "x", x: TAB_MAX_WIDTH_PX + 100 });
+    // Centres stand at half, one and a half and two and a half widths.
+    update(barState(tabs), { tab_id: "x", x: TAB_MAX_WIDTH_PX + TAB_MAX_WIDTH_PX / 4 });
     expect(commands.reportDropSlot).toHaveBeenLastCalledWith(1);
     expect(marker(container)).toHaveAttribute("data-tab-drop-marker", "1");
     expect(marker(container)?.parentElement).toBe(strip());
@@ -581,7 +640,7 @@ describe("a tab from another window (В63)", () => {
     // The tabs stay where they are; only the marker shows the place.
     for (const node of tabsShown()) expect(transformOf(node)).toBe("");
 
-    update(barState(tabs), { tab_id: "x", x: TAB_MAX_WIDTH_PX + 110 });
+    update(barState(tabs), { tab_id: "x", x: TAB_MAX_WIDTH_PX + TAB_MAX_WIDTH_PX / 4 + 10 });
     expect(commands.reportDropSlot).toHaveBeenCalledTimes(1);
 
     update(barState(tabs), { tab_id: "x", x: 3 * TAB_MAX_WIDTH_PX - 10 });

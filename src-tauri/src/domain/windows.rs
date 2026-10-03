@@ -11,10 +11,11 @@ pub const SAVED_WINDOWS_VERSION: u32 = 1;
 /// Height of the tab bar row: 30 px of content and a 1 px separator, the
 /// rows of the chrome (DESIGN_SYSTEM.md, ChromeRow).
 pub const TAB_BAR_HEIGHT_PX: u32 = 31;
-/// Narrowest a tab gets before the bar scrolls.
-pub const TAB_MIN_WIDTH_PX: u32 = 96;
+/// Narrowest a tab gets before the bar scrolls: four or five letters of its
+/// label and room for the close button.
+pub const TAB_MIN_WIDTH_PX: u32 = 72;
 /// Widest a tab gets.
-pub const TAB_MAX_WIDTH_PX: u32 = 240;
+pub const TAB_MAX_WIDTH_PX: u32 = 200;
 /// How far below the tab bar the pointer goes before a tab tears off.
 pub const TAB_DETACH_THRESHOLD_PX: u32 = 24;
 /// How much of the tab bar must stay on some screen, across, for a saved
@@ -191,6 +192,11 @@ pub enum DetailLinkMode {
 pub struct OpenCard {
     pub slug: String,
     pub link_mode: DetailLinkMode,
+    /// The card's visible title, the tab's label while it is open (В47).
+    /// Kept so an unloaded tab is labelled without its page; empty in a
+    /// session saved before labels named cards.
+    #[serde(default)]
+    pub title: String,
 }
 
 /// The first card whose top edge is at or below the feed's top edge, and

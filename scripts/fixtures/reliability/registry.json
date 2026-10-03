@@ -1557,10 +1557,12 @@
         "src/lib/tabPage.ts",
         "src/lib/tabPage.test.ts",
         "src/lib/tabVisibility.ts",
-        "src/lib/tabVisibility.test.ts"
+        "src/lib/tabVisibility.test.ts",
+        "src/lib/placeHistory.ts",
+        "src/lib/placeHistory.test.ts"
       ],
       "requirement": "SPEC_TABS.md### Окно и страница",
-      "tests": ["src/App.test.tsx", "src/lib/pageEvents.test.ts", "src/lib/pageEvents.lint.test.ts", "src/lib/tabPage.test.ts", "src/lib/tabVisibility.test.ts", "src/lib/controlCharGuard.test.ts", "src/hooks/useSidebarResize.test.tsx", "src/lib/nativeWindowChromeSurface.test.ts", "src/components/DropZone.test.tsx", "src/hooks/useChromeDragGesture.test.tsx"],
+      "tests": ["src/App.test.tsx", "src/lib/placeHistory.test.ts", "src/lib/pageEvents.test.ts", "src/lib/pageEvents.lint.test.ts", "src/lib/tabPage.test.ts", "src/lib/tabVisibility.test.ts", "src/lib/controlCharGuard.test.ts", "src/hooks/useSidebarResize.test.tsx", "src/lib/nativeWindowChromeSurface.test.ts", "src/components/DropZone.test.tsx", "src/hooks/useChromeDragGesture.test.tsx"],
       "command": "test:frontend"
     },
     {

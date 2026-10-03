@@ -335,7 +335,13 @@ export type NativeShellSmokeReport = { status: string; vault_path: string | null
 /**
  * The card open in a tab.
  */
-export type OpenCard = { slug: string; link_mode: DetailLinkMode }
+export type OpenCard = { slug: string; link_mode: DetailLinkMode;
+/**
+ * The card's visible title, the tab's label while it is open (В47).
+ * Kept so an unloaded tab is labelled without its page; empty in a
+ * session saved before labels named cards.
+ */
+title?: string }
 
 export type OrphanMedia = { file_name: string; size_bytes: number; modified_secs: number }
 
@@ -544,9 +550,18 @@ space_name: string | null;
  */
 collection: string | null;
 /**
+ * The title of the card open in the tab; `None` with no card open.
+ */
+card: string | null;
+/**
  * The tab has a page now.
  */
-live: boolean }
+live: boolean;
+/**
+ * The tab's page has places to go back and forward to (В81). An
+ * unloaded tab has neither: its history went with its page.
+ */
+history: TabHistory }
 
 /**
  * What a tab page needs to start (`get_tab_bootstrap`).
@@ -562,6 +577,16 @@ lead: boolean;
  * old single-window settings over once (В79).
  */
 fresh_start: boolean }
+
+/**
+ * Whether a tab's page can go back and forward through its places (В81).
+ */
+export type TabHistory = { back: boolean; forward: boolean }
+
+/**
+ * Which way the tab bar asks a tab to step through its places (В81).
+ */
+export type TabHistoryStep = { forward: boolean }
 
 /**
  * A stable tab identity: 32 lowercase hex characters.

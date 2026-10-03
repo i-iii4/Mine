@@ -4,14 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Tabs</title>
-    <!-- The page background before the stylesheet lands. The bar is all
-         chrome, so it repeats the theme's own --chrome values: the first
-         paint and every later paint are the same colour. -->
+    <!-- The page background before the stylesheet lands. The bar is one
+         surface, the bottom panel's accent, so it repeats the theme's own
+         --accent values: the first paint and every later paint are the same
+         colour. -->
     <style>
       :root { color-scheme: light dark; }
-      html, body { background: oklch(0.99 0 0); }
+      html, body { background: oklch(0.98 0 0); }
       @media (prefers-color-scheme: dark) {
-        html, body { background: oklch(0.17 0 0); }
+        html, body { background: oklch(0.2 0 0); }
       }
     </style>
   </head>

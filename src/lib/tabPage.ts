@@ -18,6 +18,8 @@ export const TAB_REFRESH_REQUESTED_EVENT = "tab-refresh-requested";
 export const TAB_SPACE_FORGOTTEN_EVENT = "tab-space-forgotten";
 /** The space was opened from outside and this tab shows it: go to Everything (В72). */
 export const TAB_GO_EVERYTHING_EVENT = "tab-go-everything";
+/** The tab bar's back or forward button: step through this tab's places (В81). */
+export const TAB_HISTORY_GO_EVENT = "tab-history-go";
 /** The sidebar of this tab's window changed (В56). */
 export const WINDOW_SIDEBAR_CHANGED_EVENT = "window-sidebar-changed";
 

@@ -104,6 +104,8 @@ pub fn run() {
             commands::tabs::get_tabbar_bootstrap,
             commands::tabs::report_tab_view,
             commands::tabs::tab_painted,
+            commands::tabs::report_tab_history,
+            commands::tabs::step_tab_history,
             commands::tabs::activate_tab,
             commands::tabs::activate_adjacent_tab,
             commands::tabs::new_tab,
