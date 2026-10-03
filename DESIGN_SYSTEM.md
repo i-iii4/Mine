@@ -1269,8 +1269,11 @@ Right collection switcher живёт в правом top chrome segment и по�
 текущую Grid route collection: `Everything` или имя текущего канала. Геометрия
 повторяет space selector: root slot `h-full min-w-0 max-w-[50%] flex-none
 rounded-0 bg-transparent font-mono text-sm text-muted-foreground`, с тем же
-dropdown chevron внутри pill, что у space selector; root padding `px-6` в expanded mode и `px-3` в compact/collapsed mode,
-чтобы после collapsed space selector не оставалось лишнего 32px inset.
+dropdown chevron внутри pill, что у space selector; root padding
+`px-[var(--top-collection-pad-x)]` (8px) при открытом и свёрнутом боковом
+меню. Отдельный узкий режим `px-3` убран 03.10.2026 по замечанию пользователя:
+он остался со времён, когда space selector имел поля по 12px, и при свёрнутом
+меню давал 20px до имени вместо 16px.
 Hover/open/keyboard-focus рисует только inner pill
 `h-6 rounded-1 px-2 bg-active text-foreground` вокруг имени. При клике
 открывается обычный `DropdownMenu` со search field `Input ghost` и пунктами
@@ -1287,8 +1290,8 @@ prefill'иться текущим query, валидирует пустые/ду�
 route в новый канал. Ширина dropdown — floating width role `selector` (`18rem`),
 такая же как у Space dropdown.
 Позиционирование dropdown привязано к видимой внутренней пуле collection
-trigger. В expanded mode Radix `alignOffset=24` компенсирует root `px-6`; в
-compact/collapsed mode `alignOffset=12` компенсирует root `px-3`. Dropdown не
+trigger. Radix `alignOffset` равен левому полю root, измеренному при открытии
+(`getComputedStyle(...).paddingLeft`), а не записанному числом. Dropdown не
 может выпадать от невидимого layout slot, даже если slot шире видимой пули.
 
 Compact Detail top menu — экспериментальная настройка Settings

@@ -1430,7 +1430,6 @@ export function AppWithVault({
     toggleCollapsed,
   } = useSidebarResize(windowSidebar);
 
-  const topCollectionSwitcherCompact = sidebarCollapsed || compactDetailTopMenuEnabled;
 
 
   // ── dnd-kit sensors ────────────────────────────────────────────────────
@@ -4383,7 +4382,6 @@ export function AppWithVault({
           <TopCollectionSwitcher
             currentTag={currentTag}
             orderedTags={orderedTags}
-            compact={topCollectionSwitcherCompact}
             onNavigate={handleTopCollectionNavigate}
             onCreateCollection={handleTopCollectionCreate}
           />

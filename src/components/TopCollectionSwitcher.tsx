@@ -44,7 +44,6 @@ type CollectionSwitcherItem = {
 interface TopCollectionSwitcherProps {
   currentTag?: string;
   orderedTags: readonly TagCount[];
-  compact?: boolean;
   onNavigate: (tag?: string) => void;
   onCreateCollection: (tag: string) => void | Promise<void>;
 }
@@ -60,7 +59,6 @@ function collectionKey(tag?: string): string {
 export function TopCollectionSwitcher({
   currentTag,
   orderedTags,
-  compact = false,
   onNavigate,
   onCreateCollection,
 }: TopCollectionSwitcherProps) {
@@ -82,14 +80,14 @@ export function TopCollectionSwitcher({
   // from the trigger instead of restated as a number: the copy was 24 because
   // the padding once was, and it stayed behind the moment the chrome inset
   // stopped following the feed rhythm, leaving the menu 16px adrift.
-  const [menuAlignOffset, setMenuAlignOffset] = useState(compact ? 12 : 24);
+  const [menuAlignOffset, setMenuAlignOffset] = useState(0);
   useLayoutEffect(() => {
     if (!open) return;
     const node = topChromeTrigger.triggerProps.ref.current;
     if (!node) return;
     const padding = Number.parseFloat(getComputedStyle(node).paddingLeft);
     if (Number.isFinite(padding)) setMenuAlignOffset(padding);
-  }, [compact, open, topChromeTrigger.triggerProps.ref]);
+  }, [open, topChromeTrigger.triggerProps.ref]);
   const currentKey = collectionKey(currentTag);
   const label = currentCollectionLabel(currentTag);
   const trimmedQuery = query.trim().replace(/\s+/g, " ");
@@ -268,9 +266,10 @@ export function TopCollectionSwitcher({
             {...topChromeTrigger.triggerProps}
             className={cn(
               "max-w-[50%]",
-              // Label text = this padding + 8px inner pill padding; the alt
-              // design keeps it flush with the grid's card edge (16px).
-              compact ? "px-3" : "px-[var(--top-collection-pad-x)]",
+              // Label text = this padding + 8px inner pill padding: 16 px
+              // from the segment's edge with the sidebar open or collapsed,
+              // like the space switcher.
+              "px-[var(--top-collection-pad-x)]",
             )}
           />
         </DropdownMenuTrigger>

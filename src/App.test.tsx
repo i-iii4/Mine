@@ -1904,8 +1904,9 @@ describe("AppWithVault", () => {
     expect(document.querySelector("[data-top-chrome-space-measure]")).toBeNull();
     expect(screen.queryByRole("textbox", { name: "Filter collections" })).not.toBeInTheDocument();
     const collectionSwitcher = screen.getByRole("button", { name: "Switch collection: Everything" });
-    expect(collectionSwitcher).toHaveClass("px-3");
-    expect(collectionSwitcher).not.toHaveClass("px-6");
+    // Collapsed or not, the collection switcher keeps the one inset.
+    expect(collectionSwitcher).toHaveClass("px-[var(--top-collection-pad-x)]");
+    expect(collectionSwitcher).not.toHaveClass("px-3");
   });
 
   it("opens the search overlay from the bottom action without refetching the grid", async () => {
@@ -2207,7 +2208,7 @@ describe("AppWithVault", () => {
       getComputedStyle(collectionSwitcher).paddingLeft,
     );
     expect(alignOffset).toBe(
-      String(Number.isFinite(triggerPadding) && triggerPadding > 0 ? triggerPadding : 24),
+      String(Number.isFinite(triggerPadding) && triggerPadding > 0 ? triggerPadding : 0),
     );
     expect(screen.getByRole("menuitem", { name: "Create collection" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Everything" })).not.toBeInTheDocument();
