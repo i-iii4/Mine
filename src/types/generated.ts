@@ -485,6 +485,16 @@ export type SearchSnapshot = { generation: ProjectionRevision; search_generation
 export type SearchTextRange = { start: number; end: number }
 
 /**
+ * The place of a space selection in its tab's order (SPEC_TABS.md, В10):
+ * the generation of the page that made it, then the page's own count. The
+ * page stamps a choice when it makes it, because the commands that carry
+ * two choices may start in either order. A page load takes a newer
+ * generation (`page_generation`), so a late request of the page it
+ * replaced loses to it. Ordered by generation, then by count.
+ */
+export type SelectionStamp = { generation: number; sequence: number }
+
+/**
  * One rebound command: which key, which modifiers.
  */
 export type ShortcutBinding = { key: string; meta?: boolean; shift?: boolean; alt?: boolean; ctrl?: boolean }

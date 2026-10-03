@@ -379,6 +379,8 @@ export function VaultSwitcher({
           keyboardFocus={topChromeTrigger.keyboardFocus}
           data-vault-switcher=""
           data-vault-switcher-surface={surface}
+          // The filter row may narrow the name first (useSidebarRowFit.ts).
+          data-row-fit-name={isTopChrome && !topChromeCollapsed ? "" : undefined}
           {...(isTopChrome ? topChromeTrigger.triggerProps : {})}
           className={cn(
             isTopChrome

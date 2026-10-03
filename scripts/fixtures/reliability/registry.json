@@ -1489,6 +1489,32 @@
     },
     {
       "paths": [
+        "src/components/ChromeCloseButton.tsx",
+        "src/components/ui/tooltip.tsx",
+        "src/dev/ButtonAdaptationPage.tsx",
+        "src/dev/shadcnButtonStyles.ts"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#Подсказки",
+      "tests": ["src/App.test.tsx", "src/components/ui/button.test.tsx"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/components/ui/tabs.tsx",
+        "src/components/ui/switch.tsx",
+        "src/components/DetailLinkModeTabs.tsx",
+        "src/hooks/useSidebarRowFit.ts",
+        "src/hooks/useSidebarRowFit.test.tsx",
+        "src/settings/TopBarVariants.tsx",
+        "src/settings/SettingsApp.tsx",
+        "src/lib/settingsSections.ts"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#Сжатие ряда фильтра",
+      "tests": ["src/hooks/useSidebarRowFit.test.tsx", "src/App.test.tsx"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
         "src/lib/uiVersion.ts",
         "src/lib/uiVersion.test.ts",
         "src/settings/main.tsx"
@@ -1581,10 +1607,12 @@
         "src/lib/tabVisibility.ts",
         "src/lib/tabVisibility.test.ts",
         "src/lib/placeHistory.ts",
-        "src/lib/placeHistory.test.ts"
+        "src/lib/placeHistory.test.ts",
+        "src/lib/spaceSelection.ts",
+        "src/lib/spaceSelection.test.ts"
       ],
       "requirement": "SPEC_TABS.md### Окно и страница",
-      "tests": ["src/App.test.tsx", "src/lib/placeHistory.test.ts", "src/lib/pageEvents.test.ts", "src/lib/pageEvents.lint.test.ts", "src/lib/tabPage.test.ts", "src/lib/tabVisibility.test.ts", "src/lib/controlCharGuard.test.ts", "src/hooks/useSidebarResize.test.tsx", "src/lib/nativeWindowChromeSurface.test.ts", "src/components/DropZone.test.tsx", "src/hooks/useChromeDragGesture.test.tsx"],
+      "tests": ["src/App.test.tsx", "src/lib/placeHistory.test.ts", "src/lib/spaceSelection.test.ts", "src/lib/pageEvents.test.ts", "src/lib/pageEvents.lint.test.ts", "src/lib/tabPage.test.ts", "src/lib/tabVisibility.test.ts", "src/lib/controlCharGuard.test.ts", "src/hooks/useSidebarResize.test.tsx", "src/lib/nativeWindowChromeSurface.test.ts", "src/components/DropZone.test.tsx", "src/hooks/useChromeDragGesture.test.tsx"],
       "command": "test:frontend"
     },
     {

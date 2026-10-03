@@ -671,6 +671,37 @@ pub fn centered_frame(width: f64, height: f64, screens: &[ScreenArea]) -> Window
     }
 }
 
+/// A new window that comes from the window at `from` (В54): the same size,
+/// one tab bar `step` lower and to the right, so the tab bar of the window
+/// behind stays in sight. A window that would cross the right or the bottom
+/// edge of its screen starts again at the screen's top left corner.
+pub fn cascaded_frame(from: &WindowFrame, step: f64, screens: &[ScreenArea]) -> WindowFrame {
+    let contains = |screen: &&ScreenArea| {
+        from.x >= screen.x
+            && from.x < screen.x + screen.width
+            && from.y >= screen.y
+            && from.y < screen.y + screen.height
+    };
+    let Some(screen) = screens
+        .iter()
+        .find(contains)
+        .or_else(|| screens.iter().find(|screen| screen.main))
+        .or_else(|| screens.first())
+    else {
+        return WindowFrame {
+            x: from.x + step,
+            y: from.y + step,
+            ..*from
+        };
+    };
+    let width = from.width.min(screen.width);
+    let height = from.height.min(screen.height);
+    let (x, y) = (from.x + step, from.y + step);
+    let fits = x + width <= screen.x + screen.width && y + height <= screen.y + screen.height;
+    let (x, y) = if fits { (x, y) } else { (screen.x, screen.y) };
+    WindowFrame { x, y, width, height }
+}
+
 /// Whether enough of the tab bar of `frame` is on some screen to grab it.
 fn bar_reachable(frame: &WindowFrame, screens: &[ScreenArea]) -> bool {
     let bar_top = frame.y;
@@ -762,6 +793,21 @@ mod tests {
             height: 1117.0,
             main: true,
         }]
+    }
+
+    #[test]
+    fn a_new_window_steps_one_tab_bar_from_the_window_it_came_from() {
+        let from = WindowFrame { x: 100.0, y: 80.0, width: 1200.0, height: 800.0 };
+        let next = cascaded_frame(&from, 31.0, &screen());
+        assert_eq!(next, WindowFrame { x: 131.0, y: 111.0, width: 1200.0, height: 800.0 });
+    }
+
+    #[test]
+    fn a_new_window_past_the_screen_edge_starts_at_its_corner() {
+        // 1728 x 1117: one more step would cross the bottom edge.
+        let from = WindowFrame { x: 300.0, y: 300.0, width: 1200.0, height: 800.0 };
+        let next = cascaded_frame(&from, 31.0, &screen());
+        assert_eq!(next, WindowFrame { x: 0.0, y: 0.0, width: 1200.0, height: 800.0 });
     }
 
     fn tab(id: &str, space: &str) -> SavedTab {

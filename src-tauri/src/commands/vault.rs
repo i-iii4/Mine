@@ -20,6 +20,7 @@ use crate::space_registry::{
     LostReason,
 };
 use crate::commands::space_events;
+use crate::commands::spaces::SelectionStamp;
 use crate::commands::state::{
     chosen_space, schedule_preview_reconcile, tab_layout, AppState, CommandError, OpenSpace,
     SpaceLease, SweepGuard, VaultState,
@@ -129,6 +130,7 @@ pub async fn list_spaces(app: AppHandle) -> Result<Vec<SpaceEntry>, CommandError
 }
 
 fn space_entries(app: &AppHandle) -> Vec<SpaceEntry> {
+    follow_moved_spaces(app);
     let serde_json::Value::Object(cfg) = load_config(app) else {
         return Vec::new();
     };
@@ -153,6 +155,24 @@ fn space_entries(app: &AppHandle) -> Vec<SpaceEntry> {
         .collect()
 }
 
+/// Find each listed space gone from its path beside it under a new name, as
+/// opening it would (П30), and record the move. A space renamed while no tab
+/// had it open is then listed at its folder, not as unavailable with only
+/// Forget to offer (03.10.2026, a folder renamed twice).
+fn follow_moved_spaces(app: &AppHandle) {
+    let serde_json::Value::Object(cfg) = load_config(app) else {
+        return;
+    };
+    for status in crate::space_registry::statuses_in(&cfg, derived_stores_dir(app).as_deref()) {
+        if status.available || status.record.vault_id.is_none() {
+            continue;
+        }
+        if let Some(to) = crate::space_registry::find_moved(&status.record) {
+            record_moved_space(app, &status.record.path, &to);
+        }
+    }
+}
+
 /// Open the space the person chose at `path` in the calling tab: open or
 /// create its index, lay out its folders on a first choice, bind the tab to
 /// it (SPEC_TABS.md, В10). Persists the path so the next launch restores it.
@@ -161,12 +181,17 @@ pub async fn select_vault(
     app: AppHandle,
     webview: tauri::Webview,
     path: String,
+    stamp: SelectionStamp,
 ) -> Result<VaultOpenResult, CommandError> {
     // With the frontend's space_switch_requested these bound where a slow
     // switch spends its time: the IPC hop, the selection lock or the open.
     append_startup_trace(&app, "select_vault", "received");
     let label = webview.label().to_string();
-    let request = app.state::<AppState>().tabs.begin_selection(&label);
+    let request = app
+        .state::<AppState>()
+        .tabs
+        .begin_selection(&label, stamp)
+        .map_err(|_| superseded_selection())?;
     tauri::async_runtime::spawn_blocking(move || {
         open_space_in_tab(&app, &label, request, &path, SpaceOpening::Chosen, true)
     })
@@ -195,7 +220,7 @@ enum SpaceOpening {
 fn open_space_in_tab(
     app: &AppHandle,
     label: &str,
-    request: u64,
+    request: SelectionStamp,
     path: &str,
     opening: SpaceOpening,
     announce: bool,
@@ -234,7 +259,7 @@ fn superseded_selection() -> CommandError {
     CommandError::Internal("vault selection superseded by a newer request".into())
 }
 
-fn require_latest_selection(state: &AppState, label: &str, request: u64) -> Result<(), CommandError> {
+fn require_latest_selection(state: &AppState, label: &str, request: SelectionStamp) -> Result<(), CommandError> {
     if state.tabs.is_latest(label, request) {
         Ok(())
     } else {
@@ -562,6 +587,14 @@ impl From<&VaultWriteLayout> for VaultWriteLayoutDto {
     }
 }
 
+/// A generation for the calling page's space selections, newer than any
+/// handed out before (SPEC_TABS.md, В10). The page asks once, before its
+/// first choice, and stamps every choice with it and its own count.
+#[tauri::command]
+pub fn selection_generation(state: State<'_, AppState>) -> u64 {
+    state.tabs.page_generation()
+}
+
 /// Open the saved space in the calling tab without changing the config: the
 /// restore at launch.
 #[tauri::command]
@@ -569,9 +602,14 @@ pub async fn open_vault(
     app: AppHandle,
     webview: tauri::Webview,
     path: String,
+    stamp: SelectionStamp,
 ) -> Result<VaultOpenResult, CommandError> {
     let label = webview.label().to_string();
-    let request = app.state::<AppState>().tabs.begin_selection(&label);
+    let request = app
+        .state::<AppState>()
+        .tabs
+        .begin_selection(&label, stamp)
+        .map_err(|_| superseded_selection())?;
     tauri::async_runtime::spawn_blocking(move || {
         // Opening without a choice by the person: the folder must still be
         // the saved space. Only an explicit selection may make a folder a
@@ -1161,11 +1199,15 @@ fn watch_space_root(app: &AppHandle, space: Arc<OpenSpace>) {
     let host = AppSpaceRoot(app.clone());
     let spawned = std::thread::Builder::new()
         .name("space-root-watch".into())
-        .spawn(move || loop {
-            std::thread::sleep(SPACE_ROOT_CHECK_INTERVAL);
-            if check_space_root(&host, &space) != RootWatch::Watching {
-                return;
+        .spawn(move || {
+            loop {
+                std::thread::sleep(SPACE_ROOT_CHECK_INTERVAL);
+                if !keeps_watching(&check_space_root(&host, &space)) {
+                    break;
+                }
             }
+            // The next opening of this space watches its folder again.
+            space.release_root_watch();
         });
     if let Err(error) = spawned {
         log::warn!("cannot watch the space folder: {error}");
@@ -1246,6 +1288,14 @@ enum RootWatch {
     Followed(String),
     /// The space is nowhere to be found, and its tabs were told.
     Unavailable,
+}
+
+/// Whether the folder watch goes on after `state`. After a followed move it
+/// does: the open space serves the new folder now, and a second rename of
+/// it is the same case (П30). Measured 03.10.2026: the watch ended after the
+/// first move, and a second rename of the open space went unseen.
+fn keeps_watching(state: &RootWatch) -> bool {
+    matches!(state, RootWatch::Watching | RootWatch::Followed(_))
 }
 
 /// One look at the folder of the open space.
@@ -3052,6 +3102,27 @@ mod space_root_watch_tests {
         assert_eq!(check_space_root(&host, lease.space()), RootWatch::Followed(moved.clone()));
         assert_eq!(*host.reopened.borrow(), vec![(ID.to_string(), a, moved)]);
         assert!(host.announced.borrow().is_empty());
+    }
+
+    #[test]
+    fn the_watch_goes_on_after_a_followed_move_and_ends_only_on_loss_or_close() {
+        // П30: the moved space is watched at its new folder, so a second
+        // rename is seen too (03.10.2026, a folder renamed twice).
+        assert!(keeps_watching(&RootWatch::Watching));
+        assert!(keeps_watching(&RootWatch::Followed("/new".into())));
+        assert!(!keeps_watching(&RootWatch::Unavailable));
+        assert!(!keeps_watching(&RootWatch::Retired));
+    }
+
+    #[test]
+    fn an_ended_watch_is_claimed_again_by_the_next_opening() {
+        let dir = tempfile::tempdir().unwrap();
+        let spaces = SpaceHost::with_grace(Duration::from_millis(20));
+        let (lease, _, _) = open_space_a(&spaces, dir.path());
+        assert!(lease.space().claim_root_watch());
+        assert!(!lease.space().claim_root_watch());
+        lease.space().release_root_watch();
+        assert!(lease.space().claim_root_watch());
     }
 
     #[test]

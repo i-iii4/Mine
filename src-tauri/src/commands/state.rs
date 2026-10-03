@@ -380,7 +380,11 @@ impl AppState {
     /// publishes it. The space is keyed by its folder.
     pub(crate) fn open_space_for_test(&self, label: &str, session: VaultState) -> Arc<OpenSpace> {
         let vault_id = session.vault.root().to_string_lossy().into_owned();
-        let request = self.tabs.begin_selection(label);
+        let stamp = crate::commands::spaces::SelectionStamp {
+            generation: self.tabs.page_generation(),
+            sequence: 1,
+        };
+        let request = self.tabs.begin_selection(label, stamp).expect("a fresh page's first choice");
         let lease = self.spaces.lease(&vault_id);
         let space = Arc::clone(lease.space());
         space.publish(session, None);
@@ -394,15 +398,17 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::{AppState, VaultState};
+    use crate::commands::spaces::SelectionStamp;
     use crate::domain::vault::VaultLayout;
     use crate::storage::db;
 
     #[test]
     fn reliability_new_selection_detaches_previous_request() {
         let state = AppState::new();
-        let old = state.tabs.begin_selection("main");
+        let generation = state.tabs.page_generation();
+        let old = state.tabs.begin_selection("main", SelectionStamp { generation, sequence: 1 }).unwrap();
         assert!(state.tabs.is_latest("main", old));
-        let latest = state.tabs.begin_selection("main");
+        let latest = state.tabs.begin_selection("main", SelectionStamp { generation, sequence: 2 }).unwrap();
         assert!(!state.tabs.is_latest("main", old));
         assert!(state.tabs.is_latest("main", latest));
     }

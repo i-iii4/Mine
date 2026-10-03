@@ -548,6 +548,8 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
           variant="chrome"
           size="chrome-icon"
           aria-label={BACK_LABEL}
+          // The tab bar's page is one row tall: a tooltip would be cut off.
+          tooltip={false}
           data-tab-history="back"
           disabled={!history.back}
           onClick={() => run(stepTabHistory(false), "go back")}
@@ -559,6 +561,8 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
           variant="chrome"
           size="chrome-icon"
           aria-label={FORWARD_LABEL}
+          // The tab bar's page is one row tall: a tooltip would be cut off.
+          tooltip={false}
           data-tab-history="forward"
           disabled={!history.forward}
           onClick={() => run(stepTabHistory(true), "go forward")}
@@ -659,6 +663,8 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
                   size="chrome-icon"
                   tabIndex={-1}
                   aria-label={CLOSE_TAB_BUTTON_LABEL}
+          // The tab bar's page is one row tall: a tooltip would be cut off.
+          tooltip={false}
                   data-tab-close=""
                   className="absolute inset-y-0 right-2"
                   onClick={(event) => {
@@ -695,6 +701,8 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
             variant="chrome"
             size="chrome-icon"
             aria-label={NEW_TAB_LABEL}
+          // The tab bar's page is one row tall: a tooltip would be cut off.
+          tooltip={false}
             onClick={() => run(newTab(), "open a new tab")}
           >
             <Plus />
@@ -712,6 +720,8 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
           variant="chrome"
           size="chrome-icon"
           aria-label={SETTINGS_MENU_LABEL}
+          // The tab bar's page is one row tall: a tooltip would be cut off.
+          tooltip={false}
           onClick={(event) => openSettingsMenu(event.currentTarget)}
         >
           <MineLogo />

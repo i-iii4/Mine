@@ -134,6 +134,7 @@ pub fn run() {
             commands::article_audio::set_article_audio_position,
             commands::vault::select_vault,
             commands::vault::open_vault,
+            commands::vault::selection_generation,
             commands::vault::get_vault_path,
             commands::vault::list_known_vaults,
             commands::vault::list_spaces,

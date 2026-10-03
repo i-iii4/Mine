@@ -7,6 +7,7 @@ const sections = [
   ["Appearance", "appearance"], ["Shortcuts", "shortcuts"],
   ["Graph", "graph"], ["Spaces", "spaces"], ["New files", "layout"],
   ["Updates", "updates"], ["Orphans", "orphans"], ["Design system", "design-system"],
+  ["Top Bar Variants", "top-bar-variants"],
 ];
 
 describe("AppSettingsMenu", () => {

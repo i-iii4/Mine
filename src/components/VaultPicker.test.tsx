@@ -58,7 +58,7 @@ describe("VaultPicker (SPEC_ONBOARDING.md, О9 to О12)", () => {
   it("opens the chosen folder at once, with no confirmation step", async () => {
     const onSelected = vi.fn();
     mockOpen.mockResolvedValue("/test/Documents" as never);
-    mockCommands({ select_vault: { indexed: 0, errors: 0 } });
+    mockCommands({ selection_generation: 7, select_vault: { indexed: 0, errors: 0 } });
     render(<VaultPicker onVaultSelected={onSelected} />);
 
     fireEvent.click(screen.getByRole("button", { name: /choose folder/i }));
@@ -66,8 +66,14 @@ describe("VaultPicker (SPEC_ONBOARDING.md, О9 to О12)", () => {
     // The system dialog is the decision; the first index shows what the
     // folder holds and offers another one (О12, О13).
     await waitFor(() => expect(onSelected).toHaveBeenCalledWith("/test/Documents"));
-    expect(mockInvoke).toHaveBeenCalledWith("select_vault", { path: "/test/Documents" });
-    expect(mockInvoke.mock.calls.map(([command]) => command)).toEqual(["select_vault"]);
+    // The choice carries its place in the page's order (SPEC_TABS.md, В10).
+    expect(mockInvoke).toHaveBeenCalledWith("select_vault", {
+      path: "/test/Documents",
+      stamp: { generation: expect.any(Number), sequence: expect.any(Number) },
+    });
+    expect(
+      mockInvoke.mock.calls.map(([command]) => command).filter((command) => command !== "selection_generation"),
+    ).toEqual(["select_vault"]);
   });
 
   it("shows an error when opening fails", async () => {

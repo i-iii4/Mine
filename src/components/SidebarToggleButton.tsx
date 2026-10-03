@@ -21,6 +21,9 @@ export function SidebarToggleButton({
       type="button"
       variant="chrome"
       size="chrome-icon"
+      // It stands in the tab bar, a page one row tall: a tooltip would be
+      // cut off there.
+      tooltip={false}
       aria-label={label}
       aria-pressed={!collapsed}
       onClick={onToggle}

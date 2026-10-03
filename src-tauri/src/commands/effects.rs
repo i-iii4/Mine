@@ -38,6 +38,7 @@ pub const COMMAND_EFFECTS: &[(&str, Effect)] = &[
     ("set_article_audio_position", Effect::Reads),
     ("select_vault", Effect::Reads),
     ("open_vault", Effect::Reads),
+    ("selection_generation", Effect::Reads),
     ("get_vault_path", Effect::Reads),
     ("list_known_vaults", Effect::Reads),
     ("list_spaces", Effect::Reads),

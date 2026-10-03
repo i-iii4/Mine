@@ -2,6 +2,22 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
+/* `dark:` follows Mine's theme, not only the system's: dark when the person
+   chose Dark (`data-theme="dark"`), or chose System and macOS is dark. The
+   tokens below switch by the same rule; Tailwind's own `dark:` read macOS
+   alone, so shadcn's dark-only colours (outline, checkbox, switch, badge)
+   stayed light under a chosen Dark. */
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme="light"]), :root:not([data-theme="light"]) *) {
+      @slot;
+    }
+  }
+}
+
 @font-face {
   font-family: "Geist";
   src: url("/fonts/Geist-Variable.woff2") format("woff2");
@@ -659,13 +675,20 @@ body {
   }
 }
 
+/* An article card in the dark theme is painted with the accent; it declares
+   that as its surface, so the buttons on it lift from what is under them
+   (the surface map below: every button-hosting zone declares its surface).
+   Without it they lifted from the card's own colour and stood 0.06 above
+   the accent instead of 0.09 (03.10.2026). */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .feed-article-card {
+    --surface: var(--accent);
     background: var(--accent);
   }
 }
 
 :root[data-theme="dark"] .feed-article-card {
+  --surface: var(--accent);
   background: var(--accent);
 }
 
@@ -1183,6 +1206,14 @@ body {
   body {
     @apply bg-background text-foreground;
   }
+  /* Every button answers a press by sinking one pixel, as shadcn Nova's do
+     (registry, 03.10.2026; DESIGN_SYSTEM.md, «Нажатие»). Not a menu
+     trigger, whose menu answers instead, not a switch (a tab, a segment, a
+     toggle), whose new state answers, and not a disabled one. A utility
+     that sets `translate` still wins. */
+  button:active:not(:disabled):not([aria-haspopup]):not([role="tab"]):not([role="switch"]):not([aria-pressed]) {
+    translate: 0 1px;
+  }
 }
 
 /* Interface text at 13px, the size macOS sets its window titles, menus and
@@ -1212,6 +1243,49 @@ header.chrome-row .text-sm,
    their own drawing. */
 svg.lucide {
   stroke-width: 1.8462;
+}
+
+/* The sidebar's filter row gives room up in a fixed order
+   (useSidebarRowFit.ts; DESIGN_SYSTEM.md, «Сжатие ряда фильтра»). The
+   stage is the row's `data-row-fit`; every stage keeps what the one before
+   it took. */
+:root {
+  /* The space name at its narrowest: about ten letters and the chevron. */
+  --row-fit-name-min: 120px;
+}
+[data-row-fit]:not([data-row-fit="full"]) [data-row-fit-name] {
+  max-width: var(--row-fit-name-min);
+}
+[data-row-fit-icon] {
+  display: none;
+}
+:is([data-row-fit="icons"], [data-row-fit="search"]) [data-row-fit-label] {
+  display: none;
+}
+:is([data-row-fit="icons"], [data-row-fit="search"]) [data-row-fit-icon] {
+  display: inline-flex;
+}
+/* A segment that shows only its icon is a square. */
+:is([data-row-fit="icons"], [data-row-fit="search"]) [data-row-fit-segment] {
+  width: 20px;
+  padding-inline: 0;
+}
+[data-row-fit-search-button] {
+  display: none;
+}
+/* Folded, the field stays in the row with no width, so ⌘F still reaches it;
+   focused or holding a query, it opens over the row's actions. */
+[data-row-fit="search"]:not([data-row-search-open]) [data-row-fit-field] {
+  flex: 0 0 0;
+  width: 0;
+  padding: 0;
+  opacity: 0;
+}
+[data-row-fit="search"]:not([data-row-search-open]) [data-row-fit-search-button] {
+  display: inline-flex;
+}
+[data-row-fit="search"][data-row-search-open] [data-row-fit-actions] {
+  display: none;
 }
 
 /* The create row parts the sidebar list as it appears: its height runs from

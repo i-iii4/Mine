@@ -26,6 +26,7 @@ use crate::commands::settings::{
     SpaceStats,
 };
 use crate::commands::effects::{RenamedKind, SpaceRename, VaultChangedPayload};
+use crate::commands::spaces::SelectionStamp;
 use crate::commands::state::CommandError;
 use crate::commands::vault::SpaceMovedPayload;
 use crate::domain::windows::{
@@ -77,6 +78,7 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<ScrollAnchor>()
         .register::<SidebarLayout>()
         .register::<ChromeRows>()
+        .register::<SelectionStamp>()
         .register::<TabBarState>()
         .register::<TabBarTab>()
         .register::<TabHistory>()

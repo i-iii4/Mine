@@ -1,6 +1,7 @@
 import { X } from "lucide-react";
 import type { ComponentProps } from "react";
 import { Button } from "@/components/ui/button";
+import { commandById } from "@/lib/commandRegistry";
 
 type ChromeCloseButtonProps = Omit<
   ComponentProps<typeof Button>,
@@ -21,6 +22,7 @@ export function ChromeCloseButton({
       variant="chrome"
       size="chrome-icon"
       aria-label={label}
+      shortcut={commandById("close-element").combo}
       className={className}
       {...props}
     >

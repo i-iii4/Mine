@@ -25,7 +25,7 @@ use tauri::{
 use crate::commands::space_events;
 use crate::commands::state::AppState;
 use crate::domain::windows::{
-    centered_frame, normalize, ScreenArea, SavedTab, SavedWindow, SavedWindows, SidebarLayout,
+    cascaded_frame, centered_frame, normalize, ScreenArea, SavedTab, SavedWindow, SavedWindows, SidebarLayout,
     ChromeRows, SpaceStatus, TabId, TabSpace, TabView, WindowFrame, WindowId,
     WINDOW_DEFAULT_HEIGHT, WINDOW_DEFAULT_WIDTH, WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH,
 };
@@ -419,6 +419,8 @@ fn create_window(app: &AppHandle, saved: &SavedWindow) -> anyhow::Result<Window>
     set_tab_visible(app, &saved.active_tab, true);
     layout(app, &saved.id);
     emit_bar_state(app, &saved.id);
+    // The page takes the keyboard, or a page shortcut goes nowhere.
+    native::keyboard_to_page(&window, &page);
     Ok(window)
 }
 
@@ -575,6 +577,11 @@ fn on_window_focused(app: &AppHandle, window_id: &WindowId) {
         refresh_leads(app, space.vault_id());
     }
     project_current_space(app);
+    // A focused window hands the keyboard to its visible page when nothing
+    // in a page holds it.
+    if let (Some(window), Some(page)) = (app.get_window(&window_id.label()), app.get_webview(&visible.label())) {
+        native::keyboard_to_page(&window, &page);
+    }
     request_focus_refresh(app, &visible);
 }
 
@@ -963,10 +970,20 @@ pub fn new_window_at(app: &AppHandle, space: TabSpace, view: TabView) {
     let sidebar = last.as_ref().map_or_else(SidebarLayout::default, SavedWindow::active_sidebar);
     // A new window opens with the chrome of the window it came from (В83).
     let chrome_rows = last.as_ref().map_or(ChromeRows::STANDARD, |window| window.chrome_rows);
+    // It steps from that window, one tab bar lower and to the right (В54);
+    // from a full screen window or none it stands in the middle.
+    let frame = match last.as_ref() {
+        Some(window) if !window.fullscreen => cascaded_frame(
+            &window.frame,
+            f64::from(crate::domain::windows::tab_bar_height(chrome_rows.tab_bar)),
+            &screens,
+        ),
+        _ => centered_frame(WINDOW_DEFAULT_WIDTH, WINDOW_DEFAULT_HEIGHT, &screens),
+    };
     let tab = TabId(new_id());
     let window = SavedWindow {
         id: WindowId(new_id()),
-        frame: centered_frame(WINDOW_DEFAULT_WIDTH, WINDOW_DEFAULT_HEIGHT, &screens),
+        frame,
         fullscreen: false,
         tabs: vec![SavedTab {
             id: tab.clone(),

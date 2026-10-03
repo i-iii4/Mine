@@ -1,10 +1,10 @@
 import { useDraggable } from "@dnd-kit/core";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { commandById } from "@/lib/commandRegistry";
 import { cn } from "@/lib/utils";
 import { useChromeDragGesture } from "@/hooks/useChromeDragGesture";
 import type {
-  DetailLinkMode,
   IndexedBlock,
   LightBlock,
   MainViewMode,
@@ -20,11 +20,8 @@ import {
   type SegmentedControlOption,
 } from "./ui/segmented-control";
 import { FeedDisplayMenu } from "./FeedDisplayMenu";
+import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 
-const DETAIL_LINK_MODE_OPTIONS: SegmentedControlOption<DetailLinkMode>[] = [
-  { value: "all", label: "All" },
-  { value: "linked", label: "Connected" },
-];
 
 const MAIN_VIEW_MODE_OPTIONS: SegmentedControlOption<MainViewMode>[] = [
   { value: "grid", label: "Grid" },
@@ -117,12 +114,29 @@ function MainSecondaryStatsRight({
   // The Display options belong to the feed only (SPEC_FEED_DISPLAY.md, Д4).
   const feedDisplay = viewMode === "grid";
 
+  // Interface version 2: no count and no `View:` prefix; the view switch
+  // stands at the right with the Display button, on a permanent plate as
+  // the sidebar's filter has it (DESIGN_SYSTEM.md, «Версии интерфейса»).
+  if (afterPath) {
+    return (
+      <div
+        data-main-secondary-stats-right=""
+        className="flex h-full min-w-0 items-center justify-end font-mono text-sm leading-none text-tertiary-foreground"
+      >
+        <ChromeActions data-main-view-mode-switcher="" data-feed-display={feedDisplay ? "" : undefined}>
+          <MainViewModeTabs value={viewMode} onChange={onViewModeChange} />
+          {feedDisplay && <FeedDisplayMenu />}
+        </ChromeActions>
+      </div>
+    );
+  }
+
   return (
     <div
       data-main-secondary-stats-right=""
       className={cn(
         "flex h-full min-w-0 items-center justify-start gap-5 overflow-hidden font-mono text-sm leading-none text-tertiary-foreground",
-        afterPath ? "pl-3" : "pl-[var(--main-secondary-pad-x)]",
+        "pl-[var(--main-secondary-pad-x)]",
         // With actions at the end, ChromeActions owns the right edge inset.
         !feedDisplay && "pr-[var(--main-secondary-pad-x)]",
       )}
@@ -222,8 +236,6 @@ export function MainSecondaryTopBar({
   detailBlock,
   detailTitle,
   detailEntered,
-  detailLinkMode,
-  onDetailLinkModeChange,
   viewMode,
   onViewModeChange,
   vaultPath,
@@ -260,8 +272,6 @@ export function MainSecondaryTopBar({
   detailBlock?: LightBlock | IndexedBlock | null;
   detailTitle?: string;
   detailEntered?: boolean;
-  detailLinkMode: DetailLinkMode;
-  onDetailLinkModeChange: (value: DetailLinkMode) => void;
   viewMode: MainViewMode;
   onViewModeChange: (value: MainViewMode) => void;
   vaultPath: string;
@@ -321,9 +331,11 @@ export function MainSecondaryTopBar({
       )}
       style={sidebarCollapsed ? undefined : { width: "var(--sidebar-width)" }}
     >
+      {/* The stats stay while a card is open: the All / Connected switch
+          that took their place left every mode (03.10.2026). */}
       <div
         className="main-secondary-bar-layer absolute inset-0"
-        data-entered={mainLayerEntered ? "true" : "false"}
+        data-entered="true"
         data-main-secondary-main-layer=""
       >
         <MainSecondaryStatsLeft
@@ -335,41 +347,6 @@ export function MainSecondaryTopBar({
           onRevealSpace={onRevealSpace}
         />
       </div>
-      {detailBlock && !sidebarCollapsed && (
-        <div
-          className={cn(
-            "main-secondary-bar-layer absolute inset-0 flex h-full min-w-0 items-center gap-2 pl-[var(--chrome-edge-pad)]",
-            !onCreateCollection && "pr-[var(--chrome-edge-pad)]",
-          )}
-          data-entered={detailLayerEntered ? "true" : "false"}
-          data-secondary-sidebar-link-mode-bar=""
-        >
-          {/* A label in the voice of View: over the feed. */}
-          <span className="shrink-0 font-mono text-sm text-tertiary-foreground">Collections:</span>
-          <CompactDetailLinkModeSwitch
-            value={detailLinkMode}
-            onChange={onDetailLinkModeChange}
-            chromeDragEnabled={false}
-            entered={detailEntered}
-          />
-          {onCreateCollection && (
-            // The same spot as the plus over the closed list: the right
-            // edge, 8px in, so the button does not move when a card opens.
-            <ChromeActions windowEdge={false} className="ml-auto mr-2">
-              <Button
-                type="button"
-                variant="chrome"
-                size="chrome-icon"
-                aria-label="New Collection"
-                onClick={onCreateCollection}
-                data-secondary-link-mode-new-collection=""
-              >
-                <Plus />
-              </Button>
-            </ChromeActions>
-          )}
-        </div>
-      )}
     </div>
   );
   const contentSegment = (
@@ -455,6 +432,7 @@ export function MainSecondaryTopBar({
             onRequestRename={onRequestRename}
             onRequestDelete={onRequestDelete}
             triggerVariant="chrome"
+            triggerShortcut={commandById("element-menu-open").combo}
             openRequestSequence={detailMenuOpenRequestSequence}
             topChromeInteraction
           />
@@ -488,33 +466,29 @@ export function MainSecondaryTopBar({
   );
 }
 
-export function CompactDetailLinkModeSwitch({
+
+/** Grid and Graph as chrome tabs on a permanent plate (version 2). */
+function MainViewModeTabs({
   value,
   onChange,
-  chromeDragEnabled = true,
-  entered,
-  className,
 }: {
-  value: DetailLinkMode;
-  onChange: (value: DetailLinkMode) => void;
-  chromeDragEnabled?: boolean;
-  entered?: boolean;
-  className?: string;
+  value: MainViewMode;
+  onChange: (value: MainViewMode) => void;
 }) {
-  const chromeGesture = useChromeDragGesture({ disabled: !chromeDragEnabled });
-
+  const choose = (next: string) => {
+    const option = MAIN_VIEW_MODE_OPTIONS.find((candidate) => candidate.value === next);
+    if (option) onChange(option.value);
+  };
   return (
-    <SegmentedControl
-      chrome
-      {...chromeGesture}
-      value={value}
-      options={DETAIL_LINK_MODE_OPTIONS}
-      onChange={onChange}
-      aria-label="Collection filter"
-      data-entered={entered === undefined ? undefined : entered ? "true" : "false"}
-      data-compact-detail-link-mode-control=""
-      className={className}
-    />
+    <Tabs value={value} onValueChange={choose} className="h-full gap-0">
+      <TabsList variant="chrome" plate="always" aria-label="View mode" data-main-view-mode-control="">
+        {MAIN_VIEW_MODE_OPTIONS.map((option) => (
+          <TabsTrigger key={option.value} value={option.value}>
+            {option.label}
+          </TabsTrigger>
+        ))}
+      </TabsList>
+    </Tabs>
   );
 }
 
@@ -632,6 +606,7 @@ export function CompactDetailTopMenu({
         onRequestRename={onRequestRename}
         onRequestDelete={onRequestDelete}
         triggerVariant="chrome"
+            triggerShortcut={commandById("element-menu-open").combo}
         openRequestSequence={menuOpenRequestSequence}
         topChromeInteraction
       />

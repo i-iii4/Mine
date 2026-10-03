@@ -96,6 +96,12 @@ const coldSpaceAuditRoute =
   import.meta.env.DEV && window.location.pathname === "/__cold-space-audit";
 const sidebarReorderAuditRoute =
   import.meta.env.DEV && window.location.pathname === "/__sidebar-reorder-audit";
+// The versions of the sidebar's filter row, in a plain browser tab
+// (settings, Top Bar Variants, without the app around it).
+const topBarVariantsRoute =
+  import.meta.env.DEV && window.location.pathname === "/__top-bar-variants";
+// Buttons as they are and adapted to shadcn's secondary, outline and ghost.
+const buttonsRoute = import.meta.env.DEV && window.location.pathname === "/__buttons";
 const nativeShellSmokeRoute = new URLSearchParams(window.location.search)
   .has("mine-native-shell-smoke");
 const auditRoute = feedScrollAuditRoute
@@ -171,12 +177,38 @@ function Root() {
     return <NativeShellSmokeRoute />;
   }
 
+  if (buttonsRoute) {
+    return (
+      <React.Suspense fallback={null}>
+        <ButtonAdaptationPage />
+      </React.Suspense>
+    );
+  }
+
+  if (topBarVariantsRoute) {
+    return (
+      <React.Suspense fallback={null}>
+        <TopBarVariantsPage />
+      </React.Suspense>
+    );
+  }
+
   if (auditRoute) {
     return AuditRoute ? <AuditRoute /> : null;
   }
 
   return <App />;
 }
+
+const ButtonAdaptationPage = React.lazy(async () => {
+  const mod = await import("./dev/ButtonAdaptationPage");
+  return { default: mod.ButtonAdaptationPage };
+});
+
+const TopBarVariantsPage = React.lazy(async () => {
+  const mod = await import("./settings/TopBarVariants");
+  return { default: mod.TopBarVariantsPage };
+});
 
 function NativeShellSmokeRoute() {
   const [status, setStatus] = React.useState("running");

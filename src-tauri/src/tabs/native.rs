@@ -22,7 +22,7 @@ mod imp {
     use objc2::rc::Retained;
     use objc2::runtime::AnyObject;
     use objc2_app_kit::{NSColor, NSView, NSWindow, NSWindowOrderingMode};
-    use objc2_foundation::{NSNumber, NSPoint, NSRect, NSString};
+    use objc2_foundation::{NSArray, NSNumber, NSPoint, NSRect, NSString};
     use tauri::{Webview, Window};
 
     /// Put `lower` right under `upper` in their window: the page being shown
@@ -86,11 +86,57 @@ mod imp {
             .map(|(_, lights)| (f64::from(lights.row), lights.spacing))
     }
 
+    /// Whether `responder` is a page or a view inside one.
+    unsafe fn inside_web_view(responder: &AnyObject) -> bool {
+        let is_view: bool = objc2::msg_send![responder, isKindOfClass: objc2::class!(NSView)];
+        if !is_view {
+            return false;
+        }
+        let mut view: *const AnyObject = responder;
+        while let Some(current) = view.as_ref() {
+            let web: bool = objc2::msg_send![current, isKindOfClass: objc2::class!(WKWebView)];
+            if web {
+                return true;
+            }
+            let parent: *mut AnyObject = objc2::msg_send![current, superview];
+            view = parent;
+        }
+        false
+    }
+
+    /// Give the keyboard to `page` unless a page of its window has it. A new
+    /// window hands it to no page, and tao hands it back to the window's own
+    /// view whenever the window's style changes (`set_style_mask`, tao
+    /// 0.34.8 `util/mod.rs`); a shortcut the page listens for then goes
+    /// nowhere until a click (measured 03.10.2026: `TaoView` held it in a
+    /// window opened with ⌘N).
+    pub fn keyboard_to_page(window: &Window, page: &Webview) {
+        let window = window.clone();
+        let page = page.clone();
+        let _ = window.clone().run_on_main_thread(move || {
+            let Ok(ptr) = window.ns_window() else {
+                return;
+            };
+            // SAFETY: the live NSWindow of this window, on the main thread.
+            let held = unsafe {
+                let ns_window: &AnyObject = &*(ptr as *const AnyObject);
+                let responder: *mut AnyObject = objc2::msg_send![ns_window, firstResponder];
+                responder.as_ref().is_some_and(|responder| inside_web_view(responder))
+            };
+            if !held {
+                let _ = page.set_focus();
+            }
+        });
+    }
+
     /// Each window's frame observers, by window label, retained.
     static OBSERVERS: Mutex<Vec<(String, usize)>> = Mutex::new(Vec::new());
 
     /// NSWindowStyleMaskFullScreen.
     const FULL_SCREEN_STYLE: usize = 1 << 14;
+
+    /// Windows whose traffic lights are waiting to be put back.
+    static PENDING: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 
     /// The view holding the traffic lights: the close button's superview's
     /// superview, the title bar container.
@@ -120,62 +166,87 @@ mod imp {
         Some(minimise.origin.x - close.origin.x)
     }
 
-    /// Put the traffic lights in the middle of the window's row, as far from
-    /// its left edge as from its top, the system's step apart. The title bar
-    /// container is made exactly as tall as the row, from the window's top,
-    /// and every button is set to its point in it. The points follow from
-    /// the row and the step alone, never from where AppKit left a button, so
-    /// putting them back after each AppKit layout settles in one pass.
-    /// Measured 03.10.2026: AppKit keeps a button 9px from the container's
-    /// top and lays the three out one by one; a container sized from the
-    /// close button's place grew 3.5px on every layout and the buttons
-    /// parted. Full screen is the system's: its title bar drops in its own
+    /// Put the traffic lights of the window `key` in the middle of its row,
+    /// as far from its left edge as from its top, the system's step apart.
+    /// Only the buttons move: each is set to its point measured from the
+    /// window's top, whatever height AppKit gives their view, and the point
+    /// follows from the row and the step alone, so a second pass changes
+    /// nothing. Full screen is the system's: its title bar drops in its own
     /// window, and the lights there stay where AppKit puts them.
-    unsafe fn place(ns_window: &AnyObject) {
-        let Some((row, spacing)) = traffic_lights(std::ptr::from_ref(ns_window) as usize) else {
+    unsafe fn place(key: usize) {
+        let Some((row, spacing)) = traffic_lights(key) else {
             return;
         };
+        // SAFETY: a window in the registry is alive: `release` takes it out
+        // on the main thread before the window goes, and this runs there.
+        let ns_window: &AnyObject = &*(key as *const AnyObject);
         let style: usize = objc2::msg_send![ns_window, styleMask];
         if style & FULL_SCREEN_STYLE != 0 {
             return;
         }
-        let Some(container) = title_bar_container(ns_window) else {
-            return;
-        };
         let window: NSRect = objc2::msg_send![ns_window, frame];
-        let origin_y = window.size.height - row;
-        let mut bar: NSRect = objc2::msg_send![container, frame];
-        if (bar.size.height - row).abs() >= 0.5 || (bar.origin.y - origin_y).abs() >= 0.5 {
-            bar.size.height = row;
-            bar.origin.y = origin_y;
-            let _: () = objc2::msg_send![container, setFrame: bar];
-        }
         for (index, button) in window_buttons(ns_window).into_iter().enumerate() {
             let Some(button) = button else {
                 continue;
             };
-            let frame: NSRect = objc2::msg_send![button, frame];
-            // The buttons' own view spans the container; centred in it, a
-            // button is centred in the row whichever way the view counts.
             let parent: *mut AnyObject = objc2::msg_send![button, superview];
-            let parent_height = parent.as_ref().map_or(row, |parent| {
-                let parent: NSRect = objc2::msg_send![parent, frame];
-                parent.size.height
-            });
+            let Some(parent) = parent.as_ref() else {
+                continue;
+            };
+            let frame: NSRect = objc2::msg_send![button, frame];
+            let bounds: NSRect = objc2::msg_send![parent, bounds];
+            let in_window: NSRect =
+                objc2::msg_send![parent, convertRect: bounds, toView: std::ptr::null::<AnyObject>()];
+            let flipped: bool = objc2::msg_send![parent, isFlipped];
+            // The gap above the button inside its view, for a gap of `inset`
+            // above it in the window.
             let inset = ((row - frame.size.height) / 2.0).max(0.0);
+            let view_top = window.size.height - (in_window.origin.y + in_window.size.height);
+            let gap = inset - view_top;
             #[allow(clippy::cast_precision_loss)]
             let x = inset + index as f64 * spacing;
-            let y = ((parent_height - frame.size.height) / 2.0).max(0.0);
+            let y = if flipped { gap } else { bounds.size.height - gap - frame.size.height };
             if (frame.origin.x - x).abs() >= 0.5 || (frame.origin.y - y).abs() >= 0.5 {
                 let _: () = objc2::msg_send![button, setFrameOrigin: NSPoint::new(x, y)];
             }
         }
     }
 
+    /// Put the traffic lights back once the AppKit pass that moved them
+    /// returns. AppKit sets the buttons one by one (`-[NSThemeFrame
+    /// _updateButtonPositions]`) and ignores a move of the button it is
+    /// setting (`setFrameOrigin:ignoreRentry:`); a move made inside the frame
+    /// notification is lost for that button and undone for the ones not set
+    /// yet (stack and frames measured 03.10.2026). The main run loop runs
+    /// the block right after, in every mode, live resize included; several
+    /// notifications of one pass make one placement.
+    unsafe fn place_after_appkit(key: usize) {
+        {
+            let mut pending = PENDING.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if pending.contains(&key) {
+                return;
+            }
+            pending.push(key);
+        }
+        let block = block2::RcBlock::new(move || {
+            PENDING
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .retain(|pending| *pending != key);
+            place(key);
+        });
+        let run_loop: *mut AnyObject = objc2::msg_send![objc2::class!(NSRunLoop), mainRunLoop];
+        let Some(run_loop) = run_loop.as_ref() else {
+            return;
+        };
+        let modes = NSArray::from_retained_slice(&[NSString::from_str("kCFRunLoopCommonModes")]);
+        let _: () = objc2::msg_send![run_loop, performInModes: &*modes, block: &*block];
+    }
+
     /// Keep `window`'s traffic lights in the middle of the tab bar's row.
     /// AppKit lays the title bar out again on resize, focus, full screen and
     /// more; each time it moves the container or a button, their frame
-    /// notifications put them back, before the frame is drawn.
+    /// notifications put them back once it is done.
     pub fn keep_traffic_lights(window: &Window, row_height: u32) {
         let label = window.label().to_string();
         let window = window.clone();
@@ -183,6 +254,7 @@ mod imp {
             let Ok(ptr) = window.ns_window() else {
                 return;
             };
+            let key = ptr as usize;
             // SAFETY: the live NSWindow of this window, on the main thread.
             // The observers are removed when the window goes (`release`), and
             // the views they watch belong to the window, so the block never
@@ -194,10 +266,10 @@ mod imp {
                 };
                 {
                     let mut lights = TRAFFIC_LIGHTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                    lights.retain(|(window, _)| *window != ptr as usize);
-                    lights.push((ptr as usize, TrafficLights { row: row_height, spacing }));
+                    lights.retain(|(window, _)| *window != key);
+                    lights.push((key, TrafficLights { row: row_height, spacing }));
                 }
-                place(ns_window);
+                place(key);
                 let Some(container) = title_bar_container(ns_window) else {
                     return;
                 };
@@ -207,9 +279,8 @@ mod imp {
                     return;
                 };
                 let name = NSString::from_str("NSViewFrameDidChangeNotification");
-                let window_ptr = ptr as usize;
                 let block = block2::RcBlock::new(move |_note: NonNull<AnyObject>| {
-                    place(&*(window_ptr as *const AnyObject));
+                    place_after_appkit(key);
                 });
                 // The container and each button: AppKit moves any of them.
                 let watched = std::iter::once(container).chain(window_buttons(ns_window).into_iter().flatten());
@@ -243,8 +314,8 @@ mod imp {
                         None => return,
                     }
                 }
-                // SAFETY: the live NSWindow of this window, on the main thread.
-                unsafe { place(&*(ptr as *const AnyObject)) };
+                // SAFETY: on the main thread, for a window in the registry.
+                unsafe { place(ptr as usize) };
             }
         });
     }
@@ -359,6 +430,7 @@ mod imp {
 
     pub fn order_below(_upper: &Webview, _lower: &Webview) {}
     pub fn clear_page_background(_page: &Webview) {}
+    pub fn keyboard_to_page(_window: &Window, _page: &Webview) {}
     pub fn set_window_background(_window: &Window, _rgb: (f64, f64, f64)) {}
     pub fn keep_traffic_lights(_window: &Window, _row_height: u32) {}
     pub fn set_traffic_light_row(_window: &Window, _row_height: u32) {}
@@ -389,6 +461,12 @@ pub fn set_traffic_light_row(window: &Window, row_height: u32) {
 pub fn release_traffic_lights(window: &Window) {
     imp::release_traffic_lights(window);
 }
+
+/// Give the keyboard to `page` unless a page of `window` has it.
+pub fn keyboard_to_page(window: &Window, page: &Webview) {
+    imp::keyboard_to_page(window, page);
+}
+
 
 /// Paint `window`'s background with `hex` (`#rrggbb`); an unreadable colour
 /// leaves the system background.

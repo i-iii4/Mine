@@ -4,6 +4,15 @@ import { Slot } from "radix-ui"
 
 import { cn } from "@/lib/utils"
 import { ChromeControl, ChromePlate } from "./chrome-control"
+import { Tooltip, TooltipContent, TooltipShortcut, TooltipTrigger } from "./tooltip"
+
+/** Sizes that hold a glyph and no text: such a button names itself in a
+ *  tooltip (decision of 03.10.2026). */
+const ICON_SIZES = new Set(["icon", "icon-xs", "chrome-icon"])
+
+/** How long the pointer rests before the first tooltip; the next ones open
+ *  at once while the pointer moves between buttons (the provider's skip). */
+const TOOLTIP_DELAY_MS = 500
 
 // Keyboard focus draws the `--ring` outline inside the edge, the same inset
 // line hover uses (DESIGN_SYSTEM.md, Focus (button)); only chrome controls
@@ -25,6 +34,11 @@ const buttonVariants = cva(
         reference: "bg-transparent outline-1 -outline-offset-1 outline-border",
         ghost: "bg-transparent hover:text-hover-foreground",
         chrome: "group/chrome bg-transparent text-muted-foreground hover:text-foreground data-[state=open]:text-foreground focus-visible:text-foreground focus-visible:outline-none",
+        // The chrome's permanent plate (the + over the table) as a button of
+        // its own: `--active` from its surface, a dimmed glyph; on hover or
+        // while its menu is open it lifts one step to `--component-fill` and
+        // the glyph brightens. Trial on cards, 03.10.2026.
+        raised: "bg-active text-muted-foreground hover:bg-component-fill hover:text-foreground data-[state=open]:bg-component-fill data-[state=open]:text-foreground",
         link: "bg-transparent underline underline-offset-4 hover:text-hover-foreground",
       },
       size: {
@@ -49,15 +63,31 @@ function Button({
   variant = "default",
   size = "default",
   asChild = false,
+  plate = "hover",
+  tooltip,
+  shortcut,
   children,
   ...props
 }: React.ComponentProps<"button"> &
   VariantProps<typeof buttonVariants> & {
     asChild?: boolean
+    /** chrome-icon: the 24px plate on hover only, or always (the sidebar's
+     *  filter row, DESIGN_SYSTEM.md, «Иконочные кнопки хрома»). */
+    plate?: "hover" | "always"
+    /** What the tooltip says. An icon button says its `aria-label` unless
+     *  given this; `false` keeps it silent (a page too small to show one). */
+    tooltip?: React.ReactNode | false
+    /** The keystroke that does the same, shown beside the tooltip's text. */
+    shortcut?: string
   }) {
   const Comp = asChild ? Slot.Root : "button"
+  const label = props["aria-label"]
+  const tip =
+    tooltip === false
+      ? null
+      : tooltip ?? (!asChild && ICON_SIZES.has(size ?? "") && typeof label === "string" ? label : null)
 
-  return (
+  const button = (
     <ChromeControl enabled={size === "chrome-icon"}>
     <Comp
       data-slot="button"
@@ -67,12 +97,30 @@ function Button({
       {...props}
     >
       {size === "chrome-icon" && !asChild ? (
-        <ChromePlate className="w-6 rounded-1 group-hover/chrome:bg-active group-data-[state=open]/chrome:bg-active group-data-[top-chrome-keyboard-focus=true]/chrome:bg-active group-focus-visible/chrome:bg-active">
+        <ChromePlate
+          data-plate={plate}
+          className={cn(
+            "w-6 rounded-1",
+            plate === "always"
+              ? "bg-active"
+              : "group-hover/chrome:bg-active group-data-[state=open]/chrome:bg-active group-data-[top-chrome-keyboard-focus=true]/chrome:bg-active group-focus-visible/chrome:bg-active",
+          )}
+        >
           {children}
         </ChromePlate>
       ) : children}
     </Comp>
     </ChromeControl>
+  )
+  if (tip === null) return button
+  return (
+    <Tooltip delayDuration={TOOLTIP_DELAY_MS}>
+      <TooltipTrigger asChild>{button}</TooltipTrigger>
+      <TooltipContent>
+        {tip}
+        {shortcut && <TooltipShortcut>{shortcut}</TooltipShortcut>}
+      </TooltipContent>
+    </Tooltip>
   )
 }
 

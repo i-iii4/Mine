@@ -268,7 +268,7 @@ local-arena/
 │   ├── types/                  # generated.ts from Rust/Specta + frontend-owned index.ts
 │   ├── lib/                    # commands.ts (IPC), masonryLayout.ts, cardLayout.ts, cardHeight.ts, cardAspect.ts (политика обрезки), assets.ts, clipboard.ts, utils.ts (cn()), pageEvents.ts (события своей страницы), tabPage.ts (память вкладки), tabVisibility.ts (показ и пауза медиа), chromeHeight.ts (высота хрома окна), controlCharGuard.ts и др.
 │   ├── workers/                # fontMetrics.worker.ts (Canvas measureText), thumbWorker.ts
-│   ├── dev/                    # Dev-only Feed, Graph, ColdSpace and SidebarReorder acceptance routes
+│   ├── dev/                    # Dev-only Feed, Graph, ColdSpace and SidebarReorder acceptance routes; страницы сравнения на dev-сервере: /__buttons (кнопки shadcn), /__top-bar-variants (верхний ряд)
 │   ├── test/                   # Vitest setup
 │   └── styles/                 # Глобальные стили (global.css)
 ├── scripts/

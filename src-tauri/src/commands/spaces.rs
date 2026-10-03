@@ -105,6 +105,12 @@ impl OpenSpace {
         !self.root_watch_started.swap(true, Ordering::SeqCst)
     }
 
+    /// The folder watch ended (the space is unavailable or closed): the next
+    /// opening claims it again.
+    pub(crate) fn release_root_watch(&self) {
+        self.root_watch_started.store(false, Ordering::SeqCst);
+    }
+
     /// Whether the startup sync of this opening finished.
     pub(crate) fn opening_synced(&self) -> bool {
         self.synced.load(Ordering::SeqCst)
@@ -316,10 +322,21 @@ impl Drop for SpaceLease {
     }
 }
 
-/// One tab's slot: the newest selection it made, the space it shows and
-/// whether its page is shown in its window.
+/// The place of a space selection in its tab's order (SPEC_TABS.md, В10):
+/// the generation of the page that made it, then the page's own count. The
+/// page stamps a choice when it makes it, because the commands that carry
+/// two choices may start in either order. A page load takes a newer
+/// generation (`page_generation`), so a late request of the page it
+/// replaced loses to it. Ordered by generation, then by count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize, specta::Type)]
+pub struct SelectionStamp {
+    pub generation: u64,
+    pub sequence: u64,
+}
+
+/// One tab's slot: the space it shows and whether its page is shown in its
+/// window.
 struct TabSlot {
-    selection: u64,
     lease: Option<SpaceLease>,
     visible: bool,
 }
@@ -327,6 +344,11 @@ struct TabSlot {
 #[derive(Default)]
 struct TabsInner {
     tabs: BTreeMap<String, TabSlot>,
+    /// Each tab's newest selection. Kept when the slot goes, so a request
+    /// still on its way after that stays ordered against the next ones.
+    selections: BTreeMap<String, SelectionStamp>,
+    /// The last page generation handed out, for any tab.
+    generation: u64,
     /// Tab labels, the most recently active first.
     recent: Vec<String>,
 }
@@ -343,38 +365,47 @@ pub struct TabRegistry {
 pub struct Superseded;
 
 impl TabRegistry {
-    /// Start a selection in the tab `label`. A selection begun later in the
-    /// same tab supersedes it; other tabs are not affected (В10).
-    pub fn begin_selection(&self, label: &str) -> u64 {
+    /// A generation for a page that just loaded: newer than any handed out
+    /// before, in any tab.
+    pub fn page_generation(&self) -> u64 {
         let mut inner = lock(&self.inner);
-        let slot = inner.tabs.entry(label.to_string()).or_insert(TabSlot {
-            selection: 0,
+        inner.generation += 1;
+        inner.generation
+    }
+
+    /// Start the selection `stamp` in the tab `label`. A selection the page
+    /// stamped later supersedes it, whichever starts first; one stamped
+    /// earlier than the tab's newest is superseded already. Other tabs are
+    /// not affected (В10).
+    pub fn begin_selection(&self, label: &str, stamp: SelectionStamp) -> Result<SelectionStamp, Superseded> {
+        let mut inner = lock(&self.inner);
+        if inner.selections.get(label).is_some_and(|newest| *newest >= stamp) {
+            return Err(Superseded);
+        }
+        inner.selections.insert(label.to_string(), stamp);
+        inner.tabs.entry(label.to_string()).or_insert(TabSlot {
             lease: None,
             visible: true,
         });
-        slot.selection += 1;
-        slot.selection
+        Ok(stamp)
     }
 
-    /// Whether `request` is still the newest selection of the tab.
-    pub fn is_latest(&self, label: &str, request: u64) -> bool {
-        lock(&self.inner)
-            .tabs
-            .get(label)
-            .is_some_and(|slot| slot.selection == request)
+    /// Whether `stamp` is still the newest selection of the tab.
+    pub fn is_latest(&self, label: &str, stamp: SelectionStamp) -> bool {
+        lock(&self.inner).selections.get(label) == Some(&stamp)
     }
 
-    /// Bind the tab to the leased space when `request` is still its newest
+    /// Bind the tab to the leased space when `stamp` is still its newest
     /// selection. The previous lease is released after the lock.
-    pub fn bind(&self, label: &str, request: u64, lease: SpaceLease) -> Result<(), Superseded> {
+    pub fn bind(&self, label: &str, stamp: SelectionStamp, lease: SpaceLease) -> Result<(), Superseded> {
         let previous = {
             let mut inner = lock(&self.inner);
+            if inner.selections.get(label) != Some(&stamp) {
+                return Err(Superseded);
+            }
             let Some(slot) = inner.tabs.get_mut(label) else {
                 return Err(Superseded);
             };
-            if slot.selection != request {
-                return Err(Superseded);
-            }
             let previous = slot.lease.replace(lease);
             inner.recent.retain(|recent| recent != label);
             inner.recent.insert(0, label.to_string());
@@ -442,7 +473,6 @@ impl TabRegistry {
     pub fn set_visible(&self, label: &str, visible: bool) {
         let mut inner = lock(&self.inner);
         let slot = inner.tabs.entry(label.to_string()).or_insert(TabSlot {
-            selection: 0,
             lease: None,
             visible,
         });
@@ -491,12 +521,53 @@ mod tests {
         }
     }
 
+    /// The `sequence`th choice of the page of generation 1.
+    fn stamp(sequence: u64) -> SelectionStamp {
+        SelectionStamp { generation: 1, sequence }
+    }
+
+    #[test]
+    fn a_choice_stamped_earlier_loses_whichever_starts_first() {
+        let host = SpaceHost::with_grace(Duration::from_millis(20));
+        let tabs = TabRegistry::default();
+        // The page chose x, then y; the command carrying y started first.
+        let y = tabs.begin_selection("tab-a", stamp(2)).unwrap();
+        assert_eq!(tabs.begin_selection("tab-a", stamp(1)), Err(Superseded));
+        tabs.bind("tab-a", y, host.lease("space-y")).unwrap();
+        assert_eq!(tabs.space_of("tab-a").unwrap().vault_id(), "space-y");
+    }
+
+    #[test]
+    fn a_reloaded_page_beats_the_late_request_of_the_page_before() {
+        let tabs = TabRegistry::default();
+        let before = tabs.page_generation();
+        let after = tabs.page_generation();
+        assert!(after > before);
+        let reloaded = SelectionStamp { generation: after, sequence: 1 };
+        tabs.begin_selection("tab-a", reloaded).unwrap();
+        let late = SelectionStamp { generation: before, sequence: 9 };
+        assert_eq!(tabs.begin_selection("tab-a", late), Err(Superseded));
+        assert!(tabs.is_latest("tab-a", reloaded));
+    }
+
+    #[test]
+    fn the_newest_choice_outlives_the_tab_slot() {
+        let host = SpaceHost::with_grace(Duration::from_millis(20));
+        let tabs = TabRegistry::default();
+        let newer = tabs.begin_selection("tab-a", stamp(2)).unwrap();
+        tabs.bind("tab-a", newer, host.lease("space-x")).unwrap();
+        // The space was forgotten: the tab's slot went, its page stayed.
+        tabs.remove("tab-a");
+        assert_eq!(tabs.begin_selection("tab-a", stamp(1)), Err(Superseded));
+        assert!(tabs.begin_selection("tab-a", stamp(3)).is_ok());
+    }
+
     #[test]
     fn two_tabs_of_one_space_share_its_owner() {
         let host = SpaceHost::with_grace(Duration::from_millis(20));
         let tabs = TabRegistry::default();
-        let a = tabs.begin_selection("tab-a");
-        let b = tabs.begin_selection("tab-b");
+        let a = tabs.begin_selection("tab-a", stamp(1)).unwrap();
+        let b = tabs.begin_selection("tab-b", stamp(1)).unwrap();
         tabs.bind("tab-a", a, host.lease("space-x")).unwrap();
         tabs.bind("tab-b", b, host.lease("space-x")).unwrap();
 
@@ -562,7 +633,7 @@ mod tests {
     fn running_work_keeps_the_space_after_its_tabs_close() {
         let host = SpaceHost::with_grace(Duration::from_millis(20));
         let tabs = TabRegistry::default();
-        let request = tabs.begin_selection("tab-a");
+        let request = tabs.begin_selection("tab-a", stamp(1)).unwrap();
         tabs.bind("tab-a", request, host.lease("space-x")).unwrap();
         let job = host.lease("space-x");
 
@@ -578,13 +649,13 @@ mod tests {
     fn a_choice_in_one_tab_never_supersedes_another_tab() {
         let host = SpaceHost::with_grace(Duration::from_millis(20));
         let tabs = TabRegistry::default();
-        let a = tabs.begin_selection("tab-a");
-        let b = tabs.begin_selection("tab-b");
+        let a = tabs.begin_selection("tab-a", stamp(1)).unwrap();
+        let b = tabs.begin_selection("tab-b", stamp(1)).unwrap();
         assert!(tabs.is_latest("tab-a", a));
         tabs.bind("tab-b", b, host.lease("space-y")).unwrap();
         tabs.bind("tab-a", a, host.lease("space-x")).unwrap();
 
-        let newer = tabs.begin_selection("tab-a");
+        let newer = tabs.begin_selection("tab-a", stamp(2)).unwrap();
         assert!(!tabs.is_latest("tab-a", a));
         assert_eq!(tabs.bind("tab-a", a, host.lease("space-z")), Err(Superseded));
         assert!(tabs.is_latest("tab-b", b));
@@ -596,9 +667,9 @@ mod tests {
     fn rebinding_a_tab_releases_its_previous_space() {
         let host = SpaceHost::with_grace(Duration::from_millis(20));
         let tabs = TabRegistry::default();
-        let first = tabs.begin_selection("tab-a");
+        let first = tabs.begin_selection("tab-a", stamp(1)).unwrap();
         tabs.bind("tab-a", first, host.lease("space-x")).unwrap();
-        let second = tabs.begin_selection("tab-a");
+        let second = tabs.begin_selection("tab-a", stamp(2)).unwrap();
         tabs.bind("tab-a", second, host.lease("space-y")).unwrap();
 
         assert_eq!(host.leases_of("space-x"), 0);
@@ -612,7 +683,7 @@ mod tests {
         let host = SpaceHost::with_grace(Duration::from_millis(20));
         let tabs = TabRegistry::default();
         for label in ["tab-a", "tab-b", "tab-c"] {
-            let request = tabs.begin_selection(label);
+            let request = tabs.begin_selection(label, stamp(1)).unwrap();
             let space = if label == "tab-c" { "space-y" } else { "space-x" };
             tabs.bind(label, request, host.lease(space)).unwrap();
         }

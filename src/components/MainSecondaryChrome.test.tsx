@@ -113,13 +113,14 @@ describe("MainSecondaryTopBar placement", () => {
     expect(document.querySelector("[data-main-secondary-note-meta]")).toBeNull();
   });
 
-  it("shows the collections switch over the sidebar in both placements", () => {
+  it("brings no collections switch with an open card, in either placement", () => {
+    // The All / Connected switch left every mode (03.10.2026).
     const { unmount } = renderBar("bottom", BLOCK);
-    expect(screen.getByText("Collections:")).toBeInTheDocument();
+    expect(screen.queryByText("Collections:")).not.toBeInTheDocument();
     unmount();
 
     renderBar("top", BLOCK);
-    expect(screen.getByText("Collections:")).toBeInTheDocument();
+    expect(screen.queryByText("Collections:")).not.toBeInTheDocument();
   });
 });
 

@@ -1833,11 +1833,9 @@ describe("AppWithVault", () => {
     expect(screen.getByRole("button", { name: "Mine settings" })).toBe(settingsMenu);
     expect(settingsMenu.closest("[data-top-chrome-settings-menu]")?.nextElementSibling).toBeNull();
 
-    // The collection filter of the open card stands at the right of the
-    // sidebar's filter row: the sidebar column has no third row (03.10.2026).
-    const linkModeControl = () => document.querySelector(
-      "[data-sidebar-top-search-actions] [data-compact-detail-link-mode-control]",
-    ) as HTMLElement | null;
+    // The All / Connected switch left every mode (03.10.2026): an open card
+    // brings no collection filter anywhere.
+    const linkModeControl = () => document.querySelector("[data-detail-link-mode-tabs]");
     const secondaryDetailMenu = document.querySelector(
       "[data-secondary-detail-top-menu]",
     ) as HTMLElement | null;
@@ -1845,18 +1843,13 @@ describe("AppWithVault", () => {
       "[data-main-secondary-top-bar-content-segment]",
     ) as HTMLElement | null;
     expect(screen.getByRole("dialog")).toHaveAttribute("data-detail-top-chrome-mode", "external");
-    expect(linkModeControl()).toBeInTheDocument();
+    expect(linkModeControl()).toBeNull();
     expect(secondaryDetailMenu).toBeInTheDocument();
     expect(secondaryContentSegment).toBeInTheDocument();
     await waitFor(() => {
       expect(document.querySelector("[data-main-secondary-top-bar]")).toHaveClass("bg-accent");
       expect(secondaryDetailMenu).toHaveAttribute("data-entered", "true");
-      expect(linkModeControl()).toHaveAttribute("data-entered", "true");
     });
-    expect(within(linkModeControl()!).getByRole("button", { name: "All" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
     expect(document.querySelector("[data-secondary-sidebar-link-mode-bar]")).not.toBeInTheDocument();
     expect(within(secondaryDetailMenu!).getByText("alpha-block")).toBeInTheDocument();
     expect(document.querySelector("[data-sidebar-link-mode-bar]")).not.toBeInTheDocument();
@@ -1866,8 +1859,6 @@ describe("AppWithVault", () => {
 
     expect(document.querySelector("[data-main-secondary-top-bar]")).toHaveClass("bg-chrome");
     expect(secondaryDetailMenu).toHaveAttribute("data-entered", "false");
-    // It leaves with the card's chrome, as the menu does.
-    expect(linkModeControl()).toHaveAttribute("data-entered", "false");
     expect(document.querySelectorAll("[data-main-secondary-main-layer]")[0]).toHaveAttribute(
       "data-entered",
       "true",
@@ -3515,7 +3506,7 @@ describe("AppWithVault", () => {
     it("returns to its place, mode, card, link mode and filter, read first (В40, В78)", async () => {
       const view = tabView({
         location: { kind: "collection", tag: "alpha" },
-        open_card: { slug: "alpha-block", link_mode: "linked", title: "alpha-block" },
+        open_card: { slug: "alpha-block", link_mode: "all", title: "alpha-block" },
         collection_filter: "al",
       });
       const onRestored = vi.fn();
@@ -3527,8 +3518,9 @@ describe("AppWithVault", () => {
         .filter(([, , limit, order]) => !isSearchOverlayQuery(limit ?? 0, order));
       expect(feedReads[0]?.[0]).toBe("alpha");
       await waitFor(() => expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block"));
-      const linkMode = document.querySelector("[data-compact-detail-link-mode-control]") as HTMLElement;
-      expect(within(linkMode).getByRole("button", { name: "Connected" })).toHaveAttribute("aria-pressed", "true");
+      // The saved link mode no longer filters anything: the switch left every
+      // mode (03.10.2026), and the card reopens with every collection listed.
+      expect(document.querySelector("[data-detail-link-mode-tabs]")).toBeNull();
       expect(screen.getByRole("textbox", { name: "Filter collections" })).toHaveValue("al");
       await waitFor(() => expect(onRestored).toHaveBeenCalledTimes(1));
 

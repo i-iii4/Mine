@@ -18,7 +18,7 @@ import {
   useNavigate,
   useLocation,
 } from "react-router";
-import { Plus, X } from "lucide-react";
+import { Plus, Search, X } from "lucide-react";
 import { AppSettingsMenu } from "@/components/AppSettingsMenu";
 import { ActivityIndicators } from "@/components/ActivityIndicators";
 import { Button } from "@/components/ui/button";
@@ -99,6 +99,7 @@ import {
   sidebarRowKeyToRoute,
 } from "@/lib/sidebarSearch";
 import { SEARCH_INPUT_SUPPRESSION_PROPS } from "@/lib/searchInputSuppression";
+import { useSidebarRowFit } from "@/hooks/useSidebarRowFit";
 import {
   BOTTOM_ACTION_BAR_HIDDEN_STORAGE_KEY,
   getStoredBottomActionBarHidden,
@@ -127,9 +128,9 @@ import {
   type NativeWindowChromeSurfaceToken,
 } from "@/lib/nativeWindowChromeSurface";
 import { Input } from "@/components/ui/input";
+import { ChromeControl, ChromePlate } from "@/components/ui/chrome-control";
 import { CardPointMenu } from "@/components/CardHoverMenu";
 import {
-  CompactDetailLinkModeSwitch,
   CompactDetailTopMenu,
   MainSecondaryTopBar,
 } from "@/components/MainSecondaryChrome";
@@ -340,7 +341,6 @@ import { Grid } from "@/components/Grid";
 import { GraphView } from "@/components/GraphView";
 import { DragCardStackPreview } from "@/components/Card";
 import { ActionButton } from "@/components/ActionButton";
-import { ChromeControl, ChromePlate } from "@/components/ui/chrome-control";
 import { applyTheme, getStoredTheme, THEME_STORAGE_KEY } from "@/lib/themeMode";
 import {
   applyDesign,
@@ -1038,7 +1038,9 @@ export function AppWithVault({
     useState<CardActionsMenuTarget | null>(null);
   const [selectedBlockAnchor, setSelectedBlockAnchor] = useState<string | null>(null);
   const [selectedBlockTags, setSelectedBlockTags] = useState<string[]>([]);
-  const [detailLinkMode, setDetailLinkMode] = useState<DetailLinkMode>("all");
+  // The sidebar always lists every collection: the All / Connected switch
+  // left every mode (decision of 03.10.2026). The tab still saves the mode.
+  const detailLinkMode: DetailLinkMode = "all";
   const [deleteTargetSlug, setDeleteTargetSlug] = useState<string | null>(null);
   const [deletePlan, setDeletePlan] = useState<DeleteBlockPlan | null>(null);
   const [deletePlanError, setDeletePlanError] = useState<string | null>(null);
@@ -1077,6 +1079,11 @@ export function AppWithVault({
   const [activeDragTextSelection, setActiveDragTextSelection] = useState<TextSelectionDragPreview | null>(null);
   const mainRef = useRef<HTMLDivElement>(null);
   const sidebarSearchInputRef = useRef<HTMLInputElement>(null);
+  // The filter row over the sidebar's table gives room up in a fixed order
+  // (useSidebarRowFit.ts); folded, the field opens while focused or holding
+  // a query.
+  const sidebarRowRef = useRef<HTMLDivElement>(null);
+  const [sidebarSearchFocused, setSidebarSearchFocused] = useState(false);
   const lastSidebarSearchFocusSequenceRef = useRef(0);
   const sidebarSearchChromeDragGesture = useChromeDragGesture();
   const [compactDetailTopMenuRequestSequence, setCompactDetailTopMenuRequestSequence] = useState(0);
@@ -1447,6 +1454,20 @@ export function AppWithVault({
     endResize,
     toggleCollapsed,
   } = useSidebarResize(windowSidebar);
+
+  const sidebarRowFit = useSidebarRowFit(
+    sidebarRowRef,
+    sidebarSearchInputRef,
+    [
+      vaultPath,
+      sidebarCollapsed,
+      renderedDetailBlock !== null,
+      sidebarSearchHasValue,
+      isSyncing,
+      blocks.some((item) => item.content_in_cloud),
+    ].join("|"),
+  );
+  const sidebarSearchOpen = sidebarSearchFocused || sidebarSearchHasValue;
 
 
 
@@ -2346,7 +2367,6 @@ export function AppWithVault({
         if (cancelled || !full) return;
         // A card that is gone stays closed (В18).
         openDetailBlock(full);
-        setDetailLinkMode(card.link_mode);
       })
       .catch((error: unknown) => console.error("Could not reopen the tab's card:", error))
       .finally(finish);
@@ -3205,10 +3225,8 @@ export function AppWithVault({
         return;
       }
       e.preventDefault();
-      if (renderedDetailBlock) {
-        setDetailLinkMode((current) => (current === "all" ? "linked" : "all"));
-        return;
-      }
+      // With a card open the key did switch All / Connected, gone now.
+      if (renderedDetailBlock) return;
       handleMainViewModeChange(mainViewMode === "grid" ? "graph" : "grid");
     };
     window.addEventListener("keydown", handler);
@@ -3452,18 +3470,13 @@ export function AppWithVault({
   /// a dialog, because that row has nowhere to appear and the command used to
   /// do nothing at all.
   const beginCreateCollection = useCallback(() => {
-    // Made while a card is open with its collections filtered to Connected,
-    // the new collection takes that card at once, as a card dropped on the
-    // create row does. Under All it is an ordinary new collection.
-    setPendingCreateChannelDrop(
-      selectedBlock && detailLinkMode === "linked" ? { type: "block", slug: selectedBlock.slug } : null,
-    );
+    setPendingCreateChannelDrop(null);
     if (sidebarCollapsed) {
       setIsNamingCollection(true);
       return;
     }
     setIsCreatingChannel(true);
-  }, [detailLinkMode, selectedBlock, sidebarCollapsed]);
+  }, [sidebarCollapsed]);
 
   const sidebarSearchNavigationRows = useMemo(() => (
     buildSidebarSearchNavigationRows(orderedTags, sidebarSearchQuery)
@@ -3554,14 +3567,10 @@ export function AppWithVault({
       activateSidebarSearchNavigationRow(`tag:${existing.tag}`);
       return;
     }
-    void handleCreateChannel(
-      name,
-      selectedBlock && detailLinkMode === "linked" ? { type: "block", slug: selectedBlock.slug } : null,
-    );
+    void handleCreateChannel(name, null);
     handleClearSidebarSearch();
   }, [
     activateSidebarSearchNavigationRow,
-    detailLinkMode,
     handleClearSidebarSearch,
     handleCreateChannel,
     moveSidebarSearchNavigationRow,
@@ -4279,8 +4288,6 @@ export function AppWithVault({
           detailBlock={renderedDetailBlock}
           detailTitle={compactDetailCardTitle}
           detailEntered={compactDetailChromeEntered}
-          detailLinkMode={detailLinkMode}
-          onDetailLinkModeChange={setDetailLinkMode}
           viewMode={mainViewMode}
           onViewModeChange={handleMainViewModeChange}
           vaultPath={vaultPath}
@@ -4335,11 +4342,14 @@ export function AppWithVault({
               the sidebar button live in the window's tab bar above this page
               (SPEC_TABS.md, В43, РП6). */}
           <div
+            ref={sidebarRowRef}
             className={cn(
               "flex h-full min-w-0",
               sidebarCollapsed ? "flex-none" : "flex-1",
             )}
             data-top-chrome-space-search-group=""
+            data-row-fit={sidebarCollapsed ? undefined : sidebarRowFit}
+            data-row-search-open={!sidebarCollapsed && sidebarSearchOpen ? "" : undefined}
           >
             <VaultSwitcher
               currentPath={vaultPath}
@@ -4368,8 +4378,25 @@ export function AppWithVault({
                   ].filter(Boolean).join(" ")}
                   data-sidebar-top-search-surface=""
                 >
+                  {/* The field folded for room: the search button opens it. */}
+                  <Button
+                    type="button"
+                    variant="chrome"
+                    size="chrome-icon"
+                    plate="always"
+                    aria-label="Filter collections"
+                    shortcut={commandById("find-collections").combo}
+                    className="ml-2"
+                    onClick={() => sidebarSearchInputRef.current?.focus()}
+                    data-row-fit-search-button=""
+                  >
+                    <Search />
+                  </Button>
                   <Input
                     ref={sidebarSearchInputRef}
+                    onFocus={() => setSidebarSearchFocused(true)}
+                    onBlur={() => setSidebarSearchFocused(false)}
+                    data-row-fit-field=""
                     {...SEARCH_INPUT_SUPPRESSION_PROPS}
                     aria-label="Filter collections"
                     aria-activedescendant={
@@ -4406,7 +4433,9 @@ export function AppWithVault({
                       onClick={handleClearSidebarSearch}
                       data-sidebar-top-search-clear=""
                     >
-                      <ChromePlate className="w-6 rounded-1 group-hover:bg-component-fill-hover group-focus-visible:bg-component-fill-hover">
+                      {/* No plate, ever: hover only brightens the glyph
+                          (decision of 03.10.2026). */}
+                      <ChromePlate className="w-6 rounded-1">
                       <X aria-hidden="true" className="size-[13px]" />
                       </ChromePlate>
                     </button>
@@ -4417,26 +4446,19 @@ export function AppWithVault({
                       foot of the window the metadata row still carries it. */}
                   {!metadataRowAtBottom && (
                     // Icon buttons 4px apart, 8px from the column's line.
-                    <div className="mr-2 flex shrink-0 items-center gap-1" data-sidebar-top-search-actions="">
+                    <div className="mr-2 flex shrink-0 items-center gap-1" data-sidebar-top-search-actions="" data-row-fit-actions="">
                       <ActivityIndicators
                         cloudPending={blocks.filter((item) => item.content_in_cloud).length}
                         indexing={isSyncing}
                         onRevealSpace={() => void revealItemInDir(vaultPath)}
                       />
-                      {renderedDetailBlock && (
-                        <CompactDetailLinkModeSwitch
-                          value={detailLinkMode}
-                          onChange={setDetailLinkMode}
-                          chromeDragEnabled={false}
-                          className="detail-top-bar-enter"
-                          entered={compactDetailChromeEntered}
-                        />
-                      )}
                       <Button
                         type="button"
                         variant="chrome"
                         size="chrome-icon"
+                        plate="always"
                         aria-label="New Collection"
+                        shortcut={commandById("new-collection").combo}
                         onClick={beginCreateCollection}
                         data-sidebar-new-collection=""
                       >
@@ -4533,7 +4555,6 @@ export function AppWithVault({
         onToggleLinkedTag={handleToggleTag}
         onBatchSetTag={handleBatchSetTag}
         linkMode={detailLinkMode}
-        onLinkModeChange={setDetailLinkMode}
         showLinkModeChrome={false}
         detailChromeClosing={detailChromeClosing}
         scrollEdgeFade={scrollEdgeFade}

@@ -65,6 +65,7 @@ import type {
   CloudRecommendationState,
   UpdateStatus,
 } from "@/types";
+import { createSelectionStamps } from "./spaceSelection";
 
 function isCommandError(error: unknown): error is CommandError {
   if (!error || typeof error !== "object" || !("kind" in error)) return false;
@@ -117,11 +118,15 @@ async function invoke<T>(
 }
 
 // Vault
-export const selectVault = (path: string) =>
-  invoke<VaultOpenResult>("select_vault", { path });
+// Every choice of a space carries its place in this page's order, taken
+// when it is made (SPEC_TABS.md, В10).
+const nextSelectionStamp = createSelectionStamps(() => invoke<number>("selection_generation"));
 
-export const openVault = (path: string) =>
-  invoke<VaultOpenResult>("open_vault", { path });
+export const selectVault = async (path: string) =>
+  invoke<VaultOpenResult>("select_vault", { path, stamp: await nextSelectionStamp() });
+
+export const openVault = async (path: string) =>
+  invoke<VaultOpenResult>("open_vault", { path, stamp: await nextSelectionStamp() });
 
 export const getVaultPath = () =>
   invoke<string | null>("get_vault_path");

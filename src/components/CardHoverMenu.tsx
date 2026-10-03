@@ -56,6 +56,8 @@ interface CardMoreMenuProps<TBlock extends LightBlock | IndexedBlock> extends Ca
   topChromeInteraction?: boolean;
   triggerVariant?: ComponentProps<typeof Button>["variant"];
   triggerSize?: ComponentProps<typeof Button>["size"];
+  /** The keystroke that opens this menu, shown in the trigger's tooltip. */
+  triggerShortcut?: string;
 }
 
 interface CardPointMenuProps<TBlock extends LightBlock | IndexedBlock> extends CardMenuActionsProps<TBlock> {
@@ -163,6 +165,7 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
   topChromeInteraction = false,
   triggerVariant = "default",
   triggerSize,
+  triggerShortcut,
 }: CardMoreMenuProps<TBlock>) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuOpenRef = useRef(false);
@@ -204,6 +207,7 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
           variant={triggerVariant}
           size={triggerSize ?? (triggerVariant === "chrome" ? "chrome-icon" : "icon")}
           aria-label="Card actions"
+          shortcut={triggerShortcut}
           className={className}
           {...(topChromeInteraction ? topChromeTrigger.triggerProps : {})}
         >
@@ -542,7 +546,7 @@ export const CardHoverMenu = memo(function CardHoverMenu({
       >
         {hasUrl && (
           <Button
-            variant="default"
+            variant="raised"
             size="icon-xs"
             aria-label="Source"
             // Leaves the app for the browser: the one case that keeps the
@@ -566,7 +570,9 @@ export const CardHoverMenu = memo(function CardHoverMenu({
           onRequestRename={onRequestRename}
           onRequestDelete={onRequestDelete}
           openRequestSequence={openMoreMenuRequestSequence}
+          triggerVariant="raised"
           triggerSize="icon-xs"
+          triggerShortcut={commandById("element-menu").combo}
           onOpenChange={(open) => {
             if (open) {
               if (keyboardMenuRequestPending) {
@@ -613,7 +619,7 @@ export const CardHoverMenu = memo(function CardHoverMenu({
         >
           <DropdownMenuTrigger asChild>
             <Button
-              variant="default"
+              variant="raised"
               size="icon-xs"
               aria-label="Connect"
               className="ml-auto"
