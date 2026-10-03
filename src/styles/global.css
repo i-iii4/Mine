@@ -1222,3 +1222,12 @@ svg.lucide {
   min-height: 0;
   overflow: hidden;
 }
+
+/* The interface without monospace (decision 02.10.2026). Every place set in
+   the mono utility takes the interface's Geist instead; its digits stay
+   tabular, so counts and hotkeys keep their columns. Code in an article is
+   content and keeps its own face. */
+.font-mono {
+  font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
