@@ -148,6 +148,17 @@ export type DeleteOrphanResult = { deleted: string[]; skipped: string[] }
 
 export type DeleteTextSelectionParams = { source_slug: string; selected_text: string; first_block_start: number; first_block_end: number; source_body_hash: string }
 
+/**
+ * Which collections an open card lists: all of them, or the ones it is in.
+ */
+export type DetailLinkMode = "all" | "linked"
+
+/**
+ * `tabbar-drop-hover`: the dragged tab is over this bar at `x` (logical
+ * points from the bar's left edge), or left it (`None`).
+ */
+export type DropHover = { tab_id: TabId; x: number | null }
+
 export type ExtractInlineMediaParams = { source_slug: string; media_ref: string; target_tag: string }
 
 export type ExtractTextSelectionParams = { source_slug: string; target_tag: string; selected_text: string; first_block_start: number; first_block_end: number; source_body_hash: string }
@@ -297,6 +308,11 @@ preview_unreadable?: boolean;
  */
 collections: string[]; search_match: SearchMatch | null }
 
+/**
+ * How the feed is laid out.
+ */
+export type MainViewMode = "grid" | "graph"
+
 export type MediaAssetActionError = { kind: "no_vault" } | { kind: "invalid_media_ref"; reason: string } | { kind: "media_not_found"; media_ref: string } | { kind: "unsupported_media_kind"; media_ref: string } | { kind: "name_taken"; target: string } | { kind: "invalid_filename"; reason: string } | { kind: "clipboard_unsupported"; media_ref: string } | { kind: "internal"; message: string }
 
 export type MediaAssetMutationResult = { media_ref: string; new_media_ref: string | null; affected_slugs: string[] }
@@ -315,6 +331,11 @@ export type MergeBlocksError = { kind: "no_vault" } | { kind: "too_few_cards" } 
 export type MergeBlocksResult = { block: IndexedBlock; merged_slug: string; removed_slugs: string[] }
 
 export type NativeShellSmokeReport = { status: string; vault_path: string | null; location: string; user_agent: string; timestamp_ms: number }
+
+/**
+ * The card open in a tab.
+ */
+export type OpenCard = { slug: string; link_mode: DetailLinkMode }
 
 export type OrphanMedia = { file_name: string; size_bytes: number; modified_secs: number }
 
@@ -378,6 +399,12 @@ export type RenameBlockResult = { old_slug: string; new_slug: string }
 export type RenameMediaAssetParams = { media_ref: string; new_stem: string }
 
 /**
+ * What was renamed by a change, so a tab showing the old name follows it
+ * (В17, В18).
+ */
+export type RenamedKind = "collection" | "card"
+
+/**
  * The next domain decision; platform code performs only its concrete effect.
  */
 export type SaveAction = "publish_media" | "publish_markdown" | "persist_receipt" | "return_committed" | "unknown_outcome" | "name_conflict"
@@ -425,6 +452,12 @@ indexed: number;
  */
 errors: number }
 
+/**
+ * The first card whose top edge is at or below the feed's top edge, and
+ * how far below.
+ */
+export type ScrollAnchor = { slug: string; offset_px: number }
+
 export type SearchMatch = { field: SearchMatchField; kind: SearchMatchKind; excerpt: string; ranges: SearchTextRange[]; score: number; explanation: string | null }
 
 export type SearchMatchField = "title" | "description" | "author" | "body" | "url" | "semantic"
@@ -445,9 +478,18 @@ export type SearchTextRange = { start: number; end: number }
 export type ShortcutBinding = { key: string; meta?: boolean; shift?: boolean; alt?: boolean; ctrl?: boolean }
 
 /**
+ * The sidebar of one window (РП5, В56).
+ */
+export type SidebarLayout = { width_px: number; collapsed: boolean }
+
+/**
  * One space in the list, with whether it can be opened right now.
  */
-export type SpaceEntry = { path: string;
+export type SpaceEntry = {
+/**
+ * The space's identity, when the registry knows it.
+ */
+vault_id: string | null; path: string;
 /**
  * The folder name, as the switcher shows it.
  */
@@ -461,12 +503,98 @@ available: boolean;
  */
 current: boolean }
 
+/**
+ * `space-lead-changed`: the tab became or stopped being its space's lead.
+ */
+export type SpaceLead = { lead: boolean }
+
+/**
+ * `space-moved`: the space `vault_id` now lives at `path` (SPEC_TABS.md,
+ * В73).
+ */
+export type SpaceMovedPayload = { vault_id: string; path: string }
+
+/**
+ * One rename made by a command.
+ */
+export type SpaceRename = { kind: RenamedKind; from: string; to: string }
+
 export type SpaceStats = { file_count: number; markdown_count: number; media_count: number; total_bytes: number;
 /**
  * From the space's local derived index; `None` when the space has never
  * been opened (no vault-id / no index) or the index predates `card_kind`.
  */
 element_count: number | null }
+
+/**
+ * What one window's tab bar shows (`tabbar-state`).
+ */
+export type TabBarState = { window_id: WindowId; tabs: TabBarTab[]; active_tab: TabId; sidebar: SidebarLayout; fullscreen: boolean }
+
+/**
+ * One tab as the tab bar shows it (В47).
+ */
+export type TabBarTab = { id: TabId;
+/**
+ * The space's folder name; `None` for a tab choosing a space.
+ */
+space_name: string | null;
+/**
+ * The collection the tab is in; `None` on Everything.
+ */
+collection: string | null;
+/**
+ * The tab has a page now.
+ */
+live: boolean }
+
+/**
+ * What a tab page needs to start (`get_tab_bootstrap`).
+ */
+export type TabBootstrap = { tab_id: TabId; window_id: WindowId; space: TabSpace; view: TabView; sidebar: SidebarLayout;
+/**
+ * The tab leads its space: it does the space's page work and shows its
+ * notices (В19).
+ */
+lead: boolean;
+/**
+ * No saved windows were read at this launch: the page may carry its
+ * old single-window settings over once (В79).
+ */
+fresh_start: boolean }
+
+/**
+ * A stable tab identity: 32 lowercase hex characters.
+ */
+export type TabId = string
+
+/**
+ * Where in the space a tab is.
+ */
+export type TabLocation = { kind: "everything" } | { kind: "collection"; tag: string }
+
+/**
+ * What a tab shows.
+ */
+export type TabSpace =
+/**
+ * The space with this identity.
+ */
+{ kind: "space"; vault_id: string } |
+/**
+ * Nothing to show: no spaces yet, or the space was forgotten.
+ */
+{ kind: "picker" }
+
+/**
+ * The memory of a tab (Т2): where it is and what it shows.
+ */
+export type TabView = { location: TabLocation; mode: MainViewMode; open_card: OpenCard | null; scroll_anchor: ScrollAnchor | null; collection_filter: string }
+
+/**
+ * `tab-visibility-changed`: the tab was shown or hidden (В41).
+ */
+export type TabVisibility = { visible: boolean }
 
 /**
  * A tag with its usage count across blocks.
@@ -533,6 +661,12 @@ export type UpdateStage = "disabled" | "idle" | "checking" | "available" | "down
  */
 export type UpdateStatus = { stage: UpdateStage; version: string | null; notes: string | null; downloaded_bytes: number; total_bytes: number | null; archive_sha256: string | null; error: UpdateError | null; activation_available: boolean }
 
+/**
+ * `vault-changed`: the sources of the space at `path` changed. `renames`
+ * lists what a command renamed; the watcher's news carries none.
+ */
+export type VaultChangedPayload = { path: string; renames: SpaceRename[] }
+
 export type VaultOpenResult = { indexed: number; errors: number; sync_in_progress: boolean; derived_store_ready: boolean; bootstrapped_from_legacy: boolean; migration_required: boolean; thumbs_root: string }
 
 export type VaultStats = { totalFileCount: number; markdownFileCount: number; mediaFileCount: number; sourceBytes: number; currentCollectionCardCount: number; currentCollection: string | null; updatedAtMs: number }
@@ -551,3 +685,8 @@ export type VaultStats = { totalFileCount: number; markdownFileCount: number; me
 export type VaultWriteLayout = { cards?: string; media?: string; collections?: string }
 
 export type VaultWriteLayoutDto = { cards: string; media: string; collections: string }
+
+/**
+ * A stable window identity: 32 lowercase hex characters.
+ */
+export type WindowId = string

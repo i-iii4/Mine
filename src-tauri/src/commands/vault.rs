@@ -107,6 +107,8 @@ pub async fn list_known_vaults(app: AppHandle) -> Result<Vec<String>, CommandErr
 /// One space in the list, with whether it can be opened right now.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct SpaceEntry {
+    /// The space's identity, when the registry knows it.
+    pub vault_id: Option<String>,
     pub path: String,
     /// The folder name, as the switcher shows it.
     pub name: String,
@@ -136,6 +138,7 @@ fn space_entries(app: &AppHandle) -> Vec<SpaceEntry> {
         .map(|status| {
             let path = status.record.path;
             SpaceEntry {
+                vault_id: status.record.vault_id.clone(),
                 name: Path::new(&path)
                     .file_name()
                     .map(|name| name.to_string_lossy().into_owned())
@@ -201,10 +204,20 @@ fn open_space_in_tab(
     require_latest_selection(&state, label, request)?;
     let path = canonical_space_path(path)?;
     let (lease, result) = initialize_vault(app, &state, &path, opening)?;
+    let vault_id = lease.space().vault_id().to_string();
+    let left = state
+        .space_for(label)
+        .map(|space| space.vault_id().to_string())
+        .filter(|previous| previous != &vault_id);
     state
         .tabs
         .bind(label, request, lease)
         .map_err(|_| superseded_selection())?;
+    crate::tabs::space_shown(app, label, &vault_id);
+    // The space the tab left may have lost its lead (SPEC_TABS.md, В19).
+    if let Some(left) = left {
+        crate::tabs::refresh_leads(app, &left);
+    }
     if announce {
         save_vault_path(app, &path);
         space_events::emit_to_labels(
@@ -271,8 +284,11 @@ pub enum UnavailableVaultReason {
 /// when the saved space is reachable. The distinction matters: a missing folder
 /// must never look like a fresh install.
 #[tauri::command]
-pub fn get_unavailable_vault(app: AppHandle) -> Result<Option<UnavailableVault>, CommandError> {
-    let Some(saved_path) = load_saved_vault_path(&app) else {
+pub fn get_unavailable_vault(
+    app: AppHandle,
+    webview: tauri::Webview,
+) -> Result<Option<UnavailableVault>, CommandError> {
+    let Some(saved_path) = saved_space_path(&app, &webview) else {
         return Ok(None);
     };
     match locate_saved_space(&app, &saved_path) {
@@ -416,13 +432,33 @@ fn current_derived_root(
 /// Explicit user action only: this is the single place the saved path is
 /// dropped, so a folder that is merely offline is never forgotten silently.
 #[tauri::command]
-pub fn forget_unavailable_vault(app: AppHandle) -> Result<(), CommandError> {
-    let Some(path) = load_saved_vault_path(&app) else {
+pub fn forget_unavailable_vault(app: AppHandle, webview: tauri::Webview) -> Result<(), CommandError> {
+    let Some(path) = saved_space_path(&app, &webview) else {
         return Ok(());
     };
+    let vault_id = saved_space_identity(&app, &path);
     // Exactly this record and the current binding go; every other space and
-    // setting stays (П13, П28).
-    update_config(&app, |cfg| crate::space_registry::forget(cfg, &path))
+    // setting stays (П13, П28). The tabs of the space choose another
+    // (SPEC_TABS.md, В70).
+    update_config(&app, |cfg| crate::space_registry::forget(cfg, &path))?;
+    if let Some(vault_id) = vault_id {
+        crate::tabs::space_forgotten(&app, &vault_id);
+    }
+    Ok(())
+}
+
+/// The space the page `webview` is bound to restore: its tab's saved space,
+/// or the config's current space for a page that is not a tab.
+fn saved_space_path(app: &AppHandle, webview: &tauri::Webview) -> Option<String> {
+    match crate::tabs::tab_space_path(app, webview.label()) {
+        Some(tab_space) => tab_space,
+        None => load_saved_vault_path(app),
+    }
+}
+
+/// Make `path` the space the config names as current (SPEC_TABS.md, В74).
+pub(crate) fn record_current_space(app: &AppHandle, path: &str) {
+    save_vault_path(app, path);
 }
 
 /// The write layout of the space `vault_id`, else of the most recently used
@@ -573,9 +609,10 @@ pub fn get_vault_path(
     }
 
     repair_space_registry(&app);
-    // Try to restore from saved config: the saved path opens only while it
-    // holds the recorded space, never a folder that took its place.
-    if let Some(saved_path) = load_saved_vault_path(&app) {
+    // Try to restore the tab's saved space (SPEC_TABS.md, В32): the saved
+    // path opens only while it holds the recorded space, never a folder that
+    // took its place. A tab choosing a space has none.
+    if let Some(saved_path) = saved_space_path(&app, &webview) {
         let found = match locate_saved_space(&app, &saved_path) {
             Located::Here { path } => Some(path),
             Located::Moved { path, .. } => {

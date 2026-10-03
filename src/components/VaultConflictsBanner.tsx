@@ -3,7 +3,7 @@
 // resolution per conflict (Phase 18.G.4).
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { listenPage } from "@/lib/pageEvents";
 import { AlertTriangle, Check, Edit3, Trash2, X } from "lucide-react";
 import {
   listVaultConflicts,
@@ -44,9 +44,9 @@ export function VaultConflictsBanner({ vaultReady }: VaultConflictsBannerProps) 
     }
     void refresh();
     const handles = [
-      listen("vault-conflict-detected", () => void refresh()),
-      listen("vault-conflict-resolved", () => void refresh()),
-      listen("vault-changed", () => void refresh()),
+      listenPage("vault-conflict-detected", () => void refresh()),
+      listenPage("vault-conflict-resolved", () => void refresh()),
+      listenPage("vault-changed", () => void refresh()),
     ];
     return () => {
       handles.forEach((p) => p.then((fn) => fn()));

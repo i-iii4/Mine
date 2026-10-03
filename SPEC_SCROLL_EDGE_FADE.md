@@ -1,6 +1,6 @@
 # SPEC: Scroll edge fade
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [PRINCIPLES.md](PRINCIPLES.md) | [SPEC_SETTINGS_WINDOW.md](SPEC_SETTINGS_WINDOW.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [PRINCIPLES.md](PRINCIPLES.md) | [SPEC_SETTINGS_WINDOW.md](SPEC_SETTINGS_WINDOW.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_TABS.md](SPEC_TABS.md)
 
 ## Задача
 
@@ -9,7 +9,8 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [DESIGN_SYSTEM.md](DESIG
 обрезанный по линии.
 
 Поверхностей четыре: боковая панель, лента, развёрнутая карточка и результаты
-поиска.
+поиска. Горизонтальная прокрутка полосы вкладок устроена иначе, см. раздел
+«Полоса вкладок».
 
 ## Механика
 
@@ -135,6 +136,30 @@ smootherstep(t) = 6t⁵ − 15t⁴ + 10t³
 Хук хранит одно булево, поэтому обычная прокрутка после первого пересечения
 порога не вызывает повторных рендеров.
 
+## Полоса вкладок
+
+С 03.10.2026 ([SPEC_TABS.md](SPEC_TABS.md), В48). Когда вкладки не помещаются
+в полосе и в минимальной ширине, блок вкладок прокручивается по горизонтали, и
+край, за которым спрятаны вкладки, растворяется. Это не верхняя полоса из этой
+спецификации, а маска прозрачности, как у правой кромки строк боковой панели:
+вкладки лежат на хроме, и раствориться им есть куда только в цвет того же
+хрома, поэтому довод против маски (контент выцветает к чужому фону) здесь не
+действует.
+
+- Кривая и ширина общие с правой кромкой: девять пар `alpha/progress`,
+  `EDGE_FADE_WIDTH` 24px. Правый край даёт `createRightFadeMaskStyle(24, 0)`,
+  левый `createLeftFadeMaskStyle(24)`: та же кривая, развёрнутая к началу
+  блока (`src/lib/edgeFade.ts`; общий построитель с
+  `createTopFadeMaskStyle`).
+- Край считается скрытым со смещения `TOP_FADE_SCROLLED_THRESHOLD_PX` (1px),
+  отдельно для каждой стороны (`hiddenEdges` в `src/tabbar/tabLayout.ts`).
+  Маска есть только у скрытого края; если скрыты оба, две маски
+  пересекаются (`mask-composite: intersect`, у WebKit `source-in`).
+- Растворение работает в обеих темах и не зависит от настройки
+  `mine.scrollEdgeFade`: это не накладка, и светлую тему оно не портит.
+- Состояние краёв меняется только при пересечении порога, а не на каждый
+  прокрученный пиксель.
+
 ## Настройка
 
 Ключ `mine.scrollEdgeFade`, выключено по умолчанию. Строка Appearance —
@@ -158,3 +183,6 @@ smootherstep(t) = 6t⁵ − 15t⁴ + 10t³
   настройке.
 - `src/components/Sidebar.test.tsx` — обёртка `nav` прозрачна для раскладки:
   ничего над скроллпортом не занимает вертикальное место.
+- `src/tabbar/tabLayout.test.ts`: края полосы вкладок, отсутствие маски, когда
+  всё помещается, игнорирование субпиксельных смещений, правый край общей
+  кривой, левый её зеркалом, пересечение двух масок в середине прокрутки.

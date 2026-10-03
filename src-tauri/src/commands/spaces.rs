@@ -40,6 +40,8 @@ pub struct OpenSpace {
     /// The watch of the folder itself runs once per open space.
     root_watch_started: AtomicBool,
     closed: AtomicBool,
+    /// Space notices closed during this opening (SPEC_TABS.md, В20).
+    dismissed_notices: Mutex<BTreeSet<String>>,
 }
 
 impl OpenSpace {
@@ -52,6 +54,7 @@ impl OpenSpace {
             opening: Mutex::new(()),
             root_watch_started: AtomicBool::new(false),
             closed: AtomicBool::new(false),
+            dismissed_notices: Mutex::new(BTreeSet::new()),
         }
     }
 
@@ -79,6 +82,17 @@ impl OpenSpace {
     /// bound to it stops.
     pub fn is_closed(&self) -> bool {
         self.closed.load(Ordering::SeqCst)
+    }
+
+    /// Record a space notice closed in this opening (В20): the next lead tab
+    /// does not show it again.
+    pub fn dismiss_notice(&self, notice: &str) {
+        lock(&self.dismissed_notices).insert(notice.to_string());
+    }
+
+    /// Whether a space notice was closed in this opening.
+    pub fn notice_dismissed(&self, notice: &str) -> bool {
+        lock(&self.dismissed_notices).contains(notice)
     }
 
     /// Claim the folder watch for this opening; `true` once.
@@ -396,11 +410,6 @@ impl TabRegistry {
         }
     }
 
-    /// The tab used last.
-    pub fn active_label(&self) -> Option<String> {
-        lock(&self.inner).recent.first().cloned()
-    }
-
     /// The space of the most recently used tab that shows one.
     pub fn last_active_space(&self) -> Option<Arc<OpenSpace>> {
         let inner = lock(&self.inner);
@@ -409,6 +418,19 @@ impl TabRegistry {
             .iter()
             .filter_map(|label| inner.tabs.get(label))
             .find_map(|slot| slot.lease.as_ref().map(|lease| Arc::clone(lease.space())))
+    }
+
+    /// Record whether the tab's page is shown in its window (SPEC_TABS.md,
+    /// В4). A hidden tab never leads its space. The slot is made when the
+    /// page has not chosen a space yet.
+    pub fn set_visible(&self, label: &str, visible: bool) {
+        let mut inner = lock(&self.inner);
+        let slot = inner.tabs.entry(label.to_string()).or_insert(TabSlot {
+            selection: 0,
+            lease: None,
+            visible,
+        });
+        slot.visible = visible;
     }
 
     /// The lead tab of `vault_id`: its visible tab used last (В19).
@@ -568,5 +590,10 @@ mod tests {
         );
         assert_eq!(tabs.lead_of("space-x", &|_| false), None);
         assert_eq!(tabs.last_active_space().unwrap().vault_id(), "space-x");
+
+        tabs.set_visible("tab-a", false);
+        assert_eq!(tabs.lead("space-x").as_deref(), Some("tab-b"));
+        tabs.set_visible("tab-b", false);
+        assert_eq!(tabs.lead("space-x"), None);
     }
 }

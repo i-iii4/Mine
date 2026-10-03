@@ -96,7 +96,11 @@ fn schema(required: &[&str], props: Vec<(String, Value)>) -> Value {
 }
 
 fn space_prop() -> (String, Value) {
-    prop("space", "string", "Absolute path of the space; defaults to the active one")
+    prop(
+        "space",
+        "string",
+        "Absolute path of the space; defaults to the app's current space when this server first needed one",
+    )
 }
 
 fn slug_prop() -> (String, Value) {
@@ -443,8 +447,23 @@ fn tool_argv(
     Ok((argv, temp))
 }
 
+/// A call that names no space acts on the space pinned for this process:
+/// clicking another tab in Mine never moves an agent's next call to another
+/// space (SPEC_TABS.md, В75).
+fn with_pinned_space(env: &CliEnv, arguments: &Value) -> Value {
+    if arguments.get("space").and_then(Value::as_str).is_some() {
+        return arguments.clone();
+    }
+    let mut pinned = arguments.clone();
+    if let (Some(space), Some(object)) = (env.default_space(), pinned.as_object_mut()) {
+        object.insert("space".into(), Value::String(space));
+    }
+    pinned
+}
+
 fn call_tool(env: &CliEnv, name: &str, arguments: &Value) -> Result<Value, String> {
-    let (argv, _temp) = tool_argv(name, arguments)?;
+    let arguments = with_pinned_space(env, arguments);
+    let (argv, _temp) = tool_argv(name, &arguments)?;
     let output = run(env, &argv);
     // Tool-level failures travel inside the result as isError, per MCP; only
     // malformed calls become JSON-RPC errors (handled by the caller).
@@ -467,6 +486,17 @@ fn call_tool(env: &CliEnv, name: &str, arguments: &Value) -> Result<Value, Strin
 mod tests {
     use super::*;
     use crate::cli::tests::{args, fixture};
+
+    #[test]
+    fn a_call_without_a_space_keeps_the_space_pinned_first() {
+        // SPEC_TABS.md, В75: switching tabs in Mine never moves an agent.
+        let env = CliEnv::in_dir(std::path::PathBuf::from("/nonexistent"));
+        env.pinned_space.set(Some("/spaces/First".into())).unwrap();
+        let pinned = with_pinned_space(&env, &json!({ "slug": "Card" }));
+        assert_eq!(pinned["space"], "/spaces/First");
+        let named = with_pinned_space(&env, &json!({ "slug": "Card", "space": "/spaces/Other" }));
+        assert_eq!(named["space"], "/spaces/Other");
+    }
 
     fn request(env: &CliEnv, method: &str, params: Value) -> Value {
         let raw = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params });

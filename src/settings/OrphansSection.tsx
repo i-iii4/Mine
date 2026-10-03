@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -13,13 +13,14 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   deleteOrphanMedia,
-  getVaultPath,
   listOrphanMedia,
   promoteOrphanMedia,
 } from "@/lib/commands";
 import { mediaUrl } from "@/lib/assets";
 import { formatBytes } from "@/lib/formatBytes";
 import type { OrphanMedia } from "@/types";
+import { OpenSpaceSelect } from "./OpenSpaceSelect";
+import { useOpenSpaces, type OpenSpace } from "./useOpenSpaces";
 
 // Mirrors preview_plan::IMAGE_EXTS — extensions the asset protocol can render
 // directly as an <img> preview. Everything else gets a placeholder slot.
@@ -32,11 +33,40 @@ function fileExt(name: string): string {
   return index >= 0 ? name.slice(index + 1).toLowerCase() : "";
 }
 
+const DESCRIPTION = "Media files in the space root that no element references.";
+
 type BatchAction = "promote" | "delete";
 
 export function OrphansSection() {
+  const { spaces, current, choose, error } = useOpenSpaces();
+
+  if (spaces === null || current === null) {
+    return (
+      <section className="flex flex-col gap-s3">
+        <h1 className="text-lg font-semibold">Orphans</h1>
+        <p className="text-sm text-muted-foreground">{DESCRIPTION}</p>
+        {spaces !== null && (
+          <p className="py-12 text-center text-sm text-muted-foreground">
+            {error ?? "Open a space to find its orphan media."}
+          </p>
+        )}
+      </section>
+    );
+  }
+
+  // Keyed by the space: choosing another one starts its list from scratch,
+  // and an answer still in flight for the previous space lands nowhere.
+  return (
+    <SpaceOrphans
+      key={current.vaultId}
+      space={current}
+      selector={<OpenSpaceSelect spaces={spaces} current={current} onChoose={choose} />}
+    />
+  );
+}
+
+function SpaceOrphans({ space, selector }: { space: OpenSpace; selector: ReactNode }) {
   const [orphans, setOrphans] = useState<OrphanMedia[]>([]);
-  const [vaultPath, setVaultPath] = useState<string | null>(null);
   // The space the list was built for: every operation on it names that space.
   const [listSpace, setListSpace] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -47,11 +77,10 @@ export function OrphansSection() {
 
   const reload = useCallback(async () => {
     try {
-      const [list, path] = await Promise.all([listOrphanMedia(), getVaultPath()]);
+      const list = await listOrphanMedia(space.vaultId);
       const items = list.orphans;
       setOrphans(items);
       setListSpace(list.vault_id);
-      setVaultPath(path);
       setSelected((previous) => {
         const names = new Set(items.map((item) => item.file_name));
         return new Set([...previous].filter((name) => names.has(name)));
@@ -59,7 +88,7 @@ export function OrphansSection() {
     } catch (e) {
       setError(String(e));
     }
-  }, []);
+  }, [space.vaultId]);
 
   useEffect(() => {
     void reload();
@@ -136,9 +165,9 @@ export function OrphansSection() {
           Refresh
         </Button>
       </div>
-      <p className="text-sm text-muted-foreground">
-        Media files in the space root that no element references.
-      </p>
+      <p className="text-sm text-muted-foreground">{DESCRIPTION}</p>
+
+      {selector}
 
       {orphans.length === 0 ? (
         <p className="py-12 text-center text-sm text-muted-foreground">No orphan media</p>
@@ -165,9 +194,9 @@ export function OrphansSection() {
                       checked={selected.has(item.file_name)}
                       onCheckedChange={() => toggleOne(item.file_name)}
                     />
-                    {isImage && vaultPath ? (
+                    {isImage ? (
                       <img
-                        src={mediaUrl(vaultPath, item.file_name)}
+                        src={mediaUrl(space.path, item.file_name)}
                         alt=""
                         loading="lazy"
                         className="size-8 shrink-0 rounded-[2px] bg-component-fill object-cover"

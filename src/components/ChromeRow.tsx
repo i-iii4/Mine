@@ -32,11 +32,21 @@ export function ChromeActions({ windowEdge = true, className, ...props }: HTMLAt
   return <div data-chrome-actions="" className={cn("flex shrink-0 items-center gap-1", windowEdge && "mr-[var(--chrome-icon-edge-pad)]", className)} {...props} />;
 }
 
-/** Own the two outer boundaries once, independently of native decorations. */
-export function ChromeShell({ className, children, ...props }: HTMLAttributes<HTMLDivElement>) {
+/**
+ * Own the two outer boundaries once, independently of native decorations.
+ * `topEdge={false}` leaves the top one to what stands above the page: a tab
+ * page sits under its window's tab bar, whose row ends with its own
+ * separator (SPEC_TABS.md, В43, В44), and a second line there would double it.
+ */
+export function ChromeShell({
+  topEdge = true,
+  className,
+  children,
+  ...props
+}: HTMLAttributes<HTMLDivElement> & { topEdge?: boolean }) {
   return (
     <div {...props} data-chrome-shell="" className={cn("flex h-screen w-screen flex-col bg-background text-foreground", className)}>
-      <Separator data-chrome-frame-edge="top" />
+      {topEdge && <Separator data-chrome-frame-edge="top" />}
       {children}
       <Separator data-chrome-frame-edge="bottom" />
     </div>

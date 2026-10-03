@@ -5,7 +5,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { startWindowDrag } from "@/lib/commands";
 
 const DEFAULT_CHROME_DRAG_THRESHOLD_PX = 4;
 
@@ -67,7 +67,11 @@ export function useChromeDragGesture({
       suppressClickRef.current = true;
       moveEvent.preventDefault();
       moveEvent.stopPropagation();
-      void getCurrentWindow().startDragging().catch(() => {});
+      // The backend finds this tab's window: a tab page moved into another
+      // window still names the first one itself (SPEC_TABS.md, В22, В23).
+      void startWindowDrag().catch((error: unknown) => {
+        console.error("Could not start dragging the window:", error);
+      });
     };
 
     const handlePointerEnd = (endEvent: PointerEvent) => {

@@ -44,10 +44,11 @@ where
     }
 }
 
-/// Send `event` to the tab in use: the one used last (SPEC_TABS.md, В21).
+/// Send `event` to the tab in use: the visible tab of the last window
+/// (SPEC_TABS.md, В21).
 pub fn emit_to_active_tab<S: Serialize + Clone>(app: &AppHandle, event: &str, payload: S) {
-    if let Some(label) = app.state::<AppState>().tabs.active_label() {
-        emit_to_labels(app, [label], event, payload);
+    if let Some(tab) = crate::tabs::last_visible_tab(app) {
+        emit_to_labels(app, [tab.label()], event, payload);
     }
 }
 

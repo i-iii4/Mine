@@ -93,40 +93,55 @@ fn css_point(x: f64, y: f64, view_height: f64, flipped: bool, page_zoom: f64) ->
 
 #[cfg(target_os = "macos")]
 mod imp {
-    use std::ffi::c_void;
-    use std::sync::atomic::{AtomicPtr, Ordering};
-    use std::sync::OnceLock;
+    use std::collections::BTreeMap;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Mutex, OnceLock};
 
     use objc2::rc::Retained;
     use objc2::runtime::{AnyClass, AnyObject, Bool, Imp, Sel};
     use objc2::{msg_send, sel};
     use objc2_foundation::{NSPoint, NSRect, NSString};
-    use tauri::{AppHandle, Emitter, Manager, Wry};
+    use tauri::{AppHandle, Webview, Wry};
 
     use super::{css_point, plan_menu, MenuPlan, NativeItem, EVENT};
 
     static APP: OnceLock<AppHandle<Wry>> = OnceLock::new();
-    static MAIN_VIEW: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+    /// The web views of tab pages, by address, with their page labels
+    /// (SPEC_TABS.md, В77). Any other web view is a window that is not a tab.
+    static TAB_VIEWS: Mutex<BTreeMap<usize, String>> = Mutex::new(BTreeMap::new());
+    static HOOKED: AtomicBool = AtomicBool::new(false);
 
-    /// Attach the handler to the web view class. Must run once, on setup.
+    fn tab_views() -> std::sync::MutexGuard<'static, BTreeMap<usize, String>> {
+        TAB_VIEWS.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Keep the app for the menu's events. Runs once, on setup.
     pub fn install(app: &AppHandle<Wry>) {
         let _ = APP.set(app.clone());
-        let Some(window) = app.get_webview_window("main") else {
-            log::warn!("native context menu: main window is missing");
-            return;
-        };
-        let result = window.with_webview(|webview| {
+    }
+
+    /// The tab page `page` exists: its right clicks open Mine's menu, sent to
+    /// it alone. The first page also attaches the handler to the web view
+    /// class, which every window's web view shares.
+    pub fn register_page(page: &Webview<Wry>) {
+        let label = page.label().to_string();
+        let result = page.with_webview(move |webview| {
             let view = webview.inner();
-            MAIN_VIEW.store(view, Ordering::SeqCst);
-            // SAFETY: `inner()` is the live WKWebView of the main window, and
-            // this closure runs on the main thread where AppKit objects live.
-            // Every window's web view shares this class, so the rules reach
-            // the settings window too.
-            unsafe { add_menu_hook(view.cast::<AnyObject>()) };
+            tab_views().insert(view as usize, label);
+            if !HOOKED.swap(true, Ordering::SeqCst) {
+                // SAFETY: `inner()` is a live WKWebView and this closure runs
+                // on the main thread where AppKit objects live.
+                unsafe { add_menu_hook(view.cast::<AnyObject>()) };
+            }
         });
         if let Err(error) = result {
             log::warn!("native context menu: {error}");
         }
+    }
+
+    /// The tab page `label` is gone.
+    pub fn unregister_page(label: &str) {
+        tab_views().retain(|_, known| known != label);
     }
 
     unsafe fn add_menu_hook(view: *mut AnyObject) {
@@ -150,11 +165,10 @@ mod imp {
     }
 
     unsafe extern "C-unwind" fn will_open_menu(this: &AnyObject, _cmd: Sel, menu: &AnyObject, event: &AnyObject) {
-        let is_main = std::ptr::eq(
-            (this as *const AnyObject).cast::<c_void>(),
-            MAIN_VIEW.load(Ordering::SeqCst).cast_const(),
-        );
-        match plan_menu(&native_items(menu), is_main) {
+        let tab = tab_views()
+            .get(&((this as *const AnyObject) as usize))
+            .cloned();
+        match plan_menu(&native_items(menu), tab.is_some()) {
             MenuPlan::ReplaceWithMineMenu => {
                 let _: () = msg_send![menu, removeAllItems];
                 let location: NSPoint = msg_send![event, locationInWindow];
@@ -163,10 +177,8 @@ mod imp {
                 let flipped: Bool = msg_send![this, isFlipped];
                 let zoom: f64 = msg_send![this, pageZoom];
                 let payload = css_point(point.x, point.y, bounds.size.height, flipped.as_bool(), zoom);
-                if let Some(app) = APP.get() {
-                    if let Err(error) = app.emit_to("main", EVENT, payload) {
-                        log::warn!("native context menu: {error}");
-                    }
+                if let (Some(app), Some(label)) = (APP.get(), tab) {
+                    crate::commands::space_events::emit_to_labels(app, [label], EVENT, payload);
                 }
             }
             MenuPlan::Remove(indices) => {
@@ -202,10 +214,14 @@ mod imp {
 }
 
 #[cfg(target_os = "macos")]
-pub use imp::install;
+pub use imp::{install, register_page, unregister_page};
 
 #[cfg(not(target_os = "macos"))]
 pub fn install(_app: &tauri::AppHandle<tauri::Wry>) {}
+#[cfg(not(target_os = "macos"))]
+pub fn register_page(_page: &tauri::Webview<tauri::Wry>) {}
+#[cfg(not(target_os = "macos"))]
+pub fn unregister_page(_label: &str) {}
 
 #[cfg(test)]
 mod tests {

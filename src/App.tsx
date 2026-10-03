@@ -20,11 +20,31 @@ import {
 } from "react-router";
 import { X } from "lucide-react";
 import { AppSettingsMenu } from "@/components/AppSettingsMenu";
-import { useAppOpenRequest } from "@/hooks/useAppOpenRequest";
 import { ChromeRow, ChromeShell } from "@/components/ChromeRow";
 import type { SettingsSection } from "@/lib/settingsSections";
 import { isTauri } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { listenPage } from "@/lib/pageEvents";
+import {
+  SPACE_LEAD_CHANGED_EVENT,
+  TAB_GO_EVERYTHING_EVENT,
+  TAB_REFRESH_REQUESTED_EVENT,
+  TAB_SPACE_FORGOTTEN_EVENT,
+  WINDOW_SIDEBAR_CHANGED_EVENT,
+  afterTwoFrames,
+  createTabViewReporter,
+  tabLocationOf,
+  tabLocationPath,
+  takeLegacyTabState,
+  type TabViewReporter,
+} from "@/lib/tabPage";
+import {
+  TAB_VISIBILITY_CHANGED_EVENT,
+  pauseTabMedia,
+  setTabVisible,
+} from "@/lib/tabVisibility";
+// The tab bar's own reading of ⌃Tab and ⌃⇧Tab from the command registry:
+// both pages of a window answer them the same way (SPEC_TABS.md, В57).
+import { adjacentTabDirection } from "@/lib/adjacentTab";
 import {
   DndContext,
   DragOverlay,
@@ -96,10 +116,6 @@ import {
   CompactDetailLinkModeSwitch,
   CompactDetailTopMenu,
   MainSecondaryTopBar,
-  getStoredMainViewMode,
-  persistMainViewMode,
-  type DetailLinkMode,
-  type MainViewMode,
 } from "@/components/MainSecondaryChrome";
 
 type CardActionsMenuTarget = {
@@ -187,14 +203,25 @@ import type {
   UnavailableVault,
   UnavailableVaultReason,
   DeleteBlockPlan,
+  DetailLinkMode,
   FeedOrder,
   IndexedBlock,
   LightBlock,
+  MainViewMode,
   TagCount,
   ChannelDto,
   GridSnapshot,
   MediaAssetRef,
   ProjectionRevision,
+  ScrollAnchor,
+  SidebarLayout,
+  SpaceLead,
+  SpaceMovedPayload,
+  SpaceRename,
+  TabBootstrap,
+  TabView,
+  TabVisibility,
+  VaultChangedPayload,
   VaultStats,
 } from "@/types";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -238,15 +265,21 @@ import {
   sweepVaultThumbnails,
   openSettingsWindow,
   clipperExtensionFolder,
-  setSidebarMenuCollapsed,
   createBlock,
-  readClipboardPayload
+  readClipboardPayload,
+  getTabBootstrap,
+  activateAdjacentTab,
+  reportTabView,
+  tabPainted,
+  setWindowSidebar,
+  dismissSpaceNotice,
+  spaceNoticeDismissed,
+  newTab,
 } from "@/lib/commands";
 import { ArticleAudioGatewayProvider } from "@/lib/articleAudioGateway";
 import { scheduleAfterNextPaint, whenCardsRendered } from "@/lib/startup";
 import { desktopArticleAudioGateway } from "@/lib/articleAudioDesktopGateway";
 import { ARTICLE_AUDIO_ENABLED } from "@/lib/featureFlags";
-import { pushRecentTag } from "@/lib/recentTags";
 import {
   resolveBlockDragBlocks,
   resolveBlockDragSlugs,
@@ -260,7 +293,6 @@ import {
   type MineTextSelectionDragPayload,
 } from "@/lib/textSelectionDrag";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
-import { useSidebarSwipe } from "@/hooks/useSidebarSwipe";
 import { useThumbnailUpgrade } from "@/hooks/useThumbnailUpgrade";
 import { useChannelPreviewsEvents } from "@/hooks/useChannelPreviewsEvents";
 import { useChromeDragGesture } from "@/hooks/useChromeDragGesture";
@@ -279,7 +311,6 @@ import {
   type IndexingCount,
 } from "@/components/IndexingProgress";
 import { PreviewsPendingContext } from "@/lib/cardPreviewState";
-import { SidebarToggleButton } from "@/components/SidebarToggleButton";
 import { VaultSwitcher } from "@/components/VaultSwitcher";
 import { TopCollectionSwitcher } from "@/components/TopCollectionSwitcher";
 import { Sidebar, SidebarTagRowDragPreview } from "@/components/Sidebar";
@@ -338,10 +369,21 @@ const GRID_PAGE_SIZE = 200;
 const FEED_READ_RETRY_DELAYS_MS = [1_000, 4_000, 15_000] as const;
 const DETAIL_SECONDARY_CHROME_EXIT_MS = 190;
 const DETAIL_COMPACT_CHROME_EXIT_MS = 260;
+/// How many further feed pages a restored tab reads to find the card it was
+/// scrolled to before it starts at the top instead (SPEC_TABS.md, В40):
+/// GRID_PAGE_SIZE cards each.
+const SCROLL_RESTORE_PAGE_LIMIT = 25;
+/// The space notice for the opening's progress (О13), as the backend names
+/// it when it remembers the notice closed (SPEC_TABS.md, В20).
+const INDEXING_SPACE_NOTICE = "indexing";
 
-interface VaultChangedEvent {
-  path: string;
-}
+/// `vault-changed`. A command's news names what it renamed (SPEC_TABS.md,
+/// В17); the watcher's names nothing, and a preview pass's carries
+/// `preview_only` and no renames at all.
+type VaultChangedEvent = Omit<VaultChangedPayload, "renames"> & {
+  renames?: SpaceRename[];
+  preview_only?: boolean;
+};
 
 interface VaultSyncStartedEvent {
   path: string;
@@ -439,16 +481,40 @@ function useErrorNotice(error: string | null): { open: boolean; dismiss: () => v
   return { open: error !== null && error !== dismissed, dismiss };
 }
 
-function ExternalSpaceNavigation({ sequence }: { sequence: number }) {
-  const navigate = useNavigate();
-  const handled = useRef(0);
-  useEffect(() => {
-    if (sequence > handled.current) {
-      handled.current = sequence;
-      navigate("/", { replace: true });
-    }
-  }, [sequence, navigate]);
-  return null;
+/// What a restored tab returns to in its space (SPEC_TABS.md, В40, В78):
+/// `view` is applied once the space at `path` opens, and `saved` is what the
+/// backend holds, so a view that differs from it is reported.
+interface TabRestore {
+  path: string;
+  view: TabView;
+  saved: TabView;
+}
+
+/// What this page needs from the backend as a tab: none for a page that is
+/// not a tab (a dev browser route), which then behaves as before tabs.
+async function readTabBootstrap(): Promise<TabBootstrap | null> {
+  if (!isTauri()) return null;
+  try {
+    return await getTabBootstrap();
+  } catch (error) {
+    console.error("[startup] getTabBootstrap:failed", error);
+    return null;
+  }
+}
+
+/// The one-time move of the main view and the sidebar out of localStorage
+/// (В79). Only a launch that read no saved windows takes them: the stored
+/// mode becomes this tab's and the stored sidebar its window's. The keys go
+/// in any case.
+function adoptLegacyTabState(bootstrap: TabBootstrap): { view: TabView; sidebar: SidebarLayout } {
+  const legacy = takeLegacyTabState();
+  if (!bootstrap.fresh_start) return { view: bootstrap.view, sidebar: bootstrap.sidebar };
+  const view = legacy.mode !== null ? { ...bootstrap.view, mode: legacy.mode } : bootstrap.view;
+  if (legacy.sidebar === null) return { view, sidebar: bootstrap.sidebar };
+  void setWindowSidebar(legacy.sidebar).catch((error: unknown) => {
+    console.error("Could not move the stored sidebar to the window:", error);
+  });
+  return { view, sidebar: legacy.sidebar };
 }
 
 export function App() {
@@ -458,39 +524,141 @@ export function App() {
   const [creatingNewSpace, setCreatingNewSpace] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selectionReadSucceeded, setSelectionReadSucceeded] = useState(false);
-  const [externalOpenSequence, setExternalOpenSequence] = useState(0);
-  const handleExternalOpen = useCallback((path: string) => {
-    setVaultPath(path);
-    setExternalOpenSequence((sequence) => sequence + 1);
-  }, []);
-  const openSpaceError = useAppOpenRequest(!loading, handleExternalOpen);
+  // This page as a tab (SPEC_TABS.md); null for a page that is not one.
+  const [tab, setTab] = useState<TabBootstrap | null>(null);
+  const isTab = tab !== null;
+  // Whether this tab leads its space: only the lead does the space's page
+  // work and shows its notices (В19). A page that is not a tab always does.
+  const [lead, setLead] = useState(true);
+  // The sidebar belongs to the window (В56): the bootstrap's, then every
+  // `window-sidebar-changed`.
+  const [windowSidebar, setWindowSidebarLayout] = useState<SidebarLayout | null>(null);
+  const [tabRestore, setTabRestore] = useState<TabRestore | null>(null);
+  // The first screen of this page is on the page: the backend waits for its
+  // frame before it shows the tab (В5).
+  const [firstScreenShown, setFirstScreenShown] = useState(false);
+  const handleFirstScreen = useCallback(() => setFirstScreenShown(true), []);
 
   useEffect(() => {
+    let cancelled = false;
     const started = performance.now();
     console.info("[startup] getVaultPath:start");
+    const bootstrapRead = readTabBootstrap();
+    // The tab's bootstrap holds whether or not its space could be read.
+    let bootstrapAdopted = false;
+    const adoptBootstrap = async (path: string | null) => {
+      const bootstrap = await bootstrapRead;
+      if (cancelled || bootstrapAdopted || !bootstrap) return;
+      bootstrapAdopted = true;
+      const adopted = adoptLegacyTabState(bootstrap);
+      setTab(bootstrap);
+      setLead(bootstrap.lead);
+      setWindowSidebarLayout(adopted.sidebar);
+      setTabRestore(path ? { path, view: adopted.view, saved: bootstrap.view } : null);
+    };
     getVaultPath()
       .then(async (path) => {
         console.info("[startup] getVaultPath:done", {
           path,
           elapsedMs: Math.round(performance.now() - started),
         });
+        await adoptBootstrap(path);
+        if (cancelled) return;
         setVaultPath(path);
         // No path may mean two very different things: nothing was ever chosen,
         // or the chosen folder is unreachable at the moment. Only the second
         // deserves an explanation instead of a first-run screen.
         if (!path) {
           const unavailable = await getUnavailableVault();
+          if (cancelled) return;
           setUnavailablePath(unavailable?.path ?? null);
           setUnavailableReason(unavailable?.reason ?? "missing");
         }
         setSelectionReadSucceeded(true);
       })
-      .catch((err) => {
+      .catch(async (err) => {
         console.error("[startup] getVaultPath:failed", err);
-        setVaultPath(null);
+        await adoptBootstrap(null);
+        if (!cancelled) setVaultPath(null);
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    // The legacy keys are taken once: a run cancelled before its answer
+    // leaves them to the run that replaces it.
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  // The first screen of a tab drew: the backend may show the tab now (В5).
+  useEffect(() => {
+    if (!isTab || !firstScreenShown) return;
+    return afterTwoFrames(() => {
+      void tabPainted().catch((error: unknown) => console.error("Could not report the tab's frame:", error));
+    });
+  }, [firstScreenShown, isTab]);
+
+  // What the backend says about this tab: shown or hidden (В41), its lead
+  // role (В19, В20), its window's sidebar (В56) and its space forgotten (В70).
+  useEffect(() => {
+    if (!isTab) return;
+    let cancelPaint: (() => void) | null = null;
+    const subscriptions = [
+      listenPage<TabVisibility>(TAB_VISIBILITY_CHANGED_EVENT, (event) => {
+        const { visible } = event.payload;
+        setTabVisible(visible);
+        cancelPaint?.();
+        cancelPaint = null;
+        if (visible) {
+          // Shown again: the backend waits for a fresh frame before it hides
+          // the tab this one replaces.
+          cancelPaint = afterTwoFrames(() => {
+            void tabPainted().catch((error: unknown) => console.error("Could not report the tab's frame:", error));
+          });
+        } else {
+          // Nothing plays in a hidden tab, and nothing starts again on show.
+          pauseTabMedia();
+        }
+      }),
+      listenPage<SpaceLead>(SPACE_LEAD_CHANGED_EVENT, (event) => setLead(event.payload.lead)),
+      listenPage<SidebarLayout>(WINDOW_SIDEBAR_CHANGED_EVENT, (event) => setWindowSidebarLayout(event.payload)),
+      listenPage(TAB_SPACE_FORGOTTEN_EVENT, () => {
+        setCreatingNewSpace(false);
+        setUnavailablePath(null);
+        setTabRestore(null);
+        setVaultPath(null);
+      }),
+    ];
+    return () => {
+      cancelPaint?.();
+      for (const subscription of subscriptions) void subscription.then((stop) => stop());
+    };
+  }, [isTab]);
+
+  // ⌃Tab and ⌃⇧Tab show the next and the previous tab of the window from any
+  // screen of the page, fields and dialogs included (В55, В57). ⇧⌘] and ⇧⌘[
+  // are items of the native menu, which takes them before the page.
+  useEffect(() => {
+    if (!isTab) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      const direction = adjacentTabDirection(event);
+      if (direction === null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void activateAdjacentTab(direction === "forward").catch((error: unknown) => {
+        console.error("Could not show the adjacent tab:", error);
+      });
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [isTab]);
+
+  // A screen without a space is this page's first screen as soon as it shows.
+  const showsSpace = !loading && vaultPath !== null;
+  useEffect(() => {
+    if (!loading && !showsSpace) setFirstScreenShown(true);
+  }, [loading, showsSpace]);
 
   useEffect(() => {
     if (loading || vaultPath || !isTauri()) return;
@@ -510,13 +678,13 @@ export function App() {
   // Switches initiated here resolve to the same path — an idempotent set.
   useEffect(() => {
     let cancelled = false;
-    const unlisten = listen<{ path: string }>("vault-selected", (event) => {
+    const unlisten = listenPage<{ path: string }>("vault-selected", (event) => {
       if (cancelled) return;
       setVaultPath(event.payload.path);
     });
     // The space this tab shows moved and reopened at its new folder
     // (SPEC_VAULT_LIFECYCLE.md, П30; SPEC_TABS.md, В73).
-    const unlistenMoved = listen<{ vault_id: string; path: string }>("space-moved", (event) => {
+    const unlistenMoved = listenPage<SpaceMovedPayload>("space-moved", (event) => {
       if (cancelled) return;
       setVaultPath(event.payload.path);
     });
@@ -539,7 +707,7 @@ export function App() {
   vaultPathRef.current = vaultPath;
   useEffect(() => {
     let cancelled = false;
-    const unlisten = listen<UnavailableVault>("space-unavailable", (event) => {
+    const unlisten = listenPage<UnavailableVault>("space-unavailable", (event) => {
       if (cancelled || event.payload.path !== vaultPathRef.current) return;
       setUnavailablePath(event.payload.path);
       setUnavailableReason(event.payload.reason);
@@ -591,12 +759,16 @@ export function App() {
 
   const routedApp = (
     <BrowserRouter>
-      <ExternalSpaceNavigation sequence={externalOpenSequence} />
-      {openSpaceError && <div role="alert" className="fixed bottom-0 z-50 bg-background p-4 text-destructive">{openSpaceError}</div>}
       <AppWithVault
         key={vaultPath}
         vaultPath={vaultPath}
         onVaultSelected={setVaultPath}
+        tabPage={isTab}
+        lead={lead}
+        windowSidebar={windowSidebar}
+        restore={tabRestore?.path === vaultPath ? tabRestore : null}
+        onRestored={() => setTabRestore(null)}
+        onFirstScreen={handleFirstScreen}
       />
     </BrowserRouter>
   );
@@ -617,15 +789,57 @@ export function App() {
 export function AppWithVault({
   vaultPath,
   onVaultSelected,
+  tabPage = false,
+  lead = true,
+  windowSidebar = null,
+  restore = null,
+  onRestored,
+  onFirstScreen,
 }: {
   vaultPath: string;
   onVaultSelected: (path: string) => void;
+  /// This page is a tab: it reports its view and opens spaces in new tabs.
+  tabPage?: boolean;
+  /// This tab leads its space (SPEC_TABS.md, В19).
+  lead?: boolean;
+  /// The sidebar of this tab's window (В56); null for a page that is not a tab.
+  windowSidebar?: SidebarLayout | null;
+  /// What this tab returns to, read once when it mounts (В40).
+  restore?: TabRestore | null;
+  onRestored?: () => void;
+  /// The first route of the space, or its failure, is on screen (В5).
+  onFirstScreen?: () => void;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
   const projectionRevisionOwner = useProjectionRevisionOwner();
   // The bar shows chords: a rebind in Settings re-renders them (Ф11).
   useCommandOverrides();
+
+  const onFirstScreenRef = useRef(onFirstScreen);
+  onFirstScreenRef.current = onFirstScreen;
+  const onRestoredRef = useRef(onRestored);
+  onRestoredRef.current = onRestored;
+  // The first reads of the space landed: the feed, the collections, the stats.
+  const [initialLoadsDone, setInitialLoadsDone] = useState(false);
+  // The view this tab returns to, taken once: later renders hand none.
+  const [restoreView] = useState<TabView | null>(() => restore?.view ?? null);
+  // What the backend holds for this tab: known for a restored tab only.
+  const savedViewRef = useRef<TabView | null>(restore?.saved ?? null);
+  // The place is restored before the first route read, so the feed reads the
+  // restored collection at once instead of Everything first. A collection
+  // that no longer exists sends the tab to Everything once collections are
+  // read (В18).
+  // A passive effect: the router hears navigation only once its own layout
+  // effect has subscribed, after this component's layout effects.
+  const placeRestoredRef = useRef(false);
+  useEffect(() => {
+    if (placeRestoredRef.current) return;
+    placeRestoredRef.current = true;
+    if (restoreView?.location.kind === "collection") {
+      navigate(tabLocationPath(restoreView.location), { replace: true });
+    }
+  }, [navigate, restoreView]);
 
   const currentTag = location.pathname.startsWith("/channel/")
     ? decodeURIComponent(location.pathname.slice("/channel/".length))
@@ -682,6 +896,8 @@ export function AppWithVault({
   const [indexRereadAfterLoadId, setIndexRereadAfterLoadId] = useState<number | null>(null);
   const [tags, setTags] = useState<TagCount[]>([]);
   const [channels, setChannels] = useState<ChannelDto[]>([]);
+  // The space's collections were read at least once.
+  const [taxonomyLoaded, setTaxonomyLoaded] = useState(false);
   const compactDetailTopMenuEnabled = false;
   const [bottomActionBarHidden, setBottomActionBarHidden] = useState(
     getStoredBottomActionBarHidden,
@@ -690,7 +906,8 @@ export function AppWithVault({
     getStoredGraphPreferences,
   );
   const [scrollEdgeFade, setScrollEdgeFade] = useState(getStoredScrollEdgeFade);
-  const [mainViewMode, setMainViewMode] = useState<MainViewMode>(getStoredMainViewMode);
+  // Grid or Graph is the tab's own (SPEC_TABS.md, В78).
+  const [mainViewMode, setMainViewMode] = useState<MainViewMode>(() => restoreView?.mode ?? "grid");
   const [imagePreview, setImagePreview] = useState<ImagePreviewRequest | null>(null);
   const [isCreatingChannel, setIsCreatingChannel] = useState(false);
   const [isNamingCollection, setIsNamingCollection] = useState(false);
@@ -803,7 +1020,8 @@ export function AppWithVault({
   const [searchOverlayOpen, setSearchOverlayOpen] = useState(false);
   // Query survives the session: reopening shows it selected (SPEC_SEARCH_OVERLAY).
   const [searchOverlayQuery, setSearchOverlayQuery] = useState("");
-  const [sidebarSearchQuery, setSidebarSearchQuery] = useState("");
+  // The collection filter is the tab's own too (В78).
+  const [sidebarSearchQuery, setSidebarSearchQuery] = useState(() => restoreView?.collection_filter ?? "");
   const sidebarSearchHasValue = sidebarSearchQuery.length > 0;
   const sidebarSearchHasActiveQuery = sidebarSearchQuery.trim().length > 0;
   const [sidebarSearchFocusSequence, setSidebarSearchFocusSequence] = useState(0);
@@ -879,11 +1097,37 @@ export function AppWithVault({
     previewPass?.count ?? null,
   );
   const indexingCountNotice = useIndexingNotice(indexingStep !== null);
+  // The space's notices belong to its lead tab (SPEC_TABS.md, В19, В20). A
+  // notice closed there stays closed for the space's opening: the backend
+  // remembers it, and a tab that starts leading asks.
+  const { hide: hideIndexingNotice } = indexingCountNotice;
+  const leadRef = useRef(lead);
+  leadRef.current = lead;
+  useEffect(() => {
+    if (!tabPage || !lead) return;
+    let cancelled = false;
+    void spaceNoticeDismissed(INDEXING_SPACE_NOTICE)
+      .then((dismissed) => {
+        if (!cancelled && dismissed) hideIndexingNotice();
+      })
+      .catch((error: unknown) => console.error("Could not read the space's closed notices:", error));
+    return () => {
+      cancelled = true;
+    };
+  }, [hideIndexingNotice, lead, tabPage]);
+  const closeIndexingNotice = useCallback(() => {
+    hideIndexingNotice();
+    if (!tabPage) return;
+    void dismissSpaceNotice(INDEXING_SPACE_NOTICE).catch((error: unknown) => {
+      console.error("Could not record the closed notice:", error);
+    });
+  }, [hideIndexingNotice, tabPage]);
   // A count belongs to the pass that sent it: the next pass starts from none.
   useEffect(() => {
     if (!isSyncing) setSyncProgress(null);
   }, [isSyncing]);
   // The first saved card's slug, while its one-time marker is on screen (О19).
+  // Only the lead tab marks it: one marker for the space, not one per tab.
   const [firstCardSlug, setFirstCardSlug] = useState<string | null>(null);
   const firstCardPendingRef = useRef(false);
   useEffect(() => {
@@ -1049,15 +1293,27 @@ export function AppWithVault({
     });
   }, []);
 
-  // Redirect if navigated to a channel that doesn't exist (check both tags and channels)
+  // The collection this tab is moving to because another tab renamed it.
+  const followedCollectionRef = useRef<string | null>(null);
+  // Redirect if navigated to a channel that doesn't exist (check both tags and
+  // channels). Judged once collections were read at least once, even when the
+  // space has none: a restored tab or another tab's deletion can leave this
+  // tab in a collection that is gone (SPEC_TABS.md, В18).
   useEffect(() => {
     if (suppressRedirectRef.current) return;
-    if (currentTag && (tags.length > 0 || channels.length > 0)
+    // Following a renamed collection: the new route lands after the renamed
+    // list, and the old name in between is not a deletion (В18).
+    const followed = followedCollectionRef.current;
+    if (followed !== null) {
+      if (currentTag !== followed) return;
+      followedCollectionRef.current = null;
+    }
+    if (currentTag && taxonomyLoaded
       && !tags.some((t) => t.tag === currentTag)
       && !channels.some((c) => c.tag === currentTag)) {
       navigate("/");
     }
-  }, [currentTag, tags, channels, navigate]);
+  }, [currentTag, tags, channels, navigate, taxonomyLoaded]);
 
   const activeBlocks = blocks;
   const gridRouteSnapshotReady =
@@ -1130,9 +1386,16 @@ export function AppWithVault({
     gridColumnCountRef.current = n;
   }, []);
 
+  // A route change made to follow a renamed collection keeps the open card
+  // (SPEC_TABS.md, В18).
+  const keepDetailOnRouteChangeRef = useRef(false);
   // Close Detail when navigating to a different route. Feed keyboard focus is
   // owned by Grid and resets with the route-scoped Grid instance.
   useEffect(() => {
+    if (keepDetailOnRouteChangeRef.current) {
+      keepDetailOnRouteChangeRef.current = false;
+      return;
+    }
     cancelPendingDetailClose();
     setSelectedBlock(null);
     setSelectedBlockAnchor(null);
@@ -1148,14 +1411,7 @@ export function AppWithVault({
     updateResize,
     endResize,
     toggleCollapsed,
-  } = useSidebarResize();
-
-  useEffect(() => {
-    if (!isTauri()) return;
-    void setSidebarMenuCollapsed(sidebarCollapsed).catch((error) => {
-      console.error("Failed to synchronize the native sidebar menu:", error);
-    });
-  }, [sidebarCollapsed]);
+  } = useSidebarResize(windowSidebar);
 
   const topCollectionSwitcherCompact = sidebarCollapsed || compactDetailTopMenuEnabled;
 
@@ -1179,8 +1435,10 @@ export function AppWithVault({
 
   // Phase 2 thumbnail upgrade pipeline: Web Worker decodes webp/heic/
   // video media via the browser's native decoder and writes real JPEG
-  // bytes back through save_thumb. Mounts once vault is open.
-  useThumbnailUpgrade(vaultReady);
+  // bytes back through save_thumb. Mounts once vault is open, and only in
+  // the tab that leads the space: one page decodes for all of them, and a
+  // hidden page has no frames to decode with (SPEC_TABS.md, В19).
+  useThumbnailUpgrade(vaultReady && lead);
 
   // Errors are kept per source, and only that source clears its own
   // (SPEC_AUDIT_FIXES.md, Г4.1, Д2.4): a late collections answer never hides
@@ -1203,7 +1461,10 @@ export function AppWithVault({
   const taxonomyLoadNotice = useErrorNotice(taxonomyLoadError);
 
   useEffect(() => {
-    if (!loadError || !isTauri()) return;
+    if (!loadError) return;
+    // An error in the feed's place is this tab's first screen too (В5).
+    onFirstScreenRef.current?.();
+    if (!isTauri()) return;
     return scheduleAfterNextPaint(() => {
       void recordStartupMilestone("interactive").catch(() => {});
       void startStartupMaintenance().catch((error) => {
@@ -1377,6 +1638,7 @@ export function AppWithVault({
       }
       setTags(snapshot.tags);
       setChannels(snapshot.channels);
+      setTaxonomyLoaded(true);
       setTotalBlocks(snapshot.total_blocks);
       // Kept outside React state: hovering cards and rows reads it on every
       // pointer move (SPEC_CARD_STATES.md, С3 and С4).
@@ -1901,6 +2163,9 @@ export function AppWithVault({
       if (routeCommitted && isTauri()) {
         void recordStartupMilestone("first_route_committed").catch(() => {});
       }
+      // The first route, read or failed, is what this tab shows first (В5).
+      onFirstScreenRef.current?.();
+      setInitialLoadsDone(true);
       cancelPostPaint = scheduleAfterNextPaint(() => {
         if (cancelled) return;
         if (routeCommitted && isTauri()) {
@@ -1944,22 +2209,19 @@ export function AppWithVault({
     void loadVaultStatsRef.current(currentTag);
   }, [currentTag, vaultReady]);
 
-  // Filesystem catch-up plus passive thumb sweep on focus/visibility.
-  // The route refresh joins VaultReconciler before querying, so missed notify
-  // events cannot leave Grid/Sidebar stale when the user returns to Mine.
-  // Throttled to avoid turning a flurry of focus events into repeated scans.
+  // Filesystem catch-up plus passive thumb sweep when the person comes back to
+  // Mine. The route refresh joins VaultReconciler before querying, so missed
+  // notify events cannot leave Grid/Sidebar stale. The backend asks for it on
+  // the focus of a tab window, once per open space and at most every 10 s;
+  // showing a tab asks for nothing (SPEC_TABS.md, В42).
+  const isSyncingRef = useRef(isSyncing);
+  isSyncingRef.current = isSyncing;
   useEffect(() => {
     if (!vaultReady) {
       return;
     }
-    let lastRun = 0;
-    const MIN_INTERVAL_MS = 10_000;
-    const run = () => {
-      if (isSyncing) return;
-      const now = Date.now();
-      if (now - lastRun < MIN_INTERVAL_MS) return;
-      if (document.visibilityState !== "visible") return;
-      lastRun = now;
+    const subscription = listenPage(TAB_REFRESH_REQUESTED_EVENT, () => {
+      if (isSyncingRef.current) return;
       scheduleRefresh(
         { grid: true, taxonomy: true, previews: true },
         0,
@@ -1968,16 +2230,212 @@ export function AppWithVault({
       void sweepVaultThumbnails().catch((err) => {
         console.warn("[THUMB_SWEEP] failed:", err);
       });
-    };
-    const onFocus = () => run();
-    const onVisibility = () => run();
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVisibility);
+    });
     return () => {
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisibility);
+      void subscription.then((stop) => stop());
     };
-  }, [isSyncing, scheduleRefresh, vaultReady]);
+  }, [scheduleRefresh, vaultReady]);
+
+  // ── Tab memory (SPEC_TABS.md, В18, В31, В40, В78) ───────────────────────
+
+  const selectedBlockRef = useRef(selectedBlock);
+  selectedBlockRef.current = selectedBlock;
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
+
+  /// Another tab of this space or the world outside changed it (В18): the
+  /// place follows a renamed collection, the open card a renamed card, and
+  /// an open card that is gone closes. A collection that is gone sends the
+  /// tab to Everything once collections are read again (the redirect above).
+  const followSpaceChange = (renames: readonly SpaceRename[]) => {
+    for (const rename of renames) {
+      if (rename.kind !== "collection") continue;
+      // Renamed here at once, so the redirect does not take the old name's
+      // absence for a deletion before the collections are read again.
+      setTags((current) => current.map((item) => (
+        item.tag === rename.from ? { ...item, tag: rename.to } : item
+      )));
+      setChannels((current) => current.map((item) => (
+        item.tag === rename.from ? { ...item, tag: rename.to } : item
+      )));
+      if (currentTagRef.current === rename.from) {
+        keepDetailOnRouteChangeRef.current = selectedBlockRef.current !== null;
+        followedCollectionRef.current = rename.to;
+        navigateRef.current(tabLocationPath({ kind: "collection", tag: rename.to }), { replace: true });
+      }
+    }
+    const open = selectedBlockRef.current;
+    if (!open) return;
+    const cardRename = renames.find((rename) => rename.kind === "card" && rename.from === open.slug);
+    const slug = cardRename?.to ?? open.slug;
+    if (cardRename) {
+      setSelectedBlock((current) => (
+        current && current.slug === cardRename.from ? { ...current, slug: cardRename.to } : current
+      ));
+    }
+    void getBlock(slug)
+      .then((full) => {
+        setSelectedBlock((current) => {
+          if (!current || current.slug !== slug) return current;
+          // Gone: closed. Renamed: the fresh card under its new name. Still
+          // there: the card on screen stays as it is.
+          if (!full) return null;
+          return cardRename ? full : current;
+        });
+        if (!full) setSelectedBlockAnchor(null);
+      })
+      .catch((error: unknown) => {
+        console.error("Could not re-read the open card:", error);
+      });
+  };
+  const followSpaceChangeRef = useRef(followSpaceChange);
+  followSpaceChangeRef.current = followSpaceChange;
+
+  // The place, the mode and the filter came back as the first state; the
+  // open card and the scroll follow once the space is read.
+  const [viewRestored, setViewRestored] = useState(restoreView === null);
+  useEffect(() => {
+    if (viewRestored || !initialLoadsDone) return;
+    let cancelled = false;
+    const finish = () => {
+      if (cancelled) return;
+      setViewRestored(true);
+      onRestoredRef.current?.();
+    };
+    const card = restoreView?.open_card ?? null;
+    if (!card) {
+      finish();
+      return;
+    }
+    void getBlock(card.slug)
+      .then((full) => {
+        if (cancelled || !full) return;
+        // A card that is gone stays closed (В18).
+        openDetailBlock(full);
+        setDetailLinkMode(card.link_mode);
+      })
+      .catch((error: unknown) => console.error("Could not reopen the tab's card:", error))
+      .finally(finish);
+    return () => {
+      cancelled = true;
+    };
+  }, [initialLoadsDone, openDetailBlock, restoreView, viewRestored]);
+
+  // The scroll comes back once its card is in the feed: pages are read on
+  // until it is, and a card that is gone leaves the feed at its top (В18).
+  // Another place or Graph before that drops it.
+  const [pendingScroll, setPendingScroll] = useState<{ anchor: ScrollAnchor; routeKey: string } | null>(() => (
+    restoreView?.scroll_anchor && restoreView.mode === "grid"
+      ? {
+          anchor: restoreView.scroll_anchor,
+          routeKey: restoreView.location.kind === "collection" ? restoreView.location.tag : "__all__",
+        }
+      : null
+  ));
+  const pendingScrollRef = useRef(pendingScroll);
+  pendingScrollRef.current = pendingScroll;
+  // Pages asked for on the scroll's behalf: bounded, so a feed that never
+  // brings the card back cannot be read forever.
+  const scrollRestorePagesRef = useRef(0);
+  const scrollRestoreAnchor = useMemo(() => (
+    pendingScroll && blocks.some((item) => item.slug === pendingScroll.anchor.slug)
+      ? pendingScroll.anchor
+      : null
+  ), [blocks, pendingScroll]);
+  useEffect(() => {
+    if (!pendingScroll || !initialLoadsDone) return;
+    if (mainViewMode !== "grid" || routeKeyFor(currentTag) !== pendingScroll.routeKey || gridLoadError !== null) {
+      setPendingScroll(null);
+      return;
+    }
+    if (!gridRouteSnapshotReady || scrollRestoreAnchor || loadingMoreBlocks) return;
+    if (hasMoreBlocks && scrollRestorePagesRef.current < SCROLL_RESTORE_PAGE_LIMIT) {
+      scrollRestorePagesRef.current += 1;
+      void loadMoreBlocks();
+      return;
+    }
+    setPendingScroll(null);
+  }, [
+    appliedRouteLoadId,
+    currentTag,
+    gridLoadError,
+    gridRouteSnapshotReady,
+    hasMoreBlocks,
+    initialLoadsDone,
+    loadMoreBlocks,
+    loadingMoreBlocks,
+    mainViewMode,
+    pendingScroll,
+    routeKeyFor,
+    scrollRestoreAnchor,
+  ]);
+  const handleScrollAnchorRestored = useCallback(() => setPendingScroll(null), []);
+
+  // Where the feed stands, read when a report goes out.
+  const readScrollPositionRef = useRef<(() => ScrollAnchor | null) | null>(null);
+  const reporterRef = useRef<TabViewReporter | null>(null);
+  const handleScrollPositionChange = useCallback((read: () => ScrollAnchor | null) => {
+    readScrollPositionRef.current = read;
+    reporterRef.current?.schedule();
+  }, []);
+  const tabViewInputRef = useRef({ currentTag, mainViewMode, selectedBlock, detailLinkMode, sidebarSearchQuery });
+  tabViewInputRef.current = { currentTag, mainViewMode, selectedBlock, detailLinkMode, sidebarSearchQuery };
+  const readTabView = useCallback((): TabView => {
+    const input = tabViewInputRef.current;
+    return {
+      location: tabLocationOf(input.currentTag),
+      mode: input.mainViewMode,
+      open_card: input.selectedBlock
+        ? { slug: input.selectedBlock.slug, link_mode: input.detailLinkMode }
+        : null,
+      // A scroll still on its way back is what the tab remembers.
+      scroll_anchor: pendingScrollRef.current?.anchor ?? readScrollPositionRef.current?.() ?? null,
+      collection_filter: input.sidebarSearchQuery,
+    };
+  }, []);
+
+  // The tab reports its memory once restored: at most every
+  // TAB_VIEW_REPORT_DEBOUNCE_MS, and at once when hidden or closed (В31,
+  // В40). Menus, dialogs, search, editors, selection and history are not
+  // part of it (В30).
+  useEffect(() => {
+    if (!tabPage || !viewRestored) return;
+    const reporter = createTabViewReporter({
+      read: readTabView,
+      send: reportTabView,
+      lastReported: savedViewRef.current,
+    });
+    reporterRef.current = reporter;
+    reporter.schedule();
+    const onPageHide = () => reporter.flush();
+    window.addEventListener("pagehide", onPageHide);
+    const visibility = listenPage<TabVisibility>(TAB_VISIBILITY_CHANGED_EVENT, (event) => {
+      if (!event.payload.visible) reporter.flush();
+    });
+    return () => {
+      window.removeEventListener("pagehide", onPageHide);
+      void visibility.then((stop) => stop());
+      reporter.dispose();
+      reporterRef.current = null;
+    };
+  }, [readTabView, tabPage, viewRestored]);
+  useEffect(() => {
+    reporterRef.current?.schedule();
+  }, [currentTag, detailLinkMode, mainViewMode, pendingScroll, selectedBlock?.slug, sidebarSearchQuery]);
+
+  // The space was opened from outside and this tab shows it (В72).
+  useEffect(() => {
+    if (!tabPage) return;
+    const subscription = listenPage(TAB_GO_EVERYTHING_EVENT, () => {
+      setPendingScroll(null);
+      setSelectedBlock(null);
+      setSelectedBlockAnchor(null);
+      navigateRef.current("/");
+    });
+    return () => {
+      void subscription.then((stop) => stop());
+    };
+  }, [tabPage]);
 
   useEffect(() => {
     if (!vaultReady) {
@@ -2004,10 +2462,11 @@ export function AppWithVault({
 
     const unlistenFns: Array<Promise<() => void>> = [];
 
-    unlistenFns.push(listen<BlockAddedEvent>("block:added", (event) => {
+    unlistenFns.push(listenPage<BlockAddedEvent>("block:added", (event) => {
       // The very first card this space ever saved gets its one sentence about
       // being a file (О19): the feed was empty, the marker was never shown.
-      if (firstCardPendingRef.current && blocksRef.current.length === 0) {
+      // The lead tab alone marks it (SPEC_TABS.md, В19).
+      if (leadRef.current && firstCardPendingRef.current && blocksRef.current.length === 0) {
         firstCardPendingRef.current = false;
         setFirstCardSlug(event.payload.slug);
         void completeFirstCardMarker().catch(() => {});
@@ -2020,7 +2479,7 @@ export function AppWithVault({
       });
     }));
 
-    unlistenFns.push(listen<BlockRemovedEvent>("block:removed", (event) => {
+    unlistenFns.push(listenPage<BlockRemovedEvent>("block:removed", (event) => {
       invalidateRoutesForTags(event.payload.tags);
       scheduleRefresh({
         grid: currentTagRef.current === undefined || event.payload.tags.includes(currentTagRef.current),
@@ -2029,7 +2488,7 @@ export function AppWithVault({
       });
     }));
 
-    unlistenFns.push(listen<BlockRenamedEvent>("block:renamed", (event) => {
+    unlistenFns.push(listenPage<BlockRenamedEvent>("block:renamed", (event) => {
       invalidateRouteSnapshots();
       setSelectedBlock((current) => {
         if (!current || current.slug !== event.payload.old_slug) {
@@ -2067,7 +2526,7 @@ export function AppWithVault({
       }, 0);
     }));
 
-    unlistenFns.push(listen<ThumbUpdatedEvent>("thumb:updated", (event) => {
+    unlistenFns.push(listenPage<ThumbUpdatedEvent>("thumb:updated", (event) => {
       if (event.payload.path && event.payload.path !== vaultPathRef.current) return;
       invalidateRouteSnapshots();
       if (blocksRef.current.some((block) => block.slug === event.payload.slug)) {
@@ -2083,13 +2542,17 @@ export function AppWithVault({
       scheduleRefresh({ previews: true });
     }));
 
-    unlistenFns.push(listen<VaultChangedEvent & { preview_only?: boolean }>("vault-changed", (event) => {
+    unlistenFns.push(listenPage<VaultChangedEvent>("vault-changed", (event) => {
       if (event.payload.path !== vaultPathRef.current) {
         return;
       }
       // Preview producers already invalidated individual rows above. Other
       // surfaces still receive the legacy vault notification.
       if (event.payload.preview_only) return;
+      // Another tab of this space, or the world outside, changed it: this
+      // tab's place and open card follow renames and leave what is gone
+      // (SPEC_TABS.md, В15, В18).
+      followSpaceChangeRef.current(event.payload.renames ?? []);
       invalidateRouteSnapshots();
       scheduleRefresh({
         grid: true,
@@ -2098,7 +2561,7 @@ export function AppWithVault({
       });
     }));
 
-    unlistenFns.push(listen<VaultStats>("vault:stats-updated", (event) => {
+    unlistenFns.push(listenPage<VaultStats>("vault:stats-updated", (event) => {
       const currentCollection = currentTagRef.current ?? null;
       if (event.payload.currentCollection === currentCollection) {
         setVaultStats(event.payload);
@@ -2107,35 +2570,35 @@ export function AppWithVault({
       requestVaultStatsRefresh();
     }));
 
-    unlistenFns.push(listen<VaultSyncStartedEvent>("vault-sync-started", (event) => {
+    unlistenFns.push(listenPage<VaultSyncStartedEvent>("vault-sync-started", (event) => {
       if (event.payload.path === vaultPathRef.current) {
         setIsSyncing(true);
       }
     }));
 
-    unlistenFns.push(listen<VaultSyncProgressEvent>("vault-sync-progress", (event) => {
+    unlistenFns.push(listenPage<VaultSyncProgressEvent>("vault-sync-progress", (event) => {
       if (event.payload.path !== vaultPathRef.current) return;
       setSyncProgress({ processed: event.payload.processed, total: event.payload.total });
     }));
 
     // Queued arrives before the index pass's `vault-sync-finished`, so the
     // opening notice passes from notes to previews without a gap.
-    unlistenFns.push(listen<DerivedPreviewQueuedEvent>("derived-preview-queued", (event) => {
+    unlistenFns.push(listenPage<DerivedPreviewQueuedEvent>("derived-preview-queued", (event) => {
       if (event.payload.path !== vaultPathRef.current) return;
       setPreviewPass((pass) => pass ?? { count: null });
     }));
 
-    unlistenFns.push(listen<DerivedPreviewProgressEvent>("derived-preview-progress", (event) => {
+    unlistenFns.push(listenPage<DerivedPreviewProgressEvent>("derived-preview-progress", (event) => {
       if (event.payload.path !== vaultPathRef.current) return;
       setPreviewPass({ count: { processed: event.payload.processed, total: event.payload.total } });
     }));
 
-    unlistenFns.push(listen<DerivedPreviewFinishedEvent>("derived-preview-finished", (event) => {
+    unlistenFns.push(listenPage<DerivedPreviewFinishedEvent>("derived-preview-finished", (event) => {
       if (event.payload.path !== vaultPathRef.current) return;
       setPreviewPass(null);
     }));
 
-    unlistenFns.push(listen<VaultSyncFinishedEvent>("vault-sync-finished", (event) => {
+    unlistenFns.push(listenPage<VaultSyncFinishedEvent>("vault-sync-finished", (event) => {
       if (event.payload.path !== vaultPathRef.current) {
         return;
       }
@@ -2203,6 +2666,14 @@ export function AppWithVault({
     onVaultSelected(selected);
   }, [navigate, onVaultSelected]);
 
+  // A space chosen with ⌘ in the switcher opens in a new tab of this window;
+  // this tab keeps its own (SPEC_TABS.md, В52).
+  const openSpaceInNewTab = useCallback((vaultId: string) => {
+    void newTab(vaultId).catch((error: unknown) => {
+      console.error("Could not open the space in a new tab:", error);
+    });
+  }, []);
+
   // Search overlay opens above any surface, including an open Detail
   // (SPEC_SEARCH_OVERLAY.md); the modal Dialog owns the keyboard while open.
   const toggleSearchOverlay = useCallback(() => {
@@ -2259,7 +2730,7 @@ export function AppWithVault({
 
   useEffect(() => {
     let cancelled = false;
-    const unlisten = listen<SurfaceSearchShortcutTarget>(
+    const unlisten = listenPage<SurfaceSearchShortcutTarget>(
       "surface-search-shortcut",
       (event) => {
         if (cancelled) return;
@@ -2272,21 +2743,9 @@ export function AppWithVault({
     };
   }, [handleSurfaceSearchShortcut]);
 
-  // A two-finger swipe does what the keyboard shortcut does, on every screen.
-  useSidebarSwipe({ collapsed: sidebarCollapsed, onToggle: toggleCollapsed });
-
-  useEffect(() => {
-    let cancelled = false;
-    const unlisten = listen("sidebar-toggle-shortcut", () => {
-      if (!cancelled) {
-        toggleCollapsed();
-      }
-    });
-    return () => {
-      cancelled = true;
-      unlisten.then((fn) => fn());
-    };
-  }, [toggleCollapsed]);
+  // The View menu's Hide Sidebar (⌃⌘S), the two-finger swipe and the tab
+  // bar's button change the window's sidebar in the backend; the change
+  // arrives here as `window-sidebar-changed` (SPEC_TABS.md, В56).
 
   const handleOpenSettings = useCallback((section?: SettingsSection) => {
     void openSettingsWindow(section).catch((error) => {
@@ -2295,18 +2754,14 @@ export function AppWithVault({
   }, []);
 
   const handleMainViewModeChange = useCallback((next: MainViewMode) => {
-    setMainViewMode((current) => {
-      if (current === next) return current;
-      persistMainViewMode(next);
-      return next;
-    });
+    setMainViewMode(next);
   }, []);
 
   // The settings window writes localStorage (shared per origin) and emits
   // this event; re-read the changed key and update the affected state.
   useEffect(() => {
     let cancelled = false;
-    const unlisten = listen<SettingsChangedPayload>(SETTINGS_CHANGED_EVENT, (event) => {
+    const unlisten = listenPage<SettingsChangedPayload>(SETTINGS_CHANGED_EVENT, (event) => {
       if (cancelled) return;
       adoptSettingsChange(event.payload);
       const { key } = event.payload;
@@ -2561,7 +3016,6 @@ export function AppWithVault({
 
   const handleTopCollectionCreate = useCallback(async (tag: string) => {
     const channel = await createChannel(tag);
-    pushRecentTag(channel.tag);
     await reloadAllSnapshots();
     navigate(`/channel/${encodeURIComponent(channel.tag)}`);
   }, [navigate, reloadAllSnapshots]);
@@ -2756,7 +3210,6 @@ export function AppWithVault({
       setPendingCreateChannelDrop(null);
       try {
         const channel = await createChannel(tag);
-        pushRecentTag(channel.tag);
         // Named at the top of the list, it takes the first place there
         // instead of the last: the others move down by one.
         const order = [channel.tag, ...orderedTags.map((t) => t.tag).filter((t) => t !== channel.tag)];
@@ -3063,7 +3516,6 @@ export function AppWithVault({
   const handleMediaAssetCreateChannelAndCard = useCallback(
     async (asset: MediaAssetRef, tag: string) => {
       const channel = await createChannel(tag);
-      pushRecentTag(channel.tag);
       await handleMediaAssetCreateCard(asset, channel.tag);
     },
     [handleMediaAssetCreateCard],
@@ -3172,7 +3624,6 @@ export function AppWithVault({
   const handleTextSelectionCreateChannelAndCard = useCallback(
     async (payload: MineTextSelectionDragPayload, tag: string) => {
       const channel = await createChannel(tag);
-      pushRecentTag(channel.tag);
       await handleTextSelectionDrop(payload, channel.tag);
     },
     [handleTextSelectionDrop],
@@ -3390,7 +3841,6 @@ export function AppWithVault({
           }
         } else {
           await addTag(slug, tag);
-          pushRecentTag(tag);
           if (selectedBlock?.slug === slug) {
             setSelectedBlockTags((current) => (
               current.includes(tag) ? current : [...current, tag]
@@ -3417,7 +3867,6 @@ export function AppWithVault({
     async (tag: string, blockSlug: string) => {
       try {
         await addTag(blockSlug, tag);
-        pushRecentTag(tag);
         if (selectedBlock?.slug === blockSlug) {
           setSelectedBlockTags((current) => (
             current.includes(tag) ? current : [...current, tag]
@@ -3459,9 +3908,6 @@ export function AppWithVault({
           } else {
             await removeTag(slug, tag);
           }
-        }
-        if (connected) {
-          pushRecentTag(tag);
         }
         if (selectedBlock && slugs.includes(selectedBlock.slug)) {
           setSelectedBlockTags((current) => {
@@ -3604,16 +4050,14 @@ export function AppWithVault({
 
   if (!vaultReady && !loadError) {
     return (
-      <ChromeShell>
+      // Under the tab bar, whose own separator is this page's top line (В43).
+      <ChromeShell topEdge={!tabPage}>
         <ChromeRow as="header" separator="bottom"
           data-tauri-drag-region
           className={topChromeSurfaceClass}
         >
-          <div
-            data-tauri-drag-region
-            data-traffic-light-reserve=""
-            className={cn("w-20 shrink-0", topChromeSurfaceClass)}
-          />
+          {/* No traffic-light reserve: the window's buttons live in the tab
+              bar above this page (SPEC_TABS.md, В43). */}
           <div data-tauri-drag-region className="flex flex-1 items-center px-3" />
           <AppSettingsMenu onSelectSection={handleOpenSettings} />
         </ChromeRow>
@@ -3643,10 +4087,14 @@ export function AppWithVault({
   const feedErrorNotices = openError !== null
     ? []
     : feedErrors.slice(feedShowsCards ? 0 : 1).filter(({ notice }) => notice.open);
+  // The space's own notices show in its lead tab only (SPEC_TABS.md, В19);
+  // a tab's errors are its own and show wherever they happened.
+  const showIndexingNotice = lead && indexingCountNotice.visible && indexingStep !== null;
+  const showFirstCardMarker = lead && firstCardSlug !== null;
   const showNotifications = feedErrorNotices.length > 0
     || selectionCardError !== null
-    || firstCardSlug !== null
-    || (indexingCountNotice.visible && indexingStep !== null);
+    || showFirstCardMarker
+    || showIndexingNotice;
 
   const metadataRow = mainSecondaryTopBarVisible ? (
     <MainSecondaryTopBar
@@ -3694,6 +4142,8 @@ export function AppWithVault({
       onDragCancel={handleDndCancel}
     >
     <ChromeShell
+      // Under the tab bar, whose own separator is this page's top line (В43).
+      topEdge={!tabPage}
       style={{ minWidth: APP_MIN_WIDTH_PX }}
     >
       {/* Top toolbar */}
@@ -3711,19 +4161,9 @@ export function AppWithVault({
           )}
           style={sidebarCollapsed ? undefined : { width: "var(--sidebar-width)" }}
         >
-          <div
-            data-tauri-drag-region
-            data-traffic-light-reserve=""
-            className={cn("w-20 max-w-full shrink-0", topChromeSurfaceClass)}
-          />
-          <div data-tauri-drag-region className="flex h-full shrink-0 items-center pr-2">
-            <SidebarToggleButton collapsed={sidebarCollapsed} onToggle={toggleCollapsed} />
-          </div>
-          <div
-            aria-hidden="true"
-            className="h-full w-px shrink-0 bg-border"
-            data-top-chrome-space-separator=""
-          />
+          {/* The row starts with the space switcher: the traffic lights and
+              the sidebar button live in the window's tab bar above this page
+              (SPEC_TABS.md, В43, РП6). */}
           <div
             className={cn(
               "flex h-full min-w-0",
@@ -3737,6 +4177,7 @@ export function AppWithVault({
                 navigate("/", { replace: true });
                 onVaultSelected(path);
               }}
+              onOpenInNewTab={tabPage ? openSpaceInNewTab : undefined}
               surface="topChrome"
               topChromeCollapsed={sidebarCollapsed}
             />
@@ -3990,6 +4431,9 @@ export function AppWithVault({
                 spaceOnboardingOwed={spaceOnboardingOwed}
                 firstIndexProgress={isSyncing ? syncProgress : null}
                 vaultIndexing={isSyncing || indexRereadAfterLoadId !== null}
+                onScrollPositionChange={handleScrollPositionChange}
+                restoreScrollAnchor={scrollRestoreAnchor}
+                onScrollAnchorRestored={handleScrollAnchorRestored}
               />
             }
           >
@@ -4049,7 +4493,8 @@ export function AppWithVault({
         />
       </main>
 
-      <CloudRecommendation vaultPath={vaultPath} refreshToken={cloudAdviceToken} />
+      {/* Keep Downloaded is advice about the space: its lead tab gives it (В19). */}
+      {lead && <CloudRecommendation vaultPath={vaultPath} refreshToken={cloudAdviceToken} />}
 
       {showNotifications && (
         <NotificationAnchor>
@@ -4068,7 +4513,7 @@ export function AppWithVault({
                 </p>
               </NotificationCard>
             )}
-            {indexingCountNotice.visible && indexingStep !== null && (
+            {showIndexingNotice && indexingStep !== null && (
               // The opening counts out loud in the corner (О13): one card,
               // notes and then previews. A folder whose feed is still empty
               // may be the wrong one: it opened without a confirmation, so
@@ -4076,11 +4521,11 @@ export function AppWithVault({
               <IndexingProgress
                 spaceName={vaultPath.replace(/\/+$/, "").split("/").pop() ?? vaultPath}
                 step={indexingStep}
-                onClose={indexingCountNotice.hide}
+                onClose={closeIndexingNotice}
                 onChooseAnother={blocks.length === 0 ? () => void handleSwitchVault() : undefined}
               />
             )}
-            {firstCardSlug !== null && (
+            {showFirstCardMarker && firstCardSlug !== null && (
               <FirstCardMarkerCard
                 fileName={`${firstCardSlug.split("/").pop() ?? firstCardSlug}.md`}
                 onReveal={() => {
@@ -4447,6 +4892,10 @@ interface RouteContext {
   spaceOnboardingOwed: boolean | null;
   firstIndexProgress: { processed: number; total: number } | null;
   vaultIndexing: boolean;
+  /// The tab's memory of the feed's scroll (SPEC_TABS.md, В31, В40).
+  onScrollPositionChange: (read: () => ScrollAnchor | null) => void;
+  restoreScrollAnchor: ScrollAnchor | null;
+  onScrollAnchorRestored: () => void;
 }
 
 function PageShell(props: RouteContext) {

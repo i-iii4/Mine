@@ -1,13 +1,13 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CardHoverMenu, CardMoreMenu, CardPointMenu } from "./CardHoverMenu";
-import { getBlock } from "@/lib/commands";
+import { getBlock, startWindowDrag } from "@/lib/commands";
 import type { LightBlock } from "@/types";
 
 vi.mock("@/lib/commands", () => ({
   getBlock: vi.fn(async () => ({ tags: [] })),
+  startWindowDrag: vi.fn(async () => {}),
 }));
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
@@ -62,13 +62,8 @@ function dragPastChromeThreshold(element: HTMLElement) {
 }
 
 describe("CardHoverMenu", () => {
-  const startDragging = vi.fn(async () => {});
-
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getCurrentWindow).mockReturnValue({
-      startDragging,
-    } as never);
     vi.mocked(getBlock).mockResolvedValue({ tags: [] } as Awaited<ReturnType<typeof getBlock>>);
   });
 
@@ -378,7 +373,7 @@ describe("CardHoverMenu", () => {
     const trigger = screen.getByRole("button");
     dragPastChromeThreshold(trigger);
 
-    expect(startDragging).toHaveBeenCalledTimes(1);
+    expect(startWindowDrag).toHaveBeenCalledTimes(1);
     expect(screen.queryByText("Rename…")).not.toBeInTheDocument();
 
     fireEvent.pointerDown(trigger, {

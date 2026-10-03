@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { listenPage } from "@/lib/pageEvents";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -59,7 +59,7 @@ export function ImportDialog({
     if (!open) return;
 
     let cleanup: (() => void) | undefined;
-    listen<ImportProgress>("import-progress", (event) => {
+    listenPage<ImportProgress>("import-progress", (event) => {
       setProgress(event.payload);
     }).then((fn) => {
       cleanup = fn;

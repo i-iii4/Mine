@@ -1,7 +1,14 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useChromeDragGesture } from "./useChromeDragGesture";
+
+const commands = vi.hoisted(() => ({
+  startWindowDrag: vi.fn(async () => {}),
+}));
+
+vi.mock("@/lib/commands", () => ({
+  startWindowDrag: commands.startWindowDrag,
+}));
 
 function ChromeButton({ onClick }: { onClick: () => void }) {
   const chromeGesture = useChromeDragGesture();
@@ -13,13 +20,8 @@ function ChromeButton({ onClick }: { onClick: () => void }) {
 }
 
 describe("useChromeDragGesture", () => {
-  const startDragging = vi.fn(async () => {});
-
   beforeEach(() => {
-    startDragging.mockClear();
-    vi.mocked(getCurrentWindow).mockReturnValue({
-      startDragging,
-    } as never);
+    commands.startWindowDrag.mockClear();
   });
 
   it("keeps a short pointer gesture as a normal click", () => {
@@ -40,11 +42,11 @@ describe("useChromeDragGesture", () => {
     });
     fireEvent.click(button);
 
-    expect(startDragging).not.toHaveBeenCalled();
+    expect(commands.startWindowDrag).not.toHaveBeenCalled();
     expect(onClick).toHaveBeenCalledTimes(1);
   });
 
-  it("starts native window drag after threshold movement and suppresses click", () => {
+  it("asks the backend to drag the tab's window after threshold movement and suppresses click (В23)", () => {
     const onClick = vi.fn();
     render(<ChromeButton onClick={onClick} />);
 
@@ -67,7 +69,7 @@ describe("useChromeDragGesture", () => {
     });
     fireEvent.click(button);
 
-    expect(startDragging).toHaveBeenCalledTimes(1);
+    expect(commands.startWindowDrag).toHaveBeenCalledTimes(1);
     expect(onClick).not.toHaveBeenCalled();
   });
 });

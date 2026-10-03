@@ -9,7 +9,7 @@ import {
 } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { FolderOpen, FolderPlus, X } from "lucide-react";
+import { FolderOpen, FolderPlus, Plus, X } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -51,6 +51,10 @@ interface VaultSwitcherProps {
   hotkey?: string;
   surface?: "actionBar" | "topChrome";
   topChromeCollapsed?: boolean;
+  /// Open the space `vaultId` in a new tab of this window (SPEC_TABS.md,
+  /// В52): ⌘-click on a space, or its Open in New Tab action. Absent on a
+  /// page that is not a tab, which has no window of tabs to open it in.
+  onOpenInNewTab?: (vaultId: string) => void;
 }
 
 /// Icon actions inside a menu row: muted at rest, filled on approach.
@@ -107,8 +111,12 @@ export function VaultSwitcher({
   hotkey,
   surface = "actionBar",
   topChromeCollapsed = false,
+  onOpenInNewTab,
 }: VaultSwitcherProps) {
   const [knownVaults, setKnownVaults] = useState<string[]>([]);
+  // A tab opens a space by its identity, never by its path (В29). A space the
+  // registry knows no identity for yet gets one on its first opening here.
+  const [vaultIds, setVaultIds] = useState<ReadonlyMap<string, string | null>>(() => new Map());
   // Spaces whose folder cannot be opened right now stay listed and marked
   // instead of vanishing from the list (SPEC_VAULT_LIFECYCLE.md, П26).
   const [unavailableSpaces, setUnavailableSpaces] = useState<SpaceEntry[]>([]);
@@ -130,7 +138,9 @@ export function VaultSwitcher({
       if (!cancelled) setKnownVaults(paths);
     }).catch((error) => console.error("Could not refresh spaces", error));
     listSpaces().then((spaces) => {
-      if (!cancelled) setUnavailableSpaces(spaces.filter((space) => !space.available && !space.current));
+      if (cancelled) return;
+      setUnavailableSpaces(spaces.filter((space) => !space.available && !space.current));
+      setVaultIds(new Map(spaces.map((space) => [space.path, space.vault_id])));
     }).catch(() => {
       if (!cancelled) setUnavailableSpaces([]);
     });
@@ -150,6 +160,28 @@ export function VaultSwitcher({
     await selectVault(path);
     onVaultSelected(path);
   }, [currentPath, onVaultSelected, resetMenuSearch]);
+
+  /// The space `path` in a new tab, when this page can open tabs and the
+  /// space has an identity; otherwise null.
+  const newTabOpener = useCallback((path: string): (() => void) | null => {
+    const vaultId = vaultIds.get(path) ?? null;
+    if (!onOpenInNewTab || vaultId === null) return null;
+    return () => {
+      setOpen(false);
+      resetMenuSearch();
+      onOpenInNewTab(vaultId);
+    };
+  }, [onOpenInNewTab, resetMenuSearch, vaultIds]);
+
+  /// A plain choice switches this tab; with ⌘ the space opens in a new tab
+  /// and this tab keeps its own (В52).
+  const handleChoose = useCallback((path: string, metaKey: boolean) => {
+    if (metaKey && onOpenInNewTab) {
+      newTabOpener(path)?.();
+      return;
+    }
+    void handleSwitch(path);
+  }, [handleSwitch, newTabOpener, onOpenInNewTab]);
 
   const handleReveal = useCallback(async (path: string) => {
     try {
@@ -266,11 +298,11 @@ export function VaultSwitcher({
     });
   }, [actionCount]);
 
-  const activateIndex = useCallback((index: number | null) => {
+  const activateIndex = useCallback((index: number | null, metaKey = false) => {
     if (index === null) return;
     const path = visibleVaults[index];
     if (path) {
-      void handleSwitch(path);
+      handleChoose(path, metaKey);
       return;
     }
     if (index === revealActionIndex) {
@@ -283,8 +315,8 @@ export function VaultSwitcher({
   }, [
     addSpaceActionIndex,
     handleAddSpace,
+    handleChoose,
     handleRevealCurrent,
-    handleSwitch,
     revealActionIndex,
     visibleVaults,
   ]);
@@ -318,7 +350,8 @@ export function VaultSwitcher({
     if (event.key !== "Enter" || activeIndex === null) return;
     event.preventDefault();
     event.stopPropagation();
-    activateIndex(activeIndex);
+    // ⌘Return opens the chosen space in a new tab, as ⌘-click does (В52).
+    activateIndex(activeIndex, event.metaKey);
   }, [activateIndex, activeIndex, moveActiveIndex, query, resetMenuSearch, restoreSearchFocus]);
 
   const handleOpenChange = useCallback((nextOpen: boolean) => {
@@ -344,8 +377,14 @@ export function VaultSwitcher({
           className={cn(
             isTopChrome
               ? cn(
-                  "justify-start px-3",
-                  topChromeCollapsed ? "max-w-[159px]" : "max-w-[50%]",
+                  // The row of a tab page starts with this trigger: the
+                  // traffic lights and the sidebar button live in the tab bar
+                  // above (SPEC_TABS.md, В43). Its label lands on the chrome
+                  // edge inset, like the collection switcher's.
+                  "justify-start pl-[var(--top-collection-pad-x)] pr-3",
+                  // Collapsed, it is the segment's only content and takes the
+                  // segment's whole cap; open, half the space and search zone.
+                  topChromeCollapsed ? "max-w-[240px]" : "max-w-[50%]",
                 )
               : undefined,
           )}
@@ -391,9 +430,8 @@ export function VaultSwitcher({
                   path={path}
                   active={activeIndex === index}
                   onActive={() => setActiveIndex(index)}
-                  onSwitch={() => {
-                    void handleSwitch(path);
-                  }}
+                  onSwitch={({ metaKey }) => handleChoose(path, metaKey)}
+                  newTab={onOpenInNewTab ? { open: newTabOpener(path) } : null}
                   onReveal={() => {
                     void handleReveal(path);
                   }}
@@ -546,6 +584,7 @@ function SpaceRow({
   active,
   onActive,
   onSwitch,
+  newTab,
   onReveal,
   onRequestForget,
 }: {
@@ -553,7 +592,10 @@ function SpaceRow({
   path: string;
   active: boolean;
   onActive: () => void;
-  onSwitch: () => void;
+  onSwitch: (modifiers: { metaKey: boolean }) => void;
+  /// The Open in New Tab action, on a page that opens tabs. `open` is null
+  /// while the space has no identity yet: the action shows, disabled.
+  newTab: { open: (() => void) | null } | null;
   onReveal: () => void;
   onRequestForget: () => void;
 }) {
@@ -573,7 +615,8 @@ function SpaceRow({
         active={active}
         onActive={onActive}
         onPress={onSwitch}
-        className="pr-14"
+        // Room for the row's icon actions: two, or three with a new tab.
+        className={newTab ? "pr-20" : "pr-14"}
       >
         {/* Empty leading slot: the pinned actions below the divider carry
             icons, and one text column through the whole menu is the icon
@@ -588,6 +631,31 @@ function SpaceRow({
         )}
         data-vault-switcher-row-actions=""
       >
+        {newTab && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label={`Open ${name} in New Tab`}
+                className={ROW_ACTION_CLASS}
+                disabled={newTab.open === null}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  newTab.open?.();
+                }}
+                data-vault-switcher-open-in-new-tab=""
+              >
+                {/* The tab bar's own sign for a new tab (В43). */}
+                <Plus />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">Open in New Tab</TooltipContent>
+          </Tooltip>
+        )}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button

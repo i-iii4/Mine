@@ -1,14 +1,16 @@
 import { commandById, setCommandOverrides } from "@/lib/commandRegistry";
 import { reloadFeedDisplay, setFeedSort } from "@/lib/feedDisplay";
 import { reportCardsRendered } from "@/lib/startup";
+import { isTabVisible, setTabVisible } from "@/lib/tabVisibility";
+import { TAB_VIEW_REPORT_DEBOUNCE_MS } from "@/lib/tabPage";
+import { useThumbnailUpgrade } from "@/hooks/useThumbnailUpgrade";
 import type { ReactNode } from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { act, render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { isTauri } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 
-import type { ChannelDto, DeleteBlockPlan, GridSnapshot, IndexedBlock, LightBlock, TaxonomySnapshot, VaultOpenResult, VaultStats } from "@/types";
+import type { ChannelDto, DeleteBlockPlan, GridSnapshot, IndexedBlock, LightBlock, SidebarLayout, TabBootstrap, TabView, TaxonomySnapshot, VaultOpenResult, VaultStats } from "@/types";
 import { App, AppWithVault } from "./App";
 import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
 import { SEARCH_OVERLAY_RECENT_LIMIT, SEARCH_OVERLAY_RESULT_LIMIT } from "@/components/SearchOverlay";
@@ -69,7 +71,17 @@ const commandMocks = vi.hoisted(() => ({
   extractTextSelection: vi.fn(),
   deleteTextSelection: vi.fn(),
   openSettingsWindow: vi.fn<() => Promise<void>>(async () => {}),
-  setSidebarMenuCollapsed: vi.fn<(collapsed: boolean) => Promise<void>>(async () => {}),
+  // The page as a tab (SPEC_TABS.md, «Команды»).
+  getTabBootstrap: vi.fn<() => Promise<TabBootstrap | null>>(async () => null),
+  reportTabView: vi.fn<(view: TabView) => Promise<void>>(async () => {}),
+  tabPainted: vi.fn<() => Promise<void>>(async () => {}),
+  setWindowSidebar: vi.fn<(sidebar: SidebarLayout) => Promise<void>>(async () => {}),
+  startWindowDrag: vi.fn<() => Promise<void>>(async () => {}),
+  reportWindowSurface: vi.fn<(color: string) => Promise<void>>(async () => {}),
+  dismissSpaceNotice: vi.fn<(notice: string) => Promise<void>>(async () => {}),
+  spaceNoticeDismissed: vi.fn<(notice: string) => Promise<boolean>>(async () => false),
+  newTab: vi.fn<(vaultId?: string) => Promise<void>>(async () => {}),
+  activateAdjacentTab: vi.fn<(forward: boolean) => Promise<void>>(async () => {}),
 }));
 
 const sidebarResizeState = vi.hoisted(() => ({
@@ -77,6 +89,8 @@ const sidebarResizeState = vi.hoisted(() => ({
   collapsed: false,
   isResizing: false,
   toggleCollapsed: vi.fn(),
+  // The window's sidebar the app handed the hook last (SPEC_TABS.md, В56).
+  windowSidebar: undefined as { width_px: number; collapsed: boolean } | null | undefined,
 }));
 
 const clipboardWriteText = vi.hoisted(() => vi.fn<(text: string) => Promise<void>>());
@@ -134,7 +148,16 @@ vi.mock("@/lib/commands", () => ({
   extractTextSelection: commandMocks.extractTextSelection,
   deleteTextSelection: commandMocks.deleteTextSelection,
   openSettingsWindow: commandMocks.openSettingsWindow,
-  setSidebarMenuCollapsed: commandMocks.setSidebarMenuCollapsed,
+  getTabBootstrap: commandMocks.getTabBootstrap,
+  reportTabView: commandMocks.reportTabView,
+  tabPainted: commandMocks.tabPainted,
+  setWindowSidebar: commandMocks.setWindowSidebar,
+  startWindowDrag: commandMocks.startWindowDrag,
+  reportWindowSurface: commandMocks.reportWindowSurface,
+  dismissSpaceNotice: commandMocks.dismissSpaceNotice,
+  spaceNoticeDismissed: commandMocks.spaceNoticeDismissed,
+  newTab: commandMocks.newTab,
+  activateAdjacentTab: commandMocks.activateAdjacentTab,
 }));
 
 vi.mock("@/lib/articleAudioDesktopGateway", () => ({
@@ -149,15 +172,18 @@ vi.mock("@/lib/articleAudioDesktopGateway", () => ({
 }));
 
 vi.mock("@/hooks/useSidebarResize", () => ({
-  useSidebarResize: () => ({
-    width: sidebarResizeState.width,
-    collapsed: sidebarResizeState.collapsed,
-    isResizing: sidebarResizeState.isResizing,
-    startResize: vi.fn(),
-    updateResize: vi.fn(),
-    endResize: vi.fn(),
-    toggleCollapsed: sidebarResizeState.toggleCollapsed,
-  }),
+  useSidebarResize: (windowSidebar: { width_px: number; collapsed: boolean } | null = null) => {
+    sidebarResizeState.windowSidebar = windowSidebar;
+    return {
+      width: sidebarResizeState.width,
+      collapsed: sidebarResizeState.collapsed,
+      isResizing: sidebarResizeState.isResizing,
+      startResize: vi.fn(),
+      updateResize: vi.fn(),
+      endResize: vi.fn(),
+      toggleCollapsed: sidebarResizeState.toggleCollapsed,
+    };
+  },
 }));
 
 vi.mock("@/hooks/useThumbnailUpgrade", () => ({
@@ -181,19 +207,28 @@ vi.mock("@/components/VaultSwitcher", () => ({
     currentPath,
     surface = "actionBar",
     topChromeCollapsed = false,
+    onOpenInNewTab,
   }: {
     currentPath: string;
     surface?: string;
     topChromeCollapsed?: boolean;
+    onOpenInNewTab?: (vaultId: string) => void;
   }) => (
-    <button
-      type="button"
-      data-vault-switcher=""
-      data-vault-switcher-surface={surface}
-      data-vault-switcher-top-chrome-collapsed={String(topChromeCollapsed)}
-    >
-      {currentPath.split("/").pop() ?? currentPath}
-    </button>
+    <>
+      <button
+        type="button"
+        data-vault-switcher=""
+        data-vault-switcher-surface={surface}
+        data-vault-switcher-top-chrome-collapsed={String(topChromeCollapsed)}
+      >
+        {currentPath.split("/").pop() ?? currentPath}
+      </button>
+      {onOpenInNewTab && (
+        <button type="button" onClick={() => onOpenInNewTab("other-space-id")}>
+          Open other space in a new tab
+        </button>
+      )}
+    </>
   ),
 }));
 
@@ -224,7 +259,13 @@ vi.mock("@/components/Grid", async () => {
     loadingMoreBlocks,
     onLoadMoreBlocks,
     vaultIndexing,
+    restoreScrollAnchor,
+    onScrollAnchorRestored,
+    onScrollPositionChange,
   }: {
+    restoreScrollAnchor?: { slug: string; offset_px: number } | null;
+    onScrollAnchorRestored?: () => void;
+    onScrollPositionChange?: (read: () => { slug: string; offset_px: number } | null) => void;
     blocks: LightBlock[];
     currentTag?: string;
     routeSnapshotReady?: boolean;
@@ -250,6 +291,18 @@ vi.mock("@/components/Grid", async () => {
       <div>
         <div data-testid="grid">{`${currentTag ?? "__all__"}:${blocks.length}`}</div>
         <div data-testid="grid-indexing">{String(Boolean(vaultIndexing))}</div>
+        <div data-testid="grid-scroll-restore">
+          {restoreScrollAnchor ? `${restoreScrollAnchor.slug}:${restoreScrollAnchor.offset_px}` : "none"}
+        </div>
+        <button type="button" onClick={() => onScrollAnchorRestored?.()}>
+          Finish scroll restore
+        </button>
+        <button
+          type="button"
+          onClick={() => onScrollPositionChange?.(() => ({ slug: "beta-block", offset_px: 12 }))}
+        >
+          Scroll feed
+        </button>
         <div data-testid="grid-slugs">{blocks.map((item) => item.slug).join(",")}</div>
         <button type="button" onClick={() => onLoadMoreBlocks?.()}>
           Load more blocks
@@ -461,22 +514,19 @@ function bottomBarEntry(label: string): HTMLElement | null {
 }
 
 describe("AppWithVault", () => {
-  const startDragging = vi.fn(async () => {});
-  const setBackgroundColor = vi.fn(async (_color: string) => {});
-
   beforeEach(() => {
     vi.clearAllMocks();
     gridScroll.atEnd = false;
     commandMocks.getGridRows.mockResolvedValue({ path: "/vault", generation: 1, blocks: [] });
     vi.mocked(isTauri).mockReturnValue(false);
-    vi.mocked(getCurrentWindow).mockReturnValue({
-      startDragging,
-      setBackgroundColor,
-    } as never);
+    commandMocks.getTabBootstrap.mockResolvedValue(null);
+    commandMocks.spaceNoticeDismissed.mockResolvedValue(false);
+    setTabVisible(true);
     localStorage.clear();
     sidebarResizeState.width = 300;
     sidebarResizeState.collapsed = false;
     sidebarResizeState.isResizing = false;
+    sidebarResizeState.windowSidebar = undefined;
     clipboardWriteText.mockResolvedValue(undefined);
     webClipboardWriteText.mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
@@ -902,7 +952,7 @@ describe("AppWithVault", () => {
     expect(commandMocks.recordStartupMilestone).toHaveBeenCalledWith("interactive");
   });
 
-  it("does not start a focus thumbnail sweep while startup sync is running", async () => {
+  it("catches up with the disk when the backend asks, not while startup sync runs (В42)", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
         <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
@@ -912,7 +962,7 @@ describe("AppWithVault", () => {
     await waitFor(() => {
       expect(commandMocks.startVaultSync).toHaveBeenCalledTimes(1);
     });
-    fireEvent.focus(window);
+    fireEvent(window, new CustomEvent("tab-refresh-requested", { detail: { payload: null } }));
     expect(commandMocks.sweepVaultThumbnails).not.toHaveBeenCalled();
 
     fireEvent(
@@ -931,9 +981,18 @@ describe("AppWithVault", () => {
     await waitFor(() => {
       expect(screen.getByTestId("grid-route-ready")).toHaveTextContent("true");
     });
+    // Focus and a shown page no longer start it: switching tabs would (В42).
     fireEvent.focus(window);
+    fireEvent(document, new Event("visibilitychange"));
+    expect(commandMocks.sweepVaultThumbnails).not.toHaveBeenCalled();
+
+    const listCallsBefore = commandMocks.listGridBlocks.mock.calls.length;
+    fireEvent(window, new CustomEvent("tab-refresh-requested", { detail: { payload: null } }));
     await waitFor(() => {
       expect(commandMocks.sweepVaultThumbnails).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(commandMocks.listGridBlocks.mock.calls.length).toBeGreaterThan(listCallsBefore);
     });
   });
 
@@ -1161,7 +1220,8 @@ describe("AppWithVault", () => {
     const spaceSwitcher = topSidebarSegment?.querySelector("[data-vault-switcher]") as HTMLElement | null;
     expect(spaceSwitcher).toHaveAttribute("data-vault-switcher-surface", "topChrome");
     expect(spaceSwitcher).toHaveTextContent("vault");
-    expect(topSidebarSegment?.querySelector("[data-top-chrome-space-separator]")).toBeInTheDocument();
+    // The space switcher opens the row; one separator parts it from the filter.
+    expect(topSidebarSegment?.querySelector("[data-top-chrome-space-separator]")).toBeNull();
     expect(topSidebarSegment?.querySelector("[data-top-chrome-search-separator]")).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Find elements" })).not.toBeInTheDocument();
     expect(document.querySelector("[data-main-search-top-bar]")).toBeNull();
@@ -1233,44 +1293,30 @@ describe("AppWithVault", () => {
     );
   });
 
-  it("hides and shows the sidebar from the top chrome, the button staying in place", async () => {
-    sidebarResizeState.toggleCollapsed.mockClear();
-    const { unmount } = render(
-      <MemoryRouter initialEntries={["/"]}>
-        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
-      </MemoryRouter>,
-    );
+  it("starts the tab page's row with the space switcher: the traffic lights and the sidebar button live in the tab bar (В43)", async () => {
+    for (const collapsed of [false, true]) {
+      sidebarResizeState.collapsed = collapsed;
+      const { unmount } = render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      await waitFor(() => {
+        expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+      });
 
-    await waitFor(() => {
-      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
-    });
-
-    const header = document.querySelector("header") as HTMLElement;
-    const toggle = within(header).getByRole("button", { name: "Hide Sidebar" });
-    expect(toggle).toHaveAttribute("data-top-chrome-sidebar-toggle", "");
-    expect(toggle).toHaveAttribute("aria-pressed", "true");
-    // Right of the traffic lights, ahead of the space name.
-    expect(toggle.closest("[data-app-top-sidebar-segment]")).not.toBeNull();
-    // The same command as View → Hide Sidebar and the bottom bar.
-    fireEvent.click(toggle);
-    expect(sidebarResizeState.toggleCollapsed).toHaveBeenCalledTimes(1);
-    unmount();
-
-    sidebarResizeState.collapsed = true;
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
-      </MemoryRouter>,
-    );
-    await waitFor(() => {
-      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
-    });
-    const collapsedHeader = document.querySelector("header") as HTMLElement;
-    const shown = within(collapsedHeader).getByRole("button", { name: "Show Sidebar" });
-    expect(shown).toHaveAttribute("aria-pressed", "false");
-    // Still in the sidebar's segment of the top row: the collapsed segment
-    // keeps it where it was.
-    expect(shown.closest("[data-app-top-sidebar-segment]")).not.toBeNull();
+      const header = document.querySelector("header") as HTMLElement;
+      expect(header.querySelector("[data-traffic-light-reserve]")).toBeNull();
+      expect(header.querySelector("[data-top-chrome-sidebar-toggle]")).toBeNull();
+      expect(header.querySelector("[data-top-chrome-space-separator]")).toBeNull();
+      const segment = header.querySelector("[data-app-top-sidebar-segment]") as HTMLElement;
+      const switcher = segment.querySelector("[data-vault-switcher]") as HTMLElement;
+      expect(switcher).not.toBeNull();
+      // Nothing of the window's own stands before it in the row.
+      expect(segment.firstElementChild?.contains(switcher)).toBe(true);
+      expect(header.firstElementChild).toBe(segment);
+      unmount();
+    }
     sidebarResizeState.collapsed = false;
   });
 
@@ -1288,7 +1334,8 @@ describe("AppWithVault", () => {
     const viewSwitcher = document.querySelector("[data-main-view-mode-switcher]") as HTMLElement;
     fireEvent.click(within(viewSwitcher).getByRole("button", { name: "Graph" }));
 
-    expect(localStorage.getItem("mine.mainViewMode")).toBe("graph");
+    // The tab remembers its mode; nothing app-wide does (SPEC_TABS.md, В78).
+    expect(localStorage.getItem("mine.mainViewMode")).toBeNull();
     expect(await screen.findByTestId("graph-view")).toHaveTextContent("__all__");
     expect(screen.queryByTestId("grid")).not.toBeInTheDocument();
     expect(within(viewSwitcher).getByRole("button", { name: "Graph" })).toHaveAttribute(
@@ -1298,7 +1345,7 @@ describe("AppWithVault", () => {
 
     fireEvent.click(within(viewSwitcher).getByRole("button", { name: "Grid" }));
 
-    expect(localStorage.getItem("mine.mainViewMode")).toBe("grid");
+    expect(localStorage.getItem("mine.mainViewMode")).toBeNull();
     expect(await screen.findByTestId("grid")).toHaveTextContent("__all__:2");
   });
 
@@ -1532,11 +1579,12 @@ describe("AppWithVault", () => {
 
     fireEvent.keyDown(window, { key: "Tab" });
     expect(await screen.findByTestId("graph-view")).toBeInTheDocument();
-    expect(localStorage.getItem("mine.mainViewMode")).toBe("graph");
+    // The tab remembers its mode; nothing app-wide does (SPEC_TABS.md, В78).
+    expect(localStorage.getItem("mine.mainViewMode")).toBeNull();
 
     fireEvent.keyDown(window, { key: "Tab" });
     expect(await screen.findByTestId("grid")).toBeInTheDocument();
-    expect(localStorage.getItem("mine.mainViewMode")).toBe("grid");
+    expect(localStorage.getItem("mine.mainViewMode")).toBeNull();
   });
 
   it("leaves Tab native inside an editable target", async () => {
@@ -1556,7 +1604,7 @@ describe("AppWithVault", () => {
     input.remove();
 
     expect(screen.getByTestId("grid")).toBeInTheDocument();
-    expect(localStorage.getItem("mine.mainViewMode")).not.toBe("graph");
+    expect(screen.queryByTestId("graph-view")).not.toBeInTheDocument();
   });
 
   it("toggles the connections filter with Tab while an element is open", async () => {
@@ -1577,7 +1625,7 @@ describe("AppWithVault", () => {
 
     // The view must not flip underneath the open element.
     expect(screen.queryByTestId("graph-view")).not.toBeInTheDocument();
-    expect(localStorage.getItem("mine.mainViewMode")).not.toBe("graph");
+    expect(screen.queryByTestId("graph-view")).not.toBeInTheDocument();
   });
 
   it("renders default chrome surfaces", async () => {
@@ -1593,12 +1641,12 @@ describe("AppWithVault", () => {
 
     const topSidebarSegment = document.querySelector("[data-app-top-sidebar-segment]") as HTMLElement;
     const secondaryBar = document.querySelector("[data-main-secondary-top-bar]") as HTMLElement;
-    const trafficLightReserve = document.querySelector("[data-traffic-light-reserve]") as HTMLElement;
     expect(topSidebarSegment.parentElement).toHaveClass("bg-chrome");
-    expect(trafficLightReserve).toHaveClass("bg-chrome");
     expect(secondaryBar).toHaveClass("bg-chrome");
+    // The backend paints every window with the chrome colour this page
+    // reports; the page paints no window itself (SPEC_TABS.md, В25).
     await waitFor(() => {
-      expect(setBackgroundColor).toHaveBeenCalledWith("#fcfcfc");
+      expect(commandMocks.reportWindowSurface).toHaveBeenCalledWith("#fcfcfc");
     });
 
     fireEvent.keyDown(window, { key: "А", code: "KeyF", metaKey: true, shiftKey: true });
@@ -1844,7 +1892,10 @@ describe("AppWithVault", () => {
     expect(spaceSwitcher).toHaveAttribute("data-vault-switcher-surface", "topChrome");
     expect(spaceSwitcher).toHaveAttribute("data-vault-switcher-top-chrome-collapsed", "true");
     expect(spaceSwitcher).toHaveTextContent("vault");
-    expect(topSidebarSegment?.querySelector("[data-top-chrome-space-separator]")).toBeInTheDocument();
+    // The collapsed segment holds the space switcher alone: no traffic-light
+    // reserve, no sidebar button and no separator before it (В43).
+    expect(topSidebarSegment?.querySelector("[data-traffic-light-reserve]")).toBeNull();
+    expect(topSidebarSegment?.querySelector("[data-top-chrome-space-separator]")).toBeNull();
     expect(topSidebarSegment?.querySelector("[data-top-chrome-search-separator]")).not.toBeInTheDocument();
     expect(document.querySelector("[data-top-chrome-space-measure]")).toBeNull();
     expect(screen.queryByRole("textbox", { name: "Filter collections" })).not.toBeInTheDocument();
@@ -1944,13 +1995,12 @@ describe("AppWithVault", () => {
       expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
     });
 
-    fireEvent(
-      window,
-      new CustomEvent("sidebar-toggle-shortcut", {
-        detail: { payload: null },
-      }),
-    );
-    expect(sidebarResizeState.toggleCollapsed).toHaveBeenCalledTimes(1);
+    // The menu, the swipe and the tab bar's button toggle the window's
+    // sidebar in the backend; the old page events toggle nothing (В56).
+    for (const retired of ["sidebar-toggle-shortcut", "sidebar-swipe"]) {
+      fireEvent(window, new CustomEvent(retired, { detail: { payload: "left" } }));
+    }
+    expect(sidebarResizeState.toggleCollapsed).not.toHaveBeenCalled();
 
     vi.mocked(isTauri).mockReturnValue(true);
     fireEvent.keyDown(window, {
@@ -1959,7 +2009,7 @@ describe("AppWithVault", () => {
       metaKey: true,
       ctrlKey: true,
     });
-    expect(sidebarResizeState.toggleCollapsed).toHaveBeenCalledTimes(1);
+    expect(sidebarResizeState.toggleCollapsed).not.toHaveBeenCalled();
 
     vi.mocked(isTauri).mockReturnValue(false);
     fireEvent.keyDown(window, {
@@ -1968,22 +2018,7 @@ describe("AppWithVault", () => {
       metaKey: true,
       ctrlKey: true,
     });
-    expect(sidebarResizeState.toggleCollapsed).toHaveBeenCalledTimes(2);
-  });
-
-  it("projects the current sidebar state into the native View menu", async () => {
-    vi.mocked(isTauri).mockReturnValue(true);
-    sidebarResizeState.collapsed = true;
-
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
-      </MemoryRouter>,
-    );
-
-    await waitFor(() => {
-      expect(commandMocks.setSidebarMenuCollapsed).toHaveBeenCalledWith(true);
-    });
+    expect(sidebarResizeState.toggleCollapsed).toHaveBeenCalledTimes(1);
   });
 
   it("opens a search result in Detail and closes the overlay", async () => {
@@ -2282,6 +2317,8 @@ describe("AppWithVault", () => {
     fireEvent.click(trigger);
 
     expect(screen.queryByRole("textbox", { name: "Search collections" })).not.toBeInTheDocument();
+    // The backend drags the tab's window (SPEC_TABS.md, В23).
+    expect(commandMocks.startWindowDrag).toHaveBeenCalledTimes(1);
   });
 
   it("creates a collection from the filter on Enter, first in the list, and opens one already called that", async () => {
@@ -3018,7 +3055,7 @@ describe("AppWithVault", () => {
     // The feed and the collections are read again, and both answer.
     const gridReads = commandMocks.listGridBlocks.mock.calls.length;
     const taxonomyReads = commandMocks.listTaxonomySnapshot.mock.calls.length;
-    fireEvent.focus(window);
+    fireEvent(window, new CustomEvent("tab-refresh-requested", { detail: { payload: null } }));
     await waitFor(() => {
       expect(commandMocks.listGridBlocks.mock.calls.length).toBeGreaterThan(gridReads);
       expect(commandMocks.listTaxonomySnapshot.mock.calls.length).toBeGreaterThan(taxonomyReads);
@@ -3380,6 +3417,411 @@ describe("AppWithVault", () => {
       expect(screen.getByTestId("grid-thumb-versions")).toHaveTextContent(
         "new-image=1",
       );
+    });
+  });
+
+  describe("as one tab among many (SPEC_TABS.md)", () => {
+    const send = (name: string, payload: unknown = null) => {
+      fireEvent(window, new CustomEvent(name, { detail: { payload } }));
+    };
+    const tabView = (overrides: Partial<TabView> = {}): TabView => ({
+      location: { kind: "everything" },
+      mode: "grid",
+      open_card: null,
+      scroll_anchor: null,
+      collection_filter: "",
+      ...overrides,
+    });
+    const bootstrap = (overrides: Partial<TabBootstrap> = {}): TabBootstrap => ({
+      tab_id: "a".repeat(32),
+      window_id: "b".repeat(32),
+      space: { kind: "space", vault_id: "vault-id" },
+      view: tabView(),
+      sidebar: { width_px: 360, collapsed: false },
+      lead: true,
+      fresh_start: false,
+      ...overrides,
+    });
+    const waitReportInterval = () => act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, TAB_VIEW_REPORT_DEBOUNCE_MS + 60));
+    });
+    const renderTab = (props: Partial<Parameters<typeof AppWithVault>[0]> = {}, entry = "/") => render(
+      <MemoryRouter initialEntries={[entry]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} tabPage {...props} />
+      </MemoryRouter>,
+    );
+
+    it("returns to its place, mode, card, link mode and filter, read first (В40, В78)", async () => {
+      const view = tabView({
+        location: { kind: "collection", tag: "alpha" },
+        open_card: { slug: "alpha-block", link_mode: "linked" },
+        collection_filter: "al",
+      });
+      const onRestored = vi.fn();
+      renderTab({ restore: { path: "/vault", view, saved: view }, onRestored });
+
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1"));
+      // The restored collection is the first route read, not Everything.
+      const feedReads = commandMocks.listGridBlocks.mock.calls
+        .filter(([, , limit, order]) => !isSearchOverlayQuery(limit ?? 0, order));
+      expect(feedReads[0]?.[0]).toBe("alpha");
+      await waitFor(() => expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block"));
+      const linkMode = document.querySelector("[data-compact-detail-link-mode-control]") as HTMLElement;
+      expect(within(linkMode).getByRole("button", { name: "Connected" })).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByRole("textbox", { name: "Filter collections" })).toHaveValue("al");
+      await waitFor(() => expect(onRestored).toHaveBeenCalledTimes(1));
+
+      // The backend already holds this view: nothing to report.
+      await waitReportInterval();
+      expect(commandMocks.reportTabView).not.toHaveBeenCalled();
+    });
+
+    it("restores Graph as the tab's mode", async () => {
+      const view = tabView({ mode: "graph" });
+      renderTab({ restore: { path: "/vault", view, saved: view } });
+      expect(await screen.findByTestId("graph-view")).toHaveTextContent("__all__");
+    });
+
+    it("goes to Everything and leaves the card closed when they are gone, and reports it (В18)", async () => {
+      commandMocks.getBlock.mockImplementation(async (slug: string) => (
+        slug === "gone-card" ? null : indexedBlock(1, slug, slug)
+      ));
+      const view = tabView({
+        location: { kind: "collection", tag: "gone" },
+        open_card: { slug: "gone-card", link_mode: "all" },
+        scroll_anchor: { slug: "gone-card", offset_px: 40 },
+      });
+      const onRestored = vi.fn();
+      renderTab({ restore: { path: "/vault", view, saved: view }, onRestored });
+
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+      await waitFor(() => expect(onRestored).toHaveBeenCalled());
+      expect(screen.queryByTestId("detail-title")).toBeNull();
+      expect(screen.getByTestId("grid-scroll-restore")).toHaveTextContent("none");
+
+      await waitFor(() => {
+        expect(commandMocks.reportTabView).toHaveBeenCalledWith(tabView());
+      }, { timeout: 2000 });
+    });
+
+    it("hands the feed its scroll anchor once the card is loaded, and keeps it in memory until then", async () => {
+      const view = tabView({ scroll_anchor: { slug: "beta-block", offset_px: 120 } });
+      renderTab({ restore: { path: "/vault", view, saved: tabView() } });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("grid-scroll-restore")).toHaveTextContent("beta-block:120");
+      });
+      // Reported while still on its way back: the tab remembers the anchor.
+      await waitFor(() => {
+        expect(commandMocks.reportTabView).toHaveBeenLastCalledWith(view);
+      }, { timeout: 2000 });
+
+      fireEvent.click(screen.getByRole("button", { name: "Finish scroll restore" }));
+      expect(screen.getByTestId("grid-scroll-restore")).toHaveTextContent("none");
+    });
+
+    it("reads further pages until the scroll anchor's card is in the feed", async () => {
+      const firstPage = Array.from({ length: 200 }, (_, index) => block(index + 1, `card-${index}`));
+      const deep = block(500, "deep-card");
+      commandMocks.listGridBlocks.mockImplementation(async (_tag, offset = 0, limit = 200, order) => {
+        if (isSearchOverlayQuery(limit, order)) return gridSnapshot([]);
+        return offset === 0
+          ? gridSnapshot(firstPage, 201, true)
+          : gridSnapshot([deep], 201, false);
+      });
+      const view = tabView({ scroll_anchor: { slug: "deep-card", offset_px: 8 } });
+      renderTab({ restore: { path: "/vault", view, saved: view } });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("grid-scroll-restore")).toHaveTextContent("deep-card:8");
+      });
+      expect(commandMocks.listGridBlocks.mock.calls.some(([, offset]) => offset === 200)).toBe(true);
+    });
+
+    it("reports its memory at most once per interval, and at once when hidden (В31)", async () => {
+      renderTab();
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+      // A tab that opened a space anew tells the backend what it shows.
+      await waitFor(() => expect(commandMocks.reportTabView).toHaveBeenCalledWith(tabView()));
+      commandMocks.reportTabView.mockClear();
+
+      fireEvent.click(screen.getByRole("button", { name: "Scroll feed" }));
+      fireEvent.change(screen.getByRole("textbox", { name: "Filter collections" }), { target: { value: "be" } });
+      fireEvent.keyDown(window, { key: "Tab" });
+      expect(commandMocks.reportTabView).not.toHaveBeenCalled();
+
+      await waitReportInterval();
+      expect(commandMocks.reportTabView).toHaveBeenCalledTimes(1);
+      expect(commandMocks.reportTabView).toHaveBeenLastCalledWith(tabView({
+        mode: "graph",
+        collection_filter: "be",
+        scroll_anchor: { slug: "beta-block", offset_px: 12 },
+      }));
+
+      fireEvent.keyDown(window, { key: "Tab" });
+      send("tab-visibility-changed", { visible: false });
+      expect(commandMocks.reportTabView).toHaveBeenCalledTimes(2);
+      expect(commandMocks.reportTabView).toHaveBeenLastCalledWith(tabView({
+        collection_filter: "be",
+        scroll_anchor: { slug: "beta-block", offset_px: 12 },
+      }));
+    });
+
+    it("reports nothing on a page that is not a tab", async () => {
+      renderTab({ tabPage: false });
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+      fireEvent.keyDown(window, { key: "Tab" });
+      await waitReportInterval();
+      expect(commandMocks.reportTabView).not.toHaveBeenCalled();
+    });
+
+    it("follows a collection and a card renamed in another tab, the card staying open (В18)", async () => {
+      renderTab({}, "/channel/alpha");
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1"));
+      fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+      await waitFor(() => expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block"));
+
+      send("vault-changed", {
+        path: "/vault",
+        renames: [
+          { kind: "collection", from: "alpha", to: "alpha two" },
+          { kind: "card", from: "alpha-block", to: "alpha-renamed" },
+        ],
+      });
+
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("alpha two:"));
+      await waitFor(() => {
+        expect(screen.getByRole("dialog", { name: "alpha-renamed.md" })).toBeInTheDocument();
+      });
+    });
+
+    it("closes an open card another tab deleted, and leaves a collection that is gone (В18)", async () => {
+      renderTab({}, "/channel/alpha");
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1"));
+      fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+      await waitFor(() => expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block"));
+
+      commandMocks.getBlock.mockResolvedValue(null);
+      send("vault-changed", { path: "/vault", renames: [] });
+      await waitFor(() => expect(screen.queryByTestId("detail-title")).toBeNull());
+
+      commandMocks.listTaxonomySnapshot.mockResolvedValue({
+        generation: 2,
+        tags: [{ tag: "beta", count: 1 }],
+        channels: [],
+        total_blocks: 2,
+      });
+      send("vault-changed", { path: "/vault", renames: [] });
+      // The collections are read again at once when the index pass lands.
+      send("vault-sync-finished", { path: "/vault", indexed: 2, errors: 0, error: null });
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:"));
+    });
+
+    it("goes to Everything with nothing open when the space is opened from outside (В72)", async () => {
+      renderTab({}, "/channel/alpha");
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1"));
+      fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+      await waitFor(() => expect(screen.getByTestId("detail-title")).toBeInTheDocument());
+
+      send("tab-go-everything");
+
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+      expect(screen.queryByTestId("detail-title")).toBeNull();
+    });
+
+    it("keeps the space's notices and preview work to its lead tab (В19, В20)", async () => {
+      const commands = await import("@/lib/commands");
+      vi.mocked(commands.firstCardMarkerPending).mockResolvedValue(true);
+      commandMocks.listGridBlocks.mockImplementation(async () => gridSnapshot([]));
+      const view = (lead: boolean) => (
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} tabPage lead={lead} />
+        </MemoryRouter>
+      );
+      const { rerender } = render(view(false));
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:0"));
+      expect(vi.mocked(useThumbnailUpgrade)).toHaveBeenLastCalledWith(false);
+      expect(document.querySelector("[data-cloud-recommendation]")).toBeNull();
+
+      vi.useFakeTimers();
+      try {
+        send("vault-sync-progress", { path: "/vault", processed: 10, total: 643 });
+        send("block:added", { slug: "Cards/First clip", tags: [], is_text: false });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(INDEXING_NOTICE_DELAY_MS);
+        });
+        expect(screen.queryByText("Indexing “vault”")).toBeNull();
+        expect(screen.queryByText("This card is a file")).toBeNull();
+        expect(vi.mocked(commands.completeFirstCardMarker)).not.toHaveBeenCalled();
+        expect(commandMocks.spaceNoticeDismissed).not.toHaveBeenCalled();
+
+        // This tab starts leading: it asks whether the notice was closed.
+        rerender(view(true));
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
+        expect(commandMocks.spaceNoticeDismissed).toHaveBeenCalledWith("indexing");
+        expect(vi.mocked(useThumbnailUpgrade)).toHaveBeenLastCalledWith(true);
+        expect(screen.getByText("Indexing “vault”")).toBeInTheDocument();
+
+        // Closed here: the backend keeps it closed for the next lead.
+        fireEvent.click(screen.getByRole("button", { name: "Hide" }));
+        expect(commandMocks.dismissSpaceNotice).toHaveBeenCalledWith("indexing");
+        expect(screen.queryByText("Indexing “vault”")).toBeNull();
+      } finally {
+        vi.useRealTimers();
+        vi.mocked(commands.firstCardMarkerPending).mockResolvedValue(false);
+      }
+    });
+
+    it("hides the indexing notice another lead already closed (В20)", async () => {
+      commandMocks.spaceNoticeDismissed.mockResolvedValue(true);
+      renderTab({ lead: true });
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+      await waitFor(() => expect(commandMocks.spaceNoticeDismissed).toHaveBeenCalledWith("indexing"));
+
+      vi.useFakeTimers();
+      try {
+        send("vault-sync-progress", { path: "/vault", processed: 10, total: 643 });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(INDEXING_NOTICE_DELAY_MS);
+        });
+        expect(screen.queryByText("Indexing “vault”")).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("opens a space from the switcher in a new tab of this window (В52)", async () => {
+      renderTab();
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+      fireEvent.click(screen.getByRole("button", { name: "Open other space in a new tab" }));
+      expect(commandMocks.newTab).toHaveBeenCalledWith("other-space-id");
+    });
+
+    it("offers no new tab on a page that is not a tab", async () => {
+      renderTab({ tabPage: false });
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+      expect(screen.queryByRole("button", { name: "Open other space in a new tab" })).toBeNull();
+    });
+
+    describe("the page shell", () => {
+      beforeEach(() => {
+        vi.mocked(isTauri).mockReturnValue(true);
+        commandMocks.getVaultPath.mockResolvedValue("/vault");
+      });
+
+      it("boots from the tab's bootstrap: the window's sidebar, then its changes (В56)", async () => {
+        commandMocks.getTabBootstrap.mockResolvedValue(bootstrap({ sidebar: { width_px: 420, collapsed: true } }));
+        render(<App />);
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+        expect(sidebarResizeState.windowSidebar).toEqual({ width_px: 420, collapsed: true });
+
+        send("window-sidebar-changed", { width_px: 500, collapsed: false });
+        await waitFor(() => {
+          expect(sidebarResizeState.windowSidebar).toEqual({ width_px: 500, collapsed: false });
+        });
+        expect(commandMocks.setWindowSidebar).not.toHaveBeenCalled();
+      });
+
+      it("reports its first frame, pauses its media when hidden and reports a frame when shown again (В5, В41)", async () => {
+        commandMocks.getTabBootstrap.mockResolvedValue(bootstrap());
+        render(<App />);
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+        await waitFor(() => expect(commandMocks.tabPainted).toHaveBeenCalledTimes(1));
+
+        const video = document.createElement("video");
+        document.body.appendChild(video);
+        const pause = vi.spyOn(video, "pause");
+        try {
+          send("tab-visibility-changed", { visible: false });
+          expect(pause).toHaveBeenCalled();
+          expect(isTabVisible()).toBe(false);
+
+          send("tab-visibility-changed", { visible: true });
+          expect(isTabVisible()).toBe(true);
+          await waitFor(() => expect(commandMocks.tabPainted).toHaveBeenCalledTimes(2));
+        } finally {
+          video.remove();
+        }
+      });
+
+      it("shows the space picker when its space is forgotten (В70)", async () => {
+        commandMocks.getTabBootstrap.mockResolvedValue(bootstrap());
+        render(<App />);
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+
+        send("tab-space-forgotten");
+
+        expect(await screen.findByText("Vault Picker")).toBeInTheDocument();
+      });
+
+      it("takes the stored mode and sidebar into the first tab and window, once (В79)", async () => {
+        localStorage.setItem("mine.mainViewMode", "graph");
+        localStorage.setItem("mine:sidebar", JSON.stringify({ width: 420, collapsed: true }));
+        localStorage.setItem("mine:recentTags", JSON.stringify(["alpha"]));
+        // No saved windows were read at this launch.
+        commandMocks.getTabBootstrap.mockResolvedValue(bootstrap({ fresh_start: true }));
+        render(<App />);
+
+        expect(await screen.findByTestId("graph-view")).toBeInTheDocument();
+        expect(commandMocks.setWindowSidebar).toHaveBeenCalledWith({ width_px: 420, collapsed: true });
+        expect(sidebarResizeState.windowSidebar).toEqual({ width_px: 420, collapsed: true });
+        expect(localStorage.getItem("mine.mainViewMode")).toBeNull();
+        expect(localStorage.getItem("mine:sidebar")).toBeNull();
+        expect(localStorage.getItem("mine:recentTags")).toBeNull();
+        await waitFor(() => {
+          expect(commandMocks.reportTabView).toHaveBeenCalledWith(tabView({ mode: "graph" }));
+        }, { timeout: 2000 });
+      });
+
+      it("keeps saved windows over the stored values and still deletes them (В79)", async () => {
+        localStorage.setItem("mine.mainViewMode", "graph");
+        localStorage.setItem("mine:sidebar", JSON.stringify({ width: 420, collapsed: true }));
+        commandMocks.getTabBootstrap.mockResolvedValue(bootstrap({ fresh_start: false }));
+        render(<App />);
+
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+        expect(screen.queryByTestId("graph-view")).toBeNull();
+        expect(commandMocks.setWindowSidebar).not.toHaveBeenCalled();
+        expect(sidebarResizeState.windowSidebar).toEqual({ width_px: 360, collapsed: false });
+        expect(localStorage.getItem("mine.mainViewMode")).toBeNull();
+        expect(localStorage.getItem("mine:sidebar")).toBeNull();
+      });
+
+      it("shows the next and the previous tab on ⌃Tab and ⌃⇧Tab, and leaves the menu's chords to the menu (В55, В57)", async () => {
+        commandMocks.getTabBootstrap.mockResolvedValue(bootstrap());
+        render(<App />);
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+
+        const input = screen.getByRole("textbox", { name: "Filter collections" });
+        fireEvent.keyDown(input, { key: "Tab", code: "Tab", ctrlKey: true });
+        expect(commandMocks.activateAdjacentTab).toHaveBeenLastCalledWith(true);
+        fireEvent.keyDown(window, { key: "Tab", code: "Tab", ctrlKey: true, shiftKey: true });
+        expect(commandMocks.activateAdjacentTab).toHaveBeenLastCalledWith(false);
+        expect(commandMocks.activateAdjacentTab).toHaveBeenCalledTimes(2);
+
+        // ⇧⌘] is the native menu's; a bare Tab is the view's.
+        fireEvent.keyDown(window, { key: "]", code: "BracketRight", metaKey: true, shiftKey: true });
+        fireEvent.keyDown(window, { key: "Tab", code: "Tab" });
+        expect(commandMocks.activateAdjacentTab).toHaveBeenCalledTimes(2);
+        expect(await screen.findByTestId("graph-view")).toBeInTheDocument();
+      });
+
+      it("draws no top line of its own under the tab bar, and keeps it on a page that is not a tab (В43)", async () => {
+        commandMocks.getTabBootstrap.mockResolvedValue(bootstrap());
+        const { unmount } = render(<App />);
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+        expect(document.querySelector("[data-chrome-frame-edge=top]")).toBeNull();
+        expect(document.querySelector("[data-chrome-frame-edge=bottom]")).not.toBeNull();
+        expect(document.querySelector("[data-chrome-shell]")?.firstElementChild?.tagName).toBe("HEADER");
+        unmount();
+
+        commandMocks.getTabBootstrap.mockResolvedValue(null);
+        render(<App />);
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+        expect(document.querySelector("[data-chrome-frame-edge=top]")).not.toBeNull();
+      });
     });
   });
 });

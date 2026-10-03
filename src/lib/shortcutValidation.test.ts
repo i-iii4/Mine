@@ -15,6 +15,44 @@ describe("validateShortcut", () => {
     expect(rejectionMessage(rejection!)).toContain("macOS");
   });
 
+  it("refuses every chord macOS keeps for tabs and windows", () => {
+    // SPEC_TABS.md, В59, in the form the Shortcuts recorder produces.
+    const chords = [
+      { key: "t", meta: true },
+      { key: "n", meta: true },
+      { key: "w", meta: true },
+      { key: "w", meta: true, shift: true },
+      ...["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((key) => ({ key, meta: true })),
+      { key: "[", meta: true, shift: true },
+      { key: "]", meta: true, shift: true },
+      { key: "{", meta: true, shift: true },
+      { key: "}", meta: true, shift: true },
+      { key: "Tab", ctrl: true },
+      { key: "Tab", ctrl: true, shift: true },
+    ];
+    for (const chord of chords) {
+      const recorded = { shift: false, alt: false, ctrl: false, meta: false, ...chord };
+      expect(validateShortcut("find-elements", recorded, commands), JSON.stringify(chord))
+        .toEqual({ reason: "system", combo: expect.any(String) });
+    }
+  });
+
+  it("refuses the system chords whose modifiers come in a different order", () => {
+    // Screenshots and Force Quit: the reserved list is keyed like a recorded chord.
+    for (const chord of [
+      { key: "3", meta: true, shift: true },
+      { key: "5", meta: true, shift: true },
+      { key: "Escape", meta: true, alt: true },
+    ]) {
+      expect(validateShortcut("find-elements", chord, commands)?.reason).toBe("system");
+    }
+  });
+
+  it("keeps ⌘[ and ⌘] free of the tab chords that add shift", () => {
+    expect(validateShortcut("copy-path", { key: "[", meta: true, alt: true }, commands)).toBeNull();
+    expect(validateShortcut("history-back", { key: "[", meta: true }, commands)).toBeNull();
+  });
+
   it("refuses a bare key: it would swallow typing", () => {
     const rejection = validateShortcut("find-elements", { key: "e" }, commands);
     expect(rejection?.reason).toBe("bare-key");

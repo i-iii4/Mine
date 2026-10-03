@@ -47,7 +47,8 @@ enum GesturePhase {
     Other,
 }
 
-/// Direction of a recognised swipe, named as the frontend event payload.
+/// Direction of a recognised swipe: right opens the sidebar, left closes it
+/// (SPEC_TABS.md, В56).
 #[cfg(any(target_os = "macos", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SwipeDirection {
@@ -55,17 +56,6 @@ enum SwipeDirection {
     Right,
 }
 
-#[cfg(any(target_os = "macos", test))]
-impl SwipeDirection {
-    /// Payload of the `sidebar-swipe` event.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    fn as_payload(self) -> &'static str {
-        match self {
-            Self::Left => "left",
-            Self::Right => "right",
-        }
-    }
-}
 
 /// Accumulates one gesture between "landed" and "lifted" and decides once.
 #[cfg(any(target_os = "macos", test))]
@@ -185,11 +175,7 @@ mod imp {
             );
             let decision = recognizer.borrow_mut().feed(phase);
             if let Some(direction) = decision {
-                crate::commands::space_events::emit_to_active_tab(
-                    &app,
-                    "sidebar-swipe",
-                    direction.as_payload(),
-                );
+                crate::tabs::swipe_sidebar(&app, direction == super::SwipeDirection::Right);
             }
 
             event.as_ptr()

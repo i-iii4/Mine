@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en" data-tab-bar-page>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tabs</title>
+    <!-- The page background before the stylesheet lands. The bar is all
+         chrome, so it repeats the theme's own --chrome values: the first
+         paint and every later paint are the same colour. -->
+    <style>
+      :root { color-scheme: light dark; }
+      html, body { background: oklch(0.99 0 0); }
+      @media (prefers-color-scheme: dark) {
+        html, body { background: oklch(0.17 0 0); }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/tabbar/main.tsx"></script>
+  </body>
+</html>

@@ -10,11 +10,13 @@
 
 Приёмка: старая карточка с транскриптом и миниатюрой; ссылка без транскрипта; обычная статья; локальное видео; галерея; недопустимый домен; отказ внешнего проигрывателя; восстановление превью из прежних исходников; фактическое воспроизведение в WKWebView со страницы на пользовательской схеме: прямое встраивание даёт ошибку 153, через обёртку проигрыватель переходит в состояние «играет».
 
-Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
+Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_TABS.md](SPEC_TABS.md)
 
 ## Overview
 
 React 19 + TypeScript + TailwindCSS v4 фронтенд для Mine. Работает внутри Tauri v2 WebView (Safari/WebKit). Взаимодействует с Rust-бэкендом через `@tauri-apps/api/core` (invoke). Ассеты (thumbnails, медиафайлы) отображаются через `convertFileSrc`.
+
+С 03.10.2026 страниц интерфейса три вида, у каждого свой HTML-вход Vite: страница вкладки (`index.html`, метка `tab-<tab_id>`, одна на живую вкладку), полоса вкладок (`tabbar.html`, `src/tabbar/`, метка `tabbar-<window_id>`, одна на окно) и окно настроек (`settings.html`, метка `settings`). Окна `main` больше нет. Контракт вкладок: [SPEC_TABS.md](SPEC_TABS.md), раздел ниже «Страница вкладки».
 
 ## TypeScript types
 
@@ -192,6 +194,26 @@ deleteChannel(tag: string): Promise<boolean>
 getVaultStats(currentCollection?: string | null): Promise<VaultStats>
 ```
 
+## Страница вкладки
+
+Реализовано 03.10.2026 ([SPEC_TABS.md](SPEC_TABS.md)). Каждая вкладка это отдельная страница `index.html` со своей памятью; бэкенд говорит странице, какая она вкладка, а страница сообщает, что показывает.
+
+**События страницы** (В21, В22). Бэкенд адресует события страницам по меткам: новости пространства уходят вкладкам этого пространства, роль вкладке, состояние полосе её окна. Страница подписывается только на свои события через `listenPage` ([pageEvents.ts](src/lib/pageEvents.ts)), то есть `getCurrentWebview().listen()`; события без пространства (`settings-changed`, `shortcuts-changed`, `update-status`) приходят и так. Общий `listen` и `once` из `@tauri-apps/api/event`, `getCurrentWindow()` и `getCurrentWebviewWindow()` в коде вкладок и полосы запрещены правилом ESLint `no-restricted-imports` ([eslint.config.js](eslint.config.js); исключения `src/settings/**`, `src/test/**` и тесты), правило проверяет `src/lib/pageEvents.lint.test.ts`, исходники полосы проверяет `src/tabbar/sourceGuard.test.ts`. Общий `listen` слышал бы события чужих вкладок, а метка окна записывается в страницу один раз при создании и после переноса вкладки в другое окно устаревает. Действия с окном идут командами бэкенда: перетаскивание окна за хром `startWindowDrag` (`useChromeDragGesture`), цвет фона окна `reportWindowSurface` (`useNativeWindowChromeSurface`). Бросок файлов слушает `getCurrentWebview().onDragDropEvent`: слушатель уровня окна в дочерней странице ничего не получает.
+
+**Запуск вкладки.** `App` до первого экрана читает `get_tab_bootstrap()`: `tab_id`, `window_id`, пространство вкладки, её `TabView`, раскладку бокового меню окна, роль ведущей и признак `fresh_start` (сохранённых окон не было). Вне Tauri (браузерные маршруты разработки) ответа нет, и страница ведёт себя как до вкладок. Вкладка возвращается к своей памяти (В18, В40): место открывается до первого чтения маршрута, поэтому лента сразу читает нужную коллекцию; режим Grid или Graph, открытая карточка с режимом связей, фильтр коллекций и прокрутка к карточке-якорю. Якорь ищется не дальше `SCROLL_RESTORE_PAGE_LIMIT` (25) страниц ленты, иначе лента открывается с начала. Исчезнувшая коллекция ведёт на Everything, исчезнувшая карточка закрывается.
+
+**Память вкладки** (В31). Вкладка сообщает свой `TabView` командой `report_tab_view` не чаще раза в 250 мс (`createTabViewReporter` в [tabPage.ts](src/lib/tabPage.ts)) и не повторяет уже сообщённое. Ключи `mine.mainViewMode`, `mine:sidebar` (и прежний `arena:sidebar`) уходят из `localStorage`: при запуске без сохранённых окон их значения становятся режимом первой вкладки и боковым меню первого окна, затем ключи удаляются; `mine:recentTags` удаляется вместе с записью в него (`takeLegacyTabState`, В79).
+
+**Переключение вкладок** (В5, В41). Первый экран вкладки (первый маршрут, экран без пространства или ошибка) через два кадра сообщается командой `tab_painted`, и бэкенд только после этого скрывает прежнюю вкладку. Событие `tab-visibility-changed` говорит странице, показана она или скрыта ([tabVisibility.ts](src/lib/tabVisibility.ts)); собственный `visibilitychange` страницы сигналом не служит, потому что перенос вкладки в другое окно на 1 мс скрывает страницу. При скрытии `pauseTabMedia` ставит на паузу видео и звук страницы и встроенный проигрыватель YouTube (команда `pauseVideo` через `postMessage`); при показе ничего само не запускается, автозапуск ленты ждёт `useTabVisible` и свои правила, а страница снова сообщает кадр.
+
+**Ведущая вкладка** (В19, В20). Роль приходит в `TabBootstrap.lead` и событием `space-lead-changed`. Только ведущая вкладка ведёт вторую фазу миниатюр (`useThumbnailUpgrade`), показывает уведомление о ходе индексации, пометку первой карточки и рекомендацию Keep Downloaded. Закрытое уведомление индексации запоминает бэкенд (`dismiss_space_notice`, `space_notice_dismissed`).
+
+**Прочие события вкладки.** `tab-refresh-requested` запускает сверку с диском вместо прежних `focus` и `visibilitychange` (бэкенд шлёт его видимой вкладке окна, вернувшегося в фокус, раз на пространство и не чаще 10 с, В42). `tab-space-forgotten` переводит вкладку к выбору пространства (В70). `tab-go-everything` возвращает вкладку на Everything после открытия пространства из Finder или расширения (В72). `vault-changed` от команды другой вкладки несёт `renames`: место и открытая карточка следуют за переименованием (В15 по В18).
+
+**Клавиши и новые вкладки.** ⌃Tab и ⌃⇧Tab страница ловит в фазе перехвата из любого экрана и передаёт `activateAdjacentTab` (SPEC_KEYBOARD.md, «Вкладки и окна»). Переключатель пространств открывает пространство в новой вкладке по ⌘-щелчку, ⌘Return и действию строки `Open in New Tab` (`onOpenInNewTab` у `VaultSwitcher`, команда `new_tab(vault_id)`, В52); обычный выбор меняет пространство этой вкладки.
+
+**Ввод в дочерней странице** (В80). `installControlCharGuard` ([controlCharGuard.ts](src/lib/controlCharGuard.ts)) в `src/main.tsx` и `src/tabbar/main.tsx` отбрасывает ввод символов с U+001C по U+001F (`beforeinput` вида `insert*`): стрелки в дочерней странице macOS вставляют их в поле (tauri #10194).
+
 ## Delete confirmation
 
 - Grid and Detail delete entry points open the same App-level delete dialog through `prepareDeleteBlock` before committing.
@@ -206,7 +228,8 @@ getVaultStats(currentCollection?: string | null): Promise<VaultStats>
 
 ## File drop overlay
 
-The global file `DropZone` listens to Tauri webview drag/drop events and should
+The global file `DropZone` listens to its own page's Tauri drag/drop events
+(`getCurrentWebview().onDragDropEvent`, SPEC_TABS.md, В22) and should
 show the import overlay only for real file drags. It must gate overlay state on
 the Tauri `enter` event carrying at least one path. Plain native drags inside
 the WebView, including selected text extraction drags, must not show the `Drop
@@ -371,7 +394,9 @@ Vault-пикер — не маршрут, а состояние: если `vault
 
 Корневой компонент. Управляет:
 - Состояние vault (путь или null)
-- При старте вызывает `getVaultPath()` — если null, показывает VaultPicker
+- При старте вызывает `getVaultPath()` (пространство этой вкладки) и
+  `getTabBootstrap()` (память вкладки, раздел «Страница вкладки»); если пути
+  нет, показывает VaultPicker
 - После выбора vault — Layout с sidebar + router
 - Подписывается на `block:renamed` и ретаргетит открытый Detail / scroll target на `new_slug` без закрытия текущего контекста
 
@@ -390,7 +415,10 @@ Vault-пикер — не маршрут, а состояние: если `vault
   минимальной metadata card + два боковых inset по `32px`.
 - Минимальная ширина desktop window: `904px` = `600px` максимального sidebar +
   `304px` минимальной правой/main области. Значения фронтенда живут в
-  `src/lib/appLayout.ts`, нативный window guard — в `src-tauri/tauri.conf.json`.
+  `src/lib/appLayout.ts`. Окна создаёт бэкенд по сохранённым окнам
+  (03.10.2026), поэтому нативный минимум окна живёт в
+  `src-tauri/src/domain/windows.rs`: `WINDOW_MIN_WIDTH` 904 и
+  `WINDOW_MIN_HEIGHT` 600 плюс `TAB_BAR_HEIGHT_PX`.
 
 ### Sidebar
 
@@ -610,7 +638,9 @@ mr-2"`, `8px` от правого края колонки, которая выз
 `View:` + shared compact `SegmentedControl` с options `Grid / Graph`.
 Переключатель стоит сразу после route count по левой оси content segment через
 `gap-5`, использует тот же UI-контракт, что `Collections: All / Connected` в
-expanded card chrome, и пишет выбранный режим в `mine.mainViewMode`. Старые
+expanded card chrome. С 03.10.2026 режим принадлежит вкладке: он входит в её
+`TabView.mode` и сообщается бэкенду (SPEC_TABS.md, В78); ключ
+`mine.mainViewMode` больше не пишется. Старые
 `ActionButton`-переключатели `Graph/Grid` в bottom action bar или top fallback
 не рендерятся.
 
@@ -705,6 +735,13 @@ article-card без media (8 lines × widest single-column inner width). Fronten
 Это даёт быстрый resize и мгновенное переключение между разделами при тысячах блоков, потому что browser layout работает только с окном видимых карточек, а не со всей коллекцией.
 
 ### Sidebar Resize
+
+Ширина и свёрнутость принадлежат окну, а не вкладке и не `localStorage`
+(03.10.2026, SPEC_TABS.md, В56, В78): итог перетаскивания края уходит
+командой `set_window_sidebar`, и все вкладки окна получают его событием
+`window-sidebar-changed`. Пока край тащат в этой вкладке, пришедшее событие
+не сдвигает панель из-под указателя. Ширина первого запуска 360px
+(`SIDEBAR_DEFAULT_WIDTH_PX` в `domain/windows.rs`).
 
 Resize handle должен блокировать нативное WebKit text selection с первого
 `pointerdown`, а не только после преодоления drag threshold. На `pointerdown`
@@ -953,16 +990,19 @@ Image media expansion:
   restore the bar. `Cmd+,` targets whichever Settings control is mounted.
   The `80px` traffic-light reserve is not a transparent spacer: it receives
   the same surface class as permanent top chrome and is marked with
-  `data-traffic-light-reserve`. App also syncs the native Tauri window
-  background via `getCurrentWindow().setBackgroundColor()` to the same resolved
-  surface (`--chrome`), so the AppKit
+  `data-traffic-light-reserve`; since 03.10.2026 it lives in the tab bar and
+  in the settings window, not in the tab page's first row. Every page reports
+  the same resolved surface (`--chrome`) to the backend through
+  `reportWindowSurface` (`useNativeWindowChromeSurface`), and the backend
+  paints every tab window and keeps the colour in `windows.json`
+  (SPEC_TABS.md, В25), so the AppKit
   titlebar area never shows a mismatched fill behind overlay controls. Native
   macOS traffic lights remain AppKit controls, not DOM. Desktop Rust must not
   hide, recolor, alpha-toggle, or install a custom tracking state machine over
   the real `Close` / `Miniaturize` / `Zoom` standard window buttons. Inactive
   gray circles, hover color, native outline, disabled/active states and click
   behavior are owned by macOS. The frontend only reserves the `80px` zone and
-  syncs the native titlebar background to the same resolved top-chrome surface.
+  reports the resolved top-chrome surface for the native titlebar background.
   The frontend must not draw fake traffic lights or outline the native buttons.
   Theme selection also syncs native appearance through Tauri `setTheme()`:
   explicit `Light` calls `setTheme("light")`, explicit `Dark` calls
@@ -970,7 +1010,7 @@ Image media expansion:
   OS. This is the only allowed way to align traffic-light light/dark rendering
   with Mine's theme; arbitrary button colors remain unsupported and forbidden.
   Top chrome делится той же границей `--sidebar-width`, что и body: слева
-  traffic-light spacer, space selector, sidebar channel search и
+  space selector, sidebar channel search и
   `border-r border-sidebar-border`, справа current collection switcher и
   оставшийся drag region. Так разделитель Sidebar/Main продолжается до
   верхнего края окна, а search не является overlay над Grid.
@@ -1128,7 +1168,8 @@ Image media expansion:
 - Top chrome controls must remain usable as window drag handles. Interactive
   chrome controls use the shared `4px` pointer threshold: movement below the
   threshold is handled as normal click/focus/editing, movement at or above it
-  calls `getCurrentWindow().startDragging()` and suppresses the click generated
+  calls `startWindowDrag()` (the backend finds the page's window, SPEC_TABS.md,
+  В23) and suppresses the click generated
   at the end of that drag gesture. Empty chrome regions still use
   `data-tauri-drag-region`. Plain clickable controls use
   `useChromeDragGesture()`. Dropdown triggers use
@@ -1386,19 +1427,28 @@ Image media expansion:
 #### Sidebar
 - `Control+Cmd+S` — свернуть/развернуть Sidebar.
 - Desktop delivery принадлежит native
-  `View -> Hide Sidebar` / `View -> Show Sidebar` menu accelerator, который эмитит
-  `sidebar-toggle-shortcut`. Frontend `keydown` остаётся только browser/dev
+  `View -> Hide Sidebar` / `View -> Show Sidebar` menu accelerator. С 03.10.2026
+  событие `sidebar-toggle-shortcut` снято: пункт меню исполняет бэкенд и
+  меняет боковое меню окна вкладок в фокусе, а без него последнего окна
+  (SPEC_TABS.md, В56). Frontend `keydown` остаётся только browser/dev
   fallback: при `isTauri() === true` он не меняет состояние, чтобы один жест не
   вызывал native event и второй toggle из WKWebView. Browser fallback проверяет
   physical `KeyboardEvent.code === "KeyS"`, чтобы команда работала на
   нелатинских раскладках.
-- React `useSidebarResize.collapsed` остаётся источником состояния. При каждом
-  изменении frontend синхронизирует native menu title через
-  `set_sidebar_menu_collapsed`: раскрытая панель показывает `Hide Sidebar`,
-  свёрнутая — `Show Sidebar`. Поэтому shortcut, toolbar action и resize-collapse
-  имеют один menu contract, а native menu не хранит независимое состояние.
-- Одно сочетание toggles оба состояния и вызывает существующий
-  `useSidebarResize.toggleCollapsed`; отдельного shortcut для expand нет.
+- С 03.10.2026 боковым меню владеет окно: ширину и свёрнутость хранит бэкенд
+  (`SavedWindow.sidebar` в `windows.json`). Кнопка в полосе вкладок, пункт
+  View, свайп двумя пальцами (`swipe_gesture.rs`, событие `sidebar-swipe`
+  снято) и перетаскивание края меню во вкладке меняют раскладку командой
+  `set_window_sidebar`, бэкенд рассылает `window-sidebar-changed` всем
+  вкладкам окна и его полосе. Заголовок пункта View (`Hide Sidebar` или
+  `Show Sidebar`) бэкенд ставит сам по боковому меню последнего окна
+  (`window_chrome::reflect_sidebar`); вызов `set_sidebar_menu_collapsed` из
+  страницы снят.
+- Одно сочетание toggles оба состояния; отдельного shortcut для expand нет.
+  Внутри вкладки `useSidebarResize(windowSidebar)` держит раскладку окна:
+  применяет пришедшую, приводя ширину к минимуму варианта оформления,
+  показывает изменение человека сразу и отправляет его `set_window_sidebar`.
+  Страница вне вкладки держит раскладку в памяти, начиная с минимума.
 
 #### История страниц
 - `Cmd+[` / `Cmd+]` — перейти назад/вперёд по router/browser history.

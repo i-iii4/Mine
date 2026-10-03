@@ -25,7 +25,15 @@ use crate::commands::settings::{
     DeleteOrphanResult, OrphanMedia, OrphanMediaBatchRequest, OrphanMediaList, PromoteOrphanResult,
     SpaceStats,
 };
+use crate::commands::effects::{RenamedKind, SpaceRename, VaultChangedPayload};
 use crate::commands::state::CommandError;
+use crate::commands::vault::SpaceMovedPayload;
+use crate::domain::windows::{
+    DetailLinkMode, MainViewMode, OpenCard, ScrollAnchor, SidebarLayout, TabId, TabLocation,
+    TabSpace, TabView, WindowId,
+};
+use crate::tabs::drag::DropHover;
+use crate::tabs::{SpaceLead, TabBarState, TabBarTab, TabBootstrap, TabVisibility};
 use crate::updater::{UpdateError, UpdateStage, UpdateStatus};
 use crate::commands::cloud_recommendation::CloudRecommendationState;
 use crate::commands::icloud_progress::{IcloudDownloadProgress, IcloudDownloadStatus};
@@ -56,6 +64,26 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<mine_core::save::SaveOutcome>()
         .register::<mine_core::save::SaveExecutor>()
         .register::<IndexedBlock>()
+        .register::<TabId>()
+        .register::<WindowId>()
+        .register::<TabSpace>()
+        .register::<TabView>()
+        .register::<TabLocation>()
+        .register::<MainViewMode>()
+        .register::<DetailLinkMode>()
+        .register::<OpenCard>()
+        .register::<ScrollAnchor>()
+        .register::<SidebarLayout>()
+        .register::<TabBarState>()
+        .register::<TabBarTab>()
+        .register::<TabBootstrap>()
+        .register::<TabVisibility>()
+        .register::<SpaceLead>()
+        .register::<VaultChangedPayload>()
+        .register::<SpaceRename>()
+        .register::<RenamedKind>()
+        .register::<SpaceMovedPayload>()
+        .register::<DropHover>()
         .register::<ClipboardPayload>()
         .register::<ShortcutBinding>()
         .register::<LightBlock>()

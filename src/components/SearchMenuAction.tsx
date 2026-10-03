@@ -12,7 +12,8 @@ interface SearchMenuActionProps {
   children: ReactNode;
   rowSize?: MenuRowSize;
   className?: string;
-  onPress: () => void;
+  /** `metaKey`: the row was pressed with ⌘, which some menus read as "elsewhere". */
+  onPress: (modifiers: { metaKey: boolean }) => void;
   onActive?: () => void;
 }
 
@@ -55,7 +56,7 @@ export function SearchMenuAction({
         event.preventDefault();
         event.stopPropagation();
         if (!disabled) {
-          onPress();
+          onPress({ metaKey: event.metaKey });
         }
       }}
     >

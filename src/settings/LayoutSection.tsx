@@ -1,4 +1,5 @@
-// Where new files go inside the current space.
+// Where new files go inside a space open in a tab, chosen in the section
+// itself (SPEC_TABS.md, В71).
 //
 // Reading a vault is always recursive and independent of this: a card's
 // identity is its path, wherever it sits. These three settings govern writes
@@ -6,13 +7,15 @@
 // Pointing all three at the root keeps a vault flat, which is exactly how every
 // vault behaved before this contract. See SPEC_VAULT_LIFECYCLE.md П1–П4.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Input } from "@/components/ui/input";
 import {
   getVaultWriteLayout,
   setVaultWriteLayout,
 } from "@/lib/commands";
+import { OpenSpaceSelect } from "./OpenSpaceSelect";
 import { SettingRow } from "./SettingRow";
+import { useOpenSpaces } from "./useOpenSpaces";
 import type { VaultWriteLayoutDto } from "@/types";
 
 const ROOT_LABEL = "Space root";
@@ -63,6 +66,31 @@ function FolderField({ label, caption, value, disabled, onCommit }: FolderFieldP
 }
 
 export function LayoutSection() {
+  const { spaces, current, choose, error } = useOpenSpaces();
+
+  if (spaces === null || current === null) {
+    return (
+      <section className="grid gap-s3" data-settings-section="layout">
+        {spaces !== null && (
+          <p className="text-sm text-muted-foreground">
+            {error ?? "Open a space to configure its folders."}
+          </p>
+        )}
+      </section>
+    );
+  }
+
+  // Keyed by the space: a draft typed for one space never shows for another.
+  return (
+    <SpaceLayout
+      key={current.vaultId}
+      vaultId={current.vaultId}
+      selector={<OpenSpaceSelect spaces={spaces} current={current} onChoose={choose} />}
+    />
+  );
+}
+
+function SpaceLayout({ vaultId, selector }: { vaultId: string; selector: ReactNode }) {
   const [layout, setLayout] = useState<VaultWriteLayoutDto | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -71,11 +99,11 @@ export function LayoutSection() {
   // the field must snap back to what is stored *and* keep telling the user why.
   const refresh = useCallback(async () => {
     try {
-      setLayout(await getVaultWriteLayout());
+      setLayout(await getVaultWriteLayout(vaultId));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, []);
+  }, [vaultId]);
 
   useEffect(() => {
     void refresh();
@@ -85,7 +113,7 @@ export function LayoutSection() {
     async (next: VaultWriteLayoutDto) => {
       setBusy(true);
       try {
-        setLayout(await setVaultWriteLayout(next));
+        setLayout(await setVaultWriteLayout(next, vaultId));
         setError(null);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -94,44 +122,40 @@ export function LayoutSection() {
         setBusy(false);
       }
     },
-    [refresh],
+    [refresh, vaultId],
   );
-
-  if (!layout) {
-    return (
-      <section className="grid gap-s3" data-settings-section="layout">
-        <p className="text-sm text-muted-foreground">
-          {error ?? "Open a space to configure its folders."}
-        </p>
-      </section>
-    );
-  }
 
   return (
     <section className="grid gap-s3" data-settings-section="layout">
       <h1 className="text-lg font-semibold">Where to save new files</h1>
 
-      <FolderField
-        label="Cards"
-        caption={`New card documents, currently ${displayValue(layout.cards)}`}
-        value={layout.cards}
-        disabled={busy}
-        onCommit={(cards) => void commit({ ...layout, cards })}
-      />
-      <FolderField
-        label="Media"
-        caption={`New images and video, currently ${displayValue(layout.media)}`}
-        value={layout.media}
-        disabled={busy}
-        onCommit={(media) => void commit({ ...layout, media })}
-      />
-      <FolderField
-        label="Collections"
-        caption={`New collection documents, currently ${displayValue(layout.collections)}`}
-        value={layout.collections}
-        disabled={busy}
-        onCommit={(collections) => void commit({ ...layout, collections })}
-      />
+      {selector}
+
+      {layout && (
+        <>
+          <FolderField
+            label="Cards"
+            caption={`New card documents, currently ${displayValue(layout.cards)}`}
+            value={layout.cards}
+            disabled={busy}
+            onCommit={(cards) => void commit({ ...layout, cards })}
+          />
+          <FolderField
+            label="Media"
+            caption={`New images and video, currently ${displayValue(layout.media)}`}
+            value={layout.media}
+            disabled={busy}
+            onCommit={(media) => void commit({ ...layout, media })}
+          />
+          <FolderField
+            label="Collections"
+            caption={`New collection documents, currently ${displayValue(layout.collections)}`}
+            value={layout.collections}
+            disabled={busy}
+            onCommit={(collections) => void commit({ ...layout, collections })}
+          />
+        </>
+      )}
 
       {error && <p className="text-sm text-destructive">{error}</p>}
     </section>

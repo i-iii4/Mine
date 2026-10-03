@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -28,21 +28,16 @@ import { MenuIconSlot } from "@/components/ui/menu-icon-slot";
 import {
   addKnownVault,
   forgetKnownVault,
-  getVaultPath,
   listSpaces,
   reorderKnownVaults,
-  selectVault,
+  showSpace,
+  spacesInTabs,
   spaceStats,
 } from "@/lib/commands";
 import { formatBytes } from "@/lib/formatBytes";
 import { cn } from "@/lib/utils";
-import type { SpaceStats } from "@/types";
-
-function basename(path: string): string {
-  const trimmed = path.replace(/\/+$/, "");
-  const index = trimmed.lastIndexOf("/");
-  return index >= 0 ? trimmed.slice(index + 1) : trimmed;
-}
+import type { SpaceEntry, SpaceMovedPayload, SpaceStats } from "@/types";
+import { basename } from "./useOpenSpaces";
 
 type SpaceStatsState = SpaceStats | "error";
 
@@ -72,16 +67,17 @@ function statsSummary(stats: SpaceStatsState | undefined): string {
 
 interface SpaceRowProps {
   path: string;
-  isActive: boolean;
+  /// Some tab shows this space (SPEC_TABS.md, В69); several rows may be.
+  isOpen: boolean;
   stats: SpaceStatsState | undefined;
   /// The folder is there and is this space; an unavailable space stays
   /// listed and marked (SPEC_VAULT_LIFECYCLE.md, П26) but cannot be opened.
   available: boolean;
-  onSwitch: (path: string) => void;
+  onOpen: (path: string) => void;
   onRemove: (path: string) => void;
 }
 
-function SpaceRow({ path, isActive, stats, available, onSwitch, onRemove }: SpaceRowProps) {
+function SpaceRow({ path, isOpen, stats, available, onOpen, onRemove }: SpaceRowProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const { setNodeRef, attributes, listeners, transform, transition, isDragging } =
     useSortable({ id: path });
@@ -94,32 +90,34 @@ function SpaceRow({ path, isActive, stats, available, onSwitch, onRemove }: Spac
       style={{ transform: CSS.Transform.toString(transform), transition }}
       className={cn(
         "group/space rounded-1 border border-border px-3 py-2",
-        isActive ? "bg-active" : "bg-accent hover:bg-active",
+        isOpen ? "bg-active" : "bg-accent hover:bg-active",
         isDragging && "opacity-30",
       )}
-      aria-current={isActive ? "true" : undefined}
       aria-disabled={available ? undefined : "true"}
       data-space-row=""
+      data-space-open={isOpen ? "" : undefined}
       data-space-row-unavailable={available ? undefined : ""}
       onClick={(event) => {
         // dnd-kit prevents the click that follows a completed drag.
         if (event.defaultPrevented || !available) return;
-        onSwitch(path);
+        onOpen(path);
       }}
       onKeyDown={(event) => {
         if (available && (event.key === "Enter" || event.key === " ")) {
           event.preventDefault();
-          onSwitch(path);
+          onOpen(path);
         }
       }}
     >
       <div className="flex items-center gap-s2">
         <p className={cn("min-w-0 flex-1 truncate text-base", !available && "text-muted-foreground")}>
           {basename(path)}
+          {/* The background says it to the eye (Р-12); this says it aloud. */}
+          {isOpen && <span className="sr-only">, open in a tab</span>}
         </p>
         {/* Fixed-size slot: ⋯ fades in on hover/focus, geometry never jumps
             (opacity canon of card hover actions). Clicks must not bubble into
-            the row switch. */}
+            the row's open action. */}
         <div
           className="flex size-8 shrink-0 items-center justify-center"
           onClick={(event) => event.stopPropagation()}
@@ -168,12 +166,17 @@ function SpaceRow({ path, isActive, stats, available, onSwitch, onRemove }: Spac
 export function SpacesSection() {
   const [knownVaults, setKnownVaults] = useState<string[]>([]);
   const [unavailable, setUnavailable] = useState<ReadonlySet<string>>(() => new Set());
-  const [activeVault, setActiveVault] = useState<string | null>(null);
+  // The identity of each listed space, to match rows against the open set.
+  const [idByPath, setIdByPath] = useState<ReadonlyMap<string, string>>(() => new Map());
+  // Identities of the spaces some tab shows (SPEC_TABS.md, В69).
+  const [openIds, setOpenIds] = useState<ReadonlySet<string>>(() => new Set());
   const [statsByPath, setStatsByPath] = useState<Record<string, SpaceStatsState>>({});
   const [error, setError] = useState<string | null>(null);
+  // Paths already scanned: refreshing the list does not walk them again.
+  const statsRequested = useRef(new Set<string>());
 
   const sensors = useSensors(
-    // distance 8 keeps plain clicks as switches; only a real drag reorders.
+    // distance 8 keeps plain clicks as opens; only a real drag reorders.
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
   );
 
@@ -181,6 +184,8 @@ export function SpacesSection() {
   // a slow volume degrades only its own row.
   const loadStats = useCallback((paths: string[]) => {
     for (const path of paths) {
+      if (statsRequested.current.has(path)) continue;
+      statsRequested.current.add(path);
       void spaceStats(path)
         .then((stats) => {
           setStatsByPath((previous) => ({ ...previous, [path]: stats }));
@@ -191,78 +196,81 @@ export function SpacesSection() {
     }
   }, []);
 
-  const reload = useCallback(async () => {
-    try {
-      const [spaces, active] = await Promise.all([listSpaces(), getVaultPath()]);
+  const applySpaces = useCallback(
+    (spaces: SpaceEntry[]) => {
       setKnownVaults(spaces.map((space) => space.path));
       setUnavailable(new Set(spaces.filter((space) => !space.available).map((space) => space.path)));
-      setActiveVault(active);
+      setIdByPath(
+        new Map(
+          spaces.flatMap((space): [string, string][] =>
+            space.vault_id === null ? [] : [[space.path, space.vault_id]],
+          ),
+        ),
+      );
       loadStats(spaces.filter((space) => space.available).map((space) => space.path));
+    },
+    [loadStats],
+  );
+
+  const reload = useCallback(async () => {
+    try {
+      const [spaces, shown] = await Promise.all([listSpaces(), spacesInTabs()]);
+      applySpaces(spaces);
+      setOpenIds(new Set(shown));
     } catch (e) {
       setError(String(e));
     }
-  }, [loadStats]);
+  }, [applySpaces]);
 
   useEffect(() => {
     void reload();
   }, [reload]);
 
-  // A switch may originate anywhere (this list, the main-window switcher) —
-  // the backend broadcasts every select_vault.
   useEffect(() => {
     let cancelled = false;
-    const unlisten = listen<{ path: string }>("vault-selected", (event) => {
+    // Tabs open and close spaces from any window.
+    const stopOpen = listen<string[]>("spaces-open-changed", (event) => {
       if (cancelled) return;
-      setActiveVault(event.payload.path);
+      setOpenIds(new Set(event.payload));
+      // A space created or added from a tab is new to the list.
+      void listSpaces()
+        .then((spaces) => {
+          if (!cancelled) applySpaces(spaces);
+        })
+        .catch((e: unknown) => {
+          if (!cancelled) setError(String(e));
+        });
     });
-    // The space moved to a new folder (SPEC_TABS.md, В73).
-    const unlistenMoved = listen<{ vault_id: string; path: string }>("space-moved", (event) => {
+    // The space moved to a new folder (В73): its row follows the new path.
+    const stopMoved = listen<SpaceMovedPayload>("space-moved", () => {
       if (cancelled) return;
-      setActiveVault(event.payload.path);
+      void reload();
     });
     return () => {
       cancelled = true;
-      unlisten.then((fn) => fn());
-      unlistenMoved.then((fn) => fn());
+      void stopOpen.then((stop) => stop());
+      void stopMoved.then((stop) => stop());
     };
+  }, [applySpaces, reload]);
+
+  // Shows the space's tab used last, or opens it in a new tab of the last
+  // window (В69). The highlight follows spaces-open-changed.
+  const handleOpen = useCallback((path: string) => {
+    setError(null);
+    void showSpace(path, false).catch((e: unknown) => setError(String(e)));
   }, []);
 
-  const handleSwitch = useCallback(
-    (path: string) => {
-      if (path === activeVault) return;
-      setError(null);
-      void selectVault(path)
-        .then(() => setActiveVault(path))
-        .catch((e) => setError(String(e)));
-    },
-    [activeVault],
-  );
-
-  // Removing the active space switches to the next one first, so the config
-  // invariant "active ∈ known" never breaks (Р-6). The sole remaining space
-  // is simply forgotten — the app keeps running on it.
-  const handleRemove = useCallback(
-    (path: string) => {
-      setError(null);
-      void (async () => {
-        try {
-          if (path === activeVault) {
-            const next = knownVaults.find(
-              (candidate) => candidate !== path && !unavailable.has(candidate),
-            );
-            if (next) {
-              await selectVault(next);
-              setActiveVault(next);
-            }
-          }
-          setKnownVaults(await forgetKnownVault(path));
-        } catch (e) {
-          setError(String(e));
-        }
-      })();
-    },
-    [activeVault, knownVaults, unavailable],
-  );
+  // Forgetting is always allowed (В70): the backend sends the tabs of the
+  // forgotten space to the space picker.
+  const handleRemove = useCallback((path: string) => {
+    setError(null);
+    void forgetKnownVault(path)
+      .then((paths) => {
+        statsRequested.current.delete(path);
+        setKnownVaults(paths);
+      })
+      .catch((e: unknown) => setError(String(e)));
+  }, []);
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
@@ -305,17 +313,20 @@ export function SpacesSection() {
       >
         <SortableContext items={knownVaults} strategy={verticalListSortingStrategy}>
           <ul className="flex flex-col gap-1">
-            {knownVaults.map((path) => (
-              <SpaceRow
-                key={path}
-                path={path}
-                isActive={path === activeVault}
-                stats={statsByPath[path]}
-                available={!unavailable.has(path)}
-                onSwitch={handleSwitch}
-                onRemove={handleRemove}
-              />
-            ))}
+            {knownVaults.map((path) => {
+              const vaultId = idByPath.get(path);
+              return (
+                <SpaceRow
+                  key={path}
+                  path={path}
+                  isOpen={vaultId !== undefined && openIds.has(vaultId)}
+                  stats={statsByPath[path]}
+                  available={!unavailable.has(path)}
+                  onOpen={handleOpen}
+                  onRemove={handleRemove}
+                />
+              );
+            })}
             {knownVaults.length === 0 && (
               <li className="py-8 text-center text-sm text-muted-foreground">
                 No known spaces

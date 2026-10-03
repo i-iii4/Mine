@@ -1,4 +1,4 @@
-import { listen } from "@tauri-apps/api/event";
+import { listenPage } from "@/lib/pageEvents";
 
 import { audioAssetUrl } from "@/lib/assets";
 import {
@@ -36,7 +36,7 @@ export const desktopArticleAudioGateway: ArticleAudioGateway = {
   setPosition: setArticleAudioPosition,
   resolvePlaybackSource: resolveDesktopPlaybackSource,
   subscribe: async (onUpdated) =>
-    listen<ArticleAudioUpdatedEvent>(ARTICLE_AUDIO_UPDATED_EVENT, (event) => {
+    listenPage<ArticleAudioUpdatedEvent>(ARTICLE_AUDIO_UPDATED_EVENT, (event) => {
       onUpdated(event.payload);
     }),
 };

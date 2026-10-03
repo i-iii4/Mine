@@ -78,10 +78,9 @@ export function createRightFadeMaskStyle(
   } as CSSProperties;
 }
 
-/// Build a mask that fades content out toward the top edge, with the right
-/// edge's curve: a rising text card dissolves past the frame's top instead of
-/// being cut by it (SPEC_CARD_STATES.md, С8.2).
-export function createTopFadeMaskStyle(fadeWidth: number): CSSProperties {
+/// A mask that fades content out toward its starting edge (the top for
+/// `to bottom`, the left for `to right`) with the right edge's curve.
+function createLeadingFadeMaskStyle(fadeWidth: number, direction: "to bottom" | "to right"): CSSProperties {
   const stops = [
     "rgba(0, 0, 0, 0) 0px",
     ...[...EDGE_FADE_STOPS]
@@ -90,11 +89,25 @@ export function createTopFadeMaskStyle(fadeWidth: number): CSSProperties {
     `rgba(0, 0, 0, 1) ${fadeWidth}px`,
     "rgba(0, 0, 0, 1) 100%",
   ].join(", ");
-  const gradient = `linear-gradient(to bottom, ${stops})`;
+  const gradient = `linear-gradient(${direction}, ${stops})`;
   return {
     maskImage: gradient,
     WebkitMaskImage: gradient,
   } as CSSProperties;
+}
+
+/// Build a mask that fades content out toward the top edge, with the right
+/// edge's curve: a rising text card dissolves past the frame's top instead of
+/// being cut by it (SPEC_CARD_STATES.md, С8.2).
+export function createTopFadeMaskStyle(fadeWidth: number): CSSProperties {
+  return createLeadingFadeMaskStyle(fadeWidth, "to bottom");
+}
+
+/// Build a mask that fades content out toward the left edge, with the right
+/// edge's curve: tabs scrolled past the start of the tab bar dissolve
+/// (SPEC_TABS.md, В48).
+export function createLeftFadeMaskStyle(fadeWidth: number): CSSProperties {
+  return createLeadingFadeMaskStyle(fadeWidth, "to right");
 }
 
 // ─── Top edge: extends the chrome ───────────────────────────────────────────

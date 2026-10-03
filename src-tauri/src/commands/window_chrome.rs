@@ -1,7 +1,8 @@
 //! Native window chrome commands.
 //!
-//! React owns the actual sidebar state. The native View menu mirrors that
-//! state so its command title always describes the action that will happen.
+//! Each tab window owns its sidebar (SPEC_TABS.md, В56). The native View
+//! menu mirrors the sidebar of the last window so its command title always
+//! describes the action that will happen.
 
 use tauri::AppHandle;
 
@@ -15,6 +16,14 @@ fn sidebar_menu_title(collapsed: bool) -> &'static str {
         "Show Sidebar"
     } else {
         "Hide Sidebar"
+    }
+}
+
+/// Name the View menu's sidebar item after the next action on a sidebar
+/// that is `collapsed` or not.
+pub fn reflect_sidebar(app: &AppHandle, collapsed: bool) {
+    if let Err(error) = set_sidebar_menu_collapsed(app.clone(), collapsed) {
+        log::warn!("{error}");
     }
 }
 

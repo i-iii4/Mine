@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { setShortcutCaptureActive } from "@/lib/commands";
 import { bindingId, bindingsEqual, type CommandBinding } from "@/lib/commandBinding";
@@ -8,25 +8,33 @@ import {
   COMMAND_CONTEXT_TITLES,
   DEFAULT_COMMANDS,
   allCommands,
+  commandBindings,
   getCommandOverrides,
   subscribeToCommands,
   type CommandContext,
   type ResolvedCommand,
 } from "@/lib/commandRegistry";
 import { persistCommandOverrides } from "@/lib/shortcutOverrides";
+import { cn } from "@/lib/utils";
 import { rejectionMessage, validateShortcut } from "@/lib/shortcutValidation";
 
 const CONTEXT_ORDER: readonly CommandContext[] = ["global", "feed", "element", "selection"];
 
 function bindingFromEvent(event: KeyboardEvent): CommandBinding | null {
   if (["Meta", "Shift", "Alt", "Control"].includes(event.key)) return null;
+  // Physical keys where the layout or Shift changes `key`: ⇧⌘[ arrives as
+  // "{" on a US layout and as a letter on others.
   const key = /^Key[A-Z]$/.test(event.code)
     ? event.code.slice(3).toLowerCase()
     : /^Digit[0-9]$/.test(event.code)
       ? event.code.slice(5)
-      : /^[a-zA-Z]$/.test(event.key)
-        ? event.key.toLowerCase()
-        : event.key;
+      : event.code === "BracketLeft"
+        ? "["
+        : event.code === "BracketRight"
+          ? "]"
+          : /^[a-zA-Z]$/.test(event.key)
+            ? event.key.toLowerCase()
+            : event.key;
   return {
     key,
     meta: event.metaKey,
@@ -39,16 +47,46 @@ function bindingFromEvent(event: KeyboardEvent): CommandBinding | null {
 function matchesSearch(command: ResolvedCommand, query: string): boolean {
   const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
   if (terms.length === 0) return true;
-  const id = command.binding ? bindingId(command.binding) : "";
+  const ids = commandBindings(command).map(bindingId);
   const searchable = [
     command.name,
     command.combo,
-    id,
-    id.replaceAll("meta", "cmd"),
-    id.replaceAll("alt", "option"),
-    id.replaceAll("ctrl", "control"),
+    ...ids.flatMap((id) => [
+      id,
+      id.replaceAll("meta", "cmd"),
+      id.replaceAll("alt", "option"),
+      id.replaceAll("ctrl", "control"),
+    ]),
   ].map((value) => value.toLocaleLowerCase());
   return terms.every((term) => searchable.some((value) => value.includes(term)));
+}
+
+/// A chord macOS owns: shown as a keystroke reference in the same slot as an
+/// editable binding, with nothing to press (SPEC_TABS.md, В57).
+function FixedShortcutRow({ command }: { command: ResolvedCommand }) {
+  return (
+    <div
+      data-shortcut-row={command.id}
+      data-shortcut-fixed=""
+      className="flex min-h-10 items-center justify-between gap-3 border-b border-border py-1"
+    >
+      <span className="min-w-0 flex-1 truncate text-base text-foreground">{command.name}</span>
+      <div className="flex shrink-0 items-center gap-2" data-shortcut-actions="">
+        {command.combos.map((combo) => (
+          <span
+            key={combo}
+            data-shortcut-reference=""
+            className={cn(
+              buttonVariants({ variant: "reference", size: "xs" }),
+              "h-5 min-w-12 font-mono font-normal text-muted-foreground",
+            )}
+          >
+            {combo}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export function ShortcutsSection() {
@@ -166,7 +204,11 @@ export function ShortcutsSection() {
   };
 
   const anyRebound = commands.some((command) => command.rebound);
-  const visibleCommands = commands.filter((command) => !command.fixed && matchesSearch(command, query));
+  // Structural keys are the interface's own language and stay out of the
+  // list; chords macOS owns are listed so the user sees they are taken.
+  const visibleCommands = commands.filter(
+    (command) => command.fixed !== "structural" && matchesSearch(command, query),
+  );
 
   return (
     <section className="flex w-full max-w-[720px] flex-col gap-s3" data-shortcuts-section="">
@@ -195,7 +237,12 @@ export function ShortcutsSection() {
       />
 
       {CONTEXT_ORDER.map((context) => {
-        const group = visibleCommands.filter((command) => command.context === context);
+        const inContext = visibleCommands.filter((command) => command.context === context);
+        // Commands the user can change come first; fixed ones close the group.
+        const group = [
+          ...inContext.filter((command) => !command.fixed),
+          ...inContext.filter((command) => command.fixed),
+        ];
         if (group.length === 0) return null;
         return (
           <div key={context} className="flex flex-col" data-shortcuts-group={context}>
@@ -203,6 +250,7 @@ export function ShortcutsSection() {
               {COMMAND_CONTEXT_TITLES[context]}
             </h2>
             {group.map((command) => {
+              if (command.fixed) return <FixedShortcutRow key={command.id} command={command} />;
               const isEditing = editing === command.id;
               const rowError = error?.id === command.id ? error.message : null;
               return (

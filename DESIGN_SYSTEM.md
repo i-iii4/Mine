@@ -1018,9 +1018,9 @@ Surface Search описан в [SPEC_SEARCH.md](SPEC_SEARCH.md). Это inline s
 
 Main/Grid search (`Cmd+F`) сохраняет backend/query механизм, но visual search
 component сейчас временно не rendered. Top chrome всё равно делится тем же
-`--sidebar-width`, что и body: левая часть держит traffic-light spacer, space
-selector, sidebar channel search и `border-r border-sidebar-border`, поэтому
-разделитель Sidebar/Main продолжается до верхнего края окна. Правая часть top
+`--sidebar-width`, что и body: левая часть держит space selector, sidebar
+channel search и `border-r border-sidebar-border`, поэтому разделитель
+Sidebar/Main продолжается до верхнего края страницы вкладки. Правая часть top
 chrome начинается с current collection switcher, а оставшаяся область остаётся
 drag region до нового search surface. Поиск не участвует в layout Grid, не
 анимирует страницу и не меняет scroll viewport.
@@ -1065,9 +1065,10 @@ Hover/open/keyboard focus используют
 и отдельный Separator; локальные размеры кнопок и компенсации запрещены.
 
 Sidebar search (`Shift+Cmd+F`) живёт в левом сегменте top chrome. Порядок:
-traffic-light spacer, separator `w-px bg-border`, space selector, separator
-`w-px bg-border`, search input, затем штатный `border-r border-sidebar-border`
-между Sidebar и Main.
+space selector, separator `w-px bg-border`, search input, затем штатный
+`border-r border-sidebar-border` между Sidebar и Main. Резерв светофоров и
+кнопка бокового меню с 03.10.2026 стоят в полосе вкладок над этим рядом
+(раздел «Полоса вкладок»).
 
 Все chrome-строки используют один `ChromeRow`: permanent header (включая
 загрузку пространства и Settings), secondary row сверху/снизу и bottom action
@@ -1100,22 +1101,32 @@ Dropdown отступает на штатные 4px от полноразмер�
 Оформление нативного окна не меняется; индивидуальные translate/padding
 поправки для строк и кнопок запрещены. При двух верхних строках нижняя линия
 второго уровня поднимается на 1px; положение плашки первого уровня сохраняется.
+Страница вкладки внешней верхней границы не рисует (`ChromeShell
+topEdge={false}`, 03.10.2026): над ней стоит полоса вкладок, и нижний
+разделитель полосы служит швом между полосой и первым рядом страницы; вторая
+линия удвоила бы его. Окно настроек и страницы вне вкладок рисуют обе границы.
 
 Permanent top chrome использует `bg-chrome`, промежуточный surface между
 `bg-background` и `bg-accent`. Это оставляет активному search surface следующий
 видимый уровень заливки: когда query непустой, search wrapper получает
 `bg-accent`, а остальной header остаётся `bg-chrome`.
 Traffic-light reserve (`80px`) не остаётся прозрачным spacer'ом: он получает
-тот же surface class, что и permanent top chrome (`bg-chrome` или, в variant
-2, `bg-accent`). Дополнительно App синхронизирует native window background
-через `getCurrentWindow().setBackgroundColor()` с тем же surface, чтобы
-AppKit titlebar area не просвечивала чужим цветом поверх overlay titlebar.
+тот же surface class, что и хром вокруг него (`bg-chrome` в полосе вкладок и в
+окне настроек). Цвет фона нативного окна задаёт бэкенд (03.10.2026,
+SPEC_TABS.md, В25): страница сообщает цвет поверхности хрома `#rrggbb`,
+вычисленный из её CSS-токена, командой `report_window_surface`
+(`useNativeWindowChromeSurface`), бэкенд красит все окна вкладок
+(`NSWindow.backgroundColor`) и хранит цвет в `windows.json`, чтобы следующий
+запуск красил окно до загрузки страниц. Так AppKit titlebar area не
+просвечивает чужим цветом поверх overlay titlebar. Собственный фон страниц
+выключен (`drawsBackground = NO`, В26): до первого кадра страницы виден цвет
+хрома, а не белый.
 Сами native traffic lights не стилизуются CSS, не перекрашиваются через webview
 и не получают custom alpha/state machine из Rust. На macOS desktop это всегда
 настоящие AppKit standard window buttons, а inactive gray, hover color,
 обводка, disabled/active state и click behavior полностью остаются системными.
-Frontend только резервирует `80px` зоны и синхронизирует фон native titlebar
-area с top chrome, чтобы системные кнопки лежали на корректной поверхности.
+Frontend только резервирует `80px` зоны и сообщает бэкенду цвет хрома, чтобы
+системные кнопки лежали на корректной поверхности.
 Fake traffic lights, outline/обводка кружков, ручная отрисовка кнопок и
 programmatic hide/show настоящих кнопок запрещены.
 
@@ -1128,22 +1139,24 @@ Theme selector обязан синхронизировать не только w
 
 Когда sidebar collapsed, top chrome не схлопывается до `0px` и не держит
 пустой слот под исчезнувший поиск. Левый segment сжимается до реального
-содержимого: `80px` traffic-light safety area + `1px` separator + intrinsic
-width space selector. Channel search скрывается, а правая часть top chrome с
-current collection switcher начинается сразу после compact collapsed segment.
-Collapsed layout строится только CSS intrinsic sizing: левый segment получает
-`w-auto max-w-[240px]`, а `VaultSwitcher` в collapsed mode получает
-`max-w-[159px]` (`240 - 80 - 1`). JS measurement, hidden probe и вычисление
-ширины по уже обрезанному visible trigger запрещены.
+содержимого: intrinsic width space selector. Резерва светофоров и кнопки
+бокового меню в ряду страницы вкладки нет с 03.10.2026: они в полосе вкладок.
+Channel search скрывается, а правая часть top chrome с current collection
+switcher начинается сразу после compact collapsed segment. Collapsed layout
+строится только CSS intrinsic sizing: левый segment получает
+`w-auto max-w-[240px]`, и `VaultSwitcher` в collapsed mode получает тот же
+предел `max-w-[240px]`, потому что он единственное содержимое сегмента. JS
+measurement, hidden probe и вычисление ширины по уже обрезанному visible
+trigger запрещены.
 
 Space selector — это top-chrome вариант `VaultSwitcher`: `h-full`,
-`max-w-[50%]`, `flex-none`, `min-w-0`, `px-3`, `rounded-0`,
+`max-w-[50%]`, `flex-none`, `min-w-0`, `pl-[var(--top-collection-pad-x)] pr-3`, `rounded-0`,
 `font-mono text-sm text-muted-foreground`, `truncate`; без folder icon и без
 dropdown chevron. Root trigger не заливается и не рисует отдельную обводку: он
 только задаёт layout slot. Ширина
 подстраивается под имя текущей папки, но не может занять больше половины
 доступной search/space зоны. В collapsed sidebar state, когда search скрыт,
-ограничение меняется на `max-w-[159px]`, а сам segment shrink-wrap'ится по
+ограничение меняется на `max-w-[240px]`, а сам segment shrink-wrap'ится по
 intrinsic width selector, чтобы справа не оставалось пустой ячейки. Короткое
 имя (`Mine`, `Тест`) обязано отображаться полностью; ellipsis допустим только
 для длинных названий, которые превышают collapsed selector cap.
@@ -1154,10 +1167,12 @@ intrinsic width selector, чтобы справа не оставалось пу
 focus поднимает только эту интерактивную плашку до `text-foreground`. Это тот
 же system hover/active token, что используется для row hover/focus в
 `DropdownMenu`. Текст выровнен по левому краю через `justify-start` +
-`text-left`. Space selector уже стоит после
-traffic-light reserve, поэтому использует компактный root inset `px-3`, а не
-правую content axis. Вместе с внутренним `px-2` пули текст начинается на `20px`
-после separator. Если имя папки не помещается, оно режется обычным end ellipsis.
+`text-left`. Space selector открывает первый ряд страницы вкладки (03.10.2026),
+поэтому его левый inset равен краю хрома минус внутренний отступ пули
+(`--top-collection-pad-x`, 8px), как у переключателя коллекций: вместе с
+внутренним `px-2` пули текст начинается на `16px` от края окна
+(`--chrome-edge-pad`). Если имя папки не помещается, оно режется обычным end
+ellipsis.
 Pointer-click не должен оставлять trigger в focus-colored состоянии после
 закрытия dropdown: top chrome triggers используют общий interaction hook,
 который различает pointer и keyboard open. После pointer-close Radix
@@ -1330,7 +1345,8 @@ motion path, что появление, без промежуточного ск
 Top chrome controls are dual-purpose. A short pointer gesture keeps the native
 control action: click opens the space selector, click/focus enters channel
 search. Movement beyond `4px` starts native window drag through
-`useChromeDragGesture()` / `getCurrentWindow().startDragging()` and suppresses
+`useChromeDragGesture()`, which asks the backend to drag the page's window
+(`start_window_drag`, SPEC_TABS.md, В23), and suppresses
 the following click. This keeps the Zed-like behavior where even filled chrome
 can be used to move the window without turning controls into dead drag-only
 areas.
@@ -1828,6 +1844,14 @@ Mine гасит контент у кромки маской прозрачнос
 подсказку по середине буквы. Маску несёт само поле ввода, а не вся поверхность
 поиска, поэтому кнопка очистки `X` справа от поля остаётся целой.
 
+Полоса вкладок (03.10.2026) растворяет оба горизонтальных края, за которыми
+спрятаны вкладки: правый той же маской, что строки боковой панели
+(`createRightFadeMaskStyle` без прозрачного хвоста), левый её зеркалом
+(`createLeftFadeMaskStyle`), ширина `24px`. Когда вкладки спрятаны с обеих
+сторон, две маски пересекаются. Здесь маска, а не накладка: вкладки лежат на
+хроме, исчезать им есть куда только в тот же цвет, поэтому растворение работает
+в обеих темах и не зависит от настройки `Fade content under the chrome`.
+
 Верхняя кромка прокручиваемых поверхностей использует не маску, а накладку: цвет
 поверхности кладётся поверх контента и растворяется вниз. Контент сохраняет
 собственную непрозрачность и проезжает под полосой целым.
@@ -2065,14 +2089,140 @@ that exist specifically to prevent drift: `MenuTextTrigger` and
 Раздел проверяется вживую: [edge-states-audit.mjs](scripts/edge-states-audit.mjs)
 открывает его в браузере и падает, если экран не помещается в рамку, текст
 совпал по цвету с фоном, какое-то состояние не отрисовалось или что-то бросило
-исключение. Отдельная точка входа `edge-states.html` существует только в dev —
-в продакшен-сборку входят лишь `index.html` и `settings.html`.
+исключение. Отдельная точка входа `edge-states.html` существует только в dev:
+в продакшен-сборку входят лишь `index.html`, `settings.html` и `tabbar.html`.
 
 Контракты состояний: [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md),
 [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md),
 [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md).
 
 ## Макет
+
+### Полоса вкладок
+
+Реализована 03.10.2026 ([SPEC_TABS.md](SPEC_TABS.md), от В43 до В50, от В60
+до В63). Отдельная страница интерфейса `tabbar.html` (`src/tabbar/`), одна на
+окно, во всю его ширину над страницей вкладки. Видна всегда, и при одной
+вкладке (РП2).
+
+**Геометрия.** Ряд `ChromeRow as="header" separator="bottom"`, та же система,
+что у верхней панели: содержимое `30px` (`--chrome-row-content-height`) и
+разделитель `1px` снизу, всего `31px` (`TAB_BAR_HEIGHT_PX` в
+`src-tauri/src/domain/windows.rs`; `src/tabbar/constants.ts` повторяет
+значение, тест сверяет его с исходником Rust и с токенами хрома). Нижний
+разделитель полосы и есть шов со страницей вкладки: своей верхней границы
+страница не рисует. Поверхность `bg-chrome`: страница полосы целиком хром,
+`tabbar.css` красит `html`, `body` и `#root` токеном `--chrome`, а
+`tabbar.html` до загрузки стилей ставит те же значения `oklch` светлой и тёмной
+темы, поэтому первый кадр не отличается от следующих.
+
+Порядок слева направо:
+
+1. Резерв светофоров `data-traffic-light-reserve`, `80px` (`w-20`), без
+   интерактивных элементов. В полноэкранном режиме системных кнопок нет, а
+   резерв остаётся, чтобы ничего не сдвигалось.
+2. Кнопка бокового меню `SidebarToggleButton` (раздел «Тулбар») с отступом
+   `8px` справа (`pr-2`). Действует на боковое меню окна.
+3. Вкладки: `role="tablist"`, `data-tab-strip`.
+4. Кнопка `+`: lucide `Plus`, `variant="chrome"`, `size="chrome-icon"`,
+   доступное имя `New Tab`, в слоте с отступами `4px` (`px-1`) сразу за
+   последней вкладкой.
+5. Остаток ряда: зона перетаскивания окна.
+
+Резерв, слот кнопки бокового меню, слот `+` и остаток ряда перетаскивают окно
+общим жестом хрома с порогом `4px` (`useChromeDragGesture`). Жест просит
+бэкенд начать перетаскивание (`start_window_drag`): страница не знает своего
+окна после переноса вкладки (В22, В23). До первого состояния окна полоса
+показывает `TabBarPending`: тот же ряд с резервом и зоной перетаскивания, без
+вкладок.
+
+**Ширина.** Все вкладки одной ширины: ширина ряда без слота `+` делится поровну
+и округляется вниз до целого пикселя, в пределах от 96 до 240 px
+(`TAB_MIN_WIDTH_PX`, `TAB_MAX_WIDTH_PX`). Блок вкладок занимает ровно их сумму,
+поэтому `+` стоит вплотную к последней вкладке. После закрытия вкладки
+указателем (крестик, средняя кнопка) ширины держатся, пока указатель над
+полосой: под указателем оказывается крестик следующей вкладки. Удержание
+снимают уход указателя с полосы и появление вкладок сверх числа на момент
+закрытия.
+
+**Вкладка.** Узел `role="tab"` с полями `2px` по бокам (`px-[2px]`) несёт
+плашку `ChromePlate` высотой `24px`: `rounded-1` (3px), отступы
+`pl-2 pr-[2px]`, промежуток `4px` между подписью и крестиком. Область нажатия
+занимает всю высоту ряда (`ChromeControl`).
+
+| Состояние | Плашка | Подпись | Имя пространства после коллекции |
+|---|---|---|---|
+| Видимая (`aria-selected`) | `bg-component-fill` | `text-foreground` | `text-muted-foreground` |
+| Покой | без заливки | `text-muted-foreground` | `text-tertiary-foreground` |
+| Наведение | `bg-active` | `text-foreground` | `text-muted-foreground` |
+
+Фокус с клавиатуры рисует обводку `1px` цветом `ring` внутри плашки
+(`-outline-offset-1`), заливка остаётся по состоянию.
+
+**Подпись** (В47, `tabLabel.ts`). Текст `13px` (правило текста интерфейса для
+`header.chrome-row .text-sm`), одна строка, обрезка многоточием. На Everything
+подпись это имя пространства. Внутри коллекции сначала имя коллекции, за ним
+через `6px` (`ml-1.5`) имя пространства приглушённым цветом. Имя коллекции
+держит своё место (`shrink-0`) и обрезается, только когда длиннее всей
+вкладки; имя пространства сокращается первым. Вкладка без пространства
+подписана `Choose Space`. Полную подпись показывает системная подсказка
+`title`, в ней имена разделены ` · `.
+
+**Крестик.** `Button variant="ghost" size="icon-xs"`, уменьшенный до `20px`
+(`size-5`), скругление `2px`, цвет `text-muted-foreground`, lucide `X` `13px`
+с линией `1px`. На видимой вкладке виден всегда, на остальных только при
+наведении; место под него занято всегда (`invisible`), поэтому подпись не
+прыгает. Доступное имя `Close Tab`, в порядок табуляции не входит. Средняя
+кнопка мыши закрывает вкладку, на которой её нажали и отпустили.
+
+**Прокрутка.** Когда вкладки не помещаются и в `96px`, блок вкладок
+прокручивается по горизонтали без полосы прокрутки (`scrollbar-width: none`,
+`::-webkit-scrollbar` скрыт, `overscroll-behavior-x: contain`). Край, за
+которым спрятаны вкладки, растворяется маской шириной `24px` с кривой правой
+кромки боковой панели: справа `createRightFadeMaskStyle`, слева
+`createLeftFadeMaskStyle`; прокрученный в середину блок растворяет оба края
+пересечением двух масок (раздел «Растворение кромок»). Край считается
+скрытым со смещения `1px` (`TOP_FADE_SCROLLED_THRESHOLD_PX`). Видимая вкладка
+всегда прокручена в видимую часть целиком, с наименьшим сдвигом.
+
+**Клавиатура** (В49, `tabKeyboard.ts`). В порядке табуляции одна вкладка,
+по умолчанию видимая. Стрелки влево и вправо двигают фокус по кругу, Home и End
+на первую и последнюю, Enter и пробел показывают вкладку, Delete и Backspace
+закрывают её, и фокус уходит на соседнюю справа, а без неё слева. ⌃Tab и
+⌃⇧Tab страница полосы ловит сама и передаёт бэкенду
+(`activate_adjacent_tab`). Щелчок фокус в полосе не оставляет: нажатие не
+фокусирует вкладку, и фокус уходит в показанную вкладку.
+
+**Меню вкладки** (В50, `tabMenu.ts`). Правый щелчок открывает нативное меню
+у указателя (`Menu` Tauri): `Move Tab to New Window`, разделитель, `Close Tab`,
+`Close Other Tabs`. У единственной вкладки окна первый и последний пункты
+выключены. Меню одно на полосу: пункты действуют на вкладку, для которой его
+открыли последним. Своих всплывающих элементов страница полосы не рисует:
+она высотой в один ряд и обрезала бы их (В6). Бросок файлов на полосу ничего
+не делает.
+
+**Перестановка** (В60, `tabDrag.ts`). Нажатие на вкладку и сдвиг дальше `4px`
+превращают жест в перетаскивание, щелчок после него подавляется. Вкладка идёт
+за указателем по горизонтали, не выходя за ряд вкладок, и лежит над соседями
+(`z-10`) без анимации. Соседи сдвигаются на ширину вкладки за `150ms`
+(`TAB_REORDER_MOTION_MS`) с кривой `cubic-bezier(0.22, 1, 0.36, 1)`, при
+уменьшении движения сразу (`motionDuration`). Место меняется, когда вкладка
+закрыла половину соседа. Пока идёт перетаскивание, вкладки не принимают
+указатель. Отпускание показывает новый порядок сразу, без анимации и без
+ожидания ответа бэкенда; Escape возвращает вкладку на место.
+
+**Отрыв и присоединение** (от В61 до В63). Указатель ниже полосы больше чем
+на `24px` (`TAB_DETACH_THRESHOLD_PX`) или за левым, правым либо верхним краем
+окна отрывает вкладку: дальше её ведёт бэкенд, и новое окно идёт за указателем
+так, что вкладка в его полосе стоит под указателем с прежним смещением захвата.
+Единственная вкладка окна не отрывается: её перетаскивание двигает само окно.
+В полноэкранном окне отрыв действует как `Move Tab to New Window` (В65), а
+перетаскивание единственной вкладки ничего не делает. Пока перетаскиваемая
+вкладка над полосой другого окна, в той полосе стоит маркер места вставки:
+вертикальная линия `2px` (`DROP_MARKER_WIDTH_PX`) на всю высоту ряда цветом
+`bg-foreground`, по центру границы между вкладками и внутри ряда на обоих его
+концах. Маркер не принимает указатель и скрыт от экранного диктора. Место
+вставки это число вкладок, чей центр левее указателя.
 
 ### Тулбар
 
@@ -2081,19 +2231,27 @@ that exist specifically to prevent drift: `MenuTextTrigger` and
 внутри top chrome не выключают drag целиком: они используют общий threshold
 gesture (`4px`) — короткий жест остаётся click/focus, движение за порог
 запускает native window drag и гасит последующий click.
-Traffic-light reserve размечается как `data-traffic-light-reserve`, имеет
-ширину `80px`, наследует тот же surface, что и top chrome, и не содержит
-интерактивных DOM-кнопок. Видимость inactive native traffic lights управляется
-только AppKit-слоем, не CSS.
 
-Сразу после reserve стоит кнопка бокового меню (`SidebarToggleButton`,
-`data-top-chrome-sidebar-toggle`): стандартная иконочная кнопка верхней панели
+С 03.10.2026 первый ряд страницы вкладки начинается с переключателя
+пространства: резерв светофоров и кнопка бокового меню переехали в полосу
+вкладок над страницей (раздел «Полоса вкладок», SPEC_TABS.md, В43, РП6).
+Traffic-light reserve размечается как `data-traffic-light-reserve`, имеет
+ширину `80px`, наследует surface хрома вокруг себя и не содержит
+интерактивных DOM-кнопок; он стоит в полосе вкладок и в окне настроек.
+Видимость inactive native traffic lights управляется только AppKit-слоем, не
+CSS.
+
+Кнопка бокового меню (`SidebarToggleButton`, `data-top-chrome-sidebar-toggle`)
+стоит в полосе вкладок сразу после резерва: стандартная иконочная кнопка хрома
 (`variant="chrome"`, `size="chrome-icon"`) с lucide `Columns2`. Подпись для
 экранного диктора `Hide Sidebar` или `Show Sidebar`, `aria-pressed` пока меню
 открыто. Действие то же, что у пункта View → Hide Sidebar (⌃⌘S), у кнопки
-`Hide Sidebar` в нижней панели и у свайпа двумя пальцами; состояние одно,
-`useSidebarResize.collapsed`. Кнопка живёт в сегменте бокового меню верхнего
-ряда, поэтому при свёрнутом меню остаётся в той же точке окна.
+`Hide Sidebar` в нижней панели, у свайпа двумя пальцами и у перетаскивания края
+меню. Боковым меню владеет окно: его ширину и свёрнутость хранит бэкенд
+(`SavedWindow.sidebar`), меняет командой `set_window_sidebar` и рассылает
+событием `window-sidebar-changed` всем вкладкам окна и его полосе (В56).
+Поэтому кнопка стоит в одной точке окна при любой вкладке и любом состоянии
+меню, а меню не прыгает при переключении вкладок.
 
 Почему `Columns2`, а не `PanelLeft` (решение пользователя 02.10.2026):
 `PanelLeft` рисует узкую колонку у края, а левая панель Mine держит коллекции
@@ -2239,7 +2397,7 @@ hover/active; текст участвует в общем sidebar row focus-mode
 
 #### Общее
 
-Ширина по умолчанию: 300px. Диапазон ресайза: 220–600px. Порог сворачивания: 100px. Паддинг строки в полном режиме: `py-1` (4px), без `px-*`.
+Ширина по умолчанию 360px: с ней бэкенд создаёт боковое меню каждого нового окна (`SIDEBAR_DEFAULT_WIDTH_PX`, SPEC_TABS.md, В56), страница поднимает её до своего минимума. Диапазон ресайза: от 220 до 600px. Порог сворачивания: 100px. Паддинг строки в полном режиме: `py-1` (4px), без `px-*`.
 App shell keeps the right/main pane at a minimum of `304px`: `240px` metadata
 card minimum plus two `32px` side insets. Desktop `minWidth` is `904px`
 (`600px` max sidebar + `304px` min right pane).
@@ -2607,11 +2765,12 @@ SPEC_AUDIT_FIXES.md): строка встаёт сразу.
 Vite-entry (`settings.html` → `src/settings/`) — не тянет App/Grid/Detail.
 Спецификация: SPEC_SETTINGS_WINDOW.md.
 
-Хром консистентен с main-окном: `titleBarStyle: Overlay` + `hiddenTitle`,
+Хром консистентен с хромом вкладок: `titleBarStyle: Overlay` + `hiddenTitle`,
 верхний бар `h-8 bg-chrome border-b border-border` с traffic-light reserve
 `80px`, заголовок `Settings` (`font-mono text-sm text-muted-foreground`),
 `data-tauri-drag-region`; native background синхронизируется через
-`useNativeWindowChromeSurface("--chrome")`, как в main.
+`useNativeWindowChromeSurface("--chrome")`, как у вкладок: страница сообщает
+цвет бэкенду (`report_window_surface`).
 
 Лэйаут: левая навигация `176px` (`border-r border-border`, строки
 `h-8 rounded-1 px-2 font-mono text-sm` — язык сайдбара; активная `bg-active
@@ -2624,21 +2783,24 @@ text-foreground`, остальные `text-muted-foreground` с hover до foreg
 
 Строка пространства (Spaces): имя → путь → сводка
 `N elements · N markdown · N media · N files · size` (голые числа — язык
-счётчиков; `formatBytes` — десятичная база как в Finder). Строка — селектор:
-клик переключает пространство, активная строка `bg-active` (канон выбранного,
-без текстовых меток), остальные `bg-accent hover:bg-active`. Строки
+счётчиков; `formatBytes`: десятичная база как в Finder). Клик по строке
+показывает пространство во вкладке (`show_space`, 03.10.2026): выбирает его
+вкладку, выбранную последней, а без неё открывает новую вкладку в последнем
+окне. Строки пространств, открытых хотя бы в одной вкладке, получают
+`bg-active` (канон выбранного, без текстовых меток; таких строк может быть
+несколько), остальные `bg-accent hover:bg-active`. Строки
 перетаскиваются (dnd-kit, distance 8 — клик не drag); порядок в config —
 канонический для всех списков пространств. Правый слот фиксированного размера
 (`size-8`): `⋯`-кнопка `opacity-0 → group-hover/focus-within:opacity-100`
 (opacity-канон карточек, открытое меню пиннит видимость). Никаких постоянных
 кнопок у строк: единственная команда `Remove Space` живёт в `⋯`-меню
-(`variant="detach"` + `Unlink`); Remove активного переключает на следующее
-пространство до забывания. Полные зафиксированные решения —
+(`variant="detach"` + `Unlink`); `Remove Space` доступен всегда, вкладки
+забытого пространства переходят к выбору пространства. Полные зафиксированные решения:
 SPEC_SETTINGS_WINDOW.md § Design decisions.
 
 Межоконная синхронизация: settings-окно пишет localStorage (общий per origin)
-и эмитит Tauri-событие `settings-changed` (`{ key }`); main-окно перечитывает
-изменённый ключ. Тема применяется каждым окном самостоятельно при старте
+и эмитит Tauri-событие `settings-changed` (`{ key }`); страницы вкладок и
+полосы вкладок перечитывают изменённый ключ. Тема применяется каждым окном самостоятельно при старте
 (`applyTheme(getStoredTheme())` до первого рендера) — модуль
 `src/lib/themeMode.ts`.
 

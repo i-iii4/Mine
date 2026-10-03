@@ -55,7 +55,7 @@
 - `SPEC_AI_ACCESS.md` — доступ AI-агентов к материалам: ядро → CLI `mine` → MCP, read-only контракт, JSON-вывод как будущие схемы MCP
 - `SPEC_ONBOARDING.md` — онбординг: расширение как самостоятельная точка входа, установка расширения без терминала, первый запуск, пустая лента, импорт Are.na
 - `SPEC_VAULT_LIFECYCLE.md` — жизненный цикл пространства: раскладка трёх папок и настраиваемые целевые папки, детерминированное правило дублей, перемещения, недоступное пространство, удаление и уборка
-- [SPEC_TABS.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_TABS.md>): вкладки пространств: своя полоса и отдельная страница на вкладку, несколько открытых пространств в одном процессе, сессия между запусками, перестановка и отрыв в новое окно; спецификация 03.10.2026, решения РП1 по РП7 приняты, работа начинается с пробы Э0
+- [SPEC_TABS.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_TABS.md>): вкладки пространств: своя полоса и отдельная страница на вкладку, несколько открытых пространств в одном процессе, сессия между запусками, перестановка и отрыв в новое окно; реализовано 03.10.2026 (этапы Э0 по Э4), живая приёмка за пользователем
 - `SPEC_CLOUD_STORAGE.md` — хранилище в iCloud: неблокирующий интерфейс, честный прогресс, индикаторы загрузки и индексации, встроенная рекомендация вместо форума
 - `AUDIT_ACTIVATION.md` — аудит активации: юзер-джорни первой сессии до первой ценности, работы пользователя, вердикты и рекомендации (12.08.2026)
 - `AUDIT_VAULT_RESILIENCE.md` — аудит устойчивости хранилищ: полный перебор сценариев структуры/конфликтов/потерь, «сейчас/проблема/целевое» (12.08.2026)
@@ -67,7 +67,7 @@
 
 | Technology | Purpose |
 |---|---|
-| Tauri v2 | Десктопная оболочка, системные API, файловый доступ |
+| Tauri v2 | Десктопная оболочка, системные API, файловый доступ; флаг `unstable` для окна без собственной страницы и дочерних страниц окна (полоса вкладок и вкладки, `Window::add_child`) |
 | Rust | Бэкенд: файловые операции, индексирование, thumbnails |
 | rusqlite | SQLite + FTS5 — поисковый индекс и связи между блоками |
 | notify | File watcher — отслеживание изменений в vault |
@@ -79,7 +79,7 @@
 | tiny_http + http-range + url + getrandom | Native host: локальный upload-сервер для бинарных файлов, валидация URL, upload-токены |
 | pulldown-cmark | Native host: разбор CommonMark, чтобы примеры в коде не превращались во вставки медиа |
 | React 19 | UI-фреймворк |
-| react-router | Роутинг main-окна |
+| react-router | Роутинг страницы вкладки |
 | Vite | Сборка фронтенда, HMR |
 | react-force-graph-2d + d3-force | Canvas Graph View: force-directed layout, zoom/pan, custom node paint |
 | TypeScript | Язык фронтенда |
@@ -132,7 +132,11 @@ local-arena/
 │   │   ├── space_registry.rs   # Реестр пространств по vault_id, восстановление, поиск переехавшей папки
 │   │   ├── clipper_registration.rs # Регистрация помощника в браузерах: список браузеров, замена помощника
 │   │   ├── youtube_embed.rs    # Локальная страница-обёртка проигрывателя YouTube (Referer, ошибка 153)
-│   │   ├── frame_context_menu.rs # Правый клик по встроенному кадру: меню Mine вместо меню WebKit
+│   │   ├── frame_context_menu.rs # Правый клик по встроенному кадру: меню Mine вместо меню WebKit, событие вкладке, где щёлкнули
+│   │   ├── tabs/               # Окна вкладок (SPEC_TABS.md): TabShell, восстановление из windows.json, полоса и страницы вкладок
+│   │   │   ├── mod.rs          # Создание окон и страниц, переключение, выгрузка, ведущая вкладка, vault_path, Finder и настройки
+│   │   │   ├── native.rs       # objc2: порядок слоёв страниц, фон окна, страница без своего фона, сигнал нехватки памяти
+│   │   │   └── drag.rs         # Отрыв вкладки в новое окно и присоединение к другому: слежение за указателем, Escape
 │   │   ├── source_video_download.rs # Download Media: yt-dlp, склейка, прогресс, отмена
 │   │   ├── domain/             # Чистая бизнес-логика (без Tauri, без SQLite)
 │   │   │   ├── mod.rs
@@ -143,6 +147,7 @@ local-arena/
 │   │   │   ├── article_audio.rs # PreparedArticleSpeech: speakable text, text_hash
 │   │   │   ├── tag.rs          # Tag operations
 │   │   │   ├── vault.rs        # Vault path resolution, derived store layout, file naming
+│   │   │   ├── windows.rs      # SavedWindows: схема windows.json, правила чтения, операции над окнами и вкладками
 │   │   │   └── search.rs       # Search query parsing
 │   │   ├── storage/            # Персистентность (SQLite, FS)
 │   │   │   ├── mod.rs
@@ -169,6 +174,7 @@ local-arena/
 │   │   │   ├── vault_stats.rs  # Read model статистики хранилища
 │   │   │   ├── files.rs        # File operations (copy, move, delete)
 │   │   │   ├── graph.rs        # GraphSnapshot projection for Graph View
+│   │   │   ├── window_store.rs # windows.json: атомарная запись с задержкой, файлы corrupt и новее, состояние выхода
 │   │   │   └── thumbnails.rs   # Thumbnail generation + cache
 │   │   ├── watcher/            # File system watcher
 │   │   │   ├── mod.rs
@@ -182,12 +188,17 @@ local-arena/
 │   │   └── commands/           # Tauri commands (тонкий слой, без логики)
 │   │       ├── mod.rs
 │   │       ├── state.rs        # AppState, VaultState, CommandError (composition root)
+│   │       ├── spaces.rs       # SpaceHost, OpenSpace, аренды пространств, привязка вкладок к пространствам
+│   │       ├── space_events.rs # Адресация событий: вкладки пространства, ведущая вкладка, окно настроек
+│   │       ├── effects.rs      # Перечень команд по действию на пространство, vault-changed другим вкладкам
+│   │       ├── tabs.rs         # Команды вкладок и окон: bootstrap, переключение, закрытие, перенос, show_space
+│   │       ├── app_open.rs     # Папка пространства из Finder или расширения: показ во вкладке
 │   │       ├── freshness.rs     # Reconciliation coordinator
 │   │       ├── preview_reconcile.rs # Derived preview queue
 │   │       ├── thumbnail_sweeps.rs # Thumbnail sweep coordinator
 │   │       ├── thumbnails.rs   # Thumbnail commands (Phase 2 upgrades)
 │   │       ├── native_shell_smoke.rs # Packaged WKWebView IPC smoke report
-│   │       ├── window_chrome.rs # Native View-menu projection for Sidebar state
+│   │       ├── window_chrome.rs # Заголовок пункта View по боковому меню последнего окна
 │   │       ├── blocks.rs       # → вызывает domain + storage
 │   │       ├── channels.rs     # list/create/delete/reorder channels
 │   │       ├── conflicts.rs    # Vault conflict resolution
@@ -212,11 +223,19 @@ local-arena/
 │   ├── Cargo.toml
 │   └── tauri.conf.json
 ├── src/                        # React-фронтенд
-│   ├── main.tsx                # Точка входа React (main-окно)
-│   ├── App.tsx                 # Корневой компонент + роутинг
+│   ├── main.tsx                # Точка входа страницы вкладки (index.html)
+│   ├── App.tsx                 # Корневой компонент + роутинг, запуск вкладки по TabBootstrap, ведущая вкладка
+│   ├── tabbar/                 # Полоса вкладок (третий Vite-entry: tabbar.html), одна на окно
+│   │   ├── main.tsx            # Bootstrap: вид до первого рендера, защита от управляющих символов
+│   │   ├── TabBarApp.tsx, TabBar.tsx # Ряд полосы: резерв светофоров, кнопка бокового меню, вкладки, +
+│   │   ├── useTabBarState.ts   # tabbar-state, window-sidebar-changed, tabbar-drop-hover
+│   │   ├── tabLayout.ts, tabLabel.ts, tabKeyboard.ts, tabMenu.ts, tabDrag.ts # Ширины и растворение краёв, подпись, клавиатура, нативное меню, перетаскивание
+│   │   ├── constants.ts        # Геометрия и время полосы (сверяется с domain/windows.rs)
+│   │   └── appearance.ts, tabbar.css # Тема и шрифт по настройкам, поверхность хрома
 │   ├── settings/               # Окно настроек (второй Vite-entry: settings.html)
 │   │   ├── main.tsx            # Bootstrap: тема до первого рендера
 │   │   ├── SettingsApp.tsx     # Хром + навигация разделов
+│   │   ├── OpenSpaceSelect.tsx, useOpenSpaces.ts # Выбор пространства из открытых во вкладках (Orphans, New files)
 │   │   └── *Section.tsx        # AppearanceSection, GraphSection, SpacesSection, OrphansSection и др.; раздела Extension нет
 │   ├── components/
 │   │   ├── Grid.tsx            # Virtualized masonry grid — scroll-based windowing, direction-aware overscan, priority loading
@@ -245,7 +264,7 @@ local-arena/
 │   │   └── EdgeStatesSection.tsx # Витрина краевых состояний (гейт test:edge-states)
 │   ├── hooks/                  # useSidebarResize, useGridScroll, useChannelPreviewsEvents, useProjectionRevisionOwner, useThumbnailUpgrade и др.
 │   ├── types/                  # generated.ts from Rust/Specta + frontend-owned index.ts
-│   ├── lib/                    # commands.ts (IPC), masonryLayout.ts, cardLayout.ts, cardHeight.ts, cardAspect.ts (политика обрезки), assets.ts, clipboard.ts, utils.ts (cn()) и др.
+│   ├── lib/                    # commands.ts (IPC), masonryLayout.ts, cardLayout.ts, cardHeight.ts, cardAspect.ts (политика обрезки), assets.ts, clipboard.ts, utils.ts (cn()), pageEvents.ts (события своей страницы), tabPage.ts (память вкладки), tabVisibility.ts (показ и пауза медиа), controlCharGuard.ts и др.
 │   ├── workers/                # fontMetrics.worker.ts (Canvas measureText), thumbWorker.ts
 │   ├── dev/                    # Dev-only Feed, Graph, ColdSpace and SidebarReorder acceptance routes
 │   ├── test/                   # Vitest setup
@@ -299,7 +318,8 @@ local-arena/
 ├── vite.extension.config.ts    # Vite-конфигурация для сборки расширения
 ├── vite.overlay.config.ts      # Vite-конфигурация overlay-варианта расширения
 ├── public/                     # Статические ассеты
-├── index.html
+├── index.html                  # Vite-entry страницы вкладки
+├── tabbar.html                 # Vite-entry полосы вкладок
 ├── components.json             # Конфигурация shadcn/ui
 ├── vite.config.ts
 ├── settings.html               # Второй Vite-entry: окно настроек
@@ -337,6 +357,7 @@ local-arena/
 разложить его можно CLI `migrate-vault-layout`.
 
 ```
+~/Library/Application Support/com.mine.app/windows.json        # Сохранённые окна и вкладки (SPEC_TABS.md)
 ~/Library/Application Support/com.mine.app/vaults/<vault-id>/  # Local derived store
 ├── index.db
 ├── cloud-waits.json                # Журнал ожиданий iCloud по сессиям

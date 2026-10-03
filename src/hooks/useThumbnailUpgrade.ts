@@ -25,7 +25,7 @@
 // Contract: SPEC_THUMBNAILS.md#contracts
 
 import { useEffect, useRef } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { listenPage } from "@/lib/pageEvents";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { listPendingThumbUpgrades, saveThumb, saveTilePoster } from "@/lib/commands";
 import type { TilePosterUpgrade } from "@/lib/commands";
@@ -378,11 +378,11 @@ export function useThumbnailUpgrade(enabled: boolean, onUpgraded?: () => void): 
     })();
 
     // Subscribe to live upgrade requests from the watcher.
-    const unlistenPromise = listen<ThumbUpgradeRequestedEvent>(
+    const unlistenPromise = listenPage<ThumbUpgradeRequestedEvent>(
       "thumb:upgrade-requested",
       (event) => dispatch(event.payload),
     );
-    const unlistenPendingPromise = listen("derived-preview-pending", () => {
+    const unlistenPendingPromise = listenPage("derived-preview-pending", () => {
       void enumeratePending();
     });
 

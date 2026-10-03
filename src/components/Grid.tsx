@@ -14,7 +14,8 @@ import {
   ContextMenu,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import type { LightBlock, TagCount } from "@/types";
+import type { LightBlock, ScrollAnchor as TabScrollAnchor, TagCount } from "@/types";
+import { useTabVisible } from "@/lib/tabVisibility";
 import { TopFadeScrim } from "./TopFadeScrim";
 import { useDensity } from "@/lib/density";
 import { FeedShowContext, useFeedDisplay, type FeedShow } from "@/lib/feedDisplay";
@@ -90,6 +91,7 @@ import {
   feedPointerPosition,
   findLayoutNeighborSlug,
   findMarqueeSelectionSlugs,
+  findFirstCardAtOrBelowTop,
   findPositionForSlug,
   findViewportPreservationAnchor,
   firstVisibleSlug,
@@ -253,6 +255,21 @@ interface GridProps {
   onLoadMoreBlocks?: () => void;
   /** Dissolve cards into transparency as they scroll up under the chrome. */
   scrollEdgeFade?: boolean;
+  /**
+   * The feed scrolled or reflowed. `read` tells where it stands now: the
+   * first card whose top edge is at or below the feed's top edge and that
+   * distance, or null at the very top. Read on demand, so a scroll costs the
+   * caller nothing until it reports (SPEC_TABS.md, В31).
+   */
+  onScrollPositionChange?: (read: () => TabScrollAnchor | null) => void;
+  /**
+   * Where a restored tab stood (В40): once that card and every card above it
+   * have their height, the feed scrolls so the card's top sits `offset_px`
+   * below the feed's top, once per request. The caller hands it over only
+   * when the card is in `blocks`.
+   */
+  restoreScrollAnchor?: TabScrollAnchor | null;
+  onScrollAnchorRestored?: () => void;
   /**
    * Whether the card under the pointer marks its collections in the sidebar
    * (SPEC_CARD_STATES.md, С4). The keyboard-focused card always does.
@@ -487,7 +504,13 @@ export function Grid({
   loadingMoreBlocks = false,
   onLoadMoreBlocks,
   scrollEdgeFade = false,
+  onScrollPositionChange,
+  restoreScrollAnchor = null,
+  onScrollAnchorRestored,
 }: GridProps) {
+  // A hidden tab plays nothing; shown again, the feed's own rules decide
+  // what plays (SPEC_TABS.md, В41).
+  const tabVisible = useTabVisible();
   const spacing = useDensity();
   const layoutGap = spacing;
   // Presentation of the cards (SPEC_FEED_DISPLAY.md, Д10 to Д16): read by the
@@ -1202,6 +1225,55 @@ export function Grid({
     renderReadyBlockIds,
     viewportHeight,
   ]);
+
+  // Where the feed stands, for the tab's memory. The reader works from the
+  // latest geometry whenever the caller asks, so no anchor is computed per
+  // scroll frame.
+  const scrollPositionInputRef = useRef({ positions: layout.positions, blocks, gridTopInset });
+  scrollPositionInputRef.current = { positions: layout.positions, blocks, gridTopInset };
+  const readScrollPosition = useCallback((): TabScrollAnchor | null => {
+    const scrollTopNow = latestScrollTopRef.current;
+    if (scrollTopNow <= TOP_OF_FEED_SCROLL_EPSILON_PX) return null;
+    const input = scrollPositionInputRef.current;
+    const anchor = findFirstCardAtOrBelowTop(input.positions, input.blocks, scrollTopNow, input.gridTopInset);
+    return anchor ? { slug: anchor.slug, offset_px: anchor.offsetTop } : null;
+  }, []);
+  const onScrollPositionChangeRef = useRef(onScrollPositionChange);
+  onScrollPositionChangeRef.current = onScrollPositionChange;
+  useEffect(() => {
+    onScrollPositionChangeRef.current?.(readScrollPosition);
+  }, [blocks, layout.positions, readScrollPosition, scrollTop]);
+
+  // A restored tab returns to its card (SPEC_TABS.md, В40). It waits until
+  // the card and every card above it have their height, so the cards above
+  // do not move it again, then scrolls once for this request.
+  const handledScrollRestoreRef = useRef<TabScrollAnchor | null>(null);
+  const onScrollAnchorRestoredRef = useRef(onScrollAnchorRestored);
+  onScrollAnchorRestoredRef.current = onScrollAnchorRestored;
+  useLayoutEffect(() => {
+    const request = restoreScrollAnchor;
+    const scrollElement = parentRef.current;
+    if (!request || handledScrollRestoreRef.current === request || !scrollElement || viewportHeight <= 0) {
+      return;
+    }
+    const position = findPositionForSlug(layout.positions, blocks, request.slug);
+    if (!position || committedEndIndex < position.index) return;
+    handledScrollRestoreRef.current = request;
+    const nextScrollTop = clampedScrollTopForAnchor(
+      layout,
+      scrollElement.clientHeight || viewportHeight,
+      position,
+      { slug: request.slug, offsetTop: request.offset_px },
+      gridTopInset,
+    );
+    if (Math.abs(scrollElement.scrollTop - nextScrollTop) > 0.5) {
+      scrollElement.scrollTop = nextScrollTop;
+      latestScrollTopRef.current = nextScrollTop;
+      setScrollTop(nextScrollTop);
+      scrollElement.dispatchEvent(new Event("scroll"));
+    }
+    onScrollAnchorRestoredRef.current?.();
+  }, [blocks, committedEndIndex, gridTopInset, layout, restoreScrollAnchor, viewportHeight]);
 
   const autoplayEligibleBySlug = useMemo(() => {
     const eligible = new Map<string, ReturnType<typeof normalizeFeedPlayback>>();
@@ -1957,7 +2029,7 @@ export function Grid({
   const activeHeavyPlaybackRef = useRef<ReadonlySet<string>>(new Set<string>());
 
   const activePlaybackSlugs = useMemo(() => {
-    if (renderReadyBlockIds.size === 0 || viewportHeight <= 0) {
+    if (!tabVisible || renderReadyBlockIds.size === 0 || viewportHeight <= 0) {
       return new Set<string>();
     }
 
@@ -2034,6 +2106,7 @@ export function Grid({
     renderReadyBlockIds,
     scrollTop,
     show,
+    tabVisible,
     viewportHeight,
     visibleItems,
   ]);

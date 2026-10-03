@@ -73,6 +73,7 @@ fn emit_build_identity() {
         "bun.lock",
         "index.html",
         "settings.html",
+        "tabbar.html",
         "vite.config.ts",
         "extension/manifest.json",
     ] {

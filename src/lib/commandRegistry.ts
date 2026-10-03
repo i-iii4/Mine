@@ -36,8 +36,21 @@ export interface CommandDefinition {
   ///
   /// - `structural`: arrows, Enter, Escape, Tab. These are the language of the
   ///   interface rather than shortcuts; rebinding them breaks the model.
-  /// - `system`: macOS owns the combo (⌘, on Settings) and expects it there.
+  /// - `system`: macOS owns the combo (⌘, on Settings, ⌘T and the other tab
+  ///   and window chords) and expects it there. Shown, never recorded.
   fixed?: "structural" | "system";
+  /// More chords for the same fixed command: ⌃Tab beside ⇧⌘], ⌘2 to ⌘8
+  /// beside ⌘1. Matched like the binding; a command that can be rebound has
+  /// exactly one chord.
+  alternates?: readonly CommandBinding[];
+  /// The binding and its alternates are one run of keys (⌘1 to ⌘8), shown as
+  /// the first and the last joined by "…" rather than one by one.
+  run?: true;
+}
+
+/// ⌘1 to ⌘8 select a tab by its place; ⌘9 always selects the last one.
+function metaDigit(digit: number): CommandBinding {
+  return { key: String(digit), meta: true };
 }
 
 export const DEFAULT_COMMANDS: readonly CommandDefinition[] = [
@@ -116,6 +129,70 @@ export const DEFAULT_COMMANDS: readonly CommandDefinition[] = [
     name: "Paste",
     context: "global",
     binding: { key: "v", meta: true },
+  },
+
+  // ── Tabs and windows (SPEC_TABS.md, В55, В57) ─────────────────────────
+  // macOS keeps these chords for tabs and windows in every app. The ⌘ ones
+  // are native menu items; the pages catch ⌃Tab and ⌃⇧Tab.
+  {
+    id: "new-tab",
+    name: "New Tab",
+    context: "global",
+    binding: { key: "t", meta: true },
+    fixed: "system",
+  },
+  {
+    id: "new-window",
+    name: "New Window",
+    context: "global",
+    binding: { key: "n", meta: true },
+    fixed: "system",
+  },
+  {
+    id: "close-tab",
+    name: "Close Tab",
+    context: "global",
+    binding: { key: "w", meta: true },
+    fixed: "system",
+  },
+  {
+    id: "close-window",
+    name: "Close Window",
+    context: "global",
+    binding: { key: "w", meta: true, shift: true },
+    fixed: "system",
+  },
+  {
+    id: "next-tab",
+    name: "Show Next Tab",
+    context: "global",
+    binding: { key: "]", meta: true, shift: true },
+    alternates: [{ key: "Tab", ctrl: true }],
+    fixed: "system",
+  },
+  {
+    id: "previous-tab",
+    name: "Show Previous Tab",
+    context: "global",
+    binding: { key: "[", meta: true, shift: true },
+    alternates: [{ key: "Tab", ctrl: true, shift: true }],
+    fixed: "system",
+  },
+  {
+    id: "select-tab",
+    name: "Select Tab 1 to 8",
+    context: "global",
+    binding: metaDigit(1),
+    alternates: [2, 3, 4, 5, 6, 7, 8].map(metaDigit),
+    run: true,
+    fixed: "system",
+  },
+  {
+    id: "select-last-tab",
+    name: "Select Last Tab",
+    context: "global",
+    binding: metaDigit(9),
+    fixed: "system",
   },
 
   // ── Feed ──────────────────────────────────────────────────────────────
@@ -238,25 +315,43 @@ export function subscribeToCommands(listener: () => void): () => void {
 export interface ResolvedCommand extends CommandDefinition {
   /// What the interface shows — chord label or gesture hint.
   combo: string;
+  /// The same, one entry per key a fixed command answers to (⇧⌘] and ⌃⇥).
+  combos: readonly string[];
   /// Whether this command's binding differs from the shipped default.
   rebound: boolean;
   /// Matches the physical keydown. Absent for gestures.
   matches?: (e: KeyboardEvent) => boolean;
 }
 
+/// Every chord a command answers to: its binding, then its alternates.
+export function commandBindings(
+  command: Pick<CommandDefinition, "binding" | "alternates">,
+): CommandBinding[] {
+  return command.binding ? [command.binding, ...(command.alternates ?? [])] : [];
+}
+
+function comboLabels(definition: CommandDefinition, bindings: readonly CommandBinding[]): string[] {
+  if (bindings.length === 0) {
+    return definition.gesture ? [gestureLabel(definition.gesture)] : [];
+  }
+  const labels = bindings.map(bindingLabel);
+  return definition.run ? [`${labels[0]}…${labels[labels.length - 1]}`] : labels;
+}
+
 function resolve(definition: CommandDefinition): ResolvedCommand {
   const override = definition.fixed ? undefined : overrides[definition.id];
   const binding = override ?? definition.binding;
+  const bindings = commandBindings({ binding, alternates: definition.alternates });
+  const combos = comboLabels(definition, bindings);
   return {
     ...definition,
     binding,
-    combo: binding
-      ? bindingLabel(binding)
-      : definition.gesture
-        ? gestureLabel(definition.gesture)
-        : "",
+    combo: combos.join(" "),
+    combos,
     rebound: override !== undefined,
-    matches: binding ? (e: KeyboardEvent) => bindingMatches(binding, e) : undefined,
+    matches: bindings.length > 0
+      ? (e: KeyboardEvent) => bindings.some((candidate) => bindingMatches(candidate, e))
+      : undefined,
   };
 }
 

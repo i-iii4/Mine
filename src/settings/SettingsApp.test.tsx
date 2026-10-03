@@ -6,12 +6,13 @@ import { setCommandOverrides } from "@/lib/commandRegistry";
 import { SettingsApp } from "./SettingsApp";
 
 vi.mock("@/lib/commands", () => ({
-  listKnownVaults: vi.fn().mockResolvedValue([]),
-  getVaultPath: vi.fn().mockResolvedValue(null),
+  reportWindowSurface: vi.fn().mockResolvedValue(undefined),
+  listSpaces: vi.fn().mockResolvedValue([]),
+  spacesInTabs: vi.fn().mockResolvedValue([]),
+  showSpace: vi.fn(),
   addKnownVault: vi.fn(),
   forgetKnownVault: vi.fn(),
   reorderKnownVaults: vi.fn(),
-  selectVault: vi.fn(),
   spaceStats: vi.fn().mockResolvedValue({
     file_count: 0,
     markdown_count: 0,

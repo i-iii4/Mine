@@ -133,6 +133,8 @@ async function main() {
     "mine",
     "--bin",
     "cold-space-audit",
+    "--features",
+    "tooling",
     "--locked",
     "--",
     coldSource,

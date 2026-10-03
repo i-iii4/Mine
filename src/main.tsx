@@ -14,8 +14,13 @@ import {
 } from "@/lib/fontChoice";
 import { App } from "./App";
 import { getVaultPath, recordStartupMilestone, reportNativeShellSmoke } from "@/lib/commands";
+import { installControlCharGuard } from "@/lib/controlCharGuard";
 import { scheduleAfterNextPaint } from "@/lib/startup";
 import "./styles/global.css";
+
+// A tab is a child page of its window, where the arrow keys can type stray
+// control characters into fields (SPEC_TABS.md, В80): one guard for the page.
+installControlCharGuard();
 
 // Apply the stored theme and design variant before first paint (the settings
 // window owns the controls; this window re-applies on "settings-changed").

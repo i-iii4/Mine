@@ -3,7 +3,14 @@ import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useChromeDragGesture } from "@/hooks/useChromeDragGesture";
-import type { IndexedBlock, LightBlock, TagCount, VaultStats } from "@/types";
+import type {
+  DetailLinkMode,
+  IndexedBlock,
+  LightBlock,
+  MainViewMode,
+  TagCount,
+  VaultStats,
+} from "@/types";
 import { ActivityIndicators } from "./ActivityIndicators";
 import { ChromeRow, ChromeActions } from "./ChromeRow";
 import { CardMoreMenu } from "./CardHoverMenu";
@@ -13,9 +20,6 @@ import {
   type SegmentedControlOption,
 } from "./ui/segmented-control";
 import { FeedDisplayMenu } from "./FeedDisplayMenu";
-
-export type DetailLinkMode = "all" | "linked";
-export type MainViewMode = "grid" | "graph";
 
 const DETAIL_LINK_MODE_OPTIONS: SegmentedControlOption<DetailLinkMode>[] = [
   { value: "all", label: "All" },
@@ -27,18 +31,9 @@ const MAIN_VIEW_MODE_OPTIONS: SegmentedControlOption<MainViewMode>[] = [
   { value: "graph", label: "Graph" },
 ];
 
-const MAIN_VIEW_MODE_STORAGE_KEY = "mine.mainViewMode";
 const RU_INTEGER_FORMATTER = new Intl.NumberFormat("ru-RU", {
   maximumFractionDigits: 0,
 });
-
-export function getStoredMainViewMode(): MainViewMode {
-  return window.localStorage.getItem(MAIN_VIEW_MODE_STORAGE_KEY) === "graph" ? "graph" : "grid";
-}
-
-export function persistMainViewMode(mode: MainViewMode) {
-  window.localStorage.setItem(MAIN_VIEW_MODE_STORAGE_KEY, mode);
-}
 
 function formatPluralCount(count: number, singular: string, plural: string): string {
   return `${RU_INTEGER_FORMATTER.format(count)} ${count === 1 ? singular : plural}`;

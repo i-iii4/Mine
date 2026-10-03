@@ -1,6 +1,6 @@
 # Startup Performance Specification
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_DISTRIBUTION.md](SPEC_DISTRIBUTION.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_DISTRIBUTION.md](SPEC_DISTRIBUTION.md) | [SPEC_TABS.md](SPEC_TABS.md)
 
 ## Статус
 
@@ -84,16 +84,36 @@ Settings; пользовательское действие требуется �
 ```text
 process start
   -> single-instance decision
-  -> create and show window shell
-  -> frontend bootstrap
+  -> read windows.json
+  -> create and show the last window: shell, tab bar, its visible tab
+  -> frontend bootstrap of that tab
   -> resolve saved vault identity
   -> open local SQLite snapshot
   -> publish first route snapshot
   -> interactive
 ```
 
+С 03.10.2026 окна и вкладки восстанавливаются из сохранённых окон
+([SPEC_TABS.md](SPEC_TABS.md), от В35 до В37). Окна `main` в
+`tauri.conf.json` больше нет: при запуске `tabs::restore` читает
+`windows.json`, исправляет его (`normalize` в `domain/windows.rs`) и создаёт
+только последнее окно, то есть окно, которое было в фокусе последним: само
+окно, его полосу вкладок и страницу его видимой вкладки. Остальные вкладки
+этого окна страниц не получают: полоса показывает их по сохранённой записи,
+страница создаётся при первом выборе вкладки. Чтение `windows.json` входит в
+бюджет оболочки. Нативная проверка (`native_shell_smoke`) `windows.json` не
+читает и не пишет.
+
+Остальные сохранённые окна с их видимыми вкладками создаются после первого
+маршрута, в сохранённом порядке. Команда `start_startup_maintenance`, которую
+вкладка вызывает после кадра с первым маршрутом (`first_route_committed`, затем
+`interactive`), а без пространства или при ошибке после кадра с этим экраном,
+первым делом вызывает `tabs::restore_rest`; тот срабатывает один раз за
+процесс. Так окна, восстановленные после первого, не стоят на критическом
+пути.
+
 В critical path разрешены только операции, без которых нельзя показать
-сохранённый интерфейс текущего пространства. Они имеют явные deadlines и не
+сохранённый интерфейс пространства видимой вкладки последнего окна. Они имеют явные deadlines и не
 могут неограниченно ждать сеть, iCloud inventory, хеширование больших файлов,
 копирование runtime payload или запуск дочернего процесса.
 
@@ -110,6 +130,10 @@ process start
 
 Задачи имеют независимые состояния, таймауты и ошибки. Провал одной задачи не
 отменяет остальные и не меняет состояние уже опубликованного snapshot.
+
+Координатор обслуживания один на процесс, сколько бы окон и вкладок ни было
+открыто ([SPEC_TABS.md](SPEC_TABS.md), В37). Перед ним, в том же вызове, идёт
+создание остальных сохранённых окон (`restore_rest`).
 
 ## Clipper runtime
 
@@ -196,6 +220,11 @@ Literal zero-time launch не является требованием: macOS д�
 
 Если target hardware будет определён иначе, числа меняются отдельным решением;
 порядок этапов и нулевой blocking-maintenance budget не меняются.
+
+Вкладки (03.10.2026) бюджеты не меняют. «Visible window shell» это последнее
+окно с полосой вкладок, чтение `windows.json` входит в его бюджет; «first
+saved cards» это карточки видимой вкладки последнего окна. Остальные окна
+восстанавливаются после этих отметок и в них не входят.
 
 ## Observability
 

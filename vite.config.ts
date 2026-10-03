@@ -69,10 +69,12 @@ export default defineConfig(async () => ({
   },
   build: {
     rollupOptions: {
-      // Two webviews, two HTML entries: the main window and the settings window.
+      // One HTML entry per kind of page: a tab, the settings window and the
+      // tab bar of every tab window (SPEC_TABS.md, «Термины»).
       input: {
         main: path.resolve(__dirname, "index.html"),
         settings: path.resolve(__dirname, "settings.html"),
+        tabbar: path.resolve(__dirname, "tabbar.html"),
       },
     },
   },

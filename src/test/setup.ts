@@ -88,6 +88,26 @@ vi.mock("@tauri-apps/api/event", () => ({
   }),
 }));
 
+// Mock @tauri-apps/api/webview the same way: a page's own subscriptions
+// (SPEC_TABS.md, В22) hear window CustomEvents, so tests drive them exactly
+// like the global ones. File drops arrive as `mine-test-drag-drop`.
+vi.mock("@tauri-apps/api/webview", () => {
+  const bridge = (event: string, handler: (payload: unknown) => void) => {
+    const wrapped: EventListener = (domEvent) => {
+      const customEvent = domEvent as CustomEvent;
+      void handler(customEvent.detail);
+    };
+    window.addEventListener(event, wrapped);
+    return () => window.removeEventListener(event, wrapped);
+  };
+  const webview = {
+    label: "tab-test",
+    listen: vi.fn(async (event: string, handler: (payload: unknown) => void) => bridge(event, handler)),
+    onDragDropEvent: vi.fn(async (handler: (payload: unknown) => void) => bridge("mine-test-drag-drop", handler)),
+  };
+  return { getCurrentWebview: vi.fn(() => webview) };
+});
+
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: vi.fn(() => ({
     startDragging: vi.fn(async () => {}),

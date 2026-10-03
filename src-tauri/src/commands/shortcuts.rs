@@ -64,11 +64,38 @@ impl ShortcutBinding {
 
 pub type ShortcutOverrides = std::collections::BTreeMap<String, ShortcutBinding>;
 
+/// Whether `binding` is one macOS keeps for tabs and windows in every app
+/// (SPEC_TABS.md, В59): ⌘T, ⌘N, ⌘W, ⇧⌘W, ⌘1 по ⌘9, ⇧⌘[, ⇧⌘], ⌃Tab, ⌃⇧Tab.
+pub fn reserved_for_tabs(binding: &ShortcutBinding) -> bool {
+    let key = binding.key.to_lowercase();
+    let only_meta = binding.meta && !binding.alt && !binding.ctrl;
+    let only_ctrl = binding.ctrl && !binding.meta && !binding.alt;
+    let digit = key.len() == 1 && key.chars().all(|c| ('1'..='9').contains(&c));
+    let meta_reserved = if binding.shift {
+        matches!(key.as_str(), "w" | "[" | "]" | "{" | "}")
+    } else {
+        digit || matches!(key.as_str(), "t" | "n" | "w")
+    };
+    (only_meta && meta_reserved) || (only_ctrl && key == "tab")
+}
+
+/// The person's rebindings. A rebinding onto a combo now kept for tabs is
+/// dropped: the command takes its default combo back, and the log says so
+/// (В59).
 pub fn load_overrides(app: &AppHandle) -> ShortcutOverrides {
     let cfg = load_config(app);
-    cfg.get(CONFIG_KEY)
+    let mut overrides: ShortcutOverrides = cfg
+        .get(CONFIG_KEY)
         .and_then(|value| serde_json::from_value(value.clone()).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    overrides.retain(|command, binding| {
+        let reserved = reserved_for_tabs(binding);
+        if reserved {
+            log::info!("shortcut of {command} dropped: its combo now belongs to tabs");
+        }
+        !reserved
+    });
+    overrides
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -112,4 +139,40 @@ pub fn save_shortcut_overrides(
     app.emit("shortcuts-changed", &overrides)
         .map_err(|e| CommandError::Internal(format!("failed to emit shortcuts-changed: {e}")))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tab_combo_tests {
+    use super::{reserved_for_tabs, ShortcutBinding};
+
+    fn combo(key: &str, meta: bool, shift: bool, ctrl: bool) -> ShortcutBinding {
+        ShortcutBinding {
+            key: key.into(),
+            meta,
+            shift,
+            alt: false,
+            ctrl,
+        }
+    }
+
+    #[test]
+    fn the_combos_of_tabs_and_windows_are_kept() {
+        for key in ["1", "5", "9", "t", "N", "w"] {
+            assert!(reserved_for_tabs(&combo(key, true, false, false)), "⌘{key}");
+        }
+        for key in ["W", "[", "]", "{", "}"] {
+            assert!(reserved_for_tabs(&combo(key, true, true, false)), "⇧⌘{key}");
+        }
+        assert!(reserved_for_tabs(&combo("Tab", false, false, true)));
+        assert!(reserved_for_tabs(&combo("Tab", false, true, true)));
+    }
+
+    #[test]
+    fn other_combos_stay_with_the_person() {
+        assert!(!reserved_for_tabs(&combo("0", true, false, false)));
+        assert!(!reserved_for_tabs(&combo("[", true, false, false)));
+        assert!(!reserved_for_tabs(&combo("Tab", false, false, false)));
+        assert!(!reserved_for_tabs(&combo("n", true, true, false)));
+        assert!(!reserved_for_tabs(&combo("1", true, false, true)));
+    }
 }

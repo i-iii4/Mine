@@ -1,35 +1,20 @@
-//! OS open requests are retained until the main frontend is ready.
-use std::sync::Mutex;
-use tauri::{Emitter, Manager};
-use super::state::CommandError;
-
-#[derive(Default)]
-pub struct PendingSpace(pub Mutex<Option<String>>);
-
+//! A known space opened from Finder or the extension is shown in a tab
+//! (SPEC_TABS.md, В72).
 fn requested_space(url: &tauri::Url, known: &[String]) -> Option<String> {
     let path = url.to_file_path().ok()?;
     known.iter().find(|candidate| std::path::Path::new(candidate) == path).cloned()
 }
 
+/// A folder of a known space opened from Finder or the extension: the
+/// backend shows it in a tab (SPEC_TABS.md, В72); before the windows are
+/// restored the request waits for them there.
 pub fn receive(app: &tauri::AppHandle, urls: &[tauri::Url]) {
     let known = super::vault::load_known_vaults(app);
     for url in urls {
         if let Some(path) = requested_space(url, &known) {
-            match app.state::<PendingSpace>().0.lock() {
-                Ok(mut pending) => *pending = Some(path),
-                Err(error) => { log::error!("open space lock: {error}"); continue; }
-            }
-            if let Err(error) = app.emit("open-space-requested", ()) {
-                log::error!("open space notification: {error}");
-            }
+            crate::tabs::open_space_from_outside(app, std::path::Path::new(&path));
         }
     }
-}
-
-#[tauri::command]
-pub fn take_open_space_request(state: tauri::State<'_, PendingSpace>) -> Result<Option<String>, CommandError> {
-    state.0.lock().map(|mut pending| pending.take())
-        .map_err(|error| CommandError::Internal(error.to_string()))
 }
 
 #[cfg(test)]

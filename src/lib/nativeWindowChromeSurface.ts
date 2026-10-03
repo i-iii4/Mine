@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { reportWindowSurface } from "@/lib/commands";
 
 export type NativeWindowChromeSurfaceToken = "--chrome" | "--accent";
 
@@ -88,11 +88,13 @@ export function resolveNativeWindowChromeSurfaceColor(
     ?? FALLBACK_SURFACE_COLORS[currentTheme()][surfaceToken];
 }
 
+/// Tells the backend the chrome colour of this page, at start and on every
+/// theme change. The backend paints every window with it and keeps it for the
+/// next launch: a page paints no window itself (SPEC_TABS.md, В25).
 export function useNativeWindowChromeSurface(
   surfaceToken: NativeWindowChromeSurfaceToken,
 ): void {
   useEffect(() => {
-    const appWindow = getCurrentWindow();
     let disposed = false;
     let lastColor: string | null = null;
 
@@ -100,7 +102,9 @@ export function useNativeWindowChromeSurface(
       const nextColor = resolveNativeWindowChromeSurfaceColor(surfaceToken);
       if (disposed || nextColor === lastColor) return;
       lastColor = nextColor;
-      void appWindow.setBackgroundColor(nextColor).catch(() => {});
+      void reportWindowSurface(nextColor).catch((error: unknown) => {
+        console.error("Could not report the window surface colour:", error);
+      });
     };
 
     sync();

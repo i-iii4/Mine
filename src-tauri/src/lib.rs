@@ -32,6 +32,8 @@ mod source_video_download;
 #[cfg(feature = "desktop")]
 mod swipe_gesture;
 #[cfg(feature = "desktop")]
+mod tabs;
+#[cfg(feature = "desktop")]
 pub mod update_activation;
 #[cfg(feature = "desktop")]
 pub mod updater;
@@ -52,6 +54,25 @@ use tauri::menu::{AboutMetadata, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 #[cfg(feature = "desktop")]
 use tauri::Manager;
 
+/// File and Window menu items about tabs and windows (SPEC_TABS.md, В57).
+#[cfg(feature = "desktop")]
+const MENU_ID_NEW_TAB: &str = "tabs-new-tab";
+#[cfg(feature = "desktop")]
+const MENU_ID_NEW_WINDOW: &str = "tabs-new-window";
+#[cfg(feature = "desktop")]
+const MENU_ID_CLOSE_TAB: &str = "tabs-close-tab";
+#[cfg(feature = "desktop")]
+const MENU_ID_CLOSE_WINDOW: &str = "tabs-close-window";
+#[cfg(feature = "desktop")]
+const MENU_ID_PREVIOUS_TAB: &str = "tabs-previous-tab";
+#[cfg(feature = "desktop")]
+const MENU_ID_NEXT_TAB: &str = "tabs-next-tab";
+#[cfg(feature = "desktop")]
+const MENU_ID_MOVE_TAB_TO_NEW_WINDOW: &str = "tabs-move-to-new-window";
+/// `tabs-select-1` … `tabs-select-8` pick a tab by position, `tabs-select-9`
+/// the last tab.
+#[cfg(feature = "desktop")]
+const MENU_ID_SELECT_TAB_PREFIX: &str = "tabs-select-";
 #[cfg(feature = "desktop")]
 const MENU_ID_FIND_CARDS: &str = "surface-search-find-cards";
 #[cfg(feature = "desktop")]
@@ -73,14 +94,32 @@ pub fn run() {
     crate::asset_protocol::register(tauri::Builder::default())
         .manage(AppState::new())
         .manage(updater::UpdateService::default())
-        .manage(commands::app_open::PendingSpace::default())
         .manage(youtube_embed::YoutubeEmbedServer::default())
         .manage(source_video_download::SourceVideoDownloads::default())
         // Article audio commands are registered only with the `article-audio`
         // feature; `generate_handler!` takes a flat list, so the gate lives on
         // this attribute rather than on individual entries.
         .invoke_handler(tauri::generate_handler![
-            commands::app_open::take_open_space_request,
+            commands::tabs::get_tab_bootstrap,
+            commands::tabs::get_tabbar_bootstrap,
+            commands::tabs::report_tab_view,
+            commands::tabs::tab_painted,
+            commands::tabs::activate_tab,
+            commands::tabs::activate_adjacent_tab,
+            commands::tabs::new_tab,
+            commands::tabs::close_tab,
+            commands::tabs::close_other_tabs,
+            commands::tabs::move_tab,
+            commands::tabs::set_window_sidebar,
+            commands::tabs::start_window_drag,
+            commands::tabs::report_window_surface,
+            commands::tabs::show_space,
+            commands::tabs::spaces_in_tabs,
+            commands::tabs::dismiss_space_notice,
+            commands::tabs::space_notice_dismissed,
+            commands::tabs::move_tab_to_new_window,
+            commands::tabs::begin_tab_drag,
+            commands::tabs::report_drop_slot,
             #[cfg(feature = "article-audio")]
             commands::article_audio::get_article_audio_state,
             #[cfg(feature = "article-audio")]
@@ -185,43 +224,9 @@ pub fn run() {
         // refuses navigator.clipboard once the menu that triggered it takes
         // focus away, and the rejection is invisible.
         .plugin(tauri_plugin_clipboard_manager::init())
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            // Menu commands act on the tab in use (SPEC_TABS.md, В21).
-            MENU_ID_FIND_CARDS => {
-                commands::space_events::emit_to_active_tab(app, "surface-search-shortcut", "main");
-            }
-            MENU_ID_FIND_CHANNELS => {
-                commands::space_events::emit_to_active_tab(app, "surface-search-shortcut", "sidebar");
-            }
-            MENU_ID_TOGGLE_SIDEBAR => {
-                commands::space_events::emit_to_active_tab(app, "sidebar-toggle-shortcut", ());
-            }
-            MENU_ID_SETTINGS => {
-                let _ = commands::settings::open_settings_window(app.clone(), None);
-            }
-            _ => {}
-        })
+        .on_menu_event(|app, event| on_menu_event(app, event.id().as_ref()))
         .on_window_event(|window, event| {
-            // Coming back to Mine, often after installing a browser, checks
-            // the clipper helper at once (SPEC_ONBOARDING.md, О5).
-            if window.label() == "main" && matches!(event, tauri::WindowEvent::Focused(true)) {
-                commands::startup::nudge_clipper_upkeep();
-            }
-            // The tab in focus becomes the one in use (SPEC_TABS.md, В21); a
-            // tab gone releases its space.
-            match event {
-                tauri::WindowEvent::Focused(true) => window
-                    .app_handle()
-                    .state::<AppState>()
-                    .tabs
-                    .touch(window.label()),
-                tauri::WindowEvent::Destroyed => window
-                    .app_handle()
-                    .state::<AppState>()
-                    .tabs
-                    .remove(window.label()),
-                _ => {}
-            }
+            // Tab windows handle their own events (`crate::tabs`).
             if window.label() == "settings"
                 && matches!(
                     event,
@@ -262,9 +267,6 @@ pub fn run() {
             // menu instead of WebKit's frame menu.
             frame_context_menu::install(app.handle());
 
-            if app.get_webview_window("main").is_some() {
-                crate::util::append_startup_trace(app.handle(), "window", "created");
-            }
 
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -272,17 +274,6 @@ pub fn run() {
                         .level(log::LevelFilter::Info)
                         .build(),
                 )?;
-            }
-
-            if commands::native_shell_smoke::enabled() {
-                let window = app
-                    .get_webview_window("main")
-                    .ok_or_else(|| anyhow::anyhow!("native-shell smoke main window is missing"))?;
-                let url = tauri::Url::parse(&format!(
-                    "tauri://localhost/index.html?{}=1",
-                    commands::native_shell_smoke::QUERY_FLAG,
-                ))?;
-                window.navigate(url)?;
             }
 
             // ── Native macOS menu ────────────────────────────────────────
@@ -297,17 +288,35 @@ pub fn run() {
             )?;
             app.set_menu(menu)?;
 
+            // The tab windows (SPEC_TABS.md, В35). The native shell check
+            // runs beside the person's Mine and keeps its hands off their
+            // saved windows (В34).
+            let saved_windows_dir = if commands::native_shell_smoke::enabled() {
+                None
+            } else {
+                app.path().app_data_dir().ok()
+            };
+            app.manage(tabs::TabShell::new(saved_windows_dir));
+            tabs::restore(app.handle())?;
+            crate::util::append_startup_trace(app.handle(), "window", "created");
+
             crate::util::append_startup_trace(app.handle(), "setup", "done");
 
             Ok(())
         })
         .build(application_context())
         .expect("error while building tauri application")
-        .run(|app, event| {
+        .run(|app, event| match event {
             #[cfg(any(target_os = "macos", target_os = "ios"))]
-            if let tauri::RunEvent::Opened { urls } = event {
-                commands::app_open::receive(app, &urls);
+            tauri::RunEvent::Opened { urls } => commands::app_open::receive(app, &urls),
+            // Quitting keeps every window as it stands for the next launch
+            // (SPEC_TABS.md, В33).
+            tauri::RunEvent::ExitRequested { .. } => {
+                if let Some(shell) = app.try_state::<tabs::TabShell>() {
+                    shell.quit();
+                }
             }
+            _ => {}
         });
 }
 
@@ -378,16 +387,140 @@ fn build_app_menu(
         .fullscreen()
         .build()?;
 
-    let window_menu = SubmenuBuilder::new(app, "Window")
+    // Tabs and windows (SPEC_TABS.md, В57, В58): the File items are Mine's
+    // own, the stock close item would hold ⌘W for the whole window.
+    let item = |id: &str, title: &str, keys: &str| -> anyhow::Result<tauri::menu::MenuItem<tauri::Wry>> {
+        Ok(MenuItemBuilder::with_id(id, title).accelerator(keys).build(app)?)
+    };
+    let file_menu = SubmenuBuilder::new(app, "File")
+        .item(&item(MENU_ID_NEW_TAB, "New Tab", "CmdOrCtrl+T")?)
+        .item(&item(MENU_ID_NEW_WINDOW, "New Window", "CmdOrCtrl+N")?)
+        .separator()
+        .item(&item(MENU_ID_CLOSE_TAB, "Close Tab", "CmdOrCtrl+W")?)
+        .item(&item(MENU_ID_CLOSE_WINDOW, "Close Window", "CmdOrCtrl+Shift+W")?)
+        .build()?;
+
+    let mut window_menu = SubmenuBuilder::new(app, "Window")
         .minimize()
         .maximize()
         .separator()
-        .close_window()
-        .build()?;
+        .item(&item(MENU_ID_PREVIOUS_TAB, "Show Previous Tab", "CmdOrCtrl+Shift+[")?)
+        .item(&item(MENU_ID_NEXT_TAB, "Show Next Tab", "CmdOrCtrl+Shift+]")?)
+        .item(&MenuItemBuilder::with_id(MENU_ID_MOVE_TAB_TO_NEW_WINDOW, "Move Tab to New Window").build(app)?)
+        .separator();
+    for position in 1..=9 {
+        let title = if position == 9 {
+            "Select Last Tab".to_string()
+        } else {
+            format!("Select Tab {position}")
+        };
+        window_menu = window_menu.item(&item(
+            &format!("{MENU_ID_SELECT_TAB_PREFIX}{position}"),
+            &title,
+            &format!("CmdOrCtrl+{position}"),
+        )?);
+    }
+    let window_menu = window_menu.build()?;
 
     Ok(MenuBuilder::new(app)
-        .items(&[&app_menu, &edit_menu, &view_menu, &window_menu])
+        .items(&[&app_menu, &file_menu, &edit_menu, &view_menu, &window_menu])
         .build()?)
+}
+
+/// The tab window a menu command acts on: the one in focus, else the last
+/// one (SPEC_TABS.md, В21).
+#[cfg(feature = "desktop")]
+fn menu_window(app: &tauri::AppHandle) -> Option<domain::windows::WindowId> {
+    tabs::focused_tab_window(app).or_else(|| tabs::last_window(app))
+}
+
+/// The visible tab of the window a menu command acts on.
+#[cfg(feature = "desktop")]
+fn menu_tab(app: &tauri::AppHandle) -> Option<domain::windows::TabId> {
+    let window = menu_window(app)?;
+    let snapshot = app.state::<tabs::TabShell>().snapshot();
+    snapshot.window(&window).map(|saved| saved.active_tab.clone())
+}
+
+#[cfg(feature = "desktop")]
+fn on_menu_event(app: &tauri::AppHandle, id: &str) {
+    match id {
+        // Menu commands act on the tab in use (SPEC_TABS.md, В21).
+        MENU_ID_FIND_CARDS => {
+            commands::space_events::emit_to_active_tab(app, "surface-search-shortcut", "main");
+        }
+        MENU_ID_FIND_CHANNELS => {
+            commands::space_events::emit_to_active_tab(app, "surface-search-shortcut", "sidebar");
+        }
+        MENU_ID_TOGGLE_SIDEBAR => {
+            if let Some(window) = menu_window(app) {
+                tabs::toggle_sidebar(app, &window);
+            }
+        }
+        MENU_ID_SETTINGS => {
+            let _ = commands::settings::open_settings_window(app.clone(), None);
+        }
+        MENU_ID_NEW_TAB => {
+            if let Some(window) = menu_window(app) {
+                let space = menu_tab(app)
+                    .and_then(|tab| {
+                        app.state::<tabs::TabShell>()
+                            .snapshot()
+                            .tab(&tab)
+                            .map(|saved| saved.space.clone())
+                    })
+                    .unwrap_or(domain::windows::TabSpace::Picker);
+                tabs::new_tab(app, &window, space);
+            }
+        }
+        MENU_ID_NEW_WINDOW => tabs::new_window(app, tabs::last_visible_space(app)),
+        // With the settings window in front, ⌘W and ⇧⌘W close it (В58).
+        MENU_ID_CLOSE_TAB | MENU_ID_CLOSE_WINDOW if tabs::other_window_focused(app).is_some() => {
+            if let Some(window) = tabs::other_window_focused(app) {
+                let _ = window.close();
+            }
+        }
+        MENU_ID_CLOSE_TAB => {
+            if let Some(tab) = menu_tab(app) {
+                tabs::close_tab(app, &tab);
+            }
+        }
+        MENU_ID_CLOSE_WINDOW => {
+            if let Some(window) = menu_window(app) {
+                tabs::close_window(app, &window);
+            }
+        }
+        MENU_ID_PREVIOUS_TAB | MENU_ID_NEXT_TAB => {
+            let forward = id == MENU_ID_NEXT_TAB;
+            if let Some(tab) = menu_tab(app) {
+                let next = app.state::<tabs::TabShell>().snapshot().adjacent(&tab, forward);
+                if let Some(next) = next {
+                    tabs::activate(app, &next);
+                }
+            }
+        }
+        MENU_ID_MOVE_TAB_TO_NEW_WINDOW => {
+            if let Some(tab) = menu_tab(app) {
+                tabs::move_tab_to_new_window(app, &tab);
+            }
+        }
+        _ => {
+            let Some(position) = id
+                .strip_prefix(MENU_ID_SELECT_TAB_PREFIX)
+                .and_then(|digit| digit.parse::<usize>().ok())
+            else {
+                return;
+            };
+            let Some(window) = menu_window(app) else {
+                return;
+            };
+            let at = (position < 9).then(|| position - 1);
+            let tab = app.state::<tabs::TabShell>().snapshot().tab_at(&window, at);
+            if let Some(tab) = tab {
+                tabs::activate(app, &tab);
+            }
+        }
+    }
 }
 
 /// Rebuild the menu after the user rebinds a command.

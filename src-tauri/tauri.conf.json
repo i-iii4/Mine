@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.mine.app",
   "build": {
-    "features": ["desktop"],
+    "features": [
+      "desktop"
+    ],
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "bun run fetch:ytdlp && bun run dev",
@@ -12,20 +14,7 @@
     "beforeBundleCommand": "node scripts/build-clipper-runtime-manifest.mjs"
   },
   "app": {
-    "windows": [
-      {
-        "title": "",
-        "titleBarStyle": "Overlay",
-        "hiddenTitle": true,
-        "decorations": true,
-        "width": 1200,
-        "height": 800,
-        "minWidth": 904,
-        "minHeight": 600,
-        "resizable": true,
-        "fullscreen": false
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": "default-src 'self'; img-src 'self' asset: https: http: data:; media-src 'self' asset: https:; script-src 'self'; style-src 'self' 'unsafe-inline'; frame-src 'self' http://localhost:*",
       "assetProtocol": {

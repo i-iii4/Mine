@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 
 import { createBlock } from "@/lib/commands";
 import { fileNameToTitle, inferBlockType } from "@/lib/pasteImport";
@@ -64,7 +64,9 @@ export function DropZone({ currentTag, onBlocksCreated }: DropZoneProps) {
     let disposed = false;
     let unlisten: (() => void) | undefined;
 
-    getCurrentWebviewWindow()
+    // The page's own drops: a tab is a child page of its window, and a
+    // window-level listener there hears nothing (SPEC_TABS.md, В22).
+    getCurrentWebview()
       .onDragDropEvent((event) => {
         if (event.payload.type === "enter") {
           fileDragActiveRef.current = event.payload.paths.length > 0;

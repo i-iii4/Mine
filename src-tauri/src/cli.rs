@@ -30,14 +30,37 @@ const CONTRACT_VERSION: u32 = 1;
 /// run against a fixture directory instead of the user's real one.
 pub struct CliEnv {
     pub app_data_dir: PathBuf,
+    /// The space an MCP process acts on when a call names none: the app's
+    /// current space at the first such call, kept for the life of the
+    /// process (SPEC_TABS.md, В75).
+    pub pinned_space: std::sync::OnceLock<Option<String>>,
 }
 
 impl CliEnv {
     pub fn from_system() -> Option<Self> {
         let home = std::env::var_os("HOME")?;
-        Some(Self {
-            app_data_dir: PathBuf::from(home).join("Library/Application Support/com.mine.app"),
-        })
+        Some(Self::in_dir(
+            PathBuf::from(home).join("Library/Application Support/com.mine.app"),
+        ))
+    }
+
+    /// An environment reading the app's data in `app_data_dir`.
+    pub fn in_dir(app_data_dir: PathBuf) -> Self {
+        Self {
+            app_data_dir,
+            pinned_space: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// The space a call that names none acts on, pinned at first use.
+    pub fn default_space(&self) -> Option<String> {
+        self.pinned_space
+            .get_or_init(|| {
+                load_space_config(self)
+                    .active
+                    .map(|path| path.to_string_lossy().into_owned())
+            })
+            .clone()
     }
 }
 
@@ -1012,9 +1035,7 @@ pub(crate) mod tests {
 
         (
             dir,
-            CliEnv {
-                app_data_dir: app_data,
-            },
+            CliEnv::in_dir(app_data),
             vault_root,
         )
     }

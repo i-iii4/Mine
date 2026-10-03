@@ -44,12 +44,86 @@ describe("ShortcutsSection", () => {
     expect(shortcut("find-elements")).not.toHaveClass("w-28");
   });
 
-  it("hides fixed gestures and uses the binding itself as the editor control", () => {
+  it("hides structural keys and uses the binding itself as the editor control", () => {
     render(<ShortcutsSection />);
     expect(row("navigate")).toBeNull();
-    expect(row("settings")).toBeNull();
+    expect(row("toggle-view")).toBeNull();
     expect(shortcut("find-elements")).toHaveTextContent("⌘F");
     expect(within(row("find-elements")).queryByText("Change")).not.toBeInTheDocument();
+  });
+
+  it("lists the chords macOS owns as references that cannot be changed", () => {
+    // SPEC_TABS.md, В57: the tab commands show their fixed chords.
+    render(<ShortcutsSection />);
+    const references = (command: string) =>
+      [...row(command).querySelectorAll("[data-shortcut-reference]")].map((chip) => chip.textContent);
+
+    expect(references("new-tab")).toEqual(["⌘T"]);
+    expect(references("new-window")).toEqual(["⌘N"]);
+    expect(references("close-tab")).toEqual(["⌘W"]);
+    expect(references("close-window")).toEqual(["⇧⌘W"]);
+    expect(references("next-tab")).toEqual(["⇧⌘]", "⌃⇥"]);
+    expect(references("previous-tab")).toEqual(["⇧⌘[", "⌃⇧⇥"]);
+    expect(references("select-tab")).toEqual(["⌘1…⌘8"]);
+    expect(references("select-last-tab")).toEqual(["⌘9"]);
+    expect(references("settings")).toEqual(["⌘,"]);
+
+    for (const command of ["new-tab", "next-tab", "select-tab", "settings"]) {
+      expect(row(command)).toHaveAttribute("data-shortcut-fixed");
+      expect(within(row(command)).queryByRole("button")).toBeNull();
+    }
+    expect(within(row("new-tab")).getByText("New Tab")).toBeInTheDocument();
+    // The keystroke-reference body: outline, no fill, no hover.
+    expect(row("next-tab").querySelector("[data-shortcut-reference]")).toHaveClass("outline-border", "h-5");
+    expect(row("next-tab").querySelector("[data-shortcut-reference]")).not.toHaveClass("bg-component-fill");
+  });
+
+  it("lists the editable commands of a group before the fixed ones", () => {
+    render(<ShortcutsSection />);
+    const global = document.querySelector('[data-shortcuts-group="global"]')!;
+    const rows = [...global.querySelectorAll("[data-shortcut-row]")];
+    const firstFixed = rows.findIndex((element) => element.hasAttribute("data-shortcut-fixed"));
+    expect(firstFixed).toBeGreaterThan(0);
+    expect(rows.slice(firstFixed).every((element) => element.hasAttribute("data-shortcut-fixed"))).toBe(true);
+  });
+
+  it("finds a tab command by any of its chords", async () => {
+    const user = userEvent.setup();
+    render(<ShortcutsSection />);
+    const search = screen.getByRole("searchbox", { name: "Search shortcuts" });
+    await user.type(search, "cmd+5");
+    expect(row("select-tab")).toBeInTheDocument();
+    expect(row("select-last-tab")).toBeNull();
+
+    await user.clear(search);
+    await user.type(search, "control+tab");
+    expect(row("next-tab")).toBeInTheDocument();
+  });
+
+  it("refuses a tab chord when recording another command", () => {
+    render(<ShortcutsSection />);
+    fireEvent.click(shortcut("copy-path"));
+    fireEvent.keyDown(shortcut("copy-path"), { key: "1", code: "Digit1", metaKey: true });
+    expect(within(row("copy-path")).getByRole("alert")).toHaveTextContent("macOS");
+
+    // A US layout reports ⇧⌘[ as "{"; the physical bracket is what counts.
+    fireEvent.keyDown(shortcut("copy-path"), {
+      key: "{", code: "BracketLeft", metaKey: true, shiftKey: true,
+    });
+    expect(within(row("copy-path")).getByRole("alert")).toHaveTextContent("macOS");
+    expect(saveMock).not.toHaveBeenCalled();
+  });
+
+  it("records a bracket by its physical key whatever the layout prints", async () => {
+    render(<ShortcutsSection />);
+    fireEvent.click(shortcut("copy-path"));
+    // ⌥[ prints a quote mark on a US Mac layout.
+    fireEvent.keyDown(shortcut("copy-path"), {
+      key: "“", code: "BracketLeft", metaKey: true, altKey: true,
+    });
+    await waitFor(() => expect(saveMock).toHaveBeenCalledWith({
+      "copy-path": { key: "[", meta: true, shift: false, alt: true, ctrl: false },
+    }));
   });
 
   it("records a valid combination in the same row and saves it immediately", async () => {

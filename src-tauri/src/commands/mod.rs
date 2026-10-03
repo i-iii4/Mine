@@ -28,6 +28,7 @@ pub mod space_events;
 pub mod spaces;
 pub mod startup;
 pub mod state;
+pub mod tabs;
 pub mod tags;
 mod thumbnail_sweeps;
 pub mod thumbnails;

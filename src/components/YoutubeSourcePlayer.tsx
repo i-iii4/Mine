@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { listenPage } from "@/lib/pageEvents";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Trash2 } from "lucide-react";
 import {
@@ -99,7 +99,7 @@ export function YoutubeSourcePlayer({ slug, source, poster, title, onDelete, onD
 
   useEffect(() => {
     let cancelled = false;
-    const unlisten = listen<{ x: number; y: number }>(SOURCE_VIDEO_CONTEXT_MENU_EVENT, (event) => {
+    const unlisten = listenPage<{ x: number; y: number }>(SOURCE_VIDEO_CONTEXT_MENU_EVENT, (event) => {
       const surface = surfaceRef.current;
       if (cancelled || !surface) return;
       const { x, y } = event.payload;
@@ -130,7 +130,7 @@ export function YoutubeSourcePlayer({ slug, source, poster, title, onDelete, onD
       (status) => { if (!cancelled && !eventSeen) setDownload(restoredDownload(status)); },
       (error: unknown) => console.error("Could not read the download state:", error),
     );
-    const unlisten = listen<SourceVideoDownloadState & { slug: string }>(SOURCE_VIDEO_DOWNLOAD_EVENT, (event) => {
+    const unlisten = listenPage<SourceVideoDownloadState & { slug: string }>(SOURCE_VIDEO_DOWNLOAD_EVENT, (event) => {
       if (cancelled || event.payload.slug !== slug) return;
       eventSeen = true;
       const { slug: _slug, ...state } = event.payload;

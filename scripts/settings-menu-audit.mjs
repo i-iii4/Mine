@@ -33,7 +33,7 @@ const server = await createServer({
         window.__TAURI_INTERNALS__ = { metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } }, invoke: async command => {
           if (command === "plugin:event|emit" || command === "plugin:event|emit_to") return;
           if (command === "get_block") return { slug: "audit", content: "Text", tags: [] };
-          if (command === "plugin:window|start_dragging") { window.dragCount = (window.dragCount || 0) + 1; return; }
+          if (command === "start_window_drag") { window.dragCount = (window.dragCount || 0) + 1; return; }
           throw new Error("Unexpected fixture IPC: " + command);
         }};
         const secondaryProps = {

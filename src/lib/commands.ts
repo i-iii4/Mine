@@ -7,6 +7,11 @@ import {
   type InvokeOptions,
 } from "@tauri-apps/api/core";
 import type {
+  SidebarLayout,
+  TabBarState,
+  TabBootstrap,
+  TabId,
+  TabView,
   IndexedBlock,
   GridSnapshot,
   FeedOrder,
@@ -586,15 +591,15 @@ export const forgetUnavailableVault = () =>
 /** Folders new cards, media and collections are written into.
  *  Reading is always recursive; this governs writes only.
  *  See SPEC_VAULT_LIFECYCLE.md П1–П4. */
-export const getVaultWriteLayout = () =>
-  invoke<VaultWriteLayoutDto>("get_vault_write_layout");
+export const getVaultWriteLayout = (vaultId?: string) =>
+  invoke<VaultWriteLayoutDto>("get_vault_write_layout", { vaultId: vaultId ?? null });
 
-export const setVaultWriteLayout = (layout: VaultWriteLayoutDto) =>
-  invoke<VaultWriteLayoutDto>("set_vault_write_layout", { layout });
+export const setVaultWriteLayout = (layout: VaultWriteLayoutDto, vaultId?: string) =>
+  invoke<VaultWriteLayoutDto>("set_vault_write_layout", { layout, vaultId: vaultId ?? null });
 
 /** Create the standard folders in this space and write into them from now on. */
-export const organizeVaultLayout = () =>
-  invoke<VaultWriteLayoutDto>("organize_vault_layout");
+export const organizeVaultLayout = (vaultId?: string) =>
+  invoke<VaultWriteLayoutDto>("organize_vault_layout", { vaultId: vaultId ?? null });
 
 // Vault conflicts (Phase 18.G.4 — see SPEC_IDENTITY_ROBUSTNESS.md)
 export interface VaultConflictItem {
@@ -636,8 +641,10 @@ export const addKnownVault = (path: string) =>
 export const forgetKnownVault = (path: string) =>
   invoke<string[]>("forget_known_vault", { path });
 
-export const listOrphanMedia = () =>
-  invoke<OrphanMediaList>("list_orphan_media");
+/** Orphan media of the space `vaultId`, else of the tab used last
+ *  (SPEC_TABS.md, В71). */
+export const listOrphanMedia = (vaultId?: string) =>
+  invoke<OrphanMediaList>("list_orphan_media", { vaultId: vaultId ?? null });
 
 // Orphan operations name the space their list was built for; the backend
 // refuses them once another space is open.
@@ -662,3 +669,80 @@ export const checkForUpdates = () => invoke<UpdateStatus>("check_for_updates");
 export const downloadUpdate = () => invoke<UpdateStatus>("download_update");
 export const installUpdate = () => invoke<UpdateStatus>("install_update");
 export const restorePreviousUpdate = () => invoke<UpdateStatus>("restore_previous_update");
+
+// ─── Tabs and windows (SPEC_TABS.md, «Команды») ────────────────────────────
+// A tab page and a tab bar know themselves by their page label; the backend
+// reads it from the calling page, so these take no tab of their own.
+
+/** What this tab page needs to start: its tab, space, memory, sidebar, lead role. */
+export const getTabBootstrap = () => invoke<TabBootstrap | null>("get_tab_bootstrap");
+
+/** What this tab bar shows now; later changes arrive as `tabbar-state`. */
+export const getTabbarBootstrap = () => invoke<TabBarState | null>("get_tabbar_bootstrap");
+
+/** This tab's memory, sent at most every 250 ms (В31). */
+export const reportTabView = (view: TabView) => invoke<void>("report_tab_view", { view });
+
+/** This tab drew its first frame since it was shown (В5). */
+export const tabPainted = () => invoke<void>("tab_painted");
+
+/** Show the tab `tabId` in its window. */
+export const activateTab = (tabId: TabId) => invoke<void>("activate_tab", { tabId });
+
+/** Show the next (`forward`) or previous tab of this page's window, round the end (В55). */
+export const activateAdjacentTab = (forward: boolean) =>
+  invoke<void>("activate_adjacent_tab", { forward });
+
+/** Open a new tab in this page's window: the space `vaultId`, else the visible tab's space (В51). */
+export const newTab = (vaultId?: string) => invoke<void>("new_tab", { vaultId: vaultId ?? null });
+
+/** Close the tab `tabId` (В53). */
+export const closeTab = (tabId: TabId) => invoke<void>("close_tab", { tabId });
+
+/** Close every tab of `tabId`'s window but it (В50). */
+export const closeOtherTabs = (tabId: TabId) => invoke<void>("close_other_tabs", { tabId });
+
+/** Move the tab `tabId` to `index` in its window (В60). */
+export const moveTab = (tabId: TabId, index: number) => invoke<void>("move_tab", { tabId, index });
+
+/** Move the tab `tabId` into a window of its own (В50, В65). */
+export const moveTabToNewWindow = (tabId: TabId) =>
+  invoke<void>("move_tab_to_new_window", { tabId });
+
+/** The pointer pulled the tab `tabId` off the bar: the backend follows the
+ *  pointer until release, then leaves a new window or joins another window's
+ *  bar (В61 по В65). `grabX`/`grabY` are where the tab was grabbed, in
+ *  this bar's coordinates. */
+export const beginTabDrag = (tabId: TabId, grabX: number, grabY: number) =>
+  invoke<void>("begin_tab_drag", { tabId, grabX, grabY });
+
+/** Store and spread the sidebar of this page's window (В56). */
+export const setWindowSidebar = (sidebar: SidebarLayout) =>
+  invoke<void>("set_window_sidebar", { sidebar });
+
+/** Start dragging this page's window by its chrome (В23). */
+export const startWindowDrag = () => invoke<void>("start_window_drag");
+
+/** The chrome colour `#rrggbb` computed from CSS, painted behind every page (В25). */
+export const reportWindowSurface = (color: string) =>
+  invoke<void>("report_window_surface", { color });
+
+/** Show the space at `path`: its tab used last, or a new tab in the last window (В69, В72). */
+export const showSpace = (path: string, goEverything: boolean) =>
+  invoke<void>("show_space", { path, goEverything });
+
+/** The identities of every space some tab shows (В69). */
+export const spacesInTabs = () => invoke<string[]>("spaces_in_tabs");
+
+/** A notice of this tab's space was closed in this opening (В20). */
+export const dismissSpaceNotice = (notice: string) =>
+  invoke<void>("dismiss_space_notice", { notice });
+
+/** Whether a notice of this tab's space was closed in this opening (В20). */
+export const spaceNoticeDismissed = (notice: string) =>
+  invoke<boolean>("space_notice_dismissed", { notice });
+
+/** This tab bar reports the slot under a dragged tab from another window,
+ *  or `null` when none (В63). Sent while `tabbar-drop-hover` arrives. */
+export const reportDropSlot = (index: number | null) =>
+  invoke<void>("report_drop_slot", { index });

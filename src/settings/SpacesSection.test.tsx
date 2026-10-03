@@ -5,32 +5,31 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   addKnownVault,
   forgetKnownVault,
-  getVaultPath,
   listSpaces,
   reorderKnownVaults,
-  selectVault,
+  showSpace,
+  spacesInTabs,
   spaceStats,
 } from "@/lib/commands";
 import type { SpaceEntry, SpaceStats } from "@/types";
-
-/** The space list as the backend returns it: every known space, available. */
-function spaces(...paths: string[]): SpaceEntry[] {
-  return paths.map((path) => ({
-    path,
-    name: path.split("/").pop() ?? path,
-    available: true,
-    current: false,
-  }));
-}
 import { SpacesSection, reorderedPaths } from "./SpacesSection";
+
+/** The space list as the backend returns it: every known space, available,
+ *  with an identity named after its folder. */
+function spaces(...paths: string[]): SpaceEntry[] {
+  return paths.map((path) => {
+    const name = path.split("/").pop() ?? path;
+    return { vault_id: `id-${name}`, path, name, available: true, current: false };
+  });
+}
 
 vi.mock("@/lib/commands", () => ({
   listSpaces: vi.fn(),
-  getVaultPath: vi.fn(),
+  spacesInTabs: vi.fn(),
+  showSpace: vi.fn(),
   addKnownVault: vi.fn(),
   forgetKnownVault: vi.fn(),
   reorderKnownVaults: vi.fn(),
-  selectVault: vi.fn(),
   spaceStats: vi.fn(),
 }));
 
@@ -71,39 +70,117 @@ function openRowMenu(row: HTMLElement) {
   fireEvent.click(trigger);
 }
 
+function emitOpenSpaces(ids: string[]) {
+  act(() => {
+    window.dispatchEvent(new CustomEvent("spaces-open-changed", { detail: { payload: ids } }));
+  });
+}
+
 describe("SpacesSection", () => {
   beforeEach(() => {
     vi.mocked(listSpaces)
       .mockReset()
       .mockResolvedValue(spaces("/Users/me/Mine", "/Users/me/Archive"));
-    vi.mocked(getVaultPath).mockReset().mockResolvedValue("/Users/me/Mine");
+    vi.mocked(spacesInTabs).mockReset().mockResolvedValue(["id-Mine"]);
+    vi.mocked(showSpace).mockReset().mockResolvedValue(undefined);
     vi.mocked(spaceStats).mockReset().mockImplementation(async (path: string) => {
       if (path === "/Users/me/Mine") return MINE_STATS;
       if (path === "/Users/me/Archive") return ARCHIVE_STATS;
+      if (path === "/Users/me/Work") return ARCHIVE_STATS;
       throw new Error(`unknown space: ${path}`);
     });
     vi.mocked(addKnownVault).mockReset();
     vi.mocked(forgetKnownVault).mockReset();
     vi.mocked(reorderKnownVaults).mockReset();
-    vi.mocked(selectVault).mockReset().mockResolvedValue({
-      path: "",
-      indexed: 0,
-      requires_migration: false,
-    } as never);
     vi.mocked(open).mockReset();
   });
 
-  it("marks the active space with the active background, no text badge", async () => {
+  it("marks every space open in a tab with the active background, no text badge", async () => {
+    vi.mocked(listSpaces).mockResolvedValue(
+      spaces("/Users/me/Mine", "/Users/me/Archive", "/Users/me/Work"),
+    );
+    vi.mocked(spacesInTabs).mockResolvedValue(["id-Mine", "id-Work"]);
     renderSpaces();
     await screen.findByText("Mine");
 
-    const mineRow = spaceRowOf("Mine");
-    const archiveRow = spaceRowOf("Archive");
-    expect(mineRow).toHaveAttribute("aria-current", "true");
-    expect(mineRow.className).toContain("bg-active");
-    expect(archiveRow).not.toHaveAttribute("aria-current");
-    expect(archiveRow.className).toContain("bg-accent");
+    await waitFor(() => expect(spaceRowOf("Mine")).toHaveAttribute("data-space-open"));
+    expect(spaceRowOf("Mine").className).toContain("bg-active");
+    expect(spaceRowOf("Work")).toHaveAttribute("data-space-open");
+    expect(spaceRowOf("Work").className).toContain("bg-active");
+    expect(spaceRowOf("Archive")).not.toHaveAttribute("data-space-open");
+    expect(spaceRowOf("Archive").className).toContain("bg-accent");
+    // No single current space any more, and no visible badge.
+    expect(document.querySelector("[aria-current]")).toBeNull();
     expect(screen.queryByText("Current")).not.toBeInTheDocument();
+  });
+
+  it("does not drive the highlight from the legacy current flag", async () => {
+    vi.mocked(listSpaces).mockResolvedValue([
+      { ...spaces("/Users/me/Mine")[0]!, current: true },
+      ...spaces("/Users/me/Archive"),
+    ]);
+    vi.mocked(spacesInTabs).mockResolvedValue(["id-Archive"]);
+    renderSpaces();
+    await screen.findByText("Mine");
+
+    await waitFor(() => expect(spaceRowOf("Archive")).toHaveAttribute("data-space-open"));
+    expect(spaceRowOf("Mine")).not.toHaveAttribute("data-space-open");
+  });
+
+  it("never marks a space the registry has no identity for", async () => {
+    vi.mocked(listSpaces).mockResolvedValue([
+      { vault_id: null, path: "/Users/me/Mine", name: "Mine", available: true, current: false },
+    ]);
+    vi.mocked(spacesInTabs).mockResolvedValue(["id-Mine"]);
+    renderSpaces();
+    await screen.findByText("Mine");
+    await waitFor(() => expect(spacesInTabs).toHaveBeenCalled());
+    expect(spaceRowOf("Mine")).not.toHaveAttribute("data-space-open");
+  });
+
+  it("follows tabs opening and closing spaces through spaces-open-changed", async () => {
+    renderSpaces();
+    await screen.findByText("Archive");
+    await waitFor(() => expect(spaceRowOf("Mine")).toHaveAttribute("data-space-open"));
+
+    emitOpenSpaces(["id-Archive"]);
+
+    await waitFor(() => expect(spaceRowOf("Archive")).toHaveAttribute("data-space-open"));
+    expect(spaceRowOf("Mine")).not.toHaveAttribute("data-space-open");
+
+    emitOpenSpaces([]);
+    await waitFor(() => expect(spaceRowOf("Archive")).not.toHaveAttribute("data-space-open"));
+  });
+
+  it("lists a space a tab created once it opens there", async () => {
+    renderSpaces();
+    await screen.findByText("Archive");
+
+    vi.mocked(listSpaces).mockResolvedValue(
+      spaces("/Users/me/Mine", "/Users/me/Archive", "/Users/me/Work"),
+    );
+    emitOpenSpaces(["id-Mine", "id-Work"]);
+
+    expect(await screen.findByText("Work")).toBeInTheDocument();
+    await waitFor(() => expect(spaceRowOf("Work")).toHaveAttribute("data-space-open"));
+    await waitFor(() => expect(spaceStats).toHaveBeenCalledWith("/Users/me/Work"));
+    // The spaces already scanned are not walked again.
+    expect(vi.mocked(spaceStats).mock.calls.filter(([path]) => path === "/Users/me/Mine")).toHaveLength(1);
+  });
+
+  it("follows a space whose folder moved", async () => {
+    renderSpaces();
+    await screen.findByText("Archive");
+
+    vi.mocked(listSpaces).mockResolvedValue(spaces("/Users/me/Mine", "/Volumes/Disk/Archive"));
+    act(() => {
+      window.dispatchEvent(new CustomEvent("space-moved", {
+        detail: { payload: { vault_id: "id-Archive", path: "/Volumes/Disk/Archive" } },
+      }));
+    });
+
+    expect(await screen.findByText("/Volumes/Disk/Archive")).toBeInTheDocument();
+    expect(screen.queryByText("/Users/me/Archive")).not.toBeInTheDocument();
   });
 
   it("shows only space controls, without standing instructions or an iCloud card", async () => {
@@ -154,8 +231,7 @@ describe("SpacesSection", () => {
 
     fireEvent.click(spaceRowOf("Archive"));
     await waitFor(() => {
-      expect(selectVault).toHaveBeenCalledWith("/Users/me/Archive");
-      expect(spaceRowOf("Archive")).toHaveAttribute("aria-current", "true");
+      expect(showSpace).toHaveBeenCalledWith("/Users/me/Archive", false);
     });
   });
 
@@ -176,40 +252,42 @@ describe("SpacesSection", () => {
     });
   });
 
-  it("switches the space on row click and ignores clicks on the active row", async () => {
+  it("shows the space in a tab on row click, an open row included", async () => {
     renderSpaces();
     await screen.findByText("Archive");
-
-    fireEvent.click(spaceRowOf("Mine"));
-    expect(selectVault).not.toHaveBeenCalled();
 
     fireEvent.click(spaceRowOf("Archive"));
     await waitFor(() => {
-      expect(selectVault).toHaveBeenCalledWith("/Users/me/Archive");
+      expect(showSpace).toHaveBeenCalledWith("/Users/me/Archive", false);
     });
+    // The highlight waits for the backend's spaces-open-changed.
+    expect(spaceRowOf("Archive")).not.toHaveAttribute("data-space-open");
+
+    // An open row brings its tab forward.
+    fireEvent.click(spaceRowOf("Mine"));
     await waitFor(() => {
-      expect(spaceRowOf("Archive")).toHaveAttribute("aria-current", "true");
+      expect(showSpace).toHaveBeenCalledWith("/Users/me/Mine", false);
     });
   });
 
-  it("follows switches that originate elsewhere via vault-selected", async () => {
+  it("opens a space from the keyboard", async () => {
     renderSpaces();
     await screen.findByText("Archive");
-
-    act(() => {
-      window.dispatchEvent(
-        new CustomEvent("vault-selected", {
-          detail: { payload: { path: "/Users/me/Archive" } },
-        }),
-      );
-    });
-
+    fireEvent.keyDown(spaceRowOf("Archive"), { key: "Enter" });
     await waitFor(() => {
-      expect(spaceRowOf("Archive")).toHaveAttribute("aria-current", "true");
+      expect(showSpace).toHaveBeenCalledWith("/Users/me/Archive", false);
     });
   });
 
-  it("removes a non-active space without switching", async () => {
+  it("shows why a space could not be shown", async () => {
+    vi.mocked(showSpace).mockRejectedValue(new Error("no window"));
+    renderSpaces();
+    await screen.findByText("Archive");
+    fireEvent.click(spaceRowOf("Archive"));
+    expect(await screen.findByText(/no window/)).toBeInTheDocument();
+  });
+
+  it("removes a space that is not open", async () => {
     vi.mocked(forgetKnownVault).mockResolvedValue(["/Users/me/Mine"]);
     renderSpaces();
     await screen.findByText("Archive");
@@ -222,34 +300,35 @@ describe("SpacesSection", () => {
     await waitFor(() => {
       expect(forgetKnownVault).toHaveBeenCalledWith("/Users/me/Archive");
     });
-    expect(selectVault).not.toHaveBeenCalled();
+    expect(showSpace).not.toHaveBeenCalled();
     await waitFor(() => {
       expect(screen.queryByText("Archive")).not.toBeInTheDocument();
     });
   });
 
-  it("removing the active space switches to the next one first", async () => {
+  it("forgets a space open in tabs at once, without showing another first", async () => {
+    // В70: the backend sends that space's tabs to the space picker.
     vi.mocked(forgetKnownVault).mockResolvedValue(["/Users/me/Archive"]);
     renderSpaces();
     await screen.findByText("Mine");
+    await waitFor(() => expect(spaceRowOf("Mine")).toHaveAttribute("data-space-open"));
 
     openRowMenu(spaceRowOf("Mine"));
     fireEvent.click(await screen.findByRole("menuitem", { name: /Remove Space/ }));
 
     await waitFor(() => {
-      expect(selectVault).toHaveBeenCalledWith("/Users/me/Archive");
       expect(forgetKnownVault).toHaveBeenCalledWith("/Users/me/Mine");
     });
-    // Switch happens before forget — the config invariant holds.
-    const switchOrder = vi.mocked(selectVault).mock.invocationCallOrder[0]!;
-    const forgetOrder = vi.mocked(forgetKnownVault).mock.invocationCallOrder[0]!;
-    expect(switchOrder).toBeLessThan(forgetOrder);
+    expect(showSpace).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(screen.queryByText("Mine")).not.toBeInTheDocument();
+    });
   });
 
   it("lists a space whose folder is gone as unavailable, without opening it", async () => {
     vi.mocked(listSpaces).mockResolvedValue([
       ...spaces("/Users/me/Mine"),
-      { path: "/Users/me/Gone", name: "Gone", available: false, current: false },
+      { vault_id: "id-Gone", path: "/Users/me/Gone", name: "Gone", available: false, current: false },
     ]);
     renderSpaces();
     await screen.findByText("Gone");
@@ -257,11 +336,11 @@ describe("SpacesSection", () => {
     expect(row).toHaveAttribute("aria-disabled", "true");
     expect(within(row).getByText(/Folder unavailable/)).toBeInTheDocument();
     fireEvent.click(row);
-    expect(selectVault).not.toHaveBeenCalled();
+    expect(showSpace).not.toHaveBeenCalled();
     expect(spaceStats).not.toHaveBeenCalledWith("/Users/me/Gone");
   });
 
-  it("removing the sole space forgets it without switching", async () => {
+  it("forgets the sole space too", async () => {
     vi.mocked(listSpaces).mockResolvedValue(spaces("/Users/me/Mine"));
     vi.mocked(forgetKnownVault).mockResolvedValue([]);
     renderSpaces();
@@ -273,16 +352,18 @@ describe("SpacesSection", () => {
     await waitFor(() => {
       expect(forgetKnownVault).toHaveBeenCalledWith("/Users/me/Mine");
     });
-    expect(selectVault).not.toHaveBeenCalled();
+    expect(showSpace).not.toHaveBeenCalled();
+    expect(await screen.findByText("No known spaces")).toBeInTheDocument();
   });
 
-  it("adds a space through the native directory picker without switching", async () => {
+  it("adds a space through the native directory picker without opening it", async () => {
     vi.mocked(open).mockResolvedValue("/Users/me/New Space");
     vi.mocked(addKnownVault).mockResolvedValue([
       "/Users/me/Mine",
       "/Users/me/Archive",
       "/Users/me/New Space",
     ]);
+    vi.mocked(spaceStats).mockResolvedValue(ARCHIVE_STATS);
     renderSpaces();
 
     fireEvent.click(await screen.findByRole("button", { name: "Add Space" }));
@@ -295,7 +376,7 @@ describe("SpacesSection", () => {
     await waitFor(() => {
       expect(spaceStats).toHaveBeenCalledWith("/Users/me/New Space");
     });
-    expect(selectVault).not.toHaveBeenCalled();
+    expect(showSpace).not.toHaveBeenCalled();
   });
 
   it("does nothing when the picker is cancelled", async () => {

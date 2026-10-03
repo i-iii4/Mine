@@ -3,57 +3,40 @@ import {
   SIDEBAR_MAX_WIDTH_PX,
   sidebarMinWidth,
   sidebarCollapseThreshold,
-  sidebarDefaultWidth,
 } from "@/lib/appLayout";
 import { getDesignMode, useDesignMode } from "@/lib/designMode";
+import { setWindowSidebar } from "@/lib/commands";
+import type { SidebarLayout } from "@/types";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-const STORAGE_KEY = "mine:sidebar";
-const LEGACY_STORAGE_KEY = "arena:sidebar";
 const MAX_WIDTH = SIDEBAR_MAX_WIDTH_PX;
 const CSS_VAR = "--sidebar-width";
 
-// MIN_WIDTH (three equal columns), COLLAPSE_THRESHOLD (⅔ of min) and the
-// first-run DEFAULT all depend on the design variant's chrome — see appLayout.
+// MIN_WIDTH (three equal columns) and COLLAPSE_THRESHOLD (half of min) depend
+// on the design variant's chrome; see appLayout.
 
-// ─── Persistence ────────────────────────────────────────────────────────────
-
-interface SidebarPersisted {
-  width: number;
-  collapsed: boolean;
-}
+// ─── Ownership ──────────────────────────────────────────────────────────────
+//
+// The sidebar belongs to the window, not to the tab (SPEC_TABS.md, В56, В78):
+// the backend keeps its layout, first-run width included, and sends every
+// change to all tabs of the window and to its tab bar. A tab clamps what it
+// receives to what the panel can show, changes it with `setWindowSidebar`
+// only when the person does, and shows the change at once; the echo that
+// follows says the same. A page that is not a tab (a dev browser route)
+// keeps the layout in memory, starting at the minimum.
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function loadPersisted(minWidth: number, defaultWidth: number): SidebarPersisted {
-  try {
-    let raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      raw = localStorage.getItem(LEGACY_STORAGE_KEY);
-      if (raw) {
-        localStorage.setItem(STORAGE_KEY, raw);
-        localStorage.removeItem(LEGACY_STORAGE_KEY);
-      }
-    }
-    if (!raw) return { width: defaultWidth, collapsed: false };
-    const parsed = JSON.parse(raw);
-    if (typeof parsed.width !== "number" || typeof parsed.collapsed !== "boolean") {
-      return { width: defaultWidth, collapsed: false };
-    }
-    return {
-      width: clamp(parsed.width, minWidth, MAX_WIDTH),
-      collapsed: parsed.collapsed,
-    };
-  } catch {
-    return { width: defaultWidth, collapsed: false };
-  }
-}
-
-function persist(width: number, collapsed: boolean): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ width, collapsed }));
+function initialLayout(windowSidebar: SidebarLayout | null): { width: number; collapsed: boolean } {
+  const design = getDesignMode();
+  if (!windowSidebar) return { width: sidebarMinWidth(design), collapsed: false };
+  return {
+    width: clamp(windowSidebar.width_px, sidebarMinWidth(design), MAX_WIDTH),
+    collapsed: windowSidebar.collapsed,
+  };
 }
 
 function writeCssVar(width: number): void {
@@ -79,25 +62,35 @@ export interface UseSidebarResizeReturn {
   toggleCollapsed: () => void;
 }
 
-export function useSidebarResize(): UseSidebarResizeReturn {
+/**
+ * The sidebar's width and collapsed state, and the drag that resizes it.
+ * `windowSidebar` is the layout of this tab's window as the backend last sent
+ * it (bootstrap, then `window-sidebar-changed`); null for a page that is not
+ * a tab.
+ */
+export function useSidebarResize(windowSidebar: SidebarLayout | null = null): UseSidebarResizeReturn {
   const design = useDesignMode();
   const MIN_WIDTH = sidebarMinWidth(design);
   const COLLAPSE_THRESHOLD = sidebarCollapseThreshold(design);
 
-  const [storedWidth, setStoredWidth] = useState(() => {
-    const d = getDesignMode();
-    return loadPersisted(sidebarMinWidth(d), sidebarDefaultWidth(d)).width;
-  });
-  const [collapsed, setCollapsed] = useState(() => {
-    const d = getDesignMode();
-    return loadPersisted(sidebarMinWidth(d), sidebarDefaultWidth(d)).collapsed;
-  });
+  const [storedWidth, setStoredWidth] = useState(() => initialLayout(windowSidebar).width);
+  const [collapsed, setCollapsed] = useState(() => initialLayout(windowSidebar).collapsed);
   const [isResizing, setIsResizing] = useState(false);
   const [dragWidth, setDragWidth] = useState(() => {
-    const d = getDesignMode();
-    const { width, collapsed: c } = loadPersisted(sidebarMinWidth(d), sidebarDefaultWidth(d));
+    const { width, collapsed: c } = initialLayout(windowSidebar);
     return c ? 0 : width;
   });
+
+  // The window owns the layout: a change made here goes to the backend, which
+  // tells every tab of the window and its tab bar.
+  const ownedByWindowRef = useRef(windowSidebar !== null);
+  ownedByWindowRef.current = windowSidebar !== null;
+  const commit = useCallback((width: number, nextCollapsed: boolean) => {
+    if (!ownedByWindowRef.current) return;
+    void setWindowSidebar({ width_px: Math.round(width), collapsed: nextCollapsed }).catch((error: unknown) => {
+      console.error("Could not store the window's sidebar:", error);
+    });
+  }, []);
 
   const startRef = useRef({ startX: 0, startWidth: 0 });
   const rafIdRef = useRef<number | null>(null);
@@ -130,10 +123,23 @@ export function useSidebarResize(): UseSidebarResizeReturn {
   }, [width, isResizing]);
 
   // Design variant change moves the minimum; lift a stored width now below it.
-  // localStorage is self-correcting (loadPersisted re-clamps on next load).
+  // The window's stored width is left alone: every page clamps it on arrival.
   useEffect(() => {
     setStoredWidth((w) => clamp(w, MIN_WIDTH, MAX_WIDTH));
   }, [MIN_WIDTH]);
+
+  // The window's layout changed: another tab, the tab bar's button, the View
+  // menu or the two-finger swipe (В56). A drag in progress here keeps the
+  // panel under the pointer; its own result follows when it ends.
+  const isResizingRef = useRef(isResizing);
+  isResizingRef.current = isResizing;
+  const windowWidth = windowSidebar?.width_px;
+  const windowCollapsed = windowSidebar?.collapsed;
+  useEffect(() => {
+    if (windowWidth === undefined || windowCollapsed === undefined || isResizingRef.current) return;
+    setStoredWidth(clamp(windowWidth, minWidthRef.current, MAX_WIDTH));
+    setCollapsed(windowCollapsed);
+  }, [windowCollapsed, windowWidth]);
 
   const startResize = useCallback((startX: number, startWidth: number) => {
     startRef.current = { startX, startWidth };
@@ -164,7 +170,7 @@ export function useSidebarResize(): UseSidebarResizeReturn {
       pendingWidthRef.current = next;
       setIsResizing(false);
       setCollapsed(true);
-      persist(storedWidthRef.current, true);
+      commit(storedWidthRef.current, true);
       document.body.classList.remove("sidebar-resizing");
       return;
     }
@@ -183,7 +189,7 @@ export function useSidebarResize(): UseSidebarResizeReturn {
         });
       });
     }
-  }, []);
+  }, [commit]);
 
   const endResize = useCallback(() => {
     if (rafIdRef.current !== null) {
@@ -203,24 +209,23 @@ export function useSidebarResize(): UseSidebarResizeReturn {
       // Safety net if a fast gesture skipped the live-collapse check.
       setCollapsed(true);
       setDragWidth(storedWidthRef.current);
-      persist(storedWidthRef.current, true);
+      commit(storedWidthRef.current, true);
     } else {
       // Within the rubber-band band (or above) — snap to at least the minimum.
       const clamped = clamp(finalWidth, minWidthRef.current, MAX_WIDTH);
       setCollapsed(false);
       setStoredWidth(clamped);
       setDragWidth(clamped);
-      persist(clamped, false);
+      commit(clamped, false);
     }
-  }, []);
+  }, [commit]);
 
   const toggleCollapsed = useCallback(() => {
-    setCollapsed((prev) => {
-      const next = !prev;
-      persist(storedWidthRef.current, next);
-      return next;
-    });
-  }, []);
+    const next = !collapsedRef.current;
+    collapsedRef.current = next;
+    setCollapsed(next);
+    commit(storedWidthRef.current, next);
+  }, [commit]);
 
   // Cleanup pending RAF on unmount
   useEffect(() => {

@@ -107,7 +107,5 @@ export function sidebarCollapseThreshold(design: DesignMode): number {
   return Math.round(sidebarMinWidth(design) / 2);
 }
 
-/** Comfortable first-run / re-expand width, always at least the minimum. */
-export function sidebarDefaultWidth(design: DesignMode): number {
-  return Math.max(360, sidebarMinWidth(design));
-}
+// The first-run width is the window's: the backend starts every window's
+// sidebar at its SIDEBAR_DEFAULT_WIDTH_PX (SPEC_TABS.md, В56).

@@ -231,6 +231,34 @@ export function findViewportPreservationAnchor(
   return best ? { slug: best.slug, offsetTop: best.offsetTop } : null;
 }
 
+/**
+ * The first card whose top edge is at or below the feed's top edge, and how
+ * far below: what a tab remembers of its scroll (SPEC_TABS.md, В28). Ties on
+ * the same top go to the leftmost card. Null when no card starts below.
+ */
+export function findFirstCardAtOrBelowTop(
+  positions: readonly MasonryPosition[],
+  blocks: readonly LightBlock[],
+  scrollTop: number,
+  topInset: number,
+): ScrollAnchor | null {
+  let best: { slug: string; itemTop: number; itemLeft: number } | null = null;
+  for (const position of positions) {
+    const block = blocks[position.index];
+    if (!block) continue;
+    const itemTop = topInset + position.top;
+    if (itemTop < scrollTop) continue;
+    if (
+      !best
+      || itemTop < best.itemTop - 0.5
+      || (Math.abs(itemTop - best.itemTop) <= 0.5 && position.left < best.itemLeft)
+    ) {
+      best = { slug: block.slug, itemTop, itemLeft: position.left };
+    }
+  }
+  return best ? { slug: best.slug, offsetTop: best.itemTop - scrollTop } : null;
+}
+
 export function clampedScrollTopForAnchor(
   layout: MasonryLayout,
   viewportHeight: number,

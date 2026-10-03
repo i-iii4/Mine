@@ -132,6 +132,9 @@ pub fn record_startup_milestone(app: AppHandle, event: String) -> Result<(), Com
 /// surface. The worker never joins the IPC command or the UI thread.
 #[tauri::command]
 pub fn start_startup_maintenance(app: AppHandle) -> Result<bool, CommandError> {
+    // The first route of the last window is on screen: the other saved
+    // windows come now (SPEC_TABS.md, В36).
+    crate::tabs::restore_rest(&app);
     let write = crate::storage::source_mutation::begin_write()
         .map_err(|error| CommandError::Internal(error.to_string()))?;
     if MAINTENANCE_STARTED.swap(true, Ordering::AcqRel) {

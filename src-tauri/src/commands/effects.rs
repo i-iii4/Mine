@@ -32,7 +32,6 @@ pub enum Effect {
 /// Every registered command and its effect (В16).
 #[cfg(test)]
 pub const COMMAND_EFFECTS: &[(&str, Effect)] = &[
-    ("take_open_space_request", Effect::Reads),
     ("get_article_audio_state", Effect::Reads),
     ("generate_article_audio", Effect::AnnouncesItself),
     ("delete_article_audio", Effect::AnnouncesItself),
@@ -126,6 +125,27 @@ pub const COMMAND_EFFECTS: &[(&str, Effect)] = &[
     ("start_source_video_download", Effect::Reads),
     ("cancel_source_video_download", Effect::Reads),
     ("source_video_download_status", Effect::Reads),
+    // Windows and tabs change no space (SPEC_TABS.md, «Команды»).
+    ("get_tab_bootstrap", Effect::Reads),
+    ("get_tabbar_bootstrap", Effect::Reads),
+    ("report_tab_view", Effect::Reads),
+    ("tab_painted", Effect::Reads),
+    ("activate_tab", Effect::Reads),
+    ("activate_adjacent_tab", Effect::Reads),
+    ("new_tab", Effect::Reads),
+    ("close_tab", Effect::Reads),
+    ("close_other_tabs", Effect::Reads),
+    ("move_tab", Effect::Reads),
+    ("set_window_sidebar", Effect::Reads),
+    ("start_window_drag", Effect::Reads),
+    ("report_window_surface", Effect::Reads),
+    ("show_space", Effect::Reads),
+    ("spaces_in_tabs", Effect::Reads),
+    ("dismiss_space_notice", Effect::Reads),
+    ("space_notice_dismissed", Effect::Reads),
+    ("move_tab_to_new_window", Effect::Reads),
+    ("begin_tab_drag", Effect::Reads),
+    ("report_drop_slot", Effect::Reads),
 ];
 
 /// What was renamed by a change, so a tab showing the old name follows it

@@ -31,4 +31,21 @@ describe("shared chrome geometry", () => {
     expect(screen.getByText("Metadata").previousElementSibling).toBe(screen.getByText("Header").nextElementSibling);
     expect(container.querySelector("[data-slot=separator] + [data-slot=separator]")).toBeNull();
   });
+
+  it("leaves the top boundary to the tab bar above a tab page and keeps the rest (SPEC_TABS.md, В43)", () => {
+    const { container } = render(
+      <ChromeShell topEdge={false}>
+        <ChromeRow as="header" separator="bottom">Header</ChromeRow>
+        <ChromeRow separator="bottom">Metadata</ChromeRow>
+        <main>Body</main>
+        <ChromeRow separator="top">Actions</ChromeRow>
+      </ChromeShell>,
+    );
+    expect(container.querySelector("[data-chrome-frame-edge=top]")).toBeNull();
+    expect(container.querySelectorAll("[data-chrome-frame-edge=bottom]")).toHaveLength(1);
+    // The header is the shell's first child: nothing draws above it.
+    expect(container.querySelector("[data-chrome-shell]")?.firstElementChild).toBe(screen.getByRole("banner"));
+    // The page's own rows keep their separators.
+    expect(container.querySelectorAll("[data-chrome-divider]")).toHaveLength(3);
+  });
 });

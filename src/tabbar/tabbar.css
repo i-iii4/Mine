@@ -1,0 +1,19 @@
+/* The tab bar page is chrome from edge to edge (SPEC_TABS.md, В43): its own
+   surface is the chrome token, not the page background global.css gives
+   every other page. The attribute outranks that rule whatever the order. */
+html[data-tab-bar-page],
+html[data-tab-bar-page] body,
+html[data-tab-bar-page] #root {
+  background: var(--chrome);
+}
+
+/* The strip scrolls sideways when the tabs do not fit; its edges dissolve
+   instead of showing a scrollbar (В48). */
+[data-tab-strip] {
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+}
+
+[data-tab-strip]::-webkit-scrollbar {
+  display: none;
+}

@@ -11,7 +11,7 @@
 // `INDEXING_NOTICE_DELAY_MS`, counted from the start of the first phase: the
 // short passes that follow every saved file would otherwise blink it.
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { NotificationCard } from "@/components/NotificationCard";
@@ -75,7 +75,10 @@ export function useIndexingNotice(active: boolean): {
     const timer = window.setTimeout(() => setDue(true), INDEXING_NOTICE_DELAY_MS);
     return () => window.clearTimeout(timer);
   }, [active]);
-  return { visible: active && due && !hidden, hide: () => setHidden(true) };
+  // Stable, so a caller may hide the notice from an effect: a tab that starts
+  // leading its space hides a notice the previous lead closed (SPEC_TABS.md, В20).
+  const hide = useCallback(() => setHidden(true), []);
+  return { visible: active && due && !hidden, hide };
 }
 
 /** The notice's title for a phase of opening `spaceName`. */

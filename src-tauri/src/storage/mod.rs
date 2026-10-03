@@ -28,3 +28,4 @@ pub mod source_mutation;
 pub mod thumbnails;
 pub mod vault_conflicts;
 pub mod vault_stats;
+pub mod window_store;

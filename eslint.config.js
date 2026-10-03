@@ -54,4 +54,39 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // Tab pages and tab bars are child pages of a window (SPEC_TABS.md, В22).
+    // A global `listen` hears events meant for other tabs, and the window
+    // handles go stale once a tab moves into another window: the window label
+    // is written into the page once, when it is created. Pages subscribe
+    // through `listenPage` (src/lib/pageEvents.ts) and ask the backend for
+    // window actions. The settings window is an ordinary window and keeps
+    // them; tests mock these modules.
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/settings/**", "src/test/**", "src/**/*.test.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@tauri-apps/api/event",
+              importNames: ["listen", "once"],
+              message: "Subscribe through listenPage from @/lib/pageEvents: a page hears only its own events (SPEC_TABS.md, В22).",
+            },
+            {
+              name: "@tauri-apps/api/window",
+              importNames: ["getCurrentWindow"],
+              message: "A tab page names a stale window after it moves. Ask the backend: startWindowDrag, reportWindowSurface (SPEC_TABS.md, В22, В23).",
+            },
+            {
+              name: "@tauri-apps/api/webviewWindow",
+              importNames: ["getCurrentWebviewWindow"],
+              message: "A tab is a child page of its window. Use getCurrentWebview from @tauri-apps/api/webview (SPEC_TABS.md, В22).",
+            },
+          ],
+        },
+      ],
+    },
+  },
 );

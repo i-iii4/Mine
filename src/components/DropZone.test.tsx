@@ -16,8 +16,9 @@ const mocks = vi.hoisted(() => ({
   unlisten: vi.fn(),
 }));
 
-vi.mock("@tauri-apps/api/webviewWindow", () => ({
-  getCurrentWebviewWindow: () => ({
+// Drops reach the page through its own webview (SPEC_TABS.md, В22).
+vi.mock("@tauri-apps/api/webview", () => ({
+  getCurrentWebview: () => ({
     onDragDropEvent: mocks.onDragDropEvent,
   }),
 }));

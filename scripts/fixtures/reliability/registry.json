@@ -1318,7 +1318,8 @@
         "src-tauri/src/commands/vault.rs",
         "src-tauri/src/commands/freshness.rs",
         "src-tauri/src/lib.rs",
-        "scripts/edge-states-audit.mjs"
+        "scripts/edge-states-audit.mjs",
+        "src/edgeStatesBench.tsx"
       ],
       "requirement": "SPEC_ONBOARDING.md#**О12.**",
       "tests": ["src/components/VaultPicker.test.tsx", "src/components/IndexingProgress.test.tsx", "src/components/EdgeStatesSection.test.tsx"],
@@ -1462,6 +1463,14 @@
     },
     {
       "paths": [
+        "scripts/browser-audits.mjs"
+      ],
+      "requirement": "SPEC_GRID_LAYOUT_READINESS.md## Browser Acceptance Harness",
+      "tests": ["scripts/cold-space-browser-audit.mjs", "scripts/feed-scroll-audit.mjs"],
+      "command": "test:browser"
+    },
+    {
+      "paths": [
         "src-tauri/src/commands/spaces.rs",
         "src-tauri/src/commands/space_events.rs",
         "src-tauri/src/commands/effects.rs",
@@ -1472,6 +1481,122 @@
       "requirement": "SPEC_TABS.md### Открытые пространства",
       "tests": ["src-tauri/src/commands/spaces.rs", "src-tauri/src/commands/space_events.rs", "src-tauri/src/commands/effects.rs"],
       "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src-tauri/src/tabs/mod.rs",
+        "src-tauri/src/tabs/native.rs",
+        "src-tauri/src/tabs/drag.rs",
+        "src-tauri/src/commands/tabs.rs",
+        "src-tauri/src/domain/windows.rs",
+        "src-tauri/src/storage/window_store.rs",
+        "src-tauri/src/domain/mod.rs",
+        "src-tauri/src/storage/mod.rs",
+        "src-tauri/capabilities/default.json",
+        "src-tauri/src/commands/app_open.rs",
+        "src-tauri/src/commands/window_chrome.rs"
+      ],
+      "requirement": "SPEC_TABS.md## Сохранённые окна",
+      "tests": ["src-tauri/src/domain/windows.rs", "src-tauri/src/storage/window_store.rs", "src-tauri/src/tabs/native.rs", "src-tauri/src/tabs/drag.rs", "src-tauri/src/commands/app_open.rs"],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src-tauri/src/commands/shortcuts.rs"
+      ],
+      "requirement": "SPEC_TABS.md## Сочетания клавиш",
+      "tests": ["src-tauri/src/commands/shortcuts.rs"],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src/tabbar/",
+        "src/lib/adjacentTab.ts",
+        "tabbar.html",
+        "vite.config.ts"
+      ],
+      "requirement": "SPEC_TABS.md## Полоса вкладок",
+      "tests": ["src/tabbar/TabBar.test.tsx", "src/tabbar/TabBarApp.test.tsx", "src/tabbar/constants.test.ts", "src/tabbar/sourceGuard.test.ts", "src/tabbar/tabDrag.test.ts", "src/tabbar/tabKeyboard.test.ts", "src/tabbar/tabLabel.test.ts", "src/tabbar/tabLayout.test.ts", "src/tabbar/tabMenu.test.ts"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "eslint.config.js",
+        "scripts/settings-menu-audit.mjs",
+        "src/main.tsx",
+        "src/test/setup.ts",
+        "src/components/ChromeRow.tsx",
+        "src/components/ChromeRow.test.tsx",
+        "src/components/DropZone.tsx",
+        "src/components/DropZone.test.tsx",
+        "src/components/ImportDialog.tsx",
+        "src/components/SearchMenuAction.tsx",
+        "src/components/VaultSwitcher.test.tsx",
+        "src/components/grid/interaction.test.ts",
+        "src/hooks/useChromeDragGesture.ts",
+        "src/hooks/useChromeDragGesture.test.tsx",
+        "src/hooks/useSidebarResize.ts",
+        "src/hooks/useSidebarResize.test.tsx",
+        "src/hooks/useThumbnailUpgrade.ts",
+        "src/lib/articleAudioDesktopGateway.ts",
+        "src/lib/nativeWindowChromeSurface.ts",
+        "src/lib/nativeWindowChromeSurface.test.ts",
+        "src/lib/controlCharGuard.ts",
+        "src/lib/controlCharGuard.test.ts",
+        "src/lib/pageEvents.ts",
+        "src/lib/pageEvents.test.ts",
+        "src/lib/pageEvents.lint.test.ts",
+        "src/lib/tabPage.ts",
+        "src/lib/tabPage.test.ts",
+        "src/lib/tabVisibility.ts",
+        "src/lib/tabVisibility.test.ts"
+      ],
+      "requirement": "SPEC_TABS.md### Окно и страница",
+      "tests": ["src/App.test.tsx", "src/lib/pageEvents.test.ts", "src/lib/pageEvents.lint.test.ts", "src/lib/tabPage.test.ts", "src/lib/tabVisibility.test.ts", "src/lib/controlCharGuard.test.ts", "src/hooks/useSidebarResize.test.tsx", "src/lib/nativeWindowChromeSurface.test.ts", "src/components/DropZone.test.tsx", "src/hooks/useChromeDragGesture.test.tsx"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/settings/LayoutSection.tsx",
+        "src/settings/LayoutSection.test.tsx",
+        "src/settings/OrphansSection.tsx",
+        "src/settings/OrphansSection.test.tsx",
+        "src/settings/ShortcutsSection.tsx",
+        "src/settings/ShortcutsSection.test.tsx",
+        "src/settings/SpacesSection.test.tsx",
+        "src/settings/OpenSpaceSelect.tsx",
+        "src/settings/useOpenSpaces.ts",
+        "src/lib/commandRegistry.ts",
+        "src/lib/commandRegistry.test.ts",
+        "src/lib/shortcutValidation.ts",
+        "src/lib/shortcutValidation.test.ts"
+      ],
+      "requirement": "SPEC_TABS.md## Связи с остальным приложением",
+      "tests": ["src/settings/SpacesSection.test.tsx", "src/settings/OrphansSection.test.tsx", "src/settings/LayoutSection.test.tsx", "src/settings/ShortcutsSection.test.tsx", "src/lib/commandRegistry.test.ts", "src/lib/shortcutValidation.test.ts"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/hooks/useAppOpenRequest.ts",
+        "src/hooks/useAppOpenRequest.test.ts",
+        "src/hooks/useSidebarSwipe.ts",
+        "src/hooks/useSidebarSwipe.test.tsx",
+        "src/lib/recentTags.ts",
+        "src/lib/shortcutOverrides.ts",
+        "src/components/CardHoverMenu.test.tsx",
+        "src/components/Grid.tsx",
+        "src/components/IndexingProgress.tsx",
+        "src/components/MainSecondaryChrome.tsx",
+        "src/components/VaultConflictsBanner.tsx",
+        "src/components/VaultSwitcher.tsx",
+        "src/components/YoutubeSourcePlayer.tsx",
+        "src/components/grid/interaction.ts",
+        "src/lib/appLayout.ts",
+        "src/lib/edgeFade.ts"
+      ],
+      "requirement": "SPEC_TABS.md### Окно и страница",
+      "tests": ["src/App.test.tsx", "src/components/VaultSwitcher.test.tsx", "src/lib/tabVisibility.test.ts"],
+      "command": "test:frontend"
     }
   ],
   "release": null

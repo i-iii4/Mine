@@ -65,8 +65,10 @@ describe("VaultSwitcher", () => {
     const trigger = screen.getByRole("button", { name: /Switch space: Mine/ });
     expect(trigger).toHaveClass("bg-transparent");
     expect(trigger).toHaveClass("max-w-[50%]");
-    expect(trigger).not.toHaveClass("max-w-[159px]");
-    expect(trigger).toHaveClass("px-3");
+    expect(trigger).not.toHaveClass("max-w-[240px]");
+    // First in the tab page's row: the label lands on the chrome edge inset
+    // (SPEC_TABS.md, В43).
+    expect(trigger).toHaveClass("pl-[var(--top-collection-pad-x)]", "pr-3");
     expect(trigger).toHaveClass("font-mono");
     expect(trigger).toHaveClass("text-sm");
     expect(trigger).toHaveClass("text-muted-foreground");
@@ -87,7 +89,7 @@ describe("VaultSwitcher", () => {
     expect(pill).not.toHaveClass("group-focus-visible:bg-component-fill-hover");
   });
 
-  it("uses intrinsic capped width in collapsed top-chrome mode", async () => {
+  it("takes the collapsed segment's whole cap, with no traffic-light reserve beside it", async () => {
     render(
       <VaultSwitcher
         currentPath="/Users/i_iii/Library/Mobile Documents/com~apple~CloudDocs/Mine"
@@ -102,7 +104,7 @@ describe("VaultSwitcher", () => {
     });
 
     const trigger = screen.getByRole("button", { name: /Switch space: Mine/ });
-    expect(trigger).toHaveClass("max-w-[159px]");
+    expect(trigger).toHaveClass("max-w-[240px]");
     expect(trigger).not.toHaveClass("max-w-[50%]");
     expect(trigger).toHaveTextContent("Mine");
   });
@@ -392,5 +394,95 @@ describe("VaultSwitcher", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
 
     expect(commandMocks.forgetKnownVault).not.toHaveBeenCalled();
+  });
+
+  describe("a space in a new tab (SPEC_TABS.md, В52)", () => {
+    const MINE = "/spaces/Mine";
+    const TEST = "/spaces/Тест";
+    const LEGACY = "/spaces/Old";
+
+    async function openTabSwitcher(onOpenInNewTab?: (vaultId: string) => void) {
+      const onVaultSelected = vi.fn();
+      commandMocks.selectVault.mockClear();
+      commandMocks.listSpaces.mockClear();
+      commandMocks.listKnownVaults.mockResolvedValue([MINE, TEST, LEGACY]);
+      commandMocks.listSpaces.mockResolvedValue([
+        { vault_id: "mine-id", path: MINE, name: "Mine", available: true, current: true },
+        { vault_id: "test-id", path: TEST, name: "Тест", available: true, current: false },
+        // Known only by its path until it is opened once (В29).
+        { vault_id: null, path: LEGACY, name: "Old", available: true, current: false },
+      ]);
+      render(
+        <VaultSwitcher
+          currentPath={MINE}
+          onVaultSelected={onVaultSelected}
+          onOpenInNewTab={onOpenInNewTab}
+          surface="topChrome"
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Switch space: Mine" }));
+      await screen.findByRole("menuitem", { name: "Тест" });
+      await waitFor(() => expect(commandMocks.listSpaces).toHaveBeenCalled());
+      return { onVaultSelected };
+    }
+
+    it("opens a space in a new tab on ⌘-click and leaves this tab's space alone", async () => {
+      const onOpenInNewTab = vi.fn();
+      const { onVaultSelected } = await openTabSwitcher(onOpenInNewTab);
+
+      fireEvent.click(screen.getByRole("menuitem", { name: "Тест" }), { metaKey: true });
+
+      await waitFor(() => expect(onOpenInNewTab).toHaveBeenCalledWith("test-id"));
+      expect(commandMocks.selectVault).not.toHaveBeenCalled();
+      expect(onVaultSelected).not.toHaveBeenCalled();
+      await waitFor(() => {
+        expect(screen.queryByRole("menuitem", { name: "Тест" })).not.toBeInTheDocument();
+      });
+    });
+
+    it("keeps a plain choice in this tab", async () => {
+      const onOpenInNewTab = vi.fn();
+      const { onVaultSelected } = await openTabSwitcher(onOpenInNewTab);
+
+      fireEvent.click(screen.getByRole("menuitem", { name: "Тест" }));
+
+      await waitFor(() => expect(onVaultSelected).toHaveBeenCalledWith(TEST));
+      expect(commandMocks.selectVault).toHaveBeenCalledWith(TEST);
+      expect(onOpenInNewTab).not.toHaveBeenCalled();
+    });
+
+    it("offers Open in New Tab on each space, disabled for a space without an identity", async () => {
+      const onOpenInNewTab = vi.fn();
+      await openTabSwitcher(onOpenInNewTab);
+
+      const legacy = await screen.findByRole("button", { name: "Open Old in New Tab" });
+      await waitFor(() => expect(legacy).toBeDisabled());
+      fireEvent.click(screen.getByRole("button", { name: "Open Тест in New Tab" }));
+
+      expect(onOpenInNewTab).toHaveBeenCalledWith("test-id");
+      expect(onOpenInNewTab).toHaveBeenCalledTimes(1);
+      expect(commandMocks.selectVault).not.toHaveBeenCalled();
+    });
+
+    it("opens the active space in a new tab with ⌘Return", async () => {
+      const onOpenInNewTab = vi.fn();
+      await openTabSwitcher(onOpenInNewTab);
+      const search = screen.getByRole("textbox", { name: "Search spaces" });
+
+      fireEvent.keyDown(search, { key: "ArrowDown" });
+      fireEvent.keyDown(search, { key: "Enter", metaKey: true });
+
+      await waitFor(() => expect(onOpenInNewTab).toHaveBeenCalledWith("test-id"));
+      expect(commandMocks.selectVault).not.toHaveBeenCalled();
+    });
+
+    it("has no new tab on a page that is not a tab: ⌘-click switches as before", async () => {
+      const { onVaultSelected } = await openTabSwitcher(undefined);
+
+      expect(screen.queryByRole("button", { name: "Open Тест in New Tab" })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("menuitem", { name: "Тест" }), { metaKey: true });
+
+      await waitFor(() => expect(onVaultSelected).toHaveBeenCalledWith(TEST));
+    });
   });
 });

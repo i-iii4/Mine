@@ -128,25 +128,27 @@ pub fn forget_known_vault(
     state: State<'_, AppState>,
     path: String,
 ) -> Result<Vec<String>, CommandError> {
-    // A space some tab shows counts as the active one (SPEC_TABS.md, В70
-    // replaces this with moving its tabs to the space picker).
-    let shown = state
-        .spaces
-        .by_root(std::path::Path::new(&path))
-        .is_some_and(|space| !state.tabs.labels_of(space.vault_id()).is_empty());
+    // Forgetting is allowed while tabs show the space: they go to the space
+    // picker (SPEC_TABS.md, В70).
+    let _ = state;
+    let vault_id = match load_config(&app) {
+        serde_json::Value::Object(cfg) => crate::space_registry::records(&cfg)
+            .into_iter()
+            .find(|record| crate::space_registry::same_path(&record.path, &path))
+            .and_then(|record| record.vault_id),
+        _ => None,
+    };
     let current = known_vaults_from_config(&load_config(&app));
-    if shown && current.iter().any(|existing| existing != &path) {
-        return Err(CommandError::Internal(
-            "cannot forget the active space while others exist — switch space first".into(),
-        ));
-    }
 
-    // Exactly this record goes; the app keeps running on its current space
-    // and every other setting stays (П28).
+    // Exactly this record goes; every other setting stays (П28).
     update_config(&app, |cfg| {
         crate::space_registry::forget_record(cfg, &path, false);
     })?;
     let known = detach_known_vault(current, &path);
+    if let Some(vault_id) = vault_id {
+        crate::tabs::space_forgotten(&app, &vault_id);
+        crate::tabs::emit_spaces_in_tabs(&app);
+    }
 
     // Detach is not garbage collection. Backups, pending uploads and indexes
     // still owned by another process must survive removing the registry entry.
@@ -726,9 +728,8 @@ pub fn promote_orphan_media(
     app: AppHandle,
     state: State<'_, AppState>,
     request: OrphanMediaBatchRequest,
-    vault_id: Option<String>,
 ) -> Result<PromoteOrphanResult, CommandError> {
-    let space = chosen_space(&state, vault_id.as_deref())?;
+    let space = chosen_space(&state, Some(request.vault_id.as_str()))?;
     let result = {
         let vault_state = space
             .vault_state
@@ -792,9 +793,8 @@ pub async fn delete_orphan_media(
     app: AppHandle,
     state: State<'_, AppState>,
     request: OrphanMediaBatchRequest,
-    vault_id: Option<String>,
 ) -> Result<DeleteOrphanResult, CommandError> {
-    let space = chosen_space(&state, vault_id.as_deref())?;
+    let space = chosen_space(&state, Some(request.vault_id.as_str()))?;
     let vault = space.layout()?;
     let result = tauri::async_runtime::spawn_blocking(move || {
         let file_names = orphan_request_files(&vault, request)?;

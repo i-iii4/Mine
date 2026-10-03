@@ -11,3 +11,4 @@ pub mod search;
 pub mod source_patch;
 pub mod tag;
 pub mod vault;
+pub mod windows;

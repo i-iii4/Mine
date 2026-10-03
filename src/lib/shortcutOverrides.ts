@@ -4,7 +4,7 @@
 /// `shortcuts-changed`, so a rebind in Settings reaches the main window without
 /// a restart.
 
-import { listen } from "@tauri-apps/api/event";
+import { listenPage } from "@/lib/pageEvents";
 import { isTauri } from "@tauri-apps/api/core";
 import type { CommandBinding } from "./commandBinding";
 import { getCommandOverrides, setCommandOverrides, type CommandOverrides } from "./commandRegistry";
@@ -45,7 +45,7 @@ export async function persistCommandOverrides(
 /// Subscribe to rebinds made in the other window.
 export function watchCommandOverrides(): () => void {
   if (!isTauri()) return () => {};
-  const unlisten = listen<CommandOverrides>("shortcuts-changed", (event) => {
+  const unlisten = listenPage<CommandOverrides>("shortcuts-changed", (event) => {
     setCommandOverrides(event.payload ?? {});
   });
   return () => { void unlisten.then((stop) => stop()); };

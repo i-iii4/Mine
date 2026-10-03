@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { bindingId } from "./commandBinding";
 import {
   DEFAULT_COMMANDS,
   allCommands,
+  commandBindings,
   commandById,
   commandsForContext,
   setCommandOverrides,
@@ -24,13 +26,13 @@ describe("command registry", () => {
     // different things in feed and element — but inside one surface, and
     // against the always-active global set, a combo must mean one thing.
     for (const context of ["feed", "element", "selection"] as const) {
-      const active = [...commandsForContext("global"), ...commandsForContext(context)]
-        .filter((command) => command.binding);
-      const combos = active.map((command) => command.combo);
+      const active = [...commandsForContext("global"), ...commandsForContext(context)];
+      // Every chord a command answers to, alternates included.
+      const combos = active.flatMap((command) => commandBindings(command).map(bindingId));
       const duplicates = combos.filter((combo, index) => combos.indexOf(combo) !== index);
       // ⇥ in an element intentionally shadows the global view toggle: an open
       // element captures Tab for its own mode switch.
-      expect(duplicates.filter((combo) => combo !== "⇥")).toEqual([]);
+      expect(duplicates.filter((combo) => combo !== "tab")).toEqual([]);
     }
   });
 
@@ -100,6 +102,65 @@ describe("command registry", () => {
         expect(["structural", "system"]).toContain(command.fixed);
       } else {
         expect(command.binding, `${command.id} is bindable but has no binding`).toBeDefined();
+      }
+    }
+  });
+
+  it("lists the tab and window commands with the chords macOS keeps for them", () => {
+    // SPEC_TABS.md, В55 and В57: labels come from the shared key table.
+    const expected: Record<string, readonly string[]> = {
+      "new-tab": ["⌘T"],
+      "new-window": ["⌘N"],
+      "close-tab": ["⌘W"],
+      "close-window": ["⇧⌘W"],
+      "next-tab": ["⇧⌘]", "⌃⇥"],
+      "previous-tab": ["⇧⌘[", "⌃⇧⇥"],
+      "select-tab": ["⌘1…⌘8"],
+      "select-last-tab": ["⌘9"],
+    };
+    for (const [id, combos] of Object.entries(expected)) {
+      const command = commandById(id);
+      expect(command.combos, id).toEqual(combos);
+      expect(command.fixed, id).toBe("system");
+      expect(command.context, id).toBe("global");
+    }
+    expect(commandById("next-tab").combo).toBe("⇧⌘] ⌃⇥");
+    expect(commandById("select-tab").name).toBe("Select Tab 1 to 8");
+  });
+
+  it("never rebinds a tab command", () => {
+    setCommandOverrides({
+      "new-tab": { key: "j", meta: true },
+      "next-tab": { key: "j", meta: true, alt: true },
+    });
+    expect(commandById("new-tab").combo).toBe("⌘T");
+    expect(commandById("new-tab").rebound).toBe(false);
+    expect(commandById("next-tab").combos).toEqual(["⇧⌘]", "⌃⇥"]);
+  });
+
+  it("matches a tab command on its chord and on each alternate", () => {
+    const next = commandById("next-tab");
+    expect(next.matches!(keydown({ key: "Tab", ctrlKey: true }))).toBe(true);
+    expect(next.matches!(keydown({ key: "}", code: "BracketRight", metaKey: true, shiftKey: true }))).toBe(true);
+    // Exact modifiers: the bare view toggle and the previous tab stay apart.
+    expect(next.matches!(keydown({ key: "Tab" }))).toBe(false);
+    expect(next.matches!(keydown({ key: "Tab", ctrlKey: true, shiftKey: true }))).toBe(false);
+    expect(commandById("previous-tab").matches!(keydown({ key: "Tab", ctrlKey: true, shiftKey: true }))).toBe(true);
+    expect(commandById("toggle-view").matches!(keydown({ key: "Tab", ctrlKey: true }))).toBe(false);
+
+    const select = commandById("select-tab");
+    for (let digit = 1; digit <= 8; digit += 1) {
+      expect(select.matches!(keydown({ key: String(digit), code: `Digit${digit}`, metaKey: true }))).toBe(true);
+    }
+    expect(select.matches!(keydown({ key: "9", code: "Digit9", metaKey: true }))).toBe(false);
+    expect(commandById("select-last-tab").matches!(keydown({ key: "9", code: "Digit9", metaKey: true }))).toBe(true);
+  });
+
+  it("gives more than one chord only to commands that cannot be rebound", () => {
+    // A rebind replaces one chord; a second one would keep answering the old key.
+    for (const command of DEFAULT_COMMANDS) {
+      if (command.alternates || command.run) {
+        expect(command.fixed, command.id).toBeDefined();
       }
     }
   });
