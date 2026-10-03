@@ -79,7 +79,7 @@ describe("VaultSwitcher", () => {
     // The dropdown chevron sits inside the pill, right after the name.
     expect(pill.querySelector("[data-menu-chevron]")).not.toBeNull();
     expect(pill).toHaveClass("rounded-1");
-    expect(pill).toHaveClass("px-2");
+    expect(pill).toHaveClass("pl-2", "pr-1");
     expect(pill).toHaveClass("text-muted-foreground");
     expect(pill).toHaveClass("group-hover:bg-active");
     expect(pill).toHaveClass("group-hover:text-foreground");

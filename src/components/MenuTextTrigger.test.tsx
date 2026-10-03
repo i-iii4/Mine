@@ -20,15 +20,18 @@ describe("MenuTextTrigger", () => {
     const trigger = screen.getByRole("button", { name: "Switch space: Mine" });
     const chevron = trigger.querySelector("[data-menu-chevron]");
     expect(chevron).not.toBeNull();
-    expect(chevron?.parentElement).toHaveClass("chrome-plate", "gap-1");
+    // Its box's empty sides stand in for the gap and half the right padding.
+    expect(chevron?.parentElement).toHaveClass("chrome-plate", "gap-0", "pl-2", "pr-1");
+    expect(chevron?.parentElement).not.toHaveClass("gap-1", "px-2");
     expect(chevron?.previousElementSibling).toHaveTextContent("Mine");
     // Closed it points right; the open menu turns it down.
     expect(chevron).toHaveClass("lucide-chevron-right", "group-data-[state=open]:rotate-90");
   });
 
-  it("draws no chevron in the top chrome unless asked", () => {
+  it("draws no chevron in the top chrome unless asked, and keeps even padding then", () => {
     render(<MenuTextTrigger label="Mine" aria-label="Switch space: Mine" />);
     expect(screen.getByRole("button", { name: "Switch space: Mine" }).querySelector("svg")).toBeNull();
+    expect(screen.getByText("Mine").parentElement).toHaveClass("px-2");
   });
 
   it("uses the clipper header trigger as a compact pill with an inline chevron", () => {
@@ -42,7 +45,7 @@ describe("MenuTextTrigger", () => {
     );
 
     const trigger = screen.getByRole("button", { name: "Switch space: Mine" });
-    expect(trigger).toHaveClass("h-6", "rounded-1", "px-2", "text-base", "text-foreground");
+    expect(trigger).toHaveClass("h-6", "rounded-1", "gap-0", "pl-2", "pr-1", "text-base", "text-foreground");
     expect(trigger).not.toHaveClass("w-full", "border-b", "bg-accent");
     const icon = trigger.querySelector("svg");
     expect(icon).toBeTruthy();

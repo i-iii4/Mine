@@ -30,6 +30,12 @@ export const MenuTextTrigger = React.forwardRef<HTMLButtonElement, MenuTextTrigg
     const isClipperHeader = surface === "clipperHeader";
     const Plate = surface === "topChrome" ? ChromePlate : "span";
     const innerTextClass = surface === "clipperHeader" ? "text-foreground" : "text-muted-foreground";
+    // A 13 px chevron is drawn in the middle of its box, about 4 px of
+    // nothing on each side. With a chevron the pill drops the gap before it
+    // and half its right padding, so it looks as tight to the name and as far
+    // from the edge as the name is from the left one (DESIGN_SYSTEM.md,
+    // «Иконка рядом с текстом»).
+    const chevronPadding = showChevron ? "gap-0 pl-2 pr-1" : "gap-1 px-2";
 
     return (
       <ChromeControl enabled={surface === "topChrome"}>
@@ -41,7 +47,10 @@ export const MenuTextTrigger = React.forwardRef<HTMLButtonElement, MenuTextTrigg
           surface === "topChrome" &&
             "inline-flex min-w-0 flex-none items-center overflow-hidden rounded-0 font-mono text-sm text-muted-foreground focus-visible:outline-none",
           surface === "clipperHeader" &&
-            "inline-flex h-6 max-w-full items-center gap-1 overflow-hidden rounded-1 px-2 text-base text-foreground hover:bg-active data-[state=open]:bg-active",
+            cn(
+              "inline-flex h-6 max-w-full items-center overflow-hidden rounded-1 text-base text-foreground hover:bg-active data-[state=open]:bg-active",
+              chevronPadding,
+            ),
           surface === "actionBar" &&
             "action-button inline-flex h-6 shrink-0 items-center overflow-hidden rounded-1 p-[2px] font-mono text-sm hover:bg-active",
           className,
@@ -65,7 +74,10 @@ export const MenuTextTrigger = React.forwardRef<HTMLButtonElement, MenuTextTrigg
               className={cn(
                 isClipperHeader
                   ? "min-w-0 max-w-full"
-                  : "min-w-0 max-w-full gap-1 rounded-1 px-2 group-hover:bg-active group-hover:text-foreground group-data-[state=open]:bg-active group-data-[state=open]:text-foreground",
+                  : cn(
+                    "min-w-0 max-w-full rounded-1 group-hover:bg-active group-hover:text-foreground group-data-[state=open]:bg-active group-data-[state=open]:text-foreground",
+                    chevronPadding,
+                  ),
                 innerTextClass,
                 keyboardFocus && "bg-active text-foreground",
               )}

@@ -1150,13 +1150,25 @@ switcher начинается сразу после compact collapsed segment. C
 measurement, hidden probe и вычисление ширины по уже обрезанному visible
 trigger запрещены.
 
+#### Иконка рядом с текстом
+
+Иконка lucide `13px` нарисована в середине своего квадрата: у уголка
+`ChevronRight` примерно по `4px` пустого места слева и справа внутри квадрата.
+Когда такая иконка стоит в подсветке после текста, её пустые поля заменяют
+часть отступов, иначе промежуток и правый край на глаз вдвое шире задуманного
+(замечание пользователя 03.10.2026: «Mine >» с пустым правым краем). Правило:
+промежуток между текстом и иконкой `0`, правое поле подсветки `4px` вместо
+`8px` (`pl-2 pr-1`). На глаз текст отстоит от левого края на `8px`, уголок от
+текста на `4px` и от правого края на `8px`. Размер иконки не меняется.
+
 Space selector — это top-chrome вариант `VaultSwitcher`: `h-full`,
 `max-w-[50%]`, `flex-none`, `min-w-0`, `pl-[var(--top-collection-pad-x)] pr-3`, `rounded-0`,
 `font-mono text-sm text-muted-foreground`, `truncate`; без folder icon. С
 03.10.2026 по решению пользователя у него есть dropdown chevron: lucide
-`ChevronRight` `13px` внутри inner pill сразу после имени через `4px`
-(`gap-1`), цвет текста pill, поэтому подсвечивается вместе с именем
-(`MenuTextTrigger showChevron`). В закрытом состоянии смотрит вправо, при
+`ChevronRight` `13px` внутри inner pill сразу после имени, цвет текста pill,
+поэтому подсвечивается вместе с именем (`MenuTextTrigger showChevron`). Поля
+pill со стрелкой `pl-2 pr-1` и промежуток `0` (раздел «Иконка рядом с
+текстом»). В закрытом состоянии смотрит вправо, при
 открытии меню поворачивается вниз за `150ms`, как в клиппере. Root trigger не заливается и не рисует отдельную обводку: он
 только задаёт layout slot. Ширина
 подстраивается под имя текущей папки, но не может занять больше половины
@@ -1985,7 +1997,8 @@ primitives и те же состояния, что desktop UI:
   surface. In the clipper popup the row is `h-10 bg-accent px-2`; the actual
   Radix trigger is the inner `MenuTextTrigger surface="clipperHeader"` pill
   (`h-6 rounded-1 px-2`), so row padding plus pill padding places the `Mine`
-  text at 16px. Chevron sits inside the pill immediately after the space name,
+  text at 16px. Chevron sits inside the pill immediately after the space name
+  (padding `pl-2 pr-1`, no gap: section «Иконка рядом с текстом»),
   starts as right-facing, and rotates down on open. The dropdown uses
   `widthRole="selector"`, `align="start"`, and `bg-accent`. The same row owns
   the top-right close action through shared `ChromeCloseButton`, the same
