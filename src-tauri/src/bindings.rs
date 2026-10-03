@@ -29,8 +29,8 @@ use crate::commands::effects::{RenamedKind, SpaceRename, VaultChangedPayload};
 use crate::commands::state::CommandError;
 use crate::commands::vault::SpaceMovedPayload;
 use crate::domain::windows::{
-    DetailLinkMode, MainViewMode, OpenCard, ScrollAnchor, SidebarLayout, TabId, TabLocation,
-    TabSpace, TabView, WindowId,
+    ChromeRows, DetailLinkMode, MainViewMode, OpenCard, ScrollAnchor, SidebarLayout, TabId,
+    TabLocation, TabSpace, TabView, WindowId,
 };
 use crate::tabs::drag::DropHover;
 use crate::tabs::{
@@ -76,6 +76,7 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<OpenCard>()
         .register::<ScrollAnchor>()
         .register::<SidebarLayout>()
+        .register::<ChromeRows>()
         .register::<TabBarState>()
         .register::<TabBarTab>()
         .register::<TabHistory>()

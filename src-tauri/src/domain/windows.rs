@@ -11,6 +11,58 @@ pub const SAVED_WINDOWS_VERSION: u32 = 1;
 /// Height of the tab bar row: 30 px of content and a 1 px separator, the
 /// rows of the chrome (DESIGN_SYSTEM.md, ChromeRow).
 pub const TAB_BAR_HEIGHT_PX: u32 = 31;
+/// Height of a top chrome row's content (`--chrome-row-content-height`): the
+/// standard one and the tall one the person can switch to (В83). The tall
+/// row and its 1 px line step as a row of the sidebar's table, 40 px with its
+/// line (`--sidebar-row-height` in global.css; constants.test.ts checks).
+pub const CHROME_ROW_HEIGHT_PX: u32 = 30;
+pub const CHROME_ROW_TALL_HEIGHT_PX: u32 = 39;
+
+/// The tab bar's height for chrome rows `row_height` tall: the row and its
+/// 1 px separator.
+pub fn tab_bar_height(row_height: u32) -> u32 {
+    row_height + 1
+}
+
+/// A chrome row height the app knows; anything else reads as the standard.
+pub fn chrome_row_height(value: u32) -> u32 {
+    // 40 was the tall row's content before the line counted in its step.
+    if value == CHROME_ROW_TALL_HEIGHT_PX || value == 40 {
+        CHROME_ROW_TALL_HEIGHT_PX
+    } else {
+        CHROME_ROW_HEIGHT_PX
+    }
+}
+
+/// The heights of the chrome rows (В83): the tab bar's row and the top rows
+/// of the tab pages, apart, so the bar can stay standard over tall pages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct ChromeRows {
+    pub tab_bar: u32,
+    pub page: u32,
+}
+
+impl ChromeRows {
+    pub const STANDARD: Self = Self {
+        tab_bar: CHROME_ROW_HEIGHT_PX,
+        page: CHROME_ROW_HEIGHT_PX,
+    };
+
+    /// Each height one the app knows.
+    pub fn known(self) -> Self {
+        Self {
+            tab_bar: chrome_row_height(self.tab_bar),
+            page: chrome_row_height(self.page),
+        }
+    }
+}
+
+impl Default for ChromeRows {
+    fn default() -> Self {
+        Self::STANDARD
+    }
+}
+
 /// Narrowest a tab gets before the bar scrolls: four or five letters of its
 /// label and room for the close button.
 pub const TAB_MIN_WIDTH_PX: u32 = 72;
@@ -98,6 +150,10 @@ pub struct SavedWindow {
     /// The sidebar last set in this window: what a tab saved before tabs had
     /// a sidebar of their own takes (В56).
     pub sidebar: SidebarLayout,
+    /// The heights of this window's chrome rows (В83): each window has its
+    /// own, so two can stand side by side to compare.
+    #[serde(default)]
+    pub chrome_rows: ChromeRows,
 }
 
 impl SavedWindow {
@@ -275,6 +331,7 @@ impl SavedWindows {
                 }],
                 active_tab: tab,
                 sidebar: SidebarLayout::default(),
+                chrome_rows: ChromeRows::STANDARD,
             }],
             window_surface: None,
         }
@@ -472,6 +529,8 @@ impl SavedWindows {
             return None;
         }
         let sidebar = source.tab_sidebar(tab);
+        // A torn tab takes its window's chrome along.
+        let chrome_rows = source.chrome_rows;
         let closed = self.close_tab(tab)?;
         self.add_window(SavedWindow {
             id: window,
@@ -480,6 +539,7 @@ impl SavedWindows {
             tabs: vec![closed.tab],
             active_tab: tab.clone(),
             sidebar,
+            chrome_rows,
         });
         Some(closed.now_visible)
     }
@@ -534,6 +594,17 @@ impl SavedWindows {
             self.set_space(tab, TabSpace::Picker);
         }
         tabs
+    }
+
+    /// Store the chrome rows of `window` (В83).
+    pub fn set_chrome_rows(&mut self, window: &WindowId, rows: ChromeRows) -> bool {
+        match self.window_mut(window) {
+            Some(target) => {
+                target.chrome_rows = rows.known();
+                true
+            }
+            None => false,
+        }
     }
 
     /// Store the sidebar of `tab` (В56). The window keeps it as its last.
@@ -634,6 +705,8 @@ pub fn normalize(
             TabSpace::Space { vault_id } => space(vault_id) == SpaceStatus::Known,
             TabSpace::Picker => true,
         });
+        // A height no longer offered (46 px tried on 03.10.2026) reads as standard.
+        window.chrome_rows = window.chrome_rows.known();
         for tab in &mut window.tabs {
             // A tab saved while the window owned the sidebar takes the window's.
             tab.sidebar.get_or_insert(window.sidebar);
@@ -715,6 +788,7 @@ mod tests {
             tabs,
             active_tab: TabId(active.into()),
             sidebar: SidebarLayout::default(),
+            chrome_rows: ChromeRows::STANDARD,
         }
     }
 

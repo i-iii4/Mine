@@ -131,6 +131,8 @@ pub const COMMAND_EFFECTS: &[(&str, Effect)] = &[
     ("report_tab_view", Effect::Reads),
     ("tab_painted", Effect::Reads),
     ("report_tab_history", Effect::Reads),
+    ("open_place", Effect::Reads),
+    ("set_chrome_rows", Effect::Reads),
     ("step_tab_history", Effect::Reads),
     ("activate_tab", Effect::Reads),
     ("activate_adjacent_tab", Effect::Reads),

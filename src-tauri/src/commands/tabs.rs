@@ -4,7 +4,7 @@
 use tauri::{AppHandle, Manager, Webview};
 
 use super::state::CommandError;
-use crate::domain::windows::{SidebarLayout, TabId, TabSpace, TabView};
+use crate::domain::windows::{ChromeRows, SidebarLayout, TabId, TabSpace, TabView};
 use crate::tabs::{self, TabBarState, TabBootstrap};
 
 /// What the calling tab page needs to start.
@@ -25,6 +25,19 @@ pub fn get_tabbar_bootstrap(app: AppHandle, webview: Webview) -> Option<TabBarSt
 #[tauri::command]
 pub fn report_tab_view(app: AppHandle, webview: Webview, view: TabView) {
     tabs::report_view(&app, webview.label(), view);
+}
+
+/// Open a place of the calling tab's space in a new tab of its window, or in
+/// a new window (В82): ⌘-click and ⇧⌘-click on a card or a collection.
+#[tauri::command]
+pub fn open_place(app: AppHandle, webview: Webview, view: TabView, new_window: bool) {
+    tabs::open_place(&app, webview.label(), view, new_window);
+}
+
+/// Set the chrome rows of the calling bar's window (В83).
+#[tauri::command]
+pub fn set_chrome_rows(app: AppHandle, webview: Webview, rows: ChromeRows) {
+    tabs::set_chrome_rows(&app, webview.label(), rows);
 }
 
 /// Where the calling tab can step through its places (В81).

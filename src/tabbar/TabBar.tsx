@@ -37,6 +37,7 @@ import {
   newTab,
   openSettingsWindow,
   reportDropSlot,
+  setChromeRows,
   setWindowSidebar,
   stepTabHistory,
 } from "@/lib/commands";
@@ -211,9 +212,10 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
   }, [activeIndex, count, stripWidth, syncEdges, width]);
 
   // ── What the handlers below read at the moment they run ──────────────────
-  const latest = useRef({ tabs, sourceTabs, fullscreen, width });
+  const chromeRows = bar.chrome_rows;
+  const latest = useRef({ tabs, sourceTabs, fullscreen, width, chromeRows });
   useLayoutEffect(() => {
-    latest.current = { tabs, sourceTabs, fullscreen, width };
+    latest.current = { tabs, sourceTabs, fullscreen, width, chromeRows };
   });
 
   // ── Closing (В48, В53) ─────────────────────────────────────────────────
@@ -299,11 +301,13 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
         storeUiVersion(version);
         broadcastSettingsChange(UI_VERSION_STORAGE_KEY);
       },
+      // The backend lays the windows out again and tells every page.
+      chooseChromeRows: (rows) => run(setChromeRows(rows), "change the chrome height"),
     });
     const pending = settingsMenu.current;
     const { left, bottom } = button.getBoundingClientRect();
     pending
-      .then((built) => built.open({ x: left, y: bottom }, getUiVersion()))
+      .then((built) => built.open({ x: left, y: bottom }, getUiVersion(), latest.current.chromeRows))
       .catch((error: unknown) => {
         if (settingsMenu.current === pending) settingsMenu.current = null;
         console.error("Tab bar could not show the settings menu:", error);
@@ -514,12 +518,20 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
     >
       {/* The traffic lights sit over this spot. */}
       {trafficLightReserve && (
-        <div {...windowDrag} data-traffic-light-reserve="" className="h-full w-20 shrink-0" />
+        // 80 px at the standard row; the lights move right by half of what
+        // the row grows, and the reserve with them (SPEC_TABS.md, В83).
+        <div
+          {...windowDrag}
+          data-traffic-light-reserve=""
+          className="h-full w-[calc(80px+(var(--chrome-row-content-height)-30px)/2)] shrink-0"
+        />
       )}
       <div
         {...windowDrag}
         className={cn(
-          "flex h-full shrink-0 items-center gap-0.5 pr-2",
+          // Icon buttons 4px apart; the first tab's line 8px past the last
+          // one (DESIGN_SYSTEM.md, «Иконочные кнопки хрома»).
+          "flex h-full shrink-0 items-center gap-1 pr-2",
           // Without the reserve the first button stands on the chrome's edge
           // inset, like the last one at the right edge.
           !trafficLightReserve && "pl-[var(--chrome-icon-edge-pad)]",
@@ -639,7 +651,8 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
               >
                 <TabTitle text={label} width={width} />
                 {/* Shown on hover only, over the label's dissolved end; a
-                    chrome button like the rest of the row (В46). */}
+                    chrome button like the rest of the row (В46), its plate
+                    8px from the tab's line, as from any boundary. */}
                 <Button
                   type="button"
                   variant="chrome"
@@ -647,7 +660,7 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
                   tabIndex={-1}
                   aria-label={CLOSE_TAB_BUTTON_LABEL}
                   data-tab-close=""
-                  className="absolute inset-y-0 right-0.5"
+                  className="absolute inset-y-0 right-2"
                   onClick={(event) => {
                     event.stopPropagation();
                     closeByPointer(tab.id);
@@ -674,7 +687,8 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
           {...windowDrag}
           ref={plusSlotRef}
           data-tab-bar-new-tab-slot=""
-          className="flex h-full shrink-0 items-center px-1"
+          // 8px from the last tab's line, 4px to the logo after it.
+          className="flex h-full shrink-0 items-center pr-1 pl-2"
         >
           <Button
             type="button"

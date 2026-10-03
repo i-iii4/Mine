@@ -52,6 +52,7 @@ function barState(overrides: Partial<TabBarState> = {}): TabBarState {
     active_tab: "a",
     sidebar: { width_px: 240, collapsed: false },
     fullscreen: false,
+    chrome_rows: { tab_bar: 30, page: 30 },
     ...overrides,
   };
 }

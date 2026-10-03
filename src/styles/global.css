@@ -1148,8 +1148,22 @@ body {
    flow; ChromeShell, not individual rows, owns the window-edge boundaries. */
 :root {
   --chrome-row-content-height: 30px;
+  /* The step of a sidebar table row, its 1px line included. The tall chrome
+     takes the same step (SPEC_TABS.md, В83). */
+  --sidebar-row-height: 40px;
   --chrome-control-plate-height: 24px;
-  --chrome-icon-edge-pad: calc(var(--chrome-edge-pad) - 4px);
+  /* The outer padding of every chrome control toward a boundary (window
+     edge, column line, tab line): icon buttons and text pills alike
+     (DESIGN_SYSTEM.md, «Иконочные кнопки хрома»). */
+  --chrome-icon-edge-pad: 8px;
+}
+/* The tall chrome the person can switch to (SPEC_TABS.md, В83): the top
+   rows, those closed by a line below them, the tab bar's too, step as a row
+   of the sidebar's table; the bottom bar keeps its height. Controls keep
+   their 24px plate, centred in the row. */
+:root[data-chrome-height="40"] .chrome-row[data-chrome-separator="bottom"] {
+  /* A row and its 1px line make one table row's step. */
+  --chrome-row-content-height: calc(var(--sidebar-row-height) - 1px);
 }
 .chrome-row {
   position: relative;
@@ -1230,4 +1244,13 @@ svg.lucide {
 .font-mono {
   font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
   font-variant-numeric: tabular-nums;
+}
+
+/* Version 2: the bottom bar, its names and hotkeys alike, is set in Geist
+   Mono at the same size, so its height stays. Departure Mono, when chosen
+   for the interface, keeps the bar. */
+:root[data-ui-version="2"]:not([data-font-interface="departure"]) [data-bottom-action-bar],
+:root[data-ui-version="2"]:not([data-font-interface="departure"]) [data-bottom-action-bar] .font-mono,
+:root[data-ui-version="2"]:not([data-font-interface="departure"]) [data-bottom-action-bar] .font-sans {
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }

@@ -159,7 +159,8 @@ describe("tab bar row (В43)", () => {
       const after = order[index];
       expect(before && after && before.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     }
-    expect(reserve?.className).toContain("w-20");
+    // 80px at the 30px row, growing with the row as the lights' inset (В83).
+    expect(reserve?.className).toContain("w-[calc(80px+(var(--chrome-row-content-height)-30px)/2)]");
   });
 
   it("gives the traffic lights' place back in full screen in version 2, and keeps it in version 1", () => {

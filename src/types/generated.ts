@@ -63,6 +63,12 @@ block_count: number }
 
 export type ChannelPreviewsSnapshot = { generation: ProjectionRevision; previews: Partial<{ [key in string]: PreviewItem[] }> }
 
+/**
+ * The heights of the chrome rows (В83): the tab bar's row and the top rows
+ * of the tab pages, apart, so the bar can stay standard over tall pages.
+ */
+export type ChromeRows = { tab_bar: number; page: number }
+
 export type ClipboardPayload =
 /**
  * Files copied in Finder — their absolute paths.
@@ -535,7 +541,11 @@ element_count: number | null }
 /**
  * What one window's tab bar shows (`tabbar-state`).
  */
-export type TabBarState = { window_id: WindowId; tabs: TabBarTab[]; active_tab: TabId; sidebar: SidebarLayout; fullscreen: boolean }
+export type TabBarState = { window_id: WindowId; tabs: TabBarTab[]; active_tab: TabId; sidebar: SidebarLayout; fullscreen: boolean;
+/**
+ * The heights of the chrome rows' content (В83).
+ */
+chrome_rows: ChromeRows }
 
 /**
  * One tab as the tab bar shows it (В47).
@@ -576,7 +586,11 @@ lead: boolean;
  * No saved windows were read at this launch: the page may carry its
  * old single-window settings over once (В79).
  */
-fresh_start: boolean }
+fresh_start: boolean;
+/**
+ * The heights of the chrome rows' content (В83).
+ */
+chrome_rows: ChromeRows }
 
 /**
  * Whether a tab's page can go back and forward through its places (В81).

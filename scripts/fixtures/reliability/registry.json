@@ -1540,6 +1540,7 @@
       "paths": [
         "src/tabbar/",
         "src/lib/adjacentTab.ts",
+        "src/lib/chromeHeight.ts",
         "src/components/MineLogo.tsx",
         "tabbar.html",
         "vite.config.ts"

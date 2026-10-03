@@ -277,10 +277,12 @@ export function MainSecondaryTopBar({
   /// button bar's surface and closes with a separator on top instead of below —
   /// the seam always faces the content.
   placement?: "top" | "bottom";
-  /// Which half to draw. Interface version 2 folds this row: the half over
-  /// the feed joins the row above it (`content`, without a row of its own),
-  /// the half over the sidebar heads the sidebar's table (`sidebar`).
-  part?: "both" | "sidebar" | "content";
+  /// Which half to draw. At the top of the window the row has no half over
+  /// the sidebar since 03.10.2026: version 1 draws the half over the feed as
+  /// a row over the feed column (`feed`), version 2 folds it into the row
+  /// above (`content`, without a row of its own). At the foot of the window
+  /// the row keeps both halves (`both`).
+  part?: "both" | "content" | "feed";
   /// A group selection exists: its commands take the whole row over.
   selectionActive?: boolean;
   /// Where the feed portals the selection's commands into.
@@ -310,15 +312,14 @@ export function MainSecondaryTopBar({
       data-tauri-drag-region
       data-main-secondary-top-bar-sidebar-segment=""
       className={cn(
-        "relative flex h-full shrink-0 items-center overflow-hidden",
-        part === "sidebar" ? "w-full" : "border-r border-sidebar-border",
-        part !== "sidebar" && sidebarCollapsed && "w-auto max-w-[240px]",
+        "relative flex h-full shrink-0 items-center overflow-hidden border-r border-sidebar-border",
+        sidebarCollapsed && "w-auto max-w-[240px]",
         // Right over the sidebar's table the segment takes the table's
         // surface; an open card's accent still marks the whole row.
         placement === "top" && !sidebarCollapsed && !detailLayerEntered && "bg-sidebar",
         !sidebarResizing && "transition-[width] duration-200 ease-out motion-reduce:transition-none",
       )}
-      style={sidebarCollapsed || part === "sidebar" ? undefined : { width: "var(--sidebar-width)" }}
+      style={sidebarCollapsed ? undefined : { width: "var(--sidebar-width)" }}
     >
       <div
         className="main-secondary-bar-layer absolute inset-0"
@@ -481,8 +482,8 @@ export function MainSecondaryTopBar({
       data-main-secondary-placement={placement}
       separator={placement === "bottom" ? "top" : "bottom"}
     >
-      {sidebarSegment}
-      {part === "both" && contentSegment}
+      {part === "both" && sidebarSegment}
+      {contentSegment}
     </ChromeRow>
   );
 }

@@ -1,5 +1,7 @@
 import { scrollBehavior } from "@/lib/motion";
 import {
+  createContext,
+  useContext,
   useState,
   useRef,
   useCallback,
@@ -83,7 +85,9 @@ const SIDEBAR_PREVIEW_DIVIDER_GAP = SIDEBAR_PREVIEW_DIVIDER_GAP_PX;
 /// which subtracts its border before centring. Written as padding rather than
 /// as height, because the row's size belongs to the modular scale and a
 /// hairline must not push it off.
-const SIDEBAR_ROW_BOX_CLASS = "relative flex min-h-10 w-full items-center pb-px";
+// A row's step, its 1px line (`pb-px`) included: `--sidebar-row-height`,
+// which the tall chrome steps by too (SPEC_TABS.md, В83).
+const SIDEBAR_ROW_BOX_CLASS = "relative flex min-h-[var(--sidebar-row-height)] w-full items-center pb-px";
 const SIDEBAR_ROW_ACTION_BUTTON_WIDTH = `calc(var(--sidebar-zone) - ${2 * SIDEBAR_ROW_ACTION_GAP_PX}px)`;
 const SIDEBAR_ROW_ACTION_BUTTON_GAP = SIDEBAR_ROW_ACTION_GAP_PX;
 /// How far the button's body sits from the right edge of the row.
@@ -232,9 +236,9 @@ interface SidebarProps {
   searchQuery?: string;
   /** Optional slot for a header banner (e.g. iCloud conflict surface). */
   headerSlot?: React.ReactNode;
-  /** A chrome row heading the column, above the table: the sidebar half of
-   *  the row over the feed when interface version 2 folds it. */
-  topRow?: React.ReactNode;
+  /** ⌘-click on a row opens its route in a new tab, ⇧⌘-click in a new window
+   *  (SPEC_TABS.md, В82). Absent on a page that is not a tab. */
+  onOpenElsewhere?: (to: string, newWindow: boolean) => void;
   linkedBlockSlug?: string | null;
   linkedTags?: string[];
   onToggleLinkedTag?: (slug: string, tag: string, hasTag: boolean) => void;
@@ -270,10 +274,18 @@ function createSidebarSeamAccentSet(
 /// the memoised core skips every update that leaves it unchanged. A collection
 /// sort derives nothing, so during it the core does not re-render at all: only
 /// the sortable rows move, each through its own useSortable subscription.
+/** What a ⌘-click on a row does (В82); reaches every row without threading
+ *  a prop through the row components. */
+const SidebarOpenElsewhereContext = createContext<((to: string, newWindow: boolean) => void) | null>(null);
+
 export function Sidebar(props: SidebarProps) {
   const { over } = useDndContext();
   const dropOverId = props.isDropDragging && over?.id != null ? String(over.id) : null;
-  return <SidebarCore {...props} dropOverId={dropOverId} />;
+  return (
+    <SidebarOpenElsewhereContext.Provider value={props.onOpenElsewhere ?? null}>
+      <SidebarCore {...props} dropOverId={dropOverId} />
+    </SidebarOpenElsewhereContext.Provider>
+  );
 }
 
 const SidebarCore = memo(function SidebarCore({
@@ -301,7 +313,6 @@ const SidebarCore = memo(function SidebarCore({
   keyboardNavigationFocusPersistent = false,
   searchQuery = "",
   headerSlot,
-  topRow,
   linkedBlockSlug,
   linkedTags = [],
   onToggleLinkedTag,
@@ -863,7 +874,6 @@ const SidebarCore = memo(function SidebarCore({
         transition: isResizing ? "none" : "width 200ms ease",
       }}
     >
-      {topRow}
       {isLinkingBlock && showLinkModeChrome && (
         <SidebarLinkModeSwitch
           value={effectiveLinkMode}
@@ -1349,9 +1359,16 @@ function SidebarRowBody({
   // the pointer (С4). The link editor's own buttons keep that place otherwise.
   const connectedToHoveredCard = useRowConnectedToHoveredCard(rowKey);
   const showConnectedPill = !compact && (staticConnected || (!isLinkEditor && connectedToHoveredCard));
+  const openElsewhere = useContext(SidebarOpenElsewhereContext);
   const handleNavLinkClick = (e: ReactMouseEvent<HTMLAnchorElement>) => {
     if (isDragging || isDropDragging) {
       e.preventDefault();
+      return;
+    }
+    // ⌘ opens the row's route in a new tab, with ⇧ in a new window (В82).
+    if (e.metaKey && openElsewhere) {
+      e.preventDefault();
+      openElsewhere(to, e.shiftKey);
       return;
     }
     if (isCurrentRoute && onSameClick) {

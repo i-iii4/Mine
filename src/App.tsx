@@ -18,14 +18,17 @@ import {
   useNavigate,
   useLocation,
 } from "react-router";
-import { X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { AppSettingsMenu } from "@/components/AppSettingsMenu";
+import { ActivityIndicators } from "@/components/ActivityIndicators";
+import { Button } from "@/components/ui/button";
 import { ChromeRow, ChromeShell } from "@/components/ChromeRow";
 import type { SettingsSection } from "@/lib/settingsSections";
 import { isTauri } from "@tauri-apps/api/core";
 import { listenPage } from "@/lib/pageEvents";
 import { getNavigationLabel } from "@/lib/displayTitle";
 import { applyUiVersion, getStoredUiVersion, UI_VERSION_STORAGE_KEY, useUiVersion } from "@/lib/uiVersion";
+import { applyChromeRowHeight, CHROME_ROWS_EVENT } from "@/lib/chromeHeight";
 import {
   SPACE_LEAD_CHANGED_EVENT,
   TAB_GO_EVERYTHING_EVENT,
@@ -233,6 +236,7 @@ import type {
   SpaceRename,
   TabBootstrap,
   TabHistoryStep,
+  ChromeRows,
   TabView,
   TabVisibility,
   VaultChangedPayload,
@@ -283,6 +287,7 @@ import {
   readClipboardPayload,
   getTabBootstrap,
   activateAdjacentTab,
+  openPlace,
   reportTabHistory,
   reportTabView,
   tabPainted,
@@ -573,6 +578,8 @@ export function App() {
       const bootstrap = await bootstrapRead;
       if (cancelled || bootstrapAdopted || !bootstrap) return;
       bootstrapAdopted = true;
+      // The tab bar above is as tall as the backend laid it out (В83).
+      applyChromeRowHeight(bootstrap.chrome_rows.page);
       const adopted = adoptLegacyTabState(bootstrap);
       setTab(bootstrap);
       setLead(bootstrap.lead);
@@ -646,6 +653,7 @@ export function App() {
         }
       }),
       listenPage<SpaceLead>(SPACE_LEAD_CHANGED_EVENT, (event) => setLead(event.payload.lead)),
+      listenPage<ChromeRows>(CHROME_ROWS_EVENT, (event) => applyChromeRowHeight(event.payload.page)),
       listenPage<SidebarLayout>(WINDOW_SIDEBAR_CHANGED_EVENT, (event) => setWindowSidebarLayout(event.payload)),
       listenPage(TAB_SPACE_FORGOTTEN_EVENT, () => {
         setCreatingNewSpace(false);
@@ -2875,6 +2883,33 @@ export function AppWithVault({
   // bar's button change the window's sidebar in the backend; the change
   // arrives here as `window-sidebar-changed` (SPEC_TABS.md, В56).
 
+  /// ⌘-click and ⇧⌘-click: the place in a new tab or a new window of this
+  /// space, in this tab's mode (SPEC_TABS.md, В82).
+  const openPlaceElsewhere = useCallback((
+    tag: string | undefined,
+    card: LightBlock | null,
+    newWindow: boolean,
+  ) => {
+    const view: TabView = {
+      location: tabLocationOf(tag),
+      mode: mainViewMode,
+      open_card: card ? { slug: card.slug, link_mode: "all", title: getNavigationLabel(card) } : null,
+      scroll_anchor: null,
+      collection_filter: "",
+    };
+    void openPlace(view, newWindow).catch((error: unknown) => {
+      console.error("Could not open the place elsewhere:", error);
+    });
+  }, [mainViewMode]);
+  const handleOpenBlockElsewhere = useCallback(
+    (block: LightBlock, newWindow: boolean) => openPlaceElsewhere(currentTag, block, newWindow),
+    [currentTag, openPlaceElsewhere],
+  );
+  const handleOpenRouteElsewhere = useCallback((to: string, newWindow: boolean) => {
+    const tag = to.startsWith("/channel/") ? decodeURIComponent(to.slice("/channel/".length)) : undefined;
+    openPlaceElsewhere(tag, null, newWindow);
+  }, [openPlaceElsewhere]);
+
   const handleOpenSettings = useCallback((section?: SettingsSection) => {
     void openSettingsWindow(section).catch((error) => {
       console.error("Failed to open settings window:", error);
@@ -4228,7 +4263,7 @@ export function AppWithVault({
     || showFirstCardMarker
     || showIndexingNotice;
 
-  const metadataRowOf = (part: "both" | "sidebar" | "content") => mainSecondaryTopBarVisible ? (
+  const metadataRowOf = (part: "both" | "content" | "feed") => mainSecondaryTopBarVisible ? (
     <MainSecondaryTopBar
           part={part}
           sidebarCollapsed={sidebarCollapsed}
@@ -4364,9 +4399,9 @@ export function AppWithVault({
                       aria-label="Clear collection search"
                       className={cn(
                         "group inline-flex w-6 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground focus-visible:text-foreground focus-visible:outline-none",
-                        // 8px from the column's edge, like the plus below
-                        // and the sidebar rows' Connect button.
-                        compactDetailTopMenuActive ? "mr-1" : "mr-2",
+                        // The filter's actions follow it; at the foot-row
+                        // layout the clear button ends the row, 8px in.
+                        metadataRowAtBottom ? "mr-2" : "mr-1",
                       )}
                       onClick={handleClearSidebarSearch}
                       data-sidebar-top-search-clear=""
@@ -4377,17 +4412,37 @@ export function AppWithVault({
                     </button>
                     </ChromeControl>
                   )}
-                  {/* Only when the metadata row is not carrying it already:
-                      at the foot of the window the collections switch lives
-                      there, and two of them are one too many. */}
-                  {compactDetailTopMenuActive && renderedDetailBlock && !metadataRowAtBottom && (
-                    <CompactDetailLinkModeSwitch
-                      value={detailLinkMode}
-                      onChange={setDetailLinkMode}
-                      chromeDragEnabled={false}
-                      className="detail-top-bar-enter mr-2"
-                      entered={compactDetailChromeEntered}
-                    />
+                  {/* The sidebar column has no third row (03.10.2026): what lived
+                      over the table lives here, at the filter's right. At the
+                      foot of the window the metadata row still carries it. */}
+                  {!metadataRowAtBottom && (
+                    // Icon buttons 4px apart, 8px from the column's line.
+                    <div className="mr-2 flex shrink-0 items-center gap-1" data-sidebar-top-search-actions="">
+                      <ActivityIndicators
+                        cloudPending={blocks.filter((item) => item.content_in_cloud).length}
+                        indexing={isSyncing}
+                        onRevealSpace={() => void revealItemInDir(vaultPath)}
+                      />
+                      {renderedDetailBlock && (
+                        <CompactDetailLinkModeSwitch
+                          value={detailLinkMode}
+                          onChange={setDetailLinkMode}
+                          chromeDragEnabled={false}
+                          className="detail-top-bar-enter"
+                          entered={compactDetailChromeEntered}
+                        />
+                      )}
+                      <Button
+                        type="button"
+                        variant="chrome"
+                        size="chrome-icon"
+                        aria-label="New Collection"
+                        onClick={beginCreateCollection}
+                        data-sidebar-new-collection=""
+                      >
+                        <Plus />
+                      </Button>
+                    </div>
                   )}
                 </div>
               </>
@@ -4428,12 +4483,12 @@ export function AppWithVault({
         </div>
       </ChromeRow>
 
-      {!metadataRowAtBottom && !foldedMetadataRow && metadataRow}
+
 
       {/* Body: sidebar + main */}
       <div className="flex min-h-0 flex-1">
       <Sidebar
-        topRow={foldedMetadataRow && !sidebarCollapsed ? metadataRowOf("sidebar") : null}
+        onOpenElsewhere={tabPage ? handleOpenRouteElsewhere : undefined}
         width={sidebarWidth}
         previewsPending={previewsPending}
         collapsed={sidebarCollapsed}
@@ -4500,9 +4555,13 @@ export function AppWithVault({
         onToggleCollapsed={toggleCollapsed}
       />
 
+      {/* The feed column: in version 1 the row over the feed heads it, the
+          sidebar column has no third row (03.10.2026). */}
+      <div className="flex min-w-0 flex-1 flex-col" style={{ minWidth: APP_MAIN_MIN_WIDTH_PX }}>
+      {!metadataRowAtBottom && !foldedMetadataRow && metadataRowOf("feed")}
       <main
         ref={mainRef}
-        className="relative isolate flex-1 overflow-hidden"
+        className="relative isolate min-h-0 flex-1 overflow-hidden"
         style={{ minWidth: APP_MAIN_MIN_WIDTH_PX }}
       >
         {blockingError !== null && (
@@ -4550,6 +4609,7 @@ export function AppWithVault({
                 restoreFocusSlug={gridFocusRestore?.slug ?? null}
                 restoreFocusSequence={gridFocusRestore?.sequence ?? 0}
                 onBlockClick={handleBlockClick}
+                onOpenBlockElsewhere={tabPage ? handleOpenBlockElsewhere : undefined}
                 onToggleTag={handleToggleTag}
                 onCreateAndAssign={handleCreateTagFromMenu}
                 onLoadBlockTags={handleLoadBlockTags}
@@ -4634,6 +4694,7 @@ export function AppWithVault({
           onDeleteMedia={() => confirmDeleteBlock(Boolean(deletePlan?.unused_media.length))}
         />
       </main>
+      </div>
 
       {/* Keep Downloaded is advice about the space: its lead tab gives it (В19). */}
       {lead && <CloudRecommendation vaultPath={vaultPath} refreshToken={cloudAdviceToken} />}
@@ -5003,6 +5064,7 @@ interface RouteContext {
   restoreFocusSlug: string | null;
   restoreFocusSequence: number;
   onBlockClick: (block: LightBlock) => void;
+  onOpenBlockElsewhere?: (block: LightBlock, newWindow: boolean) => void;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
   onLoadBlockTags: (slugs: string[]) => Promise<Map<string, string[]>>;

@@ -13,7 +13,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, PhysicalPosition, Position};
 
 use super::{create_window, emit_bar_state, lock, new_id, shell, window_of, TabShell};
-use crate::domain::windows::{SavedWindows, TabId, WindowFrame, WindowId, TAB_BAR_HEIGHT_PX};
+use crate::domain::windows::{tab_bar_height, SavedWindows, TabId, WindowFrame, WindowId};
 
 /// `tabbar-drop-hover`: the dragged tab is over this bar at `x` (logical
 /// points from the bar's left edge), or left it (`None`).
@@ -166,7 +166,7 @@ fn bar_under(app: &AppHandle, moving: &WindowId, cursor: PhysicalPosition<f64>) 
             let inside = cursor.x >= left
                 && cursor.x <= left + f64::from(size.width)
                 && cursor.y >= top
-                && cursor.y <= top + f64::from(TAB_BAR_HEIGHT_PX) * scale;
+                && cursor.y <= top + f64::from(tab_bar_height(window.chrome_rows.tab_bar)) * scale;
             inside.then(|| (window.id.clone(), (cursor.x - left) / scale))
         })
 }

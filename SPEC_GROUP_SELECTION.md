@@ -15,9 +15,11 @@ commands row.
 
 In scope:
 
-- `Cmd+click` toggles individual cards in the current Grid.
-- `Shift+click` has the same behavior as `Cmd+click`: it toggles only the
-  clicked card.
+- `Shift+click` toggles individual cards in the current Grid.
+- `Cmd+click` toggles a card only on a page that is not a tab. С 03.10.2026 в
+  странице вкладки `Cmd+click` открывает карточку в новой вкладке, а
+  `Cmd+Shift+click` в новом окне (SPEC_TABS.md, В82); выделение там остаётся
+  за `Shift+click` и рамкой.
 - Empty-area pointer drag draws a marquee rectangle and selects every committed
   card that intersects it.
 - Selected cards get a strong monochrome selected frame.
@@ -70,7 +72,8 @@ cleared before Detail becomes interactive.
 
 ### Modified Click
 
-`Cmd+click` and `Shift+click` on a committed card both toggle only that card:
+`Shift+click` (and `Cmd+click` on a page that is not a tab) on a committed
+card toggles only that card:
 
 - not selected -> add to `selectedSlugs`;
 - selected -> remove from `selectedSlugs`.

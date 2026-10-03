@@ -1238,7 +1238,7 @@ describe("AppWithVault", () => {
     expect(document.querySelector("[data-main-search-top-bar]")).toBeNull();
   });
 
-  it("renders the main secondary top bar as a real shell row split across sidebar and content", async () => {
+  it("renders the row over the feed as a real shell row heading the feed column; the sidebar column has no third row", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
         <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
@@ -1263,24 +1263,19 @@ describe("AppWithVault", () => {
     expect(document.querySelector("header")).toHaveAttribute("data-chrome-separator", "bottom");
     expect(document.querySelector("[data-bottom-action-bar]")).toHaveClass("chrome-row");
     expect(document.querySelector("[data-bottom-action-bar]")).toHaveAttribute("data-chrome-separator", "top");
-    expect(sidebarSegment).toHaveStyle({ width: "var(--sidebar-width)" });
-    expect(sidebarSegment).toHaveClass("border-r", "border-sidebar-border");
-    expect(contentSegment).toHaveClass("flex-1");
-    // Over the sidebar: the count of collections and the command that adds
-    // one, right after it; the space's file statistics are gone.
-    expect(sidebarSegment?.querySelector("[data-main-secondary-collection-count]")).toHaveTextContent(
-      /^\d+ collections?$/,
-    );
-    expect(sidebarSegment).not.toHaveTextContent("files");
-    expect(contentSegment).toHaveTextContent("2 elements");
-    expect(sidebarSegment?.querySelector("[data-main-secondary-stats-left]")).toHaveClass(
-      "gap-5",
-      "text-tertiary-foreground",
-    );
-    expect(within(sidebarSegment!).getByRole("button", { name: "New Collection" })).toHaveAttribute(
-      "data-main-secondary-new-collection",
+    // The sidebar column has no third row (03.10.2026): no count of
+    // collections; the command that adds one stands at the filter's right.
+    expect(sidebarSegment).toBeNull();
+    expect(document.querySelector("[data-main-secondary-collection-count]")).toBeNull();
+    const filterActions = document.querySelector("[data-sidebar-top-search-actions]") as HTMLElement;
+    expect(within(filterActions).getByRole("button", { name: "New Collection" })).toHaveAttribute(
+      "data-sidebar-new-collection",
       "",
     );
+    // The row heads the feed column, over the feed only.
+    expect(secondaryBar?.parentElement?.querySelector(":scope > main")).not.toBeNull();
+    expect(contentSegment).toHaveClass("flex-1");
+    expect(contentSegment).toHaveTextContent("2 elements");
     expect(contentSegment?.querySelector("[data-main-secondary-stats-right]")).toHaveClass(
       "gap-5",
       "justify-start",
@@ -1518,15 +1513,13 @@ describe("AppWithVault", () => {
 
     fireEvent.click(screen.getByText("Report selection"));
     expect(selectionLayer()).toHaveAttribute("data-entered", "true");
-    // The selection lives in the content half and replaces only its ordinary
-    // content; the stats over the sidebar stay.
+    // The selection lives in the row over the feed and replaces only its
+    // ordinary content.
     expect(selectionLayer().closest("[data-main-secondary-top-bar-content-segment]"))
       .not.toBeNull();
     const layers = document.querySelectorAll("[data-main-secondary-main-layer]");
-    const sidebarLayer = layers[0]!;
-    const contentLayer = layers[1]!;
-    expect(sidebarLayer).toHaveAttribute("data-entered", "true");
-    expect(contentLayer).toHaveAttribute("data-entered", "false");
+    expect(layers).toHaveLength(1);
+    expect(layers[0]).toHaveAttribute("data-entered", "false");
 
     // The ground does not move: a selection swaps the half's content, not the
     // row's surface — fills compute from the surface, so they stay consistent.
@@ -1840,8 +1833,10 @@ describe("AppWithVault", () => {
     expect(screen.getByRole("button", { name: "Mine settings" })).toBe(settingsMenu);
     expect(settingsMenu.closest("[data-top-chrome-settings-menu]")?.nextElementSibling).toBeNull();
 
-    const secondarySidebarBar = document.querySelector(
-      "[data-secondary-sidebar-link-mode-bar]",
+    // The collection filter of the open card stands at the right of the
+    // sidebar's filter row: the sidebar column has no third row (03.10.2026).
+    const linkModeControl = () => document.querySelector(
+      "[data-sidebar-top-search-actions] [data-compact-detail-link-mode-control]",
     ) as HTMLElement | null;
     const secondaryDetailMenu = document.querySelector(
       "[data-secondary-detail-top-menu]",
@@ -1850,19 +1845,19 @@ describe("AppWithVault", () => {
       "[data-main-secondary-top-bar-content-segment]",
     ) as HTMLElement | null;
     expect(screen.getByRole("dialog")).toHaveAttribute("data-detail-top-chrome-mode", "external");
-    expect(secondarySidebarBar).toBeInTheDocument();
+    expect(linkModeControl()).toBeInTheDocument();
     expect(secondaryDetailMenu).toBeInTheDocument();
     expect(secondaryContentSegment).toBeInTheDocument();
     await waitFor(() => {
       expect(document.querySelector("[data-main-secondary-top-bar]")).toHaveClass("bg-accent");
       expect(secondaryDetailMenu).toHaveAttribute("data-entered", "true");
-      expect(secondarySidebarBar).toHaveAttribute("data-entered", "true");
+      expect(linkModeControl()).toHaveAttribute("data-entered", "true");
     });
-    expect(secondarySidebarBar).toHaveTextContent("Collections:");
-    expect(within(secondarySidebarBar!).getByRole("button", { name: "All" })).toHaveAttribute(
+    expect(within(linkModeControl()!).getByRole("button", { name: "All" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
+    expect(document.querySelector("[data-secondary-sidebar-link-mode-bar]")).not.toBeInTheDocument();
     expect(within(secondaryDetailMenu!).getByText("alpha-block")).toBeInTheDocument();
     expect(document.querySelector("[data-sidebar-link-mode-bar]")).not.toBeInTheDocument();
     expect(document.querySelector('[data-detail-top-menu="classic"]')).not.toBeInTheDocument();
@@ -1871,12 +1866,9 @@ describe("AppWithVault", () => {
 
     expect(document.querySelector("[data-main-secondary-top-bar]")).toHaveClass("bg-chrome");
     expect(secondaryDetailMenu).toHaveAttribute("data-entered", "false");
-    expect(secondarySidebarBar).toHaveAttribute("data-entered", "false");
+    // It leaves with the card's chrome, as the menu does.
+    expect(linkModeControl()).toHaveAttribute("data-entered", "false");
     expect(document.querySelectorAll("[data-main-secondary-main-layer]")[0]).toHaveAttribute(
-      "data-entered",
-      "true",
-    );
-    expect(document.querySelectorAll("[data-main-secondary-main-layer]")[1]).toHaveAttribute(
       "data-entered",
       "true",
     );
@@ -1888,7 +1880,7 @@ describe("AppWithVault", () => {
       document.documentElement.setAttribute("data-ui-version", "2");
     });
 
-    it("folds the third row: its feed half into the second row, its sidebar half over the table", async () => {
+    it("folds the row over the feed into the second row; no row heads the table", async () => {
       render(
         <MemoryRouter initialEntries={["/"]}>
           <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
@@ -1898,15 +1890,10 @@ describe("AppWithVault", () => {
 
       const header = document.querySelector("header.chrome-row") as HTMLElement;
       expect(header.querySelector("[data-main-secondary-top-bar-content-segment]")).not.toBeNull();
-      const sidebar = document.querySelector("[data-sidebar-mock]") as HTMLElement;
-      const headOfTable = sidebar.querySelector("[data-main-secondary-top-bar-sidebar-segment]");
-      expect(headOfTable).not.toBeNull();
-      expect(headOfTable).toHaveClass("w-full");
-      expect(headOfTable).not.toHaveClass("border-r");
-      // No row of its own between the second row and the body.
-      const rows = document.querySelectorAll("[data-main-secondary-top-bar]");
-      expect(rows).toHaveLength(1);
-      expect(sidebar.contains(rows[0])).toBe(true);
+      expect(document.querySelector("[data-main-secondary-top-bar-sidebar-segment]")).toBeNull();
+      // No row of its own between the second row and the body, over the feed
+      // or over the table.
+      expect(document.querySelectorAll("[data-main-secondary-top-bar]")).toHaveLength(0);
     });
 
     it("joins space and collection into one path with the sidebar collapsed: no line, no padding between", async () => {
@@ -2411,8 +2398,6 @@ describe("AppWithVault", () => {
 
     const input = screen.getByRole("textbox", { name: "Filter collections" });
     fireEvent.change(input, { target: { value: "Gamma" } });
-    // The count over the list counts what the filter leaves.
-    expect(document.querySelector("[data-main-secondary-collection-count]")).toHaveTextContent("0 collections");
 
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => {
@@ -3515,6 +3500,7 @@ describe("AppWithVault", () => {
       sidebar: { width_px: 360, collapsed: false },
       lead: true,
       fresh_start: false,
+      chrome_rows: { tab_bar: 30, page: 30 },
       ...overrides,
     });
     const waitReportInterval = () => act(async () => {

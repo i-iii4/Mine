@@ -7,6 +7,7 @@ import {
   type InvokeOptions,
 } from "@tauri-apps/api/core";
 import type {
+  ChromeRows,
   SidebarLayout,
   TabBarState,
   TabBootstrap,
@@ -685,6 +686,13 @@ export const reportTabView = (view: TabView) => invoke<void>("report_tab_view", 
 
 /** This tab drew its first frame since it was shown (В5). */
 export const tabPainted = () => invoke<void>("tab_painted");
+
+/** Set the heights of the tab bar's row and the pages' top rows (В83). */
+export const setChromeRows = (rows: ChromeRows) => invoke<void>("set_chrome_rows", { rows });
+
+/** Open a place of this tab's space in a new tab, or a new window (В82). */
+export const openPlace = (view: TabView, newWindow: boolean) =>
+  invoke<void>("open_place", { view, newWindow });
 
 /** Where this tab can step through its places (В81). */
 export const reportTabHistory = (back: boolean, forward: boolean) =>

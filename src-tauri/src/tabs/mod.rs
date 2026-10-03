@@ -26,7 +26,7 @@ use crate::commands::space_events;
 use crate::commands::state::AppState;
 use crate::domain::windows::{
     centered_frame, normalize, ScreenArea, SavedTab, SavedWindow, SavedWindows, SidebarLayout,
-    SpaceStatus, TabId, TabSpace, TabView, WindowFrame, WindowId, TAB_BAR_HEIGHT_PX,
+    ChromeRows, SpaceStatus, TabId, TabSpace, TabView, WindowFrame, WindowId,
     WINDOW_DEFAULT_HEIGHT, WINDOW_DEFAULT_WIDTH, WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH,
 };
 use crate::storage::window_store::{load, Loaded, WindowStore};
@@ -101,6 +101,8 @@ pub struct TabBarState {
     pub active_tab: TabId,
     pub sidebar: SidebarLayout,
     pub fullscreen: bool,
+    /// The heights of the chrome rows' content (В83).
+    pub chrome_rows: ChromeRows,
 }
 
 /// What a tab page needs to start (`get_tab_bootstrap`).
@@ -117,6 +119,8 @@ pub struct TabBootstrap {
     /// No saved windows were read at this launch: the page may carry its
     /// old single-window settings over once (В79).
     pub fresh_start: bool,
+    /// The heights of the chrome rows' content (В83).
+    pub chrome_rows: ChromeRows,
 }
 
 /// `tab-visibility-changed`: the tab was shown or hidden (В41).
@@ -339,6 +343,45 @@ fn fresh_windows(app: &AppHandle, screens: &[ScreenArea]) -> SavedWindows {
     SavedWindows::fresh(space, WindowId(new_id()), TabId(new_id()), screens)
 }
 
+/// The chrome rows of the window `window_id` (В83).
+fn chrome_rows_of(app: &AppHandle, window_id: &WindowId) -> ChromeRows {
+    shell(app).snapshot().window(window_id).map_or(ChromeRows::STANDARD, |window| window.chrome_rows)
+}
+
+/// The tab bar's height in `window_id`: its row and its line (В83).
+fn bar_height(app: &AppHandle, window_id: &WindowId) -> f64 {
+    f64::from(crate::domain::windows::tab_bar_height(chrome_rows_of(app, window_id).tab_bar))
+}
+
+/// Set the chrome rows of the window whose bar is `bar_label` (В83): store
+/// them, lay the window out again, move its traffic lights to the bar's row
+/// and tell its bar and its tab pages. Other windows keep theirs, so two can
+/// stand side by side to compare.
+pub fn set_chrome_rows(app: &AppHandle, bar_label: &str, rows: ChromeRows) {
+    let Some(window_id) = WindowId::from_label(bar_label) else {
+        return;
+    };
+    let shell = shell(app);
+    if !shell.change(|model| model.set_chrome_rows(&window_id, rows)) {
+        return;
+    }
+    layout(app, &window_id);
+    let rows = chrome_rows_of(app, &window_id);
+    if let Some(window) = app.get_window(&window_id.label()) {
+        native::set_traffic_light_row(&window, rows.tab_bar);
+    }
+    let mut labels: Vec<String> = shell
+        .snapshot()
+        .window(&window_id)
+        .map(|window| window.tabs.iter().map(|tab| tab.id.label()).collect())
+        .unwrap_or_default();
+    labels.push(window_id.bar_label());
+    space_events::emit_to_labels(app, labels, CHROME_ROWS_EVENT, rows);
+}
+
+/// The event every bar and page re-reads the chrome rows' heights on (В83).
+pub const CHROME_ROWS_EVENT: &str = "chrome-rows-changed";
+
 /// Create the native window `saved` with its tab bar and its visible tab.
 fn create_window(app: &AppHandle, saved: &SavedWindow) -> anyhow::Result<Window> {
     let label = saved.id.label();
@@ -361,8 +404,9 @@ fn create_window(app: &AppHandle, saved: &SavedWindow) -> anyhow::Result<Window>
     let bar = window.add_child(
         bar,
         LogicalPosition::new(0.0, 0.0),
-        LogicalSize::new(frame.width, f64::from(TAB_BAR_HEIGHT_PX)),
+        LogicalSize::new(frame.width, bar_height(app, &saved.id)),
     )?;
+    native::keep_traffic_lights(&window, saved.chrome_rows.tab_bar);
     native::clear_page_background(&bar);
     let window_id = saved.id.clone();
     let handle = app.clone();
@@ -383,15 +427,19 @@ fn create_window(app: &AppHandle, saved: &SavedWindow) -> anyhow::Result<Window>
 /// when it shows.
 fn create_page(app: &AppHandle, window: &Window, tab: &TabId) -> anyhow::Result<Webview> {
     let (width, height) = logical_size(window);
-    let bar = f64::from(TAB_BAR_HEIGHT_PX);
+    let window_id = WindowId::from_label(window.label());
+    let rows = window_id.as_ref().map_or(ChromeRows::STANDARD, |id| chrome_rows_of(app, id));
+    let bar = f64::from(crate::domain::windows::tab_bar_height(rows.tab_bar));
     if let Some(existing) = app.get_webview(&tab.label()) {
         if existing.window().label() == window.label() {
             return Ok(existing);
         }
         match existing.reparent(window) {
             Ok(()) => {
-                // The page keeps the frame of its old window until told.
+                // The page keeps the frame of its old window until told, and
+                // the height of its old window's rows (В83).
                 let _ = existing.set_bounds(bounds(0.0, bar, width, (height - bar).max(0.0)));
+                space_events::emit_to_labels(app, [tab.label()], CHROME_ROWS_EVENT, rows);
                 return Ok(existing);
             }
             Err(error) => {
@@ -451,7 +499,7 @@ fn layout(app: &AppHandle, window_id: &WindowId) {
         return;
     };
     let (width, height) = logical_size(&window);
-    let bar = f64::from(TAB_BAR_HEIGHT_PX);
+    let bar = bar_height(app, window_id);
     if let Some(page) = app.get_webview(&window_id.bar_label()) {
         let _ = page.set_bounds(bounds(0.0, 0.0, width, bar));
     }
@@ -648,6 +696,7 @@ pub fn bar_state(app: &AppHandle, window_id: &WindowId) -> Option<TabBarState> {
         // The bar's sidebar button acts on the visible tab's sidebar (В56).
         sidebar: window.active_sidebar(),
         fullscreen: window.fullscreen,
+        chrome_rows: window.chrome_rows,
     })
 }
 
@@ -681,6 +730,7 @@ pub fn bootstrap(app: &AppHandle, label: &str) -> Option<TabBootstrap> {
         sidebar: window.tab_sidebar(&tab),
         lead: is_lead(app, label),
         fresh_start: shell(app).fresh_start.load(Ordering::SeqCst),
+        chrome_rows: window.chrome_rows,
     })
 }
 
@@ -869,9 +919,15 @@ pub fn unload_for_memory_pressure(app: &AppHandle) {
 
 /// Open a new tab at the end of `window_id` with `space`, and show it (В51).
 pub fn new_tab(app: &AppHandle, window_id: &WindowId, space: TabSpace) {
+    new_tab_at(app, window_id, space, TabView::default());
+}
+
+/// Open a tab showing `space` at the place `view` at the end of
+/// `window_id`, and show it (В82).
+pub fn new_tab_at(app: &AppHandle, window_id: &WindowId, space: TabSpace, view: TabView) {
     let shell = shell(app);
     let tab = TabId(new_id());
-    let added = shell.change(|model| model.add_tab(window_id, tab.clone(), space, TabView::default()));
+    let added = shell.change(|model| model.add_tab(window_id, tab.clone(), space, view));
     if added {
         activate(app, &tab);
     }
@@ -879,12 +935,34 @@ pub fn new_tab(app: &AppHandle, window_id: &WindowId, space: TabSpace) {
 
 /// Open a new window with one tab showing `space` (В54).
 pub fn new_window(app: &AppHandle, space: TabSpace) {
+    new_window_at(app, space, TabView::default());
+}
+
+/// Open a place of the space of the tab page `label` in a new tab of its
+/// window, or in a new window (В82).
+pub fn open_place(app: &AppHandle, label: &str, view: TabView, new_window: bool) {
+    let Some(tab) = TabId::from_label(label) else {
+        return;
+    };
+    let snapshot = shell(app).snapshot();
+    let Some(space) = snapshot.tab(&tab).map(|saved| saved.space.clone()) else {
+        return;
+    };
+    if new_window {
+        new_window_at(app, space, view);
+    } else if let Some(window) = snapshot.window_of(&tab).map(|window| window.id.clone()) {
+        new_tab_at(app, &window, space, view);
+    }
+}
+
+/// Open a new window with one tab showing `space` at the place `view` (В82).
+pub fn new_window_at(app: &AppHandle, space: TabSpace, view: TabView) {
     let shell = shell(app);
     let screens = screens(app);
-    let sidebar = shell
-        .snapshot()
-        .last_window()
-        .map_or_else(SidebarLayout::default, SavedWindow::active_sidebar);
+    let last = shell.snapshot().last_window().cloned();
+    let sidebar = last.as_ref().map_or_else(SidebarLayout::default, SavedWindow::active_sidebar);
+    // A new window opens with the chrome of the window it came from (В83).
+    let chrome_rows = last.as_ref().map_or(ChromeRows::STANDARD, |window| window.chrome_rows);
     let tab = TabId(new_id());
     let window = SavedWindow {
         id: WindowId(new_id()),
@@ -893,11 +971,12 @@ pub fn new_window(app: &AppHandle, space: TabSpace) {
         tabs: vec![SavedTab {
             id: tab.clone(),
             space,
-            view: TabView::default(),
+            view,
             sidebar: Some(sidebar),
         }],
         active_tab: tab,
         sidebar,
+        chrome_rows,
     };
     shell.change(|model| model.add_window(window.clone()));
     if let Err(error) = create_window(app, &window) {
@@ -980,6 +1059,7 @@ pub fn close_window(app: &AppHandle, window_id: &WindowId) {
         close_page(app, &tab.id);
     }
     if let Some(window) = app.get_window(&window_id.label()) {
+        native::release_traffic_lights(&window);
         let _ = window.destroy();
     }
     project_current_space(app);

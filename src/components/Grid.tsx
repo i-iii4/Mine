@@ -234,6 +234,10 @@ interface GridProps {
   restoreFocusSlug?: string | null;
   restoreFocusSequence?: number;
   onBlockClick: (block: LightBlock) => void;
+  /// ⌘-click opens the card in a new tab, ⇧⌘-click in a new window
+  /// (SPEC_TABS.md, В82). Absent on a page that is not a tab: there ⌘-click
+  /// selects, as ⇧-click does everywhere.
+  onOpenBlockElsewhere?: (block: LightBlock, newWindow: boolean) => void;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
   onLoadBlockTags: (slugs: string[]) => Promise<Map<string, string[]>>;
@@ -487,6 +491,7 @@ export function Grid({
   restoreFocusSlug = null,
   restoreFocusSequence = 0,
   onBlockClick,
+  onOpenBlockElsewhere,
   onToggleTag,
   onCreateAndAssign,
   onLoadBlockTags,
@@ -1619,6 +1624,13 @@ export function Grid({
     block: LightBlock,
     event: ReactMouseEvent<HTMLDivElement>,
   ): boolean => {
+    // In a tab ⌘ opens the card elsewhere, with ⇧ in a new window (В82).
+    if (event.metaKey && onOpenBlockElsewhere) {
+      event.preventDefault();
+      event.stopPropagation();
+      onOpenBlockElsewhere(block, event.shiftKey);
+      return true;
+    }
     if (event.metaKey || event.shiftKey || selectedSlugs.size > 0) {
       event.preventDefault();
       event.stopPropagation();
@@ -1629,7 +1641,7 @@ export function Grid({
     }
 
     return false;
-  }, [selectedSlugs.size, toggleSelectedSlug]);
+  }, [onOpenBlockElsewhere, selectedSlugs.size, toggleSelectedSlug]);
 
   const marqueeRect = useMemo(
     () => marqueeSelection?.active

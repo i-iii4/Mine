@@ -16,9 +16,13 @@ pub fn parse_hex_color(hex: &str) -> Option<(f64, f64, f64)> {
 
 #[cfg(target_os = "macos")]
 mod imp {
+    use std::ptr::NonNull;
+    use std::sync::Mutex;
+
+    use objc2::rc::Retained;
     use objc2::runtime::AnyObject;
     use objc2_app_kit::{NSColor, NSView, NSWindow, NSWindowOrderingMode};
-    use objc2_foundation::{NSNumber, NSString};
+    use objc2_foundation::{NSNumber, NSPoint, NSRect, NSString};
     use tauri::{Webview, Window};
 
     /// Put `lower` right under `upper` in their window: the page being shown
@@ -60,6 +64,220 @@ mod imp {
             unsafe {
                 let _: () = objc2::msg_send![object, setValue: &*no, forKey: &*key];
             }
+        });
+    }
+
+    /// Where a window's traffic lights stand (В83): the row they sit in the
+    /// middle of, and the system's step between two buttons, read once
+    /// before anything moves them.
+    struct TrafficLights {
+        row: u32,
+        spacing: f64,
+    }
+
+    /// Each window's traffic lights, by its NSWindow.
+    static TRAFFIC_LIGHTS: Mutex<Vec<(usize, TrafficLights)>> = Mutex::new(Vec::new());
+
+    fn traffic_lights(ns_window: usize) -> Option<(f64, f64)> {
+        let lights = TRAFFIC_LIGHTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        lights
+            .iter()
+            .find(|(window, _)| *window == ns_window)
+            .map(|(_, lights)| (f64::from(lights.row), lights.spacing))
+    }
+
+    /// Each window's frame observers, by window label, retained.
+    static OBSERVERS: Mutex<Vec<(String, usize)>> = Mutex::new(Vec::new());
+
+    /// NSWindowStyleMaskFullScreen.
+    const FULL_SCREEN_STYLE: usize = 1 << 14;
+
+    /// The view holding the traffic lights: the close button's superview's
+    /// superview, the title bar container.
+    unsafe fn title_bar_container(ns_window: &AnyObject) -> Option<&AnyObject> {
+        // NSWindowCloseButton.
+        let close: *mut AnyObject = objc2::msg_send![ns_window, standardWindowButton: 0usize];
+        let title_bar: *mut AnyObject = objc2::msg_send![close.as_ref()?, superview];
+        let container: *mut AnyObject = objc2::msg_send![title_bar.as_ref()?, superview];
+        container.as_ref()
+    }
+
+    /// The close, minimise and zoom buttons, in their order.
+    unsafe fn window_buttons(ns_window: &AnyObject) -> [Option<&AnyObject>; 3] {
+        [0usize, 1, 2].map(|kind| {
+            let button: *mut AnyObject = objc2::msg_send![ns_window, standardWindowButton: kind];
+            button.as_ref()
+        })
+    }
+
+    /// The system's step between two buttons, where it laid them out.
+    unsafe fn system_spacing(ns_window: &AnyObject) -> Option<f64> {
+        let [Some(close), Some(minimise), _] = window_buttons(ns_window) else {
+            return None;
+        };
+        let close: NSRect = objc2::msg_send![close, frame];
+        let minimise: NSRect = objc2::msg_send![minimise, frame];
+        Some(minimise.origin.x - close.origin.x)
+    }
+
+    /// Put the traffic lights in the middle of the window's row, as far from
+    /// its left edge as from its top, the system's step apart. The title bar
+    /// container is made exactly as tall as the row, from the window's top,
+    /// and every button is set to its point in it. The points follow from
+    /// the row and the step alone, never from where AppKit left a button, so
+    /// putting them back after each AppKit layout settles in one pass.
+    /// Measured 03.10.2026: AppKit keeps a button 9px from the container's
+    /// top and lays the three out one by one; a container sized from the
+    /// close button's place grew 3.5px on every layout and the buttons
+    /// parted. Full screen is the system's: its title bar drops in its own
+    /// window, and the lights there stay where AppKit puts them.
+    unsafe fn place(ns_window: &AnyObject) {
+        let Some((row, spacing)) = traffic_lights(std::ptr::from_ref(ns_window) as usize) else {
+            return;
+        };
+        let style: usize = objc2::msg_send![ns_window, styleMask];
+        if style & FULL_SCREEN_STYLE != 0 {
+            return;
+        }
+        let Some(container) = title_bar_container(ns_window) else {
+            return;
+        };
+        let window: NSRect = objc2::msg_send![ns_window, frame];
+        let origin_y = window.size.height - row;
+        let mut bar: NSRect = objc2::msg_send![container, frame];
+        if (bar.size.height - row).abs() >= 0.5 || (bar.origin.y - origin_y).abs() >= 0.5 {
+            bar.size.height = row;
+            bar.origin.y = origin_y;
+            let _: () = objc2::msg_send![container, setFrame: bar];
+        }
+        for (index, button) in window_buttons(ns_window).into_iter().enumerate() {
+            let Some(button) = button else {
+                continue;
+            };
+            let frame: NSRect = objc2::msg_send![button, frame];
+            // The buttons' own view spans the container; centred in it, a
+            // button is centred in the row whichever way the view counts.
+            let parent: *mut AnyObject = objc2::msg_send![button, superview];
+            let parent_height = parent.as_ref().map_or(row, |parent| {
+                let parent: NSRect = objc2::msg_send![parent, frame];
+                parent.size.height
+            });
+            let inset = ((row - frame.size.height) / 2.0).max(0.0);
+            #[allow(clippy::cast_precision_loss)]
+            let x = inset + index as f64 * spacing;
+            let y = ((parent_height - frame.size.height) / 2.0).max(0.0);
+            if (frame.origin.x - x).abs() >= 0.5 || (frame.origin.y - y).abs() >= 0.5 {
+                let _: () = objc2::msg_send![button, setFrameOrigin: NSPoint::new(x, y)];
+            }
+        }
+    }
+
+    /// Keep `window`'s traffic lights in the middle of the tab bar's row.
+    /// AppKit lays the title bar out again on resize, focus, full screen and
+    /// more; each time it moves the container or a button, their frame
+    /// notifications put them back, before the frame is drawn.
+    pub fn keep_traffic_lights(window: &Window, row_height: u32) {
+        let label = window.label().to_string();
+        let window = window.clone();
+        let _ = window.clone().run_on_main_thread(move || {
+            let Ok(ptr) = window.ns_window() else {
+                return;
+            };
+            // SAFETY: the live NSWindow of this window, on the main thread.
+            // The observers are removed when the window goes (`release`), and
+            // the views they watch belong to the window, so the block never
+            // runs for a window that is gone.
+            unsafe {
+                let ns_window: &AnyObject = &*(ptr as *const AnyObject);
+                let Some(spacing) = system_spacing(ns_window) else {
+                    return;
+                };
+                {
+                    let mut lights = TRAFFIC_LIGHTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    lights.retain(|(window, _)| *window != ptr as usize);
+                    lights.push((ptr as usize, TrafficLights { row: row_height, spacing }));
+                }
+                place(ns_window);
+                let Some(container) = title_bar_container(ns_window) else {
+                    return;
+                };
+                let center: *mut AnyObject =
+                    objc2::msg_send![objc2::class!(NSNotificationCenter), defaultCenter];
+                let Some(center) = center.as_ref() else {
+                    return;
+                };
+                let name = NSString::from_str("NSViewFrameDidChangeNotification");
+                let window_ptr = ptr as usize;
+                let block = block2::RcBlock::new(move |_note: NonNull<AnyObject>| {
+                    place(&*(window_ptr as *const AnyObject));
+                });
+                // The container and each button: AppKit moves any of them.
+                let watched = std::iter::once(container).chain(window_buttons(ns_window).into_iter().flatten());
+                for object in watched {
+                    let _: () = objc2::msg_send![object, setPostsFrameChangedNotifications: true];
+                    let token: *mut AnyObject = objc2::msg_send![
+                        center,
+                        addObserverForName: &*name,
+                        object: object,
+                        queue: std::ptr::null::<AnyObject>(),
+                        usingBlock: &*block
+                    ];
+                    if let Some(token) = Retained::retain(token) {
+                        let mut observers = OBSERVERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                        observers.push((label.clone(), Retained::into_raw(token) as usize));
+                    }
+                }
+            }
+        });
+    }
+
+    /// Move `window`'s traffic lights for a bar row `row_height` tall.
+    pub fn set_traffic_light_row(window: &Window, row_height: u32) {
+        let window = window.clone();
+        let _ = window.clone().run_on_main_thread(move || {
+            if let Ok(ptr) = window.ns_window() {
+                {
+                    let mut lights = TRAFFIC_LIGHTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    match lights.iter_mut().find(|(window, _)| *window == ptr as usize) {
+                        Some((_, lights)) => lights.row = row_height,
+                        None => return,
+                    }
+                }
+                // SAFETY: the live NSWindow of this window, on the main thread.
+                unsafe { place(&*(ptr as *const AnyObject)) };
+            }
+        });
+    }
+
+    /// Stop keeping the traffic lights of the window `label`, before it goes.
+    pub fn release_traffic_lights(window: &Window) {
+        let label = window.label().to_string();
+        let window = window.clone();
+        let ns_window = window.ns_window().ok().map(|ptr| ptr as usize);
+        let _ = window.run_on_main_thread(move || {
+            if let Some(ns_window) = ns_window {
+                TRAFFIC_LIGHTS
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .retain(|(window, _)| *window != ns_window);
+            }
+            let mut observers = OBSERVERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            observers.retain(|(owner, token)| {
+                if owner != &label {
+                    return true;
+                }
+                // SAFETY: the token was retained in `keep_traffic_lights` and
+                // is released exactly once, here, on the main thread.
+                unsafe {
+                    let token = Retained::from_raw(*token as *mut AnyObject);
+                    let center: *mut AnyObject =
+                        objc2::msg_send![objc2::class!(NSNotificationCenter), defaultCenter];
+                    if let (Some(center), Some(token)) = (center.as_ref(), token) {
+                        let _: () = objc2::msg_send![center, removeObserver: &*token];
+                    }
+                }
+                false
+            });
         });
     }
 
@@ -142,6 +360,9 @@ mod imp {
     pub fn order_below(_upper: &Webview, _lower: &Webview) {}
     pub fn clear_page_background(_page: &Webview) {}
     pub fn set_window_background(_window: &Window, _rgb: (f64, f64, f64)) {}
+    pub fn keep_traffic_lights(_window: &Window, _row_height: u32) {}
+    pub fn set_traffic_light_row(_window: &Window, _row_height: u32) {}
+    pub fn release_traffic_lights(_window: &Window) {}
 }
 
 /// See the platform implementation.
@@ -152,6 +373,21 @@ pub fn order_below(upper: &Webview, lower: &Webview) {
 /// See the platform implementation.
 pub fn clear_page_background(page: &Webview) {
     imp::clear_page_background(page);
+}
+
+/// Keep `window`'s traffic lights in the middle of a top row `row_height` tall.
+pub fn keep_traffic_lights(window: &Window, row_height: u32) {
+    imp::keep_traffic_lights(window, row_height);
+}
+
+/// Move `window`'s traffic lights for a bar row `row_height` tall.
+pub fn set_traffic_light_row(window: &Window, row_height: u32) {
+    imp::set_traffic_light_row(window, row_height);
+}
+
+/// Stop keeping `window`'s traffic lights, before it goes.
+pub fn release_traffic_lights(window: &Window) {
+    imp::release_traffic_lights(window);
 }
 
 /// Paint `window`'s background with `hex` (`#rrggbb`); an unreadable colour

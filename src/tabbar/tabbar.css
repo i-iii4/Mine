@@ -48,7 +48,9 @@ html[data-tab-bar-page] #root {
 
 [role="tab"]:hover [data-tab-label],
 [role="tab"]:focus-visible [data-tab-label] {
-  --tab-close-room: 24px;
+  /* The plate 8px from the tab's line, the label ending 4px before it:
+     28px of the label lie under the plate, 2px more keep them apart. */
+  --tab-close-room: 30px;
 }
 
 [data-tab-close] {

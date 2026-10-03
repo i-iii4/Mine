@@ -7,6 +7,7 @@ import {
   TAB_MAX_WIDTH_PX,
   TAB_MIN_WIDTH_PX,
 } from "./constants";
+import { STANDARD_CHROME_ROW_HEIGHT, TALL_CHROME_ROW_HEIGHT } from "@/lib/chromeHeight";
 
 /** The value of `pub const <name>: u32 = <value>;` in the Rust source. */
 function rustConstant(source: string, name: string): number {
@@ -32,6 +33,16 @@ describe("tab bar constants", () => {
     const row = /--chrome-row-content-height:\s*(\d+)px;/.exec(css);
     expect(row?.[1]).toBeDefined();
     expect(TAB_BAR_HEIGHT_PX).toBe(Number(row?.[1]) + 1);
+  });
+
+  it("step the tall chrome as a sidebar table row, its line included (В83)", () => {
+    const css = readFileSync("src/styles/global.css", "utf8");
+    const step = /--sidebar-row-height:\s*(\d+)px;/.exec(css);
+    expect(step?.[1]).toBeDefined();
+    expect(rustConstant(rust, "CHROME_ROW_TALL_HEIGHT_PX") + 1).toBe(Number(step?.[1]));
+    expect(TALL_CHROME_ROW_HEIGHT).toBe(rustConstant(rust, "CHROME_ROW_TALL_HEIGHT_PX"));
+    expect(STANDARD_CHROME_ROW_HEIGHT).toBe(rustConstant(rust, "CHROME_ROW_HEIGHT_PX"));
+    expect(css).toContain("--chrome-row-content-height: calc(var(--sidebar-row-height) - 1px);");
   });
 
   it("drag tabs past the chrome's own threshold", () => {
