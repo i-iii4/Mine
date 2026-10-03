@@ -58,6 +58,7 @@ const commandMocks = vi.hoisted(() => ({
   listTaxonomySnapshot: vi.fn<() => Promise<TaxonomySnapshot>>(),
   getVaultStats: vi.fn<(currentCollection?: string | null) => Promise<VaultStats>>(),
   createChannel: vi.fn<(tag: string) => Promise<ChannelDto>>(),
+  reorderChannels: vi.fn(async (_items: { tag: string; position: number }[]) => undefined),
   renameBlockFile: vi.fn(),
   prepareDeleteBlock: vi.fn<(slug: string) => Promise<DeleteBlockPlan>>(),
   deleteBlock: vi.fn<(slug: string, deleteUnusedMedia?: boolean) => Promise<boolean>>(),
@@ -116,6 +117,7 @@ vi.mock("@/lib/commands", () => ({
   listTaxonomySnapshot: commandMocks.listTaxonomySnapshot,
   getVaultStats: commandMocks.getVaultStats,
   createChannel: commandMocks.createChannel,
+  reorderChannels: commandMocks.reorderChannels,
   deleteChannel: vi.fn(),
   reorderCollections: vi.fn(),
   renameChannel: vi.fn(),
@@ -2280,6 +2282,44 @@ describe("AppWithVault", () => {
     fireEvent.click(trigger);
 
     expect(screen.queryByRole("textbox", { name: "Search collections" })).not.toBeInTheDocument();
+  });
+
+  it("creates a collection from the filter on Enter, first in the list, and opens one already called that", async () => {
+    commandMocks.createChannel.mockClear();
+    commandMocks.reorderChannels.mockClear();
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    const input = screen.getByRole("textbox", { name: "Filter collections" });
+    fireEvent.change(input, { target: { value: "Gamma" } });
+    // The count over the list counts what the filter leaves.
+    expect(document.querySelector("[data-main-secondary-collection-count]")).toHaveTextContent("0 collections");
+
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => {
+      expect(commandMocks.createChannel).toHaveBeenCalledWith("Gamma");
+    });
+    // The new collection takes the first place; the others move down by one.
+    await waitFor(() => {
+      expect(commandMocks.reorderChannels).toHaveBeenCalledWith([
+        { tag: "Gamma", position: 0 },
+        { tag: "alpha", position: 1 },
+        { tag: "beta", position: 2 },
+      ]);
+    });
+    expect(input).toHaveValue("");
+
+    // A name already taken, in any case, opens that collection instead.
+    fireEvent.change(input, { target: { value: "ALPHA" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(commandMocks.createChannel).toHaveBeenCalledTimes(1);
   });
 
   it("creates a new channel from the pinned collection switcher action", async () => {

@@ -57,8 +57,8 @@ import {
   isOverlayKeyboardTarget,
 } from "@/lib/keyboardTargets";
 import {
-  SIDEBAR_CREATE_CHANNEL_ROW_KEY,
   buildSidebarSearchNavigationRows,
+  filterSidebarTags,
   sidebarRowDomId,
   sidebarRowKeyToRoute,
 } from "@/lib/sidebarSearch";
@@ -2742,12 +2742,18 @@ export function AppWithVault({
   );
 
   const handleCreateChannel = useCallback(
-    async (tag: string) => {
-      const pendingDrop = pendingCreateChannelDrop;
+    // `drop` names what the new collection takes at once when the caller
+    // knows it (Enter in the filter); otherwise the pending one applies.
+    async (tag: string, drop?: PendingCreateChannelDrop | null) => {
+      const pendingDrop = drop !== undefined ? drop : pendingCreateChannelDrop;
       setPendingCreateChannelDrop(null);
       try {
         const channel = await createChannel(tag);
         pushRecentTag(channel.tag);
+        // Named at the top of the list, it takes the first place there
+        // instead of the last: the others move down by one.
+        const order = [channel.tag, ...orderedTags.map((t) => t.tag).filter((t) => t !== channel.tag)];
+        await reorderChannels(order.map((name, position) => ({ tag: name, position })));
 
         if (pendingDrop?.type === "block") {
           await attachBlocksToTag([pendingDrop.slug], channel.tag);
@@ -2803,6 +2809,7 @@ export function AppWithVault({
     [
       attachBlocksToTag,
       invalidateRoutesForTags,
+      orderedTags,
       pendingCreateChannelDrop,
       reloadAllSnapshots,
       scheduleRefresh,
@@ -2819,13 +2826,18 @@ export function AppWithVault({
   /// a dialog, because that row has nowhere to appear and the command used to
   /// do nothing at all.
   const beginCreateCollection = useCallback(() => {
-    setPendingCreateChannelDrop(null);
+    // Made while a card is open with its collections filtered to Connected,
+    // the new collection takes that card at once, as a card dropped on the
+    // create row does. Under All it is an ordinary new collection.
+    setPendingCreateChannelDrop(
+      selectedBlock && detailLinkMode === "linked" ? { type: "block", slug: selectedBlock.slug } : null,
+    );
     if (sidebarCollapsed) {
       setIsNamingCollection(true);
       return;
     }
     setIsCreatingChannel(true);
-  }, [sidebarCollapsed]);
+  }, [detailLinkMode, selectedBlock, sidebarCollapsed]);
 
   const sidebarSearchNavigationRows = useMemo(() => (
     buildSidebarSearchNavigationRows(orderedTags, sidebarSearchQuery)
@@ -2868,14 +2880,10 @@ export function AppWithVault({
 
   const activateSidebarSearchNavigationRow = useCallback((rowKey: string | null) => {
     if (!rowKey) return;
-    if (rowKey === SIDEBAR_CREATE_CHANNEL_ROW_KEY) {
-      handleSetCreatingChannel(true);
-      return;
-    }
     const route = sidebarRowKeyToRoute(rowKey);
     if (!route) return;
     navigate(route);
-  }, [handleSetCreatingChannel, navigate]);
+  }, [navigate]);
 
   const handleSidebarSearchKeyDown = useCallback((event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Escape") {
@@ -2898,17 +2906,45 @@ export function AppWithVault({
 
     if (event.key !== "Enter") return;
     const activeRowKey = sidebarSearchKeyboardNavigationFocus?.rowKey ?? null;
-    if (!activeRowKey) return;
+    if (activeRowKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      activateSidebarSearchNavigationRow(activeRowKey);
+      return;
+    }
+    // No row chosen with the arrows: Enter acts on the typed name. A
+    // collection already called that opens; otherwise one is made with it,
+    // taking the open card when its collections show Connected, and the
+    // filter clears so the list shows the new collection on top.
+    const name = sidebarSearchQuery.trim();
+    if (!name) return;
     event.preventDefault();
     event.stopPropagation();
-    activateSidebarSearchNavigationRow(activeRowKey);
+    const lowered = name.toLowerCase();
+    const existing = orderedTags.find(
+      (tc) => tc.tag.toLowerCase() === lowered || collectionRefLabel(tc.tag).toLowerCase() === lowered,
+    );
+    if (existing) {
+      activateSidebarSearchNavigationRow(`tag:${existing.tag}`);
+      return;
+    }
+    void handleCreateChannel(
+      name,
+      selectedBlock && detailLinkMode === "linked" ? { type: "block", slug: selectedBlock.slug } : null,
+    );
+    handleClearSidebarSearch();
   }, [
     activateSidebarSearchNavigationRow,
+    detailLinkMode,
     handleClearSidebarSearch,
+    handleCreateChannel,
     moveSidebarSearchNavigationRow,
+    orderedTags,
+    selectedBlock,
     setSidebarSearchNavigationRow,
     sidebarSearchHasValue,
     sidebarSearchKeyboardNavigationFocus,
+    sidebarSearchQuery,
   ]);
 
   const beginCreateChannelFromDrop = useCallback((pendingDrop: PendingCreateChannelDrop) => {
@@ -3610,6 +3646,9 @@ export function AppWithVault({
           sidebarCollapsed={sidebarCollapsed}
           sidebarResizing={sidebarResizing}
           onCreateCollection={beginCreateCollection}
+          collectionCount={sidebarSearchQuery.trim()
+            ? filterSidebarTags(orderedTags, sidebarSearchQuery).length
+            : orderedTags.length}
           stats={vaultStats}
           cloudPending={blocks.filter((item) => item.content_in_cloud).length}
           indexing={isSyncing}
@@ -3708,11 +3747,6 @@ export function AppWithVault({
                     sidebarSearchActiveSurfaceClass,
                   ].filter(Boolean).join(" ")}
                   data-sidebar-top-search-surface=""
-                  // Overflowing text at the panel's right edge dissolves, it is
-                  // not cut: a narrow panel used to slice the placeholder
-                  // through the middle of a letter. Same curve the sidebar rows
-                  // use — DESIGN_SYSTEM.md, «Растворение кромок».
-                  style={SIDEBAR_SEARCH_MASK_STYLE}
                 >
                   <Input
                     ref={sidebarSearchInputRef}
@@ -3724,11 +3758,18 @@ export function AppWithVault({
                         : undefined
                     }
                     placeholder="Filter collections..."
+                    // Overflowing text at the field's right edge dissolves, it
+                    // is not cut: a narrow panel used to slice the placeholder
+                    // through the middle of a letter. The field alone takes the
+                    // fade, so the clear button beside it stays whole. Same
+                    // curve the sidebar rows use (DESIGN_SYSTEM.md, «Растворение
+                    // кромок»).
+                    style={SIDEBAR_SEARCH_MASK_STYLE}
                     variant="ghost"
                     value={sidebarSearchQuery}
                     onChange={(event) => handleSidebarSearchChange(event.target.value)}
                     onKeyDown={handleSidebarSearchKeyDown}
-                    className="h-full min-w-0 flex-1 rounded-0 bg-transparent px-3 py-0 font-mono text-sm text-muted-foreground hover:placeholder:text-muted-foreground focus:placeholder:text-muted-foreground group-hover/sidebar-search:placeholder:text-muted-foreground"
+                    className="h-full min-w-0 flex-1 rounded-0 bg-transparent px-3 py-0 font-mono text-sm text-muted-foreground placeholder:text-muted-foreground hover:placeholder:text-foreground group-hover/sidebar-search:placeholder:text-foreground"
                     data-sidebar-top-search=""
                   />
                   {sidebarSearchHasValue && (
@@ -3738,7 +3779,9 @@ export function AppWithVault({
                       aria-label="Clear collection search"
                       className={cn(
                         "group inline-flex w-6 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground focus-visible:text-foreground focus-visible:outline-none",
-                        compactDetailTopMenuActive ? "mr-1" : "mr-3",
+                        // 8px from the column's edge, like the plus below
+                        // and the sidebar rows' Connect button.
+                        compactDetailTopMenuActive ? "mr-1" : "mr-2",
                       )}
                       onClick={handleClearSidebarSearch}
                       data-sidebar-top-search-clear=""

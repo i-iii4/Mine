@@ -41,24 +41,23 @@ export function buildSidebarRowOrder(
   includeEverythingRow: boolean,
   includeCreateRow = false,
 ): string[] {
-  const rowKeys = [
+  // The create row stands at the top of the collections, under Everything.
+  return [
     ...(includeEverythingRow ? [SIDEBAR_ALL_ROW_KEY] : []),
+    ...(includeCreateRow ? [SIDEBAR_CREATE_CHANNEL_ROW_KEY] : []),
     ...visibleTags.map((tc) => `tag:${tc.tag}`),
   ];
-  if (includeCreateRow) {
-    rowKeys.push(SIDEBAR_CREATE_CHANNEL_ROW_KEY);
-  }
-  return rowKeys;
 }
 
 export function buildSidebarSearchNavigationRows(
   orderedTags: readonly TagCount[],
   searchQuery: string,
 ): string[] {
+  // The create row is not a search result: it shows only while a collection
+  // is being named, and creation starts from the row above the list or ⇧⌘N.
   return buildSidebarRowOrder(
     filterSidebarTags(orderedTags, searchQuery),
     shouldShowSidebarEverythingRow(searchQuery),
-    true,
   );
 }
 

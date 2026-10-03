@@ -1450,6 +1450,15 @@
       "requirement": "DESIGN_SYSTEM.md#Иконки 13 px",
       "tests": ["src/components/FeedDisplayMenu.test.tsx", "src/App.test.tsx"],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/sidebarSearch.ts",
+        "src/lib/sidebarSearchMask.test.ts"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#Создание коллекции",
+      "tests": ["src/components/Sidebar.test.tsx", "src/App.test.tsx", "src/lib/sidebarSearchMask.test.ts"],
+      "command": "test:frontend"
     }
   ],
   "release": null

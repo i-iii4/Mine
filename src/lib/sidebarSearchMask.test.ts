@@ -8,12 +8,15 @@ import { EDGE_FADE_WIDTH, createRightFadeMaskStyle } from "./edgeFade";
 /// unknown property, so the contract is pinned on the source and the helper
 /// rather than on a rendered style attribute.
 describe("collection filter edge", () => {
-  it("masks the filter surface with the shared right-edge fade", () => {
+  it("masks the filter field, not the clear button beside it, with the shared right-edge fade", () => {
     const app = readFileSync("src/App.tsx", "utf8");
     const surface = app.slice(app.indexOf("data-sidebar-top-search-surface"));
-    const openingTag = surface.slice(0, surface.indexOf(">"));
+    const surfaceTag = surface.slice(0, surface.indexOf(">"));
+    const field = app.slice(app.indexOf('aria-label="Filter collections"'));
+    const fieldTag = field.slice(0, field.indexOf("data-sidebar-top-search=\"\""));
 
-    expect(openingTag).toContain("style={SIDEBAR_SEARCH_MASK_STYLE}");
+    expect(fieldTag).toContain("style={SIDEBAR_SEARCH_MASK_STYLE}");
+    expect(surfaceTag).not.toContain("style={SIDEBAR_SEARCH_MASK_STYLE}");
     expect(app).toContain(
       "const SIDEBAR_SEARCH_MASK_STYLE = createRightFadeMaskStyle(EDGE_FADE_WIDTH, 0);",
     );

@@ -82,7 +82,9 @@ function MainSecondaryStatsLeft({
         onRevealSpace={onRevealSpace}
       />
       {onCreateCollection && (
-        <ChromeActions className="ml-auto">
+        // 8px from the column's edge, the inset the sidebar rows give their
+        // Connect button, and the filter's clear button above.
+        <ChromeActions windowEdge={false} className="ml-auto mr-2">
           <Button
             type="button"
             variant="chrome"
@@ -214,6 +216,7 @@ export function MainSecondaryTopBar({
   sidebarCollapsed,
   sidebarResizing,
   onCreateCollection,
+  collectionCount,
   stats,
   detailBlock,
   detailTitle,
@@ -242,6 +245,9 @@ export function MainSecondaryTopBar({
   sidebarResizing: boolean;
   /// Starts naming a new collection in the sidebar list (⇧⌘N).
   onCreateCollection?: () => void;
+  /// How many collections the list shows: all of them, or those the
+  /// sidebar's filter leaves. Defaults to every collection.
+  collectionCount?: number;
   stats: VaultStats | null;
   /// Cards whose content iCloud is currently holding.
   cloudPending?: number;
@@ -324,7 +330,7 @@ export function MainSecondaryTopBar({
           data-main-secondary-main-layer=""
         >
           <MainSecondaryStatsLeft
-            collectionCount={tags.length}
+            collectionCount={collectionCount ?? tags.length}
             onCreateCollection={onCreateCollection}
             sidebarCollapsed={sidebarCollapsed}
             cloudPending={cloudPending}
@@ -334,7 +340,10 @@ export function MainSecondaryTopBar({
         </div>
         {detailBlock && !sidebarCollapsed && (
           <div
-            className="main-secondary-bar-layer absolute inset-0 flex h-full min-w-0 items-center gap-2 px-[var(--chrome-edge-pad)]"
+            className={cn(
+              "main-secondary-bar-layer absolute inset-0 flex h-full min-w-0 items-center gap-2 pl-[var(--chrome-edge-pad)]",
+              !onCreateCollection && "pr-[var(--chrome-edge-pad)]",
+            )}
             data-entered={detailLayerEntered ? "true" : "false"}
             data-secondary-sidebar-link-mode-bar=""
           >
@@ -347,16 +356,20 @@ export function MainSecondaryTopBar({
               entered={detailEntered}
             />
             {onCreateCollection && (
-              <Button
-                type="button"
-                variant="chrome"
-                size="chrome-icon"
-                aria-label="New Collection"
-                onClick={onCreateCollection}
-                data-secondary-link-mode-new-collection=""
-              >
-                <Plus />
-              </Button>
+              // The same spot as the plus over the closed list: the right
+              // edge, 8px in, so the button does not move when a card opens.
+              <ChromeActions windowEdge={false} className="ml-auto mr-2">
+                <Button
+                  type="button"
+                  variant="chrome"
+                  size="chrome-icon"
+                  aria-label="New Collection"
+                  onClick={onCreateCollection}
+                  data-secondary-link-mode-new-collection=""
+                >
+                  <Plus />
+                </Button>
+              </ChromeActions>
             )}
           </div>
         )}

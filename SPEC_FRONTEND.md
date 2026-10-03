@@ -570,22 +570,41 @@ scroll-content использует `pt-8` (32px), поэтому вместе �
 Когда Detail открыт в non-compact режиме, этот же второй bar становится
 App-level Detail chrome: sidebar segment показывает `Collections:` + `All /
 Connected` + иконочную кнопку `+` (New Collection), content segment показывает
-title/filename, `CardMoreMenu` и close.
+title/filename, `CardMoreMenu` и close. Кнопка `+` стоит на том же месте, что
+над закрытым списком (`ChromeActions windowEdge={false} className="ml-auto
+mr-2"`), и при открытии карточки не сдвигается.
 Sidebar и Detail body не должны рендерить свои дополнительные top overlays в
 этот момент; иначе получается третий слой chrome под вторым bar.
 
 В main browsing state этот второй bar рендерит `MainSecondaryTopBar`, а не
 общий toolbar. Левый segment (`data-main-secondary-top-bar-sidebar-segment`)
-это шапка списка коллекций: слева число коллекций (`tags.length`, тот же
-список, что рисует боковое меню) и за ним индикаторы iCloud и индексации; у
-правого края ячейки иконочная кнопка `+` в `ChromeActions className="ml-auto"`,
-которая вызывает `onCreateCollection` (в `App` это `beginCreateCollection`, то
-же, что ⇧⌘N). У ячейки только левый отступ, правый держит `ChromeActions`, как
-у кнопки `Display` над лентой. Правый segment
+это шапка списка коллекций: слева число коллекций и за ним индикаторы iCloud и
+индексации. Число приходит из `App` пропом `collectionCount`: без фильтра это
+`orderedTags.length`, тот же список, что рисует боковое меню, а пока в
+`Filter collections...` набран текст, это
+`filterSidebarTags(orderedTags, query).length`. У правого края ячейки
+иконочная кнопка `+` в `ChromeActions windowEdge={false} className="ml-auto
+mr-2"`, `8px` от правого края колонки, которая вызывает `onCreateCollection`
+(в `App` это `beginCreateCollection`, то же, что ⇧⌘N). Контракт создания
+коллекции описан в DESIGN_SYSTEM.md, «Создание коллекции». Правый segment
 (`data-main-secondary-top-bar-content-segment`) получает
 `currentCollectionCardCount`: в `Everything` это все non-channel карточки, в
 канале это карточки, прикреплённые к этому каналу. Active Grid search не меняет
 этот счётчик.
+
+**Создание коллекции в `App`.** `beginCreateCollection` (`+`, ⇧⌘N) ставит
+`pendingCreateChannelDrop` равным открытой карточке, только если её коллекции
+показаны в режиме `Connected` (`detailLinkMode === "linked"`), иначе `null`.
+`handleCreateChannel(tag, drop?)` берёт переданный `drop`, а без него ожидающий.
+После `createChannel` он вызывает `reorderChannels`: новая коллекция получает
+позицию 0, остальные сдвигаются на одну, затем ожидающая карточка
+прикрепляется к коллекции. `Sidebar` показывает строку создания под
+`Everything` и передаёт ей набранный фильтр как начальное имя
+(`defaultName={searchQuery.trim()}`). Остальные пути создания (меню `Connect`
+карточки, `Create collection` в переключателе коллекций верхней панели,
+создание из перетащенного медиа или выделенного текста, расширение)
+`reorderChannels` не вызывают: коллекция получает `MAX(position) + 1` и встаёт
+в конец списка.
 
 Тот же правый segment держит единственный main view-mode switcher:
 `View:` + shared compact `SegmentedControl` с options `Grid / Graph`.
@@ -1043,24 +1062,34 @@ Image media expansion:
   inner selector pill, not to the invisible root layout slot: top-chrome space
   selector uses Radix `align="start"` with `alignOffset=12`.
 - Sidebar search renders as a `data-sidebar-top-search-surface` wrapper with a
-  transparent `Input ghost` and an optional clear action. Empty hover/focus
-  changes only placeholder text from tertiary to muted; it does not add a
-  background. Search input text uses the same permanent top-chrome typography
+  transparent `Input ghost` and an optional clear action. Подсказка
+  `Filter collections...` в покое стоит в `text-muted-foreground`, при
+  наведении на поле становится `text-foreground`; фона пустое поле не
+  получает. Маску растворения правой кромки (`SIDEBAR_SEARCH_MASK_STYLE`)
+  несёт само поле `Input`, а не surface, поэтому кнопка очистки рядом не
+  гаснет. Search input text uses the same permanent top-chrome typography
   as Detail top bar: `font-mono text-sm text-muted-foreground`, regular
   weight. When the trimmed query is non-empty, only the search surface is filled
   with `bg-accent`, matching the bottom action bar surface. The top header,
   space selector and separator lines remain on `bg-chrome`.
 - The clear action appears only when the input value is non-empty. It is an
-  icon-only `X` button (`h-6 w-6 rounded-1`, `aria-label="Clear channel
-  search"`). Clicking it clears the query, restores the full channel list and
+  icon-only `X` button (`w-6`, plate `ChromePlate w-6 rounded-1`,
+  `aria-label="Clear collection search"`), `8px` from the column's right edge
+  (`mr-2`; `mr-1` in Compact Detail top menu), on one vertical with the `+`
+  below it. Clicking it clears the query, restores the full channel list and
   returns focus to the input. `Escape` with a non-empty value clears the field;
   `Escape` with an empty value blurs the input.
 - While Sidebar channel search is focused, unmodified `ArrowUp`/`ArrowDown`
   navigate visible Sidebar rows through `aria-activedescendant`; DOM focus
   stays in the input, so typing can continue without re-focusing the field.
-  `Enter` активирует активную строку. Строка создания коллекции входит в
-  порядок только пока видна: пока новую коллекцию называют или пока тащат
-  карточку.
+  `Enter` активирует активную строку. Строка создания коллекции в эту
+  навигацию не входит (`buildSidebarSearchNavigationRows`): это не результат
+  фильтра.
+- `Enter` без выбранной стрелками строки действует на набранное имя (trimmed;
+  пустое поле не обрабатывается). Коллекция с таким тегом или подписью без
+  учёта регистра открывается. Иначе `handleCreateChannel(name, drop)` создаёт
+  коллекцию, где `drop` равен открытой карточке, если её коллекции показаны в
+  режиме `Connected`, и `null` в остальных случаях; затем фильтр очищается.
 - All search inputs suppress native browser/WebKit typing suggestions through
   shared `SEARCH_INPUT_SUPPRESSION_PROPS`: `autoComplete="off"`,
   `autoCorrect="off"`, `autoCapitalize="none"`, `spellCheck={false}`. This

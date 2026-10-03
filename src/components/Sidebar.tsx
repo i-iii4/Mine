@@ -20,6 +20,7 @@ import { useDndContext, useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Pencil, Plus, Trash2 } from "lucide-react";
+import { bindingLabel } from "@/lib/commandBinding";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -952,6 +953,28 @@ const SidebarCore = memo(function SidebarCore({
             />
           )}
 
+          {/* A new collection is named at the top of the list, under
+              Everything, and takes the first place there. The list parts to
+              make room for the row, quickly (global.css, data-sidebar-row-part). */}
+          {showCreateRow && (
+            <div data-sidebar-row-part=""><div>
+            <NewChannelRow
+              compact={compact}
+              isEditing={isCreatingChannel}
+              // A filter typed before the plus becomes the new name's start.
+              defaultName={searchQuery.trim()}
+              isSidebarRowFocused={effectiveSidebarRowFocusKey === "create-channel"}
+              isSidebarRowSeamAccent={seamAccentKeys.has("create-channel")}
+              onStartCreate={() => onSetCreatingChannel(true)}
+              onCreate={(value) => {
+                onCreateChannel(value);
+                onSetCreatingChannel(false);
+              }}
+              onCancel={() => onSetCreatingChannel(false)}
+            />
+            </div></div>
+          )}
+
           <SortableContext
             items={visibleTags.map((tc) => `tag:${tc.tag}`)}
             strategy={verticalListSortingStrategy}
@@ -998,18 +1021,6 @@ const SidebarCore = memo(function SidebarCore({
 
         </div>
 
-        {showCreateRow && <NewChannelRow
-          compact={compact}
-          isEditing={isCreatingChannel}
-          isSidebarRowFocused={effectiveSidebarRowFocusKey === "create-channel"}
-          isSidebarRowSeamAccent={seamAccentKeys.has("create-channel")}
-          onStartCreate={() => onSetCreatingChannel(true)}
-          onCreate={(value) => {
-            onCreateChannel(value);
-            onSetCreatingChannel(false);
-          }}
-          onCancel={() => onSetCreatingChannel(false)}
-        />}
 
       </nav>
       <TopFadeScrim scrolled={topFade.scrolled} surface="sidebar" color="var(--sidebar)" />
@@ -1540,6 +1551,7 @@ function SidebarEditableRowBody({
   submitAction?: {
     label: string;
     shortcut: string;
+    shortcutKey: string;
   };
   onSubmit: (value: string) => void;
   onCancel: () => void;
@@ -1558,6 +1570,16 @@ function SidebarEditableRowBody({
       data-sidebar-editable-row-body
       data-sidebar-editable-row-full-width
     >
+      {submitAction && !compact && (
+        // The list's right zone runs through this row too: the guideline the
+        // other rows show, the submit button inside the zone.
+        <span
+          aria-hidden="true"
+          data-sidebar-editable-row-guideline=""
+          className="pointer-events-none absolute inset-y-0 w-px bg-sidebar-border"
+          style={{ right: "var(--sidebar-zone)" }}
+        />
+      )}
       <InlineChannelNameEditor
         defaultValue={defaultValue}
         placeholder={placeholder}
@@ -1858,6 +1880,7 @@ const TagNavItem = memo(function TagNavItem({
 function NewChannelRow({
   compact,
   isEditing,
+  defaultName,
   isSidebarRowFocused,
   isSidebarRowSeamAccent,
   onStartCreate,
@@ -1866,6 +1889,7 @@ function NewChannelRow({
 }: {
   compact?: boolean;
   isEditing: boolean;
+  defaultName: string;
   isSidebarRowFocused: boolean;
   isSidebarRowSeamAccent: boolean;
   onStartCreate: () => void;
@@ -1891,11 +1915,12 @@ function NewChannelRow({
     >
       {isEditing ? (
         <SidebarEditableRowBody
-          defaultValue=""
+          defaultValue={defaultName}
           placeholder=""
           ariaLabel="Имя нового канала"
           compact={compact}
-          submitAction={{ label: "Create", shortcut: "Enter" }}
+          // The key's label comes from the one key table the bottom bar uses.
+          submitAction={{ label: "Create", shortcut: bindingLabel({ key: "Enter" }), shortcutKey: "Enter" }}
           onSubmit={onCreate}
           onCancel={onCancel}
         />
@@ -2105,7 +2130,10 @@ function InlineChannelNameEditor({
   ariaLabel: string;
   submitAction?: {
     label: string;
+    /** The key as every hotkey in the interface writes it (`bindingLabel`). */
     shortcut: string;
+    /** The key's name for assistive technology (`aria-keyshortcuts`). */
+    shortcutKey: string;
   };
   onSubmit: (value: string) => void;
   onCancel: () => void;
@@ -2130,7 +2158,13 @@ function InlineChannelNameEditor({
   };
 
   return (
-    <div className="flex w-full min-w-0 items-center gap-3" data-sidebar-inline-channel-editor-row>
+    <div
+      className="flex w-full min-w-0 items-center gap-3"
+      // With a submit button the name ends before the right zone, where the
+      // button stands.
+      style={submitAction ? { paddingRight: `calc(var(--sidebar-zone) + 1px + ${SIDEBAR_ROW_ACTION_BUTTON_GAP}px)` } : undefined}
+      data-sidebar-inline-channel-editor-row
+    >
       <input
         ref={ref}
         type="text"
@@ -2162,11 +2196,18 @@ function InlineChannelNameEditor({
       {submitAction && (
         <button
           type="button"
-          aria-label={`${submitAction.label} ${submitAction.shortcut}`}
+          aria-label={submitAction.label}
+          aria-keyshortcuts={submitAction.shortcutKey}
+          // Placed like a row's Connect button: 8px from the zone's edges,
+          // the zone's width less those 8px on both sides.
           className={cn(
             SIDEBAR_ROW_ACTION_BUTTON_CLASS,
-            "shrink-0 gap-[1ch] px-[1ch]",
+            "absolute top-1/2 z-10 -translate-y-1/2 gap-[1ch] px-[1ch]",
           )}
+          style={{
+            right: SIDEBAR_ROW_ACTION_BUTTON_INSET,
+            width: SIDEBAR_ROW_ACTION_BUTTON_WIDTH,
+          }}
           data-sidebar-inline-submit-action=""
           onPointerDown={(event) => {
             event.preventDefault();
@@ -2180,7 +2221,8 @@ function InlineChannelNameEditor({
         >
           <span>{submitAction.label}</span>
           <span
-            className="font-mono text-xs font-normal text-muted-foreground"
+            // Set like the bottom bar's hotkeys.
+            className="font-mono text-sm font-normal text-muted-foreground"
             data-sidebar-inline-submit-shortcut=""
           >
             {submitAction.shortcut}

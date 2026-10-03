@@ -165,7 +165,7 @@ describe("Sidebar", () => {
     expect(container.querySelector('[data-sidebar-row-key="create-channel"]')).toBeNull();
   });
 
-  it("renders the new-channel row outside the guided channel grid while a card is dragged", () => {
+  it("renders the new-channel row at the top of the list, under Everything, while a card is dragged", () => {
     const { container } = renderSidebar({ ...defaultProps, width: 600, isDropDragging: true });
 
     const button = screen.getByRole("button", { name: "Create New Collection" });
@@ -173,7 +173,12 @@ describe("Sidebar", () => {
     expect(row).toHaveAttribute("data-sidebar-new-channel-row", "");
     expect(row).toHaveAttribute("data-sidebar-row", "");
     expect(row).toHaveAttribute("data-sidebar-row-key", "create-channel");
-    expect(row.closest("[data-sidebar-rows]")).toBeNull();
+    expect(row.closest("[data-sidebar-rows]")).not.toBeNull();
+    // The list parts for it (global.css, data-sidebar-row-part).
+    expect(row.closest("[data-sidebar-row-part]")).not.toBeNull();
+    const keys = Array.from(container.querySelectorAll("[data-sidebar-row-key]"))
+      .map((node) => node.getAttribute("data-sidebar-row-key"));
+    expect(keys.slice(0, 3)).toEqual(["all", "create-channel", "tag:alpha"]);
     expect(row).not.toHaveAttribute("data-sidebar-row-surface");
     expect(container.querySelector("[data-sidebar-rows]")).toBeInTheDocument();
     const label = within(row).getByText("Create New Collection");
@@ -184,6 +189,17 @@ describe("Sidebar", () => {
     expect(label.nextElementSibling).toHaveAttribute("data-sidebar-create-channel-plus", "");
     expect(label.nextElementSibling).toHaveClass("ml-2");
     expect(row.querySelector("[data-sidebar-empty-preview-rail]")).not.toBeInTheDocument();
+  });
+
+  it("starts the new name with the filter typed before the plus", () => {
+    renderSidebar({
+      ...defaultProps,
+      width: 600,
+      isCreatingChannel: true,
+      searchQuery: "  Arch ",
+    });
+
+    expect(screen.getByRole("textbox", { name: "Имя нового канала" })).toHaveValue("Arch");
   });
 
   it("names a new channel inline once creation starts", () => {
@@ -210,18 +226,22 @@ describe("Sidebar", () => {
     expect(createRow?.querySelector("[data-sidebar-editable-row-full-width]")).toBeInTheDocument();
     expect(createRow?.querySelector("[data-sidebar-preview-rail]")).not.toBeInTheDocument();
     expect(createRow?.querySelector("[data-sidebar-empty-preview-rail]")).not.toBeInTheDocument();
-    const createAction = within(createRow as HTMLElement).getByRole("button", {
-      name: /Create\s+Enter/,
-    });
+    const createAction = within(createRow as HTMLElement).getByRole("button", { name: "Create" });
     expect(createAction).toHaveAttribute("data-sidebar-inline-submit-action", "");
+    expect(createAction).toHaveAttribute("aria-keyshortcuts", "Enter");
     expect(createAction).toHaveClass("bg-component-fill");
     expect(createAction).toHaveClass("hover:outline-component-fill-hover");
     expect(createAction).toHaveTextContent("Create");
-    expect(within(createAction).getByText("Enter")).toHaveAttribute(
+    // Placed in the right zone like a row's Connect button.
+    expect(createAction).toHaveClass("absolute");
+    expect(createRow?.querySelector("[data-sidebar-editable-row-guideline]")).toBeInTheDocument();
+    // The key's label from the one key table the bottom bar uses.
+    expect(within(createAction).getByText("↵")).toHaveAttribute(
       "data-sidebar-inline-submit-shortcut",
       "",
     );
-    expect(container.querySelector('[data-sidebar-row-key="tag:beta"]')).toHaveAttribute(
+    // Under Everything: the row above it shares the seam.
+    expect(container.querySelector('[data-sidebar-row-key="all"]')).toHaveAttribute(
       "data-sidebar-row-seam-accent",
       "true",
     );
@@ -250,7 +270,7 @@ describe("Sidebar", () => {
 
     const input = screen.getByRole("textbox", { name: "Имя нового канала" });
     const row = input.closest("[data-sidebar-new-channel-row]") as HTMLElement;
-    const createAction = within(row).getByRole("button", { name: /Create\s+Enter/ });
+    const createAction = within(row).getByRole("button", { name: "Create" });
 
     fireEvent.change(input, { target: { value: "Research" } });
     fireEvent.click(createAction);
@@ -304,7 +324,8 @@ describe("Sidebar", () => {
     const createRow = container.querySelector("[data-sidebar-new-channel-row]") as HTMLElement;
     expect(createRow).toHaveAttribute("data-sidebar-row-key", "create-channel");
     expect(createRow).toHaveAttribute("data-sidebar-row-focused", "true");
-    expect(container.querySelector('[data-sidebar-row-key="tag:beta"]')).toHaveAttribute(
+    // The row stands under Everything, which shares its seam.
+    expect(container.querySelector('[data-sidebar-row-key="all"]')).toHaveAttribute(
       "data-sidebar-row-seam-accent",
       "true",
     );
@@ -467,13 +488,15 @@ describe("Sidebar", () => {
     const { container } = renderSidebar({ ...defaultProps, width: 600, isDropDragging: true });
 
     const nav = container.querySelector("[data-sidebar-scroll]")!;
-    const allRow = container.querySelector('[data-sidebar-row-key="all"]')!;
+    // A dragged card shows the create row at the top, between Everything and
+    // the first collection: it is the row above alpha now.
+    const createRow = container.querySelector('[data-sidebar-row-key="create-channel"]')!;
     const alphaRow = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
     const betaRow = container.querySelector('[data-sidebar-row-key="tag:beta"]')!;
 
     expect(nav).toHaveAttribute("data-sidebar-row-focus-mode", "true");
     expect(alphaRow).toHaveAttribute("data-sidebar-row-focused", "true");
-    expect(allRow).toHaveAttribute("data-sidebar-row-seam-accent", "true");
+    expect(createRow).toHaveAttribute("data-sidebar-row-seam-accent", "true");
     expect(alphaRow).toHaveAttribute("data-sidebar-row-seam-accent", "true");
     expect(betaRow).not.toHaveAttribute("data-sidebar-row-focused");
     expect(alphaRow).not.toHaveClass("ring-2");

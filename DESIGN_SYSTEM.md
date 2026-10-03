@@ -1196,24 +1196,35 @@ flex-1`, внутри прозрачный `Input ghost` (`rounded-0 px-3 py-0 b
 text-muted-foreground`. Search занимает весь остаток ширины после selector. При
 вводе длинного query используется нативное поведение `input`: caret остаётся
 видимым, поэтому пользователь видит последние вводимые символы. Пустое поле на
-hover/focus не получает фон: реагирует только placeholder,
-`text-tertiary-foreground` → `text-muted-foreground`. Когда trimmed query
+hover не получает фон: реагирует только placeholder. В покое подсказка
+`Filter collections...` стоит в активном цвете `text-muted-foreground`, при
+наведении на поле становится яркой, `text-foreground`. Когда trimmed query
 непустой, только search surface получает `bg-accent`, тот же surface token, что
 нижняя action bar; весь header, space selector и separator lines остаются на
 `bg-chrome`.
 
-Clear action появляется только когда value непустой: `button h-6 w-6
-rounded-1`, иконка `X` из `lucide-react`, `aria-label="Clear collection search"`.
-Hover/focus clear action использует `bg-component-fill-hover text-foreground`.
-Click очищает query, восстанавливает полный список каналов и возвращает focus
-в input. `Escape` с непустым value очищает поле; `Escape` с пустым value
-снимает focus.
+Clear action появляется только когда value непустой: кнопка шириной `w-6`,
+внутри плашка `ChromePlate w-6 rounded-1` с иконкой `X` 13 px,
+`aria-label="Clear collection search"`. Hover/focus clear action использует
+`bg-component-fill-hover text-foreground`. Кнопка стоит в 8 px от правого края
+колонки (`mr-2`), на одной вертикали с кнопкой `+` во втором ряду и с кнопкой
+`Connected` строк коллекций; в Compact Detail top menu отступ `mr-1`. Click
+очищает query, восстанавливает полный список каналов и возвращает focus в
+input. `Escape` с непустым value очищает поле; `Escape` с пустым value снимает
+focus.
+
+`Enter` в `Filter collections...`, когда стрелками не выбрана ни одна строка,
+действует на набранное имя (trimmed). Коллекция с таким именем, без учёта
+регистра, открывается. Иначе создаётся новая коллекция с этим именем по
+правилам раздела «Создание коллекции», а фильтр очищается, чтобы список показал
+её первой. Пустое поле `Enter` не обрабатывает.
 
 Top-chrome search inputs use input-owned keyboard navigation. `ArrowUp` /
 `ArrowDown` change `aria-activedescendant` and the visual active row; DOM focus
 stays in the input so the user can keep typing. This applies to Sidebar channel
 search, `Search spaces` and `Search collections`. `Enter` activates the active
-row. Pointer hover can update the active row but must not blur the input. Все
+row. Строка создания коллекции в навигацию поиска не входит: это не результат
+фильтра. Pointer hover can update the active row but must not blur the input. Все
 search inputs отключают нативные подсказки ввода через общий
 `SEARCH_INPUT_SUPPRESSION_PROPS`: `autoComplete="off"`, `autoCorrect="off"`,
 `autoCapitalize="none"`, `spellCheck={false}`. Это относится к top chrome,
@@ -1812,7 +1823,8 @@ Mine гасит контент у кромки маской прозрачнос
 полную прозрачность, ручная таблица из девяти пар `alpha/progress`. Правило
 относится ко всему тексту у этой кромки — именам коллекций в строках и полю
 `Filter collections` в верхнем хроме (26.08.2026): узкая панель раньше срезала его
-подсказку по середине буквы.
+подсказку по середине буквы. Маску несёт само поле ввода, а не вся поверхность
+поиска, поэтому кнопка очистки `X` справа от поля остаётся целой.
 
 Верхняя кромка прокручиваемых поверхностей использует не маску, а накладку: цвет
 поверхности кладётся поверх контента и растворяется вниз. Контент сохраняет
@@ -2234,14 +2246,11 @@ card minimum plus two `32px` side insets. Desktop `minWidth` is `904px`
 slot всегда показывает count в `font-mono`. Rename/Delete доступны через
 `ContextMenu` строки, а не через hover-многоточие.
 
-Строки создания коллекции (`Create New Collection +`,
-`data-sidebar-new-channel-row`) в покое нет: команда живёт во втором ряду
-верхней панели (`+` у правого края ячейки над меню, а при открытой карточке
-после `All / Connected`) и на ⇧⌘N. Строка появляется внизу списка только пока у неё
-есть работа: пока новую коллекцию называют, тогда она становится полем ввода;
-и пока тащат карточку, тогда это цель броска, которая создаёт коллекцию сразу с
-этой карточкой. Пока строки нет, клавиатурная навигация по списку её не
-проходит.
+Строки создания коллекции (`data-sidebar-new-channel-row`) в покое нет: она
+появляется вверху списка, под `Everything`, только пока новую коллекцию
+называют или тащат карточку. Команда живёт во втором ряду верхней панели
+(`+` у правого края колонки) и на ⇧⌘N. Полный контракт в разделе «Создание
+коллекции».
 
 #### Перетаскивание строк (reorder)
 
@@ -2369,14 +2378,16 @@ deltas, cards, pills, uppercase labels и любые hover/focus states, кро�
 
 - слева число коллекций (`data-main-secondary-collection-count`):
   `1 collection`, иначе `N collections`; число берётся из того же списка
-  коллекций, что рисует боковое меню;
+  коллекций, что рисует боковое меню. Пока в `Filter collections...` набран
+  текст, это число коллекций, которые оставил фильтр (`filterSidebarTags`);
 - за ним индикаторы загрузки из iCloud и индексации (`ActivityIndicators`),
   видимые только во время работы;
 - у правого края ячейки иконочная кнопка `+` (`data-main-secondary-new-collection`,
   `aria-label="New Collection"`): стандартная кнопка верхней панели в
-  `ChromeActions className="ml-auto"`, то же действие, что ⇧⌘N. Правый отступ
-  держит `ChromeActions` (`--chrome-icon-edge-pad`), как у кнопки `Display`
-  над лентой. Если команды нет, ячейка получает правый отступ сама.
+  `ChromeActions windowEdge={false} className="ml-auto mr-2"`, то же действие,
+  что ⇧⌘N. Кнопка стоит в 8 px от правого края колонки, на одной вертикали с
+  кнопкой очистки фильтра над ней и с кнопкой `Connected` строк коллекций.
+  Если команды нет, ячейка получает правый отступ сама.
 
 Статистики файлов пространства (`files`, `.md`, `media`, объём) в этой строке
 больше нет.
@@ -2415,7 +2426,11 @@ React commit; запрещены промежуточные `calculating`, `rend
 
 Содержимое surface: `Collections:` + selector `All / Connected` + иконочная
 кнопка `+` (`data-secondary-link-mode-new-collection`, `aria-label="New
-Collection"`), то же действие, что ⇧⌘N. `Collections:` использует
+Collection"`), то же действие, что ⇧⌘N. Кнопка `+` стоит на том же месте, что
+над закрытым списком: `ChromeActions windowEdge={false} className="ml-auto
+mr-2"`, 8 px от правого края колонки, поэтому при открытии карточки она не
+сдвигается. Слой получает только левый отступ `pl-[--chrome-edge-pad]`, а без
+команды и правый. `Collections:` использует
 `font-mono text-tertiary-foreground`, как `View:` над лентой. Selector повторяет
 ActionButton geometry: outer `h-6 p-[2px] rounded-1`, segments `h-5
 px-[1ch] rounded-[2px] text-muted-foreground`. Hover заливает только outer
@@ -2520,6 +2535,69 @@ Stable preview invariant: обычный sidebar и link-editor использу
 размонтировать строки каналов или `<img>` thumbnail'ы; меняется только правый
 row-action slot (`count/menu` ↔ `Connected/Connect/Disconnect`). Это убирает blink превью при
 переключении в Detail.
+
+### Создание коллекции
+
+Новую коллекцию называют прямо в списке бокового меню. Пути входа: кнопка `+`
+во втором ряду верхней панели, ⇧⌘N, бросок карточки на строку создания и
+`Enter` в `Filter collections...`.
+
+**Строка создания.** `NewChannelRow` (`data-sidebar-new-channel-row`, ключ
+строки `create-channel`) стоит вверху списка, сразу под `Everything`, внутри
+списка строк (`data-sidebar-rows`). В покое строки нет. Она видна, только пока
+у неё есть работа: пока коллекцию называют (тогда это поле имени) и пока
+тащат карточку (тогда это цель броска `Create New Collection +`, которая
+создаёт коллекцию сразу с этой карточкой). `Everything` остаётся на месте и не
+прячется. Порядок строк для клавиатуры и общих швов задаёт
+`buildSidebarRowOrder`: `Everything`, строка создания, коллекции.
+
+**Движение.** Появляясь, строка раздвигает список: обёртка
+`data-sidebar-row-part` раскрывает высоту от нуля до своей за `150ms` на
+`cubic-bezier(0.22, 1, 0.36, 1)` (keyframes `sidebar-row-part` в
+`src/styles/global.css`). Уходит строка мгновенно. Других анимаций у создания
+нет: варианты со сворачиванием `Everything`, удержанием введённого имени и
+обратным ходом при отмене опробованы и отклонены 02.10.2026. При
+`prefers-reduced-motion` раскрытие гасит общее правило `global.css` (Ф12 в
+SPEC_AUDIT_FIXES.md): строка встаёт сразу.
+
+**Поле имени и кнопка `Create`.** Через строку проходит правая зона списка
+(`--sidebar-zone`) с той же направляющей, что у строк коллекций
+(`data-sidebar-editable-row-guideline`, `w-px bg-sidebar-border`,
+`right: var(--sidebar-zone)`); в compact-режиме направляющей нет. Поле имени
+кончается перед зоной: правый отступ строки ввода равен зоне, пикселю
+направляющей и `8px`. Кнопка `Create` стоит в зоне по правилам кнопки
+`Connected`: `8px` от краёв зоны со всех сторон, ширина равна зоне минус
+`16px`, класс `SIDEBAR_ROW_ACTION_BUTTON_CLASS`. За подписью идёт знак клавиши
+`↵` в `font-mono text-sm font-normal text-muted-foreground`, как горячие
+клавиши нижней панели. Знак берётся из общей таблицы клавиш
+`bindingLabel({ key: "Enter" })` (`src/lib/commandBinding.ts`), руками в
+строке не пишется. Доступное имя кнопки `Create`, клавиша объявлена через
+`aria-keyshortcuts="Enter"`. `Enter` или уход фокуса с непустым именем создают
+коллекцию; пустое имя и `Escape` отменяют создание.
+
+**Начальное имя.** Если перед `+` или ⇧⌘N в фильтре набран текст, поле имени
+открывается с этим текстом (trimmed), каретка стоит в конце.
+
+**Место в порядке.** Коллекция, созданная через `+`, ⇧⌘N, бросок карточки или
+`Enter` в фильтре, встаёт первой в ручном порядке: после `createChannel`
+приложение вызывает `reorderChannels`, новая коллекция получает позицию 0,
+остальные сдвигаются на одну. Известное ограничение: коллекция из меню
+`Connect` карточки, из `Create collection` переключателя коллекций, из
+перетащенного медиа или выделенного текста и из расширения пока встаёт
+последней.
+
+**Открытая карточка.** Кнопка `+` стоит на том же месте, что над закрытым
+списком: у правого края колонки, в `8px` от него. Если коллекции открытой
+карточки показаны в режиме `Connected`, новая коллекция сразу получает эту
+карточку, как при броске карточки на строку создания. В режиме `All`
+создаётся обычная пустая коллекция.
+
+**Фильтр.** Пока в `Filter collections...` набран текст, число коллекций во
+втором ряду считает только оставленные фильтром. `Enter` без выбранной
+стрелками строки открывает коллекцию с набранным именем (без учёта регистра),
+а если такой нет, создаёт её по правилам выше (первой, с открытой карточкой в
+режиме `Connected`) и очищает фильтр. Строка создания не входит в навигацию
+стрелками по результатам фильтра.
 
 ### Окно настроек (Settings window)
 

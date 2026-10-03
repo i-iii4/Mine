@@ -1199,3 +1199,26 @@ header.chrome-row .text-sm,
 svg.lucide {
   stroke-width: 1.8462;
 }
+
+/* The create row parts the sidebar list as it appears: its height runs from
+   nothing to its own, fast, on the project's ease-out. Leaving, it goes at
+   once. Reduced motion lands at once through the global rule (Ф12). */
+@keyframes sidebar-row-part {
+  from {
+    grid-template-rows: 0fr;
+  }
+  to {
+    grid-template-rows: 1fr;
+  }
+}
+
+[data-sidebar-row-part] {
+  display: grid;
+  grid-template-rows: 1fr;
+  animation: sidebar-row-part 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+[data-sidebar-row-part] > * {
+  min-height: 0;
+  overflow: hidden;
+}
