@@ -47,10 +47,10 @@ vi.mock("./tabMenu", () => ({ createTabMenu: menu.create }));
 
 const settingsMenu = vi.hoisted(() => {
   const state = {
-    openSection: null as ((section: string) => void) | null,
-    open: vi.fn(async (_at: { x: number; y: number }) => undefined),
-    create: vi.fn(async (openSection: (section: string) => void) => {
-      state.openSection = openSection;
+    actions: null as { openSection: (section: string) => void; chooseVersion: (version: 1 | 2) => void } | null,
+    open: vi.fn(async (_at: { x: number; y: number }, _version: 1 | 2) => undefined),
+    create: vi.fn(async (actions: { openSection: (section: string) => void; chooseVersion: (version: 1 | 2) => void }) => {
+      state.actions = actions;
       return { open: state.open };
     }),
   };
@@ -58,6 +58,9 @@ const settingsMenu = vi.hoisted(() => {
 });
 
 vi.mock("./settingsMenu", () => ({ createSettingsMenu: settingsMenu.create }));
+
+const settingsChanged = vi.hoisted(() => ({ broadcastSettingsChange: vi.fn() }));
+vi.mock("@/lib/settingsChanged", () => settingsChanged);
 
 /** The zone the tabs and `+` share, and the slot `+` takes from it. */
 const NEW_TAB_SLOT_PX = 32;
@@ -159,9 +162,18 @@ describe("tab bar row (В43)", () => {
     expect(reserve?.className).toContain("w-20");
   });
 
-  it("keeps the reserve in full screen", () => {
-    const { container } = renderBar(barState([tab("a")], { fullscreen: true }));
-    expect(container.querySelector("header[data-fullscreen='true'] [data-traffic-light-reserve]")).not.toBeNull();
+  it("gives the traffic lights' place back in full screen in version 2, and keeps it in version 1", () => {
+    document.documentElement.setAttribute("data-ui-version", "2");
+    const { container, unmount } = renderBar(barState([tab("a")], { fullscreen: true }));
+    expect(container.querySelector("header[data-fullscreen='true'] [data-traffic-light-reserve]")).toBeNull();
+    const toggle = screen.getByRole("button", { name: "Hide Sidebar" });
+    expect(toggle.closest("div.pl-\\[var\\(--chrome-icon-edge-pad\\)\\]")).not.toBeNull();
+    unmount();
+
+    document.documentElement.setAttribute("data-ui-version", "1");
+    const again = renderBar(barState([tab("a")], { fullscreen: true }));
+    expect(again.container.querySelector("header[data-fullscreen='true'] [data-traffic-light-reserve]")).not.toBeNull();
+    document.documentElement.removeAttribute("data-ui-version");
   });
 
   it("toggles the window's sidebar through the backend (В56)", () => {
@@ -186,8 +198,22 @@ describe("tab bar row (В43)", () => {
     await act(async () => {});
     expect(settingsMenu.create).toHaveBeenCalledTimes(1);
     expect(settingsMenu.open).toHaveBeenCalledTimes(1);
-    settingsMenu.openSection?.("spaces");
+    settingsMenu.actions?.openSection("spaces");
     expect(commands.openSettingsWindow).toHaveBeenCalledWith("spaces");
+  });
+
+  it("switches the interface version for every page from the logo's menu", async () => {
+    renderBar(barState([tab("a")]));
+    fireEvent.click(screen.getByRole("button", { name: SETTINGS_MENU_LABEL }));
+    await act(async () => {});
+
+    settingsMenu.actions?.chooseVersion(1);
+    expect(document.documentElement).toHaveAttribute("data-ui-version", "1");
+    expect(localStorage.getItem("mine.uiVersion")).toBe("1");
+    expect(settingsChanged.broadcastSettingsChange).toHaveBeenCalledWith("mine.uiVersion");
+
+    settingsMenu.actions?.chooseVersion(2);
+    expect(document.documentElement).toHaveAttribute("data-ui-version", "2");
   });
 
   it("opens a new tab with +", () => {

@@ -95,7 +95,25 @@ pub struct SavedWindow {
     /// Left to right.
     pub tabs: Vec<SavedTab>,
     pub active_tab: TabId,
+    /// The sidebar last set in this window: what a tab saved before tabs had
+    /// a sidebar of their own takes (В56).
     pub sidebar: SidebarLayout,
+}
+
+impl SavedWindow {
+    /// The sidebar of `tab` in this window (В56).
+    pub fn tab_sidebar(&self, tab: &TabId) -> SidebarLayout {
+        self.tabs
+            .iter()
+            .find(|candidate| &candidate.id == tab)
+            .and_then(|found| found.sidebar)
+            .unwrap_or(self.sidebar)
+    }
+
+    /// The sidebar of the visible tab: what the tab bar's button acts on.
+    pub fn active_sidebar(&self) -> SidebarLayout {
+        self.tab_sidebar(&self.active_tab)
+    }
 }
 
 /// Logical points in global screen coordinates, top left origin.
@@ -107,7 +125,7 @@ pub struct WindowFrame {
     pub height: f64,
 }
 
-/// The sidebar of one window (РП5, В56).
+/// The sidebar of one tab (РП5, В56: changed 03.10.2026 from one per window).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub struct SidebarLayout {
     pub width_px: u32,
@@ -129,6 +147,10 @@ pub struct SavedTab {
     pub id: TabId,
     pub space: TabSpace,
     pub view: TabView,
+    /// The tab's own sidebar (В56). Absent in a file saved while the window
+    /// owned it; reading fills it with the window's.
+    #[serde(default)]
+    pub sidebar: Option<SidebarLayout>,
 }
 
 /// What a tab shows.
@@ -249,6 +271,7 @@ impl SavedWindows {
                     id: tab.clone(),
                     space,
                     view: TabView::default(),
+                    sidebar: Some(SidebarLayout::default()),
                 }],
                 active_tab: tab,
                 sidebar: SidebarLayout::default(),
@@ -328,10 +351,13 @@ impl SavedWindows {
         let Some(target) = self.window_mut(window) else {
             return false;
         };
+        // A new tab opens with the sidebar of the tab it was opened from.
+        let sidebar = target.active_sidebar();
         target.tabs.push(SavedTab {
             id: tab.clone(),
             space,
             view,
+            sidebar: Some(sidebar),
         });
         target.active_tab = tab;
         true
@@ -445,7 +471,7 @@ impl SavedWindows {
         if source.tabs.len() < 2 {
             return None;
         }
-        let sidebar = source.sidebar;
+        let sidebar = source.tab_sidebar(tab);
         let closed = self.close_tab(tab)?;
         self.add_window(SavedWindow {
             id: window,
@@ -510,15 +536,20 @@ impl SavedWindows {
         tabs
     }
 
-    /// Store the sidebar of `window`.
-    pub fn set_sidebar(&mut self, window: &WindowId, sidebar: SidebarLayout) -> bool {
-        match self.window_mut(window) {
-            Some(target) => {
-                target.sidebar = sidebar;
-                true
-            }
-            None => false,
+    /// Store the sidebar of `tab` (В56). The window keeps it as its last.
+    pub fn set_tab_sidebar(&mut self, tab: &TabId, sidebar: SidebarLayout) -> bool {
+        let Some(window) = self
+            .windows
+            .iter_mut()
+            .find(|window| window.tabs.iter().any(|candidate| &candidate.id == tab))
+        else {
+            return false;
+        };
+        window.sidebar = sidebar;
+        if let Some(target) = window.tabs.iter_mut().find(|candidate| &candidate.id == tab) {
+            target.sidebar = Some(sidebar);
         }
+        true
     }
 
     /// Store where `window` stands.
@@ -604,6 +635,8 @@ pub fn normalize(
             TabSpace::Picker => true,
         });
         for tab in &mut window.tabs {
+            // A tab saved while the window owned the sidebar takes the window's.
+            tab.sidebar.get_or_insert(window.sidebar);
             if !seen_tabs.insert(tab.id.clone()) {
                 let old = tab.id.clone();
                 tab.id = TabId(new_id());
@@ -665,6 +698,7 @@ mod tests {
                 vault_id: space.into(),
             },
             view: TabView::default(),
+            sidebar: None,
         }
     }
 
@@ -883,5 +917,26 @@ mod tests {
         let view = &value.windows[0].tabs[0].view;
         assert_eq!(view.location, TabLocation::Everything);
         assert_eq!(view.mode, MainViewMode::Graph);
+    }
+
+    #[test]
+    fn every_tab_keeps_its_own_sidebar() {
+        let narrow = SidebarLayout { width_px: 280, collapsed: false };
+        let closed = SidebarLayout { width_px: 280, collapsed: true };
+        let mut model = saved(vec![window("w1", vec![tab("a", "x"), tab("b", "x")], "a")]);
+        model.windows[0].sidebar = narrow;
+        // A file saved while the window owned the sidebar: every tab takes it.
+        let mut model = normalize(model, &known, &screen(), &mut ids());
+        assert_eq!(model.windows[0].tab_sidebar(&TabId("b".into())), narrow);
+
+        assert!(model.set_tab_sidebar(&TabId("a".into()), closed));
+        assert_eq!(model.windows[0].tab_sidebar(&TabId("a".into())), closed);
+        assert_eq!(model.windows[0].tab_sidebar(&TabId("b".into())), narrow);
+        assert_eq!(model.windows[0].active_sidebar(), closed);
+
+        // A new tab opens with the sidebar of the tab it was opened from.
+        assert!(model.add_tab(&WindowId("w1".into()), TabId("c".into()), TabSpace::Picker, TabView::default()));
+        assert_eq!(model.windows[0].tab_sidebar(&TabId("c".into())), closed);
+        assert!(!model.set_tab_sidebar(&TabId("gone".into()), narrow));
     }
 }

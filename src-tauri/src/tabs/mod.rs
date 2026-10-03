@@ -645,7 +645,8 @@ pub fn bar_state(app: &AppHandle, window_id: &WindowId) -> Option<TabBarState> {
         window_id: window.id.clone(),
         tabs,
         active_tab: window.active_tab.clone(),
-        sidebar: window.sidebar,
+        // The bar's sidebar button acts on the visible tab's sidebar (В56).
+        sidebar: window.active_sidebar(),
         fullscreen: window.fullscreen,
     })
 }
@@ -677,7 +678,7 @@ pub fn bootstrap(app: &AppHandle, label: &str) -> Option<TabBootstrap> {
         window_id: window.id.clone(),
         space: saved.space.clone(),
         view: saved.view.clone(),
-        sidebar: window.sidebar,
+        sidebar: window.tab_sidebar(&tab),
         lead: is_lead(app, label),
         fresh_start: shell(app).fresh_start.load(Ordering::SeqCst),
     })
@@ -705,6 +706,10 @@ pub fn activate(app: &AppHandle, tab: &TabId) {
         return;
     };
     shell.change(|model| model.activate(tab));
+    // The View menu names the visible tab's sidebar action (В56).
+    if let Some(saved) = shell.snapshot().window(&window_id) {
+        crate::commands::window_chrome::reflect_sidebar(app, saved.active_sidebar().collapsed);
+    }
     let Ok(page) = create_page(app, &window, tab) else {
         log::warn!("failed to create a tab page");
         emit_bar_state(app, &window_id);
@@ -879,7 +884,7 @@ pub fn new_window(app: &AppHandle, space: TabSpace) {
     let sidebar = shell
         .snapshot()
         .last_window()
-        .map_or_else(SidebarLayout::default, |window| window.sidebar);
+        .map_or_else(SidebarLayout::default, SavedWindow::active_sidebar);
     let tab = TabId(new_id());
     let window = SavedWindow {
         id: WindowId(new_id()),
@@ -889,6 +894,7 @@ pub fn new_window(app: &AppHandle, space: TabSpace) {
             id: tab.clone(),
             space,
             view: TabView::default(),
+            sidebar: Some(sidebar),
         }],
         active_tab: tab,
         sidebar,
@@ -1022,19 +1028,19 @@ pub fn move_tab_to_new_window(app: &AppHandle, tab: &TabId) {
 }
 
 /// A two-finger swipe opens (right) or closes (left) the sidebar of the
-/// window in front (В56).
+/// visible tab of the window in front (В56).
 pub fn swipe_sidebar(app: &AppHandle, open: bool) {
     let Some(window) = focused_tab_window(app).or_else(|| last_window(app)) else {
         return;
     };
-    let current = shell(app)
-        .snapshot()
-        .window(&window)
-        .map_or_else(SidebarLayout::default, |saved| saved.sidebar);
+    let Some(saved) = shell(app).snapshot().window(&window).cloned() else {
+        return;
+    };
+    let current = saved.active_sidebar();
     if current.collapsed == open {
-        set_sidebar(
+        set_tab_sidebar(
             app,
-            &window,
+            &saved.active_tab,
             SidebarLayout {
                 collapsed: !open,
                 ..current
@@ -1133,31 +1139,46 @@ pub fn space_forgotten(app: &AppHandle, vault_id: &str) {
     }
 }
 
-/// Store and spread the sidebar of `window_id` (В56).
-pub fn set_sidebar(app: &AppHandle, window_id: &WindowId, sidebar: SidebarLayout) {
+/// Store and spread the sidebar of `tab` (В56): to the tab's page, and to
+/// its window's bar and the View menu when the tab is the visible one.
+pub fn set_tab_sidebar(app: &AppHandle, tab: &TabId, sidebar: SidebarLayout) {
     let shell = shell(app);
-    if !shell.change(|model| model.set_sidebar(window_id, sidebar)) {
+    if !shell.change(|model| model.set_tab_sidebar(tab, sidebar)) {
         return;
     }
-    let mut labels: Vec<String> = shell
-        .snapshot()
-        .window(window_id)
-        .map(|window| window.tabs.iter().map(|tab| tab.id.label()).collect())
-        .unwrap_or_default();
-    labels.push(window_id.bar_label());
+    let mut labels = vec![tab.label()];
+    let window = shell.snapshot().window_of(tab).cloned();
+    let visible = window.as_ref().is_some_and(|window| &window.active_tab == tab);
+    if let (Some(window), true) = (&window, visible) {
+        labels.push(window.id.bar_label());
+    }
     space_events::emit_to_labels(app, labels, "window-sidebar-changed", sidebar);
-    crate::commands::window_chrome::reflect_sidebar(app, sidebar.collapsed);
+    if visible {
+        crate::commands::window_chrome::reflect_sidebar(app, sidebar.collapsed);
+    }
 }
 
-/// Toggle the sidebar of the last window (menu, В56).
+/// The sidebar of a page: its own for a tab page, the visible tab's for a
+/// window's tab bar (В56).
+pub fn set_sidebar_of_label(app: &AppHandle, label: &str, sidebar: SidebarLayout) {
+    let tab = TabId::from_label(label).or_else(|| {
+        let window = WindowId::from_label(label)?;
+        shell(app).snapshot().window(&window).map(|window| window.active_tab.clone())
+    });
+    if let Some(tab) = tab {
+        set_tab_sidebar(app, &tab, sidebar);
+    }
+}
+
+/// Toggle the sidebar of the visible tab of `window_id` (menu, В56).
 pub fn toggle_sidebar(app: &AppHandle, window_id: &WindowId) {
-    let current = shell(app)
-        .snapshot()
-        .window(window_id)
-        .map_or_else(SidebarLayout::default, |window| window.sidebar);
-    set_sidebar(
+    let Some(window) = shell(app).snapshot().window(window_id).cloned() else {
+        return;
+    };
+    let current = window.active_sidebar();
+    set_tab_sidebar(
         app,
-        window_id,
+        &window.active_tab,
         SidebarLayout {
             collapsed: !current.collapsed,
             ..current

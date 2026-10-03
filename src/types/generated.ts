@@ -484,7 +484,7 @@ export type SearchTextRange = { start: number; end: number }
 export type ShortcutBinding = { key: string; meta?: boolean; shift?: boolean; alt?: boolean; ctrl?: boolean }
 
 /**
- * The sidebar of one window (РП5, В56).
+ * The sidebar of one tab (РП5, В56: changed 03.10.2026 from one per window).
  */
 export type SidebarLayout = { width_px: number; collapsed: boolean }
 

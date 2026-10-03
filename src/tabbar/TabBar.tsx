@@ -41,6 +41,8 @@ import {
   stepTabHistory,
 } from "@/lib/commands";
 import { motionDuration } from "@/lib/motion";
+import { broadcastSettingsChange } from "@/lib/settingsChanged";
+import { getUiVersion, storeUiVersion, UI_VERSION_STORAGE_KEY, useUiVersion } from "@/lib/uiVersion";
 import { cn } from "@/lib/utils";
 import type { DropHover, TabBarState, TabBarTab, TabId } from "@/types";
 import { DROP_MARKER_WIDTH_PX, TAB_REORDER_EASING, TAB_REORDER_MOTION_MS } from "./constants";
@@ -156,6 +158,10 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
   const count = tabs.length;
   const activeIndex = tabs.findIndex((tab) => tab.id === activeTab);
   const history = tabs[activeIndex]?.history ?? { back: false, forward: false };
+  // In full screen there are no traffic lights. Version 2 gives their place
+  // back to the row; version 1 keeps it so nothing shifts.
+  const uiVersion = useUiVersion();
+  const trafficLightReserve = !(fullscreen && uiVersion === 2);
 
   const zoneRef = useRef<HTMLDivElement>(null);
   const plusSlotRef = useRef<HTMLDivElement>(null);
@@ -286,11 +292,18 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
   // ── The logo's settings menu (В43) ────────────────────────────────────────
   const settingsMenu = useRef<Promise<SettingsMenu> | null>(null);
   const openSettingsMenu = useCallback((button: HTMLElement) => {
-    settingsMenu.current ??= createSettingsMenu((section) => run(openSettingsWindow(section), "open the settings"));
+    settingsMenu.current ??= createSettingsMenu({
+      openSection: (section) => run(openSettingsWindow(section), "open the settings"),
+      // Every page follows: this one at once, the others by settings-changed.
+      chooseVersion: (version) => {
+        storeUiVersion(version);
+        broadcastSettingsChange(UI_VERSION_STORAGE_KEY);
+      },
+    });
     const pending = settingsMenu.current;
     const { left, bottom } = button.getBoundingClientRect();
     pending
-      .then((built) => built.open({ x: left, y: bottom }))
+      .then((built) => built.open({ x: left, y: bottom }, getUiVersion()))
       .catch((error: unknown) => {
         if (settingsMenu.current === pending) settingsMenu.current = null;
         console.error("Tab bar could not show the settings menu:", error);
@@ -499,10 +512,19 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
       className="bg-accent"
       onPointerLeave={() => setFrozen(null)}
     >
-      {/* The traffic lights sit over this spot; in full screen they are
-          gone, and the spot stays so nothing shifts. */}
-      <div {...windowDrag} data-traffic-light-reserve="" className="h-full w-20 shrink-0" />
-      <div {...windowDrag} className="flex h-full shrink-0 items-center gap-0.5 pr-2">
+      {/* The traffic lights sit over this spot. */}
+      {trafficLightReserve && (
+        <div {...windowDrag} data-traffic-light-reserve="" className="h-full w-20 shrink-0" />
+      )}
+      <div
+        {...windowDrag}
+        className={cn(
+          "flex h-full shrink-0 items-center gap-0.5 pr-2",
+          // Without the reserve the first button stands on the chrome's edge
+          // inset, like the last one at the right edge.
+          !trafficLightReserve && "pl-[var(--chrome-icon-edge-pad)]",
+        )}
+      >
         <SidebarToggleButton
           collapsed={sidebar.collapsed}
           onToggle={() =>

@@ -209,11 +209,13 @@ vi.mock("@/components/VaultSwitcher", () => ({
     currentPath,
     surface = "actionBar",
     topChromeCollapsed = false,
+    joinsNext = false,
     onOpenInNewTab,
   }: {
     currentPath: string;
     surface?: string;
     topChromeCollapsed?: boolean;
+    joinsNext?: boolean;
     onOpenInNewTab?: (vaultId: string) => void;
   }) => (
     <>
@@ -222,6 +224,7 @@ vi.mock("@/components/VaultSwitcher", () => ({
         data-vault-switcher=""
         data-vault-switcher-surface={surface}
         data-vault-switcher-top-chrome-collapsed={String(topChromeCollapsed)}
+        data-vault-switcher-joins-next={String(joinsNext)}
       >
         {currentPath.split("/").pop() ?? currentPath}
       </button>
@@ -420,10 +423,12 @@ vi.mock("@/components/Sidebar", async () => {
       orderedTags,
       totalBlocks,
       searchQuery = "",
+      topRow = null,
     }: {
       orderedTags: Array<{ tag: string; count: number }>;
       totalBlocks: number;
       searchQuery?: string;
+      topRow?: ReactNode;
     }) => {
       const normalizedSearchQuery = searchQuery.trim().toLowerCase();
       const showEverything = !normalizedSearchQuery
@@ -431,7 +436,8 @@ vi.mock("@/components/Sidebar", async () => {
         || "__all__".includes(normalizedSearchQuery);
 
       return (
-        <nav>
+        <nav data-sidebar-mock="">
+          {topRow}
           {showEverything && <Link to="/">Everything {totalBlocks}</Link>}
           {orderedTags
             .filter((tag) => !normalizedSearchQuery || tag.tag.toLowerCase().includes(normalizedSearchQuery))
@@ -518,6 +524,9 @@ function bottomBarEntry(label: string): HTMLElement | null {
 describe("AppWithVault", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // These tests pin interface version 1, the layout as it stood on
+    // 03.10.2026; version 2 has its own block below.
+    document.documentElement.setAttribute("data-ui-version", "1");
     gridScroll.atEnd = false;
     commandMocks.getGridRows.mockResolvedValue({ path: "/vault", generation: 1, blocks: [] });
     vi.mocked(isTauri).mockReturnValue(false);
@@ -1874,6 +1883,65 @@ describe("AppWithVault", () => {
     expect(within(secondaryContentSegment!).getByText("2 elements")).toBeInTheDocument();
   });
 
+  describe("interface version 2 (DESIGN_SYSTEM.md, «Версии интерфейса»)", () => {
+    beforeEach(() => {
+      document.documentElement.setAttribute("data-ui-version", "2");
+    });
+
+    it("folds the third row: its feed half into the second row, its sidebar half over the table", async () => {
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+
+      const header = document.querySelector("header.chrome-row") as HTMLElement;
+      expect(header.querySelector("[data-main-secondary-top-bar-content-segment]")).not.toBeNull();
+      const sidebar = document.querySelector("[data-sidebar-mock]") as HTMLElement;
+      const headOfTable = sidebar.querySelector("[data-main-secondary-top-bar-sidebar-segment]");
+      expect(headOfTable).not.toBeNull();
+      expect(headOfTable).toHaveClass("w-full");
+      expect(headOfTable).not.toHaveClass("border-r");
+      // No row of its own between the second row and the body.
+      const rows = document.querySelectorAll("[data-main-secondary-top-bar]");
+      expect(rows).toHaveLength(1);
+      expect(sidebar.contains(rows[0])).toBe(true);
+    });
+
+    it("joins space and collection into one path with the sidebar collapsed: no line, no padding between", async () => {
+      sidebarResizeState.width = 0;
+      sidebarResizeState.collapsed = true;
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+
+      const segment = document.querySelector("[data-app-top-sidebar-segment]") as HTMLElement;
+      expect(segment).not.toHaveClass("border-r");
+      // The space switcher's own padding is VaultSwitcher.test.tsx's to check.
+      expect(document.querySelector("[data-vault-switcher]")).toHaveAttribute("data-vault-switcher-joins-next", "true");
+      const collection = screen.getByRole("button", { name: "Switch collection: Everything" });
+      expect(collection).toHaveClass("pl-0", "pr-0");
+    });
+
+    it("keeps outer padding toward the column line with the sidebar open", async () => {
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+
+      expect(document.querySelector("[data-vault-switcher]")).toHaveAttribute("data-vault-switcher-joins-next", "false");
+      const collection = screen.getByRole("button", { name: "Switch collection: Everything" });
+      // A line before it, the path going on after it.
+      expect(collection).toHaveClass("pl-[var(--top-collection-pad-x)]", "pr-0");
+    });
+  });
+
   it("keeps space and collection controls while hiding channel search when the sidebar is collapsed", async () => {
     sidebarResizeState.width = 0;
     sidebarResizeState.collapsed = true;
@@ -1905,7 +1973,7 @@ describe("AppWithVault", () => {
     expect(screen.queryByRole("textbox", { name: "Filter collections" })).not.toBeInTheDocument();
     const collectionSwitcher = screen.getByRole("button", { name: "Switch collection: Everything" });
     // Collapsed or not, the collection switcher keeps the one inset.
-    expect(collectionSwitcher).toHaveClass("px-[var(--top-collection-pad-x)]");
+    expect(collectionSwitcher).toHaveClass("pl-[var(--top-collection-pad-x)]", "pr-[var(--top-collection-pad-x)]");
     expect(collectionSwitcher).not.toHaveClass("px-3");
   });
 
@@ -2182,7 +2250,7 @@ describe("AppWithVault", () => {
     });
 
     const collectionSwitcher = screen.getByRole("button", { name: "Switch collection: Everything" });
-    expect(collectionSwitcher).toHaveClass("px-[var(--top-collection-pad-x)]");
+    expect(collectionSwitcher).toHaveClass("pl-[var(--top-collection-pad-x)]", "pr-[var(--top-collection-pad-x)]");
     expect(collectionSwitcher).not.toHaveClass("px-3");
     expect(collectionSwitcher).toHaveClass("font-mono");
     expect(collectionSwitcher).toHaveClass("text-sm");

@@ -68,7 +68,7 @@ describe("VaultSwitcher", () => {
     expect(trigger).not.toHaveClass("max-w-[240px]");
     // First in the tab page's row: the label lands on the chrome edge inset
     // (SPEC_TABS.md, В43).
-    expect(trigger).toHaveClass("px-[var(--top-collection-pad-x)]");
+    expect(trigger).toHaveClass("pl-[var(--top-collection-pad-x)]", "pr-[var(--top-collection-pad-x)]");
     expect(trigger).toHaveClass("font-mono");
     expect(trigger).toHaveClass("text-sm");
     expect(trigger).toHaveClass("text-muted-foreground");
@@ -87,6 +87,24 @@ describe("VaultSwitcher", () => {
     expect(pill).toHaveClass("group-data-[state=open]:text-foreground");
     expect(pill).not.toHaveClass("group-hover:bg-component-fill-hover");
     expect(pill).not.toHaveClass("group-focus-visible:bg-component-fill-hover");
+  });
+
+  it("drops its right outer padding when the next element is a pill with no line between", async () => {
+    render(
+      <VaultSwitcher
+        currentPath="/Users/test/Mine"
+        onVaultSelected={vi.fn()}
+        surface="topChrome"
+        joinsNext
+      />,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const trigger = screen.getByRole("button", { name: /Switch space: Mine/ });
+    expect(trigger).toHaveClass("pl-[var(--top-collection-pad-x)]", "pr-0");
   });
 
   it("takes the collapsed segment's whole cap, with no traffic-light reserve beside it", async () => {

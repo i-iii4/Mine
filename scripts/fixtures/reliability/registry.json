@@ -1489,6 +1489,16 @@
     },
     {
       "paths": [
+        "src/lib/uiVersion.ts",
+        "src/lib/uiVersion.test.ts",
+        "src/settings/main.tsx"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#Версии интерфейса",
+      "tests": ["src/lib/uiVersion.test.ts", "src/tabbar/TabBar.test.tsx"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
         "src-tauri/src/commands/spaces.rs",
         "src-tauri/src/commands/space_events.rs",
         "src-tauri/src/commands/effects.rs",

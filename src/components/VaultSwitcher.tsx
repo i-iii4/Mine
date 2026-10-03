@@ -51,6 +51,10 @@ interface VaultSwitcherProps {
   hotkey?: string;
   surface?: "actionBar" | "topChrome";
   topChromeCollapsed?: boolean;
+  /// The next element of the row is a pill, with no line between them
+  /// (interface version 2, sidebar collapsed): no outer padding on the right.
+  /// Outer padding stands only toward a boundary, the window edge or a line.
+  joinsNext?: boolean;
   /// Open the space `vaultId` in a new tab of this window (SPEC_TABS.md,
   /// В52): ⌘-click on a space, or its Open in New Tab action. Absent on a
   /// page that is not a tab, which has no window of tabs to open it in.
@@ -111,6 +115,7 @@ export function VaultSwitcher({
   hotkey,
   surface = "actionBar",
   topChromeCollapsed = false,
+  joinsNext = false,
   onOpenInNewTab,
 }: VaultSwitcherProps) {
   const [knownVaults, setKnownVaults] = useState<string[]>([]);
@@ -385,7 +390,8 @@ export function VaultSwitcher({
                   // 8 px of row on both sides of the pill, as round the
                   // collection switcher's: to the window edge and to the
                   // search separator.
-                  "justify-start px-[var(--top-collection-pad-x)]",
+                  "justify-start pl-[var(--top-collection-pad-x)]",
+                  joinsNext ? "pr-0" : "pr-[var(--top-collection-pad-x)]",
                   // Collapsed, it is the segment's only content and takes the
                   // segment's whole cap; open, half the space and search zone.
                   topChromeCollapsed ? "max-w-[240px]" : "max-w-[50%]",

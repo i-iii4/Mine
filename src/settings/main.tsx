@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { applyTheme, getStoredTheme } from "@/lib/themeMode";
 import { applyDesign, getStoredDesignMode } from "@/lib/designMode";
+import { applyUiVersion, getStoredUiVersion } from "@/lib/uiVersion";
 import { applyCardRadius, getStoredCardRadius } from "@/lib/cardRadius";
 import { applyDensity, getStoredDensity } from "@/lib/density";
 import {
@@ -19,6 +20,7 @@ import { hydrateCommandOverrides, watchCommandOverrides } from "@/lib/shortcutOv
 // rely on the main window having done so for this webview.
 applyTheme(getStoredTheme());
 applyDesign(getStoredDesignMode());
+applyUiVersion(getStoredUiVersion());
 applyCardRadius(getStoredCardRadius());
 applyDensity(getStoredDensity());
 applyInterfaceFont(getStoredInterfaceFont());

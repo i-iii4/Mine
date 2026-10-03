@@ -232,6 +232,9 @@ interface SidebarProps {
   searchQuery?: string;
   /** Optional slot for a header banner (e.g. iCloud conflict surface). */
   headerSlot?: React.ReactNode;
+  /** A chrome row heading the column, above the table: the sidebar half of
+   *  the row over the feed when interface version 2 folds it. */
+  topRow?: React.ReactNode;
   linkedBlockSlug?: string | null;
   linkedTags?: string[];
   onToggleLinkedTag?: (slug: string, tag: string, hasTag: boolean) => void;
@@ -298,6 +301,7 @@ const SidebarCore = memo(function SidebarCore({
   keyboardNavigationFocusPersistent = false,
   searchQuery = "",
   headerSlot,
+  topRow,
   linkedBlockSlug,
   linkedTags = [],
   onToggleLinkedTag,
@@ -859,6 +863,7 @@ const SidebarCore = memo(function SidebarCore({
         transition: isResizing ? "none" : "width 200ms ease",
       }}
     >
+      {topRow}
       {isLinkingBlock && showLinkModeChrome && (
         <SidebarLinkModeSwitch
           value={effectiveLinkMode}

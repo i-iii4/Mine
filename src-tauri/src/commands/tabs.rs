@@ -105,12 +105,11 @@ pub fn move_tab(app: AppHandle, tab_id: TabId, index: usize) {
     tabs::move_tab(&app, &tab_id, index);
 }
 
-/// Store and spread the sidebar of the calling page's window (В56).
+/// Store and spread a sidebar (В56): the calling tab's own, or for a tab
+/// bar the sidebar of its window's visible tab.
 #[tauri::command]
 pub fn set_window_sidebar(app: AppHandle, webview: Webview, sidebar: SidebarLayout) {
-    if let Some(window) = tabs::window_of_label(&app, webview.label()) {
-        tabs::set_sidebar(&app, &window, sidebar);
-    }
+    tabs::set_sidebar_of_label(&app, webview.label(), sidebar);
 }
 
 /// Start dragging the calling page's window by its chrome (В23).

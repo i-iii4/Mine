@@ -1429,23 +1429,24 @@ Image media expansion:
 - Desktop delivery принадлежит native
   `View -> Hide Sidebar` / `View -> Show Sidebar` menu accelerator. С 03.10.2026
   событие `sidebar-toggle-shortcut` снято: пункт меню исполняет бэкенд и
-  меняет боковое меню окна вкладок в фокусе, а без него последнего окна
+  меняет боковое меню видимой вкладки окна в фокусе, а без него последнего окна
   (SPEC_TABS.md, В56). Frontend `keydown` остаётся только browser/dev
   fallback: при `isTauri() === true` он не меняет состояние, чтобы один жест не
   вызывал native event и второй toggle из WKWebView. Browser fallback проверяет
   physical `KeyboardEvent.code === "KeyS"`, чтобы команда работала на
   нелатинских раскладках.
-- С 03.10.2026 боковым меню владеет окно: ширину и свёрнутость хранит бэкенд
-  (`SavedWindow.sidebar` в `windows.json`). Кнопка в полосе вкладок, пункт
-  View, свайп двумя пальцами (`swipe_gesture.rs`, событие `sidebar-swipe`
-  снято) и перетаскивание края меню во вкладке меняют раскладку командой
-  `set_window_sidebar`, бэкенд рассылает `window-sidebar-changed` всем
-  вкладкам окна и его полосе. Заголовок пункта View (`Hide Sidebar` или
-  `Show Sidebar`) бэкенд ставит сам по боковому меню последнего окна
-  (`window_chrome::reflect_sidebar`); вызов `set_sidebar_menu_collapsed` из
-  страницы снят.
+- С 03.10.2026 у каждой вкладки своё боковое меню: ширину и свёрнутость
+  хранит бэкенд в памяти вкладки (`SavedTab.sidebar` в `windows.json`,
+  SPEC_TABS.md, В56). Кнопка в полосе вкладок, пункт View и свайп двумя
+  пальцами (`swipe_gesture.rs`, событие `sidebar-swipe` снято) меняют меню
+  видимой вкладки, перетаскивание края меню меняет меню своей вкладки; всё
+  идёт командой `set_window_sidebar`, бэкенд шлёт `window-sidebar-changed`
+  странице этой вкладки и полосе, если вкладка видимая. Заголовок пункта
+  View (`Hide Sidebar` или `Show Sidebar`) бэкенд ставит сам по меню видимой
+  вкладки (`window_chrome::reflect_sidebar`), при переключении вкладки тоже;
+  вызов `set_sidebar_menu_collapsed` из страницы снят.
 - Одно сочетание toggles оба состояния; отдельного shortcut для expand нет.
-  Внутри вкладки `useSidebarResize(windowSidebar)` держит раскладку окна:
+  Внутри вкладки `useSidebarResize(windowSidebar)` держит меню вкладки:
   применяет пришедшую, приводя ширину к минимуму варианта оформления,
   показывает изменение человека сразу и отправляет его `set_window_sidebar`.
   Страница вне вкладки держит раскладку в памяти, начиная с минимума.

@@ -100,10 +100,15 @@ function MainSecondaryStatsRight({
   stats,
   viewMode,
   onViewModeChange,
+  afterPath = false,
 }: {
   stats: VaultStats | null;
   viewMode: MainViewMode;
   onViewModeChange: (value: MainViewMode) => void;
+  /// Right after the path's last pill in the row above (interface version 2):
+  /// 12 px, so the count stands 20 px from the chevron, the gap between the
+  /// block's own groups (`gap-5`).
+  afterPath?: boolean;
 }) {
   const inCollection = Boolean(stats?.currentCollection);
   const cardCount = stats
@@ -116,7 +121,8 @@ function MainSecondaryStatsRight({
     <div
       data-main-secondary-stats-right=""
       className={cn(
-        "flex h-full min-w-0 items-center justify-start gap-5 overflow-hidden pl-[var(--main-secondary-pad-x)] font-mono text-sm leading-none text-tertiary-foreground",
+        "flex h-full min-w-0 items-center justify-start gap-5 overflow-hidden font-mono text-sm leading-none text-tertiary-foreground",
+        afterPath ? "pl-3" : "pl-[var(--main-secondary-pad-x)]",
         // With actions at the end, ChromeActions owns the right edge inset.
         !feedDisplay && "pr-[var(--main-secondary-pad-x)]",
       )}
@@ -233,6 +239,7 @@ export function MainSecondaryTopBar({
   indexing = false,
   onRevealSpace,
   placement = "top",
+  part = "both",
   selectionActive = false,
   selectionHostRef,
 }: {
@@ -270,6 +277,10 @@ export function MainSecondaryTopBar({
   /// button bar's surface and closes with a separator on top instead of below —
   /// the seam always faces the content.
   placement?: "top" | "bottom";
+  /// Which half to draw. Interface version 2 folds this row: the half over
+  /// the feed joins the row above it (`content`, without a row of its own),
+  /// the half over the sidebar heads the sidebar's table (`sidebar`).
+  part?: "both" | "sidebar" | "content";
   /// A group selection exists: its commands take the whole row over.
   selectionActive?: boolean;
   /// Where the feed portals the selection's commands into.
@@ -294,6 +305,167 @@ export function MainSecondaryTopBar({
       : undefined,
   });
 
+  const sidebarSegment = (
+    <div
+      data-tauri-drag-region
+      data-main-secondary-top-bar-sidebar-segment=""
+      className={cn(
+        "relative flex h-full shrink-0 items-center overflow-hidden",
+        part === "sidebar" ? "w-full" : "border-r border-sidebar-border",
+        part !== "sidebar" && sidebarCollapsed && "w-auto max-w-[240px]",
+        // Right over the sidebar's table the segment takes the table's
+        // surface; an open card's accent still marks the whole row.
+        placement === "top" && !sidebarCollapsed && !detailLayerEntered && "bg-sidebar",
+        !sidebarResizing && "transition-[width] duration-200 ease-out motion-reduce:transition-none",
+      )}
+      style={sidebarCollapsed || part === "sidebar" ? undefined : { width: "var(--sidebar-width)" }}
+    >
+      <div
+        className="main-secondary-bar-layer absolute inset-0"
+        data-entered={mainLayerEntered ? "true" : "false"}
+        data-main-secondary-main-layer=""
+      >
+        <MainSecondaryStatsLeft
+          collectionCount={collectionCount ?? tags.length}
+          onCreateCollection={onCreateCollection}
+          sidebarCollapsed={sidebarCollapsed}
+          cloudPending={cloudPending}
+          indexing={indexing}
+          onRevealSpace={onRevealSpace}
+        />
+      </div>
+      {detailBlock && !sidebarCollapsed && (
+        <div
+          className={cn(
+            "main-secondary-bar-layer absolute inset-0 flex h-full min-w-0 items-center gap-2 pl-[var(--chrome-edge-pad)]",
+            !onCreateCollection && "pr-[var(--chrome-edge-pad)]",
+          )}
+          data-entered={detailLayerEntered ? "true" : "false"}
+          data-secondary-sidebar-link-mode-bar=""
+        >
+          {/* A label in the voice of View: over the feed. */}
+          <span className="shrink-0 font-mono text-sm text-tertiary-foreground">Collections:</span>
+          <CompactDetailLinkModeSwitch
+            value={detailLinkMode}
+            onChange={onDetailLinkModeChange}
+            chromeDragEnabled={false}
+            entered={detailEntered}
+          />
+          {onCreateCollection && (
+            // The same spot as the plus over the closed list: the right
+            // edge, 8px in, so the button does not move when a card opens.
+            <ChromeActions windowEdge={false} className="ml-auto mr-2">
+              <Button
+                type="button"
+                variant="chrome"
+                size="chrome-icon"
+                aria-label="New Collection"
+                onClick={onCreateCollection}
+                data-secondary-link-mode-new-collection=""
+              >
+                <Plus />
+              </Button>
+            </ChromeActions>
+          )}
+        </div>
+      )}
+    </div>
+  );
+  const contentSegment = (
+    <div
+      data-tauri-drag-region
+      data-main-secondary-top-bar-content-segment=""
+      className="relative flex h-full min-w-0 flex-1 items-center overflow-hidden"
+    >
+      {/* The selection replaces this half's ordinary content — the element
+          count and the view switch — not the whole row: its commands sit
+          over the feed they act on, the sidebar keeps its stats. The host
+          stays mounted so the feed's portal target exists before the first
+          selected card. */}
+      <div
+        className={cn(
+          "main-secondary-bar-layer absolute inset-0 z-10",
+          !selectionActive && "pointer-events-none",
+        )}
+        data-entered={selectionActive ? "true" : "false"}
+        data-secondary-selection-bar=""
+      >
+        <div ref={selectionHostRef} className="h-full w-full" />
+      </div>
+      <div
+        className="main-secondary-bar-layer absolute inset-0"
+        data-entered={contentMainLayerEntered ? "true" : "false"}
+        data-main-secondary-main-layer=""
+      >
+        <MainSecondaryStatsRight
+          stats={stats}
+          viewMode={viewMode}
+          onViewModeChange={onViewModeChange}
+          afterPath={part === "content"}
+        />
+      </div>
+      {/* At the foot of the window the title, the card menu and the close
+          control belong to the top toolbar, so this half shows what the note
+          is instead of repeating its name. */}
+      {detailBlock && placement === "bottom" && (
+        <div
+          className="main-secondary-bar-layer absolute inset-0"
+          data-entered={detailLayerEntered ? "true" : "false"}
+          data-secondary-detail-note-meta=""
+        >
+          <MainSecondaryNoteMeta block={detailBlock} />
+        </div>
+      )}
+      {detailBlock && placement === "top" && (
+        <div
+          className={cn(
+            "main-secondary-bar-layer absolute inset-0 flex h-full min-w-0 flex-1 items-center gap-1",
+            part === "content" ? "pl-0" : "pl-[var(--chrome-edge-pad)]",
+          )}
+          data-entered={detailLayerEntered ? "true" : "false"}
+          data-secondary-detail-top-menu=""
+        >
+          <div
+            ref={setDragHandleRef}
+            {...dragAttributes}
+            {...dragListeners}
+            className={cn(
+              "min-w-0 cursor-grab truncate font-mono text-sm text-muted-foreground active:cursor-grabbing",
+              // In the path it is a pill like the space and the collection
+              // before it: the same inner padding and hover plate.
+              part === "content"
+                ? "h-6 rounded-1 px-2 leading-6 hover:bg-active hover:text-foreground"
+                : "flex-1",
+              isDragging && "opacity-30",
+            )}
+            title={detailTitle}
+            data-secondary-detail-drag-handle=""
+          >
+            {detailTitle}
+          </div>
+          <ChromeActions className={part === "content" ? "ml-auto" : undefined}>
+          <CardMoreMenu
+            block={detailBlock}
+            vaultPath={vaultPath}
+            tags={tags}
+            currentTag={currentTag}
+            onToggleTag={onToggleTag}
+            onCreateAndAssign={onCreateAndAssign}
+            onRequestRename={onRequestRename}
+            onRequestDelete={onRequestDelete}
+            triggerVariant="chrome"
+            openRequestSequence={detailMenuOpenRequestSequence}
+            topChromeInteraction
+          />
+          <ChromeCloseButton {...closeChromeGesture} onClick={onDetailClose} />
+          </ChromeActions>
+        </div>
+      )}
+    </div>
+  );
+  // The half over the feed stands in the row above it, with no row of its own.
+  if (part === "content") return contentSegment;
+
   return (
     <ChromeRow
       data-tauri-drag-region
@@ -309,150 +481,8 @@ export function MainSecondaryTopBar({
       data-main-secondary-placement={placement}
       separator={placement === "bottom" ? "top" : "bottom"}
     >
-      <div
-        data-tauri-drag-region
-        data-main-secondary-top-bar-sidebar-segment=""
-        className={cn(
-          "relative flex h-full shrink-0 items-center overflow-hidden border-r border-sidebar-border",
-          sidebarCollapsed && "w-auto max-w-[240px]",
-          // Right over the sidebar's table the segment takes the table's
-          // surface; an open card's accent still marks the whole row.
-          placement === "top" && !sidebarCollapsed && !detailLayerEntered && "bg-sidebar",
-          !sidebarResizing && "transition-[width] duration-200 ease-out motion-reduce:transition-none",
-        )}
-        style={sidebarCollapsed ? undefined : { width: "var(--sidebar-width)" }}
-      >
-        <div
-          className="main-secondary-bar-layer absolute inset-0"
-          data-entered={mainLayerEntered ? "true" : "false"}
-          data-main-secondary-main-layer=""
-        >
-          <MainSecondaryStatsLeft
-            collectionCount={collectionCount ?? tags.length}
-            onCreateCollection={onCreateCollection}
-            sidebarCollapsed={sidebarCollapsed}
-            cloudPending={cloudPending}
-            indexing={indexing}
-            onRevealSpace={onRevealSpace}
-          />
-        </div>
-        {detailBlock && !sidebarCollapsed && (
-          <div
-            className={cn(
-              "main-secondary-bar-layer absolute inset-0 flex h-full min-w-0 items-center gap-2 pl-[var(--chrome-edge-pad)]",
-              !onCreateCollection && "pr-[var(--chrome-edge-pad)]",
-            )}
-            data-entered={detailLayerEntered ? "true" : "false"}
-            data-secondary-sidebar-link-mode-bar=""
-          >
-            {/* A label in the voice of View: over the feed. */}
-            <span className="shrink-0 font-mono text-sm text-tertiary-foreground">Collections:</span>
-            <CompactDetailLinkModeSwitch
-              value={detailLinkMode}
-              onChange={onDetailLinkModeChange}
-              chromeDragEnabled={false}
-              entered={detailEntered}
-            />
-            {onCreateCollection && (
-              // The same spot as the plus over the closed list: the right
-              // edge, 8px in, so the button does not move when a card opens.
-              <ChromeActions windowEdge={false} className="ml-auto mr-2">
-                <Button
-                  type="button"
-                  variant="chrome"
-                  size="chrome-icon"
-                  aria-label="New Collection"
-                  onClick={onCreateCollection}
-                  data-secondary-link-mode-new-collection=""
-                >
-                  <Plus />
-                </Button>
-              </ChromeActions>
-            )}
-          </div>
-        )}
-      </div>
-      <div
-        data-tauri-drag-region
-        data-main-secondary-top-bar-content-segment=""
-        className="relative flex h-full min-w-0 flex-1 items-center overflow-hidden"
-      >
-        {/* The selection replaces this half's ordinary content — the element
-            count and the view switch — not the whole row: its commands sit
-            over the feed they act on, the sidebar keeps its stats. The host
-            stays mounted so the feed's portal target exists before the first
-            selected card. */}
-        <div
-          className={cn(
-            "main-secondary-bar-layer absolute inset-0 z-10",
-            !selectionActive && "pointer-events-none",
-          )}
-          data-entered={selectionActive ? "true" : "false"}
-          data-secondary-selection-bar=""
-        >
-          <div ref={selectionHostRef} className="h-full w-full" />
-        </div>
-        <div
-          className="main-secondary-bar-layer absolute inset-0"
-          data-entered={contentMainLayerEntered ? "true" : "false"}
-          data-main-secondary-main-layer=""
-        >
-          <MainSecondaryStatsRight
-            stats={stats}
-            viewMode={viewMode}
-            onViewModeChange={onViewModeChange}
-          />
-        </div>
-        {/* At the foot of the window the title, the card menu and the close
-            control belong to the top toolbar, so this half shows what the note
-            is instead of repeating its name. */}
-        {detailBlock && placement === "bottom" && (
-          <div
-            className="main-secondary-bar-layer absolute inset-0"
-            data-entered={detailLayerEntered ? "true" : "false"}
-            data-secondary-detail-note-meta=""
-          >
-            <MainSecondaryNoteMeta block={detailBlock} />
-          </div>
-        )}
-        {detailBlock && placement === "top" && (
-          <div
-            className="main-secondary-bar-layer absolute inset-0 flex h-full min-w-0 flex-1 items-center gap-1 pl-[var(--chrome-edge-pad)]"
-            data-entered={detailLayerEntered ? "true" : "false"}
-            data-secondary-detail-top-menu=""
-          >
-            <div
-              ref={setDragHandleRef}
-              {...dragAttributes}
-              {...dragListeners}
-              className={cn(
-                "min-w-0 flex-1 cursor-grab truncate font-mono text-sm text-muted-foreground active:cursor-grabbing",
-                isDragging && "opacity-30",
-              )}
-              title={detailTitle}
-              data-secondary-detail-drag-handle=""
-            >
-              {detailTitle}
-            </div>
-            <ChromeActions>
-            <CardMoreMenu
-              block={detailBlock}
-              vaultPath={vaultPath}
-              tags={tags}
-              currentTag={currentTag}
-              onToggleTag={onToggleTag}
-              onCreateAndAssign={onCreateAndAssign}
-              onRequestRename={onRequestRename}
-              onRequestDelete={onRequestDelete}
-              triggerVariant="chrome"
-              openRequestSequence={detailMenuOpenRequestSequence}
-              topChromeInteraction
-            />
-            <ChromeCloseButton {...closeChromeGesture} onClick={onDetailClose} />
-            </ChromeActions>
-          </div>
-        )}
-      </div>
+      {sidebarSegment}
+      {part === "both" && contentSegment}
     </ChromeRow>
   );
 }

@@ -25,6 +25,7 @@ import type { SettingsSection } from "@/lib/settingsSections";
 import { isTauri } from "@tauri-apps/api/core";
 import { listenPage } from "@/lib/pageEvents";
 import { getNavigationLabel } from "@/lib/displayTitle";
+import { applyUiVersion, getStoredUiVersion, UI_VERSION_STORAGE_KEY, useUiVersion } from "@/lib/uiVersion";
 import {
   SPACE_LEAD_CHANGED_EVENT,
   TAB_GO_EVERYTHING_EVENT,
@@ -1366,7 +1367,16 @@ export function AppWithVault({
     : DETAIL_SECONDARY_CHROME_EXIT_MS;
   const topChromeSurfaceClass = "bg-chrome";
   const topChromeSurfaceToken: NativeWindowChromeSurfaceToken = "--chrome";
-  const compactDetailCardTitle = renderedDetailBlock ? cardTitle(renderedDetailBlock) : "";
+  // Interface version 2: the third row goes. Its half over the feed joins the
+  // second row after the collection switcher, its half over the sidebar heads
+  // the table; with the sidebar collapsed nothing parts space and collection.
+  const uiVersion = useUiVersion();
+  const foldedMetadataRow = uiVersion === 2 && !metadataRowAtBottom;
+  // Version 2 names the open card by the shared visible title rule, without
+  // its folder or extension (SPEC_DISPLAY_TITLE.md).
+  const compactDetailCardTitle = renderedDetailBlock
+    ? uiVersion === 2 ? getNavigationLabel(renderedDetailBlock) : cardTitle(renderedDetailBlock)
+    : "";
   // The search overlay is modal: while it is open the feed answers no key,
   // ⌘K included (SPEC_SEARCH_OVERLAY.md; SPEC_AUDIT_FIXES.md, Г4.2).
   const gridKeyboardNavigationDisabled = Boolean(renderedDetailBlock)
@@ -2887,6 +2897,8 @@ export function AppWithVault({
         applyTheme(getStoredTheme());
       } else if (key === DESIGN_STORAGE_KEY) {
         applyDesign(getStoredDesignMode());
+      } else if (key === UI_VERSION_STORAGE_KEY) {
+        applyUiVersion(getStoredUiVersion());
       } else if (key === BOTTOM_ACTION_BAR_HIDDEN_STORAGE_KEY) {
         setBottomActionBarHidden(getStoredBottomActionBarHidden());
       } else if (key === GRAPH_PREFERENCES_STORAGE_KEY) {
@@ -4216,8 +4228,9 @@ export function AppWithVault({
     || showFirstCardMarker
     || showIndexingNotice;
 
-  const metadataRow = mainSecondaryTopBarVisible ? (
+  const metadataRowOf = (part: "both" | "sidebar" | "content") => mainSecondaryTopBarVisible ? (
     <MainSecondaryTopBar
+          part={part}
           sidebarCollapsed={sidebarCollapsed}
           sidebarResizing={sidebarResizing}
           onCreateCollection={beginCreateCollection}
@@ -4249,6 +4262,7 @@ export function AppWithVault({
           selectionHostRef={setSelectionCommandsHost}
         />
   ) : null;
+  const metadataRow = metadataRowOf("both");
 
   return (
     // Cards tell a preview still being built from a lost file (SPEC_CARD_MEDIA_GEOMETRY.md).
@@ -4275,7 +4289,8 @@ export function AppWithVault({
           data-tauri-drag-region
           data-app-top-sidebar-segment=""
           className={cn(
-            "flex h-full shrink-0 items-center overflow-hidden border-r border-sidebar-border",
+            "flex h-full shrink-0 items-center overflow-hidden",
+            !(uiVersion === 2 && sidebarCollapsed) && "border-r border-sidebar-border",
             sidebarCollapsed && "w-auto max-w-[240px]",
             !sidebarResizing && "transition-[width] duration-200 ease-out motion-reduce:transition-none",
           )}
@@ -4300,6 +4315,7 @@ export function AppWithVault({
               onOpenInNewTab={tabPage ? openSpaceInNewTab : undefined}
               surface="topChrome"
               topChromeCollapsed={sidebarCollapsed}
+              joinsNext={uiVersion === 2 && sidebarCollapsed}
             />
             {!sidebarCollapsed && (
               <>
@@ -4384,6 +4400,8 @@ export function AppWithVault({
             orderedTags={orderedTags}
             onNavigate={handleTopCollectionNavigate}
             onCreateCollection={handleTopCollectionCreate}
+            joinsPrevious={uiVersion === 2 && sidebarCollapsed}
+            joinsNext={foldedMetadataRow}
           />
           {compactDetailTopMenuActive && renderedDetailBlock ? (
             <CompactDetailTopMenu
@@ -4400,6 +4418,8 @@ export function AppWithVault({
               menuOpenRequestSequence={compactDetailTopMenuRequestSequence}
               entered={compactDetailChromeEntered}
             />
+          ) : foldedMetadataRow ? (
+            metadataRowOf("content")
           ) : (
             <div data-tauri-drag-region className="h-full min-w-0 flex-1" />
           )}
@@ -4408,11 +4428,12 @@ export function AppWithVault({
         </div>
       </ChromeRow>
 
-      {!metadataRowAtBottom && metadataRow}
+      {!metadataRowAtBottom && !foldedMetadataRow && metadataRow}
 
       {/* Body: sidebar + main */}
       <div className="flex min-h-0 flex-1">
       <Sidebar
+        topRow={foldedMetadataRow && !sidebarCollapsed ? metadataRowOf("sidebar") : null}
         width={sidebarWidth}
         previewsPending={previewsPending}
         collapsed={sidebarCollapsed}
