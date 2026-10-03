@@ -2572,9 +2572,9 @@ deltas, cards, pills, uppercase labels и любые hover/focus states, кро�
 Левый segment (`data-main-secondary-top-bar-sidebar-segment`) это шапка списка
 коллекций под ним (`data-main-secondary-stats-left`). С 03.10.2026 по решению
 пользователя он окрашен поверхностью таблицы `bg-sidebar`, как и поле `Find
-collections` во втором ряду хрома (`data-sidebar-top-search-surface`; при
-введённом запросе поле `bg-accent`): колонка таблицы продолжается вверх до
-переключателя пространства. Открытая карточка окрашивает весь ряд в
+collections` во втором ряду хрома (`data-sidebar-top-search-surface`), с
+запросом и без: колонка таблицы продолжается вверх до переключателя
+пространства. Открытая карточка окрашивает весь ряд в
 `bg-accent`, и segment тоже. Устроен как правая половина над лентой: только левый отступ `pl-[--chrome-edge-pad]`, `h-full`,
 `items-center`, `overflow-hidden`, `gap-5`. Текстовый режим:
 `font-mono text-tertiary-foreground leading-none`, regular weight, кегль 13 px

@@ -1654,7 +1654,9 @@ describe("AppWithVault", () => {
     fireEvent.keyDown(window, { key: "А", code: "KeyF", metaKey: true, shiftKey: true });
     const input = screen.getByRole("textbox", { name: "Filter collections" });
     fireEvent.change(input, { target: { value: "alp" } });
-    expect(input.closest("[data-sidebar-top-search-surface]")).toHaveClass("bg-accent");
+    // Over the table the field keeps the table's surface, a query too.
+    expect(input.closest("[data-sidebar-top-search-surface]")).toHaveClass("bg-sidebar");
+    expect(input.closest("[data-sidebar-top-search-surface]")).not.toHaveClass("bg-accent");
 
     fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
     await waitFor(() => {
@@ -2106,7 +2108,9 @@ describe("AppWithVault", () => {
     expect(screen.queryByRole("button", { name: "Clear collection search" })).not.toBeInTheDocument();
     fireEvent.change(input, { target: { value: "alp" } });
 
-    expect(searchSurface).toHaveClass("bg-accent");
+    // A query leaves the field on the table's surface.
+    expect(searchSurface).toHaveClass("bg-sidebar");
+    expect(searchSurface).not.toHaveClass("bg-accent");
     const clearSearch = screen.getByRole("button", { name: "Clear collection search" });
     expect(clearSearch).toHaveAttribute("data-chrome-control");
     expect(clearSearch.querySelector("[data-chrome-plate]")).not.toBeNull();

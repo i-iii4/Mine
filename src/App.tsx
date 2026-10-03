@@ -1046,7 +1046,6 @@ export function AppWithVault({
   // The collection filter is the tab's own too (В78).
   const [sidebarSearchQuery, setSidebarSearchQuery] = useState(() => restoreView?.collection_filter ?? "");
   const sidebarSearchHasValue = sidebarSearchQuery.length > 0;
-  const sidebarSearchHasActiveQuery = sidebarSearchQuery.trim().length > 0;
   const [sidebarSearchFocusSequence, setSidebarSearchFocusSequence] = useState(0);
   const [scrollToTopSignal, setScrollToTopSignal] = useState(0);
   const [sidebarKeyboardNavigationFocus, setSidebarKeyboardNavigationFocus] = useState<{
@@ -1367,11 +1366,6 @@ export function AppWithVault({
     : DETAIL_SECONDARY_CHROME_EXIT_MS;
   const topChromeSurfaceClass = "bg-chrome";
   const topChromeSurfaceToken: NativeWindowChromeSurfaceToken = "--chrome";
-  // Find collections sits over the sidebar's table and takes its surface;
-  // an active query lights it like other active search surfaces.
-  const sidebarSearchActiveSurfaceClass = sidebarSearchHasActiveQuery
-    ? "bg-accent"
-    : "bg-sidebar";
   const compactDetailCardTitle = renderedDetailBlock ? cardTitle(renderedDetailBlock) : "";
   // The search overlay is modal: while it is open the feed answers no key,
   // ⌘K included (SPEC_SEARCH_OVERLAY.md; SPEC_AUDIT_FIXES.md, Г4.2).
@@ -4318,8 +4312,9 @@ export function AppWithVault({
                 <div
                   {...sidebarSearchChromeDragGesture}
                   className={[
-                    "group/sidebar-search flex h-full min-w-0 flex-1 items-center",
-                    sidebarSearchActiveSurfaceClass,
+                    // Over the sidebar's table, with a query or without, the
+                    // field takes the table's surface.
+                    "group/sidebar-search flex h-full min-w-0 flex-1 items-center bg-sidebar",
                   ].filter(Boolean).join(" ")}
                   data-sidebar-top-search-surface=""
                 >
