@@ -667,8 +667,10 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
         <div {...windowDrag} data-tab-bar-drag-area="" className="h-full min-w-0 flex-1" />
       </div>
       {/* The logo's settings menu closes the row at the window's right edge,
-          as it did in the tab page's chrome (В43). */}
-      <ChromeActions data-tab-bar-settings="" className="ml-2">
+          as it did in the tab page's chrome (В43). With the tabs filling the
+          row it stands right after +, 4 px apart like neighbouring chrome
+          buttons: the + slot's own padding. */}
+      <ChromeActions data-tab-bar-settings="">
         <Button
           type="button"
           variant="chrome"
