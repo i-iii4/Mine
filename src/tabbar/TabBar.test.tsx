@@ -2,7 +2,15 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import type { DropHover, TabBarState, TabBarTab } from "@/types";
 import { TAB_BAR_HEIGHT_PX, TAB_DETACH_THRESHOLD_PX, TAB_MAX_WIDTH_PX, TAB_MIN_WIDTH_PX } from "./constants";
-import { BACK_LABEL, CLOSE_TAB_BUTTON_LABEL, FORWARD_LABEL, NEW_TAB_LABEL, TAB_LIST_LABEL, TabBar } from "./TabBar";
+import {
+  BACK_LABEL,
+  CLOSE_TAB_BUTTON_LABEL,
+  FORWARD_LABEL,
+  NEW_TAB_LABEL,
+  SETTINGS_MENU_LABEL,
+  TAB_LIST_LABEL,
+  TabBar,
+} from "./TabBar";
 import type { TabMenuActions } from "./tabMenu";
 
 const commands = vi.hoisted(() => ({
@@ -14,6 +22,7 @@ const commands = vi.hoisted(() => ({
   moveTab: vi.fn(async () => undefined),
   moveTabToNewWindow: vi.fn(async () => undefined),
   newTab: vi.fn(async () => undefined),
+  openSettingsWindow: vi.fn(async () => undefined),
   reportDropSlot: vi.fn(async () => undefined),
   setWindowSidebar: vi.fn(async () => undefined),
   startWindowDrag: vi.fn(async () => undefined),
@@ -35,6 +44,20 @@ const menu = vi.hoisted(() => {
 });
 
 vi.mock("./tabMenu", () => ({ createTabMenu: menu.create }));
+
+const settingsMenu = vi.hoisted(() => {
+  const state = {
+    openSection: null as ((section: string) => void) | null,
+    open: vi.fn(async (_at: { x: number; y: number }) => undefined),
+    create: vi.fn(async (openSection: (section: string) => void) => {
+      state.openSection = openSection;
+      return { open: state.open };
+    }),
+  };
+  return state;
+});
+
+vi.mock("./settingsMenu", () => ({ createSettingsMenu: settingsMenu.create }));
 
 /** The zone the tabs and `+` share, and the slot `+` takes from it. */
 const NEW_TAB_SLOT_PX = 32;
@@ -117,7 +140,17 @@ describe("tab bar row (В43)", () => {
     const back = screen.getByRole("button", { name: BACK_LABEL });
     const forward = screen.getByRole("button", { name: FORWARD_LABEL });
     const newTabButton = screen.getByRole("button", { name: NEW_TAB_LABEL });
-    const order = [reserve, toggle, back, forward, strip(), newTabButton, header?.querySelector("[data-tab-bar-drag-area]")];
+    const settings = screen.getByRole("button", { name: SETTINGS_MENU_LABEL });
+    const order = [
+      reserve,
+      toggle,
+      back,
+      forward,
+      strip(),
+      newTabButton,
+      header?.querySelector("[data-tab-bar-drag-area]"),
+      settings,
+    ];
     for (let index = 1; index < order.length; index += 1) {
       const before = order[index - 1];
       const after = order[index];
@@ -140,6 +173,21 @@ describe("tab bar row (В43)", () => {
     update(barState([tab("a")], { sidebar: { width_px: 240, collapsed: true } }));
     fireEvent.click(screen.getByRole("button", { name: "Show Sidebar" }));
     expect(commands.setWindowSidebar).toHaveBeenLastCalledWith({ width_px: 240, collapsed: false });
+  });
+
+  it("ends with the logo, whose native menu opens the settings at a section", async () => {
+    renderBar(barState([tab("a")]));
+    const settings = screen.getByRole("button", { name: SETTINGS_MENU_LABEL });
+    expect(settings.querySelector("[data-mine-logo]")).not.toBeNull();
+    // At the window's right edge, inset like every chrome row's last button.
+    expect(settings.closest("[data-chrome-actions]")?.className).toContain("mr-[var(--chrome-icon-edge-pad)]");
+
+    fireEvent.click(settings);
+    await act(async () => {});
+    expect(settingsMenu.create).toHaveBeenCalledTimes(1);
+    expect(settingsMenu.open).toHaveBeenCalledTimes(1);
+    settingsMenu.openSection?.("spaces");
+    expect(commands.openSettingsWindow).toHaveBeenCalledWith("spaces");
   });
 
   it("opens a new tab with +", () => {

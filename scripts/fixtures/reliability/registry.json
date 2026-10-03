@@ -1479,6 +1479,16 @@
     },
     {
       "paths": [
+        "src/components/MenuTextTrigger.test.tsx",
+        "src/components/TopCollectionSwitcher.tsx",
+        "src/components/VaultSwitcher.tsx"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#Surface Search",
+      "tests": ["src/components/MenuTextTrigger.test.tsx", "src/components/VaultSwitcher.test.tsx"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
         "src-tauri/src/commands/spaces.rs",
         "src-tauri/src/commands/space_events.rs",
         "src-tauri/src/commands/effects.rs",
@@ -1520,6 +1530,7 @@
       "paths": [
         "src/tabbar/",
         "src/lib/adjacentTab.ts",
+        "src/components/MineLogo.tsx",
         "tabbar.html",
         "vite.config.ts"
       ],

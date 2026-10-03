@@ -262,6 +262,7 @@ export function TopCollectionSwitcher({
             aria-label={`Switch collection: ${label}`}
             label={label}
             surface="topChrome"
+            showChevron
             keyboardFocus={topChromeTrigger.keyboardFocus}
             data-top-collection-switcher=""
             {...topChromeTrigger.triggerProps}

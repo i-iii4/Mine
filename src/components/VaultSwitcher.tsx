@@ -370,6 +370,7 @@ export function VaultSwitcher({
           label={triggerLabel}
           hotkey={hotkey}
           surface={isTopChrome ? "topChrome" : "actionBar"}
+          showChevron={isTopChrome}
           keyboardFocus={topChromeTrigger.keyboardFocus}
           data-vault-switcher=""
           data-vault-switcher-surface={surface}

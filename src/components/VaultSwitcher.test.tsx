@@ -75,9 +75,9 @@ describe("VaultSwitcher", () => {
     expect(trigger).not.toHaveClass("text-base");
     expect(trigger).not.toHaveClass("hover:bg-component-fill-hover");
     expect(trigger).not.toHaveClass("focus-visible:outline-1");
-    expect(trigger.querySelector("svg")).toBeNull();
-
     const pill = screen.getByText("Mine").parentElement as HTMLElement;
+    // The dropdown chevron sits inside the pill, right after the name.
+    expect(pill.querySelector("[data-menu-chevron]")).not.toBeNull();
     expect(pill).toHaveClass("rounded-1");
     expect(pill).toHaveClass("px-2");
     expect(pill).toHaveClass("text-muted-foreground");

@@ -21,7 +21,8 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { ChevronLeft, ChevronRight, Plus, X } from "lucide-react";
-import { ChromeRow } from "@/components/ChromeRow";
+import { ChromeActions, ChromeRow } from "@/components/ChromeRow";
+import { MineLogo } from "@/components/MineLogo";
 import { SidebarToggleButton } from "@/components/SidebarToggleButton";
 import { Button } from "@/components/ui/button";
 import { useChromeDragGesture } from "@/hooks/useChromeDragGesture";
@@ -34,6 +35,7 @@ import {
   moveTab,
   moveTabToNewWindow,
   newTab,
+  openSettingsWindow,
   reportDropSlot,
   setWindowSidebar,
   stepTabHistory,
@@ -64,6 +66,7 @@ import {
   stripFadeMaskStyle,
   type FrozenTabWidth,
 } from "./tabLayout";
+import { createSettingsMenu, type SettingsMenu } from "./settingsMenu";
 import { createTabMenu, type TabMenu } from "./tabMenu";
 
 export const NEW_TAB_LABEL = "New Tab";
@@ -71,6 +74,7 @@ export const CLOSE_TAB_BUTTON_LABEL = "Close Tab";
 export const TAB_LIST_LABEL = "Tabs";
 export const BACK_LABEL = "Back";
 export const FORWARD_LABEL = "Forward";
+export const SETTINGS_MENU_LABEL = "Mine settings";
 
 const PRIMARY_BUTTON = 0;
 const MIDDLE_BUTTON = 1;
@@ -276,6 +280,20 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
         // A menu that failed to build is built again on the next right click.
         if (menu.current === pending) menu.current = null;
         console.error("Tab bar could not show the tab menu:", error);
+      });
+  }, []);
+
+  // ── The logo's settings menu (В43) ────────────────────────────────────────
+  const settingsMenu = useRef<Promise<SettingsMenu> | null>(null);
+  const openSettingsMenu = useCallback((button: HTMLElement) => {
+    settingsMenu.current ??= createSettingsMenu((section) => run(openSettingsWindow(section), "open the settings"));
+    const pending = settingsMenu.current;
+    const { left, bottom } = button.getBoundingClientRect();
+    pending
+      .then((built) => built.open({ x: left, y: bottom }))
+      .catch((error: unknown) => {
+        if (settingsMenu.current === pending) settingsMenu.current = null;
+        console.error("Tab bar could not show the settings menu:", error);
       });
   }, []);
 
@@ -648,6 +666,19 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
         </div>
         <div {...windowDrag} data-tab-bar-drag-area="" className="h-full min-w-0 flex-1" />
       </div>
+      {/* The logo's settings menu closes the row at the window's right edge,
+          as it did in the tab page's chrome (В43). */}
+      <ChromeActions data-tab-bar-settings="" className="ml-2">
+        <Button
+          type="button"
+          variant="chrome"
+          size="chrome-icon"
+          aria-label={SETTINGS_MENU_LABEL}
+          onClick={(event) => openSettingsMenu(event.currentTarget)}
+        >
+          <MineLogo />
+        </Button>
+      </ChromeActions>
     </ChromeRow>
   );
 }

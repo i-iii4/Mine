@@ -14,6 +14,23 @@ describe("MenuTextTrigger", () => {
     expect(label?.parentElement).toHaveClass("chrome-plate", "rounded-1", "px-2");
   });
 
+  it("puts the top chrome chevron inside the pill, right after the name", () => {
+    render(<MenuTextTrigger label="Mine" aria-label="Switch space: Mine" showChevron />);
+
+    const trigger = screen.getByRole("button", { name: "Switch space: Mine" });
+    const chevron = trigger.querySelector("[data-menu-chevron]");
+    expect(chevron).not.toBeNull();
+    expect(chevron?.parentElement).toHaveClass("chrome-plate", "gap-1");
+    expect(chevron?.previousElementSibling).toHaveTextContent("Mine");
+    // Closed it points right; the open menu turns it down.
+    expect(chevron).toHaveClass("lucide-chevron-right", "group-data-[state=open]:rotate-90");
+  });
+
+  it("draws no chevron in the top chrome unless asked", () => {
+    render(<MenuTextTrigger label="Mine" aria-label="Switch space: Mine" />);
+    expect(screen.getByRole("button", { name: "Switch space: Mine" }).querySelector("svg")).toBeNull();
+  });
+
   it("uses the clipper header trigger as a compact pill with an inline chevron", () => {
     render(
       <MenuTextTrigger

@@ -1034,8 +1034,9 @@ Bottom app bar справа содержит `ActionButton` `Search elements` с
 Settings содержит persisted переключатель `Hide bottom menu`
 (`localStorage` key `mine.bottomActionBarHidden`). Он скрывает весь bottom app
 bar без placeholder-строки и без изменения высоты top chrome/body. Чтобы не
-создавать тупик в UI, постоянная кнопка логотипа Mine справа в top chrome
-открывает меню разделов настроек независимо от видимости bottom bar.
+создавать тупик в UI, постоянная кнопка логотипа Mine открывает меню разделов
+настроек независимо от видимости bottom bar. С 03.10.2026 она стоит справа в
+полосе вкладок (раздел «Полоса вкладок»), а не в top chrome страницы.
 Shortcut `Cmd+,` продолжает открывать то же окно настроек.
 
 Кнопка логотипа: правый inset **SVG-области** `--chrome-edge-pad` (16px),
@@ -1151,8 +1152,12 @@ trigger запрещены.
 
 Space selector — это top-chrome вариант `VaultSwitcher`: `h-full`,
 `max-w-[50%]`, `flex-none`, `min-w-0`, `pl-[var(--top-collection-pad-x)] pr-3`, `rounded-0`,
-`font-mono text-sm text-muted-foreground`, `truncate`; без folder icon и без
-dropdown chevron. Root trigger не заливается и не рисует отдельную обводку: он
+`font-mono text-sm text-muted-foreground`, `truncate`; без folder icon. С
+03.10.2026 по решению пользователя у него есть dropdown chevron: lucide
+`ChevronRight` `13px` внутри inner pill сразу после имени через `4px`
+(`gap-1`), цвет текста pill, поэтому подсвечивается вместе с именем
+(`MenuTextTrigger showChevron`). В закрытом состоянии смотрит вправо, при
+открытии меню поворачивается вниз за `150ms`, как в клиппере. Root trigger не заливается и не рисует отдельную обводку: он
 только задаёт layout slot. Ширина
 подстраивается под имя текущей папки, но не может занять больше половины
 доступной search/space зоны. В collapsed sidebar state, когда search скрыт,
@@ -1251,8 +1256,8 @@ rename/create остаются самостоятельными.
 Right collection switcher живёт в правом top chrome segment и показывает
 текущую Grid route collection: `Everything` или имя текущего канала. Геометрия
 повторяет space selector: root slot `h-full min-w-0 max-w-[50%] flex-none
-rounded-0 bg-transparent font-mono text-sm text-muted-foreground`, без dropdown
-chevron; root padding `px-6` в expanded mode и `px-3` в compact/collapsed mode,
+rounded-0 bg-transparent font-mono text-sm text-muted-foreground`, с тем же
+dropdown chevron внутри pill, что у space selector; root padding `px-6` в expanded mode и `px-3` в compact/collapsed mode,
 чтобы после collapsed space selector не оставалось лишнего 32px inset.
 Hover/open/keyboard-focus рисует только inner pill
 `h-6 rounded-1 px-2 bg-active text-foreground` вокруг имени. При клике
@@ -2131,6 +2136,13 @@ that exist specifically to prevent drift: `MenuTextTrigger` and
    доступное имя `New Tab`, в слоте с отступами `4px` (`px-1`) сразу за
    последней вкладкой.
 6. Остаток ряда: зона перетаскивания окна.
+7. Кнопка логотипа Mine (раздел «Кнопка логотипа»): в `ChromeActions` с
+   отступом `8px` слева (`ml-2`) и правым краевым отступом ряда. Её место
+   вне зоны вкладок, поэтому `+` за последней вкладкой не упирается в край
+   окна. Меню разделов настроек нативное (`src/tabbar/settingsMenu.ts`):
+   страница полосы высотой в один ряд обрезала бы меню, нарисованное в ней.
+   В странице вкладки логотипа больше нет; страница без полосы (отладочный
+   маршрут в браузере) оставляет его в своём хроме.
 
 Резерв, слот кнопки бокового меню, слот `+` и остаток ряда перетаскивают окно
 общим жестом хрома с порогом `4px` (`useChromeDragGesture`). Жест просит

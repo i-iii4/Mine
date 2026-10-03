@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChromeControl, ChromePlate } from "./ui/chrome-control";
 
@@ -27,7 +27,6 @@ export const MenuTextTrigger = React.forwardRef<HTMLButtonElement, MenuTextTrigg
     },
     ref,
   ) => {
-    const chromeLike = surface === "topChrome" || surface === "clipperHeader";
     const isClipperHeader = surface === "clipperHeader";
     const Plate = surface === "topChrome" ? ChromePlate : "span";
     const innerTextClass = surface === "clipperHeader" ? "text-foreground" : "text-muted-foreground";
@@ -66,7 +65,7 @@ export const MenuTextTrigger = React.forwardRef<HTMLButtonElement, MenuTextTrigg
               className={cn(
                 isClipperHeader
                   ? "min-w-0 max-w-full"
-                  : "min-w-0 max-w-full rounded-1 px-2 group-hover:bg-active group-hover:text-foreground group-data-[state=open]:bg-active group-data-[state=open]:text-foreground",
+                  : "min-w-0 max-w-full gap-1 rounded-1 px-2 group-hover:bg-active group-hover:text-foreground group-data-[state=open]:bg-active group-data-[state=open]:text-foreground",
                 innerTextClass,
                 keyboardFocus && "bg-active text-foreground",
               )}
@@ -74,13 +73,18 @@ export const MenuTextTrigger = React.forwardRef<HTMLButtonElement, MenuTextTrigg
               <span className="min-w-0 truncate text-left">
                 {label}
               </span>
+              {/* In the top chrome the chevron sits inside the pill, right
+                  after the name, and lights up with it. Closed it points
+                  right and turns down as the menu opens, as in the clipper. */}
+              {showChevron && surface === "topChrome" ? (
+                <ChevronRight
+                  data-menu-chevron=""
+                  className="size-[13px] shrink-0 transition-transform duration-150 group-data-[state=open]:rotate-90 motion-reduce:transition-none"
+                />
+              ) : null}
             </Plate>
-            {showChevron && chromeLike ? (
-              isClipperHeader ? (
-                <ChevronRight className="size-[13px] shrink-0 text-muted-foreground transition-transform duration-150 group-hover:text-foreground group-data-[state=open]:rotate-90 group-data-[state=open]:text-foreground" />
-              ) : (
-                <ChevronDown className="size-[13px] shrink-0 text-muted-foreground group-hover:text-foreground group-data-[state=open]:text-foreground" />
-              )
+            {showChevron && isClipperHeader ? (
+              <ChevronRight className="size-[13px] shrink-0 text-muted-foreground transition-transform duration-150 group-hover:text-foreground group-data-[state=open]:rotate-90 group-data-[state=open]:text-foreground" />
             ) : null}
           </>
         )}

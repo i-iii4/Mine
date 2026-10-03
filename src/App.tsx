@@ -4183,7 +4183,8 @@ export function AppWithVault({
           {/* No traffic-light reserve: the window's buttons live in the tab
               bar above this page (SPEC_TABS.md, В43). */}
           <div data-tauri-drag-region className="flex flex-1 items-center px-3" />
-          <AppSettingsMenu onSelectSection={handleOpenSettings} />
+          {/* A tab's settings menu lives in its window's tab bar (В43). */}
+          {!tabPage && <AppSettingsMenu onSelectSection={handleOpenSettings} />}
         </ChromeRow>
         <div className="flex min-h-0 flex-1 items-center justify-center">
           <p className="text-sm text-muted-foreground">Opening vault…</p>
@@ -4407,7 +4408,8 @@ export function AppWithVault({
           ) : (
             <div data-tauri-drag-region className="h-full min-w-0 flex-1" />
           )}
-          <AppSettingsMenu onSelectSection={handleOpenSettings} />
+          {/* A tab's settings menu lives in its window's tab bar (В43). */}
+          {!tabPage && <AppSettingsMenu onSelectSection={handleOpenSettings} />}
         </div>
       </ChromeRow>
 
