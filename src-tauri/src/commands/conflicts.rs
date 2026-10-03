@@ -108,7 +108,7 @@ fn resolve_vault_conflict_unannounced(
 
 /// [`resolve_vault_conflict_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15).
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(async, rename_all = "snake_case")]
 pub fn resolve_vault_conflict(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, base_slug: String, conflict_slug: String, action: ResolveAction) -> Result<(), CommandError> {
     let announcing = webview.clone();
     let outcome = resolve_vault_conflict_unannounced(webview, app, state, base_slug, conflict_slug, action);

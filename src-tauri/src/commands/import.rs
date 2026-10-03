@@ -28,7 +28,7 @@ pub struct ArenaChannelInfo {
 // ─── Commands ────────────────────────────────────────────────────────────────
 
 /// Fetch public channels for an Are.na user.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_arena_channels(username: String) -> Result<Vec<ArenaChannelInfo>, CommandError> {
     let channels = arena_api::fetch_user_channels(&username)?;
 
@@ -101,7 +101,7 @@ fn import_arena_channels_unannounced(
 
 /// [`import_arena_channels_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn import_arena_channels(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, channels: Vec<ImportChannelRequest>) -> Result<Vec<importer::ImportChannelResult>, CommandError> {
     let announcing = webview.clone();
     let outcome = import_arena_channels_unannounced(webview, app, state, channels);

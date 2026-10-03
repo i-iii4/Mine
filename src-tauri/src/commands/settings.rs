@@ -723,7 +723,7 @@ pub(crate) fn promote_orphan_media_inner(
 
 /// Turn orphan media of the chosen space into cards (SPEC_TABS.md, В71); the
 /// tabs of that space hear of the new cards (В15).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn promote_orphan_media(
     app: AppHandle,
     state: State<'_, AppState>,

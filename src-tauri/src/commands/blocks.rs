@@ -569,7 +569,7 @@ fn create_block_unannounced(
 
 /// [`create_block_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15).
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(async, rename_all = "snake_case")]
 pub fn create_block(webview: tauri::Webview, state: State<'_, AppState>, params: CreateBlockParams) -> Result<IndexedBlock, CommandError> {
     let announcing = webview.clone();
     let outcome = create_block_unannounced(webview, state, params);
@@ -869,7 +869,7 @@ fn rename_media_asset_unannounced(
 
 /// [`rename_media_asset_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15).
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(async, rename_all = "snake_case")]
 pub fn rename_media_asset(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, params: RenameMediaAssetParams) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
     let announcing = webview.clone();
     let outcome = rename_media_asset_unannounced(webview, app, state, params);
@@ -942,7 +942,7 @@ fn delete_media_asset_unannounced(
 
 /// [`delete_media_asset_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15).
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(async, rename_all = "snake_case")]
 pub fn delete_media_asset(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, media_ref: String) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
     let announcing = webview.clone();
     let outcome = delete_media_asset_unannounced(webview, app, state, media_ref);
@@ -1009,7 +1009,7 @@ fn remove_media_asset_from_card_unannounced(
 
 /// [`remove_media_asset_from_card_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15).
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(async, rename_all = "snake_case")]
 pub fn remove_media_asset_from_card(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, params: RemoveMediaAssetFromCardParams) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
     let announcing = webview.clone();
     let outcome = remove_media_asset_from_card_unannounced(webview, app, state, params);
@@ -1064,7 +1064,7 @@ fn delete_source_video_unannounced(
 
 /// [`delete_source_video_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15).
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(async, rename_all = "snake_case")]
 pub fn delete_source_video(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, slug: String) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
     let announcing = webview.clone();
     let outcome = delete_source_video_unannounced(webview, app, state, slug);
@@ -1965,7 +1965,7 @@ fn rename_block_file_unannounced(
 
 /// [`rename_block_file_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15).
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(async, rename_all = "snake_case")]
 pub fn rename_block_file(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, old_slug: String, new_stem: String) -> Result<RenameBlockResult, RenameBlockError> {
     let announcing = webview.clone();
     let outcome = rename_block_file_unannounced(webview, app, state, old_slug, new_stem);
@@ -2027,7 +2027,7 @@ fn delete_block_unannounced(
 
 /// [`delete_block_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15).
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(async, rename_all = "snake_case")]
 pub fn delete_block(webview: tauri::Webview, state: State<'_, AppState>, slug: String, delete_unused_media: Option<bool>) -> Result<bool, CommandError> {
     let announcing = webview.clone();
     let outcome = delete_block_unannounced(webview, state, slug, delete_unused_media);
@@ -2241,7 +2241,7 @@ fn merge_blocks_unannounced(
 
 /// [`merge_blocks_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15).
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(async, rename_all = "snake_case")]
 pub fn merge_blocks(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, ordered_slugs: Vec<String>) -> Result<MergeBlocksResult, MergeBlocksError> {
     let announcing = webview.clone();
     let outcome = merge_blocks_unannounced(webview, app, state, ordered_slugs);

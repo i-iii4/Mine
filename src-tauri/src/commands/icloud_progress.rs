@@ -49,7 +49,7 @@ const UNKNOWN: IcloudDownloadProgress = IcloudDownloadProgress {
 /// `media_ref` is whatever the card carries — a vault-relative path or a bare
 /// basename — resolved with the same rules the asset protocol uses, so the
 /// probe watches the same file the card paints.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn icloud_download_progress(
     webview: tauri::Webview,
     app: AppHandle,

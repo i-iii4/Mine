@@ -55,7 +55,7 @@ fn add_tag_unannounced(webview: tauri::Webview, state: State<'_, AppState>, slug
 
 /// [`add_tag_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_tag(webview: tauri::Webview, state: State<'_, AppState>, slug: String, tag: String) -> Result<(), CommandError> {
     let announcing = webview.clone();
     let outcome = add_tag_unannounced(webview, state, slug, tag);
@@ -83,7 +83,7 @@ fn remove_tag_unannounced(
 
 /// [`remove_tag_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_tag(webview: tauri::Webview, state: State<'_, AppState>, slug: String, tag: String) -> Result<(), CommandError> {
     let announcing = webview.clone();
     let outcome = remove_tag_unannounced(webview, state, slug, tag);
@@ -298,7 +298,7 @@ fn rename_tag_unannounced(
 
 /// [`rename_tag_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15).
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(async, rename_all = "snake_case")]
 pub fn rename_tag(webview: tauri::Webview, state: State<'_, AppState>, old_tag: String, new_tag: String) -> Result<(), CommandError> {
     let announcing = webview.clone();
     let renamed = super::effects::SpaceRename::collection(&old_tag, &new_tag);
@@ -333,7 +333,7 @@ fn delete_tag_from_all_unannounced(webview: tauri::Webview, state: State<'_, App
 
 /// [`delete_tag_from_all_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_tag_from_all(webview: tauri::Webview, state: State<'_, AppState>, tag: String) -> Result<(), CommandError> {
     let announcing = webview.clone();
     let outcome = delete_tag_from_all_unannounced(webview, state, tag);

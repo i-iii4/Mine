@@ -164,7 +164,7 @@ fn create_channel_unannounced(
 
 /// [`create_channel_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_channel(webview: tauri::Webview, state: State<'_, AppState>, tag: String, title: Option<String>) -> Result<ChannelDto, CommandError> {
     let announcing = webview.clone();
     let outcome = create_channel_unannounced(webview, state, tag, title);
@@ -389,7 +389,7 @@ fn rename_channel_unannounced(
 
 /// [`rename_channel_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15).
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(async, rename_all = "snake_case")]
 pub fn rename_channel(webview: tauri::Webview, state: State<'_, AppState>, old_tag: String, new_tag: String) -> Result<ChannelDto, CommandError> {
     let announcing = webview.clone();
     let renamed = super::effects::SpaceRename::collection(&old_tag, &new_tag);
@@ -681,7 +681,7 @@ fn delete_channel_unannounced(webview: tauri::Webview, state: State<'_, AppState
 
 /// [`delete_channel_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_channel(webview: tauri::Webview, state: State<'_, AppState>, tag: String) -> Result<bool, CommandError> {
     let announcing = webview.clone();
     let outcome = delete_channel_unannounced(webview, state, tag);

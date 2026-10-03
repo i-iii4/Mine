@@ -84,7 +84,7 @@ pub struct TilePosterUpgrade {
 /// thumb from the sidebar never sees a half-written file. Emits
 /// `thumb:updated { slug }` on success so any `<img>` element pointing
 /// at `<slug>.jpg` can cache-bust itself.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_thumb(
     webview: tauri::Webview,
     app: AppHandle,
@@ -210,7 +210,7 @@ struct ThumbUpdatedPayload {
 /// Transport mirrors `save_thumb`: the JPEG is the raw request body while
 /// `poster_name` and `slug` ride in the percent-encoded `x-poster-name` and
 /// `x-slug` headers.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_tile_poster(
     webview: tauri::Webview,
     app: AppHandle,

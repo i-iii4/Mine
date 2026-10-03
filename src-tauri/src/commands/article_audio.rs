@@ -58,7 +58,7 @@ pub async fn generate_article_audio(
     Ok(ready)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_article_audio(
     webview: tauri::Webview,
     app: AppHandle,

@@ -303,4 +303,35 @@ mod tests {
             );
         }
     }
+
+    /// A command that writes waits for the space's lock and the index, which
+    /// background work may hold for seconds. A synchronous Tauri command runs
+    /// on the main thread and freezes every window meanwhile, so every
+    /// command that writes runs off it: an `async fn`, or `async` in its
+    /// attribute (SPEC_INTEGRATION.md, «Команды записи вне главного потока»).
+    #[test]
+    fn no_command_that_writes_runs_on_the_main_thread() {
+        let modules: Vec<String> = std::fs::read_dir(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands"),
+        )
+        .unwrap()
+        .map(|entry| std::fs::read_to_string(entry.unwrap().path()).unwrap())
+        .collect();
+        for (name, effect) in COMMAND_EFFECTS {
+            if *effect == Effect::Reads {
+                continue;
+            }
+            let off_main_thread = modules.iter().any(|text| {
+                if text.contains(&format!("pub async fn {name}(")) {
+                    return true;
+                }
+                let Some(start) = text.find(&format!("pub fn {name}(")) else {
+                    return false;
+                };
+                let attribute = text[..start].rfind("#[tauri::command").map(|at| &text[at..start]);
+                attribute.is_some_and(|attribute| attribute.starts_with("#[tauri::command(async"))
+            });
+            assert!(off_main_thread, "{name} writes but runs on the main thread");
+        }
+    }
 }

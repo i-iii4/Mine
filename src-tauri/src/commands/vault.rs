@@ -481,7 +481,7 @@ pub fn get_vault_write_layout(
 ///
 /// Existing files are never moved: this governs writes from here on. Reading
 /// stays recursive, so whatever is already on disk keeps working.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_vault_write_layout(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -516,7 +516,7 @@ pub fn set_vault_write_layout(
 }
 
 /// Create the standard folders in the current space and adopt them for writes.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn organize_vault_layout(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -651,7 +651,7 @@ pub fn get_vault_path(
 
 /// Start a background sync for the currently opened vault.
 /// Returns true if a new sync was started, false if one is already running.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn start_vault_sync(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>) -> Result<bool, CommandError> {
     let path = {
         let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
@@ -776,7 +776,7 @@ fn rebuild_index_projection(
 /// returns `0` without starting another worker. The guard is released
 /// either by the done-callback when the worker finishes or by the
 /// dropped closure if spawning the worker thread failed.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sweep_vault_thumbnails(
     webview: tauri::Webview,
     app: AppHandle,
