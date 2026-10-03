@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 
 use crate::commands::state::{schedule_preview_reconcile, AppState};
 #[cfg(test)]
@@ -156,7 +156,7 @@ fn reconcile_scan(
             None => {
                 if article_audio::delete_all_artifacts(vault, slug).unwrap_or(false) {
                     if let Some(ref app) = app {
-                        emit_article_audio_updated(app, slug);
+                        emit_article_audio_updated(app, vault, slug);
                     }
                 }
             }
@@ -295,7 +295,7 @@ fn spawn_thumb_jobs_worker(
                     app.as_ref().map_or(true, |handle| {
                         handle
                             .state::<AppState>()
-                            .is_current_vault(vault.root())
+                            .is_open_root(vault.root())
                     })
                 };
                 // One snapshot of the vault's file list for every job: a
@@ -458,7 +458,9 @@ pub fn index_md_file(
                     base_slug
                 );
                 if let Some(app) = app {
-                    let _ = app.emit(
+                    let _ = crate::commands::space_events::emit_to_vault(
+                        app,
+                        vault,
                         "vault-conflict-detected",
                         VaultConflictPayload {
                             base_slug,
@@ -475,7 +477,7 @@ pub fn index_md_file(
 
     if outcome.audio_invalidated {
         if let Some(app) = app {
-            emit_article_audio_updated(app, &outcome.slug);
+            emit_article_audio_updated(app, vault, &outcome.slug);
         }
     }
 
@@ -503,7 +505,9 @@ pub fn index_md_file(
                 && job.block.frontmatter.thumbnail.is_none()
                 && thumbnails::find_first_local_media(&job.block.body, thumbnails::is_image_ext)
                     .is_none();
-            let _ = app.emit(
+            let _ = crate::commands::space_events::emit_to_vault(
+                app,
+                vault,
                 "block:added",
                 BlockAddedPayload {
                     slug: job.block.slug.clone(),
@@ -597,7 +601,9 @@ fn emit_thumb_events(
     if source == thumbnails::ThumbSource::None {
         return;
     }
-    let _ = app.emit(
+    let _ = crate::commands::space_events::emit_to_vault(
+        app,
+        vault,
         "thumb:updated",
         ThumbUpdatedPayload {
             path: vault.root().to_string_lossy().into_owned(),
@@ -638,7 +644,9 @@ fn emit_thumb_events(
             )
         })
         .unwrap_or_default();
-    let _ = app.emit(
+    crate::commands::space_events::emit_to_lead(
+        app,
+        vault.root(),
         "thumb:upgrade-requested",
         ThumbUpgradeRequestedPayload {
             slug: block.slug.clone(),
@@ -1013,14 +1021,18 @@ fn announce_removal(app: Option<&AppHandle>, vault: &VaultLayout, pending: &Pend
     let Some(app) = app else {
         return;
     };
-    let _ = app.emit(
+    let _ = crate::commands::space_events::emit_to_vault(
+        app,
+        vault,
         "block:removed",
         BlockRemovedPayload {
             slug: pending.slug.clone(),
             tags: pending.tags.clone(),
         },
     );
-    let _ = app.emit(
+    let _ = crate::commands::space_events::emit_to_vault(
+        app,
+        vault,
         "thumb:updated",
         ThumbUpdatedPayload {
             path: vault.root().to_string_lossy().into_owned(),
@@ -1136,7 +1148,9 @@ fn perform_rename_match(
                 );
             }
             if let Some(app) = app {
-                let _ = app.emit(
+                let _ = crate::commands::space_events::emit_to_vault(
+                    app,
+                    vault,
                     "block:renamed",
                     BlockRenamedPayload {
                         old_slug: pending.slug.clone(),
@@ -1392,7 +1406,9 @@ fn spawn_thumb_from_picture(
                 return;
             }
             if let Some(app) = app {
-                let _ = app.emit(
+                crate::commands::space_events::emit_to_space_path(
+                    &app,
+                    &event_path.clone(),
                     "thumb:updated",
                     ThumbUpdatedPayload {
                         path: event_path,
@@ -1453,8 +1469,10 @@ fn file_saved_at(path: &Path) -> DateTime {
         .unwrap_or_else(|_| DateTime::new("1970-01-01T00:00:00Z").unwrap())
 }
 
-fn emit_article_audio_updated(app: &AppHandle, slug: &str) {
-    let _ = app.emit(
+fn emit_article_audio_updated(app: &AppHandle, vault: &VaultLayout, slug: &str) {
+    let _ = crate::commands::space_events::emit_to_vault(
+        app,
+        vault,
         ARTICLE_AUDIO_UPDATED_EVENT,
         ArticleAudioUpdatedPayload {
             slug: slug.to_string(),

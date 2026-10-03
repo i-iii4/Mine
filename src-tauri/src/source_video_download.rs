@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 
 use crate::commands::blocks::{MediaAssetActionError, MediaAssetMutationResult};
 use crate::domain::vault::VaultLayout;
@@ -213,36 +213,35 @@ pub struct SourceVideoDownloads {
     jobs: Mutex<HashMap<JobKey, Arc<Job>>>,
 }
 
-/// The open space, as the download will need it at the end.
-fn open_space(app: &AppHandle) -> Option<VaultLayout> {
-    let state = app.state::<crate::commands::state::AppState>();
-    let vault_state = state.vault_state.lock().ok()?;
-    vault_state.as_ref().map(|vs| vs.vault.clone())
-}
-
 impl SourceVideoDownloads {
-    fn job(&self, app: &AppHandle, slug: &str) -> Option<Arc<Job>> {
-        let key = JobKey::new(&open_space(app)?, slug);
+    fn job(&self, vault: &VaultLayout, slug: &str) -> Option<Arc<Job>> {
+        let key = JobKey::new(vault, slug);
         let jobs = self.jobs.lock().ok()?;
         jobs.get(&key).cloned()
     }
 
-    /// The last known state of a card's download in the open space, if one
-    /// ran in this session.
-    pub fn status(&self, app: &AppHandle, slug: &str) -> Option<DownloadState> {
-        let job = self.job(app, slug)?;
+    /// The last known state of a card's download in the space `vault`, if
+    /// one ran in this session.
+    pub fn status(&self, vault: &VaultLayout, slug: &str) -> Option<DownloadState> {
+        let job = self.job(vault, slug)?;
         let state = job.state.lock().ok()?;
         Some(state.clone())
     }
 
-    /// Start downloading the card's source video, unless it already is.
+    /// Start downloading the card's source video into the space `vault`,
+    /// unless it already is.
     ///
     /// # Errors
-    /// The card has no YouTube source, or no space is open.
-    pub fn start(&self, app: &AppHandle, slug: String, source_url: &str) -> Result<(), String> {
+    /// The card has no YouTube source.
+    pub fn start(
+        &self,
+        app: &AppHandle,
+        vault: VaultLayout,
+        slug: String,
+        source_url: &str,
+    ) -> Result<(), String> {
         let source = mine_core::domain::video_source::parse_youtube_source(source_url)
             .ok_or_else(|| "The card has no supported source video.".to_owned())?;
-        let vault = open_space(app).ok_or_else(|| "No space is open.".to_owned())?;
         let key = JobKey::new(&vault, &slug);
         let job = {
             let mut jobs = self.jobs.lock().map_err(|error| error.to_string())?;
@@ -266,10 +265,17 @@ impl SourceVideoDownloads {
             job
         };
         emit(app, &job, &slug, DownloadState::Preparing);
+        // The download keeps its space open until it ends (SPEC_TABS.md, В8).
+        let lease = {
+            let state = app.state::<crate::commands::state::AppState>();
+            let open = state.spaces.by_root(job.vault.root());
+            open.map(|space| state.spaces.lease(space.vault_id()))
+        };
         let app = app.clone();
         std::thread::Builder::new()
             .name("source-video-download".into())
             .spawn(move || {
+                let _lease = lease;
                 let outcome = run(&app, &job, &slug, &source.video_id);
                 let state = match outcome {
                     _ if job.cancel.load(Ordering::SeqCst) => DownloadState::Cancelled,
@@ -282,10 +288,10 @@ impl SourceVideoDownloads {
         Ok(())
     }
 
-    /// Stop a running download of a card in the open space; its partial
+    /// Stop a running download of a card in the space `vault`; its partial
     /// files are removed.
-    pub fn cancel(&self, app: &AppHandle, slug: &str) {
-        if let Some(job) = self.job(app, slug) {
+    pub fn cancel(&self, vault: &VaultLayout, slug: &str) {
+        if let Some(job) = self.job(vault, slug) {
             job.stop();
         }
     }
@@ -392,16 +398,25 @@ fn report(app: &AppHandle, slug: &str, job: &Job, state: DownloadState) {
     emit(app, job, slug, state);
 }
 
-/// Progress is shown for the open space only: a card of the same name in
-/// another space is another card.
+/// Progress reaches the tabs of the job's space only: a card of the same
+/// name in another space is another card (SPEC_TABS.md, В21).
 fn emit(app: &AppHandle, job: &Job, slug: &str, state: DownloadState) {
-    let shown = open_space(app).is_some_and(|open| same_space(&open, &job.vault));
-    if !shown {
+    let space = app
+        .state::<crate::commands::state::AppState>()
+        .spaces
+        .by_root(job.vault.root());
+    let Some(space) = space else {
+        return;
+    };
+    if !space.layout().is_ok_and(|open| same_space(&open, &job.vault)) {
         return;
     }
-    if let Err(error) = app.emit(EVENT, DownloadEvent { slug: slug.to_owned(), state }) {
-        log::warn!("source video download event: {error}");
-    }
+    crate::commands::space_events::emit_to_space(
+        app,
+        space.vault_id(),
+        EVENT,
+        DownloadEvent { slug: slug.to_owned(), state },
+    );
 }
 
 /// Removes the working directory whatever happens.

@@ -5,7 +5,7 @@
 use tauri::{AppHandle, State};
 
 use crate::commands::state::{
-    current_vault_layout, ensure_vault_fresh, read_owned_projection, read_owned_search_projection,
+    tab_layout, ensure_vault_fresh, read_owned_projection, read_owned_search_projection,
     AppState, CommandError,
 };
 use crate::domain::search::parse_search_query;
@@ -19,11 +19,12 @@ const MAX_SEARCH_PAGE_SIZE: usize = 200;
 /// Search blocks by free text and/or filters (type:image, tag:design).
 #[tauri::command]
 pub async fn search(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
     query: String,
 ) -> Result<Vec<IndexedBlock>, CommandError> {
-    let vault = current_vault_layout(&state)?;
+    let vault = tab_layout(&state, &webview)?;
     ensure_vault_fresh(&app, vault.clone()).await?;
     let parsed = parse_search_query(&query);
     tauri::async_runtime::spawn_blocking(move || -> Result<Vec<IndexedBlock>, CommandError> {
@@ -35,6 +36,7 @@ pub async fn search(
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn search_grid_blocks(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
     current_tag: Option<String>,
@@ -42,7 +44,7 @@ pub async fn search_grid_blocks(
     limit: Option<usize>,
     cursor: Option<search_projection::SearchPageToken>,
 ) -> Result<search_projection::SearchSnapshot, CommandError> {
-    let vault = current_vault_layout(&state)?;
+    let vault = tab_layout(&state, &webview)?;
     ensure_vault_fresh(&app, vault.clone()).await?;
     let page_limit = limit
         .unwrap_or(MAX_SEARCH_PAGE_SIZE)

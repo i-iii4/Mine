@@ -8,7 +8,7 @@ use crate::commands::article_audio_desktop::{
     ensure_desktop_article_audio_config, generate_desktop_article_audio,
     resolve_article_audio_helper_path,
 };
-use crate::commands::state::{current_vault_layout, AppState, CommandError};
+use crate::commands::state::{tab_layout, AppState, CommandError};
 use crate::util::now_iso8601;
 use crate::domain::vault::validate_slug;
 use crate::storage::article_audio::{self, ArticleAudioState};
@@ -22,23 +22,26 @@ struct ArticleAudioUpdatedPayload {
 
 #[tauri::command]
 pub fn get_article_audio_state(
+    webview: tauri::Webview,
     state: State<'_, AppState>,
     slug: String,
 ) -> Result<ArticleAudioState, CommandError> {
     validate_slug(&slug).map_err(|e| CommandError::Internal(e.to_string()))?;
-    let vault = current_vault_layout(&state)?;
+    let vault = tab_layout(&state, &webview)?;
     let block = article_audio::load_block_for_audio(&vault, &slug)?;
     Ok(article_audio::resolve_state_for_block(&vault, &block)?)
 }
 
 #[tauri::command]
 pub async fn generate_article_audio(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
     slug: String,
 ) -> Result<ArticleAudioState, CommandError> {
     validate_slug(&slug).map_err(|e| CommandError::Internal(e.to_string()))?;
-    let vault = current_vault_layout(&state)?;
+    let vault = tab_layout(&state, &webview)?;
+    let event_vault = vault.clone();
     let helper_path = resolve_article_audio_helper_path(&app)?;
     let desktop_config = ensure_desktop_article_audio_config(&app)?;
     let task_slug = slug.clone();
@@ -51,12 +54,13 @@ pub async fn generate_article_audio(
     .map_err(|e| {
         CommandError::Internal(format!("generate_article_audio task join failed: {e}"))
     })??;
-    emit_audio_updated(&app, &slug);
+    emit_audio_updated(&app, &event_vault, &slug);
     Ok(ready)
 }
 
 #[tauri::command]
 pub fn delete_article_audio(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
     slug: String,
@@ -64,16 +68,17 @@ pub fn delete_article_audio(
     let _write = crate::storage::source_mutation::begin_write()
         .map_err(|error| CommandError::Internal(error.to_string()))?;
     validate_slug(&slug).map_err(|e| CommandError::Internal(e.to_string()))?;
-    let vault = current_vault_layout(&state)?;
+    let vault = tab_layout(&state, &webview)?;
     let removed = article_audio::delete_all_artifacts(&vault, &slug)?;
     if removed {
-        emit_audio_updated(&app, &slug);
+        emit_audio_updated(&app, &vault, &slug);
     }
     Ok(())
 }
 
 #[tauri::command]
 pub fn set_article_audio_position(
+    webview: tauri::Webview,
     state: State<'_, AppState>,
     slug: String,
     position_ms: u64,
@@ -81,7 +86,7 @@ pub fn set_article_audio_position(
     completed: bool,
 ) -> Result<(), CommandError> {
     validate_slug(&slug).map_err(|e| CommandError::Internal(e.to_string()))?;
-    let vault = current_vault_layout(&state)?;
+    let vault = tab_layout(&state, &webview)?;
     let completed_at = completed.then(now_iso8601);
     let next_state = article_audio::update_playback_position(
         &vault,
@@ -95,8 +100,10 @@ pub fn set_article_audio_position(
     Ok(())
 }
 
-fn emit_audio_updated(app: &AppHandle, slug: &str) {
-    let _ = app.emit(
+fn emit_audio_updated(app: &AppHandle, vault: &crate::domain::vault::VaultLayout, slug: &str) {
+    let _ = crate::commands::space_events::emit_to_vault(
+        app,
+        vault,
         ARTICLE_AUDIO_UPDATED_EVENT,
         ArticleAudioUpdatedPayload {
             slug: slug.to_string(),

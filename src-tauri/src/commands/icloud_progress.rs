@@ -51,12 +51,14 @@ const UNKNOWN: IcloudDownloadProgress = IcloudDownloadProgress {
 /// probe watches the same file the card paints.
 #[tauri::command]
 pub fn icloud_download_progress(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
     media_ref: String,
 ) -> Result<IcloudDownloadProgress, CommandError> {
     let vault_root = {
-        let vault_state = state
+        let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
+        let vault_state = space
             .vault_state
             .lock()
             .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;

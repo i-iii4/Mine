@@ -1459,6 +1459,19 @@
       "requirement": "DESIGN_SYSTEM.md#Создание коллекции",
       "tests": ["src/components/Sidebar.test.tsx", "src/App.test.tsx", "src/lib/sidebarSearchMask.test.ts"],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src-tauri/src/commands/spaces.rs",
+        "src-tauri/src/commands/space_events.rs",
+        "src-tauri/src/commands/effects.rs",
+        "src-tauri/src/commands/cloud_recommendation.rs",
+        "src-tauri/src/commands/icloud_progress.rs",
+        "src-tauri/src/commands/import.rs"
+      ],
+      "requirement": "SPEC_TABS.md### Открытые пространства",
+      "tests": ["src-tauri/src/commands/spaces.rs", "src-tauri/src/commands/space_events.rs", "src-tauri/src/commands/effects.rs"],
+      "command": "test:rust"
     }
   ],
   "release": null

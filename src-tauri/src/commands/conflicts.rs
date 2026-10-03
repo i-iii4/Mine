@@ -8,9 +8,9 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, State};
 
-use crate::commands::state::{current_vault_layout, read_owned_projection, AppState, CommandError};
+use crate::commands::state::{tab_layout, read_owned_projection, AppState, CommandError};
 use crate::domain::block::{parse_markdown_document, ParsedMarkdownBlock};
 use crate::domain::vault::{validate_slug, VaultLayout};
 use crate::storage::source_mutation::{SourceFileWrite, StagedSourceMutation};
@@ -54,10 +54,11 @@ pub enum ResolveAction {
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn list_vault_conflicts(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Vec<VaultConflictItem>, CommandError> {
-    let vault = current_vault_layout(&state)?;
+    let vault = tab_layout(&state, &webview)?;
     tauri::async_runtime::spawn_blocking(move || {
         let rows = read_owned_projection(&app, &vault, index::list_vault_conflicts)?;
         Ok(rows.into_iter().map(VaultConflictItem::from).collect())
@@ -66,8 +67,8 @@ pub async fn list_vault_conflicts(
     .map_err(|error| CommandError::Internal(format!("conflict list task failed: {error}")))?
 }
 
-#[tauri::command(rename_all = "snake_case")]
-pub fn resolve_vault_conflict(
+fn resolve_vault_conflict_unannounced(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
     base_slug: String,
@@ -77,7 +78,8 @@ pub fn resolve_vault_conflict(
     validate_slug(&base_slug).map_err(|e| CommandError::Internal(e.to_string()))?;
     validate_slug(&conflict_slug).map_err(|e| CommandError::Internal(e.to_string()))?;
 
-    let vault_state = state
+    let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
+    let vault_state = space
         .vault_state
         .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
@@ -92,7 +94,7 @@ pub fn resolve_vault_conflict(
     resolution.apply(&vs.conn, &vs.vault)?;
 
     // Notify listeners so any open sidebar banner / dialog refreshes.
-    let _ = app.emit(
+    let _ = crate::commands::space_events::emit_to_vault(&app, &vs.vault, 
         "vault-conflict-resolved",
         VaultConflictItem {
             base_slug: base_slug.clone(),
@@ -102,6 +104,18 @@ pub fn resolve_vault_conflict(
     );
 
     Ok(())
+}
+
+/// [`resolve_vault_conflict_unannounced`], then the other tabs of the space hear of the
+/// change (SPEC_TABS.md, В15).
+#[tauri::command(rename_all = "snake_case")]
+pub fn resolve_vault_conflict(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, base_slug: String, conflict_slug: String, action: ResolveAction) -> Result<(), CommandError> {
+    let announcing = webview.clone();
+    let outcome = resolve_vault_conflict_unannounced(webview, app, state, base_slug, conflict_slug, action);
+    if outcome.is_ok() {
+        super::effects::space_changed_by_tab(&announcing, Vec::new());
+    }
+    outcome
 }
 
 /// The source writes and index changes of one chosen conflict version,

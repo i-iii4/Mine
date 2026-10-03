@@ -3,17 +3,18 @@
 // Contract: SPEC_INTEGRATION.md#commands/blocks
 
 use anyhow::bail;
+use crate::commands::effects::VaultChangedPayload;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 use std::process::Command;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 use thiserror::Error;
 
 use crate::commands::state::{
-    adopt_recovered_projection, current_vault_layout, ensure_vault_fresh, read_owned_projection,
+    adopt_recovered_projection, tab_layout, ensure_vault_fresh, read_owned_projection,
     AppState, CommandError,
 };
 use crate::domain::block::{
@@ -353,10 +354,6 @@ struct ThumbUpdatedPayload {
     is_text: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct VaultChangedPayload {
-    path: String,
-}
 
 struct PlannedBlockWrite {
     original_path: PathBuf,
@@ -409,11 +406,12 @@ const IN_APP_RENAME_WATCHER_SUPPRESSION_MS: u64 = 1500;
 
 /// List all blocks (lightweight — without body/description), ordered by saved_at descending.
 #[tauri::command]
-pub async fn list_blocks(app: AppHandle) -> Result<Vec<index::LightBlock>, CommandError> {
+pub async fn list_blocks(webview: tauri::Webview, app: AppHandle) -> Result<Vec<index::LightBlock>, CommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         let (original, result) = {
             let state = app.state::<AppState>();
-            let vault_state = state
+            let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
+            let vault_state = space
                 .vault_state
                 .lock()
                 .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
@@ -432,6 +430,7 @@ pub async fn list_blocks(app: AppHandle) -> Result<Vec<index::LightBlock>, Comma
 /// non-channel block count for the sidebar "Everything" row.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn list_grid_blocks(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
     current_tag: Option<String>,
@@ -449,7 +448,7 @@ pub async fn list_grid_blocks(
             limit.unwrap_or(200)
         ),
     );
-    let vault = current_vault_layout(&state)?;
+    let vault = tab_layout(&state, &webview)?;
     ensure_vault_fresh(&app, vault.clone()).await?;
     let page_offset = offset.unwrap_or(0);
     let page_limit = limit.unwrap_or(200).max(1);
@@ -486,6 +485,7 @@ pub async fn list_grid_blocks(
 /// Get a single block by slug.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn get_grid_rows(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
     path: String,
@@ -497,7 +497,7 @@ pub async fn get_grid_rows(
             "preview row batch exceeds 200".into(),
         ));
     }
-    let vault = current_vault_layout(&state)?;
+    let vault = tab_layout(&state, &webview)?;
     if vault.root().to_string_lossy() != path {
         return Err(CommandError::NoVault);
     }
@@ -513,12 +513,13 @@ pub async fn get_grid_rows(
 /// Get a single block by slug.
 #[tauri::command]
 pub async fn get_block(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
     slug: String,
 ) -> Result<Option<IndexedBlock>, CommandError> {
     validate_slug(&slug).map_err(|e| CommandError::Internal(e.to_string()))?;
-    let vault = current_vault_layout(&state)?;
+    let vault = tab_layout(&state, &webview)?;
     ensure_vault_fresh(&app, vault.clone()).await?;
     tauri::async_runtime::spawn_blocking(move || -> Result<Option<IndexedBlock>, CommandError> {
         read_owned_projection(&app, &vault, |conn| index::get_block(conn, &slug))
@@ -530,13 +531,14 @@ pub async fn get_block(
 /// Resolve a note wikilink for navigation using the current indexed sources.
 #[tauri::command]
 pub async fn resolve_note_link(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
     source_slug: String,
     raw_target: String,
 ) -> Result<Option<String>, CommandError> {
     validate_slug(&source_slug).map_err(|error| CommandError::Internal(error.to_string()))?;
-    let vault = current_vault_layout(&state)?;
+    let vault = tab_layout(&state, &webview)?;
     ensure_vault_fresh(&app, vault.clone()).await?;
     tauri::async_runtime::spawn_blocking(move || -> Result<Option<String>, CommandError> {
         read_owned_projection(&app, &vault, |conn| {
@@ -550,18 +552,31 @@ pub async fn resolve_note_link(
 }
 
 /// Create a new block through the shared capture rules and native transaction.
-#[tauri::command(rename_all = "snake_case")]
-pub fn create_block(
+fn create_block_unannounced(
+    webview: tauri::Webview,
     state: State<'_, AppState>,
     params: CreateBlockParams,
 ) -> Result<IndexedBlock, CommandError> {
-    let vault_state = state
+    let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
+    let vault_state = space
         .vault_state
         .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
     let vault = files::layout_for_new_files(&vs.vault)?;
     create_block_inner(&vs.conn, &vault, params)
+}
+
+/// [`create_block_unannounced`], then the other tabs of the space hear of the
+/// change (SPEC_TABS.md, В15).
+#[tauri::command(rename_all = "snake_case")]
+pub fn create_block(webview: tauri::Webview, state: State<'_, AppState>, params: CreateBlockParams) -> Result<IndexedBlock, CommandError> {
+    let announcing = webview.clone();
+    let outcome = create_block_unannounced(webview, state, params);
+    if outcome.is_ok() {
+        super::effects::space_changed_by_tab(&announcing, Vec::new());
+    }
+    outcome
 }
 
 /// The desktop create adapter, also exercised without constructing a GUI.
@@ -656,8 +671,8 @@ pub(crate) fn select_capture_name(
 }
 
 /// Extract a local inline image from an article body into a new image block.
-#[tauri::command(rename_all = "snake_case")]
-pub async fn extract_inline_media(
+async fn extract_inline_media_unannounced(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
     params: ExtractInlineMediaParams,
@@ -668,8 +683,9 @@ pub async fn extract_inline_media(
         target_tag,
     } = params;
     let vault = {
+        let space = state.space_for(webview.label()).ok_or(InlineMediaExtractError::NoVault)?;
         let vault_state =
-            state
+            space
                 .vault_state
                 .lock()
                 .map_err(|_| InlineMediaExtractError::Internal {
@@ -681,6 +697,7 @@ pub async fn extract_inline_media(
         files::layout_for_new_files(&vs.vault).map_err(internal_extract_error)?
     };
 
+    let event_vault = vault.clone();
     let indexed = tauri::async_runtime::spawn_blocking(move || {
         let conn = db::open_or_create(&vault.index_db_path()).map_err(internal_extract_error)?;
         extract_inline_media_inner(&conn, &vault, source_slug, media_ref, target_tag)
@@ -693,7 +710,7 @@ pub async fn extract_inline_media(
     let slug = indexed.slug.clone();
     let tags = indexed.tags.clone();
 
-    app.emit(
+    crate::commands::space_events::emit_to_vault(&app, &event_vault, 
         "block:added",
         BlockAddedPayload {
             slug: slug.clone(),
@@ -704,7 +721,7 @@ pub async fn extract_inline_media(
     .map_err(|e| InlineMediaExtractError::Internal {
         message: format!("failed to emit block:added: {e}"),
     })?;
-    app.emit(
+    crate::commands::space_events::emit_to_vault(&app, &event_vault, 
         "thumb:updated",
         ThumbUpdatedPayload {
             slug,
@@ -718,11 +735,23 @@ pub async fn extract_inline_media(
     Ok(indexed)
 }
 
+/// [`extract_inline_media_unannounced`], then the other tabs of the space hear of the
+/// change (SPEC_TABS.md, В15).
+#[tauri::command(rename_all = "snake_case")]
+pub async fn extract_inline_media(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, params: ExtractInlineMediaParams) -> Result<IndexedBlock, InlineMediaExtractError> {
+    let announcing = webview.clone();
+    let outcome = extract_inline_media_unannounced(webview, app, state, params).await;
+    if outcome.is_ok() {
+        super::effects::space_changed_by_tab(&announcing, Vec::new());
+    }
+    outcome
+}
+
 /// Create a new standalone media card for a local media file, then connect that
 /// media card to the selected collection. The source note/card is only
 /// provenance context and is never connected as a side effect.
-#[tauri::command(rename_all = "snake_case")]
-pub async fn create_media_asset_card(
+async fn create_media_asset_card_unannounced(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
     params: CreateMediaAssetCardParams,
@@ -733,8 +762,9 @@ pub async fn create_media_asset_card(
         source_slug,
     } = params;
     let vault = {
+        let space = state.space_for(webview.label()).ok_or(MediaAssetActionError::NoVault)?;
         let vault_state =
-            state
+            space
                 .vault_state
                 .lock()
                 .map_err(|_| MediaAssetActionError::Internal {
@@ -744,6 +774,7 @@ pub async fn create_media_asset_card(
         vs.vault.clone()
     };
 
+    let event_vault = vault.clone();
     let indexed = tauri::async_runtime::spawn_blocking(move || {
         let conn =
             db::open_or_create(&vault.index_db_path()).map_err(internal_media_asset_error)?;
@@ -754,7 +785,7 @@ pub async fn create_media_asset_card(
         message: format!("media asset create worker failed: {e}"),
     })??;
 
-    app.emit(
+    crate::commands::space_events::emit_to_vault(&app, &event_vault, 
         "block:added",
         BlockAddedPayload {
             slug: indexed.slug.clone(),
@@ -765,7 +796,7 @@ pub async fn create_media_asset_card(
     .map_err(|e| MediaAssetActionError::Internal {
         message: format!("failed to emit block:added: {e}"),
     })?;
-    app.emit(
+    crate::commands::space_events::emit_to_vault(&app, &event_vault, 
         "thumb:updated",
         ThumbUpdatedPayload {
             slug: indexed.slug.clone(),
@@ -779,10 +810,22 @@ pub async fn create_media_asset_card(
     Ok(indexed)
 }
 
+/// [`create_media_asset_card_unannounced`], then the other tabs of the space hear of the
+/// change (SPEC_TABS.md, В15).
+#[tauri::command(rename_all = "snake_case")]
+pub async fn create_media_asset_card(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, params: CreateMediaAssetCardParams) -> Result<IndexedBlock, MediaAssetActionError> {
+    let announcing = webview.clone();
+    let outcome = create_media_asset_card_unannounced(webview, app, state, params).await;
+    if outcome.is_ok() {
+        super::effects::space_changed_by_tab(&announcing, Vec::new());
+    }
+    outcome
+}
+
 /// Rename a local media file and rewrite media references. Card filenames,
 /// titles, H1s and URLs remain unchanged.
-#[tauri::command(rename_all = "snake_case")]
-pub fn rename_media_asset(
+fn rename_media_asset_unannounced(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
     params: RenameMediaAssetParams,
@@ -791,7 +834,8 @@ pub fn rename_media_asset(
         media_ref,
         new_stem,
     } = params;
-    let vault_state = state
+    let space = state.space_for(webview.label()).ok_or(MediaAssetActionError::NoVault)?;
+    let vault_state = space
         .vault_state
         .lock()
         .map_err(|_| MediaAssetActionError::Internal {
@@ -801,7 +845,7 @@ pub fn rename_media_asset(
 
     let result = rename_media_asset_inner(&state, &vs.conn, &vs.vault, media_ref, new_stem)?;
     for slug in &result.affected_slugs {
-        app.emit(
+        crate::commands::space_events::emit_to_vault(&app, &vs.vault, 
             "thumb:updated",
             ThumbUpdatedPayload {
                 slug: slug.clone(),
@@ -812,11 +856,9 @@ pub fn rename_media_asset(
             message: format!("failed to emit thumb:updated: {e}"),
         })?;
     }
-    app.emit(
+    crate::commands::space_events::emit_to_vault(&app, &vs.vault, 
         "vault-changed",
-        VaultChangedPayload {
-            path: vs.vault.root().to_string_lossy().to_string(),
-        },
+        VaultChangedPayload::from_outside(vs.vault.root().to_string_lossy().to_string()),
     )
     .map_err(|e| MediaAssetActionError::Internal {
         message: format!("failed to emit vault-changed: {e}"),
@@ -825,14 +867,28 @@ pub fn rename_media_asset(
     Ok(result)
 }
 
+/// [`rename_media_asset_unannounced`], then the other tabs of the space hear of the
+/// change (SPEC_TABS.md, В15).
+#[tauri::command(rename_all = "snake_case")]
+pub fn rename_media_asset(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, params: RenameMediaAssetParams) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
+    let announcing = webview.clone();
+    let outcome = rename_media_asset_unannounced(webview, app, state, params);
+    if outcome.is_ok() {
+        super::effects::space_changed_by_tab(&announcing, Vec::new());
+    }
+    outcome
+}
+
 /// Prepare a destructive media-file delete by listing every card/note whose
 /// Markdown currently references the selected local file.
 #[tauri::command(rename_all = "snake_case")]
 pub fn prepare_delete_media_asset(
+    webview: tauri::Webview,
     state: State<'_, AppState>,
     media_ref: String,
 ) -> Result<DeleteMediaAssetPlan, MediaAssetActionError> {
-    let vault_state = state
+    let space = state.space_for(webview.label()).ok_or(MediaAssetActionError::NoVault)?;
+    let vault_state = space
         .vault_state
         .lock()
         .map_err(|_| MediaAssetActionError::Internal {
@@ -845,13 +901,14 @@ pub fn prepare_delete_media_asset(
 
 /// Delete the selected media file and remove references to it from every
 /// parseable Markdown card/note. Cards and notes stay in place.
-#[tauri::command(rename_all = "snake_case")]
-pub fn delete_media_asset(
+fn delete_media_asset_unannounced(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
     media_ref: String,
 ) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
-    let vault_state = state
+    let space = state.space_for(webview.label()).ok_or(MediaAssetActionError::NoVault)?;
+    let vault_state = space
         .vault_state
         .lock()
         .map_err(|_| MediaAssetActionError::Internal {
@@ -861,7 +918,7 @@ pub fn delete_media_asset(
 
     let result = delete_media_asset_inner(&state, &vs.conn, &vs.vault, media_ref)?;
     for slug in &result.affected_slugs {
-        app.emit(
+        crate::commands::space_events::emit_to_vault(&app, &vs.vault, 
             "thumb:updated",
             ThumbUpdatedPayload {
                 slug: slug.clone(),
@@ -872,11 +929,9 @@ pub fn delete_media_asset(
             message: format!("failed to emit thumb:updated: {e}"),
         })?;
     }
-    app.emit(
+    crate::commands::space_events::emit_to_vault(&app, &vs.vault, 
         "vault-changed",
-        VaultChangedPayload {
-            path: vs.vault.root().to_string_lossy().to_string(),
-        },
+        VaultChangedPayload::from_outside(vs.vault.root().to_string_lossy().to_string()),
     )
     .map_err(|e| MediaAssetActionError::Internal {
         message: format!("failed to emit vault-changed: {e}"),
@@ -885,10 +940,22 @@ pub fn delete_media_asset(
     Ok(result)
 }
 
+/// [`delete_media_asset_unannounced`], then the other tabs of the space hear of the
+/// change (SPEC_TABS.md, В15).
+#[tauri::command(rename_all = "snake_case")]
+pub fn delete_media_asset(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, media_ref: String) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
+    let announcing = webview.clone();
+    let outcome = delete_media_asset_unannounced(webview, app, state, media_ref);
+    if outcome.is_ok() {
+        super::effects::space_changed_by_tab(&announcing, Vec::new());
+    }
+    outcome
+}
+
 /// Remove the selected media reference from one source card. The media file
 /// itself remains on disk, and every other card/note keeps its references.
-#[tauri::command(rename_all = "snake_case")]
-pub fn remove_media_asset_from_card(
+fn remove_media_asset_from_card_unannounced(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
     params: RemoveMediaAssetFromCardParams,
@@ -899,7 +966,8 @@ pub fn remove_media_asset_from_card(
         reference_kind,
         occurrence_index,
     } = params;
-    let vault_state = state
+    let space = state.space_for(webview.label()).ok_or(MediaAssetActionError::NoVault)?;
+    let vault_state = space
         .vault_state
         .lock()
         .map_err(|_| MediaAssetActionError::Internal {
@@ -917,7 +985,7 @@ pub fn remove_media_asset_from_card(
         occurrence_index,
     )?;
     for slug in &result.affected_slugs {
-        app.emit(
+        crate::commands::space_events::emit_to_vault(&app, &vs.vault, 
             "thumb:updated",
             ThumbUpdatedPayload {
                 slug: slug.clone(),
@@ -928,11 +996,9 @@ pub fn remove_media_asset_from_card(
             message: format!("failed to emit thumb:updated: {e}"),
         })?;
     }
-    app.emit(
+    crate::commands::space_events::emit_to_vault(&app, &vs.vault, 
         "vault-changed",
-        VaultChangedPayload {
-            path: vs.vault.root().to_string_lossy().to_string(),
-        },
+        VaultChangedPayload::from_outside(vs.vault.root().to_string_lossy().to_string()),
     )
     .map_err(|e| MediaAssetActionError::Internal {
         message: format!("failed to emit vault-changed: {e}"),
@@ -941,17 +1007,30 @@ pub fn remove_media_asset_from_card(
     Ok(result)
 }
 
+/// [`remove_media_asset_from_card_unannounced`], then the other tabs of the space hear of the
+/// change (SPEC_TABS.md, В15).
+#[tauri::command(rename_all = "snake_case")]
+pub fn remove_media_asset_from_card(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, params: RemoveMediaAssetFromCardParams) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
+    let announcing = webview.clone();
+    let outcome = remove_media_asset_from_card_unannounced(webview, app, state, params);
+    if outcome.is_ok() {
+        super::effects::space_changed_by_tab(&announcing, Vec::new());
+    }
+    outcome
+}
+
 /// Remove the card's source video: its YouTube `url`, its `thumbnail`
 /// property, and the poster file when no other card references it. Title,
 /// body, collections and the card file stay. See SPEC_MEDIA_ASSET_ACTIONS.md
 /// «Меню видео источника».
-#[tauri::command(rename_all = "snake_case")]
-pub fn delete_source_video(
+fn delete_source_video_unannounced(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
     slug: String,
 ) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
-    let vault_state = state
+    let space = state.space_for(webview.label()).ok_or(MediaAssetActionError::NoVault)?;
+    let vault_state = space
         .vault_state
         .lock()
         .map_err(|_| MediaAssetActionError::Internal {
@@ -961,7 +1040,7 @@ pub fn delete_source_video(
 
     let result = delete_source_video_inner(&state, &vs.conn, &vs.vault, &slug)?;
     for slug in &result.affected_slugs {
-        app.emit(
+        crate::commands::space_events::emit_to_vault(&app, &vs.vault, 
             "thumb:updated",
             ThumbUpdatedPayload {
                 slug: slug.clone(),
@@ -972,17 +1051,27 @@ pub fn delete_source_video(
             message: format!("failed to emit thumb:updated: {e}"),
         })?;
     }
-    app.emit(
+    crate::commands::space_events::emit_to_vault(&app, &vs.vault, 
         "vault-changed",
-        VaultChangedPayload {
-            path: vs.vault.root().to_string_lossy().to_string(),
-        },
+        VaultChangedPayload::from_outside(vs.vault.root().to_string_lossy().to_string()),
     )
     .map_err(|e| MediaAssetActionError::Internal {
         message: format!("failed to emit vault-changed: {e}"),
     })?;
 
     Ok(result)
+}
+
+/// [`delete_source_video_unannounced`], then the other tabs of the space hear of the
+/// change (SPEC_TABS.md, В15).
+#[tauri::command(rename_all = "snake_case")]
+pub fn delete_source_video(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, slug: String) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
+    let announcing = webview.clone();
+    let outcome = delete_source_video_unannounced(webview, app, state, slug);
+    if outcome.is_ok() {
+        super::effects::space_changed_by_tab(&announcing, Vec::new());
+    }
+    outcome
 }
 
 /// Publish a downloaded source video into the vault and embed it under the
@@ -1006,7 +1095,7 @@ pub(crate) fn attach_downloaded_source_video(
         return Ok(published.result);
     };
     for slug in &published.result.affected_slugs {
-        app.emit(
+        crate::commands::space_events::emit_to_vault(&app, &vault, 
             "thumb:updated",
             ThumbUpdatedPayload {
                 slug: slug.clone(),
@@ -1017,11 +1106,9 @@ pub(crate) fn attach_downloaded_source_video(
             message: format!("failed to emit thumb:updated: {e}"),
         })?;
     }
-    app.emit(
+    crate::commands::space_events::emit_to_vault(&app, &vault, 
         "vault-changed",
-        VaultChangedPayload {
-            path: open_root.to_string_lossy().to_string(),
-        },
+        VaultChangedPayload::from_outside(open_root.to_string_lossy().to_string()),
     )
     .map_err(|e| MediaAssetActionError::Internal {
         message: format!("failed to emit vault-changed: {e}"),
@@ -1047,28 +1134,31 @@ fn publish_downloaded_source_video(
     video_id: &str,
     downloaded: &Path,
 ) -> Result<PublishedSourceVideo, MediaAssetActionError> {
-    let vault_state = state
-        .vault_state
-        .lock()
-        .map_err(|_| MediaAssetActionError::Internal {
-            message: "vault state mutex poisoned".into(),
-        })?;
     // The open session outlives its folder until the folder watch notices: a
     // disconnected disk still leaves the space "open". Only a folder still
     // there takes the video through the session; otherwise the closed-space
-    // path keeps it for the space (`SPEC_AUDIT_FIXES.md`, Ф9, Г2.2).
-    if let Some(vs) = vault_state.as_ref().filter(|vs| {
-        crate::source_video_download::same_space(&vs.vault, vault)
-            && !crate::storage::root_guard::root_gone(&vs.vault)
-    }) {
-        let result =
-            attach_downloaded_source_video_inner(state, &vs.conn, &vs.vault, slug, video_id, downloaded)?;
-        return Ok(PublishedSourceVideo {
-            result,
-            open_root: Some(vs.vault.root().to_path_buf()),
-        });
+    // path keeps it for the space (`SPEC_AUDIT_FIXES.md`, Ф9, Г2.2). Any open
+    // space may be the one, not only a current one (SPEC_TABS.md, В7).
+    for space in state.spaces.all() {
+        let vault_state = space
+            .vault_state
+            .lock()
+            .map_err(|_| MediaAssetActionError::Internal {
+                message: "vault state mutex poisoned".into(),
+            })?;
+        if let Some(vs) = vault_state.as_ref().filter(|vs| {
+            crate::source_video_download::same_space(&vs.vault, vault)
+                && !crate::storage::root_guard::root_gone(&vs.vault)
+        }) {
+            let result = attach_downloaded_source_video_inner(
+                state, &vs.conn, &vs.vault, slug, video_id, downloaded,
+            )?;
+            return Ok(PublishedSourceVideo {
+                result,
+                open_root: Some(vs.vault.root().to_path_buf()),
+            });
+        }
     }
-    drop(vault_state);
     Ok(PublishedSourceVideo {
         result: attach_into_closed_space(state, vault, slug, video_id, downloaded)?,
         open_root: None,
@@ -1118,10 +1208,12 @@ fn attach_into_closed_space(
 /// intentionally separate from Copy Path, which copies a plain string path.
 #[tauri::command(rename_all = "snake_case")]
 pub fn copy_media_asset_to_clipboard(
+    webview: tauri::Webview,
     state: State<'_, AppState>,
     media_ref: String,
 ) -> Result<(), MediaAssetActionError> {
-    let vault_state = state
+    let space = state.space_for(webview.label()).ok_or(MediaAssetActionError::NoVault)?;
+    let vault_state = space
         .vault_state
         .lock()
         .map_err(|_| MediaAssetActionError::Internal {
@@ -1139,8 +1231,8 @@ pub fn copy_media_asset_to_clipboard(
     copy_media_path_to_clipboard(&media_path, &media_ref)
 }
 
-#[tauri::command(rename_all = "snake_case")]
-pub async fn extract_text_selection(
+async fn extract_text_selection_unannounced(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
     params: ExtractTextSelectionParams,
@@ -1157,8 +1249,9 @@ pub async fn extract_text_selection(
         reason: format!("invalid source slug: {e}"),
     })?;
     let vault = {
+        let space = state.space_for(webview.label()).ok_or(TextSelectionExtractError::NoVault)?;
         let vault_state =
-            state
+            space
                 .vault_state
                 .lock()
                 .map_err(|_| TextSelectionExtractError::Internal {
@@ -1177,6 +1270,7 @@ pub async fn extract_text_selection(
         )
         .map_err(internal_text_selection_error)?;
 
+    let event_vault = vault.clone();
     let indexed = tauri::async_runtime::spawn_blocking(move || {
         let conn =
             db::open_or_create(&vault.index_db_path()).map_err(internal_text_selection_error)?;
@@ -1199,7 +1293,7 @@ pub async fn extract_text_selection(
     let slug = indexed.slug.clone();
     let tags = indexed.tags.clone();
 
-    app.emit(
+    crate::commands::space_events::emit_to_vault(&app, &event_vault, 
         "block:added",
         BlockAddedPayload {
             slug: slug.clone(),
@@ -1210,7 +1304,7 @@ pub async fn extract_text_selection(
     .map_err(|e| TextSelectionExtractError::Internal {
         message: format!("failed to emit block:added: {e}"),
     })?;
-    app.emit(
+    crate::commands::space_events::emit_to_vault(&app, &event_vault, 
         "thumb:updated",
         ThumbUpdatedPayload {
             slug,
@@ -1224,8 +1318,20 @@ pub async fn extract_text_selection(
     Ok(indexed)
 }
 
+/// [`extract_text_selection_unannounced`], then the other tabs of the space hear of the
+/// change (SPEC_TABS.md, В15).
 #[tauri::command(rename_all = "snake_case")]
-pub async fn delete_text_selection(
+pub async fn extract_text_selection(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, params: ExtractTextSelectionParams) -> Result<IndexedBlock, TextSelectionExtractError> {
+    let announcing = webview.clone();
+    let outcome = extract_text_selection_unannounced(webview, app, state, params).await;
+    if outcome.is_ok() {
+        super::effects::space_changed_by_tab(&announcing, Vec::new());
+    }
+    outcome
+}
+
+async fn delete_text_selection_unannounced(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
     params: DeleteTextSelectionParams,
@@ -1241,8 +1347,9 @@ pub async fn delete_text_selection(
         reason: format!("invalid source slug: {e}"),
     })?;
     let vault = {
+        let space = state.space_for(webview.label()).ok_or(TextSelectionExtractError::NoVault)?;
         let vault_state =
-            state
+            space
                 .vault_state
                 .lock()
                 .map_err(|_| TextSelectionExtractError::Internal {
@@ -1261,6 +1368,7 @@ pub async fn delete_text_selection(
         )
         .map_err(internal_text_selection_error)?;
 
+    let event_vault = vault.clone();
     let indexed = tauri::async_runtime::spawn_blocking(move || {
         let conn =
             db::open_or_create(&vault.index_db_path()).map_err(internal_text_selection_error)?;
@@ -1279,7 +1387,7 @@ pub async fn delete_text_selection(
         message: format!("text selection deletion worker failed: {e}"),
     })??;
 
-    app.emit(
+    crate::commands::space_events::emit_to_vault(&app, &event_vault, 
         "thumb:updated",
         ThumbUpdatedPayload {
             slug: indexed.slug.clone(),
@@ -1291,6 +1399,18 @@ pub async fn delete_text_selection(
     })?;
 
     Ok(indexed)
+}
+
+/// [`delete_text_selection_unannounced`], then the other tabs of the space hear of the
+/// change (SPEC_TABS.md, В15).
+#[tauri::command(rename_all = "snake_case")]
+pub async fn delete_text_selection(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, params: DeleteTextSelectionParams) -> Result<IndexedBlock, TextSelectionExtractError> {
+    let announcing = webview.clone();
+    let outcome = delete_text_selection_unannounced(webview, app, state, params).await;
+    if outcome.is_ok() {
+        super::effects::space_changed_by_tab(&announcing, Vec::new());
+    }
+    outcome
 }
 
 fn extract_inline_media_inner(
@@ -1813,8 +1933,8 @@ fn delete_text_selection_inner(
 /// filename, rewrites block wikilinks and Mine-owned media references across
 /// the vault, migrates derived artifacts, and preserves the existing DB row by
 /// renaming its slug instead of creating a new block.
-#[tauri::command(rename_all = "snake_case")]
-pub fn rename_block_file(
+fn rename_block_file_unannounced(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
     old_slug: String,
@@ -1824,7 +1944,8 @@ pub fn rename_block_file(
         reason: e.to_string(),
     })?;
 
-    let vault_state = state
+    let space = state.space_for(webview.label()).ok_or(RenameBlockError::NoVault)?;
+    let vault_state = space
         .vault_state
         .lock()
         .map_err(|_| RenameBlockError::Internal {
@@ -1842,15 +1963,31 @@ pub fn rename_block_file(
     )
 }
 
+/// [`rename_block_file_unannounced`], then the other tabs of the space hear of the
+/// change (SPEC_TABS.md, В15).
+#[tauri::command(rename_all = "snake_case")]
+pub fn rename_block_file(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, old_slug: String, new_stem: String) -> Result<RenameBlockResult, RenameBlockError> {
+    let announcing = webview.clone();
+    let outcome = rename_block_file_unannounced(webview, app, state, old_slug, new_stem);
+    if let Ok(result) = &outcome {
+        super::effects::space_changed_by_tab(
+            &announcing,
+            vec![super::effects::SpaceRename::card(&result.old_slug, &result.new_slug)],
+        );
+    }
+    outcome
+}
+
 /// Prepare a user-visible deletion plan for a block.
 #[tauri::command]
 pub async fn prepare_delete_block(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
     slug: String,
 ) -> Result<DeleteBlockPlan, CommandError> {
     validate_slug(&slug).map_err(|e| CommandError::Internal(e.to_string()))?;
-    let vault = current_vault_layout(&state)?;
+    let vault = tab_layout(&state, &webview)?;
     tauri::async_runtime::spawn_blocking(move || {
         let (block, blocks) = super::state::read_owned_projection(&app, &vault, |conn| {
             Ok((index::get_block(conn, &slug)?, index::list_blocks(conn)?))
@@ -1866,13 +2003,14 @@ pub async fn prepare_delete_block(
 }
 
 /// Delete a block: remove .md, selected unused media, derived artifacts, and index row.
-#[tauri::command(rename_all = "snake_case")]
-pub fn delete_block(
+fn delete_block_unannounced(
+    webview: tauri::Webview,
     state: State<'_, AppState>,
     slug: String,
     delete_unused_media: Option<bool>,
 ) -> Result<bool, CommandError> {
-    let vault_state = state
+    let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
+    let vault_state = space
         .vault_state
         .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
@@ -1887,13 +2025,25 @@ pub fn delete_block(
     )
 }
 
+/// [`delete_block_unannounced`], then the other tabs of the space hear of the
+/// change (SPEC_TABS.md, В15).
+#[tauri::command(rename_all = "snake_case")]
+pub fn delete_block(webview: tauri::Webview, state: State<'_, AppState>, slug: String, delete_unused_media: Option<bool>) -> Result<bool, CommandError> {
+    let announcing = webview.clone();
+    let outcome = delete_block_unannounced(webview, state, slug, delete_unused_media);
+    if outcome.is_ok() {
+        super::effects::space_changed_by_tab(&announcing, Vec::new());
+    }
+    outcome
+}
+
 /// Delete a selection while retaining all media, in one rollback-safe batch.
-#[tauri::command]
-pub async fn delete_blocks(app: AppHandle, slugs: Vec<String>) -> Result<usize, CommandError> {
-    let expected_vault = current_vault_layout(&app.state::<AppState>())?;
+async fn delete_blocks_unannounced(webview: tauri::Webview, app: AppHandle, slugs: Vec<String>) -> Result<usize, CommandError> {
+    let expected_vault = tab_layout(&app.state::<AppState>(), &webview)?;
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let guard = state
+        let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
+        let guard = space
             .vault_state
             .lock()
             .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
@@ -1907,6 +2057,18 @@ pub async fn delete_blocks(app: AppHandle, slugs: Vec<String>) -> Result<usize, 
     })
     .await
     .map_err(|error| CommandError::Internal(error.to_string()))?
+}
+
+/// [`delete_blocks_unannounced`], then the other tabs of the space hear of the
+/// change (SPEC_TABS.md, В15).
+#[tauri::command]
+pub async fn delete_blocks(webview: tauri::Webview, app: AppHandle, slugs: Vec<String>) -> Result<usize, CommandError> {
+    let announcing = webview.clone();
+    let outcome = delete_blocks_unannounced(webview, app, slugs).await;
+    if outcome.is_ok() {
+        super::effects::space_changed_by_tab(&announcing, Vec::new());
+    }
+    outcome
 }
 
 pub(crate) fn delete_blocks_inner(
@@ -2029,13 +2191,14 @@ pub(crate) fn delete_block_inner(
 
 /// Merge selected cards into one new article card while preserving media files
 /// and rewriting external card-to-card references to the new card.
-#[tauri::command(rename_all = "snake_case")]
-pub fn merge_blocks(
+fn merge_blocks_unannounced(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
     ordered_slugs: Vec<String>,
 ) -> Result<MergeBlocksResult, MergeBlocksError> {
-    let vault_state = state
+    let space = state.space_for(webview.label()).ok_or(MergeBlocksError::NoVault)?;
+    let vault_state = space
         .vault_state
         .lock()
         .map_err(|_| MergeBlocksError::Internal {
@@ -2046,7 +2209,7 @@ pub fn merge_blocks(
     let mutation = merge_blocks_inner(Some(&state), &vs.conn, &vault, ordered_slugs)?;
     let result = mutation.result;
 
-    app.emit(
+    crate::commands::space_events::emit_to_vault(&app, &vault, 
         "block:added",
         BlockAddedPayload {
             slug: result.merged_slug.clone(),
@@ -2055,7 +2218,7 @@ pub fn merge_blocks(
         },
     )
     .map_err(internal_merge_error)?;
-    app.emit(
+    crate::commands::space_events::emit_to_vault(&app, &vault, 
         "thumb:updated",
         ThumbUpdatedPayload {
             slug: result.merged_slug.clone(),
@@ -2064,18 +2227,28 @@ pub fn merge_blocks(
     )
     .map_err(internal_merge_error)?;
     for event in mutation.removed_events {
-        app.emit("block:removed", event)
+        crate::commands::space_events::emit_to_vault(&app, &vault, "block:removed", event)
             .map_err(internal_merge_error)?;
     }
-    app.emit(
+    crate::commands::space_events::emit_to_vault(&app, &vault, 
         "vault-changed",
-        VaultChangedPayload {
-            path: vs.vault.root().to_string_lossy().to_string(),
-        },
+        VaultChangedPayload::from_outside(vs.vault.root().to_string_lossy().to_string()),
     )
     .map_err(internal_merge_error)?;
 
     Ok(result)
+}
+
+/// [`merge_blocks_unannounced`], then the other tabs of the space hear of the
+/// change (SPEC_TABS.md, В15).
+#[tauri::command(rename_all = "snake_case")]
+pub fn merge_blocks(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, ordered_slugs: Vec<String>) -> Result<MergeBlocksResult, MergeBlocksError> {
+    let announcing = webview.clone();
+    let outcome = merge_blocks_unannounced(webview, app, state, ordered_slugs);
+    if outcome.is_ok() {
+        super::effects::space_changed_by_tab(&announcing, Vec::new());
+    }
+    outcome
 }
 
 pub(crate) fn build_delete_block_plan(
@@ -4073,7 +4246,7 @@ pub(crate) fn rename_block_file_inner(
     }
 
     if let Some(app) = app {
-        let _ = app.emit(
+        let _ = crate::commands::space_events::emit_to_vault(&app, &vault, 
             "block:renamed",
             RenameBlockResult {
                 old_slug: old_slug.to_string(),
@@ -7564,7 +7737,7 @@ mod tests {
         persist_block(&conn, &second, &youtube_card("Film", "poster.jpg"));
         let card_before = std::fs::read(second.block_path("Film")).unwrap();
         let state = AppState::new();
-        *state.vault_state.lock().unwrap() = Some(crate::commands::state::VaultState {
+        state.open_space_for_test("main", crate::commands::state::VaultState {
             conn,
             vault: second.clone(),
         });
@@ -7594,7 +7767,7 @@ mod tests {
         let (vault, conn) = identified_vault(dir.path(), "0123456789abcdef0123456789abcdef");
         persist_block(&conn, &vault, &youtube_card("Film", "poster.jpg"));
         let state = AppState::new();
-        *state.vault_state.lock().unwrap() = Some(crate::commands::state::VaultState {
+        state.open_space_for_test("main", crate::commands::state::VaultState {
             conn,
             vault: vault.clone(),
         });
@@ -8178,7 +8351,7 @@ mod tests {
         persist_block(&conn, &second, &youtube_card("Film", "poster.jpg"));
         let card_before = std::fs::read(second.block_path("Film")).unwrap();
         let state = AppState::new();
-        *state.vault_state.lock().unwrap() = Some(crate::commands::state::VaultState {
+        state.open_space_for_test("main", crate::commands::state::VaultState {
             conn,
             vault: second.clone(),
         });

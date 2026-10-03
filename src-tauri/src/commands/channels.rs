@@ -8,7 +8,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Manager, State};
 
 use crate::commands::state::{
-    current_vault_layout, ensure_vault_fresh, read_owned_projection, AppState, CommandError,
+    tab_layout, ensure_vault_fresh, read_owned_projection, AppState, CommandError,
 };
 use crate::commands::tags::MembershipRewrite;
 use crate::domain::block::{
@@ -78,11 +78,12 @@ pub struct BlockCollection {
 /// List all channels with block counts.
 #[tauri::command]
 pub async fn list_channels(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Vec<ChannelDto>, CommandError> {
     append_startup_trace(&app, "list_channels", "start");
-    let vault = current_vault_layout(&state)?;
+    let vault = tab_layout(&state, &webview)?;
     ensure_vault_fresh(&app, vault.clone()).await?;
     let app_for_query = app.clone();
     let dtos =
@@ -98,11 +99,12 @@ pub async fn list_channels(
 
 #[tauri::command]
 pub async fn list_taxonomy_snapshot(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<TaxonomySnapshot, CommandError> {
     append_startup_trace(&app, "list_taxonomy_snapshot", "start");
-    let vault = current_vault_layout(&state)?;
+    let vault = tab_layout(&state, &webview)?;
     ensure_vault_fresh(&app, vault.clone()).await?;
     let app_for_query = app.clone();
     let snapshot =
@@ -143,20 +145,33 @@ pub async fn list_taxonomy_snapshot(
 }
 
 /// Create a promoted collection from a Markdown collection ref.
-#[tauri::command]
-pub fn create_channel(
+fn create_channel_unannounced(
+    webview: tauri::Webview,
     state: State<'_, AppState>,
     tag: String,
     title: Option<String>,
 ) -> Result<ChannelDto, CommandError> {
     let _ = title;
-    let vault_state = state
+    let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
+    let vault_state = space
         .vault_state
         .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
     let vault = files::layout_for_new_files(&vs.vault)?;
     create_channel_inner(&vs.conn, &vault, &tag)
+}
+
+/// [`create_channel_unannounced`], then the other tabs of the space hear of the
+/// change (SPEC_TABS.md, В15).
+#[tauri::command]
+pub fn create_channel(webview: tauri::Webview, state: State<'_, AppState>, tag: String, title: Option<String>) -> Result<ChannelDto, CommandError> {
+    let announcing = webview.clone();
+    let outcome = create_channel_unannounced(webview, state, tag, title);
+    if outcome.is_ok() {
+        super::effects::space_changed_by_tab(&announcing, Vec::new());
+    }
+    outcome
 }
 
 pub(crate) fn create_channel_inner(
@@ -226,18 +241,34 @@ pub struct ReorderItem {
 /// Off the main thread: it writes one document per moved collection, and a
 /// synchronous command held the window still until the last write landed,
 /// right at the moment of the drop.
-#[tauri::command]
-pub async fn reorder_channels(app: AppHandle, items: Vec<ReorderItem>) -> Result<(), CommandError> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        reorder_channels_blocking(&state, items)
-    })
+async fn reorder_channels_unannounced(
+    app: AppHandle,
+    webview: tauri::Webview,
+    items: Vec<ReorderItem>,
+) -> Result<(), CommandError> {
+    let space = crate::commands::state::tab_space(&app.state::<AppState>(), &webview)?;
+    tauri::async_runtime::spawn_blocking(move || reorder_channels_blocking(&space, items))
     .await
     .map_err(|error| CommandError::Internal(format!("reorder worker failed: {error}")))?
 }
 
-fn reorder_channels_blocking(state: &AppState, items: Vec<ReorderItem>) -> Result<(), CommandError> {
-    let vault_state = state
+/// [`reorder_channels_unannounced`], then the other tabs of the space hear of the
+/// change (SPEC_TABS.md, В15).
+#[tauri::command]
+pub async fn reorder_channels(app: AppHandle, webview: tauri::Webview, items: Vec<ReorderItem>) -> Result<(), CommandError> {
+    let announcing = webview.clone();
+    let outcome = reorder_channels_unannounced(app, webview, items).await;
+    if outcome.is_ok() {
+        super::effects::space_changed_by_tab(&announcing, Vec::new());
+    }
+    outcome
+}
+
+fn reorder_channels_blocking(
+    space: &crate::commands::state::OpenSpace,
+    items: Vec<ReorderItem>,
+) -> Result<(), CommandError> {
+    let vault_state = space
         .vault_state
         .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
@@ -341,18 +372,32 @@ fn reorder_channels_blocking(state: &AppState, items: Vec<ReorderItem>) -> Resul
 
 /// Rename a channel: update the tag in all blocks' frontmatter files,
 /// re-index them, and update the channel record in the database.
-#[tauri::command(rename_all = "snake_case")]
-pub fn rename_channel(
+fn rename_channel_unannounced(
+    webview: tauri::Webview,
     state: State<'_, AppState>,
     old_tag: String,
     new_tag: String,
 ) -> Result<ChannelDto, CommandError> {
-    let vault_state = state
+    let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
+    let vault_state = space
         .vault_state
         .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
     rename_channel_inner(Some(&state), &vs.conn, &vs.vault, &old_tag, &new_tag)
+}
+
+/// [`rename_channel_unannounced`], then the other tabs of the space hear of the
+/// change (SPEC_TABS.md, В15).
+#[tauri::command(rename_all = "snake_case")]
+pub fn rename_channel(webview: tauri::Webview, state: State<'_, AppState>, old_tag: String, new_tag: String) -> Result<ChannelDto, CommandError> {
+    let announcing = webview.clone();
+    let renamed = super::effects::SpaceRename::collection(&old_tag, &new_tag);
+    let outcome = rename_channel_unannounced(webview, state, old_tag, new_tag);
+    if outcome.is_ok() {
+        super::effects::space_changed_by_tab(&announcing, vec![renamed]);
+    }
+    outcome
 }
 
 pub(crate) fn rename_channel_inner(
@@ -568,11 +613,12 @@ pub struct ChannelPreviewsSnapshot {
 /// Max `limit` thumbnails per channel.
 #[tauri::command]
 pub async fn list_channel_previews(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
     limit: usize,
 ) -> Result<ChannelPreviewsSnapshot, CommandError> {
-    let vault = current_vault_layout(&state)?;
+    let vault = tab_layout(&state, &webview)?;
     ensure_vault_fresh(&app, vault.clone()).await?;
     tauri::async_runtime::spawn_blocking(
         move || -> Result<ChannelPreviewsSnapshot, CommandError> {
@@ -623,14 +669,26 @@ pub async fn list_channel_previews(
 
 /// Delete a channel: move its page to the Trash, as it was read, and remove
 /// its index entry. Blocks are not affected (tags stay in block frontmatter).
-#[tauri::command]
-pub fn delete_channel(state: State<'_, AppState>, tag: String) -> Result<bool, CommandError> {
-    let vault_state = state
+fn delete_channel_unannounced(webview: tauri::Webview, state: State<'_, AppState>, tag: String) -> Result<bool, CommandError> {
+    let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
+    let vault_state = space
         .vault_state
         .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
     delete_channel_inner(&vs.conn, &vs.vault, &tag)
+}
+
+/// [`delete_channel_unannounced`], then the other tabs of the space hear of the
+/// change (SPEC_TABS.md, В15).
+#[tauri::command]
+pub fn delete_channel(webview: tauri::Webview, state: State<'_, AppState>, tag: String) -> Result<bool, CommandError> {
+    let announcing = webview.clone();
+    let outcome = delete_channel_unannounced(webview, state, tag);
+    if outcome.is_ok() {
+        super::effects::space_changed_by_tab(&announcing, Vec::new());
+    }
+    outcome
 }
 
 pub(crate) fn delete_channel_inner(
@@ -813,7 +871,7 @@ mod tests {
         let conn = db::open_or_create(&vault.index_db_path()).unwrap();
         crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
         let state = AppState::new();
-        *state.vault_state.lock().unwrap() = Some(crate::commands::state::VaultState {
+        let main_space = state.open_space_for_test("main", crate::commands::state::VaultState {
             conn,
             vault: vault.clone(),
         });
@@ -821,7 +879,7 @@ mod tests {
 
         // Games moves above Cities; Art keeps its place.
         reorder_channels_blocking(
-            &state,
+            &main_space,
             vec![
                 ReorderItem { tag: "Art".into(), position: 0 },
                 ReorderItem { tag: "Games".into(), position: 1 },
@@ -1016,7 +1074,7 @@ mod tests {
         let conn = db::open_or_create(&vault.index_db_path()).unwrap();
         crate::storage::reconcile::reconcile_vault(&conn, vault).unwrap();
         let state = AppState::new();
-        *state.vault_state.lock().unwrap() = Some(crate::commands::state::VaultState {
+        state.open_space_for_test("main", crate::commands::state::VaultState {
             conn,
             vault: vault.clone(),
         });
@@ -1038,9 +1096,10 @@ mod tests {
         )
         .unwrap();
         let state = app_state(&vault);
+        let main_space = state.space_for("main").expect("main tab");
 
         reorder_channels_blocking(
-            &state,
+            &main_space,
             vec![
                 ReorderItem { tag: "Art".into(), position: 0 },
                 ReorderItem { tag: "Photos".into(), position: 1 },
@@ -1062,7 +1121,8 @@ mod tests {
         let card = "---\naliases:\n  - Sunset\n# kept\nMine Collections:\n  - \"[[Photos]]\"\n\nrating: 5\nsaved_at: 2026-04-25T14:00:40Z\n---\nBody\n";
         std::fs::write(vault.block_path("Cards/Sunset"), card).unwrap();
         let state = app_state(&vault);
-        let guard = state.vault_state.lock().unwrap();
+        let main_space = state.space_for("main").expect("main tab");
+        let guard = main_space.vault_state.lock().unwrap();
         let vs = guard.as_ref().unwrap();
 
         rename_channel_inner(None, &vs.conn, &vs.vault, "Photos", "Pictures").unwrap();
@@ -1088,7 +1148,8 @@ mod tests {
         let card = "---\n{aliases: [Sunset], Mine Collections: [\"[[Photos]]\"], saved_at: 2026-04-25T14:00:40Z}\n---\nBody\n";
         std::fs::write(vault.block_path("Cards/Sunset"), card).unwrap();
         let state = app_state(&vault);
-        let guard = state.vault_state.lock().unwrap();
+        let main_space = state.space_for("main").expect("main tab");
+        let guard = main_space.vault_state.lock().unwrap();
         let vs = guard.as_ref().unwrap();
 
         rename_channel_inner(None, &vs.conn, &vs.vault, "Photos", "Pictures").unwrap();
@@ -1115,7 +1176,8 @@ mod tests {
         let card = "---\n  Mine Collections: [\"[[Photos]]\"]\n  saved_at: 2026-04-25T14:00:40Z\n---\nBody\n";
         std::fs::write(vault.block_path("Cards/Sunset"), card).unwrap();
         let state = app_state(&vault);
-        let guard = state.vault_state.lock().unwrap();
+        let main_space = state.space_for("main").expect("main tab");
+        let guard = main_space.vault_state.lock().unwrap();
         let vs = guard.as_ref().unwrap();
 
         let refused = rename_channel_inner(None, &vs.conn, &vs.vault, "Photos", "Pictures");

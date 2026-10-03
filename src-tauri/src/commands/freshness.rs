@@ -1,9 +1,10 @@
 use std::collections::{BTreeSet, HashMap};
+use crate::commands::effects::VaultChangedPayload;
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 
 use super::preview_reconcile::schedule_preview_reconcile;
 use super::state::{AppState, CommandError};
@@ -80,10 +81,6 @@ struct VaultFreshnessChangedPayload {
     fast_path_hits: usize,
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct VaultChangedPayload {
-    path: String,
-}
 
 impl FreshnessCoordinator {
     pub fn route_action(&self, vault_path: &str) -> FreshnessRouteAction {
@@ -400,7 +397,9 @@ fn publish_freshness_outcome(
                         report.elapsed_ms,
                     ),
                 );
-                let _ = app.emit(
+                crate::commands::space_events::emit_to_space_path(
+                    app,
+                    &outcome.vault_path.clone(),
                     "vault-freshness-changed",
                     VaultFreshnessChangedPayload {
                         vault_path: outcome.vault_path.clone(),
@@ -424,11 +423,11 @@ fn publish_freshness_outcome(
                 );
             }
             if outcome.ran_reconcile && changed {
-                let _ = app.emit(
+                crate::commands::space_events::emit_to_space_path(
+                    app,
+                    &outcome.vault_path.clone(),
                     "vault-changed",
-                    VaultChangedPayload {
-                        path: outcome.vault_path,
-                    },
+                    VaultChangedPayload::from_outside(outcome.vault_path),
                 );
             }
         }
@@ -442,7 +441,9 @@ fn publish_freshness_outcome(
                         outcome.generation, outcome.joined_callers, message
                     ),
                 );
-                let _ = app.emit(
+                crate::commands::space_events::emit_to_space_path(
+                    app,
+                    &outcome.vault_path.clone(),
                     "vault-freshness-changed",
                     VaultFreshnessChangedPayload {
                         vault_path: outcome.vault_path.clone(),

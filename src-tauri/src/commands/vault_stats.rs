@@ -5,18 +5,19 @@
 
 use tauri::{AppHandle, State};
 
-use crate::commands::state::{current_vault_layout, ensure_vault_fresh, AppState, CommandError};
+use crate::commands::state::{tab_layout, ensure_vault_fresh, AppState, CommandError};
 use crate::storage::vault_stats;
 use crate::util::append_startup_trace;
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn get_vault_stats(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
     current_collection: Option<String>,
 ) -> Result<vault_stats::VaultStats, CommandError> {
     append_startup_trace(&app, "get_vault_stats", "start");
-    let vault = current_vault_layout(&state)?;
+    let vault = tab_layout(&state, &webview)?;
     ensure_vault_fresh(&app, vault.clone()).await?;
     let app_for_query = app.clone();
     let stats = tauri::async_runtime::spawn_blocking(

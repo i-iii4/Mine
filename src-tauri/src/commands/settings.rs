@@ -10,11 +10,11 @@ use std::path::Path;
 use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::commands::blocks::{collect_used_media_for_block, media_users_on_disk};
-use crate::commands::state::{current_vault_layout, AppState, CommandError, VaultState};
+use crate::commands::state::{chosen_space, AppState, CommandError, VaultState};
 use crate::commands::vault::{
     canonical_space_path, derived_store_root, initialize_new_space_layout, load_config,
     update_config,
@@ -32,7 +32,12 @@ pub fn open_settings_window(app: AppHandle, section: Option<String>) -> Result<(
         let _ = existing.set_focus();
         // Already open: the window itself moves to the asked-for section.
         if let Some(section) = section {
-            let _ = existing.emit("settings-section", section);
+            crate::commands::space_events::emit_to_labels(
+                &app,
+                [SETTINGS_WINDOW_LABEL],
+                "settings-section",
+                section,
+            );
         }
         return Ok(());
     }
@@ -123,18 +128,14 @@ pub fn forget_known_vault(
     state: State<'_, AppState>,
     path: String,
 ) -> Result<Vec<String>, CommandError> {
-    let active = {
-        let vault_state = state
-            .vault_state
-            .lock()
-            .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-        vault_state
-            .as_ref()
-            .map(|vs| vs.vault.root().to_string_lossy().to_string())
-    };
+    // A space some tab shows counts as the active one (SPEC_TABS.md, В70
+    // replaces this with moving its tabs to the space picker).
+    let shown = state
+        .spaces
+        .by_root(std::path::Path::new(&path))
+        .is_some_and(|space| !state.tabs.labels_of(space.vault_id()).is_empty());
     let current = known_vaults_from_config(&load_config(&app));
-    if active.as_deref() == Some(path.as_str()) && current.iter().any(|existing| existing != &path)
-    {
+    if shown && current.iter().any(|existing| existing != &path) {
         return Err(CommandError::Internal(
             "cannot forget the active space while others exist — switch space first".into(),
         ));
@@ -532,8 +533,9 @@ fn scan_orphans_with_referenced(
 pub async fn list_orphan_media(
     app: AppHandle,
     state: State<'_, AppState>,
+    vault_id: Option<String>,
 ) -> Result<OrphanMediaList, CommandError> {
-    let vault = current_vault_layout(&state)?;
+    let vault = chosen_space(&state, vault_id.as_deref())?.layout()?;
     tauri::async_runtime::spawn_blocking(move || {
         let vault_id = space_id_of(&vault)?;
         let blocks = super::state::read_owned_projection(&app, &vault, |conn| {
@@ -717,18 +719,27 @@ pub(crate) fn promote_orphan_media_inner(
     Ok(PromoteOrphanResult { created, skipped })
 }
 
+/// Turn orphan media of the chosen space into cards (SPEC_TABS.md, В71); the
+/// tabs of that space hear of the new cards (В15).
 #[tauri::command]
 pub fn promote_orphan_media(
+    app: AppHandle,
     state: State<'_, AppState>,
     request: OrphanMediaBatchRequest,
+    vault_id: Option<String>,
 ) -> Result<PromoteOrphanResult, CommandError> {
-    let vault_state = state
-        .vault_state
-        .lock()
-        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-    let file_names = orphan_request_files(&vs.vault, request)?;
-    promote_orphan_media_inner(vs, file_names)
+    let space = chosen_space(&state, vault_id.as_deref())?;
+    let result = {
+        let vault_state = space
+            .vault_state
+            .lock()
+            .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+        let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+        let file_names = orphan_request_files(&vs.vault, request)?;
+        promote_orphan_media_inner(vs, file_names)?
+    };
+    super::effects::space_changed_in(&app, &space);
+    Ok(result)
 }
 
 pub(crate) fn delete_orphan_media_inner(
@@ -774,19 +785,26 @@ fn delete_orphan_media_with(
     Ok(DeleteOrphanResult { deleted, skipped })
 }
 
+/// Delete orphan media of the chosen space (SPEC_TABS.md, В71); the tabs of
+/// that space hear of it (В15).
 #[tauri::command]
 pub async fn delete_orphan_media(
+    app: AppHandle,
     state: State<'_, AppState>,
     request: OrphanMediaBatchRequest,
+    vault_id: Option<String>,
 ) -> Result<DeleteOrphanResult, CommandError> {
-    let vault = current_vault_layout(&state)?;
-    tauri::async_runtime::spawn_blocking(move || {
+    let space = chosen_space(&state, vault_id.as_deref())?;
+    let vault = space.layout()?;
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let file_names = orphan_request_files(&vault, request)?;
         let vs = orphan_worker_state(vault)?;
         delete_orphan_media_inner(&vs, file_names)
     })
     .await
-    .map_err(|error| CommandError::Internal(error.to_string()))?
+    .map_err(|error| CommandError::Internal(error.to_string()))??;
+    super::effects::space_changed_in(&app, &space);
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -1069,7 +1087,7 @@ mod tests {
         write_media(&vs, "orphan.jpg");
         let state = AppState::new();
         let vault = vs.vault.clone();
-        *state.vault_state.lock().expect("lock") = Some(vs);
+        let main_space = state.open_space_for_test("main", vs);
         let (started_tx, started_rx) = std::sync::mpsc::channel();
         let (resume_tx, resume_rx) = std::sync::mpsc::channel();
         let worker = std::thread::spawn(move || {
@@ -1083,7 +1101,7 @@ mod tests {
         started_rx
             .recv_timeout(std::time::Duration::from_secs(5))
             .expect("worker running");
-        let available = state.vault_state.try_lock().is_ok();
+        let available = main_space.vault_state.try_lock().is_ok();
         resume_tx.send(()).expect("resume worker");
         worker.join().expect("join").expect("delete result");
         assert!(

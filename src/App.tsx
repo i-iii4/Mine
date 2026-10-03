@@ -514,16 +514,23 @@ export function App() {
       if (cancelled) return;
       setVaultPath(event.payload.path);
     });
+    // The space this tab shows moved and reopened at its new folder
+    // (SPEC_VAULT_LIFECYCLE.md, П30; SPEC_TABS.md, В73).
+    const unlistenMoved = listen<{ vault_id: string; path: string }>("space-moved", (event) => {
+      if (cancelled) return;
+      setVaultPath(event.payload.path);
+    });
     return () => {
       cancelled = true;
       unlisten.then((fn) => fn());
+      unlistenMoved.then((fn) => fn());
     };
   }, []);
 
   // The open space's folder disappeared while the app ran and could not be
   // found beside its old path: show the same screen as at startup
   // (SPEC_VAULT_LIFECYCLE.md, П15). A space found under a new name reopens
-  // through "vault-selected" above instead. The report names the lost space
+  // through "space-moved" above instead. The report names the lost space
   // and counts only while that space is the open one: a loss of A detected
   // after the switch to B leaves B on screen (SPEC_AUDIT_FIXES.md, В2.1).
   // Paths compare as spelled, like every space-scoped event here: the

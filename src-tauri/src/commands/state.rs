@@ -1,12 +1,12 @@
 // Shared application ownership for Tauri commands.
 //
-// Stateful workers live in dedicated coordinator modules. AppState only
-// composes them with active-vault, watcher, sync and suppression ownership.
+// Stateful workers live in dedicated coordinator modules. AppState composes
+// them with the open spaces, the tabs bound to them, sync and suppression
+// ownership (SPEC_TABS.md, В7 по В14).
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
@@ -18,6 +18,7 @@ pub use super::freshness::ensure_vault_fresh;
 use super::freshness::FreshnessCoordinator;
 pub use super::preview_reconcile::schedule_preview_reconcile;
 use super::preview_reconcile::PreviewReconcileCoordinator;
+pub use super::spaces::{OpenSpace, SpaceHost, SpaceLease, TabRegistry};
 pub use super::thumbnail_sweeps::SweepGuard;
 use super::thumbnail_sweeps::ThumbnailSweepCoordinator;
 use crate::domain::vault::VaultLayout;
@@ -36,11 +37,10 @@ pub struct SyncTracker {
 }
 
 pub struct AppState {
-    pub vault_state: Mutex<Option<VaultState>>,
-    pub(crate) vault_selection: Mutex<()>,
-    pub(crate) vault_publication: Mutex<()>,
-    vault_selection_request: AtomicU64,
-    pub watcher: Mutex<Option<VaultWatcher>>,
+    /// Every space open in the process (SPEC_TABS.md, В7).
+    pub spaces: SpaceHost,
+    /// Which space each tab shows (SPEC_TABS.md, В10).
+    pub tabs: TabRegistry,
     pub instance_guard: Mutex<Option<SingleInstanceGuard>>,
     pub sync_tracker: Mutex<SyncTracker>,
     pub suppressed_paths: Mutex<HashMap<PathBuf, Instant>>,
@@ -52,11 +52,8 @@ pub struct AppState {
 impl AppState {
     pub fn new() -> Self {
         Self {
-            vault_state: Mutex::new(None),
-            vault_selection: Mutex::new(()),
-            vault_publication: Mutex::new(()),
-            vault_selection_request: AtomicU64::new(0),
-            watcher: Mutex::new(None),
+            spaces: SpaceHost::default(),
+            tabs: TabRegistry::default(),
             instance_guard: Mutex::new(None),
             sync_tracker: Mutex::new(SyncTracker::default()),
             suppressed_paths: Mutex::new(HashMap::new()),
@@ -64,51 +61,6 @@ impl AppState {
             freshness: FreshnessCoordinator::default(),
             preview_reconcile: PreviewReconcileCoordinator::default(),
         }
-    }
-
-    /// Register user intent before any blocking disk work is queued.
-    pub(crate) fn begin_vault_selection(&self) -> u64 {
-        let _publication = self
-            .vault_publication
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        self.vault_selection_request.fetch_add(1, Ordering::SeqCst) + 1
-    }
-
-    /// A detached older load must never publish over the newest selection.
-    pub(crate) fn is_latest_vault_selection(&self, request: u64) -> bool {
-        self.vault_selection_request.load(Ordering::SeqCst) == request
-    }
-
-    /// Begin the selection that follows `request`, only while `request` is
-    /// still the newest one. The app reopening a space on its own (found
-    /// after a move) never overrides a choice the person made meanwhile
-    /// (`SPEC_AUDIT_FIXES.md`, В2.1); `None` when one was made.
-    pub(crate) fn begin_vault_selection_after(&self, request: u64) -> Option<u64> {
-        let _publication = self
-            .vault_publication
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let next = request.checked_add(1)?;
-        self.vault_selection_request
-            .compare_exchange(request, next, Ordering::SeqCst, Ordering::SeqCst)
-            .ok()
-            .map(|_| next)
-    }
-
-    /// Run `act` only while `request` is still the newest selection. A
-    /// selection begun meanwhile waits for `act` to finish, so nothing `act`
-    /// announces can land after a newer choice (`SPEC_AUDIT_FIXES.md`, В2.1).
-    pub(crate) fn while_latest_vault_selection<T>(
-        &self,
-        request: u64,
-        act: impl FnOnce() -> T,
-    ) -> Option<T> {
-        let _publication = self
-            .vault_publication
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        self.is_latest_vault_selection(request).then(act)
     }
 
     pub fn try_start_sweep(&self, vault: &VaultLayout) -> Option<SweepGuard> {
@@ -119,21 +71,15 @@ impl AppState {
         self.thumbnail_sweeps.take_pending()
     }
 
-    pub fn is_current_vault(&self, root: &Path) -> bool {
-        self.vault_state
-            .lock()
-            .map(|slot| {
-                slot.as_ref()
-                    .is_some_and(|state| state.vault.root() == root)
-            })
-            .unwrap_or(false)
+    /// Whether an open space serves `root`. Background work for a folder no
+    /// open space serves any more stops (SPEC_TABS.md, В14).
+    pub fn is_open_root(&self, root: &Path) -> bool {
+        self.spaces.is_open_root(root)
     }
 
-    pub(crate) fn current_vault_path(&self) -> Option<String> {
-        self.vault_state.lock().ok().and_then(|slot| {
-            slot.as_ref()
-                .map(|state| state.vault.root().to_string_lossy().into_owned())
-        })
+    /// The open space shown by the tab whose page is `label`.
+    pub fn space_for(&self, label: &str) -> Option<Arc<OpenSpace>> {
+        self.tabs.space_of(label)
     }
 
     pub fn set_instance_guard(&self, guard: SingleInstanceGuard) -> Result<(), CommandError> {
@@ -226,13 +172,26 @@ impl AppState {
     }
 }
 
-pub fn current_vault_layout(state: &AppState) -> Result<VaultLayout, CommandError> {
-    let vault_state = state
-        .vault_state
-        .lock()
-        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-    Ok(vs.vault.clone())
+/// The open space of the tab whose page called the command (SPEC_TABS.md,
+/// В11). A page that shows no space, or is not a tab, has none.
+pub fn tab_space(state: &AppState, webview: &tauri::Webview) -> Result<Arc<OpenSpace>, CommandError> {
+    state.space_for(webview.label()).ok_or(CommandError::NoVault)
+}
+
+/// The layout of the calling tab's space.
+pub fn tab_layout(state: &AppState, webview: &tauri::Webview) -> Result<VaultLayout, CommandError> {
+    tab_space(state, webview)?.layout()
+}
+
+/// The space a window other than a tab acts on: the one given by
+/// `vault_id`, else the space of the most recently used tab (SPEC_TABS.md,
+/// В71).
+pub fn chosen_space(state: &AppState, vault_id: Option<&str>) -> Result<Arc<OpenSpace>, CommandError> {
+    match vault_id {
+        Some(vault_id) => state.spaces.get(vault_id),
+        None => state.tabs.last_active_space(),
+    }
+    .ok_or(CommandError::NoVault)
 }
 
 /// Read a projection with one corruption recovery, adopting its new slot only
@@ -266,11 +225,11 @@ fn current_read_owner(
     app: &tauri::AppHandle,
     requested: &VaultLayout,
 ) -> Result<VaultLayout, CommandError> {
-    let current = current_vault_layout(&app.state::<AppState>())?;
-    if current.root() != requested.root() {
-        return Err(CommandError::NoVault);
-    }
-    Ok(current)
+    app.state::<AppState>()
+        .spaces
+        .by_root(requested.root())
+        .ok_or(CommandError::NoVault)?
+        .layout()
 }
 
 pub(crate) fn adopt_recovered_projection<T>(
@@ -295,8 +254,12 @@ pub(crate) fn adopt_recovered_session(
     recovered: VaultLayout,
     start_watcher: impl FnOnce(&VaultLayout) -> anyhow::Result<VaultWatcher>,
 ) -> Result<(), CommandError> {
+    let space = state
+        .spaces
+        .by_root(vault.root())
+        .ok_or(CommandError::NoVault)?;
     if recovered.index_db_path() == vault.index_db_path() {
-        let current = current_vault_layout(state)?;
+        let current = space.layout()?;
         return if same_projection_owner(&current, vault) {
             Ok(())
         } else {
@@ -311,11 +274,11 @@ pub(crate) fn adopt_recovered_session(
             None
         }
     };
-    let publication = state
-        .vault_publication
+    let publication = space
+        .publication
         .lock()
         .map_err(|_| CommandError::Internal("vault publication mutex poisoned".into()))?;
-    let mut active = state
+    let mut active = space
         .vault_state
         .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
@@ -339,7 +302,7 @@ pub(crate) fn adopt_recovered_session(
         drop(watcher);
         return Err(CommandError::NoVault);
     }
-    let mut watcher_slot = state
+    let mut watcher_slot = space
         .watcher
         .lock()
         .map_err(|_| CommandError::Internal("watcher mutex poisoned".into()))?;
@@ -412,6 +375,23 @@ pub fn now_saved_at() -> String {
 }
 
 #[cfg(test)]
+impl AppState {
+    /// Open `session` as the space of the tab `label`, the way an opening
+    /// publishes it. The space is keyed by its folder.
+    pub(crate) fn open_space_for_test(&self, label: &str, session: VaultState) -> Arc<OpenSpace> {
+        let vault_id = session.vault.root().to_string_lossy().into_owned();
+        let request = self.tabs.begin_selection(label);
+        let lease = self.spaces.lease(&vault_id);
+        let space = Arc::clone(lease.space());
+        space.publish(session, None);
+        self.tabs
+            .bind(label, request, lease)
+            .expect("a fresh selection binds");
+        space
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::{AppState, VaultState};
     use crate::domain::vault::VaultLayout;
@@ -420,28 +400,11 @@ mod tests {
     #[test]
     fn reliability_new_selection_detaches_previous_request() {
         let state = AppState::new();
-        let old = state.begin_vault_selection();
-        assert!(state.is_latest_vault_selection(old));
-        let latest = state.begin_vault_selection();
-        assert!(!state.is_latest_vault_selection(old));
-        assert!(state.is_latest_vault_selection(latest));
-    }
-
-    #[test]
-    fn a_reopen_of_its_own_never_overrides_a_newer_choice() {
-        let state = AppState::new();
-        let opened = state.begin_vault_selection();
-        let followed = state
-            .begin_vault_selection_after(opened)
-            .expect("nothing newer was chosen");
-        assert!(state.is_latest_vault_selection(followed));
-        assert_eq!(state.begin_vault_selection_after(opened), None);
-
-        let chosen = state.begin_vault_selection();
-        assert_eq!(state.begin_vault_selection_after(followed), None);
-        assert!(state.is_latest_vault_selection(chosen));
-        assert_eq!(state.while_latest_vault_selection(followed, || "announced"), None);
-        assert_eq!(state.while_latest_vault_selection(chosen, || "announced"), Some("announced"));
+        let old = state.tabs.begin_selection("main");
+        assert!(state.tabs.is_latest("main", old));
+        let latest = state.tabs.begin_selection("main");
+        assert!(!state.tabs.is_latest("main", old));
+        assert!(state.tabs.is_latest("main", latest));
     }
 
     #[test]
@@ -478,19 +441,19 @@ mod tests {
     }
 
     #[test]
-    fn background_work_matches_only_the_current_vault() {
+    fn background_work_matches_only_open_spaces() {
         let state = AppState::new();
         let source = tempfile::tempdir().unwrap();
         let derived = source.path().join("derived");
         let vault = VaultLayout::with_derived_root(source.path().to_path_buf(), derived);
         let conn = db::open_or_create(&vault.index_db_path()).unwrap();
-        *state.vault_state.lock().unwrap() = Some(VaultState {
+        state.open_space_for_test("main", VaultState {
             conn,
             vault: vault.clone(),
         });
 
-        assert!(state.is_current_vault(vault.root()));
-        assert!(!state.is_current_vault(&source.path().join("other")));
+        assert!(state.is_open_root(vault.root()));
+        assert!(!state.is_open_root(&source.path().join("other")));
     }
 }
 #[test]

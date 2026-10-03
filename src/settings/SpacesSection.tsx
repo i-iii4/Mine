@@ -215,9 +215,15 @@ export function SpacesSection() {
       if (cancelled) return;
       setActiveVault(event.payload.path);
     });
+    // The space moved to a new folder (SPEC_TABS.md, В73).
+    const unlistenMoved = listen<{ vault_id: string; path: string }>("space-moved", (event) => {
+      if (cancelled) return;
+      setActiveVault(event.payload.path);
+    });
     return () => {
       cancelled = true;
       unlisten.then((fn) => fn());
+      unlistenMoved.then((fn) => fn());
     };
   }, []);
 

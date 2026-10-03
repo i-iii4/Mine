@@ -29,24 +29,26 @@ fn never_show(app: &AppHandle) -> bool {
         .unwrap_or(false)
 }
 
-fn derived_root(state: &State<'_, AppState>) -> Result<std::path::PathBuf, CommandError> {
-    let vault_state = state
-        .vault_state
-        .lock()
-        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-    Ok(vs.vault.derived_root().to_path_buf())
+/// The derived store of the calling tab's space.
+fn derived_root(
+    webview: &tauri::Webview,
+    state: &State<'_, AppState>,
+) -> Result<std::path::PathBuf, CommandError> {
+    Ok(crate::commands::state::tab_layout(state, webview)?
+        .derived_root()
+        .to_path_buf())
 }
 
 #[tauri::command]
 pub fn cloud_recommendation_state(
     app: AppHandle,
+    webview: tauri::Webview,
     state: State<'_, AppState>,
 ) -> Result<CloudRecommendationState, CommandError> {
     if never_show(&app) {
         return Ok(CloudRecommendationState { due: false });
     }
-    let root = derived_root(&state)?;
+    let root = derived_root(&webview, &state)?;
     let log = cloud_waits::load(&root);
     Ok(CloudRecommendationState {
         due: cloud_waits::recommendation_due(&log),
@@ -58,10 +60,11 @@ pub fn cloud_recommendation_state(
 #[tauri::command]
 pub fn dismiss_cloud_recommendation(
     app: AppHandle,
+    webview: tauri::Webview,
     state: State<'_, AppState>,
     never_show_again: bool,
 ) -> Result<(), CommandError> {
-    let root = derived_root(&state)?;
+    let root = derived_root(&webview, &state)?;
     cloud_waits::dismiss(&root)
         .map_err(|error| CommandError::Internal(format!("failed to dismiss: {error:#}")))?;
     if never_show_again {

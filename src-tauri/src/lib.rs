@@ -50,8 +50,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(feature = "desktop")]
 use tauri::menu::{AboutMetadata, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 #[cfg(feature = "desktop")]
-use tauri::Emitter;
-#[cfg(feature = "desktop")]
 use tauri::Manager;
 
 #[cfg(feature = "desktop")]
@@ -188,14 +186,15 @@ pub fn run() {
         // focus away, and the rejection is invisible.
         .plugin(tauri_plugin_clipboard_manager::init())
         .on_menu_event(|app, event| match event.id().as_ref() {
+            // Menu commands act on the tab in use (SPEC_TABS.md, В21).
             MENU_ID_FIND_CARDS => {
-                let _ = app.emit("surface-search-shortcut", "main");
+                commands::space_events::emit_to_active_tab(app, "surface-search-shortcut", "main");
             }
             MENU_ID_FIND_CHANNELS => {
-                let _ = app.emit("surface-search-shortcut", "sidebar");
+                commands::space_events::emit_to_active_tab(app, "surface-search-shortcut", "sidebar");
             }
             MENU_ID_TOGGLE_SIDEBAR => {
-                let _ = app.emit("sidebar-toggle-shortcut", ());
+                commands::space_events::emit_to_active_tab(app, "sidebar-toggle-shortcut", ());
             }
             MENU_ID_SETTINGS => {
                 let _ = commands::settings::open_settings_window(app.clone(), None);
@@ -207,6 +206,21 @@ pub fn run() {
             // the clipper helper at once (SPEC_ONBOARDING.md, О5).
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Focused(true)) {
                 commands::startup::nudge_clipper_upkeep();
+            }
+            // The tab in focus becomes the one in use (SPEC_TABS.md, В21); a
+            // tab gone releases its space.
+            match event {
+                tauri::WindowEvent::Focused(true) => window
+                    .app_handle()
+                    .state::<AppState>()
+                    .tabs
+                    .touch(window.label()),
+                tauri::WindowEvent::Destroyed => window
+                    .app_handle()
+                    .state::<AppState>()
+                    .tabs
+                    .remove(window.label()),
+                _ => {}
             }
             if window.label() == "settings"
                 && matches!(

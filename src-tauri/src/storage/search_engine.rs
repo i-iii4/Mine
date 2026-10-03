@@ -1841,13 +1841,23 @@ static FASTEMBED_WARM_PROVIDER: FastEmbedSemanticProvider = FastEmbedSemanticPro
 #[cfg(all(not(target_os = "ios"), not(test)))]
 static FASTEMBED_MODEL: OnceLock<Mutex<Option<TextEmbedding>>> = OnceLock::new();
 
+/// The turns at the one model every open space shares.
+#[cfg(all(not(target_os = "ios"), not(test)))]
+static FASTEMBED_GATE: OnceLock<EmbeddingGate> = OnceLock::new();
+
 #[cfg(all(not(target_os = "ios"), not(test)))]
 impl FastEmbedSemanticProvider {
     fn embed_with_prefix(&self, prefix: &str, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        let usage = if prefix == "query" {
+            EmbeddingUse::Query
+        } else {
+            EmbeddingUse::Passages
+        };
+        let _turn = FASTEMBED_GATE.get_or_init(EmbeddingGate::default).acquire(usage)?;
         let model = FASTEMBED_MODEL.get_or_init(|| Mutex::new(None));
         let mut model = model
-            .try_lock()
-            .map_err(|_| anyhow::anyhow!("semantic model is warming"))?;
+            .lock()
+            .map_err(|_| anyhow::anyhow!("semantic model mutex poisoned"))?;
         if model.is_none() {
             if !self.allow_initialize {
                 anyhow::bail!("semantic model is not ready");
@@ -1873,6 +1883,113 @@ impl FastEmbedSemanticProvider {
             .as_mut()
             .expect("fastembed model is initialized")
             .embed(prefixed, Some(SEARCH_EMBEDDING_BATCH))?)
+    }
+}
+
+/// Longest a search waits for the embedding model while another space warms
+/// or indexes with it (SPEC_TABS.md, В13). Past it the search answers
+/// without the semantic layer.
+pub const EMBEDDING_MODEL_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Who asks for the embedding model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmbeddingUse {
+    /// A search a person waits on: served first, waits a bounded time.
+    Query,
+    /// Background warming and indexing: waits as long as it takes and lets
+    /// every waiting query go first.
+    Passages,
+}
+
+/// The model was busy past [`EMBEDDING_MODEL_WAIT`].
+#[derive(Debug, thiserror::Error)]
+#[error("the semantic model is busy with another space")]
+pub struct EmbeddingBusy;
+
+#[derive(Debug, Default)]
+struct GateState {
+    busy: bool,
+    queries_waiting: usize,
+}
+
+/// One embedding model shared by every open space, used in turn instead of
+/// failing whoever comes second (В13).
+#[derive(Debug, Default)]
+pub struct EmbeddingGate {
+    state: std::sync::Mutex<GateState>,
+    released: std::sync::Condvar,
+}
+
+/// A turn at the model; the next one starts when it drops.
+#[derive(Debug)]
+pub struct EmbeddingTurn<'a> {
+    gate: &'a EmbeddingGate,
+}
+
+impl Drop for EmbeddingTurn<'_> {
+    fn drop(&mut self) {
+        self.gate
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .busy = false;
+        self.gate.released.notify_all();
+    }
+}
+
+impl EmbeddingGate {
+    /// Wait for a turn at the model.
+    ///
+    /// # Errors
+    /// A query still waiting after [`EMBEDDING_MODEL_WAIT`].
+    pub fn acquire(&self, usage: EmbeddingUse) -> std::result::Result<EmbeddingTurn<'_>, EmbeddingBusy> {
+        self.acquire_within(usage, EMBEDDING_MODEL_WAIT)
+    }
+
+    fn acquire_within(
+        &self,
+        usage: EmbeddingUse,
+        wait: std::time::Duration,
+    ) -> std::result::Result<EmbeddingTurn<'_>, EmbeddingBusy> {
+        let deadline = std::time::Instant::now() + wait;
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if usage == EmbeddingUse::Query {
+            state.queries_waiting += 1;
+        }
+        loop {
+            let blocked = state.busy
+                || (usage == EmbeddingUse::Passages && state.queries_waiting > 0);
+            if !blocked {
+                if usage == EmbeddingUse::Query {
+                    state.queries_waiting -= 1;
+                }
+                state.busy = true;
+                return Ok(EmbeddingTurn { gate: self });
+            }
+            if usage == EmbeddingUse::Passages {
+                state = self
+                    .released
+                    .wait(state)
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                continue;
+            }
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                state.queries_waiting -= 1;
+                drop(state);
+                // A passage batch held back for this query may go now.
+                self.released.notify_all();
+                return Err(EmbeddingBusy);
+            }
+            state = self
+                .released
+                .wait_timeout(state, deadline - now)
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .0;
+        }
     }
 }
 
@@ -1917,6 +2034,55 @@ impl SemanticEmbeddingProvider for FastEmbedSemanticProvider {
             .into_iter()
             .next()
             .ok_or_else(|| anyhow::anyhow!("fastembed returned no query embedding"))
+    }
+}
+
+#[cfg(test)]
+mod embedding_gate_tests {
+    use super::{EmbeddingGate, EmbeddingUse};
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn a_waiting_query_goes_before_a_waiting_passage_batch() {
+        let gate = Arc::new(EmbeddingGate::default());
+        let warming = gate.acquire(EmbeddingUse::Passages).unwrap();
+        let order = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        let passages = {
+            let (gate, order) = (Arc::clone(&gate), Arc::clone(&order));
+            std::thread::spawn(move || {
+                let _turn = gate.acquire(EmbeddingUse::Passages).unwrap();
+                order.lock().unwrap().push("passages");
+            })
+        };
+        std::thread::sleep(Duration::from_millis(30));
+        let query = {
+            let (gate, order) = (Arc::clone(&gate), Arc::clone(&order));
+            std::thread::spawn(move || {
+                let _turn = gate.acquire(EmbeddingUse::Query).unwrap();
+                order.lock().unwrap().push("query");
+                std::thread::sleep(Duration::from_millis(20));
+            })
+        };
+        std::thread::sleep(Duration::from_millis(30));
+        drop(warming);
+        query.join().unwrap();
+        passages.join().unwrap();
+        assert_eq!(*order.lock().unwrap(), vec!["query", "passages"]);
+    }
+
+    #[test]
+    fn a_query_gives_up_after_the_wait_and_the_model_stays_usable() {
+        let gate = EmbeddingGate::default();
+        let held = gate.acquire(EmbeddingUse::Passages).unwrap();
+        let started = Instant::now();
+        assert!(gate
+            .acquire_within(EmbeddingUse::Query, Duration::from_millis(40))
+            .is_err());
+        assert!(started.elapsed() >= Duration::from_millis(40));
+        drop(held);
+        assert!(gate.acquire(EmbeddingUse::Query).is_ok());
     }
 }
 

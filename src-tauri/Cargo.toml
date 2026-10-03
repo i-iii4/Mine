@@ -35,7 +35,7 @@ fs2 = "0.4"
 libc = "0.2"
 
 # Tauri (desktop only)
-tauri = { version = "2", features = ["protocol-asset"], optional = true }
+tauri = { version = "2", features = ["protocol-asset", "unstable"], optional = true }
 tauri-plugin-log = { version = "2", optional = true }
 tauri-plugin-dialog = { version = "2", optional = true }
 tauri-plugin-opener = { version = "2", optional = true }

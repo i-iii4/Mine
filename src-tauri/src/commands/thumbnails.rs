@@ -10,7 +10,7 @@ use serde::Serialize;
 use std::borrow::Cow;
 use std::path::PathBuf;
 use tauri::ipc::{InvokeBody, Request};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, State};
 
 use crate::commands::state::{
     read_owned_projection, schedule_preview_reconcile, AppState, CommandError,
@@ -86,6 +86,7 @@ pub struct TilePosterUpgrade {
 /// at `<slug>.jpg` can cache-bust itself.
 #[tauri::command]
 pub fn save_thumb(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
     request: Request<'_>,
@@ -95,7 +96,8 @@ pub fn save_thumb(
     validate_thumb_write_request(&slug, &bytes)?;
 
     let vault = {
-        let vault_state = state
+        let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
+        let vault_state = space
             .vault_state
             .lock()
             .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
@@ -127,7 +129,7 @@ pub fn save_thumb(
     schedule_preview_reconcile(&app, vault.clone(), [slug.clone()], false)?;
 
     // save_thumb always writes JPEG — never a text placeholder.
-    let _ = app.emit(
+    let _ = crate::commands::space_events::emit_to_vault(&app, &vault, 
         "thumb:updated",
         ThumbUpdatedPayload {
             path: vault.root().to_string_lossy().into_owned(),
@@ -210,6 +212,7 @@ struct ThumbUpdatedPayload {
 /// `x-slug` headers.
 #[tauri::command]
 pub fn save_tile_poster(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
     request: Request<'_>,
@@ -221,7 +224,8 @@ pub fn save_tile_poster(
     validate_slug(&slug).map_err(|error| CommandError::Internal(error.to_string()))?;
 
     let vault = {
-        let vault_state = state
+        let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
+        let vault_state = space
             .vault_state
             .lock()
             .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
@@ -248,7 +252,7 @@ pub fn save_tile_poster(
     schedule_preview_reconcile(&app, vault.clone(), [slug.clone()], false)?;
 
     // The tile lives inside the block's card; refresh it.
-    let _ = app.emit(
+    let _ = crate::commands::space_events::emit_to_vault(&app, &vault, 
         "thumb:updated",
         ThumbUpdatedPayload {
             path: vault.root().to_string_lossy().into_owned(),
@@ -325,11 +329,13 @@ fn validate_tile_poster_request(poster_name: &str, bytes: &[u8]) -> Result<(), C
 /// better we could produce.
 #[tauri::command]
 pub async fn list_pending_thumb_upgrades(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Vec<ThumbUpgradeRequest>, CommandError> {
     let vault = {
-        let vault_state = state
+        let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
+        let vault_state = space
             .vault_state
             .lock()
             .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;

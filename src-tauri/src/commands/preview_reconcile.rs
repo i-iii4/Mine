@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 
 use super::state::{AppState, CommandError};
 use crate::domain::vault::VaultLayout;
@@ -28,13 +28,13 @@ struct PreviewWorkQueue {
 }
 
 impl PreviewWorkQueue {
-    /// Keep queued work only for the `active` space. Returns the spaces whose
-    /// queued full pass was dropped: each is owed `derived-preview-finished`,
-    /// since nothing will run for it any more.
-    fn keep_only(&mut self, active: Option<&str>) -> Vec<String> {
+    /// Keep queued work only for the `open` spaces (SPEC_TABS.md, В14).
+    /// Returns the spaces whose queued full pass was dropped: each is owed
+    /// `derived-preview-finished`, since nothing will run for it any more.
+    fn keep_only(&mut self, open: &BTreeSet<String>) -> Vec<String> {
         let mut dropped_full_passes = Vec::new();
         self.pending.retain(|path, work| {
-            let keep = active == Some(path.as_str());
+            let keep = open.contains(path);
             if !keep && work.full_scan {
                 dropped_full_passes.push(path.clone());
             }
@@ -47,6 +47,35 @@ impl PreviewWorkQueue {
     fn full_pass_queued(&self, path: &str) -> bool {
         self.pending.get(path).is_some_and(|work| work.full_scan)
     }
+
+    /// Take the next queued work: the `first` space when it waits, else the
+    /// first space in order.
+    fn take_next(&mut self, first: Option<&str>) -> Option<(String, QueuedPreviewWork)> {
+        let path = first
+            .filter(|path| self.pending.contains_key(*path))
+            .map(str::to_string)
+            .or_else(|| self.pending.keys().next().cloned())?;
+        self.pending.remove(&path).map(|work| (path, work))
+    }
+}
+
+/// The folders of every open space, as queue keys.
+fn open_paths(state: &AppState) -> BTreeSet<String> {
+    state
+        .spaces
+        .open_roots()
+        .into_iter()
+        .map(|root| root.to_string_lossy().into_owned())
+        .collect()
+}
+
+/// The folder served first: the space of the most recently used tab.
+fn first_path(state: &AppState) -> Option<String> {
+    state
+        .tabs
+        .last_active_space()
+        .and_then(|space| space.root())
+        .map(|root| root.to_string_lossy().into_owned())
 }
 
 struct QueuedPreviewWork {
@@ -140,7 +169,7 @@ where
     let write = crate::storage::source_mutation::begin_write()
         .map_err(|error| CommandError::Internal(error.to_string()))?;
     let state = app.state::<AppState>();
-    if !state.is_current_vault(vault.root()) {
+    if !state.is_open_root(vault.root()) {
         return Ok(());
     }
     let vault_path = vault.root().to_string_lossy().into_owned();
@@ -150,7 +179,7 @@ where
             .queue
             .lock()
             .map_err(|_| CommandError::Internal("preview queue mutex poisoned".into()))?;
-        for dropped in queue.keep_only(Some(&vault_path)) {
+        for dropped in queue.keep_only(&open_paths(&state)) {
             announce_previews_finished(app, dropped);
         }
         let work = queue
@@ -169,7 +198,9 @@ where
             // sync pass's `vault-sync-finished`) and in order with the
             // worker's `derived-preview-finished`: the opening notice sees no
             // gap between indexing and previews (SPEC_ONBOARDING.md, О13).
-            let _ = app.emit(
+            crate::commands::space_events::emit_to_space_path(
+                app,
+                &vault_path,
                 "derived-preview-queued",
                 DerivedPreviewQueuedPayload {
                     path: vault_path.clone(),
@@ -221,30 +252,27 @@ fn preview_worker_loop(app: AppHandle) {
     loop {
         let work = {
             let state = app.state::<AppState>();
-            let active_path = state.current_vault_path();
+            let open = open_paths(&state);
+            let first = first_path(&state);
             let mut queue = state
                 .preview_reconcile
                 .queue
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
-            for dropped in queue.keep_only(active_path.as_deref()) {
+            for dropped in queue.keep_only(&open) {
                 announce_previews_finished(&app, dropped);
             }
-            let Some(active_path) = active_path else {
+            let Some(next) = queue.take_next(first.as_deref()) else {
                 queue.running = false;
                 return;
             };
-            let Some(queued) = queue.pending.remove(&active_path) else {
-                queue.running = false;
-                return;
-            };
-            (active_path, queued)
+            next
         };
 
         log::info!("derived preview reconciliation started for {}", work.0);
         let active_root = work.1.vault.root().to_path_buf();
         let result = db::open_or_create(&work.1.vault.index_db_path()).and_then(|conn| {
-            let is_current = || app.state::<AppState>().is_current_vault(&active_root);
+            let is_current = || app.state::<AppState>().is_open_root(&active_root);
             let mut publish_batch = |report: &PreviewReconcileReport| {
                 if !report.cancelled && is_current() {
                     publish_preview_report(&app, &work.0, report);
@@ -252,7 +280,9 @@ fn preview_worker_loop(app: AppHandle) {
             };
             let mut publish_progress = |progress: PreviewPassProgress| {
                 if is_current() {
-                    let _ = app.emit(
+                    crate::commands::space_events::emit_to_space_path(
+                        &app,
+                        &work.0,
                         "derived-preview-progress",
                         DerivedPreviewProgressPayload {
                             path: work.0.clone(),
@@ -279,7 +309,7 @@ fn preview_worker_loop(app: AppHandle) {
                 if report.cancelled
                     || !app
                         .state::<AppState>()
-                        .is_current_vault(work.1.vault.root())
+                        .is_open_root(work.1.vault.root())
                 {
                     log::info!(
                         "derived preview reconciliation cancelled for {} after {} blocks",
@@ -365,7 +395,9 @@ fn finish_full_pass(app: &AppHandle, path: &str) {
 }
 
 fn announce_previews_finished(app: &AppHandle, path: String) {
-    let _ = app.emit(
+    crate::commands::space_events::emit_to_space_path(
+        app,
+        &path.clone(),
         "derived-preview-finished",
         DerivedPreviewFinishedPayload { path },
     );
@@ -373,7 +405,9 @@ fn announce_previews_finished(app: &AppHandle, path: String) {
 
 fn publish_preview_report(app: &AppHandle, path: &str, report: &PreviewReconcileReport) {
     for slug in &report.changed_slugs {
-        let _ = app.emit(
+        crate::commands::space_events::emit_to_space_path(
+            app,
+            path,
             "thumb:updated",
             DerivedPreviewThumbPayload {
                 path: path.to_string(),
@@ -382,7 +416,9 @@ fn publish_preview_report(app: &AppHandle, path: &str, report: &PreviewReconcile
             },
         );
     }
-    let _ = app.emit(
+    crate::commands::space_events::emit_to_space_path(
+        app,
+        path,
         "derived-preview-changed",
         DerivedPreviewChangedPayload {
             path: path.to_string(),
@@ -393,10 +429,12 @@ fn publish_preview_report(app: &AppHandle, path: &str, report: &PreviewReconcile
         },
     );
     if !report.failed.is_empty() {
-        let _ = app.emit("derived-preview-pending", ());
+        crate::commands::space_events::emit_to_lead(app, std::path::Path::new(path), "derived-preview-pending", ());
     }
     if !report.changed_slugs.is_empty() {
-        let _ = app.emit(
+        crate::commands::space_events::emit_to_space_path(
+            app,
+            path,
             "vault-changed",
             DerivedPreviewVaultChangedPayload {
                 path: path.to_string(),
@@ -547,10 +585,25 @@ mod tests {
             .pending
             .insert("/active".into(), queued(&vault, true, &[]));
 
-        assert_eq!(queue.keep_only(Some("/active")), vec!["/old".to_string()]);
+        let open: BTreeSet<String> = ["/active".to_string(), "/other".to_string()].into();
+        assert_eq!(queue.keep_only(&open), vec!["/old".to_string()]);
         assert!(queue.full_pass_queued("/active"));
         assert!(!queue.full_pass_queued("/old"));
-        assert_eq!(queue.keep_only(None), vec!["/active".to_string()]);
+        assert_eq!(queue.keep_only(&BTreeSet::new()), vec!["/active".to_string()]);
         assert!(queue.pending.is_empty());
+    }
+
+    #[test]
+    fn every_open_space_is_served_the_most_recent_first() {
+        let temp = tempfile::tempdir().unwrap();
+        let vault =
+            VaultLayout::with_derived_root(temp.path().join("source"), temp.path().join("derived"));
+        let mut queue = PreviewWorkQueue::default();
+        queue.pending.insert("/a".into(), queued(&vault, true, &[]));
+        queue.pending.insert("/b".into(), queued(&vault, true, &[]));
+
+        assert_eq!(queue.take_next(Some("/b")).map(|(path, _)| path).as_deref(), Some("/b"));
+        assert_eq!(queue.take_next(Some("/b")).map(|(path, _)| path).as_deref(), Some("/a"));
+        assert!(queue.take_next(None).is_none());
     }
 }

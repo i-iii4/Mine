@@ -143,7 +143,7 @@ mod imp {
 
     use block2::RcBlock;
     use objc2_app_kit::{NSEvent, NSEventMask, NSEventPhase};
-    use tauri::{AppHandle, Emitter, Runtime};
+    use tauri::AppHandle;
 
     use super::{GesturePhase, SwipeRecognizer};
 
@@ -166,7 +166,7 @@ mod imp {
     }
 
     /// Install the monitor. Must run on the main thread, where AppKit lives.
-    pub fn install<R: Runtime>(app: AppHandle<R>) {
+    pub fn install(app: AppHandle) {
         let recognizer = Rc::new(RefCell::new(SwipeRecognizer::default()));
 
         let handler = RcBlock::new(move |event: NonNull<NSEvent>| -> *mut NSEvent {
@@ -185,7 +185,11 @@ mod imp {
             );
             let decision = recognizer.borrow_mut().feed(phase);
             if let Some(direction) = decision {
-                let _ = app.emit("sidebar-swipe", direction.as_payload());
+                crate::commands::space_events::emit_to_active_tab(
+                    &app,
+                    "sidebar-swipe",
+                    direction.as_payload(),
+                );
             }
 
             event.as_ptr()

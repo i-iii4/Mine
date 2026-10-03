@@ -5,13 +5,14 @@
 use tauri::{AppHandle, State};
 
 use crate::commands::state::{
-    current_vault_layout, ensure_vault_fresh, read_owned_projection, AppState, CommandError,
+    tab_layout, ensure_vault_fresh, read_owned_projection, AppState, CommandError,
 };
 use crate::storage::graph;
 use crate::util::append_startup_trace;
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn list_graph_snapshot(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
     scope: Option<graph::GraphScope>,
@@ -33,7 +34,7 @@ pub async fn list_graph_snapshot(
                 .unwrap_or("__all__")
         ),
     );
-    let vault = current_vault_layout(&state)?;
+    let vault = tab_layout(&state, &webview)?;
     ensure_vault_fresh(&app, vault.clone()).await?;
     let app_for_query = app.clone();
     let snapshot = tauri::async_runtime::spawn_blocking(

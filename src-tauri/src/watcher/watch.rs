@@ -5,11 +5,12 @@
 // Tauri event so the frontend can refresh.
 
 use anyhow::Result;
+use crate::commands::effects::VaultChangedPayload;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 
 use crate::commands::state::AppState;
 use crate::domain::vault::VaultLayout;
@@ -21,10 +22,6 @@ const DEBOUNCE_MS: u64 = 300;
 const RECOVERY_ERROR_THRESHOLD: u32 = 3;
 const RECOVERY_ERROR_WINDOW: Duration = Duration::from_secs(30);
 
-#[derive(Debug, Clone, Serialize)]
-struct VaultChangedPayload {
-    path: String,
-}
 
 #[derive(Debug, Clone, Serialize)]
 struct WatcherErrorPayload {
@@ -213,11 +210,11 @@ pub fn start_watching(app: &AppHandle, vault: &VaultLayout) -> Result<VaultWatch
             let now = Instant::now();
             if now.duration_since(*last) >= Duration::from_millis(DEBOUNCE_MS) {
                 *last = now;
-                let _ = app_clone.emit(
+                crate::commands::space_events::emit_to_space_root(
+                    &app_clone,
+                    vault_clone.root(),
                     "vault-changed",
-                    VaultChangedPayload {
-                        path: vault_clone.root().to_string_lossy().into_owned(),
-                    },
+                    VaultChangedPayload::from_outside(vault_clone.root().to_string_lossy().into_owned()),
                 );
             }
         })?;
@@ -245,7 +242,16 @@ pub fn start_watching(app: &AppHandle, vault: &VaultLayout) -> Result<VaultWatch
 /// (Б2.4). The open space and the watcher slot are locked in the order a
 /// space switch locks them.
 fn install_recovered_watcher(state: &AppState, replacement: VaultWatcher) -> bool {
-    let Ok(open) = state.vault_state.lock() else {
+    // The space that owns the folder; another open space is never touched
+    // (SPEC_TABS.md, В7).
+    let Some(space) = state.spaces.by_root(replacement.layout().root()) else {
+        log::info!(
+            "watcher recovery for {} dropped: the space is no longer open",
+            replacement.layout().index_db_path().display()
+        );
+        return false;
+    };
+    let Ok(open) = space.vault_state.lock() else {
         log::error!("vault state mutex poisoned during watcher recovery");
         return false;
     };
@@ -256,7 +262,7 @@ fn install_recovered_watcher(state: &AppState, replacement: VaultWatcher) -> boo
         );
         return false;
     }
-    let previous = match state.watcher.lock() {
+    let previous = match space.watcher.lock() {
         Ok(mut slot) => slot.replace(replacement),
         Err(_) => {
             log::error!("watcher mutex poisoned during recovery");
@@ -307,9 +313,11 @@ fn restart_watcher_after_recovery(
         );
         return false;
     }
-    state.watcher.lock().is_ok_and(|slot| {
-        slot.as_ref()
-            .is_some_and(|watcher| recovered_space_is_open(Some(watcher.layout()), &recovered))
+    state.spaces.by_root(recovered.root()).is_some_and(|space| {
+        space.watcher.lock().is_ok_and(|slot| {
+            slot.as_ref()
+                .is_some_and(|watcher| recovered_space_is_open(Some(watcher.layout()), &recovered))
+        })
     })
 }
 
@@ -328,7 +336,12 @@ fn start_removal_timer(app: &AppHandle, vault: &VaultLayout) -> Result<RemovalTi
             let path = vault.root().to_string_lossy().into_owned();
             handler::run_removal_timer(&conn, &vault, &stop, Some(&app), |pass| {
                 if settle_removal_pass(&app.state::<AppState>(), &path, pass) {
-                    let _ = app.emit("vault-changed", VaultChangedPayload { path: path.clone() });
+                    crate::commands::space_events::emit_to_space_path(
+                        &app,
+                        &path,
+                        "vault-changed",
+                        VaultChangedPayload::from_outside(path.clone()),
+                    );
                 }
             });
         })?;
@@ -368,7 +381,9 @@ fn record_watcher_error(
         .record_error(Instant::now());
     let path = vault.root().to_string_lossy().into_owned();
     app.state::<AppState>().freshness.mark_dirty(&path);
-    let _ = app.emit(
+    crate::commands::space_events::emit_to_space_root(
+        app,
+        vault.root(),
         "watcher-error",
         WatcherErrorPayload {
             path: path.clone(),
@@ -406,7 +421,9 @@ fn record_watcher_error(
                 .unwrap_or_else(|error| error.into_inner())
                 .finish_recovery(fresh && watcher_restarted);
             let path = vault_for_recovery.root().to_string_lossy().into_owned();
-            let _ = app_for_recovery.emit(
+            crate::commands::space_events::emit_to_space_path(
+                &app_for_recovery,
+                &path,
                 "watcher-recovery-finished",
                 WatcherRecoveryPayload {
                     path: path.clone(),
@@ -416,7 +433,12 @@ fn record_watcher_error(
                 },
             );
             if fresh {
-                let _ = app_for_recovery.emit("vault-changed", VaultChangedPayload { path });
+                crate::commands::space_events::emit_to_space_path(
+                    &app_for_recovery,
+                    &path.clone(),
+                    "vault-changed",
+                    VaultChangedPayload::from_outside(path),
+                );
             }
         });
     if let Err(error) = spawn_result {
@@ -504,11 +526,11 @@ mod tests {
         std::fs::write(watched.index_db_path(), b"not a SQLite database").unwrap();
 
         let state = AppState::new();
-        *state.vault_state.lock().unwrap() = Some(crate::commands::state::VaultState {
+        let space = state.open_space_for_test("main", crate::commands::state::VaultState {
             conn: db::open_memory().unwrap(),
             vault: watched.clone(),
         });
-        *state.watcher.lock().unwrap() = Some(VaultWatcher::detached(&watched));
+        *space.watcher.lock().unwrap() = Some(VaultWatcher::detached(&watched));
 
         let outcome = state.freshness.reconcile(&watched);
         let recovered = outcome
@@ -523,10 +545,10 @@ mod tests {
             outcome.recovered_vault,
             |layout| Ok(VaultWatcher::detached(layout)),
         ));
-        let installed = state.watcher.lock().unwrap();
+        let installed = space.watcher.lock().unwrap();
         let installed = installed.as_ref().expect("a watcher is in place");
         assert_eq!(installed.layout().index_db_path(), recovered.index_db_path());
-        let open = state.vault_state.lock().unwrap();
+        let open = space.vault_state.lock().unwrap();
         assert_eq!(
             open.as_ref().unwrap().vault.index_db_path(),
             recovered.index_db_path()
@@ -545,16 +567,16 @@ mod tests {
             .clone()
             .with_index_db_path(temp.path().join("derived/recovered/index.db"));
         let state = AppState::new();
-        *state.vault_state.lock().unwrap() = Some(crate::commands::state::VaultState {
+        let space = state.open_space_for_test("main", crate::commands::state::VaultState {
             conn: db::open_memory().unwrap(),
             vault: adopted.clone(),
         });
-        *state.watcher.lock().unwrap() = Some(VaultWatcher::detached(&adopted));
+        *space.watcher.lock().unwrap() = Some(VaultWatcher::detached(&adopted));
 
         assert!(!restart_watcher_after_recovery(&state, &retired, None, |layout| Ok(
             VaultWatcher::detached(layout)
         )));
-        let installed = state.watcher.lock().unwrap();
+        let installed = space.watcher.lock().unwrap();
         assert_eq!(
             installed.as_ref().unwrap().layout().index_db_path(),
             adopted.index_db_path()

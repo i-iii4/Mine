@@ -5,7 +5,8 @@
 // show a progress bar.
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use crate::commands::effects::VaultChangedPayload;
+use tauri::{AppHandle, State};
 
 use crate::commands::state::{AppState, CommandError};
 use crate::import::arena_api;
@@ -23,10 +24,6 @@ pub struct ArenaChannelInfo {
     pub status: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct VaultChangedPayload {
-    path: String,
-}
 
 // ─── Commands ────────────────────────────────────────────────────────────────
 
@@ -51,8 +48,8 @@ pub fn list_arena_channels(username: String) -> Result<Vec<ArenaChannelInfo>, Co
 ///
 /// Each channel is imported with its title as the local tag.
 /// Progress events are emitted as "import-progress".
-#[tauri::command]
-pub fn import_arena_channels(
+fn import_arena_channels_unannounced(
+    webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
     channels: Vec<ImportChannelRequest>,
@@ -62,7 +59,8 @@ pub fn import_arena_channels(
     // multi-channel import froze every other command for minutes; the import
     // runs on its own SQLite connection instead (mirrors start_background_sync).
     let (vault, db_path) = {
-        let vault_state = state
+        let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
+        let vault_state = space
             .vault_state
             .lock()
             .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
@@ -75,7 +73,7 @@ pub fn import_arena_channels(
     let mut results = Vec::new();
     for req in &channels {
         let result = importer::import_channel(&conn, &vault, &req.slug, &req.tag, |progress| {
-            let _ = app.emit("import-progress", &progress);
+            let _ = crate::commands::space_events::emit_to_vault(&app, &vault, "import-progress", &progress);
         });
 
         match result {
@@ -93,14 +91,24 @@ pub fn import_arena_channels(
     }
 
     // Emit vault-changed so the frontend refreshes
-    let _ = app.emit(
+    let _ = crate::commands::space_events::emit_to_vault(&app, &vault, 
         "vault-changed",
-        VaultChangedPayload {
-            path: vault.root().to_string_lossy().into_owned(),
-        },
+        VaultChangedPayload::from_outside(vault.root().to_string_lossy().into_owned()),
     );
 
     Ok(results)
+}
+
+/// [`import_arena_channels_unannounced`], then the other tabs of the space hear of the
+/// change (SPEC_TABS.md, В15).
+#[tauri::command]
+pub fn import_arena_channels(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, channels: Vec<ImportChannelRequest>) -> Result<Vec<importer::ImportChannelResult>, CommandError> {
+    let announcing = webview.clone();
+    let outcome = import_arena_channels_unannounced(webview, app, state, channels);
+    if outcome.is_ok() {
+        super::effects::space_changed_by_tab(&announcing, Vec::new());
+    }
+    outcome
 }
 
 #[derive(Debug, serde::Deserialize, specta::Type)]
