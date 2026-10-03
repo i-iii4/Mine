@@ -3775,6 +3775,20 @@ describe("AppWithVault", () => {
         }, { timeout: 2000 });
       });
 
+      it("keeps the stored mode for the first space a tab opens from the picker (В79)", async () => {
+        localStorage.setItem("mine.mainViewMode", "graph");
+        commandMocks.getVaultPath.mockResolvedValue(null);
+        commandMocks.getTabBootstrap.mockResolvedValue(bootstrap({ space: { kind: "picker" }, fresh_start: true }));
+        render(<App />);
+
+        expect(await screen.findByText("Vault Picker")).toBeInTheDocument();
+        expect(localStorage.getItem("mine.mainViewMode")).toBeNull();
+
+        send("vault-selected", { path: "/vault" });
+
+        expect(await screen.findByTestId("graph-view")).toBeInTheDocument();
+      });
+
       it("keeps saved windows over the stored values and still deletes them (В79)", async () => {
         localStorage.setItem("mine.mainViewMode", "graph");
         localStorage.setItem("mine:sidebar", JSON.stringify({ width: 420, collapsed: true }));

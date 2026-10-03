@@ -483,9 +483,11 @@ function useErrorNotice(error: string | null): { open: boolean; dismiss: () => v
 
 /// What a restored tab returns to in its space (SPEC_TABS.md, В40, В78):
 /// `view` is applied once the space at `path` opens, and `saved` is what the
-/// backend holds, so a view that differs from it is reported.
+/// backend holds, so a view that differs from it is reported. A `null` path
+/// is the first space a tab opens from the space picker: the mode stored
+/// before tabs waits for it there (В79).
 interface TabRestore {
-  path: string;
+  path: string | null;
   view: TabView;
   saved: TabView;
 }
@@ -554,7 +556,8 @@ export function App() {
       setTab(bootstrap);
       setLead(bootstrap.lead);
       setWindowSidebarLayout(adopted.sidebar);
-      setTabRestore(path ? { path, view: adopted.view, saved: bootstrap.view } : null);
+      if (path) setTabRestore({ path, view: adopted.view, saved: bootstrap.view });
+      else if (adopted.view !== bootstrap.view) setTabRestore({ path: null, view: adopted.view, saved: bootstrap.view });
     };
     getVaultPath()
       .then(async (path) => {
@@ -766,7 +769,7 @@ export function App() {
         tabPage={isTab}
         lead={lead}
         windowSidebar={windowSidebar}
-        restore={tabRestore?.path === vaultPath ? tabRestore : null}
+        restore={tabRestore && (tabRestore.path === null || tabRestore.path === vaultPath) ? tabRestore : null}
         onRestored={() => setTabRestore(null)}
         onFirstScreen={handleFirstScreen}
       />
