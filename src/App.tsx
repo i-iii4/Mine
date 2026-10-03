@@ -1367,9 +1367,11 @@ export function AppWithVault({
     : DETAIL_SECONDARY_CHROME_EXIT_MS;
   const topChromeSurfaceClass = "bg-chrome";
   const topChromeSurfaceToken: NativeWindowChromeSurfaceToken = "--chrome";
+  // Find collections sits over the sidebar's table and takes its surface;
+  // an active query lights it like other active search surfaces.
   const sidebarSearchActiveSurfaceClass = sidebarSearchHasActiveQuery
     ? "bg-accent"
-    : "";
+    : "bg-sidebar";
   const compactDetailCardTitle = renderedDetailBlock ? cardTitle(renderedDetailBlock) : "";
   // The search overlay is modal: while it is open the feed answers no key,
   // ⌘K included (SPEC_SEARCH_OVERLAY.md; SPEC_AUDIT_FIXES.md, Г4.2).

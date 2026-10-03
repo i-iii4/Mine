@@ -315,6 +315,9 @@ export function MainSecondaryTopBar({
         className={cn(
           "relative flex h-full shrink-0 items-center overflow-hidden border-r border-sidebar-border",
           sidebarCollapsed && "w-auto max-w-[240px]",
+          // Right over the sidebar's table the segment takes the table's
+          // surface; an open card's accent still marks the whole row.
+          placement === "top" && !sidebarCollapsed && !detailLayerEntered && "bg-sidebar",
           !sidebarResizing && "transition-[width] duration-200 ease-out motion-reduce:transition-none",
         )}
         style={sidebarCollapsed ? undefined : { width: "var(--sidebar-width)" }}
