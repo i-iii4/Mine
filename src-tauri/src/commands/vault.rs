@@ -655,6 +655,15 @@ pub fn get_vault_path(
 pub fn start_vault_sync(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>) -> Result<bool, CommandError> {
     let path = {
         let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
+        // Another tab of this opening already synced it (SPEC_TABS.md, В7).
+        if space.opening_synced() {
+            append_startup_trace(
+                &app,
+                "start_vault_sync",
+                &format!("already_synced vault_id={}", space.vault_id()),
+            );
+            return Ok(false);
+        }
         let vault_state = space
             .vault_state
             .lock()
@@ -1818,6 +1827,9 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
 
             match final_result {
                 Ok(scan) => {
+                    if let Some(space) = sync_state.spaces.by_root(vault.root()) {
+                        space.mark_opening_synced();
+                    }
                     // Reconciliation reads source documents into the index.
                     // Never recreate documents from cached channel rows here:
                     // doing so duplicates nested collections and resurrects deletions.

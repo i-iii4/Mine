@@ -1471,6 +1471,14 @@
     },
     {
       "paths": [
+        "src/components/NotificationCard.test.tsx"
+      ],
+      "requirement": "SPEC_ONBOARDING.md#**О13.**",
+      "tests": ["src/components/NotificationCard.test.tsx", "src/components/IndexingProgress.test.tsx"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
         "src-tauri/src/commands/spaces.rs",
         "src-tauri/src/commands/space_events.rs",
         "src-tauri/src/commands/effects.rs",

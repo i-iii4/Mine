@@ -39,6 +39,10 @@ pub struct OpenSpace {
     pub(crate) opening: Mutex<()>,
     /// The watch of the folder itself runs once per open space.
     root_watch_started: AtomicBool,
+    /// The startup sync of this opening finished: a later tab of the space
+    /// does not run it again, the watcher already follows changes
+    /// (SPEC_TABS.md, В7).
+    synced: AtomicBool,
     closed: AtomicBool,
     /// Space notices closed during this opening (SPEC_TABS.md, В20).
     dismissed_notices: Mutex<BTreeSet<String>>,
@@ -53,6 +57,7 @@ impl OpenSpace {
             publication: Mutex::new(()),
             opening: Mutex::new(()),
             root_watch_started: AtomicBool::new(false),
+            synced: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             dismissed_notices: Mutex::new(BTreeSet::new()),
         }
@@ -98,6 +103,17 @@ impl OpenSpace {
     /// Claim the folder watch for this opening; `true` once.
     pub(crate) fn claim_root_watch(&self) -> bool {
         !self.root_watch_started.swap(true, Ordering::SeqCst)
+    }
+
+    /// Whether the startup sync of this opening finished.
+    pub(crate) fn opening_synced(&self) -> bool {
+        self.synced.load(Ordering::SeqCst)
+    }
+
+    /// The startup sync of this opening finished; a failed one is not marked,
+    /// so the next tab runs it again.
+    pub(crate) fn mark_opening_synced(&self) {
+        self.synced.store(true, Ordering::SeqCst);
     }
 
     /// Publish a session, replacing the previous one and its watcher. The
@@ -521,6 +537,25 @@ mod tests {
         assert!(Arc::ptr_eq(again.space(), &owner));
         assert!(!owner.is_closed());
         assert_eq!(owner.root().as_deref(), Some(dir.path()));
+    }
+
+    #[test]
+    fn the_startup_sync_runs_once_per_opening_of_a_space() {
+        let host = SpaceHost::with_grace(Duration::from_millis(20));
+        let first = host.lease("space-x");
+        assert!(!first.space().opening_synced());
+        first.space().mark_opening_synced();
+
+        // A second tab of the same opening finds it synced.
+        let second = host.lease("space-x");
+        assert!(second.space().opening_synced());
+
+        // Closed after its grace period and opened again: a new opening syncs.
+        drop(first);
+        drop(second);
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(host.get("space-x").is_none());
+        assert!(!host.lease("space-x").space().opening_synced());
     }
 
     #[test]

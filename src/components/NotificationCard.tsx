@@ -35,7 +35,9 @@ export function NotificationCard({
 }: NotificationCardProps) {
   return (
     <div
-      className="w-80 rounded-1 border border-border bg-popover p-3 text-popover-foreground shadow-md"
+      // A long word, such as a path in an error, breaks inside the card
+      // instead of running past its edge.
+      className="w-80 rounded-1 border border-border bg-popover p-3 text-popover-foreground shadow-md [overflow-wrap:anywhere]"
       data-notification-card=""
     >
       <div className="flex items-start justify-between gap-2">
