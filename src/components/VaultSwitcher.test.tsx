@@ -68,7 +68,7 @@ describe("VaultSwitcher", () => {
     expect(trigger).not.toHaveClass("max-w-[240px]");
     // First in the tab page's row: the label lands on the chrome edge inset
     // (SPEC_TABS.md, В43).
-    expect(trigger).toHaveClass("pl-[var(--top-collection-pad-x)]", "pr-3");
+    expect(trigger).toHaveClass("px-[var(--top-collection-pad-x)]");
     expect(trigger).toHaveClass("font-mono");
     expect(trigger).toHaveClass("text-sm");
     expect(trigger).toHaveClass("text-muted-foreground");

@@ -1162,7 +1162,7 @@ trigger запрещены.
 текста на `4px` и от правого края на `8px`. Размер иконки не меняется.
 
 Space selector — это top-chrome вариант `VaultSwitcher`: `h-full`,
-`max-w-[50%]`, `flex-none`, `min-w-0`, `pl-[var(--top-collection-pad-x)] pr-3`, `rounded-0`,
+`max-w-[50%]`, `flex-none`, `min-w-0`, `px-[var(--top-collection-pad-x)]`, `rounded-0`,
 `font-mono text-sm text-muted-foreground`, `truncate`; без folder icon. С
 03.10.2026 по решению пользователя у него есть dropdown chevron: lucide
 `ChevronRight` `13px` внутри inner pill сразу после имени, цвет текста pill,

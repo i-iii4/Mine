@@ -382,7 +382,10 @@ export function VaultSwitcher({
                   // traffic lights and the sidebar button live in the tab bar
                   // above (SPEC_TABS.md, В43). Its label lands on the chrome
                   // edge inset, like the collection switcher's.
-                  "justify-start pl-[var(--top-collection-pad-x)] pr-3",
+                  // 8 px of row on both sides of the pill, as round the
+                  // collection switcher's: to the window edge and to the
+                  // search separator.
+                  "justify-start px-[var(--top-collection-pad-x)]",
                   // Collapsed, it is the segment's only content and takes the
                   // segment's whole cap; open, half the space and search zone.
                   topChromeCollapsed ? "max-w-[240px]" : "max-w-[50%]",
