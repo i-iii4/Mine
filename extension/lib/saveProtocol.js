@@ -9,7 +9,7 @@
           || !capabilities.every(value => typeof value === "string" && required.includes(value))))) {
       return { ok: false, code: "incompatible_protocol", outcome: "not_committed", terminal_rejected: true,
         ...(typeof request.operation_id === "string" ? { operation_id: request.operation_id } : {}),
-        error: "This save requires an unsupported protocol or capability. Its draft is preserved." };
+        error: "This save requires an unsupported protocol or capability. Nothing was saved." };
     }
     return null;
   }

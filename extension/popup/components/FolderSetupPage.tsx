@@ -6,7 +6,7 @@ import {
   type StandaloneStatus,
 } from "../lib/standalone";
 
-/** This component never extracts the setup page as a clip or replaces a draft. */
+/** This component never extracts the setup page as a clip or replaces the open clip. */
 export function FolderSetupPage() {
   const bindingId = new URLSearchParams(window.location.search).get("binding_id") ?? undefined;
   const [status, setStatus] = useState<StandaloneStatus>({ configured: false });

@@ -6,50 +6,6 @@ import { createRequire } from "node:module";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import objktVideo from "../lib/fixtures/objkt-video.json";
-import type { DurableClipperDraft } from "../lib/draft";
-
-const { drafts, draftRecords } = vi.hoisted(() => ({ drafts: new Map<string, DurableClipperDraft>(), draftRecords: new Map<string, unknown>() }));
-vi.mock("../lib/draft", async importOriginal => {
-  const original = await importOriginal<typeof import("../lib/draft")>();
-  const { readFileSync } = await import("node:fs");
-  const { dirname, join } = await import("node:path");
-  const { fileURLToPath } = await import("node:url");
-  const { createContext, runInContext } = await import("node:vm");
-  const { webcrypto } = await import("node:crypto");
-  const { TextEncoder } = await import("node:util");
-  const context = createContext({ crypto: webcrypto, TextEncoder });
-  runInContext(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../lib/storedValue.js"), "utf8"), context);
-  runInContext(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../lib/draftStore.js"), "utf8"), context);
-  const worker = context.MineDraftStore as {
-    attach: (url: string, options: Record<string, unknown>, storage: object) => Promise<import("../lib/draft").DraftAttachment>;
-    writeOwned: (url: string, draft: DurableClipperDraft, expected: number, ownership: import("../lib/draft").DraftOwnership, storage: object) => Promise<DurableClipperDraft>;
-    clear: (url: string, id: string, revision: number, storage: object) => Promise<void>;
-    clearOwned: (url: string, id: string, revision: number, ownership: Pick<import("../lib/draft").DraftOwnership, "ownerId" | "generation">, storage: object) => Promise<void>;
-  };
-  const storage = {
-    get: async (key: string) => ({ [key]: key.startsWith("mineDurableDraft:") ? drafts.get(key.slice("mineDurableDraft:".length)) : draftRecords.get(key) }),
-    set: async (values: Record<string, unknown>) => {
-      for (const [key, value] of Object.entries(values)) {
-        draftRecords.set(key, structuredClone(value));
-        if (key.startsWith("mineDurableDraftRecord:") && value && typeof value === "object" && "draft" in value && value.draft
-          && "sourceUrl" in value && typeof value.sourceUrl === "string") {
-          // Confirmed editions remain inspectable by existing payload assertions.
-          drafts.set(value.sourceUrl, structuredClone(value.draft) as DurableClipperDraft);
-        }
-      }
-    },
-    remove: async (key: string) => {
-      draftRecords.delete(key);
-      if (key.startsWith("mineDurableDraft:")) drafts.delete(key.slice("mineDurableDraft:".length));
-    },
-  };
-  return { ...original,
-    attachDraft: (url: string, options: Record<string, unknown>, tabId: number | null) => worker.attach(url, { ...options, captureScope: String(tabId ?? "default") }, storage),
-    writeOwnedDraft: (url: string, draft: DurableClipperDraft, expected: number, ownership: import("../lib/draft").DraftOwnership) => worker.writeOwned(url, draft, expected, ownership, storage),
-    clearDraft: (url: string, id: string, revision: number) => worker.clear(url, id, revision, storage),
-    clearOwnedDraft: (url: string, id: string, revision: number, ownership: Pick<import("../lib/draft").DraftOwnership, "ownerId" | "generation">) => worker.clearOwned(url, id, revision, ownership, storage),
-  };
-});
 vi.mock("../lib/protocol", async (importOriginal) => ({
   ...await importOriginal<typeof import("../lib/protocol")>(),
   negotiateWidgetProtocol: async () => undefined,
@@ -100,7 +56,6 @@ vi.hoisted(() => {
 
 import { CLIPPER_RECONNECT_INTERVAL_MS, DESTINATION_CHANGED_DURING_SAVE, MINE_NOT_CONNECTED, useClipperState } from "./useClipperState";
 import * as messaging from "../lib/messaging";
-import * as draftApi from "../lib/draft";
 import * as photoLightbox from "../lib/twitterPhotoLightbox";
 
 // The generated Node binding executes the same compiled Rust/WASM as the worker.
@@ -116,7 +71,7 @@ function mockChrome() {
       local: {
         get: vi.fn(async () => ({ ...localData })),
         set: vi.fn(async (values: Record<string, unknown>) => { Object.assign(localData, values); }),
-        remove: vi.fn(async (key: string) => { delete localData[key]; }),
+        remove: vi.fn(async (keys: string | string[]) => { for (const key of [keys].flat()) delete localData[key]; }),
       },
       session: {
         get: vi.fn(async () => ({})),
@@ -146,8 +101,6 @@ function mockChrome() {
 
 beforeEach(() => {
   clipperLaunch.value = null;
-  drafts.clear();
-  draftRecords.clear();
   threadArticle.value = null;
   vi.clearAllMocks();
   mockChrome();
@@ -159,69 +112,6 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("standalone mode decision", () => {
-  it("hands later edits to the worker before an earlier reply, retaining them after close", async () => {
-    browserDestination();
-    const original = draftApi.writeOwnedDraft;
-    let finish: (() => void) | undefined;
-    const writing = vi.spyOn(draftApi, "writeOwnedDraft").mockImplementationOnce(async (...args) => {
-      const confirmed = await original(...args);
-      await new Promise<void>(resolve => { finish = resolve; });
-      return confirmed;
-    });
-    const first = renderHook(() => useClipperState());
-    await waitFor(() => expect(finish).toBeDefined());
-    act(() => first.result.current.setTitle("Latest before closing"));
-    await waitFor(() => expect(writing.mock.calls.some(call => call[1].state.title === "Latest before closing")).toBe(true));
-    first.unmount();
-    await act(async () => { finish?.(); });
-    const reopened = renderHook(() => useClipperState());
-    await waitFor(() => expect(reopened.result.current.draftReady).toBe(true));
-    expect(reopened.result.current.title).toBe("Latest before closing");
-  });
-  it("keeps the legacy revision protocol when an old worker does not announce snapshot sequences", async () => {
-    browserDestination();
-    const originalAttach = draftApi.attachDraft;
-    vi.spyOn(draftApi, "attachDraft").mockImplementation(async (...args) => {
-      const attached = await originalAttach(...args);
-      return { draft: attached.draft, draftId: attached.draftId, generation: attached.generation };
-    });
-    const originalWrite = draftApi.writeOwnedDraft;
-    let finish: (() => void) | undefined;
-    const writing = vi.spyOn(draftApi, "writeOwnedDraft").mockImplementationOnce(async (...args) => {
-      const confirmed = await originalWrite(...args);
-      await new Promise<void>(resolve => { finish = resolve; });
-      return confirmed;
-    });
-    const { result } = renderHook(() => useClipperState());
-    await waitFor(() => expect(finish).toBeDefined());
-    act(() => result.current.setTitle("Legacy latest edit"));
-    expect(writing).toHaveBeenCalledTimes(1);
-    await act(async () => { finish?.(); });
-    await waitFor(() => expect(drafts.get("https://example.com")?.state.title).toBe("Legacy latest edit"));
-    expect(writing.mock.calls.every(call => call[3].sequence === undefined)).toBe(true);
-    expect(result.current.draftError).toBeNull();
-  });
-
-  it("retains a newly created collection when draft restoration replies late", async () => {
-    browserDestination();
-    drafts.set("https://example.com", lifecycleDraft());
-    const original = draftApi.attachDraft;
-    let finish: (() => void) | undefined;
-    vi.spyOn(draftApi, "attachDraft").mockImplementationOnce(async (...args) => {
-      const attached = await original(...args);
-      await new Promise<void>(resolve => { finish = resolve; });
-      return attached;
-    });
-    standalone.standaloneCreateChannel.mockResolvedValue({ ok: true, tag: "New collection" });
-    const { result } = renderHook(() => useClipperState());
-    await waitFor(() => expect(finish).toBeDefined());
-    await act(async () => { await result.current.createChannel("New collection"); });
-    expect(result.current.selectedTags).toEqual(["New collection"]);
-    await act(async () => { finish?.(); });
-    await waitFor(() => expect(result.current.draftReady).toBe(true));
-    expect(result.current.selectedTags).toEqual(["New collection"]);
-  });
-
   it("saves into the browser folder while the helper does not answer (А3.11)", async () => {
     standalone.getStandaloneStatus.mockResolvedValue({ configured: true, folderName: "Mine", permission: "granted", bindingId: "browser-original" });
     standalone.standaloneSave.mockResolvedValue({ ok: true, outcome: "committed", slug: "Cards/Clip" });
@@ -229,7 +119,7 @@ describe("standalone mode decision", () => {
     sendToNative.mockImplementation(() => new Promise(() => undefined));
     const { result } = renderHook(() => useClipperState());
     await waitFor(() => expect(result.current.saveMode).toBe("standalone"));
-    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    await settled(result);
     act(() => result.current.setCurrentType("link"));
     await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
     expect(standalone.standaloneSave).toHaveBeenCalledTimes(1);
@@ -238,7 +128,7 @@ describe("standalone mode decision", () => {
   it("keeps the editor and says why when a collection cannot be created (А3.10)", async () => {
     browserDestination();
     const { result } = renderHook(() => useClipperState());
-    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    await settled(result);
     standalone.standaloneCreateChannel.mockResolvedValueOnce({ ok: false, error: "Restore access to the saved folder" });
     await act(async () => { await result.current.createChannel("Reference"); });
     expect(standalone.standaloneCreateChannel).toHaveBeenCalledWith("Reference", "browser-original");
@@ -254,7 +144,7 @@ describe("standalone mode decision", () => {
   it("does not select a created collection after its destination was replaced", async () => {
     browserDestination();
     const { result } = renderHook(() => useClipperState());
-    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    await settled(result);
     let finish: ((value: { ok: boolean; tag: string }) => void) | undefined;
     standalone.standaloneCreateChannel.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
     const creating = result.current.createChannel("Old folder collection");
@@ -266,12 +156,9 @@ describe("standalone mode decision", () => {
     expect(result.current.selectedTags).toEqual([]);
   });
 
-  it("uploads the current screenshot when an old restored cache reply arrives later", async () => {
+  it("uploads the current screenshot when the cache reply of an older frame arrives later", async () => {
     const oldBytes = "data:image/png;base64,AQID";
     const newBytes = "data:image/png;base64,BAUG";
-    const old = lifecycleDraft();
-    drafts.set("https://example.com", { ...old, state: { ...old.state, currentType: "screenshot", screenshotDataUrl: oldBytes,
-      executor: "native", selectedVault: "/v", bindingId: "native-v" } });
     sendToNative.mockImplementation(async (request: { action: string }) => request.action === "get_status"
       ? { ...nativeStatus(), upload_port: 1234, upload_token: "token", features: [...nativeStatus().features, "pending_uploads_v1"] }
       : { ok: true, channels: [], vaults: ["/v"] });
@@ -279,13 +166,16 @@ describe("standalone mode decision", () => {
     vi.spyOn(messaging, "cacheScreenshotUpload").mockImplementation(async bytes => bytes === oldBytes
       ? new Promise(resolve => { finishOld = resolve; }) : "new-upload");
     const upload = vi.spyOn(messaging, "uploadFile").mockResolvedValue({ ok: true, upload_id: "staged-new" });
+    // The window asks background to capture its source tab (Ф6); neither
+    // frame comes with a cached upload, so the editor caches each itself.
+    const frames = [oldBytes, newBytes];
+    const capture = vi.mocked(chrome.runtime.sendMessage).mockImplementation(((message: { action?: string }, callback?: (r: unknown) => void) => {
+      if (message.action === "captureForCrop") callback?.({ ok: true, dataUrl: frames.shift() });
+    }) as unknown as typeof chrome.runtime.sendMessage);
     const { result } = renderHook(() => useClipperState());
     await waitFor(() => expect(finishOld).toBeDefined());
-    await waitFor(() => expect(result.current.draftReady).toBe(true));
-    // The window asks background to capture its source tab (Ф6).
-    const capture = vi.mocked(chrome.runtime.sendMessage).mockImplementation(((message: { action?: string }, callback?: (r: unknown) => void) => {
-      if (message.action === "captureForCrop") callback?.({ ok: true, dataUrl: newBytes });
-    }) as unknown as typeof chrome.runtime.sendMessage);
+    await settled(result);
+    expect(result.current.currentType).toBe("screenshot");
     act(() => result.current.retakeScreenshot());
     expect(capture).toHaveBeenCalledWith({ target: "background", action: "captureForCrop", tabId: 7, documentUrl: "https://example.com" }, expect.any(Function));
     await waitFor(() => expect(result.current.screenshotDataUrl).toBe(newBytes));
@@ -293,206 +183,68 @@ describe("standalone mode decision", () => {
     await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
     expect(upload.mock.calls[0]?.[3]).toBe("new-upload");
   });
-  it("leaves Save available when earlier captures cannot be selected unambiguously", async () => {
+  it("never shows a committed save left in the journal as unresolved, and removes it on opening (Т6)", async () => {
     browserDestination();
-    vi.spyOn(draftApi, "attachDraft").mockRejectedValue(new draftApi.DraftStorageError("Several earlier captures", "draft_ambiguous"));
+    const key = "minePendingSaveOperation:left-behind";
+    // A record whose removal failed after its save committed.
+    await chrome.storage.local.set({ [key]: { schemaVersion: 1, id: "left-behind", executor: "browser", bindingId: "browser-original",
+      vaultPath: null, sourceUrl: "https://example.com", attempted: true,
+      payload: { action: "save_block", url: "https://example.com", title: "Saved before" },
+      terminalResult: { ok: true, outcome: "committed", slug: "Cards/Saved-before" } } });
     const { result } = renderHook(() => useClipperState());
-    await waitFor(() => expect(result.current.draftReady).toBe(true));
-    expect(result.current.draftError).toContain("Several earlier clips");
-    expect(result.current.canSave).toBe(true);
-    act(() => { result.current.setCurrentType("link"); result.current.setTitle("Visible unambiguous clip"); });
-    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
-    expect(standalone.standaloneSave.mock.calls[0]?.[0]).toMatchObject({ title: "Visible unambiguous clip" });
-  });
-
-  it("rebinds an empty restored capture to the current generation of the same document", async () => {
-    browserDestination();
-    const fresh: messaging.PageMetadata = { url: "https://example.com", documentUrl: "https://example.com", captureGeneration: "fresh:1",
-      title: "Page", description: "", image: null, author: null, ogType: null, favicon: null, selection: "", detectedType: "link", isArticle: false };
-    vi.spyOn(messaging, "extractMetadata").mockResolvedValue(fresh);
-    vi.spyOn(messaging, "extractArticleAsync").mockResolvedValue({ title: "Current article", content: "Current document text",
-      byline: null, excerpt: "", documentUrl: fresh.documentUrl, sourceUrl: fresh.url, captureGeneration: fresh.captureGeneration });
-    drafts.set(fresh.url, { schemaVersion: 1, revision: 3, draftId: "restored",
-      state: { metadata: { ...fresh, captureGeneration: "previous:1" }, articleData: null, title: "Keep my title", selectedTags: ["Art"],
-        currentType: "link", selectedVault: null, screenshotDataUrl: null, screenshotUploadId: null, executor: "browser", bindingId: "browser-original" } });
-    const { result } = renderHook(() => useClipperState());
-    await waitFor(() => expect(result.current.draftReady).toBe(true));
-    expect(result.current.metadata?.captureGeneration).toBe("fresh:1");
-    act(() => result.current.setCurrentType("content"));
-    await waitFor(() => expect(result.current.articleExtractionState).toBe("ready"));
-    expect(result.current.articleData?.content).toBe("Current document text");
-    expect(result.current.title).toBe("Keep my title");
-    expect(result.current.selectedTags).toEqual(["Art"]);
-  });
-  it("automatically recovers an interrupted draft attach without exposing an internal error", async () => {
-    sendToNative.mockImplementation(async (request: { action: string }) => request.action === "get_status"
-      ? nativeStatus() : { ok: true, channels: [], vaults: ["/v"] });
-    vi.spyOn(draftApi, "attachDraft").mockRejectedValueOnce(new draftApi.DraftStorageError("Read interrupted", "draft_transport"));
-    const { result } = renderHook(() => useClipperState());
-    await waitFor(() => expect(result.current.draftReady).toBe(true));
-    expect(result.current.draftError).toBeNull();
-    await act(async () => { await result.current.retryConnection(true); });
-    expect(result.current.draftError).toBeNull();
-  });
-  it("saves the visible clip without waiting for attach and settles late restoration without replacing saved content", async () => {
-    browserDestination();
-    const meta: messaging.PageMetadata = { url: "https://example.com", title: "Current page", description: "", image: null, author: null,
-      ogType: null, favicon: null, selection: "Visible current selection", detectedType: "selection", isArticle: false };
-    vi.spyOn(messaging, "extractMetadata").mockResolvedValue(meta);
-    const previous: DurableClipperDraft = { schemaVersion: 1, revision: 3, draftId: "earlier-edits", state: {
-      metadata: { ...meta, selection: "Earlier selection" }, articleData: null, title: "Earlier unsaved title", selectedTags: ["Earlier"], currentType: "content",
-      selectedVault: null, screenshotDataUrl: null, screenshotUploadId: null, executor: "browser", bindingId: "browser-original",
-    } };
-    drafts.set(meta.url, previous);
-    const original = draftApi.attachDraft;
-    let finish: (() => void) | undefined;
-    vi.spyOn(draftApi, "attachDraft").mockImplementationOnce(async (...args) => {
-      const attached = await original(...args);
-      await new Promise<void>(resolve => { finish = resolve; });
-      return attached;
-    });
-    const { result } = renderHook(() => useClipperState());
-    await waitFor(() => expect(finish).toBeDefined());
-    expect(result.current.draftReady).toBe(false);
-    expect(result.current.draftLoading).toBe(true);
-    expect(result.current.canSave).toBe(true);
-    act(() => { result.current.setTitle("Visible current title"); result.current.toggleTag("Art"); });
-    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
-    expect(standalone.standaloneSave.mock.calls[0]?.[0]).toMatchObject({ title: "Visible current title", body: "Visible current selection", tags: ["Art"] });
-    expect(drafts.get(meta.url)).toEqual(previous);
-    await act(async () => { finish?.(); });
-    await waitFor(() => expect(result.current.draftLoading).toBe(false));
-    expect(result.current.title).toBe("Visible current title");
-    expect(result.current.metadata?.selection).toBe("Visible current selection");
-    expect(result.current.selectedTags).toEqual(["Art"]);
-    expect(result.current.draftError).toBeNull();
-    expect(drafts.get(meta.url)).toEqual(previous);
+    await settled(result);
+    await waitFor(async () => expect((await chrome.storage.local.get(null))[key]).toBeUndefined());
+    expect(result.current.previousOperation).toBeNull();
+    act(() => { result.current.setCurrentType("link"); result.current.setTitle("Next clip"); });
     await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
     expect(standalone.standaloneSave).toHaveBeenCalledTimes(1);
+    expect(standalone.standaloneSave.mock.calls[0]?.[0]).toMatchObject({ title: "Next clip" });
+    expect(standalone.standaloneLookup).not.toHaveBeenCalled();
   });
-  it("repeats an uncertain mutation before saving later edits without a revision conflict", async () => {
+  it("saves the visible edits and a repeated Save of the committed clip does not dispatch again", async () => {
     browserDestination();
-    const original = draftApi.writeOwnedDraft;
-    const writing = vi.spyOn(draftApi, "writeOwnedDraft").mockImplementationOnce(async (...args) => {
-      await original(...args);
-      throw new draftApi.DraftStorageError("Reply interrupted", "draft_transport");
-    });
     const { result } = renderHook(() => useClipperState());
-    await waitFor(() => expect(writing.mock.calls.length).toBeGreaterThanOrEqual(2));
-    expect(result.current.draftError).toBeNull();
-    const firstMutation = writing.mock.calls[0]?.[3].mutationId;
-    act(() => { result.current.setTitle("Latest user edit"); result.current.setCurrentType("link"); });
-    await waitFor(() => expect(result.current.draftError).toBeNull());
-    expect(writing.mock.calls[1]?.[3].mutationId).toBe(firstMutation);
-    expect(drafts.get("https://example.com")?.state.title).toBe("Latest user edit");
+    await settled(result);
+    act(() => { result.current.setCurrentType("link"); result.current.setTitle("Current title"); result.current.toggleTag("Art"); });
+    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+    expect(standalone.standaloneSave.mock.calls[0]?.[0]).toMatchObject({ title: "Current title", tags: ["Art"] });
     await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
     expect(standalone.standaloneSave).toHaveBeenCalledTimes(1);
-  });
-  it("saves the visible clip after restore failure and retains its receipt across reopening", async () => {
-    browserDestination();
-    const oldDraft: DurableClipperDraft = {
-      schemaVersion: 1, revision: 3, draftId: "previous-edits",
-      state: {
-        metadata: { url: "https://example.com", title: "Previous", description: "", image: null, author: null,
-          ogType: null, favicon: null, selection: "", detectedType: "link", isArticle: false },
-        articleData: null, title: "Previous unsaved title", selectedTags: ["Previous"], currentType: "link",
-        selectedVault: null, screenshotDataUrl: null, screenshotUploadId: null, executor: "browser", bindingId: "browser-original",
-      },
-    };
-    drafts.set("https://example.com", oldDraft);
-    const attaching = vi.spyOn(draftApi, "attachDraft").mockRejectedValue(new draftApi.DraftStorageError("Read interrupted", "draft_transport"));
-    const writing = vi.spyOn(draftApi, "writeOwnedDraft");
-    const first = renderHook(() => useClipperState());
-    await waitFor(() => expect(first.result.current.draftReady).toBe(true));
-    expect(attaching).toHaveBeenCalledTimes(2);
-    expect(first.result.current.draftLoading).toBe(false);
-    act(() => { first.result.current.setCurrentType("link"); first.result.current.setTitle("Visible current clip"); first.result.current.toggleTag("Art"); });
-    await act(async () => { expect(await first.result.current.save()).toMatchObject({ ok: true }); });
-    const request = standalone.standaloneSave.mock.calls[0]?.[0];
-    expect(request).toMatchObject({ title: "Visible current clip", tags: ["Art"], executor_id: "browser", binding_id: "browser-original" });
-    expect(writing).not.toHaveBeenCalled();
-    expect(drafts.get("https://example.com")).toEqual(oldDraft);
-    first.unmount();
-    const second = renderHook(() => useClipperState());
-    await waitFor(() => expect(second.result.current.previousOperation?.terminalResult?.ok).toBe(true));
-    await act(async () => { expect(await second.result.current.save()).toMatchObject({ ok: false }); });
-    await act(async () => { expect(await second.result.current.recoverPreviousSave()).toMatchObject({ ok: true }); });
-    expect(standalone.standaloneSave).toHaveBeenCalledTimes(1);
-    expect(drafts.get("https://example.com")).toEqual(oldDraft);
-  });
-  it("saves current edits when autosave fails and retries the committed operation without duplicate dispatch", async () => {
-    browserDestination();
-    vi.spyOn(draftApi, "writeOwnedDraft").mockRejectedValue(new draftApi.DraftStorageError("Recovery quota unavailable", "draft_storage_failed"));
-    const { result } = renderHook(() => useClipperState());
-    await waitFor(() => expect(result.current.draftError).not.toBeNull());
-    act(() => { result.current.setCurrentType("link"); result.current.setTitle("Current unsynced title"); result.current.toggleTag("Art"); });
-    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
-    expect(standalone.standaloneSave.mock.calls[0]?.[0]).toMatchObject({ title: "Current unsynced title", tags: ["Art"] });
-    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
-    expect(standalone.standaloneSave).toHaveBeenCalledTimes(1);
-  });
-  it("preserves earlier edits when delayed restoration completes after the visible editor changed", async () => {
-    browserDestination();
-    const meta: messaging.PageMetadata = { url: "https://example.com", title: "Page", description: "", image: null, author: null,
-      ogType: null, favicon: null, selection: "", detectedType: "link", isArticle: false };
-    drafts.set(meta.url, { schemaVersion: 1, revision: 3, draftId: "earlier-capture", state: {
-      metadata: meta, articleData: null, title: "Earlier unsaved title", selectedTags: ["Earlier"], currentType: "link",
-      selectedVault: null, screenshotDataUrl: null, screenshotUploadId: null, executor: "browser", bindingId: "browser-original",
-    } });
-    const original = draftApi.attachDraft;
-    let finish: (() => void) | undefined;
-    vi.spyOn(draftApi, "attachDraft").mockImplementationOnce(async (...args) => {
-      const attached = await original(...args);
-      await new Promise<void>(resolve => { finish = resolve; });
-      return attached;
-    });
-    const { result } = renderHook(() => useClipperState());
-    await waitFor(() => expect(finish).toBeDefined());
-    act(() => { result.current.setCurrentType("link"); result.current.setTitle("Visible new title"); result.current.toggleTag("Art"); });
-    await act(async () => { finish?.(); });
-    await waitFor(() => expect(result.current.draftReady).toBe(true));
-    expect(result.current.title).toBe("Visible new title");
-    expect(result.current.selectedTags).toEqual(["Art"]);
-    expect(draftRecords.get("mineDurableDraftRecord:earlier-capture")).toMatchObject({ draft: { state: { title: "Earlier unsaved title" } } });
-    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
-    expect(standalone.standaloneSave.mock.calls[0]?.[0]).toMatchObject({ title: "Visible new title", tags: ["Art"] });
-    expect(draftRecords.get("mineDurableDraftRecord:earlier-capture")).toMatchObject({ draft: { state: { title: "Earlier unsaved title" } } });
   });
   it("refuses dispatch when the mandatory save journal cannot be stored", async () => {
     browserDestination();
     const { result } = renderHook(() => useClipperState());
-    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    await settled(result);
     act(() => result.current.setCurrentType("link"));
     vi.mocked(chrome.storage.local.set).mockRejectedValueOnce(new Error("Save journal storage unavailable"));
     await act(async () => { expect(await result.current.save()).toMatchObject({ ok: false, error: "Save journal storage unavailable" }); });
     expect(standalone.standaloneSave).not.toHaveBeenCalled();
   });
-  it("returns source success while autosave is pending and repeats Save without duplicate dispatch", async () => {
+  it("leaves no journal record after a committed Save; reopening shows no previous save and Save stays available (Т3)", async () => {
     browserDestination();
-    vi.spyOn(messaging, "extractMetadata").mockResolvedValue({ url: "https://example.com", title: "Page", description: "", image: null, author: null,
-      ogType: null, favicon: null, selection: "", detectedType: "link", isArticle: false });
-    const original = draftApi.writeOwnedDraft;
-    let finish: (() => void) | undefined;
-    vi.spyOn(draftApi, "writeOwnedDraft").mockImplementationOnce(async (...args) => {
-      await new Promise<void>(resolve => { finish = resolve; });
-      return original(...args);
-    });
-    const { result } = renderHook(() => useClipperState());
-    await waitFor(() => expect(finish).toBeDefined());
-    act(() => result.current.setCurrentType("link"));
-    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+    const first = renderHook(() => useClipperState());
+    await settled(first.result);
+    act(() => first.result.current.setCurrentType("link"));
+    await act(async () => { expect(await first.result.current.save()).toMatchObject({ ok: true }); });
     const operationId = standalone.standaloneSave.mock.calls[0]?.[0].operation_id;
     const key = `minePendingSaveOperation:${operationId}`;
-    expect((await chrome.storage.local.get(key))[key]).toMatchObject({ terminalResult: { ok: true } });
-    await act(async () => { finish?.(); });
-    await waitFor(async () => expect((await chrome.storage.local.get(key))[key]).toBeUndefined());
-    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+    await waitFor(async () => expect((await chrome.storage.local.get(null))[key]).toBeUndefined());
+    await act(async () => { expect(await first.result.current.save()).toMatchObject({ ok: true }); });
     expect(standalone.standaloneSave).toHaveBeenCalledTimes(1);
+    first.unmount();
+
+    const second = renderHook(() => useClipperState());
+    await settled(second.result);
+    expect(second.result.current.previousOperation).toBeNull();
+    expect(second.result.current.canSave).toBe(true);
+    act(() => second.result.current.setCurrentType("link"));
+    await act(async () => { expect(await second.result.current.save()).toMatchObject({ ok: true }); });
+    expect(standalone.standaloneSave).toHaveBeenCalledTimes(2);
   });
   it("keeps a confirmed source success when the recovery receipt cannot be stored", async () => {
     browserDestination();
     const { result } = renderHook(() => useClipperState());
-    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    await settled(result);
     act(() => result.current.setCurrentType("link"));
     const store = vi.mocked(chrome.storage.local.set).getMockImplementation();
     if (!store) throw new Error("Storage fixture is missing");
@@ -511,7 +263,7 @@ describe("standalone mode decision", () => {
   it("confirms the same prepared journal after interrupted readback before its first dispatch", async () => {
     browserDestination();
     const { result } = renderHook(() => useClipperState());
-    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    await settled(result);
     act(() => { result.current.setCurrentType("link"); result.current.setTitle("Prepared visible title"); });
     const read = vi.mocked(chrome.storage.local.get).getMockImplementation();
     if (!read) throw new Error("Storage fixture is missing");
@@ -540,7 +292,7 @@ describe("standalone mode decision", () => {
       ? nativeStatus() : { ok: true, channels: [], vaults: ["/v"] });
     vi.spyOn(messaging, "pickVaultFolder").mockRejectedValueOnce(new Error("Picker interrupted"));
     const { result } = renderHook(() => useClipperState());
-    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    await settled(result);
     act(() => { result.current.setTitle("Keep this title"); result.current.toggleTag("Art"); });
     await act(async () => { await result.current.addSpace(); });
     expect(result.current.nativeStatusError).toBe("Picker interrupted");
@@ -584,33 +336,6 @@ describe("standalone mode decision", () => {
     expect(result.current.channelsError).toBeNull();
     expect(result.current.channelsLoading).toBe(false);
   });
-  it("restores title, collection order and screenshot bytes after the widget is destroyed", async () => {
-    browserDestination();
-    drafts.set("https://example.com", {
-      schemaVersion: 1, revision: 3, draftId: "confirmed-draft",
-      state: {
-        metadata: { url: "https://example.com", title: "Page", description: "", image: null, author: null,
-          ogType: null, favicon: null, selection: "", detectedType: "link", isArticle: false },
-        articleData: null, title: "Confirmed title", selectedTags: ["Second", "First"], currentType: "link",
-        selectedVault: null, screenshotDataUrl: "data:image/png;base64,AQID", screenshotUploadId: "expired-worker-id",
-        executor: "browser", bindingId: "browser-original",
-      },
-    });
-    const first = renderHook(() => useClipperState());
-    await waitFor(() => expect(first.result.current.draftReady).toBe(true));
-    expect(first.result.current.title).toBe("Confirmed title");
-    expect(first.result.current.selectedTags).toEqual(["Second", "First"]);
-    expect(first.result.current.screenshotDataUrl).toBe("data:image/png;base64,AQID");
-    act(() => first.result.current.setTitle("Next confirmed edition"));
-    await waitFor(() => expect(drafts.get("https://example.com")?.state.title).toBe("Next confirmed edition"));
-    first.unmount();
-    const reopened = renderHook(() => useClipperState());
-    await waitFor(() => expect(reopened.result.current.draftReady).toBe(true));
-    expect(reopened.result.current.title).toBe("Next confirmed edition");
-    expect(reopened.result.current.screenshotDataUrl).toBe("data:image/png;base64,AQID");
-    expect(standalone.standaloneSave).not.toHaveBeenCalled();
-  });
-
   function browserDestination() {
     sendToNative.mockResolvedValue({ ok: false, error: "No helper" });
     standalone.getStandaloneStatus.mockResolvedValue({ configured: true, folderName: "Mine", permission: "granted", bindingId: "browser-original" });
@@ -640,7 +365,7 @@ describe("standalone mode decision", () => {
     vi.spyOn(messaging, "extractArticleAsync").mockResolvedValue({ title: "Meridian", content: `${photos}\n\nA geometric book.`,
       byline: null, excerpt: "", documentUrl: meta.documentUrl, sourceUrl: meta.url, captureGeneration: meta.captureGeneration });
     const { result } = renderHook(() => useClipperState());
-    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    await settled(result);
     act(() => result.current.setCurrentType("content"));
     await waitFor(() => expect(result.current.articleExtractionState).toBe("ready"));
     expect(result.current.articleData?.content.match(/!\[/g)).toHaveLength(9);
@@ -734,7 +459,7 @@ describe("standalone mode decision", () => {
     const { result } = renderHook(() => useClipperState());
     await waitFor(() => expect(result.current.saveMode).toBe(executor === "native" ? "app" : "standalone"));
     await waitFor(() => expect(result.current.articleData?.content).toContain(`![](${objktVideo.mediaUrl})`));
-    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    await settled(result);
     const previewBody = result.current.articleData?.content;
     expect(previewBody).not.toContain("<video");
     expect(result.current.articleData?.embeddedVideos).toHaveLength(1);
@@ -814,7 +539,7 @@ describe("standalone mode decision", () => {
     });
     const { result } = renderHook(() => useClipperState());
     await waitFor(() => expect(result.current.saveMode).toBe(executor === "native" ? "app" : "standalone"));
-    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    await settled(result);
     act(() => result.current.setCurrentType("link"));
     let outcome: { ok: boolean; error?: string } | undefined;
     await act(async () => { outcome = await result.current.save(); });
@@ -835,7 +560,7 @@ describe("standalone mode decision", () => {
     });
     const { result } = renderHook(() => useClipperState());
     await waitFor(() => expect(result.current.saveMode).toBe("app"));
-    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    await settled(result);
     act(() => result.current.setCurrentType("link"));
     await act(async () => { await result.current.save(); });
     expect(sent).toBeDefined();
@@ -1034,7 +759,7 @@ describe("standalone mode decision", () => {
     expect(blocked?.ok).toBe(false);
     expect(standalone.standaloneSave).toHaveBeenCalledTimes(1);
 
-    act(() => second.result.current.confirmDifferentDraft());
+    act(() => second.result.current.confirmDifferentClip());
     standalone.standaloneSave.mockResolvedValue({ ok: true, outcome: "committed" });
     await act(async () => { await second.result.current.save(); });
     expect(standalone.standaloneSave.mock.calls[1]![0]).toMatchObject({ title: "Clip B" });
@@ -1114,13 +839,12 @@ function nativeStatus() {
   return { ok: true, connected: true, vaultConfigured: true, vault_path: "/v", binding_id: "native-v", features: ["save_operation_v1", "operation_lookup_v1"] };
 }
 
-function lifecycleDraft(): DurableClipperDraft {
-  return { schemaVersion: 1, revision: 1, draftId: "old-capture", state: {
-    metadata: { url: "https://example.com", title: "Page", description: "", image: null, author: null,
-      ogType: null, favicon: null, selection: "", detectedType: "link", isArticle: false },
-    articleData: null, title: "Old edited title", selectedTags: ["Old collection"], currentType: "link",
-    selectedVault: null, screenshotDataUrl: null, screenshotUploadId: null, executor: "browser", bindingId: "browser-original",
-  } };
+/// The clipper has opened and its destination check has settled.
+async function settled(result: { current: ReturnType<typeof useClipperState> }) {
+  await waitFor(() => {
+    expect(result.current.state).toBe("main");
+    expect(result.current.connectionChecking).toBe(false);
+  });
 }
 
 describe("space identity (SPEC_CLIPPER.md, К1, К3, К6)", () => {
@@ -1374,7 +1098,7 @@ describe("screenshots in the editor (SPEC_AUDIT_FIXES.md, Б4.5, Б4.6)", () => 
     const { result } = renderHook(() => useClipperState());
     await waitFor(() => expect(captures).toHaveLength(1));
     act(() => captures[0]!({ ok: true, dataUrl: first, screenshotId: "shot-1" }));
-    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    await settled(result);
     expect(result.current.canSave).toBe(true);
 
     act(() => result.current.retakeScreenshot());
@@ -1418,15 +1142,7 @@ describe("screenshots in the editor (SPEC_AUDIT_FIXES.md, Б4.5, Б4.6)", () => 
   });
 });
 
-describe("a draft is never moved to another browser folder in silence (SPEC_AUDIT_FIXES.md, В4.4)", () => {
-  const url = "https://example.com";
-
-  function draftFor(bindingId: string, folderLabel?: string): DurableClipperDraft {
-    const draft = lifecycleDraft();
-    return { ...draft, state: { ...draft.state, bindingId, selectedTags: ["Collection of A"],
-      ...(folderLabel === undefined ? {} : { folderLabel }) } };
-  }
-
+describe("a clip is never moved to another browser folder in silence (SPEC_AUDIT_FIXES.md, В4.4)", () => {
   function selectedFolder(folderName: string, bindingId: string) {
     standalone.getStandaloneStatus.mockResolvedValue({ configured: true, folderName, permission: "granted", bindingId });
   }
@@ -1437,43 +1153,10 @@ describe("a draft is never moved to another browser folder in silence (SPEC_AUDI
     selectedFolder("Folder B", "browser-b");
   });
 
-  it("restores a draft made for folder A while B is selected: names both, drops A's collections, saves to B without them", async () => {
-    drafts.set(url, draftFor("browser-a", "Folder A"));
-    const { result } = renderHook(() => useClipperState());
-    await waitFor(() => expect(result.current.draftReady).toBe(true));
-    await waitFor(() => expect(result.current.destinationNotice)
-      .toBe("This draft was made for “Folder A”. It will be saved to “Folder B”."));
-    expect(result.current.title).toBe("Old edited title");
-    expect(result.current.selectedTags).toEqual([]);
-    expect(result.current.standaloneFolder).toBe("Folder B");
-
-    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
-    expect(standalone.standaloneSave).toHaveBeenCalledTimes(1);
-    expect(standalone.standaloneSave.mock.calls[0]![0]).toMatchObject({ binding_id: "browser-b", tags: null, title: "Old edited title" });
-  });
-
-  it("keeps the collections of a draft made for the folder selected now", async () => {
-    drafts.set(url, draftFor("browser-b", "Folder B"));
-    const { result } = renderHook(() => useClipperState());
-    await waitFor(() => expect(result.current.draftReady).toBe(true));
-    await waitFor(() => expect(result.current.saveMode).toBe("standalone"));
-    await act(async () => { await result.current.retryConnection(true); });
-    expect(result.current.selectedTags).toEqual(["Collection of A"]);
-    expect(result.current.destinationNotice).toBeNull();
-  });
-
-  it("names another folder for a draft that did not keep the folder's name", async () => {
-    drafts.set(url, draftFor("browser-a"));
-    const { result } = renderHook(() => useClipperState());
-    await waitFor(() => expect(result.current.destinationNotice)
-      .toBe("This draft was made for another folder. It will be saved to “Folder B”."));
-    expect(result.current.selectedTags).toEqual([]);
-  });
-
   it("drops the collections and names both folders when another folder is chosen elsewhere meanwhile", async () => {
     const { result } = renderHook(() => useClipperState());
     await waitFor(() => expect(result.current.saveMode).toBe("standalone"));
-    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    await settled(result);
     act(() => { result.current.setCurrentType("link"); result.current.toggleTag("Collection of B"); });
     expect(result.current.selectedTags).toEqual(["Collection of B"]);
 
@@ -1483,7 +1166,7 @@ describe("a draft is never moved to another browser folder in silence (SPEC_AUDI
     await act(async () => { listener.forEach((receive) => receive({ action: "mineStandaloneFolderChanged" })); });
     await waitFor(() => expect(result.current.standaloneFolder).toBe("Folder C"));
     expect(result.current.selectedTags).toEqual([]);
-    expect(result.current.destinationNotice).toBe("This draft was made for “Folder B”. It will be saved to “Folder C”.");
+    expect(result.current.destinationNotice).toBe("This clip was made for “Folder B”. It will be saved to “Folder C”.");
 
     await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
     expect(standalone.standaloneSave.mock.calls[0]![0]).toMatchObject({ binding_id: "browser-c", tags: null });
@@ -1491,7 +1174,6 @@ describe("a draft is never moved to another browser folder in silence (SPEC_AUDI
 });
 
 describe("Save while the folder is being checked (SPEC_AUDIT_FIXES.md, Г3.2)", () => {
-  const url = "https://example.com";
   const folder = (name: string, bindingId: string) => ({ configured: true, folderName: name, permission: "granted", bindingId });
   const sentTags = () => standalone.standaloneSave.mock.calls.map(([request]) => (request as { tags?: unknown }).tags);
 
@@ -1500,21 +1182,25 @@ describe("Save while the folder is being checked (SPEC_AUDIT_FIXES.md, Г3.2)", 
     standalone.standaloneSave.mockResolvedValue({ ok: true, outcome: "committed", slug: "Cards/Clip" });
   });
 
-  it("a Save pressed while a restored draft of folder A is checked against B refuses with the notice; the next one saves to B without A's collections", async () => {
-    const draft = lifecycleDraft();
-    drafts.set(url, { ...draft, state: { ...draft.state, bindingId: "browser-a", folderLabel: "Folder A", selectedTags: ["Collection of A"] } });
+  it("a Save pressed while a folder change is being checked refuses with the notice; the next one saves to B without A's collections", async () => {
     const held: Array<() => void> = [];
     let checks = 0;
     standalone.getStandaloneStatus.mockImplementation(() => {
       checks += 1;
-      // The clipper's own first check answers at once; the check the restored
-      // draft starts is still out when Save is pressed.
-      if (checks === 1) return Promise.resolve(folder("Folder B", "browser-b"));
-      return new Promise((resolve) => { held.push(() => resolve(folder("Folder B", "browser-b"))); });
+      // The clipper's own first check finds folder A; the check that the
+      // folder change starts is still out when Save is pressed.
+      if (checks === 1) return Promise.resolve(folder("Folder A", "browser-a"));
+      if (checks === 2) return new Promise((resolve) => { held.push(() => resolve(folder("Folder B", "browser-b"))); });
+      return Promise.resolve(folder("Folder B", "browser-b"));
     });
     const { result } = renderHook(() => useClipperState());
+    await settled(result);
+    expect(result.current.standaloneFolder).toBe("Folder A");
+    act(() => { result.current.setCurrentType("link"); result.current.setTitle("Clip made for A"); result.current.toggleTag("Collection of A"); });
+    const listeners = vi.mocked(chrome.runtime.onMessage.addListener).mock.calls
+      .map(([registered]) => registered as unknown as (message: { action?: string }) => void);
+    act(() => { listeners.at(-1)?.({ action: "mineStandaloneFolderChanged" }); });
     await waitFor(() => expect(held).toHaveLength(1));
-    await waitFor(() => expect(result.current.selectedTags).toEqual(["Collection of A"]));
     const canSaveDuringCheck = result.current.canSave;
 
     let saving: ReturnType<typeof result.current.save> = Promise.resolve(undefined);
@@ -1529,21 +1215,21 @@ describe("Save while the folder is being checked (SPEC_AUDIT_FIXES.md, Г3.2)", 
     expect(refused!).toEqual({ ok: false, error: DESTINATION_CHANGED_DURING_SAVE });
     expect(canSaveDuringCheck).toBe(false);
     expect(result.current.state).toBe("main");
-    expect(result.current.destinationNotice).toBe("This draft was made for “Folder A”. It will be saved to “Folder B”.");
+    expect(result.current.destinationNotice).toBe("This clip was made for “Folder A”. It will be saved to “Folder B”.");
     expect(result.current.selectedTags).toEqual([]);
-    expect(result.current.title).toBe("Old edited title");
+    expect(result.current.title).toBe("Clip made for A");
     expect(result.current.canSave).toBe(true);
 
     await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
     expect(standalone.standaloneSave).toHaveBeenCalledTimes(1);
-    expect(standalone.standaloneSave.mock.calls[0]![0]).toMatchObject({ binding_id: "browser-b", tags: null, title: "Old edited title" });
+    expect(standalone.standaloneSave.mock.calls[0]![0]).toMatchObject({ binding_id: "browser-b", tags: null, title: "Clip made for A" });
   });
 
   it("a check that comes during a save does not move it; the editor follows the folder once the save ends", async () => {
     standalone.getStandaloneStatus.mockResolvedValue(folder("Folder B", "browser-b"));
     const { result } = renderHook(() => useClipperState());
     await waitFor(() => expect(result.current.saveMode).toBe("standalone"));
-    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    await settled(result);
     act(() => { result.current.setCurrentType("link"); result.current.toggleTag("Collection of B"); });
     let finishSave: (response: unknown) => void = () => undefined;
     standalone.standaloneSave.mockImplementationOnce(() => new Promise((resolve) => { finishSave = resolve; }));
@@ -1566,7 +1252,7 @@ describe("Save while the folder is being checked (SPEC_AUDIT_FIXES.md, Г3.2)", 
     expect(standalone.standaloneSave.mock.calls[0]![0]).toMatchObject({ binding_id: "browser-b", tags: ["Collection of B"] });
     await waitFor(() => expect(result.current.standaloneFolder).toBe("Folder C"));
     expect(result.current.selectedTags).toEqual([]);
-    expect(result.current.destinationNotice).toBe("This draft was made for “Folder B”. It will be saved to “Folder C”.");
+    expect(result.current.destinationNotice).toBe("This clip was made for “Folder B”. It will be saved to “Folder C”.");
   });
 });
 
@@ -1590,7 +1276,7 @@ describe("Save link clips the link, not the page it was clicked on (SPEC_AUDIT_F
 
   it("opens as Link without a screenshot of page A and saves link B with nothing of page A", async () => {
     const { result } = renderHook(() => useClipperState());
-    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    await settled(result);
 
     expect(result.current.currentType).toBe("link");
     expect(sentMessages().some((message) => message.action === "captureForCrop")).toBe(false);
@@ -1606,8 +1292,45 @@ describe("Save link clips the link, not the page it was clicked on (SPEC_AUDIT_F
 
   it("names link B for a screenshot, so the tab showing page A is refused rather than saved as B", async () => {
     const { result } = renderHook(() => useClipperState());
-    await waitFor(() => expect(result.current.draftReady).toBe(true));
+    await settled(result);
     act(() => result.current.setCurrentType("screenshot"));
     expect(sentMessages().find((message) => message.action === "captureForCrop")).toMatchObject({ documentUrl: linkB });
+  });
+});
+
+describe("a clip lives only in the open clipper (SPEC_CLIPPER_DRAFTS_REMOVAL.md, Ч1, Ч2, Ч3)", () => {
+  it("ignores drafts an earlier version stored: the fresh capture and the saved destination open (Т1)", async () => {
+    sendToNative.mockImplementation(async (request: { action: string }) => request.action === "get_status"
+      ? nativeStatus() : { ok: true, channels: [], vaults: ["/v", "/old"] });
+    const oldState = { title: "Old draft title", selectedTags: ["Old collection"], currentType: "link",
+      selectedVault: "/old", executor: "native", bindingId: "path-binding-of-old" };
+    await chrome.storage.local.set({
+      mineSaveDestination: { executor: "native", vaultPath: "/v", bindingId: "native-v" },
+      "mineDurableDraft:https://example.com": { schemaVersion: 1, revision: 4, draftId: "old", state: oldState },
+      "mineDurableDraftRecord:old": { schemaVersion: 2, sourceUrl: "https://example.com", draftId: "old", captureScope: "7",
+        ownerId: "earlier", generation: 1, draft: { schemaVersion: 1, revision: 4, draftId: "old", state: oldState } },
+    });
+    const { result } = renderHook(() => useClipperState());
+    await settled(result);
+    // The page's own title, not the one the old draft kept.
+    expect(result.current.title).toBe("Page");
+    expect(result.current.selectedTags).toEqual([]);
+    expect(result.current.selectedVault).toBe("/v");
+    expect(sendToNative.mock.calls.find(([request]) => request.action === "get_status")?.[0])
+      .toMatchObject({ vault_path: "/v", binding_id: "native-v" });
+  });
+
+  it("open, edit and close without Save: nothing of the clip is written to the browser (Т4)", async () => {
+    sendToNative.mockResolvedValue({ ok: false, error: "No helper" });
+    standalone.getStandaloneStatus.mockResolvedValue({ configured: true, folderName: "Mine", permission: "granted", bindingId: "browser-original" });
+    const { result, unmount } = renderHook(() => useClipperState());
+    await settled(result);
+    act(() => { result.current.setCurrentType("link"); result.current.setTitle("Edited, never saved"); result.current.toggleTag("Art"); });
+    unmount();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const written = vi.mocked(chrome.storage.local.set).mock.calls.flatMap(([values]) => Object.keys(values as Record<string, unknown>));
+    expect(written.filter((key) => key.startsWith("mineDurable") || key.startsWith("minePendingSaveOperation:"))).toEqual([]);
+    expect(JSON.stringify(await chrome.storage.local.get(null))).not.toContain("Edited, never saved");
+    expect(standalone.standaloneSave).not.toHaveBeenCalled();
   });
 });

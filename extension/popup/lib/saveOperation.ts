@@ -9,8 +9,6 @@ declare global {
 export interface PinnedSaveOperation {
   schemaVersion?: 1;
   id: string;
-  draftId?: string;
-  draftRevision?: number;
   terminalResult?: NativeResponse;
   sourceUrl?: string;
   folderLabel?: string;
@@ -57,7 +55,8 @@ function validateStoredOperation(value: unknown, operation: PinnedSaveOperation)
   }
 }
 
-/** Keep an acknowledged source commit independently of draft cleanup. */
+/** Keep an acknowledged source commit until its record is removed: a record
+ *  that outlives a failed removal is settled, not unresolved. */
 export async function persistSaveReceipt(operation: PinnedSaveOperation, result: NativeResponse): Promise<void> {
   if (!result.ok && result.outcome !== "committed") throw new Error("An unconfirmed save cannot have a committed receipt");
   const key = PENDING_PREFIX + operation.id;
@@ -71,6 +70,26 @@ export async function persistSaveReceipt(operation: PinnedSaveOperation, result:
   operation.terminalResult = result;
 }
 
+/** Whether a stored record carries a committed result: nothing about it is
+ *  left to check (SPEC_CLIPPER_DRAFTS_REMOVAL.md, Ч4). */
+function isSettled(operation: Partial<PinnedSaveOperation>): boolean {
+  return operation.terminalResult?.ok === true || operation.terminalResult?.outcome === "committed";
+}
+
+/** Remove every record whose save is committed. A record in an unknown
+ *  format is preserved. */
+export async function clearCommittedSaves(): Promise<void> {
+  const stored: Record<string, unknown> = await chrome.storage.local.get(null);
+  const settled = Object.entries(stored)
+    .filter(([key, value]) => key.startsWith(PENDING_PREFIX) && value !== null && typeof value === "object"
+      && (!("schemaVersion" in value) || value.schemaVersion === 1)
+      && isSettled(value as Partial<PinnedSaveOperation>))
+    .map(([key]) => key);
+  if (settled.length > 0) await chrome.storage.local.remove(settled);
+}
+
+/** The unresolved save of this page, if any. A committed record is not one:
+ *  it never blocks Save or asks for a check. */
 export async function findPendingSave(url: string): Promise<PinnedSaveOperation | null> {
   const stored: Record<string, unknown> = await chrome.storage.local.get(null);
   for (const [key, value] of Object.entries(stored)) {
@@ -88,12 +107,12 @@ export async function findPendingSave(url: string): Promise<PinnedSaveOperation 
     if (typeof operation.id !== "string" || typeof operation.bindingId !== "string"
       || (operation.executor !== "native" && operation.executor !== "browser")
       || (operation.vaultPath !== null && typeof operation.vaultPath !== "string")) continue;
+    if (isSettled(operation)) continue;
     // A damaged payload remains discoverable and lookup-only; it is not proof
-    // that the source operation never happened. Older records use payload.url.
+    // that the source operation never happened. Older records use payload.url
+    // and may carry draftId and draftRevision, which are no longer read.
     return { id: operation.id, executor: operation.executor, bindingId: operation.bindingId,
-      vaultPath: operation.vaultPath, payload, sourceUrl, draftId: operation.draftId,
-      draftRevision: typeof operation.draftRevision === "number" ? operation.draftRevision : undefined,
-      terminalResult: operation.terminalResult?.ok || operation.terminalResult?.outcome === "committed" ? operation.terminalResult : undefined,
+      vaultPath: operation.vaultPath, payload, sourceUrl,
       folderLabel: typeof operation.folderLabel === "string" ? operation.folderLabel : undefined, attempted: true };
   }
   return null;
@@ -110,7 +129,7 @@ export async function executePinnedSave(operation: PinnedSaveOperation): Promise
       executor_id: operation.executor, vault_path: operation.vaultPath, mode: "resume", operation_mode: "resume" };
     return operation.executor === "browser" ? standaloneSave(request) : sendToNative(request);
   }
-  if (!operation.payload) return { ok: false, outcome: "unknown", error: "The original draft is unavailable; only its save outcome can be checked." };
+  if (!operation.payload) return { ok: false, outcome: "unknown", error: "The original clip is unavailable; only its save outcome can be checked." };
   operation.attempted = true;
   const request = {
     ...operation.payload,

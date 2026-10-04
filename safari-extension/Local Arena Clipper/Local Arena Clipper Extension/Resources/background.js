@@ -21,29 +21,8 @@
 // folder when the native host is not there. Classic script, attaches to
 // globalThis — the same convention every lib/ file follows.
 importScripts("generated/save-core/mine_core.js", "lib/mineCore.js", "lib/saveProtocol.js", "lib/standaloneVault.js");
-importScripts("lib/storedValue.js", "lib/draftStore.js");
 
 const HOST_NAME = "com.mine.clipper.v1";
-const DRAFT_SESSION_KEY = "mineDraftBrowserSession";
-let draftSessionPromise = null;
-function currentDraftSession() {
-  if (!draftSessionPromise) draftSessionPromise = (async () => {
-    const stored = await chrome.storage.session.get(DRAFT_SESSION_KEY);
-    if (typeof stored[DRAFT_SESSION_KEY] === "string") return stored[DRAFT_SESSION_KEY];
-    const session = crypto.randomUUID();
-    await chrome.storage.session.set({ [DRAFT_SESSION_KEY]: session });
-    return session;
-  })().catch(error => { draftSessionPromise = null; throw error; });
-  return draftSessionPromise;
-}
-async function attachClipperDraft(store, message, sourceTabId) {
-  const [captureSession, tabs] = await Promise.all([currentDraftSession(), chrome.tabs.query({})]);
-  return store.attach(message.sourceUrl, {
-    ...message.options, captureSession,
-    captureScope: sourceTabId === null ? "extension" : String(sourceTabId),
-    activeScopes: ["extension", ...tabs.filter(tab => Number.isInteger(tab.id)).map(tab => String(tab.id))],
-  });
-}
 // Must match extension/popup/popup-layout.css body { width: 360px }
 // so detached window has no horizontal gap next to the content.
 const POPUP_DEFAULT_WIDTH = 360;
@@ -167,9 +146,12 @@ function prepareTabForViewportCapture(tabId, callback) {
   });
 }
 
-function showExistingClipperOverlay(tabId) {
+/// `freshMaterial`: the launch brings something to clip (a context-menu
+/// target, a post already read), so it replaces a clip kept open with edits
+/// (SPEC_CLIPPER_DRAFTS_REMOVAL.md, Ч11).
+function showExistingClipperOverlay(tabId, freshMaterial) {
   return new Promise((resolve) => {
-    chrome.tabs.sendMessage(tabId, { action: "showClipperOverlay" }, (resp) => {
+    chrome.tabs.sendMessage(tabId, { action: "showClipperOverlay", freshMaterial }, (resp) => {
       if (chrome.runtime.lastError) {
         resolve(false);
         return;
@@ -246,6 +228,22 @@ function forgetClipperLaunch(tabId) {
 
 function rememberClipperWindowSource(windowId, tabId) {
   return changeSessionValue(CLIPPER_WINDOW_SOURCES_KEY, (sources = {}) => ({ next: { ...sources, [windowId]: tabId } }));
+}
+
+/// Bring forward the clipper window opened for `tabId`, if one is still open.
+async function focusClipperWindowOf(tabId) {
+  const sources = await sessionRecord(CLIPPER_WINDOW_SOURCES_KEY);
+  for (const [windowId, sourceTabId] of Object.entries(sources)) {
+    if (sourceTabId !== tabId) continue;
+    try {
+      await chrome.windows.update(Number(windowId), { focused: true });
+      return true;
+    } catch {
+      // Closed before its removal reached this record.
+      await forgetClipperWindowSource(Number(windowId));
+    }
+  }
+  return false;
 }
 
 function forgetClipperWindowSource(windowId) {
@@ -332,10 +330,11 @@ async function openClipperUiNow(tab, options) {
     contextMenu: options.contextMenu ?? null,
     preloaded: options.preloaded ?? null,
   });
+  const freshMaterial = Boolean(options.contextMenu || options.preloaded);
 
   if (tabId && isContentScriptCompatible(tabUrl)) {
     try {
-      if (await showExistingClipperOverlay(tabId)) {
+      if (await showExistingClipperOverlay(tabId, freshMaterial)) {
         return "overlay";
       }
 
@@ -348,7 +347,7 @@ async function openClipperUiNow(tab, options) {
         target: { tabId },
         files: ["dist/overlay.js"],
       });
-      if (await showExistingClipperOverlay(tabId)) {
+      if (await showExistingClipperOverlay(tabId, freshMaterial)) {
         return "overlay";
       }
       throw new Error("overlay injected but did not acknowledge show");
@@ -361,6 +360,12 @@ async function openClipperUiNow(tab, options) {
 
   if (!allowWindowFallback) {
     throw new Error("Clipper overlay unavailable for this tab");
+  }
+
+  // The window already open for this tab keeps its clip and comes forward
+  // unless the launch brings new material (Ч11).
+  if (!freshMaterial && typeof tab?.id === "number" && await focusClipperWindowOf(tab.id)) {
+    return "window";
   }
 
   // Fallback: detached popup window (service pages, CSP-restricted)
@@ -485,6 +490,32 @@ chrome.windows.onRemoved.addListener(async (windowId) => {
   await forgetPopupWindow(windowId);
   await forgetClipperWindowSource(windowId);
   if (ours) await reloadIfUpdated();
+});
+
+// ── Old drafts ────────────────────────────────────────────────────────────
+//
+// A clip lives only in an open clipper (SPEC_CLIPPER_DRAFTS_REMOVAL.md, Ч6).
+// The drafts an earlier version stored go once, on install or update; save
+// records, settings and the browser folder stay. A removal that fails leaves
+// keys nothing reads, and the next update tries again.
+const OLD_DRAFT_KEY_PREFIXES = [
+  "mineDurableDraft:",
+  "mineDurableDraftRecord:",
+  "mineDurableDraftIndex:",
+  "mineDurableDraftMigration:",
+];
+
+async function removeOldDrafts() {
+  const stored = await chrome.storage.local.get(null);
+  const keys = Object.keys(stored).filter((key) => OLD_DRAFT_KEY_PREFIXES.some((prefix) => key.startsWith(prefix)));
+  if (keys.length > 0) await chrome.storage.local.remove(keys);
+  await chrome.storage.session.remove("mineDraftBrowserSession");
+}
+
+chrome.runtime.onInstalled.addListener(() => {
+  void removeOldDrafts().catch((error) => {
+    console.warn("[Mine] old clipper drafts kept until the next update:", String(error?.message ?? error));
+  });
 });
 
 // ── Context menus ─────────────────────────────────────────────────────────
@@ -655,7 +686,7 @@ async function reloadIfUpdated() {
   await chrome.storage.local.set({ mineReloadedFor: mineReloadPending });
   await chrome.storage.session.remove("mineReloadPending");
   // Checked again with nothing awaited before the reload: a clipper opened,
-  // a draft written or a save sent while the tabs were asked or storage
+  // a browser write begun or a save sent while the tabs were asked or storage
   // written would be cut off. The update stays pending, and the end of that
   // work checks again (SPEC_AUDIT_FIXES.md, В4.6).
   if (reloadWaits(activity)) {
@@ -665,10 +696,9 @@ async function reloadIfUpdated() {
   chrome.runtime.reload();
 }
 
-// Writes into the folder chosen in the browser and the draft store's queue run
-// inside this worker; a reload would cut them off. A draft write cut off is
-// the last edit lost, a draft removal cut off brings a saved clip back as a
-// draft (SPEC_AUDIT_FIXES.md, Б4.1).
+// Writes into the folder chosen in the browser, a clip and a new collection,
+// run inside this worker; a reload would cut them off half written
+// (SPEC_CLIPPER.md, К4).
 let browserWritesInFlight = 0;
 // Clipper openings still under way, and a count of every opening and every
 // browser write begun. A reload check that saw this count change while it
@@ -712,7 +742,7 @@ function trackClipperOpening(work) {
 
 // Check again once the answer has reached the page: a pending update waits
 // for the save, not for the next time a clipper happens to close. A burst of
-// writes (autosave while typing) schedules one check after the last of them.
+// writes schedules one check after the last of them.
 const RELOAD_CHECK_DELAY_MS = 1000;
 let reloadCheckTimer = null;
 function scheduleReloadCheck() {
@@ -1144,26 +1174,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
       sendResponse({ ok: supported, save_protocols: [1], features: ["save_operation_v1", "operation_lookup_v1"],
         build_id: identity.buildId, commit: identity.commit,
-        ...(supported ? {} : { code: "incompatible_protocol", error: "This Mine widget uses an unsupported protocol. Its saved draft has been preserved. Reload the page to open the current widget." }) });
+        ...(supported ? {} : { code: "incompatible_protocol", error: "This Mine widget uses an unsupported protocol. Reload the page to open the current widget." }) });
     }).catch(error => sendResponse(extensionBackgroundFailure(error)));
-    return true;
-  }
-
-  if (["draftRead", "draftWrite", "draftClear", "draftAttach", "draftWriteOwned", "draftClearOwned"].includes(msg.action)) {
-    const store = globalThis.MineDraftStore;
-    const extensionPage = sender.url?.split("?")[0] === chrome.runtime.getURL("dist/index.html");
-    const sourceTabId = extensionPage && Number.isInteger(msg.sourceTabId) && msg.sourceTabId >= 0
-      ? msg.sourceTabId : sender.tab?.id ?? null;
-    // Counted from arrival until the store's queue answers it: a pending
-    // update reloads only once the queue has drained (Б4.1).
-    const operation = trackBrowserWrite(() => (msg.action === "draftAttach" ? attachClipperDraft(store, msg, sourceTabId)
-      : msg.action === "draftWriteOwned" ? store.writeOwned(msg.sourceUrl, msg.draft, msg.expectedRevision, msg.ownership)
-      : msg.action === "draftClearOwned" ? store.clearOwned(msg.sourceUrl, msg.draftId, msg.expectedRevision, msg.ownership)
-      : msg.action === "draftRead" ? store.read(msg.sourceUrl)
-      : msg.action === "draftWrite" ? store.write(msg.sourceUrl, msg.draft, msg.expectedRevision)
-      : store.clear(msg.sourceUrl, msg.draftId, msg.expectedRevision)));
-    operation.then(draft => sendResponse({ ok: true, draft: draft ?? null }),
-      error => sendResponse({ ok: false, code: error.code ?? "draft_storage_failed", error: String(error.message ?? error) }));
     return true;
   }
 

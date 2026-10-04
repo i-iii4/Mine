@@ -201,56 +201,10 @@ try {
   // test's back before standaloneStatus does so explicitly below.
   let transportPage = await quietTransportPage();
 
-  // These messages use the shipped listener and real chrome.storage.local.
-  // Repeating an acknowledged mutation after worker destruction represents
-  // the retry after a lost reply without replacing the storage implementation.
-  const draftUrl = 'https://example.test/durable-worker-draft';
-  const attached = (await checkedBackgroundMessage(transportPage, {
-    action: 'draftAttach', sourceUrl: draftUrl, sourceTabId: 410,
-    options: { ownerId: 'first-editor', captureId: 'worker-durable-capture', newCapture: false },
-  })).draft;
-  const draft = { schemaVersion: 1, revision: 1, draftId: attached.draftId,
-    state: { title: 'Confirmed title', selectedTags: ['Collections/Worker collection'],
-      screenshotDataUrl: 'data:image/png;base64,AQID', media: ['second', 'first'] } };
-  const mutation = { action: 'draftWriteOwned', sourceUrl: draftUrl, draft, expectedRevision: 0,
-    ownership: { ownerId: 'first-editor', generation: attached.generation, mutationId: 'confirmed-before-restart' } };
-  assert.deepEqual((await checkedBackgroundMessage(transportPage, mutation)).draft, draft);
+  // The shipped listener answers again once its worker restarts. A clip is
+  // kept only in an open clipper, so nothing about it outlives the restart
+  // (SPEC_CLIPPER_DRAFTS_REMOVAL.md, Ч1).
   worker = await restartWorker(transportPage);
-  assert.deepEqual((await checkedBackgroundMessage(transportPage, mutation)).draft, draft);
-  const changedRetry = await sendBackgroundMessage(transportPage, { ...mutation,
-    draft: { ...draft, state: { ...draft.state, title: 'Changed retry' } } });
-  assert.equal(changedRetry.response?.ok, false);
-  assert.equal(changedRetry.response?.code, 'invalid_draft');
-  await context.close();
-  context = undefined;
-  worker = await launch();
-  transportPage = await quietTransportPage();
-  // A new sender tab must discover the previous session's sole capture through
-  // the shipped listener, without supplying its old scope or stored draft ID.
-  const reopened = (await checkedBackgroundMessage(transportPage, {
-    action: 'draftAttach', sourceUrl: draftUrl,
-    options: { ownerId: 'reopened-editor', captureId: 'new-browser-candidate', newCapture: false },
-  })).draft;
-  assert.deepEqual(reopened.draft, draft);
-  assert.equal(reopened.generation, attached.generation + 1);
-  const staleWrite = await sendBackgroundMessage(transportPage, { ...mutation,
-    draft: { ...draft, revision: 2 }, expectedRevision: 1 });
-  assert.equal(staleWrite.response?.code, 'draft_owner_replaced');
-  const staleClear = await sendBackgroundMessage(transportPage, {
-    action: 'draftClearOwned', sourceUrl: draftUrl, draftId: draft.draftId, expectedRevision: 1,
-    ownership: mutation.ownership,
-  });
-  assert.equal(staleClear.response?.code, 'draft_owner_replaced');
-  const otherTransportPage = await quietTransportPage();
-  const independent = (await checkedBackgroundMessage(otherTransportPage, {
-    action: 'draftAttach', sourceUrl: draftUrl, sourceTabId: 411,
-    options: { ownerId: 'other-tab', captureId: 'other-capture', newCapture: false },
-  })).draft;
-  assert.equal(independent.draft, null);
-  assert.equal(independent.draftId, 'other-capture');
-  await otherTransportPage.close();
-  const durableBytes = await worker.evaluate(async (id) => (await chrome.storage.local.get(`mineDurableDraftRecord:${id}`))[`mineDurableDraftRecord:${id}`], draft.draftId);
-  assert.deepEqual(durableBytes.draft, draft);
 
   const setupPageOpened = context.waitForEvent('page');
   const setupReplySent = sendBackgroundMessage(transportPage, {
@@ -312,7 +266,7 @@ try {
     const stored = await chrome.storage.local.get(null);
     return { markdown, collectionMarkdown, channels,
       pending: Object.keys(stored).filter(key => key.startsWith('minePendingSaveOperation:')),
-      clipDrafts: Object.values(stored).filter(value => value?.draft?.state?.metadata?.url === 'https://example.test/worker-ui-article') };
+      drafts: Object.keys(stored).filter(key => key.startsWith('mineDurableDraft')) };
   });
   assert.ok(uiCapture.markdown.includes('Saved through the real popup button.'));
   assert.ok(uiCapture.markdown.includes('https://example.test/worker-ui-article'));
@@ -321,73 +275,11 @@ try {
   assert.ok(uiCapture.markdown.includes('[[Worker collection]]'));
   assert.ok(uiCapture.collectionMarkdown.includes('type: channel'));
   assert.ok(uiCapture.channels.channels.some(channel => channel.tag === 'Worker collection' && channel.block_count === 1));
+  // The committed save leaves no record, and no draft was ever written (Ч1, Ч4).
   assert.deepEqual(uiCapture.pending, []);
-  assert.deepEqual(uiCapture.clipDrafts, []);
+  assert.deepEqual(uiCapture.drafts, []);
   await popup.close();
   await popupSource.close();
-
-  // Fail only the autosave boundary. The popup, Chrome storage, operation
-  // journal, WASM executor and file publication still execute their real code.
-  await worker.evaluate(async () => {
-    const sourceUrl = 'https://example.test/worker-ui-autosave-recovery';
-    globalThis.__mineSmokeDraftStore = globalThis.MineDraftStore;
-    globalThis.__mineSmokeAutosaveFailures = 0;
-    globalThis.MineDraftStore = { ...globalThis.MineDraftStore,
-      async writeOwned(url, ...argumentsList) {
-        if (url === sourceUrl) {
-          globalThis.__mineSmokeAutosaveFailures += 1;
-          throw Object.assign(new Error('injected autosave failure'), { code: 'draft_storage_failed' });
-        }
-        return globalThis.__mineSmokeDraftStore.writeOwned(url, ...argumentsList);
-      },
-    };
-  });
-  const faultUrl = 'https://example.test/worker-ui-autosave-recovery';
-  const { popup: faultPopup } = await openClipperWindow(worker, {
-    metadata: { url: faultUrl, title: 'Worker UI autosave recovery',
-      description: 'Autosave failure regression', image: null, author: null, ogType: 'article',
-      favicon: null, selection: '', detectedType: 'article', isArticle: true },
-    article: { title: 'Worker UI autosave recovery', content: 'Visible edits survive autosave failure and Save commits them.',
-      byline: null, excerpt: 'Autosave failure regression' },
-  });
-  try {
-    await faultPopup.getByText('Edits are kept in this open clipper. Save will store the clip shown here.', { exact: true })
-      .waitFor({ state: 'visible', timeout: 15_000 });
-    assert.equal(await faultPopup.locator('[data-clipper-save-error]').count(), 0);
-    assert.doesNotMatch(await faultPopup.locator('body').innerText(), /injected autosave failure|draft_storage_failed/);
-    await faultPopup.getByRole('button', { name: 'Connect Worker collection', exact: true }).click({ timeout: 15_000 });
-    await faultPopup.getByRole('button', { name: 'Save to 1 collection', exact: true }).click({ timeout: 15_000 });
-    await faultPopup.locator('[data-clipper-saved]').waitFor({ state: 'visible', timeout: 15_000 });
-    assert.equal(await faultPopup.locator('[data-clipper-save-error]').count(), 0);
-  } catch (error) {
-    throw new Error(`Packaged popup could not save after autosave failure: ${await faultPopup.locator('body').innerText()}`, { cause: error });
-  }
-  const faultCapture = await worker.evaluate(async () => {
-    const folder = await globalThis.MineStandaloneVault.loadDirectoryHandle();
-    const cards = await folder.getDirectoryHandle('Cards');
-    const markdown = await (await (await cards.getFileHandle('Worker UI autosave recovery.md')).getFile()).text();
-    const stored = await chrome.storage.local.get(null);
-    const operations = Object.entries(stored).filter(([key]) => key.startsWith('minePendingSaveOperation:'));
-    const operation = operations[0]?.[1];
-    const lookup = operation ? await globalThis.MineStandaloneVault.lookupOperation(operation.id, operation.bindingId) : null;
-    const failures = globalThis.__mineSmokeAutosaveFailures;
-    globalThis.MineDraftStore = globalThis.__mineSmokeDraftStore;
-    delete globalThis.__mineSmokeDraftStore;
-    delete globalThis.__mineSmokeAutosaveFailures;
-    return { markdown, operations, lookup, failures,
-      drafts: Object.entries(stored).filter(([key, value]) => key.startsWith('mineDurableDraftRecord:')
-        && value?.sourceUrl === 'https://example.test/worker-ui-autosave-recovery').map(([, value]) => value) };
-  });
-  assert.ok(faultCapture.failures > 0, 'autosave fault must actually reach the shipped worker listener');
-  assert.ok(faultCapture.markdown.includes('Visible edits survive autosave failure and Save commits them.'));
-  assert.ok(faultCapture.markdown.includes('https://example.test/worker-ui-autosave-recovery'));
-  assert.ok(faultCapture.markdown.includes('[[Worker collection]]'));
-  assert.equal(faultCapture.operations.length, 1, 'failed draft cleanup retains the original committed recovery receipt');
-  assert.equal(faultCapture.operations[0][1].terminalResult.outcome, 'committed');
-  assert.deepEqual(faultCapture.lookup, faultCapture.operations[0][1].terminalResult);
-  assert.equal(faultCapture.drafts.length, 1);
-  assert.equal(faultCapture.drafts[0].draft, null, 'failed autosave must not invent a confirmed draft edition');
-  await faultPopup.close();
 
   const devtools = await context.newCDPSession(transportPage);
   const { targetInfos } = await devtools.send('Target.getTargets');
@@ -420,22 +312,18 @@ try {
     for await (const name of cards.keys()) names.push(name);
     const stored = await chrome.storage.local.get(null);
     return { markdown: await read(cards, 'Worker UI article.md'),
-      faultMarkdown: await read(cards, 'Worker UI autosave recovery.md'),
       collectionMarkdown: await read(collections, 'Worker collection.md'), names: names.sort(),
       pending: Object.keys(stored).filter(key => key.startsWith('minePendingSaveOperation:')) };
   });
   assert.equal(finalCapture.markdown, uiCapture.markdown);
-  assert.equal(finalCapture.faultMarkdown, faultCapture.markdown);
   assert.equal(finalCapture.collectionMarkdown, uiCapture.collectionMarkdown);
-  assert.deepEqual(finalCapture.names, ['Worker UI article.md', 'Worker UI autosave recovery.md', 'Worker image.md']);
-  assert.deepEqual(finalCapture.pending, [faultCapture.operations[0][0]]);
+  assert.deepEqual(finalCapture.names, ['Worker UI article.md', 'Worker image.md']);
+  assert.deepEqual(finalCapture.pending, []);
   Object.assign(report, { ok: true, scope: 'chromium-extension-worker-wasm',
     fixtures: fixtures.length, headless: true, temporaryProfile: true,
-    persistedHandleBlobReceipt: true, browserRestarts: 4, popupSaveToFile: true,
-    popupSelectedCollectionToFile: true, chromeStorageDraftRetry: true,
-    draftTransportBrowserReopen: true, staleDraftOwnerRejected: true, independentTabCaptures: true,
+    persistedHandleBlobReceipt: true, browserRestarts: 3, popupSaveToFile: true,
+    popupSelectedCollectionToFile: true, noClipStorageBeforeSave: true, journalClearedAfterSave: true,
     savedFileStableAfterBrowserReopen: true,
-    popupSaveAfterAutosaveFailure: true, committedReceiptRetainedAfterAutosaveFailure: true,
     standaloneSetupTransport: true, nativeStatusTransport: true, serviceWorkerRestarts: 2,
     filesystem: 'OPFS-not-OS-folder' });
 } catch (error) {

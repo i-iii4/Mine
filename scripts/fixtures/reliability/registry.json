@@ -331,7 +331,7 @@
     {
       "id": "A10",
       "requirement": "SPEC_SYSTEM_RELIABILITY.md### 9. Обязательная матрица приёмки",
-      "behavior": "Неподдерживаемый протокол отклоняется до записи и сохраняет черновик",
+      "behavior": "Неподдерживаемый протокол отклоняется до записи; клип остаётся в открытом клиппере",
       "tests": [
         "scripts/reliability-gate.test.mjs"
       ],
@@ -363,7 +363,7 @@
     {
       "id": "A12",
       "requirement": "SPEC_SYSTEM_RELIABILITY.md### 9. Обязательная матрица приёмки",
-      "behavior": "Открытый черновик и несколько вложений переживают уничтожение контекста",
+      "behavior": "Обновление ждёт закрытия клиппера с несколькими вложениями; уничтоженный браузером контекст не даёт ложного подтверждения",
       "tests": [
         "scripts/reliability-gate.test.mjs"
       ],
@@ -491,7 +491,7 @@
     {
       "id": "A20",
       "requirement": "SPEC_SYSTEM_RELIABILITY.md### 9. Обязательная матрица приёмки",
-      "behavior": "Гонка записи черновика и нехватка места не дают ложного успеха",
+      "behavior": "Гонка записи журнала Save и нехватка места не дают ложного успеха",
       "tests": [
         "scripts/reliability-gate.test.mjs"
       ],
@@ -778,7 +778,6 @@
       "requirement": "SPEC_SYSTEM_RELIABILITY.md#### UPD-08.",
       "tests": [
         "scripts/startup-packaging.test.mjs",
-        "extension/lib/draftStore.test.ts",
         "extension/popup/lib/protocol.test.ts",
         "extension/popup/lib/saveOperation.test.ts",
         "extension/popup/hooks/useClipperState.standalone.test.tsx"
@@ -846,9 +845,31 @@
       "tests": [
         "extension/popup/components/FolderSetupPage.test.tsx",
         "extension/popup/components/StandaloneSetup.test.tsx",
-        "extension/popup/lib/draft.test.ts",
         "extension/popup/lib/messaging.test.ts",
         "extension/popup/hooks/useClipperState.standalone.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "SPEC_CLIPPER_DRAFTS_REMOVAL.md",
+        "extension/popup/lib/clipperEdits.ts",
+        "extension/popup/overlay-entry.tsx",
+        "extension/popup/overlay-entry.test.tsx",
+        "extension/popup/OverlayShell.tsx",
+        "extension/popup/overlayCropEscape.test.tsx",
+        "extension/popup/hooks/useClipperState.overlayCrop.test.tsx",
+        "extension/popup/lib/captureResult.ts"
+      ],
+      "requirement": "SPEC_CLIPPER_DRAFTS_REMOVAL.md## 3. Контракт",
+      "tests": [
+        "extension/popup/overlay-entry.test.tsx",
+        "extension/background.messaging.test.ts",
+        "extension/popup/lib/saveOperation.test.ts",
+        "extension/popup/hooks/useClipperState.standalone.test.tsx",
+        "extension/popup/overlayCropEscape.test.tsx",
+        "extension/popup/hooks/useClipperState.overlayCrop.test.tsx",
+        "extension/popup/lib/captureResult.test.ts"
       ],
       "command": "test:frontend"
     },
@@ -866,7 +887,7 @@
     },
     {
       "paths": ["scripts/clipper-native-lifecycle.mjs", "scripts/clipper-native-relay.mjs", "scripts/clipper-native-relay.test.mjs", "scripts/clipper-card-render.mjs"],
-      "requirement": "SPEC_CLIPPER.md### Устойчивый черновик и базовый протокол",
+      "requirement": "SPEC_CLIPPER.md### Журнал операции Save и базовый протокол",
       "tests": ["scripts/clipper-native-lifecycle.mjs", "scripts/clipper-native-relay.test.mjs", "scripts/clipper-card-render.mjs"],
       "command": "test:clipper-native-release"
     },

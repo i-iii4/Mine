@@ -132,20 +132,23 @@ try {
   await first.ui.getByRole('button', { name: 'Link', exact: true }).click();
   await first.ui.getByRole('button', { name: 'Content', exact: true }).click();
   await first.ui.getByRole('button', { name: `Connect ${collectionName}`, exact: true }).click();
-  await waitFor(() => worker.evaluate(async ({ url, selection }) => {
-    const stored = await chrome.storage.local.get(null);
-    return Object.values(stored).some(value => value?.sourceUrl === url && value?.draft?.state?.metadata?.selection === selection
-      && value.draft.state.selectedTags?.length === 1 && value.draft.state.currentType === 'content');
-  }, { url: fixtureUrl, selection }), 'acknowledged draft with selection and collection');
+  await first.ui.getByRole('button', { name: 'Save to 1 collection', exact: true }).waitFor({ timeout });
+  // The clip lives only in the open clipper: nothing of it is stored before
+  // Save (SPEC_CLIPPER_DRAFTS_REMOVAL.md, Ч1).
+  const storedBeforeSave = await worker.evaluate(async () => Object.keys(await chrome.storage.local.get(null))
+    .filter(key => key.startsWith('mineDurableDraft') || key.startsWith('minePendingSaveOperation:')));
+  assert.deepEqual(storedBeforeSave, []);
   await context.close(); context = undefined;
   await launch();
-  // Force a different tab identity without supplying any persisted capture ID.
   const intervening = await context.newPage();
-  const second = await pageWithOverlay(false);
+  // A fresh clip of the page: the person selects the material again (Ч2).
+  const second = await pageWithOverlay(true);
   assert.notEqual(second.tabId, first.tabId, 'Browser reopen must use a new source tab identity');
   await second.ui.getByText(selection, { exact: true }).waitFor({ timeout });
+  // ...and chooses the collection again.
+  await second.ui.getByRole('button', { name: `Connect ${collectionName}`, exact: true }).click();
   await second.ui.getByRole('button', { name: 'Save to 1 collection', exact: true }).waitFor({ timeout });
-  report.assertions.push('normal-overlay-reopen-restores-selection-type-and-collection-with-new-tab');
+  report.assertions.push('nothing-is-stored-before-save-and-a-browser-reopen-starts-a-fresh-clip');
   await writeFile(`${fault}.armed`, 'drop one committed Save response', { flag: 'wx' });
   await second.ui.getByRole('button', { name: 'Save to 1 collection', exact: true }).click();
   await waitFor(async () => (await wireLog()).some(event => event.kind === 'committed-response-dropped'), 'real committed response intercepted');
@@ -174,7 +177,7 @@ try {
   await launch();
   const third = await pageWithOverlay(false);
   await third.ui.getByRole('button', { name: 'Check previous save', exact: true }).click({ timeout });
-  await third.ui.getByText('The previous clip was saved. This new draft has not been saved.', { exact: true }).waitFor({ timeout });
+  await third.ui.getByText('The previous clip was saved. This new clip has not been saved.', { exact: true }).waitFor({ timeout });
   assert.deepEqual(await readFile(savedPath), originalBytes);
   const events = await wireLog();
   assert.equal(events.filter(event => event.kind === 'out-of-fixture-request-blocked').length, 0,
@@ -183,7 +186,9 @@ try {
   assert.equal(saves.length, 1, 'Recovery must lookup the original operation without another save dispatch');
   assert.equal(saves[0].message.operation_id, dropped.request.operation_id);
   assert.equal(saves[0].message.vault_path, source);
-  assert.equal(saves[0].message.binding_id, bindingId);
+  // The fresh clip takes the destination the last check confirmed: the space
+  // by its identity, not the path binding seeded before it (SPEC_CLIPPER.md, К2).
+  assert.equal(saves[0].message.binding_id, vaultId);
   assert.ok(events.some(event => event.kind === 'request' && event.message.action === 'get_save_operation'
     && event.message.operation_id === dropped.request.operation_id));
   const documents = await markdownFiles();
@@ -215,8 +220,8 @@ try {
   report.assertions.push('real-native-commit-with-lost-delivery-does-not-show-current-save-success',
     'browser-restart-recovers-original-native-operation-with-one-card-and-unchanged-bytes',
     'production-grid-snapshot-contains-original-selection-source-and-type-after-two-reconciliations');
-  // Both editors are mounted in real source tabs at the same URL. Their
-  // distinct active scopes must retain different selected material and tags.
+  // Both editors are mounted in real source tabs at the same URL. Each keeps
+  // its own material and collections in its own page; nothing is stored.
   const concurrentUrl = `${fixtureUrl}?two-editors=1`;
   const editorOne = await pageWithOverlay(true, concurrentUrl);
   await editorOne.ui.getByText(selection, { exact: true }).waitFor({ timeout });
@@ -226,31 +231,21 @@ try {
   await editorTwo.ui.getByText(otherSelection, { exact: true }).waitFor({ timeout });
   await editorTwo.ui.getByText(otherCollectionName, { exact: true }).hover();
   await editorTwo.ui.getByRole('button', { name: `Connect ${otherCollectionName}`, exact: true }).click();
-  await waitFor(() => worker.evaluate(async ({ url, selections, collections }) => {
-    const records = Object.values(await chrome.storage.local.get(null)).filter(value => value?.sourceUrl === url && value?.draft);
-    return records.length === 2 && selections.every((text, index) => records.some(value =>
-      value.draft.state.metadata?.selection === text && value.draft.state.selectedTags?.length === 1
-      && value.draft.state.selectedTags[0] === collections[index]));
-  }, { url: concurrentUrl, selections: [selection, otherSelection], collections: [collectionName, otherCollectionName] }), 'two independent confirmed editor drafts');
-  const firstDrafts = await worker.evaluate(async url => Object.values(await chrome.storage.local.get(null))
-    .filter(value => value?.sourceUrl === url && value?.draft), concurrentUrl);
-  assert.equal(new Set(firstDrafts.map(value => value.draftId)).size, 2);
+  await editorOne.ui.getByRole('button', { name: 'Save to 1 collection', exact: true }).waitFor({ timeout });
+  await editorTwo.ui.getByRole('button', { name: 'Save to 1 collection', exact: true }).waitFor({ timeout });
   await editorOne.page.close();
   await editorTwo.ui.getByText(otherSelection, { exact: true }).waitFor({ timeout });
   assert.equal(await editorTwo.ui.getByRole('button', { name: 'Content', exact: true }).getAttribute('aria-pressed'), 'true');
   await editorTwo.ui.getByRole('button', { name: 'Save to 1 collection', exact: true }).waitFor({ timeout });
-  const draftsAfterClose = await worker.evaluate(async url => Object.values(await chrome.storage.local.get(null))
-    .filter(value => value?.sourceUrl === url && value?.draft), concurrentUrl);
-  const editorMaterial = records => records.map(value => ({ draftId: value.draftId,
-    selection: value.draft.state.metadata?.selection, currentType: value.draft.state.currentType,
-    collections: value.draft.state.selectedTags })).sort((a, b) => a.draftId.localeCompare(b.draftId));
-  assert.deepEqual(editorMaterial(draftsAfterClose), editorMaterial(firstDrafts));
+  const storedForEditors = await worker.evaluate(async () => Object.keys(await chrome.storage.local.get(null))
+    .filter(key => key.startsWith('mineDurableDraft') || key.startsWith('minePendingSaveOperation:')));
+  assert.deepEqual(storedForEditors, []);
   assert.deepEqual((await markdownFiles()).sort((a, b) => a.path.localeCompare(b.path)), documents.sort((a, b) => a.path.localeCompare(b.path)),
     'Editing and closing the concurrent fixture must not write source documents');
   assert.equal((await wireLog()).filter(event => event.kind === 'request' && event.message.action === 'save_block').length, 1);
-  report.assertions.push('two-live-source-tabs-retain-independent-selected-material-and-collections-after-one-closes');
-  report.concurrentEditorDrafts = { distinctDrafts: 2, oneClosed: true, remainingSelection: otherSelection,
-    remainingCollection: otherCollectionName, additionalSaveRequests: 0, sourceDocumentsUnchanged: true };
+  report.assertions.push('two-live-source-tabs-keep-independent-material-and-collections-after-one-closes');
+  report.concurrentEditors = { oneClosed: true, remainingSelection: otherSelection,
+    remainingCollection: otherCollectionName, additionalSaveRequests: 0, sourceDocumentsUnchanged: true, storedKeys: 0 };
   report.cardRender = await renderCapturedCard({ snapshotPath: browserSnapshot, outputDirectory: run,
     slug: dropped.response.slug, expectedText: selection });
   report.assertions.push('production-grid-renders-the-same-native-source-card-before-and-after-preview-settles');

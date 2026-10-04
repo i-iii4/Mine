@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { native, save, lookup } = vi.hoisted(() => ({ native: vi.fn(), save: vi.fn(), lookup: vi.fn() }));
 vi.mock("./messaging", () => ({ sendToNative: native }));
 vi.mock("./standalone", () => ({ standaloneSave: save, standaloneLookup: lookup }));
-import { clearPendingSave, executePinnedSave, findPendingSave, persistPendingSave, persistSaveReceipt, type PinnedSaveOperation } from "./saveOperation";
+import { clearCommittedSaves, clearPendingSave, executePinnedSave, findPendingSave, persistPendingSave, persistSaveReceipt, type PinnedSaveOperation } from "./saveOperation";
 
 function operation(executor: "native" | "browser" = "native"): PinnedSaveOperation {
   return { id: "same-operation", executor, bindingId: "same-folder", vaultPath: executor === "native" ? "/v" : null,
@@ -42,8 +42,9 @@ describe("pinned save operation", () => {
     } } });
     const pinned = operation();
     await persistSaveReceipt(pinned, { ok: true, outcome: "committed", slug: "Cards/Once" });
-    const reopened = await findPendingSave("https://example.com");
-    expect(await executePinnedSave(reopened!)).toMatchObject({ outcome: "committed", slug: "Cards/Once" });
+    // Settled: the page has nothing left to check (SPEC_CLIPPER_DRAFTS_REMOVAL.md, Ч4).
+    expect(await findPendingSave("https://example.com")).toBeNull();
+    expect(await executePinnedSave(pinned)).toMatchObject({ outcome: "committed", slug: "Cards/Once" });
     expect(native).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
@@ -199,18 +200,40 @@ describe("pinned save operation", () => {
     vi.unstubAllGlobals();
   });
 
-  it("a reopened committed receipt returns success without repeating source writes", async () => {
+  it("a committed receipt left by a failed removal never blocks the page and goes on the next opening (Т6)", async () => {
     const values: Record<string, unknown> = {};
     vi.stubGlobal("chrome", { storage: { local: {
       get: async () => ({ ...values }), set: async (record: Record<string, unknown>) => { Object.assign(values, record); },
+      remove: async (keys: string | string[]) => { for (const key of [keys].flat()) delete values[key]; },
     } } });
     const pinned = operation();
     await persistPendingSave(pinned);
     await persistSaveReceipt(pinned, { ok: true, outcome: "committed", slug: "Cards/Once" });
-    const reopened = await findPendingSave("https://example.com");
-    expect(await executePinnedSave(reopened!)).toMatchObject({ outcome: "committed", slug: "Cards/Once" });
+    expect(await findPendingSave("https://example.com")).toBeNull();
+    await clearCommittedSaves();
+    expect(values).toEqual({});
     expect(native).not.toHaveBeenCalled();
     expect(save).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("removes only committed records: an unresolved save and an unknown format stay", async () => {
+    const unresolved = { ...operation(), id: "unresolved", schemaVersion: 1, attempted: true };
+    const unknown = { ...operation(), id: "unknown", schemaVersion: 2, terminalResult: { ok: true } };
+    const values: Record<string, unknown> = {
+      "minePendingSaveOperation:committed": { ...operation(), id: "committed", schemaVersion: 1, attempted: true, terminalResult: { ok: false, outcome: "committed" } },
+      "minePendingSaveOperation:unresolved": unresolved,
+      "minePendingSaveOperation:unknown": unknown,
+      mineSaveDestination: { executor: "native", vaultPath: "/v", bindingId: "same-folder" },
+    };
+    vi.stubGlobal("chrome", { storage: { local: {
+      get: async () => ({ ...values }),
+      remove: async (keys: string | string[]) => { for (const key of [keys].flat()) delete values[key]; },
+    } } });
+    await clearCommittedSaves();
+    expect(Object.keys(values).sort()).toEqual([
+      "minePendingSaveOperation:unknown", "minePendingSaveOperation:unresolved", "mineSaveDestination",
+    ]);
     vi.unstubAllGlobals();
   });
 

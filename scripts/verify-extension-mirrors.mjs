@@ -8,7 +8,6 @@ const resourceRoot = 'safari-extension/Local Arena Clipper/Local Arena Clipper E
 // Only these changed generated files receive contract coverage. No directory exemption.
 export const SAFARI_MIRRORS = [
   'background.js',
-  'lib/draftStore.js',
   'lib/storedValue.js',
   'lib/saveProtocol.js',
   'lib/standaloneVault.js',

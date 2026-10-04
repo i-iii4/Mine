@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useContext, useRef } from "react";
 import { flushSync } from "react-dom";
 import { normalizeArticleMedia } from "../lib/normalizeArticleMedia";
 import { hydrateTwitterPosts } from "../lib/twitterMedia";
@@ -70,8 +70,8 @@ import {
   type StandaloneStatus,
   type StandaloneMode,
 } from "../lib/standalone";
-import { clearPendingSave, executePinnedSave, findPendingSave, persistPendingSave, persistSaveReceipt, type PinnedSaveOperation } from "../lib/saveOperation";
-import { attachDraft, clearOwnedDraft, writeOwnedDraft, DraftStorageError, type ClipperDraftState, type DurableClipperDraft, type DraftOwnership } from "../lib/draft";
+import { clearCommittedSaves, clearPendingSave, executePinnedSave, findPendingSave, persistPendingSave, persistSaveReceipt, type PinnedSaveOperation } from "../lib/saveOperation";
+import { ClipperEditsContext, type ClipperEdits } from "../lib/clipperEdits";
 import { baselineSaveRequest, negotiateSaveProtocol, negotiateWidgetProtocol } from "../lib/protocol";
 import { localSavedAt } from "../lib/savedAt";
 
@@ -102,7 +102,6 @@ export interface ClipperState {
   currentType: ClipType;
   title: string;
   saving: boolean;
-  draftReady: boolean;
   articleExtractionState: ArticleExtractionState;
   nativeStatusError: string | null;
   knownVaults: string[];
@@ -165,27 +164,15 @@ export function useClipperState() {
   const [pendingOperation, setPendingOperation] = useState(false);
   const [savePrepared, setSavePrepared] = useState(false);
   const [previousOperation, setPreviousOperation] = useState<PinnedSaveOperation | null>(null);
-  const [allowDifferentDraft, setAllowDifferentDraft] = useState(false);
-  const [draftId, setDraftId] = useState<string>(() => crypto.randomUUID());
-  const [draftReadySource, setDraftReadySource] = useState<string | null>(null);
-  const [draftError, setDraftError] = useState<string | null>(null);
+  const [allowDifferentClip, setAllowDifferentClip] = useState(false);
   const [connectionChecking, setConnectionChecking] = useState(false);
   // Mine is out of reach or too old: the clipper keeps asking by itself.
   const [reconnecting, setReconnecting] = useState(false);
-  const draftRevisionRef = useRef(0);
-  const draftOwnerRef = useRef(crypto.randomUUID());
-  const draftCaptureRef = useRef(draftId);
-  const draftGenerationRef = useRef(0);
-  const draftSequenceRef = useRef(0);
-  const draftSnapshotsSupportedRef = useRef(false);
-  const newCaptureRef = useRef(false);
-  const draftRestoredRef = useRef(false);
-  const draftOwnedRef = useRef(false);
-  const editorChangedRef = useRef(false);
-  const draftPendingMutationRef = useRef<{ sourceUrl: string; draft: DurableClipperDraft; expectedRevision: number; ownership: DraftOwnership } | null>(null);
+  // The overlay's mark of this clip's edits; the window has none and keeps
+  // its own (SPEC_CLIPPER_DRAFTS_REMOVAL.md, Ч10, Ч11). It lives as long as
+  // this editor, so it is read once.
+  const editsRef = useRef<ClipperEdits>(useContext(ClipperEditsContext) ?? { changed: false });
   const mountedRef = useRef(true);
-  const draftWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const draftStorageErrorRef = useRef<string | null>(null);
   // Which road a save takes (О2): the app when its host answers, the granted
   // folder when it does not, and neither until one of them exists.
   const [saveMode, setSaveMode] = useState<StandaloneMode>("app");
@@ -201,7 +188,7 @@ export function useClipperState() {
   const nativeStatusGenerationRef = useRef<number | null>(null);
   const bindingIdRef = useRef<string | null>(null);
   // The name of the folder bindingIdRef names: the browser folder's name or
-  // the space's path. Tells the person where a draft was made when it is
+  // the space's path. Tells the person where the clip was made when it is
   // saved elsewhere (SPEC_AUDIT_FIXES.md, В4.4).
   const destinationLabelRef = useRef<string | null>(null);
   const [destinationNotice, setDestinationNotice] = useState<string | null>(null);
@@ -370,7 +357,7 @@ export function useClipperState() {
 
   const retakeScreenshot = useCallback(() => {
     if (operationRef.current || preparedOperationRef.current || savingRef.current) return;
-    editorChangedRef.current = true;
+    editsRef.current.changed = true;
     captureScreenshot();
   }, [captureScreenshot]);
 
@@ -432,7 +419,7 @@ export function useClipperState() {
 
   const handleTypeChange = useCallback((type: ClipType) => {
     if (operationRef.current || preparedOperationRef.current || savingRef.current) return;
-    editorChangedRef.current = true;
+    editsRef.current.changed = true;
     extractionEpochRef.current += 1;
     articleExtractionPromiseRef.current = null;
     setCurrentType(type);
@@ -513,7 +500,7 @@ export function useClipperState() {
 
   /// Save into the granted browser folder. `chosen` is a folder the person
   /// picked in this editor; `found` is the folder selected at the moment,
-  /// which may differ from the one the draft was made for.
+  /// which may differ from the one the clip was made for.
   const enterStandaloneMode = useCallback((status: StandaloneStatus, change: "found" | "chosen" = "found") => {
     const folderName = status.folderName ?? "Folder";
     const binding = status.bindingId ?? null;
@@ -535,7 +522,7 @@ export function useClipperState() {
       // (SPEC_AUDIT_FIXES.md, Ф6, В4.4).
       destinationMoveRef.current += 1;
       setSelectedTags([]);
-      setDestinationNotice(change === "chosen" ? null : movedDraftNotice(previousLabel, folderName));
+      setDestinationNotice(change === "chosen" ? null : movedClipNotice(previousLabel, folderName));
     } else if (change === "chosen") {
       setDestinationNotice(null);
     }
@@ -772,163 +759,6 @@ export function useClipperState() {
   }, [refreshChannels, ensureNativeStatus]);
 
   const captureSourceUrl = resolveCaptureResult(currentType, metadata, articleData).sourceUrl;
-  const draftSourceUrl = metadata?.documentUrl ?? metadata?.url ?? "";
-  useEffect(() => {
-    if (!draftSourceUrl || state !== "main") return;
-    let current = true;
-    setDraftReadySource(null);
-    draftOwnedRef.current = false;
-    const settleDetached = () => {
-      draftRestoredRef.current = true;
-      draftOwnedRef.current = false;
-      setDraftReadySource(draftSourceUrl);
-    };
-    const restore = async () => {
-      const options = { ownerId: draftOwnerRef.current, captureId: draftCaptureRef.current, newCapture: newCaptureRef.current };
-      let attached;
-      try {
-        attached = await attachDraft(draftSourceUrl, options, tabIdRef.current);
-      } catch (cause) {
-        if (!current || !isRecoverableDraftError(cause)) throw cause;
-        // Attachment is idempotent for the same capture and editor. One retry
-        // resolves a dropped reply without allocating or overwriting a draft.
-        attached = await attachDraft(draftSourceUrl, options, tabIdRef.current);
-      }
-      if (!current) return;
-      if (savingRef.current || operationRef.current || preparedOperationRef.current) {
-        settleDetached();
-        return;
-      }
-      if (attached.draft && !draftRestoredRef.current && editorChangedRef.current) {
-        // The visible editor already has user changes. Preserve the old record
-        // and acquire a separate capture instead of restoring over those edits.
-        const captureId = crypto.randomUUID();
-        attached = await attachDraft(draftSourceUrl, { ownerId: draftOwnerRef.current, captureId, newCapture: true }, tabIdRef.current);
-        if (!current) return;
-        if (savingRef.current || operationRef.current || preparedOperationRef.current) {
-          settleDetached();
-          return;
-        }
-      }
-      const draft = attached.draft;
-      draftOwnedRef.current = true;
-      draftGenerationRef.current = attached.generation;
-      draftSequenceRef.current = attached.sequence ?? 0;
-      draftSnapshotsSupportedRef.current = attached.sequence !== undefined;
-      draftCaptureRef.current = attached.draftId;
-      setDraftId(attached.draftId);
-      draftRevisionRef.current = draft?.revision ?? 0;
-      draftStorageErrorRef.current = null;
-      setDraftError(null);
-      if (draft && !draftRestoredRef.current && !editorChangedRef.current) {
-        const fresh = metadataRef.current;
-        const sameDocument = fresh && (fresh.documentUrl ?? fresh.url) === (draft.state.metadata.documentUrl ?? draft.state.metadata.url);
-        // The saved content survives reload, while future extraction binds to
-        // the current instance only when it still represents this document.
-        setMetadataValue(sameDocument && fresh.captureGeneration
-          ? { ...draft.state.metadata, captureGeneration: fresh.captureGeneration }
-          : draft.state.metadata);
-        setArticleDataValue(draft.state.articleData);
-        setArticleExtractionStateValue(draft.state.articleData ? articleExtractionStateForResult(draft.state.articleData, draft.state.metadata) : "idle");
-        setTitle(draft.state.title);
-        setSelectedTags(draft.state.selectedTags);
-        setCurrentType(draft.state.currentType);
-        setSelectedVault(draft.state.selectedVault);
-        vaultRef.current = draft.state.selectedVault;
-        destinationGenerationRef.current += 1;
-        destinationRef.current = draft.state.executor;
-        bindingIdRef.current = draft.state.bindingId;
-        destinationLabelRef.current = draft.state.folderLabel ?? draft.state.selectedVault;
-        setScreenshotDataUrl(draft.state.screenshotDataUrl);
-        // Worker cache IDs are ephemeral; restored bytes get a fresh upload ID.
-        setScreenshotUploadId(null);
-        if (draft.state.screenshotDataUrl) cacheCapturedScreenshot(draft.state.screenshotDataUrl);
-        void ensureNativeStatus(true);
-      }
-      draftRestoredRef.current = true;
-      setDraftReadySource(draftSourceUrl);
-    };
-    void restore().catch((cause) => {
-      if (!current) return;
-      if (savingRef.current || operationRef.current || preparedOperationRef.current) {
-        settleDetached();
-        return;
-      }
-      const message = cause instanceof DraftStorageError && cause.code === "draft_ambiguous"
-        ? "Several earlier clips from this page are preserved. Save will store the clip shown here."
-        : "Previous edits could not be restored and remain untouched. Save will store the clip shown here.";
-      draftStorageErrorRef.current = message;
-      console.warn("Clipper draft restoration unavailable; previous edits preserved", cause);
-      draftRestoredRef.current = true;
-      // A detached editor may save through the durable operation journal, but
-      // cannot autosave into a record whose contents and ownership are unknown.
-      draftOwnedRef.current = false;
-      setDraftReadySource(draftSourceUrl);
-      setDraftError(message);
-    });
-    return () => { current = false; };
-  }, [draftSourceUrl, state, setMetadataValue, setArticleDataValue, setArticleExtractionStateValue, ensureNativeStatus,
-    cacheCapturedScreenshot, setScreenshotDataUrl, setScreenshotUploadId, setSelectedTags]);
-
-  const persistCurrentDraft = useCallback(async () => {
-    if (!metadata || !draftSourceUrl || draftReadySource !== draftSourceUrl || !draftOwnedRef.current) {
-      throw new Error(draftStorageErrorRef.current ?? "The saved draft has not finished restoring. Retry when it is ready.");
-    }
-    const draftState: ClipperDraftState = {
-      metadata, articleData, title, selectedTags, currentType, selectedVault,
-      // Keep the legacy schema slot for older widgets, never a cache identity.
-      screenshotDataUrl, screenshotUploadId: null, executor: destinationRef.current, bindingId: bindingIdRef.current,
-      folderLabel: destinationLabelRef.current,
-    };
-    const previous = draftWriteQueueRef.current;
-    const snapshotsSupported = draftSnapshotsSupportedRef.current;
-    const sequence = ++draftSequenceRef.current;
-    const generation = draftGenerationRef.current;
-    const dispatch = async () => {
-      // New workers order snapshots themselves. Only the legacy revision
-      // protocol waits for the preceding reply to allocate its next edition.
-      if (!snapshotsSupported && draftPendingMutationRef.current) {
-        const confirmed = await confirmDraftMutation(draftPendingMutationRef.current);
-        draftRevisionRef.current = confirmed.revision;
-      }
-      const expectedRevision = draftRevisionRef.current;
-      const mutation = { sourceUrl: draftSourceUrl, expectedRevision, draft: {
-        schemaVersion: 1, revision: expectedRevision + 1, draftId, state: draftState,
-      } satisfies DurableClipperDraft, ownership: { ownerId: draftOwnerRef.current, generation, mutationId: crypto.randomUUID(),
-        ...(snapshotsSupported ? { sequence } : {}) } };
-      draftPendingMutationRef.current = mutation;
-      try {
-        const confirmed = await confirmDraftMutation(mutation);
-        if (generation !== draftGenerationRef.current) return;
-        draftRevisionRef.current = Math.max(draftRevisionRef.current, confirmed.revision);
-        if (draftPendingMutationRef.current === mutation) draftPendingMutationRef.current = null;
-        if (sequence === draftSequenceRef.current) {
-          draftStorageErrorRef.current = null;
-          if (mountedRef.current) setDraftError(null);
-        }
-      } catch (cause) {
-        if (snapshotsSupported && sequence < draftSequenceRef.current) return;
-        throw cause;
-      }
-    };
-    // Dispatch before awaiting: closing the editor cannot cancel a snapshot
-    // already handed to the durable worker queue.
-    const writing = snapshotsSupported ? dispatch() : previous.catch(() => undefined).then(dispatch);
-    draftWriteQueueRef.current = Promise.all([previous, writing.catch(() => undefined)]).then(() => undefined);
-    await writing;
-  }, [metadata, articleData, title, selectedTags, currentType, selectedVault, screenshotDataUrl,
-    draftSourceUrl, draftReadySource, draftId]);
-
-  useEffect(() => {
-    if (!draftSourceUrl || draftReadySource !== draftSourceUrl || !draftOwnedRef.current || savingRef.current) return;
-    void persistCurrentDraft().catch((cause) => {
-      const message = "Edits are kept in this open clipper. Save will store the clip shown here.";
-      draftStorageErrorRef.current = message;
-      console.warn("Clipper autosave unavailable; visible edits retained", cause);
-      if (mountedRef.current) setDraftError(message);
-    });
-  }, [draftSourceUrl, draftReadySource, persistCurrentDraft]);
-
   const confirmSavedOperation = useCallback(async (operation: PinnedSaveOperation, result: NativeResponse) => {
     // The executor has confirmed the source commit. A failed recovery receipt
     // cannot turn that outcome into failure or allocate another operation.
@@ -939,17 +769,16 @@ export function useClipperState() {
       console.warn("Committed clip receipt deferred; original save journal retained", cause);
       return { ok: true as const, warning: result.warning };
     }
-    const ownership = { ownerId: draftOwnerRef.current, generation: draftGenerationRef.current };
-    const owned = draftOwnedRef.current;
-    // A receipt remains discoverable until owner-fenced cleanup completes.
-    // Autosave latency must not delay the visible source success.
-    void draftWriteQueueRef.current.then(async () => {
-      if (!owned || draftPendingMutationRef.current) return;
-      await clearOwnedDraft(draftSourceUrl, operation.draftId ?? draftId, draftRevisionRef.current, ownership);
-      await clearPendingSave(operation);
-    }).catch(cause => console.warn("Saved clip recovery cleanup deferred", cause));
+    // The record goes at once. One that a failed removal leaves carries the
+    // committed receipt and is removed the next time a clipper opens (Ч4).
+    void clearPendingSave(operation).catch(cause => console.warn("Saved clip record removal deferred", cause));
     return { ok: true as const, warning: result.warning };
-  }, [draftSourceUrl, draftId]);
+  }, []);
+
+  // Records whose save is committed have nothing left to check (Ч4).
+  useEffect(() => {
+    void clearCommittedSaves().catch(cause => console.warn("Committed save records kept for now", cause));
+  }, []);
 
   useEffect(() => {
     if (!captureSourceUrl) return;
@@ -1092,6 +921,7 @@ export function useClipperState() {
         return;
       }
       if (detail.dataUrl && detail.screenshotId) {
+        editsRef.current.changed = true;
         setCaptureError(null);
         setScreenshotDataUrl(detail.dataUrl);
         setScreenshotUploadId(detail.screenshotId);
@@ -1121,7 +951,6 @@ export function useClipperState() {
       // a context-menu target. Only this clipper's source tab receives them.
       const launch = await getClipperLaunch();
       if (launch?.preloaded) {
-        newCaptureRef.current = true;
         const { metadata: preMeta, article: preArticle } = launch.preloaded;
         tabIdRef.current = IS_CONTENT_SCRIPT_CONTEXT ? CONTENT_SCRIPT_CONTEXT : launch.sourceTabId;
         captureDocumentRef.current = IS_CONTENT_SCRIPT_CONTEXT ? window.location.href : launch.sourceUrl;
@@ -1199,7 +1028,6 @@ export function useClipperState() {
       }
 
       const ctxData = launch?.contextMenu ?? null;
-      if (ctxData) newCaptureRef.current = true;
 
       // Resolve the target tab: in content-script context we ARE the tab,
       // so we use the sentinel tabId and read URL/title from window+document.
@@ -1433,7 +1261,7 @@ export function useClipperState() {
 
   const toggleTag = useCallback((tag: string) => {
     if (operationRef.current || preparedOperationRef.current || savingRef.current) return;
-    editorChangedRef.current = true;
+    editsRef.current.changed = true;
     setSelectedTags((prev) =>
       prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
     );
@@ -1441,7 +1269,7 @@ export function useClipperState() {
 
   const createChannel = useCallback(async (name: string) => {
     if (operationRef.current || preparedOperationRef.current || savingRef.current) return;
-    editorChangedRef.current = true;
+    editsRef.current.changed = true;
     const generation = destinationGenerationRef.current;
     const mode = saveModeRef.current;
     const vault = vaultRef.current;
@@ -1516,9 +1344,9 @@ export function useClipperState() {
     const previous = previousOperation ?? await findPendingSave(
       resolveCaptureResult(currentType, metadata, articleDataRef.current).sourceUrl,
     );
-    if (previous && !allowDifferentDraft) {
+    if (previous && !allowDifferentClip) {
       setPreviousOperation(previous);
-      return { ok: false as const, error: "A previous clip from this page has an unresolved save. Review that clip first; checking it does not save this new draft." };
+      return { ok: false as const, error: "A previous clip from this page has an unresolved save. Review that clip first; checking it does not save this new clip." };
     }
     // A browser folder saves without asking the helper first (А3.11).
     if (saveModeRef.current !== "standalone" && !(await ensureNativeStatus())) {
@@ -1532,7 +1360,7 @@ export function useClipperState() {
     if (currentType === "content" && contentModeNeedsArticleExtraction(saveMetadata)) {
       await ensureArticleLoaded();
     }
-    // A destination check still out, such as the one a restored draft starts,
+    // A destination check still out, such as the one a folder change starts,
     // decides where the clip goes before Save reads it.
     while (nativeStatusPromiseRef.current) await nativeStatusPromiseRef.current;
     if (destinationMoveRef.current !== movesWhenPressed) {
@@ -1713,8 +1541,6 @@ export function useClipperState() {
 
     const operation: PinnedSaveOperation = {
       id: crypto.randomUUID(),
-      draftId,
-      draftRevision: draftRevisionRef.current,
       sourceUrl: capture.sourceUrl,
       folderLabel: chosenFolderLabel,
       executor: chosenExecutor,
@@ -1767,15 +1593,13 @@ export function useClipperState() {
     screenshotDataUrl,
     screenshotUploadId,
     previousOperation,
-    allowDifferentDraft,
-    draftId,
+    allowDifferentClip,
     confirmSavedOperation,
-    draftSourceUrl,
   ]);
 
   const switchVault = useCallback(async (vaultPath: string) => {
     if (operationRef.current || preparedOperationRef.current || savingRef.current) return;
-    editorChangedRef.current = true;
+    editsRef.current.changed = true;
     destinationRef.current = "native";
     destinationGenerationRef.current += 1;
     // An error from the previous space does not follow the switch (К3).
@@ -1826,7 +1650,7 @@ export function useClipperState() {
     if (!canPickFolderHere()) return openStandaloneSetup();
     const status = await chooseStandaloneFolder();
     if (status.configured && status.permission === "granted") {
-      editorChangedRef.current = true;
+      editsRef.current.changed = true;
       await chrome.storage.local.set({ mineSaveDestination: { executor: "browser", bindingId: status.bindingId } });
       enterStandaloneMode(status, "chosen");
       return { ok: true as const };
@@ -1870,7 +1694,7 @@ export function useClipperState() {
     title,
     setTitle: (value: string) => {
       if (operationRef.current || preparedOperationRef.current || savingRef.current) return;
-      editorChangedRef.current = true;
+      editsRef.current.changed = true;
       setTitle(value);
     },
     saving,
@@ -1884,11 +1708,8 @@ export function useClipperState() {
       // Mine cannot tell which space the folder is yet: nothing could be
       // saved there until a check clears it (Д2.1).
       && !(saveMode === "app" && folderStateBlocksSave(nativeFolderState)),
-    /** Where the draft was made and where Save now puts it, when they differ. */
+    /** Where the clip was made and where Save now puts it, when they differ. */
     destinationNotice,
-    draftReady: Boolean(draftSourceUrl && draftReadySource === draftSourceUrl),
-    draftLoading: Boolean(draftSourceUrl && draftReadySource !== draftSourceUrl && !draftError),
-    draftError,
     connectionChecking,
     reconnecting,
     articleExtractionState,
@@ -1900,8 +1721,8 @@ export function useClipperState() {
     previousOperation,
     recoverPreviousSave,
     restorePreviousFolder,
-    allowDifferentDraft,
-    confirmDifferentDraft: () => setAllowDifferentDraft(true),
+    allowDifferentClip,
+    confirmDifferentClip: () => setAllowDifferentClip(true),
     retryConnection: ensureNativeStatus,
     toggleTag,
     createChannel,
@@ -1943,29 +1764,15 @@ function pageCrop(): PageCrop | undefined {
   return (globalThis as unknown as { __mineCrop?: PageCrop }).__mineCrop;
 }
 
-/// One line naming both folders when a draft is saved elsewhere than where it
-/// was made. A space is named by its folder, not by its whole path.
-function movedDraftNotice(previousLabel: string | null, folderName: string): string {
+/// One line naming both folders when a clip is saved elsewhere than where it
+/// was made (SPEC_CLIPPER_DRAFTS_REMOVAL.md, Ч7). A space is named by its
+/// folder, not by its whole path.
+function movedClipNotice(previousLabel: string | null, folderName: string): string {
   const segments = previousLabel?.split("/").filter(Boolean) ?? [];
   const previous = segments[segments.length - 1] ?? previousLabel;
   return previous
-    ? `This draft was made for “${previous}”. It will be saved to “${folderName}”.`
-    : `This draft was made for another folder. It will be saved to “${folderName}”.`;
-}
-
-function isRecoverableDraftError(cause: unknown): boolean {
-  return cause instanceof DraftStorageError
-    && (cause.code === "draft_transport" || cause.code === "draft_storage_failed" || cause.code === "draft_not_confirmed");
-}
-
-async function confirmDraftMutation(mutation: { sourceUrl: string; draft: DurableClipperDraft; expectedRevision: number; ownership: DraftOwnership }): Promise<DurableClipperDraft> {
-  try {
-    return await writeOwnedDraft(mutation.sourceUrl, mutation.draft, mutation.expectedRevision, mutation.ownership);
-  } catch (cause) {
-    if (!isRecoverableDraftError(cause)) throw cause;
-    // Replay the same identity and payload, never a replacement write.
-    return writeOwnedDraft(mutation.sourceUrl, mutation.draft, mutation.expectedRevision, mutation.ownership);
-  }
+    ? `This clip was made for “${previous}”. It will be saved to “${folderName}”.`
+    : `This clip was made for another folder. It will be saved to “${folderName}”.`;
 }
 
 function isTwitterStatusUrl(url: string | null | undefined): boolean {

@@ -1,7 +1,7 @@
 // Escape during a crop from the overlay clipper, through the actual overlay
 // entry, clipper panel and content-script crop in one page: Escape cancels the
 // crop only, and the clipper comes back with its state instead of closing and
-// mounting again from the saved draft (SPEC_AUDIT_FIXES.md, Ф6, В4.3).
+// losing the clip (SPEC_AUDIT_FIXES.md, Ф6, В4.3).
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import { act } from "react";
@@ -26,9 +26,9 @@ const { state } = vi.hoisted(() => ({ state: {
   metadata: { url: "https://a.example/story", title: "Story", selection: "", detectedType: "link", image: null },
   articleData: null, screenshotDataUrl: "data:image/jpeg;base64,AQID", capturing: false, captureError: null,
   cropSupported: true, startCropMode: () => undefined, retakeScreenshot: () => undefined,
-  channels: [], selectedTags: [], saving: false, savePinned: false, canSave: true, draftReady: true,
+  channels: [], selectedTags: [], saving: false, savePinned: false, canSave: true,
   nativeStatusError: null, reconnecting: false, connectionChecking: false, retryConnection: () => undefined,
-  draftError: null, draftLoading: false, channelsLoading: false, channelsError: null, retryChannels: () => undefined,
+  channelsLoading: false, channelsError: null, retryChannels: () => undefined,
   save: () => Promise.resolve(undefined), setCurrentType: () => undefined, toggleTag: () => undefined, createChannel: () => undefined,
 } }));
 vi.mock("./hooks/useClipperState", () => ({ useClipperState: () => state }));

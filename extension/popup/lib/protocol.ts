@@ -25,7 +25,7 @@ export function baselineSaveRequest(payload: NativeRequest, protocol = BASE_PROT
 /** A widget carries its compiled identity even in a tab opened before update. */
 export function negotiateWidgetProtocol(): Promise<void> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("Mine extension background did not confirm this widget. The saved draft is preserved. Reload the page and retry.")), 10_000);
+    const timer = setTimeout(() => reject(new Error("Mine extension background did not confirm this widget. Reload the page and retry.")), 10_000);
     chrome.runtime.sendMessage({ target: "background", action: "clipperHandshake",
       build_id: import.meta.env.VITE_MINE_BUILD_ID ?? "unbuilt",
       commit: import.meta.env.VITE_MINE_BUILD_COMMIT ?? "unknown",
@@ -34,7 +34,7 @@ export function negotiateWidgetProtocol(): Promise<void> {
       clearTimeout(timer);
       if (chrome.runtime.lastError) { reject(new Error(chrome.runtime.lastError.message)); return; }
       if (!response || negotiateSaveProtocol(response) === null) {
-        reject(new Error(response?.error ?? "The Mine widget and extension do not share a save protocol. Its saved draft has been preserved."));
+        reject(new Error(response?.error ?? "The Mine widget and extension do not share a save protocol. Nothing was saved."));
         return;
       }
       resolve();

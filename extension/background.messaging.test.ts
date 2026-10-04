@@ -18,8 +18,9 @@ function eventSink(register?: (listener: unknown) => void) {
   return { addListener: vi.fn((listener: unknown) => register?.(listener)) };
 }
 
-function background(apiMode: BrowserApiMode, options: { realDraftStore?: boolean } = {}) {
+function background(apiMode: BrowserApiMode, options: { standaloneVault?: Record<string, unknown> } = {}) {
   let receiveRuntimeMessage: MessageListener = () => undefined;
+  const installListeners: Array<() => void> = [];
   let receiveNativeMessage: (message: Message) => void = () => undefined;
   let disconnectNative: () => void = () => undefined;
 
@@ -53,7 +54,7 @@ function background(apiMode: BrowserApiMode, options: { realDraftStore?: boolean
       getContexts: vi.fn(async () => [] as unknown[]),
       getURL: (path: string) => `chrome-extension://test/${path}`,
       reload: vi.fn(),
-      onInstalled: eventSink(),
+      onInstalled: eventSink((listener) => { installListeners.push(listener as () => void); }),
       onMessage: eventSink((listener) => { receiveRuntimeMessage = listener as MessageListener; }),
       sendMessage: vi.fn(() => Promise.resolve()),
     },
@@ -84,9 +85,8 @@ function background(apiMode: BrowserApiMode, options: { realDraftStore?: boolean
     },
   };
 
-  const draftStore = { attach: vi.fn(async () => ({ draft: null, draftId: "capture", generation: 1 })), writeOwned: vi.fn(async () => null) };
   const context = createContext({
-    MineDraftStore: draftStore,
+    MineStandaloneVault: options.standaloneVault,
     TextEncoder,
     URL,
     chrome,
@@ -98,11 +98,6 @@ function background(apiMode: BrowserApiMode, options: { realDraftStore?: boolean
     fetch: vi.fn(async () => ({ ok: true, json: async () => ({ buildId: "worker-build", commit: "worker-commit" }) })),
   });
   runInContext(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib/saveProtocol.js"), "utf8"), context);
-  if (options.realDraftStore) {
-    // The worker's actual draft queue, over the storage the test controls.
-    runInContext(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib/storedValue.js"), "utf8"), context);
-    runInContext(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib/draftStore.js"), "utf8"), context);
-  }
   runInContext(source, context);
 
   function dispatch(message: Message, sender: { url?: string; tab?: { id: number; windowId?: number } } = {}) {
@@ -115,7 +110,8 @@ function background(apiMode: BrowserApiMode, options: { realDraftStore?: boolean
   return {
     chrome,
     run: (code: string): Promise<unknown> => Promise.resolve(runInContext(code, context)),
-    draftStore,
+    /** The extension is installed or updated. */
+    install: () => installListeners.forEach((listener) => listener()),
     createTab,
     createWindow,
     dispatch,
@@ -126,29 +122,44 @@ function background(apiMode: BrowserApiMode, options: { realDraftStore?: boolean
 }
 
 describe.each<BrowserApiMode>(["callback", "promise"])("background messaging with %s browser APIs", (apiMode) => {
-  it("takes capture scope from the sender instead of page-supplied options", async () => {
+  it("removes the old drafts on install or update; save records, settings and other keys stay (Т2)", async () => {
     const worker = background(apiMode);
-    await expect(worker.dispatch({ target: "background", action: "draftAttach", sourceUrl: "https://example.com", sourceTabId: 99,
-      options: { ownerId: "owner", captureId: "capture", captureScope: "forged" } }, { tab: { id: 7 } }).response).resolves.toMatchObject({ ok: true, draft: { generation: 1 } });
-    expect(worker.draftStore.attach).toHaveBeenCalledWith("https://example.com", expect.objectContaining({ captureScope: "7" }));
+    worker.chrome.storage.local.get.mockResolvedValue({
+      "mineDurableDraft:https://example.com": { schemaVersion: 1 },
+      "mineDurableDraftRecord:capture": { schemaVersion: 2 },
+      "mineDurableDraftIndex:[\"https://example.com\",\"7\"]": "capture",
+      "mineDurableDraftMigration:https://example.com": "fingerprint",
+      "minePendingSaveOperation:same": { id: "same" },
+      mineSaveDestination: { executor: "native" },
+      mineKnownVaults: ["/v"],
+      popupBounds: { width: 360 },
+    });
+    worker.install();
+    await vi.waitFor(() => expect(worker.chrome.storage.session.remove).toHaveBeenCalledWith("mineDraftBrowserSession"));
+    expect(worker.chrome.storage.local.remove).toHaveBeenCalledOnce();
+    expect(worker.chrome.storage.local.remove).toHaveBeenCalledWith([
+      "mineDurableDraft:https://example.com",
+      "mineDurableDraftRecord:capture",
+      "mineDurableDraftIndex:[\"https://example.com\",\"7\"]",
+      "mineDurableDraftMigration:https://example.com",
+    ]);
   });
-  it("creates one durable browser session for concurrent attaches and ignores forged sessions", async () => {
+  it("removes nothing from local storage when no old draft is left", async () => {
     const worker = background(apiMode);
-    worker.chrome.tabs.query.mockResolvedValue([{ id: 7 }, { id: 8 }]);
-    await Promise.all([7, 8].map(id => worker.dispatch({ target: "background", action: "draftAttach", sourceUrl: "https://example.com",
-      options: { ownerId: String(id), captureId: String(id), captureSession: "forged", activeScopes: [] } }, { tab: { id } }).response));
-    expect(worker.chrome.storage.session.set).toHaveBeenCalledOnce();
-    expect(worker.draftStore.attach).toHaveBeenCalledWith("https://example.com", expect.objectContaining({
-      captureSession: "bcb8f719-aa35-44f5-9a47-17b4d52f530f", activeScopes: ["extension", "7", "8"],
-    }));
+    worker.chrome.storage.local.get.mockResolvedValue({ mineSaveDestination: { executor: "native" } });
+    worker.install();
+    await vi.waitFor(() => expect(worker.chrome.storage.session.remove).toHaveBeenCalledWith("mineDraftBrowserSession"));
+    expect(worker.chrome.storage.local.remove).not.toHaveBeenCalled();
   });
-  it("uses the existing browser session after worker restart and the source tab of an extension window", async () => {
+  it("installs the context menus when the old drafts cannot be read", async () => {
     const worker = background(apiMode);
-    worker.chrome.storage.session.get.mockResolvedValue({ mineDraftBrowserSession: "still-this-browser" });
-    await worker.dispatch({ target: "background", action: "draftAttach", sourceUrl: "https://example.com", sourceTabId: 7,
-      options: { ownerId: "owner", captureId: "capture" } }, { url: "chrome-extension://test/dist/index.html", tab: { id: 99 } }).response;
-    expect(worker.chrome.storage.session.set).not.toHaveBeenCalled();
-    expect(worker.draftStore.attach).toHaveBeenCalledWith("https://example.com", expect.objectContaining({ captureScope: "7", captureSession: "still-this-browser" }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    worker.chrome.storage.local.get.mockRejectedValue(new Error("storage unavailable"));
+    worker.install();
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledWith("[Mine] old clipper drafts kept until the next update:", "storage unavailable"));
+    expect(worker.chrome.contextMenus.create).toHaveBeenCalled();
+    expect(worker.chrome.storage.local.remove).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
   it("answers openStandaloneSetup after creating its extension-origin window", async () => {
     const worker = background(apiMode);
@@ -429,6 +440,52 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
     });
   });
 
+  describe("a repeated launch keeps the open clip (SPEC_CLIPPER_DRAFTS_REMOVAL.md, Ч11)", () => {
+    it("tells the overlay whether the launch brings new material", async () => {
+      const worker = launchWorker();
+      const shown: Message[] = [];
+      const tabs = worker.chrome.tabs.sendMessage as unknown as ReturnType<typeof vi.fn>;
+      tabs.mockImplementation((_tabId: number, message: Message, reply?: (response: unknown) => void) => {
+        if (message.action !== "showClipperOverlay") return;
+        shown.push(message);
+        reply?.({ ok: true });
+      });
+      const page = JSON.stringify({ id: 5, url: "https://a.example/", title: "A" });
+      await expect(worker.run(`openClipperUi(${page})`)).resolves.toBe("overlay");
+      await expect(worker.run(`openClipperUi(${page}, { contextMenu: { menuItemId: "save-image", srcUrl: "https://a.example/i.jpg" } })`))
+        .resolves.toBe("overlay");
+      expect(shown.map((message) => message.freshMaterial)).toEqual([false, true]);
+    });
+
+    it("brings the clipper window of the tab forward instead of opening another", async () => {
+      const worker = launchWorker();
+      const page = JSON.stringify({ id: 5, url: "chrome://extensions/", title: "Extensions" });
+      await expect(worker.run(`openClipperUi(${page})`)).resolves.toBe("window");
+      expect(worker.createWindow).toHaveBeenCalledOnce();
+
+      await expect(worker.run(`openClipperUi(${page})`)).resolves.toBe("window");
+      expect(worker.createWindow).toHaveBeenCalledOnce();
+      expect(worker.chrome.windows.update).toHaveBeenCalledWith(17, { focused: true });
+    });
+
+    it("opens a new window for a launch with new material", async () => {
+      const worker = launchWorker();
+      const page = JSON.stringify({ id: 5, url: "chrome://extensions/", title: "Extensions" });
+      await worker.run(`openClipperUi(${page})`);
+      await worker.run(`openClipperUi(${page}, { contextMenu: { menuItemId: "save-link", linkUrl: "https://b.example/" } })`);
+      expect(worker.createWindow).toHaveBeenCalledTimes(2);
+    });
+
+    it("opens a new window when the tab's window is gone", async () => {
+      const worker = launchWorker();
+      const page = JSON.stringify({ id: 5, url: "chrome://extensions/", title: "Extensions" });
+      await worker.run(`openClipperUi(${page})`);
+      worker.chrome.windows.update.mockRejectedValueOnce(new Error("No window with id: 17."));
+      await expect(worker.run(`openClipperUi(${page})`)).resolves.toBe("window");
+      expect(worker.createWindow).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe("two openings of one tab (SPEC_AUDIT_FIXES.md, Г3.1)", () => {
     /// A tab whose overlay script answers only once it has been injected; the
     /// injection finishes when the test says so.
@@ -487,126 +544,31 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
   });
 });
 
-describe("an extension update waits for the draft queue (SPEC_AUDIT_FIXES.md, Б4.1)", () => {
-  afterEach(() => vi.useRealTimers());
-
-  const sourceUrl = "https://example.com/story";
-  const tab = { id: 7 };
-  const ownership = { ownerId: "editor", generation: 1 };
-
-  /// The actual worker and draft store over storage whose draft writes the
-  /// test holds, with an update waiting and no clipper left open.
-  function updatingWorker() {
-    vi.useFakeTimers();
-    const worker = background("promise", { realDraftStore: true });
-    const local = new Map<string, unknown>();
-    const session = new Map<string, unknown>([["mineReloadPending", "new-build"]]);
-    let holding = false;
-    let held: Array<() => void> = [];
-    const isDraft = (name: string) => name.startsWith("mineDurableDraft");
-    const read = (store: Map<string, unknown>, key: unknown) => key === null
-      ? Object.fromEntries([...store].map(([name, value]) => [name, structuredClone(value)]))
-      : { [key as string]: structuredClone(store.get(key as string)) };
-    const change = async (names: string[], apply: () => void) => {
-      if (holding && names.some(isDraft)) {
-        await new Promise<void>((resolve) => { held.push(() => { apply(); resolve(); }); });
-        return;
-      }
-      apply();
-    };
-    const storage = worker.chrome.storage as unknown as Record<"local" | "session", Record<string, ReturnType<typeof vi.fn>>>;
-    storage.local.get.mockImplementation(async (key: unknown) => read(local, key));
-    storage.local.set.mockImplementation((values: Record<string, unknown>) => change(Object.keys(values),
-      () => { for (const [name, value] of Object.entries(values)) local.set(name, structuredClone(value)); }));
-    storage.local.remove.mockImplementation((name: string) => change([name], () => { local.delete(name); }));
-    storage.session.get.mockImplementation(async (key: unknown) => read(session, key));
-    storage.session.set.mockImplementation(async (values: Record<string, unknown>) => {
-      for (const [name, value] of Object.entries(values)) session.set(name, structuredClone(value));
-    });
-    storage.session.remove.mockImplementation(async (name: string) => { session.delete(name); });
-    const send = (message: Message) => worker.dispatch({ target: "background", sourceUrl, ...message }, { tab }).response;
-    return {
-      worker, local, send,
-      hold: () => { holding = true; },
-      release: () => { holding = false; const waiting = held; held = []; waiting.forEach((finish) => finish()); },
-    };
-  }
-
-  const writeDraft = (host: ReturnType<typeof updatingWorker>, title: string, sequence: number) => host.send({
-    action: "draftWriteOwned", expectedRevision: sequence - 1,
-    draft: { schemaVersion: 1, revision: sequence, draftId: "capture", state: { title } },
-    ownership: { ...ownership, mutationId: `edit-${sequence}`, sequence },
-  });
-
-  it("keeps the last edit: no reload while it is stored, the reload once it is", async () => {
-    const host = updatingWorker();
-    await expect(host.send({ action: "draftAttach", options: { ownerId: "editor", captureId: "capture" } }))
-      .resolves.toMatchObject({ ok: true, draft: { draftId: "capture", generation: 1 } });
-    host.hold();
-    const written = writeDraft(host, "Latest edit", 1);
-    // Escape: the overlay closes and no editor is left open.
-    host.worker.dispatch({ target: "background", action: "mineClipperClosed" }, { tab });
-    await vi.advanceTimersByTimeAsync(5_000);
-    expect(host.worker.chrome.runtime.reload).not.toHaveBeenCalled();
-
-    host.release();
-    await expect(written).resolves.toMatchObject({ ok: true, draft: { revision: 1, state: { title: "Latest edit" } } });
-    expect(host.worker.chrome.runtime.reload).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(host.worker.chrome.runtime.reload).toHaveBeenCalledOnce();
-    expect(host.local.get("mineDurableDraftRecord:capture")).toMatchObject({ draft: { state: { title: "Latest edit" } } });
-  });
-
-  it("removes the saved clip's draft before the reload, so it does not come back", async () => {
-    const host = updatingWorker();
-    await host.send({ action: "draftAttach", options: { ownerId: "editor", captureId: "capture" } });
-    await writeDraft(host, "Saved clip", 1);
-    host.hold();
-    const cleared = host.send({ action: "draftClearOwned", draftId: "capture", expectedRevision: 1, ownership });
-    host.worker.dispatch({ target: "background", action: "mineClipperClosed" }, { tab });
-    await vi.advanceTimersByTimeAsync(5_000);
-    expect(host.worker.chrome.runtime.reload).not.toHaveBeenCalled();
-    expect(host.local.has("mineDurableDraftRecord:capture")).toBe(true);
-
-    host.release();
-    await expect(cleared).resolves.toMatchObject({ ok: true });
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(host.worker.chrome.runtime.reload).toHaveBeenCalledOnce();
-    expect(host.local.has("mineDurableDraftRecord:capture")).toBe(false);
-  });
-});
-
 describe("an extension update checks again right before the reload (SPEC_AUDIT_FIXES.md, В4.6)", () => {
   afterEach(() => vi.useRealTimers());
 
   const sourceUrl = "https://example.com/story";
   const tab = { id: 7 };
-  const ownership = { ownerId: "editor", generation: 1 };
 
-  /// The actual worker and draft store with an update waiting, over storage
-  /// whose draft writes the test can hold.
+  /// The actual worker with an update waiting and a browser folder whose
+  /// writes the test finishes itself.
   function updatingWorker() {
     vi.useFakeTimers();
-    const worker = background("promise", { realDraftStore: true });
+    let finishWrite: () => void = () => undefined;
+    const standaloneVault = {
+      saveStandaloneBlock: () => new Promise((resolve) => { finishWrite = () => resolve({ ok: true }); }),
+    };
+    const worker = background("promise", { standaloneVault });
     const local = new Map<string, unknown>();
     const session = new Map<string, unknown>([["mineReloadPending", "new-build"]]);
-    let holding = false;
-    let held: Array<() => void> = [];
     const read = (store: Map<string, unknown>, key: unknown) => key === null
       ? Object.fromEntries([...store].map(([name, value]) => [name, structuredClone(value)]))
       : { [key as string]: structuredClone(store.get(key as string)) };
-    const change = async (names: string[], apply: () => void) => {
-      if (holding && names.some((name) => name.startsWith("mineDurableDraft"))) {
-        await new Promise<void>((resolve) => { held.push(() => { apply(); resolve(); }); });
-        return;
-      }
-      apply();
-    };
     const storage = worker.chrome.storage as unknown as Record<"local" | "session", Record<string, ReturnType<typeof vi.fn>>>;
     storage.local.get.mockImplementation(async (key: unknown) => read(local, key));
-    storage.local.set.mockImplementation((values: Record<string, unknown>) => change(Object.keys(values),
-      () => { for (const [name, value] of Object.entries(values)) local.set(name, structuredClone(value)); }));
-    storage.local.remove.mockImplementation((name: string) => change([name], () => { local.delete(name); }));
+    storage.local.set.mockImplementation(async (values: Record<string, unknown>) => {
+      for (const [name, value] of Object.entries(values)) local.set(name, structuredClone(value));
+    });
     storage.session.get.mockImplementation(async (key: unknown) => read(session, key));
     storage.session.set.mockImplementation(async (values: Record<string, unknown>) => {
       for (const [name, value] of Object.entries(values)) session.set(name, structuredClone(value));
@@ -614,11 +576,7 @@ describe("an extension update checks again right before the reload (SPEC_AUDIT_F
     storage.session.remove.mockImplementation(async (name: string) => { session.delete(name); });
     const send = (message: Message, sender: { tab?: { id: number; url?: string } } = { tab }) =>
       worker.dispatch({ target: "background", sourceUrl, ...message }, sender).response;
-    return {
-      worker, session, send,
-      hold: () => { holding = true; },
-      release: () => { holding = false; const waiting = held; held = []; waiting.forEach((finish) => finish()); },
-    };
+    return { worker, session, send, finishWrite: () => finishWrite() };
   }
 
   /// The update check that a clipper's Escape starts, held while it asks the
@@ -632,22 +590,18 @@ describe("an extension update checks again right before the reload (SPEC_AUDIT_F
     return (pages: unknown[]) => answerPages(pages);
   }
 
-  it("does not reload while a draft write that began during the check is still being stored", async () => {
+  it("does not reload while a browser-folder save that began during the check is still being written", async () => {
     const host = updatingWorker();
-    await host.send({ action: "draftAttach", options: { ownerId: "editor", captureId: "capture" } });
     const answerPages = await checkHeldAtPages(host);
 
-    host.hold();
-    const written = host.send({ action: "draftWriteOwned", expectedRevision: 0,
-      draft: { schemaVersion: 1, revision: 1, draftId: "capture", state: { title: "Typed during the check" } },
-      ownership: { ...ownership, mutationId: "edit-1", sequence: 1 } });
+    const written = host.send({ action: "standaloneSave", payload: { title: "Saved during the check" } });
     answerPages([]);
     await vi.advanceTimersByTimeAsync(5_000);
     expect(host.worker.chrome.runtime.reload).not.toHaveBeenCalled();
     expect(host.session.get("mineReloadPending")).toBe("new-build");
 
-    host.release();
-    await expect(written).resolves.toMatchObject({ ok: true, draft: { state: { title: "Typed during the check" } } });
+    host.finishWrite();
+    await expect(written).resolves.toMatchObject({ ok: true });
     await vi.advanceTimersByTimeAsync(1_000);
     expect(host.worker.chrome.runtime.reload).toHaveBeenCalledOnce();
   });

@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { DropdownMenuPortalContainerProvider } from "@/components/ui/dropdown-menu";
 import { PopupApp } from "./PopupApp";
 import { wrapTabFocus } from "./lib/focusCycle";
+import { ClipperEditsContext, type ClipperEdits } from "./lib/clipperEdits";
 
 /**
  * Container for the in-page overlay version of the clipper.
@@ -10,9 +11,10 @@ import { wrapTabFocus } from "./lib/focusCycle";
  * Border + shadow follow the design system for floating elements
  * (DESIGN_SYSTEM.md → "Всплывающие элементы").
  *
- * Close behaviour: click outside the overlay host — handled in
- * overlay-entry.tsx via a window-level capture-phase click listener.
- * No explicit close button.
+ * Close behaviour: click outside the overlay host, handled in
+ * overlay-entry.tsx via a window-level capture-phase click listener; a clip
+ * with edits stays open on it (`edits`, SPEC_CLIPPER_DRAFTS_REMOVAL.md, Ч10).
+ * The editor's header has its own close button.
  *
  * pointer-events: the shadow host has pointer-events:none so clicks on
  * the empty viewport pass through to the page. The OverlayShell root
@@ -26,7 +28,7 @@ import { wrapTabFocus } from "./lib/focusCycle";
  * crop gives it back to the panel on resume (overlay-entry.tsx, Б4.9).
  * `preventScroll: true` avoids jumping the page viewport.
  */
-export function OverlayShell({ portalContainer }: { portalContainer: HTMLElement | null }) {
+export function OverlayShell({ portalContainer, edits }: { portalContainer: HTMLElement | null; edits: ClipperEdits }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     ref.current?.focus({ preventScroll: true });
@@ -56,7 +58,9 @@ export function OverlayShell({ portalContainer }: { portalContainer: HTMLElement
         // shadow, not a bespoke rgba.
         className="pointer-events-auto fixed right-4 top-4 flex max-h-[calc(100vh-32px)] w-[360px] flex-col overflow-y-auto rounded-1 border border-border bg-background shadow-md outline-none"
       >
-        <PopupApp />
+        <ClipperEditsContext.Provider value={edits}>
+          <PopupApp />
+        </ClipperEditsContext.Provider>
       </div>
     </DropdownMenuPortalContainerProvider>
   );

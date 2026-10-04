@@ -21,7 +21,7 @@ Native-shell smoke читает настроенный путь через IPC, 
 | SC2 | Раскладка входит в durable plan; marker закрепляется до первого артефакта. Повторное подключение не превращает новую стандартную папку в плоскую |
 | SC3 | WASM в worker; в JS только browser IO, очередь, IndexedDB и отображение результатов; удалены JS serializer/slug/collection copies |
 | SC3 | IndexedDB `mine-standalone`, версия 2: `vault`, `bindings`, `operations`; Blob и подготовленный Markdown переживают worker restart, receipt не удаляется по возрасту |
-| SC4 | Setup в extension-origin окне, возврат к черновику, regrant исходной папки, отдельные связь/совместимость/папка, стабильный dev ID |
+| SC4 | Setup в extension-origin окне, возврат к открытому клипу, regrant исходной папки, отдельные связь/совместимость/папка, стабильный dev ID |
 | SC4 | Pin до отправки; потеря ответа вызывает lookup того же ID. Восстановление старого клипа не выдаётся за сохранение нового с тем же URL |
 | SC4 | Необязательный ACK успешного handshake сохраняет одну историческую отметку вне vault; Settings показывает время/версию, не выдавая историю за текущую связь |
 | SC5 | Desktop/CLI конструируют через `build_capture`; прежние rollback, dry-run и ограничения доступа сохранены. FFI использует shared parser без новых iOS API |

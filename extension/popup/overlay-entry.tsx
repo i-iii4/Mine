@@ -1,5 +1,6 @@
 import { createRoot, type Root } from "react-dom/client";
 import { OverlayShell } from "./OverlayShell";
+import type { ClipperEdits } from "./lib/clipperEdits";
 
 // Overlay entry — injected into the active tab's content-script isolated
 // world via chrome.scripting.executeScript. Mounts <PopupApp /> inside a
@@ -23,6 +24,10 @@ interface OverlayHandle {
   /// screenshot or a crop, and on which of its elements.
   hiddenWithKeyboard: boolean;
   focusBeforeHide: Element | null;
+  /// Whether the person changed this clip; the editor sets it.
+  edits: ClipperEdits;
+  /// The page address the clip was opened for.
+  pageUrl: string;
 }
 
 let current: OverlayHandle | null = null;
@@ -30,8 +35,8 @@ let current: OverlayHandle | null = null;
 // this mount instead of a second editor: the editor has not read its launch
 // yet and opens with the latest one (SPEC_AUDIT_FIXES.md, Г3.1). A pending
 // extension update counts the clipper open from the moment the mount starts,
-// not once it has finished: its draft and its requests reach background right
-// after (SPEC_CLIPPER.md, К4; SPEC_AUDIT_FIXES.md, В4.6).
+// not once it has finished: its requests reach background right after
+// (SPEC_CLIPPER.md, К4; SPEC_AUDIT_FIXES.md, В4.6).
 let pendingMount: Promise<void> | null = null;
 // Moves on with every close. A mount that a close overtook shows nothing.
 let overlayGeneration = 0;
@@ -233,6 +238,8 @@ async function mount(generation: number, returnFocus: Element | null): Promise<O
     return path.includes(host);
   }
 
+  const edits: ClipperEdits = { changed: false };
+
   function onOutsidePointer(e: MouseEvent | PointerEvent) {
     // `hideClipperOverlay()` is a transient state used while Chrome captures
     // screenshots and while the page-level crop overlay is active. The React
@@ -240,6 +247,9 @@ async function mount(generation: number, returnFocus: Element | null): Promise<O
     // events belong to the crop/capture flow, not to click-outside close.
     if (host.style.display === "none") return;
     if (isInsidePanel(e)) return;
+    // Nothing keeps a clip once its editor closes: a clip with edits stays
+    // open, and the page under it takes the click (SPEC_CLIPPER_DRAFTS_REMOVAL.md, Ч10).
+    if (edits.changed) return;
     closeClipperOverlay();
   }
   // Defer listener registration by one frame so the click that OPENED
@@ -252,19 +262,36 @@ async function mount(generation: number, returnFocus: Element | null): Promise<O
   }, 0);
 
   const reactRoot = createRoot(appRoot);
-  reactRoot.render(<OverlayShell portalContainer={floatingRoot} />);
+  reactRoot.render(<OverlayShell portalContainer={floatingRoot} edits={edits} />);
 
-  return { host, root: reactRoot, onOutsidePointer, returnFocus, hiddenWithKeyboard: false, focusBeforeHide: null };
+  return {
+    host, root: reactRoot, onOutsidePointer, returnFocus, hiddenWithKeyboard: false, focusBeforeHide: null,
+    edits, pageUrl: window.location.href,
+  };
 }
 
 /// Fresh invocation: context menu / toolbar icon / extension icon.
 /// Remounts so PopupApp.init() runs fresh and consumes the latest
-/// launch. Any previous overlay state (currentType, metadata, title)
-/// is DESTROYED. Use this when the intent is "user opened the clipper
-/// with new input." An open while a mount is under way gets that
-/// mount: its editor has not read its launch yet (Г3.1).
-export function showClipperOverlay(): Promise<void> {
-  return pendingMount ?? beginMount(true);
+/// launch; the previous editor and its clip are gone. A clip with edits is
+/// kept instead and takes the keyboard, unless the launch brings new
+/// material (a context-menu target, a post already read) or the page shows
+/// another address since (SPEC_CLIPPER_DRAFTS_REMOVAL.md, Ч11). An open while
+/// a mount is under way gets that mount: its editor has not read its launch
+/// yet (Г3.1).
+export function showClipperOverlay(freshMaterial = true): Promise<void> {
+  if (pendingMount) return pendingMount;
+  if (current && current.edits.changed && !freshMaterial && current.pageUrl === window.location.href) {
+    focusOpenClip(current);
+    return Promise.resolve();
+  }
+  return beginMount(true);
+}
+
+/// Bring the keyboard to the clip kept open. One hidden for a screenshot or a
+/// crop gets it back when that flow resumes it.
+function focusOpenClip(handle: OverlayHandle): void {
+  if (handle.host.style.display === "none") return;
+  handle.host.shadowRoot?.querySelector<HTMLElement>("[data-mine-clipper-panel]")?.focus({ preventScroll: true });
 }
 
 /// Start the one mount of this tab. `replace` closes the editor shown now;
@@ -422,7 +449,9 @@ function onRuntimeMessage(msg: unknown) {
   if (typeof msg !== "object" || msg === null) return false;
   const action = (msg as { action?: unknown }).action;
   if (action === "showClipperOverlay") {
-    void showClipperOverlay();
+    // A launch from a background that does not say treats as new material,
+    // as every launch did before Ч11.
+    void showClipperOverlay((msg as { freshMaterial?: unknown }).freshMaterial !== false);
     return true;
   }
   if (action === "hideClipperOverlay") {

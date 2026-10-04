@@ -4,7 +4,6 @@
 // that closes cancels its crop (SPEC_AUDIT_FIXES.md, Ф6, Г3.3).
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { DurableClipperDraft } from "../lib/draft";
 
 // The overlay runs in the page's content-script world: no chrome.tabs.
 vi.hoisted(() => {
@@ -40,12 +39,6 @@ vi.mock("../lib/standalone", () => ({
   openStandaloneSetup: async () => ({ ok: true }),
   canPickFolderHere: () => false,
 }));
-vi.mock("../lib/draft", async (importOriginal) => ({
-  ...await importOriginal<typeof import("../lib/draft")>(),
-  attachDraft: async () => ({ draft: null, draftId: crypto.randomUUID(), generation: 1, sequence: 0 }),
-  writeOwnedDraft: async (_url: string, draft: DurableClipperDraft) => draft,
-  clearOwnedDraft: async () => undefined,
-}));
 vi.mock("../lib/protocol", async (importOriginal) => ({
   ...await importOriginal<typeof import("../lib/protocol")>(),
   negotiateWidgetProtocol: async () => undefined,
@@ -80,7 +73,7 @@ describe("a crop belongs to the editor that started it (SPEC_AUDIT_FIXES.md, Г3
   async function openEditor() {
     const editor = renderHook(() => useClipperState());
     await waitFor(() => expect(editor.result.current.cropSupported).toBe(true));
-    await waitFor(() => expect(editor.result.current.draftReady).toBe(true));
+    await waitFor(() => expect(editor.result.current.state).toBe("main"));
     return editor;
   }
 

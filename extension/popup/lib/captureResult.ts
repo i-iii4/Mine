@@ -11,7 +11,7 @@ export type CaptureResult = {
   | { kind: "screenshot" | "link" | "video" }
 );
 
-/** Assemble the existing draft without rereading the page or changing its selection. */
+/** Assemble the clip shown without rereading the page or changing its selection. */
 export function resolveCaptureResult(
   kind: "content" | "image" | "screenshot" | "link" | "video",
   metadata: PageMetadata | null,

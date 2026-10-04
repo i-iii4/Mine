@@ -245,7 +245,7 @@ export function PopupApp() {
   const previousSavePanel = previous && (
     <div className="grid gap-2 border-b border-border p-3" data-clipper-previous-save="">
       <p className="text-sm font-semibold">A previous clip from this page has an unresolved save.</p>
-      <p className="text-sm text-muted-foreground">This is not the current draft. Checking the previous clip does not save this one.</p>
+      <p className="text-sm text-muted-foreground">This is not the current clip. Checking the previous clip does not save this one.</p>
       <details className="text-sm">
         <summary>{typeof previous.payload?.title === "string" ? previous.payload.title : "Previous clip details"}</summary>
         <p className="break-words">Folder: {previous.folderLabel ?? previous.vaultPath ?? "Original browser folder"}</p>
@@ -259,9 +259,9 @@ export function PopupApp() {
         void clipper.recoverPreviousSave().then((result) => {
           if (!result) return;
           const message = result.ok || result.outcome === "committed"
-            ? "The previous clip was saved. This new draft has not been saved."
+            ? "The previous clip was saved. This new clip has not been saved."
             : result.terminal_rejected === true
-              ? "The previous clip was rejected before writing files. This new draft has not been saved."
+              ? "The previous clip was rejected before writing files. This new clip has not been saved."
               : result.error ?? "The previous save outcome is still unknown.";
           setRecoveryMessage(result.warning ? `${message} ${result.warning}` : message);
         }).catch((cause) => setRecoveryMessage(cause instanceof Error ? cause.message : String(cause)));
@@ -271,7 +271,7 @@ export function PopupApp() {
           if (result && !result.ok) setRecoveryMessage(result.error ?? "Could not open folder recovery");
         }).catch((cause) => setRecoveryMessage(cause instanceof Error ? cause.message : String(cause)));
       }}>Restore previous folder access</Button>}
-      {!clipper.allowDifferentDraft && <Button variant="ghost" disabled={clipper.saving} onClick={clipper.confirmDifferentDraft}>This is a different clip</Button>}
+      {!clipper.allowDifferentClip && <Button variant="ghost" disabled={clipper.saving} onClick={clipper.confirmDifferentClip}>This is a different clip</Button>}
     </div>
   );
 
@@ -488,10 +488,6 @@ export function PopupApp() {
               {clipper.destinationNotice}
             </p>
           )}
-          {clipper.draftError && !saved && (
-            <p role="status" className="text-sm text-muted-foreground">{clipper.draftError}</p>
-          )}
-          {clipper.draftLoading && !saved && <p role="status" className="text-sm text-muted-foreground">Restoring your draft…</p>}
           {saveWarning && <p className="text-sm text-muted-foreground" role="status">{saveWarning}</p>}
           {clipper.pendingOperation && clipper.saveMode === "standalone" && !clipper.saving && !saved && (
             <Button variant="secondary" disabled={clipper.saving} onClick={() => {
