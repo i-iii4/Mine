@@ -1,7 +1,7 @@
 # Удаление черновиков клиппера
 
-Статус: реализовано 04.10.2026, этапы от Э1 до Э7; живая приёмка за
-пользователем. Решение пользователя от 04.10.2026: черновики клиппера
+Статус: реализовано и установлено 04.10.2026, этапы от Э1 до Э8; живая
+проверка пользователя 04.10.2026 пройдена. Решение пользователя от 04.10.2026: черновики клиппера
 убираются целиком, журнал операции Save остаётся.
 
 Related documents: [SPEC_CLIPPER.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_CLIPPER.md>) | [SPEC_SYSTEM_RELIABILITY.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_SYSTEM_RELIABILITY.md>) | [SPEC_AUDIT_FIXES.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_AUDIT_FIXES.md>) | [SPEC_ONBOARDING.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_ONBOARDING.md>) | [SPEC_SAVE_CORE.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_SAVE_CORE.md>) | [PLAN.md](</Users/i_iii/Проекты/Личные проекты/local-arena/PLAN.md>)
@@ -318,7 +318,7 @@ Escape, крестик и Save.
 - [x] Э6. Документы из раздела 5.
 - [x] Э7. Сборка расширения, `test:clipper-worker`, сценарий нативного
   жизненного цикла, линтер, типы, тесты интерфейса и реестр.
-- [ ] Э8. Коммит, пуш, запись в DEVLOG. Доставка в браузер пользователя идёт
+- [x] Э8. Коммит, пуш, запись в DEVLOG. Доставка в браузер пользователя идёт
   через сборку и установку `.app` (`bun run build:local-app`, затем
   `bun run install:local-app`) после согласия пользователя.
 

@@ -6,7 +6,7 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTU
 
 ### Удаление черновиков клиппера
 
-Статус: реализовано 04.10.2026, этапы от Э1 до Э7; живая приёмка за пользователем, установка `.app` после его согласия. Контракт: [SPEC_CLIPPER_DRAFTS_REMOVAL.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_CLIPPER_DRAFTS_REMOVAL.md>).
+Статус: реализовано и установлено 04.10.2026, этапы от Э1 до Э8; живая проверка пользователя 04.10.2026 пройдена. Контракт: [SPEC_CLIPPER_DRAFTS_REMOVAL.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_CLIPPER_DRAFTS_REMOVAL.md>).
 
 - [x] Э1. Журнал Save без черновика: запись удаляется сразу после квитанции, подтверждённая запись снимается при открытии без панели (Т3, Т6).
 - [x] Э2. Клиппер без черновика: useClipperState.ts и PopupApp.tsx, признаки готовности в тестах (Т1, Т4).
@@ -16,7 +16,7 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTU
 - [x] Э5. Тексты без обещаний черновика (Ч7, Ч8).
 - [x] Э6. Документы: SPEC_CLIPPER.md, SPEC_SYSTEM_RELIABILITY.md, SPEC_AUDIT_FIXES.md, SPEC_SAVE_CORE.md, SPEC_ONBOARDING.md, ARCHITECTURE.md, docs/save-core-acceptance.md.
 - [x] Э7. Сборка расширения и приёмка: `test:clipper-worker`, нативный жизненный цикл, линтер, типы, тесты интерфейса, реестр.
-- [ ] Э8. Коммит, пуш, DEVLOG; установка `.app` после согласия пользователя.
+- [x] Э8 (04.10.2026). Коммит, пуш, DEVLOG; `.app` собран и установлен, копия расширения обновлена.
 
 ### Вкладки пространств
 
