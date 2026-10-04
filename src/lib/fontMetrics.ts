@@ -80,7 +80,8 @@ const DB_NAME = "mine-font-metrics";
 const DB_VERSION = 3;
 const STORE_NAME = "wordWidths";
 // v3: CJK text is measured per character with no spaces between them.
-const CACHE_KEY_VERSION = "v3";
+// v4: a word breaks after an inner hyphen as well (lineUnits.ts).
+const CACHE_KEY_VERSION = "v4";
 
 // ─── Worker lifecycle ───────────────────────────────────────────────────────
 

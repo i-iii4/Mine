@@ -1562,7 +1562,7 @@ describe("Grid — no collapse after add / revisit", () => {
       "default",
     );
     expect(actionBarQueries.getByRole("button", { name: /Connect/i })).toHaveClass(
-      "bg-component-fill",
+      "bg-depth-fill",
     );
     expect(actionBarQueries.getByRole("button", { name: /Connect/i })).not.toHaveClass(
       "bg-background/15",

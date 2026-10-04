@@ -762,6 +762,7 @@ body {
   --color-component-fill: var(--component-fill);
   --color-component-fill-inner: var(--component-fill-inner);
   --color-component-fill-hover: var(--component-fill-hover);
+  --color-depth-fill: var(--depth-fill);
   --color-search-mark: var(--search-mark);
   --color-search-mark-foreground: var(--search-mark-foreground);
 }
@@ -818,6 +819,10 @@ body {
   --elevation-hover: -0.085;
   /* interactive hover/selected surface = zone surface + signed delta */
   --active-elevation: -0.035;
+  /* filled button with depth (DESIGN_SYSTEM.md, «Объём кнопки»): the zone
+     surface mixed with white, fitted to a reference; on a near-white surface
+     the lift shrinks with the room left to white. */
+  --depth-lift: 53%;
   --hover-foreground: oklch(0.205 0 0);
   --primary-hover: oklch(0.4495 0 0);
   --primary-active: oklch(0.2178 0 0);
@@ -901,6 +906,8 @@ body {
        are derived from the zone surface in the elevation map after theme blocks. */
     --elevation-rest: 0.15;
     --elevation-hover: 0.18;
+    /* filled button with depth: the zone surface mixed with white */
+    --depth-lift: 5%;
     --hover-foreground: oklch(0.985 0 0);
     --primary-hover: oklch(0.8 0 0);
     --primary-active: oklch(0.7 0 0);
@@ -954,6 +961,7 @@ body {
   --elevation-rest: 0.15;
   --elevation-hover: 0.18;
   --active-elevation: 0.09;
+  --depth-lift: 5%;
   --hover-foreground: oklch(0.985 0 0);
   --primary-hover: oklch(0.8 0 0);
   --primary-active: oklch(0.7 0 0);
@@ -1005,6 +1013,7 @@ body {
   --elevation-rest: -0.06;
   --elevation-hover: -0.085;
   --active-elevation: -0.035;
+  --depth-lift: 53%;
   --hover-foreground: oklch(0.205 0 0);
   --primary-hover: oklch(0.4495 0 0);
   --primary-active: oklch(0.2178 0 0);
@@ -1165,6 +1174,7 @@ body {
   --component-fill: oklch(from var(--surface) calc(l + var(--elevation-rest)) 0 0);
   --component-fill-inner: var(--component-fill);
   --component-fill-hover: oklch(from var(--surface) calc(l + var(--elevation-hover)) 0 0);
+  --depth-fill: color-mix(in srgb, var(--surface), white var(--depth-lift));
 }
 
 /* Every row gets the same free area. Separators live outside it in normal
@@ -1245,6 +1255,39 @@ svg.lucide {
   stroke-width: 1.8462;
 }
 
+/* Depth of a filled button (DESIGN_SYSTEM.md, «Объём кнопки»): a raised
+   object lit from above, fitted pixel by pixel to a reference on 04.10.2026
+   (0.7 grey levels off at scale 2 in either theme). Inside, a brighter top
+   line and a soft light ring; outside, a hairline rim, a shadow set down,
+   and in the light theme a faint halo. The fill is --depth-fill. */
+:root {
+  --button-depth:
+    inset 0 1px 0 rgb(255 255 255 / 0.36),
+    inset 0 0 1.5px 1px rgb(255 255 255 / 0.45),
+    0 0 0 0.5px rgb(0 0 0 / 0.02),
+    0 0.75px 1px rgb(0 0 0 / 0.05),
+    0 0 2.5px rgb(0 0 0 / 0.05);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --button-depth:
+      inset 0 1px 0 rgb(255 255 255 / 0.04),
+      inset 0 0 0.9px 1px rgb(255 255 255 / 0.045),
+      0 0 0 0.5px rgb(0 0 0 / 0.07),
+      0 1.4px 1px rgb(0 0 0 / 0.09);
+  }
+}
+:root[data-theme="dark"] {
+  --button-depth:
+    inset 0 1px 0 rgb(255 255 255 / 0.04),
+    inset 0 0 0.9px 1px rgb(255 255 255 / 0.045),
+    0 0 0 0.5px rgb(0 0 0 / 0.07),
+    0 1.4px 1px rgb(0 0 0 / 0.09);
+}
+.button-depth {
+  box-shadow: var(--button-depth);
+}
+
 /* The sidebar's filter row gives room up in a fixed order
    (useSidebarRowFit.ts; DESIGN_SYSTEM.md, «Сжатие ряда фильтра»). The
    stage is the row's `data-row-fit`; every stage keeps what the one before
@@ -1320,11 +1363,11 @@ svg.lucide {
   font-variant-numeric: tabular-nums;
 }
 
-/* Version 2: the bottom bar, its names and hotkeys alike, is set in Geist
-   Mono at the same size, so its height stays. Departure Mono, when chosen
+/* The bottom bar, its names and hotkeys alike, is set in Geist Mono at the
+   same size, so its height stays. Departure Mono, when chosen
    for the interface, keeps the bar. */
-:root[data-ui-version="2"]:not([data-font-interface="departure"]) [data-bottom-action-bar],
-:root[data-ui-version="2"]:not([data-font-interface="departure"]) [data-bottom-action-bar] .font-mono,
-:root[data-ui-version="2"]:not([data-font-interface="departure"]) [data-bottom-action-bar] .font-sans {
+:root:not([data-font-interface="departure"]) [data-bottom-action-bar],
+:root:not([data-font-interface="departure"]) [data-bottom-action-bar] .font-mono,
+:root:not([data-font-interface="departure"]) [data-bottom-action-bar] .font-sans {
   font-family: "Geist Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }

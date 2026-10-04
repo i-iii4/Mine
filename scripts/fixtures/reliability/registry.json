@@ -982,6 +982,15 @@
     },
     {
       "paths": [
+        "src/lib/lineUnits.ts",
+        "src/lib/lineUnits.test.ts"
+      ],
+      "requirement": "SPEC_GRID.md### `src/workers/fontMetrics.worker.ts`",
+      "tests": ["src/lib/lineUnits.test.ts", "src/lib/wordWrap.test.ts", "src/lib/cardHeight.test.ts"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
         "src/lib/fontMetrics.ts",
         "src/lib/fontMetrics.test.ts",
         "src/components/SearchOverlay.tsx",
@@ -1454,6 +1463,15 @@
     },
     {
       "paths": [
+        "src/components/ActionButton.style.test.tsx",
+        "src/components/BottomBarCommands.test.tsx"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#Объём кнопки",
+      "tests": ["src/components/ActionButton.style.test.tsx", "src/components/BottomBarCommands.test.tsx", "src/components/Detail.test.tsx", "src/components/Grid.test.tsx", "src/settings/ShortcutsSection.test.tsx"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
         "src/lib/sidebarSearch.ts",
         "src/lib/sidebarSearchMask.test.ts"
       ],
@@ -1515,12 +1533,13 @@
     },
     {
       "paths": [
+        "src/settings/main.tsx",
+        "src/tabbar/appearance.ts",
         "src/lib/uiVersion.ts",
-        "src/lib/uiVersion.test.ts",
-        "src/settings/main.tsx"
+        "src/lib/uiVersion.test.ts"
       ],
-      "requirement": "DESIGN_SYSTEM.md#Версии интерфейса",
-      "tests": ["src/lib/uiVersion.test.ts", "src/tabbar/TabBar.test.tsx"],
+      "requirement": "DESIGN_SYSTEM.md#Верхние ряды",
+      "tests": ["src/tabbar/TabBar.test.tsx", "src/App.test.tsx"],
       "command": "test:frontend"
     },
     {

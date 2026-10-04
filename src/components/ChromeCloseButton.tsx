@@ -12,7 +12,7 @@ type ChromeCloseButtonProps = Omit<
 
 export function ChromeCloseButton({
   className,
-  label = "Close detail",
+  label = "Close",
   type = "button",
   ...props
 }: ChromeCloseButtonProps) {

@@ -42,8 +42,6 @@ import {
   stepTabHistory,
 } from "@/lib/commands";
 import { motionDuration } from "@/lib/motion";
-import { broadcastSettingsChange } from "@/lib/settingsChanged";
-import { getUiVersion, storeUiVersion, UI_VERSION_STORAGE_KEY, useUiVersion } from "@/lib/uiVersion";
 import { cn } from "@/lib/utils";
 import type { DropHover, TabBarState, TabBarTab, TabId } from "@/types";
 import { DROP_MARKER_WIDTH_PX, TAB_REORDER_EASING, TAB_REORDER_MOTION_MS } from "./constants";
@@ -159,10 +157,9 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
   const count = tabs.length;
   const activeIndex = tabs.findIndex((tab) => tab.id === activeTab);
   const history = tabs[activeIndex]?.history ?? { back: false, forward: false };
-  // In full screen there are no traffic lights. Version 2 gives their place
-  // back to the row; version 1 keeps it so nothing shifts.
-  const uiVersion = useUiVersion();
-  const trafficLightReserve = !(fullscreen && uiVersion === 2);
+  // In full screen there are no traffic lights: their place goes back to the
+  // row.
+  const trafficLightReserve = !fullscreen;
 
   const zoneRef = useRef<HTMLDivElement>(null);
   const plusSlotRef = useRef<HTMLDivElement>(null);
@@ -296,18 +293,13 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
   const openSettingsMenu = useCallback((button: HTMLElement) => {
     settingsMenu.current ??= createSettingsMenu({
       openSection: (section) => run(openSettingsWindow(section), "open the settings"),
-      // Every page follows: this one at once, the others by settings-changed.
-      chooseVersion: (version) => {
-        storeUiVersion(version);
-        broadcastSettingsChange(UI_VERSION_STORAGE_KEY);
-      },
       // The backend lays the windows out again and tells every page.
       chooseChromeRows: (rows) => run(setChromeRows(rows), "change the chrome height"),
     });
     const pending = settingsMenu.current;
     const { left, bottom } = button.getBoundingClientRect();
     pending
-      .then((built) => built.open({ x: left, y: bottom }, getUiVersion(), latest.current.chromeRows))
+      .then((built) => built.open({ x: left, y: bottom }, latest.current.chromeRows))
       .catch((error: unknown) => {
         if (settingsMenu.current === pending) settingsMenu.current = null;
         console.error("Tab bar could not show the settings menu:", error);

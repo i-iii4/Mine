@@ -3,6 +3,23 @@ import { splitWords } from "./lineUnits";
 import { countLines } from "./wordWrap";
 
 describe("line units", () => {
+  it("breaks after a hyphen inside a word, keeping the hyphen with what precedes it", () => {
+    expect(splitWords("well-known -flag a--b end-")).toEqual({
+      words: ["well-", "known", "-flag", "a--b", "end-"],
+      noSpaceBefore: [false, true, false, false, false],
+    });
+  });
+
+  it("counts the line a hyphenated link takes beyond the column (the card that cut its author)", () => {
+    // `// https://behance.net/gallery/248293523/D130-2…`: the browser puts
+    // `//` on one line, the link up to its hyphen on the next, overflowing,
+    // and `2…` on a third.
+    const { words, noSpaceBefore } = splitWords("// https://behance.net/gallery/248293523/D130-2…");
+    expect(words).toEqual(["//", "https://behance.net/gallery/248293523/D130-", "2…"]);
+    const widths = words.map((word) => word.length * 7);
+    expect(countLines(widths, 4, 226, noSpaceBefore)).toBe(3);
+  });
+
   it("keeps space-separated words whole", () => {
     expect(splitWords("  suitable dashboard\nfor it  ")).toEqual({
       words: ["suitable", "dashboard", "for", "it"],

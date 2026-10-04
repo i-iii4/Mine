@@ -98,7 +98,6 @@
 | src/lib/cardAspect.ts | Политика кадрирования: кламп пропорции карточки `1:2 … 2:1` |
 | src/lib/motion.ts | Единая настройка уменьшения движения для программных анимаций и прокрутки |
 | src/lib/feedDisplay.ts | Параметры ленты: порядок и вид карточек (Cards, Mixed, Media), хранение между запусками |
-| src/lib/uiVersion.ts | Версия интерфейса 1 или 2 (`data-ui-version`): сравнение переделки с исходным видом, переключатель в меню логотипа |
 | ESLint 10 + typescript-eslint | Линтинг фронтенда (TypeScript) |
 | Vitest + Testing Library | Frontend-тесты (`bun run test:frontend`) |
 | Playwright + pngjs | Browser acceptance gates: Feed, Graph, cold-space, sidebar reorder |
@@ -231,7 +230,7 @@ local-arena/
 │   │   ├── TabBarApp.tsx, TabBar.tsx # Ряд полосы: резерв светофоров, кнопка бокового меню, вкладки, +
 │   │   ├── useTabBarState.ts   # tabbar-state, window-sidebar-changed, tabbar-drop-hover
 │   │   ├── tabLayout.ts, tabLabel.ts, tabKeyboard.ts, tabMenu.ts, tabDrag.ts # Ширины и растворение краёв, подпись, клавиатура, нативное меню, перетаскивание
-│   │   ├── settingsMenu.ts     # Нативное меню логотипа: разделы настроек и версии интерфейса
+│   │   ├── settingsMenu.ts     # Нативное меню логотипа: разделы настроек и высота хрома
 │   │   ├── constants.ts        # Геометрия и время полосы (сверяется с domain/windows.rs)
 │   │   └── appearance.ts, tabbar.css # Тема и шрифт по настройкам, поверхность хрома
 │   ├── settings/               # Окно настроек (второй Vite-entry: settings.html)

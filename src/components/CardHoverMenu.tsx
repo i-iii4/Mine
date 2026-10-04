@@ -571,8 +571,9 @@ export const CardHoverMenu = memo(function CardHoverMenu({
           onRequestDelete={onRequestDelete}
           openRequestSequence={openMoreMenuRequestSequence}
           triggerVariant="raised"
+          // No keystroke in its tooltip: ⌘K opens the menu of the card the
+          // keyboard is on, not of the one under the pointer.
           triggerSize="icon-xs"
-          triggerShortcut={commandById("element-menu").combo}
           onOpenChange={(open) => {
             if (open) {
               if (keyboardMenuRequestPending) {

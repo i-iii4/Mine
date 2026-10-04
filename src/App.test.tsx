@@ -375,7 +375,7 @@ vi.mock("@/components/Detail", () => ({
       <div data-testid="detail-title">{block.title ?? block.slug}</div>
       {topChromeMode !== "external" && (
         <button type="button" onClick={onClose}>
-          Close detail
+          Close
         </button>
       )}
       <button type="button" onClick={() => onRequestDelete(block.slug)}>
@@ -524,9 +524,6 @@ function bottomBarEntry(label: string): HTMLElement | null {
 describe("AppWithVault", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // These tests pin interface version 1, the layout as it stood on
-    // 03.10.2026; version 2 has its own block below.
-    document.documentElement.setAttribute("data-ui-version", "1");
     gridScroll.atEnd = false;
     commandMocks.getGridRows.mockResolvedValue({ path: "/vault", generation: 1, blocks: [] });
     vi.mocked(isTauri).mockReturnValue(false);
@@ -857,9 +854,7 @@ describe("AppWithVault", () => {
       expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1");
     });
     await waitFor(() => {
-      expect(document.querySelector("[data-main-secondary-stats-right]")).toHaveTextContent(
-        "1 element in collection",
-      );
+      expect(screen.getByRole("button", { name: "Switch collection: alpha" })).toBeInTheDocument();
     });
     expect(commandMocks.startVaultSync).toHaveBeenCalledTimes(1);
     expect(commandMocks.listTaxonomySnapshot).toHaveBeenCalledTimes(1);
@@ -880,9 +875,7 @@ describe("AppWithVault", () => {
       expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
     });
     await waitFor(() => {
-      expect(document.querySelector("[data-main-secondary-stats-right]")).toHaveTextContent(
-        "2 elements",
-      );
+      expect(screen.getByRole("button", { name: "Switch collection: Everything" })).toBeInTheDocument();
     });
     expect(commandMocks.startVaultSync).toHaveBeenCalledTimes(1);
     expect(commandMocks.listTaxonomySnapshot).toHaveBeenCalledTimes(1);
@@ -1238,67 +1231,6 @@ describe("AppWithVault", () => {
     expect(document.querySelector("[data-main-search-top-bar]")).toBeNull();
   });
 
-  it("renders the row over the feed as a real shell row heading the feed column; the sidebar column has no third row", async () => {
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
-      </MemoryRouter>,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
-    });
-
-    const secondaryBar = document.querySelector("[data-main-secondary-top-bar]") as HTMLElement | null;
-    const sidebarSegment = document.querySelector(
-      "[data-main-secondary-top-bar-sidebar-segment]",
-    ) as HTMLElement | null;
-    const contentSegment = document.querySelector(
-      "[data-main-secondary-top-bar-content-segment]",
-    ) as HTMLElement | null;
-    expect(secondaryBar).toHaveClass("chrome-row", "bg-chrome");
-    expect(secondaryBar).toHaveAttribute("data-chrome-separator", "bottom");
-    expect(secondaryBar).not.toHaveClass("border-b");
-    expect(document.querySelector("header")).toHaveClass("chrome-row");
-    expect(document.querySelector("header")).toHaveAttribute("data-chrome-separator", "bottom");
-    expect(document.querySelector("[data-bottom-action-bar]")).toHaveClass("chrome-row");
-    expect(document.querySelector("[data-bottom-action-bar]")).toHaveAttribute("data-chrome-separator", "top");
-    // The sidebar column has no third row (03.10.2026): no count of
-    // collections; the command that adds one stands at the filter's right.
-    expect(sidebarSegment).toBeNull();
-    expect(document.querySelector("[data-main-secondary-collection-count]")).toBeNull();
-    const filterActions = document.querySelector("[data-sidebar-top-search-actions]") as HTMLElement;
-    expect(within(filterActions).getByRole("button", { name: "New Collection" })).toHaveAttribute(
-      "data-sidebar-new-collection",
-      "",
-    );
-    // The row heads the feed column, over the feed only.
-    expect(secondaryBar?.parentElement?.querySelector(":scope > main")).not.toBeNull();
-    expect(contentSegment).toHaveClass("flex-1");
-    expect(contentSegment).toHaveTextContent("2 elements");
-    expect(contentSegment?.querySelector("[data-main-secondary-stats-right]")).toHaveClass(
-      "gap-5",
-      "justify-start",
-      "text-tertiary-foreground",
-    );
-    const viewSwitcher = contentSegment?.querySelector("[data-main-view-mode-switcher]") as HTMLElement | null;
-    expect(viewSwitcher).not.toHaveClass("ml-auto");
-    expect(viewSwitcher).toHaveClass("gap-2");
-    expect(viewSwitcher).toHaveTextContent("View:GridGraph");
-    expect(viewSwitcher?.firstElementChild).toHaveClass("text-tertiary-foreground");
-    expect(within(viewSwitcher!).getByRole("button", { name: "Grid" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-    expect(within(viewSwitcher!).getByRole("button", { name: "Graph" })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
-    expect(viewSwitcher?.querySelector("[data-main-view-mode-control]")).toHaveClass(
-      "text-muted-foreground",
-    );
-  });
-
   it("starts the tab page's row with the space switcher: the traffic lights and the sidebar button live in the tab bar (В43)", async () => {
     for (const collapsed of [false, true]) {
       sidebarResizeState.collapsed = collapsed;
@@ -1338,18 +1270,19 @@ describe("AppWithVault", () => {
     });
 
     const viewSwitcher = document.querySelector("[data-main-view-mode-switcher]") as HTMLElement;
-    fireEvent.click(within(viewSwitcher).getByRole("button", { name: "Graph" }));
+    fireEvent.mouseDown(within(viewSwitcher).getByRole("tab", { name: "Graph" }), { button: 0 });
 
     // The tab remembers its mode; nothing app-wide does (SPEC_TABS.md, В78).
     expect(localStorage.getItem("mine.mainViewMode")).toBeNull();
     expect(await screen.findByTestId("graph-view")).toHaveTextContent("__all__");
     expect(screen.queryByTestId("grid")).not.toBeInTheDocument();
-    expect(within(viewSwitcher).getByRole("button", { name: "Graph" })).toHaveAttribute(
-      "aria-pressed",
+    const graphSwitcher = document.querySelector("[data-main-view-mode-switcher]") as HTMLElement;
+    expect(within(graphSwitcher).getByRole("tab", { name: "Graph" })).toHaveAttribute(
+      "aria-selected",
       "true",
     );
 
-    fireEvent.click(within(viewSwitcher).getByRole("button", { name: "Grid" }));
+    fireEvent.mouseDown(within(graphSwitcher).getByRole("tab", { name: "Grid" }), { button: 0 });
 
     expect(localStorage.getItem("mine.mainViewMode")).toBeNull();
     expect(await screen.findByTestId("grid")).toHaveTextContent("__all__:2");
@@ -1523,7 +1456,7 @@ describe("AppWithVault", () => {
 
     // The ground does not move: a selection swaps the half's content, not the
     // row's surface — fills compute from the surface, so they stay consistent.
-    const bar = document.querySelector("[data-main-secondary-top-bar]");
+    const bar = document.querySelector("header.chrome-row");
     expect(bar).toHaveClass("bg-chrome");
     expect(bar).not.toHaveClass("bg-accent");
 
@@ -1644,9 +1577,7 @@ describe("AppWithVault", () => {
     });
 
     const topSidebarSegment = document.querySelector("[data-app-top-sidebar-segment]") as HTMLElement;
-    const secondaryBar = document.querySelector("[data-main-secondary-top-bar]") as HTMLElement;
     expect(topSidebarSegment.parentElement).toHaveClass("bg-chrome");
-    expect(secondaryBar).toHaveClass("bg-chrome");
     // The backend paints every window with the chrome colour this page
     // reports; the page paints no window itself (SPEC_TABS.md, В25).
     await waitFor(() => {
@@ -1847,7 +1778,7 @@ describe("AppWithVault", () => {
     expect(secondaryDetailMenu).toBeInTheDocument();
     expect(secondaryContentSegment).toBeInTheDocument();
     await waitFor(() => {
-      expect(document.querySelector("[data-main-secondary-top-bar]")).toHaveClass("bg-accent");
+      expect(document.querySelector("header.chrome-row")).toHaveClass("bg-chrome");
       expect(secondaryDetailMenu).toHaveAttribute("data-entered", "true");
     });
     expect(document.querySelector("[data-secondary-sidebar-link-mode-bar]")).not.toBeInTheDocument();
@@ -1855,21 +1786,19 @@ describe("AppWithVault", () => {
     expect(document.querySelector("[data-sidebar-link-mode-bar]")).not.toBeInTheDocument();
     expect(document.querySelector('[data-detail-top-menu="classic"]')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Close detail" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
-    expect(document.querySelector("[data-main-secondary-top-bar]")).toHaveClass("bg-chrome");
+    expect(document.querySelector("header.chrome-row")).toHaveClass("bg-chrome");
     expect(secondaryDetailMenu).toHaveAttribute("data-entered", "false");
     expect(document.querySelectorAll("[data-main-secondary-main-layer]")[0]).toHaveAttribute(
       "data-entered",
       "true",
     );
-    expect(within(secondaryContentSegment!).getByText("2 elements")).toBeInTheDocument();
+    // The row's own content comes back: Grid and Graph, no count.
+    expect(within(secondaryContentSegment!).getByRole("tablist", { name: "View mode" })).toBeInTheDocument();
   });
 
-  describe("interface version 2 (DESIGN_SYSTEM.md, «Версии интерфейса»)", () => {
-    beforeEach(() => {
-      document.documentElement.setAttribute("data-ui-version", "2");
-    });
+  describe("the top rows (DESIGN_SYSTEM.md, «Верхние ряды»)", () => {
 
     it("folds the row over the feed into the second row; no row heads the table", async () => {
       render(
@@ -1885,6 +1814,20 @@ describe("AppWithVault", () => {
       // No row of its own between the second row and the body, over the feed
       // or over the table.
       expect(document.querySelectorAll("[data-main-secondary-top-bar]")).toHaveLength(0);
+      expect(header).toHaveAttribute("data-chrome-separator", "bottom");
+      expect(document.querySelector("[data-bottom-action-bar]")).toHaveAttribute("data-chrome-separator", "top");
+      // No count of collections; the command that adds one stands at the
+      // filter's right.
+      expect(document.querySelector("[data-main-secondary-collection-count]")).toBeNull();
+      const filterActions = document.querySelector("[data-sidebar-top-search-actions]") as HTMLElement;
+      expect(within(filterActions).getByRole("button", { name: "New Collection" })).toHaveAttribute(
+        "data-sidebar-new-collection",
+        "",
+      );
+      // No count of elements and no View: prefix; Grid and Graph at the right.
+      expect(header).not.toHaveTextContent("elements");
+      expect(header).not.toHaveTextContent("View:");
+      expect(within(header).getByRole("tablist", { name: "View mode" })).toBeInTheDocument();
     });
 
     it("joins space and collection into one path with the sidebar collapsed: no line, no padding between", async () => {
@@ -1950,8 +1893,9 @@ describe("AppWithVault", () => {
     expect(document.querySelector("[data-top-chrome-space-measure]")).toBeNull();
     expect(screen.queryByRole("textbox", { name: "Filter collections" })).not.toBeInTheDocument();
     const collectionSwitcher = screen.getByRole("button", { name: "Switch collection: Everything" });
-    // Collapsed or not, the collection switcher keeps the one inset.
-    expect(collectionSwitcher).toHaveClass("pl-[var(--top-collection-pad-x)]", "pr-[var(--top-collection-pad-x)]");
+    // Collapsed, space and collection are one path: no inset between them,
+    // none before the content that follows.
+    expect(collectionSwitcher).toHaveClass("pl-0", "pr-0");
     expect(collectionSwitcher).not.toHaveClass("px-3");
   });
 
@@ -2228,7 +2172,8 @@ describe("AppWithVault", () => {
     });
 
     const collectionSwitcher = screen.getByRole("button", { name: "Switch collection: Everything" });
-    expect(collectionSwitcher).toHaveClass("pl-[var(--top-collection-pad-x)]", "pr-[var(--top-collection-pad-x)]");
+    // From the column's line the one inset; the content after it follows on.
+    expect(collectionSwitcher).toHaveClass("pl-[var(--top-collection-pad-x)]", "pr-0");
     expect(collectionSwitcher).not.toHaveClass("px-3");
     expect(collectionSwitcher).toHaveClass("font-mono");
     expect(collectionSwitcher).toHaveClass("text-sm");
@@ -2484,7 +2429,7 @@ describe("AppWithVault", () => {
     expect(screen.getByTestId("grid-keyboard-disabled")).toHaveTextContent("true");
     expect(screen.getByTestId("grid-detail-open")).toHaveTextContent("true");
 
-    fireEvent.click(screen.getByRole("button", { name: "Close detail" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
     await waitFor(() => {
       expect(screen.getByTestId("grid-restore")).toHaveTextContent("alpha-block:1");
@@ -2502,7 +2447,7 @@ describe("AppWithVault", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
     await waitFor(() => expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block"));
     expect(document.querySelector("[data-compact-detail-top-menu]")).not.toBeInTheDocument();
-    expect(document.querySelector("[data-main-secondary-top-bar]")).toBeInTheDocument();
+    expect(document.querySelector("[data-main-secondary-top-bar-content-segment]")).toBeInTheDocument();
   });
 
   it("copies the open card markdown path with Command-L", async () => {

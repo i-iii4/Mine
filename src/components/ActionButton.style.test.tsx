@@ -19,8 +19,8 @@ describe("ActionButton presentation", () => {
   it("frames the hotkey, not the action name", () => {
     render(<ActionButton hotkey="⌘F">Search</ActionButton>);
 
-    expect(screen.getByText("⌘F").className).toContain("bg-component-fill");
-    expect(screen.getByText("Search").className).not.toContain("bg-component-fill");
+    expect(screen.getByText("⌘F").className).toContain("bg-depth-fill");
+    expect(screen.getByText("Search").className).not.toContain("bg-depth-fill");
   });
 
   it("puts the hotkey in a frame and the label beside it when standard", () => {

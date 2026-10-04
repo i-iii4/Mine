@@ -16,7 +16,6 @@ import {
   type SettingsChangedPayload,
 } from "@/lib/settingsChanged";
 import { applyTheme, getStoredTheme, THEME_STORAGE_KEY } from "@/lib/themeMode";
-import { applyUiVersion, getStoredUiVersion, UI_VERSION_STORAGE_KEY } from "@/lib/uiVersion";
 import { listenHere } from "./useTabBarState";
 
 /** Apply the stored theme, layout variant and interface font to this page. */
@@ -24,7 +23,6 @@ export function applyStoredAppearance(): void {
   applyTheme(getStoredTheme());
   applyDesign(getStoredDesignMode());
   applyInterfaceFont(getStoredInterfaceFont());
-  applyUiVersion(getStoredUiVersion());
 }
 
 /** Re-apply what a settings change touches. The event is global; a page's
@@ -37,7 +35,6 @@ export function useAppearanceSync(): void {
         if (payload.key === THEME_STORAGE_KEY) applyTheme(getStoredTheme());
         else if (payload.key === DESIGN_STORAGE_KEY) applyDesign(getStoredDesignMode());
         else if (payload.key === INTERFACE_FONT_STORAGE_KEY) applyInterfaceFont(getStoredInterfaceFont());
-        else if (payload.key === UI_VERSION_STORAGE_KEY) applyUiVersion(getStoredUiVersion());
       }),
     [],
   );

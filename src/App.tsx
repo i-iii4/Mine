@@ -27,7 +27,6 @@ import type { SettingsSection } from "@/lib/settingsSections";
 import { isTauri } from "@tauri-apps/api/core";
 import { listenPage } from "@/lib/pageEvents";
 import { getNavigationLabel } from "@/lib/displayTitle";
-import { applyUiVersion, getStoredUiVersion, UI_VERSION_STORAGE_KEY, useUiVersion } from "@/lib/uiVersion";
 import { applyChromeRowHeight, CHROME_ROWS_EVENT } from "@/lib/chromeHeight";
 import {
   SPACE_LEAD_CHANGED_EVENT,
@@ -510,11 +509,6 @@ interface TabRestore {
   path: string | null;
   view: TabView;
   saved: TabView;
-}
-
-/// The title a card shows when open in the compact detail.
-function cardTitle(block: Pick<LightBlock, "title" | "media_file" | "slug">): string {
-  return block.title ?? block.media_file ?? `${block.slug}.md`;
 }
 
 
@@ -1382,16 +1376,13 @@ export function AppWithVault({
     : DETAIL_SECONDARY_CHROME_EXIT_MS;
   const topChromeSurfaceClass = "bg-chrome";
   const topChromeSurfaceToken: NativeWindowChromeSurfaceToken = "--chrome";
-  // Interface version 2: the third row goes. Its half over the feed joins the
-  // second row after the collection switcher, its half over the sidebar heads
-  // the table; with the sidebar collapsed nothing parts space and collection.
-  const uiVersion = useUiVersion();
-  const foldedMetadataRow = uiVersion === 2 && !metadataRowAtBottom;
-  // Version 2 names the open card by the shared visible title rule, without
-  // its folder or extension (SPEC_DISPLAY_TITLE.md).
-  const compactDetailCardTitle = renderedDetailBlock
-    ? uiVersion === 2 ? getNavigationLabel(renderedDetailBlock) : cardTitle(renderedDetailBlock)
-    : "";
+  // No third row: what it held over the feed joins the second row after the
+  // collection switcher; with the sidebar collapsed nothing parts space and
+  // collection (DESIGN_SYSTEM.md, «Верхние ряды»).
+  const foldedMetadataRow = !metadataRowAtBottom;
+  // The open card is named by the shared visible title rule, without its
+  // folder or extension (SPEC_DISPLAY_TITLE.md).
+  const compactDetailCardTitle = renderedDetailBlock ? getNavigationLabel(renderedDetailBlock) : "";
   // The search overlay is modal: while it is open the feed answers no key,
   // ⌘K included (SPEC_SEARCH_OVERLAY.md; SPEC_AUDIT_FIXES.md, Г4.2).
   const gridKeyboardNavigationDisabled = Boolean(renderedDetailBlock)
@@ -2952,8 +2943,6 @@ export function AppWithVault({
         applyTheme(getStoredTheme());
       } else if (key === DESIGN_STORAGE_KEY) {
         applyDesign(getStoredDesignMode());
-      } else if (key === UI_VERSION_STORAGE_KEY) {
-        applyUiVersion(getStoredUiVersion());
       } else if (key === BOTTOM_ACTION_BAR_HIDDEN_STORAGE_KEY) {
         setBottomActionBarHidden(getStoredBottomActionBarHidden());
       } else if (key === GRAPH_PREFERENCES_STORAGE_KEY) {
@@ -4272,7 +4261,7 @@ export function AppWithVault({
     || showFirstCardMarker
     || showIndexingNotice;
 
-  const metadataRowOf = (part: "both" | "content" | "feed") => mainSecondaryTopBarVisible ? (
+  const metadataRowOf = (part: "both" | "content") => mainSecondaryTopBarVisible ? (
     <MainSecondaryTopBar
           part={part}
           sidebarCollapsed={sidebarCollapsed}
@@ -4332,7 +4321,7 @@ export function AppWithVault({
           data-app-top-sidebar-segment=""
           className={cn(
             "flex h-full shrink-0 items-center overflow-hidden",
-            !(uiVersion === 2 && sidebarCollapsed) && "border-r border-sidebar-border",
+            !sidebarCollapsed && "border-r border-sidebar-border",
             sidebarCollapsed && "w-auto max-w-[240px]",
             !sidebarResizing && "transition-[width] duration-200 ease-out motion-reduce:transition-none",
           )}
@@ -4360,7 +4349,7 @@ export function AppWithVault({
               onOpenInNewTab={tabPage ? openSpaceInNewTab : undefined}
               surface="topChrome"
               topChromeCollapsed={sidebarCollapsed}
-              joinsNext={uiVersion === 2 && sidebarCollapsed}
+              joinsNext={sidebarCollapsed}
             />
             {!sidebarCollapsed && (
               <>
@@ -4477,7 +4466,7 @@ export function AppWithVault({
             orderedTags={orderedTags}
             onNavigate={handleTopCollectionNavigate}
             onCreateCollection={handleTopCollectionCreate}
-            joinsPrevious={uiVersion === 2 && sidebarCollapsed}
+            joinsPrevious={sidebarCollapsed}
             joinsNext={foldedMetadataRow}
           />
           {compactDetailTopMenuActive && renderedDetailBlock ? (
@@ -4576,10 +4565,6 @@ export function AppWithVault({
         onToggleCollapsed={toggleCollapsed}
       />
 
-      {/* The feed column: in version 1 the row over the feed heads it, the
-          sidebar column has no third row (03.10.2026). */}
-      <div className="flex min-w-0 flex-1 flex-col" style={{ minWidth: APP_MAIN_MIN_WIDTH_PX }}>
-      {!metadataRowAtBottom && !foldedMetadataRow && metadataRowOf("feed")}
       <main
         ref={mainRef}
         className="relative isolate min-h-0 flex-1 overflow-hidden"
@@ -4715,7 +4700,6 @@ export function AppWithVault({
           onDeleteMedia={() => confirmDeleteBlock(Boolean(deletePlan?.unused_media.length))}
         />
       </main>
-      </div>
 
       {/* Keep Downloaded is advice about the space: its lead tab gives it (В19). */}
       {lead && <CloudRecommendation vaultPath={vaultPath} refreshToken={cloudAdviceToken} />}

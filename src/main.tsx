@@ -4,7 +4,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { hydrateCommandOverrides, watchCommandOverrides } from "@/lib/shortcutOverrides";
 import { applyTheme, getStoredTheme } from "@/lib/themeMode";
 import { applyDesign, getStoredDesignMode } from "@/lib/designMode";
-import { applyUiVersion, getStoredUiVersion } from "@/lib/uiVersion";
 import { applyCardRadius, getStoredCardRadius } from "@/lib/cardRadius";
 import { applyDensity, getStoredDensity } from "@/lib/density";
 import {
@@ -27,7 +26,6 @@ installControlCharGuard();
 // window owns the controls; this window re-applies on "settings-changed").
 applyTheme(getStoredTheme());
 applyDesign(getStoredDesignMode());
-applyUiVersion(getStoredUiVersion());
 applyCardRadius(getStoredCardRadius());
 applyDensity(getStoredDensity());
 applyInterfaceFont(getStoredInterfaceFont());

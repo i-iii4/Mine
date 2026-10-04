@@ -22,11 +22,13 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-component-fill outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover",
+        // Filled and raised with depth, no hover (DESIGN_SYSTEM.md,
+        // «Объём кнопки»).
+        default: "button-depth rounded-2 bg-depth-fill",
         // Secondary action: transparent body, permanent border. Text action
         // buttons are never borderless — ghost is reserved for icon controls.
         secondary: "bg-transparent outline-1 -outline-offset-1 outline-border hover:outline-component-fill-hover",
-        destructive: "bg-component-fill text-destructive outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover",
+        destructive: "button-depth rounded-2 bg-depth-fill text-destructive",
         // A keystroke that cannot be pressed: `secondary`'s body — transparent,
         // permanent border — with no hover at all. The outline keeps it a
         // control by shape; the missing fill and missing hover say it is a
@@ -34,11 +36,10 @@ const buttonVariants = cva(
         reference: "bg-transparent outline-1 -outline-offset-1 outline-border",
         ghost: "bg-transparent hover:text-hover-foreground",
         chrome: "group/chrome bg-transparent text-muted-foreground hover:text-foreground data-[state=open]:text-foreground focus-visible:text-foreground focus-visible:outline-none",
-        // The chrome's permanent plate (the + over the table) as a button of
-        // its own: `--active` from its surface, a dimmed glyph; on hover or
-        // while its menu is open it lifts one step to `--component-fill` and
-        // the glyph brightens. Trial on cards, 03.10.2026.
-        raised: "bg-active text-muted-foreground hover:bg-component-fill hover:text-foreground data-[state=open]:bg-component-fill data-[state=open]:text-foreground",
+        // The card's button: filled with depth like `default`, a dimmed glyph
+        // that brightens while its menu is open; no hover (DESIGN_SYSTEM.md,
+        // «Кнопки карточки»).
+        raised: "button-depth rounded-2 bg-depth-fill text-muted-foreground data-[state=open]:text-foreground",
         link: "bg-transparent underline underline-offset-4 hover:text-hover-foreground",
       },
       size: {

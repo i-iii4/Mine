@@ -38,8 +38,9 @@ describe("ShortcutsSection", () => {
     expect(shortcut("find-elements").parentElement).toHaveAttribute("data-shortcut-actions");
     expect(shortcut("find-elements")).toHaveAttribute("data-variant", "default");
     expect(shortcut("find-elements")).toHaveAttribute("data-size", "xs");
-    expect(shortcut("find-elements")).toHaveClass("h-5", "bg-component-fill", "text-muted-foreground");
-    expect(shortcut("find-elements")).toHaveClass("hover:outline-1", "hover:text-foreground");
+    expect(shortcut("find-elements")).toHaveClass("h-5", "bg-depth-fill", "text-muted-foreground");
+    expect(shortcut("find-elements")).toHaveClass("button-depth", "hover:text-foreground");
+    expect(shortcut("find-elements")).not.toHaveClass("hover:outline-1");
     expect(shortcut("find-elements")).not.toHaveClass("hover:bg-active", "border-border");
     expect(shortcut("find-elements")).not.toHaveClass("w-28");
   });

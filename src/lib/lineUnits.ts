@@ -23,10 +23,12 @@ export interface MeasuredWords {
  *
  * Spaces separate words. Inside a space-free token, CJK characters are each a
  * unit of their own, since the browser breaks between any two of them; runs
- * of other characters (Latin words, digits) stay whole. Units inside a token
- * follow each other with no space. A paragraph of Japanese used to count as
- * one word as soon as the text held a single space or line break elsewhere,
- * so a three-line preview was sized as one line.
+ * of other characters (Latin words, digits) stay whole but for a hyphen, after
+ * which the browser may break too. Units inside a token follow each other with
+ * no space. A paragraph of Japanese used to count as one word as soon as the
+ * text held a single space or line break elsewhere, so a three-line preview
+ * was sized as one line; a long link with a hyphen in it took one line more on
+ * screen than in the count, and its card cut its author line off (03.10.2026).
  */
 export function splitWords(text: string): MeasuredWords {
   const words: string[] = [];
@@ -36,13 +38,32 @@ export function splitWords(text: string): MeasuredWords {
 
   for (const token of trimmed.split(/\s+/u)) {
     if (!token) continue;
-    const units = CJK_CHAR.test(token) ? splitCjkToken(token) : [token];
+    const units = CJK_CHAR.test(token) ? splitCjkToken(token) : splitAfterHyphens(token);
     units.forEach((unit, index) => {
       words.push(unit);
       noSpaceBefore.push(index > 0);
     });
   }
   return { words, noSpaceBefore };
+}
+
+/**
+ * A token cut after each hyphen that has a character before and after it:
+ * `well-known` is `well-` and `known`. The hyphen stays with what precedes
+ * it, where the browser leaves it when it breaks there. A leading hyphen, a
+ * trailing one, and a run of them keep the token whole at that point.
+ */
+function splitAfterHyphens(token: string): string[] {
+  const units: string[] = [];
+  let start = 0;
+  for (let index = 1; index < token.length - 1; index += 1) {
+    if (token[index] === "-" && token[index - 1] !== "-" && token[index + 1] !== "-") {
+      units.push(token.slice(start, index + 1));
+      start = index + 1;
+    }
+  }
+  units.push(token.slice(start));
+  return units;
 }
 
 function splitCjkToken(token: string): string[] {

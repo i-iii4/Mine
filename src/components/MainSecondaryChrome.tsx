@@ -116,7 +116,7 @@ function MainSecondaryStatsRight({
 
   // Interface version 2: no count and no `View:` prefix; the view switch
   // stands at the right with the Display button, on a permanent plate as
-  // the sidebar's filter has it (DESIGN_SYSTEM.md, «Версии интерфейса»).
+  // the sidebar's filter has it (DESIGN_SYSTEM.md, «Верхние ряды»).
   if (afterPath) {
     return (
       <div
@@ -287,12 +287,11 @@ export function MainSecondaryTopBar({
   /// button bar's surface and closes with a separator on top instead of below —
   /// the seam always faces the content.
   placement?: "top" | "bottom";
-  /// Which half to draw. At the top of the window the row has no half over
-  /// the sidebar since 03.10.2026: version 1 draws the half over the feed as
-  /// a row over the feed column (`feed`), version 2 folds it into the row
-  /// above (`content`, without a row of its own). At the foot of the window
-  /// the row keeps both halves (`both`).
-  part?: "both" | "content" | "feed";
+  /// Which half to draw. At the top of the window the row has no row of its
+  /// own since 03.10.2026: its half over the feed folds into the row above
+  /// (`content`). At the foot of the window the row keeps both halves
+  /// (`both`).
+  part?: "both" | "content";
   /// A group selection exists: its commands take the whole row over.
   selectionActive?: boolean;
   /// Where the feed portals the selection's commands into.

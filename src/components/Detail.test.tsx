@@ -1105,8 +1105,8 @@ describe("Detail", () => {
 
     const sourceButton = screen.getByRole("button", { name: /Source/i });
     const connectButton = screen.getByRole("button", { name: /Connect/i });
-    expect(sourceButton).toHaveClass("min-w-0", "flex-1", "bg-component-fill-inner");
-    expect(connectButton).toHaveClass("min-w-0", "flex-1", "bg-component-fill-inner");
+    expect(sourceButton).toHaveClass("min-w-0", "flex-1", "bg-depth-fill");
+    expect(connectButton).toHaveClass("min-w-0", "flex-1", "bg-depth-fill");
     expect(sourceButton).not.toHaveClass("w-full");
     expect(connectButton).not.toHaveClass("w-full");
     expect(screen.queryByRole("button", { name: /More/i })).not.toBeInTheDocument();
@@ -1688,10 +1688,8 @@ describe("Detail", () => {
     const trigger = menu!.querySelector("[data-detail-media-more-button]");
     expect(trigger).toHaveAttribute("data-variant", "default");
     expect(trigger).toHaveAttribute("data-size", "icon");
-    expect(trigger).toHaveClass(
-      "bg-component-fill",
-      "hover:outline-component-fill-hover",
-    );
+    expect(trigger).toHaveClass("button-depth", "rounded-2", "bg-depth-fill");
+    expect(trigger?.className).not.toMatch(/(^|\s)hover:/);
 
     fireEvent.pointerDown(trigger!, { button: 0, ctrlKey: false });
     fireEvent.click(trigger!);

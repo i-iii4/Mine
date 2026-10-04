@@ -234,14 +234,14 @@ export function ButtonAdaptationPage() {
               <>
                 <Button type="button" variant="chrome" size="chrome-icon" aria-label="Display options"><Settings2 /></Button>
                 <Button type="button" variant="chrome" size="chrome-icon" aria-label="Card actions"><MoreHorizontal /></Button>
-                <Button type="button" variant="chrome" size="chrome-icon" aria-label="Close detail"><X /></Button>
+                <Button type="button" variant="chrome" size="chrome-icon" aria-label="Close"><X /></Button>
               </>
             }
             after={
               <>
                 <AdaptedButton variant="ghost" aria-label="Display options"><Settings2 /></AdaptedButton>
                 <AdaptedButton variant="ghost" aria-label="Card actions"><MoreHorizontal /></AdaptedButton>
-                <AdaptedButton variant="ghost" aria-label="Close detail"><X /></AdaptedButton>
+                <AdaptedButton variant="ghost" aria-label="Close"><X /></AdaptedButton>
               </>
             }
           />

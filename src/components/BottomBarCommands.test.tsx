@@ -43,7 +43,7 @@ describe("bottom-bar command entries", () => {
     render(<ActionButton hotkey="↵" onClick={() => {}}>Focus</ActionButton>);
     const entry = screen.getByText("Focus").closest("[data-action-button]");
 
-    expect(entry?.outerHTML ?? "").toContain("bg-component-fill");
+    expect(entry?.outerHTML ?? "").toContain("bg-depth-fill");
   });
 
   it("leaves an ordinary command interactive", () => {
