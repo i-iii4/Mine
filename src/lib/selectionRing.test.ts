@@ -2,19 +2,20 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 /// Card states (SPEC_CARD_STATES.md): keyboard focus colours the card's own
-/// border with --border-accent and washes a picture; a chosen collection's
+/// frame (border and the layer under its surface, --card-frame-color) with --border-accent and washes a picture; a chosen collection's
 /// highlight colours the border only. Pointer hover adds no border and no wash, only the card's
 /// buttons. Selection uses the brighter --feed-selection-frame, never draws
 /// outside the card, and outranks every other state.
 describe("card state styles", () => {
-  const css = readFileSync("src/styles/global.css", "utf8");
+  // Comments mention selectors too; only the rules count.
+  const css = readFileSync("src/styles/global.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   const rules = css.split("}");
   const ruleFor = (selectorPart: string, declaration: string) =>
     rules.some((block) => block.includes(selectorPart) && block.includes(declaration));
 
   it("gives keyboard focus and the collection highlight the accent border", () => {
-    expect(ruleFor('[data-feed-grid-item-focused="true"] [data-block-slug]', "border-color: var(--border-accent)")).toBe(true);
-    expect(ruleFor('[data-feed-grid-item-collection-lit="true"] [data-block-slug]', "border-color: var(--border-accent)")).toBe(true);
+    expect(ruleFor('[data-feed-grid-item-focused="true"] [data-block-slug]', "--card-frame-color: var(--border-accent)")).toBe(true);
+    expect(ruleFor('[data-feed-grid-item-collection-lit="true"] [data-block-slug]', "--card-frame-color: var(--border-accent)")).toBe(true);
   });
 
   it("leaves pointer hover without a border or a wash", () => {
@@ -22,7 +23,7 @@ describe("card state styles", () => {
   });
 
   it("marks a selected card with its own border in the bright colour", () => {
-    expect(ruleFor('[data-feed-grid-item-selected="true"] [data-block-slug]', "border-color: var(--feed-selection-frame)")).toBe(true);
+    expect(ruleFor('[data-feed-grid-item-selected="true"] [data-block-slug]', "--card-frame-color: var(--feed-selection-frame)")).toBe(true);
     expect(css).not.toContain("[data-feed-grid-selection-frame]");
     expect(css).not.toContain("--feed-selection-ring");
   });

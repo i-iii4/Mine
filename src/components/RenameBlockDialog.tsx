@@ -12,7 +12,7 @@ interface RenameBlockDialogProps {
   onRename: (currentSlug: string, newStem: string) => Promise<void>;
 }
 
-function renameErrorMessage(error: RenameBlockError): string {
+export function renameErrorMessage(error: RenameBlockError): string {
   switch (error.kind) {
     case "name_taken":
       return `A file named "${error.requested}.md" already exists.`;

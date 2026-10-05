@@ -23,7 +23,7 @@ function Input({
           "border-input border bg-background",
           "focus-visible:border-foreground",
           "aria-invalid:border-destructive",
-          "file:text-foreground file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-base file:font-semibold",
+          "file:text-foreground file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-base file:font-normal",
         ],
         variant === "ghost" && "border-none bg-transparent",
         className

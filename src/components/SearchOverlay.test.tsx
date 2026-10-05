@@ -40,7 +40,7 @@ vi.mock("@/lib/commands", () => ({
 
 vi.mock("@/components/Card", () => ({
   ReadOnlyCardPreview: ({ block, previewMode }: { block: LightBlock; previewMode?: string }) => (
-    <div data-testid="overlay-preview" data-preview-mode={previewMode}>{block.slug}</div>
+    <div data-testid="overlay-preview" data-preview-mode={previewMode}>card {block.slug}</div>
   ),
 }));
 
@@ -224,7 +224,7 @@ describe("SearchOverlay", () => {
     // Rows are grouped into dynamic date sections derived from saved_at.
     expect(await screen.findByText("Today")).toBeInTheDocument();
     expect(screen.getByText("Yesterday")).toBeInTheDocument();
-    expect(screen.getByText("Title fresh")).toBeInTheDocument();
+    expect(screen.getByText("fresh")).toBeInTheDocument();
     // The header count is a query-result number — hidden in recent mode.
     expect(screen.queryByText("462")).not.toBeInTheDocument();
     expect(screen.queryByText("No results")).not.toBeInTheDocument();
@@ -320,7 +320,7 @@ describe("SearchOverlay", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("Title alpha")).toBeInTheDocument();
+      expect(screen.getByText("alpha")).toBeInTheDocument();
     });
     expect(listGridBlocksMock).toHaveBeenCalledTimes(1);
 
@@ -336,7 +336,7 @@ describe("SearchOverlay", () => {
     );
 
     await waitFor(() => {
-      expect(screen.queryByText("Title alpha")).not.toBeInTheDocument();
+      expect(screen.queryByText("alpha")).not.toBeInTheDocument();
     });
     await new Promise((resolve) => window.setTimeout(resolve, 150));
     expect(listGridBlocksMock).toHaveBeenCalledTimes(1);
@@ -370,7 +370,7 @@ describe("SearchOverlay", () => {
     renderOverlay({ query: "alpha" });
 
     const option = await screen.findByRole("option");
-    const title = within(option).getByText("Title alpha");
+    const title = within(option).getByText("alpha");
     const snippet = within(option).getByText("Preview alpha");
 
     expect(title).toHaveClass("truncate", "text-sm", "text-foreground");
@@ -380,6 +380,33 @@ describe("SearchOverlay", () => {
     // Both lines sit on the same 20px line, so a two-line row keeps its height.
     expect(title.style.lineHeight).toBe("20px");
     expect(snippet.style.lineHeight).toBe("20px");
+  });
+
+  it("names each result row by its file name and marks a title match in it (05.10.2026)", async () => {
+    listGridBlocksMock.mockResolvedValue(
+      snapshot([
+        makeBlock(1, "Cards/Шуховская башня", {
+          title: null,
+          content_heading: "Radio tower",
+          display_title: "Radio tower",
+          search_match: {
+            field: "title",
+            kind: "exact",
+            excerpt: "Шуховская башня",
+            ranges: [{ start: 10, end: 15 }],
+            score: 8,
+          },
+        }),
+      ]),
+    );
+    renderOverlay({ query: "башня" });
+
+    const option = await screen.findByRole("option");
+    const title = option.querySelector("p")!;
+    expect(title).toHaveTextContent(/^Шуховская башня$/);
+    const mark = within(option).getByText("башня");
+    expect(mark.tagName).toBe("MARK");
+    expect(option).not.toHaveTextContent("Radio tower");
   });
 
   it("adds a plus to the displayed-result count when more search rows exist", async () => {
@@ -407,7 +434,7 @@ describe("SearchOverlay", () => {
     );
     const { rerender, onQueryChange, onClose, onOpenBlock } = renderOverlay();
 
-    await screen.findByText("Title recent");
+    await screen.findByText("recent");
     expect(screen.queryByText("508")).not.toBeInTheDocument();
 
     rerender(
@@ -538,9 +565,9 @@ describe("SearchOverlay", () => {
     resolveFirst!(snapshot([makeBlock(1, "stale")]));
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(listGridBlocksMock).toHaveBeenCalledTimes(1);
-    expect(screen.queryByText("Title stale")).not.toBeInTheDocument();
+    expect(screen.queryByText("stale")).not.toBeInTheDocument();
 
-    await waitFor(() => expect(screen.getByText("Title fresh")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("fresh")).toBeInTheDocument());
   });
 
   it("Enter before the results of the typed text opens that text's first result (А6.11)", async () => {
@@ -558,7 +585,7 @@ describe("SearchOverlay", () => {
       onOpenBlock,
     };
     const { rerender } = render(<SearchOverlay {...props} query="stale" />);
-    await waitFor(() => expect(screen.getByText("Title stale")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("stale")).toBeInTheDocument());
 
     rerender(<SearchOverlay {...props} query="fresh" />);
     fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
@@ -587,7 +614,7 @@ describe("SearchOverlay", () => {
       onOpenBlock,
     };
     const { rerender } = render(<SearchOverlay {...props} open query="stale" />);
-    await waitFor(() => expect(screen.getByText("Title stale")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("stale")).toBeInTheDocument());
 
     // Enter before the answer, then Escape before it lands.
     rerender(<SearchOverlay {...props} open query="fresh" />);
@@ -604,7 +631,7 @@ describe("SearchOverlay", () => {
     rerender(<SearchOverlay {...props} open query="fresh" />);
     await waitFor(() => expect(freshAnswers).toHaveLength(2));
     await act(async () => { freshAnswers[1]!(); });
-    await waitFor(() => expect(screen.getByText("Title fresh")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("fresh")).toBeInTheDocument());
     expect(onOpenBlock).not.toHaveBeenCalled();
     fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
     expect(onOpenBlock).toHaveBeenCalledExactlyOnceWith(fresh);
@@ -660,7 +687,7 @@ describe("SearchOverlay", () => {
     };
     try {
       const { rerender } = render(<SearchOverlay {...props} query="stale" />);
-      await waitFor(() => expect(screen.getByText("Title stale")).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText("stale")).toBeInTheDocument());
 
       rerender(<SearchOverlay {...props} query="fresh" />);
       const alert = await screen.findByRole("alert");
@@ -840,7 +867,7 @@ describe("SearchOverlay", () => {
       expect(screen.getAllByRole("option")).toHaveLength(2);
     });
     // The deleted card is gone; the active row followed the slug.
-    expect(screen.queryByText("Title alpha")).not.toBeInTheDocument();
+    expect(screen.queryByText("alpha")).not.toBeInTheDocument();
     expect(screen.getByTestId("overlay-preview")).toHaveTextContent("beta");
   });
 
@@ -862,7 +889,7 @@ describe("SearchOverlay", () => {
 
     // Immediate, no refetch needed: row gone, count decremented, index clamped.
     expect(screen.getAllByRole("option")).toHaveLength(2);
-    expect(screen.queryByText("Title beta")).not.toBeInTheDocument();
+    expect(screen.queryByText("beta")).not.toBeInTheDocument();
     expect(screen.getByText("2")).toBeInTheDocument();
     expect(screen.getByTestId("overlay-preview")).toHaveTextContent("gamma");
     expect(listGridBlocksMock.mock.calls.length).toBe(fetchCallsBefore);

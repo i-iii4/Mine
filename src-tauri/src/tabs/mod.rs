@@ -368,7 +368,7 @@ pub fn set_chrome_rows(app: &AppHandle, bar_label: &str, rows: ChromeRows) {
     layout(app, &window_id);
     let rows = chrome_rows_of(app, &window_id);
     if let Some(window) = app.get_window(&window_id.label()) {
-        native::set_traffic_light_row(&window, rows.tab_bar);
+        native::set_title_bar(&window, crate::domain::windows::title_bar_for(rows.tab_bar));
     }
     let mut labels: Vec<String> = shell
         .snapshot()
@@ -394,6 +394,10 @@ fn create_window(app: &AppHandle, saved: &SavedWindow) -> anyhow::Result<Window>
         .min_inner_size(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
         .position(frame.x, frame.y)
         .build()?;
+    // The title bar and its full screen presentation stand before the
+    // window goes full screen: AppKit takes both when the window enters it.
+    native::hide_toolbar_in_full_screen(&window);
+    native::set_title_bar(&window, crate::domain::windows::title_bar_for(saved.chrome_rows.tab_bar));
     if saved.fullscreen {
         window.set_fullscreen(true)?;
     }
@@ -406,7 +410,6 @@ fn create_window(app: &AppHandle, saved: &SavedWindow) -> anyhow::Result<Window>
         LogicalPosition::new(0.0, 0.0),
         LogicalSize::new(frame.width, bar_height(app, &saved.id)),
     )?;
-    native::keep_traffic_lights(&window, saved.chrome_rows.tab_bar);
     native::clear_page_background(&bar);
     let window_id = saved.id.clone();
     let handle = app.clone();
@@ -1076,7 +1079,6 @@ pub fn close_window(app: &AppHandle, window_id: &WindowId) {
         close_page(app, &tab.id);
     }
     if let Some(window) = app.get_window(&window_id.label()) {
-        native::release_traffic_lights(&window);
         let _ = window.destroy();
     }
     project_current_space(app);

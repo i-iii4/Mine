@@ -123,7 +123,13 @@ export type CommandError = { kind: "no_vault" } |
  * was written: a new identity over the old one would split the space in
  * two (`SPEC_AUDIT_FIXES.md`, Д2.1).
  */
-{ kind: "space_identity_unreadable"; message: { path: string } } | { kind: "internal"; message: string }
+{ kind: "space_identity_unreadable"; message: { path: string } } |
+/**
+ * A name the user typed is refused, by the rules every typed name
+ * follows or because it is taken. The message says why and is read by
+ * the user under the name (05.10.2026). Nothing was written.
+ */
+{ kind: "name_refused"; message: string } | { kind: "internal"; message: string }
 
 /**
  * Commands supported by the JSON/WASM bridge, generated into TypeScript.

@@ -18,8 +18,8 @@ use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 
 use crate::storage::block_queries::collections_column_sql;
 use crate::storage::index::{
-    is_social_url, light_block_from_row, LightBlock, SearchMatch, SearchMatchField,
-    SearchMatchKind, SearchTextRange, LIGHT_BLOCK_BODY_PREVIEW_CHARS,
+    light_block_from_row, LightBlock, SearchMatch, SearchMatchField, SearchMatchKind,
+    SearchTextRange, LIGHT_BLOCK_BODY_PREVIEW_CHARS,
 };
 
 const SEARCH_EMBEDDING_MODEL_ID: &str = "intfloat/multilingual-e5-small";
@@ -64,10 +64,6 @@ struct SearchPlan {
 struct SearchDocumentRow {
     block_id: i64,
     slug: String,
-    title: Option<String>,
-    content_heading: Option<String>,
-    display_title: Option<String>,
-    fallback_label: String,
     description: Option<String>,
     author: Option<String>,
     url: Option<String>,
@@ -327,6 +323,10 @@ fn grid_search_sql(
     let limit_index = params.len();
     params.push(Value::Integer(offset as i64));
     let offset_index = params.len();
+    // The FTS `title` column holds every name of a card (display title, legacy
+    // title, file name) and only orders the candidate window, so a card whose
+    // H1 matches stays inside it. Which field matched, and the rank, come from
+    // `build_search_match`: there `title` is the file name alone.
     sql.push_str(&format!(
         " ORDER BY bm25(blocks_fts, 8.0, 3.0, 1.0) ASC, b.saved_at DESC LIMIT ?{} OFFSET ?{}",
         limit_index, offset_index
@@ -346,12 +346,12 @@ fn search_light_block_from_row(
     Ok(block)
 }
 
-/// What decides a card's search document, read without its text: the fields
-/// results show and the hash of the body.
+/// What decides a card's search document, read without its text: the slug
+/// (its file name is the `title` field), the metadata fields and the hash of
+/// the body, which holds the note's H1.
 fn load_search_stamps(conn: &Connection) -> Result<Vec<(i64, String)>> {
     let mut stmt = conn.prepare(
-        "SELECT id, slug, title, content_heading, display_title,
-                COALESCE(fallback_label, slug), description, author, url, body_hash
+        "SELECT id, slug, description, author, url, body_hash
          FROM blocks
          WHERE card_kind != 'channel'",
     )?;
@@ -359,7 +359,7 @@ fn load_search_stamps(conn: &Connection) -> Result<Vec<(i64, String)>> {
         .query_map([], |row| {
             let id: i64 = row.get(0)?;
             let mut stamp = String::new();
-            for column in 1..=9 {
+            for column in 1..=5 {
                 stamp.push_str(&row.get::<_, Option<String>>(column)?.unwrap_or_default());
                 stamp.push('\u{1f}');
             }
@@ -494,8 +494,7 @@ fn write_search_documents(conn: &Connection, documents: Vec<SearchDocument>) -> 
 
 fn load_search_documents(conn: &Connection) -> Result<Vec<SearchDocument>> {
     let mut stmt = conn.prepare(
-        "SELECT id, slug, title, content_heading, display_title,
-                COALESCE(fallback_label, slug), description, author, url, body
+        "SELECT id, slug, description, author, url, body
          FROM blocks
          WHERE card_kind != 'channel'",
     )?;
@@ -509,8 +508,7 @@ fn load_search_documents(conn: &Connection) -> Result<Vec<SearchDocument>> {
 /// The documents of the given cards only.
 fn load_search_documents_for(conn: &Connection, ids: &[i64]) -> Result<Vec<SearchDocument>> {
     let mut stmt = conn.prepare(
-        "SELECT id, slug, title, content_heading, display_title,
-                COALESCE(fallback_label, slug), description, author, url, body
+        "SELECT id, slug, description, author, url, body
          FROM blocks
          WHERE id = ?1 AND card_kind != 'channel'",
     )?;
@@ -527,27 +525,25 @@ fn search_document_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SearchDocume
             Ok(SearchDocumentRow {
                 block_id: row.get(0)?,
                 slug: row.get(1)?,
-                title: row.get(2)?,
-                content_heading: row.get(3)?,
-                display_title: row.get(4)?,
-                fallback_label: row.get(5)?,
-                description: row.get(6)?,
-                author: row.get(7)?,
-                url: row.get(8)?,
-                body: row.get(9)?,
+                description: row.get(2)?,
+                author: row.get(3)?,
+                url: row.get(4)?,
+                body: row.get(5)?,
             })
 }
 
 fn build_search_document(row: SearchDocumentRow) -> SearchDocument {
     let mut chunks = Vec::new();
 
-    if let Some(title) = visible_title_for_row(&row).and_then(non_empty_trimmed_owned) {
+    // The `title` chunk is the card's file name; the note's H1 is searched
+    // where it lives, in the body chunks.
+    if let Some(file_name) = search_file_name(&row.slug) {
         chunks.push(search_chunk(
             row.block_id,
             &row.slug,
             SearchMatchField::Title,
             0,
-            title,
+            file_name,
             0,
         ));
     }
@@ -604,14 +600,13 @@ fn build_search_document(row: SearchDocumentRow) -> SearchDocument {
     }
 }
 
-fn visible_title_for_row(row: &SearchDocumentRow) -> Option<String> {
-    row.content_heading
-        .as_deref()
-        .and_then(non_empty_trimmed)
-        .or_else(|| row.display_title.as_deref().and_then(non_empty_trimmed))
-        .or_else(|| row.title.as_deref().and_then(non_empty_trimmed))
-        .or_else(|| non_empty_trimmed(&row.fallback_label))
-        .map(ToOwned::to_owned)
+/// The search `title` field: the card's file name, its slug without the
+/// folder (a slug never carries `.md`), kept verbatim so the ranges a title
+/// match returns index the very text the result list shows. Search names a
+/// result by its file name (user's decision of 05.10.2026, SPEC_SEARCH.md).
+fn search_file_name(slug: &str) -> Option<String> {
+    let file_name = crate::domain::block::fallback_title_from_slug(slug);
+    (!file_name.trim().is_empty()).then_some(file_name)
 }
 
 fn body_search_chunks(block_id: i64, slug: &str, body: &str) -> Vec<SearchChunk> {
@@ -1529,25 +1524,18 @@ fn build_search_match(
     body: &str,
     plan: &SearchPlan,
 ) -> Option<SearchMatch> {
-    if !is_social_url(block.url.as_deref()) {
-        let visible_title = block
-            .content_heading
-            .as_deref()
-            .and_then(non_empty_trimmed)
-            .or_else(|| block.display_title.as_deref().and_then(non_empty_trimmed))
-            .or_else(|| block.title.as_deref().and_then(non_empty_trimmed));
-
-        if let Some(title) = visible_title {
-            if let Some((needle, start, end)) = first_match_range(title, plan) {
-                return Some(SearchMatch {
-                    field: SearchMatchField::Title,
-                    kind: match_kind_for_text(title, needle, start, end),
-                    excerpt: title.to_string(),
-                    ranges: vec![full_text_search_range(title, start, end)],
-                    score: TITLE_MATCH_WEIGHT,
-                    explanation: match_explanation(needle),
-                });
-            }
+    // Every result row shows its file name, social cards included, so a match
+    // in the name is always a visible one. The H1 is found in the body below.
+    if let Some(file_name) = search_file_name(&block.slug) {
+        if let Some((needle, start, end)) = first_match_range(&file_name, plan) {
+            return Some(SearchMatch {
+                field: SearchMatchField::Title,
+                kind: match_kind_for_text(&file_name, needle, start, end),
+                ranges: vec![full_text_search_range(&file_name, start, end)],
+                excerpt: file_name,
+                score: TITLE_MATCH_WEIGHT,
+                explanation: match_explanation(needle),
+            });
         }
     }
 
@@ -1628,15 +1616,6 @@ fn non_empty_trimmed(value: &str) -> Option<&str> {
         None
     } else {
         Some(trimmed)
-    }
-}
-
-fn non_empty_trimmed_owned(value: String) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
     }
 }
 
@@ -2423,6 +2402,177 @@ mod tests {
         );
         assert!(!search_match.excerpt.contains(".webp"));
         assert!(search_match.excerpt.contains("экономистов"));
+    }
+
+    fn highlighted_text(search_match: &SearchMatch) -> String {
+        let range = search_match.ranges.first().expect("a visible range");
+        search_match
+            .excerpt
+            .chars()
+            .skip(range.start)
+            .take(range.end - range.start)
+            .collect()
+    }
+
+    fn title_chunk_text(conn: &Connection, slug: &str) -> String {
+        conn.query_row(
+            "SELECT text FROM search_chunks WHERE slug = ?1 AND field = 'title'",
+            [slug],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn title_field_is_the_file_name_and_the_h1_is_found_through_the_body() {
+        // Search names a result by its file name (05.10.2026): the `title`
+        // field is the slug's last segment, the note's H1 is body text.
+        let conn = test_conn();
+        upsert_block(
+            &conn,
+            &make_block_full(
+                "Cards/Шуховская башня",
+                "article",
+                None,
+                "2026-01-01T00:00:00Z",
+                &[],
+                "# Radio tower\n\nSteel lattice over Shabolovka.",
+            ),
+            None,
+        )
+        .unwrap();
+        upsert_block(
+            &conn,
+            &make_block_full(
+                "Cards/tower-notes",
+                "article",
+                None,
+                "2026-01-02T00:00:00Z",
+                &[],
+                "# Шуховская башня\n\nГиперболоидная конструкция на Шаболовке.",
+            ),
+            None,
+        )
+        .unwrap();
+        warm_search_index(&conn, None).unwrap();
+
+        assert_eq!(title_chunk_text(&conn, "Cards/Шуховская башня"), "Шуховская башня");
+        assert_eq!(title_chunk_text(&conn, "Cards/tower-notes"), "tower-notes");
+        let body_chunk: String = conn
+            .query_row(
+                "SELECT text FROM search_chunks WHERE slug = 'Cards/tower-notes' AND field = 'body'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(body_chunk.starts_with("Шуховская башня"), "{body_chunk}");
+
+        // The H1 of a card named otherwise is still found, the snippet shows it.
+        let (blocks, _) =
+            search_grid_blocks_with_provider(&conn, None, 0, 20, "шуховская", None).unwrap();
+        let slugs = blocks.iter().map(|block| block.slug.as_str()).collect::<Vec<_>>();
+        assert_eq!(slugs, vec!["Cards/Шуховская башня", "Cards/tower-notes"]);
+
+        let name_match = blocks[0].search_match.as_ref().unwrap();
+        assert_eq!(name_match.field, SearchMatchField::Title);
+        assert_eq!(name_match.excerpt, "Шуховская башня");
+        assert_eq!(highlighted_text(name_match), "Шуховская");
+
+        let heading_match = blocks[1].search_match.as_ref().unwrap();
+        assert_eq!(heading_match.field, SearchMatchField::Body);
+        assert!(heading_match.excerpt.starts_with("Шуховская башня"), "{}", heading_match.excerpt);
+        assert_eq!(highlighted_text(heading_match), "Шуховская");
+
+        // A word only in the H1 of the card named after the tower: body match.
+        let (blocks, _) =
+            search_grid_blocks_with_provider(&conn, None, 0, 20, "radio", None).unwrap();
+        assert_eq!(blocks.len(), 1);
+        let search_match = blocks[0].search_match.as_ref().unwrap();
+        assert_eq!(search_match.field, SearchMatchField::Body);
+        assert_eq!(highlighted_text(search_match), "Radio");
+    }
+
+    #[test]
+    fn a_typo_in_the_file_name_is_a_fuzzy_title_match_over_the_name() {
+        let conn = test_conn();
+        upsert_block(
+            &conn,
+            &make_block_full(
+                "Cards/Lighthouse keeper",
+                "article",
+                None,
+                "2026-01-01T00:00:00Z",
+                &[],
+                "# Coastal notes\n\nNothing about the name here.",
+            ),
+            None,
+        )
+        .unwrap();
+
+        let (blocks, _) =
+            search_grid_blocks_with_provider(&conn, None, 0, 20, "lighthuose", None).unwrap();
+
+        assert_eq!(blocks.len(), 1);
+        let search_match = blocks[0].search_match.as_ref().unwrap();
+        assert_eq!(search_match.field, SearchMatchField::Title);
+        assert_eq!(search_match.kind, SearchMatchKind::Fuzzy);
+        assert_eq!(search_match.excerpt, "Lighthouse keeper");
+        assert_eq!(highlighted_text(search_match), "Lighthouse");
+    }
+
+    #[test]
+    fn an_index_cut_from_the_visible_title_resyncs_chunks_and_embeddings() {
+        // An index written before 05.10.2026 holds the H1 as the title chunk.
+        // Its document hash no longer matches, so the next sync rewrites the
+        // chunks and the embeddings follow, without a migration.
+        let conn = test_conn();
+        upsert_block(
+            &conn,
+            &make_block_full(
+                "Cards/tower-notes",
+                "article",
+                None,
+                "2026-01-01T00:00:00Z",
+                &[],
+                "# Шуховская башня\n\nA memory of steel lattice.",
+            ),
+            None,
+        )
+        .unwrap();
+        let provider = FakeSemanticProvider;
+        warm_search_index(&conn, Some(&provider)).unwrap();
+
+        let old_title = "Шуховская башня";
+        conn.execute(
+            "UPDATE search_chunks SET text = ?1, text_hash = ?2 WHERE field = 'title'",
+            params![old_title, hash_text(old_title)],
+        )
+        .unwrap();
+        conn.execute_batch(
+            "UPDATE search_embeddings SET text_hash = (
+                 SELECT text_hash FROM search_chunks WHERE search_chunks.id = chunk_id
+             );
+             UPDATE search_document_state SET document_hash = 'written-before-05.10.2026';",
+        )
+        .unwrap();
+
+        assert!(warm_search_index(&conn, Some(&provider)).unwrap() > 0);
+
+        assert_eq!(title_chunk_text(&conn, "Cards/tower-notes"), "tower-notes");
+        let (chunks, embedded, current): (i64, i64, i64) = conn
+            .query_row(
+                "SELECT
+                    (SELECT count(*) FROM search_chunks),
+                    (SELECT count(*) FROM search_embeddings),
+                    (SELECT count(*) FROM search_embeddings e
+                     JOIN search_chunks c ON c.id = e.chunk_id AND c.text_hash = e.text_hash)",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(chunks, 2);
+        assert_eq!(embedded, chunks);
+        assert_eq!(current, chunks);
     }
 
     #[test]

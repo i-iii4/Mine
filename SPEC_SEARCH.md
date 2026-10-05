@@ -243,6 +243,11 @@ The FTS column weights are:
 
 `bm25(...) ASC` is required: in SQLite FTS5 lower scores are better.
 
+Колонка `title` в FTS хранит все имена карточки и только отбирает и
+упорядочивает кандидатов: карточка с совпавшим H1 не выпадает из окна
+кандидатов. Поле совпадения и ранг задаёт `build_search_match`, где `title`
+означает только имя файла (см. Match Metadata).
+
 The lexical layer still uses SQLite FTS5. The route-facing backend is a local
 `SearchEngine` layer with four sources of evidence:
 
@@ -425,12 +430,18 @@ keeps its normal title/preview rendering; it must not replace the preview with
 the author string, must not reveal the hidden URL, and must not draw a fake
 mark.
 
-`title` is considered only when the Grid card actually renders a title. Social
-cards (X/Twitter/Instagram layouts) render media plus preview/body text and do
-not expose `title` on the card surface, so their match metadata must prefer
-`description`/`body` over title/fallback-label matches.
+Поиск называет результат именем файла (решение пользователя от 05.10.2026).
+Поле `title` везде означает имя `.md` файла карточки без папки и без `.md`,
+то есть последний сегмент `slug` (`Cards/Шуховская башня` даёт
+`Шуховская башня`), то самое имя, которое меняет переименование. Из него
+собран чанк `title`, по нему считаются совпадение `title`, его `excerpt` и
+диапазоны, его же показывает строка списка в оверлее. H1 заметки и legacy
+`frontmatter.title` в поле `title` не входят: H1 лежит в теле и находится как
+совпадение `body` со сниппетом. Имя файла видно в строке у любой карточки,
+поэтому у социальных карточек совпадение в имени тоже видимое совпадение
+`title`.
 
-For `title`, `excerpt` is the rendered title text. For `description`, `excerpt`
+For `description`, `excerpt`
 is the description text around the first visible match. For `body`, `excerpt`
 is a whitespace-normalized article slice around the first visible match.
 For `author` and `url`, `excerpt` may contain the matched metadata for ranking
@@ -600,7 +611,10 @@ Backend:
 - pagination returns `has_more` correctly in search mode;
 - snippets return plain text and valid ranges;
 - prefix snippets return only the typed prefix range;
-- social-card metadata targets the rendered preview/body surface, not hidden title metadata;
+- совпадение `title` считается по имени файла у любой карточки, включая
+  социальные; legacy `frontmatter.title` никогда не становится причиной
+  совпадения, H1 заметки с другим именем файла находится как `body` со
+  сниппетом;
 - semantic-only results return no fake highlight ranges;
 - stale embedding rows are ignored when their `chunk_hash` no longer matches.
 

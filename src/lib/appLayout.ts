@@ -25,9 +25,12 @@ export const SIDEBAR_NAME_MAX_PX = 150;
 /// control and must not drift apart.
 export const SIDEBAR_ROW_ACTION_BUTTON_PX = 84;
 /// The look of that control: one `Connect` in the sidebar row and the picker,
-/// so the two never differ in padding or type.
+/// so the two never differ in padding or type. Filled with depth like the
+/// app's buttons, regular weight; hover lays the state layer over the face
+/// (buttons.css) and the text stays as it is (DESIGN_SYSTEM.md, «Объём
+/// кнопки»).
 export const CONNECT_ACTION_BUTTON_CLASS =
-  "inline-flex h-6 items-center justify-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover";
+  "button-depth inline-flex h-6 items-center justify-center rounded-1 bg-depth-fill px-[1ch] font-sans text-sm font-normal text-foreground outline-0 outline-transparent focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover";
 /// The breathing space between that control and the column that frames it.
 export const SIDEBAR_ROW_ACTION_GAP_PX = 8;
 

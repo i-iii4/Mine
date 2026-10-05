@@ -17,7 +17,7 @@ use crate::domain::block::{
 use crate::domain::channel::Channel;
 use crate::domain::collection::{normalize_collection_ref, validate_collection_ref};
 use crate::domain::source_patch::apply_block_changes;
-use crate::domain::vault::VaultLayout;
+use crate::domain::vault::{name_problem, normalize_typed_name, VaultLayout};
 #[cfg(test)]
 use crate::storage::db;
 use crate::storage::source_mutation::{SourceFileWrite, StagedSourceMutation};
@@ -174,6 +174,33 @@ pub fn create_channel(webview: tauri::Webview, state: State<'_, AppState>, tag: 
     outcome
 }
 
+/// Whether a collection may be named `new_tag`: renamed from `old_tag`, or
+/// created when there is none. It answers by the rules and checks the rename
+/// and the creation use, while the name is typed, and writes nothing
+/// (05.10.2026).
+#[tauri::command(async, rename_all = "snake_case")]
+pub fn check_collection_name(webview: tauri::Webview, state: State<'_, AppState>, old_tag: Option<String>, new_tag: String) -> Result<(), CommandError> {
+    let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
+    let vault_state = space
+        .vault_state
+        .lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+    check_collection_name_inner(&vs.conn, &vs.vault, old_tag.as_deref(), &new_tag)
+}
+
+pub(crate) fn check_collection_name_inner(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    old_tag: Option<&str>,
+    new_tag: &str,
+) -> Result<(), CommandError> {
+    match old_tag {
+        Some(old_tag) => CollectionRename::plan(conn, vault, old_tag, new_tag).map(|_| ()),
+        None => new_collection_name(conn, new_tag).map(|_| ()),
+    }
+}
+
 pub(crate) fn create_channel_inner(
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
@@ -182,20 +209,10 @@ pub(crate) fn create_channel_inner(
     let now = crate::commands::state::now_saved_at();
     let dt = DateTime::new(&now).map_err(|e| CommandError::Internal(e.to_string()))?;
 
-    let tag = validate_collection_ref(tag).map_err(CommandError::Internal)?;
-    if tag.contains('/') {
-        return Err(CommandError::Internal(
-            "new collection name must not contain a folder path".into(),
-        ));
-    }
-    // Check uniqueness after collection-ref normalization
-    let existing = index::list_channels(conn)?;
-    if existing.iter().any(|c| c.tag == tag) {
-        return Err(CommandError::Internal(format!(
-            "channel '{}' already exists",
-            tag
-        )));
-    }
+    let tag = new_collection_name(conn, tag)?;
+    // A note of that name elsewhere in the space keeps its name: the new
+    // page takes the first free one, so links by name stay unambiguous
+    // (SPEC_IDENTITY_ROBUSTNESS.md, «Запись и уникальность имён»).
     let occupied = files::scan_vault_file_paths(vault)?;
     let tag = mine_core::save::select_unique_file_stem(&tag, "md", &occupied)
         .map_err(|error| CommandError::Internal(error.to_string()))?;
@@ -392,10 +409,14 @@ fn rename_channel_unannounced(
 #[tauri::command(async, rename_all = "snake_case")]
 pub fn rename_channel(webview: tauri::Webview, state: State<'_, AppState>, old_tag: String, new_tag: String) -> Result<ChannelDto, CommandError> {
     let announcing = webview.clone();
-    let renamed = super::effects::SpaceRename::collection(&old_tag, &new_tag);
+    let renamed_from = old_tag.clone();
     let outcome = rename_channel_unannounced(webview, state, old_tag, new_tag);
-    if outcome.is_ok() {
-        super::effects::space_changed_by_tab(&announcing, vec![renamed]);
+    if let Ok(renamed) = &outcome {
+        // The name the collection took, as normalized, not as typed.
+        super::effects::space_changed_by_tab(
+            &announcing,
+            vec![super::effects::SpaceRename::collection(&renamed_from, &renamed.tag)],
+        );
     }
     outcome
 }
@@ -407,75 +428,22 @@ pub(crate) fn rename_channel_inner(
     old_tag: &str,
     new_tag: &str,
 ) -> Result<ChannelDto, CommandError> {
-    let requested_new = normalize_collection_ref(new_tag);
-    let normalized_old = normalize_collection_ref(old_tag);
-    if requested_new.is_empty() {
-        return Err(CommandError::Internal("new collection ref is empty".into()));
-    }
-    if requested_new.contains('/') {
-        let old_parent = normalized_old.rsplit_once('/').map(|(parent, _)| parent);
-        let new_parent = requested_new.rsplit_once('/').map(|(parent, _)| parent);
-        if old_parent != new_parent {
-            return Err(CommandError::Internal(
-                "collection rename cannot change its folder".into(),
-            ));
-        }
-    }
-    let normalized_new = if !requested_new.contains('/') && normalized_old.contains('/') {
-        let parent = normalized_old
-            .rsplit_once('/')
-            .map(|(parent, _)| parent)
-            .unwrap_or("");
-        format!("{parent}/{requested_new}")
-    } else {
-        requested_new
+    let plan = CollectionRename::plan(conn, vault, old_tag, new_tag)?;
+    let Some(page_move) = plan.page_move else {
+        // The same name after normalization: nothing to write.
+        return channel_dto(conn, &plan.existing);
     };
-    if normalized_new.is_empty() {
-        return Err(CommandError::Internal("new collection ref is empty".into()));
-    }
-    validate_collection_ref(&normalized_new).map_err(CommandError::Internal)?;
-
-    validate_collection_ref(&normalized_old).map_err(CommandError::Internal)?;
-    if normalized_old == normalized_new {
-        // Same tag after normalization — no-op
-        let channels = index::list_channels(conn)?;
-        let existing = channels
-            .iter()
-            .find(|c| c.tag == normalized_old)
-            .ok_or_else(|| CommandError::Internal(format!("channel '{}' not found", old_tag)))?;
-
-        let tags = index::get_all_tags(conn)?;
-        let count = tags
-            .iter()
-            .find(|t| t.tag == normalized_old)
-            .map(|t| t.count)
-            .unwrap_or(0);
-        return Ok(ChannelDto::from_channel(existing, count));
-    }
-
-    // Check that the new tag doesn't conflict with another channel
-    let channels = index::list_channels(conn)?;
-    if channels.iter().any(|c| c.tag == normalized_new) {
-        return Err(CommandError::Internal(format!(
-            "channel '{}' already exists",
-            normalized_new
-        )));
-    }
-
-    // Find the existing channel
-    let existing = channels
-        .iter()
-        .find(|c| c.tag == normalized_old)
-        .ok_or_else(|| CommandError::Internal(format!("channel '{}' not found", old_tag)))?;
-
-    // Rename in place: a collection that lives in its own folder must stay
-    // there, so the new document is written beside the old one rather than in
-    // the vault root.
-    let old_path = collection_document_for_mutation(conn, vault, &normalized_old)?
-        .map(|page| page.path)
-        .ok_or_else(|| {
-            CommandError::Internal(format!("collection document '{normalized_old}' not found"))
-        })?;
+    let CollectionRename {
+        old: normalized_old,
+        new: normalized_new,
+        existing,
+        ..
+    } = plan;
+    let PageMove {
+        from: old_path,
+        to: new_path,
+        slug: new_slug,
+    } = page_move;
 
     let affected_blocks = index::list_blocks_by_tag(conn, &normalized_old)?;
     let mut writes = Vec::with_capacity(affected_blocks.len() + 1);
@@ -519,18 +487,6 @@ pub(crate) fn rename_channel_inner(
         created_at: existing.created_at.clone(),
     };
 
-    let new_path = old_path
-        .parent()
-        .map(|parent| {
-            parent.join(format!(
-                "{}.md",
-                normalized_new.rsplit('/').next().unwrap_or(&normalized_new)
-            ))
-        })
-        .unwrap_or_else(|| vault.block_path(&normalized_new));
-    let new_slug = vault
-        .slug_for_path(&new_path)
-        .map_err(|error| CommandError::Internal(error.to_string()))?;
     // The page carries no name inside it: renaming the collection is
     // renaming the file, its text and properties move unchanged.
     writes.push(match page_rewrite {
@@ -564,13 +520,150 @@ pub(crate) fn rename_channel_inner(
         })
         .map_err(CommandError::from)?;
 
-    let tags = index::get_all_tags(conn)?;
-    let count = tags
+    channel_dto(conn, &new_channel)
+}
+
+fn channel_dto(conn: &rusqlite::Connection, channel: &Channel) -> Result<ChannelDto, CommandError> {
+    let count = index::get_all_tags(conn)?
         .iter()
-        .find(|t| t.tag == normalized_new)
-        .map(|t| t.count)
+        .find(|tag| tag.tag == channel.tag)
+        .map(|tag| tag.count)
         .unwrap_or(0);
-    Ok(ChannelDto::from_channel(&new_channel, count))
+    Ok(ChannelDto::from_channel(channel, count))
+}
+
+// ─── Names ──────────────────────────────────────────────────────────────────
+//
+// A collection's name follows the rules of every name the user types (the
+// card's file name too, `name_problem`), and a refusal says why in words the
+// sidebar shows under the name (05.10.2026).
+
+/// A collection name the user typed, normalized, or why it is refused.
+fn typed_collection_name(raw: &str) -> Result<String, CommandError> {
+    let name = normalize_typed_name(raw);
+    match name_problem(&name) {
+        Some(reason) => Err(CommandError::NameRefused(reason.to_string())),
+        None => Ok(name),
+    }
+}
+
+/// The name of a new collection, or why it is refused: the shared rules, no
+/// folder, no other collection called that.
+fn new_collection_name(conn: &rusqlite::Connection, raw: &str) -> Result<String, CommandError> {
+    let name = typed_collection_name(raw)?;
+    if name.contains('/') {
+        return Err(CommandError::NameRefused(
+            "A new collection cannot be in a folder: type its name without /.".into(),
+        ));
+    }
+    refuse_collection_called(conn, &name, None)?;
+    Ok(name)
+}
+
+/// Refuses `name` when another collection is called that, letter case aside
+/// (Obsidian finds a note by its name in any case). `renamed` is the
+/// collection being renamed: its own name is not in the way.
+fn refuse_collection_called(
+    conn: &rusqlite::Connection,
+    name: &str,
+    renamed: Option<&str>,
+) -> Result<(), CommandError> {
+    let lowered = name.to_lowercase();
+    let taken = index::list_channels(conn)?
+        .iter()
+        .any(|channel| Some(channel.tag.as_str()) != renamed && channel.tag.to_lowercase() == lowered);
+    if taken {
+        return Err(CommandError::NameRefused(format!(
+            "A collection named \"{}\" already exists.",
+            name.rsplit('/').next().unwrap_or(name)
+        )));
+    }
+    Ok(())
+}
+
+/// A collection rename the rules let through, planned before anything is
+/// written. The check while the name is typed stops here.
+struct CollectionRename {
+    old: String,
+    new: String,
+    existing: Channel,
+    /// Where the page moves; `None` when the new name is the old one.
+    page_move: Option<PageMove>,
+}
+
+/// The collection's page, from its place to the new name's place.
+struct PageMove {
+    from: std::path::PathBuf,
+    to: std::path::PathBuf,
+    /// The slug of `to`.
+    slug: String,
+}
+
+impl CollectionRename {
+    fn plan(
+        conn: &rusqlite::Connection,
+        vault: &VaultLayout,
+        old_tag: &str,
+        new_tag: &str,
+    ) -> Result<Self, CommandError> {
+        let old = normalize_collection_ref(old_tag);
+        validate_collection_ref(&old).map_err(CommandError::Internal)?;
+        let requested = typed_collection_name(new_tag)?;
+        // A bare name stays in the collection's folder; a name with a folder
+        // may only name that same folder.
+        let old_parent = old.rsplit_once('/').map(|(parent, _)| parent);
+        let new = match (requested.rsplit_once('/'), old_parent) {
+            (Some((parent, _)), _) if Some(parent) != old_parent => {
+                return Err(CommandError::NameRefused(
+                    "A collection stays in its folder: type its name without /.".into(),
+                ));
+            }
+            (None, Some(parent)) => format!("{parent}/{requested}"),
+            _ => requested,
+        };
+        validate_collection_ref(&new).map_err(CommandError::Internal)?;
+        let existing = index::list_channels(conn)?
+            .into_iter()
+            .find(|channel| channel.tag == old)
+            .ok_or_else(|| CommandError::Internal(format!("channel '{old_tag}' not found")))?;
+        if new == old {
+            return Ok(Self {
+                old,
+                new,
+                existing,
+                page_move: None,
+            });
+        }
+        refuse_collection_called(conn, &new, Some(&old))?;
+
+        // Rename in place: a collection that lives in its own folder must
+        // stay there, so the new page is written beside the old one rather
+        // than in the vault root.
+        let from = collection_document_for_mutation(conn, vault, &old)?
+            .map(|page| page.path)
+            .ok_or_else(|| CommandError::Internal(format!("collection document '{old}' not found")))?;
+        let file_name = format!("{}.md", new.rsplit('/').next().unwrap_or(&new));
+        let to = from
+            .parent()
+            .map(|parent| parent.join(&file_name))
+            .unwrap_or_else(|| vault.block_path(&new));
+        let slug = vault
+            .slug_for_path(&to)
+            .map_err(|error| CommandError::Internal(error.to_string()))?;
+        // A note already there (a card of that name in the folder) keeps its
+        // file: the page moves to a free name only, as a card's file does.
+        if to.exists() || index::slug_exists(conn, &slug)? {
+            return Err(CommandError::NameRefused(format!(
+                "A file named \"{file_name}\" already exists."
+            )));
+        }
+        Ok(Self {
+            old,
+            new,
+            existing,
+            page_move: Some(PageMove { from, to, slug }),
+        })
+    }
 }
 
 fn file_saved_at(path: &std::path::Path) -> DateTime {
@@ -1192,5 +1285,138 @@ mod tests {
             WRITTEN_PAGE
         );
         assert!(!vault.block_path("Collections/Pictures").exists());
+    }
+
+    fn refusal(outcome: Result<impl std::fmt::Debug, CommandError>) -> String {
+        match outcome {
+            Err(CommandError::NameRefused(reason)) => reason,
+            other => panic!("expected a refused name, got {other:?}"),
+        }
+    }
+
+    /// Every file in the space, with its bytes: what a refusal must leave.
+    fn space_files(vault: &VaultLayout) -> Vec<(String, Vec<u8>)> {
+        files::scan_vault_file_paths(vault)
+            .unwrap()
+            .into_iter()
+            .map(|path| {
+                let bytes = std::fs::read(vault.root().join(&path)).unwrap();
+                (path, bytes)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_refused_name_reaches_the_page_as_kind_and_message() {
+        let error = CommandError::NameRefused("The name is empty.".into());
+        assert_eq!(
+            serde_json::to_value(&error).unwrap(),
+            serde_json::json!({ "kind": "name_refused", "message": "The name is empty." })
+        );
+    }
+
+    /// 05.10.2026: a new collection's name follows the card's rules and is
+    /// refused in words, and nothing is written.
+    #[test]
+    fn a_new_collection_name_follows_the_card_rules_and_says_why() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = standard_space(dir.path());
+        std::fs::write(vault.block_path("Collections/Photos"), WRITTEN_PAGE).unwrap();
+        let state = app_state(&vault);
+        let main_space = state.space_for("main").expect("main tab");
+        let guard = main_space.vault_state.lock().unwrap();
+        let vs = guard.as_ref().unwrap();
+        let before = space_files(&vault);
+
+        let create = |name: &str| create_channel_inner(&vs.conn, &vs.vault, name);
+        assert_eq!(refusal(create("   ")), "The name is empty.");
+        assert_eq!(refusal(create("a#b")), "A name cannot contain \\ : # ^ | [ or ].");
+        assert_eq!(refusal(create("[[Photos]]")), "A name cannot contain \\ : # ^ | [ or ].");
+        assert_eq!(refusal(create(".hidden")), "A name cannot start with a dot.");
+        assert_eq!(
+            refusal(create("Shelf/Books")),
+            "A new collection cannot be in a folder: type its name without /."
+        );
+        assert_eq!(refusal(create("photos")), "A collection named \"photos\" already exists.");
+        assert_eq!(space_files(&vault), before);
+
+        assert_eq!(create(" Books.md ").unwrap().tag, "Books");
+        assert!(vault.block_path("Collections/Books").exists());
+    }
+
+    /// 05.10.2026: a rename to a name a card already has in the page's folder
+    /// is refused up front, in words; the card and the page stay.
+    #[test]
+    fn a_collection_rename_refuses_a_file_already_in_its_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = standard_space(dir.path());
+        std::fs::write(vault.block_path("Collections/Photos"), WRITTEN_PAGE).unwrap();
+        let card = "---\nsaved_at: 2026-04-25T14:00:40Z\n---\nA note, not a collection\n";
+        std::fs::write(vault.block_path("Collections/Pictures"), card).unwrap();
+        let state = app_state(&vault);
+        let main_space = state.space_for("main").expect("main tab");
+        let guard = main_space.vault_state.lock().unwrap();
+        let vs = guard.as_ref().unwrap();
+        let before = space_files(&vault);
+
+        let refused = rename_channel_inner(None, &vs.conn, &vs.vault, "Photos", "Pictures");
+
+        assert_eq!(refusal(refused), "A file named \"Pictures.md\" already exists.");
+        assert_eq!(space_files(&vault), before);
+    }
+
+    #[test]
+    fn a_collection_rename_refuses_another_collection_name_and_another_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = standard_space(dir.path());
+        std::fs::write(vault.block_path("Collections/Photos"), WRITTEN_PAGE).unwrap();
+        std::fs::write(
+            vault.block_path("Collections/Art"),
+            "---\ntype: channel\nposition: 1\nsaved_at: 2026-04-25T14:00:40Z\n---\n",
+        )
+        .unwrap();
+        let state = app_state(&vault);
+        let main_space = state.space_for("main").expect("main tab");
+        let guard = main_space.vault_state.lock().unwrap();
+        let vs = guard.as_ref().unwrap();
+        let before = space_files(&vault);
+
+        let rename = |name: &str| rename_channel_inner(None, &vs.conn, &vs.vault, "Photos", name);
+        assert_eq!(refusal(rename("ART")), "A collection named \"ART\" already exists.");
+        assert_eq!(
+            refusal(rename("Elsewhere/Pictures")),
+            "A collection stays in its folder: type its name without /."
+        );
+        assert_eq!(refusal(rename("")), "The name is empty.");
+        assert_eq!(refusal(rename("a|b")), "A name cannot contain \\ : # ^ | [ or ].");
+        assert_eq!(space_files(&vault), before);
+        assert_eq!(rename(" Photos ").unwrap().tag, "Photos");
+    }
+
+    /// The check while a name is typed answers as the rename and the creation
+    /// would, and writes nothing.
+    #[test]
+    fn the_collection_name_check_answers_as_the_write_would_and_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = standard_space(dir.path());
+        std::fs::write(vault.block_path("Collections/Photos"), WRITTEN_PAGE).unwrap();
+        std::fs::write(vault.block_path("Collections/Taken"), "A note\n").unwrap();
+        let state = app_state(&vault);
+        let main_space = state.space_for("main").expect("main tab");
+        let guard = main_space.vault_state.lock().unwrap();
+        let vs = guard.as_ref().unwrap();
+        let before = space_files(&vault);
+
+        let check = |old: Option<&str>, name: &str| {
+            check_collection_name_inner(&vs.conn, &vs.vault, old, name)
+        };
+        assert!(check(Some("Photos"), "Pictures").is_ok());
+        assert!(check(Some("Photos"), "Photos").is_ok());
+        assert_eq!(refusal(check(Some("Photos"), "Taken")), "A file named \"Taken.md\" already exists.");
+        assert_eq!(refusal(check(Some("Photos"), "a:b")), "A name cannot contain \\ : # ^ | [ or ].");
+        assert!(check(None, "Fresh").is_ok());
+        assert_eq!(refusal(check(None, "Photos")), "A collection named \"Photos\" already exists.");
+        assert_eq!(refusal(check(None, "")), "The name is empty.");
+        assert_eq!(space_files(&vault), before);
     }
 }

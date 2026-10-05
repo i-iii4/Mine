@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MainSecondaryTopBar } from "./MainSecondaryChrome";
-import type { LightBlock } from "@/types";
+import type { LightBlock, RenameBlockError } from "@/types";
 
 vi.mock("@tauri-apps/api/event", () => ({
   emit: vi.fn(),
@@ -35,18 +35,20 @@ const BLOCK: LightBlock = {
   search_match: null,
 };
 
-function renderBar(
+function bar(
   placement: "top" | "bottom",
   detailBlock: LightBlock | null,
   viewMode: "grid" | "graph" = "grid",
+  onRenameFile: (block: LightBlock, newStem: string) => Promise<void> = vi.fn(),
+  onCheckFileName: (block: LightBlock, newStem: string) => Promise<RenameBlockError | null> =
+    vi.fn(() => Promise.resolve(null)),
 ) {
-  return render(
+  return (
     <MainSecondaryTopBar
       sidebarCollapsed={false}
       sidebarResizing={false}
       stats={null}
       detailBlock={detailBlock}
-      detailTitle="Nogal House"
       detailEntered
       detailLinkMode="collections"
       onDetailLinkModeChange={vi.fn()}
@@ -58,12 +60,18 @@ function renderBar(
       onToggleTag={vi.fn()}
       onCreateAndAssign={vi.fn()}
       onRequestRename={vi.fn()}
+      onRenameFile={onRenameFile}
+      onCheckFileName={onCheckFileName}
       onRequestDelete={vi.fn()}
       onDetailClose={vi.fn()}
       detailMenuOpenRequestSequence={0}
       placement={placement}
-    />,
+    />
   );
+}
+
+function renderBar(...args: Parameters<typeof bar>) {
+  return render(bar(...args));
 }
 
 describe("MainSecondaryTopBar placement", () => {
@@ -109,8 +117,112 @@ describe("MainSecondaryTopBar placement", () => {
     renderBar("top", BLOCK);
 
     expect(document.querySelector("[data-secondary-detail-top-menu]")).toBeInTheDocument();
-    expect(screen.getByTitle("Nogal House")).toHaveTextContent("Nogal House");
+    // The path names the card by its file (05.10.2026).
+    expect(screen.getByTitle("nogal-house")).toHaveTextContent("nogal-house");
     expect(document.querySelector("[data-main-secondary-note-meta]")).toBeNull();
+  });
+
+  it("renames the card's file in place: leaving the field saves, Escape keeps the name", async () => {
+    const onRenameFile = vi.fn<(block: LightBlock, newStem: string) => Promise<void>>()
+      .mockResolvedValue(undefined);
+    renderBar("top", { ...BLOCK, slug: "Cards/Nogal House" }, "grid", onRenameFile);
+
+    const name = screen.getByTitle("Nogal House");
+    expect(name).toHaveTextContent("Nogal House");
+    fireEvent.doubleClick(name);
+    const input = screen.getByRole("textbox", { name: "Rename file" });
+    expect(input).toHaveValue("Nogal House");
+    expect(input).toHaveFocus();
+    // No Save button: leaving the field is the save (05.10.2026).
+    expect(screen.queryByText("Save")).toBeNull();
+
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(screen.queryByRole("textbox", { name: "Rename file" })).toBeNull();
+    expect(onRenameFile).not.toHaveBeenCalled();
+
+    fireEvent.doubleClick(screen.getByTitle("Nogal House"));
+    const field = screen.getByRole("textbox", { name: "Rename file" });
+    fireEvent.change(field, { target: { value: "Casa Nogal" } });
+    await act(async () => {
+      fireEvent.blur(field);
+    });
+    expect(onRenameFile).toHaveBeenCalledTimes(1);
+    expect(onRenameFile).toHaveBeenLastCalledWith(expect.objectContaining({ slug: "Cards/Nogal House" }), "Casa Nogal");
+    expect(screen.queryByRole("textbox", { name: "Rename file" })).toBeNull();
+  });
+
+  it("says under the name why a typed name would be refused", async () => {
+    const onCheckFileName = vi.fn((_block: LightBlock, stem: string) => Promise.resolve<RenameBlockError | null>(
+      stem.includes("#")
+        ? { kind: "invalid_filename", reason: "A name cannot contain \\ : # ^ | [ or ]." }
+        : null,
+    ));
+    renderBar("top", { ...BLOCK, slug: "Cards/Nogal House" }, "grid", vi.fn(), onCheckFileName);
+    fireEvent.doubleClick(screen.getByTitle("Nogal House"));
+    const field = screen.getByRole("textbox", { name: "Rename file" });
+
+    await act(async () => {
+      fireEvent.change(field, { target: { value: "Nogal #1" } });
+    });
+    expect(onCheckFileName).toHaveBeenLastCalledWith(expect.anything(), "Nogal #1");
+    expect(await screen.findAllByText("A name cannot contain \\ : # ^ | [ or ].")).not.toHaveLength(0);
+    expect(field).toHaveAttribute("aria-invalid", "true");
+
+    await act(async () => {
+      fireEvent.change(field, { target: { value: "Nogal 1" } });
+    });
+    expect(field).toHaveAttribute("aria-invalid", "false");
+  });
+
+  it("keeps the field, the cursor and the typed name when Enter is refused", async () => {
+    const onRenameFile = vi.fn<(block: LightBlock, newStem: string) => Promise<void>>()
+      .mockRejectedValue({ kind: "name_taken", requested: "Cards/Taken" });
+    renderBar("top", { ...BLOCK, slug: "Cards/Nogal House" }, "grid", onRenameFile);
+    fireEvent.doubleClick(screen.getByTitle("Nogal House"));
+    const field = screen.getByRole("textbox", { name: "Rename file" });
+    fireEvent.change(field, { target: { value: "Taken" } });
+    await act(async () => {
+      fireEvent.keyDown(field, { key: "Enter" });
+    });
+    expect(field).toHaveAttribute("data-name-refused");
+    expect(field).toHaveAttribute("readonly");
+
+    await waitFor(() => expect(field).not.toHaveAttribute("data-name-refused"));
+    expect(screen.getByRole("textbox", { name: "Rename file" })).toBe(field);
+    expect(field).toHaveValue("Taken");
+    expect(field).toHaveFocus();
+    expect(field).not.toHaveAttribute("readonly");
+    expect(screen.getAllByText('A file named "Cards/Taken.md" already exists.')).not.toHaveLength(0);
+  });
+
+  it("returns the old name when a refused name is left, its reason staying a moment", async () => {
+    const onRenameFile = vi.fn<(block: LightBlock, newStem: string) => Promise<void>>()
+      .mockRejectedValue({ kind: "name_taken", requested: "Cards/Taken" });
+    renderBar("top", { ...BLOCK, slug: "Cards/Nogal House" }, "grid", onRenameFile);
+    fireEvent.doubleClick(screen.getByTitle("Nogal House"));
+    const field = screen.getByRole("textbox", { name: "Rename file" });
+    fireEvent.change(field, { target: { value: "Taken" } });
+    await act(async () => {
+      fireEvent.blur(field);
+    });
+    expect(onRenameFile).toHaveBeenCalledTimes(1);
+    expect(field).toHaveAttribute("data-name-refused");
+
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Rename file" })).toBeNull());
+    expect(screen.getByTitle("Nogal House")).toHaveTextContent("Nogal House");
+    expect(screen.getAllByText('A file named "Cards/Taken.md" already exists.')).not.toHaveLength(0);
+  });
+
+  it("ends the edit when another card takes the path, saving nothing", () => {
+    const onRenameFile = vi.fn<(block: LightBlock, newStem: string) => Promise<void>>();
+    const { rerender } = renderBar("top", { ...BLOCK, slug: "Cards/Nogal House" }, "grid", onRenameFile);
+    fireEvent.doubleClick(screen.getByTitle("Nogal House"));
+    fireEvent.change(screen.getByRole("textbox", { name: "Rename file" }), { target: { value: "Casa" } });
+
+    rerender(bar("top", { ...BLOCK, slug: "Cards/Casa Blanca" }, "grid", onRenameFile));
+    expect(screen.queryByRole("textbox", { name: "Rename file" })).toBeNull();
+    expect(screen.getByTitle("Casa Blanca")).toHaveTextContent("Casa Blanca");
+    expect(onRenameFile).not.toHaveBeenCalled();
   });
 
   it("brings no collections switch with an open card, in either placement", () => {

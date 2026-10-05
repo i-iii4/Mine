@@ -56,15 +56,15 @@ const StandardActionButton = React.forwardRef<HTMLDivElement, ActionButtonProps>
           buttonVariants({ variant: readOnly ? "reference" : "default", size: "xs" }),
           // The key frame keeps the same 20px baseline across bar entries.
           "h-5 font-mono font-normal",
-          // The hotkey is reference material at rest and comes forward only
-          // when the pointer is anywhere on the pair — hence group-hover, not
-          // hover on the frame itself. A read-only entry has nothing to come
-          // forward for: it cannot be pressed, and answering the pointer would
-          // promise that it can.
-          "text-muted-foreground",
-          !readOnly && "group-hover:text-foreground",
-          !readOnly && "group-hover:outline-1 group-hover:-outline-offset-1 group-hover:outline-component-fill-hover",
-          isSelected && "bg-active",
+          // The hotkey is reference material at rest and comes forward one
+          // step only when the pointer is anywhere on the pair — hence
+          // group-hover, not hover on the frame itself. A read-only entry has
+          // nothing to come forward for: it cannot be pressed, and its
+          // variant draws the reference look (frame, secondary step).
+          !readOnly && "text-muted-foreground group-hover:text-foreground",
+          // Selection is a state layer over the key's own face, so it differs
+          // from the face on any surface.
+          isSelected && "state-active",
         )}
       >
         {hotkey ?? children}

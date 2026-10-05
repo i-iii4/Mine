@@ -1,6 +1,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+/* The button with depth: its face and the edges of its styles. */
+@import "./buttons.css";
 
 /* `dark:` follows Mine's theme, not only the system's: dark when the person
    chose Dark (`data-theme="dark"`), or chose System and macOS is dark. The
@@ -199,19 +201,23 @@ select,
    brighter, never draws outside the card, and outranks every other state:
    nothing is added on top of a selected card. */
 [data-block-slug] {
-  transition: border-color var(--hover-intent-fade-out) cubic-bezier(0.22, 1, 0.36, 1);
+  transition:
+    border-color var(--hover-intent-fade-out) cubic-bezier(0.22, 1, 0.36, 1),
+    background-color var(--hover-intent-fade-out) cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+/* A state colours the frame through --card-frame-color: its border and the
+   layer under its surface follow together ([data-feed-card-frame] below). */
 [data-grid-scroll][data-feed-grid-focus-mode="true"] [data-feed-grid-item-focused="true"] [data-block-slug],
 [data-grid-scroll] [data-feed-grid-item-collection-lit="true"] [data-block-slug] {
-  border-color: var(--border-accent);
+  --card-frame-color: var(--border-accent);
   transition-duration: var(--hover-intent-fade-in);
 }
 
 /* Five attribute selectors: more specific than the focus rule above, so a
    focused selected card keeps the selection border. */
 [data-grid-scroll] [data-feed-grid-item][data-feed-grid-item-live][data-feed-grid-item-selected="true"] [data-block-slug] {
-  border-color: var(--feed-selection-frame);
+  --card-frame-color: var(--feed-selection-frame);
   transition-duration: var(--hover-intent-fade-in);
 }
 
@@ -237,6 +243,24 @@ select,
   opacity: 1;
 }
 
+/* A refused name shakes once, side to side, before the old name returns
+   (05.10.2026). Reduced motion lands it at once through the global rule. */
+@keyframes name-refused {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-4px); }
+  40% { transform: translateX(4px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(2px); }
+}
+
+/* Its length is NAME_REFUSED_SHAKE_MS (useNameEdit.ts), set inline on the
+   field: the card's name in the path (MainSecondaryChrome.tsx) and the
+   sidebar's collection names (Sidebar.tsx). */
+[data-name-refused] {
+  animation-name: name-refused;
+  animation-timing-function: cubic-bezier(0.36, 0.07, 0.19, 0.97);
+}
+
 /* The card lift (SPEC_CARD_STATES.md, С8, С8.7). Every card rises for its
    row of collections waiting under the bottom edge: its text and its media
    window rise together and the window keeps its corners; the picture plane
@@ -249,6 +273,28 @@ select,
    global rule (Ф12). */
 [data-feed-card-frame] {
   --card-lift-drift: 8px;
+}
+
+/* Rounded corners without a seam (cards with the rounded corner setting). The frame clips what it holds along the
+   inner curve of its border, and the border and the clipped media are
+   smoothed separately there: whatever lies under both shows through the
+   edge pixels. Under the surface lies the frame's own colour, so those
+   pixels mix border and media only; the surface fills the inside of the
+   border. What lies flush inside the border takes its inner corner. */
+[data-feed-card-frame] {
+  /* A frame with a corner of its own sets --card-frame-radius (Card.tsx);
+     every other frame takes the card radius. */
+  --card-frame-inner-radius: max(0px, calc(var(--card-frame-radius, var(--radius-card)) - 1px));
+  --card-frame-color: var(--border);
+  border-color: var(--card-frame-color);
+  background: linear-gradient(var(--surface), var(--surface)) padding-box, var(--card-frame-color);
+}
+
+/* Media that ends the card (a post with no text under it) meets the frame's
+   bottom edge; with text under it it keeps the card radius (Д20). */
+[data-feed-card-frame] [data-card-graphic-surface]:last-child {
+  border-bottom-left-radius: var(--card-frame-inner-radius);
+  border-bottom-right-radius: var(--card-frame-inner-radius);
 }
 
 [data-card-lift] {
@@ -332,12 +378,13 @@ select,
   transform: translateY(0);
 }
 
+/* The marquee is one state layer framed by the line (SPEC_COLOR_RULES.md, 4.6). */
 [data-feed-grid-marquee-selection] {
   position: absolute;
   z-index: 9;
   box-sizing: border-box;
   border: 1px solid var(--border);
-  background: color-mix(in oklch, var(--active) 72%, transparent);
+  background: var(--active);
   border-radius: 0;
   pointer-events: none;
 }
@@ -608,15 +655,19 @@ body {
   transform: scaleX(1);
 }
 
+/* The image preview is always dark (SPEC_COLOR_RULES.md, 3.9 and 4.6): what
+   lies under it dims to the dark tertiary step with the dark canvas, the
+   image is framed by the dark line and its shadow is the K11 step
+   `shadow-2xl`. */
 .image-preview-secondary-plane {
-  background: rgb(0 0 0 / 0.56);
+  background: oklch(0.14 0 0 / 72.08%);
   -webkit-backdrop-filter: saturate(0.55);
   backdrop-filter: saturate(0.55);
 }
 
 .image-preview-primary-media {
-  box-shadow: 0 24px 96px rgb(0 0 0 / 0.45);
-  outline: 1px solid rgb(255 255 255 / 0.08);
+  box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.25);
+  outline: 1px solid oklch(0.243 0 0);
 }
 
 /* Progress without a known length (components/ui/progress.tsx): a pill
@@ -679,17 +730,20 @@ body {
    that as its surface, so the buttons on it lift from what is under them
    (the surface map below: every button-hosting zone declares its surface).
    Without it they lifted from the card's own colour and stood 0.06 above
-   the accent instead of 0.09 (03.10.2026). */
+   the accent instead of 0.09 (03.10.2026). Bare media that lifts its
+   caption shows the frame under it, and the caption is a post's text in
+   `Media`: it takes the same accent, so a risen caption never sits on a
+   darker fill than the posts beside it (05.10.2026). */
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .feed-article-card {
+  :root:not([data-theme="light"]) .feed-article-card,
+  :root:not([data-theme="light"]) [data-feed-card-frame]:has(> [data-card-lift="caption"]) {
     --surface: var(--accent);
-    background: var(--accent);
   }
 }
 
-:root[data-theme="dark"] .feed-article-card {
+:root[data-theme="dark"] .feed-article-card,
+:root[data-theme="dark"] [data-feed-card-frame]:has(> [data-card-lift="caption"]) {
   --surface: var(--accent);
-  background: var(--accent);
 }
 
 @theme inline {
@@ -748,13 +802,11 @@ body {
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
   --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-tertiary-foreground: var(--tertiary-foreground);
-  --color-hover-foreground: var(--hover-foreground);
-  --color-active: var(--active);
+  --color-inert-frame: var(--inert-frame);
   --color-primary-hover: var(--primary-hover);
   --color-primary-active: var(--primary-active);
   --color-glass: var(--glass-bg);
@@ -762,7 +814,6 @@ body {
   --color-component-fill: var(--component-fill);
   --color-component-fill-inner: var(--component-fill-inner);
   --color-component-fill-hover: var(--component-fill-hover);
-  --color-depth-fill: var(--depth-fill);
   --color-search-mark: var(--search-mark);
   --color-search-mark-foreground: var(--search-mark-foreground);
 }
@@ -789,151 +840,154 @@ body {
 }
 
 
+/* The theme tokens follow the colour rules (SPEC_COLOR_RULES.md): every
+   colour has one role, zone, height or signal, and each role one law.
+   "Brighter" means farther from the page toward the primary text. Zones are
+   levels of the window, whole zone steps brighter than the page (K3: 0.03
+   in dark, 0.03 x K4a = 0.0153 in light). Height: in light the face of a
+   button with depth is a hover plate and floating layers stand at the
+   page's brightness, held by their shadow; in dark both are brighter.
+   Signals differ from what lies under them by a lightness difference that
+   reads the same in both themes: the dark difference is the light one
+   divided by the coefficient of the signal's form, K4 = 0.7 for lines,
+   frames, text and icons, K4a = 0.51 for areas (src/lib/colorLaw.ts). Every
+   number is derived from the constants by src/styles/colorLaw.test.ts. */
 :root {
-  /* bg-page: #FFFFFF */
+  /* K1, K2. Zones: levels 0, a third (K9), 1 and 2 of the zone step.
+     Floating layers stand at the page's brightness. */
   --background: oklch(1 0 0);
-  /* text-primary: shadcn neutral light */
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(0.99 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --sidebar: oklch(0.9949 0 0);
+  --card: oklch(0.9847 0 0);
+  --chrome: oklch(0.9847 0 0);
   --popover: oklch(1 0 0);
+  --accent: oklch(0.9694 0 0);
+  --secondary: oklch(0.9694 0 0);
+  --muted: oklch(0.9694 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.145 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.3211 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  /* surface +1 */
-  --secondary: oklch(0.98 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.98 0 0);
-  /* text-secondary: shadcn neutral light */
-  --muted-foreground: oklch(0.5693 0 0);
-  /* extra text tier is intentionally kept on the shadcn muted scale */
-  --tertiary-foreground: oklch(0.7572 0 0);
-  /* chrome surface: midway between page background and accent */
-  --chrome: oklch(0.99 0 0);
-  --accent: oklch(0.98 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  /* relative elevation lift scalars: button = zone surface + signed ΔL. Light
-     sits the button just below the near-white surface; fills are derived from
-     the zone surface in the elevation map after the theme blocks. */
+  --sidebar-foreground: oklch(0.145 0 0);
+  --secondary-foreground: oklch(0.145 0 0);
+  --accent-foreground: oklch(0.145 0 0);
+  --sidebar-accent-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.145 0 0);
+  --primary-foreground: oklch(1 0 0);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  /* Text ladder (DESIGN_SYSTEM.md, «Цвет текста и значков»): the secondary
+     and tertiary steps are the foreground at these alphas. The secondary
+     reaches K5 (4.5:1) on the canvas, the tertiary is K8. */
+  --muted-alpha: 55.66%;
+  --tertiary-alpha: 26%;
+  /* Quiet signals, K7: steps of s = ΔL 0.03 brighter. The state layer
+     (DESIGN_SYSTEM.md, «Цвет от того, что под элементом») is one s on the
+     page; the frame of what cannot be pressed one s from the surface under
+     it; lines and field frames one s brighter than the brightest zone they
+     border (--accent). */
+  --active-alpha: 4.1%;
+  --inert-frame-elevation: -0.03;
+  --border: oklch(0.9394 0 0);
+  --sidebar-border: oklch(0.9394 0 0);
+  --input: oklch(0.9394 0 0);
+  /* Flat fill of a control: 2 s from the surface under it; its hover is the
+     fill under one state layer, 3 s. Fills are derived from the zone
+     surface in the elevation map after the theme blocks. */
   --elevation-rest: -0.06;
-  --elevation-hover: -0.085;
-  /* interactive hover/selected surface = zone surface + signed delta */
-  --active-elevation: -0.035;
-  /* filled button with depth (DESIGN_SYSTEM.md, «Объём кнопки»): the zone
-     surface mixed with white, fitted to a reference; on a near-white surface
-     the lift shrinks with the room left to white. */
-  --depth-lift: 53%;
-  --hover-foreground: oklch(0.205 0 0);
+  --elevation-hover: -0.09;
+  /* The face of a button with depth (src/styles/buttons.css): the surface
+     under it with the state layer a hover plate paints, so the two are one
+     paint. */
+  --button-face-step: 0;
+  --button-face-layer: linear-gradient(var(--active), var(--active));
+  --button-face-share: var(--active-alpha);
+  /* Strong indicators take text steps: the focus outline of buttons and
+     fields is the secondary step, opaque on the canvas; the keyboard focus
+     frame of a card and the sidebar seam reach K6 (3:1) on the canvas; the
+     frame of a selected card is the primary step (SPEC_CARD_STATES.md, С2). */
+  --ring: oklch(0.568 0 0);
+  --sidebar-ring: oklch(0.568 0 0);
+  --border-accent: oklch(0.669 0 0);
+  --feed-selection-frame: oklch(0.145 0 0);
+  /* Focus wash on an image: 3 s of the foreground on the canvas. */
+  --graphic-card-focus-overlay: color-mix(in srgb, oklch(0.145 0 0) 12.21%, transparent);
+  /* K12: hue and chroma from macOS, lightness by role. Destructive removes
+     content, detach breaks a link and keeps the content (Disconnect, Remove
+     from Element). The search marker is macOS's, the same in both themes. */
+  --destructive: oklch(0.596 0.232 28.7);
+  --detach: oklch(0.577 0.132 62.6);
+  --search-mark: rgb(255 255 0);
+  --search-mark-foreground: oklch(0.145 0 0);
+  /* Dimming: the canvas at 1 minus the tertiary share. */
+  --glass-bg: oklch(1 0 0 / 74%);
   --primary-hover: oklch(0.4495 0 0);
   --primary-active: oklch(0.2178 0 0);
   --card-hover-overlay: transparent;
-  --graphic-card-focus-overlay: oklch(0 0 0 / 14%);
-  /* Border colour of a selected card: the bright step of the card's own
-     border (SPEC_CARD_STATES.md, С2). */
-  --feed-selection-frame: oklch(0.145 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  /* detach accent: breaks a link, content survives (Disconnect, Remove from Element) */
-  --detach: oklch(0.66 0.17 65);
-  /* surface +3 / border */
-  --border: oklch(0.95 0 0);
-  /* navigation/hover highlight — light uses lower dL (~0.21) for equal perceived
-     sharpness: a dark line on white reads harsher than a light line on dark */
-  --border-accent: oklch(0.79 0 0);
-  --input: oklch(0.95 0 0);
-  --ring: oklch(0.5693 0 0);
-  /* search match highlighter: the one chromatic state indicator (like
-     destructive) — a real text marker. Dark ink on yellow in both themes. */
-  --search-mark: oklch(0.92 0.17 100);
-  --search-mark-foreground: oklch(0.145 0 0);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
-  /* sidebar fill: a third of the way from the page background (1.0) toward
-     chrome (0.99) — gathers the panel while keeping two thirds of the gap to
-     the chrome so the two shells stay distinguishable */
-  --sidebar: oklch(0.997 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.3211 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.95 0 0);
-  --sidebar-ring: oklch(0.5693 0 0);
-  /* backdrop-bg: rgba(255,255,255,0.8) */
-  --glass-bg: oklch(1 0 0 / 80%);
-  /* shadow-overlay handled via Tailwind shadow utilities */
   --glass-border: oklch(0 0 0 / 8%);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    /* bg-page: L 0.14 — base of the even surface ladder (step 0.03) */
+    /* Zones: levels 0, a third, 1 and 2 of the zone step 0.03. Floating
+       layers stand one step brighter than the brightest zone they open
+       over, level 3. */
     --background: oklch(0.14 0 0);
-    /* text-primary: shadcn neutral dark */
-    --foreground: oklch(0.985 0 0);
+    --sidebar: oklch(0.15 0 0);
     --card: oklch(0.17 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.14 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.9189 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    /* surface +1: L 0.20 (step 0.03 above chrome) */
-    --secondary: oklch(0.2 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.2 0 0);
-    /* text-secondary: #9A9A9A */
-    --muted-foreground: oklch(0.6862 0 0);
-    /* text-tertiary: #666666 */
-    --tertiary-foreground: oklch(0.5103 0 0);
-    /* chrome surface: midway between page background and accent */
     --chrome: oklch(0.17 0 0);
-    /* surface +1 */
+    --popover: oklch(0.23 0 0);
     --accent: oklch(0.2 0 0);
+    --secondary: oklch(0.2 0 0);
+    --muted: oklch(0.2 0 0);
+    --foreground: oklch(0.985 0 0);
+    --card-foreground: oklch(0.985 0 0);
+    --popover-foreground: oklch(0.985 0 0);
+    --sidebar-foreground: oklch(0.985 0 0);
+    --secondary-foreground: oklch(0.985 0 0);
     --accent-foreground: oklch(0.985 0 0);
-    /* interactive hover/selected surface = zone surface + 3 ladder quanta */
-    --active-elevation: 0.09;
-    /* border/lines: L 0.26 (top of the ladder) */
-    --border: oklch(0.26 0 0);
-    /* navigation/hover highlight — indicator scale, contrast ~0.30 to background */
-    --border-accent: oklch(0.44 0 0);
-    --input: oklch(0.26 0 0);
-    /* search match highlighter: dimmed marker yellow, same dark ink */
-    --search-mark: oklch(0.75 0.14 95);
+    --sidebar-accent-foreground: oklch(0.985 0 0);
+    --primary: oklch(0.985 0 0);
+    --sidebar-primary: oklch(0.985 0 0);
+    --primary-foreground: oklch(0.14 0 0);
+    --sidebar-primary-foreground: oklch(0.14 0 0);
+    /* Signals: the light difference divided by K4 of the signal's form
+       (lines, frames and text 0.7, areas 0.51). */
+    --muted-alpha: 69.28%;
+    --tertiary-alpha: 27.92%;
+    --active-alpha: 5.25%;
+    --inert-frame-elevation: 0.0429;
+    --border: oklch(0.243 0 0);
+    --sidebar-border: oklch(0.243 0 0);
+    --input: oklch(0.243 0 0);
+    --elevation-rest: 0.1176;
+    --elevation-hover: 0.1765;
+    /* The face of a button with depth: three zone steps brighter than the
+       surface under it. */
+    --button-face-step: 0.09;
+    --button-face-layer: none;
+    --button-face-share: 0%;
+    --ring: oklch(0.757 0 0);
+    --sidebar-ring: oklch(0.757 0 0);
+    --border-accent: oklch(0.612 0 0);
+    --feed-selection-frame: oklch(0.985 0 0);
+    --graphic-card-focus-overlay: color-mix(in srgb, oklch(0.985 0 0) 16.93%, transparent);
+    --destructive: oklch(0.717 0.177 28.7);
+    --detach: oklch(0.744 0.17 62.6);
+    --search-mark: rgb(255 255 0);
     --search-mark-foreground: oklch(0.145 0 0);
-    /* relative elevation lift scalars: button = zone surface + ΔL. Dark lifts
-       +0.15 / +0.18 (5 / 6 ladder quanta of 0.03) above the zone surface; fills
-       are derived from the zone surface in the elevation map after theme blocks. */
-    --elevation-rest: 0.15;
-    --elevation-hover: 0.18;
-    /* filled button with depth: the zone surface mixed with white */
-    --depth-lift: 5%;
-    --hover-foreground: oklch(0.985 0 0);
+    --glass-bg: oklch(0.14 0 0 / 72.08%);
     --primary-hover: oklch(0.8 0 0);
     --primary-active: oklch(0.7 0 0);
     --card-hover-overlay: transparent;
-    --graphic-card-focus-overlay: oklch(1 0 0 / 18%);
-    --feed-selection-frame: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-  /* detach accent: breaks a link, content survives */
-  --detach: oklch(0.78 0.16 70);
-    --ring: oklch(0.6268 0 0);
     --chart-1: oklch(0.488 0.243 264.376);
     --chart-2: oklch(0.696 0.17 162.48);
     --chart-3: oklch(0.769 0.188 70.08);
     --chart-4: oklch(0.627 0.265 303.9);
     --chart-5: oklch(0.645 0.246 16.439);
-    /* sidebar fill: a third of the way from the page background (0.14) toward
-       chrome (0.17) — distinguishable from both */
-    --sidebar: oklch(0.15 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.9189 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(0.26 0 0);
-    --sidebar-ring: oklch(0.6268 0 0);
-    /* backdrop-bg */
-    --glass-bg: oklch(0.14 0 0 / 60%);
     --glass-border: oklch(1 0 0 / 8%);
   }
 }
@@ -943,106 +997,98 @@ body {
 :root[data-theme="dark"] {
   color-scheme: dark;
   --background: oklch(0.14 0 0);
-  --foreground: oklch(0.985 0 0);
+  --sidebar: oklch(0.15 0 0);
   --card: oklch(0.17 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.14 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.9189 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.2 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.2 0 0);
-  --muted-foreground: oklch(0.6862 0 0);
-  --tertiary-foreground: oklch(0.5103 0 0);
   --chrome: oklch(0.17 0 0);
+  --popover: oklch(0.23 0 0);
   --accent: oklch(0.2 0 0);
+  --secondary: oklch(0.2 0 0);
+  --muted: oklch(0.2 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
   --accent-foreground: oklch(0.985 0 0);
-  --elevation-rest: 0.15;
-  --elevation-hover: 0.18;
-  --active-elevation: 0.09;
-  --depth-lift: 5%;
-  --hover-foreground: oklch(0.985 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.985 0 0);
+  --primary-foreground: oklch(0.14 0 0);
+  --sidebar-primary-foreground: oklch(0.14 0 0);
+  --muted-alpha: 69.28%;
+  --tertiary-alpha: 27.92%;
+  --active-alpha: 5.25%;
+  --inert-frame-elevation: 0.0429;
+  --border: oklch(0.243 0 0);
+  --sidebar-border: oklch(0.243 0 0);
+  --input: oklch(0.243 0 0);
+  --elevation-rest: 0.1176;
+  --elevation-hover: 0.1765;
+  --button-face-step: 0.09;
+  --button-face-layer: none;
+  --button-face-share: 0%;
+  --ring: oklch(0.757 0 0);
+  --sidebar-ring: oklch(0.757 0 0);
+  --border-accent: oklch(0.612 0 0);
+  --feed-selection-frame: oklch(0.985 0 0);
+  --graphic-card-focus-overlay: color-mix(in srgb, oklch(0.985 0 0) 16.93%, transparent);
+  --destructive: oklch(0.717 0.177 28.7);
+  --detach: oklch(0.744 0.17 62.6);
+  --search-mark: rgb(255 255 0);
+  --search-mark-foreground: oklch(0.145 0 0);
+  --glass-bg: oklch(0.14 0 0 / 72.08%);
   --primary-hover: oklch(0.8 0 0);
   --primary-active: oklch(0.7 0 0);
   --card-hover-overlay: transparent;
-  --graphic-card-focus-overlay: oklch(1 0 0 / 18%);
-  --feed-selection-frame: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  /* detach accent: breaks a link, content survives */
-  --detach: oklch(0.78 0.16 70);
-  --border: oklch(0.26 0 0);
-  /* navigation/hover highlight — indicator scale, contrast ~0.30 to background */
-  --border-accent: oklch(0.44 0 0);
-  --input: oklch(0.26 0 0);
-  /* search match highlighter: dimmed marker yellow, same dark ink */
-  --search-mark: oklch(0.75 0.14 95);
-  --search-mark-foreground: oklch(0.145 0 0);
-  --ring: oklch(0.6268 0 0);
-  /* sidebar fill: a third of the way from the page background (0.14) toward
-     chrome (0.17) — distinguishable from both */
-  --sidebar: oklch(0.15 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.9189 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(0.26 0 0);
-  --sidebar-ring: oklch(0.6268 0 0);
-  --glass-bg: oklch(0.14 0 0 / 60%);
   --glass-border: oklch(1 0 0 / 8%);
 }
 
 :root[data-theme="light"] {
   color-scheme: light;
   --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(0.99 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --sidebar: oklch(0.9949 0 0);
+  --card: oklch(0.9847 0 0);
+  --chrome: oklch(0.9847 0 0);
   --popover: oklch(1 0 0);
+  --accent: oklch(0.9694 0 0);
+  --secondary: oklch(0.9694 0 0);
+  --muted: oklch(0.9694 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.145 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.3211 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.98 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.98 0 0);
-  --muted-foreground: oklch(0.5693 0 0);
-  --tertiary-foreground: oklch(0.7572 0 0);
-  --chrome: oklch(0.99 0 0);
-  --accent: oklch(0.98 0 0);
-  --accent-foreground: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --secondary-foreground: oklch(0.145 0 0);
+  --accent-foreground: oklch(0.145 0 0);
+  --sidebar-accent-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.145 0 0);
+  --primary-foreground: oklch(1 0 0);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --muted-alpha: 55.66%;
+  --tertiary-alpha: 26%;
+  --active-alpha: 4.1%;
+  --inert-frame-elevation: -0.03;
+  --border: oklch(0.9394 0 0);
+  --sidebar-border: oklch(0.9394 0 0);
+  --input: oklch(0.9394 0 0);
   --elevation-rest: -0.06;
-  --elevation-hover: -0.085;
-  --active-elevation: -0.035;
-  --depth-lift: 53%;
-  --hover-foreground: oklch(0.205 0 0);
+  --elevation-hover: -0.09;
+  --button-face-step: 0;
+  --button-face-layer: linear-gradient(var(--active), var(--active));
+  --button-face-share: var(--active-alpha);
+  --ring: oklch(0.568 0 0);
+  --sidebar-ring: oklch(0.568 0 0);
+  --border-accent: oklch(0.669 0 0);
+  --feed-selection-frame: oklch(0.145 0 0);
+  --graphic-card-focus-overlay: color-mix(in srgb, oklch(0.145 0 0) 12.21%, transparent);
+  --destructive: oklch(0.596 0.232 28.7);
+  --detach: oklch(0.577 0.132 62.6);
+  --search-mark: rgb(255 255 0);
+  --search-mark-foreground: oklch(0.145 0 0);
+  --glass-bg: oklch(1 0 0 / 74%);
   --primary-hover: oklch(0.4495 0 0);
   --primary-active: oklch(0.2178 0 0);
   --card-hover-overlay: transparent;
-  --graphic-card-focus-overlay: oklch(0 0 0 / 14%);
-  --feed-selection-frame: oklch(0.145 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  /* detach accent: breaks a link, content survives (Disconnect, Remove from Element) */
-  --detach: oklch(0.66 0.17 65);
-  --border: oklch(0.95 0 0);
-  /* navigation/hover highlight — light uses lower dL (~0.21) for equal perceived
-     sharpness: a dark line on white reads harsher than a light line on dark */
-  --border-accent: oklch(0.79 0 0);
-  --input: oklch(0.95 0 0);
-  /* search match highlighter: dark ink on yellow in both themes */
-  --search-mark: oklch(0.92 0.17 100);
-  --search-mark-foreground: oklch(0.145 0 0);
-  --ring: oklch(0.5693 0 0);
-  /* sidebar fill: a third of the way from the page background (1.0) toward
-     chrome (0.99) — gathers the panel while keeping two thirds of the gap to
-     the chrome so the two shells stay distinguishable */
-  --sidebar: oklch(0.997 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.3211 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.95 0 0);
-  --sidebar-ring: oklch(0.5693 0 0);
-  --glass-bg: oklch(1 0 0 / 80%);
   --glass-border: oklch(0 0 0 / 8%);
 }
 
@@ -1136,19 +1182,19 @@ body {
   /* no overrides yet */
 }
 
-/* ── Relative elevation (color architecture, category 3) ─────────────────────
-   A button is a surface lifted a consistent ΔL above the background of its zone,
-   not an absolute fill. Each zone exposes its own background through --surface;
-   active and component-fill tokens are recomputed from it via OKLCH relative
-   color, so the same interaction reads equally "raised" on any surface and in
-   either theme. Lift magnitude lives in --active-elevation,
-   --elevation-rest and --elevation-hover (per theme, in the blocks above).
-   Transient active states do not become structural zones: their descendants
-   continue to derive from the nearest background/card/chrome/accent surface.
+/* ── Relative elevation (colour architecture, the elevation role) ────────────
+   A button is a surface lifted a consistent ΔL above what lies under it, not
+   an absolute fill. --surface is the colour under the content: each zone
+   declares its own background, and a state layer passes itself on to what it
+   holds (below). Fills are recomputed from --surface via OKLCH relative
+   colour, so the same control reads equally "raised" on any surface and in
+   either theme. Lift magnitude lives in --elevation-rest and --elevation-hover
+   (per theme, in the blocks above).
 
-   Surface map: every button-hosting zone MUST appear here. Values point at the
-   surface tokens directly, so there is no second scalar to drift out of sync.
-   Anything outside a declared zone lifts from the page background (:root). */
+   Surface map: every button-hosting zone MUST appear here. Values point at
+   the surface tokens directly, so there is no second scalar to drift out of
+   sync. Anything outside a declared zone lifts from the page background
+   (:root). */
 :root { --surface: var(--background); }
 .bg-background { --surface: var(--background); }
 .bg-card { --surface: var(--card); }
@@ -1166,15 +1212,83 @@ body {
 .bg-chrome,
 .bg-accent,
 .bg-secondary,
-.bg-muted,
-.bg-active,
-.bg-sidebar-accent {
-  --active: oklch(from var(--surface) calc(l + var(--active-elevation)) 0 0);
-  --sidebar-accent: var(--active);
+.bg-muted {
+  @apply surface-fills;
+}
+
+/* Floating layers (SPEC_COLOR_RULES.md, 3.3): menus, submenus and tooltips
+   stand on --popover like notifications, whatever zone class they carry, so
+   this comes after the surface map. The surface moves with them, so what is
+   inside lifts from the layer. */
+:is(
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dropdown-menu-sub-content"],
+  [data-slot="context-menu-content"],
+  [data-slot="context-menu-sub-content"],
+  [data-slot="tooltip-content"]
+) {
+  --surface: var(--popover);
+  background-color: var(--popover);
+}
+
+/* The colour ladder over what lies below (DESIGN_SYSTEM.md, «Цвет от того,
+   что под элементом», «Цвет текста и значков»): a state layer and the
+   secondary and tertiary text steps are the foreground at an alpha, so they
+   composite with whatever is actually under them, a highlight or an image
+   included. Declared again on any element that sets a theme of its own
+   (the side by side panels of /__ui-inventory), so the steps follow that
+   element's foreground. */
+:root,
+[data-theme] {
+  --active: color-mix(in srgb, var(--foreground) var(--active-alpha), transparent);
+  /* The flash of a press: half a state layer over the hover one (05.10.2026). */
+  --press: color-mix(in srgb, var(--foreground) calc(var(--active-alpha) / 2), transparent);
+  --muted-foreground: color-mix(in srgb, var(--foreground) var(--muted-alpha), transparent);
+  --tertiary-foreground: color-mix(in srgb, var(--foreground) var(--tertiary-alpha), transparent);
+}
+
+/* The tertiary step belongs to what is unavailable only (SPEC_COLOR_RULES.md,
+   Р1 а: WCAG exempts it); hints, placeholders and meta text take the
+   secondary step. The step is repointed on the element rather than its
+   colour set, so a hover class on the same element still lifts it. */
+:is(.text-tertiary-foreground, .placeholder\:text-tertiary-foreground):not(
+  :disabled, [data-disabled], [aria-disabled="true"],
+  :disabled *, [data-disabled] *, [aria-disabled="true"] *
+) {
+  --tertiary-foreground: var(--muted-foreground);
+}
+
+/* The fills derived from --surface, declared wherever --surface changes: in
+   a zone (above) and under a state layer (below). The opaque muted step is
+   for consumers that cannot composite, such as the graph canvas. */
+@utility surface-fills {
   --component-fill: oklch(from var(--surface) calc(l + var(--elevation-rest)) 0 0);
   --component-fill-inner: var(--component-fill);
   --component-fill-hover: oklch(from var(--surface) calc(l + var(--elevation-hover)) 0 0);
-  --depth-fill: color-mix(in srgb, var(--surface), white var(--depth-lift));
+  --inert-frame: oklch(from var(--surface) calc(l + var(--inert-frame-elevation)) 0 0);
+  --muted-foreground-opaque: color-mix(in srgb, var(--surface), var(--foreground) var(--muted-alpha));
+}
+
+/* A highlight (hover, selection, an open menu, a focused item) is a state
+   layer: the foreground at --active-alpha painted over the element's own
+   fill and over whatever lies below it. It is the surface of what it holds:
+   the element keeps the surface it stands on (`--under`), its own fill
+   lifts from that, and its children get that surface with the layer, the
+   fills following. A layer inside a layer stacks exactly; a child that is a
+   zone keeps its own surface. */
+@utility state-surface {
+  --under: var(--surface);
+  & > * {
+    --surface: color-mix(in srgb, var(--under), var(--foreground) var(--active-alpha));
+    @apply surface-fills;
+  }
+}
+/* Paints the layer and passes it on. Where the plate stands beside the
+   content rather than around it (the chrome TabsList and SegmentedControl),
+   their common parent takes state-surface in the same states. */
+@utility state-active {
+  background-image: linear-gradient(var(--active), var(--active));
+  @apply state-surface;
 }
 
 /* Every row gets the same free area. Separators live outside it in normal
@@ -1216,14 +1330,6 @@ body {
   body {
     @apply bg-background text-foreground;
   }
-  /* Every button answers a press by sinking one pixel, as shadcn Nova's do
-     (registry, 03.10.2026; DESIGN_SYSTEM.md, «Нажатие»). Not a menu
-     trigger, whose menu answers instead, not a switch (a tab, a segment, a
-     toggle), whose new state answers, and not a disabled one. A utility
-     that sets `translate` still wins. */
-  button:active:not(:disabled):not([aria-haspopup]):not([role="tab"]):not([role="switch"]):not([aria-pressed]) {
-    translate: 0 1px;
-  }
 }
 
 /* Interface text at 13px, the size macOS sets its window titles, menus and
@@ -1255,37 +1361,58 @@ svg.lucide {
   stroke-width: 1.8462;
 }
 
-/* Depth of a filled button (DESIGN_SYSTEM.md, «Объём кнопки»): a raised
-   object lit from above, fitted pixel by pixel to a reference on 04.10.2026
-   (0.7 grey levels off at scale 2 in either theme). Inside, a brighter top
-   line and a soft light ring; outside, a hairline rim, a shadow set down,
-   and in the light theme a faint halo. The fill is --depth-fill. */
+/* An icon is one layer at the alpha of its colour (DESIGN_SYSTEM.md, «Цвет
+   текста и значков»): the strokes take the colour without its alpha and the
+   mask applies the alpha to the whole icon, so where two strokes cross (an
+   X, a plus) they do not add up to a darker dot. An opaque colour gives an
+   opaque mask and changes nothing. */
+svg.lucide {
+  stroke: rgb(from currentColor r g b / 1);
+  mask-image: linear-gradient(currentColor, currentColor);
+}
+
+/* Depth of a filled button (DESIGN_SYSTEM.md, «Объём кнопки»): its face
+   and the edges of each style are drawn by buttons.css. Here is what every
+   style shares: the carrier draws --button-depth, which is no shadow unless a
+   style sets one (the macOS outline is drawn in its place), presses down 1px
+   and, disabled, shows the frame of «Недоступно». */
 :root {
-  --button-depth:
-    inset 0 1px 0 rgb(255 255 255 / 0.36),
-    inset 0 0 1.5px 1px rgb(255 255 255 / 0.45),
-    0 0 0 0.5px rgb(0 0 0 / 0.02),
-    0 0.75px 1px rgb(0 0 0 / 0.05),
-    0 0 2.5px rgb(0 0 0 / 0.05);
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --button-depth:
-      inset 0 1px 0 rgb(255 255 255 / 0.04),
-      inset 0 0 0.9px 1px rgb(255 255 255 / 0.045),
-      0 0 0 0.5px rgb(0 0 0 / 0.07),
-      0 1.4px 1px rgb(0 0 0 / 0.09);
-  }
-}
-:root[data-theme="dark"] {
-  --button-depth:
-    inset 0 1px 0 rgb(255 255 255 / 0.04),
-    inset 0 0 0.9px 1px rgb(255 255 255 / 0.045),
-    0 0 0 0.5px rgb(0 0 0 / 0.07),
-    0 1.4px 1px rgb(0 0 0 / 0.09);
+  --button-depth: 0 0 #0000;
 }
 .button-depth {
   box-shadow: var(--button-depth);
+}
+
+/* Pressing moves only a button with depth down 1px, every one of them
+   (DESIGN_SYSTEM.md, «Нажатие»): the button itself, a chrome button's
+   plate, a bottom bar key when its entry is pressed. A transform, so a
+   carrier centred with `translate` keeps its place. A disabled one does not
+   move; nothing without depth presses. The macOS button style flashes
+   instead of moving (buttons.css, 05.10.2026). */
+.button-depth:active:not(:disabled),
+button:active:not(:disabled) > .button-depth,
+[data-action-button]:active > .button-depth {
+  transform: translateY(1px);
+}
+
+/* A press flashes a hover plate: while it is held, the plate goes half a
+   state layer further than hover, and comes back on release (05.10.2026).
+   An icon's plate and a pill's plate in the chrome, which never move. A
+   raised plate is a button with depth and presses by its own rule. Instant,
+   as hover is. */
+[data-chrome-control]:active:not(:disabled) > [data-chrome-plate]:not(.button-depth) {
+  background-image: linear-gradient(var(--press), var(--press)), linear-gradient(var(--active), var(--active));
+}
+
+/* A disabled button with depth loses its face and its volume and keeps the
+   frame every disabled control shows (DESIGN_SYSTEM.md, «Недоступно»); its
+   text and icon take the tertiary step from the Button's own classes. */
+.button-depth:disabled,
+:disabled > .button-depth {
+  background-color: transparent;
+  box-shadow: none;
+  outline: 1px solid var(--inert-frame);
+  outline-offset: -1px;
 }
 
 /* The sidebar's filter row gives room up in a fixed order
@@ -1326,6 +1453,11 @@ svg.lucide {
 }
 [data-row-fit="search"]:not([data-row-search-open]) [data-row-fit-search-button] {
   display: inline-flex;
+}
+/* The folded field no longer parts the search button from the actions: they
+   keep the 4px every pair of neighbouring icon buttons has. */
+[data-row-fit="search"]:not([data-row-search-open]) [data-row-fit-actions] {
+  margin-left: 4px;
 }
 [data-row-fit="search"][data-row-search-open] [data-row-fit-actions] {
   display: none;

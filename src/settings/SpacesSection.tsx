@@ -90,7 +90,7 @@ function SpaceRow({ path, isOpen, stats, available, onOpen, onRemove }: SpaceRow
       style={{ transform: CSS.Transform.toString(transform), transition }}
       className={cn(
         "group/space rounded-1 border border-border px-3 py-2",
-        isOpen ? "bg-active" : "bg-accent hover:bg-active",
+        isOpen ? "state-active" : "bg-accent hover:state-active",
         isDragging && "opacity-30",
       )}
       aria-disabled={available ? undefined : "true"}

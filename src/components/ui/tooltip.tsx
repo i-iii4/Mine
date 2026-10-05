@@ -3,6 +3,7 @@
 import * as React from "react"
 import { Tooltip as TooltipPrimitive } from "radix-ui"
 
+import { FLOATING_LAYER_EDGE_PX } from "@/lib/floatingLayer"
 import { cn } from "@/lib/utils"
 
 /** Whether a provider stands above: a tooltip without one brings its own,
@@ -40,10 +41,14 @@ function TooltipTrigger({
 }
 
 // On the interface's own surface, as a menu is: the card fill, its border
-// and shadow, the 3px radius; no arrow (decision of 03.10.2026).
+// and shadow, the 3px radius; no arrow (decision of 03.10.2026). Below its
+// control, as macOS shows tooltips (decision of 04.10.2026); Radix flips it
+// up where there is no room below.
 function TooltipContent({
   className,
+  side = "bottom",
   sideOffset = 4,
+  collisionPadding = FLOATING_LAYER_EDGE_PX,
   children,
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Content>) {
@@ -51,7 +56,9 @@ function TooltipContent({
     <TooltipPrimitive.Portal>
       <TooltipPrimitive.Content
         data-slot="tooltip-content"
+        side={side}
         sideOffset={sideOffset}
+        collisionPadding={collisionPadding}
         className={cn(
           "bg-card text-card-foreground animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 flex w-fit items-center gap-2 origin-(--radix-tooltip-content-transform-origin) rounded-1 border px-2 py-1 text-sm text-balance shadow-md",
           className

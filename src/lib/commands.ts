@@ -75,7 +75,16 @@ function isCommandError(error: unknown): error is CommandError {
     || kind === "source_changed"
     || kind === "frontmatter_not_writable"
     || kind === "space_identity_unreadable"
+    || kind === "name_refused"
     || kind === "internal";
+}
+
+/** Why a typed name was refused, when `error` is such a refusal: the words
+ *  the place being named shows under the name (05.10.2026). */
+export function nameRefusal(error: unknown): string | null {
+  if (!(error instanceof Error) || !("cause" in error)) return null;
+  const cause = error.cause;
+  return isCommandError(cause) && cause.kind === "name_refused" ? cause.message : null;
 }
 
 /// The note's name for a message: the last segment of its path.
@@ -95,6 +104,7 @@ function commandErrorMessage(error: CommandError): string {
       return `The properties of “${noteName(error.message.path)}” are written in a form Mine cannot edit in place; nothing was changed.`;
     case "space_identity_unreadable":
       return `Mine cannot read the identity file of “${noteName(error.message.path)}”, so it did not open the space and changed nothing. Check access to the folder, or wait until iCloud downloads it.`;
+    case "name_refused":
     case "internal":
       return error.message;
   }
@@ -392,6 +402,20 @@ export const renameBlockFile = async (old_slug: string, new_stem: string) => {
   }
 };
 
+/** Why the rename of `old_slug` to `new_stem` would be refused, or null when
+ *  it would be taken; writes nothing. */
+export const checkBlockRename = async (
+  old_slug: string,
+  new_stem: string,
+): Promise<RenameBlockError | null> => {
+  try {
+    await tauriInvoke<null>("check_block_rename", { old_slug, new_stem });
+    return null;
+  } catch (error) {
+    return normalizeRenameBlockError(error);
+  }
+};
+
 export const prepareDeleteBlock = (slug: string) =>
   invoke<DeleteBlockPlan>("prepare_delete_block", { slug });
 
@@ -440,6 +464,21 @@ export const renameTag = (old_tag: string, new_tag: string) =>
 
 export const renameChannel = (old_tag: string, new_tag: string) =>
   invoke<import("@/types").ChannelDto>("rename_channel", { old_tag, new_tag });
+
+/** Why a collection could not be called `new_tag` (renamed from `old_tag`,
+ *  or created when it is null), or null when it could; writes nothing. A
+ *  check that fails for another reason names none: the save will say. */
+export const checkCollectionName = async (
+  old_tag: string | null,
+  new_tag: string,
+): Promise<string | null> => {
+  try {
+    await invoke<null>("check_collection_name", { old_tag, new_tag });
+    return null;
+  } catch (error) {
+    return nameRefusal(error);
+  }
+};
 
 export const deleteTagFromAll = (tag: string) =>
   invoke<void>("delete_tag_from_all", { tag });

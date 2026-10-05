@@ -12,7 +12,7 @@ describe("collection filter edge", () => {
     const app = readFileSync("src/App.tsx", "utf8");
     const surface = app.slice(app.indexOf("data-sidebar-top-search-surface"));
     const surfaceTag = surface.slice(0, surface.indexOf(">"));
-    const field = app.slice(app.indexOf('aria-label="Filter collections"'));
+    const field = app.slice(app.indexOf('aria-label="Find or create collection"'));
     const fieldTag = field.slice(0, field.indexOf("data-sidebar-top-search=\"\""));
 
     expect(fieldTag).toContain("style={SIDEBAR_SEARCH_MASK_STYLE}");

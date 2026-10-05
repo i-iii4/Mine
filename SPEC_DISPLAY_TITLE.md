@@ -93,11 +93,12 @@ Detail:
 
 Search:
 
-1. Prefer content heading.
-2. Fall back to legacy title.
-3. Fall back to filename stem as a navigation label.
-4. Search may index all three, but search indexing must not create source
-   frontmatter.
+1. Результат поиска назван именем файла карточки без папки и без `.md`, а не
+   видимым заголовком (решение пользователя от 05.10.2026, SPEC_SEARCH.md,
+   Match Metadata). Поле `title` в поиске и есть это имя; H1 находится через
+   тело заметки.
+2. Search may index all three names, but search indexing must not create
+   source frontmatter.
 
 Drag preview:
 
@@ -201,7 +202,8 @@ Unsafe migration cases:
 3. Frontend title surfaces consume derived titles.
    - Card title slot reads `display_title`; слот медиакарточки читает только
      `content_heading` (пункт 5 выше).
-   - Search labels use `display_title`, then fallback label.
+   - Строка результата поиска показывает имя файла (с 05.10.2026), не
+     `display_title`.
    - Detail renders body H1 through Markdown and does not create a duplicate
      metadata heading.
 

@@ -71,7 +71,7 @@ describe("SettingsApp", () => {
     const appearance = screen.getByRole("button", { name: "Appearance" });
     expect(nav).toContainElement(appearance);
     expect(appearance).toHaveAttribute("aria-current", "true");
-    expect(appearance.className).toContain("bg-active");
+    expect(appearance.className).toContain("state-active");
     expect(screen.getByRole("heading", { name: "Appearance" })).toBeInTheDocument();
   });
 
@@ -80,10 +80,10 @@ describe("SettingsApp", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Spaces" }));
     expect(await screen.findByRole("heading", { name: "Spaces" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Spaces" }).className).toContain("bg-active");
+    expect(screen.getByRole("button", { name: "Spaces" }).className).toContain("state-active");
     expect(
       screen.getByRole("button", { name: "Appearance" }).className,
-    ).not.toContain("bg-active");
+    ).not.toContain("state-active");
 
     fireEvent.click(screen.getByRole("button", { name: "Graph" }));
     expect(await screen.findByRole("heading", { name: "Graph" })).toBeInTheDocument();

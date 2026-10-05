@@ -609,7 +609,7 @@ Sidebar и Detail body не должны рендерить свои допол�
 это шапка списка коллекций: слева число коллекций и за ним индикаторы iCloud и
 индексации. Число приходит из `App` пропом `collectionCount`: без фильтра это
 `orderedTags.length`, тот же список, что рисует боковое меню, а пока в
-`Filter collections...` набран текст, это
+`Find or create...` набран текст, это
 `filterSidebarTags(orderedTags, query).length`. У правого края ячейки
 иконочная кнопка `+` в `ChromeActions windowEdge={false} className="ml-auto
 mr-2"`, `8px` от правого края колонки, которая вызывает `onCreateCollection`
@@ -973,6 +973,19 @@ Image media expansion:
 - При success закрывается и UI уже работает с `new_slug`
 - Ошибки `name_taken` / `invalid_filename` показываются inline
 
+Переименование на месте (решение пользователя 05.10.2026). Имя файла
+открытой карточки в пути и имя коллекции в боковом меню правятся прямо в
+строке, а не в диалоге: двойной клик открывает поле, уход из поля и Enter
+сохраняют, Escape оставляет прежнее имя. Поведение одно, хук
+`src/hooks/useNameEdit.ts`: пока имя набирается, команда, которая ничего не
+пишет (`check_block_rename` для карточки, `check_collection_name` для
+коллекции), отвечает теми же правилами, что и переименование, и причина стоит
+под полем; отказ трясёт поле, после Enter поле остаётся с набранным текстом,
+после ухода из поля возвращается прежнее имя. Правила имени общие для карточек
+и коллекций (`name_problem` в `src-tauri/src/domain/vault.rs`): нельзя
+`\ : # ^ | [ ]`, точку в начале части пути, пустые части и имя длиннее 255
+байт вместе с `.md`. Название карточки в пути не перетаскивается.
+
 ### Search
 
 Новый поиск — surface filter, а не command palette. Полный контракт:
@@ -1103,7 +1116,7 @@ Image media expansion:
   selector uses Radix `align="start"` with `alignOffset=12`.
 - Sidebar search renders as a `data-sidebar-top-search-surface` wrapper with a
   transparent `Input ghost` and an optional clear action. Подсказка
-  `Filter collections...` в покое стоит в `text-muted-foreground`, при
+  `Find or create...` в покое стоит в `text-muted-foreground`, при
   наведении на поле становится `text-foreground`; фона пустое поле не
   получает. Маску растворения правой кромки (`SIDEBAR_SEARCH_MASK_STYLE`)
   несёт само поле `Input`, а не surface, поэтому кнопка очистки рядом не

@@ -300,6 +300,61 @@ describe("Card", () => {
     expect(mark).toHaveClass("bg-search-mark");
   });
 
+  it("micro preview keeps the card's own title when search names the result by file name", () => {
+    const titleMatch = (excerpt: string) => ({
+      field: "title" as const,
+      kind: "prefix" as const,
+      excerpt,
+      ranges: [{ start: 0, end: 5 }],
+      score: 8,
+    });
+    const { rerender } = render(
+      <ReadOnlyCardPreview
+        block={block({
+          block_type: "article",
+          card_kind: "article",
+          slug: "Cards/Radio notes",
+          title: null,
+          content_heading: "Radio tower",
+          display_title: "Radio tower",
+          preview_text: "Regular preview",
+          search_match: titleMatch("Radio notes"),
+        })}
+        vaultPath={VAULT}
+        thumbsRootPath="/tmp/thumbs"
+        previewMode="micro"
+      />,
+    );
+
+    // The file name matched, the card shows its heading: no mark over text
+    // the ranges do not index, and the preview text stays.
+    expect(screen.getByText("Radio tower")).toBeInTheDocument();
+    expect(screen.queryByText("Radio notes")).not.toBeInTheDocument();
+    expect(screen.getByText("Regular preview")).toBeInTheDocument();
+    expect(document.querySelector("mark")).toBeNull();
+
+    rerender(
+      <ReadOnlyCardPreview
+        block={block({
+          block_type: "article",
+          card_kind: "article",
+          slug: "Cards/Radio tower",
+          title: null,
+          content_heading: "Radio tower",
+          display_title: "Radio tower",
+          preview_text: "Regular preview",
+          search_match: titleMatch("Radio tower"),
+        })}
+        vaultPath={VAULT}
+        thumbsRootPath="/tmp/thumbs"
+        previewMode="micro"
+      />,
+    );
+
+    // The heading is the file name itself: the match marks it.
+    expect(screen.getByText("Radio").tagName).toBe("MARK");
+  });
+
   it("uses search match excerpt and mark for article body matches", () => {
     render(
       <Card

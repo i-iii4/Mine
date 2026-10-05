@@ -11,14 +11,51 @@ describe("surface tokens", () => {
     expect(css).not.toMatch(/--card:\s*oklch\(0\.14 0 0\);/);
   });
 
-  it("derives interactive states from the nearest structural surface", () => {
-    expect(css).toMatch(/--active-elevation:\s*-0\.035;/);
-    expect(css).toMatch(/--active-elevation:\s*0\.09;/);
+  it("paints a highlight as a state layer over what lies below and publishes it", () => {
+    // The values themselves follow the colour rules (colorLaw.test.ts).
+    expect(css.match(/--active-alpha:\s*[\d.]+%;/g)).toHaveLength(4);
     expect(css).toMatch(
-      /--active:\s*oklch\(from var\(--surface\) calc\(l \+ var\(--active-elevation\)\) 0 0\);/,
+      /--active:\s*color-mix\(in srgb, var\(--foreground\) var\(--active-alpha\), transparent\);/,
     );
-    expect(css).toMatch(/--sidebar-accent:\s*var\(--active\);/);
-    expect(css).not.toMatch(/--active:\s*oklch\(0\.(?:23|965) 0 0\);/);
-    expect(css).not.toMatch(/\.bg-active\s*\{\s*--surface:/);
+    expect(css).toMatch(/@utility state-active \{\s*background-image: linear-gradient\(var\(--active\), var\(--active\)\);\s*@apply state-surface;/);
+    // The layer keeps the surface it stands on and passes itself on to what
+    // it holds, so a layer inside a layer stacks exactly.
+    expect(css).toMatch(
+      /@utility state-surface \{\s*--under: var\(--surface\);\s*& > \* \{\s*--surface: color-mix\(in srgb, var\(--under\), var\(--foreground\) var\(--active-alpha\)\);\s*@apply surface-fills;/,
+    );
+    expect(css).not.toMatch(/--active-elevation/);
+    expect(css).not.toMatch(/data-surface-zone/);
+  });
+
+  it("sets secondary and tertiary text as the foreground with alpha", () => {
+    // The alphas themselves follow the colour rules (colorLaw.test.ts).
+    expect(css.match(/--muted-alpha:\s*[\d.]+%;/g)).toHaveLength(4);
+    expect(css.match(/--tertiary-alpha:\s*[\d.]+%;/g)).toHaveLength(4);
+    expect(css).toMatch(/--muted-foreground:\s*color-mix\(in srgb, var\(--foreground\) var\(--muted-alpha\), transparent\);/);
+    expect(css).not.toMatch(/--muted-foreground:\s*oklch/);
+    expect(css).not.toMatch(/--hover-foreground/);
+  });
+
+  it("keeps one opaque line colour per theme, field frames equal to it", () => {
+    // Opaque: no alpha in any theme block; the values are pinned by the
+    // colour rules (colorLaw.test.ts).
+    expect(css.match(/--border:\s*oklch\([\d.]+ 0 0\);/g)).toHaveLength(4);
+    for (const line of ["0\\.9394", "0\\.243"]) {
+      expect(css.match(new RegExp(`--border:\\s*oklch\\(${line} 0 0\\);`, "g"))).toHaveLength(2);
+      expect(css.match(new RegExp(`--input:\\s*oklch\\(${line} 0 0\\);`, "g"))).toHaveLength(2);
+    }
+  });
+
+  it("presses only a button with depth", () => {
+    expect(css).not.toMatch(/button:active:not\(:disabled\):not\(\[aria-haspopup\]\)/);
+    expect(css).toMatch(
+      /\.button-depth:active:not\(:disabled\),\s*button:active:not\(:disabled\) > \.button-depth,\s*\[data-action-button\]:active > \.button-depth \{\s*transform: translateY\(1px\);/,
+    );
+  });
+
+  it("gives a disabled button with depth the frame instead of its face", () => {
+    expect(css).toMatch(
+      /\.button-depth:disabled,\s*:disabled > \.button-depth \{\s*background-color: transparent;\s*box-shadow: none;\s*outline: 1px solid var\(--inert-frame\);/,
+    );
   });
 });

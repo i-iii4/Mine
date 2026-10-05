@@ -48,11 +48,11 @@ export const MenuTextTrigger = React.forwardRef<HTMLButtonElement, MenuTextTrigg
             "inline-flex min-w-0 flex-none items-center overflow-hidden rounded-0 font-mono text-sm text-muted-foreground focus-visible:outline-none",
           surface === "clipperHeader" &&
             cn(
-              "inline-flex h-6 max-w-full items-center overflow-hidden rounded-1 text-base text-foreground hover:bg-active data-[state=open]:bg-active",
+              "inline-flex h-6 max-w-full items-center overflow-hidden rounded-1 text-base text-foreground hover:state-active data-[state=open]:state-active",
               chevronPadding,
             ),
           surface === "actionBar" &&
-            "action-button inline-flex h-6 shrink-0 items-center overflow-hidden rounded-1 p-[2px] font-mono text-sm hover:bg-active",
+            "action-button inline-flex h-6 shrink-0 items-center overflow-hidden rounded-1 p-[2px] font-mono text-sm hover:state-active",
           className,
         )}
         {...props}
@@ -75,11 +75,11 @@ export const MenuTextTrigger = React.forwardRef<HTMLButtonElement, MenuTextTrigg
                 isClipperHeader
                   ? "min-w-0 max-w-full"
                   : cn(
-                    "min-w-0 max-w-full rounded-1 group-hover:bg-active group-hover:text-foreground group-data-[state=open]:bg-active group-data-[state=open]:text-foreground",
+                    "min-w-0 max-w-full rounded-1 group-hover:state-active group-hover:text-foreground group-data-[state=open]:state-active group-data-[state=open]:text-foreground",
                     chevronPadding,
                   ),
                 innerTextClass,
-                keyboardFocus && "bg-active text-foreground",
+                keyboardFocus && "state-active text-foreground",
               )}
             >
               <span className="min-w-0 truncate text-left">

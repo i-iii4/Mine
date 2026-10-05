@@ -130,6 +130,14 @@ export const DEFAULT_COMMANDS: readonly CommandDefinition[] = [
     context: "global",
     binding: { key: "v", meta: true },
   },
+  // Dev button styles (src/lib/buttonStyle.ts): step the window's buttons
+  // through macOS, Retro and Linear. Goes with the tool.
+  {
+    id: "flip-buttons",
+    name: "Cycle Buttons macOS / Retro / Linear",
+    context: "global",
+    binding: { key: "b", ctrl: true, alt: true },
+  },
 
   // ── Tabs and windows (SPEC_TABS.md, В55, В57) ─────────────────────────
   // macOS keeps these chords for tabs and windows in every app. The ⌘ ones

@@ -5,12 +5,12 @@ export type NativeWindowChromeSurfaceToken = "--chrome" | "--accent";
 
 const FALLBACK_SURFACE_COLORS: Record<"light" | "dark", Record<NativeWindowChromeSurfaceToken, string>> = {
   light: {
-    "--chrome": "#fcfcfc",
-    "--accent": "#f8f8f8",
+    "--chrome": "#fafafa",
+    "--accent": "#f5f5f5",
   },
   dark: {
     "--chrome": "#0f0f0f",
-    "--accent": "#121212",
+    "--accent": "#161616",
   },
 };
 

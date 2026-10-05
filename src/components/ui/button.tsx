@@ -18,29 +18,32 @@ const TOOLTIP_DELAY_MS = 500
 // line hover uses (DESIGN_SYSTEM.md, Focus (button)); only chrome controls
 // show focus through their plate instead.
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-1 text-base font-semibold select-none text-foreground disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-[13px] shrink-0 [&_svg]:shrink-0 focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-ring",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-1 text-base font-normal select-none text-foreground disabled:pointer-events-none disabled:text-tertiary-foreground [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-[13px] shrink-0 [&_svg]:shrink-0 focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-ring",
   {
     variants: {
       variant: {
-        // Filled and raised with depth, no hover (DESIGN_SYSTEM.md,
-        // «Объём кнопки»).
-        default: "button-depth rounded-2 bg-depth-fill",
+        // Filled and raised with depth (DESIGN_SYSTEM.md, «Объём кнопки»).
+        // Disabled, it keeps only the frame (global.css, «Недоступно»).
+        default: "button-depth bg-depth-fill",
         // Secondary action: transparent body, permanent border. Text action
         // buttons are never borderless — ghost is reserved for icon controls.
-        secondary: "bg-transparent outline-1 -outline-offset-1 outline-border hover:outline-component-fill-hover",
-        destructive: "button-depth rounded-2 bg-depth-fill text-destructive",
-        // A keystroke that cannot be pressed: `secondary`'s body — transparent,
-        // permanent border — with no hover at all. The outline keeps it a
-        // control by shape; the missing fill and missing hover say it is a
-        // reference, not a button.
-        reference: "bg-transparent outline-1 -outline-offset-1 outline-border",
-        ghost: "bg-transparent hover:text-hover-foreground",
+        secondary: "bg-transparent outline-1 -outline-offset-1 outline-border hover:outline-component-fill-hover disabled:outline-inert-frame",
+        destructive: "button-depth bg-depth-fill text-destructive",
+        // Something that reports and cannot be pressed (a keystroke the bottom
+        // bar names, the Connected plaque): the frame every unpressable control
+        // shares, from the surface under it, and the secondary step, since what
+        // it names works. No hover at all. Disabled controls share the frame
+        // but take the tertiary step (DESIGN_SYSTEM.md, «Недоступно»).
+        reference: "bg-transparent outline-1 -outline-offset-1 outline-inert-frame text-muted-foreground",
+        ghost: "bg-transparent hover:text-foreground",
         chrome: "group/chrome bg-transparent text-muted-foreground hover:text-foreground data-[state=open]:text-foreground focus-visible:text-foreground focus-visible:outline-none",
         // The card's button: filled with depth like `default`, a dimmed glyph
-        // that brightens while its menu is open; no hover (DESIGN_SYSTEM.md,
-        // «Кнопки карточки»).
-        raised: "button-depth rounded-2 bg-depth-fill text-muted-foreground data-[state=open]:text-foreground",
-        link: "bg-transparent underline underline-offset-4 hover:text-hover-foreground",
+        // that brightens while its menu is open. Hover lays the state layer
+        // over the face, like every button with depth (buttons.css); the text
+        // and the glyph stay as they are (DESIGN_SYSTEM.md, «Кнопки
+        // карточки»).
+        raised: "button-depth bg-depth-fill text-muted-foreground data-[state=open]:text-foreground",
+        link: "bg-transparent underline underline-offset-4 hover:text-foreground",
       },
       size: {
         default: "h-8 px-3 has-[>svg]:px-2.5",
@@ -72,9 +75,12 @@ function Button({
 }: React.ComponentProps<"button"> &
   VariantProps<typeof buttonVariants> & {
     asChild?: boolean
-    /** chrome-icon: the 24px plate on hover only, or always (the sidebar's
-     *  filter row, DESIGN_SYSTEM.md, «Иконочные кнопки хрома»). */
-    plate?: "hover" | "always"
+    /** chrome-icon: the 24px plate on hover only, always (the sidebar's
+     *  filter row, DESIGN_SYSTEM.md, «Иконочные кнопки хрома»), or raised:
+     *  filled with depth like the card's buttons; hover lays the state
+     *  layer over the plate's face and the glyph stays dimmed
+     *  (DESIGN_SYSTEM.md, «Объём кнопки»). */
+    plate?: "hover" | "always" | "raised"
     /** What the tooltip says. An icon button says its `aria-label` unless
      *  given this; `false` keeps it silent (a page too small to show one). */
     tooltip?: React.ReactNode | false
@@ -94,7 +100,11 @@ function Button({
       data-slot="button"
       data-variant={variant}
       data-size={size}
-      className={cn(buttonVariants({ variant, size, className }))}
+      className={cn(
+        buttonVariants({ variant, size, className }),
+        // A raised plate keeps its glyph dimmed on hover too.
+        size === "chrome-icon" && plate === "raised" && "hover:text-muted-foreground",
+      )}
       {...props}
     >
       {size === "chrome-icon" && !asChild ? (
@@ -102,9 +112,11 @@ function Button({
           data-plate={plate}
           className={cn(
             "w-6 rounded-1",
-            plate === "always"
-              ? "bg-active"
-              : "group-hover/chrome:bg-active group-data-[state=open]/chrome:bg-active group-data-[top-chrome-keyboard-focus=true]/chrome:bg-active group-focus-visible/chrome:bg-active",
+            plate === "raised"
+              ? "button-depth bg-depth-fill"
+              : plate === "always"
+                ? "state-active"
+                : "group-hover/chrome:state-active group-data-[state=open]/chrome:state-active group-data-[top-chrome-keyboard-focus=true]/chrome:state-active group-focus-visible/chrome:state-active",
           )}
         >
           {children}

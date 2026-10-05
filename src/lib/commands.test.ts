@@ -2,11 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 
 import {
+  checkCollectionName,
   createBlock,
   deleteOrphanMedia,
   extractInlineMedia,
   getVaultPath,
+  nameRefusal,
   promoteOrphanMedia,
+  renameChannel,
   selectVault,
   setSidebarMenuCollapsed,
 } from "./commands";
@@ -50,6 +53,25 @@ describe("IPC command adapter", () => {
     await expect(selectVault("/Users/me/Mine")).rejects.toThrow(
       "Mine cannot read the identity file of “Mine”, so it did not open the space and changed nothing.",
     );
+  });
+
+  it("carries a refused name's reason in words, and the check answers with it (05.10.2026)", async () => {
+    const reason = "A collection named “Photos” already exists.";
+    mockInvoke.mockRejectedValueOnce({ kind: "name_refused", message: reason });
+    const refused = await renameChannel("Art", "Photos").catch((error: unknown) => error);
+    expect(refused).toBeInstanceOf(Error);
+    expect(nameRefusal(refused)).toBe(reason);
+    expect(nameRefusal(new Error("database failed"))).toBeNull();
+
+    mockInvoke.mockRejectedValueOnce({ kind: "name_refused", message: reason });
+    await expect(checkCollectionName(null, "Photos")).resolves.toBe(reason);
+    expect(mockInvoke).toHaveBeenLastCalledWith("check_collection_name", { old_tag: null, new_tag: "Photos" });
+
+    // A check that fails for another reason names none; the save will say.
+    mockInvoke.mockRejectedValueOnce({ kind: "internal", message: "database failed" });
+    await expect(checkCollectionName("Art", "Pictures")).resolves.toBeNull();
+    // A name the rules let through has no reason either.
+    await expect(checkCollectionName("Art", "Pictures")).resolves.toBeNull();
   });
 
   it("preserves specialized tagged errors for feature-specific handling", async () => {

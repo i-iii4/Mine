@@ -306,6 +306,7 @@ pub(crate) fn adopt_recovered_session(
         .watcher
         .lock()
         .map_err(|_| CommandError::Internal("watcher mutex poisoned".into()))?;
+    space.serve_root(recovered.root());
     let old_vault = active.replace(VaultState {
         conn,
         vault: recovered,
@@ -345,6 +346,11 @@ pub enum CommandError {
     /// two (`SPEC_AUDIT_FIXES.md`, Д2.1).
     #[error("the identity of the space at {path} cannot be read; nothing was changed")]
     SpaceIdentityUnreadable { path: String },
+    /// A name the user typed is refused, by the rules every typed name
+    /// follows or because it is taken. The message says why and is read by
+    /// the user under the name (05.10.2026). Nothing was written.
+    #[error("{0}")]
+    NameRefused(String),
     #[error("{0}")]
     Internal(String),
 }

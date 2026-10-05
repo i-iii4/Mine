@@ -62,7 +62,7 @@ describe("MenuTextTrigger", () => {
     );
 
     const trigger = screen.getByRole("button", { name: "Open actions" });
-    expect(trigger).toHaveClass("hover:bg-active");
+    expect(trigger).toHaveClass("hover:state-active");
     expect(trigger).not.toHaveClass("hover:bg-component-fill-hover");
   });
 });

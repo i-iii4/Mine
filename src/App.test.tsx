@@ -136,6 +136,7 @@ vi.mock("@/lib/commands", () => ({
   deleteChannel: vi.fn(),
   reorderCollections: vi.fn(),
   renameChannel: vi.fn(),
+  checkCollectionName: vi.fn(async () => null),
   renameBlockFile: commandMocks.renameBlockFile,
   deleteTagFromAll: vi.fn(),
   addTag: vi.fn(),
@@ -1581,11 +1582,11 @@ describe("AppWithVault", () => {
     // The backend paints every window with the chrome colour this page
     // reports; the page paints no window itself (SPEC_TABS.md, В25).
     await waitFor(() => {
-      expect(commandMocks.reportWindowSurface).toHaveBeenCalledWith("#fcfcfc");
+      expect(commandMocks.reportWindowSurface).toHaveBeenCalledWith("#fafafa");
     });
 
     fireEvent.keyDown(window, { key: "А", code: "KeyF", metaKey: true, shiftKey: true });
-    const input = screen.getByRole("textbox", { name: "Filter collections" });
+    const input = screen.getByRole("textbox", { name: "Find or create collection" });
     fireEvent.change(input, { target: { value: "alp" } });
     // Over the table the field keeps the table's surface, a query too.
     expect(input.closest("[data-sidebar-top-search-surface]")).toHaveClass("bg-sidebar");
@@ -1609,17 +1610,17 @@ describe("AppWithVault", () => {
         expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
       });
 
-      const before = screen.queryByRole("textbox", { name: "Filter collections" });
+      const before = screen.queryByRole("textbox", { name: "Find or create collection" });
       const old = fireEvent.keyDown(window, { key: "F", code: "KeyF", metaKey: true, shiftKey: true });
       // The old chord is no longer claimed: the event is not prevented and
       // the collection filter does not take focus.
       expect(old).toBe(true);
-      expect(document.activeElement).not.toBe(screen.queryByRole("textbox", { name: "Filter collections" }) ?? before);
+      expect(document.activeElement).not.toBe(screen.queryByRole("textbox", { name: "Find or create collection" }) ?? before);
 
       const rebound = fireEvent.keyDown(window, { key: "J", code: "KeyJ", metaKey: true, shiftKey: true });
       expect(rebound).toBe(false);
       await waitFor(() => {
-        expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Filter collections" }));
+        expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Find or create collection" }));
       });
     } finally {
       setCommandOverrides({});
@@ -1891,7 +1892,7 @@ describe("AppWithVault", () => {
     expect(topSidebarSegment?.querySelector("[data-top-chrome-space-separator]")).toBeNull();
     expect(topSidebarSegment?.querySelector("[data-top-chrome-search-separator]")).not.toBeInTheDocument();
     expect(document.querySelector("[data-top-chrome-space-measure]")).toBeNull();
-    expect(screen.queryByRole("textbox", { name: "Filter collections" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Find or create collection" })).not.toBeInTheDocument();
     const collectionSwitcher = screen.getByRole("button", { name: "Switch collection: Everything" });
     // Collapsed, space and collection are one path: no inset between them,
     // none before the content that follows.
@@ -2082,12 +2083,16 @@ describe("AppWithVault", () => {
     const gridCallsBeforeSearch = commandMocks.listGridBlocks.mock.calls.length;
 
     fireEvent.keyDown(window, { key: "А", code: "KeyF", metaKey: true, shiftKey: true });
-    const input = screen.getByRole("textbox", { name: "Filter collections" });
+    const input = screen.getByRole("textbox", { name: "Find or create collection" });
     await waitFor(() => {
       expect(input).toHaveFocus();
     });
     const searchSurface = input.closest("[data-sidebar-top-search-surface]") as HTMLElement;
-    expect(searchSurface).not.toHaveClass("bg-accent");
+    // Empty, the field is chrome like the rest of the row (05.10.2026).
+    expect(searchSurface).toHaveClass("bg-chrome");
+    expect(searchSurface).not.toHaveClass("bg-sidebar");
+    // No hover answer: the placeholder stays muted.
+    expect(input.className).not.toMatch(/hover:placeholder:text-foreground/);
     expect(input).toHaveClass("font-mono");
     expect(input).toHaveClass("text-sm");
     expect(input).toHaveClass("text-muted-foreground");
@@ -2105,11 +2110,14 @@ describe("AppWithVault", () => {
     const clearSearch = screen.getByRole("button", { name: "Clear collection search" });
     expect(clearSearch).toHaveAttribute("data-chrome-control");
     expect(clearSearch.querySelector("[data-chrome-plate]")).not.toBeNull();
-    expect(clearSearch.querySelector("svg")).toHaveClass("size-[13px]");
+    // A chrome icon button like its neighbours (05.10.2026): the 13px glyph
+    // and the plate on hover come from the chrome-icon size.
+    expect(clearSearch).toHaveAttribute("data-size", "chrome-icon");
+    expect(clearSearch.querySelector("[data-chrome-plate]")).toHaveClass("group-hover/chrome:state-active");
     fireEvent.click(clearSearch);
     expect(input).toHaveFocus();
     expect(input).toHaveValue("");
-    expect(searchSurface).not.toHaveClass("bg-accent");
+    expect(searchSurface).toHaveClass("bg-chrome");
     expect(screen.queryByRole("button", { name: "Clear collection search" })).not.toBeInTheDocument();
 
     fireEvent.change(input, { target: { value: "alp" } });
@@ -2136,7 +2144,7 @@ describe("AppWithVault", () => {
     });
 
     fireEvent.keyDown(window, { key: "F", code: "KeyF", metaKey: true, shiftKey: true });
-    const input = screen.getByRole("textbox", { name: "Filter collections" });
+    const input = screen.getByRole("textbox", { name: "Find or create collection" });
     await waitFor(() => {
       expect(input).toHaveFocus();
     });
@@ -2332,7 +2340,7 @@ describe("AppWithVault", () => {
       expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
     });
 
-    const input = screen.getByRole("textbox", { name: "Filter collections" });
+    const input = screen.getByRole("textbox", { name: "Find or create collection" });
     fireEvent.change(input, { target: { value: "Gamma" } });
 
     fireEvent.keyDown(input, { key: "Enter" });
@@ -2401,7 +2409,7 @@ describe("AppWithVault", () => {
       }),
     );
 
-    const input = screen.getByRole("textbox", { name: "Filter collections" });
+    const input = screen.getByRole("textbox", { name: "Find or create collection" });
     await waitFor(() => {
       expect(input).toHaveFocus();
     });
@@ -3466,7 +3474,7 @@ describe("AppWithVault", () => {
       // The saved link mode no longer filters anything: the switch left every
       // mode (03.10.2026), and the card reopens with every collection listed.
       expect(document.querySelector("[data-detail-link-mode-tabs]")).toBeNull();
-      expect(screen.getByRole("textbox", { name: "Filter collections" })).toHaveValue("al");
+      expect(screen.getByRole("textbox", { name: "Find or create collection" })).toHaveValue("al");
       await waitFor(() => expect(onRestored).toHaveBeenCalledTimes(1));
 
       // The backend already holds this view: nothing to report.
@@ -3544,7 +3552,7 @@ describe("AppWithVault", () => {
       commandMocks.reportTabView.mockClear();
 
       fireEvent.click(screen.getByRole("button", { name: "Scroll feed" }));
-      fireEvent.change(screen.getByRole("textbox", { name: "Filter collections" }), { target: { value: "be" } });
+      fireEvent.change(screen.getByRole("textbox", { name: "Find or create collection" }), { target: { value: "be" } });
       fireEvent.keyDown(window, { key: "Tab" });
       expect(commandMocks.reportTabView).not.toHaveBeenCalled();
 
@@ -3849,7 +3857,7 @@ describe("AppWithVault", () => {
         render(<App />);
         await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
 
-        const input = screen.getByRole("textbox", { name: "Filter collections" });
+        const input = screen.getByRole("textbox", { name: "Find or create collection" });
         fireEvent.keyDown(input, { key: "Tab", code: "Tab", ctrlKey: true });
         expect(commandMocks.activateAdjacentTab).toHaveBeenLastCalledWith(true);
         fireEvent.keyDown(window, { key: "Tab", code: "Tab", ctrlKey: true, shiftKey: true });

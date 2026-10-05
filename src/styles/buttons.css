@@ -1,0 +1,254 @@
+/* The button with depth (DESIGN_SYSTEM.md, «Объём кнопки»;
+   SPEC_COLOR_RULES.md, 3.3 and 3.6): its face, the same in every style, and
+   the edges of its three styles, macOS (the default), Retro and Linear,
+   chosen per window (src/lib/buttonStyle.ts, root attribute `data-buttons`).
+   The face tokens live in the theme blocks of global.css.
+
+   Every rule is anchored on the root as `html:root`: a type and a
+   pseudo-class rank it above the base button rules of global.css whatever
+   the order of the two files. */
+
+/* ── Face, every style ───────────────────────────────────────────────────────
+   The face of a button with depth: in light the zone with the very state
+   layer a hover plate paints (--active), so the two are one paint; in dark
+   three zone steps brighter than what is under it. A selected segment is the
+   same face with the edges of the style. A face that also carries a state
+   layer (a selected key) keeps both. A disabled carrier has no face (the
+   rule after the state layer below). */
+html:root .bg-depth-fill,
+html:root .bg-component-fill-inner,
+html:root .data-\[state\=active\]\:bg-component-fill-inner[data-state="active"] {
+  background-color: oklch(from var(--surface) clamp(0, calc(l + var(--button-face-step)), 1) 0 0);
+  background-image: var(--button-face-layer);
+}
+html:root .bg-component-fill-inner,
+html:root .data-\[state\=active\]\:bg-component-fill-inner[data-state="active"] {
+  box-shadow: var(--button-depth);
+}
+
+/* Hover and an open menu are a state layer on every element, a button with
+   depth included: the face stays, the layer lies over it. */
+html:root :is(
+  .button-depth:not(:disabled, :disabled > *, [data-selected="true"] > *):hover,
+  .button-depth[data-state="open"],
+  button:not(:disabled):hover > .button-depth,
+  button[data-state="open"] > .button-depth,
+  [data-action-button]:not([data-selected="true"]):hover > .button-depth
+) {
+  background-color: oklch(from var(--surface) clamp(0, calc(l + var(--button-face-step)), 1) 0 0);
+  background-image: linear-gradient(var(--active), var(--active)), var(--button-face-layer);
+}
+
+html:root :is(.bg-depth-fill, .bg-component-fill-inner).state-active {
+  background-image: linear-gradient(var(--active), var(--active)), var(--button-face-layer);
+}
+
+/* A disabled carrier has no face and no state layer: it keeps the disabled
+   frame of global.css (DESIGN_SYSTEM.md, «Недоступно»; SPEC_COLOR_RULES.md,
+   3.6). Last and as heavy as the rules above, so it wins over them. */
+html:root :is(.bg-depth-fill, .bg-component-fill-inner):is(:disabled, :disabled > *) {
+  background-color: transparent;
+  background-image: none;
+}
+
+/* ── Buttons: macOS ──────────────────────────────────────────────────────────
+   The default style (no data-buttons). On every depth carrier a 0.5px
+   outline inside the box, one quiet line step brighter than the button's
+   own face (light ΔL 0.03 darker, dark 0.0429 lighter), and nothing over
+   it: the bottom edge and the dark highlight went, so it is even all round
+   (05.10.2026). Set on the element, so
+   `var(--surface)` is the surface under this button. Hover, an open menu
+   and a selected key work the outline out from the face with the state
+   layer, so it rises with the face, as in Linear (decision 05.10.2026).
+   Inset, so the box keeps its size. Disabled carriers keep the disabled
+   frame. The step is a quiet line step (SPEC_COLOR_RULES.md, K10). */
+html:root {
+  --macos-outline-step: -0.03;
+}
+@media (prefers-color-scheme: dark) {
+  html:root:not([data-theme="light"]) {
+    --macos-outline-step: 0.0429;
+  }
+}
+html:root[data-theme="dark"] {
+  --macos-outline-step: 0.0429;
+}
+html:root:not([data-buttons]) :is(
+  .button-depth,
+  .bg-component-fill-inner,
+  .data-\[state\=active\]\:bg-component-fill-inner[data-state="active"]
+):not(:disabled, :disabled > *) {
+  --macos-face: color-mix(
+    in srgb,
+    oklch(from var(--surface) clamp(0, calc(l + var(--button-face-step)), 1) 0 0),
+    var(--foreground) var(--button-face-share)
+  );
+  --macos-outline-from: var(--macos-face);
+  box-shadow: inset 0 0 0 0.5px oklch(from var(--macos-outline-from) clamp(0, calc(l + var(--macos-outline-step)), 1) 0 0);
+}
+html:root:not([data-buttons]) :is(
+  .button-depth:not(:disabled, :disabled > *, [data-selected="true"] > *):hover,
+  .button-depth[data-state="open"],
+  button:not(:disabled):hover > .button-depth,
+  button[data-state="open"] > .button-depth,
+  [data-action-button]:not([data-selected="true"]):hover > .button-depth,
+  .button-depth.state-active,
+  .bg-component-fill-inner.state-active
+) {
+  --macos-outline-from: color-mix(in srgb, var(--macos-face), var(--foreground) var(--active-alpha));
+}
+
+/* A macOS button does not move when pressed (05.10.2026): while it is held,
+   its face flashes half a state layer further than hover (--press) and the
+   outline follows the face. Retro and Linear keep the 1px press. */
+html:root:not([data-buttons]) :is(
+  .button-depth:active:not(:disabled),
+  button:active:not(:disabled) > .button-depth,
+  [data-action-button]:active > .button-depth
+) {
+  transform: none;
+  background-image: linear-gradient(var(--press), var(--press)), linear-gradient(var(--active), var(--active)), var(--button-face-layer);
+  --macos-outline-from: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--macos-face), var(--foreground) var(--active-alpha)),
+    var(--foreground) calc(var(--active-alpha) / 2)
+  );
+}
+
+/* ── Buttons: retro ──────────────────────────────────────────────────────────
+   /__button-depth, variant 1, approved on screen by the user: three inset
+   layers on every depth carrier, no drop shadow. A 0.5px hairline drawn
+   first, a lit top line 1.5px under it and a dark bottom line 1.5px, all
+   lightness steps from the button's fill F; the hairline goes from the darker
+   of the zone and the fill. Set on the element, so `var(--surface)` is the
+   surface under this button. Disabled carriers keep the disabled frame. The
+   selected segment faces are carriers too. Hover, press and selection change
+   the face or move it, not these edges. */
+
+/* Light: F is the zone under the state layer (darker than the zone). */
+html:root[data-buttons="retro"] :is(
+  .button-depth,
+  .bg-component-fill-inner,
+  .data-\[state\=active\]\:bg-component-fill-inner[data-state="active"]
+):not(:disabled, :disabled > *) {
+  --retro-face: color-mix(in srgb, var(--surface), var(--foreground) var(--active-alpha));
+  --button-depth:
+    inset 0 0 0 0.5px oklch(from var(--retro-face) clamp(0, calc(l - 0.06), 1) 0 0),
+    inset 0 1.5px 0 oklch(from var(--retro-face) clamp(0, calc(l + 0.045), 1) 0 0),
+    inset 0 -1.5px 0 oklch(from var(--retro-face) clamp(0, calc(l - 0.03), 1) 0 0);
+}
+/* Dark: F is three zone steps brighter than the zone; the hairline goes
+   from the zone, two line steps down. */
+@media (prefers-color-scheme: dark) {
+  html:root[data-buttons="retro"]:not([data-theme="light"]) :is(
+    .button-depth,
+    .bg-component-fill-inner,
+    .data-\[state\=active\]\:bg-component-fill-inner[data-state="active"]
+  ):not(:disabled, :disabled > *) {
+    --retro-face: oklch(from var(--surface) calc(l + 0.09) 0 0);
+    --button-depth:
+      inset 0 0 0 0.5px oklch(from var(--surface) clamp(0, calc(l - 0.0858), 1) 0 0),
+      inset 0 1.5px 0 oklch(from var(--retro-face) clamp(0, calc(l + 0.0643), 1) 0 0),
+      inset 0 -1.5px 0 oklch(from var(--retro-face) clamp(0, calc(l - 0.0429), 1) 0 0);
+  }
+}
+html:root[data-buttons="retro"][data-theme="dark"] :is(
+  .button-depth,
+  .bg-component-fill-inner,
+  .data-\[state\=active\]\:bg-component-fill-inner[data-state="active"]
+):not(:disabled, :disabled > *) {
+  --retro-face: oklch(from var(--surface) calc(l + 0.09) 0 0);
+  --button-depth:
+    inset 0 0 0 0.5px oklch(from var(--surface) clamp(0, calc(l - 0.0858), 1) 0 0),
+    inset 0 1.5px 0 oklch(from var(--retro-face) clamp(0, calc(l + 0.0643), 1) 0 0),
+    inset 0 -1.5px 0 oklch(from var(--retro-face) clamp(0, calc(l - 0.0429), 1) 0 0);
+}
+
+/* ── Buttons: Linear ─────────────────────────────────────────────────────────
+   /__button-depth, variant «Linear», approved on screen by the user. On every
+   depth carrier: a face, a 0.5px outline inside the box lit from above, and
+   a minimal contact shadow. The face follows the zone and stays lighter
+   than it in the light theme (the zone mixed with white 60%: page 255,
+   sidebar 254, card and chrome 253, bottom panel 251); in the dark theme it
+   is the face of every style, three zone steps brighter. The outline is a
+   line two line steps brighter than the brighter of zone and face at the
+   top, one more step at the bottom in light and one fewer in dark. Disabled
+   carriers keep the app's disabled look. Hover, an open menu and a selected
+   key lay the state layer over the whole button; pressing still moves the
+   carrier 1px. The steps
+   live on the root, the colours are worked out on each carrier from the
+   surface under it: face = the zone mixed with white, then a lightness
+   step. */
+html:root[data-buttons="linear"] {
+  --linear-face-white: 60%;
+  --linear-face-step: 0;
+  --linear-ring-top: -0.06;
+  --linear-ring-bottom: -0.09;
+  --button-depth: 0 1px 2px -1px rgb(0 0 0 / 0.1);
+}
+@media (prefers-color-scheme: dark) {
+  html:root[data-buttons="linear"]:not([data-theme="light"]) {
+    --linear-face-white: 0%;
+    --linear-face-step: 0.09;
+    --linear-ring-top: 0.1758;
+    --linear-ring-bottom: 0.1329;
+    --button-depth: 0 0.5px 1.5px rgb(0 0 0 / 0.5);
+  }
+}
+html:root[data-buttons="linear"][data-theme="dark"] {
+  --linear-face-white: 0%;
+  --linear-face-step: 0.09;
+  --linear-ring-top: 0.1758;
+  --linear-ring-bottom: 0.1329;
+  --button-depth: 0 0.5px 1.5px rgb(0 0 0 / 0.5);
+}
+
+/* The face, the outline and the face at rest. The outline's top and bottom
+   are a 0.5px border inside the box (border-box sizing, so a fixed height
+   stays); its sides are the same gradient painted as two 0.5px strips at
+   the edges rather than a border, so a button sized by its text keeps its
+   width. The selected segment faces are carriers too. */
+html:root[data-buttons="linear"] :is(
+  .button-depth,
+  .bg-component-fill-inner,
+  .data-\[state\=active\]\:bg-component-fill-inner[data-state="active"]
+):not(:disabled, :disabled > *) {
+  --linear-face: oklch(
+    from color-mix(in srgb, var(--surface), white var(--linear-face-white))
+    clamp(0, calc(l + var(--linear-face-step)), 1) 0 0
+  );
+  --linear-ring: linear-gradient(
+    to bottom,
+    oklch(from var(--surface) clamp(0, calc(l + var(--linear-ring-top)), 1) 0 0),
+    oklch(from var(--surface) clamp(0, calc(l + var(--linear-ring-bottom)), 1) 0 0)
+  );
+  box-sizing: border-box;
+  border-style: solid;
+  border-color: transparent;
+  border-width: 0.5px 0;
+  background:
+    var(--linear-ring) left / 0.5px 100% no-repeat border-box,
+    var(--linear-ring) right / 0.5px 100% no-repeat border-box,
+    linear-gradient(var(--linear-face), var(--linear-face)) padding-box,
+    var(--linear-ring) border-box;
+}
+
+/* Hover, an open menu and a selected key: the state layer over the whole
+   button, the outline included, so the outline rises with the face, as in
+   Linear (decision 05.10.2026). */
+html:root[data-buttons="linear"] :is(
+  .button-depth:not(:disabled, :disabled > *, [data-selected="true"] > *):hover,
+  .button-depth[data-state="open"],
+  button:not(:disabled):hover > .button-depth,
+  button[data-state="open"] > .button-depth,
+  [data-action-button]:not([data-selected="true"]):hover > .button-depth,
+  .button-depth.state-active,
+  .bg-component-fill-inner.state-active
+) {
+  background:
+    linear-gradient(var(--active), var(--active)) border-box,
+    var(--linear-ring) left / 0.5px 100% no-repeat border-box,
+    var(--linear-ring) right / 0.5px 100% no-repeat border-box,
+    linear-gradient(var(--linear-face), var(--linear-face)) padding-box,
+    var(--linear-ring) border-box;
+}

@@ -118,7 +118,7 @@ const COLOR_TOKEN_GROUPS: readonly TokenGroup[] = [
       { token: "--secondary", use: "= accent (совместимость shadcn)" },
       { token: "--muted", use: "= accent (совместимость shadcn)" },
       { token: "--accent", use: "Hover-фон, action bar" },
-      { token: "--active", use: "Relative hover/selected surface" },
+      { token: "--active", use: "Слой состояния: основной цвет с прозрачностью поверх того, что под ним" },
       { token: "--border", use: "Границы и разделители" },
       { token: "--border-accent", use: "Индикатор навигации/наведения: seam строки, рамка карточки (контраст ~0.30 к фону)" },
       { token: "--search-mark", use: "Поисковый маркер: фон mark в карточках и Search Overlay (жёлтый текстовыделитель)" },
@@ -130,9 +130,8 @@ const COLOR_TOKEN_GROUPS: readonly TokenGroup[] = [
     title: "Текст",
     tokens: [
       { token: "--foreground", use: "Основной текст" },
-      { token: "--muted-foreground", use: "Вторичный — мета, счётчики" },
-      { token: "--tertiary-foreground", use: "Третичный — плейсхолдеры" },
-      { token: "--hover-foreground", use: "Текст при hover" },
+      { token: "--muted-foreground", use: "Вторичная ступень: основной с прозрачностью, мета, счётчики" },
+      { token: "--tertiary-foreground", use: "Третичная ступень: основной с прозрачностью, плейсхолдеры, недоступное" },
       { token: "--popover-foreground", use: "Текст в меню" },
       { token: "--accent-foreground", use: "Текст на accent" },
     ],
@@ -437,7 +436,7 @@ function CoreComponentSection() {
           { prop: "Фон", value: "--component-fill" },
           { prop: "Текст", value: "--foreground · 14px · 600" },
           { prop: "Отступы", value: "px-3 (12) · gap-2 (8)" },
-          { prop: "Disabled", value: "opacity-50" },
+          { prop: "Disabled", value: "без заливки и объёма · рамка --inert-frame · text --tertiary-foreground" },
         ]}
       >
         <Button size="xs">xs 24</Button>
@@ -655,7 +654,7 @@ function FloatingUiSection() {
           { prop: "Ширина", value: "max-content · min 192 · max 300" },
           { prop: "Контейнер", value: "rounded-1 · bg --popover · border · p-1 · shadow-md" },
           { prop: "Пункт", value: "py-1.5 px-2 · gap-2 · rounded-1 · 14px" },
-          { prop: "Hover", value: "bg --active · text --accent-foreground" },
+          { prop: "Hover", value: "state-active · text --foreground" },
           { prop: "destructive", value: "text --destructive" },
           { prop: "Разделитель", value: "h-px · bg --border · my-1" },
           { prop: "SVG", value: "size-[13px] · --muted-foreground" },

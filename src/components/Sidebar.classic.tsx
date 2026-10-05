@@ -169,7 +169,7 @@ function NavItem({
         cn(
           "flex items-center justify-between rounded-1 px-3 py-1.5 text-base ",
           isActive
-            ? "bg-sidebar-accent text-sidebar-accent-foreground"
+            ? "state-active text-sidebar-accent-foreground"
             : "text-muted-foreground hover:bg-accent",
         )
       }
@@ -260,7 +260,7 @@ function TagNavItem({
             cn(
               "flex items-center gap-2 rounded-1 px-3 py-1.5 text-base ",
               isActive
-                ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                ? "state-active text-sidebar-accent-foreground"
                 : "text-muted-foreground hover:bg-accent",
             )
           }
@@ -279,7 +279,7 @@ function TagNavItem({
                         size="icon-xs"
                         onClick={(e) => e.stopPropagation()}
                         onPointerDown={(e) => e.stopPropagation()}
-                        className="shrink-0 text-muted-foreground hover:text-hover-foreground"
+                        className="shrink-0 text-muted-foreground hover:text-foreground"
                       >
                         <MoreHorizontal className="size-[13px]" />
                       </Button>

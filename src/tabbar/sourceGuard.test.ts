@@ -61,7 +61,7 @@ describe("tab bar page boundaries", () => {
     // The first paint is the bar's surface, the bottom panel's accent, in
     // both themes, with the token's own values (В43).
     const css = readFileSync("src/styles/global.css", "utf8");
-    for (const value of ["oklch(0.98 0 0)", "oklch(0.2 0 0)"]) {
+    for (const value of ["oklch(0.9694 0 0)", "oklch(0.2 0 0)"]) {
       expect(css).toContain(`--accent: ${value};`);
       expect(html).toContain(value);
     }

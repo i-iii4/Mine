@@ -78,7 +78,7 @@ function FixedShortcutRow({ command }: { command: ResolvedCommand }) {
             data-shortcut-reference=""
             className={cn(
               buttonVariants({ variant: "reference", size: "xs" }),
-              "h-5 min-w-12 font-mono font-normal text-muted-foreground",
+              "h-5 min-w-12 font-mono font-normal",
             )}
           >
             {combo}
@@ -291,7 +291,7 @@ export function ShortcutsSection() {
                       aria-pressed={isEditing}
                       aria-busy={pending === command.id || arming === command.id}
                       aria-describedby={rowError ? `shortcut-error-${command.id}` : undefined}
-                      className={`h-5 min-w-12 font-mono font-normal text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring ${isEditing ? "bg-active text-foreground" : ""}`}
+                      className={`h-5 min-w-12 font-mono font-normal text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring ${isEditing ? "state-active text-foreground" : ""}`}
                       onClick={() => {
                         if (pendingRef.current || arming) return;
                         if (isEditing) cancel();

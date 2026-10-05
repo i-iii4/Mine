@@ -81,9 +81,9 @@ describe("VaultSwitcher", () => {
     expect(pill).toHaveClass("rounded-1");
     expect(pill).toHaveClass("pl-2", "pr-1");
     expect(pill).toHaveClass("text-muted-foreground");
-    expect(pill).toHaveClass("group-hover:bg-active");
+    expect(pill).toHaveClass("group-hover:state-active");
     expect(pill).toHaveClass("group-hover:text-foreground");
-    expect(pill).toHaveClass("group-data-[state=open]:bg-active");
+    expect(pill).toHaveClass("group-data-[state=open]:state-active");
     expect(pill).toHaveClass("group-data-[state=open]:text-foreground");
     expect(pill).not.toHaveClass("group-hover:bg-component-fill-hover");
     expect(pill).not.toHaveClass("group-focus-visible:bg-component-fill-hover");

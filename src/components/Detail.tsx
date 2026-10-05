@@ -341,19 +341,6 @@ export function Detail({
   const articleColumnClasses = isStackedLayout
     ? "col-start-2 min-w-0 mx-auto w-full max-w-[48rem]"
     : "col-start-2 min-w-0";
-  const {
-    attributes: dragAttributes,
-    listeners: dragListeners,
-    setNodeRef: setDragHandleRef,
-    isDragging,
-  } = useDraggable({
-    id: `detail:${displayBlock.slug}`,
-    data: {
-      type: "block",
-      slug: displayBlock.slug,
-      block: displayBlock,
-    },
-  });
 
   useEffect(() => {
     setFullBlock(isIndexedBlock(block) ? block : null);
@@ -472,14 +459,11 @@ export function Detail({
           data-detail-top-menu="classic"
         >
           <div
-            ref={setDragHandleRef}
-            {...dragAttributes}
-            {...dragListeners}
-            className={cn(
-              "min-w-0 flex-1 cursor-grab truncate font-mono text-sm text-muted-foreground active:cursor-grabbing",
-              isDragging && "opacity-30",
-            )}
-            data-detail-drag-handle
+            // The card's name is not dragged: a double click renames the
+            // card (05.10.2026).
+            onDoubleClick={() => onRequestRename(displayBlock)}
+            className="min-w-0 flex-1 select-none truncate font-mono text-sm text-muted-foreground"
+            data-detail-card-name
             title={filePath}
           >
             {filename}

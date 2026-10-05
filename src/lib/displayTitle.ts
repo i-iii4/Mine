@@ -22,6 +22,16 @@ export function getDisplayTitle(block: DisplayTitleBlock): string | null {
   return legacyTitle || null;
 }
 
+/**
+ * The card's file name: its slug without the folder (a slug never carries
+ * `.md`), the name a rename changes. Search names a result by it (user's
+ * decision of 05.10.2026, SPEC_SEARCH.md): the backend's `title` match field
+ * is this very text, so its ranges index it.
+ */
+export function getFileName(block: Pick<LightBlock, "slug">): string {
+  return block.slug.slice(block.slug.lastIndexOf("/") + 1) || block.slug;
+}
+
 export function getNavigationLabel(block: DisplayTitleBlock): string {
   return getDisplayTitle(block) ?? getFallbackLabel(block);
 }

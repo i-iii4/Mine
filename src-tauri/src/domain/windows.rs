@@ -34,6 +34,30 @@ pub fn chrome_row_height(value: u32) -> u32 {
     }
 }
 
+/// The title bar a window asks AppKit for (В83). AppKit centres the traffic
+/// lights in the title bar's height itself, in every layout, live resize and
+/// full screen included: 32 pt without a toolbar, the buttons 9 pt from the
+/// top, and 40 pt with an empty toolbar in the compact unified style, the
+/// buttons 13 pt from the top (measured on macOS 27.0, 04.10.2026). The tall
+/// row and its line make 40 px, so it takes the compact title bar; the
+/// standard row keeps the system one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TitleBar {
+    /// The system's own title bar, no toolbar.
+    Standard,
+    /// An empty toolbar in the compact unified style.
+    Compact,
+}
+
+/// The title bar for a tab bar row `row_height` tall.
+pub fn title_bar_for(row_height: u32) -> TitleBar {
+    if chrome_row_height(row_height) == CHROME_ROW_TALL_HEIGHT_PX {
+        TitleBar::Compact
+    } else {
+        TitleBar::Standard
+    }
+}
+
 /// The heights of the chrome rows (В83): the tab bar's row and the top rows
 /// of the tab pages, apart, so the bar can stay standard over tall pages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
@@ -784,6 +808,15 @@ pub fn parse(text: &str) -> Result<SavedWindows, ReadIssue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_tall_row_takes_the_compact_title_bar() {
+        assert_eq!(title_bar_for(CHROME_ROW_HEIGHT_PX), TitleBar::Standard);
+        assert_eq!(title_bar_for(CHROME_ROW_TALL_HEIGHT_PX), TitleBar::Compact);
+        // The tall row's content before its line counted in its step.
+        assert_eq!(title_bar_for(40), TitleBar::Compact);
+        assert_eq!(title_bar_for(12), TitleBar::Standard);
+    }
 
     fn screen() -> Vec<ScreenArea> {
         vec![ScreenArea {

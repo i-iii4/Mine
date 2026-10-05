@@ -4,7 +4,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { Plus, X } from "lucide-react";
+import { Plus } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,6 +26,9 @@ import {
   BatchCollectionPicker,
   COLLECTION_PICKER_CONTENT_CLASS,
 } from "./CollectionPicker";
+import { ChromeCloseButton } from "./ChromeCloseButton";
+import { ChromeActions } from "./ChromeRow";
+import { commandById } from "@/lib/commandRegistry";
 import type { LightBlock, TagCount } from "@/types";
 import {
   patchTagLookup,
@@ -138,112 +141,113 @@ export function GroupSelectionCommands({
       className="relative h-full w-full text-foreground"
       data-feed-selection-action-bar=""
     >
-      {/* The pads live on the scrolled content, not the scrollport: a scroll
-          container's right padding never renders past min-w-max content, which
-          pinned the last button to the edge while the left kept its inset. */}
+      {/* The count holds the left; the commands and the close control stand
+          at the right in ChromeActions, which owns the right edge inset as in
+          every chrome row (DESIGN_SYSTEM.md, «Иконочные кнопки хрома»). When
+          the row narrows, the count truncates (`w-0` keeps its text out of the
+          row's min-content) while the commands keep their size; the row
+          scrolls only once the commands alone outgrow it. The pads live on
+          the scrolled content, not the scrollport: a scroll container's end
+          padding never renders past its content. */}
       <div className="h-full max-w-full overflow-x-auto overflow-y-hidden">
-        <div className="flex h-full min-w-max items-center gap-1 px-[var(--main-secondary-pad-x,0.5rem)]">
+        <div className="flex h-full w-full min-w-min items-center gap-1 pl-[var(--main-secondary-pad-x,0.5rem)]">
           <div
-            className="shrink-0 px-2 font-mono text-sm text-muted-foreground"
+            className="w-0 min-w-0 flex-1 truncate px-2 font-mono text-sm text-muted-foreground"
             data-feed-selection-count=""
           >
             {`${selectedElementCountLabel(selectedBlocks.length)} selected`}
           </div>
 
-          <DropdownMenu open={connectOpen} onOpenChange={setConnectOpen} modal={false}>
-            <DropdownMenuTrigger asChild>
+          <ChromeActions data-feed-selection-actions="">
+            <DropdownMenu open={connectOpen} onOpenChange={setConnectOpen} modal={false}>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="default"
+                  size="xs"
+                  className="shrink-0"
+                >
+                  <Plus className="size-[13px]" />
+                  Connect
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent widthRole="picker" className={COLLECTION_PICKER_CONTENT_CLASS} align="center">
+                <BatchCollectionPicker
+                  selectedSlugs={selectedSlugs}
+                  tags={tags}
+                  tagLookup={tagLookup}
+                  onBatchSetTag={handleBatchSetTag}
+                  onCreateAndAssign={handleCreateAndAssignBatch}
+                />
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {currentTag && (
+              <Button
+                type="button"
+                variant="default"
+                size="xs"
+                className="shrink-0 text-detach"
+                onClick={() => {
+                  void handleRemoveFromCollection();
+                }}
+              >
+                Disconnect
+              </Button>
+            )}
+
+            {selectedBlocks.length >= 2 && (
               <Button
                 type="button"
                 variant="default"
                 size="xs"
                 className="shrink-0"
+                onClick={onMergeSelectedBlocks}
               >
-                <Plus className="size-[13px]" />
-                Connect
+                Merge
               </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent widthRole="picker" className={COLLECTION_PICKER_CONTENT_CLASS} align="center">
-              <BatchCollectionPicker
-                selectedSlugs={selectedSlugs}
-                tags={tags}
-                tagLookup={tagLookup}
-                onBatchSetTag={handleBatchSetTag}
-                onCreateAndAssign={handleCreateAndAssignBatch}
-              />
-            </DropdownMenuContent>
-          </DropdownMenu>
+            )}
 
-          {currentTag && (
-            <Button
-              type="button"
-              variant="default"
-              size="xs"
-              className="shrink-0 text-detach"
-              onClick={() => {
-                void handleRemoveFromCollection();
-              }}
-            >
-              Disconnect
-            </Button>
-          )}
-
-          {selectedBlocks.length >= 2 && (
-            <Button
-              type="button"
-              variant="default"
-              size="xs"
-              className="shrink-0"
-              onClick={onMergeSelectedBlocks}
-            >
-              Merge
-            </Button>
-          )}
-
-          <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-            <AlertDialogTrigger asChild>
-              <Button
-                type="button"
-                variant="destructive"
-                size="xs"
-                className="shrink-0"
-              >
-                Delete
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent size="sm">
-              <AlertDialogHeader className="place-items-start text-left">
-                <AlertDialogTitle>Delete selected elements?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  This will delete {selectedElementCountLabel(selectedBlocks.length)}. Media files stay in the vault.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
-                <AlertDialogAction
+            <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+              <AlertDialogTrigger asChild>
+                <Button
+                  type="button"
                   variant="destructive"
-                  disabled={deleting}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    void handleConfirmDelete();
-                  }}
+                  size="xs"
+                  className="shrink-0"
                 >
                   Delete
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent size="sm">
+                <AlertDialogHeader className="place-items-start text-left">
+                  <AlertDialogTitle>Delete selected elements?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This will delete {selectedElementCountLabel(selectedBlocks.length)}. Media files stay in the vault.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    variant="destructive"
+                    disabled={deleting}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      void handleConfirmDelete();
+                    }}
+                  >
+                    Delete
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
 
-          <div className="min-w-2 flex-1" />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label="Clear selection"
-            className="size-8 shrink-0 text-muted-foreground hover:text-foreground"
-            onClick={onClearSelection}
-          >
-            <X className="size-[13px]" />
-          </Button>
+            <ChromeCloseButton
+              label="Clear selection"
+              shortcut={commandById("clear-selection").combo}
+              onClick={onClearSelection}
+            />
+          </ChromeActions>
         </div>
       </div>
       {actionError && (

@@ -72,7 +72,7 @@ export function SettingsApp() {
               className={cn(
                 "flex h-8 shrink-0 items-center rounded-1 px-2 text-left font-mono text-sm focus-visible:outline-none",
                 section === id
-                  ? "bg-active text-foreground"
+                  ? "state-active text-foreground"
                   : "text-muted-foreground hover:text-foreground",
               )}
             >

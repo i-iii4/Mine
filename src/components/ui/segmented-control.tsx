@@ -54,12 +54,14 @@ export function SegmentedControl<T extends string>({
       role="group"
       className={cn(
         "action-button group/segments relative inline-flex shrink-0 items-center overflow-hidden rounded-1 bg-transparent text-muted-foreground outline-0",
-        chrome ? "chrome-control px-[2px] font-mono text-sm" : cn("p-[2px] hover:bg-active", sizeClasses.root),
+        // The chrome plate stands beside the segments: the group publishes it
+        // as their surface in the same states (state-surface).
+        chrome ? "chrome-control px-[2px] font-mono text-sm hover:state-surface focus-within:state-surface" : cn("p-[2px] hover:state-active", sizeClasses.root),
         className,
       )}
       {...props}
     >
-      {chrome && <ChromePlate aria-hidden="true" className="pointer-events-none absolute inset-x-0 rounded-1 group-hover/segments:bg-active group-focus-within/segments:bg-active" />}
+      {chrome && <ChromePlate aria-hidden="true" className="pointer-events-none absolute inset-x-0 rounded-1 group-hover/segments:state-active group-focus-within/segments:state-active" />}
       {options.map((option) => (
         <ChromeControl key={option.value} enabled={chrome}>
         <button
@@ -68,7 +70,7 @@ export function SegmentedControl<T extends string>({
           disabled={option.disabled}
           onClick={() => onChange(option.value)}
           className={cn(
-            "relative inline-flex shrink-0 items-center rounded-[2px] leading-none text-current focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50",
+            "relative inline-flex shrink-0 items-center rounded-[2px] leading-none text-current focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-ring disabled:pointer-events-none disabled:text-tertiary-foreground",
             !chrome && cn("px-[1ch]", sizeClasses.item, value === option.value && "bg-component-fill-inner text-foreground"),
           )}
         >

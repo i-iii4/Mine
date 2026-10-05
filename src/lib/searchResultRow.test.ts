@@ -40,13 +40,28 @@ function makeMatch(overrides: Partial<SearchMatch> = {}): SearchMatch {
 }
 
 describe("deriveSearchResultRow", () => {
-  it("title match highlights the title and keeps the plain preview snippet", () => {
+  it("names the result by its file name, never the visible title (05.10.2026)", () => {
     const block = makeBlock({
-      search_match: makeMatch({ field: "title", excerpt: "Card title", ranges: [{ start: 0, end: 4 }] }),
+      slug: "Cards/Шуховская башня",
+      title: "Legacy title",
+      content_heading: "Radio tower",
+      display_title: "Radio tower",
+      fallback_label: "Шуховская башня",
+    });
+    expect(deriveSearchResultRow(block).title).toBe("Шуховская башня");
+    expect(deriveSearchResultRow(makeBlock({ slug: "Flat card" })).title).toBe("Flat card");
+  });
+
+  it("title match highlights the file name and keeps the plain preview snippet", () => {
+    const block = makeBlock({
+      slug: "Cards/Card name",
+      content_heading: "Visible heading",
+      search_match: makeMatch({ field: "title", excerpt: "Card name", ranges: [{ start: 0, end: 4 }] }),
     });
     const row = deriveSearchResultRow(block);
-    expect(row.title).toBe("Card title");
-    expect(row.titleMatch?.field).toBe("title");
+    expect(row.title).toBe("Card name");
+    expect(row.titleMatch?.excerpt).toBe(row.title);
+    expect(row.titleMatch?.ranges).toEqual([{ start: 0, end: 4 }]);
     expect(row.snippet).toBe("Normal preview text");
     expect(row.snippetMatch).toBeNull();
   });
@@ -103,10 +118,17 @@ describe("deriveSearchResultRow", () => {
     expect(row.snippet).toBeNull();
   });
 
-  it("falls back to the fallback label when there is no display title", () => {
-    const block = makeBlock({ title: null, body: "", preview_text: null, media_file: "archive.zip" });
-    const row = deriveSearchResultRow(block);
-    expect(row.title.length).toBeGreaterThan(0);
+  it("an H1 match in the body names the result by file name and shows the heading in the snippet", () => {
+    const match = makeMatch({ field: "body", excerpt: "Шуховская башня Гиперболоидная конструкция", ranges: [{ start: 0, end: 9 }] });
+    const row = deriveSearchResultRow(makeBlock({
+      slug: "Cards/tower-notes",
+      content_heading: "Шуховская башня",
+      search_match: match,
+    }));
+    expect(row.title).toBe("tower-notes");
+    expect(row.titleMatch).toBeNull();
+    expect(row.snippet).toBe(match.excerpt);
+    expect(row.snippetMatch).toBe(match);
   });
 
   it("block without search_match renders plain title and preview", () => {

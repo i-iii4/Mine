@@ -428,7 +428,7 @@ describe("Detail", () => {
       vaultPath="/tmp/fixture" thumbsRootPath="/tmp/thumbs" tags={[]}
       onClose={vi.fn()} onNavigate={vi.fn()} onToggleTag={vi.fn()} onCreateAndAssign={vi.fn()}
       onTagsChanged={vi.fn()} onRequestRename={vi.fn()} onRequestDelete={vi.fn()} />);
-    const header = container.querySelector("[data-detail-drag-handle]")!;
+    const header = container.querySelector("[data-detail-card-name]")!;
     expect(header).toHaveTextContent(name);
     expect(header.textContent).toBe(name);
     expect(header).toHaveAttribute("title", path);
@@ -1688,7 +1688,7 @@ describe("Detail", () => {
     const trigger = menu!.querySelector("[data-detail-media-more-button]");
     expect(trigger).toHaveAttribute("data-variant", "default");
     expect(trigger).toHaveAttribute("data-size", "icon");
-    expect(trigger).toHaveClass("button-depth", "rounded-2", "bg-depth-fill");
+    expect(trigger).toHaveClass("button-depth", "rounded-1", "bg-depth-fill");
     expect(trigger?.className).not.toMatch(/(^|\s)hover:/);
 
     fireEvent.pointerDown(trigger!, { button: 0, ctrlKey: false });

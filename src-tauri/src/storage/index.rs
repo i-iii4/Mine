@@ -3521,12 +3521,13 @@ mod tests {
     #[test]
     fn list_grid_blocks_with_query_filters_route_and_returns_match_excerpt() {
         let conn = test_conn();
+        // The title field is the file name, without its folder.
         upsert_block(
             &conn,
             &make_block_full(
-                "alpha-title",
+                "Cards/Aristotle notes",
                 "article",
-                Some("Aristotle notes"),
+                None,
                 "2026-01-01T00:00:00Z",
                 &["alpha"],
                 "",
@@ -3566,10 +3567,13 @@ mod tests {
 
         assert!(!has_more);
         assert_eq!(blocks.len(), 2);
-        assert_eq!(blocks[0].slug, "alpha-title");
+        assert_eq!(blocks[0].slug, "Cards/Aristotle notes");
+        let title_match = blocks[0].search_match.as_ref().unwrap();
+        assert_eq!(title_match.field, SearchMatchField::Title);
+        assert_eq!(title_match.excerpt, "Aristotle notes");
         assert_eq!(
-            blocks[0].search_match.as_ref().unwrap().field,
-            SearchMatchField::Title
+            title_match.ranges,
+            vec![SearchTextRange { start: 0, end: 9 }]
         );
         let body_match = blocks
             .iter()
@@ -3586,49 +3590,75 @@ mod tests {
         assert_eq!(prefix_blocks.len(), 2);
         assert!(prefix_blocks
             .iter()
-            .any(|block| block.slug == "alpha-title"));
+            .any(|block| block.slug == "Cards/Aristotle notes"));
         assert!(prefix_blocks.iter().any(|block| block.slug == "alpha-body"));
     }
 
     #[test]
-    fn list_grid_blocks_with_query_uses_visible_body_match_before_fallback_label() {
+    fn list_grid_blocks_with_query_names_social_cards_by_file_name_never_hidden_title() {
+        // Every result row shows the card's file name, social cards included:
+        // a match there is the visible title match. A legacy frontmatter
+        // title is shown nowhere in the row, so it never becomes the reason;
+        // the body match is.
         let conn = test_conn();
-        let mut block = make_block_full(
-            "memory-in-slug",
+        let mut named = make_block_full(
+            "Cards/memory in slug",
+            "article",
+            None,
+            "2026-01-01T00:00:00Z",
+            &[],
+            "Social card body contains Memory too.",
+        );
+        named.frontmatter.url = Some("https://x.com/user/status/1".to_string());
+        upsert_block(&conn, &named, None).unwrap();
+        let mut hidden = make_block_full(
+            "Cards/x post",
             "article",
             Some("Memory Machines hidden social title"),
-            "2026-01-01T00:00:00Z",
+            "2026-01-02T00:00:00Z",
             &[],
             "Social card body contains Memory and must be highlighted.",
         );
-        block.frontmatter.url = Some("https://x.com/user/status/1".to_string());
-        upsert_block(&conn, &block, None).unwrap();
+        hidden.frontmatter.url = Some("https://x.com/user/status/2".to_string());
+        upsert_block(&conn, &hidden, None).unwrap();
 
         let (blocks, has_more) =
             list_grid_blocks_with_query(&conn, None, 0, 20, Some("memo")).unwrap();
 
         assert!(!has_more);
-        assert_eq!(blocks.len(), 1);
-        let search_match = blocks[0].search_match.as_ref().unwrap();
-        assert_eq!(search_match.field, SearchMatchField::Body);
-        assert!(search_match.excerpt.contains("Memory"));
-        let range = search_match.ranges.first().unwrap();
-        let highlighted = search_match
-            .excerpt
-            .chars()
-            .skip(range.start)
-            .take(range.end - range.start)
-            .collect::<String>();
-        assert_eq!(highlighted, "Memo");
+        assert_eq!(
+            blocks.iter().map(|block| block.slug.as_str()).collect::<Vec<_>>(),
+            vec!["Cards/memory in slug", "Cards/x post"]
+        );
+        let highlighted = |search_match: &SearchMatch| {
+            let range = search_match.ranges.first().unwrap();
+            search_match
+                .excerpt
+                .chars()
+                .skip(range.start)
+                .take(range.end - range.start)
+                .collect::<String>()
+        };
+
+        let name_match = blocks[0].search_match.as_ref().unwrap();
+        assert_eq!(name_match.field, SearchMatchField::Title);
+        assert_eq!(name_match.excerpt, "memory in slug");
+        assert_eq!(highlighted(name_match), "memo");
+
+        let body_match = blocks[1].search_match.as_ref().unwrap();
+        assert_eq!(body_match.field, SearchMatchField::Body);
+        assert!(body_match.excerpt.contains("Memory"));
+        assert_eq!(highlighted(body_match), "Memo");
     }
 
     #[test]
     fn list_grid_blocks_with_query_matches_cross_language_alias_phrase() {
         let conn = test_conn();
+        // The file name holds none of the phrase: the alias match is the body's.
         upsert_block(
             &conn,
             &make_block_full(
-                "memory-flock",
+                "hopfield-sketch",
                 "article",
                 Some("Hopfield sketch"),
                 "2026-01-01T00:00:00Z",
@@ -3663,7 +3693,7 @@ mod tests {
 
         assert!(!has_more);
         assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].slug, "memory-flock");
+        assert_eq!(blocks[0].slug, "hopfield-sketch");
         let search_match = blocks[0].search_match.as_ref().unwrap();
         assert_eq!(search_match.field, SearchMatchField::Body);
         assert_eq!(search_match.kind, SearchMatchKind::Alias);

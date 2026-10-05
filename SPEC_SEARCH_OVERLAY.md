@@ -161,10 +161,11 @@ selection невозможен — модальность забирает кл�
     определяются по `preview_manifest.kind === "text"` и получают
     `dark:invert`; ошибка загрузки скрывает `img`, остаётся placeholder-слот;
   - **заголовок**: `text-sm text-foreground truncate`, вес 400, line-height 20px (с 01.10.2026; от сниппета отличается только цветом)
-    (одна строка). Текст — display title блока (display_title → fallback
-    label, существующие хелперы `getDisplayTitle`/`getFallbackLabel`). При
-    `search_match.field === "title"` — подсветка диапазонов через
-    `renderSearchHighlightedText`;
+    (одна строка). Текст: имя файла карточки без папки и без `.md`
+    (`getFileName`), а не видимый заголовок; поиск называет результат именем
+    файла (решение пользователя от 05.10.2026, SPEC_SEARCH.md, Match
+    Metadata). При `search_match.field === "title"` диапазоны подсвечиваются
+    через `renderSearchHighlightedText`: бэкенд считает их по тому же имени;
   - **сниппет**: `text-sm text-muted-foreground line-clamp-1 mt-0.5` — одна строка, заголовок остаётся главным; строка либо двухэтажная (title + snippet), либо одноэтажная (title).
     Источник текста и подсветки — по правилам Card Rendering из
     SPEC_SEARCH.md, в точности как в карточках:
@@ -205,9 +206,11 @@ selection невозможен — модальность забирает кл�
 автор. Собственная рамка `CardFrame` (`border rounded-1 bg-card`) и есть
 выделение зоны; от `border-l` панели её отделяет поле `p-4`.
 
-При активном `search_match` micro-превью использует тот же row-model, что
-список (`deriveSearchResultRow`): подсветка title, excerpt первого совпадения
-вместо превью-текста, маркер `bg-search-mark`. Никакой второй логики подсветки.
+При активном `search_match` micro-превью берёт из row-model списка
+(`deriveSearchResultRow`) только текст: excerpt первого совпадения вместо
+превью-текста, маркер `bg-search-mark`. Заголовок превью остаётся собственным
+заголовком карточки; совпадение `title` (имя файла) подсвечивает его, только
+когда заголовок совпадает с именем файла. Никакой второй логики подсветки.
 
 Контекстные действия — **настоящий `CardHoverMenu`** поверх превью-карточки
 (никаких lookalike-сборок): тот же компонент, что на карточках главной
@@ -393,7 +396,8 @@ SPEC_SEARCH) промежуточное состояние не успевает
 - author/url-match → сниппет = preview_text, диапазонов нет, excerpt
   метаданных не утекает в рендер;
 - медиа-блок без текста → snippet отсутствует;
-- display title → fallback label, когда title пуст.
+- заголовок строки: имя файла без папки, а не видимый заголовок; совпадение
+  в H1 приходит как `body`, и сниппет показывает его с подсветкой.
 
 `src/components/SearchOverlay.test.tsx` (компонент):
 

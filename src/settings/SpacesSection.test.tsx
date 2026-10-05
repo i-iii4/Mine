@@ -104,9 +104,9 @@ describe("SpacesSection", () => {
     await screen.findByText("Mine");
 
     await waitFor(() => expect(spaceRowOf("Mine")).toHaveAttribute("data-space-open"));
-    expect(spaceRowOf("Mine").className).toContain("bg-active");
+    expect(spaceRowOf("Mine").className).toContain("state-active");
     expect(spaceRowOf("Work")).toHaveAttribute("data-space-open");
-    expect(spaceRowOf("Work").className).toContain("bg-active");
+    expect(spaceRowOf("Work").className).toContain("state-active");
     expect(spaceRowOf("Archive")).not.toHaveAttribute("data-space-open");
     expect(spaceRowOf("Archive").className).toContain("bg-accent");
     // No single current space any more, and no visible badge.

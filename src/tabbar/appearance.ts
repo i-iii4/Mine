@@ -16,6 +16,7 @@ import {
   type SettingsChangedPayload,
 } from "@/lib/settingsChanged";
 import { applyTheme, getStoredTheme, THEME_STORAGE_KEY } from "@/lib/themeMode";
+import { applyBarButtonStyle } from "@/lib/buttonStyle";
 import { listenHere } from "./useTabBarState";
 
 /** Apply the stored theme, layout variant and interface font to this page. */
@@ -23,6 +24,7 @@ export function applyStoredAppearance(): void {
   applyTheme(getStoredTheme());
   applyDesign(getStoredDesignMode());
   applyInterfaceFont(getStoredInterfaceFont());
+  applyBarButtonStyle();
 }
 
 /** Re-apply what a settings change touches. The event is global; a page's

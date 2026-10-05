@@ -404,6 +404,57 @@ pub fn resolve_card_name_conflict(
     mine_core::domain::vault::resolve_card_name_conflict(layout.write_layout(), raw_name, existing)
 }
 
+// ─── Names the user types ───────────────────────────────────────────────────
+
+/// Characters a note's name may not hold: `\` and NUL are not names on disk,
+/// and Obsidian cannot link to a note whose name holds `: # ^ | [ ]` (Mine
+/// links cards and collections by name, and such links would stop working).
+pub const FORBIDDEN_NAME_CHARS: &[char] = &['\\', '\0', ':', '#', '^', '|', '[', ']'];
+
+/// The longest name the file system takes for one folder or file, in bytes.
+pub const MAX_NAME_BYTES: usize = 255;
+
+const MARKDOWN_EXTENSION: &str = ".md";
+
+/// A name as the user typed it for a note (a card's file, a collection's
+/// page): no spaces around it, no `.md` at its end, Unicode composed.
+pub fn normalize_typed_name(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let cut = trimmed.len().saturating_sub(MARKDOWN_EXTENSION.len());
+    let stem = match trimmed.get(cut..) {
+        Some(end) if end.eq_ignore_ascii_case(MARKDOWN_EXTENSION) => &trimmed[..cut],
+        _ => trimmed,
+    };
+    normalize_filename_stem(stem.trim())
+}
+
+/// Why `name` cannot name a note, or `None` when it can. One rule for every
+/// name the user types: a card's file name and a collection's name
+/// (05.10.2026). `name` comes from [`normalize_typed_name`]; a `/` in it
+/// separates folders. The reasons are read by the user, under the name.
+pub fn name_problem(name: &str) -> Option<&'static str> {
+    if name.is_empty() {
+        return Some("The name is empty.");
+    }
+    if name.contains(FORBIDDEN_NAME_CHARS) {
+        return Some("A name cannot contain \\ : # ^ | [ or ].");
+    }
+    let segments: Vec<&str> = name.split('/').collect();
+    if segments.iter().any(|segment| segment.trim().is_empty()) {
+        return Some("A name cannot start or end with / or have an empty folder.");
+    }
+    if segments.iter().any(|segment| segment.starts_with('.')) {
+        return Some("A name cannot start with a dot.");
+    }
+    let file_name = segments.last().copied().unwrap_or_default();
+    if segments.iter().any(|segment| segment.len() > MAX_NAME_BYTES)
+        || file_name.len() + MARKDOWN_EXTENSION.len() > MAX_NAME_BYTES
+    {
+        return Some("The name is too long.");
+    }
+    None
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -412,6 +463,34 @@ mod tests {
 
     fn layout() -> VaultLayout {
         VaultLayout::new(PathBuf::from("/vault"))
+    }
+
+    // ── Names the user types ────────────────────────────────────────────
+
+    #[test]
+    fn a_typed_name_loses_its_spaces_and_md() {
+        assert_eq!(normalize_typed_name(" Casa Nogal.md "), "Casa Nogal");
+        assert_eq!(normalize_typed_name("Notes.MD"), "Notes");
+        assert_eq!(normalize_typed_name("Архив/Башня"), "Архив/Башня");
+        assert_eq!(normalize_typed_name("md"), "md");
+        assert_eq!(normalize_typed_name("Cafe\u{301}"), "Caf\u{e9}");
+    }
+
+    #[test]
+    fn a_name_obsidian_cannot_link_or_the_disk_cannot_hold_has_a_reason() {
+        for refused in [
+            "", "a:b", "a#b", "a^b", "a|b", "a[b", "a]b", "a\\b", "a\0b", "/a", "a/", "a//b",
+            ".hidden", "Folder/.hidden", "./a", "../escape",
+        ] {
+            assert!(name_problem(&normalize_typed_name(refused)).is_some(), "{refused:?} was accepted");
+        }
+        assert_eq!(name_problem(""), Some("The name is empty."));
+        assert_eq!(name_problem("a#b"), Some("A name cannot contain \\ : # ^ | [ or ]."));
+        assert_eq!(name_problem(".hidden"), Some("A name cannot start with a dot."));
+        assert_eq!(name_problem(&"я".repeat(127)), Some("The name is too long."));
+        for accepted in ["я".repeat(126), "Архив/Башня".into(), "Hello, world (2) & co.".into()] {
+            assert_eq!(name_problem(&accepted), None, "{accepted:?} was refused");
+        }
     }
 
     // ── VaultLayout paths ───────────────────────────────────────────────

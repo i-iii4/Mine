@@ -188,7 +188,7 @@ function SpaceOrphans({ space, selector }: { space: OpenSpace; selector: ReactNo
               const isImage = IMAGE_EXTS.has(fileExt(item.file_name));
               return (
                 <li key={item.file_name}>
-                  <label className="flex h-10 items-center gap-s2 rounded-1 px-2 hover:bg-active">
+                  <label className="flex h-10 items-center gap-s2 rounded-1 px-2 hover:state-active">
                     <Checkbox
                       aria-label={`Select ${item.file_name}`}
                       checked={selected.has(item.file_name)}

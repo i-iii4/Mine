@@ -6,6 +6,7 @@ import { applyTheme, getStoredTheme } from "@/lib/themeMode";
 import { applyDesign, getStoredDesignMode } from "@/lib/designMode";
 import { applyCardRadius, getStoredCardRadius } from "@/lib/cardRadius";
 import { applyDensity, getStoredDensity } from "@/lib/density";
+import { followWindowButtonStyle } from "@/lib/buttonStyle";
 import {
   applyContentFont,
   applyInterfaceFont,
@@ -30,6 +31,9 @@ applyCardRadius(getStoredCardRadius());
 applyDensity(getStoredDensity());
 applyInterfaceFont(getStoredInterfaceFont());
 applyContentFont(getStoredContentFont());
+// Dev button styles (src/lib/buttonStyle.ts): this window's style, then what
+// the window's bar sends.
+followWindowButtonStyle();
 void recordStartupMilestone("frontend_entry").catch(() => {});
 
 class ErrorBoundary extends React.Component<
@@ -100,6 +104,16 @@ const topBarVariantsRoute =
   import.meta.env.DEV && window.location.pathname === "/__top-bar-variants";
 // Buttons as they are and adapted to shadcn's secondary, outline and ghost.
 const buttonsRoute = import.meta.env.DEV && window.location.pathname === "/__buttons";
+// Approaches to button volume side by side in both themes.
+const buttonDepthRoute = import.meta.env.DEV && window.location.pathname === "/__button-depth";
+// Every button and icon the interface draws today, in both themes.
+const uiInventoryRoute = import.meta.env.DEV && window.location.pathname === "/__ui-inventory";
+// Icon candidates for the Connect buttons in their places, in both themes.
+const connectIconsRoute = import.meta.env.DEV && window.location.pathname === "/__connect-icons";
+// The signal ladder of the dark theme, measured.
+const textLadderRoute = import.meta.env.DEV && window.location.pathname === "/__text-ladder";
+// One slice of the window with macOS buttons and with the retro tile, in both themes.
+const buttonsDecisionRoute = import.meta.env.DEV && window.location.pathname === "/__buttons-decision";
 const nativeShellSmokeRoute = new URLSearchParams(window.location.search)
   .has("mine-native-shell-smoke");
 const auditRoute = feedScrollAuditRoute
@@ -183,6 +197,46 @@ function Root() {
     );
   }
 
+  if (buttonDepthRoute) {
+    return (
+      <React.Suspense fallback={null}>
+        <ButtonDepthPage />
+      </React.Suspense>
+    );
+  }
+
+  if (uiInventoryRoute) {
+    return (
+      <React.Suspense fallback={null}>
+        <UiInventoryPage />
+      </React.Suspense>
+    );
+  }
+
+  if (connectIconsRoute) {
+    return (
+      <React.Suspense fallback={null}>
+        <ConnectIconsPage />
+      </React.Suspense>
+    );
+  }
+
+  if (textLadderRoute) {
+    return (
+      <React.Suspense fallback={null}>
+        <TextLadderPage />
+      </React.Suspense>
+    );
+  }
+
+  if (buttonsDecisionRoute) {
+    return (
+      <React.Suspense fallback={null}>
+        <ButtonsDecisionPage />
+      </React.Suspense>
+    );
+  }
+
   if (topBarVariantsRoute) {
     return (
       <React.Suspense fallback={null}>
@@ -201,6 +255,31 @@ function Root() {
 const ButtonAdaptationPage = React.lazy(async () => {
   const mod = await import("./dev/ButtonAdaptationPage");
   return { default: mod.ButtonAdaptationPage };
+});
+
+const ButtonDepthPage = React.lazy(async () => {
+  const mod = await import("./dev/ButtonDepthPage");
+  return { default: mod.ButtonDepthPage };
+});
+
+const UiInventoryPage = React.lazy(async () => {
+  const mod = await import("./dev/UiInventoryPage");
+  return { default: mod.UiInventoryPage };
+});
+
+const ConnectIconsPage = React.lazy(async () => {
+  const mod = await import("./dev/ConnectIconsPage");
+  return { default: mod.ConnectIconsPage };
+});
+
+const TextLadderPage = React.lazy(async () => {
+  const mod = await import("./dev/TextLadderPage");
+  return { default: mod.TextLadderPage };
+});
+
+const ButtonsDecisionPage = React.lazy(async () => {
+  const mod = await import("./dev/ButtonsDecisionPage");
+  return { default: mod.ButtonsDecisionPage };
 });
 
 const TopBarVariantsPage = React.lazy(async () => {

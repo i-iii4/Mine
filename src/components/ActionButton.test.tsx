@@ -21,11 +21,11 @@ describe("ActionButton", () => {
     expect(label).toHaveClass("whitespace-nowrap", "font-mono");
   });
 
-  it("uses the shared active surface for selected state", () => {
+  it("lays the shared state layer over the key for the selected state", () => {
     render(<ActionButton isSelected>Design</ActionButton>);
 
     const button = screen.getByRole("button", { name: "Design" });
     expect(button).toHaveAttribute("data-selected", "true");
-    expect(screen.getByText("Design")).toHaveClass("bg-active");
+    expect(screen.getByText("Design")).toHaveClass("state-active");
   });
 });

@@ -400,7 +400,7 @@ export function CollectionPicker({
                 // room ((row height − button height) / 2) so the action sits
                 // evenly inside the row on both row sizes (menu and clipper).
                 "flex h-[var(--menu-row-height)] w-full items-center gap-2 rounded-1 pl-2 pr-[calc((var(--menu-row-height)-24px)/2)] text-base",
-                isActive && "bg-active",
+                isActive && "state-active",
               )}
               data-collection-picker-row=""
               data-collection-picker-row-active={isActive ? "true" : undefined}
@@ -466,8 +466,8 @@ export function CollectionPicker({
               createAndAssign();
             }}
             className={cn(
-              "flex h-[var(--menu-row-height)] w-full items-center gap-2 rounded-1 px-2 text-base font-semibold text-foreground hover:bg-active",
-              createActive && "bg-active",
+              "flex h-[var(--menu-row-height)] w-full items-center gap-2 rounded-1 px-2 text-base font-normal text-foreground hover:state-active",
+              createActive && "state-active",
             )}
             data-collection-picker-create=""
             data-collection-picker-create-active={createActive ? "true" : undefined}
@@ -696,7 +696,7 @@ export function BatchCollectionPicker({
               }}
               className={cn(
                 "flex h-[var(--menu-row-height)] w-full items-center gap-2 rounded-1 pl-2 pr-[calc((var(--menu-row-height)-24px)/2)] text-base",
-                isActive && "bg-active",
+                isActive && "state-active",
               )}
               data-batch-collection-row=""
               data-batch-collection-row-state={membership}
@@ -764,8 +764,8 @@ export function BatchCollectionPicker({
               createAndAssign();
             }}
             className={cn(
-              "flex h-[var(--menu-row-height)] w-full items-center gap-2 rounded-1 px-2 text-base font-semibold text-foreground hover:bg-active",
-              createActive && "bg-active",
+              "flex h-[var(--menu-row-height)] w-full items-center gap-2 rounded-1 px-2 text-base font-normal text-foreground hover:state-active",
+              createActive && "state-active",
             )}
             data-collection-picker-create=""
             data-collection-picker-create-active={createActive ? "true" : undefined}

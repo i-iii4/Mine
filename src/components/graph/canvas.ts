@@ -269,7 +269,9 @@ export function readGraphCanvasTheme(mode: "light" | "dark"): GraphCanvasTheme {
   probe.style.outlineColor = "var(--component-fill-hover)";
   probe.style.outlineStyle = "solid";
   probe.style.outlineWidth = "1px";
-  probe.style.color = "var(--muted-foreground)";
+  // The canvas paints labels itself and needs the muted step as an opaque
+  // colour: its composite over the chrome surface (global.css, surface-fills).
+  probe.style.color = "var(--muted-foreground-opaque)";
   document.body.appendChild(probe);
 
   const mutedStyle = getComputedStyle(probe);

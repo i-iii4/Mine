@@ -23,16 +23,20 @@ describe("bottom-bar command entries", () => {
     const entry = screen.getByText("Navigate").closest("[data-action-button]");
     const markup = entry?.outerHTML ?? "";
 
-    expect(markup).not.toContain("hover:bg-active");
+    expect(markup).not.toContain("hover:state-active");
     expect(markup).not.toContain("group-hover:outline");
     expect(markup).not.toContain("group-hover:text-foreground");
     // The outline also arrives from the button variant itself, not only from
     // the group-hover classes layered on top of it.
     expect(markup).not.toContain("hover:outline");
     expect(markup).not.toMatch(/\bhover:/);
-    // Reference entries wear the secondary body: outline only, no fill. The
-    // fill is what makes a control read as pressable.
-    expect(markup).toContain("outline-border");
+    // Reference entries wear the frame every unpressable control shares,
+    // from the surface under it, and no fill: the fill is what makes a
+    // control read as pressable. Their text keeps the secondary step, since
+    // the keystroke works; only a disabled control drops to the tertiary.
+    expect(markup).toContain("outline-inert-frame");
+    expect(markup).toContain("text-muted-foreground");
+    expect(markup).not.toMatch(/[\s"]text-tertiary-foreground/);
     expect(markup).toContain("bg-transparent");
     expect(markup).not.toContain("bg-component-fill");
   });

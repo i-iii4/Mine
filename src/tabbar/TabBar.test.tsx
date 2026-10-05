@@ -266,7 +266,11 @@ describe("tab look (В46)", () => {
     expect(tabById("b").className).toContain("bg-chrome");
     expect(tabById("b").className).not.toContain("hover:");
     expect(tabById("a").className).not.toContain("bg-chrome");
-    expect(tabById("a").className).toContain("hover:bg-active");
+    // The hover is a state layer: it is the surface of the close button on
+    // the tab, so the plate lifts from it.
+    expect(tabById("a").className).toContain("hover:state-active");
+    expect(tabById("a")).not.toHaveAttribute("data-surface-zone");
+    expect(tabById("a").className).toContain("hover:text-foreground");
   });
 
   it("gives every tab a close button that its hover shows", () => {
@@ -715,5 +719,25 @@ describe("a tab from another window (В63)", () => {
     expect(marker(container)).toBeNull();
     expect(commands.reportDropSlot).toHaveBeenLastCalledWith(null);
     expect(commands.reportDropSlot).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("button style of the window (dev tool, src/lib/buttonStyle.ts)", () => {
+  it("sends the window's style to its own tabs, again when a tab joins, and to no other page", async () => {
+    const { emitTo } = await import("@tauri-apps/api/event");
+    vi.mocked(emitTo).mockClear();
+    document.documentElement.setAttribute("data-buttons", "retro");
+    const view = renderBar(barState([tab("a"), tab("b")]));
+    const sent = () => vi.mocked(emitTo).mock.calls.map(([label, event, payload]) => ({ label, event, payload }));
+    expect(sent()).toEqual([
+      { label: "tab-a", event: "dev-buttons-window", payload: { window: "w1", style: "retro", notice: false } },
+      { label: "tab-b", event: "dev-buttons-window", payload: { window: "w1", style: "retro", notice: false } },
+    ]);
+    vi.mocked(emitTo).mockClear();
+    view.update(barState([tab("a"), tab("b")], { active_tab: "b" }));
+    expect(sent()).toEqual([]);
+    view.update(barState([tab("a"), tab("b"), tab("c")]));
+    expect(sent().map(({ label }) => label)).toEqual(["tab-a", "tab-b", "tab-c"]);
+    document.documentElement.removeAttribute("data-buttons");
   });
 });

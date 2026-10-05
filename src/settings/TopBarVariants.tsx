@@ -1,5 +1,5 @@
 import { useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { ChevronLeft, ChevronRight, ExternalLink, Link, List, ListFilter, MoreHorizontal, Plus, Search, Settings2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, ExternalLink, Link, List, ListFilter, ListPlus, MoreHorizontal, Plus, Search, Settings2, X } from "lucide-react";
 import { ChromeCloseButton } from "@/components/ChromeCloseButton";
 import { DetailLinkModeTabs } from "@/components/DetailLinkModeTabs";
 import { MenuTextTrigger } from "@/components/MenuTextTrigger";
@@ -105,7 +105,7 @@ const VARIANTS: readonly Variant[] = [
         aria-label={mode === "linked" ? "Showing connected collections. Show all" : "Show connected collections"}
         aria-pressed={mode === "linked"}
         onClick={() => setMode(mode === "linked" ? "all" : "linked")}
-        className={cn(mode === "linked" && "text-foreground [&_[data-chrome-plate]]:bg-active")}
+        className={cn(mode === "linked" && "text-foreground [&_[data-chrome-plate]]:state-active")}
       >
         <ListFilter />
       </Button>
@@ -268,12 +268,10 @@ function VariantRow({
   const [mode, setMode] = useState<DetailLinkMode>("all");
   const [query, setQuery] = useState("");
   const [focused, setFocused] = useState(false);
-  const rowRef = useRef<HTMLDivElement | null>(null);
   const fieldRef = useRef<HTMLInputElement | null>(null);
+  const { fit: measured, rowRef } = useSidebarRowFit(fieldRef, `${cardOpen}|${name}|${query !== ""}`);
   // The first version shows the row as it is, unfitted: it gives the hook
   // no row to measure.
-  const unfitted = useRef<HTMLElement | null>(null);
-  const measured = useSidebarRowFit(variant.fits ? rowRef : unfitted, fieldRef, `${cardOpen}|${name}|${query !== ""}`);
   const fit: SidebarRowFit | null = variant.fits ? measured : null;
   const searchOpen = focused || query !== "";
   return (
@@ -286,7 +284,7 @@ function VariantRow({
       <div className="overflow-hidden rounded-1 border border-border" style={{ width: width + 2 }}>
         <div className="chrome-row flex border-b border-border bg-chrome" data-chrome-separator="bottom">
           <div
-            ref={rowRef}
+            ref={variant.fits ? rowRef : undefined}
             data-row-fit={fit ?? "full"}
             data-row-search-open={variant.fits && searchOpen ? "" : undefined}
             className="flex h-[var(--chrome-row-content-height)] min-w-0 flex-1"
@@ -533,7 +531,7 @@ function UsedControls() {
             <Button type="button" variant="default" size="icon-xs" aria-label="Card actions"><MoreHorizontal /></Button>
           </div>
           <div className="absolute right-2 bottom-2 flex items-center">
-            <Button type="button" variant="default" size="icon-xs" aria-label="Connect"><Plus aria-hidden="true" /></Button>
+            <Button type="button" variant="default" size="icon-xs" aria-label="Connect"><ListPlus aria-hidden="true" /></Button>
           </div>
         </div>
         <p className="font-mono text-xs text-tertiary-foreground">при наведении: источник и меню карточки сверху, добавить в коллекцию снизу</p>

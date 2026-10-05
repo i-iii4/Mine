@@ -29,6 +29,13 @@ pub struct OpenSpace {
     /// The session: the index connection and the layout it serves. Replaced
     /// in place when the index slot is recovered or the folder moves (П30).
     pub vault_state: Mutex<Option<VaultState>>,
+    /// The folder the session serves, kept beside it under a lock of its own
+    /// that is never held while another is taken. Finding a space by its
+    /// folder (`SpaceHost::by_root`, which every event to a space's tabs goes
+    /// through) reads this, never the session: a command that holds its
+    /// session while it tells the tabs would otherwise wait on itself, as a
+    /// card rename did on 05.10.2026.
+    served_root: Mutex<Option<PathBuf>>,
     /// The file watcher of the session's layout.
     pub watcher: Mutex<Option<VaultWatcher>>,
     /// Held while the session and watcher are swapped together, so nothing
@@ -53,6 +60,7 @@ impl OpenSpace {
         Self {
             vault_id: vault_id.to_string(),
             vault_state: Mutex::new(None),
+            served_root: Mutex::new(None),
             watcher: Mutex::new(None),
             publication: Mutex::new(()),
             opening: Mutex::new(()),
@@ -76,11 +84,16 @@ impl OpenSpace {
             .ok_or(CommandError::NoVault)
     }
 
-    /// The folder the session serves now, if it has opened.
+    /// The folder the session serves now, if it has opened. Never waits on
+    /// the session itself (`served_root`).
     pub fn root(&self) -> Option<PathBuf> {
-        lock(&self.vault_state)
-            .as_ref()
-            .map(|session| session.vault.root().to_path_buf())
+        lock(&self.served_root).clone()
+    }
+
+    /// The session now serves `root`. Called by whoever replaces the session,
+    /// while it still holds the session.
+    pub(crate) fn serve_root(&self, root: &Path) {
+        *lock(&self.served_root) = Some(root.to_path_buf());
     }
 
     /// The space closed: nobody leased it through the grace period. Work
@@ -126,9 +139,11 @@ impl OpenSpace {
     /// old session and watcher are dropped after the locks are released.
     pub(crate) fn publish(&self, session: VaultState, watcher: Option<VaultWatcher>) {
         let publication = lock(&self.publication);
+        let root = session.vault.root().to_path_buf();
         let (old_session, old_watcher) = {
             let mut active = lock(&self.vault_state);
             let mut slot = lock(&self.watcher);
+            self.serve_root(&root);
             (
                 active.replace(session),
                 std::mem::replace(&mut *slot, watcher),
@@ -142,7 +157,10 @@ impl OpenSpace {
     fn close(&self) -> (Option<VaultState>, Option<VaultWatcher>) {
         self.closed.store(true, Ordering::SeqCst);
         let publication = lock(&self.publication);
-        let taken = (lock(&self.vault_state).take(), lock(&self.watcher).take());
+        let mut active = lock(&self.vault_state);
+        *lock(&self.served_root) = None;
+        let taken = (active.take(), lock(&self.watcher).take());
+        drop(active);
         drop(publication);
         taken
     }
@@ -592,6 +610,26 @@ mod tests {
         assert!(host.get("space-x").is_none());
         assert!(space.is_closed());
         assert!(space.root().is_none(), "the session outlived the space");
+    }
+
+    #[test]
+    fn finding_a_space_by_its_folder_does_not_wait_on_its_session() {
+        // A command holding its session while it tells the space's tabs
+        // (emit_to_vault finds the space by its folder) froze the app on a
+        // card rename (05.10.2026).
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(SpaceHost::with_grace(Duration::from_millis(20)));
+        let lease = host.lease("space-x");
+        lease.space().publish(session(dir.path()), None);
+        let space = Arc::clone(lease.space());
+        let root = dir.path().to_path_buf();
+        let (found, answer) = std::sync::mpsc::channel();
+        let searching = Arc::clone(&host);
+        std::thread::spawn(move || {
+            let _held = lock(&space.vault_state);
+            let _ = found.send(searching.by_root(&root).is_some());
+        });
+        assert_eq!(answer.recv_timeout(Duration::from_secs(5)), Ok(true));
     }
 
     #[test]

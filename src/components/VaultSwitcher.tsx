@@ -665,7 +665,7 @@ function SpaceRow({
                 <Plus />
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="top">Open in New Tab</TooltipContent>
+            <TooltipContent>Open in New Tab</TooltipContent>
           </Tooltip>
         )}
         <Tooltip>
@@ -686,7 +686,7 @@ function SpaceRow({
               <FolderOpen />
             </Button>
           </TooltipTrigger>
-          <TooltipContent side="top">Reveal in Finder</TooltipContent>
+          <TooltipContent>Reveal in Finder</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -711,7 +711,7 @@ function SpaceRow({
           </TooltipTrigger>
           {/* The X is the one action in this menu whose consequence is easy to
               misread, so the tooltip states what stays untouched. */}
-          <TooltipContent side="top">
+          <TooltipContent>
             Remove from the list — files stay on disk
           </TooltipContent>
         </Tooltip>

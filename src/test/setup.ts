@@ -86,6 +86,8 @@ vi.mock("@tauri-apps/api/event", () => ({
     window.addEventListener(event, wrapped);
     return () => window.removeEventListener(event, wrapped);
   }),
+  // An event addressed to one page: tests assert on the mock.
+  emitTo: vi.fn(async () => {}),
 }));
 
 // Mock @tauri-apps/api/webview the same way: a page's own subscriptions

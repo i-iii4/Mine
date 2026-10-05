@@ -465,7 +465,7 @@ export function SearchOverlay({
       aria-selected={index === activeIndex}
       className={cn(
         "flex cursor-default items-center gap-2 rounded-1 px-2 py-1.5",
-        index === activeIndex && "bg-active",
+        index === activeIndex && "state-active",
       )}
       onPointerMove={(event) => handleRowPointerMove(event, index)}
       onClick={() => onOpenBlock(block)}

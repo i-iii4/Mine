@@ -46,14 +46,58 @@ describe("DropdownMenu", () => {
       </DropdownMenu>,
     );
 
-    expect(screen.getByText("Action item")).toHaveClass("focus:bg-active");
+    expect(screen.getByText("Action item")).toHaveClass("focus:state-active");
     expect(screen.getByText("Action item")).not.toHaveClass("focus:bg-accent");
     expect(screen.getByText("Nested actions")).toHaveClass(
-      "focus:bg-active",
-      "data-[state=open]:bg-active",
+      "focus:state-active",
+      "data-[state=open]:state-active",
     );
     expect(screen.getByText("Nested actions")).not.toHaveClass(
       "data-[state=open]:bg-accent",
+    );
+  });
+
+  // DESIGN_SYSTEM.md, «Цвет текста и значков»: focus and an open submenu
+  // lift the icon one step together with the text.
+  it("lifts the item icon with its text on focus and an open submenu", () => {
+    render(
+      <DropdownMenu open modal={false}>
+        <DropdownMenuTrigger>Open menu</DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <DropdownMenuItem>Action item</DropdownMenuItem>
+          <DropdownMenuItem variant="destructive">Delete item</DropdownMenuItem>
+          <DropdownMenuItem disabled>Unavailable item</DropdownMenuItem>
+          <DropdownMenuSub open>
+            <DropdownMenuSubTrigger>Nested actions</DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              <DropdownMenuItem>Nested item</DropdownMenuItem>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        </DropdownMenuContent>
+      </DropdownMenu>,
+    );
+
+    const iconAtRest = "[&_svg:not([class*='text-'])]:text-muted-foreground";
+    const iconOnFocus = "focus:[&_svg:not([class*='text-'])]:text-foreground";
+    const iconOnOpen = "data-[state=open]:[&_svg:not([class*='text-'])]:text-foreground";
+
+    expect(screen.getByText("Action item")).toHaveClass("focus:text-foreground", iconAtRest, iconOnFocus);
+    expect(screen.getByText("Nested actions")).toHaveClass(
+      "focus:text-foreground",
+      "data-[state=open]:text-foreground",
+      iconAtRest,
+      iconOnFocus,
+      iconOnOpen,
+    );
+    // Destructive keeps its colour on text and icon in every state.
+    expect(screen.getByText("Delete item")).toHaveClass(
+      "data-[variant=destructive]:focus:text-destructive",
+      "data-[variant=destructive]:[&_svg]:!text-destructive",
+    );
+    // Disabled keeps the tertiary step.
+    expect(screen.getByText("Unavailable item")).toHaveClass(
+      "data-[disabled]:text-tertiary-foreground",
+      "data-[disabled]:[&_svg:not([class*='text-'])]:text-tertiary-foreground",
     );
   });
 

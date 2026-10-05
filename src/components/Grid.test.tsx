@@ -1557,6 +1557,48 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(
       actionBarQueries.getAllByRole("button").at(-1),
     ).toHaveAccessibleName("Clear selection");
+    // Count on the left, every command and the close control on the right in
+    // ChromeActions, which owns the right edge inset and the 4px gaps like the
+    // open card's menu and close control. The row keeps only its left inset;
+    // the count takes the room between and truncates first when it narrows.
+    const selectionRow = actionBar?.firstElementChild?.firstElementChild;
+    expect(selectionRow).toHaveClass(
+      "w-full",
+      "min-w-min",
+      "pl-[var(--main-secondary-pad-x,0.5rem)]",
+    );
+    expect(selectionRow).not.toHaveClass(
+      "min-w-max",
+      "px-[var(--main-secondary-pad-x,0.5rem)]",
+    );
+    const selectionCount = actionBar?.querySelector("[data-feed-selection-count]");
+    expect(selectionCount).toHaveClass("w-0", "min-w-0", "flex-1", "truncate");
+    expect(selectionRow?.firstElementChild).toBe(selectionCount);
+    const selectionActions = actionBar?.querySelector<HTMLElement>(
+      "[data-feed-selection-actions]",
+    );
+    expect(selectionActions).toHaveAttribute("data-chrome-actions");
+    expect(selectionActions).toHaveClass(
+      "shrink-0",
+      "gap-1",
+      "mr-[var(--chrome-icon-edge-pad)]",
+    );
+    expect(selectionCount?.nextElementSibling).toBe(selectionActions);
+    expect(selectionRow?.lastElementChild).toBe(selectionActions);
+    expect(within(selectionActions!).getAllByRole("button")).toEqual(
+      actionBarQueries.getAllByRole("button"),
+    );
+    // The close control is the chrome one: 24px plate lit on hover.
+    const clearSelection = actionBarQueries.getByRole("button", {
+      name: "Clear selection",
+    });
+    expect(clearSelection).toHaveAttribute("data-variant", "chrome");
+    expect(clearSelection).toHaveAttribute("data-size", "chrome-icon");
+    expect(clearSelection).toHaveAttribute("data-chrome-control");
+    expect(clearSelection.querySelector("[data-chrome-plate]")).toHaveClass(
+      "w-6",
+      "group-hover/chrome:state-active",
+    );
     expect(actionBarQueries.getByRole("button", { name: /Connect/i })).toHaveAttribute(
       "data-variant",
       "default",

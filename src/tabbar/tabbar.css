@@ -7,6 +7,13 @@ html[data-tab-bar-page] #root {
   background: var(--accent);
 }
 
+/* That surface is what everything on the page stands on (global.css, the
+   elevation map): a hovered tab's state layer and its close button lift
+   from it. */
+html[data-tab-bar-page] {
+  --surface: var(--accent);
+}
+
 /* The strip scrolls sideways when the tabs do not fit; its edges dissolve
    instead of showing a scrollbar (В48). */
 [data-tab-strip] {

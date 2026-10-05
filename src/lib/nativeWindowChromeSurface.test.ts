@@ -23,7 +23,7 @@ describe("useNativeWindowChromeSurface (SPEC_TABS.md, В25)", () => {
 
   it("reports the chrome colour to the backend on start and on a theme change, once per colour", async () => {
     renderHook(() => useNativeWindowChromeSurface("--chrome"));
-    expect(commands.reportWindowSurface).toHaveBeenCalledWith("#fcfcfc");
+    expect(commands.reportWindowSurface).toHaveBeenCalledWith("#fafafa");
 
     act(() => document.documentElement.setAttribute("data-theme", "dark"));
     await waitFor(() => expect(commands.reportWindowSurface).toHaveBeenLastCalledWith("#0f0f0f"));

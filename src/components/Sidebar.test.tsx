@@ -14,6 +14,24 @@ import { SIDEBAR_ROW_HOVER_SEAM_ENABLED } from "@/lib/featureFlags";
 import { SIDEBAR_PREVIEW_SLOTS } from "@/lib/appLayout";
 import { isCardLitByCollection, resetCollectionHover, setCollectionMemberships, setHoveredCard, setSelectedCards } from "@/lib/collectionHover";
 import { HOVER_INTENT } from "@/lib/hoverIntent";
+import { NAME_REFUSAL_NOTICE_MS, NAME_REFUSED_SHAKE_MS } from "@/hooks/useNameEdit";
+
+/** What the command layer throws for a refused name (`invoke`, commands.ts). */
+function refusedName(message: string): Error {
+  return Object.assign(new Error(message), { cause: { kind: "name_refused", message } });
+}
+
+/** The reason under a name being typed, when one shows. */
+function nameNotice(): Element | null {
+  return document.querySelector("[data-sidebar-name-notice]");
+}
+
+/** Lets the refusal of a save arrive, timers held still. */
+async function settleSave() {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+}
 
 /** Fake timers that also drive the hover-intent clock (performance.now). */
 const INTENT_TIMERS = {
@@ -202,7 +220,7 @@ describe("Sidebar", () => {
     expect(screen.getByRole("textbox", { name: "Имя нового канала" })).toHaveValue("Arch");
   });
 
-  it("names a new channel inline once creation starts", () => {
+  it("names a new channel inline once creation starts", async () => {
     const onSetCreatingChannel = vi.fn();
     const onCreateChannel = vi.fn();
     // Creation starts from the row above the list or ⇧⌘N; the list only
@@ -229,8 +247,9 @@ describe("Sidebar", () => {
     const createAction = within(createRow as HTMLElement).getByRole("button", { name: "Create" });
     expect(createAction).toHaveAttribute("data-sidebar-inline-submit-action", "");
     expect(createAction).toHaveAttribute("aria-keyshortcuts", "Enter");
-    expect(createAction).toHaveClass("bg-component-fill");
-    expect(createAction).toHaveClass("hover:outline-component-fill-hover");
+    // The Connect plaque's body: filled with depth, no hover.
+    expect(createAction).toHaveClass("button-depth", "bg-depth-fill");
+    expect(createAction).not.toHaveClass("hover:outline-component-fill-hover");
     expect(createAction).toHaveTextContent("Create");
     // Placed in the right zone like a row's Connect button.
     expect(createAction).toHaveClass("absolute");
@@ -254,10 +273,11 @@ describe("Sidebar", () => {
     fireEvent.keyDown(input, { key: "Enter" });
 
     expect(onCreateChannel).toHaveBeenCalledWith("Archive");
-    expect(onSetCreatingChannel).toHaveBeenCalledWith(false);
+    // The row closes once the collection is made (05.10.2026).
+    await waitFor(() => expect(onSetCreatingChannel).toHaveBeenCalledWith(false));
   });
 
-  it("submits new-channel creation from the right-edge Create action", () => {
+  it("submits new-channel creation from the right-edge Create action", async () => {
     const onSetCreatingChannel = vi.fn();
     const onCreateChannel = vi.fn();
     renderSidebar({
@@ -276,7 +296,7 @@ describe("Sidebar", () => {
     fireEvent.click(createAction);
 
     expect(onCreateChannel).toHaveBeenCalledWith("Research");
-    expect(onSetCreatingChannel).toHaveBeenCalledWith(false);
+    await waitFor(() => expect(onSetCreatingChannel).toHaveBeenCalledWith(false));
   });
 
   it("renames a channel with an inline editor without replacing row geometry", () => {
@@ -311,6 +331,181 @@ describe("Sidebar", () => {
     fireEvent.keyDown(input, { key: "Enter" });
 
     expect(onRenameTag).toHaveBeenCalledWith("alpha", "Renamed");
+  });
+
+  // A collection's name is edited as the card's name in the path is
+  // (05.10.2026): the reason under the field, a shake on a refused save.
+  describe("a collection name refused", () => {
+    const reason = "A collection named \"beta\" already exists.";
+
+    function startRenaming(props: Partial<typeof defaultProps> & Record<string, unknown>) {
+      renderSidebar({ ...defaultProps, width: 600, ...props });
+      fireEvent.doubleClick(screen.getByRole("link", { name: /alpha/ }));
+      return screen.getByRole("textbox", { name: "Переименовать alpha" });
+    }
+
+    it("says why while the name is typed", async () => {
+      const onCheckCollectionName = vi.fn(async (_oldTag: string | null, name: string) => (
+        name === "beta" ? reason : null
+      ));
+      const input = startRenaming({ onCheckCollectionName });
+
+      fireEvent.change(input, { target: { value: "beta" } });
+
+      await waitFor(() => expect(nameNotice()).toHaveTextContent(reason));
+      expect(onCheckCollectionName).toHaveBeenLastCalledWith("alpha", "beta");
+      expect(input).toHaveAttribute("aria-invalid", "true");
+
+      fireEvent.change(input, { target: { value: "gamma" } });
+
+      await waitFor(() => expect(nameNotice()).not.toBeInTheDocument());
+      expect(input).toHaveAttribute("aria-invalid", "false");
+    });
+
+    it("keeps the field, the cursor and the typed name after a refused Enter", async () => {
+      const onRenameTag = vi.fn(async () => {
+        throw refusedName(reason);
+      });
+      const input = startRenaming({ onRenameTag });
+      vi.useFakeTimers();
+
+      fireEvent.change(input, { target: { value: "beta" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      await settleSave();
+
+      expect(onRenameTag).toHaveBeenCalledWith("alpha", "beta");
+      expect(input).toHaveAttribute("data-name-refused", "");
+      expect(input).toHaveAttribute("readonly");
+      expect(nameNotice()).toHaveTextContent(reason);
+
+      act(() => {
+        vi.advanceTimersByTime(NAME_REFUSED_SHAKE_MS);
+      });
+
+      expect(input).toBeInTheDocument();
+      expect(input).toHaveValue("beta");
+      expect(input).toHaveFocus();
+      expect(input).not.toHaveAttribute("data-name-refused");
+      expect(input).not.toHaveAttribute("readonly");
+      expect(nameNotice()).toHaveTextContent(reason);
+    });
+
+    it("tries again from the Save button and closes once the name is taken", async () => {
+      const onRenameTag = vi.fn()
+        .mockRejectedValueOnce(refusedName(reason))
+        .mockResolvedValueOnce(undefined);
+      const input = startRenaming({ onRenameTag });
+      vi.useFakeTimers();
+
+      fireEvent.change(input, { target: { value: "beta" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await settleSave();
+      act(() => {
+        vi.advanceTimersByTime(NAME_REFUSED_SHAKE_MS);
+      });
+      expect(input).toHaveFocus();
+
+      fireEvent.change(input, { target: { value: "delta" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      await settleSave();
+
+      expect(onRenameTag).toHaveBeenLastCalledWith("alpha", "delta");
+      expect(screen.queryByRole("textbox", { name: "Переименовать alpha" })).not.toBeInTheDocument();
+      expect(screen.getByRole("link", { name: /alpha/ })).toBeInTheDocument();
+      expect(nameNotice()).not.toBeInTheDocument();
+    });
+
+    it("returns the old name when the field is left, the reason staying a moment", async () => {
+      const onRenameTag = vi.fn(async () => {
+        throw refusedName(reason);
+      });
+      const input = startRenaming({ onRenameTag });
+      vi.useFakeTimers();
+
+      fireEvent.change(input, { target: { value: "beta" } });
+      fireEvent.blur(input);
+      await settleSave();
+
+      expect(input).toHaveAttribute("data-name-refused", "");
+
+      act(() => {
+        vi.advanceTimersByTime(NAME_REFUSED_SHAKE_MS);
+      });
+
+      expect(screen.queryByRole("textbox", { name: "Переименовать alpha" })).not.toBeInTheDocument();
+      expect(screen.getByRole("link", { name: /alpha/ })).toBeInTheDocument();
+      expect(nameNotice()).toHaveTextContent(reason);
+
+      act(() => {
+        vi.advanceTimersByTime(NAME_REFUSAL_NOTICE_MS);
+      });
+
+      expect(nameNotice()).not.toBeInTheDocument();
+    });
+
+    it("shows a failure without a reason in plain words", async () => {
+      const error = new Error("index is locked");
+      const onRenameTag = vi.fn(async () => {
+        throw error;
+      });
+      const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+      const input = startRenaming({ onRenameTag });
+
+      fireEvent.change(input, { target: { value: "beta" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      await waitFor(() => expect(nameNotice()).toHaveTextContent("Could not rename the collection."));
+      expect(logged).toHaveBeenCalledWith("Could not rename the collection.", error);
+      logged.mockRestore();
+    });
+
+    it("keeps a new collection's field after a refused Enter and closes the row when it is left", async () => {
+      const onSetCreatingChannel = vi.fn();
+      const onCreateChannel = vi.fn(async () => {
+        throw refusedName(reason);
+      });
+      const props = {
+        ...defaultProps,
+        width: 600,
+        isCreatingChannel: true,
+        onSetCreatingChannel,
+        onCreateChannel,
+      };
+      const { rerender } = renderSidebar(props);
+      const input = screen.getByRole("textbox", { name: "Имя нового канала" });
+      vi.useFakeTimers();
+
+      fireEvent.change(input, { target: { value: "beta" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      await settleSave();
+      act(() => {
+        vi.advanceTimersByTime(NAME_REFUSED_SHAKE_MS);
+      });
+
+      expect(onCreateChannel).toHaveBeenCalledWith("beta");
+      expect(input).toHaveValue("beta");
+      expect(input).toHaveFocus();
+      expect(onSetCreatingChannel).not.toHaveBeenCalled();
+
+      fireEvent.blur(input);
+      await settleSave();
+      act(() => {
+        vi.advanceTimersByTime(NAME_REFUSED_SHAKE_MS);
+      });
+
+      // The row is cancelled; its reason stays a moment where it stood.
+      expect(onSetCreatingChannel).toHaveBeenCalledWith(false);
+      rerender(sidebarTree({ ...props, isCreatingChannel: false }));
+      expect(screen.queryByRole("textbox", { name: "Имя нового канала" })).not.toBeInTheDocument();
+      expect(document.querySelector("[data-sidebar-name-notice-anchor]")).toBeInTheDocument();
+      expect(nameNotice()).toHaveTextContent(reason);
+
+      act(() => {
+        vi.advanceTimersByTime(NAME_REFUSAL_NOTICE_MS);
+      });
+
+      expect(nameNotice()).not.toBeInTheDocument();
+    });
   });
 
   it("uses the row hover seam when card content is dragged over Create New Collection", () => {
@@ -1472,8 +1667,11 @@ describe("sidebar and the card under the pointer (SPEC_CARD_STATES.md)", () => {
     expect(screen.getByText("5")).toHaveClass("opacity-100");
     const pill = pillIn(container, "tag:alpha")!;
     expect(pill.tagName).toBe("SPAN");
-    // The bottom bar's reference key: transparent body, 1px outline, mono regular, muted.
-    expect(pill).toHaveClass("pointer-events-none", "bg-transparent", "outline-1", "outline-border", "font-mono", "font-normal", "text-muted-foreground");
+    // The bottom bar's reference key (SPEC_CARD_STATES.md, С4): transparent
+    // body, the 1px unpressable frame from the surface under it, mono
+    // regular, the secondary step, since the link it reports is real.
+    expect(pill).toHaveClass("pointer-events-none", "bg-transparent", "outline-1", "outline-inert-frame", "font-mono", "font-normal", "text-muted-foreground");
+    expect(pill).not.toHaveClass("text-tertiary-foreground");
     expect(pill).not.toHaveClass("font-semibold");
     expect(pill).not.toHaveClass("text-foreground");
     act(() => setHoveredCard(null));
@@ -1632,7 +1830,7 @@ describe("sidebar and the feed selection (SPEC_CARD_STATES.md, С6)", () => {
 
     const alpha = screen.getByRole("button", { name: "Disconnect alpha" });
     expect(alpha).toHaveTextContent("Connected");
-    expect(alpha).toHaveClass("opacity-100", "font-semibold", "bg-component-fill");
+    expect(alpha).toHaveClass("opacity-100", "button-depth", "bg-depth-fill");
 
     const beta = screen.getByRole("button", { name: "Connect beta" });
     expect(beta).toHaveClass("opacity-100");

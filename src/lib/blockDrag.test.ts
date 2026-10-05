@@ -59,10 +59,6 @@ describe("block drag helpers", () => {
     expect(resolveBlockDragSlugs("alpha", data)).toEqual(["alpha", "beta"]);
   });
 
-  it("falls back to detail ids for single-card drags", () => {
-    expect(resolveBlockDragSlugs("detail:alpha", undefined)).toEqual(["alpha"]);
-  });
-
   it("resolves group drag preview blocks from draggable data", () => {
     const alpha = block("alpha");
     const beta = block("beta");

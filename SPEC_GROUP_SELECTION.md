@@ -431,15 +431,25 @@ Ownership and mechanics:
 - hidden while a block drag is active, so the stack preview/drop operation is
   the only primary drag affordance;
 - the action error renders as a single line anchored under the row;
-- horizontal scrolling inside the row when content does not fit.
+- при сужении ряда первым обрезается счётчик, команды сохраняют размер; ряд
+  прокручивается по горизонтали, только когда не помещаются сами команды.
 
-Layout order:
+Layout order (выравнивание вправо по решению пользователя 05.10.2026; до
+этого команды шли сразу за счётчиком, а справа стоял только крестик):
 
-- the counter starts the row: `font-mono text-sm text-muted-foreground`,
+- счётчик слева: `font-mono text-sm text-muted-foreground`,
   `{n} element(s) selected` (English plural helper
-  `selectedElementCountLabel`, not string concatenation);
-- then the actions; the rightmost control is an icon-only close button (`X`)
-  that clears selection, pinned to the row's far edge.
+  `selectedElementCountLabel`, not string concatenation); он занимает место
+  между краем и командами и обрезается (`w-0 min-w-0 flex-1 truncate`);
+- команды справа, в одной `ChromeActions` (`data-feed-selection-actions`)
+  вместе с крестиком, по правилу «Иконочные кнопки хрома» (DESIGN_SYSTEM.md),
+  как меню и закрытие открытой карточки: между кнопками `4px` (`gap-1`), от
+  края окна до подсветки крестика `8px` (`--chrome-icon-edge-pad`); у самого
+  ряда только левый отступ `--main-secondary-pad-x`;
+- последним стоит крестик `Clear selection`: `ChromeCloseButton`
+  (`Button variant="chrome" size="chrome-icon"`), подсветка `24×24` при
+  наведении, подсказка с `Esc`;
+- порядок клавиатуры: команды слева направо, затем крестик.
 
 Direct action buttons use standard design-system `Button` variants, whose
 fills compute from the row's own surface (relative elevation — no hand-picked

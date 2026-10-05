@@ -68,7 +68,16 @@ import {
   type FrozenTabWidth,
 } from "./tabLayout";
 import { createSettingsMenu, type SettingsMenu } from "./settingsMenu";
+import {
+  adoptWindowButtonStyleSet,
+  chooseWindowButtonStyle,
+  sendWindowButtonStyle,
+  shownButtonStyle,
+  WINDOW_BUTTON_STYLE_SET_EVENT,
+  type WindowButtonStyleSetPayload,
+} from "@/lib/buttonStyle";
 import { createTabMenu, type TabMenu } from "./tabMenu";
+import { listenHere } from "./useTabBarState";
 
 export const NEW_TAB_LABEL = "New Tab";
 export const CLOSE_TAB_BUTTON_LABEL = "Close Tab";
@@ -208,6 +217,30 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
     syncEdges();
   }, [activeIndex, count, stripWidth, syncEdges, width]);
 
+  // ── Dev button styles (src/lib/buttonStyle.ts) ───────────────────────────
+  // The bar owns its window's button style: each tab page gets it whenever
+  // the tabs change (a new tab, a tab dragged in), and a step made in one
+  // page (⌃⌥B) is stored here and spread to the others.
+  const latestWindow = useRef({ windowId: bar.window_id, tabs: sourceTabs, activeTab });
+  useLayoutEffect(() => {
+    latestWindow.current = { windowId: bar.window_id, tabs: sourceTabs, activeTab };
+  });
+  const tabIdsKey = sourceTabs.map((tab) => tab.id).join(" ");
+  useEffect(() => {
+    // Sent when the window's tabs change, not when the visible one does.
+    const { activeTab: active } = latestWindow.current;
+    sendWindowButtonStyle(bar.window_id, shownButtonStyle(), tabIdsKey.split(" ").filter(Boolean), active, false);
+  }, [bar.window_id, tabIdsKey]);
+  useEffect(
+    () =>
+      listenHere<WindowButtonStyleSetPayload>(WINDOW_BUTTON_STYLE_SET_EVENT, (payload) => {
+        const { windowId, tabs: current, activeTab: active } = latestWindow.current;
+        if (payload.window !== windowId) return;
+        adoptWindowButtonStyleSet(windowId, payload.style, current.map((tab) => tab.id), active);
+      }),
+    [],
+  );
+
   // ── What the handlers below read at the moment they run ──────────────────
   const chromeRows = bar.chrome_rows;
   const latest = useRef({ tabs, sourceTabs, fullscreen, width, chromeRows });
@@ -295,6 +328,12 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
       openSection: (section) => run(openSettingsWindow(section), "open the settings"),
       // The backend lays the windows out again and tells every page.
       chooseChromeRows: (rows) => run(setChromeRows(rows), "change the chrome height"),
+      // Dev button styles: this window only; its visible tab says what
+      // is on.
+      chooseButtonStyle: (style) => {
+        const { windowId, tabs: current, activeTab: active } = latestWindow.current;
+        chooseWindowButtonStyle(windowId, style, current.map((tab) => tab.id), active);
+      },
     });
     const pending = settingsMenu.current;
     const { left, bottom } = button.getBoundingClientRect();
@@ -603,14 +642,15 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
                 // Square tabs the full height of the row, outlined by the
                 // row's lines. The visible tab takes the chrome below it, a
                 // line still parting them; the others take the row's surface
-                // and light up under the pointer (В46).
+                // and light up under the pointer with a state layer, which is
+                // the surface of the close button on it (В46).
                 className={cn(
                   "relative flex h-full flex-none items-center border-r border-border pr-1 pl-3 outline-none",
                   "focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-ring",
                   index === 0 && "border-l",
                   active
                     ? "bg-chrome text-foreground"
-                    : "text-muted-foreground hover:bg-active hover:text-foreground",
+                    : "text-muted-foreground hover:text-foreground hover:state-active",
                   follows && "z-10",
                   follows && !active && "bg-accent",
                 )}

@@ -23,7 +23,7 @@ describe("SegmentedControl", () => {
       "font-mono",
       "text-sm",
       "text-muted-foreground",
-      "hover:bg-active",
+      "hover:state-active",
     );
     expect(control).not.toHaveClass("hover:outline-component-fill-hover");
     expect(screen.getByRole("button", { name: "All" })).toHaveClass(
@@ -138,7 +138,7 @@ describe("SegmentedControl", () => {
     expect(inactive).toHaveClass("text-current");
     expect(inactive).not.toHaveClass("hover:text-foreground");
     expect(screen.getByRole("group", { name: "Collection filter" })).toHaveClass(
-      "hover:bg-active",
+      "hover:state-active",
     );
   });
 });

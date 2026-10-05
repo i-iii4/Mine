@@ -9,12 +9,6 @@ export interface BlockDragData {
   clearSelectionOnDragStart?: () => void;
 }
 
-function slugFromActiveId(activeId: string): string {
-  return activeId.startsWith("detail:")
-    ? activeId.slice("detail:".length)
-    : activeId;
-}
-
 export function uniqueDragSlugs(slugs: readonly string[]): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
@@ -46,7 +40,7 @@ export function resolveBlockDragSlugs(
     if (dragSlugs.length > 0) return dragSlugs;
     if (data.slug) return [data.slug];
   }
-  return [slugFromActiveId(activeId)];
+  return [activeId];
 }
 
 export function resolveBlockDragBlocks(

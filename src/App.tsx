@@ -127,7 +127,6 @@ import {
   type NativeWindowChromeSurfaceToken,
 } from "@/lib/nativeWindowChromeSurface";
 import { Input } from "@/components/ui/input";
-import { ChromeControl, ChromePlate } from "@/components/ui/chrome-control";
 import { CardPointMenu } from "@/components/CardHoverMenu";
 import {
   CompactDetailTopMenu,
@@ -264,7 +263,9 @@ import {
   deleteChannel,
   reorderChannels,
   renameChannel,
+  checkCollectionName,
   renameBlockFile,
+  checkBlockRename,
   prepareDeleteBlock,
   deleteTagFromAll,
   addTag,
@@ -341,6 +342,8 @@ import { GraphView } from "@/components/GraphView";
 import { DragCardStackPreview } from "@/components/Card";
 import { ActionButton } from "@/components/ActionButton";
 import { applyTheme, getStoredTheme, THEME_STORAGE_KEY } from "@/lib/themeMode";
+import { flipWindowButtonStyleHere } from "@/lib/buttonStyle";
+import { ButtonStyleNotice } from "@/components/ButtonStyleNotice";
 import {
   applyDesign,
   getStoredDesignMode,
@@ -1074,9 +1077,8 @@ export function AppWithVault({
   const mainRef = useRef<HTMLDivElement>(null);
   const sidebarSearchInputRef = useRef<HTMLInputElement>(null);
   // The filter row over the sidebar's table gives room up in a fixed order
-  // (useSidebarRowFit.ts); folded, the field opens while focused or holding
-  // a query.
-  const sidebarRowRef = useRef<HTMLDivElement>(null);
+  // (useSidebarRowFit.ts, its ref comes from there); folded, the field opens
+  // while focused or holding a query.
   const [sidebarSearchFocused, setSidebarSearchFocused] = useState(false);
   const lastSidebarSearchFocusSequenceRef = useRef(0);
   const sidebarSearchChromeDragGesture = useChromeDragGesture();
@@ -1446,8 +1448,7 @@ export function AppWithVault({
     toggleCollapsed,
   } = useSidebarResize(windowSidebar);
 
-  const sidebarRowFit = useSidebarRowFit(
-    sidebarRowRef,
+  const { fit: sidebarRowFit, rowRef: sidebarRowRef } = useSidebarRowFit(
     sidebarSearchInputRef,
     [
       vaultPath,
@@ -2972,6 +2973,13 @@ export function AppWithVault({
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
+      // Dev button styles (src/lib/buttonStyle.ts): step the buttons of
+      // this window.
+      if (commandPressed("flip-buttons", e)) {
+        e.preventDefault();
+        flipWindowButtonStyleHere();
+        return;
+      }
       if (commandPressed("toggle-sidebar", e)) {
         // The native View menu owns this accelerator in packaged Mine. Letting
         // WKWebView handle the same keydown would toggle the sidebar twice.
@@ -3131,17 +3139,22 @@ export function AppWithVault({
 
   // ── Tag management ──────────────────────────────────────────────────────
 
+  // A refused rename rejects: the sidebar keeps the name's field and shows
+  // the reason under it (05.10.2026). What follows a rename that was taken
+  // does not make it refused.
   const handleRenameTag = useCallback(
     async (oldTag: string, newTag: string) => {
       suppressRedirectRef.current = true;
       try {
         const result = await renameChannel(oldTag, newTag);
-        await reloadAllSnapshots();
-        if (window.location.pathname === `/channel/${encodeURIComponent(oldTag)}`) {
-          navigate(`/channel/${encodeURIComponent(result.tag)}`);
+        try {
+          await reloadAllSnapshots();
+          if (window.location.pathname === `/channel/${encodeURIComponent(oldTag)}`) {
+            navigate(`/channel/${encodeURIComponent(result.tag)}`);
+          }
+        } catch (err) {
+          console.error("Failed to refresh after renaming a collection:", err);
         }
-      } catch (err) {
-        console.error("Failed to rename channel:", err);
       } finally {
         suppressRedirectRef.current = false;
       }
@@ -3375,14 +3388,19 @@ export function AppWithVault({
     [selectedBlock],
   );
 
-  const handleCreateChannel = useCallback(
+  // A refused name rejects: the sidebar keeps the name's field and shows the
+  // reason under it (05.10.2026). What follows a creation that was taken does
+  // not make it refused.
+  const createCollection = useCallback(
     // `drop` names what the new collection takes at once when the caller
     // knows it (Enter in the filter); otherwise the pending one applies.
     async (tag: string, drop?: PendingCreateChannelDrop | null) => {
       const pendingDrop = drop !== undefined ? drop : pendingCreateChannelDrop;
+      const channel = await createChannel(tag);
+      // Only now: a refused name keeps what the collection was to take for
+      // the name that follows.
       setPendingCreateChannelDrop(null);
       try {
-        const channel = await createChannel(tag);
         // Named at the top of the list, it takes the first place there
         // instead of the last: the others move down by one.
         const order = [channel.tag, ...orderedTags.map((t) => t.tag).filter((t) => t !== channel.tag)];
@@ -3447,6 +3465,19 @@ export function AppWithVault({
       reloadAllSnapshots,
       scheduleRefresh,
     ],
+  );
+
+  // Every other way to create one (Enter in the filter, the dialog): it has
+  // no field to keep, so a refusal is logged.
+  const handleCreateChannel = useCallback(
+    async (tag: string, drop?: PendingCreateChannelDrop | null) => {
+      try {
+        await createCollection(tag, drop);
+      } catch (err) {
+        console.error("Failed to create collection:", err);
+      }
+    },
+    [createCollection],
   );
 
   const handleSetCreatingChannel = useCallback((creating: boolean) => {
@@ -3931,9 +3962,7 @@ export function AppWithVault({
       const activeIsTag = activeId.startsWith("tag:");
       const activeSlug = activeData?.type === "block" && activeData.slug
         ? activeData.slug
-        : activeId.startsWith("detail:")
-          ? activeId.slice("detail:".length)
-          : activeId;
+        : activeId;
       const activeSlugs = !activeIsTag
         ? resolveBlockDragSlugs(activeId, activeData)
         : [];
@@ -4212,6 +4241,11 @@ export function AppWithVault({
     [reloadAllSnapshots],
   );
 
+  const handleCheckFileName = useCallback(
+    (block: LightBlock | IndexedBlock, newStem: string) => checkBlockRename(block.slug, newStem),
+    [],
+  );
+
   if (!vaultReady && !loadError) {
     return (
       // Under the tab bar, whose own separator is this page's top line (В43).
@@ -4275,7 +4309,6 @@ export function AppWithVault({
           indexing={isSyncing}
           onRevealSpace={() => void revealItemInDir(vaultPath)}
           detailBlock={renderedDetailBlock}
-          detailTitle={compactDetailCardTitle}
           detailEntered={compactDetailChromeEntered}
           viewMode={mainViewMode}
           onViewModeChange={handleMainViewModeChange}
@@ -4285,6 +4318,8 @@ export function AppWithVault({
           onToggleTag={handleToggleTag}
           onCreateAndAssign={handleCreateTagFromMenu}
           onRequestRename={setRenamingBlock}
+          onRenameFile={handleRenameBlock}
+          onCheckFileName={handleCheckFileName}
           onRequestDelete={requestDeleteBlock}
           onDetailClose={handleDetailClose}
           detailMenuOpenRequestSequence={compactDetailTopMenuRequestSequence}
@@ -4361,9 +4396,10 @@ export function AppWithVault({
                 <div
                   {...sidebarSearchChromeDragGesture}
                   className={[
-                    // Over the sidebar's table, with a query or without, the
-                    // field takes the table's surface.
-                    "group/sidebar-search flex h-full min-w-0 flex-1 items-center bg-sidebar",
+                    // Empty, the field is chrome like the rest of the row; a
+                    // query gives it the table's surface (05.10.2026).
+                    "flex h-full min-w-0 flex-1 items-center",
+                    sidebarSearchHasValue ? "bg-sidebar" : "bg-chrome",
                   ].filter(Boolean).join(" ")}
                   data-sidebar-top-search-surface=""
                 >
@@ -4372,8 +4408,8 @@ export function AppWithVault({
                     type="button"
                     variant="chrome"
                     size="chrome-icon"
-                    plate="always"
-                    aria-label="Filter collections"
+                    plate="raised"
+                    aria-label="Find or create collection"
                     shortcut={commandById("find-collections").combo}
                     className="ml-2"
                     onClick={() => sidebarSearchInputRef.current?.focus()}
@@ -4387,13 +4423,13 @@ export function AppWithVault({
                     onBlur={() => setSidebarSearchFocused(false)}
                     data-row-fit-field=""
                     {...SEARCH_INPUT_SUPPRESSION_PROPS}
-                    aria-label="Filter collections"
+                    aria-label="Find or create collection"
                     aria-activedescendant={
                       sidebarSearchKeyboardNavigationFocus
                         ? sidebarRowDomId(sidebarSearchKeyboardNavigationFocus.rowKey)
                         : undefined
                     }
-                    placeholder="Filter collections..."
+                    placeholder="Find or create..."
                     // Overflowing text at the field's right edge dissolves, it
                     // is not cut: a narrow panel used to slice the placeholder
                     // through the middle of a letter. The field alone takes the
@@ -4405,30 +4441,25 @@ export function AppWithVault({
                     value={sidebarSearchQuery}
                     onChange={(event) => handleSidebarSearchChange(event.target.value)}
                     onKeyDown={handleSidebarSearchKeyDown}
-                    className="h-full min-w-0 flex-1 rounded-0 bg-transparent px-3 py-0 font-mono text-sm text-muted-foreground placeholder:text-muted-foreground hover:placeholder:text-foreground group-hover/sidebar-search:placeholder:text-foreground"
+                    className="h-full min-w-0 flex-1 rounded-0 bg-transparent px-3 py-0 font-mono text-sm text-muted-foreground placeholder:text-muted-foreground"
                     data-sidebar-top-search=""
                   />
                   {sidebarSearchHasValue && (
-                    <ChromeControl>
-                    <button
+                    // A chrome icon button like its neighbours: the plate on
+                    // hover (05.10.2026, instead of the glyph-only exception).
+                    <Button
                       type="button"
+                      variant="chrome"
+                      size="chrome-icon"
                       aria-label="Clear collection search"
-                      className={cn(
-                        "group inline-flex w-6 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground focus-visible:text-foreground focus-visible:outline-none",
-                        // The filter's actions follow it; at the foot-row
-                        // layout the clear button ends the row, 8px in.
-                        metadataRowAtBottom ? "mr-2" : "mr-1",
-                      )}
+                      // The filter's actions follow it; at the foot-row
+                      // layout the clear button ends the row, 8px in.
+                      className={metadataRowAtBottom ? "mr-2" : "mr-1"}
                       onClick={handleClearSidebarSearch}
                       data-sidebar-top-search-clear=""
                     >
-                      {/* No plate, ever: hover only brightens the glyph
-                          (decision of 03.10.2026). */}
-                      <ChromePlate className="w-6 rounded-1">
-                      <X aria-hidden="true" className="size-[13px]" />
-                      </ChromePlate>
-                    </button>
-                    </ChromeControl>
+                      <X aria-hidden="true" />
+                    </Button>
                   )}
                   {/* The sidebar column has no third row (03.10.2026): what lived
                       over the table lives here, at the filter's right. At the
@@ -4445,7 +4476,7 @@ export function AppWithVault({
                         type="button"
                         variant="chrome"
                         size="chrome-icon"
-                        plate="always"
+                        plate="raised"
                         aria-label="New Collection"
                         shortcut={commandById("new-collection").combo}
                         onClick={beginCreateCollection}
@@ -4521,7 +4552,8 @@ export function AppWithVault({
         onSetCreatingChannel={handleSetCreatingChannel}
         onDeleteTag={handleDeleteTagFromAll}
         onRenameTag={handleRenameTag}
-        onCreateChannel={handleCreateChannel}
+        onCreateChannel={createCollection}
+        onCheckCollectionName={checkCollectionName}
         onOpenBlock={openDetailBlock}
         onOpenCardMenu={openCardActionsMenu}
         hoverPreviewFrozen={cardActionsMenuTarget !== null}
@@ -4700,6 +4732,9 @@ export function AppWithVault({
           onDeleteMedia={() => confirmDeleteBlock(Boolean(deletePlan?.unused_media.length))}
         />
       </main>
+
+      {/* Dev button styles: which style a switch turned on. */}
+      <ButtonStyleNotice />
 
       {/* Keep Downloaded is advice about the space: its lead tab gives it (В19). */}
       {lead && <CloudRecommendation vaultPath={vaultPath} refreshToken={cloudAdviceToken} />}

@@ -38,9 +38,9 @@ export function SearchMenuAction({
       data-menu-row-size={rowSize}
       className={cn(
         "relative flex h-[var(--menu-row-height)] w-full cursor-default items-center gap-2 rounded-1 px-2 py-0 text-left text-base outline-hidden select-none",
-        "hover:bg-active focus-visible:bg-active",
-        active && "bg-active",
-        disabled && "pointer-events-none opacity-50",
+        "hover:state-active focus-visible:state-active",
+        active && "state-active",
+        disabled && "pointer-events-none text-tertiary-foreground",
         className,
       )}
       style={menuRowHeightStyle(rowSize)}

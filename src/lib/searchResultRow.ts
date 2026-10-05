@@ -1,17 +1,22 @@
 // Pure mapping from a search-result LightBlock to the overlay list row.
 //
+// The row names the result by its file name (user's decision of 05.10.2026),
+// and the search `title` field is that same name end to end (SPEC_SEARCH.md),
+// so a title match's ranges index the row's title line.
+//
 // Encodes the Match Metadata rendering rules (SPEC_SEARCH.md) for the list
-// surface, mirroring what feed cards do:
-// - title match    → highlight ranges on the title line, snippet stays the
+// surface:
+// - title match    → highlight ranges on the file name, snippet stays the
 //   normal preview text without a mark;
-// - description/body match → snippet is the backend excerpt with mark ranges;
+// - description/body match → snippet is the backend excerpt with mark ranges
+//   (the note's H1 is body text and matches here);
 // - semantic match → snippet is the excerpt, no ranges, no fake highlight;
 // - author/url match → ranking-only metadata: snippet is the normal preview
 //   text, the matched metadata never leaks into the rendered row;
 // - media block without any text → no snippet, the row stays single-line.
 
 import type { LightBlock, SearchMatch } from "@/types";
-import { getDisplayTitle, getFallbackLabel } from "@/lib/displayTitle";
+import { getFileName } from "@/lib/displayTitle";
 
 export interface SearchResultRow {
   title: string;
@@ -27,7 +32,7 @@ const SNIPPET_MATCH_FIELDS: ReadonlySet<SearchMatch["field"]> = new Set([
 ]);
 
 export function deriveSearchResultRow(block: LightBlock): SearchResultRow {
-  const title = getDisplayTitle(block) ?? getFallbackLabel(block);
+  const title = getFileName(block);
   const match = block.search_match ?? null;
 
   const titleMatch = match?.field === "title" ? match : null;

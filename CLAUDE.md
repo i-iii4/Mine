@@ -49,6 +49,7 @@
 - `SPEC_SEARCH_OVERLAY.md` — поиск по блокам: модальный overlay (`Cmd+F`), список результатов с подсветкой первого совпадения, превью-карточка справа; заменяет невидимый грид-фильтр main search
 - `SPEC_SETTINGS_WINDOW.md` — отдельное окно настроек: Appearance / Spaces / Orphans (сироты-медиа с batch delete/convert), межоконная синхронизация
 - `SPEC_SCROLL_EDGE_FADE.md` — растворение верхней кромки прокручиваемых поверхностей: общая кривая маски, порог активации, настройка `mine.scrollEdgeFade`
+- [SPEC_COLOR_RULES.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_COLOR_RULES.md>): закон цвета, три роли (зона, высота, сигнал), постоянные и вывод каждого токена единственной палитры; принят пользователем 05.10.2026, проверяется `src/styles/colorLaw.test.ts`
 - `SPEC_DISTRIBUTION.md` — production-контракт подписи, доставки, обновлений, диагностики; статус DEFERRED по явному продуктовому решению
 - `SPEC_STARTUP_PERFORMANCE.md` — принятый контракт мгновенного запуска: окно и local snapshot образуют отдельный critical path, а клиппер/freshness/preview maintenance выполняются после первого интерактивного кадра
 - `DESIGN_SYSTEM_IOS.md` — дизайн-система iOS: цвета, типографика, компоненты, жесты
@@ -270,7 +271,7 @@ local-arena/
 │   ├── workers/                # fontMetrics.worker.ts (Canvas measureText), thumbWorker.ts
 │   ├── dev/                    # Dev-only Feed, Graph, ColdSpace and SidebarReorder acceptance routes; страницы сравнения на dev-сервере: /__buttons (кнопки shadcn), /__top-bar-variants (верхний ряд)
 │   ├── test/                   # Vitest setup
-│   └── styles/                 # Глобальные стили (global.css)
+│   └── styles/                 # global.css (токены единственной палитры, SPEC_COLOR_RULES.md) и buttons.css (лицо кнопки и три стиля краёв: macOS, Retro, Linear)
 ├── scripts/
 │   ├── browser-audits.mjs      # Оркестратор browser gates: свой Vite, все аудиты, teardown
 │   ├── feed-scroll-audit.mjs   # Playwright Grid scroll/source-request acceptance

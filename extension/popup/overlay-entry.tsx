@@ -1,6 +1,7 @@
 import { createRoot, type Root } from "react-dom/client";
 import { OverlayShell } from "./OverlayShell";
 import type { ClipperEdits } from "./lib/clipperEdits";
+import { rewriteRootForShadow } from "./lib/shadowRootCss";
 
 // Overlay entry — injected into the active tab's content-script isolated
 // world via chrome.scripting.executeScript. Mounts <PopupApp /> inside a
@@ -10,8 +11,8 @@ import type { ClipperEdits } from "./lib/clipperEdits";
 // CSS is loaded at runtime from dist/assets/popup.css (the SAME bundle
 // the detached window uses). This avoids duplicating Tailwind generation
 // between two builds: all utility classes that work in the window
-// context also work in the overlay. The CSS is post-processed to rewrite
-// `:root` selectors to `:root, :host` so custom properties resolve
+// context also work in the overlay. The CSS is post-processed so every bare
+// `:root` selector also selects `:host` and custom properties resolve
 // inside Shadow DOM (where `:root` matches nothing).
 
 interface OverlayHandle {
@@ -49,10 +50,9 @@ async function loadCss(): Promise<string> {
     const raw = await fetch(url).then((r) => r.text());
     // Tailwind v4 + shadcn emit all color custom properties on :root only.
     // Inside Shadow DOM, :root matches nothing — no variables, no styles.
-    // Rewrite :root { ... } to :root,:host { ... } so the same declarations apply to
-    // the shadow host. Rules already using `:root, :host` (font vars
-    // from @theme) are not matched by the narrower `:root(?=\s*\{)` pattern.
-    cachedCss = raw.replace(/:root(?=\s*\{)/g, ":root,:host");
+    // Every bare :root selector, alone or in a selector list such as the
+    // colour ladder's `:root, [data-theme]`, also selects the shadow host.
+    cachedCss = rewriteRootForShadow(raw);
   } catch (e) {
     console.error("[Mine] failed to load popup.css:", e);
     cachedCss = "";

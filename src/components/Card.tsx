@@ -116,8 +116,11 @@ interface CardProps {
   onRequestDelete?: (slug: string) => void;
 }
 
+// The frame's corner is `--card-frame-radius` (the card radius unless a
+// frame sets its own); what fills it flush inside its 1px border takes
+// `--card-frame-inner-radius`, the corner less the border (global.css).
 const CARD_FRAME_CLASS =
-  "relative overflow-hidden border border-border rounded-[var(--radius-card)] bg-card";
+  "relative overflow-hidden border border-border rounded-[var(--card-frame-radius,var(--radius-card))] bg-card";
 const PREVIEW_RETRY_DELAYS_MS = [250, 1000] as const;
 
 interface CardFrameProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -258,8 +261,10 @@ export function CardSourcelessSurface({
 /// The box clips the rest, so the outer geometry never changes.
 /// A media window that fills its card keeps the card's bottom corners: on a
 /// lift its bottom edge rises above the action row and stays rounded, as the
-/// media over the text does edge to edge (SPEC_CARD_STATES.md, С8.3).
-const FILL_WINDOW_CLASS = "rounded-b-[var(--radius-card)]";
+/// media over the text does edge to edge (SPEC_CARD_STATES.md, С8.3). At rest
+/// it lies flush inside the frame's border, so its corner is the frame's inner
+/// one: a larger corner left a crescent of the card's surface showing.
+const FILL_WINDOW_CLASS = "rounded-b-[var(--card-frame-inner-radius)]";
 
 function GraphicSurface({
   children,
@@ -614,12 +619,13 @@ export function ReadOnlyCardPreview({
     // inverted real screenshots. Format stays the fallback for legacy rows
     // that have no manifest at all.
     const isTextThumb = manifest ? manifest.kind === "text" : block.thumb_format === "png";
-    // Active search: the micro preview renders the same row model as the
-    // search-result list (title highlight, first-match excerpt as preview).
+    // Active search: the micro preview takes the search-result list's row
+    // model for its text (first-match excerpt as preview), but keeps the
+    // card's own title: the list names the result by its file name. A title
+    // match marks this title only when it is that very name, since the
+    // highlighter draws nothing over text other than the match's excerpt.
     const matchRow = block.search_match ? deriveSearchResultRow(block) : null;
-    const title = matchRow
-      ? matchRow.title
-      : (getDisplayTitle(block) ?? getNavigationLabel(block));
+    const title = getDisplayTitle(block) ?? getNavigationLabel(block);
     const previewText = matchRow
       ? (matchRow.snippet ?? "")
       : (block.preview_text?.trim() ?? "");
@@ -634,7 +640,7 @@ export function ReadOnlyCardPreview({
     return (
       <CardFrame
         className={cn(
-          "pointer-events-none rounded-1",
+          "pointer-events-none [--card-frame-radius:var(--radius-1)]",
           isArticleFeedCard && "feed-article-card",
           shadowClassName,
           className,
@@ -698,7 +704,7 @@ export function ReadOnlyCardPreview({
   return (
     <CardFrame
       className={cn(
-        "pointer-events-none rounded-1",
+        "pointer-events-none [--card-frame-radius:var(--radius-1)]",
         isArticleFeedCard && "feed-article-card",
         shadowClassName,
         className,
@@ -882,8 +888,8 @@ export function InteractiveCardPreview({
       data-block-slug={block.slug}
       role={onClick ? "button" : undefined}
       tabIndex={onClick ? 0 : undefined}
-      className={cn("group rounded-1 shadow-lg", !onClick && "cursor-default", className)}
-      style={{ width, borderRadius: "var(--radius-1)" }}
+      className={cn("group shadow-lg [--card-frame-radius:var(--radius-1)]", !onClick && "cursor-default", className)}
+      style={{ width }}
       onClick={() => onClick?.(block)}
       onKeyDown={(event) => {
         if (!onClick) return;
@@ -1569,8 +1575,10 @@ function CardCollectionPills({ collections, style }: { collections: readonly str
             data-card-collection-current={current ? "" : undefined}
             className={cn(
               buttonVariants({ variant: "reference", size: "xs" }),
+              // A pill that opens its collection: the reference body with the
+              // line colour round it, since it can be pressed.
               "h-6 shrink-0 font-mono font-normal",
-              current ? "text-foreground outline-[var(--border-accent)]" : "text-muted-foreground",
+              current ? "text-foreground outline-[var(--border-accent)]" : "text-muted-foreground outline-border",
             )}
             onPointerDown={(event) => event.stopPropagation()}
             onKeyDown={(event) => event.stopPropagation()}

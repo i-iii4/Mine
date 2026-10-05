@@ -30,7 +30,9 @@ use crate::domain::markdown::{
 use crate::domain::source_patch::apply_block_changes;
 use mine_core::links::{link_file_part, NoteMoves};
 use unicode_normalization::UnicodeNormalization;
-use crate::domain::vault::{normalize_filename_stem, validate_slug, VaultLayout};
+use crate::domain::vault::{
+    name_problem, normalize_filename_stem, normalize_typed_name, validate_slug, VaultLayout,
+};
 use crate::storage::index::IndexedBlock;
 use crate::storage::source_mutation::{SourceFileWrite, SourceMutationError, StagedSourceMutation};
 use crate::storage::{
@@ -1976,6 +1978,24 @@ pub fn rename_block_file(webview: tauri::Webview, app: AppHandle, state: State<'
         );
     }
     outcome
+}
+
+/// Asks whether a name would be taken, while it is typed: the path shows the
+/// reason under the name before the rename is tried (05.10.2026).
+#[tauri::command(async, rename_all = "snake_case")]
+pub fn check_block_rename(webview: tauri::Webview, state: State<'_, AppState>, old_slug: String, new_stem: String) -> Result<(), RenameBlockError> {
+    validate_slug(&old_slug).map_err(|e| RenameBlockError::InvalidFilename {
+        reason: e.to_string(),
+    })?;
+    let space = state.space_for(webview.label()).ok_or(RenameBlockError::NoVault)?;
+    let vault_state = space
+        .vault_state
+        .lock()
+        .map_err(|_| RenameBlockError::Internal {
+            message: "vault state mutex poisoned".into(),
+        })?;
+    let vs = vault_state.as_ref().ok_or(RenameBlockError::NoVault)?;
+    check_block_rename_inner(&vs.conn, &vs.vault, &old_slug, &new_stem)
 }
 
 /// Prepare a user-visible deletion plan for a block.
@@ -4117,14 +4137,7 @@ pub(crate) fn rename_block_file_inner(
     old_slug: &str,
     new_stem: &str,
 ) -> Result<RenameBlockResult, RenameBlockError> {
-    let requested_slug = normalize_requested_stem(new_stem)?;
-    let new_slug = if requested_slug.contains('/') {
-        requested_slug
-    } else if let Some((parent, _)) = old_slug.rsplit_once('/') {
-        format!("{parent}/{requested_slug}")
-    } else {
-        requested_slug
-    };
+    let new_slug = requested_rename_slug(old_slug, new_stem)?;
     if old_slug == new_slug {
         return Ok(RenameBlockResult {
             old_slug: old_slug.to_string(),
@@ -4139,13 +4152,7 @@ pub(crate) fn rename_block_file_inner(
         });
     }
 
-    if vault.block_path(&new_slug).exists()
-        || index::slug_exists(conn, &new_slug).map_err(internal_rename_error)?
-    {
-        return Err(RenameBlockError::NameTaken {
-            requested: new_slug,
-        });
-    }
+    refuse_taken_name(conn, vault, &new_slug)?;
 
     let (read_slug, content) =
         files::read_block_file(vault, &old_path).map_err(internal_rename_error)?;
@@ -4307,14 +4314,63 @@ impl Drop for NewFolder {
     }
 }
 
-fn normalize_requested_stem(raw: &str) -> Result<String, RenameBlockError> {
-    let trimmed = raw.trim();
-    let stem = if trimmed.to_lowercase().ends_with(".md") {
-        &trimmed[..trimmed.len() - 3]
+fn invalid_name(reason: &str) -> RenameBlockError {
+    RenameBlockError::InvalidFilename {
+        reason: reason.to_string(),
+    }
+}
+
+/// The slug `new_stem` names for `old_slug`: a bare name stays in the card's
+/// folder, a name with `/` is a path from the space's root.
+fn requested_rename_slug(old_slug: &str, new_stem: &str) -> Result<String, RenameBlockError> {
+    let requested_slug = normalize_requested_stem(new_stem)?;
+    Ok(if requested_slug.contains('/') {
+        requested_slug
+    } else if let Some((parent, _)) = old_slug.rsplit_once('/') {
+        format!("{parent}/{requested_slug}")
     } else {
-        trimmed
-    };
-    let normalized = normalize_filename_stem(stem.trim());
+        requested_slug
+    })
+}
+
+fn refuse_taken_name(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    new_slug: &str,
+) -> Result<(), RenameBlockError> {
+    if vault.block_path(new_slug).exists()
+        || index::slug_exists(conn, new_slug).map_err(internal_rename_error)?
+    {
+        return Err(RenameBlockError::NameTaken {
+            requested: new_slug.to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// Whether the rename of `old_slug` to `new_stem` would be taken, by the
+/// rename's own rules and its own taken-name check; nothing is written.
+pub(crate) fn check_block_rename_inner(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    old_slug: &str,
+    new_stem: &str,
+) -> Result<(), RenameBlockError> {
+    let new_slug = requested_rename_slug(old_slug, new_stem)?;
+    if old_slug == new_slug {
+        return Ok(());
+    }
+    refuse_taken_name(conn, vault, &new_slug)
+}
+
+/// The name a rename asks for, normalized, or why it is refused, by the rules
+/// every typed name follows ([`name_problem`], shared with collections). The
+/// reasons are read by the user (the path names them in a notice, 05.10.2026).
+fn normalize_requested_stem(raw: &str) -> Result<String, RenameBlockError> {
+    let normalized = normalize_typed_name(raw);
+    if let Some(reason) = name_problem(&normalized) {
+        return Err(invalid_name(reason));
+    }
     validate_slug(&normalized).map_err(|e| RenameBlockError::InvalidFilename {
         reason: e.to_string(),
     })?;
@@ -7201,6 +7257,47 @@ mod tests {
     fn normalize_requested_stem_rejects_path_traversal() {
         let err = normalize_requested_stem("../escape").unwrap_err();
         assert!(matches!(err, RenameBlockError::InvalidFilename { .. }));
+    }
+
+    #[test]
+    fn the_check_answers_as_the_rename_would_and_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let conn = db::open_memory().unwrap();
+        write_note(&vault, "One", "# One\n");
+        write_note(&vault, "Taken", "# Taken\n");
+
+        assert!(check_block_rename_inner(&conn, &vault, "One", "Fresh").is_ok());
+        assert!(check_block_rename_inner(&conn, &vault, "One", "One").is_ok());
+        assert!(matches!(
+            check_block_rename_inner(&conn, &vault, "One", "Taken"),
+            Err(RenameBlockError::NameTaken { .. }),
+        ));
+        assert!(matches!(
+            check_block_rename_inner(&conn, &vault, "One", "a#b"),
+            Err(RenameBlockError::InvalidFilename { .. }),
+        ));
+        assert!(vault.block_path("One").exists() && !vault.block_path("Fresh").exists());
+    }
+
+    #[test]
+    fn a_rename_refuses_names_obsidian_cannot_link_or_the_disk_cannot_hold() {
+        for refused in [
+            "", "   ", "a:b", "a#b", "a^b", "a|b", "a[b", "a]b", "a\\b", "a\0b",
+            "/a", "a/", "a//b", ".hidden", "Folder/.hidden", "./a",
+        ] {
+            assert!(
+                matches!(normalize_requested_stem(refused), Err(RenameBlockError::InvalidFilename { .. })),
+                "{refused:?} was accepted",
+            );
+        }
+        let too_long = "я".repeat(127);
+        assert!(normalize_requested_stem(&too_long).is_err(), "254 bytes and .md fit no file name");
+        let longest = "я".repeat(126);
+        assert_eq!(normalize_requested_stem(&longest).unwrap(), longest);
+        assert_eq!(normalize_requested_stem(" Casa Nogal.md ").unwrap(), "Casa Nogal");
+        assert_eq!(normalize_requested_stem("Архив/Башня").unwrap(), "Архив/Башня");
+        assert_eq!(normalize_requested_stem("Hello, world (2) & co.").unwrap(), "Hello, world (2) & co.");
     }
 
     /// Properties Mine does not know, a YAML comment and a blank line: what an

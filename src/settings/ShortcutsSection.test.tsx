@@ -41,7 +41,7 @@ describe("ShortcutsSection", () => {
     expect(shortcut("find-elements")).toHaveClass("h-5", "bg-depth-fill", "text-muted-foreground");
     expect(shortcut("find-elements")).toHaveClass("button-depth", "hover:text-foreground");
     expect(shortcut("find-elements")).not.toHaveClass("hover:outline-1");
-    expect(shortcut("find-elements")).not.toHaveClass("hover:bg-active", "border-border");
+    expect(shortcut("find-elements")).not.toHaveClass("hover:state-active", "border-border");
     expect(shortcut("find-elements")).not.toHaveClass("w-28");
   });
 
@@ -74,8 +74,9 @@ describe("ShortcutsSection", () => {
       expect(within(row(command)).queryByRole("button")).toBeNull();
     }
     expect(within(row("new-tab")).getByText("New Tab")).toBeInTheDocument();
-    // The keystroke-reference body: outline, no fill, no hover.
-    expect(row("next-tab").querySelector("[data-shortcut-reference]")).toHaveClass("outline-border", "h-5");
+    // The keystroke-reference body: the unpressable frame, no fill, no hover,
+    // and the secondary step, since the chord works.
+    expect(row("next-tab").querySelector("[data-shortcut-reference]")).toHaveClass("outline-inert-frame", "text-muted-foreground", "h-5");
     expect(row("next-tab").querySelector("[data-shortcut-reference]")).not.toHaveClass("bg-component-fill");
   });
 
@@ -132,7 +133,7 @@ describe("ShortcutsSection", () => {
     fireEvent.click(shortcut("find-elements"));
     expect(shortcut("find-elements")).toHaveFocus();
     expect(shortcut("find-elements")).toHaveAttribute("aria-pressed", "true");
-    expect(shortcut("find-elements")).toHaveClass("bg-active", "text-foreground");
+    expect(shortcut("find-elements")).toHaveClass("state-active", "text-foreground");
     expect(shortcut("find-elements")).toHaveTextContent("Press keys");
     expect(row("find-elements").querySelector("[data-shortcut-editor]")).toBeNull();
 

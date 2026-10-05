@@ -40,7 +40,9 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import type { IndexedBlock, LightBlock, TagCount, PreviewCard } from "@/types";
-import { getBlock } from "@/lib/commands";
+import { getBlock, nameRefusal } from "@/lib/commands";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { NAME_REFUSED_SHAKE_MS, useNameEdit, type NameEdit } from "@/hooks/useNameEdit";
 import { collectionRefLabel } from "@/lib/collections";
 import { SIDEBAR_ROW_HOVER_SEAM_ENABLED } from "@/lib/featureFlags";
 import { getHoverPreviewOpenDelay } from "@/lib/hoverPreviewTiming";
@@ -108,7 +110,7 @@ const SIDEBAR_PREVIEW_MASK_CLEAR_TAIL =
  *  the row's action button, whose place it takes. SPEC_CARD_STATES.md, С4, С5. */
 const SIDEBAR_ROW_CONNECTED_PILL_CLASS = cn(
   buttonVariants({ variant: "reference", size: "xs" }),
-  "pointer-events-none h-6 font-mono font-normal text-muted-foreground",
+  "pointer-events-none h-6 font-mono font-normal",
 );
 /**
  * A row's answering parts cross-fade: in over `--hover-intent-fade-in` when the
@@ -220,8 +222,14 @@ interface SidebarProps {
   isCreatingChannel: boolean;
   onSetCreatingChannel: (v: boolean) => void;
   onDeleteTag: (tag: string) => void;
-  onRenameTag: (oldTag: string, newTag: string) => void;
-  onCreateChannel: (tag: string) => void;
+  /** Renames a collection; a refused name rejects, and the field stays with
+   *  the reason under it (05.10.2026). */
+  onRenameTag: (oldTag: string, newTag: string) => Promise<void> | void;
+  /** Creates a collection; a refused name rejects, as a rename's does. */
+  onCreateChannel: (tag: string) => Promise<void> | void;
+  /** Why a collection could not be called `name` (renamed from `oldTag`, or
+   *  created when it is null), or null; asked while the name is typed. */
+  onCheckCollectionName?: (oldTag: string | null, name: string) => Promise<string | null>;
   onOpenBlock?: (block: IndexedBlock) => void;
   onOpenCardMenu?: (block: LightBlock | IndexedBlock, point: CardMenuPoint) => void;
   hoverPreviewFrozen?: boolean;
@@ -304,6 +312,7 @@ const SidebarCore = memo(function SidebarCore({
   onDeleteTag,
   onRenameTag,
   onCreateChannel,
+  onCheckCollectionName,
   onOpenBlock,
   onOpenCardMenu,
   hoverPreviewFrozen = false,
@@ -427,16 +436,29 @@ const SidebarCore = memo(function SidebarCore({
   // would hand each row a fresh function and force a full repaint of the list
   // mid-gesture.
   const startRenamingTag = useCallback((tag: string) => setEditingTag(tag), []);
-  const cancelRenamingTag = useCallback(() => setEditingTag(null), []);
+  // A rename that ends late (saved, or refused as its field was left) closes
+  // only its own row: another row may be being renamed by then.
+  const endRenamingTag = useCallback((tag: string) => {
+    setEditingTag((current) => (current === tag ? null : current));
+  }, []);
 
+  // The rename is awaited: the row stays a field until it is saved, and a
+  // refused name comes back to the field (05.10.2026).
   const handleRename = useCallback(
-    (oldTag: string, newValue: string) => {
-      const trimmed = newValue.trim();
-      if (trimmed) onRenameTag(oldTag, trimmed);
-      setEditingTag(null);
+    async (oldTag: string, newValue: string) => {
+      await onRenameTag(oldTag, newValue);
     },
     [onRenameTag],
   );
+
+  const createEdit = useNameEdit({
+    check: onCheckCollectionName ? (typed) => onCheckCollectionName(null, typed) : undefined,
+    save: async (typed) => {
+      await onCreateChannel(typed);
+    },
+    reasonOf: (error) => collectionNameRefusal(error, "Could not create the collection."),
+    end: () => onSetCreatingChannel(false),
+  });
 
   // The compact icon-rail state is gone: the panel is either the full table or
   // fully collapsed (removed). Rows always render the three-column layout.
@@ -981,13 +1003,16 @@ const SidebarCore = memo(function SidebarCore({
               isSidebarRowFocused={effectiveSidebarRowFocusKey === "create-channel"}
               isSidebarRowSeamAccent={seamAccentKeys.has("create-channel")}
               onStartCreate={() => onSetCreatingChannel(true)}
-              onCreate={(value) => {
-                onCreateChannel(value);
-                onSetCreatingChannel(false);
-              }}
-              onCancel={() => onSetCreatingChannel(false)}
+              edit={createEdit}
             />
             </div></div>
+          )}
+          {/* A refused name left the row: the row is gone, its reason stays
+              a moment where it stood. */}
+          {!showCreateRow && createEdit.notice !== null && (
+            <SidebarNameNotice notice={createEdit.notice}>
+              <div aria-hidden="true" className="h-0" data-sidebar-name-notice-anchor="" />
+            </SidebarNameNotice>
           )}
 
           <SortableContext
@@ -1021,7 +1046,8 @@ const SidebarCore = memo(function SidebarCore({
                   } : selectionLinkEditor(tc.tag)}
                   onDoubleClick={startRenamingTag}
                   onRenameSubmit={handleRename}
-                  onRenameCancel={cancelRenamingTag}
+                  onRenameEnd={endRenamingTag}
+                  onRenameCheck={onCheckCollectionName}
                   onDelete={onDeleteTag}
                   onClick={onNavClick}
                   onSameClick={isLinkEditorActive ? undefined : onScrollToTop}
@@ -1557,14 +1583,45 @@ function SidebarRowBody({
   );
 }
 
+/// What a refused collection name shows under the name: the reason the
+/// command gave, or `fallback` when it failed without one.
+function collectionNameRefusal(error: unknown, fallback: string): string {
+  const reason = nameRefusal(error);
+  if (reason !== null) return reason;
+  console.error(fallback, error);
+  return fallback;
+}
+
+/// The reason a typed name is refused, right under the row being named: the
+/// notice the card's name in the path shows (05.10.2026).
+function SidebarNameNotice({
+  notice,
+  children,
+}: {
+  notice: string | null;
+  children: ReactNode;
+}) {
+  return (
+    <Tooltip open={notice !== null}>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent
+        align="start"
+        className="max-w-80 text-destructive"
+        data-sidebar-name-notice=""
+      >
+        {notice}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 function SidebarEditableRowBody({
   defaultValue,
   placeholder,
   ariaLabel,
   compact,
   submitAction,
-  onSubmit,
-  onCancel,
+  edit,
 }: {
   defaultValue: string;
   placeholder: string;
@@ -1575,42 +1632,42 @@ function SidebarEditableRowBody({
     shortcut: string;
     shortcutKey: string;
   };
-  onSubmit: (value: string) => void;
-  onCancel: () => void;
+  edit: NameEdit;
 }) {
   return (
-    <div
-      className={
-        compact
-          ? cn(
-              "flex w-full items-center overflow-hidden text-base",
-              "rounded-1 p-2",
-              "text-muted-foreground",
-            )
-          : cn(SIDEBAR_ROW_BOX_CLASS, "pl-[var(--sidebar-row-pad-x)] font-sans text-base text-muted-foreground")
-      }
-      data-sidebar-editable-row-body
-      data-sidebar-editable-row-full-width
-    >
-      {submitAction && !compact && (
-        // The list's right zone runs through this row too: the guideline the
-        // other rows show, the submit button inside the zone.
-        <span
-          aria-hidden="true"
-          data-sidebar-editable-row-guideline=""
-          className="pointer-events-none absolute inset-y-0 w-px bg-sidebar-border"
-          style={{ right: "var(--sidebar-zone)" }}
+    <SidebarNameNotice notice={edit.notice}>
+      <div
+        className={
+          compact
+            ? cn(
+                "flex w-full items-center overflow-hidden text-base",
+                "rounded-1 p-2",
+                "text-muted-foreground",
+              )
+            : cn(SIDEBAR_ROW_BOX_CLASS, "pl-[var(--sidebar-row-pad-x)] font-sans text-base text-muted-foreground")
+        }
+        data-sidebar-editable-row-body
+        data-sidebar-editable-row-full-width
+      >
+        {submitAction && !compact && (
+          // The list's right zone runs through this row too: the guideline the
+          // other rows show, the submit button inside the zone.
+          <span
+            aria-hidden="true"
+            data-sidebar-editable-row-guideline=""
+            className="pointer-events-none absolute inset-y-0 w-px bg-sidebar-border"
+            style={{ right: "var(--sidebar-zone)" }}
+          />
+        )}
+        <InlineChannelNameEditor
+          defaultValue={defaultValue}
+          placeholder={placeholder}
+          ariaLabel={ariaLabel}
+          submitAction={submitAction}
+          edit={edit}
         />
-      )}
-      <InlineChannelNameEditor
-        defaultValue={defaultValue}
-        placeholder={placeholder}
-        ariaLabel={ariaLabel}
-        submitAction={submitAction}
-        onSubmit={onSubmit}
-        onCancel={onCancel}
-      />
-    </div>
+      </div>
+    </SidebarNameNotice>
   );
 }
 
@@ -1716,7 +1773,8 @@ const TagNavItem = memo(function TagNavItem({
   linkEditor,
   onDoubleClick,
   onRenameSubmit,
-  onRenameCancel,
+  onRenameEnd,
+  onRenameCheck,
   onDelete,
   onClick,
   onSameClick,
@@ -1745,8 +1803,11 @@ const TagNavItem = memo(function TagNavItem({
   isEditing: boolean;
   linkEditor?: SidebarRowLinkEditor;
   onDoubleClick: (tag: string) => void;
-  onRenameSubmit: (tag: string, value: string) => void;
-  onRenameCancel: () => void;
+  /** Saves the new name; a refused name rejects. */
+  onRenameSubmit: (tag: string, value: string) => Promise<void>;
+  /** The rename of `tag` is over: saved, kept, or refused as its field was left. */
+  onRenameEnd: (tag: string) => void;
+  onRenameCheck?: (tag: string, value: string) => Promise<string | null>;
   onDelete: (tag: string) => void;
   onClick?: () => void;
   onSameClick?: () => void;
@@ -1760,10 +1821,15 @@ const TagNavItem = memo(function TagNavItem({
   const isLinkEditor = !!linkEditor;
   // The parent hands out one callback for every row; each row binds its own tag.
   const startRename = useCallback(() => onDoubleClick(tag), [onDoubleClick, tag]);
-  const submitRename = useCallback(
-    (value: string) => onRenameSubmit(tag, value),
-    [onRenameSubmit, tag],
-  );
+  // The edit lives with the row, not with its field: a name refused as the
+  // field was left returns, and its reason stays under the row a moment.
+  const renameEdit = useNameEdit({
+    current: label,
+    check: onRenameCheck ? (typed) => onRenameCheck(tag, typed) : undefined,
+    save: (typed) => onRenameSubmit(tag, typed),
+    reasonOf: (error) => collectionNameRefusal(error, "Could not rename the collection."),
+    end: () => onRenameEnd(tag),
+  });
   const deleteTag = useCallback(() => onDelete(tag), [onDelete, tag]);
   const isCurrentRoute = location.pathname === to || location.pathname.startsWith(`${to}/`);
 
@@ -1814,8 +1880,9 @@ const TagNavItem = memo(function TagNavItem({
           placeholder={label}
           ariaLabel={`Переименовать ${label}`}
           compact={compact}
-          onSubmit={submitRename}
-          onCancel={onRenameCancel}
+          // Saving names its key like creating does (05.10.2026).
+          submitAction={{ label: "Save", shortcut: bindingLabel({ key: "Enter" }), shortcutKey: "Enter" }}
+          edit={renameEdit}
         />
       </SidebarRowFrame>
     );
@@ -1865,6 +1932,16 @@ const TagNavItem = memo(function TagNavItem({
               onDoubleClick={startRename}
               linkEditor={linkEditor}
             />
+            {renameEdit.notice !== null && (
+              // The old name returned after a refusal; its reason stays a moment.
+              <SidebarNameNotice notice={renameEdit.notice}>
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0"
+                  data-sidebar-name-notice-anchor=""
+                />
+              </SidebarNameNotice>
+            )}
           </SidebarRowFrame>
         </ContextMenuTrigger>
         <ContextMenuContent>
@@ -1906,8 +1983,7 @@ function NewChannelRow({
   isSidebarRowFocused,
   isSidebarRowSeamAccent,
   onStartCreate,
-  onCreate,
-  onCancel,
+  edit,
 }: {
   compact?: boolean;
   isEditing: boolean;
@@ -1915,8 +1991,9 @@ function NewChannelRow({
   isSidebarRowFocused: boolean;
   isSidebarRowSeamAccent: boolean;
   onStartCreate: () => void;
-  onCreate: (value: string) => void;
-  onCancel: () => void;
+  /** The naming of the new collection; it outlives the row, whose reason
+   *  stays a moment after a refused name closed it. */
+  edit: NameEdit;
 }) {
   const { setNodeRef } = useDroppable({
     id: "create-channel",
@@ -1943,8 +2020,7 @@ function NewChannelRow({
           compact={compact}
           // The key's label comes from the one key table the bottom bar uses.
           submitAction={{ label: "Create", shortcut: bindingLabel({ key: "Enter" }), shortcutKey: "Enter" }}
-          onSubmit={onCreate}
-          onCancel={onCancel}
+          edit={edit}
         />
       ) : (
         <button
@@ -2144,8 +2220,7 @@ function InlineChannelNameEditor({
   defaultValue = "",
   ariaLabel,
   submitAction,
-  onSubmit,
-  onCancel,
+  edit,
 }: {
   placeholder: string;
   defaultValue?: string;
@@ -2157,11 +2232,10 @@ function InlineChannelNameEditor({
     /** The key's name for assistive technology (`aria-keyshortcuts`). */
     shortcutKey: string;
   };
-  onSubmit: (value: string) => void;
-  onCancel: () => void;
+  /** The name's edit (`useNameEdit`): the field opening begins it. */
+  edit: NameEdit;
 }) {
   const ref = useRef<HTMLInputElement>(null);
-  const submitted = useRef(false);
 
   useEffect(() => {
     const input = ref.current;
@@ -2169,15 +2243,9 @@ function InlineChannelNameEditor({
     input.focus();
     const end = input.value.length;
     input.setSelectionRange(end, end);
+    // Once per field: it opens, the edit begins.
+    edit.begin(input.value);
   }, []);
-
-  const doSubmit = (value: string) => {
-    if (submitted.current) return;
-    submitted.current = true;
-    const trimmed = value.trim();
-    if (trimmed) onSubmit(trimmed);
-    else onCancel();
-  };
 
   return (
     <div
@@ -2195,25 +2263,32 @@ function InlineChannelNameEditor({
         placeholder={placeholder}
         className="block h-5 min-w-0 flex-1 translate-x-px border-0 bg-transparent p-0 font-sans text-base leading-5 text-foreground outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0"
         data-sidebar-inline-channel-editor=""
+        aria-invalid={edit.notice !== null}
+        // A refused name shakes once and takes no typing meanwhile.
+        readOnly={edit.refused}
+        data-name-refused={edit.refused ? "" : undefined}
+        style={{ animationDuration: `${NAME_REFUSED_SHAKE_MS}ms` }}
+        spellCheck={false}
+        autoComplete="off"
         onClick={(e) => {
           e.stopPropagation();
         }}
         onPointerDown={(e) => {
           e.stopPropagation();
         }}
+        onChange={(e) => edit.change(e.currentTarget.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter") {
             e.preventDefault();
             e.stopPropagation();
-            doSubmit((e.target as HTMLInputElement).value);
+            edit.submit(e.currentTarget.value);
           } else if (e.key === "Escape") {
             e.preventDefault();
             e.stopPropagation();
-            submitted.current = true;
-            onCancel();
+            edit.cancel();
           }
         }}
-        onBlur={(e) => doSubmit(e.target.value)}
+        onBlur={(e) => edit.leave(e.currentTarget.value)}
       />
       {submitAction && (
         <button
@@ -2238,7 +2313,7 @@ function InlineChannelNameEditor({
           onClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
-            doSubmit(ref.current?.value ?? "");
+            edit.submit(ref.current?.value ?? "");
           }}
         >
           <span>{submitAction.label}</span>

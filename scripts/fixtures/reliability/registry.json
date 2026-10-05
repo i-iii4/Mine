@@ -1476,6 +1476,8 @@
         "src/components/ui/checkbox.tsx",
         "src/components/ui/dialog.tsx",
         "src/components/ui/menu-icon-slot.tsx",
+        "src/dev/ConnectIconsPage.tsx",
+        "src/dev/connectIconData.ts",
         "src/settings/SpacesSection.tsx"
       ],
       "requirement": "DESIGN_SYSTEM.md#Иконки 13 px",
@@ -1484,11 +1486,88 @@
     },
     {
       "paths": [
+        "src/components/ActionButton.tsx",
         "src/components/ActionButton.style.test.tsx",
-        "src/components/BottomBarCommands.test.tsx"
+        "src/components/BottomBarCommands.test.tsx",
+        "src/components/ui/input.tsx",
+        "src/dev/ButtonDepthPage.tsx",
+        "src/dev/ButtonsDecisionPage.tsx",
+        "src/dev/buttonsDecisionStyles.ts",
+        "src/dev/buttonsDecisionStyles.test.ts",
+        "src/dev/buttonDepthApproaches.ts",
+        "src/dev/UiInventoryPage.tsx"
       ],
       "requirement": "DESIGN_SYSTEM.md#Объём кнопки",
-      "tests": ["src/components/ActionButton.style.test.tsx", "src/components/BottomBarCommands.test.tsx", "src/components/Detail.test.tsx", "src/components/Grid.test.tsx", "src/settings/ShortcutsSection.test.tsx"],
+      "tests": ["src/components/ActionButton.style.test.tsx", "src/components/BottomBarCommands.test.tsx", "src/components/Detail.test.tsx", "src/components/Grid.test.tsx", "src/settings/ShortcutsSection.test.tsx", "src/dev/buttonsDecisionStyles.test.ts"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/dev/TextLadderPage.tsx",
+        "src/dev/textLadderData.ts",
+        "src/dev/textLadderData.test.ts"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#Цвет текста и значков",
+      "tests": ["src/dev/textLadderData.test.ts"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/colorLaw.ts",
+        "src/styles/colorLaw.test.ts",
+        "src/styles/global.css",
+        "src/lib/sidebarSurface.test.ts"
+      ],
+      "requirement": "SPEC_COLOR_RULES.md#Правила цвета Mine",
+      "tests": ["src/styles/colorLaw.test.ts", "src/lib/sidebarSurface.test.ts"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/buttonStyle.ts",
+        "src/lib/buttonStyle.test.ts",
+        "src/styles/buttons.css",
+        "src/tabbar/settingsMenu.ts",
+        "src/components/ButtonStyleNotice.tsx",
+        "src/components/ButtonStyleNotice.test.tsx"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#Объём кнопки",
+      "tests": ["src/lib/buttonStyle.test.ts", "src/components/ButtonStyleNotice.test.tsx"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "extension/popup/overlay-entry.tsx",
+        "extension/popup/lib/shadowRootCss.ts",
+        "extension/popup/lib/shadowRootCss.test.ts"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#Цвет текста и значков",
+      "tests": ["extension/popup/lib/shadowRootCss.test.ts"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/styles/global.css",
+        "src/styles/global.test.ts",
+        "src/lib/floatingLayer.ts",
+        "src/components/ActionButton.tsx",
+        "src/components/ActionButton.test.tsx",
+        "src/components/graph/canvas.ts",
+        "src/components/ui/button.tsx",
+        "src/components/ui/tabs.tsx",
+        "src/components/ui/tooltip.tsx",
+        "src/components/ui/dropdown-menu.tsx",
+        "src/components/ui/dropdown-menu.test.tsx",
+        "src/components/ui/context-menu.tsx",
+        "src/components/ui/context-menu.test.tsx",
+        "src/components/ui/segmented-control.tsx",
+        "src/components/ui/segmented-control.test.tsx",
+        "src/tabbar/TabBar.tsx",
+        "src/tabbar/TabBar.test.tsx",
+        "src/tabbar/tabbar.css"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#Цвет от того, что под элементом",
+      "tests": ["src/styles/global.test.ts", "src/lib/sidebarSurface.test.ts", "src/components/ActionButton.test.tsx", "src/components/BottomBarCommands.test.tsx", "src/components/ui/dropdown-menu.test.tsx", "src/components/ui/context-menu.test.tsx", "src/components/ui/segmented-control.test.tsx", "src/tabbar/TabBar.test.tsx", "src/components/Sidebar.test.tsx", "src/components/GraphView.test.tsx"],
       "command": "test:frontend"
     },
     {
@@ -1696,6 +1775,31 @@
       ],
       "requirement": "SPEC_TABS.md### Окно и страница",
       "tests": ["src/App.test.tsx", "src/components/VaultSwitcher.test.tsx", "src/lib/tabVisibility.test.ts"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/components/RenameBlockDialog.tsx",
+        "src/hooks/useNameEdit.ts",
+        "src/lib/blockDrag.ts",
+        "src/lib/blockDrag.test.ts"
+      ],
+      "requirement": "SPEC_FRONTEND.md### RenameBlockDialog",
+      "tests": [
+        "src/components/RenameBlockDialog.test.tsx",
+        "src/components/MainSecondaryChrome.test.tsx",
+        "src/components/Sidebar.test.tsx",
+        "src/lib/blockDrag.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/searchResultRow.ts",
+        "src/lib/searchResultRow.test.ts"
+      ],
+      "requirement": "SPEC_SEARCH.md## Match Metadata",
+      "tests": ["src/lib/searchResultRow.test.ts", "src/components/SearchOverlay.test.tsx"],
       "command": "test:frontend"
     }
   ],

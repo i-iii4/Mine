@@ -1,13 +1,16 @@
-import { useDraggable } from "@dnd-kit/core";
 import { Plus } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { getFileName } from "@/lib/displayTitle";
 import { commandById } from "@/lib/commandRegistry";
 import { cn } from "@/lib/utils";
 import { useChromeDragGesture } from "@/hooks/useChromeDragGesture";
+import { NAME_REFUSED_SHAKE_MS, useNameEdit } from "@/hooks/useNameEdit";
 import type {
   IndexedBlock,
   LightBlock,
   MainViewMode,
+  RenameBlockError,
   TagCount,
   VaultStats,
 } from "@/types";
@@ -15,12 +18,14 @@ import { ActivityIndicators } from "./ActivityIndicators";
 import { ChromeRow, ChromeActions } from "./ChromeRow";
 import { CardMoreMenu } from "./CardHoverMenu";
 import { ChromeCloseButton } from "./ChromeCloseButton";
+import { renameErrorMessage } from "./RenameBlockDialog";
 import {
   SegmentedControl,
   type SegmentedControlOption,
 } from "./ui/segmented-control";
 import { FeedDisplayMenu } from "./FeedDisplayMenu";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 
 const MAIN_VIEW_MODE_OPTIONS: SegmentedControlOption<MainViewMode>[] = [
@@ -234,7 +239,6 @@ export function MainSecondaryTopBar({
   collectionCount,
   stats,
   detailBlock,
-  detailTitle,
   detailEntered,
   viewMode,
   onViewModeChange,
@@ -244,6 +248,8 @@ export function MainSecondaryTopBar({
   onToggleTag,
   onCreateAndAssign,
   onRequestRename,
+  onRenameFile,
+  onCheckFileName,
   onRequestDelete,
   onDetailClose,
   detailMenuOpenRequestSequence,
@@ -270,7 +276,6 @@ export function MainSecondaryTopBar({
   /// Reveal the space folder so the user can mark it Keep Downloaded.
   onRevealSpace?: () => void;
   detailBlock?: LightBlock | IndexedBlock | null;
-  detailTitle?: string;
   detailEntered?: boolean;
   viewMode: MainViewMode;
   onViewModeChange: (value: MainViewMode) => void;
@@ -280,6 +285,12 @@ export function MainSecondaryTopBar({
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
   onRequestRename: (block: LightBlock | IndexedBlock) => void;
+  /// Renames the open card's file to a new name without its folder; rejects
+  /// with a `RenameBlockError` when the name is refused.
+  onRenameFile: (block: LightBlock | IndexedBlock, newStem: string) => Promise<void>;
+  /// Whether a name typed for the open card would be refused, and why;
+  /// writes nothing.
+  onCheckFileName: (block: LightBlock | IndexedBlock, newStem: string) => Promise<RenameBlockError | null>;
   onRequestDelete: (slug: string) => void;
   onDetailClose: () => void;
   detailMenuOpenRequestSequence: number;
@@ -303,18 +314,6 @@ export function MainSecondaryTopBar({
   // are not what it replaces, and its commands belong over the feed they act on.
   const contentMainLayerEntered = mainLayerEntered && !selectionActive;
   const closeChromeGesture = useChromeDragGesture({ disabled: !detailBlock });
-  const {
-    attributes: dragAttributes,
-    listeners: dragListeners,
-    setNodeRef: setDragHandleRef,
-    isDragging,
-  } = useDraggable({
-    id: `detail-secondary:${detailBlock?.slug ?? "__empty__"}`,
-    disabled: !detailBlock,
-    data: detailBlock
-      ? { type: "block", slug: detailBlock.slug, block: detailBlock }
-      : undefined,
-  });
 
   const sidebarSegment = (
     <div
@@ -402,24 +401,12 @@ export function MainSecondaryTopBar({
           data-entered={detailLayerEntered ? "true" : "false"}
           data-secondary-detail-top-menu=""
         >
-          <div
-            ref={setDragHandleRef}
-            {...dragAttributes}
-            {...dragListeners}
-            className={cn(
-              "min-w-0 cursor-grab truncate font-mono text-sm text-muted-foreground active:cursor-grabbing",
-              // In the path it is a pill like the space and the collection
-              // before it: the same inner padding and hover plate.
-              part === "content"
-                ? "h-6 rounded-1 px-2 leading-6 hover:bg-active hover:text-foreground"
-                : "flex-1",
-              isDragging && "opacity-30",
-            )}
-            title={detailTitle}
-            data-secondary-detail-drag-handle=""
-          >
-            {detailTitle}
-          </div>
+          <DetailCardFileName
+            block={detailBlock}
+            inPath={part === "content"}
+            onRename={onRenameFile}
+            onCheck={onCheckFileName}
+          />
           <ChromeActions className={part === "content" ? "ml-auto" : undefined}>
           <CardMoreMenu
             block={detailBlock}
@@ -465,6 +452,134 @@ export function MainSecondaryTopBar({
   );
 }
 
+
+function isRenameBlockError(value: unknown): value is RenameBlockError {
+  return typeof value === "object" && value !== null && "kind" in value;
+}
+
+function refusalMessage(raw: unknown): string {
+  return isRenameBlockError(raw) ? renameErrorMessage(raw) : "Could not rename the file.";
+}
+
+type FileNameCheck = (block: LightBlock | IndexedBlock, newStem: string) => Promise<RenameBlockError | null>;
+
+/// The open card in the path is named by its file and renamed right there
+/// (user's decisions of 05.10.2026). A double click turns the name into a
+/// field; leaving the field or Enter saves, Escape keeps the old name. While
+/// the typed name would be refused (a character Obsidian cannot link, a name
+/// already taken) the reason stands right under it. A refused save shakes the
+/// field once: after Enter the field stays, with the cursor and the typed
+/// name; after leaving the field the old name returns and the reason stays a
+/// moment (`useNameEdit`, shared with the sidebar's collection names). The
+/// name is not dragged.
+function DetailCardFileName({
+  block,
+  inPath,
+  onRename,
+  onCheck,
+}: {
+  block: LightBlock | IndexedBlock;
+  /// In the path the name is a pill like the space and the collection before
+  /// it: the same inner padding and hover plate.
+  inPath: boolean;
+  onRename: (block: LightBlock | IndexedBlock, newStem: string) => Promise<void>;
+  onCheck: FileNameCheck;
+}) {
+  const fileName = getFileName(block);
+  const [editing, setEditing] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const edit = useNameEdit({
+    current: fileName,
+    check: (typed) => onCheck(block, typed).then((problem) => (
+      problem ? renameErrorMessage(problem) : null
+    )),
+    save: (typed) => onRename(block, typed),
+    reasonOf: refusalMessage,
+    end: () => setEditing(false),
+  });
+
+  // Another card in the path ends the edit, as Escape would.
+  useEffect(() => {
+    edit.cancel();
+  }, [block.slug]);
+
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!editing || !input) return;
+    input.focus();
+    const end = input.value.length;
+    input.setSelectionRange(end, end);
+  }, [editing]);
+
+  const startEditing = () => {
+    edit.begin(fileName);
+    setEditing(true);
+  };
+
+  return (
+    <Tooltip open={edit.notice !== null}>
+      <TooltipTrigger asChild>
+        <div
+          className={cn("flex min-w-0", (editing || !inPath) && "flex-1")}
+          data-secondary-detail-card-name-anchor=""
+        >
+          {editing ? (
+            <input
+              ref={inputRef}
+              type="text"
+              aria-label="Rename file"
+              aria-invalid={edit.notice !== null}
+              defaultValue={fileName}
+              readOnly={edit.refused}
+              spellCheck={false}
+              autoComplete="off"
+              // The plate stays while the name is a field, so its extent shows.
+              className="state-active h-6 min-w-0 flex-1 rounded-1 border-0 bg-transparent px-2 font-mono text-sm leading-6 text-foreground outline-none"
+              data-secondary-detail-card-name-input=""
+              data-name-refused={edit.refused ? "" : undefined}
+              style={{ animationDuration: `${NAME_REFUSED_SHAKE_MS}ms` }}
+              onPointerDown={(event) => event.stopPropagation()}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  edit.submit(event.currentTarget.value);
+                } else if (event.key === "Escape") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  edit.cancel();
+                }
+              }}
+              onChange={(event) => edit.change(event.currentTarget.value)}
+              onBlur={(event) => edit.leave(event.currentTarget.value)}
+            />
+          ) : (
+            <div
+              onDoubleClick={startEditing}
+              className={cn(
+                "min-w-0 select-none truncate font-mono text-sm text-muted-foreground",
+                inPath
+                  ? "h-6 rounded-1 px-2 leading-6 hover:state-active hover:text-foreground"
+                  : "flex-1",
+              )}
+              title={fileName}
+              data-secondary-detail-card-name=""
+            >
+              {fileName}
+            </div>
+          )}
+        </div>
+      </TooltipTrigger>
+      <TooltipContent
+        align="start"
+        className="max-w-80 text-destructive"
+        data-secondary-detail-card-name-notice=""
+      >
+        {edit.notice}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 /** Grid and Graph as chrome tabs on a permanent plate (version 2). */
 function MainViewModeTabs({
@@ -516,42 +631,25 @@ function MainViewModeSwitch({
   );
 }
 
-/// The card title in the compact top menu is the block's drag handle, exactly
-/// as the filename is in the classic Detail header.
-///
-/// It used to be a `data-tauri-drag-region` instead, which silently swapped
-/// the gesture's meaning with the chrome mode: the same grab that dragged the
-/// card into a collection under the classic header started dragging the
-/// window under the compact one. The window keeps its drag surface on the
-/// header's empty stretches; the card's identity stays draggable everywhere
-/// it is shown.
-function CompactDetailCardTitleDragHandle({
+/// The card title in the compact top menu behaves as the card's name does
+/// in every chrome mode: it is not dragged, and a double click renames the
+/// card (05.10.2026). The window keeps its drag surface on the header's empty
+/// stretches.
+function CompactDetailCardTitle({
   block,
   cardTitle,
+  onRequestRename,
 }: {
   block: LightBlock | IndexedBlock;
   cardTitle: string;
+  onRequestRename: (block: LightBlock | IndexedBlock) => void;
 }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-    id: `detail:${block.slug}`,
-    data: {
-      type: "block",
-      slug: block.slug,
-      block,
-    },
-  });
   return (
     <div
-      ref={setNodeRef}
-      {...attributes}
-      {...listeners}
-      className={cn(
-        "min-w-0 flex-1 cursor-grab truncate pl-0 pr-3 font-mono text-sm text-muted-foreground active:cursor-grabbing",
-        isDragging && "opacity-30",
-      )}
+      onDoubleClick={() => onRequestRename(block)}
+      className="min-w-0 flex-1 select-none truncate pl-0 pr-3 font-mono text-sm text-muted-foreground"
       title={cardTitle}
       data-compact-detail-card-title=""
-      data-detail-drag-handle
     >
       {cardTitle}
     </div>
@@ -593,7 +691,7 @@ export function CompactDetailTopMenu({
       data-entered={entered ? "true" : "false"}
       data-compact-detail-top-menu=""
     >
-      <CompactDetailCardTitleDragHandle block={block} cardTitle={cardTitle} />
+      <CompactDetailCardTitle block={block} cardTitle={cardTitle} onRequestRename={onRequestRename} />
       <ChromeActions windowEdge={false}>
       <CardMoreMenu
         block={block}

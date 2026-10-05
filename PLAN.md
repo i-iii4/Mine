@@ -2479,6 +2479,24 @@ architecture decision 046 in [ARCHITECTURE.md](ARCHITECTURE.md).
 | 33.6 | Automated acceptance | DONE | Pending maintenance, milestone ordering, bundle inventory, manifest changes, atomic replacement, full frontend and Rust suites pass |
 | 33.7 | Real launch acceptance | MANUAL QA | 10 clean-process release launches pass: shell p95 216 ms, cards p95 584 ms, blocking maintenance 0/10; reboot-cold and remaining clipper-state matrix stay open |
 
+### Phase 34: единая палитра, стили кнопок, переименование на месте
+
+Решения пользователя 05.10.2026. Спецификация цвета:
+[SPEC_COLOR_RULES.md](SPEC_COLOR_RULES.md); интерфейс:
+[DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), «Архитектура цвета: три роли» и
+«Объём кнопки»; переименование: [SPEC_FRONTEND.md](SPEC_FRONTEND.md),
+«RenameBlockDialog».
+
+| # | Срез | Статус | Содержание |
+|---|---|---|---|
+| 34.1 | Закон цвета | DONE | Три роли (зона, высота, сигнал), постоянные К1 по К12, каждый токен выведен и проверен `colorLaw.test.ts`; старая палитра удалена |
+| 34.2 | Стили кнопок | DONE | macOS (обводка на шаг от лица, мигание при нажатии), Retro, Linear; выбор по окну, ⌃⌥B; мигание подложек хрома при нажатии |
+| 34.3 | Имя карточки в пути | DONE | Имя файла вместо заголовка, без перетаскивания, правка в строке с проверкой на лету; поиск называет результат именем файла |
+| 34.4 | Имя коллекции | DONE | Та же правка в боковом меню; общие правила имени в Rust, `CommandError::NameRefused` |
+| 34.5 | Блокировка при переименовании | DONE | Поиск пространства по папке больше не берёт замок сессии (`served_root`) |
+| 34.6 | Полоса вкладок в полноэкранном режиме | MANUAL QA | `NSApplicationPresentationAutoHideToolbar`; живая проверка пользователя открыта |
+| 34.7 | Кнопки со стрелкой без мигания | OPEN | Переключатели пространства и коллекции: при нажатии только поворот стрелки, в открытом состоянии подложка горит ровно; ждёт ответа пользователя про кнопки-иконки с меню |
+
 ### Backlog
 
 | Task | Description |
