@@ -21,7 +21,6 @@ rmSync(join(source, 'dist'), { recursive: true, force: true });
 run('bunx', ['vite', 'build', '--config', 'vite.extension.config.ts']);
 run('bunx', ['vite', 'build', '--config', 'vite.overlay.config.ts']);
 writeFileSync(join(source, 'dist/runtime-identity.json'), `${JSON.stringify(identity)}\n`);
-cpSync(join(root, 'public/fonts'), join(source, 'dist/fonts'), { recursive: true });
 const safari = join(root, 'safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources');
 // Generated copies only: Safari consumes the same adapter/WASM, not a fork.
 for (const name of ['dist', 'generated/save-core']) {

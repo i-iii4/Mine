@@ -776,9 +776,9 @@ Rules:
 - do not change card size, opacity, border, label visibility or link color on
   hover; the only canvas change is the shared one-CSS-pixel `hoverOutline`;
 - after the configured delay, fetch the full block with `get_block`;
-- render `ReadOnlyCardPreview` with `previewMode="micro"` and width `240`;
-  its `CardFrame` keeps the same `bg-card` surface as feed cards and sidebar
-  hover previews;
+- render `ReadOnlyCardPreview` with width `240`: the feed's own card in its
+  final hover state, with nothing to press (SPEC_CARD_STATES.md, С10, since
+  06.10.2026), the same card as the sidebar and search previews;
 - position the preview from `graph2ScreenCoords(node.x, node.y)`, clamped to the
   viewport with the same gap/margin model as Sidebar;
 - close immediately on pointer leave;

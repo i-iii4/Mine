@@ -568,7 +568,9 @@ fn stage_original(write: &SourceFileWrite) -> std::result::Result<OriginalSource
             })
         }
         SourceFileContent::Rename { source, rewrite } => {
-            if write.path.exists() {
+            // The source's own name in other letter case finds the source
+            // where the disk ignores case: no other file stands there.
+            if write.path.exists() && !files::names_same_entry(source, &write.path) {
                 return Err(SourceMutationError::Validate {
                     path: write.path.clone(),
                     reason: "rename destination already exists".to_string(),
@@ -716,6 +718,9 @@ fn publish_rewritten_rename(
     destination: &Path,
     expected: &[u8],
 ) -> Result<(PathBuf, files::FileFingerprint)> {
+    if files::names_same_entry(source, destination) {
+        return publish_rewritten_respelling(temp, source, destination, expected);
+    }
     let published = link_published(temp, destination).with_context(|| {
         format!(
             "failed to publish rewritten rename {} -> {}",
@@ -760,6 +765,52 @@ fn publish_rewritten_rename(
             })
         }
     }
+}
+
+/// [`publish_rewritten_rename`] when the new name is the source's own name in
+/// other letter case, on a disk that ignores case (06.10.2026). The new name
+/// finds the source until the source leaves it, so nothing can be linked there
+/// first: the source moves aside in one step, is checked there, and only then
+/// the rewritten file takes the new name. Every way out but success puts the
+/// source back under its name; a file that took the name meanwhile keeps it,
+/// and the source stays aside.
+fn publish_rewritten_respelling(
+    temp: &Path,
+    source: &Path,
+    destination: &Path,
+    expected: &[u8],
+) -> Result<(PathBuf, files::FileFingerprint)> {
+    let aside = files::aside_path(source, "rename-original");
+    if let Err(error) = std::fs::rename(source, &aside) {
+        return Err(files::SourceChanged {
+            path: source.to_path_buf(),
+            preserved: None,
+        })
+        .with_context(|| format!("rename source vanished: {error}"));
+    }
+    #[cfg(test)]
+    hooks::run_after_move_aside(&aside);
+    let failure = match std::fs::read(&aside) {
+        Ok(bytes) if bytes == expected => match link_published(temp, destination) {
+            Ok(published) => return Ok((aside, published)),
+            Err(error) => error,
+        },
+        Ok(_) => files::SourceChanged {
+            path: source.to_path_buf(),
+            preserved: None,
+        }
+        .into(),
+        Err(error) => anyhow::Error::new(error)
+            .context(format!("read back rename source {}", aside.display())),
+    };
+    if files::rename_exclusive(&aside, source).is_ok() {
+        return Err(failure);
+    }
+    Err(anyhow::Error::new(files::SourceChanged {
+        path: source.to_path_buf(),
+        preserved: Some(aside),
+    })
+    .context(format!("{failure:#}")))
 }
 
 /// Refuse unless `path` still holds `expected`.
@@ -1642,5 +1693,81 @@ mod tests {
 
         assert_eq!(std::fs::read(&new).unwrap(), b"rewritten");
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    fn visible_names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+            .filter(|name| !name.starts_with('.'))
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// 06.10.2026: a new name that is the source's own name in other letter
+    /// case finds the source where the disk ignores case (the macOS default).
+    /// The rename respells the file, moved as it is or rewritten; rollback
+    /// brings back the old spelling and bytes, and nothing hidden stays. On a
+    /// disk that tells case apart it is an ordinary rename.
+    #[test]
+    fn a_rename_to_another_case_of_its_own_name_respells_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let plain = dir.path().join("plain.md");
+        let rewritten = dir.path().join("rewritten.md");
+        let respell = || {
+            std::fs::write(&plain, b"plain").unwrap();
+            std::fs::write(&rewritten, b"original").unwrap();
+            StagedSourceMutation::stage(vec![
+                SourceFileWrite::rename(plain.clone(), dir.path().join("Plain.md")),
+                SourceFileWrite::rename_with_bytes(
+                    rewritten.clone(),
+                    dir.path().join("Rewritten.md"),
+                    b"original".to_vec(),
+                    b"respelled".to_vec(),
+                ),
+            ])
+            .unwrap()
+            .commit()
+            .unwrap()
+        };
+
+        let committed = respell();
+        assert_eq!(visible_names(dir.path()), ["Plain.md", "Rewritten.md"]);
+        assert_eq!(std::fs::read(dir.path().join("Rewritten.md")).unwrap(), b"respelled");
+        committed.rollback("injected index failure").unwrap();
+        assert_eq!(visible_names(dir.path()), ["plain.md", "rewritten.md"]);
+        assert_eq!(std::fs::read(&plain).unwrap(), b"plain");
+        assert_eq!(std::fs::read(&rewritten).unwrap(), b"original");
+        assert!(hidden_leftovers(dir.path()).is_empty(), "{:?}", hidden_leftovers(dir.path()));
+
+        respell().finalize();
+        assert_eq!(visible_names(dir.path()), ["Plain.md", "Rewritten.md"]);
+        assert_eq!(std::fs::read(dir.path().join("Plain.md")).unwrap(), b"plain");
+        assert!(hidden_leftovers(dir.path()).is_empty(), "{:?}", hidden_leftovers(dir.path()));
+    }
+
+    /// 06.10.2026: a respelling whose source changed after it was read is
+    /// refused, and the edited source keeps its name.
+    #[test]
+    fn a_respelling_refuses_when_the_source_was_edited_meanwhile() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("note.md");
+        std::fs::write(&old, b"read by Mine").unwrap();
+        let staged = StagedSourceMutation::stage(vec![SourceFileWrite::rename_with_bytes(
+            old.clone(),
+            dir.path().join("Note.md"),
+            b"read by Mine".to_vec(),
+            b"Mine rewrite".to_vec(),
+        )])
+        .unwrap();
+        replace_from_outside(&old, b"edited meanwhile");
+
+        let error = staged.commit().unwrap_err();
+
+        assert!(matches!(error, SourceMutationError::Changed { .. }), "{error}");
+        assert_eq!(visible_names(dir.path()), ["note.md"]);
+        assert_eq!(std::fs::read(&old).unwrap(), b"edited meanwhile");
+        assert!(hidden_leftovers(dir.path()).is_empty(), "{:?}", hidden_leftovers(dir.path()));
     }
 }

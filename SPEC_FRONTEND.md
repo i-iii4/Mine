@@ -582,11 +582,11 @@ preview strip, и только после этого начинает ужима
 
 **Event-driven previews.** Превью карточек в sidebar обновляются через Tauri events (`block:added`, `block:removed`, `thumb:updated`, `vault-changed`), а не через polling. Initial state и event refresh идут через `listChannelPreviews(20)`; `useChannelPreviewsEvents` коалесцирует события и фильтрует `has_thumb=false` как defense-in-depth. Cache-bust: initial load использует `?m=<mtime>` из SQLite `thumb_mtime`, real-time updates используют `?v=<counter>` (per-slug version counter, инкрементируется на `thumb:updated`). Два механизма дополняют друг друга: `?m=` покрывает межсессионные изменения (Phase 2 worker перезаписал PNG→JPEG), `?v=` покрывает live-обновления внутри сессии.
 
-**Sidebar hover quick look.** The left sidebar hover popup is micro-preview
-only: it renders one confirmed `<slug>.jpg` asset plus compact text metadata
-and deliberately ignores `preview_manifest.tiles`. This keeps the left menu
-aligned with the thumbnail strip contract even when the full feed card is a
-multi-image composite/gallery. Related Notes keeps its richer hover preview.
+**Sidebar hover preview.** С 06.10.2026 превью мини-карточки бокового меню
+показывает ту же карточку, что лента, в итоговом виде наведения и без
+активных элементов (SPEC_CARD_STATES.md, С10), с галереей из
+`preview_manifest.tiles`, как в ленте. Сама полоса мини-карточек по-прежнему
+берёт одну подтверждённую миниатюру `<slug>.jpg`.
 
 **Main secondary top bar + sidebar inset.** На главной под permanent top chrome
 есть второй structural bar `h-8`, split на sidebar/content segments. Sidebar
@@ -774,10 +774,11 @@ becoming a stronger component fill. In dark theme `--card` uses the same
 one-step surface as top chrome (`--chrome`, `oklch(0.17 0 0)`), so cards,
 hover previews and floating menu shells are visibly filled above the page
 background.
-Read-only hover previews in Sidebar, Search Overlay and Graph View reuse
-`ReadOnlyCardPreview` / `CardFrame`, so their outer fill remains the same
-surface as feed cards: base `bg-card`, plus the same `feed-article-card`
-class for runtime article cards.
+Read-only hover previews in Sidebar, Search Overlay, Graph View and Detail
+related notes are the feed card itself (`ReadOnlyCardPreview`, one path
+`StaticCard`): the same surface `bg-card`, the same `feed-article-card` for
+post variants, the feed's current `Show`, lifted to the final hover state
+with nothing to press (SPEC_CARD_STATES.md, С10).
 Hover does not change the card frame: no border recolor, outline, inset border,
 shadow, glow, transition, or extra overlay. The feed hover affordance is the
 card action controls. Feed keyboard focus is not Card state: Grid owns
@@ -985,6 +986,9 @@ Image media expansion:
 и коллекций (`name_problem` в `src-tauri/src/domain/vault.rs`): нельзя
 `\ : # ^ | [ ]`, точку в начале части пути, пустые части и имя длиннее 255
 байт вместе с `.md`. Название карточки в пути не перетаскивается.
+Имя, отличающееся от прежнего только регистром букв, сохраняется: хук
+сравнивает его с прежним с учётом регистра, а команды переименования не
+считают его занятым и дают файлу новое написание (06.10.2026).
 
 ### Search
 
@@ -1253,7 +1257,9 @@ Image media expansion:
   `Cmd+F`/`Shift+Cmd+F` emit `surface-search-shortcut` (`main`/`sidebar`).
   DOM `keydown` остаётся browser/dev fallback и принимает physical
   `KeyboardEvent.code === "KeyF"` плюс Latin `key === "f"`.
-- `Cmd+K` не участвует в поиске; он остаётся scoped shortcut для card/Detail
+- `Cmd+K` открывает меню `More` активной строки выдачи Search Overlay, как у
+  карточки под указателем в ленте (06.10.2026, SPEC_SEARCH_OVERLAY.md,
+  «Команды строки»); в остальном он остаётся scoped shortcut для card/Detail
   overflow menus.
 - Search Overlay вызывает `search_grid_blocks` для непустого query и получает
   `SearchSnapshot`; обычный Grid и recent-режим используют `list_grid_blocks`

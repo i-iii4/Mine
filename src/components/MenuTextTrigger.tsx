@@ -1,5 +1,6 @@
 import * as React from "react";
 import { ChevronRight } from "lucide-react";
+import { useMenuTriggerPointerInside } from "@/hooks/useMenuTriggerPointerInside";
 import { cn } from "@/lib/utils";
 import { ChromeControl, ChromePlate } from "./ui/chrome-control";
 
@@ -12,6 +13,8 @@ interface MenuTextTriggerProps
   hotkey?: string;
   keyboardFocus?: boolean;
   showChevron?: boolean;
+  /** Radix's menu state, handed down through `DropdownMenuTrigger asChild`. */
+  "data-state"?: string;
 }
 
 export const MenuTextTrigger = React.forwardRef<HTMLButtonElement, MenuTextTriggerProps>(
@@ -23,10 +26,21 @@ export const MenuTextTrigger = React.forwardRef<HTMLButtonElement, MenuTextTrigg
       keyboardFocus = false,
       showChevron = false,
       className,
+      "data-state": menuState,
       ...props
     },
     ref,
   ) => {
+    const nodeRef = React.useRef<HTMLButtonElement | null>(null);
+    const setNode = React.useCallback((node: HTMLButtonElement | null) => {
+      nodeRef.current = node;
+      if (typeof ref === "function") ref(node);
+      else if (ref) ref.current = node;
+    }, [ref]);
+    // The top chrome plate stays lit while the pointer is over the trigger,
+    // also where the modal menu hides the trigger from hover: a click that
+    // closes the menu only turns the chevron back.
+    useMenuTriggerPointerInside(nodeRef, surface === "topChrome" && menuState === "open");
     const isClipperHeader = surface === "clipperHeader";
     const Plate = surface === "topChrome" ? ChromePlate : "span";
     const innerTextClass = surface === "clipperHeader" ? "text-foreground" : "text-muted-foreground";
@@ -40,8 +54,9 @@ export const MenuTextTrigger = React.forwardRef<HTMLButtonElement, MenuTextTrigg
     return (
       <ChromeControl enabled={surface === "topChrome"}>
       <button
-        ref={ref}
+        ref={setNode}
         type="button"
+        data-state={menuState}
         className={cn(
           "group select-none bg-transparent outline-0",
           surface === "topChrome" &&
@@ -75,7 +90,7 @@ export const MenuTextTrigger = React.forwardRef<HTMLButtonElement, MenuTextTrigg
                 isClipperHeader
                   ? "min-w-0 max-w-full"
                   : cn(
-                    "min-w-0 max-w-full rounded-1 group-hover:state-active group-hover:text-foreground group-data-[state=open]:state-active group-data-[state=open]:text-foreground",
+                    "min-w-0 max-w-full rounded-1 group-hover:state-active group-hover:text-foreground group-data-[pointer-inside]:state-active group-data-[pointer-inside]:text-foreground group-data-[state=open]:state-active group-data-[state=open]:text-foreground",
                     chevronPadding,
                   ),
                 innerTextClass,

@@ -6,8 +6,10 @@ import {
   deriveFontMetricsHash,
   FIRST_MEASURED_BLOCKS,
   getFontHash,
+  measureFontFingerprint,
   measureTopFirst,
 } from "./fontMetrics";
+import { SYSTEM_SANS_STACK } from "./fontChoice";
 import type { WordWidths, WorkerInMessage, WorkerOutMessage } from "@/types/fontMetrics";
 
 function makeBlock(overrides: Partial<LightBlock> = {}): LightBlock {
@@ -203,8 +205,13 @@ describe("a font-metrics worker that never answers (А8.1)", () => {
 describe("card titles are measured with the weight they are painted with (01.10.2026)", () => {
   /// A card title differs from its text by color alone: regular weight.
   const REGULAR_WEIGHT = 400;
-  const REGULAR_SPEC = "400 12px 'Geist', system-ui, sans-serif";
-  const SEMIBOLD_SPEC = "600 12px 'Geist', system-ui, sans-serif";
+  const REGULAR_SPEC = `400 12px ${SYSTEM_SANS_STACK}`;
+  const SEMIBOLD_SPEC = `600 12px ${SYSTEM_SANS_STACK}`;
+  /// The test canvas measures 7.5 px per character, in every font.
+  const TEST_CANVAS_FINGERPRINT = measureFontFingerprint(
+    { font: "", measureText: (text: string) => ({ width: text.length * 7.5 }) },
+    [REGULAR_SPEC, REGULAR_SPEC],
+  );
   /// The identity every width measured with the semibold title font was
   /// stored under. Semibold words are wider than regular ones: such a width
   /// must never size a regular title.
@@ -273,7 +280,7 @@ describe("card titles are measured with the weight they are painted with (01.10.
       expect(compute.titleFontSpec).toBe(compute.previewFontSpec);
       expect(compute.fontHash).toBe(fresh.getFontHash());
       expect(compute.fontHash).toBe(
-        fresh.deriveFontMetricsHash(compute.titleFontSpec, compute.previewFontSpec),
+        fresh.deriveFontMetricsHash(compute.titleFontSpec, compute.previewFontSpec, TEST_CANVAS_FINGERPRINT),
       );
     } finally {
       restoreGlobals();
@@ -330,8 +337,83 @@ describe("card titles are measured with the weight they are painted with (01.10.
     expect(identity.cacheKey).not.toContain(`:${SEMIBOLD_TITLE_FONT_HASH}:`);
     // The hash names the measured weight: measuring titles semibold again
     // would open a different cache, not hit a stale one.
-    expect(getFontHash()).toBe(deriveFontMetricsHash(REGULAR_SPEC, REGULAR_SPEC));
-    expect(deriveFontMetricsHash(SEMIBOLD_SPEC, REGULAR_SPEC)).not.toBe(getFontHash());
+    expect(getFontHash()).toBe(deriveFontMetricsHash(REGULAR_SPEC, REGULAR_SPEC, TEST_CANVAS_FINGERPRINT));
+    expect(deriveFontMetricsHash(SEMIBOLD_SPEC, REGULAR_SPEC, TEST_CANVAS_FINGERPRINT)).not.toBe(getFontHash());
   });
 });
 
+describe("cards are measured in the system font (06.10.2026)", () => {
+  function restoreGlobals() {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  }
+
+  it("measures with the stylesheet's own stack and loads no font file", async () => {
+    vi.resetModules();
+    type Listener = (event: { data: WorkerOutMessage }) => void;
+    const inits: Array<Extract<WorkerInMessage, { type: "init" }>> = [];
+    const computes: Array<Extract<WorkerInMessage, { type: "compute" }>> = [];
+    class AnsweringWorker {
+      private listeners: Listener[] = [];
+      addEventListener(type: string, listener: Listener) {
+        if (type === "message") this.listeners.push(listener);
+      }
+      removeEventListener(type: string, listener: Listener) {
+        this.listeners = this.listeners.filter((candidate) => candidate !== listener);
+      }
+      postMessage(message: WorkerInMessage) {
+        const reply = (data: WorkerOutMessage) => queueMicrotask(() => {
+          for (const listener of [...this.listeners]) listener({ data });
+        });
+        if (message.type === "init") {
+          inits.push(message);
+          reply({ type: "ready", requestId: message.requestId });
+          return;
+        }
+        computes.push(message);
+        reply({ type: "result", requestId: message.requestId, results: [], fontHash: message.fontHash });
+      }
+      terminate() {}
+    }
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("Worker", AnsweringWorker);
+    vi.stubGlobal("OffscreenCanvas", class {});
+    vi.stubGlobal("fetch", fetchSpy);
+    try {
+      const fresh = await import("./fontMetrics");
+      await fresh.fetchWordWidths([makeBlock({ id: 11, title: "Headline" })]);
+      expect(inits).toEqual([expect.objectContaining({ font: null })]);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(computes[0]?.titleFontSpec).toBe(`400 12px ${SYSTEM_SANS_STACK}`);
+      expect(computes[0]?.previewFontSpec).toBe(`400 12px ${SYSTEM_SANS_STACK}`);
+    } finally {
+      restoreGlobals();
+    }
+  });
+
+  it("opens a new cache when the system face changes under the same spec", () => {
+    const spec = `400 12px ${SYSTEM_SANS_STACK}`;
+    const narrow = measureFontFingerprint({ font: "", measureText: (text) => ({ width: text.length * 6.9 }) }, [spec, spec]);
+    const wide = measureFontFingerprint({ font: "", measureText: (text) => ({ width: text.length * 7.1 }) }, [spec, spec]);
+    expect(narrow).not.toBe(wide);
+    expect(deriveFontMetricsHash(spec, spec, narrow)).not.toBe(deriveFontMetricsHash(spec, spec, wide));
+  });
+
+  it("measures the fingerprint in every spec it names", () => {
+    const fonts: string[] = [];
+    const measurer = {
+      font: "",
+      measureText(text: string) {
+        fonts.push(this.font);
+        return { width: text.length };
+      },
+    };
+    measureFontFingerprint(measurer, ["400 12px a", "600 12px a"]);
+    expect(fonts).toEqual(["400 12px a", "600 12px a"]);
+    expect(measureFontFingerprint(null, ["400 12px a"])).toBe("unmeasured");
+  });
+
+  it("names the system font version in the cache key", () => {
+    expect(createFontMetricsCacheIdentity(makeBlock({ id: 5 })).cacheKey.startsWith("v5:")).toBe(true);
+  });
+});

@@ -3,7 +3,8 @@
 
 /**
  * Font identity — a string that changes whenever anything affecting
- * measureText output changes (font file, font size, font weight).
+ * measureText output changes (the face the spec resolves to, font size, font
+ * weight).
  * When the hash changes, all cached word widths are considered stale.
  */
 export type FontHash = string;
@@ -87,11 +88,12 @@ export interface WorkerBlockResult {
 /** Main → worker */
 export type WorkerInMessage =
   | {
-      /** Register the Geist font in the worker's FontFaceSet. Sent once on startup. */
+      /** Prepare the worker. Sent once on startup. `font` is a file to
+       *  register in the worker's FontFaceSet first (Departure Mono); the
+       *  system font needs none and comes as `null`. */
       type: "init";
       requestId: number;
-      fontBuffer: ArrayBuffer;
-      fontFamily: string;
+      font: { family: string; buffer: ArrayBuffer } | null;
     }
   | {
       /** Compute word widths for a batch of blocks. */
@@ -99,9 +101,9 @@ export type WorkerInMessage =
       requestId: number;
       blocks: WorkerBlockInput[];
       fontHash: FontHash;
-      /** Font spec used to measure titles (e.g., "400 12px 'Geist', ..."). */
+      /** Font spec used to measure titles (e.g., "400 12px system-ui, ..."). */
       titleFontSpec: string;
-      /** Font spec used to measure preview (e.g., "400 12px 'Geist', ..."). */
+      /** Font spec used to measure preview (e.g., "400 12px system-ui, ..."). */
       previewFontSpec: string;
     };
 

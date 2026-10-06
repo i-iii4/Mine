@@ -1,10 +1,11 @@
 import { CLOUD_BADGE_DELAY_MS, CLOUD_STATE_LABEL } from "@/lib/cloudContent";
 import { readFileSync } from "node:fs";
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Card, DragCardStackPreview, ReadOnlyCardPreview } from "./Card";
-import { FeedShowContext, type FeedShow } from "@/lib/feedDisplay";
+import { FeedShowContext, setFeedShow, type FeedShow } from "@/lib/feedDisplay";
+import { publishCollectionOrder } from "@/lib/cardCollections";
 import { CARD_HOVER_ACTION_MIN_HEIGHT, computeCardHeight } from "@/lib/cardHeight";
 import { PROVISIONAL_MEDIA_ASPECT, clampCardAspect } from "@/lib/cardAspect";
 import { PreviewsPendingContext } from "@/lib/cardPreviewState";
@@ -209,7 +210,7 @@ describe("Card", () => {
     await waitFor(() => expect(onMenuOpenChange).toHaveBeenCalledWith(true));
   });
 
-  it("renders pure text micro previews without a baked thumbnail image", () => {
+  it("renders a text post preview as the feed does: no picture, its text and author", () => {
     const { container } = render(
       <ReadOnlyCardPreview
         block={{
@@ -234,13 +235,12 @@ describe("Card", () => {
         }}
         vaultPath={VAULT}
         thumbsRootPath="/tmp/thumbs"
-        previewMode="micro"
       />,
     );
 
     expect(container.querySelector("img")).toBeNull();
     expect(screen.getByText("Авторка задает хороший вопрос")).toBeInTheDocument();
-    expect(screen.getByText("by @fish_elysium")).toBeInTheDocument();
+    expect(screen.getByText("@fish_elysium")).toBeInTheDocument();
   });
 
   it("uses the feed card surface for read-only hover previews", () => {
@@ -249,7 +249,6 @@ describe("Card", () => {
         block={block()}
         vaultPath={VAULT}
         thumbsRootPath="/tmp/thumbs"
-        previewMode="micro"
       />,
     );
 
@@ -262,7 +261,6 @@ describe("Card", () => {
         block={block({ block_type: "article", card_kind: "article" })}
         vaultPath={VAULT}
         thumbsRootPath="/tmp/thumbs"
-        previewMode="micro"
       />,
     );
 
@@ -272,7 +270,7 @@ describe("Card", () => {
     );
   });
 
-  it("micro preview renders the search excerpt with the highlighter mark", () => {
+  it("a preview renders the search excerpt with the highlighter mark, as the feed card does", () => {
     render(
       <ReadOnlyCardPreview
         block={block({
@@ -290,7 +288,6 @@ describe("Card", () => {
         })}
         vaultPath={VAULT}
         thumbsRootPath="/tmp/thumbs"
-        previewMode="micro"
       />,
     );
 
@@ -300,7 +297,7 @@ describe("Card", () => {
     expect(mark).toHaveClass("bg-search-mark");
   });
 
-  it("micro preview keeps the card's own title when search names the result by file name", () => {
+  it("a preview keeps the card's own title when search names the result by file name", () => {
     const titleMatch = (excerpt: string) => ({
       field: "title" as const,
       kind: "prefix" as const,
@@ -322,7 +319,6 @@ describe("Card", () => {
         })}
         vaultPath={VAULT}
         thumbsRootPath="/tmp/thumbs"
-        previewMode="micro"
       />,
     );
 
@@ -347,7 +343,6 @@ describe("Card", () => {
         })}
         vaultPath={VAULT}
         thumbsRootPath="/tmp/thumbs"
-        previewMode="micro"
       />,
     );
 
@@ -781,6 +776,34 @@ describe("Card", () => {
     // Domain appears twice: in the color placeholder and below the title
     const domains = screen.getAllByText("example.com");
     expect(domains.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("shows the page picture that loaded, and only that one", () => {
+    const pictureLink = (path: string) => block({
+      block_type: "link", title: "Linked page", url: "https://example.com/page",
+      preview_manifest: JSON.stringify({
+        kind: "image", primary_preview_path: path, width: 1200, height: 630,
+        preview_width: 600, preview_height: 315, tiles: [], overflow_count: 0,
+      }),
+    });
+    const { container, rerender } = render(
+      <ReadOnlyCardPreview block={pictureLink("page.jpg")} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" />,
+    );
+    const picture = () => container.querySelector<HTMLImageElement>("[data-card-graphic-surface] img")!;
+    expect(picture()).toHaveClass("opacity-0");
+    // A picture from the cache can load before the card's effects run: the
+    // loaded state belongs to that picture, so nothing resets it afterwards.
+    fireEvent.load(picture());
+    expect(picture()).toHaveClass("opacity-100");
+    rerender(
+      <ReadOnlyCardPreview block={pictureLink("page.jpg")} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" />,
+    );
+    expect(picture()).toHaveClass("opacity-100");
+    // A new picture is not the loaded one until it loads in turn.
+    rerender(
+      <ReadOnlyCardPreview block={pictureLink("other.jpg")} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" />,
+    );
+    expect(picture()).toHaveClass("opacity-0");
   });
 
   it("renders link card with slug when no title", () => {
@@ -2403,16 +2426,12 @@ describe("Card titles differ from their text by color alone (01.10.2026)", () =>
     expectBodySizedTitle(screen.getByText("Sunset"));
   });
 
-  it.each([
-    ["the hover preview", "full"],
-    ["the search preview", "micro"],
-  ] as const)("sets the title in %s exactly as in the feed", (_surface, previewMode) => {
+  it("sets the title in a card preview exactly as in the feed", () => {
     render(
       <ReadOnlyCardPreview
         block={article}
         vaultPath={VAULT}
         thumbsRootPath="/tmp/thumbs"
-        previewMode={previewMode}
       />,
     );
     expectBodySizedTitle(screen.getByText("Article title"));
@@ -2520,6 +2539,171 @@ describe("Card lift on hover (SPEC_CARD_STATES.md, С8)", () => {
     expect(ruleFor('[data-card-lift-hover]:hover [data-card-lift-fade]', "mask-position: 0 0")).toBe(true);
     // The lift is the card's own, never a depth class.
     expect(css).not.toContain("data-card-lift-depth");
+  });
+});
+
+describe("Card previews show the feed card in its final hover state (SPEC_CARD_STATES.md, С10)", () => {
+  const menuProps = {
+    tags: [],
+    onToggleTag: vi.fn(),
+    onCreateAndAssign: vi.fn(),
+    onRequestRename: vi.fn(),
+    onRequestDelete: vi.fn(),
+  };
+  const imageManifest = (path: string) => JSON.stringify({
+    kind: "image", primary_preview_path: path, width: 1280, height: 960,
+    preview_width: 640, preview_height: 480, tiles: [], overflow_count: 0,
+  });
+  const picture = (overrides: Partial<LightBlock> = {}) => block({
+    block_type: "image", url: null, title: null, media_file: "Media/Sunset.jpg",
+    content_heading: "Sunset", display_title: "Sunset", fallback_label: "Sunset",
+    preview_manifest: imageManifest("sunset.jpg"), collections: ["Art", "Web"], ...overrides,
+  });
+  const textPost = () => block({
+    block_type: "article", card_kind: "article", title: "A post", url: null,
+    body: "Words of the post.", preview_text: "Words of the post.", author: "Author",
+    collections: ["Art"],
+  });
+  const mediaPost = () => block({
+    block_type: "article", card_kind: "article", title: "A post with media", url: null,
+    body: "Words\n\n![](Media/one.jpg)", preview_text: "Words", collections: ["Web"],
+    preview_manifest: JSON.stringify({
+      kind: "image", primary_preview_path: "post.jpg", width: 800, height: 600,
+      preview_width: 800, preview_height: 600,
+      tiles: [{ source_path: "Media/one.jpg", preview_path: "post.preview-1.jpg",
+        width: 800, height: 600, preview_width: 800, preview_height: 600,
+        is_video: false, is_video_poster: false }],
+      overflow_count: 0,
+    }),
+  });
+  const pictureLink = () => block({
+    block_type: "link", title: "Linked page", url: "https://example.com/page",
+    preview_manifest: imageManifest("page.jpg"), collections: [],
+  });
+  const samples = [
+    ["a picture", picture],
+    ["a text post", textPost],
+    ["a post with media", mediaPost],
+    ["a link", pictureLink],
+  ] as const;
+  const shows: FeedShow[] = ["mixed", "cards", "media"];
+
+  afterEach(() => {
+    setFeedShow("mixed");
+    publishCollectionOrder([]);
+  });
+
+  const parse = (markup: string) => new DOMParser().parseFromString(markup, "text/html");
+  const frameIn = (document: Document) => document.querySelector<HTMLElement>("[data-feed-card-frame]")!;
+  /// What the frame holds without its own pieces: the feed card's hover
+  /// actions or the preview's row of collections, and the image loading
+  /// hint (a preview loads at once, a feed card as it scrolls in).
+  const contentOf = (frame: HTMLElement, own: string) => {
+    frame.querySelectorAll(own).forEach((node) => node.remove());
+    frame.querySelectorAll("[loading]").forEach((node) => node.removeAttribute("loading"));
+    return frame.innerHTML;
+  };
+  const feedMarkup = (value: LightBlock, show: FeedShow) => renderToStaticMarkup(
+    <FeedShowContext.Provider value={show}>
+      <Card block={value} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" onClick={vi.fn()} {...menuProps} />
+    </FeedShowContext.Provider>,
+  );
+  const previewMarkup = (value: LightBlock) => renderToStaticMarkup(
+    <ReadOnlyCardPreview block={value} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" width={288} />,
+  );
+
+  it.each(shows)("draws the feed's own card for every kind in %s", (show) => {
+    setFeedShow(show);
+    for (const [, make] of samples) {
+      const value = make();
+      const feed = contentOf(
+        frameIn(parse(feedMarkup(value, show))),
+        "[data-card-hover-overlay], [data-card-hover-more-action], [data-card-hover-bottom-actions]",
+      );
+      const preview = contentOf(frameIn(parse(previewMarkup(value))), "[data-card-preview-collections]");
+      expect(preview).toBe(feed);
+    }
+  });
+
+  it.each(samples)("stands %s lifted from its first frame, by the feed card's lift", (_kind, make) => {
+    const value = make();
+    const feedFrame = frameIn(parse(feedMarkup(value, "mixed")));
+    const previewFrame = frameIn(parse(previewMarkup(value)));
+    expect(previewFrame.hasAttribute("data-card-preview")).toBe(true);
+    expect(previewFrame.hasAttribute("data-card-lift-pinned")).toBe(true);
+    // Pinned, not hovered: it needs no pointer to stay up.
+    expect(previewFrame.hasAttribute("data-card-lift-hover")).toBe(false);
+    const liftOf = (frame: HTMLElement) => /--card-lift:\s*([0-9.]+)px/.exec(frame.getAttribute("style") ?? "")?.[1] ?? null;
+    expect(liftOf(previewFrame)).toBe(liftOf(feedFrame));
+  });
+
+  it("has nothing to press: no buttons, collections as text in the sidebar's order", () => {
+    publishCollectionOrder([{ tag: "Web", count: 1 }, { tag: "Art", count: 1 }]);
+    const { container } = render(
+      <ReadOnlyCardPreview block={picture()} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" />,
+    );
+    expect(container.querySelector("button")).toBeNull();
+    expect(container.querySelector("[data-card-hover-more-action], [data-card-hover-connect]")).toBeNull();
+    expect(frameIn(document)).toHaveClass("pointer-events-none");
+    const row = container.querySelector("[data-card-preview-collections]")!;
+    expect(Array.from(row.querySelectorAll("[data-card-collection-name]"), (name) => name.textContent))
+      .toEqual(["Web", "Art"]);
+    expect(row.querySelector("[data-card-collection-name]")).toHaveClass("font-mono", "text-sm", "text-muted-foreground");
+  });
+
+  it("says when a card is in no collection, as the feed card's row does", () => {
+    const { container } = render(
+      <ReadOnlyCardPreview block={pictureLink()} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" />,
+    );
+    expect(container.querySelector("[data-card-preview-collections] [data-card-no-collections]"))
+      .toHaveTextContent("No collections");
+  });
+
+  it("brings up a bare picture's caption with the feed's title rule: its own H1, never a legacy title or the file", () => {
+    const { container, rerender } = render(
+      <ReadOnlyCardPreview block={picture()} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" />,
+    );
+    expect(container.querySelector("[data-card-lift='caption']")).toHaveTextContent("Sunset");
+
+    rerender(
+      <ReadOnlyCardPreview
+        block={picture({ content_heading: null, display_title: "Legacy title", title: "Legacy title" })}
+        vaultPath={VAULT}
+        thumbsRootPath="/tmp/thumbs"
+      />,
+    );
+    const caption = container.querySelector("[data-card-lift='caption']")!;
+    expect(caption).not.toHaveTextContent("Legacy title");
+    expect(caption).not.toHaveTextContent("Sunset");
+  });
+
+  it("reserves a bare picture's height exactly as the feed does at the preview's width", () => {
+    setFeedShow("media");
+    const value = mediaPost();
+    const { container } = render(
+      <ReadOnlyCardPreview block={value} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" width={288} />,
+    );
+    expect(frameIn(document)).toHaveStyle({ height: `${computeCardHeight(value, 288, null, "media")}px` });
+    // `Media` shows the post's media alone and lifts its text as the caption.
+    expect(container.querySelector("[data-card-lift='caption']")).toHaveTextContent("A post with media");
+  });
+
+  it("leaves a dragged card at rest, as the feed card under a drag (С8.5)", () => {
+    const { container } = render(
+      <DragCardStackPreview blocks={[picture()]} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" />,
+    );
+    const frame = container.querySelector("[data-feed-card-frame]")!;
+    expect(frame).toHaveAttribute("data-card-preview");
+    expect(frame).not.toHaveAttribute("data-card-lift-pinned");
+    expect(container.querySelector("[data-card-lift='caption']")).toBeNull();
+    expect(container.querySelector("[data-card-preview-collections]")).toBeNull();
+  });
+
+  it("stops every lift transition inside a preview in global.css", () => {
+    const css = readFileSync("src/styles/global.css", "utf8");
+    const rule = css.split("}").find((part) => part.includes("[data-card-preview] [data-card-lift],"));
+    expect(rule).toContain("[data-card-preview] [data-card-lift-fade]");
+    expect(rule).toContain("transition: none");
   });
 });
 

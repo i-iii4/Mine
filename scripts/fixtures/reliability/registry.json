@@ -1012,6 +1012,24 @@
     },
     {
       "paths": [
+        "src/lib/fontChoice.ts",
+        "src/lib/fontChoice.test.ts",
+        "src/lib/fontMetrics.ts",
+        "src/lib/fontMetrics.test.ts",
+        "src/types/fontMetrics.ts",
+        "src/workers/fontMetrics.worker.ts",
+        "src/styles/global.css",
+        "src/components/graph/canvas.ts",
+        "extension/popup/overlay-entry.tsx",
+        "extension/manifest.json",
+        "scripts/build-extension.mjs"
+      ],
+      "requirement": "SPEC_GRID.md## Системный шрифт (06.10.2026)",
+      "tests": ["src/lib/fontChoice.test.ts", "src/lib/fontMetrics.test.ts", "src/components/GraphView.test.tsx", "extension/popup/overlay-entry.test.tsx"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
         "src/lib/fontMetrics.ts",
         "src/lib/fontMetrics.test.ts",
         "src/components/SearchOverlay.tsx",
@@ -1800,6 +1818,22 @@
       ],
       "requirement": "SPEC_SEARCH.md## Match Metadata",
       "tests": ["src/lib/searchResultRow.test.ts", "src/components/SearchOverlay.test.tsx"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/components/SearchResultRowActions.tsx"
+      ],
+      "requirement": "SPEC_SEARCH_OVERLAY.md### Команды строки",
+      "tests": ["src/components/SearchOverlay.test.tsx"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/hooks/useMenuTriggerPointerInside.ts"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#### Нажатие",
+      "tests": ["src/components/MenuTextTrigger.test.tsx"],
       "command": "test:frontend"
     }
   ],

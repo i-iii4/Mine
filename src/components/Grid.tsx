@@ -2749,8 +2749,9 @@ function MeasurementPass({
     let cancelled = false;
 
     const run = async () => {
-      // 1. Wait for fonts to be ready — text widths depend on the actual
-      //    Geist font being loaded, not the fallback system font.
+      // 1. Wait for fonts to be ready — text widths depend on the interface
+      //    font being loaded; the system font always is, a font file
+      //    (Departure Mono) may still be on its way.
       if (typeof document !== "undefined" && document.fonts?.ready) {
         try {
           await document.fonts.ready;

@@ -1015,7 +1015,7 @@ describe("Sidebar", () => {
       tiles: [
         {
           source_path: "alpha-a-img1.jpg",
-          preview_path: null,
+          preview_path: "alpha-a.preview-1.jpg",
           width: 900,
           height: 1200,
           is_video: false,
@@ -1023,7 +1023,7 @@ describe("Sidebar", () => {
         },
         {
           source_path: "alpha-a-img2.jpg",
-          preview_path: null,
+          preview_path: "alpha-a.preview-2.jpg",
           width: 900,
           height: 1200,
           is_video: false,
@@ -1031,7 +1031,7 @@ describe("Sidebar", () => {
         },
         {
           source_path: "alpha-a-img3.jpg",
-          preview_path: null,
+          preview_path: "alpha-a.preview-3.jpg",
           width: 900,
           height: 1200,
           is_video: false,
@@ -1043,6 +1043,7 @@ describe("Sidebar", () => {
 
     vi.mocked(invoke)
       .mockResolvedValueOnce(previewBlock("alpha-a", {
+        tags: ["alpha"],
         card_kind: "article",
         block_type: "article",
         media_file: null,
@@ -1103,12 +1104,18 @@ describe("Sidebar", () => {
     expect(hoverPreview).toBeInTheDocument();
     expect(hoverPreview).toHaveClass("pointer-events-none");
     expect(hoverPreview!.querySelector("button")).toBeNull();
-    const hoverImages = hoverPreview!.querySelectorAll("img");
-    expect(hoverImages).toHaveLength(1);
-    expect(hoverImages[0]).toHaveAttribute(
-      "src",
-      "asset://localhost//vault/.mine/cache/thumbs/alpha-a.jpg?m=123",
-    );
+    // The feed's own card in its final hover state (SPEC_CARD_STATES.md,
+    // С10): the post's whole gallery and its text, lifted, with its
+    // collections as text at the bottom.
+    expect(hoverPreview!.querySelector("[data-card-preview]")).toHaveAttribute("data-card-lift-pinned");
+    const hoverImages = hoverPreview!.querySelectorAll("[data-card-media-tile] img");
+    expect(Array.from(hoverImages, (image) => image.getAttribute("src"))).toEqual([
+      "asset://localhost//vault/.mine/cache/thumbs/alpha-a.preview-1.jpg",
+      "asset://localhost//vault/.mine/cache/thumbs/alpha-a.preview-2.jpg",
+      "asset://localhost//vault/.mine/cache/thumbs/alpha-a.preview-3.jpg",
+    ]);
+    expect(hoverPreview).toHaveTextContent("Alpha preview text");
+    expect(hoverPreview!.querySelector("[data-card-preview-collections]")).toHaveTextContent("alpha");
     expect(container.querySelector("[data-sidebar-thumbnail-hover-bridge]")).not.toBeInTheDocument();
     fireEvent.pointerLeave(container.querySelector("[data-sidebar-scroll]")!);
     expect(container.querySelector("[data-sidebar-scroll]")).toHaveAttribute(

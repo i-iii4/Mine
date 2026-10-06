@@ -213,6 +213,26 @@ pub(crate) fn aside_path(path: &Path, purpose: &str) -> PathBuf {
     ))
 }
 
+/// Whether `a` and `b` name one directory entry: the same file under the same
+/// name, spelled the same or, where the disk ignores letter case (the macOS
+/// default), in another case. Two names of one file (hard links) are two
+/// entries, and a path that names nothing is no entry. A rename to another
+/// spelling of its own name is not taken by another file (06.10.2026,
+/// SPEC_IDENTITY_ROBUSTNESS.md, «In-app rename»).
+pub(crate) fn names_same_entry(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let (Ok(first), Ok(second)) = (std::fs::symlink_metadata(a), std::fs::symlink_metadata(b))
+    else {
+        return false;
+    };
+    if (first.dev(), first.ino()) != (second.dev(), second.ino()) {
+        return false;
+    }
+    // One file may have several names. The disk resolves a path to the
+    // spelling its entry is written in, so one entry gives one path.
+    matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b)
+}
+
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod exchange {
     use anyhow::Result;
@@ -1108,8 +1128,9 @@ pub fn rename_derived_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &
     let old_thumb = vault.thumb_path(old_slug);
     if old_thumb.exists() {
         let new_thumb = vault.thumb_path(new_slug);
+        // A slug in other letter case may name the same preview.
         anyhow::ensure!(
-            !new_thumb.exists(),
+            !new_thumb.exists() || names_same_entry(&old_thumb, &new_thumb),
             "target thumbnail already exists: {}",
             new_thumb.display()
         );
@@ -1287,6 +1308,25 @@ mod tests {
             .map(|slot| slot.path().join("Note.md"))
             .find(|candidate| std::fs::read(candidate).is_ok_and(|bytes| bytes == b"note bytes"));
         assert!(kept.is_some(), "the note must land in {}", test_trash.display());
+    }
+
+    /// 06.10.2026: one entry is one file under one name, in any spelling the
+    /// disk finds it by; a second name of the file is another entry.
+    #[test]
+    fn same_entry_is_one_name_of_one_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let note = temp.path().join("note.md");
+        std::fs::write(&note, b"note").unwrap();
+        std::fs::write(temp.path().join("other.md"), b"note").unwrap();
+        std::fs::hard_link(&note, temp.path().join("linked.md")).unwrap();
+
+        assert!(names_same_entry(&note, &note));
+        // Where the disk ignores case the other spelling finds the note.
+        let respelled = temp.path().join("NOTE.md");
+        assert_eq!(names_same_entry(&note, &respelled), respelled.exists());
+        assert!(!names_same_entry(&note, &temp.path().join("other.md")));
+        assert!(!names_same_entry(&note, &temp.path().join("linked.md")));
+        assert!(!names_same_entry(&note, &temp.path().join("missing.md")));
     }
 
     #[test]

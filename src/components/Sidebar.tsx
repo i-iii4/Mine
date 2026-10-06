@@ -68,6 +68,7 @@ import {
   useRowConnectedToHoveredCard,
 } from "@/lib/collectionHover";
 import { scheduleAfterOptimisticUiUpdate } from "@/lib/groupSelection";
+import { publishCollectionOrder } from "@/lib/cardCollections";
 import { HOVER_INTENT } from "@/lib/hoverIntent";
 import { HoverIntentDragWatch, useHoverIntent } from "@/hooks/useHoverIntent";
 import { TopFadeScrim } from "./TopFadeScrim";
@@ -489,6 +490,11 @@ const SidebarCore = memo(function SidebarCore({
       },
     };
   };
+  // The manual order this menu draws is the order a card preview lists its
+  // collections in, as the feed card's row does (SPEC_CARD_STATES.md, С10).
+  useEffect(() => {
+    publishCollectionOrder(orderedTags);
+  }, [orderedTags]);
   const linkedTagSet = useMemo(() => new Set(linkedTags), [linkedTags]);
   const baseVisibleTags = useMemo(() => (
     isLinkEditorActive && effectiveLinkMode === "linked"
@@ -1085,7 +1091,6 @@ const SidebarCore = memo(function SidebarCore({
               vaultPath={vaultPath}
               thumbsRootPath={thumbsRootPath}
               width={SIDEBAR_PREVIEW_WIDTH}
-              previewMode="micro"
             />
           </div>
       )}

@@ -2,6 +2,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { OverlayShell } from "./OverlayShell";
 import type { ClipperEdits } from "./lib/clipperEdits";
 import { rewriteRootForShadow } from "./lib/shadowRootCss";
+import { SYSTEM_SANS_STACK } from "@/lib/fontChoice";
 
 // Overlay entry — injected into the active tab's content-script isolated
 // world via chrome.scripting.executeScript. Mounts <PopupApp /> inside a
@@ -60,40 +61,10 @@ async function loadCss(): Promise<string> {
   return cachedCss;
 }
 
-// Fonts must be registered against the document, not inside Shadow DOM —
-// @font-face declarations inside a shadow root are honoured only for the
-// root itself, not for descendants. document.fonts.add() registers them
-// globally on the page document, which shadow descendants inherit.
-let fontsLoaded = false;
-async function ensureFontsLoaded() {
-  if (fontsLoaded) return;
-  fontsLoaded = true;
-  try {
-    const sansUrl = chrome.runtime.getURL("dist/fonts/Geist-Variable.woff2");
-    const monoUrl = chrome.runtime.getURL("dist/fonts/GeistMono-Variable.woff2");
-    const sans = new FontFace("Geist", `url(${sansUrl}) format("woff2")`, {
-      weight: "100 900",
-      style: "normal",
-      display: "swap",
-    });
-    const mono = new FontFace("Geist Mono", `url(${monoUrl}) format("woff2")`, {
-      weight: "100 900",
-      style: "normal",
-      display: "swap",
-    });
-    await Promise.all([sans.load(), mono.load()]);
-    document.fonts.add(sans);
-    document.fonts.add(mono);
-  } catch {
-    // Fall back to the next font in the stack
-  }
-}
-
 /// The editor of mount `generation`, or `null` when a close came while the
 /// stylesheet was loading. `returnFocus` is what had the keyboard on the page
 /// before this editor takes it.
 async function mount(generation: number, returnFocus: Element | null): Promise<OverlayHandle | null> {
-  ensureFontsLoaded();
   const css = await loadCss();
   if (generation !== overlayGeneration) return null;
 
@@ -127,7 +98,7 @@ async function mount(generation: number, returnFocus: Element | null): Promise<O
       --text-sm--line-height: 16px;
       --text-base: 14px;
       --text-base--line-height: 20px;
-      font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-family: ${SYSTEM_SANS_STACK};
       font-size: 14px;
       line-height: 20px;
       color: var(--foreground);
@@ -155,7 +126,7 @@ async function mount(generation: number, returnFocus: Element | null): Promise<O
       --text-sm--line-height: 16px;
       --text-base: 14px;
       --text-base--line-height: 20px;
-      font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-family: ${SYSTEM_SANS_STACK};
       font-size: 14px;
       line-height: 20px;
       color: var(--foreground);

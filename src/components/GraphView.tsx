@@ -1100,7 +1100,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
             vaultPath={vaultPath}
             thumbsRootPath={thumbsRootPath}
             width={GRAPH_PREVIEW_WIDTH}
-            previewMode="micro"
+            thumbVersion={thumbVersions.get(hoverPreviewBlock.slug)}
           />
         </div>
       ) : null}

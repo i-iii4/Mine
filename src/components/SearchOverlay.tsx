@@ -1,7 +1,7 @@
 // Search Overlay — поиск по блокам (SPEC_SEARCH_OVERLAY.md).
 //
-// Modal navigation search: input header, result list with first-match
-// snippets on the left, a real read-only card preview of the active result on
+// Modal navigation search: input header, one-line result rows (file name,
+// then the first-match text) on the left, a real read-only card preview of the active result on
 // the right. Reuses the existing hybrid-search backend contract
 // (`search_grid_blocks` + `search_match`) and the standalone card
 // renderer; owns no IPC beyond the debounced search request.
@@ -9,6 +9,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -20,7 +21,6 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ReadOnlyCardPreview } from "@/components/Card";
-import { CardHoverMenu } from "@/components/CardHoverMenu";
 import { DropdownMenuPortalContainerProvider } from "@/components/ui/dropdown-menu";
 import {
   MicroPreviewThumbnail,
@@ -35,17 +35,22 @@ import { domainFromUrl, isSafeUrl, fallbackThumbsRoot } from "@/lib/assets";
 import { listGridBlocks, searchGridBlocks } from "@/lib/commands";
 import { normalizeSurfaceSearchQuery } from "@/lib/searchQuery";
 import { groupByRecency } from "@/lib/recencyBuckets";
-import { deriveSearchResultRow } from "@/lib/searchResultRow";
+import {
+  deriveSearchResultRow,
+  windowNameAroundMark,
+  type NameWindow,
+} from "@/lib/searchResultRow";
 import { renderSearchHighlightedText } from "@/lib/searchHighlight";
 import { SEARCH_INPUT_SUPPRESSION_PROPS } from "@/lib/searchInputSuppression";
+import { commandById } from "@/lib/commandRegistry";
 import {
-  CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX,
-  CONTENT_CARD_TITLE_CLASSES,
-} from "@/lib/cardTypography";
+  SearchResultRowActions,
+  searchRowActionsReservePx,
+} from "@/components/SearchResultRowActions";
 import { cn } from "@/lib/utils";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { TopFadeScrim } from "./TopFadeScrim";
-import type { LightBlock, TagCount } from "@/types";
+import type { LightBlock, SearchMatch, TagCount } from "@/types";
 
 /** One request, top results only — refining the query beats paging (SPEC). */
 export const SEARCH_OVERLAY_RESULT_LIMIT = 200;
@@ -64,13 +69,107 @@ const SEARCH_OVERLAY_DEBOUNCE_MS = 100;
 export const SEARCH_OVERLAY_MIN_QUERY_CHARS = 2;
 
 /**
- * One line box for both lines of a result row. The title has the size and
- * weight of the snippet and differs from it by color alone, so both lines sit
- * on the card preview line, and a two-line row is two such lines tall.
+ * A result row is one line (user's decision of 06.10.2026): the file name,
+ * then the note's text that does not repeat it, told apart by color alone
+ * and a small gap, no separator glyph. The type is the Sidebar collection
+ * row's (`font-sans text-base`), so every row has the same height.
  */
-const resultRowLineHeightStyle = {
-  lineHeight: `${CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX}px`,
-} as const;
+const RESULT_LINE_CLASSES = "flex min-w-0 flex-1 items-baseline gap-1 font-sans text-base";
+
+/**
+ * With text after it, the name takes what it needs up to three quarters of
+ * the line and truncates past that, so the text always starts. Alone, the
+ * name takes the whole line.
+ */
+const RESULT_NAME_SHARE = 0.75;
+const resultNameWithTextStyle = { maxWidth: `${RESULT_NAME_SHARE * 100}%` } as const;
+
+/** Canvas widths and the laid-out line round differently by a pixel or so. */
+const NAME_FIT_SLACK_PX = 2;
+
+let nameMeasureContext: CanvasRenderingContext2D | null | undefined;
+
+/** Widths in the element's own font, on one shared canvas. */
+function measureInFontOf(element: HTMLElement): ((text: string) => number) | null {
+  nameMeasureContext ??= document.createElement("canvas").getContext("2d");
+  const context = nameMeasureContext;
+  if (!context) return null;
+  const style = getComputedStyle(element);
+  const font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+  return (text) => {
+    context.font = font;
+    return context.measureText(text).width;
+  };
+}
+
+/**
+ * The row's name. When the line cuts the name before its first mark, the
+ * name keeps its head and skips to the words that lead up to the mark
+ * (`windowNameAroundMark`), so a result never hides why it matched.
+ * A name alone on its line stops `endReservePx` short of the line's end
+ * while the row's buttons stand there.
+ */
+function SearchResultName({
+  name,
+  match,
+  withText,
+  endReservePx,
+}: {
+  name: string;
+  match: SearchMatch | null;
+  withText: boolean;
+  endReservePx: number;
+}) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [fitted, setFitted] = useState<NameWindow | null>(null);
+  const ranges = match && match.excerpt === name && match.ranges.length > 0 ? match.ranges : null;
+  const reservePx = withText ? 0 : endReservePx;
+
+  useLayoutEffect(() => {
+    const span = ref.current;
+    const line = span?.parentElement;
+    if (!span || !line || !ranges) {
+      setFitted(null);
+      return;
+    }
+    const fit = () => {
+      const lineWidth = line.clientWidth;
+      const measure = lineWidth > 0 ? measureInFontOf(span) : null;
+      if (!measure) {
+        setFitted(null);
+        return;
+      }
+      const room = (withText ? lineWidth * RESULT_NAME_SHARE : lineWidth - reservePx) - NAME_FIT_SLACK_PX;
+      setFitted(windowNameAroundMark(name, ranges, room, measure));
+    };
+    fit();
+    if (typeof ResizeObserver === "undefined") return;
+    let observedWidth = line.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (line.clientWidth === observedWidth) return;
+      observedWidth = line.clientWidth;
+      fit();
+    });
+    observer.observe(line);
+    return () => observer.disconnect();
+  }, [name, ranges, reservePx, withText]);
+
+  return (
+    <span
+      ref={ref}
+      className="min-w-0 truncate text-foreground"
+      style={withText
+        ? resultNameWithTextStyle
+        : reservePx > 0 ? { maxWidth: `calc(100% - ${reservePx}px)` } : undefined}
+      data-search-result-name=""
+      data-search-result-name-window={fitted ? "" : undefined}
+    >
+      {fitted && match
+        ? renderSearchHighlightedText(fitted.text, { ...match, excerpt: fitted.text, ranges: fitted.ranges })
+        : renderSearchHighlightedText(name, match)}
+    </span>
+  );
+}
 
 function searchOverlayOptionDomId(blockId: number): string {
   return `search-overlay-option-${blockId}`;
@@ -86,7 +185,7 @@ interface SearchOverlayProps {
   onOpenBlock: (block: LightBlock) => void;
   /** Lazy collections for the metadata block (existing batched tags command). */
   loadBlockTags?: (slugs: string[]) => Promise<Map<string, string[]>>;
-  /** Hover actions on the preview reuse the main-page CardHoverMenu contract. */
+  /** A result row's commands (Connect, Source, More) are the feed card's. */
   tags?: TagCount[];
   currentTag?: string;
   onToggleTag?: (slug: string, tag: string, hasTag: boolean) => void | Promise<void>;
@@ -135,6 +234,13 @@ export function SearchOverlay({
   // coordinates, so keyboard scrolling under a resting cursor does not steal
   // the active row (CollectionPicker contract).
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
+  // The row the pointer is on: its commands show while it is also the active
+  // row. Arrows, the wheel and leaving the list let go of it.
+  const [pointerSlug, setPointerSlug] = useState<string | null>(null);
+  // The row whose menu is open holds the active row and its commands.
+  const [menuSlug, setMenuSlug] = useState<string | null>(null);
+  // ⌘K presses, answered by the active row's More menu.
+  const [moreMenuRequestSequence, setMoreMenuRequestSequence] = useState(0);
 
   const normalizedQuery = normalizeSurfaceSearchQuery(query);
   const normalizedQueryLength = Array.from(normalizedQuery).length;
@@ -176,6 +282,8 @@ export function SearchOverlay({
           setResultHasMore(snapshot.has_more);
           setSettledQueryKey(queryKey);
           setFailedQuery(null);
+          // New rows under a resting pointer wait for it to move (С7.5).
+          if (!options.preserveActive) setPointerSlug(null);
         })
         .catch((error: unknown) => {
           if (requestSequenceRef.current !== sequence) return;
@@ -369,6 +477,9 @@ export function SearchOverlay({
   const moveActiveIndex = useCallback(
     (delta: number) => {
       if (!results || results.length === 0) return;
+      // The arrows take the active row from the pointer: its commands hide
+      // until the pointer moves again.
+      setPointerSlug(null);
       setActiveIndex((current) =>
         Math.min(results.length - 1, Math.max(0, current + delta)),
       );
@@ -378,6 +489,14 @@ export function SearchOverlay({
 
   const handleInputKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      // ⌘K opens the active row's More menu, as on a card in the feed. The
+      // menu takes the keyboard while open; ⌘K or Escape there closes it.
+      if (commandById("element-menu").matches?.(event.nativeEvent)) {
+        if (!activeBlock) return;
+        event.preventDefault();
+        setMoreMenuRequestSequence((current) => current + 1);
+        return;
+      }
       // Modified arrows/Enter stay global-shortcut candidates (system rule).
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.key === "ArrowDown") {
@@ -423,14 +542,47 @@ export function SearchOverlay({
     if (activeBlock) onOpenBlock(activeBlock);
   }, [activeBlock, currentQuerySettled, normalizedQuery, onOpenBlock, open]);
 
+  const menuRowPresent = menuSlug !== null && rows.some((entry) => entry.block.slug === menuSlug);
+
   const handleRowPointerMove = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>, index: number) => {
+    (event: ReactPointerEvent<HTMLDivElement>, index: number, slug: string) => {
       const last = lastPointerRef.current;
       if (last && last.x === event.clientX && last.y === event.clientY) return;
       lastPointerRef.current = { x: event.clientX, y: event.clientY };
+      // An open row menu holds its row: the pointer on its way across other
+      // rows moves nothing (SPEC_CARD_STATES.md, С7.8).
+      if (menuRowPresent) return;
       setActiveIndex(index);
+      setPointerSlug(slug);
     },
-    [],
+    [menuRowPresent],
+  );
+
+  const releasePointerRow = useCallback(() => setPointerSlug(null), []);
+
+  // A reopened overlay starts with the pointer elsewhere.
+  useEffect(() => {
+    if (!open) setPointerSlug(null);
+  }, [open]);
+
+  const handleRowMenuOpenChange = useCallback((slug: string, menuOpen: boolean) => {
+    setMenuSlug((current) => (menuOpen ? slug : current === slug ? null : current));
+  }, []);
+
+  // A closed row menu hands the keyboard back to the search field, where the
+  // arrows, Enter, ⌘K and Escape keep working.
+  const handleRowMenuCloseAutoFocus = useCallback((event: Event) => {
+    event.preventDefault();
+    inputRef.current?.focus();
+  }, []);
+
+  const handleRequestRename = useCallback(
+    (block: LightBlock) => onRequestRename?.(block),
+    [onRequestRename],
+  );
+  const handleRequestDelete = useCallback(
+    (slug: string) => onRequestDelete?.(slug),
+    [onRequestDelete],
   );
 
   const handleClear = useCallback(() => {
@@ -454,53 +606,86 @@ export function SearchOverlay({
 
   // One row template for both modes; `index` is always the flat results
   // index, so the active row and arrow keys ignore section grouping.
+  // The row is two layers: the option (the result itself, what a click opens)
+  // and, over its right end, the card's commands. They are siblings, so a
+  // press on a command never reaches the option and the option's accessible
+  // name stays the result's own. The common parent carries the active layer,
+  // so both stand on the same surface.
   const renderResultRow = (
     { block, row, preview }: (typeof rows)[number],
     index: number,
-  ) => (
-    <div
-      key={block.id}
-      id={searchOverlayOptionDomId(block.id)}
-      role="option"
-      aria-selected={index === activeIndex}
-      className={cn(
-        "flex cursor-default items-center gap-2 rounded-1 px-2 py-1.5",
-        index === activeIndex && "state-active",
-      )}
-      onPointerMove={(event) => handleRowPointerMove(event, index)}
-      onClick={() => onOpenBlock(block)}
-    >
+  ) => {
+    const isActive = index === activeIndex;
+    const holdsMenu = menuRowPresent && block.slug === menuSlug;
+    const actionsShown = holdsMenu || (isActive && block.slug === pointerSlug);
+    // The commands overlay the row's end; the text stops short of them, and
+    // the name, which keeps its place, only when it stands alone.
+    const reservePx = actionsShown ? searchRowActionsReservePx(block) : 0;
+    return (
       <div
-        aria-hidden="true"
-        className="size-8 shrink-0 overflow-hidden bg-component-fill"
+        key={block.id}
+        role="none"
+        className={cn("relative rounded-1", isActive && "state-active")}
+        onPointerMove={(event) => handleRowPointerMove(event, index, block.slug)}
+        data-search-result-row=""
       >
-        <MicroPreviewThumbnail
-          preview={preview}
-          loading="lazy"
-          draggable={false}
-          onError={(event) => {
-            event.currentTarget.style.display = "none";
-          }}
-        />
-      </div>
-      <div className="min-w-0 flex-1">
-        <p
-          className={cn("truncate", CONTENT_CARD_TITLE_CLASSES)}
-          style={resultRowLineHeightStyle}
+        <div
+          id={searchOverlayOptionDomId(block.id)}
+          role="option"
+          aria-selected={isActive}
+          className="flex cursor-default items-center gap-2 px-2 py-1.5"
+          onClick={() => onOpenBlock(block)}
         >
-          {renderSearchHighlightedText(row.title, row.titleMatch)}
-        </p>
-        {row.snippet && (
-          <p
-            className="mt-0.5 line-clamp-1 text-sm text-muted-foreground"
-            style={resultRowLineHeightStyle}
+          <div
+            aria-hidden="true"
+            className="size-8 shrink-0 overflow-hidden bg-component-fill"
           >
-            {renderSearchHighlightedText(row.snippet, row.snippetMatch)}
+            <MicroPreviewThumbnail
+              preview={preview}
+              loading="lazy"
+              draggable={false}
+              onError={(event) => {
+                event.currentTarget.style.display = "none";
+              }}
+            />
+          </div>
+          <p className={RESULT_LINE_CLASSES} data-search-result-line="">
+            <SearchResultName
+              name={row.title}
+              match={row.nameMatch}
+              withText={row.text !== null}
+              endReservePx={reservePx}
+            />
+            {row.text !== null && (
+              <span
+                className="min-w-0 flex-1 truncate text-muted-foreground"
+                style={reservePx > 0 ? { paddingRight: reservePx } : undefined}
+                data-search-result-text=""
+              >
+                {renderSearchHighlightedText(row.text, row.textMatch)}
+              </span>
+            )}
           </p>
+        </div>
+        {(isActive || holdsMenu) && (
+          <SearchResultRowActions
+            block={block}
+            vaultPath={vaultPath}
+            tags={tags}
+            currentTag={currentTag}
+            visible={actionsShown}
+            moreMenuRequestSequence={isActive ? moreMenuRequestSequence : 0}
+            onToggleTag={handleToggleTag}
+            onCreateAndAssign={handleCreateAndAssign}
+            onRequestRename={handleRequestRename}
+            onRequestDelete={handleRequestDelete}
+            onMenuOpenChange={handleRowMenuOpenChange}
+            onMenuCloseAutoFocus={handleRowMenuCloseAutoFocus}
+          />
         )}
       </div>
-    </div>
-  );
+    );
+  };
 
   const [menuContainer, setMenuContainer] = useState<HTMLDivElement | null>(null);
   return (
@@ -576,6 +761,10 @@ export function SearchOverlay({
             aria-label="Search results"
             className="min-w-0 flex-1 overflow-y-auto p-1"
             data-search-results-top-fade={resultsTopFade.scrolled ? "true" : undefined}
+            // Rows that slide under a resting pointer, and a pointer gone
+            // from the list, show no commands (SPEC_CARD_STATES.md, С7.5).
+            onPointerLeave={releasePointerRow}
+            onWheel={releasePointerRow}
           >
             {showNoResults && (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
@@ -618,10 +807,10 @@ export function SearchOverlay({
           />
           </div>
 
-          {/* Two zones: the card (micro preview — one uniform template for
-              every block type, media inside the card padding, never
-              full-bleed; accent-toned) and the metadata block — bare
-              MetadataRow list, no card chrome of its own. */}
+          {/* Two zones: the card, the feed's own card in its final hover
+              state with nothing to press (SPEC_CARD_STATES.md, С10), and the
+              metadata block, a bare MetadataRow list with no card chrome of
+              its own. */}
           <div className="flex w-80 shrink-0 flex-col gap-4 overflow-y-auto border-l border-border p-4">
             {activeBlock && (
               <>
@@ -629,7 +818,6 @@ export function SearchOverlay({
                   role="button"
                   tabIndex={-1}
                   aria-label="Open element"
-                  className="group relative"
                   onClick={() => onOpenBlock(activeBlock)}
                   data-search-overlay-preview
                 >
@@ -638,21 +826,7 @@ export function SearchOverlay({
                     vaultPath={vaultPath}
                     thumbsRootPath={thumbsRootPath}
                     width={288}
-                    previewMode="micro"
                     shadow="none"
-                    className="bg-accent"
-                  />
-                  {/* The real main-page hover menu — More (top-right) plus
-                      Source/Connect (bottom row), revealed on hover. */}
-                  <CardHoverMenu
-                    block={activeBlock}
-                    vaultPath={vaultPath}
-                    tags={tags}
-                    currentTag={currentTag}
-                    onToggleTag={handleToggleTag}
-                    onCreateAndAssign={handleCreateAndAssign}
-                    onRequestRename={onRequestRename ?? (() => {})}
-                    onRequestDelete={onRequestDelete ?? (() => {})}
                   />
                 </div>
                 <div

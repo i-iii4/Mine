@@ -58,6 +58,9 @@ interface CardMoreMenuProps<TBlock extends LightBlock | IndexedBlock> extends Ca
   triggerSize?: ComponentProps<typeof Button>["size"];
   /** The keystroke that opens this menu, shown in the trigger's tooltip. */
   triggerShortcut?: string;
+  /** Where focus goes when the menu closes; the trigger by default. A search
+   *  result row sends it back to the search field. */
+  onCloseAutoFocus?: ComponentProps<typeof DropdownMenuContent>["onCloseAutoFocus"];
 }
 
 interface CardPointMenuProps<TBlock extends LightBlock | IndexedBlock> extends CardMenuActionsProps<TBlock> {
@@ -95,14 +98,18 @@ type CardHoverMenuPropsWithState = CardHoverMenuProps & {
 /// The order is always the sidebar's manual one, read from the live list the
 /// sidebar draws, so a reorder there shows here at once; a collection the
 /// list does not hold goes last. Names past the row's end dissolve into the
-/// edge before the plus, the sidebar strip's fade.
-function CardCollectionsRow({
+/// edge before the plus, the sidebar strip's fade. A card preview shows the
+/// same row `readOnly`: the names as text, nothing to press
+/// (SPEC_CARD_STATES.md, С10).
+export function CardCollectionsRow({
   collections,
   order,
+  readOnly = false,
 }: {
   collections: readonly string[];
   /** The sidebar's collections in their manual order. */
   order: readonly TagCount[];
+  readOnly?: boolean;
 }) {
   const navigation = useContext(CardCollectionsContext);
   const ordered = useMemo(() => {
@@ -123,11 +130,18 @@ function CardCollectionsRow({
           No collections
         </span>
       )}
-      {ordered.map((tag) => (
+      {ordered.map((tag) => readOnly ? (
+        <span key={tag} className={COLLECTION_NAME_CLASS} data-card-collection-name={tag}>
+          {collectionRefLabel(tag)}
+        </span>
+      ) : (
         <button
           key={tag}
           type="button"
-          className="shrink-0 whitespace-nowrap bg-transparent p-0 font-mono text-sm font-normal text-muted-foreground outline-0 hover:text-foreground focus-visible:text-foreground"
+          className={cn(
+            COLLECTION_NAME_CLASS,
+            "bg-transparent p-0 outline-0 hover:text-foreground focus-visible:text-foreground",
+          )}
           data-card-collection-pill={tag}
           onClick={() => navigation?.open(tag)}
         >
@@ -137,6 +151,9 @@ function CardCollectionsRow({
     </div>
   );
 }
+
+/// A collection's name in the row: interface text, quiet.
+const COLLECTION_NAME_CLASS = "shrink-0 whitespace-nowrap font-mono text-sm font-normal text-muted-foreground";
 
 /// The row's right edge fades over the shared edge width (lib/edgeFade.ts).
 const COLLECTIONS_ROW_FADE_STYLE = createRightFadeMaskStyle(EDGE_FADE_WIDTH, 0);
@@ -166,6 +183,7 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
   triggerVariant = "default",
   triggerSize,
   triggerShortcut,
+  onCloseAutoFocus,
 }: CardMoreMenuProps<TBlock>) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuOpenRef = useRef(false);
@@ -224,7 +242,7 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
         onCreateAndAssign={onCreateAndAssign}
         onRequestRename={onRequestRename}
         onRequestDelete={onRequestDelete}
-        onCloseAutoFocus={topChromeInteraction ? topChromeTrigger.handleCloseAutoFocus : undefined}
+        onCloseAutoFocus={topChromeInteraction ? topChromeTrigger.handleCloseAutoFocus : onCloseAutoFocus}
         onKeyDownCapture={handleMenuKeyDownCapture}
       />
     </DropdownMenu>
@@ -472,7 +490,6 @@ export const CardHoverMenu = memo(function CardHoverMenu({
   const hasUrl = block.url != null && isSafeUrl(block.url);
   const [menuOpen, setMenuOpen] = useState(false);
   const [channelOpen, setChannelOpen] = useState(false);
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [keyboardMenuOpen, setKeyboardMenuOpen] = useState(false);
   const lastOpenMoreMenuRequestSequenceRef = useRef(0);
   const keyboardMenuRequestPending =
@@ -495,18 +512,6 @@ export const CardHoverMenu = memo(function CardHoverMenu({
   useEffect(() => {
     onActionsPinnedChange?.(hoverActionsPinned);
   }, [hoverActionsPinned, onActionsPinnedChange]);
-
-  // Connect shows the card's collections ticked: read them when it opens.
-  useEffect(() => {
-    if (!channelOpen) return;
-    let cancelled = false;
-    void getBlock(block.slug).then((full) => {
-      if (!cancelled) setSelectedTags(full?.tags ?? []);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [block.slug, channelOpen]);
 
   return (
     <>
@@ -544,22 +549,7 @@ export const CardHoverMenu = memo(function CardHoverMenu({
         onClick={stopProp}
         onPointerDown={stopProp}
       >
-        {hasUrl && (
-          <Button
-            variant="raised"
-            size="icon-xs"
-            aria-label="Source"
-            // Leaves the app for the browser: the one case that keeps the
-            // pointing hand under the native cursor contract.
-            className="cursor-pointer"
-            onClick={() => {
-              onInteractionStart?.();
-              if (block.url) openUrl(block.url);
-            }}
-          >
-            <ExternalLink aria-hidden="true" />
-          </Button>
-        )}
+        {hasUrl && <CardSourceButton url={block.url!} onPress={onInteractionStart} />}
         <CardMoreMenu
           block={block}
           vaultPath={vaultPath}
@@ -611,37 +601,112 @@ export const CardHoverMenu = memo(function CardHoverMenu({
         onPointerDown={stopProp}
       >
         <CardCollectionsRow collections={block.collections} order={tags} />
-        <DropdownMenu
+        <CardConnectMenu
+          block={block}
+          tags={tags}
+          currentTag={currentTag}
+          onToggleTag={onToggleTag}
+          onCreateAndAssign={onCreateAndAssign}
+          className="ml-auto"
           onOpenChange={(open) => {
             if (open) onInteractionStart?.();
             setChannelOpen(open);
           }}
-          modal={false}
-        >
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="raised"
-              size="icon-xs"
-              aria-label="Connect"
-              className="ml-auto"
-              data-card-hover-connect=""
-            >
-              <Plus aria-hidden="true" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent widthRole="picker" className={COLLECTION_PICKER_CONTENT_CLASS} align="end">
-            <CollectionPicker
-              blockSlug={block.slug}
-              selectedTags={selectedTags}
-              tags={tags}
-              currentTag={currentTag}
-              onToggleTag={onToggleTag}
-              onCreateAndAssign={onCreateAndAssign}
-              stopKeyPropagation
-            />
-          </DropdownMenuContent>
-        </DropdownMenu>
+        />
       </div>
     </>
   );
 });
+
+/// The card's way out to its source: the link opens in the browser. The
+/// card's top row and a search result row show the same button.
+export function CardSourceButton({ url, onPress }: { url: string; onPress?: () => void }) {
+  return (
+    <Button
+      variant="raised"
+      size="icon-xs"
+      aria-label="Source"
+      // Leaves the app for the browser: the one case that keeps the
+      // pointing hand under the native cursor contract.
+      className="cursor-pointer"
+      onClick={() => {
+        onPress?.();
+        void openUrl(url);
+      }}
+    >
+      <ExternalLink aria-hidden="true" />
+    </Button>
+  );
+}
+
+/// Connect as a plus with the collection picker. The card's bottom row and a
+/// search result row show the same menu.
+export function CardConnectMenu({
+  block,
+  tags,
+  currentTag,
+  onToggleTag,
+  onCreateAndAssign,
+  className,
+  onOpenChange,
+  onCloseAutoFocus,
+}: Pick<CardMenuActionsProps<LightBlock>, "block" | "tags" | "currentTag" | "onToggleTag" | "onCreateAndAssign"> & {
+  className?: string;
+  onOpenChange?: (open: boolean) => void;
+  /** Where focus goes when the picker closes; the plus by default. */
+  onCloseAutoFocus?: ComponentProps<typeof DropdownMenuContent>["onCloseAutoFocus"];
+}) {
+  const [open, setOpen] = useState(false);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+
+  // The picker shows the card's collections ticked: read them when it opens.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void getBlock(block.slug).then((full) => {
+      if (!cancelled) setSelectedTags(full?.tags ?? []);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [block.slug, open]);
+
+  return (
+    <DropdownMenu
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        onOpenChange?.(next);
+      }}
+      modal={false}
+    >
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="raised"
+          size="icon-xs"
+          aria-label="Connect"
+          className={className}
+          data-card-hover-connect=""
+        >
+          <Plus aria-hidden="true" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        widthRole="picker"
+        className={COLLECTION_PICKER_CONTENT_CLASS}
+        align="end"
+        onCloseAutoFocus={onCloseAutoFocus}
+      >
+        <CollectionPicker
+          blockSlug={block.slug}
+          selectedTags={selectedTags}
+          tags={tags}
+          currentTag={currentTag}
+          onToggleTag={onToggleTag}
+          onCreateAndAssign={onCreateAndAssign}
+          stopKeyPropagation
+        />
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}

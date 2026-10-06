@@ -652,7 +652,9 @@ impl CollectionRename {
             .map_err(|error| CommandError::Internal(error.to_string()))?;
         // A note already there (a card of that name in the folder) keeps its
         // file: the page moves to a free name only, as a card's file does.
-        if to.exists() || index::slug_exists(conn, &slug)? {
+        // The page's own name in other letter case finds the page itself
+        // where the disk ignores case, and is free (06.10.2026).
+        if (to.exists() && !files::names_same_entry(&from, &to)) || index::slug_exists(conn, &slug)? {
             return Err(CommandError::NameRefused(format!(
                 "A file named \"{file_name}\" already exists."
             )));
@@ -1418,5 +1420,52 @@ mod tests {
         assert_eq!(refusal(check(None, "Photos")), "A collection named \"Photos\" already exists.");
         assert_eq!(refusal(check(None, "")), "The name is empty.");
         assert_eq!(space_files(&vault), before);
+    }
+
+    /// 06.10.2026: a collection renamed to its own name in other letter case
+    /// is not in its own way, nor is its page, which the new spelling names
+    /// where the disk ignores case. The page takes the new spelling and every
+    /// member card links it so; a new collection that differs from it only in
+    /// case stays refused.
+    #[test]
+    fn a_case_only_collection_rename_respells_the_page_and_memberships() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = standard_space(dir.path());
+        std::fs::write(vault.block_path("Collections/Photos"), WRITTEN_PAGE).unwrap();
+        let card = "---\nMine Collections:\n  - \"[[Photos]]\"\nsaved_at: 2026-04-25T14:00:40Z\n---\nBody\n";
+        std::fs::write(vault.block_path("Cards/Sunset"), card).unwrap();
+        let state = app_state(&vault);
+        let main_space = state.space_for("main").expect("main tab");
+        let guard = main_space.vault_state.lock().unwrap();
+        let vs = guard.as_ref().unwrap();
+
+        assert!(check_collection_name_inner(&vs.conn, &vs.vault, Some("Photos"), "photos").is_ok());
+        let renamed = rename_channel_inner(None, &vs.conn, &vs.vault, "Photos", "photos").unwrap();
+
+        assert_eq!(renamed.tag, "photos");
+        let pages: Vec<String> = std::fs::read_dir(vault.root().join("Collections"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(pages, ["photos.md"]);
+        assert_eq!(
+            std::fs::read_to_string(vault.block_path("Collections/photos")).unwrap(),
+            WRITTEN_PAGE
+        );
+        assert_eq!(
+            std::fs::read_to_string(vault.block_path("Cards/Sunset")).unwrap(),
+            card.replace("[[Photos]]", "[[photos]]")
+        );
+        let tags: Vec<String> =
+            index::list_channels(&vs.conn).unwrap().into_iter().map(|channel| channel.tag).collect();
+        assert!(tags.iter().any(|tag| tag == "photos") && !tags.iter().any(|tag| tag == "Photos"), "{tags:?}");
+        assert_eq!(
+            refusal(create_channel_inner(&vs.conn, &vs.vault, "PHOTOS")),
+            "A collection named \"PHOTOS\" already exists."
+        );
+        assert_eq!(
+            refusal(check_collection_name_inner(&vs.conn, &vs.vault, None, "Photos")),
+            "A collection named \"Photos\" already exists."
+        );
     }
 }

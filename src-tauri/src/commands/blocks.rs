@@ -4152,7 +4152,7 @@ pub(crate) fn rename_block_file_inner(
         });
     }
 
-    refuse_taken_name(conn, vault, &new_slug)?;
+    refuse_taken_name(conn, vault, old_slug, &new_slug)?;
 
     let (read_slug, content) =
         files::read_block_file(vault, &old_path).map_err(internal_rename_error)?;
@@ -4333,12 +4333,22 @@ fn requested_rename_slug(old_slug: &str, new_stem: &str) -> Result<String, Renam
     })
 }
 
+/// Refuses `new_slug` when another file or card has it. A new name that
+/// changes only letter case finds the card's own file where the disk ignores
+/// case (the macOS default): that file is not in the way (06.10.2026). Only
+/// the name is respelled so: a rename renames the file, not its folder, and
+/// a folder typed in other case would leave the disk spelling it as before.
 fn refuse_taken_name(
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
+    old_slug: &str,
     new_slug: &str,
 ) -> Result<(), RenameBlockError> {
-    if vault.block_path(new_slug).exists()
+    let folder = |slug: &str| slug.rsplit_once('/').map(|(folder, _)| folder.to_string());
+    let target = vault.block_path(new_slug);
+    let respelled = folder(old_slug) == folder(new_slug)
+        && files::names_same_entry(&vault.block_path(old_slug), &target);
+    if (target.exists() && !respelled)
         || index::slug_exists(conn, new_slug).map_err(internal_rename_error)?
     {
         return Err(RenameBlockError::NameTaken {
@@ -4360,7 +4370,7 @@ pub(crate) fn check_block_rename_inner(
     if old_slug == new_slug {
         return Ok(());
     }
-    refuse_taken_name(conn, vault, &new_slug)
+    refuse_taken_name(conn, vault, old_slug, &new_slug)
 }
 
 /// The name a rename asks for, normalized, or why it is refused, by the rules
@@ -5085,7 +5095,8 @@ fn collect_mine_owned_media_renames(
             continue;
         }
         let to = from.with_file_name(&target);
-        if to.exists() {
+        // As for the card's file: another case of its own name is no other file.
+        if to.exists() && !files::names_same_entry(&from, &to) {
             return Err(RenameBlockError::NameTaken {
                 requested: vault.root_relative_reference(&to).unwrap_or(target),
             });
@@ -7344,6 +7355,113 @@ mod tests {
         // A plain note gets its link and nothing else: no properties appear.
         assert_eq!(read_note(&vault, "Notes/Plain"), "# Plain\n\nLinks [[Bar]].\n");
         assert!(index::get_block(&conn, "Cards/Bar").unwrap().is_some());
+    }
+
+    /// The visible names in a folder, as the disk spells them.
+    fn names_in(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| !name.starts_with('.'))
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// 06.10.2026: a new name that changes only letter case names the card's
+    /// own file where the disk ignores case (the macOS default), so it is not
+    /// taken. The disk takes the new spelling, and the links, the card's own
+    /// media, the index row, the preview and the watcher follow it as in any
+    /// rename. On a disk that tells case apart it is an ordinary rename.
+    #[test]
+    fn a_case_only_rename_respells_the_card_its_media_and_its_links() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        let media = vault.root().join("Media");
+        std::fs::create_dir_all(&media).unwrap();
+        std::fs::write(media.join("foo.jpg"), b"photo").unwrap();
+        let card = "---\nfile: \"[[foo.jpg]]\"\nsaved_at: 2026-04-22T00:00:00Z\n---\nText.\n";
+        write_note(&vault, "Cards/foo", card);
+        write_note(&vault, "Cards/Other", "See [[foo]] and ![[foo.jpg]].\n");
+        write_note(&vault, "Cards/quiet", "# Quiet\n\nNo link to itself.\n");
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        let id = index::get_block(&conn, "Cards/foo").unwrap().unwrap().id;
+        let thumb = vault.thumb_path("Cards/foo");
+        std::fs::create_dir_all(thumb.parent().unwrap()).unwrap();
+        std::fs::write(&thumb, b"preview").unwrap();
+
+        assert!(check_block_rename_inner(&conn, &vault, "Cards/foo", "Foo").is_ok());
+        let result =
+            rename_block_file_inner(None, Some(&state), &conn, &vault, "Cards/foo", "Foo").unwrap();
+
+        assert_eq!(result.new_slug, "Cards/Foo");
+        assert_eq!(names_in(&vault.root().join("Cards")), ["Foo.md", "Other.md", "quiet.md"]);
+        assert_eq!(names_in(&media), ["Foo.jpg"]);
+        assert_eq!(read_note(&vault, "Cards/Foo"), card.replace("[[foo.jpg]]", "[[Foo.jpg]]"));
+        assert_eq!(read_note(&vault, "Cards/Other"), "See [[Foo]] and ![[Foo.jpg]].\n");
+        assert_eq!(index::get_block(&conn, "Cards/Foo").unwrap().unwrap().id, id);
+        assert!(index::get_block(&conn, "Cards/foo").unwrap().is_none());
+        assert_eq!(names_in(thumb.parent().unwrap()), ["Foo.jpg"]);
+        for path in [
+            vault.block_path("Cards/foo"),
+            vault.block_path("Cards/Foo"),
+            media.join("foo.jpg"),
+            media.join("Foo.jpg"),
+        ] {
+            assert!(state.is_path_suppressed(&path), "{}", path.display());
+        }
+
+        // Only the name is respelled: the card's folder typed in other case
+        // is the folder it is in, and its file stays taken there.
+        if vault.block_path("cards/Foo").exists() {
+            assert!(matches!(
+                check_block_rename_inner(&conn, &vault, "Cards/Foo", "cards/Foo"),
+                Err(RenameBlockError::NameTaken { .. }),
+            ));
+        }
+
+        // A card whose text stays as it is moves in one step.
+        assert!(check_block_rename_inner(&conn, &vault, "Cards/quiet", "Quiet").is_ok());
+        rename_block_file_inner(None, None, &conn, &vault, "Cards/quiet", "Quiet").unwrap();
+        assert_eq!(names_in(&vault.root().join("Cards")), ["Foo.md", "Other.md", "Quiet.md"]);
+        assert_eq!(read_note(&vault, "Cards/Quiet"), "# Quiet\n\nNo link to itself.\n");
+    }
+
+    /// 06.10.2026: a spelling that names another file stays taken, for the
+    /// check and the rename alike: a second name of the same file (a hard
+    /// link) on any disk, and another card's name in other letter case where
+    /// the disk ignores case.
+    #[test]
+    fn a_name_of_another_file_stays_taken_whatever_its_case() {
+        let (_root, _derived, vault, conn) = make_vault();
+        write_note(&vault, "One", "# One\n");
+        write_note(&vault, "Taken", "# Taken\n");
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        std::fs::hard_link(vault.block_path("One"), vault.block_path("Linked")).unwrap();
+        let before = names_in(vault.root());
+
+        assert!(matches!(
+            check_block_rename_inner(&conn, &vault, "One", "Linked"),
+            Err(RenameBlockError::NameTaken { .. }),
+        ));
+        assert!(matches!(
+            rename_block_file_inner(None, None, &conn, &vault, "One", "Linked"),
+            Err(RenameBlockError::NameTaken { .. }),
+        ));
+        assert_eq!(names_in(vault.root()), before);
+
+        let case_blind = vault.block_path("TAKEN").exists();
+        let check = check_block_rename_inner(&conn, &vault, "One", "TAKEN");
+        let renamed = rename_block_file_inner(None, None, &conn, &vault, "One", "TAKEN");
+        if case_blind {
+            assert!(matches!(check, Err(RenameBlockError::NameTaken { .. })));
+            assert!(matches!(renamed, Err(RenameBlockError::NameTaken { .. })));
+            assert_eq!(names_in(vault.root()), before);
+        } else {
+            // A disk that tells case apart holds both names.
+            assert!(check.is_ok());
+            assert_eq!(renamed.unwrap().new_slug, "TAKEN");
+        }
     }
 
     /// Б1.6: in the standard layout a card's media sits in `Media/`, and a

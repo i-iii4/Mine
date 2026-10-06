@@ -1136,7 +1136,7 @@ describe("Detail", () => {
       "rounded-[var(--radius-card)]",
       "border",
       "border-border",
-      "bg-accent",
+      "bg-card",
     );
     expect(metadataCard).toHaveStyle({ minWidth: "240px" });
     const metadataContent = metadataCard?.querySelector("[data-detail-metadata-card-content]");
@@ -2498,6 +2498,9 @@ describe("Detail", () => {
     expect(relatedPreview).not.toBeNull();
     expect(relatedPreview).toHaveClass("pointer-events-none");
     expect(relatedPreview?.querySelector("button")).toBeNull();
+    // The feed's own card in its final hover state (SPEC_CARD_STATES.md, С10).
+    expect(relatedPreview?.querySelector("[data-card-preview]")).toHaveAttribute("data-card-lift-pinned");
+    expect(relatedPreview?.querySelector("[data-card-preview-collections]")).not.toBeNull();
     expect(relatedPreview).not.toHaveTextContent("Connect");
     expect(document.querySelector("[data-related-note-hover-bridge]")).not.toBeInTheDocument();
 

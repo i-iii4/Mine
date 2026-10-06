@@ -439,7 +439,10 @@ mark.
 `frontmatter.title` в поле `title` не входят: H1 лежит в теле и находится как
 совпадение `body` со сниппетом. Имя файла видно в строке у любой карточки,
 поэтому у социальных карточек совпадение в имени тоже видимое совпадение
-`title`.
+`title`. Так же называют результат `mine search` в терминале и
+MCP-инструмент `search`: имя файла лежит в поле `name` их JSON, а поле
+`title` там по контракту CLI остаётся видимым заголовком заметки
+([SPEC_AI_ACCESS.md](SPEC_AI_ACCESS.md)).
 
 For `description`, `excerpt`
 is the description text around the first visible match. For `body`, `excerpt`

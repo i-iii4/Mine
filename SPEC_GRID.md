@@ -316,7 +316,7 @@ export async function fetchWordWidths(
   blocks: LightBlock[],
 ): Promise<Map<number, WordWidths>>;
 
-/** Текущий хэш шрифтов (Geist Sans file hash + font-size + line-height) */
+/** Текущий хэш шрифтов: версия модели текста, оба font spec и отпечаток гарнитуры */
 export function getFontHash(): FontHash;
 
 /** Инвалидация кэша при смене font version */
@@ -569,7 +569,7 @@ path, когда native scroll jump иначе показал бы полнос�
 
 5. **Word widths deterministic.** Для одной и той же пары `(text, fontHash)` `measureText` возвращает одно и то же значение (свойство браузера).
 
-6. **LayoutCache invalidated on font change.** Если font hash меняется (обновление Geist Sans), весь `LayoutCache` + IndexedDB word widths инвалидируются.
+6. **LayoutCache invalidated on font change.** Если font hash меняется (другой font spec или другая гарнитура под тем же spec, например системный шрифт после обновления macOS), весь `LayoutCache` + IndexedDB word widths инвалидируются.
 
 7. **Grid-lanes path и JS path взаимозаменяемы.** Оба пути принимают одни и те же данные `(blocks, layout)` и производят визуально эквивалентный рендер. Пользователь не должен замечать переключения между ними.
 
@@ -701,7 +701,7 @@ Phase 11 закрыта через доказуемые вертикальные
    двумя символами, как браузер. Это верно и когда в том же тексте есть
    пробелы или переносы строк.
 
-5. **Font loading failure** — если Geist Sans не загружается, browser fallback на system UI font. `measureText` вернёт widths для fallback font, что даст корректное computation но не идеальное соответствие когда Geist наконец загрузится. Mitigation: перед первым `fetchWordWidths` ожидать `document.fonts.ready`, проверять что Geist Sans в `document.fonts.check("14px Geist")`.
+5. **Font loading failure.** Системный шрифт не загружается: он уже есть в системе, и холст в потоке замера находит его так же, как страница. Файл нужен только необязательному Departure Mono: поток регистрирует его до первого замера, а страница перед первым `fetchWordWidths` ждёт `document.fonts.ready`.
 
 6. **IndexedDB quota exceeded** — graceful fallback на in-memory Map, warn в консоль.
 
@@ -910,3 +910,33 @@ Worker или OffscreenCanvas (JSDOM, старые WebView) остаётся п�
 ставится, когда лента показала карточки с содержимым (или пустую ленту), а не
 заготовки (SPEC_AUDIT_FIXES.md, А8.1, А8.2).
 
+## Системный шрифт (06.10.2026)
+
+По решению пользователя интерфейс и карточки набраны системным шрифтом macOS,
+Geist удалён. Холст замеряет слова строкой шрифта со стеком самой страницы:
+`400 12px system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+Arial, sans-serif` для заголовка и для текста. Стек живёт в
+`SYSTEM_SANS_STACK` (`src/lib/fontChoice.ts`), `global.css` повторяет его
+дословно, тест `fontChoice.test.ts` держит их равными.
+
+Проверено в WebKit (движок WKWebView) и Chromium на macOS 27: `system-ui`
+на холсте страницы, на `OffscreenCanvas` и в потоке замера даёт SF Pro, ту
+же гарнитуру, что DOM. Ширины слов латиницей, кириллицей, цифрами, CJK и
+эмодзи при 12, 14, 16 и 18 px, весах 400, 500 и 600 расходятся с шириной
+`span` в DOM меньше чем на 1/64 px, то есть в пределах единицы раскладки
+WebKit. На настоящем App с подменённым IPC 160 замеров карточек (80 карточек
+при ширине колонки 279, 280 и 315 px) дают нулевую разницу между
+рассчитанной и отрисованной высотой.
+
+Потоку замера системный шрифт не нужно загружать: сообщение `init` несёт
+`font: null`, файл передаётся только для Departure Mono.
+
+Системный шрифт не входит в сборку Mine: обновление macOS может изменить его
+метрики, а ширины в IndexedDB остались бы от прежних. Поэтому хэш шрифта
+включает отпечаток гарнитуры: ширину пробной строки (латиница, кириллица,
+цифры, знаки, CJK и эмодзи) в обоих font spec, замеренную один раз за сеанс
+на холсте страницы (`measureFontFingerprint`). Другая гарнитура под тем же
+spec даёт другой хэш, и ширины считаются заново.
+
+Ключ кэша `v5`, версия базы `mine-font-metrics` 4: при открытии старая
+таблица с ширинами Geist удаляется.

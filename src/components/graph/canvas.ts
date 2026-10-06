@@ -1,4 +1,5 @@
 import { collectionRefLabel } from "@/lib/collections";
+import { SYSTEM_SANS_STACK } from "@/lib/fontChoice";
 import { parsePreviewManifest } from "@/lib/cardLayout";
 import {
   graphFullThumbnailUrl,
@@ -149,7 +150,7 @@ export function paintCollectionNode(
   ctx.strokeStyle = options.highlighted ? options.theme.hoverOutline : options.theme.border;
   ctx.stroke();
 
-  ctx.font = `400 ${COLLECTION_FONT_SIZE}px system-ui, -apple-system, BlinkMacSystemFont, sans-serif`;
+  ctx.font = `400 ${COLLECTION_FONT_SIZE}px ${SYSTEM_SANS_STACK}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillStyle = options.highlighted ? options.theme.foregroundText : options.theme.mutedText;
@@ -206,7 +207,7 @@ function measureCollectionLabelWidth(label: string): number {
     return Math.ceil(label.length * 7.5 + COLLECTION_PAD_X * 2 + 2);
   }
 
-  context.font = `400 ${COLLECTION_FONT_SIZE}px system-ui, -apple-system, BlinkMacSystemFont, sans-serif`;
+  context.font = `400 ${COLLECTION_FONT_SIZE}px ${SYSTEM_SANS_STACK}`;
   return Math.ceil(context.measureText(label).width + COLLECTION_PAD_X * 2 + 2);
 }
 

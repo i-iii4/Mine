@@ -53,6 +53,16 @@ describe("surface tokens", () => {
     );
   });
 
+  it("flashes a flat chrome plate on press, except a pill with a menu chevron", () => {
+    // Icon buttons that open menus (Display) keep the flash; the space and
+    // collection switchers show a press only by turning their chevron.
+    const rules = css.match(/\[data-chrome-control\]:active[^{]*\{[^}]*\}/g) ?? [];
+    expect(rules).toHaveLength(1);
+    expect(rules[0]).toMatch(
+      /^\[data-chrome-control\]:active:not\(:disabled\) > \[data-chrome-plate\]:not\(\.button-depth\):not\(:has\(> \[data-menu-chevron\]\)\) \{\s*background-image: linear-gradient\(var\(--press\), var\(--press\)\), linear-gradient\(var\(--active\), var\(--active\)\);/,
+    );
+  });
+
   it("gives a disabled button with depth the frame instead of its face", () => {
     expect(css).toMatch(
       /\.button-depth:disabled,\s*:disabled > \.button-depth \{\s*background-color: transparent;\s*box-shadow: none;\s*outline: 1px solid var\(--inert-frame\);/,

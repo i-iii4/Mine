@@ -813,11 +813,10 @@ iOS UI contract:
   а строит micro-preview из тех же подтверждённых metadata, что и sidebar.
   Frontend-компонент `MicroPreviewThumbnail` общий для sidebar strip и Related
   Notes row.
-- Sidebar hover popup intentionally uses the same micro-preview asset as the
-  thumbnail strip. It does not render `preview_manifest.tiles`, so a multi-image
-  article/social block still opens as a one-image quick look in the left menu.
-  Rich composite/gallery rendering stays in feed cards and the Related Notes
-  hover preview.
+- Превью по наведению на мини-карточку бокового меню с 06.10.2026 рисует ту
+  же карточку, что лента, с галереей из `preview_manifest.tiles`, в итоговом
+  виде наведения без активных элементов (SPEC_CARD_STATES.md, С10). Сама
+  полоса мини-карточек остаётся на `<slug>.jpg`.
 * Совместимость со старым пространством сохраняет `.arena/index.db`, его WAL и SHM, прежнюю историю и кэш на месте. Идентификатор можно перенести в `.mine`, а старые миниатюры скопировать в локальное производное хранилище. SQLite не копируется для миграции: отдельное поколение пересобирается из документов. Автоматического удаления старых поколений нет.
 - Startup backlog planner для Phase 2 (`list_pending_thumb_upgrades`) тоже
   больше не читает thumb-файлы на main thread. Он работает через отдельный
@@ -1161,9 +1160,16 @@ Rationale: бэкенд остаётся источником истины дл�
 | Split contract (chosen): `<slug>.jpg` micro-preview для sidebar/row surfaces, `preview_manifest` для rich feed/hover surfaces | Две поверхности остаются согласованы через `storage::preview_plan`, но быстрый sidebar path не тащит rich-card semantics. |
 
 Rationale: left sidebar optimized for scan speed and dense navigation. Its
-thumbnail strip and hover quick look both use a confirmed single micro-preview
-asset. Feed cards and Related Notes hover previews remain the rich surfaces that
-can render `preview_manifest.tiles`.
+thumbnail strip uses a confirmed single micro-preview asset. Feed cards and
+every card preview remain the rich surfaces that render
+`preview_manifest.tiles`.
+
+Пересмотрено 06.10.2026 по решению пользователя: превью по наведению в
+боковом меню больше не упрощённый быстрый вид, а та же карточка, что лента,
+в итоговом виде наведения без активных элементов, как превью в поиске, графе
+и связанных заметках (SPEC_CARD_STATES.md, С10). Полоса мини-карточек
+остаётся на `<slug>.jpg`; превью рисуется для одной карточки под указателем,
+поэтому галерея в нём не нагружает плотное меню.
 
 ### 010: Расширение собирается через Vite (единая дизайн-система)
 
@@ -1176,7 +1182,7 @@ Rationale: расширение — проекция основного прил
 
 `extension/dist/` является воспроизводимым build output и не хранится в Git,
 но входит в runtime contract unpacked extension: manifest ссылается на
-`dist/overlay.js`, а overlay загружает `dist/assets/popup.css` и fonts.
+`dist/overlay.js`, а overlay загружает `dist/assets/popup.css`; шрифты системные, файлов шрифтов нет (06.10.2026).
 `bun run build:extension` остаётся единственным canonical builder и собирает
 минимальный `build/clipper-extension`; Tauri включает его в `.app`. Приложение
 и developer installer обновляют стабильную установленную копию в
@@ -1667,8 +1673,9 @@ purpose-built backend read model, light frontend rendering. The renderer follows
 the Longevity Landscape architecture: Canvas drawing through `nodeCanvasObject`,
 dynamic physics scaled by node count, `ResizeObserver`, stable link widths, and
 backend-owned graph projection. Mine-specific hover opens the same read-only
-micro preview used by Sidebar thumbnails after the shared sidebar hover delay,
-without changing graph node/link styling. Full contract:
+card preview as Sidebar thumbnails (the feed card in its final hover state,
+SPEC_CARD_STATES.md, С10) after the shared sidebar hover delay, without
+changing graph node/link styling. Full contract:
 [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md).
 
 M1 implementation keeps card thumbnails and collection pills in the same Canvas
@@ -2307,3 +2314,12 @@ feature `tooling`. В release acceptance shell p95 составил 216 мс, п
 | Системные вкладки macOS | Не выбрано: высота, фон, шрифт и место полосы не настраиваются |
 | Все пространства в одной странице | Не выбрано: общая память, вынос в окно только переносом состояния |
 | Перетаскивание HTML5 для отрыва | Не выбрано: системный сеанс перетаскивания не даёт окну идти за указателем |
+
+### 051: Системные меню (отклонено 06.10.2026)
+
+Эксперимент 06.10.2026: страница описывала меню данными, AppKit показывал его
+как `NSMenu` с живым полем поиска (меню карточки, выбор коллекций,
+переключатель коллекции в пути). Пользователь отклонил его 06.10.2026 после
+живой проверки: меню остаются веб-меню Radix, код эксперимента удалён.
+Причины записаны в [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) («Системные меню:
+отклонённый эксперимент»).

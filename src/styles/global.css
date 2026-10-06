@@ -20,22 +20,8 @@
   }
 }
 
-@font-face {
-  font-family: "Geist";
-  src: url("/fonts/Geist-Variable.woff2") format("woff2");
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "Geist Mono";
-  src: url("/fonts/GeistMono-Variable.woff2") format("woff2");
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: swap;
-}
-
+/* The interface is set in the system fonts (decision 06.10.2026): SF Pro and
+   SF Mono come with macOS, so only the optional Departure Mono ships a file. */
 @font-face {
   font-family: "Departure Mono";
   src: url("/fonts/DepartureMono-Regular.woff2") format("woff2");
@@ -376,6 +362,14 @@ select,
 [data-card-lift-hover]:hover [data-card-lift="caption"],
 [data-card-lift-pinned] [data-card-lift="caption"] {
   transform: translateY(0);
+}
+
+/* A card preview (hover, search) stands in the final hover state from its
+   first frame (SPEC_CARD_STATES.md, С10): nothing in it moves, neither when
+   it appears nor when it changes cards, with or without reduced motion. */
+[data-card-preview] [data-card-lift],
+[data-card-preview] [data-card-lift-fade] {
+  transition: none;
 }
 
 /* The marquee is one state layer framed by the line (SPEC_COLOR_RULES.md, 4.6). */
@@ -747,11 +741,13 @@ body {
 }
 
 @theme inline {
-  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  /* The stacks are SYSTEM_SANS_STACK and SYSTEM_MONO_STACK in
+     src/lib/fontChoice.ts: card text is measured on a canvas in that face. */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   /* Content font — the article body in Detail. Independent of the interface
      font: switching the UI to Departure Mono leaves reading text alone. */
-  --font-content: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-content: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --radius-0: 0px;
   --radius-1: 3px;
   --radius-2: 5px;
@@ -835,8 +831,8 @@ body {
   font-family: var(--font-content);
 }
 
-:root[data-font-content="geist-mono"] {
-  --font-content: "Geist Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+:root[data-font-content="system-mono"] {
+  --font-content: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
 
 
@@ -1399,8 +1395,9 @@ button:active:not(:disabled) > .button-depth,
    state layer further than hover, and comes back on release (05.10.2026).
    An icon's plate and a pill's plate in the chrome, which never move. A
    raised plate is a button with depth and presses by its own rule. Instant,
-   as hover is. */
-[data-chrome-control]:active:not(:disabled) > [data-chrome-plate]:not(.button-depth) {
+   as hover is. A pill with a menu chevron does not flash: its chevron
+   turning is all a press shows (06.10.2026). */
+[data-chrome-control]:active:not(:disabled) > [data-chrome-plate]:not(.button-depth):not(:has(> [data-menu-chevron])) {
   background-image: linear-gradient(var(--press), var(--press)), linear-gradient(var(--active), var(--active));
 }
 
@@ -1487,19 +1484,19 @@ button:active:not(:disabled) > .button-depth,
 }
 
 /* The interface without monospace (decision 02.10.2026). Every place set in
-   the mono utility takes the interface's Geist instead; its digits stay
-   tabular, so counts and hotkeys keep their columns. Code in an article is
-   content and keeps its own face. */
+   the mono utility takes the interface's system font instead; its digits
+   stay tabular, so counts and hotkeys keep their columns. Code in an article
+   is content and keeps its own face. */
 .font-mono {
-  font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   font-variant-numeric: tabular-nums;
 }
 
-/* The bottom bar, its names and hotkeys alike, is set in Geist Mono at the
-   same size, so its height stays. Departure Mono, when chosen
-   for the interface, keeps the bar. */
+/* The bottom bar, its names and hotkeys alike, is set in the system
+   monospace at the same size, so its height stays. Departure Mono, when
+   chosen for the interface, keeps the bar. */
 :root:not([data-font-interface="departure"]) [data-bottom-action-bar],
 :root:not([data-font-interface="departure"]) [data-bottom-action-bar] .font-mono,
 :root:not([data-font-interface="departure"]) [data-bottom-action-bar] .font-sans {
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }

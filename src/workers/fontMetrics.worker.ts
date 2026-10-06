@@ -2,8 +2,9 @@
 
 // Font-metrics Web Worker.
 // Receives batches of blocks (title + body text) and returns word widths
-// computed via OffscreenCanvas measureText. The font is loaded once via
-// FontFace API at init time using an ArrayBuffer shipped from main thread.
+// computed via OffscreenCanvas measureText. The system font needs no loading;
+// a font file (Departure Mono) is registered once via the FontFace API at init
+// time from an ArrayBuffer shipped from the main thread.
 //
 // See SPEC_GRID.md for the pipeline rationale.
 
@@ -58,12 +59,15 @@ function postError(requestId: number, message: string): void {
 
 async function handleInit(
   requestId: number,
-  fontBuffer: ArrayBuffer,
-  fontFamily: string,
+  font: { family: string; buffer: ArrayBuffer } | null,
 ): Promise<void> {
   try {
     ensureContext();
-    await loadFont(fontFamily, fontBuffer);
+    if (font) {
+      await loadFont(font.family, font.buffer);
+    } else {
+      fontReady = true;
+    }
     postResult({ type: "ready", requestId });
   } catch (err) {
     postError(requestId, err instanceof Error ? err.message : String(err));
@@ -110,7 +114,7 @@ self.addEventListener("message", (event: MessageEvent<WorkerInMessage>) => {
   const msg = event.data;
   switch (msg.type) {
     case "init":
-      void handleInit(msg.requestId, msg.fontBuffer, msg.fontFamily);
+      void handleInit(msg.requestId, msg.font);
       break;
     case "compute":
       handleCompute(

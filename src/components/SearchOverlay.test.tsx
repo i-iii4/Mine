@@ -39,8 +39,8 @@ vi.mock("@/lib/commands", () => ({
 }));
 
 vi.mock("@/components/Card", () => ({
-  ReadOnlyCardPreview: ({ block, previewMode }: { block: LightBlock; previewMode?: string }) => (
-    <div data-testid="overlay-preview" data-preview-mode={previewMode}>card {block.slug}</div>
+  ReadOnlyCardPreview: ({ block, shadow }: { block: LightBlock; shadow?: string }) => (
+    <div data-testid="overlay-preview" data-preview-shadow={shadow}>card {block.slug}</div>
   ),
 }));
 
@@ -365,21 +365,83 @@ describe("SearchOverlay", () => {
     expect(screen.getAllByRole("option")[0]!.querySelector("img")).not.toBeNull();
   });
 
-  it("sets the row title in the snippet's size and weight, told apart by color alone (01.10.2026)", async () => {
-    listGridBlocksMock.mockResolvedValue(snapshot([makeBlock(1, "alpha")]));
+  it("sets every row on one line in the Sidebar row's type: the name, then the text in the secondary color (06.10.2026)", async () => {
+    listGridBlocksMock.mockResolvedValue(snapshot([
+      makeBlock(1, "alpha"),
+      makeBlock(2, "Cards/Шуховская башня", { preview_text: "Шуховская башня гиперболоидная сетка" }),
+      makeBlock(3, "Cards/1.0 (5)", { preview_text: null, card_kind: "media", block_type: "image" }),
+    ]));
     renderOverlay({ query: "alpha" });
 
-    const option = await screen.findByRole("option");
-    const title = within(option).getByText("alpha");
-    const snippet = within(option).getByText("Preview alpha");
+    await waitFor(() => {
+      expect(screen.getAllByRole("option")).toHaveLength(3);
+    });
+    const [plain, repeated, bare] = screen.getAllByRole("option");
 
-    expect(title).toHaveClass("truncate", "text-sm", "text-foreground");
-    expect(title).not.toHaveClass("text-base");
-    expect(title.className).not.toMatch(/(?:^|\s)font-(?:medium|semibold|bold)(?:\s|$)/);
-    expect(snippet).toHaveClass("text-sm", "text-muted-foreground");
-    // Both lines sit on the same 20px line, so a two-line row keeps its height.
-    expect(title.style.lineHeight).toBe("20px");
-    expect(snippet.style.lineHeight).toBe("20px");
+    for (const option of [plain!, repeated!, bare!]) {
+      // One line: a single line element, nothing that clamps or wraps.
+      const lines = option.querySelectorAll("[data-search-result-line]");
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toHaveClass("flex", "font-sans", "text-base", "items-baseline", "gap-1");
+      expect(option.querySelectorAll("p")).toHaveLength(1);
+      expect(option.querySelector(".line-clamp-1, .line-clamp-2")).toBeNull();
+      expect(option.querySelector(".text-sm")).toBeNull();
+    }
+
+    const name = plain!.querySelector("[data-search-result-name]")!;
+    const text = plain!.querySelector("[data-search-result-text]")!;
+    expect(name).toHaveTextContent(/^alpha$/);
+    expect(name).toHaveClass("truncate", "min-w-0", "text-foreground");
+    // The name keeps at most three quarters of the line, so the text starts.
+    expect((name as HTMLElement).style.maxWidth).toBe("75%");
+    expect(name.className).not.toMatch(/(?:^|\s)font-(?:medium|semibold|bold)(?:\s|$)/);
+    expect(text).toHaveTextContent(/^Preview alpha$/);
+    expect(text).toHaveClass("truncate", "min-w-0", "flex-1", "text-muted-foreground");
+    // No separator glyph between the name and the text.
+    expect(plain!.querySelector("[data-search-result-line]")!.textContent).toBe("alphaPreview alpha");
+
+    // The text does not repeat the name.
+    expect(repeated!.querySelector("[data-search-result-name]")).toHaveTextContent(/^Шуховская башня$/);
+    expect(repeated!.querySelector("[data-search-result-text]")).toHaveTextContent(/^гиперболоидная сетка$/);
+
+    // No text: the name alone takes the whole line.
+    const bareName = bare!.querySelector("[data-search-result-name]")!;
+    expect(bareName).toHaveTextContent(/^1\.0 \(5\)$/);
+    expect((bareName as HTMLElement).style.maxWidth).toBe("");
+    expect(bare!.querySelector("[data-search-result-text]")).toBeNull();
+  });
+
+  it("keeps a deep mark of a long name in view: head, ellipsis, the words up to the mark (06.10.2026)", async () => {
+    const post = "Every sea king knows the tide does not wait, and neither does the wind that carries a wager for glor";
+    const start = post.indexOf("glor");
+    // Layout stand-ins: a 480px line and an 8px monospace font.
+    const widthSpy = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) {
+      return this.hasAttribute("data-search-result-line") ? 480 : 0;
+    });
+    const canvasSpy = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      font: "",
+      measureText: (text: string) => ({ width: Array.from(text).length * 8 }),
+    } as unknown as CanvasRenderingContext2D);
+    try {
+      listGridBlocksMock.mockResolvedValue(snapshot([
+        makeBlock(1, `Cards/${post}`, {
+          preview_text: "Something else entirely",
+          search_match: { field: "title", kind: "prefix", excerpt: post, ranges: [{ start, end: start + 4 }], score: 9 },
+        }),
+      ]));
+      renderOverlay({ query: "glor" });
+
+      const option = await screen.findByRole("option");
+      const name = option.querySelector("[data-search-result-name]")!;
+      await waitFor(() => expect(name).toHaveAttribute("data-search-result-name-window"));
+      // 75% of 480px less the slack holds 44 characters.
+      expect(name.textContent).toBe("Every sea king…that carries a wager for glor");
+      expect(name.querySelector("mark")).toHaveTextContent(/^glor$/);
+      expect(option.querySelector("[data-search-result-text]")).toHaveTextContent(/^Something else entirely$/);
+    } finally {
+      widthSpy.mockRestore();
+      canvasSpy.mockRestore();
+    }
   });
 
   it("names each result row by its file name and marks a title match in it (05.10.2026)", async () => {
@@ -402,7 +464,7 @@ describe("SearchOverlay", () => {
     renderOverlay({ query: "башня" });
 
     const option = await screen.findByRole("option");
-    const title = option.querySelector("p")!;
+    const title = option.querySelector("[data-search-result-name]")!;
     expect(title).toHaveTextContent(/^Шуховская башня$/);
     const mark = within(option).getByText("башня");
     expect(mark.tagName).toBe("MARK");
@@ -740,7 +802,8 @@ describe("SearchOverlay", () => {
     await waitFor(() => {
       expect(screen.getByTestId("overlay-preview")).toHaveTextContent("alpha");
     });
-    expect(screen.getByTestId("overlay-preview")).toHaveAttribute("data-preview-mode", "micro");
+    // The feed's own card, standing in its pane rather than floating.
+    expect(screen.getByTestId("overlay-preview")).toHaveAttribute("data-preview-shadow", "none");
     const metadata = within(
       document.querySelector("[data-search-overlay-metadata]") as HTMLElement,
     );
@@ -754,12 +817,11 @@ describe("SearchOverlay", () => {
       expect(metadata.getByText("Collections")).toBeInTheDocument();
     });
     expect(metadata.getByText("design, reading")).toBeInTheDocument();
-    // Hover actions live on the card preview, like the main-page hover menu.
-    const preview = within(
-      document.querySelector("[data-search-overlay-preview]") as HTMLElement,
-    );
-    expect(preview.getByRole("button", { name: /Source/ })).toBeInTheDocument();
-    expect(preview.getByRole("button", { name: /Connect/ })).toBeInTheDocument();
+    // The preview has nothing to press (SPEC_CARD_STATES.md, С10): no hover
+    // menu is laid over it; the card's commands live on the rows.
+    const pane = document.querySelector("[data-search-overlay-preview]") as HTMLElement;
+    expect(within(pane).queryAllByRole("button")).toHaveLength(0);
+    expect(pane.querySelector("[data-card-hover-more-action], [data-card-hover-bottom-actions]")).toBeNull();
   });
 
   it("hides empty metadata rows for a block without url, author and collections", async () => {
@@ -781,34 +843,6 @@ describe("SearchOverlay", () => {
     expect(screen.queryByText("Collections")).not.toBeInTheDocument();
   });
 
-  it("hover actions open the source url; blocks without url render no Source button", async () => {
-    listGridBlocksMock.mockResolvedValue(snapshot([
-      makeBlock(1, "with-url", { url: "https://example.com/article" }),
-      makeBlock(2, "no-url", { url: null }),
-    ]));
-    renderOverlay({ query: "al" });
-    await waitFor(() => {
-      expect(screen.getAllByRole("option")).toHaveLength(2);
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: /Source/ }));
-    expect(openUrlMock).toHaveBeenCalledWith("https://example.com/article");
-    expect(screen.getByRole("button", { name: /Connect/ })).toBeInTheDocument();
-    // The real CardHoverMenu contract: wrapper + More (⋯) + Source + Connect.
-    const preview = within(
-      document.querySelector("[data-search-overlay-preview]") as HTMLElement,
-    );
-    expect(preview.getAllByRole("button")).toHaveLength(3);
-    expect(
-      document.querySelector("[data-card-hover-bottom-actions]"),
-    ).not.toBeNull();
-
-    // Move to the block without url — Source disappears, Connect stays.
-    fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
-    expect(screen.queryByRole("button", { name: /Source/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Connect/ })).toBeInTheDocument();
-  });
-
   it("metadata Source value is clickable and opens the url", async () => {
     listGridBlocksMock.mockResolvedValue(snapshot([
       makeBlock(1, "alpha", { url: "https://example.com/article" }),
@@ -820,30 +854,6 @@ describe("SearchOverlay", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "example.com" }));
     expect(openUrlMock).toHaveBeenCalledWith("https://example.com/article");
-  });
-
-  it("Connect toggle updates the Collections row optimistically", async () => {
-    listGridBlocksMock.mockResolvedValue(snapshot([makeBlock(1, "alpha")]));
-    const loadBlockTags = vi.fn(async () => new Map([["alpha", ["reading"]]]));
-    const onToggleTag = vi.fn();
-    renderOverlay({ query: "alpha", loadBlockTags, onToggleTag });
-
-    await waitFor(() => {
-      expect(screen.getByText("reading")).toBeInTheDocument();
-    });
-
-    fireEvent.pointerDown(screen.getByRole("button", { name: /Connect/ }), {
-      button: 0,
-      ctrlKey: false,
-    });
-    const picker = await screen.findByTestId("picker-toggle-design");
-    expect(screen.getByRole("dialog").contains(picker)).toBe(true);
-    fireEvent.click(picker);
-
-    expect(onToggleTag).toHaveBeenCalledWith("alpha", "design", false);
-    await waitFor(() => {
-      expect(screen.getByText("reading, design")).toBeInTheDocument();
-    });
   });
 
   it("re-runs the active query on vault-refreshed and keeps the active row by slug", async () => {
@@ -926,5 +936,215 @@ describe("SearchOverlay", () => {
     const { onClose } = renderOverlay({ query: "abc" });
     fireEvent.keyDown(screen.getByRole("combobox"), { key: "Escape" });
     expect(onClose).toHaveBeenCalled();
+  });
+});
+
+// A row shows the feed card's commands at its right end (06.10.2026):
+// Connect, Source and More, the card's own controls; ⌘K opens More.
+describe("SearchOverlay result row commands", () => {
+  const withUrl = makeBlock(1, "alpha", { url: "https://example.com/article" });
+  const withoutUrl = makeBlock(2, "beta", { url: null });
+
+  async function renderRows(props: Partial<Parameters<typeof SearchOverlay>[0]> = {}) {
+    listGridBlocksMock.mockResolvedValue(snapshot([withUrl, withoutUrl]));
+    const utils = renderOverlay({ query: "al", ...props });
+    await waitFor(() => {
+      expect(screen.getAllByRole("option")).toHaveLength(2);
+    });
+    return utils;
+  }
+
+  function option(index: number): HTMLElement {
+    return screen.getAllByRole("option")[index]!;
+  }
+
+  function rowOf(index: number): HTMLElement {
+    return option(index).closest("[data-search-result-row]") as HTMLElement;
+  }
+
+  function rowCommands(index: number): string[] {
+    return within(rowOf(index)).queryAllByRole("button").map((button) => button.getAttribute("aria-label") ?? "");
+  }
+
+  let pointerX = 0;
+  /** A real pointer move: new coordinates every time. */
+  function hover(index: number) {
+    pointerX += 7;
+    fireEvent.pointerMove(option(index), { clientX: pointerX, clientY: 20 + index * 44 });
+  }
+
+  it("shows Connect, Source and More on the row under the pointer, in the card's buttons", async () => {
+    await renderRows();
+    // The active row holds its commands hidden until the pointer comes.
+    expect(rowCommands(0)).toEqual([]);
+    expect(rowOf(0).querySelector("[data-search-row-actions]")).toHaveAttribute("data-visible", "false");
+
+    hover(0);
+    expect(rowCommands(0)).toEqual(["Connect", "Source", "Card actions"]);
+    const actions = rowOf(0).querySelector("[data-search-row-actions]") as HTMLElement;
+    expect(actions).toHaveAttribute("data-visible", "true");
+    expect(actions).toHaveClass("gap-1", "transition-opacity", "duration-[var(--hover-intent-fade-in)]");
+    for (const button of within(actions).getAllByRole("button")) {
+      expect(button).toHaveAttribute("data-variant", "raised");
+      expect(button).toHaveAttribute("data-size", "icon-xs");
+    }
+    // The text stops short of three 24 px buttons, two 4 px gaps and the
+    // row's 8 px gap; the name keeps its place.
+    const text = option(0).querySelector("[data-search-result-text]") as HTMLElement;
+    expect(text.style.paddingRight).toBe("88px");
+    expect((option(0).querySelector("[data-search-result-name]") as HTMLElement).style.maxWidth).toBe("75%");
+
+    // The pointer moves on: the commands go with it, Source only with a link.
+    hover(1);
+    expect(option(1)).toHaveAttribute("aria-selected", "true");
+    expect(rowOf(0).querySelector("[data-search-row-actions]")).toBeNull();
+    expect(rowCommands(1)).toEqual(["Connect", "Card actions"]);
+    expect((option(1).querySelector("[data-search-result-text]") as HTMLElement).style.paddingRight).toBe("60px");
+  });
+
+  it("hides the commands when the arrows, the wheel or leaving the list take the row from the pointer", async () => {
+    await renderRows();
+    const input = screen.getByRole("combobox");
+    const listbox = screen.getByRole("listbox");
+
+    hover(0);
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(option(1)).toHaveAttribute("aria-selected", "true");
+    expect(rowCommands(0)).toEqual([]);
+    expect(rowCommands(1)).toEqual([]);
+    expect((option(1).querySelector("[data-search-result-text]") as HTMLElement).style.paddingRight).toBe("");
+
+    hover(1);
+    expect(rowCommands(1)).toEqual(["Connect", "Card actions"]);
+    fireEvent.wheel(listbox);
+    expect(rowCommands(1)).toEqual([]);
+
+    hover(1);
+    fireEvent.pointerLeave(listbox);
+    expect(rowCommands(1)).toEqual([]);
+    expect(rowOf(1).querySelector("[data-search-row-actions]")).toHaveClass("duration-[var(--hover-intent-fade-out)]");
+  });
+
+  it("stops a name alone short of the commands", async () => {
+    listGridBlocksMock.mockResolvedValue(snapshot([makeBlock(1, "alpha", { preview_text: "alpha" })]));
+    renderOverlay({ query: "al" });
+    await waitFor(() => {
+      expect(screen.getAllByRole("option")).toHaveLength(1);
+    });
+    const name = option(0).querySelector("[data-search-result-name]") as HTMLElement;
+    expect(option(0).querySelector("[data-search-result-text]")).toBeNull();
+    expect(name.style.maxWidth).toBe("");
+    hover(0);
+    expect(name.style.maxWidth).toBe("calc(100% - 60px)");
+  });
+
+  it("Source opens the link; a command never opens the card, the rest of the row does", async () => {
+    const { onOpenBlock } = await renderRows();
+    hover(0);
+    fireEvent.click(within(rowOf(0)).getByRole("button", { name: "Source" }));
+    expect(openUrlMock).toHaveBeenCalledWith("https://example.com/article");
+    expect(onOpenBlock).not.toHaveBeenCalled();
+
+    fireEvent.pointerDown(within(rowOf(0)).getByRole("button", { name: "Card actions" }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    expect(await screen.findByRole("menuitem", { name: "Rename…" })).toBeInTheDocument();
+    expect(onOpenBlock).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole("menuitem", { name: "Rename…" }), { key: "Escape" });
+    await waitFor(() => {
+      expect(screen.queryByRole("menuitem", { name: "Rename…" })).not.toBeInTheDocument();
+    });
+
+    fireEvent.click(option(0));
+    expect(onOpenBlock).toHaveBeenCalledWith(withUrl);
+  });
+
+  it("Connect toggles a collection optimistically and holds the commands while its picker is open", async () => {
+    const loadBlockTags = vi.fn(async () => new Map([["alpha", ["reading"]]]));
+    const onToggleTag = vi.fn();
+    const { onOpenBlock } = await renderRows({ loadBlockTags, onToggleTag });
+    await waitFor(() => {
+      expect(screen.getByText("reading")).toBeInTheDocument();
+    });
+
+    hover(0);
+    fireEvent.pointerDown(within(rowOf(0)).getByRole("button", { name: "Connect" }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    const picker = await screen.findByTestId("picker-toggle-design");
+    expect(screen.getByRole("dialog").contains(picker)).toBe(true);
+    // The pointer on its way to the picker leaves the list: the row holds.
+    fireEvent.pointerLeave(screen.getByRole("listbox"));
+    hover(1);
+    expect(option(0)).toHaveAttribute("aria-selected", "true");
+    expect(rowOf(0).querySelector("[data-search-row-actions]")).toHaveAttribute("data-visible", "true");
+
+    fireEvent.click(picker);
+    expect(onToggleTag).toHaveBeenCalledWith("alpha", "design", false);
+    await waitFor(() => {
+      expect(screen.getByText("reading, design")).toBeInTheDocument();
+    });
+    expect(onOpenBlock).not.toHaveBeenCalled();
+  });
+
+  it("⌘K opens the active row's More menu; Escape closes the menu first, then the overlay", async () => {
+    const onRequestRename = vi.fn();
+    const onRequestDelete = vi.fn();
+    const { onClose } = await renderRows({ onRequestRename, onRequestDelete });
+    const input = screen.getByRole("combobox");
+
+    // The arrows reach the row; ⌘K needs no pointer.
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "k", metaKey: true });
+    const rename = await screen.findByRole("menuitem", { name: "Rename…" });
+    expect(screen.getByRole("dialog").contains(rename)).toBe(true);
+    const more = within(rowOf(1)).getByRole("button", { name: "Card actions" });
+    expect(more).toHaveAttribute("aria-expanded", "true");
+    expect(rowOf(1).querySelector("[data-search-row-actions]")).toHaveAttribute("data-visible", "true");
+
+    // The open menu holds its row against the pointer.
+    hover(0);
+    expect(option(1)).toHaveAttribute("aria-selected", "true");
+
+    fireEvent.keyDown(rename, { key: "Escape" });
+    await waitFor(() => {
+      expect(screen.queryByRole("menuitem", { name: "Rename…" })).not.toBeInTheDocument();
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(input).toHaveFocus();
+    });
+
+    // ⌘K again opens it; ⌘K inside it closes it.
+    fireEvent.keyDown(input, { key: "k", metaKey: true });
+    fireEvent.keyDown(await screen.findByRole("menuitem", { name: "Rename…" }), { key: "k", metaKey: true });
+    await waitFor(() => {
+      expect(screen.queryByRole("menuitem", { name: "Rename…" })).not.toBeInTheDocument();
+    });
+
+    // The menu's commands are the card's, wired to the overlay's handlers.
+    fireEvent.keyDown(input, { key: "k", metaKey: true });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Rename…" }));
+    expect(onRequestRename).toHaveBeenCalledWith(withoutUrl);
+    await waitFor(() => {
+      expect(screen.queryByRole("menuitem", { name: "Delete" })).not.toBeInTheDocument();
+    });
+    fireEvent.keyDown(input, { key: "k", metaKey: true });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    expect(onRequestDelete).toHaveBeenCalledWith("beta");
+
+    await waitFor(() => {
+      expect(input).toHaveFocus();
+    });
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("⌘K does nothing without a row", async () => {
+    renderOverlay({ query: "abc" });
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "k", metaKey: true });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 });

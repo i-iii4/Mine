@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LightBlock, SearchMatch } from "@/types";
-import { deriveSearchResultRow } from "./searchResultRow";
+import { deriveSearchResultRow, windowNameAroundMark } from "./searchResultRow";
 
 function makeBlock(overrides: Partial<LightBlock> = {}): LightBlock {
   return {
@@ -136,5 +136,225 @@ describe("deriveSearchResultRow", () => {
     expect(row.titleMatch).toBeNull();
     expect(row.snippet).toBe("Normal preview text");
     expect(row.snippetMatch).toBeNull();
+    expect(row.text).toBe("Normal preview text");
+    expect(row.textMatch).toBeNull();
+    expect(row.nameMatch).toBeNull();
+  });
+});
+
+// One-line row (user's decision of 06.10.2026): the name, then the text that
+// does not repeat it. The cut changes only what the row shows.
+describe("deriveSearchResultRow: the line after the name", () => {
+  function lineOf(slug: string, previewText: string | null, match?: SearchMatch) {
+    return deriveSearchResultRow(makeBlock({
+      slug: `Cards/${slug}`,
+      preview_text: previewText,
+      ...(match ? { search_match: match } : {}),
+    }));
+  }
+
+  it("shows the name alone when the text says exactly what the name says", () => {
+    const row = lineOf("Шуховская башня", "Шуховская башня");
+    expect(row.title).toBe("Шуховская башня");
+    expect(row.text).toBeNull();
+    expect(row.textMatch).toBeNull();
+    // The micro preview still gets the whole text.
+    expect(row.snippet).toBe("Шуховская башня");
+  });
+
+  it("starts the text at the first word the name does not say", () => {
+    expect(lineOf("Шуховская башня", "Шуховская башня гиперболоидная конструкция").text)
+      .toBe("гиперболоидная конструкция");
+  });
+
+  it("continues after the whole word when the name was cut in the middle of it", () => {
+    const name = "Long ago the sea kings sailed the northern ways for a wager. A wager for glor";
+    const text = "Long ago the sea kings sailed the northern ways for a wager. A wager for glory or fall; there's no going back";
+    expect(lineOf(name, text).text).toBe("or fall; there's no going back");
+    expect(lineOf("… A wager for glor", "… A wager for glory or fall; there's no…").text)
+      .toBe("or fall; there's no…");
+  });
+
+  it("does not treat a short name as a cut word of a longer one", () => {
+    expect(lineOf("Cat", "Category theory basics").text).toBe("Category theory basics");
+    expect(lineOf("Report 2", "Report 2025 summary").text).toBe("Report 2025 summary");
+  });
+
+  it("reads a slash the file name turned into a space, and a dash, as the same gap", () => {
+    expect(lineOf("good-night", "/good-night").text).toBeNull();
+    expect(lineOf("good night moon", "good/night: moon rises").text).toBe("rises");
+    expect(lineOf("good-night", "/good-night and sleep well").text).toBe("and sleep well");
+  });
+
+  it("compares without case", () => {
+    expect(lineOf("THE QUIET ROOM", "The quiet room was empty").text).toBe("was empty");
+  });
+
+  it("ignores the trailing period a file name drops", () => {
+    expect(lineOf("Hello world", "Hello world.").text).toBeNull();
+    expect(lineOf("Hello world", "Hello world. Next sentence").text).toBe("Next sentence");
+  });
+
+  it("shows the name alone when the text is only the start of the name", () => {
+    expect(lineOf("A wager for glory or fall", "A wager for glory…").text).toBeNull();
+    expect(lineOf("A wager for glory or fall", "A wager for gl").text).toBeNull();
+  });
+
+  it("keeps opening brackets, quotes, hashtags and mentions with the next word", () => {
+    expect(lineOf("Design notes", "Design notes (draft) for review").text).toBe("(draft) for review");
+    expect(lineOf("Design notes", "Design notes «черновик»").text).toBe("«черновик»");
+    expect(lineOf("Design notes", "Design notes #design @team").text).toBe("#design @team");
+  });
+
+  it("keeps the text whole when it does not begin with the name", () => {
+    expect(lineOf("1.0 (5)", "105 ways to sleep").text).toBe("105 ways to sleep");
+    expect(lineOf("Notes on design systems", "Notes on typography").text).toBe("Notes on typography");
+    expect(lineOf("CleanShot 2026 10 03 at 15.43.17@2x", "Screenshot of a settings window").text)
+      .toBe("Screenshot of a settings window");
+  });
+
+  it("shows the name alone when there is no text", () => {
+    expect(lineOf("1.0 (5)", null).text).toBeNull();
+    expect(lineOf("1.0 (5)", "   ").text).toBeNull();
+  });
+
+  it("keeps a 300-character name whole and still finds the text after it", () => {
+    const name = Array.from({ length: 60 }, (_, index) => `word${index}`).join(" ").slice(0, 300).trim();
+    expect(name.length).toBeGreaterThanOrEqual(299);
+    const row = lineOf(name, `${name} and then the rest`);
+    expect(row.title).toBe(name);
+    expect(row.text).toBe("and then the rest");
+    expect(lineOf(name, "Something else entirely").text).toBe("Something else entirely");
+  });
+
+  it("shifts the excerpt's ranges by the cut", () => {
+    // `сетка` is code points 31 to 36; the cut removes the first 16.
+    const excerpt = "Шуховская башня гиперболоидная сетка";
+    const match = makeMatch({ excerpt, ranges: [{ start: 31, end: 36 }] });
+    const row = lineOf("Шуховская башня", null, match);
+    expect(row.text).toBe("гиперболоидная сетка");
+    expect(row.textMatch?.excerpt).toBe("гиперболоидная сетка");
+    expect(row.textMatch?.ranges).toEqual([{ start: 15, end: 20 }]);
+    expect(row.nameMatch).toBeNull();
+    // The untouched snippet still carries the backend's ranges for the preview.
+    expect(row.snippetMatch?.ranges).toEqual([{ start: 31, end: 36 }]);
+  });
+
+  it("counts ranges in code points across emoji before the cut", () => {
+    // `bright` is code points 18 to 24: the emoji is one code point.
+    const match = makeMatch({ excerpt: "🔥 Fire notes burn bright", ranges: [{ start: 18, end: 24 }] });
+    const row = lineOf("Fire notes", null, match);
+    expect(row.text).toBe("burn bright");
+    expect(row.textMatch?.ranges).toEqual([{ start: 5, end: 11 }]);
+  });
+
+  it("carries a range inside the cut fragment onto the same words of the name", () => {
+    const match = makeMatch({
+      excerpt: "Шуховская башня гиперболоидная сетка",
+      ranges: [{ start: 10, end: 15 }],
+    });
+    const row = lineOf("Шуховская башня", null, match);
+    expect(row.text).toBe("гиперболоидная сетка");
+    expect(row.textMatch?.ranges).toEqual([]);
+    expect(row.nameMatch?.excerpt).toBe("Шуховская башня");
+    expect(row.nameMatch?.ranges).toEqual([{ start: 10, end: 15 }]);
+  });
+
+  it("splits a range across the cut between the name and the text", () => {
+    const match = makeMatch({ excerpt: "Fire notes burn bright", ranges: [{ start: 5, end: 15 }] });
+    const row = lineOf("Fire notes", null, match);
+    expect(row.text).toBe("burn bright");
+    expect(row.nameMatch?.ranges).toEqual([{ start: 5, end: 10 }]);
+    expect(row.textMatch?.ranges).toEqual([{ start: 0, end: 4 }]);
+  });
+
+  it("keeps an excerpt intact when its start does not repeat the name", () => {
+    const match = makeMatch({ excerpt: "...around the first match...", ranges: [{ start: 20, end: 25 }] });
+    const row = lineOf("Шуховская башня", null, match);
+    expect(row.text).toBe(match.excerpt);
+    expect(row.textMatch).toBe(match);
+  });
+
+  it("starts the note's text after the name for a match in the name only", () => {
+    const match = makeMatch({ field: "title", excerpt: "Шуховская башня", ranges: [{ start: 10, end: 15 }] });
+    const row = lineOf("Шуховская башня", "Шуховская башня стоит на Шаболовке", match);
+    expect(row.nameMatch).toBe(match);
+    expect(row.text).toBe("стоит на Шаболовке");
+    expect(row.textMatch).toBeNull();
+  });
+});
+
+// A truncated name never hides its first mark (06.10.2026).
+describe("windowNameAroundMark", () => {
+  // Monospace stand-in: one unit per code point.
+  const measure = (text: string) => Array.from(text).length;
+  const post = "Every sea king knows the tide does not wait, and neither does the wind that carries a wager for glor";
+  const marked = (window: { text: string; ranges: SearchMatch["ranges"] }) =>
+    window.ranges.map((range) => Array.from(window.text).slice(range.start, range.end).join(""));
+
+  it("leaves the name alone when the mark is already in view", () => {
+    expect(windowNameAroundMark("Шуховская башня", [{ start: 10, end: 15 }], 40, measure)).toBeNull();
+    // Long name, early mark: the line's own ellipsis comes after it.
+    expect(windowNameAroundMark(post, [{ start: 4, end: 7 }], 40, measure)).toBeNull();
+    expect(windowNameAroundMark(post, [], 40, measure)).toBeNull();
+  });
+
+  it("keeps the head and skips to the words before a mark at the name's end", () => {
+    const start = post.indexOf("glor");
+    const window = windowNameAroundMark(post, [{ start, end: start + 4 }], 60, measure)!;
+    expect(window.text.startsWith("Every sea king")).toBe(true);
+    expect(window.text.endsWith("a wager for glor")).toBe(true);
+    expect(window.text).toContain("…");
+    expect(marked(window)).toEqual(["glor"]);
+    expect(measure(window.text)).toBeLessThanOrEqual(60);
+  });
+
+  it("cuts at whole words on both sides of the ellipsis", () => {
+    const start = post.indexOf("glor");
+    const window = windowNameAroundMark(post, [{ start, end: start + 4 }], 60, measure)!;
+    const [head, tail] = window.text.split("…");
+    expect(post.startsWith(head!)).toBe(true);
+    expect(post.endsWith(tail!)).toBe(true);
+    // The head ends at a word's end, the tail begins at a word's start.
+    expect(post.charAt(head!.length)).toMatch(/[\s,]/);
+    expect(post.charAt(post.length - tail!.length - 1)).toMatch(/\s/);
+  });
+
+  it("shows a mark in the middle and leaves the rest to the line's ellipsis", () => {
+    const start = post.indexOf("wind");
+    const window = windowNameAroundMark(post, [{ start, end: start + 4 }], 40, measure)!;
+    expect(marked(window)).toEqual(["wind"]);
+    // Head, ellipsis and the words up to the mark fit with room for the end ellipsis.
+    const upToMark = Array.from(window.text).slice(0, window.ranges[0]!.end).join("");
+    expect(measure(upToMark) + 1).toBeLessThanOrEqual(40);
+  });
+
+  it("keeps every later mark, shifted into the window", () => {
+    const wind = post.indexOf("wind");
+    const glor = post.indexOf("glor");
+    const window = windowNameAroundMark(post, [{ start: glor, end: glor + 4 }, { start: wind, end: wind + 4 }], 60, measure)!;
+    expect(marked(window)).toEqual(["glor", "wind"]);
+  });
+
+  it("drops the head when the head and the mark do not fit together", () => {
+    const name = `${"long ".repeat(10)}supercalifragilistic`;
+    const start = name.indexOf("supercalifragilistic");
+    const window = windowNameAroundMark(name, [{ start, end: name.length }], 22, measure)!;
+    expect(window.text).toBe("…supercalifragilistic");
+    expect(marked(window)).toEqual(["supercalifragilistic"]);
+  });
+
+  it("gives up when the mark alone is wider than the room", () => {
+    const name = `${"long ".repeat(10)}supercalifragilistic`;
+    const start = name.indexOf("supercalifragilistic");
+    expect(windowNameAroundMark(name, [{ start, end: name.length }], 10, measure)).toBeNull();
+  });
+
+  it("holds for a 300-character name", () => {
+    const name = Array.from({ length: 60 }, (_, index) => `word${index}`).join(" ").slice(0, 300).trim();
+    const start = name.indexOf("word40");
+    const window = windowNameAroundMark(name, [{ start, end: start + 6 }], 50, measure)!;
+    expect(marked(window)).toEqual(["word40"]);
+    expect(window.text.startsWith("word0")).toBe(true);
   });
 });

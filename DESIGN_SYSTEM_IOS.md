@@ -79,7 +79,7 @@ System font (SF Pro) — не кастомные шрифты. Размеры а
 
 ### Monospace
 
-Десктоп: Geist Mono в сайдбаре. iOS: SF Mono (`.monospaced()`) для channel list и метаданных.
+Десктоп: системный SF Pro с табличными цифрами в сайдбаре. iOS: SF Mono (`.monospaced()`) для channel list и метаданных.
 
 ## Spacing
 

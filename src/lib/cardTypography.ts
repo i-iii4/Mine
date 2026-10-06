@@ -2,7 +2,7 @@ export const CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX = 20;
 
 /**
  * Card title typography, shared by every surface that shows a card's title:
- * feed cards, read-only hover and search previews, and search result rows.
+ * feed cards and the read-only hover and search previews.
  * The title has the size and weight of the card text and differs from it by
  * color alone (DESIGN_SYSTEM.md, «Цвет текста»: hierarchy through brightness,
  * not through size). Callers add only layout utilities (`truncate`,

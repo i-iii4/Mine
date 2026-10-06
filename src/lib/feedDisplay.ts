@@ -82,6 +82,8 @@ export function useFeedDisplay(): FeedDisplay {
   return useSyncExternalStore(subscribe, getFeedDisplay, getFeedDisplay);
 }
 
-/// The feed's presentation for the cards inside it; every other surface that
-/// draws a card (search, drag, graph) keeps `mixed`.
+/// The feed's presentation for the cards inside it. A card drawn outside the
+/// feed (a hover or search preview, a dragged card) provides the feed's
+/// current presentation itself (`StaticCard` in Card.tsx), so it is the same
+/// card as in the feed (SPEC_CARD_STATES.md, С10).
 export const FeedShowContext = createContext<FeedShow>("mixed");

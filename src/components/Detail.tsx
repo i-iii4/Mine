@@ -772,7 +772,9 @@ function MetadataPanel({
 
         <div className="flex min-w-0 flex-col gap-6" data-metadata-sections>
           <section
-            className="overflow-hidden rounded-[var(--radius-card)] border border-border bg-accent"
+            // The card's surface, the level of the second chrome row, in
+            // both themes (user's decision of 06.10.2026).
+            className="overflow-hidden rounded-[var(--radius-card)] border border-border bg-card"
             style={{ minWidth: DETAIL_METADATA_CARD_MIN_WIDTH_PX }}
             data-detail-metadata-card
           >

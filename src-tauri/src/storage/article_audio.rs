@@ -287,7 +287,9 @@ pub fn rename_all_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str)
         write_stored_state(vault, new_slug, &stored)?;
 
         let old_state_path = vault.article_audio_state_path(old_slug);
-        if old_state_path.exists() {
+        // A slug in other letter case may name the state just written.
+        let new_state_path = vault.article_audio_state_path(new_slug);
+        if old_state_path.exists() && !files::names_same_entry(&old_state_path, &new_state_path) {
             std::fs::remove_file(&old_state_path).with_context(|| {
                 format!(
                     "failed to remove old article audio state: {}",
@@ -305,7 +307,7 @@ pub fn rename_all_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str)
         }
         let new_path = vault.article_audio_asset_path(new_slug, ext);
         anyhow::ensure!(
-            !new_path.exists(),
+            !new_path.exists() || files::names_same_entry(&old_path, &new_path),
             "target article audio asset already exists: {}",
             new_path.display()
         );

@@ -978,8 +978,9 @@ Entry point: `extension/popup/main.tsx` → output: `extension/dist/index.html` 
 - `extension/dist/index.html` существует;
 - `extension/dist/overlay.js` существует, потому что он указан в
   `content_scripts` manifest;
-- `extension/dist/assets/popup.css` и Geist fonts существуют, потому что их
-  загружает Shadow DOM overlay;
+- `extension/dist/assets/popup.css` существует, потому что его загружает
+  Shadow DOM overlay; файлов шрифтов нет, интерфейс набран системным шрифтом
+  (решение пользователя 06.10.2026);
 - `extension/generated/save-core/mine_core.js`, `mine_core_bg.wasm` и
   `extension/lib/mineCore.js` существуют; background загружает их до адаптера;
 - CSP extension pages содержит `script-src 'self' 'wasm-unsafe-eval'`.
@@ -1005,7 +1006,7 @@ extension: запись может перейти в broken state или исч�
 
 Алиас `@/` указывает на `src/` основного приложения — все компоненты `@/components/ui/*`, утилиты `@/lib/utils`, токены `@/styles/global.css` импортируются напрямую. Tauri-модули исключены через `optimizeDeps.exclude`.
 
-Шрифты (Geist, Geist Mono) копируются в `extension/dist/fonts/` через механизм Vite `publicDir`.
+Шрифты системные, как в приложении (решение пользователя 06.10.2026): стек задаёт `global.css`, overlay ставит тот же стек на свой корень, файлов шрифтов в расширении нет.
 
 ### Layout
 
@@ -2106,8 +2107,7 @@ extension/
 │       └── messaging.ts    # Типизированный адаптер native messaging
 ├── dist/                   # Собранный попап (output Vite)
 │   ├── index.html
-│   ├── assets/             # JS + CSS бандлы
-│   └── fonts/              # Geist, Geist Mono (WOFF2)
+│   └── assets/             # JS + CSS бандлы
 ├── lib/
 │   ├── defuddle.js         # Bundled Defuddle article extractor, injected on demand
 │   ├── twitterThreadSelection.js

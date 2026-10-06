@@ -3,19 +3,17 @@ import { useDraggable } from "@dnd-kit/core";
 import type { IndexedBlock, LightBlock } from "@/types";
 import {
   previewAssetUrl,
-  thumbnailUrl,
   domainFromUrl,
   fallbackThumbsRoot,
 } from "@/lib/assets";
 import {
   deriveCardLayoutDescriptor,
   deriveContentCardSlots,
-  getRuntimeCardKind,
   parsePreviewManifest,
   type CardLayoutDescriptor,
   type CardLayoutVariant,
 } from "@/lib/cardLayout";
-import { FeedShowContext } from "@/lib/feedDisplay";
+import { FeedShowContext, useFeedDisplay } from "@/lib/feedDisplay";
 import { PROVISIONAL_MEDIA_ASPECT } from "@/lib/cardAspect";
 import {
   PreviewsPendingContext,
@@ -36,19 +34,18 @@ import {
 } from "@/lib/cardTypography";
 import { CARD_HOVER_ACTION_MIN_HEIGHT, computeCardHeight } from "@/lib/cardHeight";
 import { buildFeedVideoPosterCandidates } from "@/lib/feedVideoPoster";
-import { getDisplayTitle, getMediaOwnTitle, getNavigationLabel } from "@/lib/displayTitle";
+import { getMediaOwnTitle, getNavigationLabel } from "@/lib/displayTitle";
 import { renderSearchHighlightedText, searchExcerptText } from "@/lib/searchHighlight";
-import { deriveSearchResultRow } from "@/lib/searchResultRow";
 import {
   uniqueDragBlocks,
   type BlockDragData,
 } from "@/lib/blockDrag";
 import { cn } from "@/lib/utils";
-import { CardHoverMenu } from "./CardHoverMenu";
+import { CardCollectionsRow, CardHoverMenu } from "./CardHoverMenu";
 import { EDGE_FADE_WIDTH, createTopFadeMaskStyle } from "@/lib/edgeFade";
 import { buttonVariants } from "@/components/ui/button";
 import { collectionRefLabel } from "@/lib/collections";
-import { CardCollectionsContext, shownCollections } from "@/lib/cardCollections";
+import { CardCollectionsContext, shownCollections, useCollectionOrder } from "@/lib/cardCollections";
 import { FeedVideoSurface } from "./FeedVideoSurface";
 import { FeedVideoPoster } from "./FeedVideoPoster";
 import { PlayBadge } from "./PlayBadge";
@@ -343,12 +340,10 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
     [block, show],
   );
   const isArticleFeedCard = isPostVariant(descriptor.variant);
-  const hasHoverMenu = Boolean(tags && onToggleTag && onCreateAndAssign && onRequestRename && onRequestDelete);
-  // Every card lifts to bring its row of collections up from under the
-  // bottom edge (С8); bare media lifts its caption with it (С8.7).
-  const liftsCaption = hasHoverMenu && isBareMediaVariant(descriptor.variant);
-  const liftsTray = hasHoverMenu;
-  const lifts = liftsCaption || liftsTray;
+  // Every card with hover actions lifts to bring its row of collections up
+  // from under the bottom edge (С8); bare media lifts its caption with it
+  // (С8.7).
+  const lifts = Boolean(tags && onToggleTag && onCreateAndAssign && onRequestRename && onRequestDelete);
   const [actionsPinned, setActionsPinned] = useState(false);
 
   const handleClick = (event: ReactMouseEvent<HTMLDivElement>) => {
@@ -386,7 +381,7 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
       // hover is enabled, or a pointer-opened menu holding the row (С8).
       data-card-lift-hover={lifts && hoverEnabled && hoverArmed ? "" : undefined}
       data-card-lift-pinned={lifts && actionsPinned ? "" : undefined}
-      style={liftsTray && !liftsCaption ? collectionsRowLiftStyle(descriptor) : undefined}
+      style={lifts ? cardLiftStyle(descriptor) : undefined}
       className={cn(
         "h-full",
         // `group` scopes the hover buttons' `group-hover`: an unarmed card is
@@ -417,20 +412,24 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
         />
       )}
       <CardContent block={block} vaultPath={vaultPath} thumbsRootPath={thumbsRootPath} thumbVersion={thumbVersion} priority={priority} allowPlayback={allowPlayback} />
-      {/* Bare media in any presentation (a picture or a video without a
-          frame, or anything `Media` shows as media alone) says what it is
-          when it lifts (С8.7). */}
-      {liftsCaption && (
-        <MediaLiftCaption
-          block={block}
-          trayHeight={liftsTray ? COLLECTIONS_ROW_REACH_PX - EDGE_VISUAL_GAP_PX : 0}
-          // With no caption the row stands below the media's edge itself.
-          bareTrayHeight={liftsTray ? COLLECTIONS_ROW_REACH_PX : 0}
-        />
-      )}
+      {lifts && <CardLiftCaption block={block} descriptor={descriptor} />}
     </CardFrame>
   );
 });
+
+/// How far a lifting card rises, as the `--card-lift` its frame carries
+/// (С8.1): by its own bottom space, or, for bare media, by its caption, which
+/// sets the property itself (`MediaLiftCaption`).
+function cardLiftStyle(descriptor: CardLayoutDescriptor): CSSProperties | undefined {
+  return isBareMediaVariant(descriptor.variant) ? undefined : collectionsRowLiftStyle(descriptor);
+}
+
+/// Bare media in any presentation (a picture or a video without a frame, or
+/// anything `Media` shows as media alone) says what it is when it lifts
+/// (С8.7); every other card brings up its row alone.
+function CardLiftCaption({ block, descriptor }: { block: LightBlock; descriptor: CardLayoutDescriptor }) {
+  return isBareMediaVariant(descriptor.variant) ? <MediaLiftCaption block={block} /> : null;
+}
 
 /// The row of collections sits 8px above the bottom edge and is 24px
 /// tall (its plus is an `xs` button); its 12px text is centred in it, so the
@@ -475,20 +474,11 @@ function isBareMediaVariant(variant: CardLayoutVariant): boolean {
 /// `Cards` (title and author one line, text two) so the media keeps the card
 /// (SPEC_CARD_STATES.md, С8.7). The lift is as tall as this caption, so its
 /// height is handed to the frame as `--card-lift`; it never takes more than
-/// 60% of the card, and text past that is cut.
-function MediaLiftCaption({
-  block,
-  trayHeight,
-  bareTrayHeight,
-}: {
-  block: LightBlock;
-  /** Room for the action row under a caption, whose own bottom padding
-   *  already reads as the gap above the row. */
-  trayHeight: number;
-  /** Room for the row when there is no caption: the gap from the media's edge
-   *  comes on top. */
-  bareTrayHeight: number;
-}) {
+/// 60% of the card, and text past that is cut. Under the caption it keeps
+/// room for the row of collections: the caption's own bottom padding already
+/// reads as the gap above the row; with no caption the gap from the media's
+/// edge comes on top.
+function MediaLiftCaption({ block }: { block: LightBlock }) {
   const panelRef = useRef<HTMLDivElement>(null);
   // `Media` clears a card's text from its descriptor; the caption says what
   // the same card says in `Mixed`.
@@ -511,8 +501,11 @@ function MediaLiftCaption({
   }, []);
 
   const isPost = isPostVariant(descriptor.variant) || Boolean(descriptor.previewText || descriptor.authorText);
-  // A media card never shows its file's name: only a title of its own.
-  const title = descriptor.titleText || (isPost ? "" : (getMediaOwnTitle(block) ?? ""));
+  // A picture or a video names itself only by a title of its own, the body's
+  // first heading: never its file's name, nor a legacy `frontmatter.title`
+  // the clipper once wrote (SPEC_DISPLAY_TITLE.md, UX Contract, 5).
+  const mediaCard = descriptor.variant === "image" || descriptor.variant === "video";
+  const title = mediaCard ? (getMediaOwnTitle(block) ?? "") : descriptor.titleText;
   const lines: CardTextLine[] = [];
   if (title) lines.push("title");
   if (isPost && descriptor.previewText) lines.push("preview");
@@ -562,176 +555,162 @@ function MediaLiftCaption({
           <CardCollectionPills collections={shownCollections(block)} style={{ marginTop: gapBefore("pills") }} />
         </div>
       )}
-      {(first ? trayHeight : bareTrayHeight) > 0 && (
-        <div className="shrink-0" style={{ height: first ? trayHeight : bareTrayHeight }} />
-      )}
+      <div
+        className="shrink-0"
+        style={{ height: first ? COLLECTIONS_ROW_REACH_PX - EDGE_VISUAL_GAP_PX : COLLECTIONS_ROW_REACH_PX }}
+      />
     </div>
   );
 }
 
+type CardShadow = "none" | "sm" | "md" | "lg";
+
+const CARD_SHADOW_CLASS: Record<CardShadow, string | null> = {
+  none: null,
+  sm: "shadow-sm",
+  md: "shadow-md",
+  lg: "shadow-lg",
+};
+
+/// A card drawn outside the feed is the feed's own card: the presentation the
+/// feed shows now (`Show`), the same title rule, media geometry, surface and
+/// corner (SPEC_CARD_STATES.md, С10). Nothing in it can be pressed. `raised`
+/// stands it in the feed card's final hover state at once (С8): its content
+/// lifted, a bare media card's caption up, its collections at the bottom as
+/// text, and no Source, More or Connect. A dragged card stays at rest, as the
+/// feed card does under a drag (С8.5).
+function StaticCard({
+  block,
+  vaultPath,
+  thumbsRootPath,
+  width,
+  shadow,
+  thumbVersion,
+  raised,
+}: {
+  block: LightBlock;
+  vaultPath: string;
+  thumbsRootPath?: string;
+  width: number;
+  shadow: CardShadow;
+  thumbVersion?: number;
+  raised: boolean;
+}) {
+  const { show } = useFeedDisplay();
+  const descriptor = useMemo(() => deriveCardLayoutDescriptor(block, show), [block, show]);
+  // Bare media fills the box the feed reserves for it at this width; a framed
+  // card takes its content's own height, the one the feed reserves for it
+  // (SPEC_FEED_DISPLAY.md, Д15).
+  const reservedHeight = isBareMediaVariant(descriptor.variant)
+    ? computeCardHeight(block, width, null, show)
+    : undefined;
+
+  return (
+    <FeedShowContext.Provider value={show}>
+      <CardFrame
+        data-card-preview=""
+        data-card-lift-pinned={raised ? "" : undefined}
+        className={cn(
+          "pointer-events-none",
+          isPostVariant(descriptor.variant) && "feed-article-card",
+          CARD_SHADOW_CLASS[shadow],
+        )}
+        style={{ width, height: reservedHeight, ...(raised ? cardLiftStyle(descriptor) : undefined) }}
+      >
+        <CardContent
+          block={block}
+          vaultPath={vaultPath}
+          thumbsRootPath={thumbsRootPath}
+          allowPlayback={false}
+          thumbVersion={thumbVersion}
+          priority={true}
+        />
+        {raised && <CardLiftCaption block={block} descriptor={descriptor} />}
+        {raised && <RaisedCollectionsRow collections={block.collections} />}
+      </CardFrame>
+    </FeedShowContext.Provider>
+  );
+}
+
+/// The row of collections a raised card shows where the feed card's row
+/// stands after its lift (С8.9): the same names in the sidebar's order, as
+/// text, with no Connect plus. It keeps the row's 24px, which the lift counts
+/// (С8.1).
+function RaisedCollectionsRow({ collections }: { collections: readonly string[] }) {
+  const order = useCollectionOrder();
+  return (
+    <div
+      className="absolute bottom-2 left-2 right-2 z-[5] flex h-6 items-center"
+      data-card-preview-collections=""
+    >
+      <CardCollectionsRow collections={collections} order={order} readOnly />
+    </div>
+  );
+}
+
+/// A card shown on hover (graph, sidebar, related notes) or as the search
+/// result's preview: the feed card in its final hover state (С10). A preview
+/// floating over the window carries a shadow; one standing in a pane of its
+/// own does not.
 export function ReadOnlyCardPreview({
   block: sourceBlock,
   vaultPath,
   thumbsRootPath,
   width = 240,
-  previewMode = "full",
   shadow = "lg",
-  className,
   thumbVersion,
 }: {
   block: LightBlock | IndexedBlock;
   vaultPath: string;
   thumbsRootPath?: string;
   width?: number;
-  previewMode?: "full" | "micro";
-  shadow?: "none" | "sm" | "md" | "lg";
-  className?: string;
+  shadow?: "none" | "lg";
   thumbVersion?: number;
 }) {
-  const block: LightBlock & Partial<Pick<IndexedBlock, "thumb_format" | "thumb_mtime">> =
-    "search_match" in sourceBlock
-      ? sourceBlock
+  const block: LightBlock =
+    "related_notes" in sourceBlock
       // A full block names its collections as `tags`.
-      : { ...sourceBlock, search_match: null, collections: sourceBlock.tags };
-  const shadowClassName =
-    shadow === "none"
-      ? null
-      : shadow === "sm"
-        ? "shadow-sm"
-        : shadow === "md"
-          ? "shadow-md"
-          : "shadow-lg";
-  const isArticleFeedCard = getRuntimeCardKind(block) === "article";
-
-  if (previewMode === "micro") {
-    const resolvedThumbsRoot = thumbsRootPath ?? fallbackThumbsRoot(vaultPath);
-    const mtime = typeof block.thumb_mtime === "number" && block.thumb_mtime > 0
-      ? `?m=${block.thumb_mtime}`
-      : "";
-    const manifest = parsePreviewManifest(block);
-    const firstTile = manifest?.tiles[0] ?? null;
-    const previewWidth = firstTile?.width ?? manifest?.width ?? block.width;
-    const previewHeight = firstTile?.height ?? manifest?.height ?? block.height;
-    const aspectRatio = previewWidth && previewHeight ? previewWidth / previewHeight : 1;
-    // Text thumbs are dark-ink images that need dark:invert. The manifest says
-    // what the preview is; the file format does not — a picture that uses its
-    // alpha channel is stored as PNG too, and reading the format first
-    // inverted real screenshots. Format stays the fallback for legacy rows
-    // that have no manifest at all.
-    const isTextThumb = manifest ? manifest.kind === "text" : block.thumb_format === "png";
-    // Active search: the micro preview takes the search-result list's row
-    // model for its text (first-match excerpt as preview), but keeps the
-    // card's own title: the list names the result by its file name. A title
-    // match marks this title only when it is that very name, since the
-    // highlighter draws nothing over text other than the match's excerpt.
-    const matchRow = block.search_match ? deriveSearchResultRow(block) : null;
-    const title = getDisplayTitle(block) ?? getNavigationLabel(block);
-    const previewText = matchRow
-      ? (matchRow.snippet ?? "")
-      : (block.preview_text?.trim() ?? "");
-    const hasText = Boolean(title || previewText || block.author);
-    const isPureTextPreview =
-      isTextThumb &&
-      !block.media_file &&
-      !block.thumbnail &&
-      !block.first_image &&
-      !block.media_urls;
-
-    return (
-      <CardFrame
-        className={cn(
-          "pointer-events-none [--card-frame-radius:var(--radius-1)]",
-          isArticleFeedCard && "feed-article-card",
-          shadowClassName,
-          className,
-        )}
-        style={{ width }}
-      >
-        <div className="p-4">
-          {!isPureTextPreview && (
-            <GraphicSurface
-              className="w-full"
-              style={{ aspectRatio }}
-            >
-              <img
-                src={`${thumbnailUrl(resolvedThumbsRoot, block.slug)}${mtime}`}
-                alt=""
-                className={cn(
-                  "absolute inset-0 size-full object-cover",
-                  isTextThumb && "dark:invert",
-                )}
-                loading="eager"
-                decoding="async"
-                draggable={false}
-              />
-            </GraphicSurface>
-          )}
-          {hasText && (
-            <div className={cn(!isPureTextPreview && "mt-3")}>
-              {title && (
-                <p
-                  className={cn("line-clamp-2", CONTENT_CARD_TITLE_CLASSES)}
-                  style={contentCardSingleLineTextStyle}
-                >
-                  {matchRow ? renderSearchHighlightedText(title, matchRow.titleMatch) : title}
-                </p>
-              )}
-              {previewText && (
-                <p
-                  className={cn("text-sm text-muted-foreground", title && "mt-1.5", "line-clamp-3")}
-                  style={contentCardPreviewTextStyle}
-                >
-                  {matchRow
-                    ? renderSearchHighlightedText(previewText, matchRow.snippetMatch)
-                    : previewText}
-                </p>
-              )}
-              {block.author && (
-                <p
-                  className={cn("text-sm text-muted-foreground", (title || previewText) && "mt-2")}
-                  style={contentCardSingleLineTextStyle}
-                >
-                  by {block.author}
-                </p>
-              )}
-            </div>
-          )}
-        </div>
-      </CardFrame>
-    );
-  }
-
+      ? { ...sourceBlock, search_match: null, collections: sourceBlock.tags }
+      : sourceBlock;
   return (
-    <CardFrame
-      className={cn(
-        "pointer-events-none [--card-frame-radius:var(--radius-1)]",
-        isArticleFeedCard && "feed-article-card",
-        shadowClassName,
-        className,
-      )}
-      style={{ width, ...(getRuntimeCardKind(block) === "media"
-        ? { height: computeCardHeight(block, width, null) } : {}) }}
-    >
-      <CardContent
-        block={block}
-        vaultPath={vaultPath}
-        thumbsRootPath={thumbsRootPath}
-        allowPlayback={false}
-        thumbVersion={thumbVersion}
-        priority={true}
-      />
-    </CardFrame>
+    <StaticCard
+      block={block}
+      vaultPath={vaultPath}
+      thumbsRootPath={thumbsRootPath}
+      width={width}
+      shadow={shadow}
+      thumbVersion={thumbVersion}
+      raised
+    />
   );
 }
 
-export function DragCardPreview(props: {
+export function DragCardPreview({
+  block,
+  vaultPath,
+  thumbsRootPath,
+  width = 240,
+  shadow = "lg",
+  thumbVersion,
+}: {
   block: LightBlock;
   vaultPath: string;
   thumbsRootPath?: string;
   width?: number;
+  shadow?: "sm" | "md" | "lg";
   thumbVersion?: number;
 }) {
-  return <ReadOnlyCardPreview {...props} />;
+  return (
+    <StaticCard
+      block={block}
+      vaultPath={vaultPath}
+      thumbsRootPath={thumbsRootPath}
+      width={width}
+      shadow={shadow}
+      thumbVersion={thumbVersion}
+      raised={false}
+    />
+  );
 }
 
 const DRAG_STACK_LAYERS = [
@@ -758,7 +737,7 @@ function DragStackCardPreview({
 }) {
   return (
     <div data-feed-drag-stack-card="">
-      <ReadOnlyCardPreview
+      <DragCardPreview
         block={block}
         vaultPath={vaultPath}
         thumbsRootPath={thumbsRootPath}
@@ -849,75 +828,6 @@ export function DragCardStackPreview({
         </div>
       )}
     </div>
-  );
-}
-
-export function InteractiveCardPreview({
-  block,
-  vaultPath,
-  thumbsRootPath,
-  width = 240,
-  className,
-  tags,
-  currentTag,
-  onToggleTag,
-  onCreateAndAssign,
-  onRequestRename,
-  onRequestDelete,
-  onInteractiveOpenChange,
-  onInteractionStart,
-  onClick,
-}: {
-  block: LightBlock;
-  vaultPath: string;
-  thumbsRootPath?: string;
-  width?: number;
-  className?: string;
-  tags: import("@/types").TagCount[];
-  currentTag?: string;
-  onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
-  onCreateAndAssign: (tag: string, blockSlug: string) => void;
-  onRequestRename: (block: LightBlock) => void;
-  onRequestDelete: (slug: string) => void;
-  onInteractiveOpenChange?: (open: boolean) => void;
-  onInteractionStart?: () => void;
-  onClick?: (block: LightBlock) => void;
-}) {
-  return (
-    <CardFrame
-      data-block-slug={block.slug}
-      role={onClick ? "button" : undefined}
-      tabIndex={onClick ? 0 : undefined}
-      className={cn("group shadow-lg [--card-frame-radius:var(--radius-1)]", !onClick && "cursor-default", className)}
-      style={{ width }}
-      onClick={() => onClick?.(block)}
-      onKeyDown={(event) => {
-        if (!onClick) return;
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onClick(block);
-        }
-      }}
-    >
-      <CardHoverMenu
-        block={block}
-        vaultPath={vaultPath}
-        tags={tags}
-        currentTag={currentTag}
-        onToggleTag={onToggleTag}
-        onCreateAndAssign={onCreateAndAssign}
-        onRequestRename={onRequestRename}
-        onRequestDelete={onRequestDelete}
-        onInteractiveOpenChange={onInteractiveOpenChange}
-        onInteractionStart={onInteractionStart}
-      />
-      <CardContent
-        block={block}
-        vaultPath={vaultPath}
-        thumbsRootPath={thumbsRootPath}
-        allowPlayback={false}
-      />
-    </CardFrame>
   );
 }
 
@@ -1302,7 +1212,11 @@ const LinkCard = memo(function LinkCard({
 }) {
   const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
   const previewState = usePreviewState();
-  const [thumbLoaded, setThumbLoaded] = useState(false);
+  // The picture that has loaded, not a flag: a reset in an effect ran after
+  // the load of a picture already in the cache had fired (a preview loads at
+  // once what the feed has just shown) and left the page picture hidden for
+  // good. A new source is simply not the loaded one.
+  const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
   const domain = block.url ? domainFromUrl(block.url) : null;
   const navigationLabel = getNavigationLabel(block);
   const sources = useMemo(
@@ -1317,9 +1231,9 @@ const LinkCard = memo(function LinkCard({
   const sourcesKey = sources.join("|");
   const thumb = sources[sourceIndex] ?? null;
   const thumbError = thumb === null;
+  const thumbLoaded = thumb !== null && loadedSrc === thumb;
 
   useEffect(() => {
-    setThumbLoaded(false);
     setSourceIndex(0);
   }, [sourcesKey]);
 
@@ -1327,7 +1241,7 @@ const LinkCard = memo(function LinkCard({
   useEffect(() => {
     if (!thumbError) return;
     const handler = () => {
-      setThumbLoaded(false);
+      setLoadedSrc(null);
       setSourceIndex(0);
     };
     window.addEventListener("vault-refreshed", handler);
@@ -1389,9 +1303,9 @@ const LinkCard = memo(function LinkCard({
             loading={imgLoading}
             decoding="async"
             draggable={false}
-            onLoad={() => setThumbLoaded(true)}
+            onLoad={() => setLoadedSrc(thumb)}
             onError={() => {
-              setThumbLoaded(false);
+              setLoadedSrc(null);
               setSourceIndex((i) => i + 1);
             }}
           />

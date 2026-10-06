@@ -379,7 +379,7 @@ fn cmd_search(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
     // runs the lexical half only. Said out loud per the honest-degrade rule.
     let semantic = false;
     if flags.json {
-        let rows: Vec<_> = blocks.iter().map(light_block_json).collect();
+        let rows: Vec<_> = blocks.iter().map(search_result_json).collect();
         return Ok(format!(
             "{}\n",
             json!({
@@ -393,14 +393,7 @@ fn cmd_search(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
     }
     let mut out = String::new();
     for block in &blocks {
-        out.push_str(&format!(
-            "{}\t{}\n",
-            block.slug,
-            block
-                .display_title
-                .as_deref()
-                .unwrap_or(&block.fallback_label),
-        ));
+        out.push_str(&format!("{}\t{}\n", block.slug, card_file_name(&block.slug)));
     }
     if blocks.is_empty() {
         out.push_str("nothing found (lexical search; semantic runs inside the app)\n");
@@ -977,6 +970,28 @@ fn light_block_json(block: &crate::storage::index::LightBlock) -> serde_json::Va
     })
 }
 
+/// One search result. Search names a result by its file name, as the app's
+/// search list does (user's decision of 05.10.2026, SPEC_SEARCH.md): `name`
+/// is that name. `title` keeps its contract-1 meaning, the note's visible
+/// title (its H1 or legacy `frontmatter.title`), and is null without one.
+fn search_result_json(block: &crate::storage::index::LightBlock) -> serde_json::Value {
+    let mut row = light_block_json(block);
+    row["name"] = json!(card_file_name(&block.slug));
+    row
+}
+
+/// The card's file name: its slug without the folder (a slug never carries
+/// `.md`), the name `mine card rename` changes. The same text the search
+/// `title` match field holds (`search_file_name` in `search_engine.rs`).
+fn card_file_name(slug: &str) -> String {
+    let name = crate::domain::block::fallback_title_from_slug(slug);
+    if name.trim().is_empty() {
+        slug.to_string()
+    } else {
+        name
+    }
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1127,6 +1142,32 @@ pub(crate) mod tests {
         let value: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
         assert_eq!(value["semantic"], false);
         assert_eq!(value["results"][0]["slug"], "Cards/plain");
+    }
+
+    #[test]
+    fn search_names_a_result_by_its_file_name() {
+        // Search names a result by the card's file name, as the app's search
+        // list does (SPEC_SEARCH.md); the note's H1 stays its own field.
+        let (dir, env, _root) = fixture();
+        let body = dir.path().join("body.md");
+        std::fs::write(&body, "# Typography notes\n\nNotes about typography.\n").unwrap();
+        let out = run(
+            &env,
+            &args(&["card", "set-body", "Cards/plain", "--from", body.to_str().unwrap()]),
+        );
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+
+        let out = run(&env, &args(&["search", "typography", "--json"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        let value: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+        let result = &value["results"][0];
+        assert_eq!(result["slug"], "Cards/plain");
+        assert_eq!(result["name"], "plain");
+        assert_eq!(result["title"], "Typography notes");
+
+        let out = run(&env, &args(&["search", "typography"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        assert_eq!(out.stdout, "Cards/plain\tplain\n");
     }
 
     #[test]

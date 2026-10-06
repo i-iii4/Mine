@@ -115,7 +115,8 @@ const TOOLS: &[ToolSpec] = &[
     },
     ToolSpec {
         name: "search",
-        description: "Hybrid search over cards (lexical when the embedding model is absent)",
+        description: "Hybrid search over cards (lexical when the embedding model is absent). \
+Each result is named by its file name (`name`); `title` is the note's H1 or legacy title, null without one",
         schema: || schema(&["query"], vec![
             prop("query", "string", "Search query"),
             prop("limit", "integer", "Max results"),
@@ -559,6 +560,23 @@ mod tests {
         let payload: Value = serde_json::from_str(&text_of(&result)).unwrap();
         assert_eq!(payload["contract"], 1);
         assert_eq!(payload["slug"], "Cards/sunset");
+    }
+
+    #[test]
+    fn search_names_a_result_by_its_file_name() {
+        let (_dir, env, _root) = fixture();
+        let result = call(&env, "card_set_body", json!({
+            "slug": "Cards/plain", "body": "# Typography notes\n\nNotes about typography.\n",
+        }));
+        assert_eq!(result["isError"], false, "{}", text_of(&result));
+
+        let result = call(&env, "search", json!({ "query": "typography" }));
+        assert_eq!(result["isError"], false, "{}", text_of(&result));
+        let payload: Value = serde_json::from_str(&text_of(&result)).unwrap();
+        let first = &payload["results"][0];
+        assert_eq!(first["slug"], "Cards/plain");
+        assert_eq!(first["name"], "plain");
+        assert_eq!(first["title"], "Typography notes");
     }
 
     #[test]

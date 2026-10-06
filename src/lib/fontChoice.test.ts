@@ -5,6 +5,8 @@ import {
   applyInterfaceFont,
   getStoredContentFont,
   getStoredInterfaceFont,
+  SYSTEM_MONO_STACK,
+  SYSTEM_SANS_STACK,
 } from "./fontChoice";
 
 describe("font choice", () => {
@@ -14,20 +16,22 @@ describe("font choice", () => {
     document.documentElement.removeAttribute("data-font-content");
   });
 
-  it("defaults to Geist for the interface and Geist Sans for content", () => {
-    expect(getStoredInterfaceFont()).toBe("geist");
-    expect(getStoredContentFont()).toBe("geist-sans");
+  it("defaults to the system fonts for the interface and the article", () => {
+    expect(getStoredInterfaceFont()).toBe("system");
+    expect(getStoredContentFont()).toBe("system-sans");
   });
 
-  it("normalizes retired font preferences to Geist", () => {
+  it("normalizes retired font preferences to the system fonts", () => {
     localStorage.setItem("mine.fontInterface", "departure");
     localStorage.setItem("mine.fontContent", "geist-mono");
     applyInterfaceFont("departure");
-    applyContentFont("geist-mono");
-    expect(document.documentElement.getAttribute("data-font-interface")).toBe("geist");
-    expect(document.documentElement.getAttribute("data-font-content")).toBe("geist-sans");
-    expect(getStoredInterfaceFont()).toBe("geist");
-    expect(getStoredContentFont()).toBe("geist-sans");
+    applyContentFont("system-mono");
+    expect(document.documentElement.getAttribute("data-font-interface")).toBe("system");
+    expect(document.documentElement.getAttribute("data-font-content")).toBe("system-sans");
+    expect(localStorage.getItem("mine.fontInterface")).toBe("system");
+    expect(localStorage.getItem("mine.fontContent")).toBe("system-sans");
+    expect(getStoredInterfaceFont()).toBe("system");
+    expect(getStoredContentFont()).toBe("system-sans");
   });
 
   it("ships the fonts and the switch rules in the stylesheet", () => {
@@ -38,7 +42,20 @@ describe("font choice", () => {
     // family on the utilities — repointing --font-sans alone would not stick.
     expect(css).toMatch(/data-font-interface="departure"\] \.font-sans/);
     expect(css).toContain("[data-content-font]");
-    expect(css).toMatch(/data-font-content="geist-mono"/);
+    expect(css).toMatch(/data-font-content="system-mono"/);
+  });
+
+  it("sets the interface in the system fonts the canvas measures with (06.10.2026)", () => {
+    const css = readFileSync("src/styles/global.css", "utf8");
+    expect(css).toContain(`--font-sans: ${SYSTEM_SANS_STACK};`);
+    expect(css).toContain(`--font-content: ${SYSTEM_SANS_STACK};`);
+    expect(css).toContain(`--font-mono: ${SYSTEM_MONO_STACK};`);
+    // The mono utility stays the interface's sans with tabular digits.
+    expect(css).toMatch(new RegExp(
+      `\\.font-mono \\{\\s*font-family: ${SYSTEM_SANS_STACK.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")};\\s*font-variant-numeric: tabular-nums;`,
+    ));
+    // The optional Departure Mono is the only face the stylesheet ships.
+    expect(css).not.toMatch(/Geist/);
   });
 
   it("keeps the article body opted into the content font", () => {

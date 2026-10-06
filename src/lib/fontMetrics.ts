@@ -18,9 +18,13 @@ import type {
   WorkerBlockResult,
 } from "@/types/fontMetrics";
 import { FONT_METRICS_PREVIEW_MAX_CHARS } from "@/types/fontMetrics";
-import { computeWordWidths } from "@/lib/wordWidths";
+import { computeWordWidths, type TextMeasurer } from "@/lib/wordWidths";
 import { CONTENT_CARD_TITLE_FONT_WEIGHT } from "@/lib/cardTypography";
-import { getStoredInterfaceFont } from "@/lib/fontChoice";
+import {
+  DEPARTURE_MONO_STACK,
+  getStoredInterfaceFont,
+  SYSTEM_SANS_STACK,
+} from "@/lib/fontChoice";
 
 /** FNV-1a: a short, stable fingerprint of a string for cache identities. */
 function hashString(input: string): string {
@@ -39,49 +43,101 @@ function hashString(input: string): string {
  * stored choice. Resolved once at module load: switching fonts reloads the
  * main window (see App.tsx), which re-derives these constants.
  *
+ * The family is the stylesheet's own stack, character for character: the
+ * canvas resolves `system-ui` to the face the page paints (SF Pro in WebKit),
+ * in the worker as on the page, with no file to load. Departure Mono is not
+ * a system font, so the worker registers its file first.
+ *
  * Title: text-sm, regular → 12px / CONTENT_CARD_TITLE_FONT_WEIGHT (400); the
  *   title differs from the preview by color alone.
  * Preview: text-sm → 12px / 400 weight
  */
 const INTERFACE_FONT = getStoredInterfaceFont();
-const FONT_URL = INTERFACE_FONT === "departure"
-  ? "/fonts/DepartureMono-Regular.woff2"
-  : "/fonts/Geist-Variable.woff2";
-const FONT_FAMILY = INTERFACE_FONT === "departure" ? "Departure Mono" : "Geist";
-const TITLE_FONT_SPEC = `${CONTENT_CARD_TITLE_FONT_WEIGHT} 12px '${FONT_FAMILY}', system-ui, sans-serif`;
-const PREVIEW_FONT_SPEC = `400 12px '${FONT_FAMILY}', system-ui, sans-serif`;
+const FONT_FILE: { family: string; url: string } | null = INTERFACE_FONT === "departure"
+  ? { family: "Departure Mono", url: "/fonts/DepartureMono-Regular.woff2" }
+  : null;
+const FONT_STACK = INTERFACE_FONT === "departure" ? DEPARTURE_MONO_STACK : SYSTEM_SANS_STACK;
+const TITLE_FONT_SPEC = `${CONTENT_CARD_TITLE_FONT_WEIGHT} 12px ${FONT_STACK}`;
+const PREVIEW_FONT_SPEC = `400 12px ${FONT_STACK}`;
 
 /**
- * Version of what the font specs do not show: the font file itself and the
- * measured text model. Bumped manually when either changes.
+ * Version of what neither the font specs nor the face fingerprint show: the
+ * measured text model. Bumped manually when it changes.
  */
 const FONT_HASH_VERSION = "descriptor-preview-v3";
+
+/**
+ * Text whose width identifies the faces a font spec resolves to. The system
+ * font is not shipped with Mine: a macOS update may change its metrics, and
+ * widths cached under the old ones would size cards wrong. The probe covers
+ * what cards carry: Latin, Cyrillic, digits, punctuation, and CJK and emoji
+ * through the system fallback.
+ */
+const FONT_FINGERPRINT_TEXT =
+  "Hamburgefontsiv AVATAR WAVE 0123456789 Съешь же ещё этих мягких булок, да выпей чаю. «—» 東京の建築 😀";
+
+/**
+ * The widths of the probe text in each spec, joined. Measured on the page's
+ * canvas, which resolves fonts as the worker does (SPEC_GRID.md, «Системный
+ * шрифт»).
+ */
+export function measureFontFingerprint(
+  measurer: TextMeasurer | null,
+  fontSpecs: readonly string[],
+): string {
+  if (!measurer) return "unmeasured";
+  return fontSpecs
+    .map((spec) => {
+      measurer.font = spec;
+      return measurer.measureText(FONT_FINGERPRINT_TEXT).width.toFixed(3);
+    })
+    .join("/");
+}
 
 /**
  * Font hash: the identity of everything that shapes measureText output.
  * Both measured font specs (weight, size, family) are part of it, so a change
  * in how titles or previews are measured can never reuse widths measured the
- * old way: a title measured semibold never sizes a title painted regular. All
- * cached entries with a different hash are treated as stale and re-computed.
+ * old way: a title measured semibold never sizes a title painted regular. The
+ * face fingerprint stands for the font file the specs resolve to. All cached
+ * entries with a different hash are treated as stale and re-computed.
  */
 export function deriveFontMetricsHash(
   titleFontSpec: string,
   previewFontSpec: string,
+  faceFingerprint: string,
 ): FontHash {
-  return `${FONT_HASH_VERSION}-${hashString(`${titleFontSpec}\u0000${previewFontSpec}`)}`;
+  return `${FONT_HASH_VERSION}-${hashString(`${titleFontSpec}\u0000${previewFontSpec}\u0000${faceFingerprint}`)}`;
 }
 
-const FONT_HASH: FontHash = deriveFontMetricsHash(TITLE_FONT_SPEC, PREVIEW_FONT_SPEC);
+let sessionFontHash: FontHash | null = null;
+
+/** The hash of this session's fonts, fingerprinted once on first use. */
+function currentFontHash(): FontHash {
+  if (sessionFontHash === null) {
+    const measurer = typeof document === "undefined"
+      ? null
+      : document.createElement("canvas").getContext("2d");
+    sessionFontHash = deriveFontMetricsHash(
+      TITLE_FONT_SPEC,
+      PREVIEW_FONT_SPEC,
+      measureFontFingerprint(measurer, [TITLE_FONT_SPEC, PREVIEW_FONT_SPEC]),
+    );
+  }
+  return sessionFontHash;
+}
 
 const DB_NAME = "mine-font-metrics";
 // v3: drops the store of widths measured with the semibold title font. The
 // new font hash already keeps them from being read; the upgrade also frees
 // the space they hold.
-const DB_VERSION = 3;
+// v4: drops the widths measured in Geist, likewise (06.10.2026).
+const DB_VERSION = 4;
 const STORE_NAME = "wordWidths";
 // v3: CJK text is measured per character with no spaces between them.
 // v4: a word breaks after an inner hyphen as well (lineUnits.ts).
-const CACHE_KEY_VERSION = "v4";
+// v5: cards are set in the system font, not Geist (06.10.2026).
+const CACHE_KEY_VERSION = "v5";
 
 // ─── Worker lifecycle ───────────────────────────────────────────────────────
 
@@ -111,12 +167,14 @@ function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-async function fetchFontBuffer(): Promise<ArrayBuffer> {
-  const response = await fetch(FONT_URL);
+/** The font file the worker registers, or `null` for the system font. */
+async function fetchFontFile(): Promise<{ family: string; buffer: ArrayBuffer } | null> {
+  if (!FONT_FILE) return null;
+  const response = await fetch(FONT_FILE.url);
   if (!response.ok) {
-    throw new Error(`Failed to fetch font at ${FONT_URL}: ${response.status}`);
+    throw new Error(`Failed to fetch font at ${FONT_FILE.url}: ${response.status}`);
   }
-  return response.arrayBuffer();
+  return { family: FONT_FILE.family, buffer: await response.arrayBuffer() };
 }
 
 function createWorker(): Worker {
@@ -166,7 +224,7 @@ async function startWorker(attempt: number): Promise<void> {
     throw new Error("OffscreenCanvas not supported in this environment");
   }
 
-  const fontBuffer = await fetchFontBuffer();
+  const font = await fetchFontFile();
   if (attempt !== startAttempt) {
     throw new Error("Font-metrics worker start was abandoned");
   }
@@ -201,10 +259,9 @@ async function startWorker(attempt: number): Promise<void> {
   const initMessage: WorkerInMessage = {
     type: "init",
     requestId: initRequestId,
-    fontBuffer,
-    fontFamily: FONT_FAMILY,
+    font,
   };
-  started.postMessage(initMessage, [fontBuffer]);
+  started.postMessage(initMessage, font ? [font.buffer] : []);
 
   await initPromise;
 }
@@ -253,7 +310,7 @@ function computeInWorker(blocks: WorkerBlockInput[]): Promise<WorkerBlockResult[
     type: "compute",
     requestId,
     blocks,
-    fontHash: FONT_HASH,
+    fontHash: currentFontHash(),
     titleFontSpec: TITLE_FONT_SPEC,
     previewFontSpec: PREVIEW_FONT_SPEC,
   };
@@ -297,11 +354,12 @@ export function createFontMetricsCacheIdentity(
     ? descriptor.previewText.slice(0, FONT_METRICS_PREVIEW_MAX_CHARS)
     : descriptor.previewText;
   const textHash = hashString(`${title}\u0000${preview}`);
+  const fontHash = currentFontHash();
   return {
     blockId: block.id,
-    fontHash: FONT_HASH,
+    fontHash,
     textHash,
-    cacheKey: `${CACHE_KEY_VERSION}:${FONT_HASH}:${block.id}:${textHash}`,
+    cacheKey: `${CACHE_KEY_VERSION}:${fontHash}:${block.id}:${textHash}`,
     title,
     preview,
   };
@@ -565,7 +623,7 @@ export async function measureTopFirst(
 
 /** Current font hash. Exposed for debugging and cache inspection. */
 export function getFontHash(): FontHash {
-  return FONT_HASH;
+  return currentFontHash();
 }
 
 /**
