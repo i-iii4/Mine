@@ -221,6 +221,12 @@ select,
   background-color: var(--card-frame-color);
   transition: background-color var(--card-frame-fade, 0s) cubic-bezier(0.22, 1, 0.36, 1);
 }
+/* The same line as the top edge of a bare media card's lift caption
+   (SPEC_CARD_STATES.md, С8.7); its width is MEDIA_TEXT_RULE_PX, set inline. */
+[data-card-media-rule-edge] {
+  border-top-style: solid;
+  border-top-color: var(--card-frame-color);
+}
 
 /* The wash lives on the media window, not on the slot: a card lift moves the
    window up while the slot stays, and a wash on the slot fell on the text

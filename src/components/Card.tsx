@@ -264,6 +264,11 @@ export function CardSourcelessSurface({
 /// one: a larger corner left a crescent of the card's surface showing.
 const FILL_WINDOW_CLASS = "rounded-b-[var(--card-frame-inner-radius)]";
 
+/// Media with text under it takes the card radius at its bottom corners
+/// (SPEC_FEED_DISPLAY.md, Д20, decision 7), whatever the kind of card: a
+/// post, an article, a gallery, a link's page picture.
+const MEDIA_OVER_TEXT_CLASS = "rounded-b-[var(--radius-card)]";
+
 function GraphicSurface({
   children,
   className,
@@ -518,7 +523,9 @@ function MediaLiftCaption({ block }: { block: LightBlock }) {
     <div
       ref={panelRef}
       data-card-lift="caption"
+      data-card-media-rule-edge=""
       className="absolute inset-x-0 bottom-0 flex max-h-[60%] flex-col justify-end overflow-hidden"
+      style={MEDIA_TEXT_RULE_EDGE_STYLE}
     >
       {first && last && (
         <div
@@ -1275,7 +1282,7 @@ const LinkCard = memo(function LinkCard({
     return (
       <FramedCardBody
         media={(
-          <GraphicSurface className="aspect-video">
+          <GraphicSurface className={cn("aspect-video", MEDIA_OVER_TEXT_CLASS)}>
             <PreviewPendingFill />
           </GraphicSurface>
         )}
@@ -1296,7 +1303,7 @@ const LinkCard = memo(function LinkCard({
       text={textFooter}
       textClassName={LINK_FOOTER_CLASS}
       media={(
-        <GraphicSurface className="aspect-video" windowClassName={bgColor}>
+        <GraphicSurface className={cn("aspect-video", MEDIA_OVER_TEXT_CLASS)} windowClassName={bgColor}>
           {!thumbLoaded && (
             <div className="flex h-full flex-col items-center justify-center gap-1">
               <span className="text-lg font-semibold text-white/40">{initial}</span>
@@ -1383,7 +1390,7 @@ const SocialCard = memo(function SocialCard({
     }).map((url) => withThumbVersion(url, thumbVersion));
     return (
       <GraphicSurface
-        className="w-full rounded-b-[var(--radius-card)]"
+        className={cn("w-full", MEDIA_OVER_TEXT_CLASS)}
         style={{ aspectRatio: `${aspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
         data-card-preview-geometry={aspectRatio === null ? "pending" : undefined}
         contentInCloud={block.content_in_cloud}
@@ -1427,7 +1434,7 @@ const SocialCard = memo(function SocialCard({
     // The tile grid across the frame's width; the seams between tiles stay
     // straight (Д21).
     <GraphicSurface
-      className="w-full rounded-b-[var(--radius-card)]"
+      className={cn("w-full", MEDIA_OVER_TEXT_CLASS)}
       style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
       contentInCloud={block.content_in_cloud}
     >
@@ -1542,6 +1549,11 @@ function textGapsFor(lines: readonly CardTextLine[]) {
 /// height `computeCardHeight` reserves for it; global.css paints it in the
 /// frame's colour with the frame's fade (`[data-card-media-rule]`).
 const MEDIA_TEXT_RULE_STYLE = { height: MEDIA_TEXT_RULE_PX } as const;
+
+/// The same line as the top edge of a bare media card's lift caption: the
+/// caption rises under the media, so the line opens it (SPEC_CARD_STATES.md,
+/// С8.7). The caption's height, the line included, is the lift.
+const MEDIA_TEXT_RULE_EDGE_STYLE = { borderTopWidth: MEDIA_TEXT_RULE_PX } as const;
 
 /// The body of every framed card that may stack text under media: posts,
 /// articles, X and Instagram posts, pictures `Cards` frames as posts, and
@@ -1684,7 +1696,7 @@ function PostMediaSurface({
     // Edge to edge: the frame rounds the media's top corners; its bottom
     // corners take the same card radius where the text starts (SPEC_FEED_DISPLAY.md, Д20).
     <GraphicSurface
-      className={cn(fit === "fill" ? "h-full w-full" : "w-full", fit === "edge" && "rounded-b-[var(--radius-card)]")}
+      className={cn(fit === "fill" ? "h-full w-full" : "w-full", fit === "edge" && MEDIA_OVER_TEXT_CLASS)}
       windowClassName={fit === "fill" ? FILL_WINDOW_CLASS : undefined}
       style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
       data-card-preview-geometry={descriptor.primaryAspectRatio === null ? "pending" : undefined}
