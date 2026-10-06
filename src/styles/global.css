@@ -187,18 +187,15 @@ select,
    brighter, never draws outside the card, and outranks every other state:
    nothing is added on top of a selected card. */
 /* The frame's colour fades in --card-frame-fade: a state arrives at the
-   fade-in speed and leaves at the fade-out speed. The line under a card's
-   media reads the same property, so it changes colour with the border. */
+   fade-in speed and leaves at the fade-out speed. The frame's line and its
+   media's outline read the same property, so they change colour together. */
 [data-block-slug] {
   --card-frame-fade: var(--hover-intent-fade-out);
-  transition:
-    border-color var(--card-frame-fade) cubic-bezier(0.22, 1, 0.36, 1),
-    background-color var(--card-frame-fade) cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* A state colours the frame through --card-frame-color: its border, the
-   layer under its surface ([data-feed-card-frame] below) and the line under
-   its media ([data-card-media-rule]) follow together. */
+/* A state colours the frame through --card-frame-color: its line
+   ([data-feed-card-frame]::after below) and its media's outline
+   ([data-card-media-outline]) follow together. */
 [data-grid-scroll][data-feed-grid-focus-mode="true"] [data-feed-grid-item-focused="true"] [data-block-slug],
 [data-grid-scroll] [data-feed-grid-item-collection-lit="true"] [data-block-slug] {
   --card-frame-color: var(--border-accent);
@@ -212,26 +209,59 @@ select,
   --card-frame-fade: var(--hover-intent-fade-in);
 }
 
-/* The line between a framed card's media and the text under it
-   (SPEC_FEED_DISPLAY.md, Д20): the frame's colour with the frame's fade,
-   across the frame's inner width, so it meets the side lines and follows
-   focus and selection with the border. Its height is the card's
-   MEDIA_TEXT_RULE_PX (Card.tsx). A frame outside the feed carries no fade. */
-[data-card-media-rule] {
-  background-color: var(--card-frame-color);
-  transition: background-color var(--card-frame-fade, 0s) cubic-bezier(0.22, 1, 0.36, 1);
+/* The media's outline at its bottom edge (SPEC_FEED_DISPLAY.md, Д20; user's
+   decision of 06.10.2026): the frame's own line, mirrored under the media.
+   It is a whole ring the size of the frame's corner, R = the frame's
+   radius, 2R tall (2px at a square corner), drawn exactly as the frame's
+   line is drawn, with its top half cut away: what is left is the bottom
+   edge and the two bottom corners, a mirror of the frame's top edge and
+   corners pixel for pixel. It spans the frame's full width, so its sides lie
+   on the frame's line. Drawn over the media, whose clip reaches half a pixel
+   under it (GraphicSurface): the media's visible corner is the ring's inner
+   one, as at the top. An overlay: the card's height does not change. The
+   frame's colour and fade, so it follows focus and selection with the
+   frame's line. */
+[data-card-media-outline] {
+  --media-outline-half: max(var(--card-frame-outer-radius), 1px);
+  position: absolute;
+  z-index: 2;
+  height: calc(2 * var(--media-outline-half));
+  border: 1px solid var(--card-frame-color);
+  border-radius: var(--card-frame-outer-radius);
+  clip-path: inset(var(--media-outline-half) 0 0 0);
+  pointer-events: none;
+  transition: border-color var(--card-frame-fade, 0s) cubic-bezier(0.22, 1, 0.36, 1);
 }
-/* The same line as the top edge of a bare media card's lift caption
-   (SPEC_CARD_STATES.md, С8.7); its width is MEDIA_TEXT_RULE_PX, set inline. */
-[data-card-media-rule-edge] {
-  border-top-style: solid;
-  border-top-color: var(--card-frame-color);
+/* Media with text under it: drawn from the top of the text part, which
+   starts at the media's bottom edge and rises with the media on a lift; the
+   ring's bottom edge is the text part's first pixel. */
+[data-card-media-outline="under-text"] {
+  left: -1px;
+  right: -1px;
+  top: calc(1px - 2 * var(--media-outline-half));
+}
+/* Media that ends its card: drawn in the media's clip, half a pixel larger
+   than the slot, so the ring lies on the frame's own line at rest, where
+   the frame's line covers it; on a lift it rises with the media window over
+   what comes up under it (С8.3, С8.7), on the window's own timing. */
+[data-card-media-outline="on-lift"] {
+  left: -0.5px;
+  right: -0.5px;
+  bottom: -0.5px;
+  transition:
+    transform 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color var(--card-frame-fade, 0s) cubic-bezier(0.22, 1, 0.36, 1);
+}
+[data-card-lift-hover]:hover [data-card-media-outline="on-lift"],
+[data-card-lift-pinned] [data-card-media-outline="on-lift"] {
+  transform: translateY(calc(-1 * var(--card-lift)));
+  transition-duration: 200ms, var(--card-frame-fade, 0s);
 }
 
 /* The wash lives on the media window, not on the slot: a card lift moves the
    window up while the slot stays, and a wash on the slot fell on the text
    that rose into it (С8). On the window it covers the picture alone. */
-[data-card-graphic-surface] > [data-card-lift="window"]::after {
+[data-card-media-clip] > [data-card-lift="window"]::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -245,8 +275,8 @@ select,
 /* The wash is for pictures only; a text card shows the border alone. A row
    lights many cards at once, so its highlight is the border without the wash
    (С3, С7). */
-[data-grid-scroll][data-feed-grid-focus-mode="true"] [data-feed-grid-item-focused="true"] [data-card-graphic-surface] > [data-card-lift="window"]::after,
-[data-grid-scroll] [data-feed-grid-item-selected="true"] [data-card-graphic-surface] > [data-card-lift="window"]::after {
+[data-grid-scroll][data-feed-grid-focus-mode="true"] [data-feed-grid-item-focused="true"] [data-card-media-clip] > [data-card-lift="window"]::after,
+[data-grid-scroll] [data-feed-grid-item-selected="true"] [data-card-media-clip] > [data-card-lift="window"]::after {
   opacity: 1;
 }
 
@@ -282,39 +312,33 @@ select,
   --card-lift-drift: 8px;
 }
 
-/* Rounded corners without a seam (cards with the rounded corner setting). The frame clips what it holds along the
-   inner curve of its border, and the border and the clipped media are
-   smoothed separately there: whatever lies under both shows through the
-   edge pixels. Under the surface lies the frame's own colour, so those
-   pixels mix border and media only; the surface fills the inside of the
-   border. What lies flush inside the border takes its inner corner.
-   Both are plain colours (06.10.2026): the frame's colour fills the box,
-   the surface is a layer of its own inside the border, under the content,
-   painted like the chrome that shares its token. */
+/* The frame's line over what the frame holds (DESIGN_SYSTEM.md, «Линия
+   рамки поверх содержимого»; 06.10.2026). A 1px border is snapped to device
+   pixels and a clip is not, so a border with the media clipped inside it
+   left a seam wherever the two disagreed: a pale column beside a picture, a
+   strip under it. Here the line is drawn last, over everything, and what
+   the frame holds is clipped at the line's middle ([data-card-frame-clip],
+   half a pixel in, the corner less half a pixel): every edge inside lies
+   under the opaque line, and the line's own edges are smoothed against the
+   page outside and against the content inside, never against a gap. The
+   media's outline is the same ring ([data-card-media-outline]). A frame
+   with a corner of its own sets --card-frame-radius (Card.tsx); every other
+   frame takes the card radius. */
 [data-feed-card-frame] {
-  /* A frame with a corner of its own sets --card-frame-radius (Card.tsx);
-     every other frame takes the card radius. */
-  --card-frame-inner-radius: max(0px, calc(var(--card-frame-radius, var(--radius-card)) - 1px));
+  --card-frame-outer-radius: var(--card-frame-radius, var(--radius-card));
+  --card-frame-line-radius: max(0px, calc(var(--card-frame-outer-radius) - 0.5px));
   --card-frame-color: var(--border);
-  border-color: var(--card-frame-color);
-  background-color: var(--card-frame-color);
   isolation: isolate;
 }
-[data-feed-card-frame]::before {
+[data-feed-card-frame]::after {
   content: "";
   position: absolute;
   inset: 0;
-  z-index: -1;
-  border-radius: var(--card-frame-inner-radius);
-  background-color: var(--surface);
+  z-index: 1;
+  border: 1px solid var(--card-frame-color);
+  border-radius: inherit;
   pointer-events: none;
-}
-
-/* Media that ends the card (a post with no text under it) meets the frame's
-   bottom edge; with text under it it keeps the card radius (Д20). */
-[data-feed-card-frame] [data-card-graphic-surface]:last-child {
-  border-bottom-left-radius: var(--card-frame-inner-radius);
-  border-bottom-right-radius: var(--card-frame-inner-radius);
+  transition: border-color var(--card-frame-fade, 0s) cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 [data-card-lift] {
@@ -402,7 +426,8 @@ select,
    first frame (SPEC_CARD_STATES.md, С10): nothing in it moves, neither when
    it appears nor when it changes cards, with or without reduced motion. */
 [data-card-preview] [data-card-lift],
-[data-card-preview] [data-card-lift-fade] {
+[data-card-preview] [data-card-lift-fade],
+[data-card-preview] [data-card-media-outline] {
   transition: none;
 }
 
@@ -749,7 +774,7 @@ body {
     transition: none;
   }
 
-  [data-card-graphic-surface] > [data-card-lift="window"]::after {
+  [data-card-media-clip] > [data-card-lift="window"]::after {
     transition: none;
   }
 }

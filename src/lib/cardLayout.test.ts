@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LightBlock } from "@/types";
-import { MEDIA_TEXT_RULE_PX, deriveCardLayoutDescriptor, deriveContentCardSlots } from "./cardLayout";
+import { deriveCardLayoutDescriptor, deriveContentCardSlots } from "./cardLayout";
 import { CARD_COLLECTION_PILLS_ENABLED } from "./cardCollections";
 
 function cardKindForBlockType(blockType: LightBlock["block_type"]): LightBlock["card_kind"] {
@@ -925,10 +925,6 @@ describe("the line under a framed card's media (SPEC_FEED_DISPLAY.md, Д20)", ()
   });
   const lineUnder = (block: LightBlock, show: "mixed" | "cards" | "media") =>
     deriveCardLayoutDescriptor(block, show).textUnderMedia;
-
-  it("is the frame's own 1px", () => {
-    expect(MEDIA_TEXT_RULE_PX).toBe(1);
-  });
 
   it.each([
     ["a post with media and text", () => article()],

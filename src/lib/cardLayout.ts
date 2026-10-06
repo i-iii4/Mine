@@ -40,18 +40,14 @@ export interface CardLayoutDescriptor {
   mediaItems: CardLayoutMediaItem[];
   visibleMediaCount: number;
   totalMediaCount: number;
-  /// The framed card stands its media on top and a text part under it, the
-  /// two divided by a line in the frame's colour (SPEC_FEED_DISPLAY.md, Д20).
-  /// The card draws that line from this field and `computeCardHeight` counts
-  /// its `MEDIA_TEXT_RULE_PX` from it. False when the media ends the card,
-  /// for media without a frame, in `Media` and for cards without media.
+  /// The framed card stands its media on top and a text part under it
+  /// (SPEC_FEED_DISPLAY.md, Д20): the media then closes with its outline, 1px
+  /// of the frame's colour along its bottom edge and rounded bottom corners,
+  /// inside the media, so the card's height does not change. False when the
+  /// media ends the card, for media without a frame, in `Media` and for cards
+  /// without media.
   textUnderMedia: boolean;
 }
-
-/// Thickness of the line between a framed card's media and the text under it
-/// (Д20): the frame's own 1px. The card draws it at this height and the
-/// reserved height counts it, so the two never drift apart.
-export const MEDIA_TEXT_RULE_PX = 1;
 
 /// A descriptor before the line under its media is decided: the shape every
 /// presentation derives, which `deriveCardLayoutDescriptor` completes.

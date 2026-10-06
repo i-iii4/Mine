@@ -7,7 +7,6 @@ import {
   fallbackThumbsRoot,
 } from "@/lib/assets";
 import {
-  MEDIA_TEXT_RULE_PX,
   deriveCardLayoutDescriptor,
   deriveContentCardSlots,
   parsePreviewManifest,
@@ -114,11 +113,20 @@ interface CardProps {
   onRequestDelete?: (slug: string) => void;
 }
 
-// The frame's corner is `--card-frame-radius` (the card radius unless a
-// frame sets its own); what fills it flush inside its 1px border takes
-// `--card-frame-inner-radius`, the corner less the border (global.css).
-const CARD_FRAME_CLASS =
-  "relative overflow-hidden border border-border rounded-[var(--card-frame-radius,var(--radius-card))] bg-card";
+// The frame (SPEC_FEED_DISPLAY.md, Д20; DESIGN_SYSTEM.md, «Линия рамки поверх
+// содержимого»). Its 1px line is drawn over everything the frame holds
+// (`::after`, global.css), and what it holds is clipped at the line's middle:
+// the clip sits half a pixel in from the frame's edge with the corner less
+// half a pixel, and the content half a pixel further in, so the content box
+// is the one a 1px border left. Every edge of the content then lies under
+// the line, which is opaque and pixel-snapped: wherever the engine puts a
+// picture's edge, the line hides it, and the line's own edges are smoothed
+// against the page outside and against the content inside, never against a
+// gap. The corner is `--card-frame-radius` (the card radius unless a frame
+// sets its own).
+const CARD_FRAME_CLASS = "relative p-[0.5px] rounded-[var(--card-frame-outer-radius)]";
+const CARD_FRAME_CLIP_CLASS =
+  "relative isolate h-full overflow-hidden p-[0.5px] rounded-[var(--card-frame-line-radius)] bg-card";
 const PREVIEW_RETRY_DELAYS_MS = [250, 1000] as const;
 
 interface CardFrameProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -134,6 +142,11 @@ interface GraphicSurfaceProps extends React.HTMLAttributes<HTMLDivElement> {
   windowClassName?: string;
   /** Whether the content is still in iCloud: the badge stays put on a lift. */
   contentInCloud?: boolean;
+  /** Media that ends its card: on a lift it rises over what comes up under
+   *  it, and its outline rises with it (SPEC_FEED_DISPLAY.md, Д20). At rest
+   *  that outline lies on the frame's own line. Media with text under it
+   *  takes its outline from the text part instead (`FramedCardBody`). */
+  liftOutline?: boolean;
 }
 
 const CardFrame = forwardRef<HTMLDivElement, CardFrameProps>(function CardFrame(
@@ -148,7 +161,11 @@ const CardFrame = forwardRef<HTMLDivElement, CardFrameProps>(function CardFrame(
       style={{ ...cardFrameRenderStyle, ...style }}
       {...props}
     >
-      {children}
+      <div data-card-frame-clip="" className={CARD_FRAME_CLIP_CLASS}>
+        <div data-card-frame-content="" className="relative h-full">
+          {children}
+        </div>
+      </div>
     </div>
   );
 });
@@ -190,7 +207,7 @@ export function CardPreviewPendingSurface({
   return (
     <GraphicSurface
       className="h-full w-full"
-      windowClassName={FILL_WINDOW_CLASS}
+      liftOutline
       contentInCloud={contentInCloud}
       style={style}
       data-card-preview-geometry={geometryPending ? "pending" : undefined}
@@ -222,7 +239,7 @@ export function CardSourcelessSurface({
   return (
     <GraphicSurface
       className="h-full w-full"
-      windowClassName={FILL_WINDOW_CLASS}
+      liftOutline
       contentClassName="flex items-center justify-center"
       contentInCloud={contentInCloud}
       style={style}
@@ -251,30 +268,26 @@ export function CardSourcelessSurface({
   );
 }
 
-/// A media slot: the layout box, the window the media shows through, and the
-/// plane it is painted on. On a card lift (SPEC_CARD_STATES.md, С8) the window
-/// rises with the text under it, keeping its own corners, while the plane
-/// drifts back half that distance: the box's top edge holds still, the window
-/// shrinks from the bottom and the picture inside moves up by half the lift.
-/// The box clips the rest, so the outer geometry never changes.
-/// A media window that fills its card keeps the card's bottom corners: on a
-/// lift its bottom edge rises above the action row and stays rounded, as the
-/// media over the text does edge to edge (SPEC_CARD_STATES.md, С8.3). At rest
-/// it lies flush inside the frame's border, so its corner is the frame's inner
-/// one: a larger corner left a crescent of the card's surface showing.
-const FILL_WINDOW_CLASS = "rounded-b-[var(--card-frame-inner-radius)]";
-
-/// Media with text under it takes the card radius at its bottom corners
-/// (SPEC_FEED_DISPLAY.md, Д20, decision 7), whatever the kind of card: a
-/// post, an article, a gallery, a link's page picture.
-const MEDIA_OVER_TEXT_CLASS = "rounded-b-[var(--radius-card)]";
-
+/// A media slot: the layout box, the clip the media shows through, the window
+/// inside it and the plane the media is painted on. The layout box is the
+/// media's visible box, the one the feed reserves. The clip is that box grown
+/// by half a pixel on every side, with the corner of the line's middle: every
+/// media slot in a frame is bordered by a line drawn over it, the frame's on
+/// its top and sides and the frame's or the media's outline at its bottom
+/// (SPEC_FEED_DISPLAY.md, Д20), so the media's edge always lies under a line
+/// and its visible corner is the line's inner one, at the bottom as at the
+/// top. On a card lift (SPEC_CARD_STATES.md, С8) the window rises with the
+/// text under it, keeping its corners, while the plane drifts back half that
+/// distance: the clip's top edge holds still, the window shrinks from the
+/// bottom and the picture inside moves up by half the lift. The clip cuts the
+/// rest, so the outer geometry never changes.
 function GraphicSurface({
   children,
   className,
   contentClassName,
   windowClassName,
   contentInCloud,
+  liftOutline,
   ...props
 }: GraphicSurfaceProps) {
   return (
@@ -283,16 +296,24 @@ function GraphicSurface({
       // No fill of its own: the slot stays put on a lift while its window
       // rises, and a fill here would show behind the risen text as a panel
       // with the slot's corners (С8.3).
-      className={cn("relative overflow-hidden", className)}
+      className={cn("relative", className)}
       {...props}
     >
       <div
-        data-card-lift="window"
-        className={cn("absolute inset-0 overflow-hidden rounded-[inherit] bg-card", windowClassName)}
+        data-card-media-clip=""
+        className="absolute -inset-[0.5px] overflow-hidden rounded-[var(--card-frame-line-radius)]"
       >
-        <div data-card-lift="plane" className={cn("absolute inset-0", contentClassName)}>
-          {children}
+        <div
+          data-card-lift="window"
+          className={cn("absolute inset-0 overflow-hidden rounded-[inherit] bg-card", windowClassName)}
+        >
+          <div data-card-lift="plane" className={cn("absolute inset-0", contentClassName)}>
+            {children}
+          </div>
         </div>
+        {/* Over the window: at rest it lies on the frame's own line, on a
+            lift it rises with the window (global.css). */}
+        {liftOutline && <span aria-hidden="true" data-card-media-outline="on-lift" />}
       </div>
       <CloudBadge active={contentInCloud} />
     </div>
@@ -523,9 +544,7 @@ function MediaLiftCaption({ block }: { block: LightBlock }) {
     <div
       ref={panelRef}
       data-card-lift="caption"
-      data-card-media-rule-edge=""
       className="absolute inset-x-0 bottom-0 flex max-h-[60%] flex-col justify-end overflow-hidden"
-      style={MEDIA_TEXT_RULE_EDGE_STYLE}
     >
       {first && last && (
         <div
@@ -1168,7 +1187,7 @@ const ImageCard = memo(function ImageCard({
   return (
     <GraphicSurface
       className="h-full w-full"
-      windowClassName={FILL_WINDOW_CLASS}
+      liftOutline
       style={surfaceStyle}
       data-card-preview-geometry={geometryPending ? "pending" : undefined}
       contentInCloud={block.content_in_cloud}
@@ -1282,7 +1301,7 @@ const LinkCard = memo(function LinkCard({
     return (
       <FramedCardBody
         media={(
-          <GraphicSurface className={cn("aspect-video", MEDIA_OVER_TEXT_CLASS)}>
+          <GraphicSurface className="aspect-video">
             <PreviewPendingFill />
           </GraphicSurface>
         )}
@@ -1303,7 +1322,7 @@ const LinkCard = memo(function LinkCard({
       text={textFooter}
       textClassName={LINK_FOOTER_CLASS}
       media={(
-        <GraphicSurface className={cn("aspect-video", MEDIA_OVER_TEXT_CLASS)} windowClassName={bgColor}>
+        <GraphicSurface className="aspect-video" windowClassName={bgColor}>
           {!thumbLoaded && (
             <div className="flex h-full flex-col items-center justify-center gap-1">
               <span className="text-lg font-semibold text-white/40">{initial}</span>
@@ -1390,7 +1409,8 @@ const SocialCard = memo(function SocialCard({
     }).map((url) => withThumbVersion(url, thumbVersion));
     return (
       <GraphicSurface
-        className={cn("w-full", MEDIA_OVER_TEXT_CLASS)}
+        className="w-full"
+        liftOutline={!descriptor.textUnderMedia}
         style={{ aspectRatio: `${aspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
         data-card-preview-geometry={aspectRatio === null ? "pending" : undefined}
         contentInCloud={block.content_in_cloud}
@@ -1434,7 +1454,8 @@ const SocialCard = memo(function SocialCard({
     // The tile grid across the frame's width; the seams between tiles stay
     // straight (Д21).
     <GraphicSurface
-      className={cn("w-full", MEDIA_OVER_TEXT_CLASS)}
+      className="w-full"
+      liftOutline={!descriptor.textUnderMedia}
       style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
       contentInCloud={block.content_in_cloud}
     >
@@ -1545,26 +1566,15 @@ function textGapsFor(lines: readonly CardTextLine[]) {
   };
 }
 
-/// The line between a framed card's media and the text under it, at the
-/// height `computeCardHeight` reserves for it; global.css paints it in the
-/// frame's colour with the frame's fade (`[data-card-media-rule]`).
-const MEDIA_TEXT_RULE_STYLE = { height: MEDIA_TEXT_RULE_PX } as const;
-
-/// The same line as the top edge of a bare media card's lift caption: the
-/// caption rises under the media, so the line opens it (SPEC_CARD_STATES.md,
-/// С8.7). The caption's height, the line included, is the lift.
-const MEDIA_TEXT_RULE_EDGE_STYLE = { borderTopWidth: MEDIA_TEXT_RULE_PX } as const;
-
 /// The body of every framed card that may stack text under media: posts,
 /// articles, X and Instagram posts, pictures `Cards` frames as posts, and
 /// links. Its media, when it has one, comes first; its text part follows and
 /// rises with the lift (SPEC_CARD_STATES.md, С8.2, С8.3). When the card's
-/// descriptor stands the text under the media (`textUnderMedia`), the text
-/// part opens with the line between the two: 1px of the frame's colour across
-/// the frame's inner width, meeting its side lines (SPEC_FEED_DISPLAY.md,
-/// Д20). Riding in the text part, the line rises with the text and stays
-/// under the rising media window; the text's own gaps (Д25) start under it.
-/// `computeCardHeight` counts the same line from the same field.
+/// descriptor stands text under the media (`textUnderMedia`), the text part
+/// opens with the media's outline (SPEC_FEED_DISPLAY.md, Д20): outside the
+/// media, hugging its bottom edge and rounded corners, so at the media's
+/// sides it lies on the frame's own side lines and under the media it is the
+/// line above the text. An overlay: the card's height does not change.
 function FramedCardBody({
   media,
   textUnderMedia,
@@ -1574,7 +1584,8 @@ function FramedCardBody({
 }: {
   /** The media surface, or null for a card without media. */
   media: ReactNode;
-  /** The descriptor's `textUnderMedia`: the line opens the text part. */
+  /** The descriptor's `textUnderMedia`: the text part opens with the
+   *  media's outline. */
   textUnderMedia: boolean;
   /** The text part's content, or null when the card has none. */
   text: ReactNode;
@@ -1586,13 +1597,11 @@ function FramedCardBody({
     <div>
       {media}
       {text !== null && (
-        <div data-card-lift="text">
-          {textUnderMedia && (
-            <div aria-hidden="true" data-card-media-rule="" style={MEDIA_TEXT_RULE_STYLE} />
+        <div data-card-lift="text" className={cn("relative", textClassName)} style={textStyle}>
+          {textUnderMedia && media !== null && (
+            <span aria-hidden="true" data-card-media-outline="under-text" />
           )}
-          <div className={textClassName} style={textStyle}>
-            {text}
-          </div>
+          {text}
         </div>
       )}
     </div>
@@ -1601,10 +1610,9 @@ function FramedCardBody({
 
 /// The body of a framed card with its media on top and its text under it:
 /// posts, articles, X and Instagram posts, and pictures `Cards` frames as
-/// posts. The media spans the frame's inner width from its top edge, with no
-/// outline of its own; the frame's clip gives it the card's top corners and
-/// its bottom corners take the card radius where the text starts. Under it
-/// runs the line of `FramedCardBody`. The text is padded 8px at its sides,
+/// posts. The media spans the frame's inner width from its top edge; the
+/// frame's line gives it its top corners and the media's outline, which opens
+/// the text part, gives it the same corners at the bottom (Д20). The text is padded 8px at its sides,
 /// and every vertical gap reads 14px from letter to letter: the boxes are
 /// spaced by the gap less the half-leading of the lines that meet
 /// (SPEC_FEED_DISPLAY.md, Д20, Д25). Media with no text under it is the whole
@@ -1693,11 +1701,11 @@ function PostMediaSurface({
     // Exact aspect-ratio from the preview artifact; the provisional envelope
     // while it is not made yet. Multi-image previews reserve a gallery slot;
     // single images use object-cover to avoid letterboxing in feed cards.
-    // Edge to edge: the frame rounds the media's top corners; its bottom
-    // corners take the same card radius where the text starts (SPEC_FEED_DISPLAY.md, Д20).
+    // Edge to edge: the frame's line gives the media its top corners, its
+    // outline the same corners at the bottom (SPEC_FEED_DISPLAY.md, Д20).
     <GraphicSurface
-      className={cn(fit === "fill" ? "h-full w-full" : "w-full", fit === "edge" && MEDIA_OVER_TEXT_CLASS)}
-      windowClassName={fit === "fill" ? FILL_WINDOW_CLASS : undefined}
+      className={fit === "fill" ? "h-full w-full" : "w-full"}
+      liftOutline={fit === "fill" || !descriptor.textUnderMedia}
       style={{ aspectRatio: `${descriptor.primaryAspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
       data-card-preview-geometry={descriptor.primaryAspectRatio === null ? "pending" : undefined}
       contentInCloud={block.content_in_cloud}
@@ -1888,10 +1896,13 @@ const VideoCard = memo(function VideoCard({
 
   return (
     // The poster's shape, like a post's media: the height the grid reserved
-    // is computed from the same ratio (SPEC_CARD_MEDIA_GEOMETRY.md).
+    // is computed from the same ratio (SPEC_CARD_MEDIA_GEOMETRY.md). As with a
+    // picture, the surface fills the box the grid reserved, rounded to the
+    // pixel, and the ratio only shapes it where no box is given (measurement).
     <GraphicSurface
+      className="h-full w-full"
       style={{ aspectRatio: `${aspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
-      windowClassName={FILL_WINDOW_CLASS}
+      liftOutline
       data-card-preview-geometry={aspectRatio === null ? "pending" : undefined}
       contentInCloud={contentInCloud}
     >

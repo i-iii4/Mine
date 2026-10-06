@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 /// Card states (SPEC_CARD_STATES.md): keyboard focus colours the card's own
-/// frame (border and the layer under its surface, --card-frame-color) with --border-accent and washes a picture; a chosen collection's
+/// frame (its line and its media's outline, --card-frame-color) with --border-accent and washes a picture; a chosen collection's
 /// highlight colours the border only. Pointer hover adds no border and no wash, only the card's
 /// buttons. Selection uses the brighter --feed-selection-frame, never draws
 /// outside the card, and outranks every other state.
@@ -16,6 +16,21 @@ describe("card state styles", () => {
   it("gives keyboard focus and the collection highlight the accent border", () => {
     expect(ruleFor('[data-feed-grid-item-focused="true"] [data-block-slug]', "--card-frame-color: var(--border-accent)")).toBe(true);
     expect(ruleFor('[data-feed-grid-item-collection-lit="true"] [data-block-slug]', "--card-frame-color: var(--border-accent)")).toBe(true);
+  });
+
+  it("draws the frame's line over what the frame holds, clipped at the line's middle", () => {
+    expect(ruleFor("[data-feed-card-frame]::after {", "border: 1px solid var(--card-frame-color)")).toBe(true);
+    expect(ruleFor("[data-feed-card-frame]::after {", "z-index: 1")).toBe(true);
+    expect(ruleFor("[data-feed-card-frame]::after {", "border-color var(--card-frame-fade")).toBe(true);
+    expect(ruleFor("[data-feed-card-frame] {", "--card-frame-line-radius: max(0px, calc(var(--card-frame-outer-radius) - 0.5px))")).toBe(true);
+  });
+
+  it("draws the media outline as the frame's ring mirrored, in its colour and fade, rising with the media (Д20)", () => {
+    expect(ruleFor("[data-card-media-outline] {", "border: 1px solid var(--card-frame-color)")).toBe(true);
+    expect(ruleFor("[data-card-media-outline] {", "border-radius: var(--card-frame-outer-radius)")).toBe(true);
+    expect(ruleFor("[data-card-media-outline] {", "clip-path: inset(var(--media-outline-half) 0 0 0)")).toBe(true);
+    expect(ruleFor("[data-card-media-outline] {", "border-color var(--card-frame-fade")).toBe(true);
+    expect(ruleFor('[data-card-lift-pinned] [data-card-media-outline="on-lift"]', "translateY(calc(-1 * var(--card-lift)))")).toBe(true);
   });
 
   it("leaves pointer hover without a border or a wash", () => {
@@ -44,27 +59,11 @@ describe("card state styles", () => {
       '[data-feed-grid-item-selected="true"]',
       '[data-feed-grid-item-focused="true"]',
     ]) {
-      expect(ruleFor(`${state} [data-card-graphic-surface] > [data-card-lift="window"]::after`, "opacity: 1")).toBe(true);
-    }
-  });
-
-  it("colours the line under a card's media with the frame, at the frame's fade (Д20)", () => {
-    expect(ruleFor("[data-card-media-rule]", "background-color: var(--card-frame-color)")).toBe(true);
-    expect(ruleFor("[data-card-media-rule]", "background-color var(--card-frame-fade")).toBe(true);
-    // The frame fades its own colour by the same property, and every state
-    // that colours it sets the fade-in speed there.
-    expect(ruleFor("[data-block-slug]", "--card-frame-fade: var(--hover-intent-fade-out)")).toBe(true);
-    expect(ruleFor("[data-block-slug]", "border-color var(--card-frame-fade)")).toBe(true);
-    for (const state of [
-      '[data-feed-grid-item-focused="true"] [data-block-slug]',
-      '[data-feed-grid-item-collection-lit="true"] [data-block-slug]',
-      '[data-feed-grid-item-selected="true"] [data-block-slug]',
-    ]) {
-      expect(ruleFor(state, "--card-frame-fade: var(--hover-intent-fade-in)")).toBe(true);
+      expect(ruleFor(`${state} [data-card-media-clip] > [data-card-lift="window"]::after`, "opacity: 1")).toBe(true);
     }
   });
 
   it("lights a chosen collection's cards with the border only, never the wash (С3, С7)", () => {
-    expect(ruleFor('[data-feed-grid-item-collection-lit="true"] [data-card-graphic-surface] > [data-card-lift="window"]::after', "opacity: 1")).toBe(false);
+    expect(ruleFor('[data-feed-grid-item-collection-lit="true"] [data-card-media-clip] > [data-card-lift="window"]::after', "opacity: 1")).toBe(false);
   });
 });

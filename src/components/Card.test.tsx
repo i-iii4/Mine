@@ -9,7 +9,6 @@ import { publishCollectionOrder } from "@/lib/cardCollections";
 import { CARD_HOVER_ACTION_MIN_HEIGHT, computeCardHeight } from "@/lib/cardHeight";
 import { PROVISIONAL_MEDIA_ASPECT, clampCardAspect } from "@/lib/cardAspect";
 import { PreviewsPendingContext } from "@/lib/cardPreviewState";
-import { MEDIA_TEXT_RULE_PX } from "@/lib/cardLayout";
 import {
   EDGE_TEXT_SIDE_PX,
   EDGE_VISUAL_GAP_PX,
@@ -253,7 +252,7 @@ describe("Card", () => {
       />,
     );
 
-    expect(container.querySelector("[data-feed-card-frame]")).toHaveClass("bg-card");
+    expect(container.querySelector("[data-feed-card-frame] > [data-card-frame-clip]")).toHaveClass("bg-card");
   });
 
   it("uses the article feed fill for read-only article hover previews", () => {
@@ -266,7 +265,7 @@ describe("Card", () => {
     );
 
     // Every card stands on the card surface, in both themes (06.10.2026).
-    expect(container.querySelector("[data-feed-card-frame]")).toHaveClass("bg-card");
+    expect(container.querySelector("[data-feed-card-frame] > [data-card-frame-clip]")).toHaveClass("bg-card");
   });
 
   it("a preview renders the search excerpt with the highlighter mark, as the feed card does", () => {
@@ -553,7 +552,9 @@ describe("Card", () => {
     expect(card).toHaveStyle({
       minHeight: `${CARD_HOVER_ACTION_MIN_HEIGHT}px`,
     });
-    expect(card).toHaveClass("border-border");
+    // The frame's line is its own layer over the content (global.css), not a
+    // border a hover could recolour.
+    expect(card).not.toHaveClass("border", "border-border");
     expect(card).not.toHaveClass(
       "hover:border-component-fill-hover",
       "focus-visible:border-component-fill-hover",
@@ -871,7 +872,9 @@ describe("Card", () => {
       });
       const { container, unmount } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
       const surface = container.querySelector('[data-card-graphic-surface]');
-      expect(surface).toHaveClass('overflow-hidden', 'rounded-b-[var(--radius-card)]');
+      // The slot's clip, half a pixel under the lines around it, rounds the
+      // whole media at the line's middle; its tiles keep square seams.
+      expect(surface?.querySelector(':scope > [data-card-media-clip]')).toHaveClass('absolute', '-inset-[0.5px]', 'overflow-hidden', 'rounded-[var(--card-frame-line-radius)]');
       expect(surface?.querySelectorAll('img')).toHaveLength(count);
       for (const tile of container.querySelectorAll('[data-card-media-tile]')) {
         expect(tile.className).not.toContain('rounded');
@@ -886,7 +889,7 @@ describe("Card", () => {
     const b = block({ block_type: "article", url: "https://x.com/a/status/1",
       body: sources.map(src => `![](${src})`).join("\n"), media_urls: JSON.stringify(sources) });
     const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
-    expect(container.querySelector('[data-card-graphic-surface]')).toHaveClass('overflow-hidden', 'rounded-b-[var(--radius-card)]');
+    expect(container.querySelector('[data-card-graphic-surface] > [data-card-media-clip]')).toHaveClass('absolute', '-inset-[0.5px]', 'overflow-hidden', 'rounded-[var(--card-frame-line-radius)]');
     for (const tile of container.querySelectorAll('[data-card-media-tile]')) expect(tile.className).not.toContain('rounded');
   });
 
@@ -1815,10 +1818,10 @@ describe("Card geometry, author and name (SPEC_AUDIT_FIXES.md, Г4.5 to Г4.7)",
     // One line of 16px that ends in an ellipsis, never a second line.
     expect(author).toHaveClass("truncate");
     expect(author).toHaveStyle({ lineHeight: "16px" });
-    // The picture, the line under it (Д20), then the author's one line 14px
-    // from that line and from the bottom edge, letter to letter (Д25).
+    // The picture, then the author's one line 14px from it and from the
+    // bottom edge, letter to letter (Д25).
     expect(computeCardHeight(post, COLUMN, null, "mixed")).toBe(
-      CARD_BORDER + Math.round(INNER_WIDTH / 0.5) + MEDIA_TEXT_RULE_PX
+      CARD_BORDER + Math.round(INNER_WIDTH / 0.5)
         + edgeTextTop("author") + AUTHOR_LINE + edgeTextBottom("author"),
     );
   });
@@ -1994,12 +1997,8 @@ function layOutBox(
 ): number {
   const padding = paddingPx(element);
   const aspectRatio = aspectRatioOf(element);
-  // A box the card sizes inline: the line between media and text (Д20).
-  const fixedHeight = stylePx(element, "height");
   let height: number;
-  if (fixedHeight !== null) {
-    height = fixedHeight;
-  } else if (aspectRatio !== null) {
+  if (aspectRatio !== null) {
     // The layout reserves whole pixels, as `computeCardHeight` does.
     height = Math.round(width / aspectRatio);
   } else if (element.tagName === "P") {
@@ -2042,9 +2041,13 @@ function paintCard(
   const frame = new DOMParser().parseFromString(markup, "text/html")
     .querySelector("[data-feed-card-frame]");
   if (!frame) throw new Error("The card painted no frame");
+  // What the frame holds lies in its content box, one line width in from
+  // every edge: half a pixel to the clip, half a pixel more to the content.
+  const content = frame.querySelector(":scope > [data-card-frame-clip] > [data-card-frame-content]");
+  if (!content) throw new Error("The frame painted no content box");
   const boxes: PaintedBox[] = [];
   let contentHeight = 0;
-  for (const child of Array.from(frame.children)) {
+  for (const child of Array.from(content.children)) {
     if (child.classList.contains("absolute")) continue;
     contentHeight += layOutBox(
       child,
@@ -2058,11 +2061,10 @@ function paintCard(
   const height = Math.max(CARD_HOVER_ACTION_MIN_HEIGHT, contentHeight + FRAME_BORDER_PX * 2);
   const boxOf = (element: Element | null) => boxes.find((box) => box.element === element);
   const surface = boxOf(frame.querySelector("[data-card-graphic-surface]"));
-  const rule = boxOf(frame.querySelector("[data-card-media-rule]"));
   const text = boxes
     .filter((box) => box.element.tagName === "P" && box.height > 0)
     .sort((a, b) => a.top - b.top);
-  return { frame, height, surface, rule, text };
+  return { frame, height, surface, text };
 }
 
 describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д25)", () => {
@@ -2155,12 +2157,54 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д25)", () => {
     const { surface } = paintCard(make(), show, COLUMN);
     // Right under the frame's top border, across its whole inner width.
     expect(surface).toMatchObject({ top: FRAME_BORDER_PX, left: FRAME_BORDER_PX, width: INNER });
-    // The frame's rounded clip gives the media the card's top corners; the
-    // media rounds its own bottom corners with the same card radius where the
-    // text starts (01.10.2026), and has no outline of its own.
+    // The slot itself neither clips nor rounds: its clip reaches half a
+    // pixel past it on every side, under the frame's line at the top and
+    // sides and under the media's outline at the bottom, and rounds at the
+    // line's middle, so the visible corners are the lines' inner ones, the
+    // bottom a mirror of the top (06.10.2026).
     const classes = surface?.element.className.split(/\s+/) ?? [];
-    expect(classes).toContain("rounded-b-[var(--radius-card)]");
-    expect(classes.some((name) => name.startsWith("rounded-[") || name.startsWith("rounded-t-"))).toBe(false);
+    expect(classes.some((name) => name.startsWith("rounded") || name === "overflow-hidden")).toBe(false);
+    expect(surface?.element.querySelector(":scope > [data-card-media-clip]")?.className.split(/\s+/))
+      .toEqual(expect.arrayContaining(["-inset-[0.5px]", "overflow-hidden", "rounded-[var(--card-frame-line-radius)]"]));
+  });
+
+  // The media's outline at its bottom edge (Д20, 06.10.2026): outside the
+  // media, so at its sides it lies on the frame's own side lines; an overlay
+  // that adds nothing to the card's height.
+  const outlinesOf = (frame: Element) =>
+    Array.from(frame.querySelectorAll("[data-card-media-outline]"));
+
+  it.each([...framedCards, ["a link with its page picture", pageLink, "mixed"] as [string, () => LightBlock, FeedShow]])(
+    "closes the media of %s with its outline, opening the text part under it, at no height",
+    (_card, make, show) => {
+      const { frame, height } = paintCard(make(), show, COLUMN);
+      const outlines = outlinesOf(frame);
+      expect(outlines).toHaveLength(1);
+      expect(outlines[0]?.getAttribute("data-card-media-outline")).toBe("under-text");
+      expect(outlines[0]?.getAttribute("aria-hidden")).toBe("true");
+      const textPart = outlines[0]?.parentElement;
+      expect(textPart?.getAttribute("data-card-lift")).toBe("text");
+      expect(textPart?.previousElementSibling?.hasAttribute("data-card-graphic-surface")).toBe(true);
+      expect(height).toBe(computeCardHeight(make(), COLUMN, ONE_LINE, show));
+    },
+  );
+
+  it.each<[string, () => LightBlock, FeedShow]>([
+    ["a post whose media ends the card", () => ({
+      ...article(imageManifest(800, 600)), title: null, preview_text: null, author: null, body: "![](photo.jpg)",
+    }), "mixed"],
+    ["a bare picture", picture, "mixed"],
+    ["a picture in Media", picture, "media"],
+  ])("shows the outline of %s only on a lift, where the media rises over the row under it", (_card, make, show) => {
+    const { frame } = paintCard(make(), show, COLUMN);
+    const outlines = outlinesOf(frame);
+    expect(outlines).toHaveLength(1);
+    expect(outlines[0]?.getAttribute("data-card-media-outline")).toBe("on-lift");
+    // In the media's clip, over the window it rises with.
+    const clip = outlines[0]?.parentElement;
+    expect(clip?.hasAttribute("data-card-media-clip")).toBe(true);
+    expect(clip?.parentElement?.hasAttribute("data-card-graphic-surface")).toBe(true);
+    expect(outlines[0]?.previousElementSibling?.getAttribute("data-card-lift")).toBe("window");
   });
 
   it.each(framedCards)("spaces the text of %s 14px from letter to letter under the media (Д25)", (_card, make, show) => {
@@ -2175,12 +2219,9 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д25)", () => {
     const first = painted.text[0]!;
     const last = painted.text[painted.text.length - 1]!;
     const surface = painted.surface!;
-    const rule = painted.rule!;
-    // The line right under the media (Д20); 14px from it to the first
-    // letters, between every two groups, and from the last letters to the
-    // frame's bottom border.
-    expect(rule.top).toBe(surface.top + surface.height);
-    expect(first.top + air(first) - (rule.top + rule.height)).toBe(EDGE_VISUAL_GAP);
+    // 14px from the media to the first letters, between every two groups,
+    // and from the last letters to the frame's bottom border.
+    expect(first.top + air(first) - (surface.top + surface.height)).toBe(EDGE_VISUAL_GAP);
     painted.text.slice(1).forEach((line, index) => {
       const above = painted.text[index]!;
       expect(line.top + air(line) - (above.top + above.height - air(above))).toBe(EDGE_VISUAL_GAP);
@@ -2189,70 +2230,12 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д25)", () => {
     expect(painted.height).toBe(computeCardHeight(make(), COLUMN, ONE_LINE, show));
   });
 
-  it("reserves an article with one picture at its painted 334px", () => {
-    // Border 2 + media 318 × 3/4 (239) + the line under it 1 (Д20) + 12
-    // + title 16 + 8 + text 20 + 8 + author 16 + 12: every gap 14px from
-    // letter to letter (Д25).
+  it("reserves an article with one picture at its painted 333px", () => {
+    // Border 2 + media 318 × 3/4 (239) + 12 + title 16 + 8 + text 20 + 8
+    // + author 16 + 12: every gap 14px from letter to letter (Д25).
     const post = article(imageManifest(800, 600));
-    expect(computeCardHeight(post, COLUMN, ONE_LINE, "mixed")).toBe(334);
-    expect(paintCard(post, "mixed", COLUMN).height).toBe(334);
-  });
-
-  const ruledCards: Array<[string, () => LightBlock, FeedShow]> = [
-    ...framedCards,
-    ["a link with its page picture", pageLink, "mixed"],
-    ["a link with its page picture in Cards", pageLink, "cards"],
-  ];
-
-  it.each(ruledCards)("draws the line under the media of %s across the frame's inner width (Д20)", (_card, make, show) => {
-    const painted = paintCard(make(), show, COLUMN);
-    const surface = painted.surface!;
-    // Right under the media, 1px tall, from the frame's left line to its
-    // right one.
-    expect(painted.rule).toMatchObject({
-      top: surface.top + surface.height,
-      left: FRAME_BORDER_PX,
-      width: INNER,
-      height: MEDIA_TEXT_RULE_PX,
-    });
-    // It opens the text part, so it rises with the text on a lift (С8.3).
-    const rule = painted.rule!.element;
-    expect(rule.parentElement?.getAttribute("data-card-lift")).toBe("text");
-    expect(rule.parentElement?.firstElementChild).toBe(rule);
-    expect(rule.getAttribute("aria-hidden")).toBe("true");
-    expect(painted.frame.querySelectorAll("[data-card-media-rule]")).toHaveLength(1);
-    expect(painted.height).toBe(computeCardHeight(make(), COLUMN, ONE_LINE, show));
-  });
-
-  const framedWithoutLine: Array<[string, () => LightBlock, FeedShow]> = [
-    ["a post whose media ends the card", () => ({
-      ...article(imageManifest(800, 600)), title: null, preview_text: null, author: null, body: "![](photo.jpg)",
-    }), "mixed"],
-    ["an X post whose gallery ends the card", () => ({
-      ...xPost(galleryManifest(4)), preview_text: null, author: null, body: "![](photo.jpg)",
-    }), "mixed"],
-    ["a picture Cards frames with no words", () => ({ ...picture(), content_heading: null, body: "" }), "cards"],
-    ["a text post", () => block({
-      block_type: "article", card_kind: "article", title: "A piece", description: null, url: null,
-      body: "Short words", preview_text: "Short words", author: "Ann",
-    }), "mixed"],
-    ["a link without a picture", () => block({ block_type: "link", title: "Bare page", url: "https://bare.example.com" }), "mixed"],
-  ];
-
-  it.each(framedWithoutLine)("draws no line in %s, and reserves no pixel for one", (_card, make, show) => {
-    const painted = paintCard(make(), show, COLUMN);
-    expect(painted.rule).toBeUndefined();
-    expect(painted.height).toBe(computeCardHeight(make(), COLUMN, ONE_LINE, show));
-  });
-
-  it.each([
-    ["a picture without a frame", picture, "mixed"],
-    ["a video without a frame", video, "mixed"],
-    ["a post in Media", () => article(imageManifest(800, 600)), "media"],
-    ["a gallery in Media", () => xPost(galleryManifest(4)), "media"],
-    ["a link's picture in Media", pageLink, "media"],
-  ] as const)("draws no line on %s", (_card, make, show) => {
-    expect(paintCard(make(), show, COLUMN).rule).toBeUndefined();
+    expect(computeCardHeight(post, COLUMN, ONE_LINE, "mixed")).toBe(333);
+    expect(paintCard(post, "mixed", COLUMN).height).toBe(333);
   });
 
   it.each([
@@ -2419,10 +2402,10 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д25)", () => {
         onRequestDelete={vi.fn()}
       />,
     );
-    const frame = container.querySelector("[data-feed-card-frame]")!;
-    const surface = frame.querySelector("[data-card-graphic-surface]");
+    const content = container.querySelector("[data-feed-card-frame] [data-card-frame-content]")!;
+    const surface = content.querySelector("[data-card-graphic-surface]");
     // Everything but the body: the hover menu and what it positions.
-    const overlay = Array.from(frame.children).filter((child) => !child.contains(surface));
+    const overlay = Array.from(content.children).filter((child) => !child.contains(surface));
     expect(overlay.length).toBeGreaterThan(0);
     for (const child of overlay) {
       expect(child.classList.contains("absolute")).toBe(true);
@@ -2580,9 +2563,11 @@ describe("Card lift on hover (SPEC_CARD_STATES.md, С8)", () => {
       <Card block={block({ block_type: "image", media_file: "photo.jpg" })} vaultPath={VAULT} onClick={vi.fn()} {...menuProps} />,
     );
     const surface = container.querySelector("[data-card-graphic-surface]")!;
-    const windowLayer = surface.querySelector(":scope > [data-card-lift='window']");
+    const windowLayer = surface.querySelector(":scope > [data-card-media-clip] > [data-card-lift='window']");
     expect(windowLayer).not.toBeNull();
     expect(windowLayer!.querySelector(":scope > [data-card-lift='plane']")).not.toBeNull();
+    // The badge stays on the slot, outside the clip the window moves in.
+    expect(surface.querySelector(":scope > [data-card-media-clip] [data-cloud-badge]")).toBeNull();
     expect(container.querySelector("[data-card-lift='tray']")).not.toBeNull();
   });
 
@@ -3019,8 +3004,6 @@ describe("Card without a preview: pending, missing, unreadable (SPEC_CARD_MEDIA_
       expect(surface).toHaveTextContent("");
       expect(screen.getByText("A page")).toBeInTheDocument();
       expect(screen.getByText("example.com")).toBeInTheDocument();
-      // The held slot is the media the line runs under (Д20).
-      expect(surface?.nextElementSibling?.firstElementChild).toHaveAttribute("data-card-media-rule");
     });
 
     it("falls back to the compact card when no picture is coming", () => {
@@ -3028,8 +3011,6 @@ describe("Card without a preview: pending, missing, unreadable (SPEC_CARD_MEDIA_
       fireEvent.error(container.querySelector("img")!);
       expect(container.querySelector("[data-card-graphic-surface]")).toBeNull();
       expect(screen.getByText("A page")).toBeInTheDocument();
-      // No media, so no line under it: one would double the frame's top edge.
-      expect(container.querySelector("[data-card-media-rule]")).toBeNull();
     });
 
     it("stays compact without a manifest even during the pass: the layout reserved no slot", () => {
