@@ -48,6 +48,22 @@ describe("card state styles", () => {
     }
   });
 
+  it("colours the line under a card's media with the frame, at the frame's fade (Д20)", () => {
+    expect(ruleFor("[data-card-media-rule]", "background-color: var(--card-frame-color)")).toBe(true);
+    expect(ruleFor("[data-card-media-rule]", "background-color var(--card-frame-fade")).toBe(true);
+    // The frame fades its own colour by the same property, and every state
+    // that colours it sets the fade-in speed there.
+    expect(ruleFor("[data-block-slug]", "--card-frame-fade: var(--hover-intent-fade-out)")).toBe(true);
+    expect(ruleFor("[data-block-slug]", "border-color var(--card-frame-fade)")).toBe(true);
+    for (const state of [
+      '[data-feed-grid-item-focused="true"] [data-block-slug]',
+      '[data-feed-grid-item-collection-lit="true"] [data-block-slug]',
+      '[data-feed-grid-item-selected="true"] [data-block-slug]',
+    ]) {
+      expect(ruleFor(state, "--card-frame-fade: var(--hover-intent-fade-in)")).toBe(true);
+    }
+  });
+
   it("lights a chosen collection's cards with the border only, never the wash (С3, С7)", () => {
     expect(ruleFor('[data-feed-grid-item-collection-lit="true"] [data-card-graphic-surface] > [data-card-lift="window"]::after', "opacity: 1")).toBe(false);
   });

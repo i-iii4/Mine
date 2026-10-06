@@ -186,25 +186,40 @@ select,
    Pointer hover adds nothing but the card's buttons. Selection uses the same border,
    brighter, never draws outside the card, and outranks every other state:
    nothing is added on top of a selected card. */
+/* The frame's colour fades in --card-frame-fade: a state arrives at the
+   fade-in speed and leaves at the fade-out speed. The line under a card's
+   media reads the same property, so it changes colour with the border. */
 [data-block-slug] {
+  --card-frame-fade: var(--hover-intent-fade-out);
   transition:
-    border-color var(--hover-intent-fade-out) cubic-bezier(0.22, 1, 0.36, 1),
-    background-color var(--hover-intent-fade-out) cubic-bezier(0.22, 1, 0.36, 1);
+    border-color var(--card-frame-fade) cubic-bezier(0.22, 1, 0.36, 1),
+    background-color var(--card-frame-fade) cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* A state colours the frame through --card-frame-color: its border and the
-   layer under its surface follow together ([data-feed-card-frame] below). */
+/* A state colours the frame through --card-frame-color: its border, the
+   layer under its surface ([data-feed-card-frame] below) and the line under
+   its media ([data-card-media-rule]) follow together. */
 [data-grid-scroll][data-feed-grid-focus-mode="true"] [data-feed-grid-item-focused="true"] [data-block-slug],
 [data-grid-scroll] [data-feed-grid-item-collection-lit="true"] [data-block-slug] {
   --card-frame-color: var(--border-accent);
-  transition-duration: var(--hover-intent-fade-in);
+  --card-frame-fade: var(--hover-intent-fade-in);
 }
 
 /* Five attribute selectors: more specific than the focus rule above, so a
    focused selected card keeps the selection border. */
 [data-grid-scroll] [data-feed-grid-item][data-feed-grid-item-live][data-feed-grid-item-selected="true"] [data-block-slug] {
   --card-frame-color: var(--feed-selection-frame);
-  transition-duration: var(--hover-intent-fade-in);
+  --card-frame-fade: var(--hover-intent-fade-in);
+}
+
+/* The line between a framed card's media and the text under it
+   (SPEC_FEED_DISPLAY.md, Д20): the frame's colour with the frame's fade,
+   across the frame's inner width, so it meets the side lines and follows
+   focus and selection with the border. Its height is the card's
+   MEDIA_TEXT_RULE_PX (Card.tsx). A frame outside the feed carries no fade. */
+[data-card-media-rule] {
+  background-color: var(--card-frame-color);
+  transition: background-color var(--card-frame-fade, 0s) cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* The wash lives on the media window, not on the slot: a card lift moves the

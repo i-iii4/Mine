@@ -119,6 +119,10 @@ function derivedPreviewManifest(
 // to the outer height. All block types include this in their returned height.
 const CARD_BORDER = 2;
 
+// The line in the frame's colour between a framed card's media and the text
+// under it (SPEC_FEED_DISPLAY.md, Д20): 1px of the card's height.
+const MEDIA_RULE = 1;
+
 describe("computeCardHeight — image", () => {
   it("reserves height from the artifact ratio", () => {
     const block = makeBlock({
@@ -277,8 +281,9 @@ describe("computeCardHeight — video / link / file", () => {
         overflow_count: 0,
       }),
     });
-    // 12 + title 16 + 2 + domain 16 + 12: the footer LinkCard paints.
-    const expected = Math.round(318 * 9 / 16) + 58 + CARD_BORDER;
+    // The line under the picture (Д20), then 12 + title 16 + 2 + domain 16 + 12:
+    // the footer LinkCard paints.
+    const expected = Math.round(318 * 9 / 16) + MEDIA_RULE + 58 + CARD_BORDER;
     expect(computeCardHeight(block, 320, null)).toBe(expected);
   });
 
@@ -517,9 +522,10 @@ describe("computeCardHeight — social", () => {
     });
     const h = computeCardHeight(block, 280, wordWidths);
     // border 2 + the two-tile gallery at 2:1 across the inner width (278 / 2
-    // = 139, the height its surface paints) + 14px to the author's letters
-    // (box 12) + author 16 + 14px under them (box 12)
-    expect(h).toBe(181);
+    // = 139, the height its surface paints) + the 1px line under it (Д20) +
+    // 14px to the author's letters (box 12) + author 16 + 14px under them
+    // (box 12)
+    expect(h).toBe(182);
   });
 
   it("enforces the interactive minimum for empty social cards", () => {
@@ -630,8 +636,9 @@ describe("card presentation heights (SPEC_FEED_DISPLAY.md, Д15)", () => {
   });
 
   it("Mixed and Cards keep the link's 16:9 thumbnail slot whatever its picture's shape (В5.7)", () => {
-    // 12 + title 16 + 2 + domain 16 + 12: the footer LinkCard paints.
-    const expected = Math.round(318 * 9 / 16) + 58 + CARD_BORDER;
+    // The line under the picture (Д20), then 12 + title 16 + 2 + domain 16 + 12:
+    // the footer LinkCard paints.
+    const expected = Math.round(318 * 9 / 16) + MEDIA_RULE + 58 + CARD_BORDER;
     for (const artifact of [[600, 900], null] as const) {
       const link = pageLink({ source: [1200, 630], artifact: artifact ? [artifact[0], artifact[1]] : null });
       expect(computeCardHeight(link, 320, null, "mixed")).toBe(expected);
@@ -758,7 +765,7 @@ describe("post card geometry (SPEC_FEED_DISPLAY.md, Д20, Д25)", () => {
       preview_manifest: artifactManifest(640, 480),
     });
     expect(computeCardHeight(post, COLUMN, widths, "mixed")).toBe(
-      CARD_BORDER + Math.round(INNER / (640 / 480)) + TOP_TITLE + 16 + TITLE_TO_TEXT + 20 + BOTTOM_TEXT,
+      CARD_BORDER + Math.round(INNER / (640 / 480)) + MEDIA_RULE + TOP_TITLE + 16 + TITLE_TO_TEXT + 20 + BOTTOM_TEXT,
     );
   });
 
@@ -781,7 +788,7 @@ describe("post card geometry (SPEC_FEED_DISPLAY.md, Д20, Д25)", () => {
       preview_manifest: artifactManifest(640, 480),
     });
     expect(computeCardHeight(article, COLUMN, widths, "mixed")).toBe(
-      CARD_BORDER + Math.round(INNER / (640 / 480)) + TOP_TITLE + 16 + TITLE_TO_TEXT + 20 + BOTTOM_TEXT,
+      CARD_BORDER + Math.round(INNER / (640 / 480)) + MEDIA_RULE + TOP_TITLE + 16 + TITLE_TO_TEXT + 20 + BOTTOM_TEXT,
     );
 
     const xPost = makeBlock({
@@ -793,7 +800,7 @@ describe("post card geometry (SPEC_FEED_DISPLAY.md, Д20, Д25)", () => {
       preview_manifest: artifactManifest(640, 480),
     });
     expect(computeCardHeight(xPost, COLUMN, widths, "mixed")).toBe(
-      CARD_BORDER + Math.round(INNER / (640 / 480)) + TOP_TEXT + 20 + BOTTOM_TEXT,
+      CARD_BORDER + Math.round(INNER / (640 / 480)) + MEDIA_RULE + TOP_TEXT + 20 + BOTTOM_TEXT,
     );
   });
 

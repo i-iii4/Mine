@@ -7,6 +7,7 @@ import {
   fallbackThumbsRoot,
 } from "@/lib/assets";
 import {
+  MEDIA_TEXT_RULE_PX,
   deriveCardLayoutDescriptor,
   deriveContentCardSlots,
   parsePreviewManifest,
@@ -906,7 +907,7 @@ export function CardContent({
       case "image":
         return <ImageCard block={block} descriptor={descriptor} previewManifest={previewManifest} thumbsRootPath={resolvedThumbsRoot} thumbVersion={thumbVersion} measurementMode={measurementMode} />;
       case "link":
-        return <LinkCard block={block} reservesThumbnail={descriptor.primaryAspectRatio !== null} previewManifest={previewManifest} thumbsRootPath={resolvedThumbsRoot} thumbVersion={thumbVersion} measurementMode={measurementMode} />;
+        return <LinkCard block={block} reservesThumbnail={descriptor.primaryAspectRatio !== null} textUnderMedia={descriptor.textUnderMedia} previewManifest={previewManifest} thumbsRootPath={resolvedThumbsRoot} thumbVersion={thumbVersion} measurementMode={measurementMode} />;
       case "article-text":
       case "article-media":
         return <ArticleCard block={block} descriptor={descriptor} previewManifest={previewManifest} vaultPath={vaultPath} thumbsRootPath={resolvedThumbsRoot} thumbVersion={thumbVersion} playback={playback} allowPlayback={allowPlayback} measurementMode={measurementMode} />;
@@ -1191,9 +1192,14 @@ const LINK_COLORS = [
   "bg-rose-900", "bg-cyan-900", "bg-indigo-900", "bg-teal-900",
 ];
 
+/// A link's footer: 12px round its title and domain (`linkFooterHeight` in
+/// cardHeight.ts counts the same).
+const LINK_FOOTER_CLASS = "p-3";
+
 const LinkCard = memo(function LinkCard({
   block,
   reservesThumbnail,
+  textUnderMedia,
   previewManifest,
   thumbsRootPath,
   thumbVersion,
@@ -1202,6 +1208,8 @@ const LinkCard = memo(function LinkCard({
   block: LightBlock;
   /** The layout reserved the page picture's slot above the text. */
   reservesThumbnail: boolean;
+  /** The descriptor's line between that slot and the footer (Д20). */
+  textUnderMedia: boolean;
   previewManifest: ReturnType<typeof parsePreviewManifest>;
   thumbsRootPath: string;
   thumbVersion?: number;
@@ -1246,7 +1254,7 @@ const LinkCard = memo(function LinkCard({
   }, [thumbError]);
 
   const textFooter = (
-    <div className="p-3" data-card-lift="text">
+    <>
       <p className={cn("truncate", CONTENT_CARD_TITLE_CLASSES)} style={contentCardSingleLineTextStyle}>
         {navigationLabel}
       </p>
@@ -1254,23 +1262,27 @@ const LinkCard = memo(function LinkCard({
         <p className="mt-0.5 truncate text-sm text-muted-foreground" style={contentCardSingleLineTextStyle}>{domain}</p>
       )}
       <CardCollectionPills collections={shownCollections(block)} style={{ marginTop: 8 }} />
-    </div>
+    </>
   );
 
   // No thumbnail. While the page picture is on the way, the slot the layout
   // reserved for it holds the quiet fill above the text; otherwise the card
-  // is compact, title and domain only.
+  // is compact, title and domain only, with no media to set a line under.
   if (thumbError) {
     if (previewState !== "pending" || !reservesThumbnail) {
-      return textFooter;
+      return <FramedCardBody media={null} textUnderMedia={false} text={textFooter} textClassName={LINK_FOOTER_CLASS} />;
     }
     return (
-      <div className="flex flex-col">
-        <GraphicSurface className="aspect-video">
-          <PreviewPendingFill />
-        </GraphicSurface>
-        {textFooter}
-      </div>
+      <FramedCardBody
+        media={(
+          <GraphicSurface className="aspect-video">
+            <PreviewPendingFill />
+          </GraphicSurface>
+        )}
+        textUnderMedia={textUnderMedia}
+        text={textFooter}
+        textClassName={LINK_FOOTER_CLASS}
+      />
     );
   }
 
@@ -1279,37 +1291,41 @@ const LinkCard = memo(function LinkCard({
   const bgColor = LINK_COLORS[colorIdx % LINK_COLORS.length]!;
 
   return (
-    <div className="flex flex-col">
-      <GraphicSurface className="aspect-video" windowClassName={bgColor}>
-        {!thumbLoaded && (
-          <div className="flex h-full flex-col items-center justify-center gap-1">
-            <span className="text-lg font-semibold text-white/40">{initial}</span>
-            {domain && (
-              <span className="text-sm text-white/30">{domain}</span>
-            )}
-          </div>
-        )}
-        {!measurementMode && (
-          <img
-            src={thumb ?? ""}
-            alt=""
-            className={cn(
-              "absolute inset-0 h-full w-full object-cover transition-opacity",
-              thumbLoaded ? "opacity-100" : "opacity-0",
-            )}
-            loading={imgLoading}
-            decoding="async"
-            draggable={false}
-            onLoad={() => setLoadedSrc(thumb)}
-            onError={() => {
-              setLoadedSrc(null);
-              setSourceIndex((i) => i + 1);
-            }}
-          />
-        )}
-      </GraphicSurface>
-      {textFooter}
-    </div>
+    <FramedCardBody
+      textUnderMedia={textUnderMedia}
+      text={textFooter}
+      textClassName={LINK_FOOTER_CLASS}
+      media={(
+        <GraphicSurface className="aspect-video" windowClassName={bgColor}>
+          {!thumbLoaded && (
+            <div className="flex h-full flex-col items-center justify-center gap-1">
+              <span className="text-lg font-semibold text-white/40">{initial}</span>
+              {domain && (
+                <span className="text-sm text-white/30">{domain}</span>
+              )}
+            </div>
+          )}
+          {!measurementMode && (
+            <img
+              src={thumb ?? ""}
+              alt=""
+              className={cn(
+                "absolute inset-0 h-full w-full object-cover transition-opacity",
+                thumbLoaded ? "opacity-100" : "opacity-0",
+              )}
+              loading={imgLoading}
+              decoding="async"
+              draggable={false}
+              onLoad={() => setLoadedSrc(thumb)}
+              onError={() => {
+                setLoadedSrc(null);
+                setSourceIndex((i) => i + 1);
+              }}
+            />
+          )}
+        </GraphicSurface>
+      )}
+    />
   );
 });
 
@@ -1433,6 +1449,7 @@ const SocialCard = memo(function SocialCard({
   return (
     <PostCardBody
       media={mediaSurface}
+      textUnderMedia={descriptor.textUnderMedia}
       textLines={lines}
       textStack={hasTextStack ? (
         <>
@@ -1521,51 +1538,97 @@ function textGapsFor(lines: readonly CardTextLine[]) {
   };
 }
 
+/// The line between a framed card's media and the text under it, at the
+/// height `computeCardHeight` reserves for it; global.css paints it in the
+/// frame's colour with the frame's fade (`[data-card-media-rule]`).
+const MEDIA_TEXT_RULE_STYLE = { height: MEDIA_TEXT_RULE_PX } as const;
+
+/// The body of every framed card that may stack text under media: posts,
+/// articles, X and Instagram posts, pictures `Cards` frames as posts, and
+/// links. Its media, when it has one, comes first; its text part follows and
+/// rises with the lift (SPEC_CARD_STATES.md, С8.2, С8.3). When the card's
+/// descriptor stands the text under the media (`textUnderMedia`), the text
+/// part opens with the line between the two: 1px of the frame's colour across
+/// the frame's inner width, meeting its side lines (SPEC_FEED_DISPLAY.md,
+/// Д20). Riding in the text part, the line rises with the text and stays
+/// under the rising media window; the text's own gaps (Д25) start under it.
+/// `computeCardHeight` counts the same line from the same field.
+function FramedCardBody({
+  media,
+  textUnderMedia,
+  text,
+  textClassName,
+  textStyle,
+}: {
+  /** The media surface, or null for a card without media. */
+  media: ReactNode;
+  /** The descriptor's `textUnderMedia`: the line opens the text part. */
+  textUnderMedia: boolean;
+  /** The text part's content, or null when the card has none. */
+  text: ReactNode;
+  /** The text part's own padding. */
+  textClassName?: string;
+  textStyle?: CSSProperties;
+}) {
+  return (
+    <div>
+      {media}
+      {text !== null && (
+        <div data-card-lift="text">
+          {textUnderMedia && (
+            <div aria-hidden="true" data-card-media-rule="" style={MEDIA_TEXT_RULE_STYLE} />
+          )}
+          <div className={textClassName} style={textStyle}>
+            {text}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /// The body of a framed card with its media on top and its text under it:
 /// posts, articles, X and Instagram posts, and pictures `Cards` frames as
 /// posts. The media spans the frame's inner width from its top edge, with no
 /// outline of its own; the frame's clip gives it the card's top corners and
-/// its bottom corners take the card radius where the text starts. The text
-/// under it is padded 8px at its sides, and every vertical gap reads 14px
-/// from letter to letter: the boxes are spaced by the gap less the
-/// half-leading of the lines that meet (SPEC_FEED_DISPLAY.md, Д20, Д25). Media
-/// with no text under it is the whole body. `postCardHeight` in cardHeight.ts
-/// reserves exactly this.
+/// its bottom corners take the card radius where the text starts. Under it
+/// runs the line of `FramedCardBody`. The text is padded 8px at its sides,
+/// and every vertical gap reads 14px from letter to letter: the boxes are
+/// spaced by the gap less the half-leading of the lines that meet
+/// (SPEC_FEED_DISPLAY.md, Д20, Д25). Media with no text under it is the whole
+/// body. `postCardHeight` in cardHeight.ts reserves exactly this.
 function PostCardBody({
   media,
+  textUnderMedia,
   textLines,
   textStack,
 }: {
   /** The media surface, or null for a card without media. */
   media: ReactNode;
+  /** The descriptor's `textUnderMedia`. */
+  textUnderMedia: boolean;
   /** The lines the text stack paints, top to bottom. */
   textLines: readonly CardTextLine[];
   /** The text under the media, or null when there is none. */
   textStack: ReactNode;
 }) {
-  const hasMedia = media !== null;
   const first = textLines[0];
   const last = textLines[textLines.length - 1];
   const body = (
-    <div>
-      {media}
-      {textStack !== null && first && last && (
-        <div
-          data-card-lift="text"
-          style={{
-            paddingInline: EDGE_TEXT_SIDE_PX,
-            paddingTop: edgeTextTop(first),
-            paddingBottom: edgeTextBottom(last),
-          }}
-        >
-          {textStack}
-        </div>
-      )}
-    </div>
+    <FramedCardBody
+      media={media}
+      textUnderMedia={textUnderMedia}
+      text={textStack !== null && first && last ? textStack : null}
+      textStyle={first && last ? {
+        paddingInline: EDGE_TEXT_SIDE_PX,
+        paddingTop: edgeTextTop(first),
+        paddingBottom: edgeTextBottom(last),
+      } : undefined}
+    />
   );
   // A text post's body rises past the top edge on a lift; it dissolves there
   // with the sidebar strip's fade curve.
-  return !hasMedia
+  return media === null
     ? <div data-card-lift-fade="" style={TOP_LIFT_FADE_MASK_STYLE}>{body}</div>
     : body;
 }
@@ -1726,6 +1789,7 @@ const ArticleCard = memo(function ArticleCard({
   return (
     <PostCardBody
       textLines={lines}
+      textUnderMedia={descriptor.textUnderMedia}
       media={hasPreview ? (
         <PostMediaSurface
           fit="edge"

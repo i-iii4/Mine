@@ -7,6 +7,7 @@ import { getDisplayTitle, getMediaOwnTitle } from "@/lib/displayTitle";
 import type { FeedShow } from "@/lib/feedDisplay";
 import { clampCardAspect } from "@/lib/cardAspect";
 import { parseYoutubeSource } from "@/lib/youtubeSource";
+import { shownCollections } from "@/lib/cardCollections";
 
 export type CardLayoutVariant =
   | "image"
@@ -39,7 +40,22 @@ export interface CardLayoutDescriptor {
   mediaItems: CardLayoutMediaItem[];
   visibleMediaCount: number;
   totalMediaCount: number;
+  /// The framed card stands its media on top and a text part under it, the
+  /// two divided by a line in the frame's colour (SPEC_FEED_DISPLAY.md, Д20).
+  /// The card draws that line from this field and `computeCardHeight` counts
+  /// its `MEDIA_TEXT_RULE_PX` from it. False when the media ends the card,
+  /// for media without a frame, in `Media` and for cards without media.
+  textUnderMedia: boolean;
 }
+
+/// Thickness of the line between a framed card's media and the text under it
+/// (Д20): the frame's own 1px. The card draws it at this height and the
+/// reserved height counts it, so the two never drift apart.
+export const MEDIA_TEXT_RULE_PX = 1;
+
+/// A descriptor before the line under its media is decided: the shape every
+/// presentation derives, which `deriveCardLayoutDescriptor` completes.
+type CardLayoutShape = Omit<CardLayoutDescriptor, "textUnderMedia">;
 
 export interface ContentCardSlots {
   hasTopContent: boolean;
@@ -49,6 +65,9 @@ export interface ContentCardSlots {
 
 export type CardLayoutBlock = Omit<LightBlock, "search_match" | "collections"> & {
   search_match?: LightBlock["search_match"];
+  /// A feed card's collections, the pills under its text (SPEC_CARD_STATES.md,
+  /// С9); a block read elsewhere (Detail) may not carry them.
+  collections?: LightBlock["collections"];
 };
 
 export function getRuntimeCardKind(block: CardLayoutBlock): LightBlock["card_kind"] {
@@ -257,7 +276,7 @@ function deriveMediaCardLayoutDescriptor(
   block: CardLayoutBlock,
   titleText: string,
   previewManifest: ReturnType<typeof parsePreviewManifest>,
-): CardLayoutDescriptor {
+): CardLayoutShape {
   const mediaItems = mediaItemsFromMediaMetadata(previewManifest);
 
   if (hasVideoMediaSignal(block, previewManifest, mediaItems)) {
@@ -337,7 +356,7 @@ function deriveArticleCardLayoutDescriptor(
   authorText: string,
   previewManifest: ReturnType<typeof parsePreviewManifest>,
   indexedPreviewText: string,
-): CardLayoutDescriptor {
+): CardLayoutShape {
   if (isSocialUrl(block.url)) {
     const previewText = indexedPreviewText || stripMarkdown((block.body.split(/^---+$/m)[0] ?? block.body).trim());
     const mediaItems = previewManifest ? mediaItemsFromManifestTiles(previewManifest.tiles) : [];
@@ -414,7 +433,7 @@ function deriveLinkCardLayoutDescriptor(
   titleText: string,
   previewManifest: ReturnType<typeof parsePreviewManifest>,
   indexedPreviewText: string,
-): CardLayoutDescriptor {
+): CardLayoutShape {
   const mediaItems = previewManifest ? mediaItemsFromManifestTiles(previewManifest.tiles) : [];
   const hasVisualPreview = previewManifest?.kind !== undefined
     && previewManifest.kind !== "text"
@@ -464,18 +483,45 @@ export function deriveCardLayoutDescriptor(
 ): CardLayoutDescriptor {
   const previewManifest = parsePreviewManifest(block);
   const mixed = deriveMixedCardLayoutDescriptor(block, previewManifest);
-  return show === "cards"
+  const shape = show === "cards"
     ? asPostCard(block, mixed)
     : show === "media"
       ? asMediaOnly(mixed, previewManifest)
       : mixed;
+  return { ...shape, textUnderMedia: hasTextUnderMedia(block, shape) };
+}
+
+/// Whether a framed card's media stands over a text part (Д20). A post, an
+/// article, an X or Instagram post and a picture or video `Cards` frames as a
+/// post have one when anything is set under the media: a title, text, an
+/// author or the row of collections. A link has one whenever the layout
+/// reserves its page picture's slot, since the footer under it always names
+/// the page. Media alone (without a frame in `Mixed`, or in `Media`) and cards
+/// without media have none.
+function hasTextUnderMedia(block: CardLayoutBlock, shape: CardLayoutShape): boolean {
+  switch (shape.variant) {
+    case "article-media":
+    case "social-single-media":
+    case "social-media-grid":
+      return Boolean(shape.titleText || shape.previewText || shape.authorText)
+        || shownCollections({ collections: block.collections ?? [] }).length > 0;
+    case "link":
+      return shape.primaryAspectRatio !== null;
+    case "image":
+    case "video":
+    case "file":
+    case "article-text":
+    case "social-text":
+    case "media-only":
+      return false;
+  }
 }
 
 /// `Cards`: a picture or video card becomes a post card, its media on top
 /// across the frame and under it its own title (the body's first heading),
 /// its text and its author when it has them (Д12). Every other card is framed
 /// already.
-function asPostCard(block: CardLayoutBlock, mixed: CardLayoutDescriptor): CardLayoutDescriptor {
+function asPostCard(block: CardLayoutBlock, mixed: CardLayoutShape): CardLayoutShape {
   if (mixed.variant !== "image" && mixed.variant !== "video") return mixed;
   return {
     ...mixed,
@@ -492,9 +538,9 @@ function asPostCard(block: CardLayoutBlock, mixed: CardLayoutDescriptor): CardLa
 /// it leaves the framed link's fixed slot and takes its own artifact's shape,
 /// like a post's single media, the provisional envelope until it is measured.
 function asMediaOnly(
-  mixed: CardLayoutDescriptor,
+  mixed: CardLayoutShape,
   previewManifest: ReturnType<typeof parsePreviewManifest>,
-): CardLayoutDescriptor {
+): CardLayoutShape {
   const linkPicture = mixed.variant === "link" && mixed.mediaItems.length > 0;
   if (!MEDIA_BEARING_VARIANTS.has(mixed.variant) && !linkPicture) return mixed;
   return {
@@ -512,7 +558,7 @@ function asMediaOnly(
 function deriveMixedCardLayoutDescriptor(
   block: CardLayoutBlock,
   previewManifest: ReturnType<typeof parsePreviewManifest>,
-): CardLayoutDescriptor {
+): CardLayoutShape {
   const titleText = getDisplayTitle(block) ?? "";
   const authorText = block.author ?? "";
   const indexedPreviewText = block.preview_text?.trim() ?? "";

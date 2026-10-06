@@ -14,7 +14,14 @@
 import type { LightBlock } from "@/types";
 import type { WordWidths } from "@/types/fontMetrics";
 import { countLines } from "./wordWrap";
-import { deriveCardLayoutDescriptor, deriveContentCardSlots, getRuntimeCardKind, parsePreviewManifest } from "./cardLayout";
+import {
+  MEDIA_TEXT_RULE_PX,
+  deriveCardLayoutDescriptor,
+  deriveContentCardSlots,
+  getRuntimeCardKind,
+  parsePreviewManifest,
+  type CardLayoutDescriptor,
+} from "./cardLayout";
 import {
   CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX,
   CONTENT_CARD_SINGLE_LINE_HEIGHT_PX,
@@ -90,10 +97,32 @@ function linkFooterHeight(block: LightBlock): number {
     + collectionPillsHeight(block, 8) + 12;
 }
 
+/**
+ * A link with its page picture's slot, as LinkCard paints it: the 16:9 slot
+ * across the frame's inner width, the line under it (Д20) and the footer.
+ */
+function linkWithPictureHeight(
+  block: LightBlock,
+  columnWidth: number,
+  descriptor: CardLayoutDescriptor,
+): number {
+  return Math.round(innerWidth(columnWidth) * THUMBNAIL_ASPECT)
+    + mediaTextRuleHeight(descriptor)
+    + linkFooterHeight(block)
+    + CARD_BORDER_HEIGHT;
+}
+
 /** The collection pill row under a card's text and the gap above it, or
  *  nothing for a card in no collection (SPEC_CARD_STATES.md, С9). */
 function collectionPillsHeight(block: LightBlock, gapAbove: number): number {
   return shownCollections(block).length > 0 ? gapAbove + CARD_COLLECTION_PILLS_HEIGHT_PX : 0;
+}
+
+/** The line between a framed card's media and the text under it, when the
+ *  descriptor sets one (SPEC_FEED_DISPLAY.md, Д20): the same 1px the card
+ *  draws at the top of its text part. */
+function mediaTextRuleHeight(descriptor: CardLayoutDescriptor): number {
+  return descriptor.textUnderMedia ? MEDIA_TEXT_RULE_PX : 0;
 }
 
 /** Fixed file card height. */
@@ -247,14 +276,16 @@ function postTextWidth(iw: number): number {
 
 /**
  * Outer height of a post card's body: media on top, the text stack under it.
- * The media starts at the frame's top edge and spans its inner width; the
- * text stack under it is padded 8px at its sides, and its first and last
- * lines stand 14px from the media and from the bottom edge, letter to letter.
- * Media with no text under it is the whole body; a text post's stack stands
- * 14px from both edges. `textStackH` is the stack's own height, its inner gaps
- * included, wrapped at `postTextWidth`.
+ * The media starts at the frame's top edge and spans its inner width; under
+ * it, when the descriptor sets text there, runs the 1px line in the frame's
+ * colour (Д20). The text stack is padded 8px at its sides, and its first and
+ * last lines stand 14px from that line (or the media) and from the bottom
+ * edge, letter to letter. Media with no text under it is the whole body; a
+ * text post's stack stands 14px from both edges. The stack's own height, its
+ * inner gaps included, is wrapped at `postTextWidth`.
  */
 function postCardHeight(
+  descriptor: CardLayoutDescriptor,
   mediaH: number,
   lines: ReadonlyArray<{ line: CardTextLine; height: number }>,
 ): number {
@@ -263,6 +294,7 @@ function postCardHeight(
   return (
     CARD_BORDER_HEIGHT +
     mediaH +
+    mediaTextRuleHeight(descriptor) +
     (first && last ? edgeTextTop(first.line) + cardTextStackHeight(lines) + edgeTextBottom(last.line) : 0)
   );
 }
@@ -321,7 +353,7 @@ function computeArticleHeight(
   if (hasBottomMeta) lines.push({ line: "author", height: authorH });
   if (shownCollections(block).length > 0) lines.push({ line: "pills", height: CARD_COLLECTION_PILLS_HEIGHT_PX });
 
-  return postCardHeight(imageH, lines);
+  return postCardHeight(descriptor, imageH, lines);
 }
 
 function computeSocialHeight(
@@ -362,7 +394,7 @@ function computeSocialHeight(
   if (hasBottomMeta) lines.push({ line: "author", height: authorH });
   if (shownCollections(block).length > 0) lines.push({ line: "pills", height: CARD_COLLECTION_PILLS_HEIGHT_PX });
 
-  return postCardHeight(mediaH, lines);
+  return postCardHeight(descriptor, mediaH, lines);
 }
 
 /**
@@ -456,11 +488,7 @@ export function computeCardHeight(
               + CARD_BORDER_HEIGHT
             );
           case "link":
-            return (
-              Math.round(innerWidth(columnWidth) * THUMBNAIL_ASPECT) +
-              linkFooterHeight(block) +
-              CARD_BORDER_HEIGHT
-            );
+            return linkWithPictureHeight(block, columnWidth, descriptor);
           case "file":
             return FILE_CARD_HEIGHT + CARD_BORDER_HEIGHT;
           default:
@@ -474,9 +502,7 @@ export function computeCardHeight(
 
       case "link":
         return descriptor.primaryAspectRatio !== null
-          ? Math.round(innerWidth(columnWidth) * THUMBNAIL_ASPECT)
-            + linkFooterHeight(block)
-            + CARD_BORDER_HEIGHT
+          ? linkWithPictureHeight(block, columnWidth, descriptor)
           : CARD_HOVER_ACTION_MIN_HEIGHT;
 
       case "channel":

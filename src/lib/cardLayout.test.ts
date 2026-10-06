@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { LightBlock } from "@/types";
-import { deriveCardLayoutDescriptor, deriveContentCardSlots } from "./cardLayout";
+import { MEDIA_TEXT_RULE_PX, deriveCardLayoutDescriptor, deriveContentCardSlots } from "./cardLayout";
+import { CARD_COLLECTION_PILLS_ENABLED } from "./cardCollections";
 
 function cardKindForBlockType(blockType: LightBlock["block_type"]): LightBlock["card_kind"] {
   return blockType === "article"
@@ -884,3 +885,111 @@ function pageLink(options: {
     }),
   });
 }
+
+describe("the line under a framed card's media (SPEC_FEED_DISPLAY.md, Д20)", () => {
+  const imageManifest = readyImageManifest({ previewWidth: 640, previewHeight: 480 });
+  const galleryManifest = JSON.stringify({
+    kind: "composite", primary_preview_path: "test.jpg", width: 1, height: 1,
+    preview_width: 640, preview_height: 640,
+    tiles: ["a", "b"].map((name, index) => ({
+      source_path: `${name}.jpg`, preview_path: `test.preview-${index + 1}.jpg`,
+      width: 1, height: 1, preview_width: 640, preview_height: 480,
+      is_video: false, is_video_poster: false,
+    })),
+    overflow_count: 0,
+  });
+  const videoManifest = JSON.stringify({
+    kind: "video_poster", primary_preview_path: "clip.jpg", width: null, height: null,
+    preview_width: 640, preview_height: 360,
+    tiles: [{ source_path: "Media/Clip.mp4", preview_path: "clip.jpg", width: null, height: null,
+      preview_width: 640, preview_height: 360, is_video: true, is_video_poster: true }],
+    overflow_count: 0,
+  });
+  const article = (overrides: Partial<LightBlock> = {}) => makeBlock({
+    block_type: "article", title: "A post", body: "Some words\n\n![](photo.jpg)",
+    media_urls: "[\"photo.jpg\"]", preview_text: "Some words", author: "Ann",
+    preview_manifest: imageManifest, ...overrides,
+  });
+  const xPost = (manifest: string, overrides: Partial<LightBlock> = {}) => makeBlock({
+    block_type: "article", url: "https://x.com/someone/status/1", body: "Hello\n\n![](a.jpg)",
+    media_urls: "[\"a.jpg\"]", preview_text: "Hello", author: "@someone",
+    preview_manifest: manifest, ...overrides,
+  });
+  const picture = (overrides: Partial<LightBlock> = {}) => makeBlock({
+    block_type: "image", media_file: "Media/Sunset.jpg", fallback_label: "Sunset",
+    preview_manifest: imageManifest, ...overrides,
+  });
+  const video = (overrides: Partial<LightBlock> = {}) => makeBlock({
+    block_type: "video", media_file: "Media/Clip.mp4", fallback_label: "Clip",
+    preview_manifest: videoManifest, ...overrides,
+  });
+  const lineUnder = (block: LightBlock, show: "mixed" | "cards" | "media") =>
+    deriveCardLayoutDescriptor(block, show).textUnderMedia;
+
+  it("is the frame's own 1px", () => {
+    expect(MEDIA_TEXT_RULE_PX).toBe(1);
+  });
+
+  it.each([
+    ["a post with media and text", () => article()],
+    ["a post with media and an author only", () => article({ title: null, preview_text: null, body: "![](photo.jpg)" })],
+    ["an X post with one picture", () => xPost(imageManifest)],
+    ["an X post with a gallery and its author only", () => xPost(galleryManifest, { preview_text: null, body: "![](a.jpg)\n![](b.jpg)" })],
+    ["a link with its page picture", () => pageLink({ source: [1200, 630], artifact: [1200, 630] })],
+  ] as const)("runs under the media of %s in Mixed and Cards", (_card, make) => {
+    expect(lineUnder(make(), "mixed")).toBe(true);
+    expect(lineUnder(make(), "cards")).toBe(true);
+  });
+
+  it.each([
+    ["a picture with its own heading", () => picture({ content_heading: "Evening light" })],
+    ["a picture with text", () => picture({ preview_text: "Over the bay" })],
+    ["a video with an author", () => video({ author: "@filmmaker" })],
+  ] as const)("runs under %s that Cards frames as a post, and nowhere else", (_card, make) => {
+    expect(lineUnder(make(), "cards")).toBe(true);
+    // Bare media in Mixed, media alone in Media.
+    expect(lineUnder(make(), "mixed")).toBe(false);
+    expect(lineUnder(make(), "media")).toBe(false);
+  });
+
+  it.each([
+    ["a post whose media ends the card", () => article({ title: null, preview_text: null, author: null, body: "![](photo.jpg)" })],
+    ["an X post whose gallery ends the card", () => xPost(galleryManifest, { preview_text: null, author: null, body: "![](a.jpg)\n![](b.jpg)" })],
+    ["a picture without words", () => picture()],
+    ["a video without words", () => video()],
+  ] as const)("is absent from %s in every presentation", (_card, make) => {
+    for (const show of ["mixed", "cards", "media"] as const) {
+      expect(lineUnder(make(), show)).toBe(false);
+    }
+  });
+
+  it("is absent from every card Media shows as media alone", () => {
+    for (const card of [article(), xPost(imageManifest), xPost(galleryManifest), pageLink({ source: [1200, 630], artifact: [1200, 630] })]) {
+      const descriptor = deriveCardLayoutDescriptor(card, "media");
+      expect(descriptor.variant).toBe("media-only");
+      expect(descriptor.textUnderMedia).toBe(false);
+    }
+  });
+
+  it("is absent from cards without media", () => {
+    const cards = [
+      makeBlock({ block_type: "article", title: "Only words", body: "Just text", preview_text: "Just text", author: "Ann" }),
+      makeBlock({ block_type: "article", url: "https://x.com/someone/status/2", body: "Hello", preview_text: "Hello", author: "@someone" }),
+      makeBlock({ block_type: "link", title: "Bare page", url: "https://example.com/bare" }),
+      makeBlock({ block_type: "file", media_file: "doc.pdf" }),
+      makeBlock({ block_type: "channel", title: "A collection", body: "About it" }),
+    ];
+    for (const card of cards) {
+      for (const show of ["mixed", "cards", "media"] as const) {
+        expect(lineUnder(card, show)).toBe(false);
+      }
+    }
+  });
+
+  it("counts the row of collections as text under the media exactly while the pills show (С9)", () => {
+    const mediaOnly = article({ title: null, preview_text: null, author: null, body: "![](photo.jpg)" });
+    expect(lineUnder({ ...mediaOnly, collections: ["Reading"] }, "mixed")).toBe(CARD_COLLECTION_PILLS_ENABLED);
+    // A block read without its collections (Detail) has none to show.
+    expect(lineUnder(mediaOnly, "mixed")).toBe(false);
+  });
+});
