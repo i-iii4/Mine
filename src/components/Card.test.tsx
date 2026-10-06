@@ -264,10 +264,8 @@ describe("Card", () => {
       />,
     );
 
-    expect(container.querySelector("[data-feed-card-frame]")).toHaveClass(
-      "bg-card",
-      "feed-article-card",
-    );
+    // Every card stands on the card surface, in both themes (06.10.2026).
+    expect(container.querySelector("[data-feed-card-frame]")).toHaveClass("bg-card");
   });
 
   it("a preview renders the search excerpt with the highlighter mark, as the feed card does", () => {
@@ -674,7 +672,6 @@ describe("Card", () => {
       media_file: "sunset.jpg",
     });
     render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
-    expect(screen.getByRole("button")).not.toHaveClass("feed-article-card");
     const img = screen.getByRole("img");
     expect(img).toHaveAttribute(
       "src",
@@ -838,7 +835,6 @@ describe("Card", () => {
       author: "Author Name",
     });
     render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
-    expect(screen.getByRole("button")).toHaveClass("feed-article-card");
     expect(screen.getByText("My Article")).toBeInTheDocument();
     expect(
       screen.getByText("This is a long article body text for testing."),
@@ -1552,7 +1548,6 @@ describe("Card presentation in the feed (SPEC_FEED_DISPLAY.md, Д11 to Д13)", (
     const { container } = inFeed("cards", picture);
     expect(screen.getByText("Sunset")).toBeInTheDocument();
     expect(container.querySelector("[data-card-graphic-surface]")).not.toBeNull();
-    expect(container.querySelector("[data-feed-card-frame]")).toHaveClass("feed-article-card");
   });
 
   it("Cards names a picture only by a heading of its own, never by its file", () => {
@@ -1641,7 +1636,6 @@ describe("Card presentation in the feed (SPEC_FEED_DISPLAY.md, Д11 to Д13)", (
     const { container } = inFeed("mixed", picture);
     expect(screen.queryByText("Sunset")).not.toBeInTheDocument();
     expect(container.querySelector("[data-card-graphic-surface]")).not.toBeNull();
-    expect(container.querySelector("[data-feed-card-frame]")).not.toHaveClass("feed-article-card");
   });
 
   it("Media shows a post's picture alone: no title, no text, no author", () => {
@@ -1654,7 +1648,6 @@ describe("Card presentation in the feed (SPEC_FEED_DISPLAY.md, Д11 to Д13)", (
     expect(screen.queryByText("A post")).not.toBeInTheDocument();
     expect(screen.queryByText("@someone")).not.toBeInTheDocument();
     expect(container.querySelector("[data-card-graphic-surface]")).not.toBeNull();
-    expect(container.querySelector("[data-feed-card-frame]")).not.toHaveClass("feed-article-card");
   });
 });
 

@@ -776,8 +776,8 @@ hover previews and floating menu shells are visibly filled above the page
 background.
 Read-only hover previews in Sidebar, Search Overlay, Graph View and Detail
 related notes are the feed card itself (`ReadOnlyCardPreview`, one path
-`StaticCard`): the same surface `bg-card`, the same `feed-article-card` for
-post variants, the feed's current `Show`, lifted to the final hover state
+`StaticCard`): the same surface `bg-card` (one card surface for every
+variant in both themes since 06.10.2026), the feed's current `Show`, lifted to the final hover state
 with nothing to press (SPEC_CARD_STATES.md, С10).
 Hover does not change the card frame: no border recolor, outline, inset border,
 shadow, glow, transition, or extra overlay. The feed hover affordance is the
@@ -791,10 +791,8 @@ inside the focused GridItem are marked by Card as `data-card-graphic-surface`
 and receive a visible media wash only in focus mode: light theme darkens with
 `oklch(0 0 0 / 14%)`, dark theme brightens with `oklch(1 0 0 / 18%)`. Text-only
 cards do not get a graphic surface state.
-Article feed cards additionally get `feed-article-card`;
-that class applies `background: var(--accent)` only in dark theme
-(`data-theme="dark"` or system dark unless `data-theme="light"`). Light theme
-article cards stay on the default `bg-card` background.
+Every feed card stands on `bg-card` (`--card`) in both themes (06.10.2026);
+the former dark-only `--accent` fill of article cards is gone.
 
 Article inline media renders from backend-derived paths. For bare Obsidian
 embeds such as `![[01.jpg]]`, Detail first asks `preview_manifest.tiles` for a

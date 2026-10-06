@@ -266,14 +266,27 @@ select,
    smoothed separately there: whatever lies under both shows through the
    edge pixels. Under the surface lies the frame's own colour, so those
    pixels mix border and media only; the surface fills the inside of the
-   border. What lies flush inside the border takes its inner corner. */
+   border. What lies flush inside the border takes its inner corner.
+   Both are plain colours (06.10.2026): the frame's colour fills the box,
+   the surface is a layer of its own inside the border, under the content,
+   painted like the chrome that shares its token. */
 [data-feed-card-frame] {
   /* A frame with a corner of its own sets --card-frame-radius (Card.tsx);
      every other frame takes the card radius. */
   --card-frame-inner-radius: max(0px, calc(var(--card-frame-radius, var(--radius-card)) - 1px));
   --card-frame-color: var(--border);
   border-color: var(--card-frame-color);
-  background: linear-gradient(var(--surface), var(--surface)) padding-box, var(--card-frame-color);
+  background-color: var(--card-frame-color);
+  isolation: isolate;
+}
+[data-feed-card-frame]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: var(--card-frame-inner-radius);
+  background-color: var(--surface);
+  pointer-events: none;
 }
 
 /* Media that ends the card (a post with no text under it) meets the frame's
@@ -718,26 +731,6 @@ body {
   [data-card-graphic-surface] > [data-card-lift="window"]::after {
     transition: none;
   }
-}
-
-/* An article card in the dark theme is painted with the accent; it declares
-   that as its surface, so the buttons on it lift from what is under them
-   (the surface map below: every button-hosting zone declares its surface).
-   Without it they lifted from the card's own colour and stood 0.06 above
-   the accent instead of 0.09 (03.10.2026). Bare media that lifts its
-   caption shows the frame under it, and the caption is a post's text in
-   `Media`: it takes the same accent, so a risen caption never sits on a
-   darker fill than the posts beside it (05.10.2026). */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .feed-article-card,
-  :root:not([data-theme="light"]) [data-feed-card-frame]:has(> [data-card-lift="caption"]) {
-    --surface: var(--accent);
-  }
-}
-
-:root[data-theme="dark"] .feed-article-card,
-:root[data-theme="dark"] [data-feed-card-frame]:has(> [data-card-lift="caption"]) {
-  --surface: var(--accent);
 }
 
 @theme inline {

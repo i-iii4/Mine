@@ -339,7 +339,6 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
     () => deriveCardLayoutDescriptor(block, show),
     [block, show],
   );
-  const isArticleFeedCard = isPostVariant(descriptor.variant);
   // Every card with hover actions lifts to bring its row of collections up
   // from under the bottom edge (С8); bare media lifts its caption with it
   // (С8.7).
@@ -387,7 +386,6 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
         // `group` scopes the hover buttons' `group-hover`: an unarmed card is
         // no group, so a sweep shows no buttons on it.
         hoverArmed && "group",
-        isArticleFeedCard && "feed-article-card",
         isDragging && "opacity-30",
       )}
     >
@@ -612,7 +610,6 @@ function StaticCard({
         data-card-lift-pinned={raised ? "" : undefined}
         className={cn(
           "pointer-events-none",
-          isPostVariant(descriptor.variant) && "feed-article-card",
           CARD_SHADOW_CLASS[shadow],
         )}
         style={{ width, height: reservedHeight, ...(raised ? cardLiftStyle(descriptor) : undefined) }}

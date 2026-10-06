@@ -1534,8 +1534,8 @@ Source, меню и Connect на карточке стоят в варианте
 `.button-depth`), значок тусклый, при открытом меню яркий. Наведение меняет
 только лицевую сторону, как у любой объёмной кнопки: слой состояния поверх
 неё; текст и значок не меняются (решение пользователя 04.10.2026).
-Карточка-статья в тёмной теме объявляет свой фон `--accent` поверхностью,
-поэтому лицевая сторона на ней считается от него так же.
+Все карточки стоят на одной поверхности `--card` в обеих темах (решение
+пользователя 06.10.2026), лицевая сторона кнопок считается от неё.
 
 #### Нажатие
 
@@ -2297,9 +2297,9 @@ Ordinary feed cards use `bg-card`, not direct `bg-background`. In light theme
 This makes card previews visibly filled without becoming a strong component
 fill; floating UI stands on `--popover` instead. Do not hardcode one-off card background classes; change
 the semantic token if the surface level changes.
-Runtime article cards add `feed-article-card`; read-only hover previews carry
-the same class whenever the feed card does (the post variants of the current
-`Show`), so their fill matches the actual feed card.
+Every card, a post or not, in either theme, stands on `--card` (06.10.2026),
+so a read-only hover preview has the same fill as the feed card by
+construction.
 
 Feed graphic cards use the same generated thumbnail/poster source as the
 sidebar preview strip before falling back to the original media file. This keeps
@@ -2314,8 +2314,8 @@ feed surface.
 Так показываются превью в поиске, превью мини-карточки бокового меню, превью
 узла графа и превью связанной заметки. Отдельного шаблона нет: один путь
 `StaticCard` в `src/components/Card.tsx` рисует карточку ленты в текущем виде
-`Show`, с её заголовком, геометрией медиа, поверхностью `bg-card` (у постов
-`feed-article-card`), рамкой и радиусом `--radius-card`.
+`Show`, с её заголовком, геометрией медиа, поверхностью `bg-card`, рамкой и
+радиусом `--radius-card`.
 
 - Вид: содержимое уже поднято на высоту С8.1, у медиакарточки без рамки
   выехала подпись, внизу ряд коллекций (`font-mono text-sm
@@ -3548,7 +3548,7 @@ cards используют только integer `translate3d` + малые уг�
 Stack не вводит новые радиусы и не двигает реальные masonry cards; команды
 выделения скрыты во время block drag.
 
-Article-карточки в ленте используют дополнительную surface-заливку только в тёмной теме: `feed-article-card` применяет `background: var(--accent)` при `data-theme="dark"` или системной dark theme, если не выбран `data-theme="light"`. В светлой теме article-карточка остаётся на стандартном `bg-card`. Медиакарточка, у которой при подъёме выезжает подпись (С8.7 в SPEC_CARD_STATES.md), в тёмной теме берёт ту же заливку `--accent`: подпись под поднятой картинкой стоит на том же фоне, что текст постов рядом (05.10.2026).
+Все карточки ленты, посты, ссылки, файлы и медиакарточки с подписью, стоят на одной поверхности `--card`, уровне второго ряда хрома, в обеих темах (решение пользователя 06.10.2026; прежняя отдельная заливка `--accent` у постов в тёмной теме убрана). Заливка рисуется обычным цветом, как у хрома с тем же токеном. Цвет рамки лежит под всей коробкой карточки, поверхность отдельным слоем внутри рамки с её внутренним углом, поэтому скруглённые углы остаются без шва.
 
 Expanded image preview использует минималистичное разделение primary/secondary plane: фон страницы опускается до третичной ступени через `background: oklch(0.14 0 0 / 72.08%)` (холст тёмной темы, доля 1 минус третичная тёмная) и `backdrop-filter: saturate(0.55)` без blur; foreground image получает только утилитарное отделение: тень ступени К11 `shadow-2xl` (`0 25px 50px -12px rgb(0 0 0 / 0.25)`) и `outline: 1px solid oklch(0.243 0 0)` (линия тёмной темы). Просмотр изображения всегда в тёмной теме. Кнопка выхода из preview — не `X`, а inward-arrows `Minimize2` с действием `Collapse image preview`.
 
