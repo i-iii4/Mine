@@ -2285,18 +2285,16 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д25)", () => {
     });
   });
 
-  it("lays a gallery's tiles across the frame edge to edge, with no seam (Д21; 07.10.2026)", () => {
+  it("lays a gallery's tiles across the frame with 1px straight seams (Д21)", () => {
     const painted = paintCard(xPost(galleryManifest(4)), "cards", COLUMN);
     const tiles = painted.frame.querySelectorAll("[data-card-media-tile]");
     expect(tiles).toHaveLength(4);
-    // No rounding of its own on any tile, and no gap in the grid: the tiles
-    // meet edge to edge.
+    // No rounding of its own on any tile; the seams are the grid's 1px gap.
     for (const tile of Array.from(tiles)) {
       expect(tile.className).not.toMatch(/rounded/);
     }
     const grid = tiles[0]!.closest(".grid");
-    expect(grid).not.toBeNull();
-    expect(grid!.className).not.toMatch(/\bgap-/);
+    expect(grid?.classList.contains("gap-px")).toBe(true);
     expect(painted.surface).toMatchObject({ width: INNER, height: INNER });
   });
 
