@@ -30,36 +30,25 @@ collections`); `Search
 collections` зарезервировано за поиском в выпадающем переключателе коллекций;
 `Search elements` — глобальный поиск элементов (`Cmd+F`).
 
-## Design page contract
+## Где смотреть примитивы и токены
 
-Страница `Design` в приложении — это audit surface, а не декоративная
-галерея. Она должна импортировать реальные production primitives и показывать
-их состояния рядом с production-used токенами из `global.css`.
+Витрины дизайн-системы в приложении нет: страница `Design`
+(`ComponentTestBench`) удалена из настроек и из кода по решению пользователя
+07.10.2026. Источник правды это сам этот документ, закон цвета
+([SPEC_COLOR_RULES.md](SPEC_COLOR_RULES.md)) и тесты примитивов. Живые
+состояния смотрятся на страницах dev-сервера, которые рисуют настоящие
+production-компоненты:
 
-Обязательные разделы:
+- `/__ui-inventory`: опись элементов интерфейса по местам, с реальными
+  кнопками, пилюлями, меню и полями в обеих темах;
+- `/__buttons`, `/__button-depth`, `/__buttons-decision`: кнопки и стили
+  объёма;
+- `/__text-ladder`: ступени текста;
+- `edge-states.html` и гейт `test:edge-states`: краевые состояния
+  (`EdgeStatesSection`, раздел «Витрина состояний и краёв»).
 
-- token audit: только токены, которые реально используются в desktop UI или
-  Web Clipper: surfaces, text, component fills, shell/feed state tokens,
-  production radius, production spacing, typography. Токены, которые существуют
-  только как неиспользуемые shadcn defaults или историческая шкала, на странице
-  не показываются; значения читаются из текущего root theme через computed CSS
-  variables;
-- core primitives: `Button`, `ActionButton`, `Tabs` (пилюля), `Input`,
-  `SearchMenuInput`, `MenuTextTrigger`, `GraphCollectionLabel`,
-  `ChromeCloseButton`, `Checkbox`, `Progress`, `Tooltip`;
-- floating UI: `DropdownMenu`, `ContextMenu`, `CollectionPicker`,
-  `QuantizedMenuScrollArea`, width roles `command` / `selector` / `picker` and
-  row tokens `default` / `clipper`;
-- app compositions: top chrome, secondary chrome, selection action bar, feed
-  focus/selection states, shortcut badge, text-selection island and drag stack;
-- Web Clipper: full 360px popup states for content, screenshot, link and image
-  using the same extension components that ship in `extension/popup`.
-
-Названия компонентов на странице фиксируют контракт: высоту, radius, цветовой
-токен и ключевую геометрию. Если production primitive меняется, `Design`
-должна меняться в том же PR. Lookalike-компоненты на странице запрещены как
-source of truth; допустимы только небольшие static composition previews для
-состояний, которые ещё не выделены в reusable primitive.
+Lookalike-компоненты на этих страницах запрещены как source of truth:
+страница импортирует тот примитив, что стоит в продукте.
 
 ## Скругления
 

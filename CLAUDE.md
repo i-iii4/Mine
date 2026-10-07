@@ -265,7 +265,6 @@ local-arena/
 │   │   ├── IndexingProgress.tsx # Уведомление о ходе индексации в правом нижнем углу
 │   │   ├── SpaceUnavailable.tsx # Экран недоступной папки: missing и access_denied
 │   │   ├── EmptySpaceOnboarding.tsx # Два пути наполнения пустого пространства
-│   │   ├── ComponentTestBench.tsx # Витрина дизайн-системы: примитивы и токены вживую (из настроек убрана 07.10.2026, сейчас не открывается)
 │   │   └── EdgeStatesSection.tsx # Витрина краевых состояний (гейт test:edge-states)
 │   ├── hooks/                  # useSidebarResize, useGridScroll, useChannelPreviewsEvents, useProjectionRevisionOwner, useThumbnailUpgrade и др.
 │   ├── types/                  # generated.ts from Rust/Specta + frontend-owned index.ts
