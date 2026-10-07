@@ -3,7 +3,6 @@ import {
   CARD_HOVER_ACTION_MIN_HEIGHT,
   computeCardHeight,
   computeFeedPlaybackSurfaceEnvelope,
-  DEFAULT_CARD_HEIGHT,
 } from "./cardHeight";
 import { PROVISIONAL_MEDIA_ASPECT } from "./cardAspect";
 import type { LightBlock } from "@/types";
@@ -115,9 +114,23 @@ function derivedPreviewManifest(
   });
 }
 
-// Card outer wrapper has `border` class = 1px top + 1px bottom = 2px added
-// to the outer height. All block types include this in their returned height.
+// The frame's line, 1px on each edge, is in every card's height.
 const CARD_BORDER = 2;
+/// Box gaps that read as 14px from letter to letter (Д25): a 12px title or
+/// author on a 16px line keeps 2px of air, a 20px text line 4px.
+const TOP_TITLE = 12;
+const BOTTOM_TITLE = 12;
+const TITLE_TO_TEXT = 8;
+const BOTTOM_TEXT = 10;
+/// One word per line part, every one fitting a line.
+const ONE_LINE: WordWidths = {
+  title: [60],
+  preview: [60],
+  titleSpace: 4,
+  previewSpace: 4,
+  titleNoSpaceBefore: [false],
+  previewNoSpaceBefore: [false],
+};
 
 describe("computeCardHeight — image", () => {
   it("reserves height from the artifact ratio", () => {
@@ -176,10 +189,9 @@ describe("computeCardHeight — image", () => {
     expect(computeCardHeight(block, 150, null)).toBe(CARD_HOVER_ACTION_MIN_HEIGHT);
   });
 
-  it("falls back to DEFAULT_CARD_HEIGHT without metadata", () => {
+  it("reserves the provisional envelope while the artifact is not measured", () => {
     const block = makeBlock({ block_type: "image", width: null, height: null, thumbnail: "thumb.jpg" });
-    const h = computeCardHeight(block, 280, null);
-    expect(h).toBe(DEFAULT_CARD_HEIGHT);
+    expect(computeCardHeight(block, 280, null)).toBe(Math.round(278 / PROVISIONAL_MEDIA_ASPECT) + CARD_BORDER);
   });
 
   it("uses card_kind media with image metadata even when legacy type says article", () => {
@@ -264,22 +276,15 @@ describe("computeCardHeight — video / link / file", () => {
     expect(computeCardHeight(strip, 320, null)).toBe(318 * 2 + CARD_BORDER);
   });
 
-  it("link adds footer height to thumbnail", () => {
-    const block = makeBlock({
-      block_type: "link",
-      url: "https://example.com",
-      preview_manifest: JSON.stringify({
-        kind: "image",
-        primary_preview_path: "link.jpg",
-        width: 1600,
-        height: 900,
-        tiles: [],
-        overflow_count: 0,
-      }),
-    });
-    // 12 + title 16 + 2 + domain 16 + 12: the footer LinkCard paints.
-    const expected = Math.round(318 * 9 / 16) + 58 + CARD_BORDER;
-    expect(computeCardHeight(block, 320, null)).toBe(expected);
+  it("lays a link out like any card: its page picture at its own shape, its title under it (SPEC_CARD_UNIFIED.md, Е6)", () => {
+    const link = pageLink({ source: [1200, 630], artifact: [600, 900] });
+    expect(computeCardHeight(link, 320, ONE_LINE)).toBe(
+      CARD_BORDER + Math.round(318 / (600 / 900)) + TOP_TITLE + 16 + BOTTOM_TITLE,
+    );
+    // Its description is its text, as a post's is.
+    expect(computeCardHeight({ ...link, preview_text: "About the page" }, 320, ONE_LINE)).toBe(
+      CARD_BORDER + Math.round(318 / (600 / 900)) + TOP_TITLE + 16 + TITLE_TO_TEXT + 20 + BOTTOM_TEXT,
+    );
   });
 
   it("metadata-only link uses text-card geometry", () => {
@@ -297,10 +302,16 @@ describe("computeCardHeight — video / link / file", () => {
     expect(computeCardHeight(link, 320, null)).toBe(computeCardHeight(article, 320, null));
   });
 
-  it("file always returns fixed height + border", () => {
-    const block = makeBlock({ block_type: "file" });
-    expect(computeCardHeight(block, 280, null)).toBe(CARD_HOVER_ACTION_MIN_HEIGHT);
-    expect(computeCardHeight(block, 500, null)).toBe(CARD_HOVER_ACTION_MIN_HEIGHT);
+  it.each([
+    ["a file without a preview", () => makeBlock({ block_type: "file", media_file: "archive.zip" })],
+    ["a link without a picture, title or description", () => makeBlock({ block_type: "link", url: "https://example.com/bare" })],
+    ["a note with an empty body", () => makeBlock({ block_type: "article", body: "" })],
+  ])("gives %s, a card without content, the minimum height alone (Е8, Е9)", (_card, make) => {
+    for (const column of [280, 500]) {
+      for (const show of ["cards", "media"] as const) {
+        expect(computeCardHeight(make(), column, null, show)).toBe(CARD_HOVER_ACTION_MIN_HEIGHT);
+      }
+    }
   });
 });
 
@@ -522,6 +533,25 @@ describe("computeCardHeight — social", () => {
     expect(h).toBe(181);
   });
 
+  it("wraps an X post's text without media up to eight lines, as any text part (Е5)", () => {
+    const widths: WordWidths = {
+      title: [],
+      preview: Array.from({ length: 10 }, () => 300),
+      titleSpace: 4,
+      previewSpace: 4,
+      titleNoSpaceBefore: [],
+      previewNoSpaceBefore: Array.from({ length: 10 }, () => false),
+    };
+    const post = makeBlock({
+      block_type: "article",
+      url: "https://x.com/a/status/2",
+      body: "Ten long words",
+      preview_text: "Ten long words",
+    });
+    // 14 to the letters (box 10), eight 20px lines, 14 under them (box 10).
+    expect(computeCardHeight(post, 320, widths)).toBe(CARD_BORDER + 10 + 8 * 20 + BOTTOM_TEXT);
+  });
+
   it("enforces the interactive minimum for empty social cards", () => {
     const block = makeBlock({
       block_type: "article",
@@ -570,12 +600,12 @@ describe("card presentation heights (SPEC_FEED_DISPLAY.md, Д15)", () => {
     });
     const titled = { ...picture(), content_heading: "Sunset" };
     const asCard = computeCardHeight(titled, 320, titleWidths, "cards");
-    expect(asCard).toBe(computeCardHeight(post, 320, titleWidths, "mixed"));
+    expect(asCard).toBe(computeCardHeight(post, 320, titleWidths, "cards"));
     // Its own title makes it taller than the bare picture.
-    expect(asCard).toBeGreaterThan(computeCardHeight(picture(), 320, null, "mixed"));
+    expect(asCard).toBeGreaterThan(computeCardHeight(picture(), 320, null, "cards"));
     // A file name is no title: without a heading the card is its media alone.
     expect(computeCardHeight(picture(), 320, titleWidths, "cards"))
-      .toBe(computeCardHeight(picture(), 320, null, "mixed"));
+      .toBe(computeCardHeight(picture(), 320, null, "cards"));
   });
 
   it("Cards lays out a picture's text and author like the post card it looks like (В5.3)", () => {
@@ -606,7 +636,7 @@ describe("card presentation heights (SPEC_FEED_DISPLAY.md, Д15)", () => {
       preview_manifest: artifactManifest(640, 480),
     });
     expect(computeCardHeight(described, 320, widths, "cards"))
-      .toBe(computeCardHeight(post, 320, widths, "mixed"));
+      .toBe(computeCardHeight(post, 320, widths, "cards"));
   });
 
   it("Media holds a link's tall page picture at twice the width (В5.2)", () => {
@@ -629,14 +659,11 @@ describe("card presentation heights (SPEC_FEED_DISPLAY.md, Д15)", () => {
       .toBe(Math.round(innerWidth / PROVISIONAL_MEDIA_ASPECT) + CARD_BORDER);
   });
 
-  it("Mixed and Cards keep the link's 16:9 thumbnail slot whatever its picture's shape (В5.7)", () => {
-    // 12 + title 16 + 2 + domain 16 + 12: the footer LinkCard paints.
-    const expected = Math.round(318 * 9 / 16) + 58 + CARD_BORDER;
-    for (const artifact of [[600, 900], null] as const) {
-      const link = pageLink({ source: [1200, 630], artifact: artifact ? [artifact[0], artifact[1]] : null });
-      expect(computeCardHeight(link, 320, null, "mixed")).toBe(expected);
-      expect(computeCardHeight(link, 320, null, "cards")).toBe(expected);
-    }
+  it("Cards lays a link's page picture out at its artifact's own shape too (Е6, В5.7)", () => {
+    const innerWidth = 320 - CARD_BORDER;
+    const link = pageLink({ source: [1200, 630], artifact: [600, 900] });
+    expect(computeCardHeight(link, 320, ONE_LINE, "cards"))
+      .toBe(CARD_BORDER + Math.round(innerWidth / (600 / 900)) + TOP_TITLE + 16 + BOTTOM_TITLE);
   });
 
   it("Media gives a post exactly the height of its picture alone", () => {
@@ -649,7 +676,7 @@ describe("card presentation heights (SPEC_FEED_DISPLAY.md, Д15)", () => {
       preview_manifest: artifactManifest(640, 480),
     });
     expect(computeCardHeight(post, 320, null, "media")).toBe(
-      computeCardHeight(picture(), 320, null, "mixed"),
+      computeCardHeight(picture(), 320, null, "cards"),
     );
   });
 
@@ -733,7 +760,7 @@ describe("post card geometry (SPEC_FEED_DISPLAY.md, Д20, Д25)", () => {
         feed_playback: playback,
       }),
     ]) {
-      expect(computeFeedPlaybackSurfaceEnvelope(post, COLUMN, "mixed")).toEqual({
+      expect(computeFeedPlaybackSurfaceEnvelope(post, COLUMN, "cards")).toEqual({
         topOffsetPx: 1,
         heightPx: Math.round(INNER / (640 / 360)),
       });
@@ -757,7 +784,7 @@ describe("post card geometry (SPEC_FEED_DISPLAY.md, Д20, Д25)", () => {
       preview_text: "Evening over the bay",
       preview_manifest: artifactManifest(640, 480),
     });
-    expect(computeCardHeight(post, COLUMN, widths, "mixed")).toBe(
+    expect(computeCardHeight(post, COLUMN, widths, "cards")).toBe(
       CARD_BORDER + Math.round(INNER / (640 / 480)) + TOP_TITLE + 16 + TITLE_TO_TEXT + 20 + BOTTOM_TEXT,
     );
   });
@@ -780,7 +807,7 @@ describe("post card geometry (SPEC_FEED_DISPLAY.md, Д20, Д25)", () => {
       preview_text: "Evening over the bay",
       preview_manifest: artifactManifest(640, 480),
     });
-    expect(computeCardHeight(article, COLUMN, widths, "mixed")).toBe(
+    expect(computeCardHeight(article, COLUMN, widths, "cards")).toBe(
       CARD_BORDER + Math.round(INNER / (640 / 480)) + TOP_TITLE + 16 + TITLE_TO_TEXT + 20 + BOTTOM_TEXT,
     );
 
@@ -792,7 +819,7 @@ describe("post card geometry (SPEC_FEED_DISPLAY.md, Д20, Д25)", () => {
       preview_text: "Evening over the bay",
       preview_manifest: artifactManifest(640, 480),
     });
-    expect(computeCardHeight(xPost, COLUMN, widths, "mixed")).toBe(
+    expect(computeCardHeight(xPost, COLUMN, widths, "cards")).toBe(
       CARD_BORDER + Math.round(INNER / (640 / 480)) + TOP_TEXT + 20 + BOTTOM_TEXT,
     );
   });
@@ -814,7 +841,7 @@ describe("post card geometry (SPEC_FEED_DISPLAY.md, Д20, Д25)", () => {
       body: "Evening over the bay",
       preview_text: "Evening over the bay",
     });
-    expect(computeCardHeight(text, COLUMN, widths, "mixed")).toBe(
+    expect(computeCardHeight(text, COLUMN, widths, "cards")).toBe(
       CARD_BORDER + TOP_TITLE + 16 + TITLE_TO_TEXT + 20 * 3 + BOTTOM_TEXT,
     );
   });

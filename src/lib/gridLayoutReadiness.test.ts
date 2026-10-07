@@ -108,17 +108,22 @@ describe("gridLayoutReadiness", () => {
 describe("exact deterministic heights", () => {
   const widths = { title: [], preview: [], titleSpace: 4, previewSpace: 4 };
 
-  it("media cards are exact without word metrics", () => {
-    const media = { ...block(1), card_kind: "media" as const };
-    expect(blockHasExactDeterministicHeight(media, new Map())).toBe(true);
+  /// A picture without words of its own.
+  const picture = (id: number) => ({
+    ...block(id), card_kind: "media" as const, block_type: "image" as const, media_file: "a.jpg", body: "",
   });
 
-  it("a picture waits for its name's metrics only where Cards draws the name", () => {
-    // SPEC_FEED_DISPLAY.md, Д15: the text a presentation draws decides it.
-    const picture = { ...block(1), card_kind: "media" as const, block_type: "image" as const, media_file: "a.jpg" };
-    expect(blockHasExactDeterministicHeight(picture, new Map(), "mixed")).toBe(true);
-    expect(blockHasExactDeterministicHeight(picture, new Map(), "cards")).toBe(false);
-    expect(blockHasExactDeterministicHeight(picture, new Map([[1, widths]]), "cards")).toBe(true);
+  it("a card with no title or text to wrap is exact without word metrics", () => {
+    expect(blockHasExactDeterministicHeight(picture(1), new Map())).toBe(true);
+  });
+
+  it("a card waits for its text's metrics only where its text part is drawn", () => {
+    // SPEC_FEED_DISPLAY.md, Д15: the text a presentation draws decides it; in
+    // `Media` a card with media keeps its text for the lift's caption.
+    const described = { ...picture(1), body: "Evening over the bay" };
+    expect(blockHasExactDeterministicHeight(described, new Map(), "media")).toBe(true);
+    expect(blockHasExactDeterministicHeight(described, new Map(), "cards")).toBe(false);
+    expect(blockHasExactDeterministicHeight(described, new Map([[1, widths]]), "cards")).toBe(true);
   });
 
   it("text cards are exact only once their word widths are computed", () => {
@@ -130,11 +135,9 @@ describe("exact deterministic heights", () => {
   });
 
   it("a generation is cacheable only when every text card has exact metrics", () => {
-    const media = { ...block(1), card_kind: "media" as const };
-    const social = { ...block(2), card_kind: "article" as const };
-    const blocks = [media, social];
+    const blocks = [picture(1), { ...block(2), card_kind: "article" as const }];
 
-    // Social card still on the worst-clamped fallback → must not be cached,
+    // The text card still on the worst-clamped fallback must not be cached,
     // otherwise its oversized height survives the arrival of word metrics.
     expect(generationHasExactDeterministicHeights(blocks, new Map())).toBe(false);
     expect(

@@ -166,9 +166,9 @@ const SHOWCASE_PICTURE = showcaseBlock(9104, {
 /// A real feed card at the size the feed would lay it out, with its hover
 /// buttons, so the lift answers the pointer here exactly as in the feed.
 function ShowcaseCard({ block }: { block: LightBlock }) {
-  const height = computeCardHeight(block, SHOWCASE_WIDTH, null, "mixed");
+  const height = computeCardHeight(block, SHOWCASE_WIDTH, null, "cards");
   return (
-    <FeedShowContext.Provider value="mixed">
+    <FeedShowContext.Provider value="cards">
       <div style={{ width: SHOWCASE_WIDTH, height }}>
         <Card
           block={block}

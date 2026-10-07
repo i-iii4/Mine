@@ -41,7 +41,6 @@ const SORT_CHOICES: DisplayChoice<FeedOrder>[] = [
 
 const SHOW_CHOICES: DisplayChoice<FeedShow>[] = [
   { value: "cards", label: "Cards" },
-  { value: "mixed", label: "Mixed" },
   { value: "media", label: "Media" },
 ];
 

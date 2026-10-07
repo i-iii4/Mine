@@ -26,7 +26,7 @@
 - `SPEC_MOBILE.md` — спецификация iOS-приложения: SwiftUI + Rust UniFFI, iCloud sync, Share Extension
 - `SPEC_GRID.md` — спецификация zero-jank masonry grid: Canvas measureText precomputation, dual-path (native grid-lanes + virtualized JS), детерминистические высоты
 - `SPEC_THUMBNAILS.md` — спецификация thumbnail pipeline: two-phase (Rust instant placeholder + WebView async upgrade), event-driven sidebar, виртуализация, поддержка всех форматов расширения через native decoder
-- [SPEC_FEED_DISPLAY.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_FEED_DISPLAY.md>): настройки отображения ленты: кнопка Display, порядок, вид карточек (Cards, Mixed, Media), расстояние; реализовано 30.09.2026
+- [SPEC_FEED_DISPLAY.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_FEED_DISPLAY.md>): настройки отображения ленты: кнопка Display, порядок, вид карточек (Cards, Media), расстояние; реализовано 30.09.2026
 - `SPEC_DISPLAY_MODES.md` — спецификация display modes: архитектура переключения между masonry/grid/table/columns, принцип изоляции (display mode = только рендеринг), единый интерфейс `DisplayModeProps`
 - `SPEC_FEED_SCROLL_PERFORMANCE.md` — контракт canvas-feel бесконечной ленты: velocity-aware render runway, media preload/decode windows, лимиты, диагностика
 - `SPEC_GRID_LAYOUT_READINESS.md` — deterministic live geometry: render-ready gate, committed prefix, skeleton envelope, deep fast-scroll acceptance
@@ -35,7 +35,7 @@
 - `SPEC_GRAPH_VIEW.md` — спецификация Graph View: Canvas force-directed graph на базе решения Longevity Landscape, graph snapshot read model, коллекции/wikilinks/related notes, физика, UX и проверки
 - `SPEC_GROUP_SELECTION.md` — групповое выделение в Grid: marquee/keyboard selection, batch card actions, selection-scoped меню
 - [SPEC_AUDIT_FIXES.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_AUDIT_FIXES.md>): исправления по повторному аудиту 29.09.2026: контракты сохранения исходного текста, записи со сверкой, привязки операций клиппера, каталог находок А2 по А10 и то, что не делаем; этапы 1 по 12 реализованы 30.09.2026 и 01.10.2026 (этап 9: третий аудит по 836a00c, этапы 10, 11, 12: приёмки по 1f2766e, 792e3de, 8cfb1f34), живая приёмка за пользователем
-- [SPEC_CARD_UNIFIED.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_CARD_UNIFIED.md>): одна карточка: вид задаёт только содержимое, два способа отображения (с содержимым и без), уходят свои форматы ссылки, файла и соцпоста; черновик 06.10.2026, не реализовано
+- [SPEC_CARD_UNIFIED.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_CARD_UNIFIED.md>): одна карточка: вид задаёт только содержимое, два способа отображения (с содержимым и без), положения ленты `Cards` и `Media`, своих форматов у ссылки, файла и соцпоста нет; реализовано 06.10.2026
 - `SPEC_CARD_STATES.md`: единые состояния карточки (наведение, фокус, выделение) и связи карточки с коллекциями в боковом меню; реализовано 28.09.2026
 - `SPEC_ARTICLE_AUDIO.md` — manual article audio renditions: speech prep, derived audio state, desktop/iOS controls. **Функция выключена** (Cargo feature `article-audio` вне `default`, `ARTICLE_AUDIO_ENABLED = false`); процедура включения — в самой спецификации
 - `SPEC_TEXT_SELECTION_EXTRACTION.md` — извлечение выделенного текста статьи в отдельный article-блок и удаление фрагмента из source `.md`
@@ -100,7 +100,7 @@
 | src/lib/masonryLayout.ts | Кастомный virtualized masonry layout engine |
 | src/lib/cardAspect.ts | Политика кадрирования: кламп пропорции карточки `1:2 … 2:1` |
 | src/lib/motion.ts | Единая настройка уменьшения движения для программных анимаций и прокрутки |
-| src/lib/feedDisplay.ts | Параметры ленты: порядок и вид карточек (Cards, Mixed, Media), хранение между запусками |
+| src/lib/feedDisplay.ts | Параметры ленты: порядок и вид карточек (Cards, Media), хранение между запусками |
 | ESLint 10 + typescript-eslint | Линтинг фронтенда (TypeScript) |
 | Vitest + Testing Library | Frontend-тесты (`bun run test:frontend`) |
 | Playwright + pngjs | Browser acceptance gates: Feed, Graph, cold-space, sidebar reorder |
@@ -248,7 +248,7 @@ local-arena/
 │   │   ├── grid/               # Grid interaction geometry/controllers
 │   │   ├── MainSecondaryChrome.tsx # Main route secondary chrome
 │   │   ├── FeedDisplayMenu.tsx # Кнопка Display и панель: Sort, Show, Spacing (SPEC_FEED_DISPLAY)
-│   │   ├── Card.tsx            # Адаптивная карточка по типу блока (5 типов)
+│   │   ├── Card.tsx            # Одна карточка для всех видов записей: слот медиа и текстовая часть (SPEC_CARD_UNIFIED.md)
 │   │   ├── Sidebar.tsx         # Каналы, счётчики, навигация, кнопка импорта
 │   │   ├── Detail.tsx          # Lightbox: просмотр, коллекции, навигация стрелками
 │   │   ├── VaultPicker.tsx     # Выбор vault через нативный диалог

@@ -53,20 +53,20 @@ describe("Display menu (SPEC_FEED_DISPLAY.md, Д1 to Д3)", () => {
     )).toEqual(["Sort", "Show", "Spacing"]);
     expect(groups.map((group) => group.textContent)).toEqual([
       "Newest firstOldest first",
-      "CardsMixedMedia",
+      "CardsMedia",
       "322416",
     ]);
     expect(checkedIn("Sort")).toEqual(["Newest first"]);
-    expect(checkedIn("Show")).toEqual(["Mixed"]);
+    expect(checkedIn("Show")).toEqual(["Cards"]);
     expect(checkedIn("Spacing")).toEqual(["32"]);
     expect(screen.getAllByRole("separator")).toHaveLength(2);
   });
 
   it("marks the stored presentation when it opens (Д18)", async () => {
-    window.localStorage.setItem("mine.feed.show", "cards");
+    window.localStorage.setItem("mine.feed.show", "media");
     reloadFeedDisplay();
     await openMenu();
-    expect(checkedIn("Show")).toEqual(["Cards"]);
+    expect(checkedIn("Show")).toEqual(["Media"]);
   });
 
   it("keeps every row on the menu's text column, the check in the leading icon slot", async () => {

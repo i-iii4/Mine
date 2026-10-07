@@ -97,7 +97,7 @@ export function buildLayoutGenerationKey({
     `cw=${Math.round(columnWidth)}`,
     `cc=${columnCount}`,
     `gap=${layoutGap ?? 32}`,
-    `show=${show ?? "mixed"}`,
+    `show=${show ?? "cards"}`,
     `n=${blocks.length}`,
     `sig=${orderedHash}`,
     `edge=${hashString(edgeSample)}`,

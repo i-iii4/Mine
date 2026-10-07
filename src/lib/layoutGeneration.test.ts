@@ -130,7 +130,7 @@ describe("buildLayoutGenerationKey", () => {
 
   it("changes with the presentation, so the cache never serves another one's heights (SPEC_FEED_DISPLAY.md, Д15)", () => {
     const blocks = [makeBlock(1), makeBlock(2)];
-    const keyFor = (show: "cards" | "mixed" | "media" | undefined) => buildLayoutGenerationKey({
+    const keyFor = (show: "cards" | "media" | undefined) => buildLayoutGenerationKey({
       blocks,
       routeKey: "__all__",
       columnWidth: getMasonryColumnWidth(1200, 220, 32),
@@ -138,9 +138,8 @@ describe("buildLayoutGenerationKey", () => {
       layoutGap: 32,
       show,
     });
-    expect(keyFor("cards")).not.toBe(keyFor("mixed"));
-    expect(keyFor("media")).not.toBe(keyFor("mixed"));
-    // Mixed is the default presentation: an unset one is the same layout.
-    expect(keyFor(undefined)).toBe(keyFor("mixed"));
+    expect(keyFor("media")).not.toBe(keyFor("cards"));
+    // Cards is the default presentation: an unset one is the same layout.
+    expect(keyFor(undefined)).toBe(keyFor("cards"));
   });
 });

@@ -1,4 +1,4 @@
-import { deriveCardLayoutDescriptor } from "@/lib/cardLayout";
+import { deriveCardLayoutDescriptor, hasCardText } from "@/lib/cardLayout";
 import type { FeedShow } from "@/lib/feedDisplay";
 import type { LightBlock } from "@/types";
 import type { MasonryPosition } from "@/lib/masonryLayout";
@@ -67,25 +67,17 @@ function distanceToViewport(
 export function blockHasExactDeterministicHeight(
   block: LightBlock,
   wordWidthsMap: ReadonlyMap<number, unknown>,
-  show: FeedShow = "mixed",
+  show: FeedShow = "cards",
 ): boolean {
   if (wordWidthsMap.has(block.id)) return true;
-  // Text lines exist only where the presentation draws text: a picture in
-  // `Cards` carries its name, a post in `Media` carries none
-  // (SPEC_FEED_DISPLAY.md, Д15). The media placement takes no part: it moves a
-  // card's media and widens its text column edge to edge, but never adds or
-  // removes text, and word widths are per word, so the same cards wait for
-  // the same metrics in either placement (Д20, Д23).
-  switch (deriveCardLayoutDescriptor(block, show).variant) {
-    case "image":
-    case "video":
-    case "file":
-    case "link":
-    case "media-only":
-      return true;
-    default:
-      return false;
-  }
+  // Wrapped lines exist only where the card draws its title or text in the
+  // text part: a card with media in `Media` draws none, and its caption on a
+  // lift takes no room in the layout (SPEC_FEED_DISPLAY.md, Д15;
+  // SPEC_CARD_UNIFIED.md, Е11, Е12). The author is one line and needs no
+  // metrics.
+  const descriptor = deriveCardLayoutDescriptor(block, show);
+  return descriptor.textShown === "on-lift"
+    || !hasCardText({ ...descriptor.text, author: "" });
 }
 
 /**
@@ -99,7 +91,7 @@ export function blockHasExactDeterministicHeight(
 export function generationHasExactDeterministicHeights(
   blocks: readonly LightBlock[],
   wordWidthsMap: ReadonlyMap<number, unknown>,
-  show: FeedShow = "mixed",
+  show: FeedShow = "cards",
 ): boolean {
   for (const block of blocks) {
     if (!blockHasExactDeterministicHeight(block, wordWidthsMap, show)) {

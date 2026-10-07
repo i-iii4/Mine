@@ -7,10 +7,10 @@
 import { createContext, useSyncExternalStore } from "react";
 import type { FeedOrder } from "@/types";
 
-/// `cards`: everything in a card frame, media as a post card; `mixed`: text as
-/// cards, media bare (the feed as it has always been); `media`: a card with
-/// media shows only its media, a card without stays a card.
-export type FeedShow = "cards" | "mixed" | "media";
+/// `cards`: every card shows all its content; `media`: a card with media shows
+/// only its media, a card without stays as in `cards`. Both act on every card
+/// alike (SPEC_CARD_UNIFIED.md, Е11).
+export type FeedShow = "cards" | "media";
 
 export interface FeedDisplay {
   sort: FeedOrder;
@@ -36,11 +36,11 @@ function writeKey(key: string, value: string) {
   }
 }
 
-/// An unknown or damaged stored value reads as the default (Д18).
+/// An unknown or damaged stored value reads as the default (Д18), and so does
+/// the retired `mixed` (SPEC_CARD_UNIFIED.md, Е11).
 export function readStoredFeedDisplay(): FeedDisplay {
   const sort = readKey(FEED_SORT_STORAGE_KEY) === "oldest" ? "oldest" : "newest";
-  const storedShow = readKey(FEED_SHOW_STORAGE_KEY);
-  const show: FeedShow = storedShow === "cards" || storedShow === "media" ? storedShow : "mixed";
+  const show: FeedShow = readKey(FEED_SHOW_STORAGE_KEY) === "media" ? "media" : "cards";
   return { sort, show };
 }
 
@@ -86,4 +86,4 @@ export function useFeedDisplay(): FeedDisplay {
 /// feed (a hover or search preview, a dragged card) provides the feed's
 /// current presentation itself (`StaticCard` in Card.tsx), so it is the same
 /// card as in the feed (SPEC_CARD_STATES.md, С10).
-export const FeedShowContext = createContext<FeedShow>("mixed");
+export const FeedShowContext = createContext<FeedShow>("cards");

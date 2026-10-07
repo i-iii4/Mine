@@ -736,7 +736,7 @@ iOS UI contract:
     envelope текущего generation до завершения metrics attempt.
 - Старый `stableLayoutSnapshot` больше не участвует в visible live render path. Это устраняет системные bottom clip / white-tail баги, которые возникали, когда live card попадала внутрь stale height envelope.
 - **Direction-aware overscan**: при скролле вниз forward-overscan 2200px, backward 600px. При скролле вверх — зеркально. Это предзагружает больше карточек по направлению scroll'а, уменьшая «пустые зоны» при быстром скролле.
-- **Priority bounds**: зона ±1400px по направлению scroll'а, внутри которой карточки получают `priority=true`. ImageCard/LinkCard/ArticleCard используют `loading="eager"` вместо `"lazy"` — картинки начинают fetch до того как пользователь до них доскроллит.
+- **Priority bounds**: зона ±1400px по направлению scroll'а, внутри которой карточки получают `priority=true`. Слот медиа карточки (`CardMediaSlot`) использует `loading="eager"` вместо `"lazy"` — картинки начинают fetch до того как пользователь до них доскроллит.
 - Feed scroll readiness splits this into adaptive budgets instead of solving
   canvas feel by DOM inflation: a velocity-aware bounded render runway, a near
   image priority window and a wider preview-only media preload/decode window
@@ -749,7 +749,7 @@ iOS UI contract:
   item runway, so pagination does not become visible loader choreography.
   Full contract:
   [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md).
-- **CLS prevention**: ImageCard при наличии `block.width`/`block.height` рендерит контейнер с `aspectRatio: W/H` и `overflow:hidden bg-accent`, картинка через `absolute inset-0 object-cover`. Размер карточки стабилен до загрузки картинки — нет layout shift.
+- **CLS prevention**: слот медиа карточки (`CardMediaSlot`) получает форму артефакта превью (`aspectRatio`), картинка через `absolute inset-0 object-cover`. Размер карточки стабилен до загрузки картинки — нет layout shift.
 - `computeCardHeight()` остаётся heuristic для scheduling / placeholder geometry, но не имеет права клампить live content. Hard clamp `height + overflow hidden` валиден только внутри exact committed prefix текущего generation.
 - Phase 11 shadow-validation publishes
   `window.__MINE_FEED_SCROLL_DEBUG__.heightDrift`: a batch-local comparison of
@@ -772,7 +772,7 @@ iOS UI contract:
   `![alt](path)` remains strict note-relative Markdown. Detail rendering,
   feed previews, media dimensions, and thumb upgrades consume the same resolved
   vault-root-relative path from the index/manifest.
-- Single-image social fallback contract: `social-single-media` больше не имеет права жёстко рендерить block-level `slug.jpg`. Для single-image X/Twitter/Instagram preview frontend сначала берёт tile-level `previewPath`, потом `source_path`, и использует `slug.jpg` только как последний fallback. Это выравнивает single-image path с `preview_manifest` contract и устраняет серый baked-text preview поверх валидной локальной картинки.
+- Single-image social fallback contract: одиночная картинка поста X или Instagram (`paint: tile` в описании карточки) больше не имеет права жёстко рендерить block-level `slug.jpg`. Для single-image X/Twitter/Instagram preview frontend сначала берёт tile-level `previewPath`, потом `source_path`, и использует `slug.jpg` только как последний fallback. Это выравнивает single-image path с `preview_manifest` contract и устраняет серый baked-text preview поверх валидной локальной картинки.
 - Gallery aspect contract: composite/media-grid previews with `3+` items используют квадратный wrapper, а gallery ровно из `2` изображений использует `2:1` wrapper, чтобы две tiles оставались почти квадратными и не деградировали в узкий `1:2` crop.
 - Legacy article fallback contract: если у article-карточки есть `media_urls` / `first_image`, но для строки ещё нет `preview_manifest`, feed всё равно обязан строить реальный tile set из source images. `imageCount > 1` без `mediaItems` больше не допускается, иначе карточка деградирует в пустой серый gallery wrapper.
 

@@ -730,7 +730,7 @@ article-card без media (8 lines × widest single-column inner width). Fronten
 сохраняет финальное решение за CSS line-clamp/реальной измеренной высотой, так
 что текст не обрезается заранее на уровне SQLite payload.
 
-**CLS prevention**: ImageCard при наличии `block.width`/`block.height` рендерит контейнер с `aspectRatio: W/H` и `overflow:hidden bg-accent`. Картинка через `absolute inset-0 object-cover`. Размер карточки стабилен до загрузки — нет layout shift.
+**CLS prevention**: слот медиа карточки (`CardMediaSlot`, [SPEC_CARD_UNIFIED.md](SPEC_CARD_UNIFIED.md)) получает форму артефакта превью (`aspectRatio`). Картинка через `absolute inset-0 object-cover`. Размер карточки стабилен до загрузки — нет layout shift.
 
 Это даёт быстрый resize и мгновенное переключение между разделами при тысячах блоков, потому что browser layout работает только с окном видимых карточек, а не со всей коллекцией.
 

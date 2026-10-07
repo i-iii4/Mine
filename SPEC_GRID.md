@@ -229,37 +229,30 @@ export function computeCardHeight(
 ): number;
 ```
 
-Для каждого `card_kind`:
+Одна формула для всех карточек (06.10.2026,
+[SPEC_CARD_UNIFIED.md](SPEC_CARD_UNIFIED.md), Е13): вид записи на высоту не
+влияет, только показанное содержимое из описания карточки
+(`deriveCardLayoutDescriptor`):
 
-- **media** — presentation variant выводится из `media_file`, `thumbnail`,
-  `preview_manifest`, URL и file extension:
-  - image: `max(columnWidth / aspectRatio, adaptiveImageMinimum)`;
-    `adaptiveImageMinimum = clamp(interactiveFloor, columnWidth * 0.4, 120px)`.
-    `aspectRatio` имеет ровно один источник — `preview_width/preview_height`
-    сгенерированного превью, записанные генератором, — и уже приходит
-    клампленным в диапазон `1:2 … 2:1`. Render-время (`primaryAspectRatio` в
-    `cardLayout.ts`) читает то же самое поле и тот же кламп, поэтому
-    зарезервированная высота и нарисованная пропорция совпадают по построению.
-    Пока артефакт не создан, пропорция остаётся `null`: карточка получает
-    `DEFAULT_CARD_HEIGHT` и предварительный конверт
-    (`data-card-preview-geometry="pending"`), а не выдуманный квадрат.
-    Полный контракт:
-    [SPEC_CARD_MEDIA_GEOMETRY.md](SPEC_CARD_MEDIA_GEOMETRY.md)
-  - video (карточка, у которой основной файл сам ролик): форма постера по тому
-    же правилу, что у медиа поста, `clampCardAspect(previewWidth / previewHeight)`
-    в пределах от 1:2 до 2:1; пока постера нет, временная
-    `PROVISIONAL_MEDIA_ASPECT`. До 30.09.2026 рамка была жёсткой 16:9 и
-    обрезала квадратные и вертикальные ролики (решение пользователя)
-  - link: `columnWidth * 9 / 16 + 76` (16:9 thumbnail + 76px text)
-  - file: fixed compact height
-- **article** — используется `wordWidths`:
-  - `titleLines = min(2, countLines(wordWidths.title, wordWidths.titleSpace, contentWidth))`
-  - `previewLines = min(block.first_image ? 3 : 8, countLines(wordWidths.preview, wordWidths.previewSpace, contentWidth))`
-  - `imageH = block.first_image ? columnWidth * 0.5 : 0`
-  - `authorH = block.author ? 24 : 0`
-  - `height = 32 + titleLines * 20 + 6 + previewLines * 18 + imageH + authorH + 28`
+- линия рамки: 1 px сверху и снизу;
+- медиа, если показано: `round(innerWidth / aspectRatio)`, где `innerWidth`
+  это ширина колонки без линий рамки, а `aspectRatio` имеет ровно один
+  источник, форму артефакта превью (`preview_width / preview_height`),
+  клампленную в `1:2 … 2:1`; пока артефакт не создан, пропорция `null` и
+  слот берёт предварительный конверт `PROVISIONAL_MEDIA_ASPECT`
+  (`data-card-preview-geometry="pending"`), а не выдуманный квадрат. Полный
+  контракт: [SPEC_CARD_MEDIA_GEOMETRY.md](SPEC_CARD_MEDIA_GEOMETRY.md);
+- текстовая часть, если показана: строки заголовка (до 2), текста (до 3 под
+  медиа, до 8 без медиа) и автора (1), перенесённые по ширине
+  `innerWidth − 16` через `wordWidths`, с зазорами Д25 из
+  [cardTypography.ts](src/lib/cardTypography.ts);
+- не меньше `CARD_HOVER_ACTION_MIN_HEIGHT` (90 px). Карточка без содержимого
+  ровно такой высоты.
 
-Если `wordWidths === null` для article/social card (кэш ещё не готов),
+Отдельных правил у ссылки (прежний подвал и слот 16:9), файла (прежняя
+фиксированная высота) и картинки (прежний свой минимум) больше нет.
+
+Если `wordWidths === null` для карточки с текстовой частью (кэш ещё не готов),
 функция возвращает conservative reservation: худшую clamped-геометрию текущего
 template. Это overlap-safe envelope для loading state и fallback для среды,
 где worker metrics недоступны. Production switch уже выполнен после
@@ -674,13 +667,13 @@ Phase 11 закрыта через доказуемые вертикальные
 
 ## Edge cases
 
-1. **Block без размеров артефакта (image)** — то есть превью ещё не создано
-   (AVIF/HEIC/VP8X до декодирования в WebView) — используется
-   `DEFAULT_CARD_HEIGHT = 240` как conservative envelope, а image surface
-   заполняет его через `object-cover`, поэтому fallback не создаёт пустую
-   полосу. Пропорция при этом не назначается вовсе: поверхность помечается
-   `data-card-preview-geometry="pending"` и не заявляет `aspect-ratio`, так как
-   назначить квадрат значило бы выдать незнание за факт. Graphic surface обязана занимать полную
+1. **Медиа без размеров артефакта**, то есть превью ещё не создано
+   (AVIF/HEIC/VP8X до декодирования в WebView): слот любого медиа берёт
+   предварительный конверт `PROVISIONAL_MEDIA_ASPECT` (с 06.10.2026 и у
+   картинки, прежде у неё была своя высота 240 px), изображение заполняет его
+   через `object-cover`, поэтому пустой полосы нет. Поверхность помечается
+   `data-card-preview-geometry="pending"`: конверт это состояние, а не
+   измерение, и квадрат здесь выдал бы незнание за факт. Graphic surface обязана занимать полную
    ширину (`w-full`), а не выводить ширину из выданной ей высоты: при
    `aspect-ratio` с одной лишь заданной высотой любое расхождение между
    committed height и render ratio сжимает графику от края карточки. Полная

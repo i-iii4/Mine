@@ -113,7 +113,7 @@ import {
   findPreviewTileForSource,
   normalizeDetailPreviewManifest,
 } from "@/lib/feedPreview";
-import { deriveCardLayoutDescriptor } from "@/lib/cardLayout";
+import { deriveCardContent } from "@/lib/cardLayout";
 import { parseYoutubeSource } from "@/lib/youtubeSource";
 import { YoutubeSourcePlayer } from "@/components/YoutubeSourcePlayer";
 import {
@@ -1277,8 +1277,10 @@ function BlockContent({
     () => normalizeDetailPreviewManifest((fullBlock ?? block).preview_manifest),
     [block, fullBlock],
   );
-  const descriptor = useMemo(
-    () => deriveCardLayoutDescriptor(fullBlock ?? block),
+  // The record's source decides how the open card shows its media; the feed
+  // card's look does not (SPEC_CARD_UNIFIED.md, Е1).
+  const content = useMemo(
+    () => deriveCardContent(fullBlock ?? block),
     [block, fullBlock],
   );
   // Lazy-load full body if truncated (LightBlock carries only a short preview).
@@ -1416,7 +1418,7 @@ function BlockContent({
 
     case "link": {
       if (sourcePlayer) return <div>{sourcePlayer}</div>;
-      if (descriptor.variant === "link" && previewManifest?.kind !== "text") {
+      if (content.source === "link" && previewManifest?.kind !== "text") {
         const src = detailPreviewImageSource({
           block,
           previewManifest,
@@ -1469,7 +1471,7 @@ function BlockContent({
     }
 
     case "media": {
-      if (descriptor.variant === "image") {
+      if (content.source === "image") {
         const src = detailPreviewImageSource({
           block,
           previewManifest,
@@ -1514,7 +1516,7 @@ function BlockContent({
         );
       }
 
-      if (descriptor.variant === "link") {
+      if (content.source === "link") {
         const src = detailPreviewImageSource({
           block,
           previewManifest,
@@ -1550,9 +1552,9 @@ function BlockContent({
         );
       }
 
-      if (descriptor.variant === "video") {
+      if (content.source === "video") {
         const videoSourcePath =
-          descriptor.mediaItems.find((item) => item.isVideo)?.sourcePath
+          content.media?.items.find((item) => item.isVideo)?.sourcePath
           ?? block.media_file;
         const localSrc = resolveDetailMediaReference(vaultPath, videoSourcePath);
         // The lead video is either the primary file or the body's first video

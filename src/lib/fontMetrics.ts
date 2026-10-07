@@ -6,7 +6,7 @@
 // See SPEC_GRID.md for the pipeline rationale.
 
 import type { LightBlock } from "@/types";
-import { deriveCardLayoutDescriptor } from "@/lib/cardLayout";
+import { deriveCardContent } from "@/lib/cardLayout";
 import type {
   FontHash,
   WordWidths,
@@ -345,14 +345,13 @@ async function ensureFontLoaded(): Promise<void> {
 export function createFontMetricsCacheIdentity(
   block: LightBlock,
 ): FontMetricsCacheIdentity {
-  // Measured as `Cards` shows it: the only presentation where a picture card
-  // carries its name, and for every other card the same text as `Mixed`.
-  // One measurement serves all three (SPEC_FEED_DISPLAY.md, Д15).
-  const descriptor = deriveCardLayoutDescriptor(block, "cards");
-  const title = descriptor.titleText;
-  const preview = descriptor.previewText.length > FONT_METRICS_PREVIEW_MAX_CHARS
-    ? descriptor.previewText.slice(0, FONT_METRICS_PREVIEW_MAX_CHARS)
-    : descriptor.previewText;
+  // The card's own title and text, the same in every presentation: one
+  // measurement serves both (SPEC_FEED_DISPLAY.md, Д15).
+  const { text } = deriveCardContent(block);
+  const title = text.title;
+  const preview = text.text.length > FONT_METRICS_PREVIEW_MAX_CHARS
+    ? text.text.slice(0, FONT_METRICS_PREVIEW_MAX_CHARS)
+    : text.text;
   const textHash = hashString(`${title}\u0000${preview}`);
   const fontHash = currentFontHash();
   return {

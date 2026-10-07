@@ -9,19 +9,16 @@ import { clampCardAspect } from "@/lib/cardAspect";
 import { parseYoutubeSource } from "@/lib/youtubeSource";
 import { shownCollections } from "@/lib/cardCollections";
 
-export type CardLayoutVariant =
-  | "image"
-  | "link"
-  | "video"
-  | "file"
-  | "article-text"
-  | "article-media"
-  | "social-text"
-  | "social-single-media"
-  | "social-media-grid"
-  /// `Media` presentation: the card's media alone, without frame text
-  /// (SPEC_FEED_DISPLAY.md, Д13).
-  | "media-only";
+// One card (SPEC_CARD_UNIFIED.md). What a card shows is decided by its content
+// alone: its media and its text (Е3). The kind of record the content comes
+// from decides only how each part is read from the record's data (a picture's
+// title is only a real heading, an X post has none); the card's look never
+// reads it (Е1).
+
+/// The kind of record a card's content is read from (Е3). The feed card does
+/// not look at it; the open card (Detail) does, to play a video or show a
+/// link's page.
+export type CardSourceKind = "image" | "video" | "file" | "link" | "article" | "social" | "channel";
 
 export interface CardLayoutMediaItem {
   sourcePath: string;
@@ -31,32 +28,59 @@ export interface CardLayoutMediaItem {
   isVideoPoster: boolean;
 }
 
-export interface CardLayoutDescriptor {
-  variant: CardLayoutVariant;
-  titleText: string;
-  previewText: string;
-  authorText: string;
-  primaryAspectRatio: number | null;
-  mediaItems: CardLayoutMediaItem[];
-  visibleMediaCount: number;
-  totalMediaCount: number;
-  /// The framed card stands its media on top and a text part under it
-  /// (SPEC_FEED_DISPLAY.md, Д20): the media then closes with its outline, 1px
-  /// of the frame's colour along its bottom edge and rounded bottom corners,
-  /// inside the media, so the card's height does not change. False when the
-  /// media ends the card, for media without a frame, in `Media` and for cards
-  /// without media.
-  textUnderMedia: boolean;
+/// What a media slot paints: one picture from the card's whole preview (a
+/// picture, a link's page picture), one picture from its own tile (a post's
+/// picture), one video (playing or its poster), or several media as a gallery
+/// (Д21). The shape the slot is laid out at always comes from the artifact it
+/// paints (SPEC_CARD_MEDIA_GEOMETRY.md).
+export type CardMediaPaint =
+  | { kind: "preview" }
+  | { kind: "tile"; item: CardLayoutMediaItem | null }
+  | { kind: "video" }
+  | { kind: "gallery" };
+
+/// A card's media (Е3).
+export interface CardLayoutMedia {
+  items: CardLayoutMediaItem[];
+  /// The painted artifact's shape clamped from 1:2 to 2:1, the gallery's
+  /// shape, or null while the artifact is not measured: the slot then takes
+  /// the provisional envelope (`PROVISIONAL_MEDIA_ASPECT`).
+  aspectRatio: number | null;
+  visibleCount: number;
+  totalCount: number;
+  paint: CardMediaPaint;
 }
 
-/// A descriptor before the line under its media is decided: the shape every
-/// presentation derives, which `deriveCardLayoutDescriptor` completes.
-type CardLayoutShape = Omit<CardLayoutDescriptor, "textUnderMedia">;
+/// A card's text (Е3); an empty string where the part is absent.
+export interface CardLayoutText {
+  title: string;
+  text: string;
+  author: string;
+}
 
-export interface ContentCardSlots {
-  hasTopContent: boolean;
-  hasMedia: boolean;
-  hasBottomMeta: boolean;
+/// A card's content, read from its record (Е3).
+export interface CardContent {
+  source: CardSourceKind;
+  media: CardLayoutMedia | null;
+  text: CardLayoutText;
+}
+
+/// How the feed shows a card (Е2, Е11): one layout for every card, media on
+/// top when shown and the text part under it.
+export interface CardLayoutDescriptor {
+  /// With content, or without (Е8): an empty card is the frame alone.
+  mode: "content" | "empty";
+  /// The media the card shows, or null.
+  media: CardLayoutMedia | null;
+  /// The card's text, whether the text part or the lift caption shows it.
+  text: CardLayoutText;
+  /// `always`: in the text part under the media (`Cards`, and every card
+  /// without media). `on-lift`: only as the caption a lift brings up (`Media`
+  /// with media, Е12).
+  textShown: "always" | "on-lift";
+  /// The text part stands under the shown media (Д20): the media then closes
+  /// with its outline, the frame's ring mirrored under it.
+  textUnderMedia: boolean;
 }
 
 export type CardLayoutBlock = Omit<LightBlock, "search_match" | "collections"> & {
@@ -118,11 +142,35 @@ function stripMarkdown(text: string): string {
 /// Longest body slice a card previews when the index carries no preview text.
 const BODY_PREVIEW_MAX_CHARS = 400;
 
-/// The text a framed card shows under its title: the indexed preview, or the
-/// body's own words when the index has none. One rule for posts, collections
-/// and pictures framed by `Cards` (SPEC_FEED_DISPLAY.md, Д12).
+/// The body without its first heading, the card's title: the same cut the
+/// index makes before it builds a preview (`strip_first_markdown_h1` in
+/// mine-core), so the text never repeats the title above it.
+function stripFirstMarkdownH1(body: string): string {
+  const out: string[] = [];
+  let inFence = false;
+  let stripped = false;
+  for (const line of body.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
+      inFence = !inFence;
+      out.push(line);
+      continue;
+    }
+    if (!inFence && !stripped && trimmed.startsWith("# ")) {
+      stripped = true;
+      continue;
+    }
+    out.push(line);
+  }
+  return out.join("\n").trimStart();
+}
+
+/// A card's text under its title: the indexed preview, or the body's own words
+/// after its title when the index has none. One rule for every record whose
+/// body is its text.
 function contentPreviewText(block: CardLayoutBlock, indexedPreviewText: string): string {
-  return indexedPreviewText || stripMarkdown(block.body).slice(0, BODY_PREVIEW_MAX_CHARS).trim();
+  return indexedPreviewText
+    || stripMarkdown(stripFirstMarkdownH1(block.body)).slice(0, BODY_PREVIEW_MAX_CHARS).trim();
 }
 
 function isTwitterUrl(url: string): boolean {
@@ -202,7 +250,7 @@ function imageSurfaceAspectRatio(
 /// (the whole preview, else its one tile), clamped into the card range, or null
 /// while that artifact is not measured. Source dimensions are never read.
 /// Shared by videos, a post's or an article's one video, and a link's page
-/// picture shown alone in `Media`. Contract: `SPEC_CARD_MEDIA_GEOMETRY.md`.
+/// picture. Contract: `SPEC_CARD_MEDIA_GEOMETRY.md`.
 function singleArtifactAspectRatio(
   previewManifest: ReturnType<typeof parsePreviewManifest>,
   mediaItems: readonly CardLayoutMediaItem[],
@@ -227,20 +275,6 @@ function singleMediaAspectRatio(
   return item.aspectRatio === null ? null : clampCardAspect(item.aspectRatio);
 }
 
-/// The fixed slot a framed link paints its page picture in, whatever the
-/// picture's shape: `aspect-video` in `LinkCard`, `THUMBNAIL_ASPECT` in
-/// `cardHeight.ts` (SPEC_GRID.md). Only `Media` shows the picture at its own
-/// shape (SPEC_FEED_DISPLAY.md, Д11 to Д14).
-const LINK_THUMBNAIL_ASPECT = 16 / 9;
-
-function mediaItemsFromMediaMetadata(
-  previewManifest: ReturnType<typeof parsePreviewManifest>,
-): CardLayoutMediaItem[] {
-  if (previewManifest) {
-    return mediaItemsFromManifestTiles(previewManifest.tiles);
-  }
-  return [];
-}
 
 function hasVideoMediaSignal(
   block: CardLayoutBlock,
@@ -268,355 +302,248 @@ function hasImageMediaSignal(
   );
 }
 
-function deriveMediaCardLayoutDescriptor(
-  block: CardLayoutBlock,
-  titleText: string,
-  previewManifest: ReturnType<typeof parsePreviewManifest>,
-): CardLayoutShape {
-  const mediaItems = mediaItemsFromMediaMetadata(previewManifest);
+/// A page picture or any other single picture the card's whole preview
+/// holds: its own shape, clamped like every media (Е6), the tiles it was made
+/// from as its items.
+function previewPictureMedia(
+  previewManifest: NonNullable<ReturnType<typeof parsePreviewManifest>>,
+): CardLayoutMedia {
+  const items = mediaItemsFromManifestTiles(previewManifest.tiles);
+  return {
+    items,
+    aspectRatio: singleArtifactAspectRatio(previewManifest, items),
+    visibleCount: items.length,
+    totalCount: items.length + previewManifest.overflowCount,
+    paint: { kind: "preview" },
+  };
+}
 
-  if (hasVideoMediaSignal(block, previewManifest, mediaItems)) {
-    // The poster's shape, clamped like a post's media: a fixed 16:9 slot
-    // cropped square and vertical videos to their middle (30.09.2026). The
-    // artifact, or nothing; the source file's size is never read.
-    // See SPEC_CARD_MEDIA_GEOMETRY.md.
+/// A record whose main file is a picture, a video or another file. Its title
+/// is only a real heading: a legacy `frontmatter.title` on such a record
+/// mirrors the file's name or the page it came from (SPEC_DISPLAY_TITLE.md).
+function mediaRecordContent(
+  block: CardLayoutBlock,
+  previewManifest: ReturnType<typeof parsePreviewManifest>,
+  indexedPreviewText: string,
+): CardContent {
+  const text: CardLayoutText = {
+    title: getMediaOwnTitle(block) ?? "",
+    text: contentPreviewText(block, indexedPreviewText),
+    author: block.author ?? "",
+  };
+  const items = previewManifest ? mediaItemsFromManifestTiles(previewManifest.tiles) : [];
+
+  if (hasVideoMediaSignal(block, previewManifest, items)) {
+    // The poster's shape, clamped like any media; the artifact, or nothing:
+    // the source file's size is never read (SPEC_CARD_MEDIA_GEOMETRY.md).
     return {
-      variant: "video",
-      titleText,
-      previewText: "",
-      authorText: "",
-      primaryAspectRatio: singleArtifactAspectRatio(previewManifest, mediaItems),
-      mediaItems,
-      visibleMediaCount: mediaItems.length,
-      totalMediaCount: mediaItems.length,
+      source: "video",
+      media: {
+        items,
+        aspectRatio: singleArtifactAspectRatio(previewManifest, items),
+        visibleCount: items.length,
+        totalCount: items.length,
+        paint: { kind: "video" },
+      },
+      text,
     };
   }
 
   if (hasImageMediaSignal(block, previewManifest)) {
     const artifactAspect = imageSurfaceAspectRatio(previewManifest);
     return {
-      variant: "image",
-      titleText,
-      previewText: "",
-      authorText: "",
-      // Null means the artifact has not been produced yet, and stays null: the
-      // provisional envelope is chosen by the consumer, not invented here.
-      primaryAspectRatio: artifactAspect === null ? null : clampCardAspect(artifactAspect),
-      mediaItems,
-      visibleMediaCount: mediaItems.length,
-      totalMediaCount: mediaItems.length,
+      source: "image",
+      media: {
+        items,
+        // Null means the artifact has not been produced yet, and stays null:
+        // the provisional envelope is the consumer's, not invented here.
+        aspectRatio: artifactAspect === null ? null : clampCardAspect(artifactAspect),
+        visibleCount: items.length,
+        totalCount: items.length,
+        paint: { kind: "preview" },
+      },
+      text,
     };
   }
 
   if (block.media_file) {
-    return {
-      variant: "file",
-      titleText,
-      previewText: "",
-      authorText: "",
-      primaryAspectRatio: null,
-      mediaItems,
-      visibleMediaCount: mediaItems.length,
-      totalMediaCount: mediaItems.length,
-    };
+    // A file the preview generator made no picture of.
+    return { source: "file", media: null, text };
   }
 
   if (block.url) {
     return {
-      variant: "link",
-      titleText,
-      previewText: "",
-      authorText: "",
-      primaryAspectRatio: LINK_THUMBNAIL_ASPECT,
-      mediaItems,
-      visibleMediaCount: mediaItems.length,
-      totalMediaCount: mediaItems.length,
+      source: "link",
+      media: previewManifest?.primaryPreviewPath && previewManifest.kind !== "text"
+        ? previewPictureMedia(previewManifest)
+        : null,
+      text: { ...text, title: getDisplayTitle(block) ?? "" },
     };
   }
 
+  return { source: "file", media: null, text };
+}
+
+/// A saved page: its page picture, its title and its description.
+function linkContent(
+  block: CardLayoutBlock,
+  previewManifest: ReturnType<typeof parsePreviewManifest>,
+  indexedPreviewText: string,
+): CardContent {
+  const hasPagePicture = previewManifest !== null
+    && previewManifest.kind !== "text"
+    && previewManifest.primaryPreviewPath !== null;
   return {
-    variant: "file",
-    titleText,
-    previewText: "",
-    authorText: "",
-    primaryAspectRatio: null,
-    mediaItems,
-    visibleMediaCount: mediaItems.length,
-    totalMediaCount: mediaItems.length,
+    source: "link",
+    media: hasPagePicture ? previewPictureMedia(previewManifest) : null,
+    text: {
+      title: getDisplayTitle(block) ?? "",
+      text: indexedPreviewText,
+      author: block.author ?? "",
+    },
   };
 }
 
-function deriveArticleCardLayoutDescriptor(
+/// An X or Instagram post: no title of its own (a legacy title there is
+/// synthetic), its text, its author and its pictures or videos.
+function socialContent(
   block: CardLayoutBlock,
-  titleText: string,
-  authorText: string,
   previewManifest: ReturnType<typeof parsePreviewManifest>,
   indexedPreviewText: string,
-): CardLayoutShape {
-  if (isSocialUrl(block.url)) {
-    const previewText = indexedPreviewText || stripMarkdown((block.body.split(/^---+$/m)[0] ?? block.body).trim());
-    const mediaItems = previewManifest ? mediaItemsFromManifestTiles(previewManifest.tiles) : [];
-    if (mediaItems.length === 0) {
-      return {
-        variant: "social-text",
-        titleText: "",
-        previewText,
-        authorText,
-        primaryAspectRatio: null,
-        mediaItems,
-        visibleMediaCount: 0,
-        totalMediaCount: 0,
-      };
-    }
-    if (mediaItems.length === 1) {
-      return {
-        variant: "social-single-media",
-        titleText: "",
-        previewText,
-        authorText,
-        // The shape of the image the card paints, clamped into 1:2 to 2:1 like
-        // every other single media (Г4.5, Д1.2). Null when that image has not
-        // been measured yet, and stays null: substituting the source's shape
-        // would lay the card out from a file it never paints; substituting 1
-        // would state a square nobody knows.
-        primaryAspectRatio: singleMediaAspectRatio(previewManifest, mediaItems[0]!),
-        mediaItems,
-        visibleMediaCount: 1,
-        totalMediaCount: 1,
-      };
-    }
-    const totalMediaCount = mediaItems.length + (previewManifest?.overflowCount ?? 0);
+): CardContent {
+  const text: CardLayoutText = {
+    title: "",
+    text: indexedPreviewText || stripMarkdown((block.body.split(/^---+$/m)[0] ?? block.body).trim()),
+    author: block.author ?? "",
+  };
+  const items = previewManifest ? mediaItemsFromManifestTiles(previewManifest.tiles) : [];
+  if (items.length === 0) {
+    return { source: "social", media: null, text };
+  }
+  if (items.length === 1) {
+    const item = items[0]!;
     return {
-      variant: "social-media-grid",
-      titleText: "",
-      previewText,
-      authorText,
-      primaryAspectRatio: galleryAspectRatio(Math.min(4, totalMediaCount)),
-      mediaItems,
-      visibleMediaCount: Math.min(4, totalMediaCount),
-      totalMediaCount,
+      source: "social",
+      media: {
+        items,
+        // The shape of the image the card paints, clamped like every single
+        // media (Г4.5, Д1.2); null while that image is not measured.
+        aspectRatio: singleMediaAspectRatio(previewManifest, item),
+        visibleCount: 1,
+        totalCount: 1,
+        paint: item.isVideo ? { kind: "video" } : { kind: "tile", item },
+      },
+      text,
     };
   }
+  const totalCount = items.length + (previewManifest?.overflowCount ?? 0);
+  return {
+    source: "social",
+    media: {
+      items,
+      aspectRatio: galleryAspectRatio(Math.min(4, totalCount)),
+      visibleCount: Math.min(4, totalCount),
+      totalCount,
+      paint: { kind: "gallery" },
+    },
+    text,
+  };
+}
 
-  const mediaItems = previewManifest ? mediaItemsFromManifestTiles(previewManifest.tiles) : [];
-  const totalMediaCount = previewManifest
-    ? mediaItems.length + previewManifest.overflowCount
-    : 0;
-  const hasVisualPreview = previewManifest?.kind !== undefined && previewManifest.kind !== "text";
+/// A post or an article: its title, its text, its author and the media its
+/// preview was made from.
+function articleContent(
+  block: CardLayoutBlock,
+  previewManifest: ReturnType<typeof parsePreviewManifest>,
+  indexedPreviewText: string,
+): CardContent {
+  const text: CardLayoutText = {
+    title: getDisplayTitle(block) ?? "",
+    text: contentPreviewText(block, indexedPreviewText),
+    author: block.author ?? "",
+  };
+  const hasVisualPreview = previewManifest !== null && previewManifest.kind !== "text";
+  if (!hasVisualPreview) {
+    return { source: "article", media: null, text };
+  }
+  const items = mediaItemsFromManifestTiles(previewManifest.tiles);
+  const totalCount = items.length + previewManifest.overflowCount;
   // Collages keep their own arrangement; a single media is shaped by the image
   // that is painted, and by nothing else (Д1.6). Null when that image has not
   // been measured: the consumer picks a provisional envelope rather than this
   // function inventing one from the source file.
-  const singleMedia = totalMediaCount === 1 ? mediaItems[0] : undefined;
-  const primaryAspectRatio = previewManifest?.kind === "composite"
-    ? galleryAspectRatio(Math.min(4, totalMediaCount))
-    : singleMedia
-      ? singleMediaAspectRatio(previewManifest, singleMedia)
-      : singleArtifactAspectRatio(previewManifest, mediaItems);
+  const single = totalCount === 1 ? items[0] : undefined;
+  const aspectRatio = previewManifest.kind === "composite"
+    ? galleryAspectRatio(Math.min(4, totalCount))
+    : single
+      ? singleMediaAspectRatio(previewManifest, single)
+      : singleArtifactAspectRatio(previewManifest, items);
+  const paint: CardMediaPaint = totalCount > 1
+    ? { kind: "gallery" }
+    : items.length === 1 && items[0]!.isVideo
+      ? { kind: "video" }
+      : { kind: "tile", item: items[0] ?? null };
   return {
-    variant: hasVisualPreview ? "article-media" : "article-text",
-    titleText,
-    previewText: contentPreviewText(block, indexedPreviewText),
-    authorText,
-    primaryAspectRatio,
-    mediaItems,
-    visibleMediaCount: mediaItems.length,
-    totalMediaCount,
+    source: "article",
+    media: { items, aspectRatio, visibleCount: items.length, totalCount, paint },
+    text,
   };
 }
 
-function deriveLinkCardLayoutDescriptor(
-  titleText: string,
-  previewManifest: ReturnType<typeof parsePreviewManifest>,
-  indexedPreviewText: string,
-): CardLayoutShape {
-  const mediaItems = previewManifest ? mediaItemsFromManifestTiles(previewManifest.tiles) : [];
-  const hasVisualPreview = previewManifest?.kind !== undefined
-    && previewManifest.kind !== "text"
-    && previewManifest.primaryPreviewPath !== null;
-  if (hasVisualPreview) {
-    return {
-      variant: "link",
-      titleText,
-      previewText: indexedPreviewText,
-      authorText: "",
-      // The framed slot, not the picture's shape: `Media` reshapes it from the
-      // artifact (`asMediaOnly`), and the source's size is never card geometry
-      // (SPEC_CARD_MEDIA_GEOMETRY.md; SPEC_AUDIT_FIXES.md, В5.7).
-      primaryAspectRatio: LINK_THUMBNAIL_ASPECT,
-      mediaItems,
-      visibleMediaCount: mediaItems.length,
-      totalMediaCount: mediaItems.length + previewManifest.overflowCount,
-    };
-  }
-
-  return {
-    variant: "link",
-    titleText,
-    previewText: indexedPreviewText,
-    authorText: "",
-    primaryAspectRatio: null,
-    mediaItems: [],
-    visibleMediaCount: 0,
-    totalMediaCount: 0,
-  };
-}
-
-/// Framed cards that carry media on top of their text: the cards `Media`
-/// reduces to their media (Д13).
-const MEDIA_BEARING_VARIANTS: ReadonlySet<CardLayoutVariant> = new Set([
-  "article-media",
-  "social-single-media",
-  "social-media-grid",
-]);
-
-/// The card's layout in the feed's presentation (SPEC_FEED_DISPLAY.md, Д10 to
-/// Д14). `mixed` is the feed as it has always been; the other two are derived
-/// from it, so each card keeps one geometry per presentation.
-export function deriveCardLayoutDescriptor(
-  block: CardLayoutBlock,
-  show: FeedShow = "mixed",
-): CardLayoutDescriptor {
+/// A card's content, read from its record by that record's own data rules
+/// (Е3). The same for every presentation.
+export function deriveCardContent(block: CardLayoutBlock): CardContent {
   const previewManifest = parsePreviewManifest(block);
-  const mixed = deriveMixedCardLayoutDescriptor(block, previewManifest);
-  const shape = show === "cards"
-    ? asPostCard(block, mixed)
-    : show === "media"
-      ? asMediaOnly(mixed, previewManifest)
-      : mixed;
-  return { ...shape, textUnderMedia: hasTextUnderMedia(block, shape) };
-}
-
-/// Whether a framed card's media stands over a text part (Д20). A post, an
-/// article, an X or Instagram post and a picture or video `Cards` frames as a
-/// post have one when anything is set under the media: a title, text, an
-/// author or the row of collections. A link has one whenever the layout
-/// reserves its page picture's slot, since the footer under it always names
-/// the page. Media alone (without a frame in `Mixed`, or in `Media`) and cards
-/// without media have none.
-function hasTextUnderMedia(block: CardLayoutBlock, shape: CardLayoutShape): boolean {
-  switch (shape.variant) {
-    case "article-media":
-    case "social-single-media":
-    case "social-media-grid":
-      return Boolean(shape.titleText || shape.previewText || shape.authorText)
-        || shownCollections({ collections: block.collections ?? [] }).length > 0;
-    case "link":
-      return shape.primaryAspectRatio !== null;
-    case "image":
-    case "video":
-    case "file":
-    case "article-text":
-    case "social-text":
-    case "media-only":
-      return false;
-  }
-}
-
-/// `Cards`: a picture or video card becomes a post card, its media on top
-/// across the frame and under it its own title (the body's first heading),
-/// its text and its author when it has them (Д12). Every other card is framed
-/// already.
-function asPostCard(block: CardLayoutBlock, mixed: CardLayoutShape): CardLayoutShape {
-  if (mixed.variant !== "image" && mixed.variant !== "video") return mixed;
-  return {
-    ...mixed,
-    variant: "article-media",
-    // Its own title only: a file name is not shown as one.
-    titleText: getMediaOwnTitle(block) ?? "",
-    previewText: contentPreviewText(block, block.preview_text?.trim() ?? ""),
-    authorText: block.author ?? "",
-  };
-}
-
-/// `Media`: a card with media shows only its media; several media stay the
-/// usual gallery. A link's page picture is media like any other (Д13, Д14):
-/// it leaves the framed link's fixed slot and takes its own artifact's shape,
-/// like a post's single media, the provisional envelope until it is measured.
-function asMediaOnly(
-  mixed: CardLayoutShape,
-  previewManifest: ReturnType<typeof parsePreviewManifest>,
-): CardLayoutShape {
-  const linkPicture = mixed.variant === "link" && mixed.mediaItems.length > 0;
-  if (!MEDIA_BEARING_VARIANTS.has(mixed.variant) && !linkPicture) return mixed;
-  return {
-    ...mixed,
-    variant: "media-only",
-    titleText: "",
-    previewText: "",
-    authorText: "",
-    primaryAspectRatio: linkPicture
-      ? singleArtifactAspectRatio(previewManifest, mixed.mediaItems)
-      : mixed.primaryAspectRatio,
-  };
-}
-
-function deriveMixedCardLayoutDescriptor(
-  block: CardLayoutBlock,
-  previewManifest: ReturnType<typeof parsePreviewManifest>,
-): CardLayoutShape {
-  const titleText = getDisplayTitle(block) ?? "";
-  const authorText = block.author ?? "";
   const indexedPreviewText = block.preview_text?.trim() ?? "";
   const cardKind = getRuntimeCardKind(block);
-
   switch (cardKind) {
     case "media":
-      return deriveMediaCardLayoutDescriptor(block, titleText, previewManifest);
-
+      return mediaRecordContent(block, previewManifest, indexedPreviewText);
     case "link":
-      return deriveLinkCardLayoutDescriptor(
-        titleText,
-        previewManifest,
-        indexedPreviewText,
-      );
-
+      return linkContent(block, previewManifest, indexedPreviewText);
     case "channel":
       return {
-        variant: "article-text",
-        titleText,
-        previewText: contentPreviewText(block, indexedPreviewText),
-        authorText: "",
-        primaryAspectRatio: null,
-        mediaItems: [],
-        visibleMediaCount: 0,
-        totalMediaCount: 0,
+        source: "channel",
+        media: null,
+        text: {
+          title: getDisplayTitle(block) ?? "",
+          text: contentPreviewText(block, indexedPreviewText),
+          author: "",
+        },
       };
-
     case "article":
-      return deriveArticleCardLayoutDescriptor(
-        block,
-        titleText,
-        authorText,
-        previewManifest,
-        indexedPreviewText,
-      );
+      return isSocialUrl(block.url)
+        ? socialContent(block, previewManifest, indexedPreviewText)
+        : articleContent(block, previewManifest, indexedPreviewText);
   }
-
   const _never: never = cardKind;
   return _never;
 }
 
-export function deriveContentCardSlots(
-  descriptor: CardLayoutDescriptor,
-): ContentCardSlots | null {
-  switch (descriptor.variant) {
-    case "article-text":
-    case "article-media":
-      return {
-        hasTopContent: descriptor.titleText.length > 0 || descriptor.previewText.length > 0,
-        hasMedia: descriptor.variant === "article-media",
-        hasBottomMeta: descriptor.authorText.length > 0,
-      };
-    case "social-text":
-    case "social-single-media":
-    case "social-media-grid":
-      return {
-        hasTopContent: descriptor.previewText.length > 0,
-        hasMedia: descriptor.variant !== "social-text",
-        hasBottomMeta: descriptor.authorText.length > 0,
-      };
-    default:
-      return null;
-  }
+/// Whether a card has any text of its own (Е3).
+export function hasCardText(text: CardLayoutText): boolean {
+  return Boolean(text.title || text.text || text.author);
+}
+
+/// The card in the feed's presentation (Е2, Е11). Every card follows the same
+/// rules: what it has, it shows. `Media` shows a card's media alone and keeps
+/// its text for the lift's caption; a card without media shows its text as in
+/// `Cards`.
+export function deriveCardLayoutDescriptor(
+  block: CardLayoutBlock,
+  show: FeedShow = "cards",
+): CardLayoutDescriptor {
+  const { media, text } = deriveCardContent(block);
+  const textShown = show === "media" && media !== null ? "on-lift" : "always";
+  // The pills under the text (С9) stand in the text part too, though they are
+  // the card's links and not its content (Е4).
+  const textPartShown = textShown === "always"
+    && (hasCardText(text) || shownCollections({ collections: block.collections ?? [] }).length > 0);
+  return {
+    mode: media !== null || hasCardText(text) ? "content" : "empty",
+    media,
+    text,
+    textShown,
+    textUnderMedia: media !== null && textPartShown,
+  };
 }

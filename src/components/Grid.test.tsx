@@ -67,9 +67,12 @@ function makeBlock(id: number, overrides: Partial<LightBlock> = {}): LightBlock 
   };
 }
 
+/// A video as a capture saves it: its file, its poster, no words of its own.
 function makeVideoBlock(id: number, overrides: Partial<LightBlock> = {}): LightBlock {
   return makeBlock(id, {
     block_type: "video",
+    title: null,
+    body: "",
     media_file: `clip-${id}.mp4`,
     preview_manifest: JSON.stringify({
       kind: "video_poster",
@@ -106,10 +109,13 @@ function makeVideoBlock(id: number, overrides: Partial<LightBlock> = {}): LightB
   });
 }
 
+/// A picture as a capture saves it: its file, its preview, no words of its own.
 function makeImageBlock(id: number, overrides: Partial<LightBlock> = {}): LightBlock {
   return makeBlock(id, {
     block_type: "image",
     card_kind: "media",
+    title: null,
+    body: "",
     media_file: `image-${id}.jpg`,
     width: 1000,
     height: 1000,
@@ -3002,8 +3008,6 @@ describe("Grid — no collapse after add / revisit", () => {
       triggerResize(280, 800);
     });
 
-    expect(document.querySelectorAll("[data-feed-video-surface='true']")).toHaveLength(0);
-
     await flushAsync();
 
     expect(document.querySelectorAll("[data-feed-video-surface='true']")).toHaveLength(3);
@@ -3036,6 +3040,7 @@ describe("Grid — no collapse after add / revisit", () => {
       makeBlock(1400, {
         block_type: "image",
         card_kind: "media",
+        body: "",
         media_file: "tall-prewarm-spacer.jpg",
         width: 100,
         height: 136,

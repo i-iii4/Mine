@@ -313,9 +313,9 @@ export function scrollPositionIntoView(
 
 /// Whether a card may leave the skeleton: its height is exact in the feed's
 /// presentation, or the metrics pass is over. The presentation is required, not
-/// defaulted: a picture is text-free in `Mixed` and carries its name in `Cards`,
-/// and judging a `Cards` feed by `Mixed` rules lays the name out on its two-line
-/// allowance and shifts the column once it is measured
+/// defaulted: a card with media is text-free in `Media` and shows its text in
+/// `Cards`, and judging one by the other's rules lays its text out on the
+/// worst allowance and shifts the column once it is measured
 /// (SPEC_FEED_DISPLAY.md, Д15; SPEC_AUDIT_FIXES.md, В5.4).
 export function blockCanRenderFromDeterministicHeight(
   block: LightBlock,

@@ -14,10 +14,16 @@ describe("feed display options (SPEC_FEED_DISPLAY.md, Д18)", () => {
     reloadFeedDisplay();
   });
 
-  it("starts newest first, mixed", () => {
+  it("starts newest first, in Cards", () => {
     window.localStorage.clear();
     reloadFeedDisplay();
-    expect(getFeedDisplay()).toEqual({ sort: "newest", show: "mixed" });
+    expect(getFeedDisplay()).toEqual({ sort: "newest", show: "cards" });
+  });
+
+  it("reads the retired Mixed as Cards (SPEC_CARD_UNIFIED.md, Е11)", () => {
+    window.localStorage.setItem(FEED_SHOW_STORAGE_KEY, "mixed");
+    reloadFeedDisplay();
+    expect(getFeedDisplay()).toEqual({ sort: "newest", show: "cards" });
   });
 
   it("keeps the choice for the next launch", () => {
@@ -34,13 +40,13 @@ describe("feed display options (SPEC_FEED_DISPLAY.md, Д18)", () => {
   it("ignores the retired media placement a launch may still find (Д19)", () => {
     window.localStorage.setItem("mine.feed.media", "inset");
     reloadFeedDisplay();
-    expect(getFeedDisplay()).toEqual({ sort: "newest", show: "mixed" });
+    expect(getFeedDisplay()).toEqual({ sort: "newest", show: "cards" });
   });
 
   it("reads a damaged value as the default", () => {
     window.localStorage.setItem(FEED_SORT_STORAGE_KEY, "sideways");
     window.localStorage.setItem(FEED_SHOW_STORAGE_KEY, "{broken");
     reloadFeedDisplay();
-    expect(getFeedDisplay()).toEqual({ sort: "newest", show: "mixed" });
+    expect(getFeedDisplay()).toEqual({ sort: "newest", show: "cards" });
   });
 });

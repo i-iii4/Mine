@@ -673,8 +673,8 @@ describe("Card", () => {
       block_type: "image",
       media_file: "sunset.jpg",
     });
-    render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
-    const img = screen.getByRole("img");
+    const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    const img = container.querySelector("img")!;
     expect(img).toHaveAttribute(
       "src",
       expect.stringContaining("/.mine/cache/thumbs/test-block.jpg"),
@@ -691,7 +691,7 @@ describe("Card", () => {
 
     expect(container.querySelector("[data-card-image-base]")).not.toBeInTheDocument();
 
-    const img = screen.getByRole("img");
+    const img = container.querySelector("img")!;
     expect(img.getAttribute("src")).toContain("/tmp/thumbs/test-block.jpg");
     expect(img).toHaveClass("object-cover");
     expect(img.className).not.toContain("opacity-");
@@ -703,12 +703,12 @@ describe("Card", () => {
       <Card block={b} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" onClick={vi.fn()} />,
     );
 
-    expect(screen.getByRole("img")).toHaveAttribute(
+    expect(container.querySelector("img")!).toHaveAttribute(
       "src",
       expect.stringContaining("/tmp/thumbs/test-block.jpg"),
     );
 
-    fireEvent.error(screen.getByRole("img"));
+    fireEvent.error(container.querySelector("img")!);
 
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
     expect(screen.getByText("Sunset")).toBeInTheDocument();
@@ -721,17 +721,18 @@ describe("Card", () => {
       block_type: "image",
       media_file: "sunset.jpg",
     });
-    render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
-    const img = screen.getByRole("img");
+    const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    const img = container.querySelector("img")!;
     fireEvent.error(img);
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
     expect(screen.getByText("Test Block")).toBeInTheDocument();
   });
 
-  it("renders image card alt text from the title", () => {
+  it("names the card, not its picture: the picture is decorative (Г4.7)", () => {
     const b = block({ block_type: "image", title: "Sunset", media_file: "sunset.jpg" });
-    render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
-    expect(screen.getByRole("img")).toHaveAttribute("alt", "Sunset");
+    const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    expect(container.querySelector("img")!).toHaveAttribute("alt", "");
+    expect(screen.getByRole("button", { name: "Sunset" })).toBeInTheDocument();
   });
 
   it("sizes image cards from media_dimensions without letterboxing", () => {
@@ -746,7 +747,7 @@ describe("Card", () => {
     const { container } = render(
       <Card block={b} vaultPath={VAULT} onClick={vi.fn()} />,
     );
-    expect(screen.getByRole("img")).toHaveClass("object-cover");
+    expect(container.querySelector("img")!).toHaveClass("object-cover");
     expect(container.querySelector("[data-card-graphic-surface]")).toHaveClass("h-full");
   });
 
@@ -756,75 +757,51 @@ describe("Card", () => {
       media_file: "missing.jpg",
       title: "Missing Image",
     });
-    render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
-    fireEvent.error(screen.getByRole("img"));
+    const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    fireEvent.error(container.querySelector("img")!);
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
     expect(screen.getByText("Missing Image")).toBeInTheDocument();
   });
 
   // ── Link card ─────────────────────────────────────────────────────────
 
-  it("renders link card with title and domain", () => {
+  it("shows a link's title as any card's, with no domain line and no placeholder (Е6)", () => {
     const b = block({
       block_type: "link",
       title: "Example Site",
       url: "https://www.example.com/page",
     });
-    render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
     expect(screen.getByText("Example Site")).toBeInTheDocument();
-    // Domain appears twice: in the color placeholder and below the title
-    const domains = screen.getAllByText("example.com");
-    expect(domains.length).toBeGreaterThanOrEqual(1);
-  });
-
-  it("shows the page picture that loaded, and only that one", () => {
-    const pictureLink = (path: string) => block({
-      block_type: "link", title: "Linked page", url: "https://example.com/page",
-      preview_manifest: JSON.stringify({
-        kind: "image", primary_preview_path: path, width: 1200, height: 630,
-        preview_width: 600, preview_height: 315, tiles: [], overflow_count: 0,
-      }),
-    });
-    const { container, rerender } = render(
-      <ReadOnlyCardPreview block={pictureLink("page.jpg")} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" />,
-    );
-    const picture = () => container.querySelector<HTMLImageElement>("[data-card-graphic-surface] img")!;
-    expect(picture()).toHaveClass("opacity-0");
-    // A picture from the cache can load before the card's effects run: the
-    // loaded state belongs to that picture, so nothing resets it afterwards.
-    fireEvent.load(picture());
-    expect(picture()).toHaveClass("opacity-100");
-    rerender(
-      <ReadOnlyCardPreview block={pictureLink("page.jpg")} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" />,
-    );
-    expect(picture()).toHaveClass("opacity-100");
-    // A new picture is not the loaded one until it loads in turn.
-    rerender(
-      <ReadOnlyCardPreview block={pictureLink("other.jpg")} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" />,
-    );
-    expect(picture()).toHaveClass("opacity-0");
-  });
-
-  it("renders link card with slug when no title", () => {
-    const b = block({ block_type: "link", title: null });
-    render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
-    expect(screen.getByText("test-block")).toBeInTheDocument();
-  });
-
-  it("renders a compact link card when no ready preview exists", () => {
-    const b = block({
-      block_type: "link",
-      title: "No Image Site",
-      url: "https://noimage.example.com",
-    });
-    const { container } = render(
-      <Card block={b} vaultPath={VAULT} onClick={vi.fn()} />,
-    );
-    expect(screen.getByText("No Image Site")).toBeInTheDocument();
-    expect(screen.getByText("noimage.example.com")).toBeInTheDocument();
-    // The img element should be gone (compact card has no image)
+    expect(screen.queryByText("example.com")).not.toBeInTheDocument();
+    // No page picture: no media slot, no stand-in for one.
     expect(container.querySelector("img")).toBeNull();
     expect(container.querySelector("[data-card-graphic-surface]")).toBeNull();
+  });
+
+  it("shows a link's description as its text, under its page picture (Е6)", () => {
+    const b = block({
+      block_type: "link", title: "Linked page", url: "https://example.com/page", preview_text: "What the page says",
+      preview_manifest: JSON.stringify({
+        kind: "image", primary_preview_path: "page.jpg", width: 1200, height: 630,
+        preview_width: 600, preview_height: 900, tiles: [], overflow_count: 0,
+      }),
+    });
+    const { container } = render(<Card block={b} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" onClick={vi.fn()} />);
+    const surface = container.querySelector("[data-card-graphic-surface]")!;
+    // The page picture in its own shape, as any picture (В5.7).
+    expect(surface).toHaveStyle({ aspectRatio: `${600 / 900}` });
+    expect(surface.querySelector("img")?.getAttribute("src")).toContain("/tmp/thumbs/page.jpg");
+    const text = screen.getByText("What the page says");
+    expect(surface.compareDocumentPosition(text) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("puts nothing in place of a link that has neither picture, title nor description (Е8)", () => {
+    const b = block({ block_type: "link", title: null, description: null });
+    const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    expect(screen.queryByText("test-block")).not.toBeInTheDocument();
+    expect(screen.queryByText("example.com")).not.toBeInTheDocument();
+    expect(container.querySelector("[data-card-frame-content] p")).toBeNull();
   });
 
   // ── Article card ──────────────────────────────────────────────────────
@@ -1059,7 +1036,7 @@ describe("Card", () => {
     const mediaWrapper = image?.parentElement?.parentElement ?? null;
     expect(mediaWrapper).toBeTruthy();
     expect(mediaWrapper?.className).not.toContain("mt-3");
-    expect(screen.getByText("by @sorochii_")).toBeInTheDocument();
+    expect(screen.getByText("@sorochii_")).toBeInTheDocument();
   });
 
   it("renders social media above text and byline", () => {
@@ -1073,7 +1050,7 @@ describe("Card", () => {
     const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
     const media = container.querySelector("img");
     const preview = screen.getByText("Social preview body text");
-    const author = screen.getByText("by @artist");
+    const author = screen.getByText("@artist");
     expect(media).toBeTruthy();
     expect(media!.compareDocumentPosition(preview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(preview.compareDocumentPosition(author) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -1401,27 +1378,17 @@ describe("Card", () => {
 
   // ── File card ─────────────────────────────────────────────────────────
 
-  it("renders file card with extension badge", () => {
-    const b = block({
-      block_type: "file",
-      title: "Document",
-      media_file: "document.pdf",
-    });
-    render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
-    expect(screen.getByText("Document")).toBeInTheDocument();
-    expect(screen.getByText("PDF")).toBeInTheDocument();
-    expect(screen.getByText("document.pdf")).toBeInTheDocument();
-  });
-
-  it("renders FILE when no extension", () => {
-    const b = block({
-      block_type: "file",
-      title: "Unknown",
-      url: null,
-      media_file: null,
-    });
-    render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
-    expect(screen.getByText("FILE")).toBeInTheDocument();
+  it.each([
+    ["with a file", { title: "Document", media_file: "document.pdf" }],
+    ["without one", { title: "Unknown", url: null, media_file: null }],
+  ])("puts nothing in place of a file card %s and no preview: no badge, no name (Е8)", (_case, overrides) => {
+    const b = block({ block_type: "file", ...overrides });
+    const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    for (const word of ["Document", "Unknown", "PDF", "FILE", "document.pdf"]) {
+      expect(screen.queryByText(word)).not.toBeInTheDocument();
+    }
+    expect(container.querySelector("[data-card-frame-content] p")).toBeNull();
+    expect(container.querySelector("[data-card-graphic-surface]")).toBeNull();
   });
 
   it("renders media by card_kind and image metadata when legacy type is article", () => {
@@ -1431,8 +1398,8 @@ describe("Card", () => {
       title: "Photo",
       media_file: "photo.jpg",
     });
-    render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
-    expect(screen.getByRole("img")).toHaveAttribute(
+    const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
+    expect(container.querySelector("img")!).toHaveAttribute(
       "src",
       expect.stringContaining("/.mine/cache/thumbs/test-block.jpg"),
     );
@@ -1632,12 +1599,12 @@ describe("Card presentation in the feed (SPEC_FEED_DISPLAY.md, Д11 to Д13)", (
     expect(computeCardHeight(link, 320, null, "media")).toBe(paintedHeight(aspect));
   });
 
-  it("Mixed keeps a picture bare, as before", () => {
+  it("shows a picture without words of its own as its media alone, its file name nowhere (Е8)", () => {
     const picture = block({
       block_type: "image", title: null, url: null, media_file: "Media/Sunset.jpg",
       fallback_label: "Sunset", preview_manifest: imageManifest,
     });
-    const { container } = inFeed("mixed", picture);
+    const { container } = inFeed("cards", picture);
     expect(screen.queryByText("Sunset")).not.toBeInTheDocument();
     expect(container.querySelector("[data-card-graphic-surface]")).not.toBeNull();
   });
@@ -1700,7 +1667,7 @@ describe("Card geometry, author and name (SPEC_AUDIT_FIXES.md, Г4.5 to Г4.7)",
     ["Instagram", "https://instagram.com/p/1"],
   ])("paints a tall single %s picture at 1:2 and reserves the height it paints (Г4.5)", (_network, url) => {
     const post = tallPost(url);
-    for (const show of ["mixed", "cards", "media"] as const) {
+    for (const show of ["cards", "cards", "media"] as const) {
       const aspect = paintedAspect(renderedMarkup(show, post));
       expect(aspect).toBe(0.5);
       // With no text under it, the picture across the frame's inner width is
@@ -1731,7 +1698,7 @@ describe("Card geometry, author and name (SPEC_AUDIT_FIXES.md, Г4.5 to Г4.7)",
       }),
     });
     const tileAspect = clampCardAspect(800 / 1200);
-    for (const show of ["mixed", "cards", "media"] as const) {
+    for (const show of ["cards", "cards", "media"] as const) {
       const doc = renderedMarkup(show, post);
       // The tile is what the surface paints, and its shape is the surface's.
       expect(doc.querySelector("[data-card-graphic-surface] img")?.getAttribute("src"))
@@ -1775,7 +1742,7 @@ describe("Card geometry, author and name (SPEC_AUDIT_FIXES.md, Г4.5 to Г4.7)",
     ["an X post", "https://x.com/someone/status/1"],
   ])("shapes %s's one picture by the tile it paints, not by its page picture (Д1.6)", (_card, url) => {
     const card = oneMediaCard(url, "picture");
-    for (const show of ["mixed", "cards", "media"] as const) {
+    for (const show of ["cards", "cards", "media"] as const) {
       const doc = renderedMarkup(show, card);
       expect(doc.querySelector("[data-card-graphic-surface] img")?.getAttribute("src"))
         .toContain("post.preview-1.jpg");
@@ -1790,7 +1757,7 @@ describe("Card geometry, author and name (SPEC_AUDIT_FIXES.md, Г4.5 to Г4.7)",
     ["an X post", "https://x.com/someone/status/1"],
   ])("shapes %s's one video by the poster it paints, the whole preview (Д1.6)", (_card, url) => {
     const card = oneMediaCard(url, "video");
-    for (const show of ["mixed", "cards", "media"] as const) {
+    for (const show of ["cards", "cards", "media"] as const) {
       const doc = renderedMarkup(show, card);
       const poster = doc.querySelector("[data-card-graphic-surface] img")?.getAttribute("src") ?? "";
       expect(poster).toContain("post.jpg");
@@ -1802,10 +1769,10 @@ describe("Card geometry, author and name (SPEC_AUDIT_FIXES.md, Г4.5 to Г4.7)",
   });
 
   const longAuthor = "An author whose name runs on far past the width of any column in the feed, and then some more";
-  /// The author line a card paints in Mixed, found by its text.
+  /// The author line a card paints, found by its text.
   const authorLine = (value: LightBlock, text: string) => {
     render(
-      <FeedShowContext.Provider value="mixed">
+      <FeedShowContext.Provider value="cards">
         <Card block={value} vaultPath={VAULT} onClick={vi.fn()} />
       </FeedShowContext.Provider>,
     );
@@ -1814,13 +1781,13 @@ describe("Card geometry, author and name (SPEC_AUDIT_FIXES.md, Г4.5 to Г4.7)",
 
   it("keeps a long post author on one truncated line inside the height it reserves (Г4.6)", () => {
     const post = tallPost("https://x.com/someone/status/1", longAuthor);
-    const author = authorLine(post, `by ${longAuthor}`);
+    const author = authorLine(post, longAuthor);
     // One line of 16px that ends in an ellipsis, never a second line.
     expect(author).toHaveClass("truncate");
     expect(author).toHaveStyle({ lineHeight: "16px" });
     // The picture, then the author's one line 14px from it and from the
     // bottom edge, letter to letter (Д25).
-    expect(computeCardHeight(post, COLUMN, null, "mixed")).toBe(
+    expect(computeCardHeight(post, COLUMN, null, "cards")).toBe(
       CARD_BORDER + Math.round(INNER_WIDTH / 0.5)
         + edgeTextTop("author") + AUTHOR_LINE + edgeTextBottom("author"),
     );
@@ -1835,9 +1802,9 @@ describe("Card geometry, author and name (SPEC_AUDIT_FIXES.md, Г4.5 to Г4.7)",
     expect(author).toHaveStyle({ lineHeight: "16px" });
     // The author adds exactly one line and its gap under the title, however
     // long it is; the gap to the bottom edge reads the same under either.
-    const withoutAuthor = computeCardHeight({ ...article, author: null }, COLUMN, null, "mixed");
+    const withoutAuthor = computeCardHeight({ ...article, author: null }, COLUMN, null, "cards");
     expect(edgeTextBottom("author")).toBe(edgeTextBottom("title"));
-    expect(computeCardHeight(article, COLUMN, null, "mixed"))
+    expect(computeCardHeight(article, COLUMN, null, "cards"))
       .toBe(withoutAuthor + cardTextGap("title", "author") + AUTHOR_LINE);
   });
 
@@ -1864,7 +1831,7 @@ describe("Card geometry, author and name (SPEC_AUDIT_FIXES.md, Г4.5 to Г4.7)",
       .toHaveAttribute("data-feed-card-frame");
   });
 
-  it("names a video card in Mixed after its card (Г4.7)", () => {
+  it("names a video card after its card, its media decorative (Г4.7)", () => {
     const video = block({
       block_type: "video", title: null, url: null, media_file: "Media/Clip.mp4",
       fallback_label: "Clip", preview_manifest: JSON.stringify({
@@ -1876,7 +1843,7 @@ describe("Card geometry, author and name (SPEC_AUDIT_FIXES.md, Г4.5 to Г4.7)",
       }),
     });
     render(
-      <FeedShowContext.Provider value="mixed">
+      <FeedShowContext.Provider value="cards">
         <Card block={video} vaultPath={VAULT} onClick={vi.fn()} />
       </FeedShowContext.Provider>,
     );
@@ -2133,19 +2100,22 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д25)", () => {
     block_type: "video", title: null, url: null, media_file: "Media/Clip.mp4",
     fallback_label: "Clip", author: "@filmmaker", preview_manifest: videoManifest,
   });
+  /// The same picture and video with no words of their own: media alone.
+  const barePicture = () => ({ ...picture(), content_heading: null });
+  const bareVideo = () => ({ ...video(), author: null });
   const pageLink = () => block({
     block_type: "link", title: "A page", url: "https://example.com/page",
     preview_manifest: imageManifest(1200, 630),
   });
 
   const framedCards: Array<[string, () => LightBlock, FeedShow]> = [
-    ["an article with one picture", () => article(imageManifest(800, 600)), "mixed"],
-    ["an article with a gallery", () => article(galleryManifest(2)), "mixed"],
-    ["an X post with one picture", () => xPost(imageManifest(800, 1000)), "mixed"],
-    ["an X post with a two-tile gallery", () => xPost(galleryManifest(2)), "mixed"],
-    ["an X post with a four-tile gallery", () => xPost(galleryManifest(4)), "mixed"],
-    ["a picture Cards frames as a post", picture, "cards"],
-    ["a video Cards frames as a post", video, "cards"],
+    ["an article with one picture", () => article(imageManifest(800, 600)), "cards"],
+    ["an article with a gallery", () => article(galleryManifest(2)), "cards"],
+    ["an X post with one picture", () => xPost(imageManifest(800, 1000)), "cards"],
+    ["an X post with a two-tile gallery", () => xPost(galleryManifest(2)), "cards"],
+    ["an X post with a four-tile gallery", () => xPost(galleryManifest(4)), "cards"],
+    ["a picture with a heading of its own", picture, "cards"],
+    ["a video with an author", video, "cards"],
   ];
 
   it.each(framedCards)("reserves exactly the height %s paints", (_card, make, show) => {
@@ -2174,7 +2144,7 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д25)", () => {
   const outlinesOf = (frame: Element) =>
     Array.from(frame.querySelectorAll("[data-card-media-outline]"));
 
-  it.each([...framedCards, ["a link with its page picture", pageLink, "mixed"] as [string, () => LightBlock, FeedShow]])(
+  it.each([...framedCards, ["a link with its page picture", pageLink, "cards"] as [string, () => LightBlock, FeedShow]])(
     "closes the media of %s with its outline, opening the text part under it, at no height",
     (_card, make, show) => {
       const { frame, height } = paintCard(make(), show, COLUMN);
@@ -2192,8 +2162,8 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д25)", () => {
   it.each<[string, () => LightBlock, FeedShow]>([
     ["a post whose media ends the card", () => ({
       ...article(imageManifest(800, 600)), title: null, preview_text: null, author: null, body: "![](photo.jpg)",
-    }), "mixed"],
-    ["a bare picture", picture, "mixed"],
+    }), "cards"],
+    ["a picture without words", barePicture, "cards"],
     ["a picture in Media", picture, "media"],
   ])("shows the outline of %s only on a lift, where the media rises over the row under it", (_card, make, show) => {
     const { frame } = paintCard(make(), show, COLUMN);
@@ -2234,8 +2204,8 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д25)", () => {
     // Border 2 + media 318 × 3/4 (239) + 12 + title 16 + 8 + text 20 + 8
     // + author 16 + 12: every gap 14px from letter to letter (Д25).
     const post = article(imageManifest(800, 600));
-    expect(computeCardHeight(post, COLUMN, ONE_LINE, "mixed")).toBe(333);
-    expect(paintCard(post, "mixed", COLUMN).height).toBe(333);
+    expect(computeCardHeight(post, COLUMN, ONE_LINE, "cards")).toBe(333);
+    expect(paintCard(post, "cards", COLUMN).height).toBe(333);
   });
 
   it.each([
@@ -2266,8 +2236,8 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д25)", () => {
       url: null,
     })],
   ] as const)("reserves exactly what %s paints, its bottom gap included (01.10.2026)", (_name, make) => {
-    expect(paintCard(make(), "mixed", COLUMN).height)
-      .toBe(computeCardHeight(make(), COLUMN, ONE_LINE, "mixed"));
+    expect(paintCard(make(), "cards", COLUMN).height)
+      .toBe(computeCardHeight(make(), COLUMN, ONE_LINE, "cards"));
   });
 
   describe("text that wraps at the text column, 8px inside each side", () => {
@@ -2306,17 +2276,17 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д25)", () => {
 
     it.each(cases)("counts %s at the width the column gives it", (_text, make, widths, lineHeight) => {
       for (const [text, lines] of [[FITS, 1], [WRAPS, 2]] as const) {
-        const painted = paintCard(make(text), "mixed", COLUMN, MEASURE);
+        const painted = paintCard(make(text), "cards", COLUMN, MEASURE);
         const paragraph = painted.text.find((box) => box.element.textContent === text)!;
         expect(paragraph.width).toBe(INNER - EDGE_PADDING * 2);
         expect(paragraph.height).toBe(lineHeight * lines);
-        expect(computeCardHeight(make(text), COLUMN, widths(text), "mixed")).toBe(painted.height);
+        expect(computeCardHeight(make(text), COLUMN, widths(text), "cards")).toBe(painted.height);
       }
     });
   });
 
   it("lays a gallery's tiles across the frame with 1px straight seams (Д21)", () => {
-    const painted = paintCard(xPost(galleryManifest(4)), "mixed", COLUMN);
+    const painted = paintCard(xPost(galleryManifest(4)), "cards", COLUMN);
     const tiles = painted.frame.querySelectorAll("[data-card-media-tile]");
     expect(tiles).toHaveLength(4);
     // No rounding of its own on any tile; the seams are the grid's 1px gap.
@@ -2328,18 +2298,16 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д25)", () => {
     expect(painted.surface).toMatchObject({ width: INNER, height: INNER });
   });
 
-  it("runs a link's page picture across the frame's top, as it always was", () => {
-    for (const show of ["mixed", "cards"] as const) {
-      const painted = paintCard(pageLink(), show, COLUMN);
-      expect(painted.surface).toMatchObject({ top: FRAME_BORDER_PX, left: FRAME_BORDER_PX, width: INNER });
-      expect(painted.height).toBe(computeCardHeight(pageLink(), COLUMN, null, show));
-    }
+  it("runs a link's page picture across the frame's top, as any media", () => {
+    const painted = paintCard(pageLink(), "cards", COLUMN);
+    expect(painted.surface).toMatchObject({ top: FRAME_BORDER_PX, left: FRAME_BORDER_PX, width: INNER });
+    expect(painted.height).toBe(computeCardHeight(pageLink(), COLUMN, ONE_LINE, "cards"));
   });
 
   it("fills the card with frameless media and Media cards from the frame's top (Д22)", () => {
     const filling: Array<[LightBlock, FeedShow]> = [
-      [picture(), "mixed"],
-      [video(), "mixed"],
+      [barePicture(), "cards"],
+      [bareVideo(), "cards"],
       [picture(), "media"],
       [article(imageManifest(800, 600)), "media"],
       [xPost(galleryManifest(4)), "media"],
@@ -2364,7 +2332,7 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д25)", () => {
       }),
     ];
     for (const value of textOnly) {
-      const painted = paintCard(value, "mixed", COLUMN);
+      const painted = paintCard(value, "cards", COLUMN);
       expect(painted.surface).toBeUndefined();
       for (const line of painted.text) {
         expect(line.left).toBe(FRAME_BORDER_PX + EDGE_PADDING);
@@ -2384,7 +2352,7 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д25)", () => {
         // A short card is held at the hover actions' minimum height.
         expect(bottomGap).toBeGreaterThan(EDGE_VISUAL_GAP);
       }
-      expect(computeCardHeight(value, COLUMN, ONE_LINE, "mixed")).toBe(painted.height);
+      expect(computeCardHeight(value, COLUMN, ONE_LINE, "cards")).toBe(painted.height);
     }
   });
 
@@ -2437,17 +2405,16 @@ describe("Card titles differ from their text by color alone (01.10.2026)", () =>
     }),
   });
   const bareLink = block({ block_type: "link", title: "Bare page", url: "https://bare.example.com" });
-  const file = block({ block_type: "file", title: "Quarterly report", media_file: "report.pdf", url: null });
+  const file = block({ block_type: "file", title: null, content_heading: "Quarterly report", media_file: "report.pdf", url: null });
 
   it.each([
     ["an article card", article, "Article title", false],
     ["a link card with its page picture", pictureLink, "Linked page", true],
     ["a link card without a picture", bareLink, "Bare page", false],
-    ["a file card", file, "Quarterly report", false],
+    ["a file card with a heading of its own", file, "Quarterly report", false],
   ])("sets the title of %s in the card text size and weight", (_surface, value, title, hasPicture) => {
     const { container } = render(<Card block={value} vaultPath={VAULT} onClick={vi.fn()} />);
-    // Each case reaches its own title branch: the picture link is not the
-    // compact one.
+    // One title for every card: with media over it or without.
     expect(container.querySelector("[data-card-graphic-surface]") !== null).toBe(hasPicture);
     expectBodySizedTitle(screen.getByText(title));
   });
@@ -2539,23 +2506,29 @@ describe("Card lift on hover (SPEC_CARD_STATES.md, С8)", () => {
     // The row stands 8px above the bottom edge and is 24px tall, its 12px
     // letters centred: from the edge to 14px above them is 8 + 24 − 6 + 14.
     const reach = 8 + 24 - 6 + EDGE_VISUAL_GAP_PX;
-    // A post's last letters stand 14px above the edge already.
+    // Any card whose text part ends it: its last letters stand 14px above the
+    // edge already, a post's and a link's alike.
     expect(liftOf(block({ block_type: "article", body: "Some words" }))).toBe(reach - EDGE_VISUAL_GAP_PX);
-    // Media with no text under it ends at the edge: the whole reach.
+    expect(liftOf(block())).toBe(reach - EDGE_VISUAL_GAP_PX);
+    // Media with no text under it ends at the edge: the whole reach, and so
+    // does a card without content.
     expect(liftOf(block({
       block_type: "article", title: null, description: null, body: "![](photo.jpg)",
       media_urls: "[\"photo.jpg\"]",
     }))).toBe(reach);
-    // A link's footer: p-3 under its last 16px line, 2px of it air.
-    expect(liftOf(block())).toBe(reach - 12 - 2);
-    // A file card: p-4 under its 16px name.
-    expect(liftOf(block({ block_type: "file", media_file: "report.pdf", url: null }))).toBe(reach - 16 - 2);
-    // A bare picture rises by its caption's height, which the caption sets.
+    expect(liftOf(block({ block_type: "image", media_file: "photo.jpg" }))).toBe(reach);
+    expect(liftOf(block({ block_type: "file", media_file: "report.pdf", url: null }))).toBe(reach);
+    // A picture whose text `Media` keeps for the lift rises by its caption's
+    // height, which the caption sets.
+    const described = block({ block_type: "image", media_file: "photo.jpg", content_heading: "Sunset" });
     const pictureMarkup = renderToStaticMarkup(
-      <Card block={block({ block_type: "image", media_file: "photo.jpg" })} vaultPath={VAULT} onClick={vi.fn()} {...menuProps} />,
+      <FeedShowContext.Provider value="media">
+        <Card block={described} vaultPath={VAULT} onClick={vi.fn()} {...menuProps} />
+      </FeedShowContext.Provider>,
     );
     expect(pictureMarkup).toContain('data-card-lift="caption"');
-    expect(liftOf(block({ block_type: "image", media_file: "photo.jpg" }))).toBeNull();
+    expect(/--card-lift:/.test(new DOMParser().parseFromString(pictureMarkup, "text/html")
+      .querySelector("[data-feed-card-frame]")?.getAttribute("style") ?? "")).toBe(false);
   });
 
   it("moves the media window and its picture plane, and keeps the cloud badge outside them", () => {
@@ -2631,10 +2604,10 @@ describe("Card previews show the feed card in its final hover state (SPEC_CARD_S
     ["a post with media", mediaPost],
     ["a link", pictureLink],
   ] as const;
-  const shows: FeedShow[] = ["mixed", "cards", "media"];
+  const shows: FeedShow[] = ["cards", "cards", "media"];
 
   afterEach(() => {
-    setFeedShow("mixed");
+    setFeedShow("cards");
     publishCollectionOrder([]);
   });
 
@@ -2672,7 +2645,7 @@ describe("Card previews show the feed card in its final hover state (SPEC_CARD_S
 
   it.each(samples)("stands %s lifted from its first frame, by the feed card's lift", (_kind, make) => {
     const value = make();
-    const feedFrame = frameIn(parse(feedMarkup(value, "mixed")));
+    const feedFrame = frameIn(parse(feedMarkup(value, "cards")));
     const previewFrame = frameIn(parse(previewMarkup(value)));
     expect(previewFrame.hasAttribute("data-card-preview")).toBe(true);
     expect(previewFrame.hasAttribute("data-card-lift-pinned")).toBe(true);
@@ -2704,7 +2677,8 @@ describe("Card previews show the feed card in its final hover state (SPEC_CARD_S
       .toHaveTextContent("No collections");
   });
 
-  it("brings up a bare picture's caption with the feed's title rule: its own H1, never a legacy title or the file", () => {
+  it("brings up a picture's caption in Media with the feed's title rule: its own H1, never a legacy title or the file", () => {
+    setFeedShow("media");
     const { container, rerender } = render(
       <ReadOnlyCardPreview block={picture()} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" />,
     );
@@ -2717,9 +2691,18 @@ describe("Card previews show the feed card in its final hover state (SPEC_CARD_S
         thumbsRootPath="/tmp/thumbs"
       />,
     );
-    const caption = container.querySelector("[data-card-lift='caption']")!;
-    expect(caption).not.toHaveTextContent("Legacy title");
-    expect(caption).not.toHaveTextContent("Sunset");
+    // Without a heading of its own the picture has no text: no caption, and
+    // nothing put in its place (Е12).
+    expect(container.querySelector("[data-card-lift='caption']")).toBeNull();
+    expect(container).not.toHaveTextContent("Legacy title");
+  });
+
+  it("shows a picture's own heading under it in Cards, where the text part holds it", () => {
+    const { container } = render(
+      <ReadOnlyCardPreview block={picture()} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" />,
+    );
+    expect(container.querySelector("[data-card-lift='caption']")).toBeNull();
+    expect(container.querySelector("[data-card-lift='text']")).toHaveTextContent("Sunset");
   });
 
   it("reserves a bare picture's height exactly as the feed does at the preview's width", () => {
@@ -2757,14 +2740,14 @@ describe("Card without a preview: pending, missing, unreadable (SPEC_CARD_MEDIA_
   const CARD_BORDER = 2;
 
   /// The card as the feed paints it, inside or outside a running preview pass.
-  const tree = (value: LightBlock, previewsPending: boolean, show: FeedShow = "mixed") => (
+  const tree = (value: LightBlock, previewsPending: boolean, show: FeedShow = "cards") => (
     <PreviewsPendingContext.Provider value={previewsPending}>
       <FeedShowContext.Provider value={show}>
         <Card block={value} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" onClick={vi.fn()} />
       </FeedShowContext.Provider>
     </PreviewsPendingContext.Provider>
   );
-  const renderCard = (value: LightBlock, previewsPending: boolean, show: FeedShow = "mixed") =>
+  const renderCard = (value: LightBlock, previewsPending: boolean, show: FeedShow = "cards") =>
     render(tree(value, previewsPending, show));
   const markupOf = (value: LightBlock, previewsPending: boolean) =>
     new DOMParser().parseFromString(renderToStaticMarkup(tree(value, previewsPending)), "text/html");
@@ -2847,7 +2830,7 @@ describe("Card without a preview: pending, missing, unreadable (SPEC_CARD_MEDIA_
     it("turns a preview file that fails to load into the fill while the pass runs, and back into the name after it", () => {
       const picture = block({ block_type: "image", url: null, title: "Sunset", media_file: "Media/Sunset.jpg" });
       const { container, rerender } = renderCard(picture, true);
-      fireEvent.error(screen.getByRole("img"));
+      fireEvent.error(container.querySelector("img")!);
       expect(pendingFill(container)).not.toBeNull();
       expect(screen.queryByText("Sunset")).not.toBeInTheDocument();
 
@@ -2885,15 +2868,19 @@ describe("Card without a preview: pending, missing, unreadable (SPEC_CARD_MEDIA_
       expect(missing.container.querySelector("[data-preview-unavailable]")).toHaveClass("bg-card");
     });
 
-    it("fills the slot of a picture `Cards` frames before its preview exists", () => {
-      const pending = renderCard(freshPicture(), true, "cards");
-      expect(pendingFill(pending.container)).not.toBeNull();
-      expect(pending.container.querySelector("[data-preview-unavailable]")).toBeNull();
-      pending.unmount();
+    it("treats a picture alike in both presentations before its preview exists (Е7)", () => {
+      for (const show of ["cards", "media"] as const) {
+        const pending = renderCard(freshPicture(), true, show);
+        expect(pendingFill(pending.container)).not.toBeNull();
+        expect(pending.container.querySelector("[data-card-missing-media]")).toBeNull();
+        pending.unmount();
 
-      const missing = renderCard(freshPicture(), false, "cards");
-      expect(pendingFill(missing.container)).toBeNull();
-      expect(missing.container.querySelector("[data-preview-unavailable]")).not.toBeNull();
+        const missing = renderCard(freshPicture(), false, show);
+        expect(pendingFill(missing.container)).toBeNull();
+        expect(missing.container.querySelector("[data-card-missing-media]"))
+          .toHaveTextContent("Media/Strategist Index Cards.jpg");
+        missing.unmount();
+      }
     });
   });
 
@@ -2995,22 +2982,24 @@ describe("Card without a preview: pending, missing, unreadable (SPEC_CARD_MEDIA_
       }),
     });
 
-    it("holds the reserved picture slot with the fill above the text while the picture is on the way", () => {
+    it("holds the picture's slot with the fill above the text while the picture is on the way", () => {
       const { container } = renderCard(pageLink(), true);
       fireEvent.error(container.querySelector("img")!);
       const surface = container.querySelector("[data-card-graphic-surface]");
-      expect(surface).toHaveClass("aspect-video");
+      // The page picture's own shape, as any picture's.
+      expect(surface).toHaveStyle({ aspectRatio: `${600 / 315}` });
       expect(surface?.querySelector("[data-card-preview-pending]")).not.toBeNull();
       expect(surface).toHaveTextContent("");
       expect(screen.getByText("A page")).toBeInTheDocument();
-      expect(screen.getByText("example.com")).toBeInTheDocument();
     });
 
-    it("falls back to the compact card when no picture is coming", () => {
+    it("keeps the slot the layout reserved when no picture is coming, and says so in it", () => {
       const { container } = renderCard(pageLink(), false);
       fireEvent.error(container.querySelector("img")!);
-      expect(container.querySelector("[data-card-graphic-surface]")).toBeNull();
-      expect(screen.getByText("A page")).toBeInTheDocument();
+      const surface = container.querySelector("[data-card-graphic-surface]");
+      expect(surface).not.toBeNull();
+      expect(surface?.querySelector("[data-card-preview-pending]")).toBeNull();
+      expect(screen.getAllByText("A page").length).toBeGreaterThan(0);
     });
 
     it("stays compact without a manifest even during the pass: the layout reserved no slot", () => {
