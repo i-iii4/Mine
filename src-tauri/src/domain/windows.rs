@@ -12,9 +12,10 @@ pub const SAVED_WINDOWS_VERSION: u32 = 1;
 /// rows of the chrome (DESIGN_SYSTEM.md, ChromeRow).
 pub const TAB_BAR_HEIGHT_PX: u32 = 31;
 /// Height of a top chrome row's content (`--chrome-row-content-height`): the
-/// standard one and the tall one the person can switch to (В83). The tall
-/// row and its 1 px line step as a row of the sidebar's table, 40 px with its
-/// line (`--sidebar-row-height` in global.css; constants.test.ts checks).
+/// standard one and the tall one (В83), the tall one a window's default since
+/// 07.10.2026. The tall row and its 1 px line step as a row of the sidebar's
+/// table, 40 px with its line (`--sidebar-row-height` in global.css;
+/// constants.test.ts checks).
 pub const CHROME_ROW_HEIGHT_PX: u32 = 30;
 pub const CHROME_ROW_TALL_HEIGHT_PX: u32 = 39;
 
@@ -71,20 +72,40 @@ impl ChromeRows {
         tab_bar: CHROME_ROW_HEIGHT_PX,
         page: CHROME_ROW_HEIGHT_PX,
     };
+    /// Both rows tall: a window's default (user's decision of 07.10.2026).
+    pub const TALL: Self = Self {
+        tab_bar: CHROME_ROW_TALL_HEIGHT_PX,
+        page: CHROME_ROW_TALL_HEIGHT_PX,
+    };
 
-    /// Each height one the app knows.
+    /// One of the two the app offers: the bar and the pages go together
+    /// (user's decision of 07.10.2026). The pages' row decides: a short bar
+    /// over tall pages, once offered as «Chrome Height 40, Tab Bar 30», reads
+    /// as tall, since the rows the person works in were tall already; a bar
+    /// never offered over standard pages reads as standard.
     pub fn known(self) -> Self {
-        Self {
-            tab_bar: chrome_row_height(self.tab_bar),
-            page: chrome_row_height(self.page),
+        if chrome_row_height(self.page) == CHROME_ROW_TALL_HEIGHT_PX {
+            Self::TALL
+        } else {
+            Self::STANDARD
         }
     }
 }
 
+/// What a window has before the person picks other heights: the first window,
+/// a new window with none to take them from, and a window saved before rows
+/// had heights. A window's saved heights are kept.
 impl Default for ChromeRows {
     fn default() -> Self {
-        Self::STANDARD
+        Self::TALL
     }
+}
+
+/// The `data-chrome-height` a page shows for its row `row_height` tall, the
+/// attribute global.css sizes the top rows by (chromeHeight.ts): `Some("40")`
+/// for the tall row, none for the standard one.
+pub fn chrome_height_attribute(row_height: u32) -> Option<&'static str> {
+    (chrome_row_height(row_height) == CHROME_ROW_TALL_HEIGHT_PX).then_some("40")
 }
 
 /// Narrowest a tab gets before the bar scrolls: four or five letters of its
@@ -348,7 +369,7 @@ impl SavedWindows {
                 }],
                 active_tab: tab,
                 sidebar: SidebarLayout::default(),
-                chrome_rows: ChromeRows::STANDARD,
+                chrome_rows: ChromeRows::default(),
             }],
             window_surface: None,
         }
@@ -753,7 +774,8 @@ pub fn normalize(
             TabSpace::Space { vault_id } => space(vault_id) == SpaceStatus::Known,
             TabSpace::Picker => true,
         });
-        // A height no longer offered (46 px tried on 03.10.2026) reads as standard.
+        // A height no longer offered (46 px tried on 03.10.2026) reads as
+        // standard; a short bar over tall pages reads as tall (07.10.2026).
         window.chrome_rows = window.chrome_rows.known();
         for tab in &mut window.tabs {
             // A tab saved while the window owned the sidebar takes the window's.
@@ -809,6 +831,59 @@ mod tests {
         // The tall row's content before its line counted in its step.
         assert_eq!(title_bar_for(40), TitleBar::Compact);
         assert_eq!(title_bar_for(12), TitleBar::Standard);
+    }
+
+    #[test]
+    fn a_window_is_tall_by_default_and_keeps_saved_heights() {
+        // The first window and a window saved before rows had heights.
+        let fresh = SavedWindows::fresh(TabSpace::Picker, WindowId("w".into()), TabId("t".into()), &screen());
+        assert_eq!(fresh.windows[0].chrome_rows, ChromeRows::TALL);
+        assert_eq!(ChromeRows::default(), ChromeRows::TALL);
+        let mut without_rows = serde_json::to_value(&fresh.windows[0]).expect("the window writes");
+        without_rows.as_object_mut().expect("an object").remove("chrome_rows");
+        let read: SavedWindow = serde_json::from_value(without_rows).expect("the window reads");
+        assert_eq!(read.chrome_rows, ChromeRows::TALL);
+        // A window whose heights were saved keeps them, the standard ones too.
+        let mut standard = fresh.windows[0].clone();
+        standard.chrome_rows = ChromeRows::STANDARD;
+        let text = serde_json::to_string(&standard).expect("the window writes");
+        let read: SavedWindow = serde_json::from_str(&text).expect("the window reads");
+        assert_eq!(read.chrome_rows, ChromeRows::STANDARD);
+    }
+
+    #[test]
+    fn the_bar_and_the_pages_go_together() {
+        let rows = |tab_bar, page| ChromeRows { tab_bar, page };
+        assert_eq!(rows(30, 30).known(), ChromeRows::STANDARD);
+        assert_eq!(rows(39, 39).known(), ChromeRows::TALL);
+        // The tall row's content before its line counted in its step.
+        assert_eq!(rows(40, 40).known(), ChromeRows::TALL);
+        // Once offered as «Chrome Height 40, Tab Bar 30»: the pages decide.
+        assert_eq!(rows(30, 39).known(), ChromeRows::TALL);
+        // Never offered, and a height no longer offered.
+        assert_eq!(rows(39, 30).known(), ChromeRows::STANDARD);
+        assert_eq!(rows(46, 46).known(), ChromeRows::STANDARD);
+
+        let mut model = saved(vec![window("w", vec![tab("t", "x")], "t")]);
+        assert!(model.set_chrome_rows(&WindowId("w".into()), rows(30, 39)));
+        assert_eq!(model.windows[0].chrome_rows, ChromeRows::TALL);
+    }
+
+    #[test]
+    fn a_session_saved_with_a_short_bar_over_tall_pages_reads_tall() {
+        let mut window = window("w", vec![tab("t", "x")], "t");
+        window.chrome_rows = ChromeRows { tab_bar: 30, page: 39 };
+        let text = serde_json::to_string(&saved(vec![window])).expect("the session writes");
+        let read = normalize(parse(&text).expect("the session reads"), &known, &screen(), &mut ids());
+        assert_eq!(read.windows[0].chrome_rows, ChromeRows::TALL);
+    }
+
+    #[test]
+    fn a_page_is_told_its_row_before_its_first_frame() {
+        assert_eq!(chrome_height_attribute(CHROME_ROW_TALL_HEIGHT_PX), Some("40"));
+        assert_eq!(chrome_height_attribute(40), Some("40"));
+        assert_eq!(chrome_height_attribute(CHROME_ROW_HEIGHT_PX), None);
+        assert_eq!(chrome_height_attribute(46), None);
     }
 
     #[test]

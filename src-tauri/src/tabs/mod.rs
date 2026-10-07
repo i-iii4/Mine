@@ -345,7 +345,22 @@ fn fresh_windows(app: &AppHandle, screens: &[ScreenArea]) -> SavedWindows {
 
 /// The chrome rows of the window `window_id` (В83).
 fn chrome_rows_of(app: &AppHandle, window_id: &WindowId) -> ChromeRows {
-    shell(app).snapshot().window(window_id).map_or(ChromeRows::STANDARD, |window| window.chrome_rows)
+    shell(app).snapshot().window(window_id).map_or_else(ChromeRows::default, |window| window.chrome_rows)
+}
+
+/// A script that shows a page's chrome row `row_height` tall from its first
+/// frame (В83): it sets the attribute global.css sizes the top rows by at
+/// document start, so a tall window's bar and pages never paint the standard
+/// row first and jump. The page's own bootstrap and `CHROME_ROWS_EVENT` keep
+/// the attribute after that.
+fn chrome_height_script(row_height: u32) -> String {
+    match crate::domain::windows::chrome_height_attribute(row_height) {
+        Some(value) => format!(
+            "document.documentElement && document.documentElement.setAttribute(\"data-chrome-height\", \"{value}\");"
+        ),
+        None => "document.documentElement && document.documentElement.removeAttribute(\"data-chrome-height\");"
+            .to_owned(),
+    }
 }
 
 /// The tab bar's height in `window_id`: its row and its line (В83).
@@ -404,7 +419,8 @@ fn create_window(app: &AppHandle, saved: &SavedWindow) -> anyhow::Result<Window>
     if let Some(surface) = shell(app).snapshot().window_surface {
         native::set_window_background(&window, &surface);
     }
-    let bar = WebviewBuilder::new(saved.id.bar_label(), WebviewUrl::App(TAB_BAR_PAGE.into()));
+    let bar = WebviewBuilder::new(saved.id.bar_label(), WebviewUrl::App(TAB_BAR_PAGE.into()))
+        .initialization_script(chrome_height_script(saved.chrome_rows.tab_bar));
     let bar = window.add_child(
         bar,
         LogicalPosition::new(0.0, 0.0),
@@ -433,7 +449,7 @@ fn create_window(app: &AppHandle, saved: &SavedWindow) -> anyhow::Result<Window>
 fn create_page(app: &AppHandle, window: &Window, tab: &TabId) -> anyhow::Result<Webview> {
     let (width, height) = logical_size(window);
     let window_id = WindowId::from_label(window.label());
-    let rows = window_id.as_ref().map_or(ChromeRows::STANDARD, |id| chrome_rows_of(app, id));
+    let rows = window_id.as_ref().map_or_else(ChromeRows::default, |id| chrome_rows_of(app, id));
     let bar = f64::from(crate::domain::windows::tab_bar_height(rows.tab_bar));
     if let Some(existing) = app.get_webview(&tab.label()) {
         if existing.window().label() == window.label() {
@@ -458,7 +474,8 @@ fn create_page(app: &AppHandle, window: &Window, tab: &TabId) -> anyhow::Result<
         }
     }
     let page = window.add_child(
-        WebviewBuilder::new(tab.label(), WebviewUrl::App(tab_page_url().into())),
+        WebviewBuilder::new(tab.label(), WebviewUrl::App(tab_page_url().into()))
+            .initialization_script(chrome_height_script(rows.page)),
         LogicalPosition::new(0.0, bar),
         LogicalSize::new(width, height - bar),
     )?;
@@ -972,7 +989,7 @@ pub fn new_window_at(app: &AppHandle, space: TabSpace, view: TabView) {
     let last = shell.snapshot().last_window().cloned();
     let sidebar = last.as_ref().map_or_else(SidebarLayout::default, SavedWindow::active_sidebar);
     // A new window opens with the chrome of the window it came from (В83).
-    let chrome_rows = last.as_ref().map_or(ChromeRows::STANDARD, |window| window.chrome_rows);
+    let chrome_rows = last.as_ref().map_or_else(ChromeRows::default, |window| window.chrome_rows);
     // It steps from that window, one tab bar lower and to the right (В54);
     // from a full screen window or none it stands in the middle.
     let frame = match last.as_ref() {

@@ -1726,11 +1726,12 @@
         "src/lib/chromeHeight.ts",
         "src/components/MineLogo.tsx",
         "src/components/MineLogo.test.tsx",
+        "src/lib/chromeHeight.test.ts",
         "tabbar.html",
         "vite.config.ts"
       ],
       "requirement": "SPEC_TABS.md## Полоса вкладок",
-      "tests": ["src/components/MineLogo.test.tsx", "src/tabbar/TabBar.test.tsx", "src/tabbar/TabBarApp.test.tsx", "src/tabbar/constants.test.ts", "src/tabbar/sourceGuard.test.ts", "src/tabbar/tabDrag.test.ts", "src/tabbar/tabKeyboard.test.ts", "src/tabbar/tabLabel.test.ts", "src/tabbar/tabLayout.test.ts", "src/tabbar/tabMenu.test.ts"],
+      "tests": ["src/lib/chromeHeight.test.ts", "src/components/MineLogo.test.tsx", "src/tabbar/TabBar.test.tsx", "src/tabbar/TabBarApp.test.tsx", "src/tabbar/constants.test.ts", "src/tabbar/sourceGuard.test.ts", "src/tabbar/tabDrag.test.ts", "src/tabbar/tabKeyboard.test.ts", "src/tabbar/tabLabel.test.ts", "src/tabbar/tabLayout.test.ts", "src/tabbar/tabMenu.test.ts"],
       "command": "test:frontend"
     },
     {
