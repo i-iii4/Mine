@@ -296,6 +296,9 @@ export function readGraphCanvasTheme(mode: "light" | "dark"): GraphCanvasTheme {
 
   return {
     ...GRAPH_PALETTE[mode],
+    // The graph's links are the interface's lines (user's decision of
+    // 07.10.2026): `--border`, not a colour of their own.
+    linkDefault: border,
     textPreviewFill,
     chromeFill,
     border,
@@ -312,6 +315,7 @@ function graphCanvasThemeFallback(mode: "light" | "dark"): GraphCanvasTheme {
         textPreviewFill: "#0f0f0f",
         chromeFill: "#1a1a1a",
         border: "#2a2a2a",
+        linkDefault: "#2a2a2a",
         mutedText: "#9a9a9a",
         foregroundText: "#fafafa",
         hoverOutline: "#343434",
@@ -321,6 +325,7 @@ function graphCanvasThemeFallback(mode: "light" | "dark"): GraphCanvasTheme {
         textPreviewFill: "#fcfcfc",
         chromeFill: "#fcfcfc",
         border: "#eeeeee",
+        linkDefault: "#eeeeee",
         mutedText: "#777777",
         foregroundText: "#0a0a0a",
         hoverOutline: "#e7e7e7",
