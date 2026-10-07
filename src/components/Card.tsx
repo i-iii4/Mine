@@ -1319,7 +1319,9 @@ function GalleryTiles({
       : { gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr" };
 
   return (
-    <div className="absolute inset-0 grid gap-px bg-card" style={gridStyle}>
+    // Tiles meet edge to edge, no seam between them (user's decision of
+    // 07.10.2026): the gallery reads as one picture inside the card's frame.
+    <div className="absolute inset-0 grid bg-card" style={gridStyle}>
       {visibleItems.map((item, index) => {
         const tileStyle = count === 3 && index === 0 ? { gridRow: "1 / span 2" } : undefined;
 
