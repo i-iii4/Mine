@@ -139,8 +139,9 @@ export function SidebarResizeHandle({
     width <= minWidth ? "cursor-e-resize"
       : width >= maxWidth ? "cursor-w-resize"
         : "cursor-col-resize";
-  // The line lights in the navigation highlight (`--border-accent`,
-  // SPEC_COLOR_RULES.md). A pointer that only passes over the catch lights
+  // The line lights by the least shift, half a quiet step brighter than
+  // itself (`--sidebar-border-hover`, SPEC_COLOR_RULES.md, 3.5; user's
+  // decision of 07.10.2026). A pointer that only passes over the catch lights
   // nothing: the light waits 300ms, as a split view's sash does, then fades in.
   // A press, a drag and a keyboard focus light it with no wait; leaving fades
   // it out with no wait.
@@ -151,8 +152,8 @@ export function SidebarResizeHandle({
     "after:transition-[background-color] after:duration-[180ms] after:ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:after:duration-0",
     "focus-visible:after:bg-ring focus-visible:after:delay-0",
     disabled && "pointer-events-none",
-    !disabled && held && "after:bg-border-accent",
-    !disabled && !held && pointerOver && "after:bg-border-accent after:delay-300",
+    !disabled && held && "after:bg-sidebar-border-hover",
+    !disabled && !held && pointerOver && "after:bg-sidebar-border-hover after:delay-300",
     !isResizing && cursorClassName,
   );
   const pointerHandlers = {

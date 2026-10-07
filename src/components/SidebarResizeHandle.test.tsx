@@ -41,7 +41,7 @@ describe("SidebarResizeHandle", () => {
       expect(element.style.left).toBe("calc(var(--sidebar-width) - 9px)");
       expect(element).toHaveClass("absolute", "cursor-col-resize", "after:left-1/2", "after:w-[2px]");
       expect(element.childElementCount).toBe(0);
-      expect(element).not.toHaveClass("after:bg-border-accent");
+      expect(element).not.toHaveClass("after:bg-sidebar-border-hover");
     }
   });
 
@@ -50,11 +50,11 @@ describe("SidebarResizeHandle", () => {
     const { top, body } = parts(container);
     fireEvent.pointerEnter(top);
     for (const element of [top, body]) {
-      expect(element).toHaveClass("after:bg-border-accent", "after:delay-300");
+      expect(element).toHaveClass("after:bg-sidebar-border-hover", "after:delay-300");
     }
     fireEvent.pointerLeave(top);
     for (const element of [top, body]) {
-      expect(element).not.toHaveClass("after:bg-border-accent");
+      expect(element).not.toHaveClass("after:bg-sidebar-border-hover");
       expect(element).not.toHaveClass("after:delay-300");
     }
   });
@@ -67,13 +67,13 @@ describe("SidebarResizeHandle", () => {
     body.hasPointerCapture = vi.fn(() => true);
     fireEvent.pointerEnter(body);
     fireEvent.pointerDown(body, { pointerId: 1, button: 0, clientX: 400 });
-    expect(body).toHaveClass("after:bg-border-accent");
+    expect(body).toHaveClass("after:bg-sidebar-border-hover");
     expect(body).not.toHaveClass("after:delay-300");
     fireEvent.pointerUp(body, { pointerId: 1, clientX: 400 });
     expect(body).toHaveClass("after:delay-300");
 
     rerender(<SidebarResizeHandle {...props()} isResizing />);
-    expect(body).toHaveClass("after:bg-border-accent");
+    expect(body).toHaveClass("after:bg-sidebar-border-hover");
     expect(body).not.toHaveClass("after:delay-300");
   });
 
@@ -138,7 +138,7 @@ describe("SidebarResizeHandle", () => {
     fireEvent.keyDown(line, { key: "ArrowLeft" });
     expect(p.onResizeTo).not.toHaveBeenCalled();
     fireEvent.pointerEnter(line);
-    expect(line).not.toHaveClass("after:bg-border-accent");
+    expect(line).not.toHaveClass("after:bg-sidebar-border-hover");
   });
 
   it("lays only the body's part until the top row is there", () => {

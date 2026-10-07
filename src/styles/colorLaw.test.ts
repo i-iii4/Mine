@@ -165,6 +165,9 @@ describe("tokens follow the colour rules", () => {
     expect(percent(DARK["--active-alpha"])).toBeCloseTo(alphaForDelta(FG.dark, CANVAS.dark, darkSignalDelta(QUIET, "area")) * 100, 1);
     expect(Number(LIGHT["--inert-frame-elevation"])).toBeCloseTo(-QUIET, 4);
     expect(Number(DARK["--inert-frame-elevation"])).toBeCloseTo(darkSignalDelta(QUIET, "line"), 3);
+    // The sidebar's line under the pointer: half a step, the user's least shift.
+    expect(Number(LIGHT["--line-hover-elevation"])).toBeCloseTo(-QUIET / 2, 4);
+    expect(Number(DARK["--line-hover-elevation"])).toBeCloseTo(darkSignalDelta(QUIET / 2, "line"), 3);
     expect(Number(LIGHT["--elevation-rest"])).toBeCloseTo(-2 * QUIET, 4);
     expect(Number(LIGHT["--elevation-hover"])).toBeCloseTo(-3 * QUIET, 4);
     expect(Number(DARK["--elevation-rest"])).toBeCloseTo(darkSignalDelta(2 * QUIET, "area"), 3);

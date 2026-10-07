@@ -839,6 +839,7 @@ body {
   --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-border-hover: var(--sidebar-border-hover);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-tertiary-foreground: var(--tertiary-foreground);
   --color-inert-frame: var(--inert-frame);
@@ -918,9 +919,11 @@ body {
      (DESIGN_SYSTEM.md, «Цвет от того, что под элементом») is one s on the
      page; the frame of what cannot be pressed one s from the surface under
      it; lines and field frames one s brighter than the brightest zone they
-     border (--accent). */
+     border (--accent); the sidebar's line under the pointer half an s
+     brighter than itself (user's decision of 07.10.2026). */
   --active-alpha: 4.1%;
   --inert-frame-elevation: -0.03;
+  --line-hover-elevation: -0.015;
   --border: oklch(0.9394 0 0);
   --sidebar-border: oklch(0.9394 0 0);
   --input: oklch(0.9394 0 0);
@@ -995,6 +998,7 @@ body {
     --tertiary-alpha: 27.92%;
     --active-alpha: 5.25%;
     --inert-frame-elevation: 0.0429;
+    --line-hover-elevation: 0.0214;
     --border: oklch(0.243 0 0);
     --sidebar-border: oklch(0.243 0 0);
     --input: oklch(0.243 0 0);
@@ -1054,6 +1058,7 @@ body {
   --tertiary-alpha: 27.92%;
   --active-alpha: 5.25%;
   --inert-frame-elevation: 0.0429;
+  --line-hover-elevation: 0.0214;
   --border: oklch(0.243 0 0);
   --sidebar-border: oklch(0.243 0 0);
   --input: oklch(0.243 0 0);
@@ -1103,6 +1108,7 @@ body {
   --tertiary-alpha: 26%;
   --active-alpha: 4.1%;
   --inert-frame-elevation: -0.03;
+  --line-hover-elevation: -0.015;
   --border: oklch(0.9394 0 0);
   --sidebar-border: oklch(0.9394 0 0);
   --input: oklch(0.9394 0 0);
@@ -1280,6 +1286,9 @@ body {
   --press: color-mix(in srgb, var(--foreground) calc(var(--active-alpha) / 2), transparent);
   --muted-foreground: color-mix(in srgb, var(--foreground) var(--muted-alpha), transparent);
   --tertiary-foreground: color-mix(in srgb, var(--foreground) var(--tertiary-alpha), transparent);
+  /* The sidebar's line under the pointer: the least shift, half a quiet step
+     brighter than the line (SPEC_COLOR_RULES.md, 3.5). */
+  --sidebar-border-hover: oklch(from var(--sidebar-border) calc(l + var(--line-hover-elevation)) 0 0);
 }
 
 /* The tertiary step belongs to what is unavailable only (SPEC_COLOR_RULES.md,
