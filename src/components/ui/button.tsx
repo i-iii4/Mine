@@ -14,6 +14,23 @@ const ICON_SIZES = new Set(["icon", "icon-xs", "chrome-icon"])
  *  at once while the pointer moves between buttons (the provider's skip). */
 const TOOLTIP_DELAY_MS = 500
 
+/** What a button holds: pressed as a toggle, or its own menu, popover or
+ *  picker open (Radix triggers pass `aria-expanded` and `data-state` down to
+ *  the button they wrap). */
+type HeldState = {
+  "aria-pressed"?: React.AriaAttributes["aria-pressed"]
+  "aria-expanded"?: React.AriaAttributes["aria-expanded"]
+  "data-state"?: string
+}
+
+/** A held button says nothing: what it names is already in front of the
+ *  person (DESIGN_SYSTEM.md, «Подсказки»; user's decision of 07.10.2026). */
+function isHeld(props: HeldState): boolean {
+  return props["aria-pressed"] === true || props["aria-pressed"] === "true"
+    || props["aria-expanded"] === true || props["aria-expanded"] === "true"
+    || props["data-state"] === "open" || props["data-state"] === "on"
+}
+
 // Keyboard focus draws the `--ring` outline inside the edge, the same inset
 // line hover uses (DESIGN_SYSTEM.md, Focus (button)); only chrome controls
 // show focus through their plate instead.
@@ -73,7 +90,8 @@ function Button({
   children,
   ...props
 }: React.ComponentProps<"button"> &
-  VariantProps<typeof buttonVariants> & {
+  VariantProps<typeof buttonVariants> &
+  HeldState & {
     asChild?: boolean
     /** chrome-icon: the 24px plate on hover only, always (the sidebar's
      *  filter row, DESIGN_SYSTEM.md, «Иконочные кнопки хрома»), or raised:
@@ -93,6 +111,16 @@ function Button({
     tooltip === false
       ? null
       : tooltip ?? (!asChild && ICON_SIZES.has(size ?? "") && typeof label === "string" ? label : null)
+  // The tooltip is held shut while the button is held, and one already open
+  // when that happens closes and stays closed until the pointer or focus
+  // brings it again.
+  const held = isHeld(props)
+  const [tipOpen, setTipOpen] = React.useState(false)
+  const [wasHeld, setWasHeld] = React.useState(held)
+  if (held !== wasHeld) {
+    setWasHeld(held)
+    if (held) setTipOpen(false)
+  }
 
   const button = (
     <ChromeControl enabled={size === "chrome-icon"}>
@@ -127,7 +155,11 @@ function Button({
   )
   if (tip === null) return button
   return (
-    <Tooltip delayDuration={TOOLTIP_DELAY_MS}>
+    <Tooltip
+      delayDuration={TOOLTIP_DELAY_MS}
+      open={tipOpen && !held}
+      onOpenChange={(next) => setTipOpen(next && !held)}
+    >
       <TooltipTrigger asChild>{button}</TooltipTrigger>
       <TooltipContent>
         {tip}

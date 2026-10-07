@@ -1645,11 +1645,13 @@
       "paths": [
         "src/components/ChromeCloseButton.tsx",
         "src/components/ui/tooltip.tsx",
+        "src/components/ui/button.tsx",
+        "src/components/ui/button-tooltip.test.tsx",
         "src/dev/ButtonAdaptationPage.tsx",
         "src/dev/shadcnButtonStyles.ts"
       ],
       "requirement": "DESIGN_SYSTEM.md#Подсказки",
-      "tests": ["src/App.test.tsx", "src/components/ui/button.test.tsx"],
+      "tests": ["src/App.test.tsx", "src/components/ui/button.test.tsx", "src/components/ui/button-tooltip.test.tsx"],
       "command": "test:frontend"
     },
     {
