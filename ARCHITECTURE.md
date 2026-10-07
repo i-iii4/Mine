@@ -694,6 +694,11 @@ iOS UI contract:
   action-title как `Hide Sidebar` или `Show Sidebar` при каждом изменении
   React-state. Поэтому shortcut и toolbar toggle не создают
   параллельных состояний.
+- Ручка ширины `SidebarResizeHandle` не знает высот хрома: линия меню идёт
+  через верхний ряд и тело страницы, и полоса захвата лежит внутри каждого
+  из них (порталом в верхний ряд, в теле на месте), беря высоту у элемента.
+  Высота верхнего ряда (30 или 40px) и нижний бар поэтому не требуют
+  согласования с ручкой (SPEC_FRONTEND.md, «Sidebar Resize»).
 - Release verification добавляет настоящий native-shell smoke: packaged
   macOS `Mine.app` открывает WKWebView smoke route, выполняет Tauri `invoke`
   (`get_vault_path`) и подтверждает результат вторым IPC command. HTTP audit
