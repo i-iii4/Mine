@@ -2524,7 +2524,6 @@ architecture decision 046 in [ARCHITECTURE.md](ARCHITECTURE.md).
 | 36.3 | Высота и подъём | DONE 06.10.2026 | одна формула высоты, один расчёт подъёма |
 | 36.4 | Документы | DONE 06.10.2026 | SPEC_FEED_DISPLAY, SPEC_CARD_STATES, SPEC_GRID, DESIGN_SYSTEM, ARCHITECTURE, SPEC_FRONTEND |
 | 36.5 | Живая приёмка | TODO | за пользователем |
-| 36.6 | iOS | TODO | те же правила в `CardViews.swift` |
 
 ### Backlog
 
