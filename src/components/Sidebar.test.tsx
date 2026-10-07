@@ -178,7 +178,7 @@ describe("Sidebar", () => {
   it("shows no new-channel row at rest: the command lives in the row above the list", () => {
     const { container } = renderSidebar({ ...defaultProps, width: 600 });
 
-    expect(screen.queryByRole("button", { name: "Create New Collection" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New Collection" })).not.toBeInTheDocument();
     expect(container.querySelector("[data-sidebar-new-channel-row]")).toBeNull();
     expect(container.querySelector('[data-sidebar-row-key="create-channel"]')).toBeNull();
   });
@@ -186,7 +186,7 @@ describe("Sidebar", () => {
   it("renders the new-channel row at the top of the list, under Everything, while a card is dragged", () => {
     const { container } = renderSidebar({ ...defaultProps, width: 600, isDropDragging: true });
 
-    const button = screen.getByRole("button", { name: "Create New Collection" });
+    const button = screen.getByRole("button", { name: "New Collection" });
     const row = button.closest("[data-sidebar-new-channel-row]") as HTMLElement;
     expect(row).toHaveAttribute("data-sidebar-new-channel-row", "");
     expect(row).toHaveAttribute("data-sidebar-row", "");
@@ -197,16 +197,20 @@ describe("Sidebar", () => {
     const keys = Array.from(container.querySelectorAll("[data-sidebar-row-key]"))
       .map((node) => node.getAttribute("data-sidebar-row-key"));
     expect(keys.slice(0, 3)).toEqual(["all", "create-channel", "tag:alpha"]);
-    expect(row).not.toHaveAttribute("data-sidebar-row-surface");
     expect(container.querySelector("[data-sidebar-rows]")).toBeInTheDocument();
-    const label = within(row).getByText("Create New Collection");
+    // A row of the table like the others (07.10.2026): its own seam, the name
+    // in the name column under the column's fade, an empty previews' cell and
+    // the count's cell, the plus where a count stands.
+    expect(row).toHaveAttribute("data-sidebar-row-surface");
+    const label = within(row).getByText("New Collection");
     expect(label).toHaveAttribute("data-sidebar-row-text", "");
-    expect(label).not.toHaveAttribute("data-sidebar-title-fade-width");
-    expect(label).not.toHaveClass("max-w-[150px]");
-    expect(label).toHaveClass("shrink-0");
-    expect(label.nextElementSibling).toHaveAttribute("data-sidebar-create-channel-plus", "");
-    expect(label.nextElementSibling).toHaveClass("ml-2");
-    expect(row.querySelector("[data-sidebar-empty-preview-rail]")).not.toBeInTheDocument();
+    expect(label).toHaveClass("w-[var(--sidebar-name-col)]", "shrink-0", "overflow-hidden");
+    expect(label).toHaveAttribute("data-sidebar-title-fade-width");
+    expect(row.querySelector("[data-sidebar-preview-rail]")).not.toBeNull();
+    expect(row.querySelector("[data-sidebar-preview-rail]")?.childElementCount).toBe(0);
+    expect(row.querySelector("[data-sidebar-meta-cell]")).not.toBeNull();
+    const plus = row.querySelector("[data-sidebar-create-channel-plus]");
+    expect(plus?.parentElement).toHaveClass("absolute", "right-[var(--sidebar-row-pad-x)]", "w-8");
   });
 
   it("starts the new name with the filter typed before the plus", () => {
@@ -508,7 +512,7 @@ describe("Sidebar", () => {
     });
   });
 
-  it("uses the row hover seam when card content is dragged over Create New Collection", () => {
+  it("uses the row hover seam when card content is dragged over the New Collection row", () => {
     dndContextState.over = { id: "create-channel" };
     const { container } = renderSidebar({
       ...defaultProps,

@@ -100,7 +100,7 @@ export const CONNECT_PLACES: readonly Place[] = [
 export const PLUS_ELSEWHERE: readonly Place[] = [
   { what: "New Collection над таблицей коллекций и во втором ряду", where: "App.tsx:4454, MainSecondaryChrome.tsx:88" },
   { what: "New Tab в полосе вкладок и Open in New Tab в выборе пространства", where: "TabBar.tsx:704, VaultSwitcher.tsx:665" },
-  { what: "Create New Collection в боковом меню (16 px)", where: "Sidebar.tsx:1996" },
+  { what: "Строка New Collection в боковом меню (16 px)", where: "Sidebar.tsx:2039" },
   { what: "Create «…» в выборе коллекций и Create Element", where: "CollectionPicker.tsx:475, 773, Detail.tsx:2004, 3354" },
   { what: "Zoom in в просмотре картинки", where: "ImagePreviewOverlay.tsx:558" },
   { what: "FolderPlus уже значит новое пространство (выбор пространства, клиппер)", where: "VaultSwitcher.tsx:520, 540, extension VaultSelect.tsx:258" },

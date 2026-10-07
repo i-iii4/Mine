@@ -590,7 +590,7 @@ const ICON_GROUPS: readonly IconGroup[] = [
       { Icon: Pencil, name: "Pencil", size: 13 },
       { Icon: GripVertical, name: "GripVertical", size: 13 },
       { Icon: Cloud, name: "Cloud", size: 13 },
-      { Icon: Plus, name: "Plus, строка «Create New Collection»", size: 16 },
+      { Icon: Plus, name: "Plus, строка «New Collection»", size: 16 },
     ],
   },
   {

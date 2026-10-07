@@ -1954,7 +1954,9 @@ function NewChannelRow({
       isCurrentRoute={false}
       isSidebarRowFocused={isSidebarRowFocused}
       isSidebarRowSeamAccent={isSidebarRowSeamAccent}
-      surface={isEditing && !compact}
+      // A row of the table like the others: its seam lights when a dragged
+      // card is over it (07.10.2026).
+      surface={!compact}
       isEditing={isEditing}
       nodeRef={setNodeRef}
       data-sidebar-new-channel-row=""
@@ -1985,6 +1987,10 @@ function NewChannelRow({
   );
 }
 
+/// The drop target that founds a collection with the dragged card. It is a
+/// row of the table like the others (user's report of 07.10.2026: the label
+/// ran across the column lines): the name in the name column, cut by the
+/// column's fade; an empty previews' cell; the plus where a count stands.
 function SidebarCreateChannelRowBody({
   compact,
   isEditing,
@@ -1992,42 +1998,54 @@ function SidebarCreateChannelRowBody({
   compact?: boolean;
   isEditing: boolean;
 }) {
+  if (compact) {
+    return (
+      <div
+        className={cn(
+          "flex w-full items-center gap-2 overflow-hidden rounded-1 p-2 font-sans text-base text-muted-foreground",
+          // A slow pointer lights it like any row (С7.10); the keyboard at once.
+          !isEditing && "group-focus-within:text-foreground",
+        )}
+        data-sidebar-create-channel-row-body
+      >
+        <span data-sidebar-row-text="" className="min-w-0 flex-1 truncate text-left">
+          {CREATE_COLLECTION_ROW_LABEL}
+        </span>
+        <Plus
+          aria-hidden="true"
+          data-sidebar-create-channel-plus=""
+          className={cn("size-4 shrink-0 text-muted-foreground", isEditing && "opacity-0")}
+        />
+      </div>
+    );
+  }
   return (
     <div
-      className={
-        compact
-          ? cn(
-              "flex w-full items-center gap-2 overflow-hidden rounded-1 p-2 font-sans text-base text-muted-foreground",
-              // A slow pointer lights it like any row (С7.10); the keyboard at once.
-              !isEditing && "group-focus-within:text-foreground",
-            )
-          : cn(
-              SIDEBAR_ROW_BOX_CLASS,
-              "pl-[var(--sidebar-row-pad-x)] font-sans text-base text-muted-foreground",
-              // A slow pointer lights it like any row (С7.10); the keyboard at once.
-              !isEditing && "group-focus-within:text-foreground",
-            )
-      }
+      className={cn(
+        SIDEBAR_ROW_BOX_CLASS,
+        "pl-[var(--sidebar-row-pad-x)] font-sans text-base text-muted-foreground",
+        // A slow pointer lights it like any row (С7.10); the keyboard at once.
+        !isEditing && "group-focus-within:text-foreground",
+      )}
       data-sidebar-create-channel-row-body
     >
+      <SidebarRowTitleCell>{CREATE_COLLECTION_ROW_LABEL}</SidebarRowTitleCell>
+      <SidebarPreviewRail>{null}</SidebarPreviewRail>
       <span
-        data-sidebar-row-text=""
-        className="shrink-0 whitespace-nowrap text-left"
-      >
-        Create New Collection
-      </span>
-      <Plus
         aria-hidden="true"
-        data-sidebar-create-channel-plus=""
-        className={cn(
-          "ml-2 size-4 shrink-0 text-muted-foreground",
-          isEditing && "opacity-0",
-        )}
-      />
-      <span className="min-w-0 flex-1" aria-hidden="true" />
+        className="absolute inset-y-0 right-[var(--sidebar-row-pad-x)] flex w-8 -translate-x-px items-center justify-end"
+      >
+        <Plus
+          data-sidebar-create-channel-plus=""
+          className={cn("size-4 shrink-0 text-muted-foreground", isEditing && "opacity-0")}
+        />
+      </span>
     </div>
   );
 }
+
+/// The command's own name, as on the plus over the list and in the bottom bar.
+const CREATE_COLLECTION_ROW_LABEL = "New Collection";
 
 /// How many placeholder tiles a row draws while its thumbnails are on the way:
 /// one per card not shown yet, up to what the strip holds. `shown` is the
