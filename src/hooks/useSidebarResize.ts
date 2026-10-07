@@ -2,7 +2,6 @@ import { useState, useCallback, useRef, useEffect, useLayoutEffect, startTransit
 import {
   SIDEBAR_MAX_WIDTH_PX,
   sidebarMinWidth,
-  sidebarCollapseThreshold,
 } from "@/lib/appLayout";
 import { getDesignMode, useDesignMode } from "@/lib/designMode";
 import { setWindowSidebar } from "@/lib/commands";
@@ -13,18 +12,20 @@ import type { SidebarLayout } from "@/types";
 const MAX_WIDTH = SIDEBAR_MAX_WIDTH_PX;
 const CSS_VAR = "--sidebar-width";
 
-// MIN_WIDTH (three equal columns) and COLLAPSE_THRESHOLD (half of min) depend
-// on the design variant's chrome; see appLayout.
+// MIN_WIDTH (three equal columns) depends on the design variant's chrome; see
+// appLayout. A drag keeps the panel between it and MAX_WIDTH: it never
+// collapses the panel, which the sidebar button and its hotkey do (user's
+// decision of 07.10.2026).
 
 // ─── Ownership ──────────────────────────────────────────────────────────────
 //
-// The sidebar belongs to the window, not to the tab (SPEC_TABS.md, В56, В78):
-// the backend keeps its layout, first-run width included, and sends every
-// change to all tabs of the window and to its tab bar. A tab clamps what it
-// receives to what the panel can show, changes it with `setWindowSidebar`
-// only when the person does, and shows the change at once; the echo that
-// follows says the same. A page that is not a tab (a dev browser route)
-// keeps the layout in memory, starting at the minimum.
+// Every tab has its own sidebar, kept by the backend between sessions in
+// windows.json; a new tab opens with the sidebar of the tab it was opened from
+// (SPEC_TABS.md, В56). A tab clamps what it receives to what the panel can
+// show, changes it with `setWindowSidebar` only when the person does, and
+// shows the change at once; the echo that follows says the same. A page that
+// is not a tab (a dev browser route) keeps the layout in memory, starting at
+// the minimum.
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -52,12 +53,17 @@ export interface UseSidebarResizeReturn {
   collapsed: boolean;
   /** Whether a drag-resize is in progress */
   isResizing: boolean;
+  /** The bounds a drag and the keyboard keep the panel in. */
+  minWidth: number;
+  maxWidth: number;
   /** Begin a resize drag (called by handle component) */
   startResize: (startX: number, startWidth: number) => void;
   /** Update width during drag (called on every pointermove) */
   updateResize: (clientX: number) => void;
   /** Finish the resize drag */
   endResize: () => void;
+  /** Set the width at once (the handle's keyboard), clamped to the bounds */
+  resizeTo: (width: number) => void;
   /** Toggle collapsed/expanded */
   toggleCollapsed: () => void;
 }
@@ -71,7 +77,6 @@ export interface UseSidebarResizeReturn {
 export function useSidebarResize(windowSidebar: SidebarLayout | null = null): UseSidebarResizeReturn {
   const design = useDesignMode();
   const MIN_WIDTH = sidebarMinWidth(design);
-  const COLLAPSE_THRESHOLD = sidebarCollapseThreshold(design);
 
   const [storedWidth, setStoredWidth] = useState(() => initialLayout(windowSidebar).width);
   const [collapsed, setCollapsed] = useState(() => initialLayout(windowSidebar).collapsed);
@@ -95,20 +100,12 @@ export function useSidebarResize(windowSidebar: SidebarLayout | null = null): Us
   const startRef = useRef({ startX: 0, startWidth: 0 });
   const rafIdRef = useRef<number | null>(null);
   const pendingWidthRef = useRef(0);
-  // Set when the drag itself crosses the collapse point and closes the panel
-  // live; the remaining pointer events for that gesture are then ignored.
-  const collapsedByDragRef = useRef(false);
-  // Live-collapse only after the drag has held a real (≥ threshold) width, so an
-  // expand-drag out of the collapsed state isn't killed the instant it starts.
-  const armedForCollapseRef = useRef(false);
 
   // Keep refs in sync so the stable callbacks read fresh values at fire time.
   const storedWidthRef = useRef(storedWidth);
   useEffect(() => { storedWidthRef.current = storedWidth; }, [storedWidth]);
   const minWidthRef = useRef(MIN_WIDTH);
   minWidthRef.current = MIN_WIDTH;
-  const collapseRef = useRef(COLLAPSE_THRESHOLD);
-  collapseRef.current = COLLAPSE_THRESHOLD;
   const collapsedRef = useRef(collapsed);
   collapsedRef.current = collapsed;
 
@@ -144,39 +141,15 @@ export function useSidebarResize(windowSidebar: SidebarLayout | null = null): Us
   const startResize = useCallback((startX: number, startWidth: number) => {
     startRef.current = { startX, startWidth };
     pendingWidthRef.current = startWidth;
-    collapsedByDragRef.current = false;
-    // Armed only when starting from a real width. Starting collapsed (width 0)
-    // means this is an expand-drag — follow the cursor out, don't re-collapse it.
-    armedForCollapseRef.current = startWidth >= collapseRef.current;
-    if (collapsedRef.current) setCollapsed(false);
     setDragWidth(startWidth);
     setIsResizing(true);
     document.body.classList.add("sidebar-resizing");
   }, []);
 
+  // The line follows the cursor 1:1 between the bounds and stops at them.
   const updateResize = useCallback((clientX: number) => {
-    if (collapsedByDragRef.current) return;
     const { startX, startWidth } = startRef.current;
-    const raw = startWidth + (clientX - startX);
-    const next = clamp(raw, 0, MAX_WIDTH);
-
-    // Once the drag reaches a real width, arm live-collapse for the way back.
-    if (next >= collapseRef.current) armedForCollapseRef.current = true;
-
-    if (armedForCollapseRef.current && next < collapseRef.current) {
-      // Past the <1-icon point — collapse at once. No rubber-band through a
-      // near-empty icon column; the rest of this gesture is ignored.
-      collapsedByDragRef.current = true;
-      pendingWidthRef.current = next;
-      setIsResizing(false);
-      setCollapsed(true);
-      commit(storedWidthRef.current, true);
-      document.body.classList.remove("sidebar-resizing");
-      return;
-    }
-
-    // Above the collapse point: follow the cursor 1:1 (rubber-band band snaps
-    // back to the minimum on release; above the minimum it stays put).
+    const next = clamp(startWidth + (clientX - startX), minWidthRef.current, MAX_WIDTH);
     writeCssVar(next);
     pendingWidthRef.current = next;
 
@@ -189,35 +162,25 @@ export function useSidebarResize(windowSidebar: SidebarLayout | null = null): Us
         });
       });
     }
-  }, [commit]);
+  }, []);
 
   const endResize = useCallback(() => {
     if (rafIdRef.current !== null) {
       cancelAnimationFrame(rafIdRef.current);
       rafIdRef.current = null;
     }
-    if (collapsedByDragRef.current) {
-      // The drag already collapsed the panel live — nothing to settle.
-      collapsedByDragRef.current = false;
-      return;
-    }
     setIsResizing(false);
     document.body.classList.remove("sidebar-resizing");
+    const finalWidth = clamp(pendingWidthRef.current, minWidthRef.current, MAX_WIDTH);
+    setStoredWidth(finalWidth);
+    setDragWidth(finalWidth);
+    commit(finalWidth, false);
+  }, [commit]);
 
-    const finalWidth = pendingWidthRef.current;
-    if (finalWidth < collapseRef.current) {
-      // Safety net if a fast gesture skipped the live-collapse check.
-      setCollapsed(true);
-      setDragWidth(storedWidthRef.current);
-      commit(storedWidthRef.current, true);
-    } else {
-      // Within the rubber-band band (or above) — snap to at least the minimum.
-      const clamped = clamp(finalWidth, minWidthRef.current, MAX_WIDTH);
-      setCollapsed(false);
-      setStoredWidth(clamped);
-      setDragWidth(clamped);
-      commit(clamped, false);
-    }
+  const resizeTo = useCallback((nextWidth: number) => {
+    const next = clamp(nextWidth, minWidthRef.current, MAX_WIDTH);
+    setStoredWidth(next);
+    commit(next, collapsedRef.current);
   }, [commit]);
 
   const toggleCollapsed = useCallback(() => {
@@ -236,5 +199,16 @@ export function useSidebarResize(windowSidebar: SidebarLayout | null = null): Us
     };
   }, []);
 
-  return { width, collapsed, isResizing, startResize, updateResize, endResize, toggleCollapsed };
+  return {
+    width,
+    collapsed,
+    isResizing,
+    minWidth: MIN_WIDTH,
+    maxWidth: MAX_WIDTH,
+    startResize,
+    updateResize,
+    endResize,
+    resizeTo,
+    toggleCollapsed,
+  };
 }

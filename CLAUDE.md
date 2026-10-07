@@ -255,7 +255,7 @@ local-arena/
 │   │   ├── DropZone.tsx        # Drag-and-drop файлов для создания блоков
 │   │   ├── ImportDialog.tsx    # 4-шаговый импорт из Are.na
 │   │   ├── CardContextMenu.tsx # Контекстное меню карточки: коллекции, удаление
-│   │   ├── SidebarResizeHandle.tsx # Ресайз-ручка сайдбара (pill-стиль)
+│   │   ├── SidebarResizeHandle.tsx # Линия между меню и лентой как ручка ширины (shadcn ResizableHandle без захвата)
 │   │   ├── NotificationCard.tsx # Единый вид уведомления: правый нижний угол, bg-popover
 │   │   ├── FirstCardMarker.tsx # Одноразовая пометка первой карточки (О19)
 │   │   ├── CloudRecommendation.tsx # Рекомендация Keep Downloaded по журналу ожиданий

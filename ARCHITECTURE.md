@@ -692,7 +692,7 @@ iOS UI contract:
   `View` menu является каноническим desktop-владельцем accelerator `⌃⌘S`, но
   хранит только проекцию: `commands/window_chrome.rs` синхронизирует его
   action-title как `Hide Sidebar` или `Show Sidebar` при каждом изменении
-  React-state. Поэтому shortcut, toolbar toggle и resize-collapse не создают
+  React-state. Поэтому shortcut и toolbar toggle не создают
   параллельных состояний.
 - Release verification добавляет настоящий native-shell smoke: packaged
   macOS `Mine.app` открывает WKWebView smoke route, выполняет Tauri `invoke`

@@ -736,19 +736,30 @@ article-card без media (8 lines × widest single-column inner width). Fronten
 
 ### Sidebar Resize
 
-Ширина и свёрнутость принадлежат окну, а не вкладке и не `localStorage`
-(03.10.2026, SPEC_TABS.md, В56, В78): итог перетаскивания края уходит
-командой `set_window_sidebar`, и все вкладки окна получают его событием
-`window-sidebar-changed`. Пока край тащат в этой вкладке, пришедшее событие
-не сдвигает панель из-под указателя. Ширина первого запуска 360px
+Ширина и свёрнутость у каждой вкладки свои и хранятся бэкендом между
+сессиями в `windows.json`, не в `localStorage`; новая вкладка открывается с
+меню той вкладки, из которой её открыли (SPEC_TABS.md, В56; решение
+пользователя 07.10.2026 подтверждает это правило). Итог перетаскивания уходит
+командой `set_window_sidebar`, ответ бэкенда приходит событием
+`window-sidebar-changed`. Пока край тащат, пришедшее событие не сдвигает
+панель из-под указателя. Ширина первого запуска 360px
 (`SIDEBAR_DEFAULT_WIDTH_PX` в `domain/windows.rs`).
 
-Resize handle должен блокировать нативное WebKit text selection с первого
-`pointerdown`, а не только после преодоления drag threshold. На `pointerdown`
-handle ставит `body.sidebar-resizing`, вызывает `preventDefault()`, очищает
-`document.getSelection()` и захватывает pointer. `startResize()` может
-оставаться threshold-gated, чтобы click по handle продолжал toggle collapsed,
-но selection suppression не должна ждать этого порога.
+Ручка это сама линия между боковым меню и лентой, как `ResizableHandle` из
+shadcn без `withHandle` (решение пользователя 07.10.2026,
+[SidebarResizeHandle.tsx](src/components/SidebarResizeHandle.tsx)): своя линия
+меню 1px остаётся единственной отметкой, вокруг неё невидимая зона захвата
+4px, курсор `col-resize`, при наведении ничего не появляется. Перетаскивание
+меняет ширину в пределах от минимума до максимума и упирается в них, меню не
+сворачивает; сворачивает кнопка бокового меню и её сочетание клавиш. Щелчок
+по линии ничего не делает. Свёрнутое меню линии не имеет. С клавиатуры линия
+это `role="separator"`: стрелки сдвигают её на 16px, Home и End к пределам,
+фокус показывает штатное кольцо.
+
+Ручка блокирует нативное WebKit text selection с первого `pointerdown`, а не
+только после порога перетаскивания: ставит `body.sidebar-resizing`, вызывает
+`preventDefault()`, очищает `document.getSelection()` и захватывает pointer;
+отпускание без перетаскивания снимает класс.
 
 ### Card
 

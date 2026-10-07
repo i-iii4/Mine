@@ -1442,9 +1442,12 @@ export function AppWithVault({
     width: sidebarWidth,
     collapsed: sidebarCollapsed,
     isResizing: sidebarResizing,
+    minWidth: sidebarMinWidthPx,
+    maxWidth: sidebarMaxWidthPx,
     startResize,
     updateResize,
     endResize,
+    resizeTo: resizeSidebarTo,
     toggleCollapsed,
   } = useSidebarResize(windowSidebar);
 
@@ -4581,21 +4584,26 @@ export function AppWithVault({
         scrollEdgeFade={scrollEdgeFade}
       />
 
-      <SidebarResizeHandle
-        isResizing={sidebarResizing}
-        secondaryBarVisible={mainSecondaryTopBarVisible}
-        collapsed={sidebarCollapsed}
-        disabled={
-          activeDragBlock !== null
-          || activeDragMediaAsset !== null
-          || activeDragTag !== null
-          || activeDragTextSelection !== null
-        }
-        onResizeStart={startResize}
-        onResizeUpdate={updateResize}
-        onResizeEnd={endResize}
-        onToggleCollapsed={toggleCollapsed}
-      />
+      {/* A collapsed panel has no line to grab: the sidebar button opens it. */}
+      {!sidebarCollapsed && (
+        <SidebarResizeHandle
+          isResizing={sidebarResizing}
+          secondaryBarVisible={mainSecondaryTopBarVisible}
+          width={sidebarWidth}
+          minWidth={sidebarMinWidthPx}
+          maxWidth={sidebarMaxWidthPx}
+          disabled={
+            activeDragBlock !== null
+            || activeDragMediaAsset !== null
+            || activeDragTag !== null
+            || activeDragTextSelection !== null
+          }
+          onResizeStart={startResize}
+          onResizeUpdate={updateResize}
+          onResizeEnd={endResize}
+          onResizeTo={resizeSidebarTo}
+        />
+      )}
 
       <main
         ref={mainRef}

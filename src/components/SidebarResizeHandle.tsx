@@ -1,46 +1,45 @@
-import { useRef, useState, useCallback, useEffect } from "react";
+import { useRef, useCallback, type KeyboardEvent, type PointerEvent } from "react";
 import { cn } from "@/lib/utils";
 
-const DRAG_THRESHOLD = 4;
+// The divider between the sidebar and the feed is the handle itself, as the
+// source design system's resizable handle is (shadcn `ResizableHandle`
+// without its grip; user's decision of 07.10.2026). Nothing appears on it: the
+// sidebar's own 1px line stays the only mark, a 4px catch straddles it, the
+// pointer turns into `col-resize`, and a keyboard focus draws the ring. A drag
+// resizes the panel between its minimum and maximum width; it never collapses
+// the panel, which the sidebar button and its hotkey do.
+
 // Both top chrome bars are h-8 (32px). The visible sidebar/main divider runs
 // through the TOP menu and the BODY, but the SECONDARY (stats) bar in between
-// has no visible line — so the hit zone and highlight cover the top band and
-// the body band and skip the secondary bar's band entirely.
+// has no visible line, so the catch covers the top band and the body band and
+// skips the secondary bar's band entirely.
 const TOP_MENU_HEIGHT = 32;
 const SECONDARY_BAR_HEIGHT = 32;
-// The pill stays to the RIGHT of the divider line (PILL_GAP) so that when the
-// sidebar is collapsed (width → 0, line at x=0) it still sits on-screen as a
-// grab tab. The hit zone, however, straddles the line: it extends LEFT_CATCH
-// past the line on the sidebar side and far enough right to cover the pill.
-// Both zone edges therefore land off the visible line — the natural aim point —
-// which kills the boundary flicker, and gives real catch area on the left.
-const LEFT_CATCH = 8;
-// Centred in the gap between the divider and the feed's first card: the feed
-// insets by the edge rhythm, the pill is PILL_WIDTH wide, so half of what is
-// left puts it in the middle of that free strip rather than against the line.
-const PILL_GAP = 5;
-const PILL_WIDTH = 6; // w-1.5
-const HANDLE_WIDTH = LEFT_CATCH + PILL_GAP + PILL_WIDTH + 2; // 22px, 2px right slack
-const PILL_MARGIN_LEFT = LEFT_CATCH + PILL_GAP; // keep pill at line + PILL_GAP
+/// The catch round the line, shadcn's `after:w-1`. The line is the sidebar's
+/// right border, the last pixel inside its width, so the catch is centred on
+/// that pixel.
+const CATCH_WIDTH = 4;
+const CATCH_LEFT = `calc(var(--sidebar-width) - ${CATCH_WIDTH / 2 + 0.5}px)`;
+/// A drag starts past this travel, so a press that wanders by a pixel or two
+/// does not nudge the width.
+const DRAG_THRESHOLD = 4;
+/// One arrow key press moves the line by the spacing step.
+const KEYBOARD_STEP_PX = 16;
 
 interface SidebarResizeHandleProps {
   isResizing: boolean;
-  /** Whether the secondary (stats) bar is shown — its band is skipped. */
+  /** Whether the secondary (stats) bar is shown: its band is skipped. */
   secondaryBarVisible: boolean;
-  /** With the panel closed the pill is the only thing to grab, so it stays
-   *  visible instead of waiting for a hover nobody knows to attempt. */
-  collapsed?: boolean;
+  /** The panel's width now and its bounds, for the separator's value. */
+  width: number;
+  minWidth: number;
+  maxWidth: number;
   disabled: boolean;
   onResizeStart: (startX: number, startWidth: number) => void;
   onResizeUpdate: (clientX: number) => void;
   onResizeEnd: () => void;
-  onToggleCollapsed: () => void;
-}
-
-function readSidebarWidth(): number {
-  const raw = getComputedStyle(document.documentElement).getPropertyValue("--sidebar-width");
-  const parsed = parseFloat(raw);
-  return Number.isFinite(parsed) ? parsed : 0;
+  /** Set the width from the keyboard; the hook clamps it. */
+  onResizeTo: (width: number) => void;
 }
 
 function clearNativeSelection(): void {
@@ -50,133 +49,121 @@ function clearNativeSelection(): void {
 export function SidebarResizeHandle({
   isResizing,
   secondaryBarVisible,
-  collapsed = false,
+  width,
+  minWidth,
+  maxWidth,
   disabled,
   onResizeStart,
   onResizeUpdate,
   onResizeEnd,
-  onToggleCollapsed,
+  onResizeTo,
 }: SidebarResizeHandleProps) {
-  const [hovered, setHovered] = useState(false);
   const startXRef = useRef(0);
   const startWidthRef = useRef(0);
   const didDragRef = useRef(false);
 
-  // Drop a stale hover when the handle is disabled mid-gesture (e.g. a block
-  // drag begins): pointer-events:none means a pointerleave never arrives, so
-  // the pill would otherwise stay lit.
-  useEffect(() => {
-    if (disabled) setHovered(false);
-  }, [disabled]);
-
   const handlePointerDown = useCallback(
-    (e: React.PointerEvent) => {
-      if (disabled) return;
+    (e: PointerEvent<HTMLDivElement>) => {
+      if (disabled || e.button !== 0) return;
       e.preventDefault();
       e.stopPropagation();
+      // WebKit selection is held off from the press itself, not from the
+      // drag threshold (SPEC_FRONTEND.md, «Sidebar Resize»).
       clearNativeSelection();
       document.body.classList.add("sidebar-resizing");
       e.currentTarget.setPointerCapture(e.pointerId);
       startXRef.current = e.clientX;
-      startWidthRef.current = readSidebarWidth();
+      startWidthRef.current = width;
       didDragRef.current = false;
     },
-    [disabled],
+    [disabled, width],
   );
 
   const handlePointerMove = useCallback(
-    (e: React.PointerEvent) => {
+    (e: PointerEvent<HTMLDivElement>) => {
       if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
       e.preventDefault();
       const delta = e.clientX - startXRef.current;
-
       if (!didDragRef.current && Math.abs(delta) > DRAG_THRESHOLD) {
         didDragRef.current = true;
         clearNativeSelection();
         onResizeStart(startXRef.current, startWidthRef.current);
       }
-      if (didDragRef.current) {
-        onResizeUpdate(e.clientX);
-      }
+      if (didDragRef.current) onResizeUpdate(e.clientX);
     },
     [onResizeStart, onResizeUpdate],
   );
 
-  const handlePointerUp = useCallback(
-    (e: React.PointerEvent) => {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-      if (didDragRef.current) {
-        onResizeEnd();
-      } else {
-        // A stationary click (no drag past threshold) toggles collapse/expand in
-        // both directions — this is the peek-tab behaviour. Drag resizes; drag to
-        // the edge collapses via endResize.
-        document.body.classList.remove("sidebar-resizing");
-        onToggleCollapsed();
-      }
-      didDragRef.current = false;
-    },
-    [onResizeEnd, onToggleCollapsed],
-  );
-
-  const handlePointerCancel = useCallback(
-    (e: React.PointerEvent) => {
+  const finishPointer = useCallback(
+    (e: PointerEvent<HTMLDivElement>) => {
       if (e.currentTarget.hasPointerCapture(e.pointerId)) {
         e.currentTarget.releasePointerCapture(e.pointerId);
       }
-      if (didDragRef.current) {
-        onResizeEnd();
-      } else {
-        document.body.classList.remove("sidebar-resizing");
-      }
+      if (didDragRef.current) onResizeEnd();
+      else document.body.classList.remove("sidebar-resizing");
       didDragRef.current = false;
     },
     [onResizeEnd],
   );
 
-  const showPill = !disabled && (hovered || isResizing || collapsed);
-  const bodyTop = secondaryBarVisible ? TOP_MENU_HEIGHT + SECONDARY_BAR_HEIGHT : TOP_MENU_HEIGHT;
+  // The separator pattern: arrows move the line a step, Home and End take it
+  // to its bounds. The keys stay here, so the feed does not move its focus.
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLDivElement>) => {
+      if (disabled || e.metaKey || e.ctrlKey || e.altKey) return;
+      const next =
+        e.key === "ArrowLeft" ? width - KEYBOARD_STEP_PX
+          : e.key === "ArrowRight" ? width + KEYBOARD_STEP_PX
+            : e.key === "Home" ? minWidth
+              : e.key === "End" ? maxWidth
+                : null;
+      if (next === null) return;
+      e.preventDefault();
+      e.stopPropagation();
+      onResizeTo(next);
+    },
+    [disabled, maxWidth, minWidth, onResizeTo, width],
+  );
 
-  const stripClassName = cn(
-    "fixed z-40 flex items-center",
+  const catchClassName = cn(
+    "fixed z-40 outline-hidden focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1",
     disabled && "pointer-events-none",
     !isResizing && "cursor-col-resize",
   );
-  const stripHandlers = {
-    onPointerEnter: () => setHovered(true),
-    onPointerLeave: () => setHovered(false),
+  const pointerHandlers = {
     onPointerDown: handlePointerDown,
     onPointerMove: handlePointerMove,
-    onPointerUp: handlePointerUp,
-    onPointerCancel: handlePointerCancel,
+    onPointerUp: finishPointer,
+    onPointerCancel: finishPointer,
   };
-  const stripLeft = `calc(var(--sidebar-width) - ${LEFT_CATCH}px)`;
+  const bodyTop = secondaryBarVisible ? TOP_MENU_HEIGHT + SECONDARY_BAR_HEIGHT : TOP_MENU_HEIGHT;
 
   return (
     <>
-      {/* Top menu band: the line is visible here, so it stays resizable. */}
+      {/* Top menu band: the line is visible here, so it can be grabbed. */}
       <div
-        className={stripClassName}
-        style={{ top: 0, height: TOP_MENU_HEIGHT, left: stripLeft, width: HANDLE_WIDTH }}
-        {...stripHandlers}
+        aria-hidden="true"
+        data-sidebar-resize-handle=""
+        className={catchClassName}
+        style={{ top: 0, height: TOP_MENU_HEIGHT, left: CATCH_LEFT, width: CATCH_WIDTH }}
+        {...pointerHandlers}
       />
-      {/* Body band: starts below the secondary (stats) bar, so that bar's band —
-          which has no visible line — is skipped. The pill lives here. */}
+      {/* Body band: below the secondary (stats) bar, whose band has no line.
+          The one the keyboard reaches. */}
       <div
-        className={stripClassName}
-        style={{ top: bodyTop, bottom: 0, left: stripLeft, width: HANDLE_WIDTH }}
-        {...stripHandlers}
-      >
-        {/* Pill sits to the right of the line (PILL_GAP). Stays put in both states:
-            when collapsed the line is at x=0, so the pill is at x=PILL_GAP, on-screen. */}
-        <div
-          className={cn(
-            "h-10 w-1.5 rounded-full bg-border transition-opacity duration-150",
-            showPill ? "opacity-100" : "opacity-0",
-          )}
-          style={{ marginLeft: PILL_MARGIN_LEFT }}
-        />
-      </div>
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize sidebar"
+        aria-valuenow={Math.round(width)}
+        aria-valuemin={Math.round(minWidth)}
+        aria-valuemax={Math.round(maxWidth)}
+        tabIndex={disabled ? -1 : 0}
+        data-sidebar-resize-handle=""
+        className={catchClassName}
+        style={{ top: bodyTop, bottom: 0, left: CATCH_LEFT, width: CATCH_WIDTH }}
+        onKeyDown={handleKeyDown}
+        {...pointerHandlers}
+      />
     </>
   );
 }

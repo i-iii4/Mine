@@ -100,15 +100,5 @@ export function sidebarMinWidth(design: DesignMode): number {
   return sidebarZoneWidth(design) * 3 + 2 + SIDEBAR_NAV_PAD_PX[design] * 2;
 }
 
-/**
- * Below the minimum the panel becomes a curtain sliding over the frozen menu.
- * Collapse once it has slid roughly halfway across; releasing before that snaps
- * the menu back open to the minimum. (Tunable: the fraction of the curtain
- * travel before collapse.)
- */
-export function sidebarCollapseThreshold(design: DesignMode): number {
-  return Math.round(sidebarMinWidth(design) / 2);
-}
-
 // The first-run width is the window's: the backend starts every window's
 // sidebar at its SIDEBAR_DEFAULT_WIDTH_PX (SPEC_TABS.md, В56).

@@ -74,6 +74,40 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
     expect(result.current.width).toBeCloseTo(500.4);
   });
 
+  it("stops a drag at the minimum and never collapses the panel (07.10.2026)", () => {
+    const { result } = renderHook(() => useSidebarResize({ width_px: 480, collapsed: false }));
+
+    act(() => result.current.startResize(480, 480));
+    // Far past the old collapse point, to the window's left edge.
+    act(() => result.current.updateResize(0));
+    expect(result.current.collapsed).toBe(false);
+    expect(document.documentElement.style.getPropertyValue("--sidebar-width")).toBe(`${min()}px`);
+    act(() => result.current.endResize());
+
+    expect(result.current.collapsed).toBe(false);
+    expect(result.current.width).toBe(min());
+    expect(commands.setWindowSidebar).toHaveBeenLastCalledWith({ width_px: min(), collapsed: false });
+  });
+
+  it("stops a drag at the maximum", () => {
+    const { result } = renderHook(() => useSidebarResize({ width_px: 480, collapsed: false }));
+    act(() => result.current.startResize(480, 480));
+    act(() => result.current.updateResize(480 + 5000));
+    act(() => result.current.endResize());
+    expect(result.current.width).toBe(SIDEBAR_MAX_WIDTH_PX);
+    expect(result.current.maxWidth).toBe(SIDEBAR_MAX_WIDTH_PX);
+    expect(result.current.minWidth).toBe(min());
+  });
+
+  it("sets the width from the keyboard within the bounds, and stores it", () => {
+    const { result } = renderHook(() => useSidebarResize({ width_px: 480, collapsed: false }));
+    act(() => result.current.resizeTo(496));
+    expect(result.current.width).toBe(496);
+    expect(commands.setWindowSidebar).toHaveBeenLastCalledWith({ width_px: 496, collapsed: false });
+    act(() => result.current.resizeTo(0));
+    expect(result.current.width).toBe(min());
+  });
+
   it("keeps a drag under the pointer when the window's layout arrives during it", () => {
     const { result, rerender } = renderHook(
       ({ layout }: { layout: SidebarLayout }) => useSidebarResize(layout),

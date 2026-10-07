@@ -1730,6 +1730,8 @@
         "src/hooks/useChromeDragGesture.test.tsx",
         "src/hooks/useSidebarResize.ts",
         "src/hooks/useSidebarResize.test.tsx",
+        "src/components/SidebarResizeHandle.tsx",
+        "src/components/SidebarResizeHandle.test.tsx",
         "src/hooks/useThumbnailUpgrade.ts",
         "src/lib/articleAudioDesktopGateway.ts",
         "src/lib/nativeWindowChromeSurface.ts",
@@ -1749,7 +1751,7 @@
         "src/lib/spaceSelection.test.ts"
       ],
       "requirement": "SPEC_TABS.md### Окно и страница",
-      "tests": ["src/App.test.tsx", "src/lib/placeHistory.test.ts", "src/lib/spaceSelection.test.ts", "src/lib/pageEvents.test.ts", "src/lib/pageEvents.lint.test.ts", "src/lib/tabPage.test.ts", "src/lib/tabVisibility.test.ts", "src/lib/controlCharGuard.test.ts", "src/hooks/useSidebarResize.test.tsx", "src/lib/nativeWindowChromeSurface.test.ts", "src/components/DropZone.test.tsx", "src/hooks/useChromeDragGesture.test.tsx"],
+      "tests": ["src/App.test.tsx", "src/lib/placeHistory.test.ts", "src/lib/spaceSelection.test.ts", "src/lib/pageEvents.test.ts", "src/lib/pageEvents.lint.test.ts", "src/lib/tabPage.test.ts", "src/lib/tabVisibility.test.ts", "src/lib/controlCharGuard.test.ts", "src/hooks/useSidebarResize.test.tsx", "src/components/SidebarResizeHandle.test.tsx", "src/lib/nativeWindowChromeSurface.test.ts", "src/components/DropZone.test.tsx", "src/hooks/useChromeDragGesture.test.tsx"],
       "command": "test:frontend"
     },
     {
