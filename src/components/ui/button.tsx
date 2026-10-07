@@ -55,11 +55,12 @@ const buttonVariants = cva(
         ghost: "bg-transparent hover:text-foreground",
         chrome: "group/chrome bg-transparent text-muted-foreground hover:text-foreground data-[state=open]:text-foreground focus-visible:text-foreground focus-visible:outline-none",
         // The card's button: filled with depth like `default`, a dimmed glyph
-        // that brightens while its menu is open. Hover lays the state layer
-        // over the face, like every button with depth (buttons.css); the text
-        // and the glyph stay as they are (DESIGN_SYSTEM.md, «Кнопки
-        // карточки»).
-        raised: "button-depth bg-depth-fill text-muted-foreground data-[state=open]:text-foreground",
+        // at rest. Hover lays the state layer over the face, like every
+        // button with depth (buttons.css), and brightens the text and the
+        // glyph a step, as every button does on hover; a press and an open
+        // menu hold them there (SPEC_COLOR_RULES.md, 3.6; DESIGN_SYSTEM.md,
+        // «Кнопки карточки»; user's decision of 07.10.2026).
+        raised: "button-depth bg-depth-fill text-muted-foreground hover:text-foreground active:text-foreground data-[state=open]:text-foreground",
         link: "bg-transparent underline underline-offset-4 hover:text-foreground",
       },
       size: {

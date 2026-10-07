@@ -41,3 +41,23 @@ describe("chrome icon glyph", () => {
     expect(button).not.toHaveClass("hover:text-muted-foreground");
   });
 });
+
+// The card's buttons follow the same rule (user's decision of 07.10.2026,
+// instead of the glyph that stayed dimmed on hover since 04.10.2026).
+describe("card button glyph", () => {
+  it("rests dimmed and brightens a step on hover, on a press and with its menu open", () => {
+    render(
+      <Button variant="raised" size="icon-xs" aria-label="Source" tooltip={false}>
+        <svg className="lucide" />
+      </Button>,
+    );
+    const button = screen.getByRole("button", { name: "Source" });
+    expect(button).toHaveClass(
+      "button-depth",
+      "text-muted-foreground",
+      "hover:text-foreground",
+      "active:text-foreground",
+      "data-[state=open]:text-foreground",
+    );
+  });
+});
