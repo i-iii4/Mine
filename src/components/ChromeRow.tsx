@@ -29,7 +29,7 @@ ChromeRow.displayName = "ChromeRow";
 
 /** Shared action spacing. The edge inset includes the icon's inner 4px padding. */
 export function ChromeActions({ windowEdge = true, className, ...props }: HTMLAttributes<HTMLDivElement> & { windowEdge?: boolean }) {
-  return <div data-chrome-actions="" className={cn("flex shrink-0 items-center gap-1", windowEdge && "mr-[var(--chrome-icon-edge-pad)]", className)} {...props} />;
+  return <div data-chrome-actions="" className={cn("flex shrink-0 items-center gap-1", windowEdge && "mr-[var(--chrome-edge-pad)]", className)} {...props} />;
 }
 
 /**

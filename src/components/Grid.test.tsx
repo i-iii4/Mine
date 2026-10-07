@@ -1587,7 +1587,7 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(selectionActions).toHaveClass(
       "shrink-0",
       "gap-1",
-      "mr-[var(--chrome-icon-edge-pad)]",
+      "mr-[var(--chrome-edge-pad)]",
     );
     expect(selectionCount?.nextElementSibling).toBe(selectionActions);
     expect(selectionRow?.lastElementChild).toBe(selectionActions);

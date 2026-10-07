@@ -503,7 +503,13 @@ body.sidebar-resizing ::selection {
   -webkit-user-drag: none;
 }
 
-[data-floating-menu-width] {
+/* One width rule for every menu, submenu and context menu (DESIGN_SYSTEM.md,
+   «Всплывающие элементы», «Ширина»; user's decision of 07.10.2026): as wide
+   as its longest row, from 128px (the registry's least, the narrowest menus
+   measured 96 to 143px) to 300px (a collection picker shows nine names in
+   ten whole beside its action). The width a menu opens with holds while its
+   list is filtered (useHeldMenuWidth in src/lib/floatingLayer.ts). */
+[data-floating-menu] {
   --floating-menu-available-width: var(
     --radix-dropdown-menu-content-available-width,
     var(--radix-context-menu-content-available-width, calc(100vw - 16px))
@@ -512,20 +518,9 @@ body.sidebar-resizing ::selection {
     --radix-dropdown-menu-content-available-height,
     var(--radix-context-menu-content-available-height, calc(100vh - 16px))
   );
-}
-
-[data-floating-menu-width="command"] {
   width: max-content;
-  min-width: 192px;
+  min-width: 128px;
   max-width: min(300px, var(--floating-menu-available-width));
-}
-
-[data-floating-menu-width="selector"] {
-  width: min(288px, var(--floating-menu-available-width));
-}
-
-[data-floating-menu-width="picker"] {
-  width: min(320px, var(--floating-menu-available-width));
 }
 
 /* Hide scrollbars in WebKit (Tauri/Safari) */
@@ -881,8 +876,9 @@ body {
    "Brighter" means farther from the page toward the primary text. Zones are
    levels of the window, whole zone steps brighter than the page (K3: 0.03
    in dark, 0.03 x K4a = 0.0153 in light). Height: in light the face of a
-   button with depth is a hover plate and floating layers stand at the
-   page's brightness, held by their shadow; in dark both are brighter.
+   button with depth is a hover plate, in dark it is brighter. Floating
+   layers stand on zone level 2, the bottom panel's, in both themes, held
+   by their line and shadow (user's decision of 07.10.2026).
    Signals differ from what lies under them by a lightness difference that
    reads the same in both themes: the dark difference is the light one
    divided by the coefficient of the signal's form, K4 = 0.7 for lines,
@@ -890,12 +886,12 @@ body {
    number is derived from the constants by src/styles/colorLaw.test.ts. */
 :root {
   /* K1, K2. Zones: levels 0, a third (K9), 1 and 2 of the zone step.
-     Floating layers stand at the page's brightness. */
+     Floating layers stand on level 2. */
   --background: oklch(1 0 0);
   --sidebar: oklch(0.9949 0 0);
   --card: oklch(0.9847 0 0);
   --chrome: oklch(0.9847 0 0);
-  --popover: oklch(1 0 0);
+  --popover: oklch(0.9694 0 0);
   --accent: oklch(0.9694 0 0);
   --secondary: oklch(0.9694 0 0);
   --muted: oklch(0.9694 0 0);
@@ -975,13 +971,12 @@ body {
 @media (prefers-color-scheme: dark) {
   :root {
     /* Zones: levels 0, a third, 1 and 2 of the zone step 0.03. Floating
-       layers stand one step brighter than the brightest zone they open
-       over, level 3. */
+       layers stand on level 2, the bottom panel's (07.10.2026). */
     --background: oklch(0.14 0 0);
     --sidebar: oklch(0.15 0 0);
     --card: oklch(0.17 0 0);
     --chrome: oklch(0.17 0 0);
-    --popover: oklch(0.23 0 0);
+    --popover: oklch(0.2 0 0);
     --accent: oklch(0.2 0 0);
     --secondary: oklch(0.2 0 0);
     --muted: oklch(0.2 0 0);
@@ -1044,7 +1039,7 @@ body {
   --sidebar: oklch(0.15 0 0);
   --card: oklch(0.17 0 0);
   --chrome: oklch(0.17 0 0);
-  --popover: oklch(0.23 0 0);
+  --popover: oklch(0.2 0 0);
   --accent: oklch(0.2 0 0);
   --secondary: oklch(0.2 0 0);
   --muted: oklch(0.2 0 0);
@@ -1095,7 +1090,7 @@ body {
   --sidebar: oklch(0.9949 0 0);
   --card: oklch(0.9847 0 0);
   --chrome: oklch(0.9847 0 0);
-  --popover: oklch(1 0 0);
+  --popover: oklch(0.9694 0 0);
   --accent: oklch(0.9694 0 0);
   --secondary: oklch(0.9694 0 0);
   --muted: oklch(0.9694 0 0);
@@ -1191,19 +1186,19 @@ body {
      it, CSS freezes the nav — one side moving alone leaves the nav wider than
      the panel and the curtain clips the meta column. */
   --sidebar-min-width: 366px;
-  /* top chrome: collection switcher trigger padding. Its label text lands at
-     this value + the 8px inner pill padding, so the text sits at the fixed
-     16px chrome inset — the chrome no longer follows the feed rhythm. */
-  --top-collection-pad-x: calc(var(--chrome-edge-pad) - 8px);
-  /* second chrome row: vault meta (left) and collection count (right) */
-  /* The feed half of the metadata row used to follow the feed rhythm to line
-     up with the cards; the whole chrome is now detached — 16px everywhere. */
+  /* Top chrome switchers (space, collection): the trigger's padding puts its
+     pill on the chrome inset, as every chrome button's plate stands. */
+  --top-collection-pad-x: var(--chrome-edge-pad);
+  /* The chrome rows that start or end with plain text (counts, note meta,
+     the selection bar) keep it on the same inset. */
   --main-secondary-pad-x: var(--chrome-edge-pad);
-  /* Edge inset of the app chrome: top bar, metadata row, bottom action bar.
-     Pinned to 16px in every design and detached from the feed rhythm — the
-     shell keeps its own breathing room even when the feed is tightened to the
-     2px step. One name, one place to change it. */
-  --chrome-edge-pad: 16px;
+  /* The one inset of the chrome (user's decision of 07.10.2026): from a
+     boundary (window edge, column line, tab line, the panel's edge) to the
+     first control's plate, or to plain text where a row has no control; the
+     same 8px the card keeps round its buttons (Card actions, Connect). The
+     16px it was came from the 32px chrome and is gone. Detached from the
+     feed rhythm. One name, one place to change it. */
+  --chrome-edge-pad: 8px;
   /* Interior inset of the expanded card (Detail): side columns and the top
      offset of the content. Follows the feed rhythm but never drops below
      16px — at the tight 2px feed step the reading surface keeps its air. */
@@ -1350,10 +1345,6 @@ body {
      takes the same step (SPEC_TABS.md, В83). */
   --sidebar-row-height: 40px;
   --chrome-control-plate-height: 24px;
-  /* The outer padding of every chrome control toward a boundary (window
-     edge, column line, tab line): icon buttons and text pills alike
-     (DESIGN_SYSTEM.md, «Иконочные кнопки хрома»). */
-  --chrome-icon-edge-pad: 8px;
 }
 /* The tall chrome, a window's default since 07.10.2026 (SPEC_TABS.md, В83):
    the top rows, those closed by a line below them, the tab bar's too, step as

@@ -72,7 +72,7 @@ export function CardTagMenu({
           </MenuIconSlot>
           Connect
         </ContextMenuSubTrigger>
-        <ContextMenuSubContent widthRole="picker" className={COLLECTION_PICKER_CONTENT_CLASS}>
+        <ContextMenuSubContent className={COLLECTION_PICKER_CONTENT_CLASS}>
           <CollectionPicker
             blockSlug={block.slug}
             selectedTags={selectedTags}

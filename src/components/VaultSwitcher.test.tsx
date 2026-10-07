@@ -170,10 +170,6 @@ describe("VaultSwitcher", () => {
     expect(screen.getByRole("menuitem", { name: "Тест" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Add space" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Reveal in Finder" })).toBeInTheDocument();
-    expect(document.querySelector("[data-vault-switcher-menu]")).toHaveAttribute(
-      "data-vault-switcher-menu-align-offset",
-      "12",
-    );
     // Icons live in two places only: the per-row actions, and the pinned
     // commands below the divider. A space row is still a name and nothing else.
     const content = document.querySelector("[data-slot='dropdown-menu-content']");
@@ -502,5 +498,30 @@ describe("VaultSwitcher", () => {
 
       await waitFor(() => expect(onVaultSelected).toHaveBeenCalledWith(TEST));
     });
+  });
+
+  // The menu stands flush with the trigger's plate, as the collection
+  // switcher's: the offset is measured from the plate, never a copied number
+  // (a copied 12 against an 8px inset opened it 4px adrift, 07.10.2026).
+  it("lines its menu up with the trigger's plate in the top chrome", async () => {
+    commandMocks.listKnownVaults.mockResolvedValue(["/tmp/Mine", "/tmp/Тест"]);
+    commandMocks.listSpaces.mockResolvedValue([]);
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const left = this.hasAttribute("data-chrome-plate") ? 8 : 0;
+      return { left, right: left + 80, top: 0, bottom: 24, width: 80, height: 24, x: left, y: 0, toJSON: () => ({}) } as DOMRect;
+    });
+    try {
+      render(<VaultSwitcher currentPath="/tmp/Mine" onVaultSelected={vi.fn()} surface="topChrome" />);
+      await waitFor(() => expect(commandMocks.listKnownVaults).toHaveBeenCalled());
+      fireEvent.click(screen.getByRole("button", { name: /Switch space: Mine/ }));
+      await waitFor(() => {
+        expect(document.querySelector("[data-vault-switcher-menu]")).toHaveAttribute(
+          "data-vault-switcher-menu-align-offset",
+          "8",
+        );
+      });
+    } finally {
+      rect.mockRestore();
+    }
   });
 });

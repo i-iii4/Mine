@@ -857,10 +857,10 @@ text+media paragraphs remain block `<div>` wrappers to avoid invalid
 - Overflow `…` dropdown and right-click context menu shells use the feed card
   surface (`bg-card text-card-foreground`), not `bg-popover`, so floating lists
   and hover preview cards sit on the same fill.
-- Overflow `…` menu uses floating width role `command`: content-sized with
-  `12rem` minimum and `18.75rem` maximum. Its `Connect` submenu and the
-  bottom-row standalone `Connect` dropdown use width role `picker` (`20rem`)
-  because they host `CollectionPicker`.
+- Overflow `…` menu, its `Connect` submenu and the bottom-row standalone
+  `Connect` dropdown take the one menu width rule (07.10.2026; DESIGN_SYSTEM.md,
+  «Всплывающие элементы», «Ширина»): as wide as the longest row, from `128px`
+  to `300px`, the opening width held while the picker is filtered.
 - Overflow/right-click menu icon policy is conservative: only `Connect` and
   `Source` render icons. `Reveal in Finder`, `Copy Path`, `Rename…`,
   `Disconnect…` and `Delete` reserve the same leading icon slot but render it
@@ -928,10 +928,10 @@ Image media expansion:
 для связи карточки с каналами. Он не использует checkbox UI. Строка канала сама
 по себе не toggles membership; toggle делает только правая action button.
 
-- Host dropdown/submenu content uses floating width role `picker`:
-  `width: min(20rem, available-width)`. The width is intentionally wider than a
-  command menu because rows contain a search field, collection label and fixed
-  `10ch` action slot. The scrollable list height is owned by
+- Host dropdown/submenu content takes the one menu width rule (07.10.2026):
+  the longest row (collection label beside the fixed action slot) within
+  `128px` to `300px`, the opening width held while the search filters the
+  rows. The scrollable list height is owned by
   `QuantizedMenuScrollArea`, not by raw `max-h-*` classes: visible height is
   `list padding + N × rowHeight` after subtracting the fixed search header and
   footer/create action from `--floating-menu-available-height`. This is the
@@ -1147,10 +1147,13 @@ Image media expansion:
 - Space dropdown renders a `Search spaces` input, only destination spaces and a
   pinned `Add space` action. The current space is omitted entirely, with no
   checkmark/selected/disabled duplicate row. `Add space` is plain and iconless.
-  The dropdown uses floating width role `selector`:
-  `width: min(18rem, available-width)`. The dropdown is anchored to the visible
-  inner selector pill, not to the invisible root layout slot: top-chrome space
-  selector uses Radix `align="start"` with `alignOffset=12`.
+  The dropdown takes the one menu width rule (07.10.2026): the longest row
+  within `128px` to `300px`, held while the search filters. The dropdown is
+  anchored to the visible inner selector pill, not to the invisible root
+  layout slot: Radix `align="start"` with an `alignOffset` measured from the
+  pill on every opening (`useMenuAlignToPlate`), as the collection switcher's;
+  a copied `alignOffset=12` against the 8px inset opened it 4px adrift until
+  07.10.2026.
 - Sidebar search renders as a `data-sidebar-top-search-surface` wrapper with a
   transparent `Input ghost` and an optional clear action. Подсказка
   `Find or create...` в покое стоит в `text-muted-foreground`, при
@@ -1211,10 +1214,10 @@ Image media expansion:
   `Search collections` and `Search spaces` use the same input-owned keyboard
   model as Sidebar search: `ArrowUp`/`ArrowDown` change
   `aria-activedescendant`, while the input remains focused.
-  The dropdown uses the same floating width role `selector` as Space dropdown:
-  `width: min(18rem, available-width)`. The dropdown is anchored to the visible
-  inner collection pill, not to the invisible root layout slot: expanded mode
-  uses Radix `alignOffset=24`, compact/collapsed mode uses `alignOffset=12`.
+  The dropdown takes the same one menu width rule as Space dropdown. It is
+  anchored to the visible inner collection pill, not to the invisible root
+  layout slot: the `alignOffset` is measured from the pill on every opening
+  (`useMenuAlignToPlate`), shared with the space switcher.
 - Top chrome controls must remain usable as window drag handles. Interactive
   chrome controls use the shared `4px` pointer threshold: movement below the
   threshold is handled as normal click/focus/editing, movement at or above it
@@ -1603,8 +1606,8 @@ Image media expansion:
   `Disconnect` outside Everything, `Merge` when at least two cards are
   selected, and `Delete`. Its icon policy matches the card menu: icon only for
   `Connect`, empty leading slots for `Disconnect`, `Merge` and `Delete`. The
-  menu shell uses floating width role `command`; its `Connect`
-  submenu uses role `picker`.
+  menu shell and its `Connect` submenu take the one menu width rule
+  (07.10.2026).
 - When at least one card is selected, Grid renders a bottom floating action
   island centered inside the main/right content pane at `bottom-s3` (`16px`
   above the `h-8` app bottom bar), fixed

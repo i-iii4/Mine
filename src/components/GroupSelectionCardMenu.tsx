@@ -128,7 +128,7 @@ export function GroupSelectionCardMenu({
               </MenuIconSlot>
               Connect
             </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent widthRole="picker" className={COLLECTION_PICKER_CONTENT_CLASS}>
+            <DropdownMenuSubContent className={COLLECTION_PICKER_CONTENT_CLASS}>
               <BatchCollectionPicker
                 selectedSlugs={actions.selectedSlugs}
                 tags={tags}

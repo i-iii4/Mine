@@ -300,7 +300,7 @@ function CardMenuDropdownContent<TBlock extends LightBlock | IndexedBlock>({
           Connect
         </DropdownMenuSubTrigger>
         <DropdownMenuSubContent
-          widthRole="picker"
+         
           className={COLLECTION_PICKER_CONTENT_CLASS}
           onKeyDownCapture={onKeyDownCapture}
         >
@@ -692,7 +692,7 @@ export function CardConnectMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
-        widthRole="picker"
+       
         className={COLLECTION_PICKER_CONTENT_CLASS}
         align="end"
         onCloseAutoFocus={onCloseAutoFocus}

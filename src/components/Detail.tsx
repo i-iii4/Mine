@@ -960,7 +960,7 @@ function DetailActionRow({
             <Plus className="size-[13px]" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent widthRole="picker" className={COLLECTION_PICKER_CONTENT_CLASS} align="start">
+        <DropdownMenuContent className={COLLECTION_PICKER_CONTENT_CLASS} align="start">
           <CollectionPicker
             blockSlug={block.slug}
             selectedTags={selectedTags}
@@ -1931,7 +1931,7 @@ interface MediaMenuKit {
   Separator: ComponentType;
   Sub: ComponentType<{ open?: boolean; onOpenChange?: (open: boolean) => void; children?: ReactNode }>;
   SubTrigger: ComponentType<{ children?: ReactNode }>;
-  SubContent: ComponentType<{ widthRole?: "command" | "selector" | "picker"; className?: string; children?: ReactNode }>;
+  SubContent: ComponentType<{ className?: string; children?: ReactNode }>;
 }
 
 const DROPDOWN_MENU_KIT: MediaMenuKit = {
@@ -1993,7 +1993,7 @@ function MediaAssetMenuItems({
           </MenuIconSlot>
           Create Element
         </SubTrigger>
-        <SubContent widthRole="picker" className={COLLECTION_PICKER_CONTENT_CLASS}>
+        <SubContent className={COLLECTION_PICKER_CONTENT_CLASS}>
           <MediaAssetCollectionPicker
             asset={asset}
             tags={tags}
@@ -3344,7 +3344,7 @@ function TextSelectionActionBar({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent
-            widthRole="picker"
+           
             className={COLLECTION_PICKER_CONTENT_CLASS}
             align="start"
           >

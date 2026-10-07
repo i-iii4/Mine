@@ -2,7 +2,7 @@
 //
 // It drives the feed's card gap and side/top insets, the expanded card's
 // columns and top offset. Chrome (top bar, metadata row, bottom action bar)
-// is NOT on this rhythm any more: its edge inset is pinned to 16px via
+// is NOT on this rhythm any more: its edge inset is pinned to 8px via
 // --chrome-edge-pad, independently of feed spacing.
 //
 // Published as a CSS variable on the root so stylesheets and Tailwind arbitrary

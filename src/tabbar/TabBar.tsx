@@ -565,7 +565,7 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
           "flex h-full shrink-0 items-center gap-1 pr-2",
           // Without the reserve the first button stands on the chrome's edge
           // inset, like the last one at the right edge.
-          !trafficLightReserve && "pl-[var(--chrome-icon-edge-pad)]",
+          !trafficLightReserve && "pl-[var(--chrome-edge-pad)]",
         )}
       >
         <SidebarToggleButton

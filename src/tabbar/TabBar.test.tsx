@@ -167,7 +167,7 @@ describe("tab bar row (В43)", () => {
     const { container } = renderBar(barState([tab("a")], { fullscreen: true }));
     expect(container.querySelector("header[data-fullscreen='true'] [data-traffic-light-reserve]")).toBeNull();
     const toggle = screen.getByRole("button", { name: "Hide Sidebar" });
-    expect(toggle.closest("div.pl-\\[var\\(--chrome-icon-edge-pad\\)\\]")).not.toBeNull();
+    expect(toggle.closest("div.pl-\\[var\\(--chrome-edge-pad\\)\\]")).not.toBeNull();
   });
 
   it("toggles the window's sidebar through the backend (В56)", () => {
@@ -186,7 +186,7 @@ describe("tab bar row (В43)", () => {
     const settings = screen.getByRole("button", { name: SETTINGS_MENU_LABEL });
     expect(settings.querySelector("[data-mine-logo]")).not.toBeNull();
     // At the window's right edge, inset like every chrome row's last button.
-    expect(settings.closest("[data-chrome-actions]")?.className).toContain("mr-[var(--chrome-icon-edge-pad)]");
+    expect(settings.closest("[data-chrome-actions]")?.className).toContain("mr-[var(--chrome-edge-pad)]");
 
     fireEvent.click(settings);
     await act(async () => {});

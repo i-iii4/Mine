@@ -39,7 +39,7 @@ describe("Display menu (SPEC_FEED_DISPLAY.md, Д1 to Д3)", () => {
     expect(trigger).toHaveAttribute("data-variant", "chrome");
     await user.click(trigger);
     const menu = screen.getByRole("menu");
-    expect(menu).toHaveAttribute("data-floating-menu-width", "command");
+    expect(menu).toHaveAttribute("data-floating-menu", "");
     expect(menu).toHaveAttribute("data-align", "end");
   });
 

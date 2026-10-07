@@ -2,7 +2,6 @@ import {
   useCallback,
   useEffect,
   useId,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -26,6 +25,7 @@ import { MenuTextTrigger } from "@/components/MenuTextTrigger";
 import { QuantizedMenuScrollArea } from "@/components/QuantizedMenuScrollArea";
 import { SearchMenuAction } from "@/components/SearchMenuAction";
 import { SearchMenuInput } from "@/components/SearchMenuInput";
+import { useMenuAlignToPlate } from "@/hooks/useMenuAlignToPlate";
 import { useTopChromeTriggerInteraction } from "@/hooks/useTopChromeTriggerInteraction";
 import {
   filterAndRankChannelSearch,
@@ -82,19 +82,8 @@ export function TopCollectionSwitcher({
     deferPointerOpen: true,
     onPointerOpen: () => setOpen((current) => !current),
   });
-  // The menu lines up with the trigger's label, not with its box, so the
-  // offset has to equal the trigger's own horizontal padding. It is measured
-  // from the trigger instead of restated as a number: the copy was 24 because
-  // the padding once was, and it stayed behind the moment the chrome inset
-  // stopped following the feed rhythm, leaving the menu 16px adrift.
-  const [menuAlignOffset, setMenuAlignOffset] = useState(0);
-  useLayoutEffect(() => {
-    if (!open) return;
-    const node = topChromeTrigger.triggerProps.ref.current;
-    if (!node) return;
-    const padding = Number.parseFloat(getComputedStyle(node).paddingLeft);
-    if (Number.isFinite(padding)) setMenuAlignOffset(padding);
-  }, [open, topChromeTrigger.triggerProps.ref]);
+  // The menu lines up with the trigger's plate, not with its box.
+  const menuAlignOffset = useMenuAlignToPlate(topChromeTrigger.triggerProps.ref, open);
   const currentKey = collectionKey(currentTag);
   const label = currentCollectionLabel(currentTag);
   const trimmedQuery = query.trim().replace(/\s+/g, " ");
@@ -286,7 +275,7 @@ export function TopCollectionSwitcher({
           alignOffset={menuAlignOffset}
           side="bottom"
           sideOffset={4}
-          widthRole="selector"
+         
           onCloseAutoFocus={topChromeTrigger.handleCloseAutoFocus}
           className="overflow-hidden p-0"
           data-top-collection-menu=""

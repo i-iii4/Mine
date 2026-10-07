@@ -69,3 +69,22 @@ describe("surface tokens", () => {
     );
   });
 });
+
+// User's decisions of 07.10.2026 (DESIGN_SYSTEM.md, «Всплывающие элементы»,
+// «Плотность»).
+describe("menus and the chrome inset", () => {
+  it("sizes every menu by one rule: its longest row, from 128px to 300px", () => {
+    const rule = /\[data-floating-menu\] \{([^}]*)\}/.exec(css)?.[1] ?? "";
+    expect(rule).toMatch(/width: max-content;/);
+    expect(rule).toMatch(/min-width: 128px;/);
+    expect(rule).toMatch(/max-width: min\(300px, var\(--floating-menu-available-width\)\);/);
+    expect(css).not.toMatch(/data-floating-menu-width/);
+  });
+
+  it("keeps one chrome inset, the card's 8px round its buttons", () => {
+    expect(css.match(/--chrome-edge-pad:\s*[^;]+;/g)).toEqual(["--chrome-edge-pad: 8px;"]);
+    expect(css).not.toMatch(/--chrome-icon-edge-pad/);
+    expect(css).toMatch(/--top-collection-pad-x: var\(--chrome-edge-pad\);/);
+    expect(css).toMatch(/--main-secondary-pad-x: var\(--chrome-edge-pad\);/);
+  });
+});

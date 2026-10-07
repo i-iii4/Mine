@@ -60,7 +60,7 @@ export function ActivityIndicators({
             </button>
             </ChromeControl>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-80 p-3">
+          <DropdownMenuContent align="end" className="p-3">
             <p className="text-base font-semibold text-foreground">
               {CLOUD_STATE_LABEL}
             </p>

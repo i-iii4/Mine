@@ -80,7 +80,7 @@ export function GroupSelectionContextMenu({
           </MenuIconSlot>
           Connect
         </ContextMenuSubTrigger>
-        <ContextMenuSubContent widthRole="picker" className={COLLECTION_PICKER_CONTENT_CLASS}>
+        <ContextMenuSubContent className={COLLECTION_PICKER_CONTENT_CLASS}>
           <BatchCollectionPicker
             selectedSlugs={actions.selectedSlugs}
             tags={tags}

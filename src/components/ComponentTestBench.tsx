@@ -662,13 +662,13 @@ function FloatingUiSection() {
           <DropdownMenuTrigger asChild>
             <Button>Open command menu</Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent widthRole="command">
+          <DropdownMenuContent>
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
                 <Plus className="size-[13px]" />
                 Connect
               </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent widthRole="picker" className="p-0">
+              <DropdownMenuSubContent className="p-0">
                 <CollectionPicker
                   blockSlug="bench-card"
                   selectedTags={["beautiful-web"]}

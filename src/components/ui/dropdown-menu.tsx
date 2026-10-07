@@ -5,10 +5,9 @@ import { CheckIcon, ChevronRightIcon } from "lucide-react"
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui"
 
 import { MenuIconSlot } from "@/components/ui/menu-icon-slot"
-import { FLOATING_LAYER_EDGE_PX } from "@/lib/floatingLayer"
+import { FLOATING_LAYER_EDGE_PX, useHeldMenuWidth } from "@/lib/floatingLayer"
 import { cn } from "@/lib/utils"
 
-type FloatingMenuWidthRole = "command" | "selector" | "picker"
 
 const DropdownMenuPortalContainerContext = React.createContext<HTMLElement | null>(null)
 
@@ -85,20 +84,20 @@ function DropdownMenuContent({
   className,
   sideOffset = 4,
   collisionPadding = FLOATING_LAYER_EDGE_PX,
-  widthRole = "command",
+  ref,
   ...props
-}: React.ComponentProps<typeof DropdownMenuPrimitive.Content> & {
-  widthRole?: FloatingMenuWidthRole
-}) {
+}: React.ComponentProps<typeof DropdownMenuPrimitive.Content>) {
+  const holdWidth = useHeldMenuWidth(ref)
   return (
     <DropdownMenuPortal>
       <DropdownMenuPrimitive.Content
+        ref={holdWidth}
         data-slot="dropdown-menu-content"
-        data-floating-menu-width={widthRole}
+        data-floating-menu=""
         sideOffset={sideOffset}
         collisionPadding={collisionPadding}
         className={cn(
-          "bg-card text-card-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 max-h-(--radix-dropdown-menu-content-available-height) min-w-[128px] origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-1 border p-1 shadow-md",
+          "bg-card text-card-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 max-h-(--radix-dropdown-menu-content-available-height) origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-1 border p-1 shadow-md",
           className
         )}
         {...props}
@@ -284,18 +283,18 @@ function DropdownMenuSubTrigger({
 function DropdownMenuSubContent({
   className,
   collisionPadding = FLOATING_LAYER_EDGE_PX,
-  widthRole = "command",
+  ref,
   ...props
-}: React.ComponentProps<typeof DropdownMenuPrimitive.SubContent> & {
-  widthRole?: FloatingMenuWidthRole
-}) {
+}: React.ComponentProps<typeof DropdownMenuPrimitive.SubContent>) {
+  const holdWidth = useHeldMenuWidth(ref)
   return (
     <DropdownMenuPrimitive.SubContent
+      ref={holdWidth}
       data-slot="dropdown-menu-sub-content"
-      data-floating-menu-width={widthRole}
+      data-floating-menu=""
       collisionPadding={collisionPadding}
       className={cn(
-        "bg-card text-card-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 min-w-[128px] origin-(--radix-dropdown-menu-content-transform-origin) overflow-hidden rounded-1 border p-1 shadow-md",
+        "bg-card text-card-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 origin-(--radix-dropdown-menu-content-transform-origin) overflow-hidden rounded-1 border p-1 shadow-md",
         className
       )}
       {...props}

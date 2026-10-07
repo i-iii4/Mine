@@ -1684,10 +1684,20 @@
       "paths": [
         "src/components/MenuTextTrigger.test.tsx",
         "src/components/TopCollectionSwitcher.tsx",
-        "src/components/VaultSwitcher.tsx"
+        "src/components/VaultSwitcher.tsx",
+        "src/hooks/useMenuAlignToPlate.ts"
       ],
       "requirement": "DESIGN_SYSTEM.md#Surface Search",
       "tests": ["src/components/MenuTextTrigger.test.tsx", "src/components/VaultSwitcher.test.tsx"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/density.ts",
+        "src/lib/density.test.ts"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#Плотность интерфейса — настройка",
+      "tests": ["src/lib/density.test.ts"],
       "command": "test:frontend"
     },
     {

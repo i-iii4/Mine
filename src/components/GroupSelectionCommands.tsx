@@ -171,7 +171,7 @@ export function GroupSelectionCommands({
                   Connect
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent widthRole="picker" className={COLLECTION_PICKER_CONTENT_CLASS} align="center">
+              <DropdownMenuContent className={COLLECTION_PICKER_CONTENT_CLASS} align="center">
                 <BatchCollectionPicker
                   selectedSlugs={selectedSlugs}
                   tags={tags}

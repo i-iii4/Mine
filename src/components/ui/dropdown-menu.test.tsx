@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   DropdownMenu,
@@ -126,15 +126,15 @@ describe("DropdownMenu", () => {
     expect(subContent).not.toHaveClass("bg-popover", "text-popover-foreground");
   });
 
-  it("marks menu width by semantic role", () => {
+  it("gives the menu and its submenu the one width rule (07.10.2026)", () => {
     render(
       <DropdownMenu open modal={false}>
         <DropdownMenuTrigger>Open menu</DropdownMenuTrigger>
-        <DropdownMenuContent widthRole="selector">
+        <DropdownMenuContent>
           <DropdownMenuItem>Action item</DropdownMenuItem>
           <DropdownMenuSub open>
             <DropdownMenuSubTrigger>Nested actions</DropdownMenuSubTrigger>
-            <DropdownMenuSubContent widthRole="picker">
+            <DropdownMenuSubContent>
               <DropdownMenuItem>Nested item</DropdownMenuItem>
             </DropdownMenuSubContent>
           </DropdownMenuSub>
@@ -142,13 +142,29 @@ describe("DropdownMenu", () => {
       </DropdownMenu>,
     );
 
-    expect(document.querySelector("[data-slot='dropdown-menu-content']")).toHaveAttribute(
-      "data-floating-menu-width",
-      "selector",
-    );
-    expect(document.querySelector("[data-slot='dropdown-menu-sub-content']")).toHaveAttribute(
-      "data-floating-menu-width",
-      "picker",
-    );
+    for (const slot of ["dropdown-menu-content", "dropdown-menu-sub-content"]) {
+      const content = document.querySelector(`[data-slot='${slot}']`);
+      expect(content).toHaveAttribute("data-floating-menu", "");
+      expect(content).not.toHaveAttribute("data-floating-menu-width");
+      expect(content?.className).not.toMatch(/(?:^|\s)min-w-/);
+    }
+  });
+
+  it("holds the width a menu opened with as its least", () => {
+    const width = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(176);
+    try {
+      render(
+        <DropdownMenu open modal={false}>
+          <DropdownMenuTrigger>Open menu</DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuItem>Action item</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>,
+      );
+      const content = document.querySelector<HTMLElement>("[data-slot='dropdown-menu-content']");
+      expect(content?.style.minWidth).toBe("176px");
+    } finally {
+      width.mockRestore();
+    }
   });
 });

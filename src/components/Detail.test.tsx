@@ -1892,7 +1892,7 @@ describe("Detail", () => {
     render(
       <DropdownMenu open modal={false}>
         <DropdownMenuTrigger>Open menu</DropdownMenuTrigger>
-        <DropdownMenuContent widthRole="picker" className={COLLECTION_PICKER_CONTENT_CLASS}>
+        <DropdownMenuContent className={COLLECTION_PICKER_CONTENT_CLASS}>
           <MediaAssetCollectionPicker
             asset={asset}
             tags={Array.from({ length: 12 }, (_, index) => ({

@@ -22,6 +22,7 @@ import { MenuIconSlot } from "@/components/ui/menu-icon-slot";
 import { QuantizedMenuScrollArea } from "@/components/QuantizedMenuScrollArea";
 import { SearchMenuAction } from "@/components/SearchMenuAction";
 import { SearchMenuInput } from "@/components/SearchMenuInput";
+import { useMenuAlignToPlate } from "@/hooks/useMenuAlignToPlate";
 import { useTopChromeTriggerInteraction } from "@/hooks/useTopChromeTriggerInteraction";
 import { filterAndRankChannelSearch } from "@/lib/channelSearch";
 import {
@@ -135,7 +136,6 @@ export function VaultSwitcher({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const triggerLabel = vaultName(currentPath);
   const isTopChrome = surface === "topChrome";
-  const menuAlignOffset = isTopChrome ? 12 : 0;
 
   useEffect(() => {
     let cancelled = false;
@@ -268,6 +268,10 @@ export function VaultSwitcher({
     deferPointerOpen: isTopChrome,
     onPointerOpen: () => setOpen((current) => !current),
   });
+  // In the top chrome the menu lines up with the trigger's plate, as the
+  // collection switcher's does.
+  const plateAlignOffset = useMenuAlignToPlate(topChromeTrigger.triggerProps.ref, open && isTopChrome);
+  const menuAlignOffset = isTopChrome ? plateAlignOffset : 0;
 
   useEffect(() => {
     if (!isTopChrome) return;
@@ -407,7 +411,6 @@ export function VaultSwitcher({
         align="start"
         alignOffset={menuAlignOffset}
         sideOffset={isTopChrome ? 4 : 8}
-        widthRole={isTopChrome ? "selector" : "command"}
         onCloseAutoFocus={isTopChrome ? topChromeTrigger.handleCloseAutoFocus : undefined}
         className={isTopChrome ? "overflow-hidden p-0" : undefined}
         data-vault-switcher-menu={isTopChrome ? "" : undefined}

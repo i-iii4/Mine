@@ -240,7 +240,7 @@ describe("Display options (SPEC_FEED_DISPLAY.md, Д1, Д4)", () => {
     expect(screen.getByRole("button", { name: "Display options" })).toBeInTheDocument();
     const actions = container.querySelector("[data-feed-display]");
     expect(actions).toHaveAttribute("data-chrome-actions");
-    expect(actions).toHaveClass("ml-auto", "mr-[var(--chrome-icon-edge-pad)]");
+    expect(actions).toHaveClass("ml-auto", "mr-[var(--chrome-edge-pad)]");
     const row = container.querySelector("[data-main-secondary-stats-right]");
     expect(row).toHaveClass("pl-[var(--main-secondary-pad-x)]");
     expect(row).not.toHaveClass("pr-[var(--main-secondary-pad-x)]");

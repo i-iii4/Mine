@@ -3,10 +3,9 @@ import { CheckIcon, ChevronRightIcon } from "lucide-react"
 import { ContextMenu as ContextMenuPrimitive } from "radix-ui"
 
 import { MenuIconSlot } from "@/components/ui/menu-icon-slot"
-import { FLOATING_LAYER_EDGE_PX } from "@/lib/floatingLayer"
+import { FLOATING_LAYER_EDGE_PX, useHeldMenuWidth } from "@/lib/floatingLayer"
 import { cn } from "@/lib/utils"
 
-type FloatingMenuWidthRole = "command" | "selector" | "picker"
 
 function ContextMenu({
   ...props
@@ -82,18 +81,18 @@ function ContextMenuSubTrigger({
 function ContextMenuSubContent({
   className,
   collisionPadding = FLOATING_LAYER_EDGE_PX,
-  widthRole = "command",
+  ref,
   ...props
-}: React.ComponentProps<typeof ContextMenuPrimitive.SubContent> & {
-  widthRole?: FloatingMenuWidthRole
-}) {
+}: React.ComponentProps<typeof ContextMenuPrimitive.SubContent>) {
+  const holdWidth = useHeldMenuWidth(ref)
   return (
     <ContextMenuPrimitive.SubContent
+      ref={holdWidth}
       data-slot="context-menu-sub-content"
-      data-floating-menu-width={widthRole}
+      data-floating-menu=""
       collisionPadding={collisionPadding}
       className={cn(
-        "bg-card text-card-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 min-w-[128px] origin-(--radix-context-menu-content-transform-origin) overflow-hidden rounded-1 border p-1 shadow-md",
+        "bg-card text-card-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 origin-(--radix-context-menu-content-transform-origin) overflow-hidden rounded-1 border p-1 shadow-md",
         className
       )}
       {...props}
@@ -104,19 +103,19 @@ function ContextMenuSubContent({
 function ContextMenuContent({
   className,
   collisionPadding = FLOATING_LAYER_EDGE_PX,
-  widthRole = "command",
+  ref,
   ...props
-}: React.ComponentProps<typeof ContextMenuPrimitive.Content> & {
-  widthRole?: FloatingMenuWidthRole
-}) {
+}: React.ComponentProps<typeof ContextMenuPrimitive.Content>) {
+  const holdWidth = useHeldMenuWidth(ref)
   return (
     <ContextMenuPrimitive.Portal>
       <ContextMenuPrimitive.Content
+        ref={holdWidth}
         data-slot="context-menu-content"
-        data-floating-menu-width={widthRole}
+        data-floating-menu=""
         collisionPadding={collisionPadding}
         className={cn(
-          "bg-card text-card-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 max-h-(--radix-context-menu-content-available-height) min-w-[128px] origin-(--radix-context-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-1 border p-1 shadow-md",
+          "bg-card text-card-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 max-h-(--radix-context-menu-content-available-height) origin-(--radix-context-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-1 border p-1 shadow-md",
           className
         )}
         {...props}

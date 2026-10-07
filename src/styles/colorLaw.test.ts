@@ -53,9 +53,9 @@ const K8 = 0.26;
 const ZONE_STEP = { light: -K3 * K4_AREA, dark: K3 };
 const ZONE_LEVELS = { sidebar: 1 / 3, card: 1, chrome: 1, accent: 2, secondary: 2, muted: 2 } as const;
 const zone = (theme: "light" | "dark", level: number) => CANVAS[theme] + level * ZONE_STEP[theme];
-// Floating layers (3.3): light at the page's brightness, dark one step
-// brighter than the brightest zone they open over.
-const FLOATING_LEVEL = 3;
+// Floating layers (3.3): on the bottom panel's level 2 in both themes
+// (user's decision of 07.10.2026), held by their line and shadow.
+const FLOATING_LEVEL = 2;
 
 const alphaForContrast = (fg: number, bg: number, target: number) => {
   let low = 0;
@@ -113,16 +113,17 @@ describe("theme blocks", () => {
 });
 
 describe("tokens follow the colour rules", () => {
-  it("sets the zones on their levels and the floating layers above them", () => {
+  it("sets the zones on their levels and the floating layers on the bottom panel's", () => {
     for (const [name, level] of Object.entries(ZONE_LEVELS)) {
       expect(lightness(LIGHT[`--${name}`])).toBeCloseTo(zone("light", level), 4);
       expect(lightness(DARK[`--${name}`])).toBeCloseTo(zone("dark", level), 4);
     }
     expect(lightness(LIGHT["--background"])).toBe(CANVAS.light);
     expect(lightness(DARK["--background"])).toBe(CANVAS.dark);
-    expect(lightness(LIGHT["--popover"])).toBe(CANVAS.light);
+    expect(lightness(LIGHT["--popover"])).toBeCloseTo(zone("light", FLOATING_LEVEL), 4);
     expect(lightness(DARK["--popover"])).toBeCloseTo(zone("dark", FLOATING_LEVEL), 4);
-    expect(FLOATING_LEVEL).toBe(Math.max(...Object.values(ZONE_LEVELS)) + 1);
+    expect(LIGHT["--popover"]).toBe(LIGHT["--accent"]);
+    expect(DARK["--popover"]).toBe(DARK["--accent"]);
   });
 
   it("draws text, primary and its ink on the two ends of the ladder", () => {
