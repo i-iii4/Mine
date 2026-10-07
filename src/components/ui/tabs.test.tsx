@@ -100,7 +100,18 @@ describe("the pill", () => {
     const transitions = button.className.split(/\s+/).filter((name) => name.includes("transition") || name.includes("duration") || name.includes("ease-"));
     expect(transitions.length).toBeGreaterThan(0);
     for (const name of transitions) expect(name.startsWith("motion-safe:")).toBe(true);
-    expect(button.className).toContain("motion-safe:data-[animate]:duration-150");
+    // Calm, not flung: 200ms on the sine ease-in-out (07.10.2026), and the
+    // labels change colour over the same time and curve.
+    expect(button.className).toContain("motion-safe:data-[animate]:duration-200");
+    expect(button.className).toContain("motion-safe:data-[animate]:ease-[cubic-bezier(0.37,0,0.63,1)]");
+    expect(graph).toHaveClass("motion-safe:duration-200", "motion-safe:ease-[cubic-bezier(0.37,0,0.63,1)]");
+  });
+
+  it("places the button on its first frame without a slide", () => {
+    render(<Pill />);
+    const { button } = parts();
+    expect(button).not.toHaveAttribute("data-animate");
+    expect(button.style.transform).toMatch(/^translateX\(/);
   });
 
   it("lights only the text of a segment under the pointer", () => {

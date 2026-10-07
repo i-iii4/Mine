@@ -61,35 +61,35 @@ const pillSizeClasses: Record<TabsListSize, string> = {
   panel: "[--tabs-pill-height:32px] text-base group-data-[orientation=horizontal]/tabs:h-[var(--tabs-pill-height)]",
 }
 
-/** Where the chosen segment's button stands, and whether it moves there. */
-type IndicatorBox = { x: number; width: number; animate: boolean }
-
 /**
  * The chosen segment's button follows the chosen trigger: placed at once on
  * the first frame and when the pill's width changes, slid there when the
  * choice changes. The choice is read from the triggers' `data-state`, so a
  * controlled and an uncontrolled `Tabs` move it alike.
+ *
+ * The button is placed on the element itself, in the same task as the
+ * triggers' `data-state` flips, not through a React state: a render later
+ * would start the slide frames after the labels began their colour change.
+ * A second choice during a slide retargets the CSS transition from where
+ * the button is, so it never jumps.
  */
-function useChosenSegment(list: HTMLElement | null): IndicatorBox | null {
-  const [box, setBox] = React.useState<IndicatorBox | null>(null)
+function useChosenSegment(list: HTMLElement | null, indicator: HTMLElement | null): void {
   React.useLayoutEffect(() => {
-    if (!list) return
+    if (!list || !indicator) return
     const place = (animate: boolean) => {
       const chosen = list.querySelector<HTMLElement>(
         ':scope > [data-slot="tabs-trigger"][data-state="active"]'
       )
+      indicator.hidden = !chosen
+      if (!chosen) return
       // Rects, not offsetLeft and offsetWidth: those round to whole pixels,
       // and a label's width is fractional, so a rounded button stops short
       // of the track's far edge.
-      const segment = chosen?.getBoundingClientRect()
-      const next = chosen && segment
-        ? { x: segment.left - list.getBoundingClientRect().left, width: segment.width, animate }
-        : null
-      setBox((current) =>
-        current && next && current.x === next.x && current.width === next.width && current.animate === next.animate
-          ? current
-          : next
-      )
+      const segment = chosen.getBoundingClientRect()
+      const x = segment.left - list.getBoundingClientRect().left
+      indicator.toggleAttribute("data-animate", animate)
+      indicator.style.width = `${segment.width}px`
+      indicator.style.transform = `translateX(${x}px)`
     }
     place(false)
     const choice = new MutationObserver(() => place(true))
@@ -100,8 +100,7 @@ function useChosenSegment(list: HTMLElement | null): IndicatorBox | null {
       choice.disconnect()
       size?.disconnect()
     }
-  }, [list])
-  return box
+  }, [list, indicator])
 }
 
 function TabsList({
@@ -126,7 +125,8 @@ function TabsList({
     },
     [ref]
   )
-  const chosen = useChosenSegment(resolved === "chrome" ? list : null)
+  const [indicator, setIndicator] = React.useState<HTMLSpanElement | null>(null)
+  useChosenSegment(resolved === "chrome" ? list : null, indicator)
   return (
     <TabsListVariantContext.Provider value={resolved}>
       <TabsPrimitive.List
@@ -153,19 +153,20 @@ function TabsList({
                 whose face is the pill's own step (from the surface under
                 the pill, 1¼ s in light and 1¾ s in dark, no state layer),
                 so the button style's edges follow that face. It slides to
-                a new choice in 150ms (a strong ease-out); with reduced
-                motion it moves at once. */}
+                a new choice calmly, in 200ms on the sine ease-in-out:
+                no fling at the start, no hard stop, so its
+                two edges travel together and the button does not stretch
+                and spring back. With reduced motion it moves at once. Its
+                place and width are set by useChosenSegment, not here. */}
             <span
+              ref={setIndicator}
               aria-hidden="true"
               data-tabs-indicator=""
-              data-animate={chosen?.animate ? "" : undefined}
               className={cn(
                 "pointer-events-none absolute left-0 h-[var(--tabs-pill-height)] rounded-1 bg-component-fill-inner",
                 "[--button-face-step:var(--pill-chosen-elevation)] [--button-face-layer:none] [--button-face-share:0%]",
-                "motion-safe:data-[animate]:transition-[transform,width] motion-safe:data-[animate]:duration-150 motion-safe:data-[animate]:ease-[cubic-bezier(0.23,1,0.32,1)]",
-                !chosen && "hidden",
+                "motion-safe:data-[animate]:transition-[transform,width] motion-safe:data-[animate]:duration-200 motion-safe:data-[animate]:ease-[cubic-bezier(0.37,0,0.63,1)]",
               )}
-              style={chosen ? { width: chosen.width, transform: `translateX(${chosen.x}px)` } : undefined}
             />
           </>
         )}
@@ -185,9 +186,10 @@ const registryTriggerClasses = cn(
 // A segment of the pill: as tall as the pill, 1ch of padding round a label,
 // square round a 13px icon. The chosen segment's button is drawn by the list
 // under it; a segment shows only its text: the secondary step, the primary
-// when chosen or under the pointer.
+// when chosen or under the pointer. The colour changes over the same 200ms
+// and curve as the button's slide, so a label lights as the button arrives.
 const chromeTriggerClasses =
-  "relative inline-flex h-[var(--tabs-pill-height)] min-w-[var(--tabs-pill-height)] shrink-0 items-center justify-center gap-1 rounded-1 px-[1ch] leading-none whitespace-nowrap text-muted-foreground outline-none motion-safe:transition-colors motion-safe:duration-150 motion-safe:ease-out hover:text-foreground focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-ring disabled:pointer-events-none disabled:text-tertiary-foreground data-[state=active]:text-foreground has-[>svg:only-child]:px-0 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg.lucide]:size-[13px]"
+  "relative inline-flex h-[var(--tabs-pill-height)] min-w-[var(--tabs-pill-height)] shrink-0 items-center justify-center gap-1 rounded-1 px-[1ch] leading-none whitespace-nowrap text-muted-foreground outline-none motion-safe:transition-colors motion-safe:duration-200 motion-safe:ease-[cubic-bezier(0.37,0,0.63,1)] hover:text-foreground focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-ring disabled:pointer-events-none disabled:text-tertiary-foreground data-[state=active]:text-foreground has-[>svg:only-child]:px-0 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg.lucide]:size-[13px]"
 
 function TabsTrigger({
   className,
