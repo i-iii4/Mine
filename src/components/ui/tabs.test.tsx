@@ -54,12 +54,14 @@ describe("the pill", () => {
   });
   afterEach(() => restore());
 
-  it("is a track always lit, published as its segments' surface", () => {
+  it("is a track painted as a hover plate, passed on to nothing (07.10.2026)", () => {
     render(<Pill />);
     const { list, track } = parts();
-    expect(list).toHaveClass("state-surface", "rounded-1", "p-0");
-    // No hover plate: hovering the pill changes no background.
-    expect(list.className).not.toMatch(/hover:state-/);
+    expect(list).toHaveClass("rounded-1", "p-0");
+    // The list passes no surface on: the button steps from the surface under
+    // the pill, not from the track, so nothing stacks twice.
+    expect(list.className).not.toMatch(/state-/);
+    // The track is the hover plate's own state layer, exactly.
     expect(track).toHaveClass("state-active", "absolute", "inset-x-0", "h-[var(--tabs-pill-height)]", "rounded-1");
     expect(track).toHaveAttribute("aria-hidden", "true");
   });
@@ -68,6 +70,13 @@ describe("the pill", () => {
     render(<Pill />);
     const { button, grid } = parts();
     expect(button).toHaveClass("bg-component-fill-inner", "h-[var(--tabs-pill-height)]", "rounded-1", "absolute", "left-0");
+    // A button whose face is the pill's own step, 1¼ s from the surface,
+    // with no state layer: a quarter s brighter than the track.
+    expect(button).toHaveClass(
+      "[--button-face-step:var(--pill-chosen-elevation)]",
+      "[--button-face-layer:none]",
+      "[--button-face-share:0%]",
+    );
     expect(button.style.width).toBe("40px");
     expect(button.style.transform).toBe("translateX(0px)");
     // Placed on the first frame, not slid in.

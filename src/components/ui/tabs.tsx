@@ -41,11 +41,13 @@ const tabsListVariants = cva(
       variant: {
         default: "bg-muted",
         line: "gap-1 bg-transparent",
-        // The pill: a track always lit with the state layer, the chosen
-        // segment a button seated flush in it. The list publishes the track
-        // as its children's surface, so the button's face lifts from it
-        // (DESIGN_SYSTEM.md, «Цвет от того, что под элементом»).
-        chrome: "relative shrink-0 rounded-1 bg-transparent p-0 state-surface",
+        // The pill: a track and the chosen segment's button seated flush in
+        // it (user's decision of 07.10.2026, DESIGN_SYSTEM.md, «Пилюля»).
+        // The track is the hover plate's own state layer; the button steps
+        // from the surface under the pill, a quarter s brighter than the
+        // track, not from the track, so nothing stacks twice. The list
+        // passes no surface on.
+        chrome: "relative shrink-0 rounded-1 bg-transparent p-0",
       },
     },
     defaultVariants: {
@@ -147,15 +149,18 @@ function TabsList({
               className="pointer-events-none absolute inset-x-0 h-[var(--tabs-pill-height)] rounded-1 state-active"
             />
             {/* The chosen segment's button: flush with the track, as tall
-                as the pill, over its own share of it. It slides to a new
-                choice in 150ms (a strong ease-out); with reduced motion it
-                moves at once. */}
+                as the pill, over its own share of it. A button with depth
+                whose face is the pill's own step (1¼ s from the surface
+                under the pill, no state layer), so the button style's
+                edges follow that face. It slides to a new choice in 150ms (a strong
+                ease-out); with reduced motion it moves at once. */}
             <span
               aria-hidden="true"
               data-tabs-indicator=""
               data-animate={chosen?.animate ? "" : undefined}
               className={cn(
                 "pointer-events-none absolute left-0 h-[var(--tabs-pill-height)] rounded-1 bg-component-fill-inner",
+                "[--button-face-step:var(--pill-chosen-elevation)] [--button-face-layer:none] [--button-face-share:0%]",
                 "motion-safe:data-[animate]:transition-[transform,width] motion-safe:data-[animate]:duration-150 motion-safe:data-[animate]:ease-[cubic-bezier(0.23,1,0.32,1)]",
                 !chosen && "hidden",
               )}

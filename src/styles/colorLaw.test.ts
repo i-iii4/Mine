@@ -168,6 +168,11 @@ describe("tokens follow the colour rules", () => {
     // The sidebar's line under the pointer: half a step, the user's least shift.
     expect(Number(LIGHT["--line-hover-elevation"])).toBeCloseTo(-QUIET / 2, 4);
     expect(Number(DARK["--line-hover-elevation"])).toBeCloseTo(darkSignalDelta(QUIET / 2, "line"), 3);
+    // The pill's chosen segment, from the surface under it (user's decision
+    // of 07.10.2026): 1¼ s, a quarter s brighter than its track, the hover
+    // plate's state layer. A fill, so the area form.
+    expect(Number(LIGHT["--pill-chosen-elevation"])).toBeCloseTo(-1.25 * QUIET, 4);
+    expect(Number(DARK["--pill-chosen-elevation"])).toBeCloseTo(darkSignalDelta(1.25 * QUIET, "area"), 3);
     expect(Number(LIGHT["--elevation-rest"])).toBeCloseTo(-2 * QUIET, 4);
     expect(Number(LIGHT["--elevation-hover"])).toBeCloseTo(-3 * QUIET, 4);
     expect(Number(DARK["--elevation-rest"])).toBeCloseTo(darkSignalDelta(2 * QUIET, "area"), 3);

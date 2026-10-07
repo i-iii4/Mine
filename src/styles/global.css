@@ -932,6 +932,10 @@ body {
      surface in the elevation map after the theme blocks. */
   --elevation-rest: -0.06;
   --elevation-hover: -0.09;
+  /* The pill's chosen segment (DESIGN_SYSTEM.md, «Пилюля»; user's decision
+     of 07.10.2026): 1¼ s from the surface under the pill, a quarter s
+     brighter than its track, which is the hover plate's state layer. */
+  --pill-chosen-elevation: -0.0375;
   /* The face of a button with depth (src/styles/buttons.css): the surface
      under it with the state layer a hover plate paints, so the two are one
      paint. */
@@ -1004,6 +1008,7 @@ body {
     --input: oklch(0.243 0 0);
     --elevation-rest: 0.1176;
     --elevation-hover: 0.1765;
+    --pill-chosen-elevation: 0.0735;
     /* The face of a button with depth: three zone steps brighter than the
        surface under it. */
     --button-face-step: 0.09;
@@ -1064,6 +1069,7 @@ body {
   --input: oklch(0.243 0 0);
   --elevation-rest: 0.1176;
   --elevation-hover: 0.1765;
+  --pill-chosen-elevation: 0.0735;
   --button-face-step: 0.09;
   --button-face-layer: none;
   --button-face-share: 0%;
@@ -1114,6 +1120,7 @@ body {
   --input: oklch(0.9394 0 0);
   --elevation-rest: -0.06;
   --elevation-hover: -0.09;
+  --pill-chosen-elevation: -0.0375;
   --button-face-step: 0;
   --button-face-layer: linear-gradient(var(--active), var(--active));
   --button-face-share: var(--active-alpha);
@@ -1327,9 +1334,9 @@ body {
     @apply surface-fills;
   }
 }
-/* Paints the layer and passes it on. Where the plate stands beside the
-   content rather than around it (the pill's track, Tabs chrome), their
-   common parent takes state-surface in the same states. */
+/* Paints the layer and passes it on. The pill's track is this layer, but
+   the pill does not pass it on: its chosen segment steps from the surface
+   under the pill (--pill-chosen-elevation), so nothing stacks twice. */
 @utility state-active {
   background-image: linear-gradient(var(--active), var(--active));
   @apply state-surface;
