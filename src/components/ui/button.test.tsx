@@ -26,3 +26,18 @@ describe("keyboard focus", () => {
     }
   });
 });
+
+// SPEC_COLOR_RULES.md, 3.6: hover takes the glyph one step brighter on every
+// chrome icon button, whatever its plate (user's report of 07.10.2026).
+describe("chrome icon glyph", () => {
+  it.each(["hover", "always", "raised"] as const)("brightens on hover with a %s plate", (plate) => {
+    render(
+      <Button variant="chrome" size="chrome-icon" plate={plate} aria-label="New Collection" tooltip={false}>
+        <svg className="lucide" />
+      </Button>,
+    );
+    const button = screen.getByRole("button", { name: "New Collection" });
+    expect(button).toHaveClass("text-muted-foreground", "hover:text-foreground", "data-[state=open]:text-foreground");
+    expect(button).not.toHaveClass("hover:text-muted-foreground");
+  });
+});

@@ -78,8 +78,8 @@ function Button({
     /** chrome-icon: the 24px plate on hover only, always (the sidebar's
      *  filter row, DESIGN_SYSTEM.md, «Иконочные кнопки хрома»), or raised:
      *  filled with depth like the card's buttons; hover lays the state
-     *  layer over the plate's face and the glyph stays dimmed
-     *  (DESIGN_SYSTEM.md, «Объём кнопки»). */
+     *  layer over the plate's face and brightens the glyph as on every
+     *  chrome button (DESIGN_SYSTEM.md, «Объём кнопки»). */
     plate?: "hover" | "always" | "raised"
     /** What the tooltip says. An icon button says its `aria-label` unless
      *  given this; `false` keeps it silent (a page too small to show one). */
@@ -100,11 +100,11 @@ function Button({
       data-slot="button"
       data-variant={variant}
       data-size={size}
-      className={cn(
-        buttonVariants({ variant, size, className }),
-        // A raised plate keeps its glyph dimmed on hover too.
-        size === "chrome-icon" && plate === "raised" && "hover:text-muted-foreground",
-      )}
+      // Every chrome icon button brightens its glyph to the primary step on
+      // hover, a raised plate's included (SPEC_COLOR_RULES.md, 3.6; user's
+      // report of 07.10.2026: a dimmed glyph on a lit raised plate read
+      // weaker than a plain chrome button's).
+      className={buttonVariants({ variant, size, className })}
       {...props}
     >
       {size === "chrome-icon" && !asChild ? (
