@@ -1285,13 +1285,23 @@ describe("Sidebar", () => {
     // the meta zone with its fields around it.
     expect(rightDivider).toHaveStyle({ right: "var(--sidebar-zone)" });
     expect(strip).toHaveAttribute("data-sidebar-preview-fade-width", "24");
-    // Button (84) + its gap (8) + the guideline's own pixel + the divider gap (4).
-    // Measured from the zone boundary the guideline stands on: the meta zone,
-    // the guideline pixel, and the divider gap.
-    expect(strip).toHaveAttribute(
-      "data-sidebar-preview-protected-tail",
-      "calc(var(--sidebar-zone) + 1px + 4px)",
-    );
+    // The previews' cell is its own (07.10.2026): the next cell, with the
+    // right guideline's pixel, stands in the row's flow, so the previews'
+    // cell ends on the guideline. The air before it is the theme's: none in
+    // the light theme, where the cell's edge cuts the previews, 4px in the
+    // dark one (global.css). Nothing of the next cell's width enters the mask.
+    const meta = row.querySelector("[data-sidebar-meta-cell]") as HTMLSpanElement;
+    expect(rail.nextElementSibling).toBe(meta);
+    expect(meta).toHaveClass("w-[calc(var(--sidebar-zone)+1px)]", "shrink-0");
+    expect(rail.style.paddingRight).toBe("var(--preview-edge-gap, 4px)");
+    // The dissolve is published for the theme to apply (only the dark one
+    // does): the strip carries no mask of its own, and nothing is drawn over
+    // the previews' edge.
+    const mask = strip.style.getPropertyValue("--sidebar-preview-mask");
+    expect(mask).toMatch(/^linear-gradient\(to right, /);
+    expect(mask).not.toContain("--sidebar-zone");
+    expect(strip.style.maskImage).toBe("");
+    expect(rail.childElementCount).toBe(1);
   });
 
   it("lists every collection for an open card, with no filter bar (07.10.2026)", () => {

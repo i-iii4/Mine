@@ -98,12 +98,11 @@ const SIDEBAR_ROW_ACTION_BUTTON_GAP = SIDEBAR_ROW_ACTION_GAP_PX;
 const SIDEBAR_ROW_ACTION_BUTTON_INSET = SIDEBAR_ROW_ACTION_BUTTON_GAP;
 const SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH = EDGE_FADE_WIDTH;
 const SIDEBAR_PREVIEW_MASK_FADE_WIDTH = EDGE_FADE_WIDTH;
-/// Where the thumbnails stop: the meta zone, the guideline's own pixel, and
-/// then the clear ones the divider gap asks for. Measured from the zone
-/// boundary, which is where the guideline now stands — counting from the
-/// button's own field instead left the previews short of their zone.
-const SIDEBAR_PREVIEW_MASK_CLEAR_TAIL =
-  `calc(var(--sidebar-zone) + 1px + ${SIDEBAR_PREVIEW_DIVIDER_GAP}px)`;
+/// The air between the previews and the right guideline, set by the theme:
+/// none in the light theme, where the cell's edge cuts the previews; the
+/// divider gap in the dark one, where they dissolve before it (global.css,
+/// «Previews' right edge»; user's decision of 07.10.2026).
+const SIDEBAR_PREVIEW_EDGE_GAP = `var(--preview-edge-gap, ${SIDEBAR_PREVIEW_DIVIDER_GAP}px)`;
 /** A row's `Connected` that only reports. It is the bottom bar's reference
  *  key, built the same way (ActionButton with `readOnly`): the `reference`
  *  body, mono regular type, muted colour, no hover. Only its height follows
@@ -142,10 +141,17 @@ const SIDEBAR_ROW_TEXT_MASK_STYLE = createRightFadeMaskStyle(
   SIDEBAR_PREVIEW_DIVIDER_GAP,
 );
 
-const SIDEBAR_PREVIEW_MASK_STYLE = createRightFadeMaskStyle(
-  SIDEBAR_PREVIEW_MASK_FADE_WIDTH,
-  SIDEBAR_PREVIEW_MASK_CLEAR_TAIL,
+/// The previews' dissolve toward their own cell's end, with no tail: the cell
+/// itself stops short of the guideline by the divider gap, and nothing of the
+/// next cell's width enters the strip. Published as a custom property for the
+/// theme to apply: the dark theme dissolves the previews into the panel; the
+/// light theme draws them whole and lets the cell's edge cut them (global.css,
+/// «Previews' right edge»; user's decision of 07.10.2026).
+const SIDEBAR_PREVIEW_MASK = String(
+  createRightFadeMaskStyle(SIDEBAR_PREVIEW_MASK_FADE_WIDTH, 0).maskImage,
 );
+// A custom property by construction; CSSProperties has no key for it.
+const SIDEBAR_PREVIEW_MASK_STYLE = { "--sidebar-preview-mask": SIDEBAR_PREVIEW_MASK } as CSSProperties;
 
 /// One tile of the thumbnail strip, real or placeholder. Both draw from this
 /// single class, so a placeholder occupies exactly the box its thumbnail will
@@ -1221,19 +1227,46 @@ function SidebarRowTitleCell({
   );
 }
 
+/// The previews' cell: from the left guideline to the right one, its own
+/// edges and nothing past them. The next cell stands in the row's flow
+/// (`SidebarMetaCell`), so this one ends where the right guideline begins
+/// instead of running under the count and Connect and being masked off there
+/// (user's decision of 07.10.2026).
 function SidebarPreviewRail({ children }: { children: ReactNode }) {
   return (
-    <div
-      // The floor matches the other columns' keystone: the previews may not
-      // drop below it whatever width the panel is dragged to.
-      className="relative min-w-[var(--sidebar-col-floor)] flex-1"
-      data-sidebar-preview-rail
-      // Measured from the far edge of the guideline, not from the column it
-      // closes: the line owns its pixel, the gap follows it.
-      style={{ paddingLeft: `${SIDEBAR_PREVIEW_DIVIDER_GAP + 1}px` }}
-    >
-      {children}
-    </div>
+    <>
+      <div
+        // The floor matches the other columns' keystone: the previews may not
+        // drop below it whatever width the panel is dragged to.
+        className="relative min-w-[var(--sidebar-col-floor)] flex-1"
+        data-sidebar-preview-rail
+        // Measured from the far edge of the left guideline, which owns its
+        // pixel. Before the right guideline the theme decides: the light
+        // theme's previews run to it and are cut by the cell's edge, the dark
+        // theme's keep the gap of air they dissolve in (global.css,
+        // --preview-edge-gap).
+        style={{
+          paddingLeft: `${SIDEBAR_PREVIEW_DIVIDER_GAP + 1}px`,
+          paddingRight: SIDEBAR_PREVIEW_EDGE_GAP,
+        }}
+      >
+        {children}
+      </div>
+      <SidebarMetaCell />
+    </>
+  );
+}
+
+/// The row's last cell, the count and Connect, with the right guideline's
+/// pixel. It holds nothing in the flow (the count and the buttons are placed
+/// over it); it is here so the previews' cell ends on the guideline.
+function SidebarMetaCell() {
+  return (
+    <span
+      aria-hidden="true"
+      data-sidebar-meta-cell=""
+      className="w-[calc(var(--sidebar-zone)+1px)] shrink-0 self-stretch"
+    />
   );
 }
 
@@ -2051,7 +2084,6 @@ function SidebarPreviewStrip({
       data-sidebar-thumbnail-strip=""
       data-sidebar-previews={pending ? "pending" : "ready"}
       data-sidebar-preview-fade-width={String(SIDEBAR_PREVIEW_MASK_FADE_WIDTH)}
-      data-sidebar-preview-protected-tail={SIDEBAR_PREVIEW_MASK_CLEAR_TAIL}
       className="flex h-8 min-w-0 flex-1 items-end gap-1 overflow-hidden"
       style={SIDEBAR_PREVIEW_MASK_STYLE}
     >

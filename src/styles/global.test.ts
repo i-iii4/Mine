@@ -88,3 +88,30 @@ describe("menus and the chrome inset", () => {
     expect(css).toMatch(/--main-secondary-pad-x: var\(--chrome-edge-pad\);/);
   });
 });
+
+// The previews' right edge (SPEC_FRONTEND.md, «Thumbnail strip»; user's
+// decision of 07.10.2026): in the light theme the cell's edge simply cuts
+// the previews; the dark theme keeps its dissolve.
+describe("the previews' right edge", () => {
+  const block = (selector: string) => {
+    const start = css.indexOf(`${selector} {`);
+    expect(start, selector).toBeGreaterThan(-1);
+    return css.slice(start, css.indexOf("}", start));
+  };
+
+  it("runs the light theme's previews to the guideline with no gap and no effect", () => {
+    expect(block("[data-sidebar-preview-rail]")).toMatch(/--preview-edge-gap: 0px;/);
+    // The mask is applied only under the dark theme's selectors.
+    expect(css).not.toMatch(/(?:^|\n)\[data-sidebar-thumbnail-strip\] \{[^}]*mask-image/);
+    for (const gone of ["--preview-edge-alpha", "--preview-edge-blur", "--preview-edge-wash", "--preview-edge-width", "data-sidebar-preview-edge-"]) {
+      expect(css).not.toContain(gone);
+    }
+  });
+
+  it("keeps the dark theme's dissolve and its 4px of air", () => {
+    for (const theme of [':root:not([data-theme="light"])', ':root[data-theme="dark"]']) {
+      expect(block(`${theme} [data-sidebar-preview-rail]`)).toMatch(/--preview-edge-gap: 4px;/);
+      expect(block(`${theme} [data-sidebar-thumbnail-strip]`)).toMatch(/mask-image: var\(--sidebar-preview-mask\);/);
+    }
+  });
+});

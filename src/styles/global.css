@@ -142,6 +142,36 @@ select,
   transition: color var(--hover-intent-name-fade) cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+/* Previews' right edge (SPEC_FRONTEND.md, «Thumbnail strip»; user's decision
+   of 07.10.2026). In the dark theme the previews dissolve into the panel over
+   the last 24px of their cell, which reads as shade, and stop 4px before the
+   right guideline as they always did. In the light theme the same dissolve
+   read as fog; muting, blurring and washing the edge as the scroll edge effect
+   of macOS and iOS 26 and 27 does was tried in several strengths and widths
+   and turned down. There the previews run to the guideline and their cell's
+   edge simply cuts them, with no gap and no effect. The dissolve is the
+   sidebar's mask (--sidebar-preview-mask, from edgeFade.ts), applied only in
+   the dark theme. */
+[data-sidebar-preview-rail] {
+  --preview-edge-gap: 0px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) [data-sidebar-preview-rail] {
+    --preview-edge-gap: 4px;
+  }
+  :root:not([data-theme="light"]) [data-sidebar-thumbnail-strip] {
+    -webkit-mask-image: var(--sidebar-preview-mask);
+    mask-image: var(--sidebar-preview-mask);
+  }
+}
+:root[data-theme="dark"] [data-sidebar-preview-rail] {
+  --preview-edge-gap: 4px;
+}
+:root[data-theme="dark"] [data-sidebar-thumbnail-strip] {
+  -webkit-mask-image: var(--sidebar-preview-mask);
+  mask-image: var(--sidebar-preview-mask);
+}
+
 [data-sidebar-row-surface] {
   position: relative;
 }
