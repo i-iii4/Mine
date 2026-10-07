@@ -877,8 +877,9 @@ body {
    levels of the window, whole zone steps brighter than the page (K3: 0.03
    in dark, 0.03 x K4a = 0.0153 in light). Height: in light the face of a
    button with depth is a hover plate, in dark it is brighter. Floating
-   layers stand on zone level 2, the bottom panel's, in both themes, held
-   by their line and shadow (user's decision of 07.10.2026).
+   layers stand on zone level 1, the chrome's (the page row under the tab
+   bar), in both themes, held by their line and shadow (user's decision of
+   07.10.2026).
    Signals differ from what lies under them by a lightness difference that
    reads the same in both themes: the dark difference is the light one
    divided by the coefficient of the signal's form, K4 = 0.7 for lines,
@@ -886,12 +887,12 @@ body {
    number is derived from the constants by src/styles/colorLaw.test.ts. */
 :root {
   /* K1, K2. Zones: levels 0, a third (K9), 1 and 2 of the zone step.
-     Floating layers stand on level 2. */
+     Floating layers stand on level 1, the chrome's. */
   --background: oklch(1 0 0);
   --sidebar: oklch(0.9949 0 0);
   --card: oklch(0.9847 0 0);
   --chrome: oklch(0.9847 0 0);
-  --popover: oklch(0.9694 0 0);
+  --popover: oklch(0.9847 0 0);
   --accent: oklch(0.9694 0 0);
   --secondary: oklch(0.9694 0 0);
   --muted: oklch(0.9694 0 0);
@@ -929,9 +930,10 @@ body {
   --elevation-rest: -0.06;
   --elevation-hover: -0.09;
   /* The pill's chosen segment (DESIGN_SYSTEM.md, «Пилюля»; user's decision
-     of 07.10.2026): 1½ s from the surface under the pill, half an s
-     brighter than its track, which is the hover plate's state layer. */
-  --pill-chosen-elevation: -0.045;
+     of 07.10.2026): from the surface under the pill, 1¼ s in light and 1¾ s
+     in dark, a quarter and three quarters of an s brighter than its track,
+     which is the hover plate's state layer. */
+  --pill-chosen-elevation: -0.0375;
   /* The face of a button with depth (src/styles/buttons.css): the surface
      under it with the state layer a hover plate paints, so the two are one
      paint. */
@@ -971,12 +973,12 @@ body {
 @media (prefers-color-scheme: dark) {
   :root {
     /* Zones: levels 0, a third, 1 and 2 of the zone step 0.03. Floating
-       layers stand on level 2, the bottom panel's (07.10.2026). */
+       layers stand on level 1, the chrome's (07.10.2026). */
     --background: oklch(0.14 0 0);
     --sidebar: oklch(0.15 0 0);
     --card: oklch(0.17 0 0);
     --chrome: oklch(0.17 0 0);
-    --popover: oklch(0.2 0 0);
+    --popover: oklch(0.17 0 0);
     --accent: oklch(0.2 0 0);
     --secondary: oklch(0.2 0 0);
     --muted: oklch(0.2 0 0);
@@ -1003,7 +1005,7 @@ body {
     --input: oklch(0.243 0 0);
     --elevation-rest: 0.1176;
     --elevation-hover: 0.1765;
-    --pill-chosen-elevation: 0.0882;
+    --pill-chosen-elevation: 0.1029;
     /* The face of a button with depth: three zone steps brighter than the
        surface under it. */
     --button-face-step: 0.09;
@@ -1039,7 +1041,7 @@ body {
   --sidebar: oklch(0.15 0 0);
   --card: oklch(0.17 0 0);
   --chrome: oklch(0.17 0 0);
-  --popover: oklch(0.2 0 0);
+  --popover: oklch(0.17 0 0);
   --accent: oklch(0.2 0 0);
   --secondary: oklch(0.2 0 0);
   --muted: oklch(0.2 0 0);
@@ -1064,7 +1066,7 @@ body {
   --input: oklch(0.243 0 0);
   --elevation-rest: 0.1176;
   --elevation-hover: 0.1765;
-  --pill-chosen-elevation: 0.0882;
+  --pill-chosen-elevation: 0.1029;
   --button-face-step: 0.09;
   --button-face-layer: none;
   --button-face-share: 0%;
@@ -1090,7 +1092,7 @@ body {
   --sidebar: oklch(0.9949 0 0);
   --card: oklch(0.9847 0 0);
   --chrome: oklch(0.9847 0 0);
-  --popover: oklch(0.9694 0 0);
+  --popover: oklch(0.9847 0 0);
   --accent: oklch(0.9694 0 0);
   --secondary: oklch(0.9694 0 0);
   --muted: oklch(0.9694 0 0);
@@ -1115,7 +1117,7 @@ body {
   --input: oklch(0.9394 0 0);
   --elevation-rest: -0.06;
   --elevation-hover: -0.09;
-  --pill-chosen-elevation: -0.045;
+  --pill-chosen-elevation: -0.0375;
   --button-face-step: 0;
   --button-face-layer: linear-gradient(var(--active), var(--active));
   --button-face-share: var(--active-alpha);
