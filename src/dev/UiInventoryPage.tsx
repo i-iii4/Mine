@@ -577,7 +577,7 @@ const ICON_GROUPS: readonly IconGroup[] = [
       { Icon: Search, name: "Search", size: 13 },
       { Icon: Settings2, name: "Settings2", size: 13 },
       { Icon: MoreHorizontal, name: "MoreHorizontal", size: 13 },
-      { Icon: MineLogo, name: "MineLogo", size: 16 },
+      { Icon: MineLogo, name: "MineLogo", size: 12 },
     ],
   },
   {
