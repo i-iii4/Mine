@@ -1,13 +1,13 @@
-import { useRef, useCallback, type KeyboardEvent, type PointerEvent } from "react";
+import { useRef, useCallback, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { cn } from "@/lib/utils";
 
-// The divider between the sidebar and the feed is the handle itself, as the
-// source design system's resizable handle is (shadcn `ResizableHandle`
-// without its grip; user's decision of 07.10.2026). Nothing appears on it: the
-// sidebar's own 1px line stays the only mark, a 4px catch straddles it, the
-// pointer turns into `col-resize`, and a keyboard focus draws the ring. A drag
-// resizes the panel between its minimum and maximum width; it never collapses
-// the panel, which the sidebar button and its hotkey do.
+// The divider between the sidebar and the feed is the handle itself, looking
+// and answering the pointer as the source design system's sidebar rail does
+// (shadcn `SidebarRail`; user's decision of 07.10.2026): a 16px catch on the
+// sidebar's 1px line, and a 2px line in the line's own colour while the
+// pointer is over it. The rail only toggles; this one resizes the panel
+// between its minimum and maximum width and never collapses it, which the
+// sidebar button and its hotkey do.
 
 // Both top chrome bars are h-8 (32px). The visible sidebar/main divider runs
 // through the TOP menu and the BODY, but the SECONDARY (stats) bar in between
@@ -15,11 +15,13 @@ import { cn } from "@/lib/utils";
 // skips the secondary bar's band entirely.
 const TOP_MENU_HEIGHT = 32;
 const SECONDARY_BAR_HEIGHT = 32;
-/// The catch round the line, shadcn's `after:w-1`. The line is the sidebar's
-/// right border, the last pixel inside its width, so the catch is centred on
-/// that pixel.
-const CATCH_WIDTH = 4;
-const CATCH_LEFT = `calc(var(--sidebar-width) - ${CATCH_WIDTH / 2 + 0.5}px)`;
+/// The rail's catch, `w-4`. The rail sits in the sidebar's content box and is
+/// pulled back by half its width, so its middle, where its 2px line starts,
+/// falls on the sidebar's 1px right border, the last pixel inside
+/// `--sidebar-width`: the catch spans 9px left of the sidebar's edge and 7px
+/// right of it, and the lit line covers the border and the pixel past it.
+const CATCH_WIDTH = 16;
+const CATCH_LEFT = "calc(var(--sidebar-width) - 9px)";
 /// A drag starts past this travel, so a press that wanders by a pixel or two
 /// does not nudge the width.
 const DRAG_THRESHOLD = 4;
@@ -61,6 +63,8 @@ export function SidebarResizeHandle({
   const startXRef = useRef(0);
   const startWidthRef = useRef(0);
   const didDragRef = useRef(false);
+  // One line runs through both bands, so the pointer over either lights both.
+  const [pointerOver, setPointerOver] = useState(false);
 
   const handlePointerDown = useCallback(
     (e: PointerEvent<HTMLDivElement>) => {
@@ -125,12 +129,21 @@ export function SidebarResizeHandle({
     [disabled, maxWidth, minWidth, onResizeTo, width],
   );
 
+  // The rail's cursor points where its edge can go; at a bound the line can
+  // only go back.
+  const cursorClassName =
+    width <= minWidth ? "cursor-e-resize"
+      : width >= maxWidth ? "cursor-w-resize"
+        : "cursor-col-resize";
   const catchClassName = cn(
-    "fixed z-40 outline-hidden focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1",
+    "fixed z-40 outline-hidden after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] focus-visible:after:bg-ring",
     disabled && "pointer-events-none",
-    !isResizing && "cursor-col-resize",
+    !disabled && (pointerOver || isResizing) && "after:bg-sidebar-border",
+    !isResizing && cursorClassName,
   );
   const pointerHandlers = {
+    onPointerEnter: () => setPointerOver(true),
+    onPointerLeave: () => setPointerOver(false),
     onPointerDown: handlePointerDown,
     onPointerMove: handlePointerMove,
     onPointerUp: finishPointer,

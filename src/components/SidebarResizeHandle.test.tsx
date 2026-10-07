@@ -2,8 +2,8 @@ import { fireEvent, render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { SidebarResizeHandle } from "./SidebarResizeHandle";
 
-/// The divider is the handle, as shadcn's `ResizableHandle` without its grip
-/// (user's decision of 07.10.2026).
+/// The divider is the handle, looking as shadcn's `SidebarRail` does (user's
+/// decision of 07.10.2026).
 describe("SidebarResizeHandle", () => {
   const props = () => ({
     isResizing: false,
@@ -18,19 +18,31 @@ describe("SidebarResizeHandle", () => {
     onResizeTo: vi.fn(),
   });
 
-  it("is a 4px catch on the line, with nothing drawn and nothing that appears", () => {
+  it("is the rail's 16px catch whose 2px line lights in both bands under the pointer", () => {
     const { container } = render(<SidebarResizeHandle {...props()} />);
     const catches = Array.from(container.querySelectorAll<HTMLElement>("[data-sidebar-resize-handle]"));
     expect(catches).toHaveLength(2);
     for (const element of catches) {
-      expect(element.style.width).toBe("4px");
-      expect(element.style.left).toBe("calc(var(--sidebar-width) - 2.5px)");
-      expect(element).toHaveClass("cursor-col-resize", "focus-visible:ring-1");
+      expect(element.style.width).toBe("16px");
+      expect(element.style.left).toBe("calc(var(--sidebar-width) - 9px)");
+      expect(element).toHaveClass("cursor-col-resize", "after:left-1/2", "after:w-[2px]");
       expect(element.childElementCount).toBe(0);
-      expect(element.className).not.toMatch(/\bbg-/);
+      expect(element).not.toHaveClass("after:bg-sidebar-border");
     }
     fireEvent.pointerEnter(catches[1]!);
-    expect(catches[1]!.childElementCount).toBe(0);
+    for (const element of catches) expect(element).toHaveClass("after:bg-sidebar-border");
+    fireEvent.pointerLeave(catches[1]!);
+    for (const element of catches) expect(element).not.toHaveClass("after:bg-sidebar-border");
+  });
+
+  it("keeps the line lit through a drag and points the cursor back at a bound", () => {
+    const { container, rerender } = render(<SidebarResizeHandle {...props()} isResizing />);
+    const line = container.querySelector<HTMLElement>("[role='separator']")!;
+    expect(line).toHaveClass("after:bg-sidebar-border");
+    rerender(<SidebarResizeHandle {...props()} width={314} />);
+    expect(line).toHaveClass("cursor-e-resize");
+    rerender(<SidebarResizeHandle {...props()} width={600} />);
+    expect(line).toHaveClass("cursor-w-resize");
   });
 
   it("resizes on a drag past the threshold and does nothing on a click", () => {
@@ -83,6 +95,8 @@ describe("SidebarResizeHandle", () => {
     const line = container.querySelector<HTMLElement>("[role='separator']")!;
     expect(line).toHaveClass("pointer-events-none");
     expect(line).toHaveAttribute("tabindex", "-1");
+    fireEvent.pointerEnter(line);
+    expect(line).not.toHaveClass("after:bg-sidebar-border");
     fireEvent.keyDown(line, { key: "ArrowLeft" });
     expect(p.onResizeTo).not.toHaveBeenCalled();
   });
