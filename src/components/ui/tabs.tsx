@@ -150,7 +150,7 @@ function TabsList({
             />
             {/* The chosen segment's button: flush with the track, as tall
                 as the pill, over its own share of it. A button with depth
-                whose face is the pill's own step (1¼ s from the surface
+                whose face is the pill's own step (1½ s from the surface
                 under the pill, no state layer), so the button style's
                 edges follow that face. It slides to a new choice in 150ms (a strong
                 ease-out); with reduced motion it moves at once. */}

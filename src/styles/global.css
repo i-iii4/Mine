@@ -929,9 +929,9 @@ body {
   --elevation-rest: -0.06;
   --elevation-hover: -0.09;
   /* The pill's chosen segment (DESIGN_SYSTEM.md, «Пилюля»; user's decision
-     of 07.10.2026): 1¼ s from the surface under the pill, a quarter s
+     of 07.10.2026): 1½ s from the surface under the pill, half an s
      brighter than its track, which is the hover plate's state layer. */
-  --pill-chosen-elevation: -0.0375;
+  --pill-chosen-elevation: -0.045;
   /* The face of a button with depth (src/styles/buttons.css): the surface
      under it with the state layer a hover plate paints, so the two are one
      paint. */
@@ -1003,7 +1003,7 @@ body {
     --input: oklch(0.243 0 0);
     --elevation-rest: 0.1176;
     --elevation-hover: 0.1765;
-    --pill-chosen-elevation: 0.0735;
+    --pill-chosen-elevation: 0.0882;
     /* The face of a button with depth: three zone steps brighter than the
        surface under it. */
     --button-face-step: 0.09;
@@ -1064,7 +1064,7 @@ body {
   --input: oklch(0.243 0 0);
   --elevation-rest: 0.1176;
   --elevation-hover: 0.1765;
-  --pill-chosen-elevation: 0.0735;
+  --pill-chosen-elevation: 0.0882;
   --button-face-step: 0.09;
   --button-face-layer: none;
   --button-face-share: 0%;
@@ -1115,7 +1115,7 @@ body {
   --input: oklch(0.9394 0 0);
   --elevation-rest: -0.06;
   --elevation-hover: -0.09;
-  --pill-chosen-elevation: -0.0375;
+  --pill-chosen-elevation: -0.045;
   --button-face-step: 0;
   --button-face-layer: linear-gradient(var(--active), var(--active));
   --button-face-share: var(--active-alpha);
