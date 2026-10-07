@@ -2540,6 +2540,20 @@ architecture decision 046 in [ARCHITECTURE.md](ARCHITECTURE.md).
 | 37.4 | Подсветка | DONE 07.10.2026 | линия на полшага ярче (`--sidebar-border-hover`) через 300мс наведения; без ожидания при нажатии, перетаскивании, фокусе |
 | 37.5 | Живая приёмка | TODO | за пользователем |
 
+### Phase 38: пилюли
+
+Решения пользователя 07.10.2026: все переключатели из сегментов это одна
+пилюля на `Tabs` из shadcn; мёртвый фильтр `All | Connected` и страница
+сравнения `Top Bar Variants` удалены. Контракт: [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md),
+«Пилюля».
+
+| # | Срез | Статус | Содержание |
+|---|---|---|---|
+| 38.1 | Удаление фильтра | DONE 07.10.2026 | `SidebarLinkModeSwitch`, `DetailLinkModeTabs`, `linkMode`, поле `link_mode` сессии (старый файл читается), стадия `icons` сжатия ряда, раздел `Top Bar Variants` |
+| 38.2 | Пилюля | DONE 07.10.2026 | дорожка всегда, кнопка выбранного сегмента заподлицо, ховер только текста, переезд 150мс strong ease-out, reduced motion сразу; размеры `row` и `panel` |
+| 38.3 | Один компонент | DONE 07.10.2026 | `SegmentedControl` удалён; Grid / Graph, Appearance (Theme, Card corners), клиппер (Content / Screenshot / Link) на `Tabs` |
+| 38.4 | Живая приёмка | TODO | за пользователем, в том числе клиппер |
+
 ### Backlog
 
 | Task | Description |

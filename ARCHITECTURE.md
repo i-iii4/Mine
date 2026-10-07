@@ -1316,8 +1316,9 @@ Clipper UI uses the same design-system primitives as the desktop app. In-page
 overlay lives in Shadow DOM, so shared `DropdownMenu` does not portal to page
 `document.body`; `overlay-entry.tsx` creates a shadow-local floating root and
 `OverlayShell` provides it through `DropdownMenuPortalContainerProvider`.
-Space selector uses shared `MenuTextTrigger`, clip type uses shared
-`SegmentedControl`, screenshot actions use shared `Button`, and channel picker
+Space selector uses shared `MenuTextTrigger`, clip type uses the app's pill
+(`Tabs` chrome, size `panel`; DESIGN_SYSTEM.md, «Пилюля»), screenshot actions
+use shared `Button`, and channel picker
 is a thin adapter over the same `CollectionPicker` default menu layout used by
 desktop Connect menus. The final popup chrome keeps the new two-level header
 (space selector + Type row) above an elastic middle (preview surfaces compress,

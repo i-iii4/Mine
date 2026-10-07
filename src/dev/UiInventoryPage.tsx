@@ -41,7 +41,6 @@ import { MenuTextTrigger } from "@/components/MenuTextTrigger";
 import { MineLogo } from "@/components/MineLogo";
 import { SidebarToggleButton } from "@/components/SidebarToggleButton";
 import { Button } from "@/components/ui/button";
-import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CONNECT_ACTION_BUTTON_CLASS, SIDEBAR_ROW_ACTION_BUTTON_PX } from "@/lib/appLayout";
 import { cn } from "@/lib/utils";
@@ -245,7 +244,7 @@ const GROUPS: readonly Group[] = [
         zone: "bg-chrome",
         render: () => (
           <Tabs value="grid" className="h-6 gap-0">
-            <TabsList variant="chrome" plate="always" aria-label="View mode">
+            <TabsList variant="chrome" aria-label="View mode">
               {VIEW_OPTIONS.map((option) => (
                 <TabsTrigger key={option.value} value={option.value}>{option.label}</TabsTrigger>
               ))}
@@ -255,10 +254,18 @@ const GROUPS: readonly Group[] = [
       },
       {
         name: "Вид: Grid и Graph, ряд внизу",
-        spec: "сегменты chrome",
+        spec: "пилюля row",
         where: "Ряд метаданных, когда он стоит внизу окна",
         zone: "bg-chrome",
-        render: () => <SegmentedControl chrome value="grid" options={[...VIEW_OPTIONS]} onChange={noop} aria-label="View mode" />,
+        render: () => (
+          <Tabs value="grid" className="h-6 gap-0">
+            <TabsList variant="chrome" aria-label="View mode">
+              {VIEW_OPTIONS.map((option) => (
+                <TabsTrigger key={option.value} value={option.value}>{option.label}</TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+        ),
       },
     ],
   },
@@ -437,16 +444,17 @@ const GROUPS: readonly Group[] = [
       },
       {
         name: "Переключатель в настройках",
-        spec: "сегменты, обычный размер",
+        spec: "пилюля panel",
         where: "Настройки: тема и углы карточек",
         zone: "bg-background",
         render: () => (
-          <SegmentedControl
-            value="system"
-            options={[{ value: "light", label: "Light" }, { value: "dark", label: "Dark" }, { value: "system", label: "System" }]}
-            onChange={noop}
-            aria-label="Theme"
-          />
+          <Tabs value="system" className="gap-0">
+            <TabsList variant="chrome" size="panel" aria-label="Theme">
+              <TabsTrigger value="system">System</TabsTrigger>
+              <TabsTrigger value="light">Light</TabsTrigger>
+              <TabsTrigger value="dark">Dark</TabsTrigger>
+            </TabsList>
+          </Tabs>
         ),
       },
     ],
@@ -525,17 +533,18 @@ const GROUPS: readonly Group[] = [
       },
       {
         name: "Тип клипа и ссылка",
-        spec: "сегменты; link",
+        spec: "пилюля panel; link",
         where: "Клиппер: Content, Screenshot, Link; настройка папки",
         zone: "bg-background",
         render: () => (
           <div className="flex items-center gap-3">
-            <SegmentedControl
-              value="content"
-              options={[{ value: "content", label: "Content" }, { value: "screenshot", label: "Screenshot" }, { value: "link", label: "Link" }]}
-              onChange={noop}
-              aria-label="Type"
-            />
+            <Tabs value="content" className="gap-0">
+              <TabsList variant="chrome" size="panel" aria-label="Type">
+                <TabsTrigger value="content">Content</TabsTrigger>
+                <TabsTrigger value="screenshot">Screenshot</TabsTrigger>
+                <TabsTrigger value="link">Link</TabsTrigger>
+              </TabsList>
+            </Tabs>
             <Button type="button" variant="link">Learn more</Button>
           </div>
         ),

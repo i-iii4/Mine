@@ -1328,8 +1328,8 @@ body {
   }
 }
 /* Paints the layer and passes it on. Where the plate stands beside the
-   content rather than around it (the chrome TabsList and SegmentedControl),
-   their common parent takes state-surface in the same states. */
+   content rather than around it (the pill's track, Tabs chrome), their
+   common parent takes state-surface in the same states. */
 @utility state-active {
   background-image: linear-gradient(var(--active), var(--active));
   @apply state-surface;
@@ -1470,20 +1470,6 @@ button:active:not(:disabled) > .button-depth,
 }
 [data-row-fit]:not([data-row-fit="full"]) [data-row-fit-name] {
   max-width: var(--row-fit-name-min);
-}
-[data-row-fit-icon] {
-  display: none;
-}
-:is([data-row-fit="icons"], [data-row-fit="search"]) [data-row-fit-label] {
-  display: none;
-}
-:is([data-row-fit="icons"], [data-row-fit="search"]) [data-row-fit-icon] {
-  display: inline-flex;
-}
-/* A segment that shows only its icon is a square. */
-:is([data-row-fit="icons"], [data-row-fit="search"]) [data-row-fit-segment] {
-  width: 20px;
-  padding-inline: 0;
 }
 [data-row-fit-search-button] {
   display: none;

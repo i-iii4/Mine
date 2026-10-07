@@ -1578,14 +1578,32 @@
         "src/components/ui/dropdown-menu.test.tsx",
         "src/components/ui/context-menu.tsx",
         "src/components/ui/context-menu.test.tsx",
-        "src/components/ui/segmented-control.tsx",
-        "src/components/ui/segmented-control.test.tsx",
+        "src/components/ui/tabs.test.tsx",
         "src/tabbar/TabBar.tsx",
         "src/tabbar/TabBar.test.tsx",
         "src/tabbar/tabbar.css"
       ],
       "requirement": "DESIGN_SYSTEM.md#Цвет от того, что под элементом",
-      "tests": ["src/styles/global.test.ts", "src/lib/sidebarSurface.test.ts", "src/components/ActionButton.test.tsx", "src/components/BottomBarCommands.test.tsx", "src/components/ui/dropdown-menu.test.tsx", "src/components/ui/context-menu.test.tsx", "src/components/ui/segmented-control.test.tsx", "src/tabbar/TabBar.test.tsx", "src/components/Sidebar.test.tsx", "src/components/GraphView.test.tsx"],
+      "tests": ["src/styles/global.test.ts", "src/lib/sidebarSurface.test.ts", "src/components/ActionButton.test.tsx", "src/components/BottomBarCommands.test.tsx", "src/components/ui/dropdown-menu.test.tsx", "src/components/ui/context-menu.test.tsx", "src/components/ui/tabs.test.tsx", "src/tabbar/TabBar.test.tsx", "src/components/Sidebar.test.tsx", "src/components/GraphView.test.tsx"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/components/ui/tabs.tsx",
+        "src/components/ui/tabs.test.tsx",
+        "src/components/ui/segmented-control.tsx",
+        "src/components/ui/segmented-control.test.tsx",
+        "src/components/ui/button.test.tsx",
+        "src/components/ui/chrome-control.test.tsx",
+        "src/components/MainSecondaryChrome.tsx",
+        "src/settings/AppearanceSection.tsx",
+        "src/settings/AppearanceSection.test.tsx",
+        "extension/popup/components/TypeSwitcher.tsx",
+        "extension/popup/PopupApp.test.tsx",
+        "extension/popup/overlayUnits.test.ts"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#Пилюля",
+      "tests": ["src/components/ui/tabs.test.tsx", "src/components/ui/button.test.tsx", "src/settings/AppearanceSection.test.tsx", "extension/popup/PopupApp.test.tsx", "extension/popup/overlayUnits.test.ts"],
       "command": "test:frontend"
     },
     {
@@ -1639,9 +1657,9 @@
         "src/components/ui/tabs.tsx",
         "src/components/ui/switch.tsx",
         "src/components/DetailLinkModeTabs.tsx",
+        "src/settings/TopBarVariants.tsx",
         "src/hooks/useSidebarRowFit.ts",
         "src/hooks/useSidebarRowFit.test.tsx",
-        "src/settings/TopBarVariants.tsx",
         "src/settings/SettingsApp.tsx",
         "src/lib/settingsSections.ts"
       ],

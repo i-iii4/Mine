@@ -19,16 +19,12 @@ import { ChromeRow, ChromeActions } from "./ChromeRow";
 import { CardMoreMenu } from "./CardHoverMenu";
 import { ChromeCloseButton } from "./ChromeCloseButton";
 import { renameErrorMessage } from "./RenameBlockDialog";
-import {
-  SegmentedControl,
-  type SegmentedControlOption,
-} from "./ui/segmented-control";
 import { FeedDisplayMenu } from "./FeedDisplayMenu";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 
-const MAIN_VIEW_MODE_OPTIONS: SegmentedControlOption<MainViewMode>[] = [
+const MAIN_VIEW_MODE_OPTIONS: readonly { value: MainViewMode; label: string }[] = [
   { value: "grid", label: "Grid" },
   { value: "graph", label: "Graph" },
 ];
@@ -153,7 +149,7 @@ function MainSecondaryStatsRight({
       )}
       <div className="flex shrink-0 items-center gap-2" data-main-view-mode-switcher="">
         <span className="shrink-0 font-mono text-sm text-tertiary-foreground">View:</span>
-        <MainViewModeSwitch value={viewMode} onChange={onViewModeChange} entered />
+        <MainViewModeTabs value={viewMode} onChange={onViewModeChange} />
       </div>
       {/* On the Mine button's axis: the same icon button and edge inset as
           the logo in the row above (SPEC_FEED_DISPLAY.md, Д1). */}
@@ -595,7 +591,7 @@ function MainViewModeTabs({
   };
   return (
     <Tabs value={value} onValueChange={choose} className="h-full gap-0">
-      <TabsList variant="chrome" plate="always" aria-label="View mode" data-main-view-mode-control="">
+      <TabsList variant="chrome" aria-label="View mode" data-main-view-mode-control="">
         {MAIN_VIEW_MODE_OPTIONS.map((option) => (
           <TabsTrigger key={option.value} value={option.value}>
             {option.label}
@@ -603,31 +599,6 @@ function MainViewModeTabs({
         ))}
       </TabsList>
     </Tabs>
-  );
-}
-
-function MainViewModeSwitch({
-  value,
-  onChange,
-  entered,
-  className,
-}: {
-  value: MainViewMode;
-  onChange: (value: MainViewMode) => void;
-  entered?: boolean;
-  className?: string;
-}) {
-  return (
-    <SegmentedControl
-      chrome
-      value={value}
-      options={MAIN_VIEW_MODE_OPTIONS}
-      onChange={onChange}
-      aria-label="View mode"
-      data-entered={entered === undefined ? undefined : entered ? "true" : "false"}
-      data-main-view-mode-control=""
-      className={className}
-    />
   );
 }
 

@@ -73,7 +73,6 @@ import { HOVER_INTENT } from "@/lib/hoverIntent";
 import { HoverIntentDragWatch, useHoverIntent } from "@/hooks/useHoverIntent";
 import { TopFadeScrim } from "./TopFadeScrim";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
-import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
 import { ReadOnlyCardPreview } from "./Card";
 import { MicroPreviewThumbnail, microPreviewFromPreviewCard } from "./MicroPreviewThumbnail";
 
@@ -187,13 +186,6 @@ type SidebarKeyboardNavigationFocus = {
   sequence: number;
 };
 
-const SIDEBAR_LINK_MODE_OPTIONS: SegmentedControlOption<"all" | "linked">[] = [
-  { value: "all", label: "All" },
-  { value: "linked", label: "Connected" },
-];
-
-type SidebarLinkMode = "all" | "linked";
-
 interface SidebarProps {
   width: number;
   collapsed: boolean;
@@ -253,9 +245,6 @@ interface SidebarProps {
   onToggleLinkedTag?: (slug: string, tag: string, hasTag: boolean) => void;
   /** Connects or disconnects every selected feed card (SPEC_CARD_STATES.md, С6). */
   onBatchSetTag?: (slugs: string[], tag: string, connected: boolean) => void | Promise<void>;
-  linkMode?: SidebarLinkMode;
-  onLinkModeChange?: (mode: SidebarLinkMode) => void;
-  showLinkModeChrome?: boolean;
   detailChromeClosing?: boolean;
   /** Dissolve rows into transparency as they scroll up under the chrome. */
   scrollEdgeFade?: boolean;
@@ -327,15 +316,10 @@ const SidebarCore = memo(function SidebarCore({
   linkedTags = [],
   onToggleLinkedTag,
   onBatchSetTag,
-  linkMode,
-  onLinkModeChange,
-  showLinkModeChrome = true,
   detailChromeClosing = false,
   scrollEdgeFade = false,
 }: SidebarProps & { dropOverId: string | null }) {
   const [editingTag, setEditingTag] = useState<string | null>(null);
-  const [uncontrolledLinkMode, setUncontrolledLinkMode] = useState<SidebarLinkMode>("all");
-  const effectiveLinkMode = linkMode ?? uncontrolledLinkMode;
   const navRef = useRef<HTMLElement>(null);
   const topFade = useTopFadeMask(navRef, scrollEdgeFade);
   const previewTriggerRefs = useRef(new Map<string, HTMLElement>());
@@ -496,14 +480,10 @@ const SidebarCore = memo(function SidebarCore({
     publishCollectionOrder(orderedTags);
   }, [orderedTags]);
   const linkedTagSet = useMemo(() => new Set(linkedTags), [linkedTags]);
-  const baseVisibleTags = useMemo(() => (
-    isLinkEditorActive && effectiveLinkMode === "linked"
-      ? orderedTags.filter((tc) => linkedTagSet.has(tc.tag))
-      : orderedTags
-  ), [effectiveLinkMode, isLinkEditorActive, linkedTagSet, orderedTags]);
+  // Every collection is listed, an open card's included (03.10.2026).
   const visibleTags = useMemo(() => (
-    filterSidebarTags(baseVisibleTags, searchQuery)
-  ), [baseVisibleTags, searchQuery]);
+    filterSidebarTags(orderedTags, searchQuery)
+  ), [orderedTags, searchQuery]);
   const showEverythingRow = shouldShowSidebarEverythingRow(searchQuery);
   const editingRowKey = !isLinkEditorActive && editingTag !== null
     ? `tag:${editingTag}`
@@ -530,7 +510,6 @@ const SidebarCore = memo(function SidebarCore({
     orderedRowKeys,
     effectiveSidebarRowFocusKey,
   );
-  const [linkChromeEntered, setLinkChromeEntered] = useState(false);
 
   const setPreviewTriggerRef = useCallback((key: string, node: HTMLElement | null) => {
     if (node) {
@@ -871,22 +850,6 @@ const SidebarCore = memo(function SidebarCore({
     }
   }, [hoveredPreview, hoverPreviewBlock, hoverPreviewPosition]);
 
-  useEffect(() => {
-    if (!isLinkingBlock) {
-      setLinkChromeEntered(false);
-      return;
-    }
-    if (detailChromeClosing) {
-      setLinkChromeEntered(false);
-      return;
-    }
-    setLinkChromeEntered(false);
-    const frame = window.requestAnimationFrame(() => {
-      setLinkChromeEntered(true);
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [isLinkingBlock, detailChromeClosing]);
-
   return (
     <aside
       className={cn(
@@ -902,16 +865,6 @@ const SidebarCore = memo(function SidebarCore({
         transition: isResizing ? "none" : "width 200ms ease",
       }}
     >
-      {isLinkingBlock && showLinkModeChrome && (
-        <SidebarLinkModeSwitch
-          value={effectiveLinkMode}
-          entered={linkChromeEntered}
-          onChange={(mode) => {
-            setUncontrolledLinkMode(mode);
-            onLinkModeChange?.(mode);
-          }}
-        />
-      )}
       {/* Navigation. The wrapper exists so the fade band can be a sibling of
           the scrollport: inside the nav it would inherit its padding and settle
           below the real top edge. */}
@@ -1162,50 +1115,6 @@ function pointIsInsideRect(point: CardMenuPoint, rect: DOMRect): boolean {
     && point.y >= rect.top
     && point.y <= rect.bottom;
 }
-
-const SidebarLinkModeSwitch = memo(function SidebarLinkModeSwitch({
-  value,
-  entered,
-  onChange,
-}: {
-  value: "all" | "linked";
-  entered: boolean;
-  onChange: (value: "all" | "linked") => void;
-}) {
-  const label = (
-    <span className="shrink-0 font-mono text-sm text-muted-foreground">
-      Collections:
-    </span>
-  );
-  const control = (
-    <SegmentedControl
-      value={value}
-      options={SIDEBAR_LINK_MODE_OPTIONS}
-      onChange={onChange}
-      aria-label="Collection filter"
-      data-sidebar-link-mode-control
-    />
-  );
-
-  return (
-    <div
-      className={cn(
-        "detail-top-bar-enter absolute inset-x-0 top-0 z-10 flex h-8 items-center gap-2 px-8",
-        "bg-accent",
-      )}
-      data-entered={entered ? "true" : "false"}
-      data-sidebar-link-mode-bar
-    >
-      {label}
-      {control}
-      <span
-        aria-hidden="true"
-        data-entered={entered ? "true" : "false"}
-        className="detail-top-bar-line-enter pointer-events-none absolute inset-x-0 bottom-0 h-px bg-border"
-      />
-    </div>
-  );
-});
 
 function assignRef<T>(ref: Ref<T> | undefined, value: T) {
   if (!ref) return;

@@ -15,7 +15,7 @@ const OVERLAY_STYLED = [
   "src/components/ui/alert-dialog.tsx",
   "src/components/ui/dropdown-menu.tsx",
   "src/components/ui/context-menu.tsx",
-  "src/components/ui/segmented-control.tsx",
+  "src/components/ui/tabs.tsx",
   "extension/popup/components/VaultSelect.tsx",
 ];
 

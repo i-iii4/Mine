@@ -161,11 +161,6 @@ export type DeleteOrphanResult = { deleted: string[]; skipped: string[] }
 export type DeleteTextSelectionParams = { source_slug: string; selected_text: string; first_block_start: number; first_block_end: number; source_body_hash: string }
 
 /**
- * Which collections an open card lists: all of them, or the ones it is in.
- */
-export type DetailLinkMode = "all" | "linked"
-
-/**
  * `tabbar-drop-hover`: the dragged tab is over this bar at `x` (logical
  * points from the bar's left edge), or left it (`None`).
  */
@@ -345,9 +340,11 @@ export type MergeBlocksResult = { block: IndexedBlock; merged_slug: string; remo
 export type NativeShellSmokeReport = { status: string; vault_path: string | null; location: string; user_agent: string; timestamp_ms: number }
 
 /**
- * The card open in a tab.
+ * The card open in a tab. A session saved before 07.10.2026 also holds the
+ * card's `link_mode`, the All / Connected filter removed with its switch;
+ * reading ignores it.
  */
-export type OpenCard = { slug: string; link_mode: DetailLinkMode;
+export type OpenCard = { slug: string;
 /**
  * The card's visible title, the tab's label while it is open (В47).
  * Kept so an unloaded tab is labelled without its page; empty in a

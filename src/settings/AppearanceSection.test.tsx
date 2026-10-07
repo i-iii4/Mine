@@ -22,7 +22,7 @@ describe("AppearanceSection", () => {
   it("applies the chosen theme and broadcasts the change", () => {
     render(<AppearanceSection />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Dark" }));
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "Dark" }), { button: 0 });
 
     expect(localStorage.getItem("theme")).toBe("dark");
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
@@ -70,7 +70,7 @@ describe("AppearanceSection", () => {
   it("applies the card corner radius and broadcasts it", () => {
     render(<AppearanceSection />);
 
-    fireEvent.click(screen.getByRole("button", { name: "4" }));
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "4" }), { button: 0 });
 
     const root = document.documentElement;
     expect(root.style.getPropertyValue("--radius-card")).toBe("4px");
@@ -90,8 +90,8 @@ describe("AppearanceSection", () => {
       screen.getByRole("checkbox", { name: "Fade content under the chrome" }),
     ).toHaveAttribute("data-state", "checked");
 
-    expect(screen.getByRole("button", { name: "Light" })).toHaveAttribute(
-      "aria-pressed",
+    expect(screen.getByRole("tab", { name: "Light" })).toHaveAttribute(
+      "aria-selected",
       "true",
     );
   });

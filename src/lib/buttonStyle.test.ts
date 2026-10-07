@@ -118,9 +118,12 @@ describe("buttons.css", () => {
 
   it("paints the face of every style from the surface under it", () => {
     const face = rules.find(({ body }) => body.includes("background-image: var(--button-face-layer);"));
-    for (const carrier of [".bg-depth-fill", ".bg-component-fill-inner", '\\:bg-component-fill-inner[data-state="active"]']) {
+    for (const carrier of [".bg-depth-fill", ".bg-component-fill-inner"]) {
       expect(face?.selector).toContain(carrier);
     }
+    // A pill's chosen segment is its own carrier now (the list's button,
+    // 07.10.2026): no trigger paints the face on `data-state`.
+    expect(css).not.toContain('bg-component-fill-inner[data-state="active"]');
     expect(face?.selector).not.toContain("data-buttons");
     expect(face?.body).toContain("background-color: oklch(from var(--surface) clamp(0, calc(l + var(--button-face-step)), 1) 0 0);");
     // Hover and an open menu: the state layer over the face.
@@ -193,7 +196,7 @@ describe("buttons.css", () => {
     expect(macos).toHaveLength(2);
     const [rest, hover] = macos;
     // On every carrier the face rule paints, worked out there from its surface.
-    for (const carrier of [".button-depth", ".bg-component-fill-inner", '\\:bg-component-fill-inner[data-state="active"]']) {
+    for (const carrier of [".button-depth", ".bg-component-fill-inner"]) {
       expect(rest?.selector).toContain(carrier);
     }
     expect(rest?.selector).toContain(":not(:disabled, :disabled > *)");

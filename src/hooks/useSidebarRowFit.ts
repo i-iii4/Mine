@@ -1,7 +1,8 @@
 // The sidebar's filter row gives room up in a fixed order when the sidebar
 // narrows (DESIGN_SYSTEM.md, «Сжатие ряда фильтра»): first the space's name
-// shrinks to its minimum, then labelled segments turn into icons, then the
-// filter field folds into a search button. `+` never goes.
+// shrinks to its minimum, then the filter field folds into a search button.
+// `+` never goes. (A stage that turned labelled segments into icons left with
+// the All / Connected filter, 07.10.2026.)
 //
 // The fit is measured, not computed, as the bottom bar's is: each stage is
 // tried on the live row through its `data-row-fit` attribute, and the first
@@ -17,9 +18,9 @@ import {
   type RefObject,
 } from "react";
 
-export type SidebarRowFit = "full" | "name" | "icons" | "search";
+export type SidebarRowFit = "full" | "name" | "search";
 
-const STAGES: readonly SidebarRowFit[] = ["full", "name", "icons", "search"];
+const STAGES: readonly SidebarRowFit[] = ["full", "name", "search"];
 
 /** The narrowest the filter field may get before the row gives up more. */
 export const SIDEBAR_FIELD_MIN_WIDTH_PX = 72;
@@ -81,9 +82,4 @@ export function useSidebarRowFit(
   }, [measure, contentKey]);
 
   return { fit, rowRef };
-}
-
-/** Whether the row shows its segments as icons. */
-export function fitShowsIcons(fit: SidebarRowFit): boolean {
-  return fit === "icons" || fit === "search";
 }

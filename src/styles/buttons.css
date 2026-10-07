@@ -16,13 +16,11 @@
    layer (a selected key) keeps both. A disabled carrier has no face (the
    rule after the state layer below). */
 html:root .bg-depth-fill,
-html:root .bg-component-fill-inner,
-html:root .data-\[state\=active\]\:bg-component-fill-inner[data-state="active"] {
+html:root .bg-component-fill-inner {
   background-color: oklch(from var(--surface) clamp(0, calc(l + var(--button-face-step)), 1) 0 0);
   background-image: var(--button-face-layer);
 }
-html:root .bg-component-fill-inner,
-html:root .data-\[state\=active\]\:bg-component-fill-inner[data-state="active"] {
+html:root .bg-component-fill-inner {
   box-shadow: var(--button-depth);
 }
 
@@ -76,8 +74,7 @@ html:root[data-theme="dark"] {
 }
 html:root:not([data-buttons]) :is(
   .button-depth,
-  .bg-component-fill-inner,
-  .data-\[state\=active\]\:bg-component-fill-inner[data-state="active"]
+  .bg-component-fill-inner
 ):not(:disabled, :disabled > *) {
   --macos-face: color-mix(
     in srgb,
@@ -129,8 +126,7 @@ html:root:not([data-buttons]) :is(
 /* Light: F is the zone under the state layer (darker than the zone). */
 html:root[data-buttons="retro"] :is(
   .button-depth,
-  .bg-component-fill-inner,
-  .data-\[state\=active\]\:bg-component-fill-inner[data-state="active"]
+  .bg-component-fill-inner
 ):not(:disabled, :disabled > *) {
   --retro-face: color-mix(in srgb, var(--surface), var(--foreground) var(--active-alpha));
   --button-depth:
@@ -143,8 +139,7 @@ html:root[data-buttons="retro"] :is(
 @media (prefers-color-scheme: dark) {
   html:root[data-buttons="retro"]:not([data-theme="light"]) :is(
     .button-depth,
-    .bg-component-fill-inner,
-    .data-\[state\=active\]\:bg-component-fill-inner[data-state="active"]
+    .bg-component-fill-inner
   ):not(:disabled, :disabled > *) {
     --retro-face: oklch(from var(--surface) calc(l + 0.09) 0 0);
     --button-depth:
@@ -155,8 +150,7 @@ html:root[data-buttons="retro"] :is(
 }
 html:root[data-buttons="retro"][data-theme="dark"] :is(
   .button-depth,
-  .bg-component-fill-inner,
-  .data-\[state\=active\]\:bg-component-fill-inner[data-state="active"]
+  .bg-component-fill-inner
 ):not(:disabled, :disabled > *) {
   --retro-face: oklch(from var(--surface) calc(l + 0.09) 0 0);
   --button-depth:
@@ -211,8 +205,7 @@ html:root[data-buttons="linear"][data-theme="dark"] {
    width. The selected segment faces are carriers too. */
 html:root[data-buttons="linear"] :is(
   .button-depth,
-  .bg-component-fill-inner,
-  .data-\[state\=active\]\:bg-component-fill-inner[data-state="active"]
+  .bg-component-fill-inner
 ):not(:disabled, :disabled > *) {
   --linear-face: oklch(
     from color-mix(in srgb, var(--surface), white var(--linear-face-white))

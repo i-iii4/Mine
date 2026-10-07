@@ -1064,7 +1064,7 @@ save-футер. Сжатие блока ниже его контента без
 Clipper не имеет собственной визуальной компонентной системы: UI обязан
 переиспользовать app primitives (`Button`, `Input`, `DropdownMenu`,
 `SearchMenuAction`, `CollectionPicker`, `MenuTextTrigger`,
-`SegmentedControl`, `QuantizedMenuScrollArea`) или тонкий adapter над ними.
+пилюля `Tabs`, `QuantizedMenuScrollArea`) или тонкий adapter над ними.
 Компонент, который существует только в расширении и визуально не имеет аналога в
 приложении, считается нарушением контракта.
 
@@ -1106,11 +1106,12 @@ action.
 Type row — отдельная строка `h-10 border-b border-border bg-chrome px-4`. Это
 второй уровень расширения, и оно использует тот же half-step surface, что верхний
 chrome основного приложения. Слева текст
-`Type:` (`text-base text-muted-foreground`), справа общий
-`SegmentedControl size="clipper"`. Он использует тот же state model, что
-`All/Connected`, но со значениями расширения: outer shell `h-8 w-fit p-[2px]
-rounded-1`, selected inner segment `h-7 rounded-[2px] bg-component-fill-inner
-text-foreground`. Это даёт ровный 2px inset по вертикали и горизонтали.
+`Type:` (`text-base text-muted-foreground`), справа общая пилюля приложения
+(`Tabs`, `TabsList variant="chrome" size="panel"`, DESIGN_SYSTEM.md,
+«Пилюля»; с 07.10.2026 вместо `SegmentedControl size="clipper"`): пилюля
+`32px` по ширине содержимого, кнопка выбранного типа заподлицо с ней
+(`bg-component-fill-inner`, `text-foreground`), при смене типа переезжает.
+Высота задана в `px`: клиппер живёт внутри чужой страницы, где `rem` чужой.
 Сегменты shrink-to-content: ширина контрола определяется текстом, а не
 растягивается на всю ширину popup.
 
@@ -1172,7 +1173,7 @@ Instagram save buttons are never valid article input.
 |---|---|---|---|
 | PopupApp | `PopupApp.tsx` | — | Корневой компонент, состояния (loading → error → main), Cmd+Enter / Esc, высотный каркас панели |
 | VaultSelect | `components/VaultSelect.tsx` | `<MenuTextTrigger>`, `<DropdownMenu>`, `<Input>`, `<SearchMenuAction>`, `<QuantizedMenuScrollArea>`, `<ChromeCloseButton>` | Shadow-safe space selector; top-chrome inner pill state, clipper `h-10` row, chevron inside the pill, no current item in menu, row-quantized dropdown height, shared top-right close action |
-| TypeSwitcher | `components/TypeSwitcher.tsx` | `<SegmentedControl size="clipper">` | Content / Screenshot / Link in the 40px Type row without height jumps |
+| TypeSwitcher | `components/TypeSwitcher.tsx` | пилюля `<TabsList variant="chrome" size="panel">` | Content / Screenshot / Link in the 40px Type row without height jumps |
 | ChannelList | `components/ChannelList.tsx` | `<CollectionPicker>` adapter | Same picker surface and channel-selection component as desktop Connect menus, including quantized scroll list height |
 | ScreenshotPreview | `components/ScreenshotPreview.tsx` | `<Button size="sm">` | Legacy rounded screenshot card with always-visible 28px Crop Area / Retake buttons |
 | FolderSetupPage | `components/FolderSetupPage.tsx` | `<Button>` | Extension-origin `?mode=setup`, хранение handle и возврат к открытому клипу; recovery с `binding_id` запрещает смену папки |

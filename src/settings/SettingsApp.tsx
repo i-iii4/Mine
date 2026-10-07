@@ -14,10 +14,6 @@ import { UpdatesSection } from "./UpdatesSection";
 
 /// Loaded on demand: the showcase pulls in every production primitive and has
 /// no business weighing down a window opened to change a checkbox.
-const TopBarVariants = lazy(async () => {
-  const mod = await import("./TopBarVariants");
-  return { default: mod.TopBarVariants };
-});
 const ComponentTestBench = lazy(async () => {
   const mod = await import("@/components/ComponentTestBench");
   return { default: mod.ComponentTestBench };
@@ -86,17 +82,12 @@ export function SettingsApp() {
             "min-w-0 flex-1 overflow-y-auto",
             // The showcase brings its own page padding and needs the full
             // width; every other section keeps the settings inset.
-            section === "design-system" || section === "top-bar-variants" ? "p-0" : "p-s4",
+            section === "design-system" ? "p-0" : "p-s4",
           )}
         >
           {section === "design-system" && (
             <Suspense fallback={null}>
               <ComponentTestBench />
-            </Suspense>
-          )}
-          {section === "top-bar-variants" && (
-            <Suspense fallback={null}>
-              <TopBarVariants />
             </Suspense>
           )}
           {section === "appearance" && <AppearanceSection />}

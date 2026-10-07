@@ -50,8 +50,6 @@ function bar(
       stats={null}
       detailBlock={detailBlock}
       detailEntered
-      detailLinkMode="collections"
-      onDetailLinkModeChange={vi.fn()}
       viewMode={viewMode}
       onViewModeChange={vi.fn()}
       vaultPath="/vault"

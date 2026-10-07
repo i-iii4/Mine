@@ -3459,7 +3459,7 @@ describe("AppWithVault", () => {
     it("returns to its place, mode, card, link mode and filter, read first (В40, В78)", async () => {
       const view = tabView({
         location: { kind: "collection", tag: "alpha" },
-        open_card: { slug: "alpha-block", link_mode: "all", title: "alpha-block" },
+        open_card: { slug: "alpha-block", title: "alpha-block" },
         collection_filter: "al",
       });
       const onRestored = vi.fn();
@@ -3494,7 +3494,7 @@ describe("AppWithVault", () => {
       ));
       const view = tabView({
         location: { kind: "collection", tag: "gone" },
-        open_card: { slug: "gone-card", link_mode: "all", title: "Gone card" },
+        open_card: { slug: "gone-card", title: "Gone card" },
         scroll_anchor: { slug: "gone-card", offset_px: 40 },
       });
       const onRestored = vi.fn();

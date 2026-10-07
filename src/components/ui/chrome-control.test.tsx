@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from "vitest";
 import { ChromeControl } from "./chrome-control";
 import { Button } from "./button";
 import { ActionButton } from "../ActionButton";
-import { SegmentedControl } from "./segmented-control";
 
 describe("chrome hit targets", () => {
   it("extends the same button and preserves its ref, handler and disabled state", () => {
@@ -42,16 +41,5 @@ describe("chrome hit targets", () => {
     expect(click).toHaveBeenCalledTimes(2);
     expect(screen.getByText("Reference").closest("[data-chrome-control]")).toBeNull();
     unmount();
-  });
-
-  it("gives each chrome segment its own target without nesting buttons", () => {
-    const change = vi.fn();
-    render(<SegmentedControl chrome aria-label="Mode" value="grid" options={[{ value: "grid", label: "Grid" }, { value: "graph", label: "Graph" }]} onChange={change} />);
-    for (const button of screen.getAllByRole("button")) {
-      expect(button).toHaveAttribute("data-chrome-control");
-      expect(button.querySelector("button")).toBeNull();
-    }
-    fireEvent.click(screen.getByRole("button", { name: "Graph" }));
-    expect(change).toHaveBeenCalledWith("graph");
   });
 });

@@ -182,11 +182,11 @@ describe("clipper keyboard (А6.9)", () => {
 
   it("moves focus with the choice when a type segment has it", () => {
     render(<PopupApp />);
-    const content = screen.getByRole("button", { name: "Content" });
+    const content = screen.getByRole("tab", { name: "Content" });
     content.focus();
     fireEvent.keyDown(content, { key: "ArrowRight" });
     expect(state.setCurrentType).toHaveBeenLastCalledWith("screenshot");
-    expect(screen.getByRole("button", { name: "Screenshot" })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: "Screenshot" })).toHaveFocus();
   });
 
   it("keeps the arrows for the caret in a text field", () => {

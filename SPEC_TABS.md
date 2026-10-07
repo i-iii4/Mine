@@ -220,13 +220,17 @@ pub enum TabLocation {
     Collection { tag: String },
 }
 
-pub struct OpenCard { pub slug: String, pub link_mode: DetailLinkMode } // All or Connected
+pub struct OpenCard { pub slug: String, pub title: String }
+// До 07.10.2026 карточка хранила и `link_mode` (фильтр All / Connected, удалён
+// вместе с переключателем); файл, сохранённый раньше, читается: лишнее поле
+// пропускается, при записи его нет. Сборка до 07.10.2026 новый файл не прочтёт
+// (поле было обязательным) и начнёт с чистого окна.
 
 /// The first card whose top edge is at or below the feed's top edge, and that distance.
 pub struct ScrollAnchor { pub slug: String, pub offset_px: f64 }
 ```
 
-`MainViewMode` и `DetailLinkMode` сейчас живут только в интерфейсе: они переезжают в Rust и генерируются, ручного дубля в TypeScript нет.
+`MainViewMode` сейчас живёт только в интерфейсе: он переезжает в Rust и генерируется, ручного дубля в TypeScript нет.
 
 **В29.** Вкладка привязывается к пространству только по `vault_id`. Записи реестра без `vault_id` (перенесённые из старого списка путей, `space_registry.rs`) получают его при первом открытии, как сейчас. Вкладка, у которой открытие такой записи не удалось, сохраняет прежнее пространство или выбор пространства.
 

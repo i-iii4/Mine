@@ -767,11 +767,6 @@ describe("Sidebar", () => {
 
     expect(screen.getByRole("link", { name: /Everything/ })).toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: /Everything/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "Connected" })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
     expect(container.querySelector("[data-sidebar-scroll]")).toHaveAttribute(
       "data-sidebar-link-editor-mode",
       "true",
@@ -1299,22 +1294,7 @@ describe("Sidebar", () => {
     );
   });
 
-  it("filters link editor to linked channels", () => {
-    renderSidebar({
-      ...defaultProps,
-      linkedBlockSlug: "open-block",
-      linkedTags: ["alpha"],
-      onToggleLinkedTag: vi.fn(),
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Connected" }));
-
-    expect(screen.getByText("Everything")).toBeInTheDocument();
-    expect(screen.getByText("alpha")).toBeInTheDocument();
-    expect(screen.queryByText("beta")).not.toBeInTheDocument();
-  });
-
-  it("keeps link-editor chrome out of sidebar layout flow", () => {
+  it("lists every collection for an open card, with no filter bar (07.10.2026)", () => {
     const { container } = renderSidebar({
       ...defaultProps,
       linkedBlockSlug: "open-block",
@@ -1322,43 +1302,10 @@ describe("Sidebar", () => {
       onToggleLinkedTag: vi.fn(),
     });
 
-    expect(container.querySelector("[data-sidebar-link-mode-bar]")).toHaveClass("h-8");
-    expect(container.querySelector("[data-sidebar-link-mode-bar]")).toHaveClass("absolute");
-    expect(container.querySelector("[data-sidebar-link-mode-bar]")).toHaveClass("top-0");
-    expect(container.querySelector("[data-sidebar-link-mode-bar]")).toHaveClass("gap-2");
-    expect(container.querySelector("[data-sidebar-link-mode-bar]")).toHaveClass("detail-top-bar-enter");
-    expect(
-      container.querySelector("[data-sidebar-link-mode-bar] span[aria-hidden='true']"),
-    ).toHaveClass("detail-top-bar-line-enter");
-    expect(screen.getByText("Collections:")).toHaveClass("text-muted-foreground");
-    expect(screen.getByRole("button", { name: "Connected" })).toHaveClass("text-current");
-    expect(container.querySelector("[data-sidebar-scroll]")).toHaveClass("pt-[var(--sidebar-nav-pad-top)]");
-  });
-
-  it("keeps link-editor chrome entered when switching the active detail block", async () => {
-    const props = {
-      ...defaultProps,
-      linkedBlockSlug: "first-block",
-      linkedTags: ["alpha"],
-      onToggleLinkedTag: vi.fn(),
-    };
-
-    const { container, rerender } = renderSidebar(props);
-
-    const bar = container.querySelector("[data-sidebar-link-mode-bar]");
-    expect(bar).not.toBeNull();
-    await waitFor(() => {
-      expect(bar).toHaveAttribute("data-entered", "true");
-    });
-
-    rerender(sidebarTree({
-      ...props,
-      linkedBlockSlug: "second-block",
-      linkedTags: ["beta"],
-    }));
-
-    expect(container.querySelector("[data-sidebar-link-mode-bar]")).toBe(bar);
-    expect(bar).toHaveAttribute("data-entered", "true");
+    expect(screen.getByText("alpha")).toBeInTheDocument();
+    expect(screen.getByText("beta")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connected" })).not.toBeInTheDocument();
+    expect(container.querySelector("[data-sidebar-link-mode-bar]")).toBeNull();
   });
 
   it("leaves collection rows fully rendered so drag-and-drop can measure them", () => {

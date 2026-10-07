@@ -218,7 +218,6 @@ import type {
   UnavailableVault,
   UnavailableVaultReason,
   DeleteBlockPlan,
-  DetailLinkMode,
   FeedOrder,
   IndexedBlock,
   LightBlock,
@@ -1038,9 +1037,6 @@ export function AppWithVault({
     useState<CardActionsMenuTarget | null>(null);
   const [selectedBlockAnchor, setSelectedBlockAnchor] = useState<string | null>(null);
   const [selectedBlockTags, setSelectedBlockTags] = useState<string[]>([]);
-  // The sidebar always lists every collection: the All / Connected switch
-  // left every mode (decision of 03.10.2026). The tab still saves the mode.
-  const detailLinkMode: DetailLinkMode = "all";
   const [deleteTargetSlug, setDeleteTargetSlug] = useState<string | null>(null);
   const [deletePlan, setDeletePlan] = useState<DeleteBlockPlan | null>(null);
   const [deletePlanError, setDeletePlanError] = useState<string | null>(null);
@@ -2526,8 +2522,8 @@ export function AppWithVault({
     readScrollPositionRef.current = read;
     reporterRef.current?.schedule();
   }, []);
-  const tabViewInputRef = useRef({ currentTag, mainViewMode, selectedBlock, detailLinkMode, sidebarSearchQuery });
-  tabViewInputRef.current = { currentTag, mainViewMode, selectedBlock, detailLinkMode, sidebarSearchQuery };
+  const tabViewInputRef = useRef({ currentTag, mainViewMode, selectedBlock, sidebarSearchQuery });
+  tabViewInputRef.current = { currentTag, mainViewMode, selectedBlock, sidebarSearchQuery };
   const readTabView = useCallback((): TabView => {
     const input = tabViewInputRef.current;
     return {
@@ -2536,7 +2532,6 @@ export function AppWithVault({
       open_card: input.selectedBlock
         ? {
           slug: input.selectedBlock.slug,
-          link_mode: input.detailLinkMode,
           // The card's visible title, else its label without folder or
           // extension (SPEC_DISPLAY_TITLE.md; SPEC_TABS.md, В47).
           title: getNavigationLabel(input.selectedBlock),
@@ -2575,7 +2570,7 @@ export function AppWithVault({
   }, [readTabView, tabPage, viewRestored]);
   useEffect(() => {
     reporterRef.current?.schedule();
-  }, [currentTag, detailLinkMode, mainViewMode, pendingScroll, selectedBlock?.slug, sidebarSearchQuery]);
+  }, [currentTag, mainViewMode, pendingScroll, selectedBlock?.slug, sidebarSearchQuery]);
 
   // The space was opened from outside and this tab shows it (В72).
   useEffect(() => {
@@ -2911,7 +2906,7 @@ export function AppWithVault({
     const view: TabView = {
       location: tabLocationOf(tag),
       mode: mainViewMode,
-      open_card: card ? { slug: card.slug, link_mode: "all", title: getNavigationLabel(card) } : null,
+      open_card: card ? { slug: card.slug, title: getNavigationLabel(card) } : null,
       scroll_anchor: null,
       collection_filter: "",
     };
@@ -4583,8 +4578,6 @@ export function AppWithVault({
         linkedTags={renderedLinkedTags}
         onToggleLinkedTag={handleToggleTag}
         onBatchSetTag={handleBatchSetTag}
-        linkMode={detailLinkMode}
-        showLinkModeChrome={false}
         detailChromeClosing={detailChromeClosing}
         scrollEdgeFade={scrollEdgeFade}
       />

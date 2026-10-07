@@ -151,8 +151,8 @@ describe("tab view helpers", () => {
     expect(sameTabView(view(), view())).toBe(true);
     expect(sameTabView(view(), view({ collection_filter: "a" }))).toBe(false);
     expect(sameTabView(
-      view({ open_card: { slug: "x", link_mode: "all" } }),
-      view({ open_card: { slug: "x", link_mode: "linked" } }),
+      view({ open_card: { slug: "x", title: "X" } }),
+      view({ open_card: { slug: "y", title: "X" } }),
     )).toBe(false);
   });
 

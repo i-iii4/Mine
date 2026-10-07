@@ -8,7 +8,6 @@ export const SETTINGS_SECTIONS = [
   { id: "updates", label: "Updates" },
   { id: "orphans", label: "Orphans" },
   { id: "design-system", label: "Design system" },
-  { id: "top-bar-variants", label: "Top Bar Variants" },
 ] as const;
 
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]["id"];

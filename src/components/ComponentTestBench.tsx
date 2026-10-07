@@ -66,7 +66,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
-import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Tooltip,
   TooltipContent,
@@ -206,10 +206,16 @@ const GROUP_SELECTION_BLOCKS: LightBlock[] = [
   sampleBlock("memory-birds", "Memory is a flock of birds", "article"),
 ];
 
-const SEGMENT_OPTIONS: readonly SegmentedControlOption<"all" | "connected">[] = [
-  { value: "all", label: "All" },
-  { value: "connected", label: "Connected" },
-];
+const ROW_PILL_OPTIONS = [
+  { value: "grid", label: "Grid" },
+  { value: "graph", label: "Graph" },
+] as const;
+
+const PANEL_PILL_OPTIONS = [
+  { value: "system", label: "System" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+] as const;
 
 const SCREENSHOT_DATA_URL = svgDataUrl(`
   <svg xmlns="http://www.w3.org/2000/svg" width="960" height="560" viewBox="0 0 960 560">
@@ -486,40 +492,32 @@ function CoreComponentSection() {
       </ComponentSpec>
 
       <ComponentSpec
-        title="SegmentedControl"
-        summary="Сегментный переключатель. Три размера, выделенный сегмент — внутренняя заливка."
+        title="Пилюля (Tabs chrome)"
+        summary="Каждый переключатель из сегментов. Выбранный сегмент это кнопка заподлицо с дорожкой; при смене выбора она переезжает."
         specs={[
-          { prop: "compact", value: "root 24 (h-6) · item 20 (h-5) · 12px mono" },
-          { prop: "default", value: "root 32 (h-8) · item 24 (h-6) · 14px" },
-          { prop: "clipper", value: "root 32 (h-8) · item 28 (h-7) · 14px" },
-          { prop: "Скругление", value: "root rounded-1 (3) · item rounded-[2px]" },
-          { prop: "Отступ", value: "root p-[2px] · item px-[1ch]" },
-          { prop: "Выбран", value: "--component-fill-inner · text --foreground" },
-          { prop: "Не выбран", value: "text --muted-foreground · hover без text-change" },
-          { prop: "Hover оболочки", value: "--active" },
+          { prop: "row", value: "пилюля 24 на высоте ряда хрома · 12px mono" },
+          { prop: "panel", value: "пилюля 32 (настройки, клиппер) · 14px" },
+          { prop: "Дорожка", value: "слой состояния --active, всегда" },
+          { prop: "Выбран", value: "кнопка --component-fill-inner на всю высоту пилюли · text --foreground" },
+          { prop: "Не выбран", value: "text --muted-foreground · hover: text --foreground, фон не меняется" },
+          { prop: "Переключение", value: "кнопка переезжает 150мс, strong ease-out; reduced motion: сразу" },
+          { prop: "Скругление", value: "дорожка, кнопка и сегменты rounded-1" },
         ]}
       >
-        <SegmentedControl
-          value="all"
-          options={SEGMENT_OPTIONS}
-          onChange={() => {}}
-          aria-label="Compact collection filter"
-          size="compact"
-        />
-        <SegmentedControl
-          value="connected"
-          options={SEGMENT_OPTIONS}
-          onChange={() => {}}
-          aria-label="Default collection filter"
-          size="default"
-        />
-        <SegmentedControl
-          value="all"
-          options={SEGMENT_OPTIONS}
-          onChange={() => {}}
-          aria-label="Clipper collection filter"
-          size="clipper"
-        />
+        <Tabs defaultValue="grid" className="gap-0">
+          <TabsList variant="chrome" aria-label="Row pill">
+            {ROW_PILL_OPTIONS.map((option) => (
+              <TabsTrigger key={option.value} value={option.value}>{option.label}</TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+        <Tabs defaultValue="system" className="gap-0">
+          <TabsList variant="chrome" size="panel" aria-label="Panel pill">
+            {PANEL_PILL_OPTIONS.map((option) => (
+              <TabsTrigger key={option.value} value={option.value}>{option.label}</TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
       </ComponentSpec>
 
       <ComponentSpec

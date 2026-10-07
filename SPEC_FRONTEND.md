@@ -462,9 +462,10 @@ versioned collection-index backfill до формирования стабиль
 Режим открытого Detail:
 1. `Everything` остаётся обычным пунктом навигации на `/` с общим счётчиком и
    без checkbox.
-2. Верхняя surface sidebar показывает `Channels:` и selector `All / Connected`.
-3. `All` показывает все каналы; `Connected` показывает только каналы, связанные
-   с открытым блоком.
+2. Sidebar показывает все каналы. Фильтра `All / Connected` нет: убран из
+   всех режимов 03.10.2026, удалён из кода 07.10.2026 вместе с режимом
+   `linkMode` и полем `link_mode` сохранённой вкладки.
+3. Связанные с открытым блоком каналы отмечены по правилу 4a.
 4. Строка канала продолжает работать как навигация на `/channel/:tag`.
 4a. Visual highlight в link-editor привязан только к membership: связанные
    каналы (`Connected`) используют `text-foreground`, все остальные остаются
@@ -635,10 +636,9 @@ mr-2"`, `8px` от правого края колонки, которая выз
 в конец списка.
 
 Тот же правый segment держит единственный main view-mode switcher:
-`View:` + shared compact `SegmentedControl` с options `Grid / Graph`.
-Переключатель стоит сразу после route count по левой оси content segment через
-`gap-5`, использует тот же UI-контракт, что `Collections: All / Connected` в
-expanded card chrome. С 03.10.2026 режим принадлежит вкладке: он входит в её
+`View:` + пилюля `Grid / Graph` (`Tabs` chrome, размер `row`; DESIGN_SYSTEM.md,
+«Пилюля»). Переключатель стоит сразу после route count по левой оси content
+segment через `gap-5`. С 03.10.2026 режим принадлежит вкладке: он входит в её
 `TabView.mode` и сообщается бэкенду (SPEC_TABS.md, В78); ключ
 `mine.mainViewMode` больше не пишется. Старые
 `ActionButton`-переключатели `Graph/Grid` в bottom action bar или top fallback
@@ -1238,26 +1238,18 @@ Image media expansion:
   global top chrome still remains on `bg-chrome` and owns the Detail controls. The
   internal Detail top bar is not rendered, and the Sidebar `Channels:`
   link-editor top bar is not rendered.
-- In Compact Detail mode the `All / Connected` segmented control is part of
-  the left Sidebar/search segment, not the right Detail title segment. In
-  expanded Sidebar state it sits inside the same search surface as
-  `Search collections...`, to the right of the input and to the left of the
-  vertical Sidebar divider. In collapsed Sidebar state channel search remains
-  hidden and the segmented control is omitted; there is no useful row list to
-  filter in the collapsed rail, and adding the control creates unnecessary
-  chrome. The `Channels:` label is omitted. The segmented control is the same
-  App-owned `linkMode` state that filters Sidebar rows (`all` vs linked
-  channels), so there is no second filtering state.
+- Compact Detail has no `All / Connected` control: the filter left every mode
+  on 03.10.2026 and its code (`linkMode`, `SidebarLinkModeSwitch`,
+  `DetailLinkModeTabs`) was removed on 07.10.2026. The Sidebar lists every
+  channel while a card is open. The `Channels:` label is omitted.
 - Compact Detail right top chrome layout after the Sidebar/search divider:
   persistent clickable `TopCollectionSwitcher`, opened-card title, card
   overflow button, close button. The collection control must keep the normal
   dropdown behavior and stable DOM/layout identity across Detail open/close;
   plain text collection labels are forbidden.
 - Compact Detail controls inherit the same top-chrome drag contract. The
-  expanded `All / Connected` control is inside the Sidebar search surface and
-  delegates dragging to that parent surface. The collapsed `All / Connected`
-  surface, the close button and the compact card overflow trigger are directly
-  draggable via the shared threshold. `CardMoreMenu` uses this behavior only
+  close button and the compact card overflow trigger are directly draggable
+  via the shared threshold. `CardMoreMenu` uses this behavior only
   when explicitly rendered with top-chrome interaction enabled; regular card
   menus keep ordinary card/menu pointer behavior.
 - Compact Detail top chrome uses compact control spacing only: `px-3` root
@@ -1269,7 +1261,7 @@ Image media expansion:
   compact slot. `TopCollectionSwitcher` owns the right-side `px-3`; the card
   title starts with `pl-0` and does not add a second left padding layer.
 - Compact Detail motion uses the existing Detail chrome animation language.
-  Detail-only controls (`All / Connected`, card title, overflow, close and
+  Detail-only controls (card title, overflow, close and
   their collapsed-sidebar separator) enter and exit with `opacity + translateY`
   using `detail-top-bar-enter` / `detail-top-bar-line-enter`. The top chrome
   background is not animated and remains `bg-chrome`; Detail-only controls use the
@@ -1281,7 +1273,7 @@ Image media expansion:
 - Responsive priority in Compact Detail top chrome: card title shrinks first
   (`min-w-0 flex-1 truncate`), current collection switcher shrinks second
   through its own compact trigger constraints, Sidebar search shrinks third
-  through its existing flex slot. `All / Connected`, overflow and close stay
+  through its existing flex slot. Overflow and close stay
   non-shrinking and visible.
 - `Cmd+K` while Compact Detail top menu is active opens/toggles the compact
   top overflow menu. `Cmd+L` keeps copying the opened card path. Closing Detail

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { SegmentedControl } from "@/components/ui/segmented-control";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   applyTheme,
@@ -34,7 +34,7 @@ const THEME_OPTIONS = [
 ] as const;
 
 // Layout axis, orthogonal to the color theme: any theme + either design.
-// SegmentedControl is keyed by strings; the radius stays numeric everywhere else.
+// The pill is keyed by strings; the radius stays numeric everywhere else.
 const CARD_RADIUS_CONTROL_OPTIONS = CARD_RADIUS_OPTIONS.map((value) => ({
   value: String(value),
   label: value === 0 ? "Square" : String(value),
@@ -48,7 +48,9 @@ export function AppearanceSection() {
   const [scrollEdgeFade, setScrollEdgeFade] = useState(getStoredScrollEdgeFade);
   const [cardRadius, setCardRadius] = useState<CardRadius>(getStoredCardRadius);
 
-  const handleThemeChange = (mode: ThemeMode) => {
+  const handleThemeChange = (next: string) => {
+    const mode = THEME_OPTIONS.find((option) => option.value === next)?.value;
+    if (!mode) return;
     setTheme(mode);
     applyTheme(mode);
     broadcastSettingsChange(THEME_STORAGE_KEY);
@@ -78,26 +80,26 @@ export function AppearanceSection() {
       <h1 className="text-lg font-semibold">Appearance</h1>
 
       <SettingRow label="Theme">
-        <SegmentedControl
-          aria-label="Theme"
-          size="default"
-          value={theme}
-          options={THEME_OPTIONS}
-          onChange={handleThemeChange}
-        />
+        <Tabs value={theme} onValueChange={handleThemeChange} className="gap-0">
+          <TabsList variant="chrome" size="panel" aria-label="Theme">
+            {THEME_OPTIONS.map((option) => (
+              <TabsTrigger key={option.value} value={option.value}>{option.label}</TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
       </SettingRow>
 
       <SettingRow
         label="Card corners"
         caption="Corner radius of cards and their images, in pixels"
       >
-        <SegmentedControl
-          aria-label="Card corners"
-          size="default"
-          value={String(cardRadius)}
-          options={CARD_RADIUS_CONTROL_OPTIONS}
-          onChange={handleCardRadiusChange}
-        />
+        <Tabs value={String(cardRadius)} onValueChange={handleCardRadiusChange} className="gap-0">
+          <TabsList variant="chrome" size="panel" aria-label="Card corners">
+            {CARD_RADIUS_CONTROL_OPTIONS.map((option) => (
+              <TabsTrigger key={option.value} value={option.value}>{option.label}</TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
       </SettingRow>
 
       <SettingRow

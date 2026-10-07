@@ -44,7 +44,7 @@ collections` зарезервировано за поиском в выпада�
   только как неиспользуемые shadcn defaults или историческая шкала, на странице
   не показываются; значения читаются из текущего root theme через computed CSS
   variables;
-- core primitives: `Button`, `ActionButton`, `SegmentedControl`, `Input`,
+- core primitives: `Button`, `ActionButton`, `Tabs` (пилюля), `Input`,
   `SearchMenuInput`, `MenuTextTrigger`, `GraphCollectionLabel`,
   `ChromeCloseButton`, `Checkbox`, `Progress`, `Tooltip`;
 - floating UI: `DropdownMenu`, `ContextMenu`, `CollectionPicker`,
@@ -115,8 +115,8 @@ Appearance → `Card corners`: `Square` (по умолчанию) или `4` п�
   стоят справа в ряду поля `Find collections` (`data-sidebar-top-search-actions`).
   В раскладке с рядом метаданных внизу окна всё это остаётся в нём.
 - **Вид справа, без счётчика.** Числа элементов и подписи `View:` нет.
-  `Grid / Graph` стоит у правого края рядом с `Display`, вкладками хрома на
-  постоянной подложке («Вкладки хрома»).
+  `Grid / Graph` стоит у правого края рядом с `Display`, пилюлей на
+  постоянной подложке («Пилюля»).
 - **Путь.** `Mine › Everything › карточка`: внешнее поле `8px` у подсветки
   стоит только со стороны границы (край окна, линия колонки), между соседними
   подсветками его нет (`joinsNext`, `joinsPrevious`). От стрелки до следующего
@@ -654,9 +654,8 @@ destructive; в иконочном слоте — `Unlink` (разрыв цеп�
    и пересчитанные от неё заливки: кнопка Connect в подсвеченной строке,
    подложка крестика на наведённой вкладке, внутренняя пуля на подсвеченном
    триггере поднимаются от подсветки. Когда плашка подсветки стоит рядом с
-   содержимым, а не вокруг него (плашка `TabsList` и `SegmentedControl` в
-   хроме), их общий родитель в тех же состояниях несёт `state-surface`: та
-   же передача без краски.
+   содержимым, а не вокруг него (дорожка пилюли, `TabsList variant="chrome"`),
+   их общий родитель несёт `state-surface`: та же передача без краски.
 4. **Текст и значки это основной цвет с прозрачностью** (раздел «Цвет текста
    и значков»): вторичная и третичная ступени складываются с тем, что под
    ними, как слой состояния.
@@ -1313,11 +1312,12 @@ hover-плашка **24px**, отступы **3px сверху и снизу**. 
 занимает 30px строки, независимо от размеров видимой плашки. `ChromePlate`
 отделяет визуальную геометрию от hit target; существующие handlers/ref остаются
 на одном интерактивном элементе, вложенных кнопок нет. Правило распространяется
-на text triggers, логотип/More/Close/очистку поиска, облачное меню, сегменты
-Grid/Graph и All/Connected, действия нижней панели в обоих оформлениях.
-Read-only подсказки клавиш не превращаются в кнопки. Для переиспользуемых
-ActionButton/SegmentedControl режим задаётся явно через `chrome`; вне chrome
-геометрия прежняя, включая клиппер.
+на text triggers, логотип/More/Close/очистку поиска, облачное меню, действия
+нижней панели в обоих оформлениях. Read-only подсказки клавиш не превращаются
+в кнопки. Для переиспользуемого ActionButton режим задаётся явно через
+`chrome`; вне chrome геометрия прежняя, включая клиппер. Сегменты пилюли
+(`Grid / Graph`) это сами вкладки Radix высотой с пилюлю, без обёртки
+(«Пилюля»).
 
 Dropdown отступает на штатные 4px от полноразмерного trigger: после соседнего
 разделителя 1px остаётся 3px. Отдельные поправки для меню логотипа запрещены.
@@ -1401,24 +1401,28 @@ trigger запрещены.
 крестик сброса группового выделения.
 Подпись вкладки начинается в `12px` от её левой линии.
 
-#### Вкладки хрома
+#### Пилюля
 
-Переключатель из нескольких сегментов в ряду хрома это `Tabs` из реестра
-shadcn (`src/components/ui/tabs.tsx`, взят 03.10.2026 по решению пользователя)
-в нашем варианте `TabsList variant="chrome"`. Варианты реестра `default` и
-`line` остаются как есть.
+Каждый переключатель из нескольких сегментов в приложении это одна пилюля:
+`Tabs` из реестра shadcn (`src/components/ui/tabs.tsx`, взят 03.10.2026) в
+нашем варианте `TabsList variant="chrome"` (решение пользователя 07.10.2026:
+один компонент вместо двух; собственный `SegmentedControl` удалён). Варианты
+реестра `default` и `line` остаются как есть.
 
 | Что | Значение |
 |---|---|
-| Список | высотой ряда, подсветка `24px` под всем списком (`state-active`): при наведении или всегда (`plate="always"`, так в ряду фильтра), сегменты в `2px` от её краёв |
-| Сегмент | высота `20px`, поля `1ch` вокруг подписи, квадрат `20px` вокруг значка `13px` |
-| Выбранный | `bg-component-fill-inner`, текст `text-foreground` |
-| Клавиатура | стрелки переводят выбор (Radix Tabs) |
+| Размер `row` | в ряду хрома: список высотой ряда, пилюля `24px` (`--chrome-control-plate-height`), `font-mono text-sm`. `Grid / Graph` в верхнем ряду |
+| Размер `panel` | в окне настроек и в клиппере: пилюля `32px`, `text-base`. Theme и Card corners в Appearance, Content / Screenshot / Link в клиппере. Высота задана в `px`, не в `rem`: клиппер живёт внутри чужой страницы |
+| Дорожка | вся пилюля, слой состояния `--active` всегда (`state-active`); список передаёт её сегментам как поверхность (`state-surface`) |
+| Выбранный | кнопка заподлицо: высотой с пилюлю, вплотную к её краю, закрывает свою часть дорожки; лицо `bg-component-fill-inner` с краями стиля кнопок; текст `text-foreground`. Кнопку рисует список под сегментами (`data-tabs-indicator`), сегмент своей заливки не имеет |
+| Не выбранный | текст на вторичной ступени; наведение делает ярче только текст (`hover:text-foreground`), фон дорожки не меняется |
+| Сегмент | высотой с пилюлю, поля `1ch` вокруг подписи, квадрат вокруг значка `13px`, скругление `rounded-1` как у дорожки и кнопки |
+| Переключение | кнопка переезжает к новому выбору за `150ms`, сильный ease-out `cubic-bezier(0.23, 1, 0.32, 1)`, сдвиг и ширина; при первом показе и при изменении ширины пилюли встаёт сразу; при `prefers-reduced-motion` без анимации (переходы только под `motion-safe`) |
+| Клавиатура | стрелки переводят выбор (Radix Tabs); у клиппера стрелки ведёт сам клиппер (SPEC_CLIPPER.md, А6.9) |
 
-На нём стоит `Grid / Graph` во втором ряду версии 2, с постоянной подсветкой.
 Фильтр коллекций по открытой карточке (`All` и `Connected`) убран из всех
-режимов 03.10.2026 по решению пользователя: список коллекций показывает все.
-`DetailLinkModeTabs` остался только на страницах сравнения.
+режимов 03.10.2026, а 07.10.2026 удалён и из кода вместе со страницей
+сравнения `Top Bar Variants`: список коллекций показывает все.
 
 #### Сжатие ряда фильтра
 
@@ -1428,9 +1432,7 @@ shadcn (`src/components/ui/tabs.tsx`, взят 03.10.2026 по решению п
 таблица прыгала бы на строку при перетаскивании края меню):
 
 1. `name`: имя пространства сужается до `--row-fit-name-min` (`120px`).
-2. `icons`: сегменты с подписями становятся значками. Сейчас в ряду таких
-   нет: фильтр `All / Connected` убран, стадия ничего не меняет.
-3. `search`: поле сворачивается в кнопку с лупой. Свёрнутое поле остаётся в
+2. `search`: поле сворачивается в кнопку с лупой. Свёрнутое поле остаётся в
    ряду без ширины, поэтому ⌘F до него доходит; в фокусе или с запросом оно
    раскрывается поверх действий ряда. Лупа и действия ряда стоят через `4px`,
    как любые соседние кнопки (до 04.10.2026 стояли вплотную).
@@ -1771,11 +1773,8 @@ compact geometry: collection switcher использует `px-3` уже на г
 странице, поэтому `Everything`/название текущего канала не меняет X-position
 при открытии и закрытии Detail. Permanent top chrome всегда остаётся
 `bg-chrome`; открытие Detail не меняет его surface. Внутренний Detail top bar и sidebar
-`Collections:` bar не рендерятся. Segmented control `All / Connected`
-принадлежит левому Sidebar/search segment: в expanded state он стоит внутри
-search surface справа от `Find or create...` и слева от вертикального sidebar
-divider; в collapsed state search скрыт и `All / Connected` не рендерится,
-потому что в compact rail нет списка строк, который нужно фильтровать. Правая
+`Collections:` bar не рендерятся. Переключателя `All / Connected` нет
+(убран 03.10.2026, удалён из кода 07.10.2026). Правая
 часть top chrome начинается с того же кликабельного collection switcher, затем
 показывает название карточки, overflow `…`, close `X`.
 
@@ -1843,9 +1842,9 @@ Enter поле остаётся с курсором и набранным име
   сторона получает compact inset `pr-3`, чтобы close не упирался в край окна.
 
 Responsive order: сначала режется название карточки, затем текущая коллекция,
-затем сжимается Sidebar search в своём существующем flex slot. Segmented
-control, overflow и close не сжимаются. В collapsed Sidebar state channel
-search скрыт как обычно, а `All / Connected` отсутствует.
+затем сжимается Sidebar search в своём существующем flex slot. Overflow и
+close не сжимаются. В collapsed Sidebar state channel search скрыт как
+обычно.
 
 Motion: Detail-only элементы в compact top chrome входят и выходят тем же
 языком, что classic Detail chrome: `opacity + translateY` через
@@ -2578,10 +2577,11 @@ primitives и те же состояния, что desktop UI:
   `widthRole="selector"`, `align="start"`, and `bg-accent`. The same row owns
   the top-right close action through shared `ChromeCloseButton`, the same
   primitive used by expanded-card chrome;
-- clip type switcher: shared `SegmentedControl`; the app uses compact
-  `All / Connected`, the clipper uses `size="clipper"` inside a 40px Type row
-  (`Type:` on the left, switcher on the right). The row uses `bg-chrome`; the
-  switcher uses `h-8`, inner `h-7`, `p-[2px]`, `text-base`, and
+- clip type switcher: the app's pill (`Tabs`, `TabsList variant="chrome"
+  size="panel"`, раздел «Пилюля») inside a 40px Type row (`Type:` on the
+  left, switcher on the right). The row uses `bg-chrome`; the pill is 32px
+  (`--tabs-pill-height: 32px`, in px because the overlay lives in another
+  site's page), the chosen segment's button flush with it, `text-base`, and
   shrink-to-content width, never stretched full-width;
 - lower body: after the two top rows, the clipper keeps the legacy simple body:
   `.mine-clipper-body` owns the spacing tokens in `src/styles/global.css` so
@@ -2607,8 +2607,8 @@ primitives и те же состояния, что desktop UI:
 Any clipper-only component that duplicates an app primitive visually is design
 debt. The permitted form is a thin adapter over the app primitive when the
 desktop component itself depends on Tauri-only APIs. Current shared primitives
-that exist specifically to prevent drift: `MenuTextTrigger` and
-`SegmentedControl`.
+that exist specifically to prevent drift: `MenuTextTrigger` and the pill
+(`Tabs` chrome).
 
 ## Состояния Drag-and-Drop
 
@@ -3104,7 +3104,7 @@ Top inset списка в раскрытой карточке не меняет 
 использует `pt-8` (32px). В expanded главной это даёт общий visual top offset
 64px: второй bar 32px + content inset 32px. Когда Detail открыт в
 non-compact shell, второй bar становится Detail/link-editor chrome: в sidebar
-segment живёт `Collections:` + `All / Connected`, в content segment — filename,
+segment живёт `Collections:` (переключатель `All / Connected` удалён 07.10.2026), в content segment filename,
 overflow и close. Body-level `absolute inset-x-0 top-0 h-8` overlays для
 Sidebar/Detail в App shell запрещены: они создают третий слой под вторым bar.
 
@@ -3133,9 +3133,8 @@ compact Detail top chrome сохраняет отдельный `260ms` budget, 
 В main browsing state второй top-bar level — тихая информационная строка, а не
 общий toolbar. Над боковым меню она показывает число коллекций и кнопку `+`,
 над лентой число элементов текущей коллекции; в content segment допускается
-только один shared compact `SegmentedControl` для режима `View: Grid / Graph`. Этот switcher использует
-тот же визуальный контракт, что `Collections: All / Connected` в expanded card
-chrome, и стоит сразу после счётчика текущей коллекции по левой оси content
+только одна пилюля для режима `View: Grid / Graph` («Пилюля», размер `row`).
+Она стоит сразу после счётчика текущей коллекции по левой оси content
 segment. Зазор между счётчиком и switcher равен spacing-only gap левой
 ячейки (`gap-5`). Отдельные
 `ActionButton`-переключатели `Graph/Grid` в bottom action bar или top fallback
@@ -3145,7 +3144,7 @@ Art direction: это ambient metadata, а не dashboard. Строка долж
 как часть системного chrome: ровная, низкоконтрастная, без KPI-акцента и без
 визуального соревнования с карточками. Запрещены badges, bold numbers, colored
 deltas, cards, pills, uppercase labels и любые hover/focus states, кроме
-состояний shared `SegmentedControl` для view-mode и иконочной кнопки `+` над
+состояний пилюли view-mode и иконочной кнопки `+` над
 боковым меню.
 
 Левый segment (`data-main-secondary-top-bar-sidebar-segment`) это шапка списка
@@ -3207,23 +3206,18 @@ loading/skeleton text. Пока snapshot не загружен, segment ренд
 React commit; запрещены промежуточные `calculating`, `rendering layout` и
 прочие служебные сообщения в chrome.
 
-Содержимое surface: `Collections:` + selector `All / Connected` + иконочная
+Содержимое surface: `Collections:` + иконочная
 кнопка `+` (`data-secondary-link-mode-new-collection`, `aria-label="New
 Collection"`), то же действие, что ⇧⌘N. Кнопка `+` стоит на том же месте, что
 над закрытым списком: `ChromeActions windowEdge={false} className="ml-auto
 mr-2"`, 8 px от правого края колонки, поэтому при открытии карточки она не
 сдвигается. Слой получает только левый отступ `pl-[--chrome-edge-pad]`, а без
 команды и правый. `Collections:` использует
-`font-mono text-tertiary-foreground`, как `View:` над лентой. Selector повторяет
-ActionButton geometry: outer `h-6 p-[2px] rounded-1`, segments `h-5
-px-[1ch] rounded-[2px] text-muted-foreground`. Hover заливает только outer
-control через общий `hover:state-active`. Неактивные segments
-не меняют цвет текста на hover; активный segment использует
-`bg-component-fill-inner text-foreground`.
+`font-mono text-tertiary-foreground`, как `View:` над лентой. Переключателя
+`All / Connected` в этой surface больше нет (удалён 07.10.2026 вместе с
+режимом): список коллекций открытой карточки показывает все.
 
-Если включён Compact Detail top menu, эта link-editor surface не рендерится:
-тот же `All / Connected` state показывается внутри permanent top chrome
-Sidebar/search segment, без подписи `Collections:`.
+Если включён Compact Detail top menu, эта link-editor surface не рендерится.
 
 Detail article/metadata layout использует right-anchored fixed-rail contract:
 `grid w-full

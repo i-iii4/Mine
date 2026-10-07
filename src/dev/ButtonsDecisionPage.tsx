@@ -200,7 +200,7 @@ function Main() {
         <div className="ml-auto flex items-center gap-1">
           {chromeIcon("Display options", Settings2)}
           <Tabs value="grid" className="h-6 gap-0">
-            <TabsList variant="chrome" plate="always" aria-label="View mode">
+            <TabsList variant="chrome" aria-label="View mode">
               {VIEW_OPTIONS.map((option) => (
                 <TabsTrigger key={option.value} value={option.value}>
                   {option.label}

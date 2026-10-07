@@ -156,8 +156,8 @@ Settings и `Cmd+,` сохраняются. Прежняя условная те
 
 | Настройка | Контрол | Ключ |
 |---|---|---|
-| Theme: System / Light / Dark | `SegmentedControl` (size default) | `theme` |
-| Card corners: Square / 4 | `SegmentedControl` | `mine.cardRadius` |
+| Theme: System / Light / Dark | пилюля `Tabs` (size `panel`) | `theme` |
+| Card corners: Square / 4 | пилюля `Tabs` (size `panel`) | `mine.cardRadius` |
 | Fade content under the chrome | `Checkbox` + подпись | `mine.scrollEdgeFade` |
 | Hide bottom menu | `Checkbox` + подпись | `mine.bottomActionBarHidden` |
 

@@ -281,19 +281,12 @@ pub enum MainViewMode {
     Graph,
 }
 
-/// Which collections an open card lists: all of them, or the ones it is in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "snake_case")]
-pub enum DetailLinkMode {
-    All,
-    Linked,
-}
-
-/// The card open in a tab.
+/// The card open in a tab. A session saved before 07.10.2026 also holds the
+/// card's `link_mode`, the All / Connected filter removed with its switch;
+/// reading ignores it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub struct OpenCard {
     pub slug: String,
-    pub link_mode: DetailLinkMode,
     /// The card's visible title, the tab's label while it is open (В47).
     /// Kept so an unloaded tab is labelled without its page; empty in a
     /// session saved before labels named cards.
@@ -816,6 +809,19 @@ mod tests {
         // The tall row's content before its line counted in its step.
         assert_eq!(title_bar_for(40), TitleBar::Compact);
         assert_eq!(title_bar_for(12), TitleBar::Standard);
+    }
+
+    #[test]
+    fn an_open_card_saved_with_the_removed_link_mode_still_reads() {
+        let card: OpenCard =
+            serde_json::from_str(r#"{"slug":"Cards/Kura","link_mode":"linked","title":"Kura"}"#)
+                .expect("a card saved before 07.10.2026 reads");
+        assert_eq!(
+            card,
+            OpenCard { slug: "Cards/Kura".to_owned(), title: "Kura".to_owned() }
+        );
+        let written = serde_json::to_string(&card).expect("the card writes");
+        assert!(!written.contains("link_mode"));
     }
 
     fn screen() -> Vec<ScreenArea> {
