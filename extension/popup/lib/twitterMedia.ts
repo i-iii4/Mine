@@ -1,10 +1,14 @@
 import "../../lib/xThread.js";
 import type { XPostContent, XPostMedia } from "../../lib/xThread";
 import type { ArticleData, EmbeddedVideoPreview } from "./messaging";
+import { videoNotice, videoToolFailureReason, type VideoToolFailureReason } from "./videoTool";
 
 export interface TwitterMediaResponse {
   ok: boolean;
   media?: { kind: string; src: string; poster?: string | null; media_type?: string }[];
+  /** `video_tool_failed` when the helper's video tool failed (SPEC_CLIPPER.md, 3d, В3). */
+  code?: string;
+  reason?: string;
 }
 
 interface Resolver {
@@ -59,6 +63,10 @@ function mergeVideos(known: XPostMedia[], resolved: XPostMedia[]): XPostMedia[] 
 export async function hydrateTwitterPosts(article: ArticleData, resolver: Resolver): Promise<ArticleData> {
   if (!article.twitterPosts) return article;
   const responses = new Map<string, Promise<XPostMedia[]>>();
+  // The first failure of the video tool: the post goes on without that video,
+  // and the clipper says why (SPEC_CLIPPER.md, 3d, В4).
+  // Declared without narrowing to `null`: it is set inside `resolve`.
+  let toolFailure = null as VideoToolFailureReason | null;
   async function resolve(post: XPostContent): Promise<XPostMedia[]> {
     let response: TwitterMediaResponse = await resolver.publicMedia(post.id).catch(() => ({ ok: false }));
     let videos = response.ok ? response.media?.filter(m => m.kind === "video" && m.src) ?? [] : [];
@@ -66,6 +74,7 @@ export async function hydrateTwitterPosts(article: ArticleData, resolver: Resolv
     if (videos.length === 0) {
       response = await resolver.authenticatedMedia(post.id).catch(() => undefined) ?? { ok: false };
       videos = response.ok ? response.media?.filter(m => m.kind === "video" && m.src) ?? [] : [];
+      toolFailure ??= videoToolFailureReason(response);
     }
     return videos.map(m => ({ kind: "video", url: m.src, poster: m.poster ?? null }));
   }
@@ -95,5 +104,11 @@ export async function hydrateTwitterPosts(article: ArticleData, resolver: Resolv
     if (post.quote) previews(post.quote);
   }
   posts.forEach(previews);
-  return { ...article, twitterPosts: posts, content: globalThis.MineXThread.compose(posts), embeddedVideos };
+  return {
+    ...article,
+    twitterPosts: posts,
+    content: globalThis.MineXThread.compose(posts),
+    embeddedVideos,
+    ...(toolFailure ? { videoNotice: videoNotice(toolFailure) } : {}),
+  };
 }

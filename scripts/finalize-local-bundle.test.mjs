@@ -4,14 +4,17 @@ import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { finalizeLocalBundle } from './finalize-local-bundle.mjs';
-import { fileComponentManifest } from './build-clipper-runtime-manifest.mjs';
+import { fileComponentManifest, treeComponentManifest } from './build-clipper-runtime-manifest.mjs';
 
 function fixture() {
   const bundle = join(mkdtempSync(join(tmpdir(), 'mine-finalize-')), 'Mine.app');
   const macos = join(bundle, 'Contents/MacOS'), resources = join(bundle, 'Contents/Resources');
   mkdirSync(macos, { recursive: true }); mkdirSync(join(resources, 'binaries'), { recursive: true });
   mkdirSync(join(resources, 'clipper-extension'), { recursive: true });
-  for (const path of [join(macos, 'mine'), join(macos, 'native-host'), join(resources, 'binaries/yt-dlp')]) {
+  // The unpacked yt-dlp: a launcher and its Python beside it, both Mach-O.
+  mkdirSync(join(resources, 'binaries/yt-dlp-onedir/_internal'), { recursive: true });
+  for (const path of [join(macos, 'mine'), join(macos, 'native-host'), join(resources, 'binaries/yt-dlp-onedir/yt-dlp'),
+    join(resources, 'binaries/yt-dlp-onedir/_internal/Python')]) {
     writeFileSync(path, Buffer.concat([Buffer.from('cffaedfe', 'hex'), Buffer.from(path)]));
   }
   writeFileSync(join(bundle, 'Contents/Info.plist'), '{}');
@@ -41,7 +44,7 @@ const probe = () => ({ schema_version: 1, version: '0.1.0', build_id: 'a'.repeat
 test('nested signing precedes actual-byte manifest and outer-only signature', () => {
   const bundle = fixture(), harness = runner(bundle);
   const report = finalizeLocalBundle(bundle, { platform: 'darwin', execute: harness.execute, probe });
-  assert.equal(report.nested_signed, 2); assert.equal(report.runtime_verified, true);
+  assert.equal(report.nested_signed, 3); assert.equal(report.runtime_verified, true);
   const signing = harness.calls.filter(call => call.args.includes('--force'));
   assert.equal(signing.at(-1).args.at(-1), bundle);
   assert.ok(signing.every(call => !call.args.includes('--deep')));
@@ -49,7 +52,8 @@ test('nested signing precedes actual-byte manifest and outer-only signature', ()
   // Sealed as a development build: the next local build of the same version
   // may replace its helper (SPEC_DISTRIBUTION.md, D8).
   assert.equal(report.manifest.build_profile, 'local');
-  assert.deepEqual(report.manifest.ytdlp, fileComponentManifest(join(bundle, 'Contents/Resources/binaries/yt-dlp')));
+  // The yt-dlp tree is sealed after its files were signed.
+  assert.deepEqual(report.manifest.ytdlp, treeComponentManifest(join(bundle, 'Contents/Resources/binaries/yt-dlp-onedir'), 'yt-dlp'));
   assert.ok(harness.calls.at(-1).args.includes('--verify'));
 });
 test('post-manifest signing mutation or signature failure never reports success', () => {

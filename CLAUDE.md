@@ -135,6 +135,7 @@ local-arena/
 │   │   ├── space_registry.rs   # Реестр пространств по vault_id, восстановление, поиск переехавшей папки
 │   │   ├── clipper_registration.rs # Регистрация помощника в браузерах: список браузеров, замена помощника
 │   │   ├── youtube_embed.rs    # Локальная страница-обёртка проигрывателя YouTube (Referer, ошибка 153)
+│   │   ├── tool_process.rs     # Внешние утилиты: раскладка распакованного yt-dlp, запуск со сроком в своей группе процессов, тип отказа
 │   │   ├── frame_context_menu.rs # Правый клик по встроенному кадру: меню Mine вместо меню WebKit, событие вкладке, где щёлкнули
 │   │   ├── tabs/               # Окна вкладок (SPEC_TABS.md): TabShell, восстановление из windows.json, полоса и страницы вкладок
 │   │   │   ├── mod.rs          # Создание окон и страниц, переключение, выгрузка, ведущая вкладка, vault_path, Finder и настройки
@@ -280,7 +281,9 @@ local-arena/
 │   ├── graph-view-audit.mjs    # Dark/light Canvas pixel/interaction/performance acceptance
 │   ├── cold-space-browser-audit.mjs # First/settled/deep cold Grid acceptance
 │   ├── edge-states-audit.mjs   # Витрина краевых состояний: варианты, контексты, обрезка, невидимый текст
-│   ├── fetch-ytdlp.mjs         # Загрузка бинарника yt-dlp в ресурсы бандла
+│   ├── fetch-ytdlp.mjs         # Загрузка распакованной сборки yt-dlp (onedir, сумма SHA-256) в ресурсы бандла
+│   ├── ytdlp-layout.mjs        # Имена каталога yt-dlp и его запускающего файла (общие со сборкой и тестами)
+│   ├── verify-bundle-binaries.mjs # Гейт сборки: каждый Mach-O подписан, нет самораспаковывающихся PyInstaller onefile
 │   ├── native-shell-smoke.mjs  # Packaged macOS WKWebView + Tauri IPC smoke
 │   ├── build-ios.sh            # Сборка Rust core + xcframework для iOS
 │   └── seed-vault.ts, import-arena.ts, fetch-link-thumbs.ts # Утилиты наполнения vault
@@ -401,9 +404,11 @@ local-arena/
 - Xcode Command Line Tools (`swiftc`): обязательны — сборка компилирует
   iCloud-progress helper (`src-tauri/native/icloud_progress_helper.swift`)
   безусловно; без них не пройдёт даже `cargo check`
-- yt-dlp: `brew install yt-dlp` — нужен расширению, чтобы забирать видео из постов
-  X с возрастным ограничением. Без него остальное сохранение работает как
-  прежде, а этот шаг завершается понятной ошибкой
+- yt-dlp: ставить не нужно, приложение везёт распакованную сборку с собой
+  (`bun run fetch:ytdlp` кладёт её в `src-tauri/binaries/yt-dlp-onedir/`,
+  SPEC_ONBOARDING.md, О8.1). Нужна расширению для видео из постов X с
+  возрастным ограничением и Download Media. Её сбой не держит клиппер: пост
+  сохраняется без видео со строкой о причине (SPEC_CLIPPER.md, 3d)
 
 ## Test data
 
@@ -418,6 +423,7 @@ bun run dev:side               # Режим разработки рядом с �
 cargo tauri build              # Сборка .dmg/.app
 bun run build:local-app        # Локальная сборка .app с проверкой клиппера и подписью ad-hoc
 bun run install:local-app      # Установить собранный .app: прежняя копия в Корзину, сборка снята с регистрации macOS
+bun run verify:bundle-binaries # Проверить собранный .app: подписи Mach-O и отсутствие сборок, распаковывающих код при запуске
 cargo tauri build --features article-audio # Сборка с включённым article audio (по умолчанию выключен)
 bun run build:extension        # Обязательная отдельная сборка расширения → extension/dist
 bun run pack:extension         # Упаковка расширения в архив

@@ -612,6 +612,62 @@ syndication API отвечает анонимному вызову заглуш�
 Куки читаются только для доменов X, только когда пост действительно содержит
 неразрешённое видео, и нигде не сохраняются.
 
+#### Сбой утилиты видео не останавливает клиппер (07.10.2026)
+
+Случай 07.10.2026: в Dia поставляемый `yt-dlp` (тогда сборка в один файл)
+распаковал свой Python во временную папку, Dia пометил распакованное
+карантином, и Gatekeeper отказал загрузить его с диалогом «Python.framework
+повреждено». Процесс `yt-dlp` стоял, пока висел диалог, а хост обрабатывал
+сообщения по одному, поэтому вместе с ним стояли коллекции и сохранение, и
+клиппер висел на «Extracting content…». Сборка без распаковки описана в
+SPEC_ONBOARDING.md, О8; здесь то, что держит клиппер живым при любом сбое
+внешней утилиты.
+
+- **В1. Вне очереди.** `resolve_twitter_media` и `video_tool_status`
+  выполняются в отдельном потоке хоста. Пока они идут, хост отвечает на
+  остальные запросы (`get_status`, `list_channels`, `save_block` и другие).
+  Каждый ответ несёт `_messageId` своего запроса, а не последнего
+  принятого; расширение сопоставляет ответы по нему, поэтому порядок ответов
+  не важен.
+- **В2. Срок.** `yt-dlp` для поста X и проверка запуска `yt-dlp --version`
+  получают по 25 секунд (меньше 30 секунд ожидания ответа в расширении; с
+  запасом на первый запуск свежей копии, 14 секунд по замеру 07.10.2026,
+  SPEC_ONBOARDING.md, О8.1). По сроку процесс убивается вместе со своей группой процессов. Когда
+  браузер закрывает соединение и хост выходит, незавершённые процессы утилит
+  тоже убиваются: висящий `yt-dlp` не переживает хост.
+- **В3. Типизированный отказ.** Неудача утилиты отвечает
+  `{ ok:false, code:"video_tool_failed", reason, error }`, где `reason`:
+  `missing` (утилиты нет), `blocked` (macOS не дал загрузить её код:
+  `library load disallowed by system policy`), `timeout` (не уложилась в
+  срок), `failed` (вышла с ошибкой; первая строка её вывода в `error`).
+  Публичный путь без куки по-прежнему отвечает медиа без видео.
+- **В4. Content без видео.** Отказ утилиты не меняет текст и картинки поста:
+  этап извлечения заканчивается, Save сохраняет пост без видео. Под
+  предпросмотром клиппер пишет строку `Couldn't get the video: <причина>.
+  The text and pictures will be saved.` с причиной по `reason`:
+  `the video tool isn't installed`, `macOS blocked the video tool`,
+  `the video tool didn't answer in time`, `the video tool failed`.
+- **В5. Самопроверка.** `video_tool_status` отвечает
+  `{ ok:true, video_tool: { state:"ready", version } }` или
+  `{ ok:true, video_tool: { state:"unavailable", reason, error } }`. Хост
+  запускает `yt-dlp --version` в своём окружении, то есть под браузером, и
+  помнит ответ на время жизни процесса; повторный запрос отвечает сразу. Не
+  помнит только отказ по сроку: медленным бывает один первый запуск свежей
+  копии, и следующий запрос проверяет снова.
+  Клиппер спрашивает об этом только на странице поста X, в начале извлечения
+  и параллельно с ним (на других страницах утилита не нужна и не
+  запускается), а ждёт ответа только когда пост действительно нуждается в
+  утилите: извлечение нашло видео, которое без неё не получить. При
+  `unavailable` с причиной `missing`, `blocked` или `failed` запрос видео с
+  куки не отправляется, а строка В4 появляется сразу: клиппер не ждёт заведомо
+  неработающую утилиту. Отказ проверки по сроку (`timeout`) про этот запрос
+  ничего не говорит, и видео запрашивается как обычно. На посте без такого
+  видео строки нет. Старый помощник без `video_tool_status` отвечает
+  `unknown action`; тогда клиппер идёт прежним путём с запросом видео. Состав
+  каталога утилиты (пути, размеры, исполняемый бит) сверяет самопроверка Mine
+  раз в 5 минут (SPEC_ONBOARDING.md, О5, О8.1) и при расхождении ставит пакет
+  помощника заново; побайтно каталог сверяется при установке пакета.
+
 ### 3e. Bluesky
 
 Пост извлекается через публичный AT Protocol API `public.api.bsky.app`. В
@@ -1084,8 +1140,9 @@ bright `text-foreground`; hover/open state пули использует `bg-act
 развернутой карточки. Нажатие закрывает текущий popup или in-page overlay тем
 же `closeClipper` path, что Escape.
 
-Space dropdown использует существующий `DropdownMenuContent widthRole="selector"`
-(`width: min(18rem, available-width)`), `align="start"`, `side="bottom"` и
+Space dropdown использует общий `DropdownMenuContent` с одним правилом ширины
+меню (с 07.10.2026: по самой длинной строке, от `128px` до `300px`, ширина
+открытия держится при фильтрации), `align="start"`, `side="bottom"` и
 `sideOffset=4`. Surface dropdown — `bg-accent text-foreground`, то есть тот же
 первый уровень, что строка space selector. Список destination spaces внутри
 dropdown рендерится через `QuantizedMenuScrollArea` с clipper row token 40px:
@@ -2076,6 +2133,7 @@ Native host читает путь к vault из файла конфигурац�
 | Media source missing | media creation request не создаётся. Popup показывает inline error, main UI остаётся открытым |
 | Media download/finalize failed | Нет успешной media-карточки без media. Доказанный pre-effect отказ получает terminal receipt; после возможных эффектов исход остаётся unknown до проверки |
 | Link/video thumbnail download failed | Блок может быть создан без thumbnail; media failure для preview не ломает сохранение самой ссылки/видео |
+| Video tool missing, blocked, timed out or failed | `code:"video_tool_failed"` с `reason`; остальные запросы обслуживаются; пост X сохраняется без видео со строкой о причине (раздел 3d, В1–В5) |
 | Screenshot upload failed | Popup показывает inline error в `StatusBar` и сохраняет preview/tags/display heading для retry |
 | Screenshot upload succeeded but `save_block` failed | Pin id/payload/binding, lookup исходного save; нет отдельного слепого screenshot retry и удаления неизвестного staging |
 | SQLite locked | Source `.md`/media commit сохраняется; derived update best-effort, watcher/startup scan догоняют индекс |

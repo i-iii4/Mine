@@ -187,6 +187,10 @@ export interface ArticleData {
   needsAuthenticatedVideo?: boolean;
   tweetUrl?: string;
   tweetId?: string;
+  /** Why a video of the post could not be got: the helper's video tool
+   *  failed or is known not to work. The post is saved without it
+   *  (SPEC_CLIPPER.md, 3d, В4). */
+  videoNotice?: string;
 }
 
 export interface EmbeddedVideoPreview {

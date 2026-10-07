@@ -1510,6 +1510,17 @@ a semantic menu width role through shared `DropdownMenuContent`,
 `DropdownMenuSubContent`, `ContextMenuContent` or `ContextMenuSubContent`
 instead of hardcoding raw Tailwind width utilities.
 
+Superseded 07.10.2026 by the user's decision to standardise every menu's
+width. The roles are gone; one rule in the shared wrappers
+(`[data-floating-menu]` in `global.css`): content-sized from the longest
+row, `128px` to `300px`. Measured then: the narrowest menus wanted 96 to
+143px and the `12rem` minimum blew them up to 192px; the searchable lists
+with the person's real names wanted 340 to 428px. A searchable list keeps the
+width it opened with as its minimum (`useHeldMenuWidth`,
+`src/lib/floatingLayer.ts`), so filtering never narrows it: the stability the
+`selector` and `picker` roles bought with a fixed width is kept without
+fixing it. Call sites still never set a width.
+
 ### 021: Feed canvas feel requires media readiness, not only DOM overscan
 
 | Approach | Problem |
@@ -2329,3 +2340,35 @@ feature `tooling`. В release acceptance shell p95 составил 216 мс, п
 живой проверки: меню остаются веб-меню Radix, код эксперимента удалён.
 Причины записаны в [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) («Системные меню:
 отклонённый эксперимент»).
+
+### 052: Внешние утилиты поставляются распакованными и запускаются со сроком
+
+Случай 07.10.2026: поставляемый `yt-dlp` был сборкой PyInstaller в один файл.
+При каждом запуске он распаковывал свой Python во временную папку; под Dia,
+который помечает файлы своих процессов карантином, Gatekeeper отказал загрузить
+распакованный Python (диалог «Python.framework повреждено»). Помощник клиппера
+ждал утилиту без срока и в одной очереди со всеми запросами, поэтому вместе с
+ней стояли коллекции и сохранение.
+
+Решение из двух частей, по причине на каждую:
+
+1. **Код не пишется во время работы.** Поставляется распакованная сборка
+   поставщика (`yt-dlp_macos.zip`, onedir) каталогом `yt-dlp-onedir/`,
+   подписанная вместе с приложением; гейт сборки
+   ([verify-bundle-binaries.mjs](scripts/verify-bundle-binaries.mjs))
+   не пропускает неподписанный Mach-O и самораспаковывающуюся сборку
+   (SPEC_ONBOARDING.md, О8.1, О8.2).
+2. **Сбой утилиты не останавливает того, кто её запустил.**
+   [tool_process.rs](src-tauri/src/tool_process.rs): утилита в своей группе
+   процессов, со сроком, после которого группа убивается, с типизированным
+   отказом (`missing`, `blocked`, `timeout`, `failed`); помощник выполняет
+   такие запросы вне очереди сообщений и убивает незавершённые утилиты при
+   выходе; клиппер сохраняет пост без видео и говорит почему
+   (SPEC_CLIPPER.md, 3d, В1–В5).
+
+| Вариант | Результат выбора |
+|---|---|
+| Распакованная сборка в бандле, подпись и гейт | Принято: во время работы нечего помечать карантином |
+| Снимать карантин с процесса закрытыми API или подбирать `TMPDIR` | Не выбрано: костыль, обходит защиту, а не убирает причину |
+| Запускать `yt-dlp` из процесса Mine по просьбе помощника | Не выбрано: надёжно, но Mine должен быть запущен, а клиппер работает и без него |
+| Только срок без смены сборки | Не выбрано: клиппер перестал бы висеть, но видео из X не сохранялось бы никогда |

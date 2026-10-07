@@ -52,19 +52,31 @@ test('build manifest uses one schema for every runtime component', () => {
   const extension = join(root, 'extension');
   mkdirSync(extension);
   writeFileSync(join(extension, 'manifest.json'), '{}');
-  for (const file of ['host', 'yt-dlp']) writeFileSync(join(root, file), file);
+  writeFileSync(join(root, 'host'), 'host');
+  // The unpacked yt-dlp is a directory: its launcher and `_internal/`.
+  mkdirSync(join(root, 'yt-dlp-onedir/_internal'), { recursive: true });
+  writeFileSync(join(root, 'yt-dlp-onedir/yt-dlp'), 'yt-dlp');
+  writeFileSync(join(root, 'yt-dlp-onedir/_internal/Python'), 'py');
   const manifest = createRuntimeManifest({
     appVersion: '1.2.3',
     buildProfile: 'release',
     nativeHost: join(root, 'host'),
     nativeHostBuildId: 'a'.repeat(64),
     extension,
-    ytdlp: join(root, 'yt-dlp'),
+    ytdlp: join(root, 'yt-dlp-onedir'),
   });
   assert.equal(manifest.schema_version, 1);
   assert.equal(manifest.build_profile, 'release');
   assert.equal(manifest.app_version, '1.2.3');
   assert.equal(manifest.native_host_build_id, 'a'.repeat(64));
   assert.equal(manifest.native_host.bytes, 4);
-  assert.equal(manifest.ytdlp?.bytes, 6);
+  assert.equal(manifest.ytdlp?.bytes, 8);
+  assert.deepEqual(manifest.ytdlp, treeComponentManifest(join(root, 'yt-dlp-onedir'), 'yt-dlp'));
+});
+
+test('a yt-dlp tree without its launcher is refused', () => {
+  const root = mkdtempSync(join(tmpdir(), 'mine-ytdlp-manifest-'));
+  mkdirSync(join(root, '_internal'));
+  writeFileSync(join(root, '_internal/Python'), 'py');
+  assert.throws(() => treeComponentManifest(root, 'yt-dlp'), /no yt-dlp/);
 });

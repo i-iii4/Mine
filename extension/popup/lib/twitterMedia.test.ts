@@ -103,4 +103,21 @@ describe("X media recovery", () => {
     expect(r.publicMedia).not.toHaveBeenCalled();
     expect(r.authenticatedMedia).not.toHaveBeenCalled();
   });
+
+  // SPEC_CLIPPER.md, 3d, В4: the tool's failure keeps the thread and says why.
+  it("keeps the thread without the video and says why the video tool failed", async () => {
+    const r = resolver();
+    r.authenticatedMedia.mockResolvedValue({ ok: false, code: "video_tool_failed", reason: "blocked" } as never);
+    const input = article([post("10", [gif]), post("11", [])]);
+    const result = await hydrateTwitterPosts(input, r);
+    expect(result.content).toBe(input.content);
+    expect(result.videoNotice).toBe("Couldn't get the video: macOS blocked the video tool. The text and pictures will be saved.");
+  });
+
+  it("says nothing when the video came or no tool was needed", async () => {
+    const r = resolver();
+    expect((await hydrateTwitterPosts(article([post("10", [gif])]), r)).videoNotice).toBeUndefined();
+    r.authenticatedMedia.mockResolvedValue({ ok: false } as never);
+    expect((await hydrateTwitterPosts(article([post("10", [gif])]), r)).videoNotice).toBeUndefined();
+  });
 });

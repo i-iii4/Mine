@@ -16,6 +16,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::commands::state::CommandError;
 use crate::storage::clipper_connection::DEV_EXTENSION_ID;
+use crate::tool_process::{YTDLP_DIRECTORY, YTDLP_EXECUTABLE};
 
 use crate::clipper_registration::{BrowserTarget, BROWSERS, HOST_NAME};
 use crate::runtime_installation::{
@@ -309,15 +310,15 @@ fn runtime_package_matches(parent: &Path, manifest: &RuntimeBuildManifest) -> bo
     file_manifest(&parent.join("native-host")).as_ref() == Some(&manifest.native_host)
         && executable_with_size(&parent.join("native-host"), manifest.native_host.bytes)
         && extension_manifest(&parent.join("extension")).as_ref() == Some(&manifest.extension)
-        && manifest.ytdlp.as_ref().is_none_or(|expected| {
-            file_manifest(&parent.join("yt-dlp")).as_ref() == Some(expected)
-                && executable_with_size(&parent.join("yt-dlp"), expected.bytes)
-        })
+        && manifest
+            .ytdlp
+            .as_ref()
+            .is_none_or(|expected| ytdlp_matches(&parent.join(YTDLP_DIRECTORY), expected))
 }
 
-fn flush_extension_tree(root: &Path) -> std::io::Result<()> {
+fn flush_payload_tree(root: &Path) -> std::io::Result<()> {
     let mut directories = std::collections::BTreeSet::new();
-    for relative in extension_files(root)? {
+    for relative in payload_files(root)? {
         let path = root.join(relative);
         std::fs::File::open(&path)?.sync_all()?;
         let mut parent = path.parent();
@@ -356,8 +357,8 @@ fn prepare_runtime_package(
         .tempdir_in(&packages)?;
     install_binary(host_source, &staged.path().join("native-host"))?;
     std::fs::create_dir(staged.path().join("extension"))?;
-    copy_extension_tree(extension_source, &staged.path().join("extension"))?;
-    flush_extension_tree(&staged.path().join("extension"))?;
+    copy_payload_tree(extension_source, &staged.path().join("extension"))?;
+    flush_payload_tree(&staged.path().join("extension"))?;
     if manifest.ytdlp.is_some() {
         let source = video_source.ok_or_else(|| {
             std::io::Error::new(
@@ -365,7 +366,11 @@ fn prepare_runtime_package(
                 "the runtime manifest requires a missing yt-dlp component",
             )
         })?;
-        install_binary(source, &staged.path().join("yt-dlp"))?;
+        // The unpacked yt-dlp directory (SPEC_ONBOARDING.md, О8.1).
+        let staged_ytdlp = staged.path().join(YTDLP_DIRECTORY);
+        std::fs::create_dir(&staged_ytdlp)?;
+        copy_payload_tree(source, &staged_ytdlp)?;
+        flush_payload_tree(&staged_ytdlp)?;
     }
     write_runtime_json(&staged.path().join("manifest.json"), manifest)?;
     if !runtime_package_matches(staged.path(), manifest) {
@@ -432,10 +437,10 @@ fn apply_runtime_journal(
     if !installed_binary_matches(&package.join("native-host"), &host) {
         install_binary(&package.join("native-host"), &host)?;
     }
-    if journal.candidate.ytdlp.is_some()
-        && !installed_binary_matches(&package.join("yt-dlp"), &parent.join("yt-dlp"))
-    {
-        install_binary(&package.join("yt-dlp"), &parent.join("yt-dlp"))?;
+    if let Some(expected) = journal.candidate.ytdlp.as_ref() {
+        if !ytdlp_matches(&parent.join(YTDLP_DIRECTORY), expected) {
+            install_ytdlp_directory(&package.join(YTDLP_DIRECTORY), parent)?;
+        }
     }
     journal.stage = RuntimeInstallStage::HostActivated;
     write_runtime_json(&parent.join("install-journal.json"), journal)?;
@@ -720,8 +725,40 @@ fn verify_candidate_launch(host: &Path, manifest: &RuntimeBuildManifest) -> std:
         &manifest.app_version,
         Some(expected),
         RUNTIME_PROBE_TIMEOUT,
-    )
-    .map(|_| ())
+    )?;
+    if manifest.ytdlp.is_some() {
+        if let Some(package) = host.parent() {
+            warm_ytdlp(package);
+        }
+    }
+    Ok(())
+}
+
+/// How long the first start of a freshly installed `yt-dlp` may take.
+const YTDLP_WARM_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Start the package's `yt-dlp` once, so its slow first start is Mine's, not
+/// the clipper's (SPEC_ONBOARDING.md, О8.1). Measured 07.10.2026: the first
+/// `--version` of a freshly written copy took 14 s, every later one 0.2 s,
+/// from any process; the first start writes nothing into the directory. The
+/// outcome is logged only: a tool that will not start is reported to the
+/// clipper by the helper's own check (SPEC_CLIPPER.md, 3d, В5), and the
+/// helper is installed either way.
+fn warm_ytdlp(package: &Path) {
+    let running = crate::tool_process::RunningTools::new();
+    let started = std::time::Instant::now();
+    match crate::tool_process::run_with_deadline(
+        std::process::Command::new(crate::tool_process::ytdlp_in(package)).arg("--version"),
+        YTDLP_WARM_DEADLINE,
+        &running,
+    ) {
+        Ok(output) => log::info!(
+            "clipper yt-dlp {} started in {} ms",
+            output.stdout.trim(),
+            started.elapsed().as_millis()
+        ),
+        Err(failure) => log::warn!("clipper yt-dlp did not start: {failure}"),
+    }
 }
 
 /// Explicit developer inputs share the shipped application's installation policy.
@@ -730,7 +767,8 @@ pub struct DevelopmentRuntimeInputs {
     pub native_host: PathBuf,
     /// The complete built browser payload, never a source checkout fragment.
     pub extension: PathBuf,
-    /// Optional video helper; when supplied, its bytes are part of the package.
+    /// Optional unpacked `yt-dlp` directory; when supplied, its tree is part of
+    /// the package (SPEC_ONBOARDING.md, О8.1).
     pub ytdlp: Option<PathBuf>,
     /// App support root; source vaults are never accepted as installer targets.
     pub app_data_dir: PathBuf,
@@ -787,7 +825,7 @@ pub fn install_development_runtime(
             .ytdlp
             .as_ref()
             .map(|path| {
-                file_manifest(path)
+                ytdlp_manifest(path)
                     .ok_or_else(|| RuntimeInstallationError::MissingComponent(path.clone()))
             })
             .transpose()?,
@@ -887,10 +925,12 @@ fn installed_binary_matches(source: &Path, destination: &Path) -> bool {
     true
 }
 
-fn extension_files(root: &Path) -> std::io::Result<Vec<PathBuf>> {
+/// The files of a payload tree, the extension or the unpacked `yt-dlp`, in
+/// path order. A symlink anywhere refuses the tree.
+fn payload_files(root: &Path) -> std::io::Result<Vec<PathBuf>> {
     if !std::fs::symlink_metadata(root)?.is_dir() {
         return Err(std::io::Error::other(
-            "extension root must be a real directory",
+            "payload root must be a real directory",
         ));
     }
     fn collect(root: &Path, directory: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
@@ -902,7 +942,7 @@ fn extension_files(root: &Path) -> std::io::Result<Vec<PathBuf>> {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     format!(
-                        "extension payload contains a symlink: {}",
+                        "runtime payload contains a symlink: {}",
                         entry.path().display()
                     ),
                 ));
@@ -926,9 +966,12 @@ fn extension_files(root: &Path) -> std::io::Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-fn extension_fingerprint(root: &Path) -> Option<String> {
-    let files = extension_files(root).ok()?;
-    if files.is_empty() || !files.iter().any(|path| path == Path::new("manifest.json")) {
+/// Digest of a payload tree: every file's path, length and bytes, in path
+/// order; `None` without the file the tree cannot work without. The build
+/// hashes the same way (`scripts/build-clipper-runtime-manifest.mjs`).
+fn tree_fingerprint(root: &Path, required: &str) -> Option<String> {
+    let files = payload_files(root).ok()?;
+    if files.is_empty() || !files.iter().any(|path| path == Path::new(required)) {
         return None;
     }
     let mut hash = Sha256::new();
@@ -942,17 +985,103 @@ fn extension_fingerprint(root: &Path) -> Option<String> {
     Some(format!("{:x}", hash.finalize()))
 }
 
-fn extension_manifest(root: &Path) -> Option<RuntimeComponentManifest> {
-    let files = extension_files(root).ok()?;
+fn tree_manifest(root: &Path, required: &str) -> Option<RuntimeComponentManifest> {
+    let files = payload_files(root).ok()?;
     let bytes = files.iter().try_fold(0u64, |total, relative| {
         std::fs::metadata(root.join(relative))
             .ok()
             .and_then(|metadata| total.checked_add(metadata.len()))
     })?;
     Some(RuntimeComponentManifest {
-        sha256: extension_fingerprint(root)?,
+        sha256: tree_fingerprint(root, required)?,
         bytes,
     })
+}
+
+fn extension_fingerprint(root: &Path) -> Option<String> {
+    tree_fingerprint(root, "manifest.json")
+}
+
+fn extension_manifest(root: &Path) -> Option<RuntimeComponentManifest> {
+    tree_manifest(root, "manifest.json")
+}
+
+/// The unpacked `yt-dlp` directory: its launcher is the file it needs
+/// (SPEC_ONBOARDING.md, О8.1).
+fn ytdlp_manifest(root: &Path) -> Option<RuntimeComponentManifest> {
+    tree_manifest(root, YTDLP_EXECUTABLE)
+}
+
+/// The `yt-dlp` directory holds exactly the bundle's tree and its launcher can
+/// be started.
+fn ytdlp_matches(root: &Path, expected: &RuntimeComponentManifest) -> bool {
+    ytdlp_manifest(root).as_ref() == Some(expected) && launcher_is_executable(root)
+}
+
+fn launcher_is_executable(root: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(root.join(YTDLP_EXECUTABLE)) else {
+        return false;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.is_file() && metadata.permissions().mode() & 0o100 != 0
+    }
+    #[cfg(not(unix))]
+    metadata.is_file()
+}
+
+/// The files of a tree with their lengths: what the periodic upkeep compares,
+/// cheaply, against the bundle. Bytes are compared when a package is
+/// installed (SPEC_ONBOARDING.md, О5, О8.1).
+fn tree_shape(root: &Path) -> Option<Vec<(PathBuf, u64)>> {
+    payload_files(root)
+        .ok()?
+        .into_iter()
+        .map(|relative| {
+            let length = std::fs::metadata(root.join(&relative)).ok()?.len();
+            Some((relative, length))
+        })
+        .collect()
+}
+
+/// Install the unpacked `yt-dlp` beside the managed helper in one step: a
+/// staged copy is verified, then swapped in, so the path the helper reads
+/// never holds half a tree. A single-file `yt-dlp` an older installation left
+/// beside it is removed: it is the build that unpacks at run time.
+fn install_ytdlp_directory(source: &Path, parent: &Path) -> std::io::Result<()> {
+    let destination = parent.join(YTDLP_DIRECTORY);
+    let transaction = tempfile::Builder::new()
+        .prefix(".yt-dlp-")
+        .tempdir_in(parent)?;
+    let staged = transaction.path().join("new");
+    std::fs::create_dir(&staged)?;
+    copy_payload_tree(source, &staged)?;
+    flush_payload_tree(&staged)?;
+    if tree_fingerprint(&staged, YTDLP_EXECUTABLE) != tree_fingerprint(source, YTDLP_EXECUTABLE)
+        || !launcher_is_executable(&staged)
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "staged yt-dlp differs from the bundle",
+        ));
+    }
+    match std::fs::symlink_metadata(&destination) {
+        Ok(metadata) if metadata.is_dir() => atomic_swap_directories(&staged, &destination)?,
+        Ok(_) => {
+            std::fs::remove_file(&destination)?;
+            std::fs::rename(&staged, &destination)?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::rename(&staged, &destination)?;
+        }
+        Err(error) => return Err(error),
+    }
+    let legacy = parent.join(YTDLP_EXECUTABLE);
+    if std::fs::symlink_metadata(&legacy).is_ok_and(|metadata| metadata.is_file()) {
+        std::fs::remove_file(&legacy)?;
+    }
+    std::fs::File::open(parent)?.sync_all()
 }
 
 fn installed_extension_matches(source: &Path, destination: &Path) -> bool {
@@ -961,8 +1090,8 @@ fn installed_extension_matches(source: &Path, destination: &Path) -> bool {
     })
 }
 
-fn copy_extension_tree(source: &Path, destination: &Path) -> std::io::Result<()> {
-    for relative in extension_files(source)? {
+fn copy_payload_tree(source: &Path, destination: &Path) -> std::io::Result<()> {
+    for relative in payload_files(source)? {
         let target = destination.join(&relative);
         let parent = target
             .parent()
@@ -994,8 +1123,8 @@ fn install_extension_directory_checked(
         .tempdir_in(parent)?;
     let staged = transaction.path().join("new");
     std::fs::create_dir(&staged)?;
-    copy_extension_tree(source, &staged)?;
-    flush_extension_tree(&staged)?;
+    copy_payload_tree(source, &staged)?;
+    flush_payload_tree(&staged)?;
     if !installed_extension_matches(source, &staged) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -1099,8 +1228,8 @@ fn retain_extension(destination: &Path) -> std::io::Result<()> {
     let staged = tempfile::Builder::new()
         .prefix(".retaining-")
         .tempdir_in(retention_root)?;
-    copy_extension_tree(destination, staged.path())?;
-    flush_extension_tree(staged.path())?;
+    copy_payload_tree(destination, staged.path())?;
+    flush_payload_tree(staged.path())?;
     if !installed_extension_matches(destination, staged.path()) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -1154,13 +1283,11 @@ fn bundled_host_path() -> Option<PathBuf> {
         .filter(|path| path.is_file())
 }
 
+/// The bundle's unpacked `yt-dlp` directory (SPEC_ONBOARDING.md, О8.1).
 fn bundled_ytdlp_path(executable: &Path) -> Option<PathBuf> {
     let resources = executable.parent()?.parent()?.join("Resources");
-    // Tauri preserves the configured binaries/ resource subdirectory. Older
-    // bundles used a flat Resources layout, which remains a valid fallback.
-    [resources.join("binaries/yt-dlp"), resources.join("yt-dlp")]
-        .into_iter()
-        .find(|path| path.is_file())
+    Some(resources.join("binaries").join(YTDLP_DIRECTORY))
+        .filter(|directory| directory.join(YTDLP_EXECUTABLE).is_file())
 }
 
 fn bundled_extension_path(app: &AppHandle) -> Option<PathBuf> {
@@ -1298,7 +1425,7 @@ fn runtime_build_manifest(app: &AppHandle) -> Result<RuntimeBuildManifest, Comma
         extension: extension_manifest(&extension_path).ok_or_else(|| {
             CommandError::Internal("failed to fingerprint bundled clipper extension".into())
         })?,
-        ytdlp: bundled_ytdlp_path(&executable).and_then(|path| file_manifest(&path)),
+        ytdlp: bundled_ytdlp_path(&executable).and_then(|path| ytdlp_manifest(&path)),
     })
 }
 
@@ -1345,7 +1472,7 @@ fn runtime_components_present(app: &AppHandle, manifest: &RuntimeBuildManifest) 
     let Ok(extension) = installed_extension_path(app) else {
         return false;
     };
-    let extension_bytes = extension_files(&extension).ok().and_then(|files| {
+    let extension_bytes = payload_files(&extension).ok().and_then(|files| {
         files.iter().try_fold(0u64, |total, relative| {
             std::fs::metadata(extension.join(relative))
                 .ok()
@@ -1358,8 +1485,12 @@ fn runtime_components_present(app: &AppHandle, manifest: &RuntimeBuildManifest) 
         return false;
     }
     manifest.ytdlp.as_ref().is_none_or(|component| {
-        host.parent()
-            .is_some_and(|parent| executable_with_size(&parent.join("yt-dlp"), component.bytes))
+        host.parent().is_some_and(|parent| {
+            let directory = parent.join(YTDLP_DIRECTORY);
+            launcher_is_executable(&directory)
+                && tree_shape(&directory)
+                    .is_some_and(|files| files.iter().map(|(_, length)| length).sum::<u64>() == component.bytes)
+        })
     })
 }
 
@@ -1484,16 +1615,31 @@ struct RuntimeUpkeepPaths {
     /// The helper the browser manifests name, inside its immutable package.
     registered_host: PathBuf,
     installed_extension: PathBuf,
+    /// The bundle's unpacked `yt-dlp`, when this build carries one.
+    bundled_ytdlp: Option<PathBuf>,
     /// Manifests of the browsers found on this Mac, installed or not yet.
     browser_manifests: Vec<PathBuf>,
 }
 
 /// Whether browsers run exactly this build's helper and extension: the bytes
 /// match the bundle, and every browser found names the helper (SPEC_ONBOARDING.md, О5).
+/// The `yt-dlp` beside the registered helper must hold the bundle's files at
+/// their lengths with a launcher that can start; its bytes, 80 MB, are compared
+/// when its package is installed, not every 5 minutes (О8.1).
 fn runtime_matches_bundle(paths: &RuntimeUpkeepPaths) -> bool {
     installed_binary_matches(&paths.bundled_host, &paths.installed_host)
         && installed_binary_matches(&paths.bundled_host, &paths.registered_host)
         && installed_extension_matches(&paths.bundled_extension, &paths.installed_extension)
+        && paths.bundled_ytdlp.as_ref().is_none_or(|bundled| {
+            let installed = paths
+                .registered_host
+                .parent()
+                .map(|package| package.join(YTDLP_DIRECTORY));
+            installed.is_some_and(|installed| {
+                launcher_is_executable(&installed)
+                    && tree_shape(bundled).is_some_and(|shape| tree_shape(&installed) == Some(shape))
+            })
+        })
         && paths
             .browser_manifests
             .iter()
@@ -1514,6 +1660,9 @@ fn runtime_upkeep_paths(app: &AppHandle) -> Result<Option<RuntimeUpkeepPaths>, C
         installed_host: host_binary_path(app)?,
         registered_host: registered_host_path(app)?,
         installed_extension: installed_extension_path(app)?,
+        bundled_ytdlp: std::env::current_exe()
+            .ok()
+            .and_then(|exe| bundled_ytdlp_path(&exe)),
         browser_manifests: BROWSERS
             .iter()
             .filter(|browser| browser_detected(browser))
@@ -1623,6 +1772,8 @@ mod tests {
             installed_host: root.join("clipper/native-host"),
             registered_host: root.join("clipper/packages/current/native-host"),
             installed_extension: root.join("clipper/extension"),
+            // A build without `yt-dlp`; the tool's own upkeep is tested below.
+            bundled_ytdlp: None,
             browser_manifests: vec![root.join("Chrome/NativeMessagingHosts/com.mine.host.json")],
         };
         for host in [&paths.bundled_host, &paths.installed_host, &paths.registered_host] {
@@ -1755,7 +1906,7 @@ mod tests {
             old_manifest,
             &old.join("native-host"),
             &old.join("extension"),
-            Some(&old.join("yt-dlp")),
+            Some(&old.join(YTDLP_DIRECTORY)),
             |_| Ok(()),
         )
         .unwrap();
@@ -1769,7 +1920,7 @@ mod tests {
             candidate,
             &new.join("native-host"),
             &new.join("extension"),
-            Some(&new.join("yt-dlp")),
+            Some(&new.join(YTDLP_DIRECTORY)),
             |_| {
                 registrations += 1;
                 Ok(())
@@ -1843,7 +1994,18 @@ mod tests {
         let source = root.join(name);
         std::fs::create_dir_all(source.join("extension/dist")).unwrap();
         std::fs::write(source.join("native-host"), format!("host {name}")).unwrap();
-        std::fs::write(source.join("yt-dlp"), format!("video {name}")).unwrap();
+        // The unpacked yt-dlp: its launcher and its Python (SPEC_ONBOARDING.md, О8.1).
+        std::fs::create_dir_all(source.join(YTDLP_DIRECTORY).join("_internal")).unwrap();
+        std::fs::write(source.join(YTDLP_DIRECTORY).join(YTDLP_EXECUTABLE), format!("video {name}")).unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(
+                source.join(YTDLP_DIRECTORY).join(YTDLP_EXECUTABLE),
+                std::fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+        }
+        std::fs::write(source.join(YTDLP_DIRECTORY).join("_internal/Python"), format!("python {name}")).unwrap();
         std::fs::write(
             source.join("extension/manifest.json"),
             format!("manifest {name}"),
@@ -1861,7 +2023,7 @@ mod tests {
             native_host_build_id: Some("a".repeat(64)),
             native_host: file_manifest(&source.join("native-host")).unwrap(),
             extension: extension_manifest(&source.join("extension")).unwrap(),
-            ytdlp: file_manifest(&source.join("yt-dlp")),
+            ytdlp: ytdlp_manifest(&source.join(YTDLP_DIRECTORY)),
         };
         (source, manifest)
     }
@@ -1912,7 +2074,7 @@ mod tests {
                 &candidate,
                 &source.join("native-host"),
                 &source.join("extension"),
-                Some(&source.join("yt-dlp")),
+                Some(&source.join(YTDLP_DIRECTORY)),
             )
             .unwrap();
             let mut journal = RuntimeInstallJournal {
@@ -1986,7 +2148,7 @@ mod tests {
                 &candidate,
                 &source.join("native-host"),
                 &source.join("extension"),
-                Some(&source.join("yt-dlp")),
+                Some(&source.join(YTDLP_DIRECTORY)),
             )
             .unwrap();
             match damage {
@@ -2050,7 +2212,7 @@ mod tests {
             &candidate,
             &source.join("native-host"),
             &source.join("extension"),
-            Some(&source.join("yt-dlp")),
+            Some(&source.join(YTDLP_DIRECTORY)),
         )
         .unwrap();
         let mut journal = RuntimeInstallJournal {
@@ -2090,7 +2252,7 @@ mod tests {
             newest.clone(),
             &new.join("native-host"),
             &new.join("extension"),
-            Some(&new.join("yt-dlp")),
+            Some(&new.join(YTDLP_DIRECTORY)),
             |_| Ok(()),
         )
         .unwrap();
@@ -2103,7 +2265,7 @@ mod tests {
             older,
             &old.join("native-host"),
             &old.join("extension"),
-            Some(&old.join("yt-dlp")),
+            Some(&old.join(YTDLP_DIRECTORY)),
             |_| Ok(()),
         )
         .unwrap();
@@ -2137,7 +2299,7 @@ mod tests {
                 previous_manifest.clone(),
                 &old.join("native-host"),
                 &old.join("extension"),
-                Some(&old.join("yt-dlp")),
+                Some(&old.join(YTDLP_DIRECTORY)),
                 |_| Ok(()),
             )
             .unwrap();
@@ -2157,7 +2319,7 @@ mod tests {
                 &candidate,
                 &source.join("native-host"),
                 &source.join("extension"),
-                Some(&source.join("yt-dlp")),
+                Some(&source.join(YTDLP_DIRECTORY)),
             )
             .unwrap();
             let mut journal = RuntimeInstallJournal {
@@ -2195,7 +2357,7 @@ mod tests {
                 candidate,
                 &source.join("native-host"),
                 &source.join("extension"),
-                Some(&source.join("yt-dlp")),
+                Some(&source.join(YTDLP_DIRECTORY)),
                 |_| Ok(())
             )
             .is_err());
@@ -2230,7 +2392,7 @@ mod tests {
             candidate,
             &source.join("native-host"),
             &source.join("extension"),
-            Some(&source.join("yt-dlp")),
+            Some(&source.join(YTDLP_DIRECTORY)),
             |_| {
                 registered = true;
                 Ok(())
@@ -2269,7 +2431,7 @@ mod tests {
                 old_manifest.clone(),
                 &old.join("native-host"),
                 &old.join("extension"),
-                Some(&old.join("yt-dlp")),
+                Some(&old.join(YTDLP_DIRECTORY)),
                 register,
             )
             .unwrap();
@@ -2283,7 +2445,7 @@ mod tests {
                 &candidate,
                 &new.join("native-host"),
                 &new.join("extension"),
-                Some(&new.join("yt-dlp")),
+                Some(&new.join(YTDLP_DIRECTORY)),
             )
             .unwrap();
             let mut journal = RuntimeInstallJournal {
@@ -2332,7 +2494,7 @@ mod tests {
             manifest.clone(),
             &source.join("native-host"),
             &source.join("extension"),
-            Some(&source.join("yt-dlp")),
+            Some(&source.join(YTDLP_DIRECTORY)),
             |_| Err(std::io::Error::other("browser directory denied")),
         );
         assert!(error.is_err());
@@ -2345,7 +2507,7 @@ mod tests {
             manifest.clone(),
             &source.join("native-host"),
             &source.join("extension"),
-            Some(&source.join("yt-dlp")),
+            Some(&source.join(YTDLP_DIRECTORY)),
             |_| Ok(()),
         )
         .unwrap();
@@ -2370,7 +2532,7 @@ mod tests {
             manifest,
             &source.join("native-host"),
             &source.join("extension"),
-            Some(&source.join("yt-dlp")),
+            Some(&source.join(YTDLP_DIRECTORY)),
             |_| Ok(())
         )
         .is_err());
@@ -2389,7 +2551,7 @@ mod tests {
             manifest.clone(),
             &source.join("native-host"),
             &source.join("extension"),
-            Some(&source.join("yt-dlp")),
+            Some(&source.join(YTDLP_DIRECTORY)),
             |_| Ok(()),
         )
         .unwrap();
@@ -2429,7 +2591,7 @@ mod tests {
             old_manifest.clone(),
             &old.join("native-host"),
             &old.join("extension"),
-            Some(&old.join("yt-dlp")),
+            Some(&old.join(YTDLP_DIRECTORY)),
             |_| Ok(()),
         )
         .unwrap();
@@ -2443,7 +2605,7 @@ mod tests {
             new_manifest.clone(),
             &new.join("native-host"),
             &new.join("extension"),
-            Some(&new.join("yt-dlp")),
+            Some(&new.join(YTDLP_DIRECTORY)),
             |host| {
                 registration = host.to_path_buf();
                 Ok(())
@@ -2454,7 +2616,7 @@ mod tests {
         assert!(runtime_package_matches(&old_package, &old_manifest));
         assert_ne!(registration, parent.join("native-host"));
         assert_eq!(
-            std::fs::read(old_package.join("yt-dlp")).unwrap(),
+            std::fs::read(old_package.join(YTDLP_DIRECTORY).join(YTDLP_EXECUTABLE)).unwrap(),
             b"video old-dev"
         );
     }
@@ -2469,7 +2631,7 @@ mod tests {
             published_manifest.clone(),
             &published.join("native-host"),
             &published.join("extension"),
-            Some(&published.join("yt-dlp")),
+            Some(&published.join(YTDLP_DIRECTORY)),
             |_| Ok(()),
         )
         .unwrap();
@@ -2480,7 +2642,7 @@ mod tests {
             dev_manifest,
             &dev.join("native-host"),
             &dev.join("extension"),
-            Some(&dev.join("yt-dlp")),
+            Some(&dev.join(YTDLP_DIRECTORY)),
             |_| Ok(()),
         )
         .unwrap();
@@ -2522,7 +2684,7 @@ mod tests {
             old_manifest.clone(),
             &old.join("native-host"),
             &old.join("extension"),
-            Some(&old.join("yt-dlp")),
+            Some(&old.join(YTDLP_DIRECTORY)),
             register,
         )
         .unwrap();
@@ -2536,7 +2698,7 @@ mod tests {
             &candidate,
             &new.join("native-host"),
             &new.join("extension"),
-            Some(&new.join("yt-dlp")),
+            Some(&new.join(YTDLP_DIRECTORY)),
         )
         .unwrap();
         let mut journal = RuntimeInstallJournal {
@@ -2571,7 +2733,7 @@ mod tests {
             candidate,
             &new.join("native-host"),
             &new.join("extension"),
-            Some(&new.join("yt-dlp")),
+            Some(&new.join(YTDLP_DIRECTORY)),
             register,
         );
         assert!(result
@@ -2615,7 +2777,7 @@ mod tests {
                 &manifest,
                 &bundle.join("native-host"),
                 &bundle.join("extension"),
-                Some(&bundle.join("yt-dlp")),
+                Some(&bundle.join(YTDLP_DIRECTORY)),
             )
             .unwrap();
             let mut journal = RuntimeInstallJournal {
@@ -2643,7 +2805,7 @@ mod tests {
                 manifest.clone(),
                 &bundle.join("native-host"),
                 &bundle.join("extension"),
-                Some(&bundle.join("yt-dlp")),
+                Some(&bundle.join(YTDLP_DIRECTORY)),
                 register,
             )
             .unwrap_or_else(|error| panic!("{stopped_at:?}: {error}"));
@@ -2689,7 +2851,7 @@ mod tests {
             &old_manifest,
             &old.join("native-host"),
             &old.join("extension"),
-            Some(&old.join("yt-dlp")),
+            Some(&old.join(YTDLP_DIRECTORY)),
         )
         .unwrap();
         let journal = RuntimeInstallJournal {
@@ -2701,7 +2863,7 @@ mod tests {
             stage: RuntimeInstallStage::HostActivated,
         };
         write_runtime_json(&parent.join("install-journal.json"), &journal).unwrap();
-        std::fs::write(parent.join("packages").join(&old_id).join("yt-dlp"), b"truncated").unwrap();
+        std::fs::write(parent.join("packages").join(&old_id).join(YTDLP_DIRECTORY).join(YTDLP_EXECUTABLE), b"truncated").unwrap();
         let (bundle, manifest) = runtime_fixture(tmp.path(), "bundle", "1.1.0");
 
         install_runtime_from_sources(
@@ -2709,7 +2871,7 @@ mod tests {
             manifest.clone(),
             &bundle.join("native-host"),
             &bundle.join("extension"),
-            Some(&bundle.join("yt-dlp")),
+            Some(&bundle.join(YTDLP_DIRECTORY)),
             register,
         )
         .unwrap();
@@ -2723,7 +2885,7 @@ mod tests {
             &parent.join("packages").join(&settled.package_id).join("native-host")
         ));
         assert!(!parent.join("packages").join(&old_id).exists());
-        assert!(parent.join("quarantine").join(&old_id).join("yt-dlp").is_file());
+        assert!(parent.join("quarantine").join(&old_id).join(YTDLP_DIRECTORY).join(YTDLP_EXECUTABLE).is_file());
         assert!(parent.join(format!("failed-install-{old_id}.json")).is_file());
     }
 
@@ -2753,7 +2915,7 @@ mod tests {
                     manifest.clone(),
                     &bundle.join("native-host"),
                     &bundle.join("extension"),
-                    Some(&bundle.join("yt-dlp")),
+                    Some(&bundle.join(YTDLP_DIRECTORY)),
                     register,
                 )
             };
@@ -2794,7 +2956,7 @@ mod tests {
                 manifest.clone(),
                 &bundle.join("native-host"),
                 &bundle.join("extension"),
-                Some(&bundle.join("yt-dlp")),
+                Some(&bundle.join(YTDLP_DIRECTORY)),
                 |_| Ok(()),
             )
         };
@@ -2957,7 +3119,7 @@ mod tests {
             candidate.clone(),
             &source.join("native-host"),
             &source.join("extension"),
-            Some(&source.join("yt-dlp")),
+            Some(&source.join(YTDLP_DIRECTORY)),
             |_| Ok(()),
         )
         .unwrap();
@@ -2968,7 +3130,7 @@ mod tests {
             candidate.clone(),
             &source.join("native-host"),
             &source.join("extension"),
-            Some(&source.join("yt-dlp")),
+            Some(&source.join(YTDLP_DIRECTORY)),
             |_| Ok(()),
         )
         .unwrap();
@@ -3017,13 +3179,14 @@ mod tests {
     }
 
     #[test]
-    fn ytdlp_resolver_matches_tauri_bundle_resources_and_prefers_current_layout() {
+    fn ytdlp_resolver_matches_the_unpacked_tauri_bundle_resource() {
         let config: serde_json::Value =
             serde_json::from_str(include_str!("../../tauri.conf.json")).unwrap();
         assert_eq!(
-            config["bundle"]["resources"]["binaries/yt-dlp"],
-            serde_json::json!("binaries/yt-dlp")
+            config["bundle"]["resources"]["binaries/yt-dlp-onedir/"],
+            serde_json::json!("binaries/yt-dlp-onedir/")
         );
+        assert!(config["bundle"]["resources"]["binaries/yt-dlp"].is_null());
         assert_eq!(
             config["bundle"]["resources"]["../build/clipper-extension/"],
             serde_json::json!("clipper-extension/")
@@ -3031,36 +3194,102 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let contents = tmp.path().join("Mine.app/Contents");
         std::fs::create_dir_all(contents.join("MacOS")).unwrap();
-        std::fs::create_dir_all(contents.join("Resources/binaries")).unwrap();
+        let resource = contents.join("Resources/binaries/yt-dlp-onedir");
+        std::fs::create_dir_all(&resource).unwrap();
         let executable = contents.join("MacOS/mine");
-        let resource = contents.join("Resources/binaries/yt-dlp");
         std::fs::write(&executable, b"app").unwrap();
-        std::fs::write(&resource, b"current bundled helper").unwrap();
-        std::fs::write(contents.join("Resources/yt-dlp"), b"older helper").unwrap();
+        std::fs::write(resource.join("yt-dlp"), b"unpacked launcher").unwrap();
         assert_eq!(bundled_ytdlp_path(&executable), Some(resource));
     }
 
+    /// A one-file build is never taken from a bundle, in any layout an older
+    /// build used: it unpacks its Python at every start (О8.1).
     #[test]
-    fn ytdlp_resolver_preserves_legacy_flat_bundle_layout() {
+    fn ytdlp_resolver_never_takes_a_one_file_build() {
         let tmp = TempDir::new().unwrap();
         let contents = tmp.path().join("Mine.app/Contents");
-        std::fs::create_dir_all(contents.join("MacOS")).unwrap();
-        std::fs::create_dir_all(contents.join("Resources")).unwrap();
-        let resource = contents.join("Resources/yt-dlp");
-        std::fs::write(&resource, b"legacy bundled helper").unwrap();
-        assert_eq!(
-            bundled_ytdlp_path(&contents.join("MacOS/mine")),
-            Some(resource)
-        );
+        std::fs::create_dir_all(contents.join("Resources/binaries")).unwrap();
+        std::fs::write(contents.join("Resources/binaries/yt-dlp"), b"one-file build").unwrap();
+        std::fs::write(contents.join("Resources/yt-dlp"), b"legacy one-file build").unwrap();
+        assert!(bundled_ytdlp_path(&contents.join("MacOS/mine")).is_none());
+        // A directory without its launcher is not the tool either.
+        std::fs::create_dir_all(contents.join("Resources/binaries/yt-dlp-onedir/_internal")).unwrap();
+        assert!(bundled_ytdlp_path(&contents.join("MacOS/mine")).is_none());
     }
 
     #[test]
-    fn ytdlp_resolver_does_not_treat_a_resource_directory_as_a_binary() {
+    fn installing_the_unpacked_ytdlp_replaces_a_one_file_build_beside_the_helper() {
         let tmp = TempDir::new().unwrap();
-        let contents = tmp.path().join("Mine.app/Contents");
-        assert!(bundled_ytdlp_path(&contents.join("MacOS/mine")).is_none());
-        std::fs::create_dir_all(contents.join("Resources/binaries/yt-dlp")).unwrap();
-        assert!(bundled_ytdlp_path(&contents.join("MacOS/mine")).is_none());
+        let (source, manifest) = runtime_fixture(tmp.path(), "bundle", "1.0.0");
+        let parent = tmp.path().join("managed");
+        std::fs::create_dir_all(&parent).unwrap();
+        std::fs::write(parent.join("yt-dlp"), b"one-file build of an older install").unwrap();
+
+        install_ytdlp_directory(&source.join(YTDLP_DIRECTORY), &parent).unwrap();
+        let installed = parent.join(YTDLP_DIRECTORY);
+        assert!(ytdlp_matches(&installed, manifest.ytdlp.as_ref().unwrap()));
+        assert!(!parent.join("yt-dlp").exists());
+
+        // Installing again over a damaged tree swaps the whole tree back.
+        std::fs::remove_file(installed.join("_internal/Python")).unwrap();
+        assert!(!ytdlp_matches(&installed, manifest.ytdlp.as_ref().unwrap()));
+        install_ytdlp_directory(&source.join(YTDLP_DIRECTORY), &parent).unwrap();
+        assert!(ytdlp_matches(&installed, manifest.ytdlp.as_ref().unwrap()));
+        let leftovers: Vec<_> = std::fs::read_dir(&parent)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .filter(|name| name.to_string_lossy().starts_with(".yt-dlp-"))
+            .collect();
+        assert!(leftovers.is_empty(), "staging left behind: {leftovers:?}");
+    }
+
+    /// О5, О8.1: the periodic upkeep sees a file gone from, or cut short in,
+    /// the `yt-dlp` beside the helper browsers launch, and a launcher that
+    /// lost its executable bit.
+    #[test]
+    fn upkeep_notices_a_damaged_ytdlp_beside_the_registered_helper() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new().unwrap();
+        let (source, manifest) = runtime_fixture(tmp.path(), "bundle", "1.0.0");
+        let parent = tmp.path().join("managed");
+        let id = prepare_runtime_package(
+            &parent,
+            &manifest,
+            &source.join("native-host"),
+            &source.join("extension"),
+            Some(&source.join(YTDLP_DIRECTORY)),
+        )
+        .unwrap();
+        let package = parent.join("packages").join(id);
+        std::fs::copy(source.join("native-host"), parent.join("native-host")).unwrap();
+        for host in [parent.join("native-host"), package.join("native-host")] {
+            std::fs::set_permissions(&host, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        copy_payload_tree(&source.join("extension"), &parent.join("extension")).unwrap();
+        let bundled_host = source.join("native-host");
+        std::fs::set_permissions(&bundled_host, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let paths = RuntimeUpkeepPaths {
+            bundled_host,
+            bundled_extension: source.join("extension"),
+            installed_host: parent.join("native-host"),
+            registered_host: package.join("native-host"),
+            installed_extension: parent.join("extension"),
+            bundled_ytdlp: Some(source.join(YTDLP_DIRECTORY)),
+            browser_manifests: vec![],
+        };
+        assert!(runtime_matches_bundle(&paths));
+
+        let python = package.join(YTDLP_DIRECTORY).join("_internal/Python");
+        std::fs::write(&python, b"cut").unwrap();
+        assert!(!runtime_matches_bundle(&paths), "a file cut short went unnoticed");
+        std::fs::remove_file(&python).unwrap();
+        assert!(!runtime_matches_bundle(&paths), "a missing file went unnoticed");
+        std::fs::copy(source.join(YTDLP_DIRECTORY).join("_internal/Python"), &python).unwrap();
+        assert!(runtime_matches_bundle(&paths));
+
+        let launcher = package.join(YTDLP_DIRECTORY).join(YTDLP_EXECUTABLE);
+        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(!runtime_matches_bundle(&paths), "a launcher that cannot start went unnoticed");
     }
 
     #[test]

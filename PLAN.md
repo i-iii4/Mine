@@ -2554,6 +2554,22 @@ architecture decision 046 in [ARCHITECTURE.md](ARCHITECTURE.md).
 | 38.3 | Один компонент | DONE 07.10.2026 | `SegmentedControl` удалён; Grid / Graph, Appearance (Theme, Card corners), клиппер (Content / Screenshot / Link) на `Tabs` |
 | 38.4 | Живая приёмка | TODO | за пользователем, в том числе клиппер |
 
+### Phase 39: утилита видео без распаковки и без зависаний
+
+Случай 07.10.2026: в Dia клиппер висел на «Extracting content…», macOS
+показывал «Python.framework повреждено», видео из X не сохранялось. Контракт:
+[SPEC_ONBOARDING.md](SPEC_ONBOARDING.md), О8.1 по О8.3, и
+[SPEC_CLIPPER.md](SPEC_CLIPPER.md), 3d, «Сбой утилиты видео не останавливает
+клиппер», В1 по В5.
+
+| # | Срез | Статус | Содержание |
+|---|---|---|---|
+| 39.1 | Распакованная сборка | DONE 07.10.2026 | `yt-dlp_macos.zip` 2026.08.19 по SHA-256, каталог `yt-dlp-onedir/` без копий `Python.framework` и без ссылок; бандл, пакет помощника (отпечаток дерева), Download Media |
+| 39.2 | Помощник не зависает | DONE 07.10.2026 | `tool_process.rs`: срок 20 с, своя группа процессов, тип отказа; `resolve_twitter_media` и `video_tool_status` вне очереди с номером своего запроса; утилиты убиваются при выходе помощника |
+| 39.3 | Гейт сборки | DONE 07.10.2026 | `verify-bundle-binaries.mjs` в `finalize:local-app` и `verify:release`: подпись каждого Mach-O, нет PyInstaller onefile, нет ссылок в каталоге утилиты |
+| 39.4 | Самопроверка | DONE 07.10.2026 | `video_tool_status` под браузером раз за жизнь помощника; клиппер не просит видео у неработающей утилиты и пишет причину; самопроверка Mine раз в 5 минут сверяет состав каталога утилиты |
+| 39.5 | Живая приёмка | TODO | за пользователем: установить сборку, сохранить в Dia пост X с видео с возрастным ограничением; нет диалога, видео в заметке |
+
 ### Backlog
 
 | Task | Description |

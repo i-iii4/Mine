@@ -305,17 +305,17 @@ fn spawn_tool(command: &mut Command, temp: &Path) -> std::io::Result<Child> {
 
 /// Kill the process group `child` leads.
 ///
-/// What this guarantees, checked against the bundled `yt-dlp` on 30.09.2026:
-/// it is a `PyInstaller` one-file build, a launcher that unpacks Python (about
-/// 70 MB) into `TMPDIR` and runs it as a second process sharing the
-/// launcher's stdout and stderr. Killing the launcher alone leaves that
-/// second process downloading with the pipes open, so the reads of this
-/// module do not end, and leaves the unpacked copy behind. Every tool here
-/// is started by `spawn_tool`, so the signal reaches the whole group (the
-/// launcher, the Python process and whatever that one starts) and the
-/// unpacked copy lies in the job's working folder, which `Staging` removes.
-/// A process that leaves the group on its own (`setsid`) is out of reach;
-/// neither `yt-dlp` nor the joiner does that.
+/// Why the group: until 07.10.2026 the bundled `yt-dlp` was a `PyInstaller`
+/// one-file build, a launcher that unpacked Python into `TMPDIR` and ran it
+/// as a second process sharing the launcher's stdout and stderr; killing the
+/// launcher alone left that process downloading with the pipes open, so the
+/// reads of this module did not end. The bundled build is now the unpacked
+/// one (SPEC_ONBOARDING.md, О8.1), one process that unpacks nothing, but a
+/// tool may still start processes of its own, and every tool here is started
+/// by `spawn_tool`, so the signal reaches the whole group and whatever the
+/// tool writes to `TMPDIR` lies in the job's working folder, which `Staging`
+/// removes. A process that leaves the group on its own (`setsid`) is out of
+/// reach; neither `yt-dlp` nor the joiner does that.
 fn kill_group(child: &Child) {
     let Ok(group) = libc::pid_t::try_from(child.id()) else {
         return;
@@ -446,7 +446,7 @@ fn staging_dir(video_id: &str) -> PathBuf {
 
 fn run(app: &AppHandle, job: &Job, slug: &str, video_id: &str) -> Result<(), String> {
     let tools = Tools {
-        ytdlp: bundled_tool(app, "yt-dlp").ok_or("The bundled video downloader is missing.")?,
+        ytdlp: bundled_ytdlp(app).ok_or("The bundled video downloader is missing.")?,
         joiner: bundled_tool(app, "video-mux-helper").ok_or("The bundled video joiner is missing.")?,
     };
     let staging = Staging(staging_dir(video_id));
@@ -845,6 +845,19 @@ fn tool_search_path() -> String {
 }
 
 /// A binary shipped in the bundle's `binaries/`, or in the source tree during development.
+/// The launcher of the bundled unpacked `yt-dlp` (SPEC_ONBOARDING.md, О8.1),
+/// or in development the one `bun run fetch:ytdlp` staged.
+fn bundled_ytdlp(app: &AppHandle) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(resources) = app.path().resource_dir() {
+        candidates.push(crate::tool_process::ytdlp_in(&resources.join("binaries")));
+    }
+    candidates.push(crate::tool_process::ytdlp_in(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries"),
+    ));
+    candidates.into_iter().find(|path| path.is_file())
+}
+
 fn bundled_tool(app: &AppHandle, name: &str) -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if let Ok(resources) = app.path().resource_dir() {
@@ -971,13 +984,14 @@ mod tests {
         assert!(started.elapsed() < CANCEL_DEADLINE, "{:?}", started.elapsed());
     }
 
-    /// The bundled `yt-dlp` from `binaries/`, stopped while it waits for
-    /// input: its whole process group ends, and what its launcher unpacked
-    /// lies in the job's folder, not in the system temporary folder. Run by
-    /// hand with `cargo test -p mine --lib bundled_downloader -- --ignored`.
+    /// The bundled unpacked `yt-dlp` from `binaries/`, stopped while it waits
+    /// for input: its whole process group ends, and it unpacked nothing, in
+    /// the job's folder or in the system temporary folder (SPEC_ONBOARDING.md,
+    /// О8.1). Run by hand with
+    /// `cargo test -p mine --lib bundled_downloader -- --ignored`.
     #[test]
     #[ignore = "needs the bundled yt-dlp in binaries/"]
-    fn a_stopped_bundled_downloader_ends_whole_and_unpacks_into_the_job_folder() {
+    fn a_stopped_bundled_downloader_ends_whole_and_unpacks_nothing() {
         const UNPACKED_PREFIX: &str = "_MEI";
         let unpacked = |folder: &Path| -> std::collections::BTreeSet<std::ffi::OsString> {
             std::fs::read_dir(folder)
@@ -988,7 +1002,7 @@ mod tests {
         };
         let system_before = unpacked(&std::env::temp_dir());
         let folder = tempfile::tempdir().unwrap();
-        let ytdlp = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries").join("yt-dlp");
+        let ytdlp = crate::tool_process::ytdlp_in(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries"));
         let mut child = spawn_tool(
             Command::new(ytdlp)
                 .args(["-a", "-", "--simulate"])
@@ -1003,13 +1017,9 @@ mod tests {
         let group = libc::pid_t::try_from(child.id()).unwrap();
         let job = job();
         job.register(child);
-        let started = Instant::now();
-        while unpacked(folder.path()).is_empty() {
-            assert!(started.elapsed() < CANCEL_DEADLINE, "the launcher never unpacked");
-            std::thread::sleep(PROCESS_POLL_INTERVAL);
-        }
-        // Long enough for the launcher to start its second process.
+        // Long enough for Python to start and wait for its input.
         std::thread::sleep(CANCEL_DEADLINE / 2);
+        assert!(unpacked(folder.path()).is_empty(), "the downloader unpacked into its folder");
 
         job.stop();
         let status = job.wait().unwrap().unwrap();
@@ -1219,7 +1229,7 @@ mod tests {
     #[ignore = "downloads from YouTube"]
     fn real_youtube_download_produces_one_playable_mp4() {
         let binaries = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries");
-        let tools = Tools { ytdlp: binaries.join("yt-dlp"), joiner: binaries.join("video-mux-helper") };
+        let tools = Tools { ytdlp: crate::tool_process::ytdlp_in(&binaries), joiner: binaries.join("video-mux-helper") };
         let job = job();
         let staging = tempfile::tempdir().unwrap();
         let mut states = Vec::new();

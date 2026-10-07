@@ -10,6 +10,7 @@ import {
 } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { YTDLP_DIRECTORY, YTDLP_EXECUTABLE } from './ytdlp-layout.mjs';
 
 const scriptPath = fileURLToPath(import.meta.url);
 const projectRoot = resolve(dirname(scriptPath), '..');
@@ -36,12 +37,16 @@ function treeFiles(root, directory = root, files = []) {
   return files;
 }
 
-export function treeComponentManifest(root) {
+/** Digest of a payload tree: every file's path, length and bytes, in path
+ *  order. `required` names the file the tree is unusable without: the
+ *  extension's `manifest.json`, yt-dlp's launcher. The Rust installer hashes
+ *  the same way (`clipper_setup.rs`, `tree_fingerprint`). */
+export function treeComponentManifest(root, required = 'manifest.json') {
   const hash = createHash('sha256');
   let totalBytes = 0;
   const files = treeFiles(root);
-  if (!files.includes('manifest.json')) {
-    throw new Error(`extension payload has no manifest.json: ${root}`);
+  if (!files.includes(required)) {
+    throw new Error(`runtime payload has no ${required}: ${root}`);
   }
   for (const relativePath of files) {
     const bytes = readFileSync(join(root, relativePath));
@@ -76,7 +81,8 @@ export function createRuntimeManifest({ appVersion, buildProfile, nativeHost, na
     native_host_build_id: nativeHostBuildId ?? null,
     native_host: fileComponentManifest(nativeHost),
     extension: treeComponentManifest(extension),
-    ytdlp: ytdlp ? fileComponentManifest(ytdlp) : null,
+    // The unpacked yt-dlp directory (SPEC_ONBOARDING.md, О8.1).
+    ytdlp: ytdlp ? treeComponentManifest(ytdlp, YTDLP_EXECUTABLE) : null,
   };
 }
 
@@ -93,7 +99,7 @@ function main() {
     nativeHost,
     nativeHostBuildId: identity.build_id,
     extension: join(projectRoot, 'build/clipper-extension'),
-    ytdlp: join(projectRoot, 'src-tauri/binaries/yt-dlp'),
+    ytdlp: join(projectRoot, 'src-tauri/binaries', YTDLP_DIRECTORY),
   });
   mkdirSync(dirname(output), { recursive: true });
   const temporary = `${output}.${randomUUID()}.tmp`;

@@ -368,6 +368,14 @@ export function PopupApp() {
               className="max-h-[280px] min-h-24 overflow-y-auto rounded-1 border border-border p-2"
               data-clipper-scrollbar=""
             >
+              {/* The post goes on without a video the helper's tool could
+                  not get; first in the box, so it is read before Save
+                  (SPEC_CLIPPER.md, 3d, В4). */}
+              {articleData?.videoNotice && clipper.articleExtractionState !== "loading" && (
+                <p role="status" className="mb-1.5 text-sm text-muted-foreground" data-clipper-video-notice="">
+                  {articleData.videoNotice}
+                </p>
+              )}
               {metadata?.detectedType === "video" && embeddedVideoPreviews.length === 0 && videoFallbackPoster && (
                 <VideoPosterPreview posterUrl={videoFallbackPoster} title="Video preview" />
               )}

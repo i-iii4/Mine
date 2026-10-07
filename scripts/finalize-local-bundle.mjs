@@ -4,6 +4,7 @@ import { closeSync, fsyncSync, lstatSync, openSync, readFileSync, readSync, read
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRuntimeManifest, probeNativeHost } from './build-clipper-runtime-manifest.mjs';
+import { YTDLP_DIRECTORY } from './ytdlp-layout.mjs';
 
 const MACHO_MAGIC = new Set(['feedface', 'cefaedfe', 'feedfacf', 'cffaedfe', 'cafebabe', 'bebafeca', 'cafebabf', 'bfbafeca']);
 function run(execute, command, args) {
@@ -59,7 +60,8 @@ export function finalizeLocalBundle(bundle, options = {}) {
 
   const nativeHost = join(bundle, 'Contents/MacOS/native-host');
   const extension = join(bundle, 'Contents/Resources/clipper-extension');
-  const ytdlp = join(bundle, 'Contents/Resources/binaries/yt-dlp');
+  // The unpacked yt-dlp directory (SPEC_ONBOARDING.md, О8.1).
+  const ytdlp = join(bundle, 'Contents/Resources/binaries', YTDLP_DIRECTORY);
   const identity = (options.probe ?? probeNativeHost)(nativeHost, info.CFBundleShortVersionString);
   // A local ad-hoc build is a development build, not a public package: it may
   // replace an installed runtime of the same version (SPEC_DISTRIBUTION.md, D8).

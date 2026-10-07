@@ -2,6 +2,14 @@ import { useState, useEffect, useCallback, useContext, useRef } from "react";
 import { flushSync } from "react-dom";
 import { normalizeArticleMedia } from "../lib/normalizeArticleMedia";
 import { hydrateTwitterPosts } from "../lib/twitterMedia";
+import {
+  knownVideoToolFailure,
+  videoNotice,
+  videoToolFailureReason,
+  videoToolState,
+  type VideoToolFailureReason,
+  type VideoToolState,
+} from "../lib/videoTool";
 import { folderStateBlocksSave, identityStateMessage } from "../lib/folderState";
 
 import {
@@ -383,6 +391,12 @@ export function useClipperState() {
 
     setArticleExtractionStateValue("loading");
     const epoch = extractionEpochRef.current;
+    // An X post may need the helper's video tool: its self-check runs beside
+    // the extraction and is awaited only when the post needs the tool
+    // (SPEC_CLIPPER.md, 3d, В5).
+    const videoTool = isTwitterStatusUrl(meta.url)
+      ? sendToNative({ action: "video_tool_status" }).then(videoToolState, () => null)
+      : Promise.resolve(null);
     const promise = extractArticleAsync(tabId)
       .then(async (asyncArticle) => {
         if (extractionEpochRef.current !== epoch) return null;
@@ -392,9 +406,9 @@ export function useClipperState() {
         if (meta.captureGeneration && asyncArticle.captureGeneration && meta.captureGeneration !== asyncArticle.captureGeneration) {
           throw new Error("Capture navigation changed");
         }
-        const hydrated = await hydrateTwitterVideoPreviews(meta, asyncArticle);
+        const hydrated = await hydrateTwitterVideoPreviews(meta, asyncArticle, videoTool);
         if (extractionEpochRef.current !== epoch) return null;
-        if (articleHasText(hydrated) || articleHasPreviewMedia(hydrated) || hydrated.threadWarning) {
+        if (articleHasText(hydrated) || articleHasPreviewMedia(hydrated) || hydrated.threadWarning || hydrated.videoNotice) {
           setArticleDataValue(hydrated);
           if (hydrated.title) {
             setTitle((current) => current === meta.title ? hydrated.title : current);
@@ -1751,6 +1765,9 @@ interface ResolveTwitterMediaResponse {
   ok: boolean;
   error?: string;
   media?: TwitterMediaPreview[];
+  /** `video_tool_failed` when the helper's video tool failed (SPEC_CLIPPER.md, 3d, В3). */
+  code?: string;
+  reason?: string;
 }
 
 /** The crop of content.js in this page; the overlay shares its world. */
@@ -1867,19 +1884,31 @@ function captureVideoUrlFrameDataUrl(
   });
 }
 
-async function hydrateTwitterVideoPreviews(
+export async function hydrateTwitterVideoPreviews(
   metadata: PageMetadata,
   article: ArticleData,
+  videoTool: Promise<VideoToolState | null>,
 ): Promise<ArticleData> {
   if (!isTwitterStatusUrl(metadata.url)) return article;
+
+  // The video with the browser's session comes from the helper's video tool.
+  // A tool its self-check found not working is not asked: the clipper answers
+  // itself with the failure and goes on (SPEC_CLIPPER.md, 3d, В4, В5). A
+  // check past its deadline proves nothing about this request, which is
+  // asked anyway.
+  const authenticatedVideo = async (tweetUrl: string, tweetId: string | undefined) => {
+    const tool = await videoTool;
+    if (tool?.state === "unavailable" && tool.reason !== "timeout") return knownVideoToolFailure(tool.reason);
+    return chrome.runtime.sendMessage({
+      target: "background", action: "resolveAuthenticatedTweetVideo",
+      payload: { tweetUrl, tweetId },
+    }) as Promise<ResolveTwitterMediaResponse | undefined>;
+  };
 
   if (article.twitterPosts) {
     return hydrateTwitterPosts(article, {
       publicMedia: (tweetId) => sendToNative({ action: "resolve_twitter_media", tweet_id: tweetId }),
-      authenticatedMedia: (tweetId) => chrome.runtime.sendMessage({
-        target: "background", action: "resolveAuthenticatedTweetVideo",
-        payload: { tweetUrl: `https://x.com/i/status/${tweetId}`, tweetId },
-      }),
+      authenticatedMedia: (tweetId) => authenticatedVideo(`https://x.com/i/status/${tweetId}`, tweetId),
       frame: (src) => captureVideoUrlFrameDataUrl(src, firstEmbeddedVideoCurrentTime(article)),
     });
   }
@@ -1898,16 +1927,16 @@ async function hydrateTwitterVideoPreviews(
     response.ok
     && Array.isArray(response.media)
     && response.media.some((media) => media.kind === "video" && media.src);
+  let toolFailure: VideoToolFailureReason | null = null;
   if (!publicHasVideo && article.needsAuthenticatedVideo) {
-    const authenticated = await chrome.runtime.sendMessage({
-      target: "background",
-      action: "resolveAuthenticatedTweetVideo",
-      payload: { tweetUrl: article.tweetUrl ?? metadata.url, tweetId: article.tweetId },
-    }) as ResolveTwitterMediaResponse | undefined;
+    const authenticated = await authenticatedVideo(article.tweetUrl ?? metadata.url, article.tweetId);
     if (authenticated?.ok && Array.isArray(authenticated.media)) {
       response = authenticated;
     }
+    toolFailure = videoToolFailureReason(authenticated);
   }
+  // The post goes on without the video; one line says why (В4).
+  if (toolFailure) article = { ...article, videoNotice: videoNotice(toolFailure) };
 
   if (!response.ok || !Array.isArray(response.media)) return article;
 

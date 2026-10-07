@@ -39,7 +39,7 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "binaries/yt-dlp": "binaries/yt-dlp",
+      "binaries/yt-dlp-onedir/": "binaries/yt-dlp-onedir/",
       "binaries/icloud-progress-helper": "binaries/icloud-progress-helper",
       "binaries/video-mux-helper": "binaries/video-mux-helper",
       "../build/clipper-extension/": "clipper-extension/",

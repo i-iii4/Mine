@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extensionIdFromManifest } from './clipper-extension-payload.mjs';
+import { YTDLP_DIRECTORY, YTDLP_EXECUTABLE } from './ytdlp-layout.mjs';
 
 export const root = fileURLToPath(new URL('../', import.meta.url));
 
@@ -39,8 +40,9 @@ export function installDeveloperRuntime(argv = [], options = {}) {
   if (typeof targetDirectory !== 'string' || !targetDirectory.startsWith('/')) throw new Error('Cargo returned no absolute target directory');
   const argumentsForOwner = ['run', '-p', 'mine', '--bin', 'clipper-runtime-install', '--release', '--features', 'desktop,tooling', '--locked', '--',
     '--host', join(targetDirectory, 'release/native-host'), '--extension', join(projectRoot, 'build/clipper-extension')];
-  const video = join(projectRoot, 'src-tauri/binaries/yt-dlp');
-  if ((options.exists ?? existsSync)(video)) argumentsForOwner.push('--ytdlp', video);
+  // The unpacked yt-dlp directory, when staged (SPEC_ONBOARDING.md, О8.1).
+  const video = join(projectRoot, 'src-tauri/binaries', YTDLP_DIRECTORY);
+  if ((options.exists ?? existsSync)(join(video, YTDLP_EXECUTABLE))) argumentsForOwner.push('--ytdlp', video);
   run(execute, 'cargo', argumentsForOwner, projectRoot);
 }
 

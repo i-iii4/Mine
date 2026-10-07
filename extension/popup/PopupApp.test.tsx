@@ -81,6 +81,20 @@ describe("clipper preview", () => {
     expect(screen.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
   });
 
+  // SPEC_CLIPPER.md, 3d, В4: the post goes on without its video and says why.
+  it("says why a post's video could not be got, and keeps Save", () => {
+    const notice = "Couldn't get the video: macOS blocked the video tool. The text and pictures will be saved.";
+    Object.assign(state.articleData, { videoNotice: notice });
+    try {
+      const { container } = render(<PopupApp />);
+      expect(container.querySelector("[data-clipper-video-notice]")).toHaveTextContent(notice);
+      expect(screen.getByText("sketching the landscape")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+    } finally {
+      Object.assign(state.articleData, { videoNotice: undefined });
+    }
+  });
+
   it("shows collected content without internal thread warnings or confirmation checkboxes", () => {
     render(<PopupApp />);
     expect(screen.getByText("sketching the landscape")).toBeInTheDocument();

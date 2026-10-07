@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -30,6 +30,7 @@ use mine_lib::markdown_images::{
 use mine_lib::net;
 use mine_lib::space_registry::{CloudRead, IdentityUnreadable};
 use mine_lib::storage::{clipper_uploads, db, file_identity, files, index, save_operations, thumbnails};
+use mine_lib::tool_process::{RunningTools, ToolFailure};
 use mine_lib::util::now_saved_at;
 use percent_encoding::percent_decode_str;
 
@@ -203,19 +204,30 @@ fn write_message(json: &str) -> io::Result<()> {
 /// Sentinel for "no correlation id on the current request".
 const NO_MESSAGE_ID: i64 = -1;
 
-/// Correlation id of the request currently being handled. The serial main loop
-/// sets this before dispatch so every response can echo `_messageId` back,
-/// letting background.js match each response to its originating request instead
-/// of falling back to FIFO ordering. Sound only because the host handles
-/// exactly one message at a time — see the loop in `main`.
-static CURRENT_MESSAGE_ID: AtomicI64 = AtomicI64::new(NO_MESSAGE_ID);
+std::thread_local! {
+    /// Correlation id of the request this thread is handling. The main loop
+    /// sets it before dispatch, and a request handled off the loop
+    /// (`spawn_off_loop`) carries its own into its thread, so every response
+    /// echoes the `_messageId` of the request that produced it and
+    /// background.js matches responses by id, in whatever order they come
+    /// (SPEC_CLIPPER.md, 3d, В1).
+    static CURRENT_MESSAGE_ID: std::cell::Cell<i64> = const { std::cell::Cell::new(NO_MESSAGE_ID) };
+}
+
+fn set_current_message_id(id: i64) {
+    CURRENT_MESSAGE_ID.with(|current| current.set(id));
+}
+
+fn current_message_id() -> i64 {
+    CURRENT_MESSAGE_ID.with(std::cell::Cell::get)
+}
 
 /// Serialize a response, injecting the current `_messageId` when one is set so
 /// the extension can correlate it. Falls back to id-less JSON when no id is
 /// active or the response is not a JSON object.
 fn serialize_response<T: serde::Serialize>(resp: &T) -> String {
     let fallback = || r#"{"ok":false,"error":"serialization failed"}"#.to_string();
-    let id = CURRENT_MESSAGE_ID.load(Ordering::Relaxed);
+    let id = current_message_id();
     if id < 0 {
         return serde_json::to_string(resp).unwrap_or_else(|_| fallback());
     }
@@ -2749,12 +2761,14 @@ fn fetch_tweet_media_previews(tweet_id: &str) -> anyhow::Result<Vec<TwitterMedia
 /// works fine in a terminal.
 fn locate_ytdlp() -> Option<std::path::PathBuf> {
     let mut candidates: Vec<std::path::PathBuf> = vec![];
-    // The copy that ships with the app, installed next to this host. Checked
-    // first so a person who never opened a terminal still gets restricted
-    // video. See SPEC_ONBOARDING.md О8.
+    // The copy that ships with the app, the vendor's unpacked build installed
+    // next to this host, so a person who never opened a terminal still gets
+    // restricted video. A one-file build beside the host is never looked for:
+    // it unpacks its Python at every start, and that copy is what Gatekeeper
+    // refused under Dia (SPEC_ONBOARDING.md, О8, О8.1).
     if let Some(beside) = std::env::current_exe()
         .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join("yt-dlp")))
+        .and_then(|exe| exe.parent().map(mine_lib::tool_process::ytdlp_in))
     {
         candidates.push(beside);
     }
@@ -2775,6 +2789,105 @@ fn locate_ytdlp() -> Option<std::path::PathBuf> {
         }
     }
     candidates.into_iter().find(|candidate| candidate.is_file())
+}
+
+/// How long `yt-dlp` may take to resolve one post's video, and its
+/// self-check: under the 30 s the extension waits for an answer, so the
+/// clipper hears why rather than "Mine helper did not respond in time"
+/// (SPEC_CLIPPER.md, 3d, В2). Room for a first start of a fresh copy, which
+/// took 14 s on 07.10.2026 (Mine pays it at installation, О8.1, but a copy
+/// installed by an older Mine has not had it).
+const YTDLP_RESOLVE_DEADLINE: Duration = Duration::from_secs(25);
+const YTDLP_PROBE_DEADLINE: Duration = Duration::from_secs(25);
+
+/// Tools this helper started and that still run; killed when the helper
+/// ends, so a tool stuck behind a system dialog does not outlive it (3d, В2).
+static RUNNING_TOOLS: std::sync::LazyLock<RunningTools> = std::sync::LazyLock::new(RunningTools::new);
+
+/// Handle a request on a thread of its own, so the loop keeps answering the
+/// others while it waits on an external tool (SPEC_CLIPPER.md, 3d, В1). The
+/// request's correlation id goes with it: its response names its own request.
+fn spawn_off_loop(handle: impl FnOnce() + Send + 'static) {
+    let id = current_message_id();
+    let spawned = std::thread::Builder::new()
+        .name("mine-host-request".into())
+        .spawn(move || {
+            set_current_message_id(id);
+            handle();
+        });
+    if let Err(error) = spawned {
+        send_error(&format!("could not start the request: {error}"));
+    }
+}
+
+/// The protocol's answer to a failed tool (SPEC_CLIPPER.md, 3d, В3).
+#[derive(serde::Serialize)]
+struct VideoToolFailedResponse {
+    ok: bool,
+    code: &'static str,
+    reason: &'static str,
+    error: String,
+}
+
+impl VideoToolFailedResponse {
+    fn of(failure: &ToolFailure) -> Self {
+        Self {
+            ok: false,
+            code: "video_tool_failed",
+            reason: failure.reason(),
+            error: failure.to_string(),
+        }
+    }
+}
+
+/// What the self-check found about `yt-dlp` under this browser (3d, В5).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+enum VideoToolState {
+    Ready { version: String },
+    Unavailable { reason: &'static str, error: String },
+}
+
+fn probe_video_tool() -> VideoToolState {
+    let Some(ytdlp) = locate_ytdlp() else {
+        let failure = ToolFailure::Missing("yt-dlp not found".into());
+        return VideoToolState::Unavailable { reason: failure.reason(), error: failure.to_string() };
+    };
+    match mine_lib::tool_process::run_with_deadline(
+        std::process::Command::new(&ytdlp).arg("--version"),
+        YTDLP_PROBE_DEADLINE,
+        &RUNNING_TOOLS,
+    ) {
+        Ok(output) => VideoToolState::Ready { version: output.stdout.trim().to_string() },
+        Err(failure) => VideoToolState::Unavailable { reason: failure.reason(), error: failure.to_string() },
+    }
+}
+
+/// Run the self-check and remember a settled answer for the life of this
+/// helper process: the tool and the browser that started it do not change
+/// while it lives. A check past its deadline is not remembered, because a
+/// first start of a fresh copy is slow once and fast after (О8.1): the next
+/// request checks again.
+fn handle_video_tool_status() {
+    #[derive(serde::Serialize)]
+    struct VideoToolStatusResponse<'a> {
+        ok: bool,
+        video_tool: &'a VideoToolState,
+    }
+    static SETTLED: std::sync::OnceLock<VideoToolState> = std::sync::OnceLock::new();
+    if let Some(state) = SETTLED.get() {
+        return send_response(&VideoToolStatusResponse { ok: true, video_tool: state });
+    }
+    let state = probe_video_tool();
+    host_log(&format!("video_tool_status: {state:?}"));
+    let state = if settles(&state) { SETTLED.get_or_init(|| state.clone()) } else { &state };
+    send_response(&VideoToolStatusResponse { ok: true, video_tool: state });
+}
+
+/// Whether a self-check answer holds for the life of the helper: every one
+/// but a check past its deadline.
+fn settles(state: &VideoToolState) -> bool {
+    !matches!(state, VideoToolState::Unavailable { reason: "timeout", .. })
 }
 
 /// Removes its path on drop, so a live session never outlives the call — including
@@ -2801,9 +2914,9 @@ impl Drop for TempFileGuard {
 fn resolve_tweet_video_via_ytdlp(
     tweet_url: &str,
     cookies: &[TwitterCookie],
-) -> anyhow::Result<Vec<(String, Option<String>)>> {
+) -> Result<Vec<(String, Option<String>)>, ToolFailure> {
     if cookies.is_empty() {
-        anyhow::bail!("no browser cookies supplied");
+        return Err(ToolFailure::Failed("no browser cookies supplied".into()));
     }
 
     // Netscape cookie jar — the only format yt-dlp accepts from a file.
@@ -2821,45 +2934,46 @@ fn resolve_tweet_video_via_ytdlp(
     // The jar carries a live session, so it is written with owner-only
     // permissions and removed as soon as yt-dlp returns, whatever the outcome.
     let jar_path = std::env::temp_dir().join(format!("mine-x-{}.txt", generate_token()));
-    std::fs::write(&jar_path, jar)?;
+    let written = std::fs::write(&jar_path, jar);
+    let _jar_guard = TempFileGuard(jar_path.clone());
+    written.map_err(|error| ToolFailure::Failed(format!("cookie file: {error}")))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&jar_path, std::fs::Permissions::from_mode(0o600))?;
+        std::fs::set_permissions(&jar_path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|error| ToolFailure::Failed(format!("cookie file: {error}")))?;
     }
-    let _jar_guard = TempFileGuard(jar_path.clone());
 
     let ytdlp = locate_ytdlp().ok_or_else(|| {
-        anyhow::anyhow!(
+        ToolFailure::Missing(
             "yt-dlp not found. Install it (brew install yt-dlp) so age-restricted \
              posts can be resolved."
+                .into(),
         )
     })?;
 
-    let output = std::process::Command::new(&ytdlp)
-        .arg("--cookies")
-        .arg(&jar_path)
-        .arg("--no-warnings")
-        .arg("--quiet")
-        // Ask for the poster alongside the URL. Without it the preview falls
-        // back to the page's og:image, which on a restricted post is X's own
-        // "see what's happening" promo card rather than anything from the video.
-        .arg("--print")
-        .arg("%(url)s\t%(thumbnail)s")
-        .arg("-f")
-        // Prefer a progressive mp4: the rest of the pipeline downloads a single
-        // file by URL and cannot mux separate streams.
-        .arg("best[ext=mp4][protocol^=http]/best[ext=mp4]/best")
-        .arg(tweet_url)
-        .output()
-        .map_err(|e| anyhow::anyhow!("yt-dlp is not available: {e}"))?;
+    let output = mine_lib::tool_process::run_with_deadline(
+        std::process::Command::new(&ytdlp)
+            .arg("--cookies")
+            .arg(&jar_path)
+            .arg("--no-warnings")
+            .arg("--quiet")
+            // Ask for the poster alongside the URL. Without it the preview falls
+            // back to the page's og:image, which on a restricted post is X's own
+            // "see what's happening" promo card rather than anything from the video.
+            .arg("--print")
+            .arg("%(url)s\t%(thumbnail)s")
+            .arg("-f")
+            // Prefer a progressive mp4: the rest of the pipeline downloads a single
+            // file by URL and cannot mux separate streams.
+            .arg("best[ext=mp4][protocol^=http]/best[ext=mp4]/best")
+            .arg(tweet_url),
+        YTDLP_RESOLVE_DEADLINE,
+        &RUNNING_TOOLS,
+    )?;
 
-    if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("yt-dlp failed: {}", err.trim());
-    }
-
-    let urls: Vec<(String, Option<String>)> = String::from_utf8_lossy(&output.stdout)
+    let urls: Vec<(String, Option<String>)> = output
+        .stdout
         .lines()
         .map(str::trim)
         .filter(|line| line.starts_with("http"))
@@ -2876,7 +2990,7 @@ fn resolve_tweet_video_via_ytdlp(
         .collect();
 
     if urls.is_empty() {
-        anyhow::bail!("no progressive mp4 available for this post");
+        return Err(ToolFailure::Failed("no progressive mp4 available for this post".into()));
     }
     Ok(urls)
 }
@@ -2956,9 +3070,9 @@ fn handle_resolve_twitter_media(params: serde_json::Value) {
                     }
                     return send_response(&ResolveTwitterMediaResponse { ok: true, media });
                 }
-                Err(e) => {
-                    host_log(&format!("resolve_twitter_media: yt-dlp failed: {e}"));
-                    return send_error(&format!("failed to resolve Twitter video: {e}"));
+                Err(failure) => {
+                    host_log(&format!("resolve_twitter_media: yt-dlp failed: {failure}"));
+                    return send_response(&VideoToolFailedResponse::of(&failure));
                 }
             }
         }
@@ -3374,7 +3488,7 @@ fn main() {
     // Process messages until stdin is closed
     loop {
         // Reset the correlation id; it is set again once the request parses.
-        CURRENT_MESSAGE_ID.store(NO_MESSAGE_ID, Ordering::Relaxed);
+        set_current_message_id(NO_MESSAGE_ID);
         let msg = match read_message() {
             Ok(Some(m)) => m,
             Ok(None) => break,
@@ -3394,7 +3508,7 @@ fn main() {
 
         // Echo this request's correlation id back on every response it produces.
         if let Some(id) = req.params.get("_messageId").and_then(|v| v.as_i64()) {
-            CURRENT_MESSAGE_ID.store(id, Ordering::Relaxed);
+            set_current_message_id(id);
         }
 
         // A newer helper was installed: this process does nothing with the
@@ -3453,7 +3567,12 @@ fn main() {
             "pick_vault_folder" => handle_pick_vault_folder(),
             "reveal_vault" => handle_reveal_vault(req.params),
             "open_app" => handle_open_app(req.params),
-            "resolve_twitter_media" => handle_resolve_twitter_media(req.params),
+            // External tools run off the loop (SPEC_CLIPPER.md, 3d, В1).
+            "resolve_twitter_media" => {
+                let params = req.params;
+                spawn_off_loop(move || handle_resolve_twitter_media(params));
+            }
+            "video_tool_status" => spawn_off_loop(handle_video_tool_status),
 
             "list_channels" | "save_block" | "create_channel" | "get_save_operation" => {
                 let space = request_space();
@@ -3489,6 +3608,10 @@ fn main() {
             other => send_error(&format!("unknown action: {other}")),
         }
     }
+    // The browser closed the connection or a newer helper took over: a tool
+    // still running for a request nobody waits for any more ends with this
+    // process (SPEC_CLIPPER.md, 3d, В2).
+    RUNNING_TOOLS.kill_all();
 }
 
 #[cfg(test)]
@@ -4969,13 +5092,24 @@ mod tests {
         );
     }
 
+    /// SPEC_CLIPPER.md, 3d, В5; SPEC_ONBOARDING.md, О8.1: a first start of a
+    /// fresh copy is slow once, so a check past its deadline is asked again.
+    #[test]
+    fn a_self_check_past_its_deadline_is_not_remembered() {
+        assert!(settles(&VideoToolState::Ready { version: "2026.08.19".into() }));
+        for reason in ["missing", "blocked", "failed"] {
+            assert!(settles(&VideoToolState::Unavailable { reason, error: String::new() }), "{reason}");
+        }
+        assert!(!settles(&VideoToolState::Unavailable { reason: "timeout", error: String::new() }));
+    }
+
     #[test]
     fn serialize_response_message_id_echo() {
         // CRIT-7: the host must echo _messageId so background.js can match each
         // response to its originating request instead of falling back to FIFO
         // order. Before this fix the host never echoed the id and this would
-        // fail. Only this test mutates CURRENT_MESSAGE_ID, so it is self-contained.
-        CURRENT_MESSAGE_ID.store(42, Ordering::Relaxed);
+        // fail. The id is the thread's own, so the test is self-contained.
+        set_current_message_id(42);
         let with_id = serialize_response(&ErrorResponse {
             ok: false,
             error: "boom".to_string(),
@@ -4983,7 +5117,7 @@ mod tests {
         assert!(with_id.contains("\"_messageId\":42"), "got: {with_id}");
         assert!(with_id.contains("\"error\":\"boom\""));
 
-        CURRENT_MESSAGE_ID.store(NO_MESSAGE_ID, Ordering::Relaxed);
+        set_current_message_id(NO_MESSAGE_ID);
         let without_id = serialize_response(&ErrorResponse {
             ok: false,
             error: "x".to_string(),

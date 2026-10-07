@@ -929,6 +929,55 @@
       "command": "test:rust"
     },
     {
+      "paths": [
+        "src-tauri/src/tool_process.rs",
+        "src-tauri/src/lib.rs",
+        "src-tauri/tests/native_host_video_tool.rs",
+        "src-tauri/src/bin/native_host.rs",
+        "src-tauri/src/commands/clipper_setup.rs",
+        "src-tauri/src/source_video_download.rs",
+        "src-tauri/tauri.conf.json"
+      ],
+      "requirement": "SPEC_CLIPPER.md#Сбой утилиты видео не останавливает клиппер",
+      "tests": ["src-tauri/src/tool_process.rs", "src-tauri/tests/native_host_video_tool.rs", "src-tauri/src/commands/clipper_setup.rs", "src-tauri/src/source_video_download.rs"],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "scripts/fetch-ytdlp.mjs",
+        "scripts/fetch-ytdlp.test.mjs",
+        "scripts/ytdlp-layout.mjs",
+        "scripts/verify-bundle-binaries.mjs",
+        "scripts/verify-bundle-binaries.test.mjs",
+        "scripts/build-clipper-runtime-manifest.mjs",
+        "scripts/clipper-runtime-manifest.test.mjs",
+        "scripts/finalize-local-bundle.mjs",
+        "scripts/finalize-local-bundle.test.mjs",
+        "scripts/install-clipper-host.mjs",
+        "scripts/install-clipper-host.test.mjs",
+        "package.json"
+      ],
+      "requirement": "SPEC_ONBOARDING.md#**О8.1. Утилита поставляется распакованной (07.10.2026).**",
+      "tests": ["scripts/fetch-ytdlp.test.mjs", "scripts/verify-bundle-binaries.test.mjs", "scripts/clipper-runtime-manifest.test.mjs", "scripts/finalize-local-bundle.test.mjs", "scripts/install-clipper-host.test.mjs"],
+      "command": "test:reliability"
+    },
+    {
+      "paths": [
+        "extension/popup/lib/videoTool.ts",
+        "extension/popup/lib/videoTool.test.ts",
+        "extension/popup/lib/twitterMedia.ts",
+        "extension/popup/lib/twitterMedia.test.ts",
+        "extension/popup/lib/messaging.ts",
+        "extension/popup/hooks/useClipperState.ts",
+        "extension/popup/hooks/hydrateTwitterVideo.test.ts",
+        "extension/popup/PopupApp.tsx",
+        "extension/popup/PopupApp.test.tsx"
+      ],
+      "requirement": "SPEC_CLIPPER.md#Сбой утилиты видео не останавливает клиппер",
+      "tests": ["extension/popup/lib/videoTool.test.ts", "extension/popup/lib/twitterMedia.test.ts", "extension/popup/hooks/hydrateTwitterVideo.test.ts", "extension/popup/PopupApp.test.tsx"],
+      "command": "test:frontend"
+    },
+    {
       "paths": ["scripts/prepare-update-channel.mjs", "scripts/prepare-update-channel.test.mjs"],
       "requirement": "SPEC_SYSTEM_RELIABILITY.md#### UPD-04.",
       "tests": ["scripts/prepare-update-channel.test.mjs"],
@@ -1724,9 +1773,9 @@
         "src/tabbar/",
         "src/lib/adjacentTab.ts",
         "src/lib/chromeHeight.ts",
+        "src/lib/chromeHeight.test.ts",
         "src/components/MineLogo.tsx",
         "src/components/MineLogo.test.tsx",
-        "src/lib/chromeHeight.test.ts",
         "tabbar.html",
         "vite.config.ts"
       ],

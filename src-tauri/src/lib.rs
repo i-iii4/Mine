@@ -27,6 +27,7 @@ pub mod runtime_installation;
 pub mod runtime_protocol;
 pub mod space_registry;
 pub mod storage;
+pub mod tool_process;
 #[cfg(feature = "desktop")]
 mod source_video_download;
 #[cfg(feature = "desktop")]

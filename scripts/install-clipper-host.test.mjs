@@ -18,7 +18,8 @@ test('developer installation delegates all writes to the shared Rust installer',
   assert.ok(owner.args.includes('clipper-runtime-install'));
   assert.ok(owner.args.includes('/test-only/cargo-target/release/native-host'));
   assert.ok(owner.args.includes(join(root, 'build/clipper-extension')));
-  assert.ok(owner.args.includes('--ytdlp'));
+  // The unpacked yt-dlp directory, not a one-file build (SPEC_ONBOARDING.md, О8.1).
+  assert.equal(owner.args[owner.args.indexOf('--ytdlp') + 1], join(root, 'src-tauri/binaries/yt-dlp-onedir'));
   assert.ok(owner.args.includes('desktop,tooling'));
 });
 
