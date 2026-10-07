@@ -227,8 +227,10 @@ function carryRangesToName(
   return carried;
 }
 
-export interface NameWindow {
-  /** The name as shown: its head, an ellipsis, the words up to the mark. */
+export interface MarkWindow {
+  /** The name or the text as shown so its first mark is in view: the name's
+   *  head, an ellipsis and the words up to the mark; the text from an
+   *  ellipsis and the words just before the mark. */
   text: string;
   /** The marks over `text`. */
   ranges: SearchMatch["ranges"];
@@ -254,7 +256,7 @@ export function windowNameAroundMark(
   ranges: SearchMatch["ranges"],
   width: number,
   measure: (text: string) => number,
-): NameWindow | null {
+): MarkWindow | null {
   const chars = Array.from(name);
   const mark = ranges
     .filter((range) => range.start >= 0 && range.end > range.start && range.end <= chars.length)
@@ -304,6 +306,71 @@ export function windowNameAroundMark(
     text: `${slice(0, headEnd)}${NAME_ELLIPSIS}${slice(tailStart, chars.length)}`,
     ranges: ranges
       .filter((range) => range.start >= tailStart && range.end <= chars.length)
+      .map((range) => ({ start: range.start - shift, end: range.end - shift })),
+  };
+}
+
+/** The share of the text's room the words before the mark may take, so the
+ *  mark is followed by some of what it says. */
+const TEXT_LEAD_SHARE = 0.4;
+/** Kept with the word they open when the text is cut before it. */
+const WORD_OPENER = /[\p{Ps}\p{Pi}"'#@]/u;
+
+/**
+ * The text after the name is cut at the line's end, and the backend's excerpt
+ * starts up to 90 characters before its match, so its first mark often falls
+ * past the cut (user's report of 07.10.2026). Then the text starts at the
+ * words just before the mark, after an ellipsis. When the rest of the text
+ * from some word on fits the room whole, it starts at the earliest such word;
+ * otherwise the words before the mark take at most `TEXT_LEAD_SHARE` of the
+ * room, the mark and what follows it the rest, and the line's own ellipsis
+ * cuts the end. Whole words, an opening bracket or quote kept with its word.
+ * `null` when there is no mark, it is already in view, or the mark alone is
+ * wider than the room.
+ *
+ * `measure` gives a string's width in the text's font, `width` the room the
+ * text has on the line.
+ */
+export function windowTextAroundMark(
+  text: string,
+  ranges: SearchMatch["ranges"],
+  width: number,
+  measure: (text: string) => number,
+): MarkWindow | null {
+  const chars = Array.from(text);
+  const mark = ranges
+    .filter((range) => range.start >= 0 && range.end > range.start && range.end <= chars.length)
+    .sort((a, b) => a.start - b.start)[0];
+  if (!mark || width <= 0) return null;
+
+  const slice = (from: number, to: number) => chars.slice(from, to).join("");
+  const ellipsis = measure(NAME_ELLIPSIS);
+  const after = mark.end < chars.length ? ellipsis : 0;
+  if (measure(text) <= width) return null;
+  if (measure(slice(0, mark.end)) + after <= width) return null;
+  if (ellipsis + measure(slice(mark.start, mark.end)) + after > width) return null;
+
+  const offsets = codePointOffsets(text);
+  const starts = splitWords(text)
+    .map((word) => {
+      let start = codePointAt(offsets, word.start);
+      while (start > 0 && WORD_OPENER.test(chars[start - 1]!)) start -= 1;
+      return start;
+    })
+    .filter((start) => start > 0 && start < mark.start);
+  // A short end leaves room: the earliest start from which the rest fits whole
+  // fills the line with the words before the mark.
+  const wholeRest = (start: number) => ellipsis + measure(slice(start, chars.length)) <= width;
+  const fits = (start: number) =>
+    ellipsis + measure(slice(start, mark.start)) <= width * TEXT_LEAD_SHARE
+    && ellipsis + measure(slice(start, mark.end)) + after <= width;
+  const start = starts.find(wholeRest) ?? starts.find(fits) ?? mark.start;
+
+  const shift = start - 1;
+  return {
+    text: `${NAME_ELLIPSIS}${slice(start, chars.length)}`,
+    ranges: ranges
+      .filter((range) => range.start >= start && range.end <= chars.length)
       .map((range) => ({ start: range.start - shift, end: range.end - shift })),
   };
 }

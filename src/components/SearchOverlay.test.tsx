@@ -444,6 +444,39 @@ describe("SearchOverlay", () => {
     }
   });
 
+  it("keeps a text match past the line's end in view: the words just before the mark (07.10.2026)", async () => {
+    const excerpt = "… using special computer chips that are optimized for running many operations in parallel, known as GPUs.";
+    const start = Array.from(excerpt.slice(0, excerpt.indexOf("known"))).length;
+    // Layout stand-ins: a 320px text and an 8px monospace font.
+    const widthSpy = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) {
+      if (this.hasAttribute("data-search-result-line")) return 640;
+      return this.hasAttribute("data-search-result-text") ? 320 : 0;
+    });
+    const canvasSpy = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      font: "",
+      measureText: (text: string) => ({ width: Array.from(text).length * 8 }),
+    } as unknown as CanvasRenderingContext2D);
+    try {
+      listGridBlocksMock.mockResolvedValue(snapshot([
+        makeBlock(1, "Cards/Large Language Models explained briefly", {
+          search_match: { field: "body", kind: "exact", excerpt, ranges: [{ start, end: start + 5 }], score: 9 },
+        }),
+      ]));
+      renderOverlay({ query: "known" });
+
+      const option = await screen.findByRole("option");
+      const text = option.querySelector("[data-search-result-text]")!;
+      await waitFor(() => expect(text).toHaveAttribute("data-search-result-text-window"));
+      // 320px less the slack holds 39 characters: the rest from `operations`
+      // on fits whole.
+      expect(text.textContent).toBe("…operations in parallel, known as GPUs.");
+      expect(text.querySelector("mark")).toHaveTextContent(/^known$/);
+    } finally {
+      widthSpy.mockRestore();
+      canvasSpy.mockRestore();
+    }
+  });
+
   it("names each result row by its file name and marks a title match in it (05.10.2026)", async () => {
     listGridBlocksMock.mockResolvedValue(
       snapshot([

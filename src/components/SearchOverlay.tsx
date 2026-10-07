@@ -38,7 +38,8 @@ import { groupByRecency } from "@/lib/recencyBuckets";
 import {
   deriveSearchResultRow,
   windowNameAroundMark,
-  type NameWindow,
+  windowTextAroundMark,
+  type MarkWindow,
 } from "@/lib/searchResultRow";
 import { renderSearchHighlightedText } from "@/lib/searchHighlight";
 import { SEARCH_INPUT_SUPPRESSION_PROPS } from "@/lib/searchInputSuppression";
@@ -121,7 +122,7 @@ function SearchResultName({
   endReservePx: number;
 }) {
   const ref = useRef<HTMLSpanElement>(null);
-  const [fitted, setFitted] = useState<NameWindow | null>(null);
+  const [fitted, setFitted] = useState<MarkWindow | null>(null);
   const ranges = match && match.excerpt === name && match.ranges.length > 0 ? match.ranges : null;
   const reservePx = withText ? 0 : endReservePx;
 
@@ -167,6 +168,69 @@ function SearchResultName({
       {fitted && match
         ? renderSearchHighlightedText(fitted.text, { ...match, excerpt: fitted.text, ranges: fitted.ranges })
         : renderSearchHighlightedText(name, match)}
+    </span>
+  );
+}
+
+/**
+ * The row's text after the name. When the line cuts the text before its
+ * first mark, the text starts at the words just before the mark
+ * (`windowTextAroundMark`), as the name does, so a match in the note's text is
+ * never hidden past the line's end (07.10.2026). Its room is its own width,
+ * which follows the name's, less the buttons' reserve.
+ */
+function SearchResultText({
+  text,
+  match,
+  endReservePx,
+}: {
+  text: string;
+  match: SearchMatch | null;
+  endReservePx: number;
+}) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [fitted, setFitted] = useState<MarkWindow | null>(null);
+  const ranges = match && match.excerpt === text && match.ranges.length > 0 ? match.ranges : null;
+
+  useLayoutEffect(() => {
+    const span = ref.current;
+    if (!span || !ranges) {
+      setFitted(null);
+      return;
+    }
+    const fit = () => {
+      const spanWidth = span.clientWidth;
+      const measure = spanWidth > 0 ? measureInFontOf(span) : null;
+      if (!measure) {
+        setFitted(null);
+        return;
+      }
+      const room = spanWidth - endReservePx - NAME_FIT_SLACK_PX;
+      setFitted(windowTextAroundMark(text, ranges, room, measure));
+    };
+    fit();
+    if (typeof ResizeObserver === "undefined") return;
+    let observedWidth = span.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (span.clientWidth === observedWidth) return;
+      observedWidth = span.clientWidth;
+      fit();
+    });
+    observer.observe(span);
+    return () => observer.disconnect();
+  }, [text, ranges, endReservePx]);
+
+  return (
+    <span
+      ref={ref}
+      className="min-w-0 flex-1 truncate text-muted-foreground"
+      style={endReservePx > 0 ? { paddingRight: endReservePx } : undefined}
+      data-search-result-text=""
+      data-search-result-text-window={fitted ? "" : undefined}
+    >
+      {fitted && match
+        ? renderSearchHighlightedText(fitted.text, { ...match, excerpt: fitted.text, ranges: fitted.ranges })
+        : renderSearchHighlightedText(text, match)}
     </span>
   );
 }
@@ -657,13 +721,7 @@ export function SearchOverlay({
               endReservePx={reservePx}
             />
             {row.text !== null && (
-              <span
-                className="min-w-0 flex-1 truncate text-muted-foreground"
-                style={reservePx > 0 ? { paddingRight: reservePx } : undefined}
-                data-search-result-text=""
-              >
-                {renderSearchHighlightedText(row.text, row.textMatch)}
-              </span>
+              <SearchResultText text={row.text} match={row.textMatch} endReservePx={reservePx} />
             )}
           </p>
         </div>

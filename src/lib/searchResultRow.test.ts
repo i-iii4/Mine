@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LightBlock, SearchMatch } from "@/types";
-import { deriveSearchResultRow, windowNameAroundMark } from "./searchResultRow";
+import { deriveSearchResultRow, windowNameAroundMark, windowTextAroundMark } from "./searchResultRow";
 
 function makeBlock(overrides: Partial<LightBlock> = {}): LightBlock {
   return {
@@ -356,5 +356,70 @@ describe("windowNameAroundMark", () => {
     const window = windowNameAroundMark(name, [{ start, end: start + 6 }], 50, measure)!;
     expect(marked(window)).toEqual(["word40"]);
     expect(window.text.startsWith("word0")).toBe(true);
+  });
+});
+
+// The text after the name never hides its first mark either (07.10.2026).
+describe("windowTextAroundMark", () => {
+  // Monospace stand-in: one unit per code point.
+  const measure = (text: string) => Array.from(text).length;
+  const excerpt = "… using special computer chips that are optimized for running many operations in parallel, known as GPUs.";
+  const known = Array.from(excerpt.slice(0, excerpt.indexOf("known"))).length;
+  const marked = (window: { text: string; ranges: SearchMatch["ranges"] }) =>
+    window.ranges.map((range) => Array.from(window.text).slice(range.start, range.end).join(""));
+
+  it("leaves the text alone when the mark is already in view", () => {
+    expect(windowTextAroundMark(excerpt, [{ start: 8, end: 15 }], 50, measure)).toBeNull();
+    expect(windowTextAroundMark(excerpt, [], 50, measure)).toBeNull();
+    expect(windowTextAroundMark("short known text", [{ start: 6, end: 11 }], 50, measure)).toBeNull();
+  });
+
+  it("starts at the earliest word from which a short rest fits whole", () => {
+    const window = windowTextAroundMark(excerpt, [{ start: known, end: known + 5 }], 50, measure)!;
+    expect(window.text).toBe("…many operations in parallel, known as GPUs.");
+    expect(marked(window)).toEqual(["known"]);
+    expect(excerpt.endsWith(window.text.slice(1))).toBe(true);
+  });
+
+  it("gives the words before the mark at most 40% of the room when the rest runs on", () => {
+    const long = `${excerpt} The rest of the note goes on for a long while after the mark and past the line.`;
+    const window = windowTextAroundMark(long, [{ start: known, end: known + 5 }], 50, measure)!;
+    // The ellipsis included, the lead is at most 20 of the 50 units.
+    expect(window.text.startsWith("…in parallel, known as GPUs.")).toBe(true);
+    expect(marked(window)).toEqual(["known"]);
+  });
+
+  it("keeps an opening quote or bracket with its word", () => {
+    const text = `${"x".repeat(60)} "tranquil" known`;
+    const start = text.indexOf("known");
+    const window = windowTextAroundMark(text, [{ start, end: start + 5 }], 30, measure)!;
+    expect(window.text).toBe('…"tranquil" known');
+    expect(marked(window)).toEqual(["known"]);
+  });
+
+  it("starts at the mark itself when no word before it fits the lead", () => {
+    const text = `${"a".repeat(80)} supercalifragilisticexpialidocious known as kura`;
+    const start = text.indexOf("known");
+    const window = windowTextAroundMark(text, [{ start, end: start + 5 }], 30, measure)!;
+    expect(window.text).toBe("…known as kura");
+    expect(marked(window)).toEqual(["known"]);
+  });
+
+  it("keeps every later mark, shifted into the window", () => {
+    const gpus = Array.from(excerpt.slice(0, excerpt.indexOf("GPUs"))).length;
+    const window = windowTextAroundMark(excerpt, [{ start: gpus, end: gpus + 4 }, { start: known, end: known + 5 }], 50, measure)!;
+    expect(marked(window)).toEqual(["GPUs", "known"]);
+  });
+
+  it("gives up when the mark alone is wider than the room", () => {
+    expect(windowTextAroundMark(excerpt, [{ start: known, end: known + 5 }], 6, measure)).toBeNull();
+  });
+
+  it("counts code points, so an emoji before the mark keeps the ranges right", () => {
+    const text = `${"🌊 wave ".repeat(12)}and the tide known as kura`;
+    const start = Array.from(text.slice(0, text.indexOf("known"))).length;
+    const window = windowTextAroundMark(text, [{ start, end: start + 5 }], 40, measure)!;
+    expect(marked(window)).toEqual(["known"]);
+    expect(window.text.startsWith("…")).toBe(true);
   });
 });
