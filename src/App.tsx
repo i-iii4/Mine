@@ -969,6 +969,9 @@ export function AppWithVault({
   // The chrome row's slot the feed portals the selection commands into.
   const [selectionCommandsHost, setSelectionCommandsHost] =
     useState<HTMLDivElement | null>(null);
+  // The top row the sidebar's line runs through: the resize handle lays its
+  // catch there too.
+  const [topRowHost, setTopRowHost] = useState<HTMLDivElement | null>(null);
   // The bar hides whole entries by decided priority when the window narrows.
   // Widths are cached from the last visible render, so a hidden entry keeps
   // its claim and returns the moment there is room again.
@@ -4351,6 +4354,7 @@ export function AppWithVault({
     >
       {/* Top toolbar */}
       <ChromeRow as="header" separator="bottom"
+        ref={setTopRowHost}
         data-tauri-drag-region
         className={topChromeSurfaceClass}
       >
@@ -4530,8 +4534,9 @@ export function AppWithVault({
 
 
 
-      {/* Body: sidebar + main */}
-      <div className="flex min-h-0 flex-1">
+      {/* Body: sidebar + main. Positioned for the resize handle's catch, which
+          takes the body's height and so stops above the bottom bar. */}
+      <div className="relative flex min-h-0 flex-1">
       <Sidebar
         onOpenElsewhere={tabPage ? handleOpenRouteElsewhere : undefined}
         width={sidebarWidth}
@@ -4588,7 +4593,7 @@ export function AppWithVault({
       {!sidebarCollapsed && (
         <SidebarResizeHandle
           isResizing={sidebarResizing}
-          secondaryBarVisible={mainSecondaryTopBarVisible}
+          topRowHost={topRowHost}
           width={sidebarWidth}
           minWidth={sidebarMinWidthPx}
           maxWidth={sidebarMaxWidthPx}

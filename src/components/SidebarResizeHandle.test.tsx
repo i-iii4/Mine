@@ -2,12 +2,17 @@ import { fireEvent, render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { SidebarResizeHandle } from "./SidebarResizeHandle";
 
-/// The divider is the handle, looking as shadcn's `SidebarRail` does (user's
+/// The divider is the handle, built as shadcn's `SidebarRail` is (user's
 /// decision of 07.10.2026).
 describe("SidebarResizeHandle", () => {
+  // The testing library's cleanup unmounts each render, which takes the
+  // portalled part out of this row again.
+  const topRow = document.createElement("header");
+  document.body.append(topRow);
+
   const props = () => ({
     isResizing: false,
-    secondaryBarVisible: false,
+    topRowHost: topRow,
     width: 400,
     minWidth: 314,
     maxWidth: 600,
@@ -17,38 +22,73 @@ describe("SidebarResizeHandle", () => {
     onResizeEnd: vi.fn(),
     onResizeTo: vi.fn(),
   });
-
-  it("is the rail's 16px catch whose 2px line lights in both bands under the pointer", () => {
-    const { container } = render(<SidebarResizeHandle {...props()} />);
-    const catches = Array.from(container.querySelectorAll<HTMLElement>("[data-sidebar-resize-handle]"));
-    expect(catches).toHaveLength(2);
-    for (const element of catches) {
-      expect(element.style.width).toBe("16px");
-      expect(element.style.left).toBe("calc(var(--sidebar-width) - 9px)");
-      expect(element).toHaveClass("cursor-col-resize", "after:left-1/2", "after:w-[2px]");
-      expect(element.childElementCount).toBe(0);
-      expect(element).not.toHaveClass("after:bg-sidebar-border");
-    }
-    fireEvent.pointerEnter(catches[1]!);
-    for (const element of catches) expect(element).toHaveClass("after:bg-sidebar-border");
-    fireEvent.pointerLeave(catches[1]!);
-    for (const element of catches) expect(element).not.toHaveClass("after:bg-sidebar-border");
+  const parts = (container: HTMLElement) => ({
+    top: topRow.querySelector<HTMLElement>("[data-sidebar-resize-handle]")!,
+    body: container.querySelector<HTMLElement>("[role='separator']")!,
   });
 
-  it("keeps the line lit through a drag and points the cursor back at a bound", () => {
-    const { container, rerender } = render(<SidebarResizeHandle {...props()} isResizing />);
-    const line = container.querySelector<HTMLElement>("[role='separator']")!;
-    expect(line).toHaveClass("after:bg-sidebar-border");
-    rerender(<SidebarResizeHandle {...props()} width={314} />);
-    expect(line).toHaveClass("cursor-e-resize");
+  it("lays the rail's 16px catch in the top row and in the body, each as tall as its box", () => {
+    const { container } = render(<SidebarResizeHandle {...props()} />);
+    const { top, body } = parts(container);
+    // The body's part is the handle's own child: the body positions it.
+    expect(body.parentElement).toBe(container);
+    expect(top.style.top).toBe("0px");
+    expect(top.style.bottom).toBe("-1px");
+    expect(body.style.top).toBe("0px");
+    expect(body.style.bottom).toBe("0px");
+    for (const element of [top, body]) {
+      expect(element.style.width).toBe("16px");
+      expect(element.style.left).toBe("calc(var(--sidebar-width) - 9px)");
+      expect(element).toHaveClass("absolute", "cursor-col-resize", "after:left-1/2", "after:w-[2px]");
+      expect(element.childElementCount).toBe(0);
+      expect(element).not.toHaveClass("after:bg-border-accent");
+    }
+  });
+
+  it("lights the line in both parts only after the hover wait, and puts it out with no wait", () => {
+    const { container } = render(<SidebarResizeHandle {...props()} />);
+    const { top, body } = parts(container);
+    fireEvent.pointerEnter(top);
+    for (const element of [top, body]) {
+      expect(element).toHaveClass("after:bg-border-accent", "after:delay-300");
+    }
+    fireEvent.pointerLeave(top);
+    for (const element of [top, body]) {
+      expect(element).not.toHaveClass("after:bg-border-accent");
+      expect(element).not.toHaveClass("after:delay-300");
+    }
+  });
+
+  it("lights the line with no wait from the press and through a drag", () => {
+    const { container, rerender } = render(<SidebarResizeHandle {...props()} />);
+    const { body } = parts(container);
+    body.setPointerCapture = vi.fn();
+    body.releasePointerCapture = vi.fn();
+    body.hasPointerCapture = vi.fn(() => true);
+    fireEvent.pointerEnter(body);
+    fireEvent.pointerDown(body, { pointerId: 1, button: 0, clientX: 400 });
+    expect(body).toHaveClass("after:bg-border-accent");
+    expect(body).not.toHaveClass("after:delay-300");
+    fireEvent.pointerUp(body, { pointerId: 1, clientX: 400 });
+    expect(body).toHaveClass("after:delay-300");
+
+    rerender(<SidebarResizeHandle {...props()} isResizing />);
+    expect(body).toHaveClass("after:bg-border-accent");
+    expect(body).not.toHaveClass("after:delay-300");
+  });
+
+  it("points the cursor back at a bound", () => {
+    const { container, rerender } = render(<SidebarResizeHandle {...props()} width={314} />);
+    const { top, body } = parts(container);
+    for (const element of [top, body]) expect(element).toHaveClass("cursor-e-resize");
     rerender(<SidebarResizeHandle {...props()} width={600} />);
-    expect(line).toHaveClass("cursor-w-resize");
+    for (const element of [top, body]) expect(element).toHaveClass("cursor-w-resize");
   });
 
   it("resizes on a drag past the threshold and does nothing on a click", () => {
     const p = props();
     const { container } = render(<SidebarResizeHandle {...p} />);
-    const line = container.querySelector<HTMLElement>("[role='separator']")!;
+    const { body: line } = parts(container);
     line.setPointerCapture = vi.fn();
     line.releasePointerCapture = vi.fn();
     line.hasPointerCapture = vi.fn(() => true);
@@ -73,7 +113,7 @@ describe("SidebarResizeHandle", () => {
   it("moves the line from the keyboard as a separator does, and keeps the keys", () => {
     const p = props();
     const { container } = render(<SidebarResizeHandle {...p} />);
-    const line = container.querySelector<HTMLElement>("[role='separator']")!;
+    const { body: line } = parts(container);
     expect(line).toHaveAttribute("aria-orientation", "vertical");
     expect(line).toHaveAttribute("aria-valuenow", "400");
     expect(line).toHaveAttribute("tabindex", "0");
@@ -92,12 +132,18 @@ describe("SidebarResizeHandle", () => {
   it("lets nothing through while a card or a collection is dragged", () => {
     const p = { ...props(), disabled: true };
     const { container } = render(<SidebarResizeHandle {...p} />);
-    const line = container.querySelector<HTMLElement>("[role='separator']")!;
+    const { body: line } = parts(container);
     expect(line).toHaveClass("pointer-events-none");
     expect(line).toHaveAttribute("tabindex", "-1");
-    fireEvent.pointerEnter(line);
-    expect(line).not.toHaveClass("after:bg-sidebar-border");
     fireEvent.keyDown(line, { key: "ArrowLeft" });
     expect(p.onResizeTo).not.toHaveBeenCalled();
+    fireEvent.pointerEnter(line);
+    expect(line).not.toHaveClass("after:bg-border-accent");
+  });
+
+  it("lays only the body's part until the top row is there", () => {
+    const { container } = render(<SidebarResizeHandle {...props()} topRowHost={null} />);
+    expect(container.querySelectorAll("[data-sidebar-resize-handle]")).toHaveLength(1);
+    expect(topRow.childElementCount).toBe(0);
   });
 });

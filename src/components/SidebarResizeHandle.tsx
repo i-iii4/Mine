@@ -1,20 +1,20 @@
 import { useRef, useCallback, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 
-// The divider between the sidebar and the feed is the handle itself, looking
-// and answering the pointer as the source design system's sidebar rail does
-// (shadcn `SidebarRail`; user's decision of 07.10.2026): a 16px catch on the
-// sidebar's 1px line, and a 2px line in the line's own colour while the
-// pointer is over it. The rail only toggles; this one resizes the panel
+// The divider between the sidebar and the feed is the handle itself, built as
+// the source design system's sidebar rail is (shadcn `SidebarRail`; user's
+// decision of 07.10.2026): a 16px catch on the sidebar's 1px line and a 2px
+// line drawn over it. The rail only toggles; this one resizes the panel
 // between its minimum and maximum width and never collapses it, which the
 // sidebar button and its hotkey do.
+//
+// The line runs through two boxes, the top row and the body, so the catch is
+// laid in each of them and takes its height from the box: whatever height the
+// top row has, and whatever bar stands below the body, the catch covers the
+// line and nothing else (user's report of 07.10.2026: a catch of fixed heights
+// missed the tall top row and crossed the bottom bar).
 
-// Both top chrome bars are h-8 (32px). The visible sidebar/main divider runs
-// through the TOP menu and the BODY, but the SECONDARY (stats) bar in between
-// has no visible line, so the catch covers the top band and the body band and
-// skips the secondary bar's band entirely.
-const TOP_MENU_HEIGHT = 32;
-const SECONDARY_BAR_HEIGHT = 32;
 /// The rail's catch, `w-4`. The rail sits in the sidebar's content box and is
 /// pulled back by half its width, so its middle, where its 2px line starts,
 /// falls on the sidebar's 1px right border, the last pixel inside
@@ -30,8 +30,9 @@ const KEYBOARD_STEP_PX = 16;
 
 interface SidebarResizeHandleProps {
   isResizing: boolean;
-  /** Whether the secondary (stats) bar is shown: its band is skipped. */
-  secondaryBarVisible: boolean;
+  /** The top row the line runs through above the body. The body's part is
+   *  rendered in place, so its parent must be the positioned body. */
+  topRowHost: HTMLElement | null;
   /** The panel's width now and its bounds, for the separator's value. */
   width: number;
   minWidth: number;
@@ -50,7 +51,7 @@ function clearNativeSelection(): void {
 
 export function SidebarResizeHandle({
   isResizing,
-  secondaryBarVisible,
+  topRowHost,
   width,
   minWidth,
   maxWidth,
@@ -63,8 +64,9 @@ export function SidebarResizeHandle({
   const startXRef = useRef(0);
   const startWidthRef = useRef(0);
   const didDragRef = useRef(false);
-  // One line runs through both bands, so the pointer over either lights both.
+  // One line runs through both parts, so the pointer over either lights both.
   const [pointerOver, setPointerOver] = useState(false);
+  const [pressed, setPressed] = useState(false);
 
   const handlePointerDown = useCallback(
     (e: PointerEvent<HTMLDivElement>) => {
@@ -79,6 +81,7 @@ export function SidebarResizeHandle({
       startXRef.current = e.clientX;
       startWidthRef.current = width;
       didDragRef.current = false;
+      setPressed(true);
     },
     [disabled, width],
   );
@@ -106,6 +109,7 @@ export function SidebarResizeHandle({
       if (didDragRef.current) onResizeEnd();
       else document.body.classList.remove("sidebar-resizing");
       didDragRef.current = false;
+      setPressed(false);
     },
     [onResizeEnd],
   );
@@ -135,10 +139,20 @@ export function SidebarResizeHandle({
     width <= minWidth ? "cursor-e-resize"
       : width >= maxWidth ? "cursor-w-resize"
         : "cursor-col-resize";
+  // The line lights in the navigation highlight (`--border-accent`,
+  // SPEC_COLOR_RULES.md). A pointer that only passes over the catch lights
+  // nothing: the light waits 300ms, as a split view's sash does, then fades in.
+  // A press, a drag and a keyboard focus light it with no wait; leaving fades
+  // it out with no wait.
+  const held = pressed || isResizing;
   const catchClassName = cn(
-    "fixed z-40 outline-hidden after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] focus-visible:after:bg-ring",
+    "absolute z-40 outline-hidden",
+    "after:absolute after:inset-y-0 after:left-1/2 after:w-[2px]",
+    "after:transition-[background-color] after:duration-[180ms] after:ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:after:duration-0",
+    "focus-visible:after:bg-ring focus-visible:after:delay-0",
     disabled && "pointer-events-none",
-    !disabled && (pointerOver || isResizing) && "after:bg-sidebar-border",
+    !disabled && held && "after:bg-border-accent",
+    !disabled && !held && pointerOver && "after:bg-border-accent after:delay-300",
     !isResizing && cursorClassName,
   );
   const pointerHandlers = {
@@ -149,20 +163,22 @@ export function SidebarResizeHandle({
     onPointerUp: finishPointer,
     onPointerCancel: finishPointer,
   };
-  const bodyTop = secondaryBarVisible ? TOP_MENU_HEIGHT + SECONDARY_BAR_HEIGHT : TOP_MENU_HEIGHT;
 
   return (
     <>
-      {/* Top menu band: the line is visible here, so it can be grabbed. */}
-      <div
-        aria-hidden="true"
-        data-sidebar-resize-handle=""
-        className={catchClassName}
-        style={{ top: 0, height: TOP_MENU_HEIGHT, left: CATCH_LEFT, width: CATCH_WIDTH }}
-        {...pointerHandlers}
-      />
-      {/* Body band: below the secondary (stats) bar, whose band has no line.
-          The one the keyboard reaches. */}
+      {/* Top row part: down through the row's separator, so the lit line
+          meets the body's part without a gap. */}
+      {topRowHost && createPortal(
+        <div
+          aria-hidden="true"
+          data-sidebar-resize-handle=""
+          className={catchClassName}
+          style={{ top: 0, bottom: -1, left: CATCH_LEFT, width: CATCH_WIDTH }}
+          {...pointerHandlers}
+        />,
+        topRowHost,
+      )}
+      {/* Body part, the one the keyboard reaches. */}
       <div
         role="separator"
         aria-orientation="vertical"
@@ -173,7 +189,7 @@ export function SidebarResizeHandle({
         tabIndex={disabled ? -1 : 0}
         data-sidebar-resize-handle=""
         className={catchClassName}
-        style={{ top: bodyTop, bottom: 0, left: CATCH_LEFT, width: CATCH_WIDTH }}
+        style={{ top: 0, bottom: 0, left: CATCH_LEFT, width: CATCH_WIDTH }}
         onKeyDown={handleKeyDown}
         {...pointerHandlers}
       />
