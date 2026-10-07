@@ -177,16 +177,17 @@ describe("buttons.css", () => {
     expect(hover?.selector).toContain(".button-depth.state-active");
   });
 
-  it("draws the macOS outline one quiet line step brighter than the face, rising with it, inside the box", () => {
-    // The steps on the root: a quiet line step, darker in light, lighter in dark.
+  it("draws the macOS outline 1½ quiet line steps brighter than the face, rising with it, inside the box", () => {
+    // The steps on the root: 1½ quiet line steps, darker in light, lighter in
+    // dark (half a step up for legibility, user's decision of 07.10.2026).
     const tokens = rules.filter(({ body }) => body.includes("--macos-outline-step:"));
     expect(tokens).toHaveLength(3);
     const step = (body: string) => Number(/--macos-outline-step: (-?[\d.]+);/.exec(body)?.[1]);
     const light = tokens.find(({ selector }) => !isDark(selector));
-    expect(step(light?.body ?? "")).toBeCloseTo(-QUIET, 4);
+    expect(step(light?.body ?? "")).toBeCloseTo(-1.5 * QUIET, 4);
     const dark = tokens.filter(({ selector }) => isDark(selector));
     expect(dark).toHaveLength(2);
-    for (const { body } of dark) expect(step(body)).toBeCloseTo(QUIET / K4, 4);
+    for (const { body } of dark) expect(step(body)).toBeCloseTo(1.5 * QUIET / K4, 4);
 
     const macos = rules.filter(({ selector }) => selector.includes(":not([data-buttons])") && !selector.includes(":active"));
     expect(macos).toHaveLength(2);

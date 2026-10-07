@@ -53,25 +53,26 @@ html:root :is(.bg-depth-fill, .bg-component-fill-inner):is(:disabled, :disabled 
 
 /* ── Buttons: macOS ──────────────────────────────────────────────────────────
    The default style (no data-buttons). On every depth carrier a 0.5px
-   outline inside the box, one quiet line step brighter than the button's
-   own face (light ΔL 0.03 darker, dark 0.0429 lighter), and nothing over
+   outline inside the box, one and a half quiet line steps brighter than the
+   button's own face (light ΔL 0.045 darker, dark 0.0643 lighter; half a
+   step up for legibility, user's decision of 07.10.2026), and nothing over
    it: the bottom edge and the dark highlight went, so it is even all round
    (05.10.2026). Set on the element, so
    `var(--surface)` is the surface under this button. Hover, an open menu
    and a selected key work the outline out from the face with the state
    layer, so it rises with the face, as in Linear (decision 05.10.2026).
    Inset, so the box keeps its size. Disabled carriers keep the disabled
-   frame. The step is a quiet line step (SPEC_COLOR_RULES.md, K10). */
+   frame. The step is 1½ quiet line steps (SPEC_COLOR_RULES.md, K10). */
 html:root {
-  --macos-outline-step: -0.03;
+  --macos-outline-step: -0.045;
 }
 @media (prefers-color-scheme: dark) {
   html:root:not([data-theme="light"]) {
-    --macos-outline-step: 0.0429;
+    --macos-outline-step: 0.0643;
   }
 }
 html:root[data-theme="dark"] {
-  --macos-outline-step: 0.0429;
+  --macos-outline-step: 0.0643;
 }
 html:root:not([data-buttons]) :is(
   .button-depth,
