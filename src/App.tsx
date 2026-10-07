@@ -2862,11 +2862,13 @@ export function AppWithVault({
   const handleSurfaceSearchShortcut = useCallback((target: SurfaceSearchShortcutTarget) => {
     const active = document.activeElement;
     // Focus inside the search overlay must not swallow the shortcut: a repeat
-    // Cmd+F closes the overlay (SPEC_SEARCH_OVERLAY.md). Other overlays
-    // (dialogs, menus) keep owning the keyboard.
+    // Cmd+F closes the overlay (SPEC_SEARCH_OVERLAY.md). An open card is a
+    // surface the overlay opens over, not an overlay of its own (user's report
+    // of 07.10.2026: Cmd+F did nothing over an open card); a dialog, menu or
+    // preview above it keeps owning the keyboard.
     const insideSearchOverlay =
       active instanceof Element && active.closest("[data-search-overlay]") !== null;
-    if (!insideSearchOverlay && isOverlayKeyboardTarget(active)) return;
+    if (!insideSearchOverlay && isDetailShortcutBlockedTarget(active)) return;
     if (target === "sidebar") {
       focusSidebarSearch();
       return;
@@ -2992,7 +2994,8 @@ export function AppWithVault({
           ? "main"
           : null;
       if (searchSurface) {
-        if (isOverlayKeyboardTarget(e.target)) return;
+        // Opens over an open card too; only a layer above the card holds it.
+        if (isDetailShortcutBlockedTarget(e.target)) return;
         e.preventDefault();
         handleSurfaceSearchShortcut(searchSurface);
         return;

@@ -1980,6 +1980,32 @@ describe("AppWithVault", () => {
     });
   });
 
+  it("opens the search overlay over an open card, from the menu and the keyboard (07.10.2026)", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+    fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+    await waitFor(() => expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block"));
+
+    // Focus inside the open card: the card is a surface, not an overlay.
+    const insideCard = screen.getByRole("button", { name: "Delete detail" });
+    insideCard.focus();
+    fireEvent(window, new CustomEvent("surface-search-shortcut", { detail: { payload: "main" } }));
+    expect(document.querySelector("[data-search-overlay]")).not.toBeNull();
+    expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
+
+    fireEvent(window, new CustomEvent("surface-search-shortcut", { detail: { payload: "main" } }));
+    await waitFor(() => expect(document.querySelector("[data-search-overlay]")).toBeNull());
+
+    const stillInsideCard = screen.getByRole("button", { name: "Delete detail" });
+    stillInsideCard.focus();
+    fireEvent.keyDown(stillInsideCard, { key: "f", code: "KeyF", metaKey: true });
+    expect(document.querySelector("[data-search-overlay]")).not.toBeNull();
+  });
+
   it("uses the native sidebar shortcut in Tauri and the keydown fallback in browsers", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
