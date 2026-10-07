@@ -61,19 +61,20 @@ describe("the sidebar's filter row fit (DESIGN_SYSTEM.md, «Сжатие ряд�
   const min = SIDEBAR_FIELD_MIN_WIDTH_PX;
 
   it("keeps everything while the field has its minimum", () => {
-    render(<Row widths={{ full: min, name: min, search: 0 }} />);
+    render(<Row widths={{ full: min, name: min }} />);
     expect(screen.getByTestId("fit")).toHaveTextContent("full");
     expect(screen.getByTestId("row")).toHaveAttribute("data-row-fit", "full");
   });
 
-  it("narrows the name first", () => {
-    render(<Row widths={{ full: min - 1, name: min, search: 0 }} />);
+  it("narrows the name when the field would fall short", () => {
+    render(<Row widths={{ full: min - 1, name: min }} />);
     expect(screen.getByTestId("fit")).toHaveTextContent("name");
   });
 
-  it("folds the field when the narrowed name still leaves it short", () => {
-    render(<Row widths={{ full: 0, name: min - 1, search: 0 }} />);
-    expect(screen.getByTestId("fit")).toHaveTextContent("search");
+  it("gives up nothing past the name: the field and `+` never go (07.10.2026)", () => {
+    render(<Row widths={{ full: 0, name: min - 1 }} />);
+    expect(screen.getByTestId("fit")).toHaveTextContent("name");
+    expect(screen.getByTestId("row")).toHaveAttribute("data-row-fit", "name");
   });
 });
 
@@ -91,7 +92,7 @@ describe("the row follows the sidebar after it opens again", () => {
   // grows from 0 to its width over 200ms when the sidebar opens.
   const layout = { rowWidth: 313 };
   const fieldWidth = (stage: SidebarRowFit) =>
-    stage === "search" ? 0 : Math.max(0, layout.rowWidth - (stage === "full" ? 140 : 120));
+    Math.max(0, layout.rowWidth - (stage === "full" ? 140 : 120));
 
   // The app's page: while its space opens the header has no row; then the
   // row, whose field and actions go while the sidebar is collapsed.
@@ -113,7 +114,7 @@ describe("the row follows the sidebar after it opens again", () => {
     );
   }
 
-  it("measures the row again when its width settles after the sidebar opens (stuck folded, 04.10.2026)", () => {
+  it("measures the row again when its width settles after the sidebar opens (stuck narrowed, 04.10.2026)", () => {
     layout.rowWidth = 313;
     const { rerender } = render(<Page ready={false} collapsed={false} />);
     rerender(<Page ready collapsed={false} />);
@@ -127,22 +128,22 @@ describe("the row follows the sidebar after it opens again", () => {
     // of its width transition, when the row is still 0 wide.
     layout.rowWidth = 0;
     rerender(<Page ready collapsed={false} />);
-    expect(screen.getByTestId("row")).toHaveAttribute("data-row-fit", "search");
+    expect(screen.getByTestId("row")).toHaveAttribute("data-row-fit", "name");
 
-    // The transition ends: the row has its width again and keeps the field.
+    // The transition ends: the row has its width again and keeps the name.
     layout.rowWidth = 313;
     deliverResizes();
     expect(screen.getByTestId("row")).toHaveAttribute("data-row-fit", "full");
   });
 
-  it("folds and unfolds with a drag of the sidebar's edge", () => {
+  it("narrows and widens the name with a drag of the sidebar's edge", () => {
     layout.rowWidth = 313;
     const { rerender } = render(<Page ready={false} collapsed={false} />);
     rerender(<Page ready collapsed={false} />);
     deliverResizes();
-    layout.rowWidth = 170;
+    layout.rowWidth = 200;
     deliverResizes();
-    expect(screen.getByTestId("row")).toHaveAttribute("data-row-fit", "search");
+    expect(screen.getByTestId("row")).toHaveAttribute("data-row-fit", "name");
     layout.rowWidth = 313;
     deliverResizes();
     expect(screen.getByTestId("row")).toHaveAttribute("data-row-fit", "full");

@@ -1355,10 +1355,11 @@ body {
      (DESIGN_SYSTEM.md, «Иконочные кнопки хрома»). */
   --chrome-icon-edge-pad: 8px;
 }
-/* The tall chrome the person can switch to (SPEC_TABS.md, В83): the top
-   rows, those closed by a line below them, the tab bar's too, step as a row
-   of the sidebar's table; the bottom bar keeps its height. Controls keep
-   their 24px plate, centred in the row. */
+/* The tall chrome, a window's default since 07.10.2026 (SPEC_TABS.md, В83):
+   the top rows, those closed by a line below them, the tab bar's too, step as
+   a row of the sidebar's table; the bottom bar keeps its height. Controls keep
+   their 24px plate, centred in the row. The backend sets the attribute before
+   a page's first frame. */
 :root[data-chrome-height="40"] .chrome-row[data-chrome-separator="bottom"] {
   /* A row and its 1px line make one table row's step. */
   --chrome-row-content-height: calc(var(--sidebar-row-height) - 1px);
@@ -1467,38 +1468,16 @@ button:active:not(:disabled) > .button-depth,
   outline-offset: -1px;
 }
 
-/* The sidebar's filter row gives room up in a fixed order
-   (useSidebarRowFit.ts; DESIGN_SYSTEM.md, «Сжатие ряда фильтра»). The
-   stage is the row's `data-row-fit`; every stage keeps what the one before
-   it took. */
+/* The sidebar's filter row gives room up when the sidebar narrows
+   (useSidebarRowFit.ts; DESIGN_SYSTEM.md, «Сжатие ряда фильтра»): at the
+   row's `data-row-fit="name"` the space name shrinks so the field keeps its
+   minimum. */
 :root {
   /* The space name at its narrowest: about ten letters and the chevron. */
   --row-fit-name-min: 120px;
 }
-[data-row-fit]:not([data-row-fit="full"]) [data-row-fit-name] {
+[data-row-fit="name"] [data-row-fit-name] {
   max-width: var(--row-fit-name-min);
-}
-[data-row-fit-search-button] {
-  display: none;
-}
-/* Folded, the field stays in the row with no width, so ⌘F still reaches it;
-   focused or holding a query, it opens over the row's actions. */
-[data-row-fit="search"]:not([data-row-search-open]) [data-row-fit-field] {
-  flex: 0 0 0;
-  width: 0;
-  padding: 0;
-  opacity: 0;
-}
-[data-row-fit="search"]:not([data-row-search-open]) [data-row-fit-search-button] {
-  display: inline-flex;
-}
-/* The folded field no longer parts the search button from the actions: they
-   keep the 4px every pair of neighbouring icon buttons has. */
-[data-row-fit="search"]:not([data-row-search-open]) [data-row-fit-actions] {
-  margin-left: 4px;
-}
-[data-row-fit="search"][data-row-search-open] [data-row-fit-actions] {
-  display: none;
 }
 
 /* The create row parts the sidebar list as it appears: its height runs from

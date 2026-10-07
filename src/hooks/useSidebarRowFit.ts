@@ -1,13 +1,16 @@
-// The sidebar's filter row gives room up in a fixed order when the sidebar
-// narrows (DESIGN_SYSTEM.md, «Сжатие ряда фильтра»): first the space's name
-// shrinks to its minimum, then the filter field folds into a search button.
-// `+` never goes. (A stage that turned labelled segments into icons left with
-// the All / Connected filter, 07.10.2026.)
+// The sidebar's filter row gives room up when the sidebar narrows
+// (DESIGN_SYSTEM.md, «Сжатие ряда фильтра»): the space's name shrinks to its
+// minimum, so the filter field keeps its own. The field and `+` never go.
+// (Two later stages left on 07.10.2026: labelled segments turned into icons
+// went with the All / Connected filter, and the field folding into a search
+// button never came: at the narrowest sidebar, 314px, with every activity
+// indicator shown and a query in the field, it keeps 94px.)
 //
 // The fit is measured, not computed, as the bottom bar's is: each stage is
 // tried on the live row through its `data-row-fit` attribute, and the first
-// one that leaves the field its minimum width wins. The styles of the stages
-// answer the attribute (global.css), so a try costs a layout, not a render.
+// one that leaves the field its minimum width wins, the last one otherwise.
+// The styles of the stages answer the attribute (global.css), so a try costs
+// a layout, not a render.
 
 import {
   useCallback,
@@ -18,11 +21,11 @@ import {
   type RefObject,
 } from "react";
 
-export type SidebarRowFit = "full" | "name" | "search";
+export type SidebarRowFit = "full" | "name";
 
-const STAGES: readonly SidebarRowFit[] = ["full", "name", "search"];
+const STAGES: readonly SidebarRowFit[] = ["full", "name"];
 
-/** The narrowest the filter field may get before the row gives up more. */
+/** The narrowest the filter field may get before the name gives up room. */
 export const SIDEBAR_FIELD_MIN_WIDTH_PX = 72;
 
 /** What `useSidebarRowFit` gives its row. */
@@ -46,7 +49,7 @@ export function useSidebarRowFit(
     const row = rowElementRef.current;
     const field = fieldRef.current;
     if (!row || !field) return;
-    let chosen: SidebarRowFit = "search";
+    let chosen: SidebarRowFit = "name";
     for (const stage of STAGES.slice(0, -1)) {
       row.dataset.rowFit = stage;
       if (field.getBoundingClientRect().width >= SIDEBAR_FIELD_MIN_WIDTH_PX) {

@@ -18,7 +18,7 @@ import {
   useNavigate,
   useLocation,
 } from "react-router";
-import { Plus, Search, X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { AppSettingsMenu } from "@/components/AppSettingsMenu";
 import { ActivityIndicators } from "@/components/ActivityIndicators";
 import { Button } from "@/components/ui/button";
@@ -1075,10 +1075,6 @@ export function AppWithVault({
   const [activeDragTextSelection, setActiveDragTextSelection] = useState<TextSelectionDragPreview | null>(null);
   const mainRef = useRef<HTMLDivElement>(null);
   const sidebarSearchInputRef = useRef<HTMLInputElement>(null);
-  // The filter row over the sidebar's table gives room up in a fixed order
-  // (useSidebarRowFit.ts, its ref comes from there); folded, the field opens
-  // while focused or holding a query.
-  const [sidebarSearchFocused, setSidebarSearchFocused] = useState(false);
   const lastSidebarSearchFocusSequenceRef = useRef(0);
   const sidebarSearchChromeDragGesture = useChromeDragGesture();
   const [compactDetailTopMenuRequestSequence, setCompactDetailTopMenuRequestSequence] = useState(0);
@@ -1450,6 +1446,8 @@ export function AppWithVault({
     toggleCollapsed,
   } = useSidebarResize(windowSidebar);
 
+  // The filter row over the sidebar's table narrows the space name so the
+  // field keeps its minimum (useSidebarRowFit.ts).
   const { fit: sidebarRowFit, rowRef: sidebarRowRef } = useSidebarRowFit(
     sidebarSearchInputRef,
     [
@@ -1461,7 +1459,6 @@ export function AppWithVault({
       blocks.some((item) => item.content_in_cloud),
     ].join("|"),
   );
-  const sidebarSearchOpen = sidebarSearchFocused || sidebarSearchHasValue;
 
 
 
@@ -4375,7 +4372,6 @@ export function AppWithVault({
             )}
             data-top-chrome-space-search-group=""
             data-row-fit={sidebarCollapsed ? undefined : sidebarRowFit}
-            data-row-search-open={!sidebarCollapsed && sidebarSearchOpen ? "" : undefined}
           >
             <VaultSwitcher
               currentPath={vaultPath}
@@ -4405,25 +4401,8 @@ export function AppWithVault({
                   ].filter(Boolean).join(" ")}
                   data-sidebar-top-search-surface=""
                 >
-                  {/* The field folded for room: the search button opens it. */}
-                  <Button
-                    type="button"
-                    variant="chrome"
-                    size="chrome-icon"
-                    plate="raised"
-                    aria-label="Find or create collection"
-                    shortcut={commandById("find-collections").combo}
-                    className="ml-2"
-                    onClick={() => sidebarSearchInputRef.current?.focus()}
-                    data-row-fit-search-button=""
-                  >
-                    <Search />
-                  </Button>
                   <Input
                     ref={sidebarSearchInputRef}
-                    onFocus={() => setSidebarSearchFocused(true)}
-                    onBlur={() => setSidebarSearchFocused(false)}
-                    data-row-fit-field=""
                     {...SEARCH_INPUT_SUPPRESSION_PROPS}
                     aria-label="Find or create collection"
                     aria-activedescendant={
@@ -4468,7 +4447,7 @@ export function AppWithVault({
                       foot of the window the metadata row still carries it. */}
                   {!metadataRowAtBottom && (
                     // Icon buttons 4px apart, 8px from the column's line.
-                    <div className="mr-2 flex shrink-0 items-center gap-1" data-sidebar-top-search-actions="" data-row-fit-actions="">
+                    <div className="mr-2 flex shrink-0 items-center gap-1" data-sidebar-top-search-actions="">
                       <ActivityIndicators
                         cloudPending={blocks.filter((item) => item.content_in_cloud).length}
                         indexing={isSyncing}
