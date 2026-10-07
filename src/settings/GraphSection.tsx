@@ -23,7 +23,7 @@ export function GraphSection() {
 
   return (
     <section className="flex flex-col gap-s3">
-      <h1 className="text-lg font-semibold">Graph</h1>
+      <h1 className="text-base font-semibold">Graph</h1>
 
       <SettingRow
         label="Collections"

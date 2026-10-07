@@ -72,7 +72,7 @@ export function LayoutSection() {
     return (
       <section className="grid gap-s3" data-settings-section="layout">
         {spaces !== null && (
-          <p className="text-sm text-muted-foreground">
+          <p className="text-base text-muted-foreground">
             {error ?? "Open a space to configure its folders."}
           </p>
         )}
@@ -127,7 +127,7 @@ function SpaceLayout({ vaultId, selector }: { vaultId: string; selector: ReactNo
 
   return (
     <section className="grid gap-s3" data-settings-section="layout">
-      <h1 className="text-lg font-semibold">Where to save new files</h1>
+      <h1 className="text-base font-semibold">Where to save new files</h1>
 
       {selector}
 
@@ -157,7 +157,7 @@ function SpaceLayout({ vaultId, selector }: { vaultId: string; selector: ReactNo
         </>
       )}
 
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && <p className="text-base text-destructive">{error}</p>}
     </section>
   );
 }

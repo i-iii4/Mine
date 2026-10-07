@@ -1,4 +1,4 @@
-import { useEffect, lazy, Suspense, useState } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { ChromeRow, ChromeShell } from "@/components/ChromeRow";
 import { SETTINGS_SECTIONS, isSettingsSection, type SettingsSection } from "@/lib/settingsSections";
@@ -11,13 +11,6 @@ import { SpacesSection } from "./SpacesSection";
 import { OrphansSection } from "./OrphansSection";
 import { LayoutSection } from "./LayoutSection";
 import { UpdatesSection } from "./UpdatesSection";
-
-/// Loaded on demand: the showcase pulls in every production primitive and has
-/// no business weighing down a window opened to change a checkbox.
-const ComponentTestBench = lazy(async () => {
-  const mod = await import("@/components/ComponentTestBench");
-  return { default: mod.ComponentTestBench };
-});
 
 function initialSection(): SettingsSection {
   const asked = new URLSearchParams(window.location.search).get("section");
@@ -48,10 +41,12 @@ export function SettingsApp() {
         data-tauri-drag-region
         className="bg-chrome"
       >
+        {/* No visible title (user's decision of 07.10.2026): the row is
+            the drag surface and the traffic lights' reserve. The native
+            window title stays "Settings" for the Window menu and Mission
+            Control, hidden from the chrome (commands/settings.rs). */}
         <div data-tauri-drag-region data-traffic-light-reserve="" className="w-20 shrink-0" />
-        <div data-tauri-drag-region className="flex flex-1 items-center px-3">
-          <span className="font-mono text-sm text-muted-foreground">Settings</span>
-        </div>
+        <div data-tauri-drag-region className="flex-1" />
       </ChromeRow>
 
       <div className="flex min-h-0 flex-1">
@@ -66,7 +61,7 @@ export function SettingsApp() {
               aria-current={section === id ? "true" : undefined}
               onClick={() => setSection(id)}
               className={cn(
-                "flex h-8 shrink-0 items-center rounded-1 px-2 text-left font-mono text-sm focus-visible:outline-none",
+                "flex h-8 shrink-0 items-center rounded-1 px-2 text-left font-sans text-base focus-visible:outline-none",
                 section === id
                   ? "state-active text-foreground"
                   : "text-muted-foreground hover:text-foreground",
@@ -77,19 +72,7 @@ export function SettingsApp() {
           ))}
         </nav>
 
-        <main
-          className={cn(
-            "min-w-0 flex-1 overflow-y-auto",
-            // The showcase brings its own page padding and needs the full
-            // width; every other section keeps the settings inset.
-            section === "design-system" ? "p-0" : "p-s4",
-          )}
-        >
-          {section === "design-system" && (
-            <Suspense fallback={null}>
-              <ComponentTestBench />
-            </Suspense>
-          )}
+        <main className="min-w-0 flex-1 overflow-y-auto p-s4">
           {section === "appearance" && <AppearanceSection />}
           {section === "shortcuts" && <ShortcutsSection />}
           {section === "graph" && <GraphSection />}

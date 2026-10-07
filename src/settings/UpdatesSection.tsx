@@ -110,11 +110,11 @@ export function UpdatesSection() {
         <progress aria-label="Update download" className="w-full" max={status.total_bytes ?? undefined}
           value={status.total_bytes ? status.downloaded_bytes : undefined} />
       )}
-      {status?.notes && <p className="whitespace-pre-wrap text-sm text-muted-foreground">{status.notes}</p>}
+      {status?.notes && <p className="whitespace-pre-wrap text-base text-muted-foreground">{status.notes}</p>}
       {status?.stage === "verified" && !status.activation_available && (
-        <p className="text-sm text-muted-foreground">Installation is unavailable in this build. Your current version has not changed.</p>
+        <p className="text-base text-muted-foreground">Installation is unavailable in this build. Your current version has not changed.</p>
       )}
-      {failure && <p role="alert" className="text-sm text-destructive">{failure}</p>}
+      {failure && <p role="alert" className="text-base text-destructive">{failure}</p>}
       {busy && <span role="status" className="sr-only">{busy}</span>}
     </section>
   );

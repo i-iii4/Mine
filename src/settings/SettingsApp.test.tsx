@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { setCommandOverrides } from "@/lib/commandRegistry";
@@ -92,13 +92,30 @@ describe("SettingsApp", () => {
     expect(await screen.findByRole("heading", { name: /Orphans/ })).toBeInTheDocument();
   });
 
-  it("titles the chrome bar Settings", () => {
+  it("leaves the chrome bar without a title, a drag surface only (07.10.2026)", () => {
     renderSettings();
-    expect(screen.getByText("Settings")).toBeInTheDocument();
     const header = screen.getByRole("banner");
     expect(header).toHaveClass("chrome-row");
     expect(header).toHaveAttribute("data-chrome-separator", "bottom");
     expect(header).not.toHaveClass("border-b");
+    expect(header).toHaveTextContent(/^$/);
+    expect(header.querySelector("[data-traffic-light-reserve]")).toHaveAttribute("data-tauri-drag-region");
+  });
+
+  it("sets the window's text in the interface font at 14px (07.10.2026)", () => {
+    renderSettings();
+    const nav = screen.getByRole("navigation", { name: "Settings sections" });
+    for (const item of within(nav).getAllByRole("button")) {
+      expect(item).toHaveClass("font-sans", "text-base");
+      expect(item).not.toHaveClass("font-mono", "text-sm");
+    }
+    const heading = screen.getByRole("heading", { level: 1 });
+    expect(heading).toHaveClass("text-base", "font-semibold");
+    expect(heading).not.toHaveClass("text-lg");
+    const offSize = Array.from(document.querySelectorAll("main .text-sm, main .text-xs, main .text-lg"))
+      .filter((element) => !element.closest("[data-slot='button']"))
+      .map((element) => element.className);
+    expect(offSize).toEqual([]);
   });
 
   it("filters shortcut rows when typing in the opened Settings section", async () => {

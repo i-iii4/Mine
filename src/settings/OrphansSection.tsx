@@ -43,10 +43,10 @@ export function OrphansSection() {
   if (spaces === null || current === null) {
     return (
       <section className="flex flex-col gap-s3">
-        <h1 className="text-lg font-semibold">Orphans</h1>
-        <p className="text-sm text-muted-foreground">{DESCRIPTION}</p>
+        <h1 className="text-base font-semibold">Orphans</h1>
+        <p className="text-base text-muted-foreground">{DESCRIPTION}</p>
         {spaces !== null && (
-          <p className="py-12 text-center text-sm text-muted-foreground">
+          <p className="py-12 text-center text-base text-muted-foreground">
             {error ?? "Open a space to find its orphan media."}
           </p>
         )}
@@ -157,7 +157,7 @@ function SpaceOrphans({ space, selector }: { space: OpenSpace; selector: ReactNo
   return (
     <section className="flex flex-col gap-s3">
       <div className="flex items-center justify-between gap-s2">
-        <h1 className="text-lg font-semibold">
+        <h1 className="text-base font-semibold">
           Orphans{" "}
           <span className="font-normal text-muted-foreground">{orphans.length}</span>
         </h1>
@@ -165,12 +165,12 @@ function SpaceOrphans({ space, selector }: { space: OpenSpace; selector: ReactNo
           Refresh
         </Button>
       </div>
-      <p className="text-sm text-muted-foreground">{DESCRIPTION}</p>
+      <p className="text-base text-muted-foreground">{DESCRIPTION}</p>
 
       {selector}
 
       {orphans.length === 0 ? (
-        <p className="py-12 text-center text-sm text-muted-foreground">No orphan media</p>
+        <p className="py-12 text-center text-base text-muted-foreground">No orphan media</p>
       ) : (
         <div className="flex flex-col rounded-1 border border-border">
           <div className="flex h-8 items-center gap-s2 border-b border-border px-3">
@@ -179,7 +179,7 @@ function SpaceOrphans({ space, selector }: { space: OpenSpace; selector: ReactNo
               checked={selectAllState}
               onCheckedChange={toggleAll}
             />
-            <span className="text-sm text-muted-foreground">
+            <span className="text-base text-muted-foreground">
               {selected.size > 0 ? `${selected.size} selected` : "Select all"}
             </span>
           </div>
@@ -208,7 +208,7 @@ function SpaceOrphans({ space, selector }: { space: OpenSpace; selector: ReactNo
                       />
                     )}
                     <span className="min-w-0 flex-1 truncate text-base">{item.file_name}</span>
-                    <span className="shrink-0 text-sm text-muted-foreground">
+                    <span className="shrink-0 text-base text-muted-foreground">
                       {formatBytes(item.size_bytes)}
                     </span>
                   </label>
@@ -219,8 +219,8 @@ function SpaceOrphans({ space, selector }: { space: OpenSpace; selector: ReactNo
         </div>
       )}
 
-      {summary && <p className="text-sm text-muted-foreground">{summary}</p>}
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {summary && <p className="text-base text-muted-foreground">{summary}</p>}
+      {error && <p className="text-base text-destructive">{error}</p>}
 
       {selected.size > 0 && (
         <div className="flex items-center gap-s2">

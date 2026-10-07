@@ -78,7 +78,7 @@ function FixedShortcutRow({ command }: { command: ResolvedCommand }) {
             data-shortcut-reference=""
             className={cn(
               buttonVariants({ variant: "reference", size: "xs" }),
-              "h-5 min-w-12 font-mono font-normal",
+              "h-5 min-w-12 font-sans text-base font-normal",
             )}
           >
             {combo}
@@ -213,7 +213,7 @@ export function ShortcutsSection() {
   return (
     <section className="flex w-full max-w-[720px] flex-col gap-s3" data-shortcuts-section="">
       <div className="flex items-center justify-between gap-s3">
-        <h1 className="text-lg font-semibold">Shortcuts</h1>
+        <h1 className="text-base font-semibold">Shortcuts</h1>
         {anyRebound && (
           <Button
             type="button"
@@ -222,11 +222,13 @@ export function ShortcutsSection() {
             disabled={pending !== null}
             onClick={() => void resetAll()}
           >
-            Reset all
+            {/* The window's text is 14px (07.10.2026); an xs button sets
+                12px on itself, so the label takes its own size. */}
+            <span className="text-base">Reset all</span>
           </Button>
         )}
       </div>
-      {error?.id === "all" && <p className="text-sm text-destructive" role="alert">{error.message}</p>}
+      {error?.id === "all" && <p className="text-base text-destructive" role="alert">{error.message}</p>}
 
       <Input
         type="search"
@@ -246,7 +248,7 @@ export function ShortcutsSection() {
         if (group.length === 0) return null;
         return (
           <div key={context} className="flex flex-col" data-shortcuts-group={context}>
-            <h2 className="border-b border-border pb-2 text-sm text-muted-foreground">
+            <h2 className="border-b border-border pb-2 text-base text-muted-foreground">
               {COMMAND_CONTEXT_TITLES[context]}
             </h2>
             {group.map((command) => {
@@ -262,7 +264,7 @@ export function ShortcutsSection() {
                   <div className="min-w-0 flex-1">
                     <span className="block truncate text-base text-foreground">{command.name}</span>
                     {rowError && (
-                      <p id={`shortcut-error-${command.id}`} className="truncate text-xs text-destructive" role="alert" title={rowError} data-shortcut-error="">
+                      <p id={`shortcut-error-${command.id}`} className="truncate text-base text-destructive" role="alert" title={rowError} data-shortcut-error="">
                         {rowError}
                       </p>
                     )}
@@ -278,7 +280,7 @@ export function ShortcutsSection() {
                         aria-label={`Reset shortcut for ${command.name}`}
                         onClick={() => void reset(command.id)}
                       >
-                        Reset
+                        <span className="text-base">Reset</span>
                       </Button>
                     )}
                     <Button
@@ -291,7 +293,7 @@ export function ShortcutsSection() {
                       aria-pressed={isEditing}
                       aria-busy={pending === command.id || arming === command.id}
                       aria-describedby={rowError ? `shortcut-error-${command.id}` : undefined}
-                      className={`h-5 min-w-12 font-mono font-normal text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring ${isEditing ? "state-active text-foreground" : ""}`}
+                      className={`h-5 min-w-12 font-sans font-normal text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring ${isEditing ? "state-active text-foreground" : ""}`}
                       onClick={() => {
                         if (pendingRef.current || arming) return;
                         if (isEditing) cancel();
@@ -330,7 +332,9 @@ export function ShortcutsSection() {
                         void save(command.id, binding);
                       }}
                     >
-                      {arming === command.id ? "Preparing…" : pending === command.id ? "Saving…" : isEditing ? "Press keys" : command.combo}
+                      <span className="text-base">
+                        {arming === command.id ? "Preparing…" : pending === command.id ? "Saving…" : isEditing ? "Press keys" : command.combo}
+                      </span>
                     </Button>
                   </div>
                 </div>
@@ -339,7 +343,7 @@ export function ShortcutsSection() {
           </div>
         );
       })}
-      {visibleCommands.length === 0 && <p className="text-sm text-muted-foreground">No matching commands.</p>}
+      {visibleCommands.length === 0 && <p className="text-base text-muted-foreground">No matching commands.</p>}
     </section>
   );
 }

@@ -77,7 +77,7 @@ export function AppearanceSection() {
 
   return (
     <section className="flex flex-col gap-s3">
-      <h1 className="text-lg font-semibold">Appearance</h1>
+      <h1 className="text-base font-semibold">Appearance</h1>
 
       <SettingRow label="Theme">
         <Tabs value={theme} onValueChange={handleThemeChange} className="gap-0">

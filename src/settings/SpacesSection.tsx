@@ -146,15 +146,15 @@ function SpaceRow({ path, isOpen, stats, available, onOpen, onRemove }: SpaceRow
                 </MenuIconSlot>
                 <span className="flex flex-col">
                   <span>Remove Space</span>
-                  <span className="text-sm text-muted-foreground">Files stay on disk</span>
+                  <span className="text-base text-muted-foreground">Files stay on disk</span>
                 </span>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
       </div>
-      <p className="truncate text-sm text-muted-foreground">{path}</p>
-      <p className="text-sm text-muted-foreground" data-space-summary="">
+      <p className="truncate text-base text-muted-foreground">{path}</p>
+      <p className="text-base text-muted-foreground" data-space-summary="">
         {available
           ? statsSummary(stats)
           : "Folder unavailable: renamed, moved or on a disconnected drive"}
@@ -304,7 +304,7 @@ export function SpacesSection() {
 
   return (
     <section className="flex flex-col gap-s3">
-      <h1 className="text-lg font-semibold">Spaces</h1>
+      <h1 className="text-base font-semibold">Spaces</h1>
 
       <DndContext
         sensors={sensors}
@@ -328,7 +328,7 @@ export function SpacesSection() {
               );
             })}
             {knownVaults.length === 0 && (
-              <li className="py-8 text-center text-sm text-muted-foreground">
+              <li className="py-8 text-center text-base text-muted-foreground">
                 No known spaces
               </li>
             )}
@@ -336,7 +336,7 @@ export function SpacesSection() {
         </SortableContext>
       </DndContext>
 
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && <p className="text-base text-destructive">{error}</p>}
 
       <div>
         <Button variant="default" onClick={() => void handleAddSpace()}>
