@@ -2024,34 +2024,25 @@ URL text and never render `mark`.
 | `secondary` | `bg-secondary text-secondary-foreground` |
 | `destructive` | `bg-destructive text-white` |
 | `outline` | `border-border bg-component-fill text-foreground` |
-| `graphLabel` | `border-border bg-chrome font-sans font-normal text-muted-foreground hover:text-foreground` |
 | `ghost` | `hover:bg-accent hover:text-accent-foreground` |
 | `link` | `text-primary underline-offset-4 hover:underline` |
 
-Все бейджи следуют capsule-контракту: `h-7 rounded-pill px-3 py-1 text-base`.
-Обычные варианты используют `font-semibold`. `graphLabel` использует
-типографику бокового интерфейса: `font-sans text-base font-normal
-text-muted-foreground`. Интерактивные бейджи используют button-hover:
-`outline-1 -outline-offset-1 outline-component-fill-hover`.
+Все бейджи следуют capsule-контракту: `h-7 rounded-pill px-3 py-1 text-base`,
+вес `font-semibold`.
 
-### GraphCollectionLabel
+### Подпись коллекции на графе
 
-`GraphCollectionLabel` — дизайн-системный эталон label-ноды коллекции. Это
-capsule Badge, а не Button: компонент собирается как
-`Badge variant="graphLabel" interactive` и получает только button-like hover/focus
-outline. Заливка всегда `bg-chrome`, то есть тот же surface, что permanent top
-chrome; это сохраняет читаемость label поверх canvas-контента. Текст повторяет
-боковой интерфейс: `font-sans text-base font-normal text-muted-foreground`; при
-hover/focus текст становится `text-foreground`, как hover-строки бокового
-интерфейса.
-
-Graph View рендерит collection labels canvas-native, но обязан повторять этот
-контракт токенов: `bg-chrome`, `border-border`, `text-muted-foreground`,
-hover/focus text `text-foreground`, hover outline из
-`outline-component-fill-hover`, `h-7`, `px-3`, `rounded-pill`, `text-base`,
-`font-normal`. Это исключение сделано архитектурно: граф, hitbox, hover/drag и
-collision должны жить в одном canvas/d3-force координатном пространстве, без DOM
-overlay поверх графа.
+Graph View рисует подпись коллекции на холсте своим кодом (DOM-компонента у
+неё нет: граф, hitbox, hover/drag и collision живут в одном canvas/d3-force
+координатном пространстве, без DOM overlay поверх графа). Контракт подписи:
+капсула `h-7` (28px), `px-3` (12px), `rounded-pill`, линия `border-border`,
+заливка `bg-chrome` (тот же surface, что верхние ряды хрома; держит
+читаемость поверх содержимого холста), текст `font-sans text-base`
+(14px) `font-normal` цвета `text-muted-foreground`; при наведении и фокусе
+текст `text-foreground` и контур `outline-component-fill-hover` толщиной 1px.
+До 07.10.2026 этот контракт держал DOM-образец `GraphCollectionLabel` с
+вариантом бейджа `graphLabel`; он показывался только в витрине
+дизайн-системы и удалён вместе с ней по решению пользователя.
 
 ### GraphLink
 

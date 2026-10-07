@@ -638,12 +638,14 @@ mid-stride, and only on the collections large enough not to settle in time.
 remembered the ticks run at 0, because a warmup runs the whole rearrangement
 invisibly and the user sees a substituted picture instead of a graph moving.
 
-Canvas-native collection labels still follow the design-system
-`GraphCollectionLabel` contract from `src/components/GraphCollectionLabel.tsx`
-and `src/components/ui/badge.tsx`. Runtime canvas paint resolves the same tokens:
+Canvas-native collection labels follow the contract in DESIGN_SYSTEM.md,
+«Подпись коллекции на графе». Runtime canvas paint resolves these tokens:
 `border-border`, `bg-chrome`, `text-muted-foreground`, `rounded-pill`, `h-7`,
 `px-3`, `font-sans`, `text-base`, `font-normal`, hover text
-`text-foreground`, hover outline `outline-component-fill-hover`.
+`text-foreground`, hover outline `outline-component-fill-hover`. The DOM
+reference `GraphCollectionLabel` (Badge variant `graphLabel`) was shown only in
+the design-system showcase and was removed with it on 07.10.2026 (user's
+decision); the canvas paint never depended on it.
 
 Rules:
 
@@ -682,7 +684,7 @@ Rules:
 
 | Kind | Shape | Label |
 |---|---|---|
-| `collection` | canvas-native capsule matching `GraphCollectionLabel` | always visible |
+| `collection` | canvas-native capsule (DESIGN_SYSTEM.md, «Подпись коллекции на графе») | always visible |
 | `card` | sidebar micro thumbnail: screen-fixed square `32 / globalScale`, no rounding, no stroke | search match or keyboard/pointer selection |
 
 Card thumbnails use cover crop, clipped into the square. Collection hit areas
@@ -693,8 +695,7 @@ visible pill, not on a hidden circle.
 
 Labels:
 
-- collection labels: always visible as canvas-native `GraphCollectionLabel`
-  equivalents;
+- collection labels: always visible as canvas-native capsules;
 - card labels: none. A card node is never captioned. The rule used to name two
   cases and both were wrong: there are no search matches to label, because Graph
   View has no graph-local search, and the selected node already carries a

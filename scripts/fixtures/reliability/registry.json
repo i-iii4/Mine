@@ -1539,6 +1539,7 @@
         "src/components/VaultConflictsBanner.tsx",
         "src/components/VaultSwitcher.tsx",
         "src/components/ui/badge.tsx",
+        "src/components/GraphCollectionLabel.tsx",
         "src/components/ui/button.tsx",
         "src/components/ui/checkbox.tsx",
         "src/components/ui/dialog.tsx",

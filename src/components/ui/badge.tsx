@@ -17,21 +17,14 @@ const badgeVariants = cva(
           "bg-destructive font-semibold text-white [a&]:hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60",
         outline:
           "border-border bg-component-fill font-semibold text-foreground",
-        graphLabel:
-          "border-border bg-chrome font-sans font-normal text-muted-foreground hover:text-foreground focus-visible:text-foreground",
         ghost:
           "font-semibold [a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
         link:
           "font-semibold text-primary underline-offset-4 [a&]:hover:underline",
       },
-      interactive: {
-        true: "hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-component-fill-hover",
-        false: "",
-      },
     },
     defaultVariants: {
       variant: "default",
-      interactive: false,
     },
   }
 )
@@ -39,12 +32,10 @@ const badgeVariants = cva(
 function Badge({
   className,
   variant = "default",
-  interactive = false,
   asChild = false,
   ...props
 }: React.ComponentProps<"span"> &
   VariantProps<typeof badgeVariants> & {
-    interactive?: boolean
     asChild?: boolean
   }) {
   const Comp = asChild ? Slot.Root : "span"
@@ -53,8 +44,7 @@ function Badge({
     <Comp
       data-slot="badge"
       data-variant={variant}
-      data-interactive={interactive ? "true" : undefined}
-      className={cn(badgeVariants({ variant, interactive }), className)}
+      className={cn(badgeVariants({ variant }), className)}
       {...props}
     />
   )
