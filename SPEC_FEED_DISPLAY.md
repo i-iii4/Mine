@@ -36,9 +36,9 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTU
 **Д1.** Кнопка `Display` с иконкой Lucide `Settings2` стоит в верхней
 панели, во втором уровне хрома, у правого края, на оси кнопки Mine. Это штатная
 иконка хрома, как у кнопки Mine: `Button variant="chrome" size="chrome-icon"`
-в `ChromeActions` с краевым отступом `--chrome-icon-edge-pad`, поэтому обе
+в `ChromeActions` с краевым отступом `--chrome-edge-pad`, поэтому обе
 иконки стоят на одной вертикали. Имя для чтения с экрана «Display options».
-Кнопка открывает штатное меню `DropdownMenu` ширины `command`, выровненное по
+Кнопка открывает штатное меню `DropdownMenu` ширины по содержимому (общее правило меню, от 128 до 300px), выровненное по
 правому краю кнопки. Иконка выбрана 30.09.2026 вместо `SlidersHorizontal`: при
 тогдашних 16 px та рисовала около 13 × 13 px из девяти отрезков и читалась
 тяжелее соседних иконок хрома; у `Settings2` четыре элемента и рисунок около

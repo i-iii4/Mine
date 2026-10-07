@@ -2113,12 +2113,12 @@ they must never widen the dialog or overlap footer actions.
 Content: `rounded-1 border bg-card p-1 text-card-foreground` в разметке, но стоит на `--popover`: правило в `global.css` ставит меню и подменю фон и `--surface` плавающего слоя (раздел «Поверхности»); тень единая для всплывающих элементов (см. «Всплывающие элементы»).
 Item: `rounded-1 px-2 py-1.5 text-base cursor-default`.
 Item hover/focus uses the active surface swatch: `focus:state-active focus:text-foreground`. Submenu trigger open state uses the same `state-active`. Item `variant="destructive"`: красный текст (`text-destructive`), тот же hover/focus фон (`focus:state-active`).
-Width is semantic, not local/ad-hoc. Product components must choose one of the
-floating width roles from «Всплывающие элементы» through
-`DropdownMenuContent` / `DropdownMenuSubContent` `widthRole`: `command`,
-`selector`, `picker`. Raw `w-64` / `w-72` in feature components is invalid
-unless it is the implementation of a named role inside the shared menu
-primitive.
+Width follows one rule for every menu, submenu and context menu
+(`[data-floating-menu]`, «Всплывающие элементы»; 07.10.2026): the longest
+row, from 128px to 300px; a list with a search field holds its opening width
+while the query narrows it. The former width roles (`command`, `selector`,
+`picker`, `widthRole`) are gone. Raw `w-64` / `w-72` in feature components is
+invalid.
 
 Выбор из нескольких значений (`DropdownMenuRadioItem`, `ContextMenuRadioItem`)
 не сдвигает текст на `pl-8` и не рисует кружок: текущий пункт несёт галочку
@@ -2669,7 +2669,7 @@ primitives и те же состояния, что desktop UI:
   text at 16px. Chevron sits inside the pill immediately after the space name
   (padding `pl-2 pr-1`, no gap: section «Иконка рядом с текстом»),
   starts as right-facing, and rotates down on open. The dropdown uses
-  `widthRole="selector"`, `align="start"`, and `bg-accent`. The same row owns
+  the shared content width rule (128 to 300px), `align="start"`, and `bg-accent`. The same row owns
   the top-right close action through shared `ChromeCloseButton`, the same
   primitive used by expanded-card chrome;
 - clip type switcher: the app's pill (`Tabs`, `TabsList variant="chrome"

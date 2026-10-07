@@ -444,7 +444,7 @@ Layout order (выравнивание вправо по решению поль
 - команды справа, в одной `ChromeActions` (`data-feed-selection-actions`)
   вместе с крестиком, по правилу «Иконочные кнопки хрома» (DESIGN_SYSTEM.md),
   как меню и закрытие открытой карточки: между кнопками `4px` (`gap-1`), от
-  края окна до подсветки крестика `8px` (`--chrome-icon-edge-pad`); у самого
+  края окна до подсветки крестика `8px` (`--chrome-edge-pad`); у самого
   ряда только левый отступ `--main-secondary-pad-x`;
 - последним стоит крестик `Clear selection`: `ChromeCloseButton`
   (`Button variant="chrome" size="chrome-icon"`), подсветка `24×24` при
