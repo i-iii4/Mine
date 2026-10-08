@@ -118,8 +118,7 @@ selection невозможен — модальность забирает кл�
   backdrop `bg-black/50` (канон Dialog/AlertDialog), без крестика Dialog
   (`showCloseButton={false}` — закрытие через Esc/backdrop, у поиска свой
   clear).
-- Панель: `rounded-surface border border-border bg-card text-card-foreground`
-  (угол 7: радиус плашки 3 и поле поверхности 4, 08.10.2026), тень единая для
+- Панель: `rounded-1 border border-border bg-card text-card-foreground`, тень единая для
   floating UI (`shadow-[0_4px_24px_rgba(0,0,0,0.12)]
   dark:shadow-[0_4px_24px_rgba(0,0,0,0.4)]`).
 - Геометрия: ширина `min(960px, calc(100vw - 4rem))`; высота **фиксированная**

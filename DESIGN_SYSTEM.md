@@ -55,21 +55,12 @@ Lookalike-компоненты на этих страницах запрещен
 | Токен | Значение | Утилита | Где |
 |---|---|---|---|
 | `--radius-0` | 0 | `rounded-0` | Карточки контента, изображения, текстовые блоки |
-| `--radius-1` | 3px | `rounded-1` | Основные элементы интерфейса: кнопки, инпуты, подсветки строк и пунктов меню, тултипы, диалоги |
-| `--radius-surface` | `--radius-1` и `--spacing-surface`, 7px | `rounded-surface` | Поверхность с плашками на поле 4: коробки открытой карточки, панель поиска, выпадающие и контекстные меню с подменю, встроенный выбор коллекций клиппера |
+| `--radius-1` | 3px | `rounded-1` | Основные элементы интерфейса: кнопки, инпуты, попапы, меню, тултипы, диалоги |
 | — | 2px | `rounded-[2px]` | Чекбоксы (16px, компенсация масштаба) |
 | `--radius-pill` | 9999px | `rounded-pill` | Переключатели, тоглы, прогресс-бар |
 | `--radius-round` | 50% | `rounded-round` | Аватары, индикаторы статуса |
 
 **Правило:** содержимое без скругления (`rounded-0`), интерфейс 3px (`rounded-1`), бейджи и pill-контролы капсулами (`rounded-pill`), чекбоксы 2px.
-
-**Поверхность с плашками** (решение пользователя 08.10.2026): поверхность,
-которая держит плашки на поле 4 (раздел «Система отступов поверхностей»),
-скругляется на радиус плашки плюс это поле, 3 и 4 дают 7 (`rounded-surface`).
-Так угол поверхности и угол плашки в нём идут параллельно. Число 7 не
-пишется: `--radius-surface` выводится из `--radius-1` и `--spacing-surface`.
-Кнопки и подсветки внутри остаются 3. Подсказка (`Tooltip`) плашек не держит
-и остаётся 3, диалоги подтверждения тоже.
 
 ### Скругление карточек — настройка
 
@@ -82,7 +73,7 @@ Appearance → `Card corners`: `Square` (по умолчанию) или `4` п�
 | Рамка карточки | по настройке |
 | Медиа сверху в карточке с рамкой (SPEC_FEED_DISPLAY.md, Д20) | видимые углы медиа это внутренние углы линии над ним: сверху линии рамки, снизу обводки, низ зеркалит верх; обрезка медиа по середине линии (`--card-frame-line-radius`); стыки сетки прямые; медиа с текстом под ним закрыто обводкой, отражением линии рамки |
 | Изображение в развёрнутой карточке | по настройке |
-| Коробки панели открытой карточки (сведения, Related notes, связи) | не по настройке: всегда `--radius-surface`, 7 (08.10.2026) |
+| Карточка метаданных в просмотре статьи | по настройке |
 
 Внутри карточки с контентом одиночное медиа или вся сетка имеют один общий
 контур: скругление и обрезку держит общий слот `GraphicSurface`, а не
@@ -94,8 +85,7 @@ Appearance → `Card corners`: `Square` (по умолчанию) или `4` п�
 Технически настройка переопределяет только `--radius-card`. Общий слот медиа
 читает этот токен; отдельные плитки используют нулевой `--radius-media`. Изображения развёрнутой карточки читают
 `--radius-card` через правило по `[data-detail-article-column]`.
-Коробки панели открытой карточки настройку не читают: это поверхности с
-плашками, их угол `--radius-surface` (раздел «Скругления», 08.10.2026).
+Карточка с датой, источником и автором также читает `--radius-card`.
 
 `Square` не выставляет `0px`, а снимает переопределение — значение по умолчанию
 остаётся за таблицей токенов.
@@ -1247,15 +1237,12 @@ Input и Command по умолчанию — 32px (`h-8`). Clipper исполь�
 `Input controlSize="clipper"` (`h-10`) только внутри popup/overlay строк.
 
 **Скругление основных элементов интерфейса: 3px (`rounded-1`).** Button,
-ActionButton (обе пули), пункты DropdownMenu, Tooltip, Input используют этот
-радиус. Поверхность меню, которая держит пункты, скругляется
-`rounded-surface` (7px, раздел «Скругления»).
+ActionButton (обе пули), DropdownMenu, Tooltip, Input используют этот радиус.
 `Badge` является отдельным pill-примитивом и использует `rounded-pill`.
 
 **Семантические токены скругления** (управляются из `global.css`):
 - `--radius-card` → скругление карточек и нижних углов медиа сверху (по умолчанию `var(--radius-0)` = 0px; меняется настройкой)
 - `--radius-media` → скругление медиа внутри карточек (по умолчанию `var(--radius-0)` = 0px)
-- `--radius-surface` → скругление поверхности с плашками на поле 4: `--radius-1` плюс `--spacing-surface`, 7px, настройкой не меняется
 
 Карточки: `rounded-[var(--radius-card)]` на обёртке `[data-block-slug]`.
 Плитки медиа: глобальное CSS-правило `[data-block-slug] img, [data-block-slug] video { border-radius: var(--radius-media) }`.
@@ -2007,7 +1994,7 @@ normal card interaction contract.
 
 Поиск по блокам (`Cmd+F`, [SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md)) —
 модальная панель на Radix `Dialog`: backdrop `bg-black/50`, поверхность
-`rounded-surface border border-border bg-card text-card-foreground` с единой floating-тенью. Геометрия
+`rounded-1 border border-border bg-card text-card-foreground` с единой floating-тенью. Геометрия
 фиксированная (не дышит при наборе): ширина `min(960px, 100vw−4rem)`, высота
 `min(640px, 76vh)`, прижата к верхней зоне внимания (`top: 12vh`).
 
@@ -2182,7 +2169,7 @@ they must never widen the dialog or overlap footer actions.
 
 `DropdownMenuTrigger > DropdownMenuContent > DropdownMenuItem`.
 
-Content: `rounded-surface border bg-card p-surface text-card-foreground` в разметке, но стоит на `--popover`: правило в `global.css` ставит меню и подменю фон и `--surface` плавающего слоя (раздел «Поверхности»); тень единая для всплывающих элементов (см. «Всплывающие элементы»).
+Content: `rounded-1 border bg-card p-surface text-card-foreground` в разметке, но стоит на `--popover`: правило в `global.css` ставит меню и подменю фон и `--surface` плавающего слоя (раздел «Поверхности»); тень единая для всплывающих элементов (см. «Всплывающие элементы»).
 Item: `rounded-1 min-h-row px-plate text-base cursor-default`: ряд 32 на поле поверхности, значок и текст на поле плашки (раздел «Система отступов поверхностей»).
 Item hover/focus uses the active surface swatch: `focus:state-active focus:text-foreground`. Submenu trigger open state uses the same `state-active`. Item `variant="destructive"`: красный текст (`text-destructive`), тот же hover/focus фон (`focus:state-active`).
 Width follows one rule for every menu, submenu and context menu
@@ -2228,7 +2215,7 @@ Content: `rounded-1 bg-foreground text-background px-3 py-1.5 text-sm`. Стре
 
 `ContextMenuTrigger > ContextMenuContent > ContextMenuItem`.
 
-Content: `rounded-surface border bg-card p-surface text-card-foreground` в разметке, но стоит на `--popover`: правило в `global.css` ставит меню и подменю фон и `--surface` плавающего слоя (раздел «Поверхности»); тень единая для всплывающих элементов (см. «Всплывающие элементы»). Item: `rounded-1 min-h-row px-plate text-base`. Item `variant="destructive"`: красный текст (`text-destructive`), стандартный ховер-фон (`focus:bg-accent`). Поддерживает: CheckboxItem, RadioItem, Sub (подменю), Label, Separator, Shortcut.
+Content: `rounded-1 border bg-card p-surface text-card-foreground` в разметке, но стоит на `--popover`: правило в `global.css` ставит меню и подменю фон и `--surface` плавающего слоя (раздел «Поверхности»); тень единая для всплывающих элементов (см. «Всплывающие элементы»). Item: `rounded-1 min-h-row px-plate text-base`. Item `variant="destructive"`: красный текст (`text-destructive`), стандартный ховер-фон (`focus:bg-accent`). Поддерживает: CheckboxItem, RadioItem, Sub (подменю), Label, Separator, Shortcut.
 
 ### Card Hover Menu
 
@@ -2639,7 +2626,7 @@ container/radius/spacing standard. Focus surface может отличаться
 
 ### Контейнер (Content)
 
-`rounded-surface border border-border bg-card text-card-foreground p-surface` в разметке;
+`rounded-1 border border-border bg-card text-card-foreground p-surface` в разметке;
 меню, подменю и подсказки стоят на `--popover` (правило в `global.css`, раздел
 «Поверхности»). С 07.10.2026 это уровень 1 закона цвета, цвет хрома, в обеих
 темах (решение пользователя: «уровень яркости должен быть равен второму
@@ -2859,7 +2846,7 @@ primitives и те же состояния, что desktop UI:
   renders the same desktop `CollectionPicker` default menu layout inside an
   inline picker surface with the same visual tokens as floating picker content:
   `bg-card text-card-foreground flex max-h-80 flex-col overflow-hidden
-  rounded-surface border p-0 shadow-md`. Use
+  rounded-1 border p-0 shadow-md`. Use
   `COLLECTION_PICKER_CONTENT_CLASS` / `COLLECTION_PICKER_INLINE_SURFACE_CLASS`
   from `CollectionPicker`; do not restate picker geometry in clipper code.
 

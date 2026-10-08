@@ -226,8 +226,6 @@ describe("SearchOverlay", () => {
     expect(await screen.findByText("Today")).toBeInTheDocument();
     // A row of the list, its text at the rows' thumbnails.
     expect(screen.getByText("Today")).toHaveClass("flex", "h-row", "items-center", "px-plate");
-    // A surface of plates: the rows' radius plus the surface's inset.
-    expect(document.querySelector("[data-search-overlay]")).toHaveClass("rounded-surface");
     expect(screen.getByText("Yesterday")).toBeInTheDocument();
     expect(screen.getByText("fresh")).toBeInTheDocument();
     // The header count is a query-result number — hidden in recent mode.

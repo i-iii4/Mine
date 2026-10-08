@@ -972,13 +972,12 @@ type MetadataValueMode = "truncate" | "wrap";
  * the second chrome row, in both themes (user's decision of 06.10.2026).
  * Its plates (row lights, buttons) stand the surface's inset off the frame,
  * and what has no plate under it stands the plate's inset further in
- * (DESIGN_SYSTEM.md, «Система отступов поверхностей»). It rounds as a
- * surface of plates, whatever the Card corners setting gives feed cards.
+ * (DESIGN_SYSTEM.md, «Система отступов поверхностей»).
  */
 function DetailPanelCard({ className, style, ...props }: HTMLAttributes<HTMLElement>) {
   return (
     <section
-      className={cn("overflow-hidden rounded-surface border border-border bg-card p-surface", className)}
+      className={cn("overflow-hidden rounded-[var(--radius-card)] border border-border bg-card p-surface", className)}
       style={{ minWidth: DETAIL_METADATA_CARD_MIN_WIDTH_PX, ...style }}
       data-detail-panel-card
       {...props}

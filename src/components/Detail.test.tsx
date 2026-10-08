@@ -1204,7 +1204,7 @@ describe("Detail", () => {
     expect(screen.queryByRole("button", { name: /More/i })).not.toBeInTheDocument();
   });
 
-  it("frames metadata and detail actions as a surface of plates", () => {
+  it("frames metadata and detail actions with the shared card radius", () => {
     const { container } = render(
       <Detail
         block={block({ body: "Article body" })}
@@ -1223,11 +1223,9 @@ describe("Detail", () => {
     );
 
     const metadataCard = container.querySelector("[data-detail-metadata-card]");
-    // The plate's radius plus the surface's inset, not the feed cards'
-    // Card corners setting.
     expect(metadataCard).toHaveClass(
       "overflow-hidden",
-      "rounded-surface",
+      "rounded-[var(--radius-card)]",
       "border",
       "border-border",
       "bg-card",
