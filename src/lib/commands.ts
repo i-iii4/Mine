@@ -564,9 +564,6 @@ export const sweepVaultThumbnails = () =>
 export const listPendingThumbUpgrades = () =>
   invoke<ThumbUpgradeRequest[]>("list_pending_thumb_upgrades");
 
-/** Count what a folder holds before it becomes a space, so the app can say what
- *  is about to happen instead of just doing it. See SPEC_ONBOARDING.md О12. */
-
 /** The folder a browser loads once with Load unpacked; Mine keeps its
  *  contents current. See SPEC_ONBOARDING.md О16. */
 export const clipperExtensionFolder = () =>

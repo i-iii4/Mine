@@ -26,8 +26,8 @@ describe("EdgeStatesSection", () => {
     expect(container.querySelectorAll("[data-space-unavailable]")).toHaveLength(2);
     expect(screen.getByText("No access to the folder")).toBeInTheDocument();
     expect(container.querySelector("[data-space-unavailable-open-settings]")).not.toBeNull();
-    // A chosen folder opens at once; its count and the way to another folder
-    // live in the indexing notice (SPEC_ONBOARDING.md, О12, О13).
+    // A chosen folder opens at once; its count lives in the indexing notice
+    // (SPEC_ONBOARDING.md, О12, О13).
     expect(container.querySelector("[data-folder-confirmation]")).toBeNull();
     expect(container.querySelector("[data-indexing-progress]")).not.toBeNull();
     expect(container.querySelector("[data-empty-space-onboarding]")).not.toBeNull();

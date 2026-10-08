@@ -2,7 +2,7 @@
 // opening of a space (О13).
 
 import { describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, renderHook, screen } from "@testing-library/react";
+import { act, render, renderHook, screen } from "@testing-library/react";
 import {
   INDEXING_NOTICE_DELAY_MS,
   IndexingProgress,
@@ -30,12 +30,11 @@ describe("IndexingProgress", () => {
     expect(bar).toHaveAttribute("data-progress-mode", "determinate");
     const fill = bar.querySelector<HTMLElement>('[data-slot="progress-indicator"]');
     expect(fill).not.toBeNull();
-    // Track and fill rounded like the rest of the interface, 3px (user's
-    // decision of 08.10.2026), and the fill slides rather than resizing: no
-    // width is animated (DESIGN_SYSTEM.md, Progress).
-    expect(bar.className).toContain("rounded-1");
-    expect(fill?.className).toContain("rounded-1");
-    expect(bar.className).not.toContain("rounded-pill");
+    // Track and fill are plain rectangles (user's decision of 08.10.2026),
+    // and the fill slides rather than resizing: no width is animated
+    // (DESIGN_SYSTEM.md, Progress).
+    expect(bar.className).not.toContain("rounded");
+    expect(fill?.className).not.toContain("rounded");
     expect(fill?.style.transform).toBe("translateX(-50%)");
     expect(fill?.style.width).toBe("");
     expect(fill?.className).not.toContain("transition-[width]");
@@ -77,20 +76,12 @@ describe("IndexingProgress", () => {
     expect(fill?.style.transform).toBe("translateX(-100%)");
   });
 
-  it("offers another folder while the count shows what this one holds (О12)", () => {
-    const onChooseAnother = vi.fn();
-    render(<IndexingProgress spaceName="Documents" step={notes(25, 3000)} onChooseAnother={onChooseAnother} />);
-    fireEvent.click(screen.getByRole("button", { name: "Choose another folder" }));
-    expect(onChooseAnother).toHaveBeenCalledOnce();
-  });
-
   it("is a notification card in the corner that cannot be closed, digits in the interface's font", () => {
     const { container } = render(<IndexingProgress spaceName="Mine" step={notes(1284, 3000)} />);
     expect(container.querySelector("[data-notification-card]")).not.toBeNull();
     const count = screen.getByText("1284 / 3000");
     expect(count).toHaveClass("text-sm", "text-muted-foreground", "tabular-nums");
     expect(count).not.toHaveClass("font-mono");
-    expect(screen.queryByRole("button", { name: "Choose another folder" })).toBeNull();
     // Closing hid the count and stopped nothing (О13, 08.10.2026).
     expect(screen.queryByRole("button")).toBeNull();
   });

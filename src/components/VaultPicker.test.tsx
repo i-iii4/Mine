@@ -64,7 +64,7 @@ describe("VaultPicker (SPEC_ONBOARDING.md, О9 to О12)", () => {
     fireEvent.click(screen.getByRole("button", { name: /choose folder/i }));
 
     // The system dialog is the decision; the first index shows what the
-    // folder holds and offers another one (О12, О13).
+    // folder holds (О12, О13).
     await waitFor(() => expect(onSelected).toHaveBeenCalledWith("/test/Documents"));
     // The choice carries its place in the page's order (SPEC_TABS.md, В10).
     expect(mockInvoke).toHaveBeenCalledWith("select_vault", {

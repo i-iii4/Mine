@@ -2,9 +2,9 @@
 //
 // One line and one button (SPEC_ONBOARDING.md, О9 to О12, as revised
 // 01.10.2026). The folder chosen in the system dialog is the decision: it opens
-// at once, and what it holds shows as the first index counts out loud, with a
-// way to choose another folder right there (О13). The column has the width
-// and place of that count, so the screen does not jump between the two.
+// at once, and what it holds shows as the first index counts out loud (О13).
+// The column has the width and place of that count, so the screen does not
+// jump between the two.
 
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";

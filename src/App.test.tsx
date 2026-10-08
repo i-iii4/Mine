@@ -514,7 +514,6 @@ function vaultOpenResult(overrides: Partial<VaultOpenResult> = {}): VaultOpenRes
     indexed: 2,
     sync_in_progress: false,
     derived_store_ready: true,
-    space_created: false,
     thumbs_root: "/derived/thumbs",
     ...overrides,
   };
@@ -3892,28 +3891,6 @@ describe("AppWithVault", () => {
       } finally {
         vi.useRealTimers();
         vi.mocked(commands.firstCardMarkerPending).mockResolvedValue(false);
-      }
-    });
-
-    it("offers another folder only while a folder that became a space just now shows nothing (О12)", async () => {
-      commandMocks.listGridBlocks.mockImplementation(async () => gridSnapshot([]));
-      for (const created of [true, false]) {
-        commandMocks.openVault.mockResolvedValue(vaultOpenResult({ space_created: created }));
-        const { unmount } = renderTab({ lead: true });
-        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:0"));
-
-        vi.useFakeTimers();
-        try {
-          send("vault-sync-progress", { path: "/vault", processed: 10, total: 643 });
-          await act(async () => {
-            await vi.advanceTimersByTimeAsync(INDEXING_NOTICE_DELAY_MS);
-          });
-          expect(screen.getByText("Indexing “vault”")).toBeInTheDocument();
-          expect(screen.queryByRole("button", { name: "Choose another folder" }) !== null).toBe(created);
-        } finally {
-          vi.useRealTimers();
-        }
-        unmount();
       }
     });
 

@@ -42,8 +42,6 @@ pub struct VaultOpenResult {
     /// The index holds a finished snapshot. False while the first pass
     /// builds it: the opening notice is then the only sign (Х28).
     pub derived_store_ready: bool,
-    /// The folder became a space in this opening (SPEC_ONBOARDING.md, О12).
-    pub space_created: bool,
     pub thumbs_root: String,
 }
 
@@ -51,13 +49,12 @@ impl VaultOpenResult {
     /// The one answer to opening a space, whether this call opened it or
     /// another tab already had (SPEC_VAULT_LIFECYCLE.md, П31): the two paths
     /// cannot tell different stories about the same index.
-    fn opened(indexed: usize, derived_store_ready: bool, space: &OpenSpace, vault: &VaultLayout) -> Self {
+    fn opened(indexed: usize, derived_store_ready: bool, vault: &VaultLayout) -> Self {
         Self {
             indexed,
             errors: 0,
             sync_in_progress: false,
             derived_store_ready,
-            space_created: space.created(),
             thumbs_root: vault.thumbs_dir().to_string_lossy().into_owned(),
         }
     }
@@ -973,7 +970,7 @@ fn reuse_open_space(
                     ),
                 );
                 append_startup_trace(app, "startup", "milestone=local_snapshot_opened");
-                return Ok(Some(VaultOpenResult::opened(indexed, ready, space, &vs.vault)));
+                return Ok(Some(VaultOpenResult::opened(indexed, ready, &vs.vault)));
             }
         }
     }
@@ -1001,9 +998,6 @@ fn initialize_vault(
         }
     }
 
-    // Whether choosing the folder makes it a space now, read before the
-    // identity is written: only such a folder may be the wrong one (О12).
-    let becomes_space = matches!(opening, SpaceOpening::Chosen) && !holds_space_identity(Path::new(path));
     let vault = resolve_runtime_vault_layout(app, Path::new(path), opening)?;
     let vault_id = layout_space_id(&vault).ok_or_else(|| {
         CommandError::Internal(format!("the space at {path} has no identity"))
@@ -1146,10 +1140,7 @@ fn initialize_vault(
         }
     };
 
-    if becomes_space {
-        space.mark_created();
-    }
-    let opened = VaultOpenResult::opened(indexed, derived_store_ready, &space, &vault);
+    let opened = VaultOpenResult::opened(indexed, derived_store_ready, &vault);
     space.publish(VaultState { conn, vault }, prepared_watcher);
     // Switching away can miss watcher events for this vault. Every selection
     // therefore invalidates the in-memory clean generation; the existing local
@@ -2009,14 +2000,6 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
     }
 }
 
-/// Whether the folder at `root` already carries a space identity, its own or
-/// the legacy marker. Only the names are looked at: an identity still in
-/// iCloud counts.
-fn holds_space_identity(root: &Path) -> bool {
-    let base = VaultLayout::new(root.to_path_buf());
-    base.vault_id_path().exists() || base.legacy_vault_id_path().exists()
-}
-
 fn resolve_runtime_vault_layout(
     app: &AppHandle,
     root: &Path,
@@ -2517,24 +2500,6 @@ mod tests {
             cfg["known_vaults"],
             serde_json::json!([other.path().to_str().unwrap(), canonical])
         );
-    }
-
-    /// О12: only a folder with no identity, its own or the legacy marker,
-    /// becomes a space when chosen, and only its opening offers another.
-    #[test]
-    fn a_folder_holds_a_space_identity_by_either_marker() {
-        let dir = tempfile::tempdir().unwrap();
-        let vault = VaultLayout::new(dir.path().to_path_buf());
-        assert!(!holds_space_identity(dir.path()));
-
-        std::fs::create_dir_all(vault.legacy_arena_dir()).unwrap();
-        std::fs::write(vault.legacy_vault_id_path(), "legacy\n").unwrap();
-        assert!(holds_space_identity(dir.path()));
-
-        std::fs::remove_file(vault.legacy_vault_id_path()).unwrap();
-        std::fs::create_dir_all(vault.mine_dir()).unwrap();
-        std::fs::write(vault.vault_id_path(), "own\n").unwrap();
-        assert!(holds_space_identity(dir.path()));
     }
 
     #[test]

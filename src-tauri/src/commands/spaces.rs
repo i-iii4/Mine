@@ -51,10 +51,6 @@ pub struct OpenSpace {
     /// (SPEC_TABS.md, В7).
     synced: AtomicBool,
     closed: AtomicBool,
-    /// The folder became a space in this opening: it had no identity before
-    /// the person chose it. Only such a folder may be the wrong one, so only
-    /// its opening offers another (SPEC_ONBOARDING.md, О12, О13).
-    created: AtomicBool,
 }
 
 impl OpenSpace {
@@ -69,7 +65,6 @@ impl OpenSpace {
             root_watch_started: AtomicBool::new(false),
             synced: AtomicBool::new(false),
             closed: AtomicBool::new(false),
-            created: AtomicBool::new(false),
         }
     }
 
@@ -102,16 +97,6 @@ impl OpenSpace {
     /// bound to it stops.
     pub fn is_closed(&self) -> bool {
         self.closed.load(Ordering::SeqCst)
-    }
-
-    /// Record that the folder became a space in this opening.
-    pub fn mark_created(&self) {
-        self.created.store(true, Ordering::SeqCst);
-    }
-
-    /// Whether the folder became a space in this opening.
-    pub fn created(&self) -> bool {
-        self.created.load(Ordering::SeqCst)
     }
 
     /// Claim the folder watch for this opening; `true` once.

@@ -264,13 +264,6 @@ export function CloudOpenPage() {
     <main className="min-h-screen bg-background p-8 text-foreground">
       <div className="grid gap-12">
         <div className="flex flex-wrap items-start gap-6">
-          <Labeled label="новая папка">
-            <IndexingProgress
-              spaceName="NSFV"
-              step={{ phase: "notes", count: { processed: 284, total: 674 } }}
-              onChooseAnother={noop}
-            />
-          </Labeled>
           <Labeled label="заметки">
             <IndexingProgress spaceName="NSFV" step={{ phase: "notes", count: { processed: 284, total: 674 } }} />
           </Labeled>

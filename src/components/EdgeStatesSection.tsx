@@ -354,15 +354,11 @@ export function EdgeStatesSection() {
 
         <StateCase
           name="Тост открытия пространства"
-          when="Открытие дольше секунды: одна карточка в правом нижнем углу ведёт обе фазы, сначала индексацию заметок, затем подготовку превью. Числа вместо бесконечного индикатора, закрыть нельзя: уходит сама. Кнопка другой папки только у папки, ставшей пространством сейчас, пока лента пуста."
+          when="Открытие дольше секунды: одна карточка в правом нижнем углу ведёт обе фазы, сначала индексацию заметок, затем подготовку превью. Числа вместо бесконечного индикатора, закрыть нельзя: уходит сама."
         >
           <div className="grid gap-4">
-            <Variant caption="заметки, лента пуста">
-              <IndexingProgress
-                spaceName="Mine"
-                step={{ phase: "notes", count: { processed: 284, total: 674 } }}
-                onChooseAnother={() => {}}
-              />
+            <Variant caption="заметки">
+              <IndexingProgress spaceName="Mine" step={{ phase: "notes", count: { processed: 284, total: 674 } }} />
             </Variant>
             <Variant caption="между фазами: превью ещё считают работу">
               <IndexingProgress spaceName="Mine" step={{ phase: "previews", count: null }} />

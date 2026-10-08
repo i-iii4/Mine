@@ -14,7 +14,6 @@
 // goes when the opening is over (О13, user's decision of 08.10.2026).
 
 import { useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { NotificationCard } from "@/components/NotificationCard";
 
@@ -83,27 +82,16 @@ interface IndexingProgressProps {
   /** The space's folder name: the thing being opened, by name. */
   spaceName: string;
   step: IndexingStep;
-  /** The way out of a folder that became a space just now and may be the
-   *  wrong one, while the count shows what it holds: a folder opens without
-   *  a confirmation step (О12). */
-  onChooseAnother?: () => void;
 }
 
 /** The opening notice: one card in the corner for both phases (О13). */
-export function IndexingProgress({ spaceName, step, onChooseAnother }: IndexingProgressProps) {
+export function IndexingProgress({ spaceName, step }: IndexingProgressProps) {
   const title = indexingTitle(step.phase, spaceName);
   const { count } = step;
   return (
     <NotificationCard title={title}>
-      <div className="grid gap-2" data-indexing-progress="" data-indexing-phase={step.phase}>
+      <div className="grid" data-indexing-progress="" data-indexing-phase={step.phase}>
         {count === null ? <UncountedBar title={title} /> : <CountedBar title={title} count={count} />}
-        {onChooseAnother && (
-          <div>
-            <Button variant="secondary" onClick={onChooseAnother}>
-              Choose another folder
-            </Button>
-          </div>
-        )}
       </div>
     </NotificationCard>
   );

@@ -1181,9 +1181,6 @@ export function AppWithVault({
   // The space opened with no finished index: its first pass builds it, and
   // once that pass lands every route reads the new snapshot (Х28).
   const [indexBuiltOnOpen, setIndexBuiltOnOpen] = useState(false);
-  // The folder became a space in this opening (О12): only then may it be the
-  // wrong one, and the opening notice offers another.
-  const [spaceCreated, setSpaceCreated] = useState(false);
   const [thumbsRootPath, setThumbsRootPath] = useState<string | null>(null);
   const activeDragBlock = activeDragBlocks[0] ?? null;
   const renderedDragBlocks = useMemo(() => {
@@ -2164,11 +2161,9 @@ export function AppWithVault({
             vaultPath,
             indexed: result.indexed,
             derivedStoreReady: result.derived_store_ready,
-            spaceCreated: result.space_created,
             elapsedMs: Math.round(performance.now() - started),
           });
           setIndexBuiltOnOpen(!result.derived_store_ready);
-          setSpaceCreated(result.space_created);
           setThumbsRootPath(result.thumbs_root);
           setVaultReady(true);
         }
@@ -4754,14 +4749,10 @@ export function AppWithVault({
             )}
             {showIndexingNotice && indexingStep !== null && (
               // The opening counts out loud in the corner (О13): one card,
-              // notes and then previews. A folder that became a space just
-              // now and whose feed is still empty may be the wrong one: it
-              // opened without a confirmation, so the way out sits next to
-              // its count (О12). A space that already was one is not.
+              // notes and then previews.
               <IndexingProgress
                 spaceName={vaultPath.replace(/\/+$/, "").split("/").pop() ?? vaultPath}
                 step={indexingStep}
-                onChooseAnother={spaceCreated && blocks.length === 0 ? () => void handleSwitchVault() : undefined}
               />
             )}
             {showFirstCardMarker && firstCardSlug !== null && (
