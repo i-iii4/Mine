@@ -20,7 +20,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { ChevronLeft, ChevronRight, Plus, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Search, X } from "lucide-react";
 import { ChromeActions, ChromeRow } from "@/components/ChromeRow";
 import { MineLogo } from "@/components/MineLogo";
 import { SidebarToggleButton } from "@/components/SidebarToggleButton";
@@ -36,6 +36,7 @@ import {
   moveTabToNewWindow,
   newTab,
   openSettingsWindow,
+  openTabSearch,
   reportDropSlot,
   setChromeRows,
   setWindowSidebar,
@@ -85,6 +86,7 @@ export const TAB_LIST_LABEL = "Tabs";
 export const BACK_LABEL = "Back";
 export const FORWARD_LABEL = "Forward";
 export const SETTINGS_MENU_LABEL = "Mine settings";
+export const SEARCH_LABEL = "Find elements";
 
 const PRIMARY_BUTTON = 0;
 const MIDDLE_BUTTON = 1;
@@ -725,7 +727,7 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
           {...windowDrag}
           ref={plusSlotRef}
           data-tab-bar-new-tab-slot=""
-          // 8px from the last tab's line, 4px to the logo after it.
+          // 8px from the last tab's line, 4px to the search button after it.
           className="flex h-full shrink-0 items-center pr-1 pl-2"
         >
           <Button
@@ -745,8 +747,24 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
       {/* The logo's settings menu closes the row at the window's right edge,
           as it did in the tab page's chrome (В43). With the tabs filling the
           row it stands right after +, 4 px apart like neighbouring chrome
-          buttons: the + slot's own padding. */}
+          buttons: the + slot's own padding. The search button stands just
+          before the logo, 4 px apart (user's decision of 07.10.2026). */}
       <ChromeActions data-tab-bar-settings="">
+        <Button
+          type="button"
+          variant="chrome"
+          size="chrome-icon"
+          aria-label={SEARCH_LABEL}
+          aria-keyshortcuts="Meta+F"
+          // The tab bar's page is one row tall: a tooltip would be cut off.
+          tooltip={false}
+          data-tab-bar-search=""
+          // The window's visible tab opens the cards' search, over an open
+          // card too, as the Find menu item and Cmd+F do.
+          onClick={() => run(openTabSearch(), "open the search")}
+        >
+          <Search />
+        </Button>
         <Button
           type="button"
           variant="chrome"

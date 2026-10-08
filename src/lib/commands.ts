@@ -745,6 +745,9 @@ export const reportTabHistory = (back: boolean, forward: boolean) =>
 /** The bar's back or forward button: the window's visible tab steps (В81). */
 export const stepTabHistory = (forward: boolean) => invoke<void>("step_tab_history", { forward });
 
+/** The bar's search button: the window's visible tab opens the cards' search. */
+export const openTabSearch = () => invoke<void>("open_tab_search");
+
 /** Show the tab `tabId` in its window. */
 export const activateTab = (tabId: TabId) => invoke<void>("activate_tab", { tabId });
 

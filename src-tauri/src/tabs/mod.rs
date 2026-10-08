@@ -93,6 +93,10 @@ pub struct TabHistoryStep {
 /// The event that tells a tab page to step through its places (В81).
 pub const TAB_HISTORY_GO_EVENT: &str = "tab-history-go";
 
+/// The event that tells a tab page to open a search: `"main"` the cards'
+/// search overlay, `"sidebar"` the collections' filter field.
+pub const SURFACE_SEARCH_EVENT: &str = "surface-search-shortcut";
+
 /// What one window's tab bar shows (`tabbar-state`).
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct TabBarState {
@@ -1216,6 +1220,18 @@ pub fn step_history(app: &AppHandle, bar_label: &str, forward: bool) {
         return;
     };
     space_events::emit_to_labels(app, [tab.label()], TAB_HISTORY_GO_EVENT, TabHistoryStep { forward });
+}
+
+/// The tab bar's search button: its window's visible tab opens the cards'
+/// search, as the Find menu item and Cmd+F do (SPEC_TABS.md, В43).
+pub fn open_search(app: &AppHandle, bar_label: &str) {
+    let Some(window) = WindowId::from_label(bar_label) else {
+        return;
+    };
+    let Some(tab) = shell(app).snapshot().window(&window).map(|window| window.active_tab.clone()) else {
+        return;
+    };
+    space_events::emit_to_labels(app, [tab.label()], SURFACE_SEARCH_EVENT, "main");
 }
 
 /// The tab `label` shows the space `vault_id` now (В10).

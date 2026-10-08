@@ -109,6 +109,7 @@ pub fn run() {
             commands::tabs::open_place,
             commands::tabs::set_chrome_rows,
             commands::tabs::step_tab_history,
+            commands::tabs::open_tab_search,
             commands::tabs::activate_tab,
             commands::tabs::activate_adjacent_tab,
             commands::tabs::new_tab,
@@ -455,10 +456,10 @@ fn on_menu_event(app: &tauri::AppHandle, id: &str) {
     match id {
         // Menu commands act on the tab in use (SPEC_TABS.md, В21).
         MENU_ID_FIND_CARDS => {
-            commands::space_events::emit_to_active_tab(app, "surface-search-shortcut", "main");
+            commands::space_events::emit_to_active_tab(app, tabs::SURFACE_SEARCH_EVENT, "main");
         }
         MENU_ID_FIND_CHANNELS => {
-            commands::space_events::emit_to_active_tab(app, "surface-search-shortcut", "sidebar");
+            commands::space_events::emit_to_active_tab(app, tabs::SURFACE_SEARCH_EVENT, "sidebar");
         }
         MENU_ID_TOGGLE_SIDEBAR => {
             if let Some(window) = menu_window(app) {

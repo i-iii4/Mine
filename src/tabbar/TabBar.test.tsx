@@ -7,6 +7,7 @@ import {
   CLOSE_TAB_BUTTON_LABEL,
   FORWARD_LABEL,
   NEW_TAB_LABEL,
+  SEARCH_LABEL,
   SETTINGS_MENU_LABEL,
   TAB_LIST_LABEL,
   TabBar,
@@ -27,6 +28,7 @@ const commands = vi.hoisted(() => ({
   setWindowSidebar: vi.fn(async () => undefined),
   startWindowDrag: vi.fn(async () => undefined),
   stepTabHistory: vi.fn(async () => undefined),
+  openTabSearch: vi.fn(async () => undefined),
 }));
 
 vi.mock("@/lib/commands", () => commands);
@@ -143,6 +145,7 @@ describe("tab bar row (В43)", () => {
     const back = screen.getByRole("button", { name: BACK_LABEL });
     const forward = screen.getByRole("button", { name: FORWARD_LABEL });
     const newTabButton = screen.getByRole("button", { name: NEW_TAB_LABEL });
+    const search = screen.getByRole("button", { name: SEARCH_LABEL });
     const settings = screen.getByRole("button", { name: SETTINGS_MENU_LABEL });
     const order = [
       reserve,
@@ -152,6 +155,7 @@ describe("tab bar row (В43)", () => {
       strip(),
       newTabButton,
       header?.querySelector("[data-tab-bar-drag-area]"),
+      search,
       settings,
     ];
     for (let index = 1; index < order.length; index += 1) {
@@ -194,6 +198,19 @@ describe("tab bar row (В43)", () => {
     expect(settingsMenu.open).toHaveBeenCalledTimes(1);
     settingsMenu.actions?.openSection("spaces");
     expect(commands.openSettingsWindow).toHaveBeenCalledWith("spaces");
+  });
+
+  it("opens the search of the window's visible tab from the button before the logo (07.10.2026)", () => {
+    renderBar(barState([tab("a", "Mine"), tab("b", "Mine")]));
+    const search = screen.getByRole("button", { name: SEARCH_LABEL });
+    const settings = screen.getByRole("button", { name: SETTINGS_MENU_LABEL });
+    expect(search.parentElement).toBe(settings.parentElement);
+    expect(search.nextElementSibling).toBe(settings);
+    expect(search.parentElement).toHaveClass("gap-1");
+    expect(search).toHaveAttribute("aria-keyshortcuts", "Meta+F");
+
+    fireEvent.click(search);
+    expect(commands.openTabSearch).toHaveBeenCalledTimes(1);
   });
 
   it("opens a new tab with +", () => {

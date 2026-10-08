@@ -53,6 +53,13 @@ pub fn step_tab_history(app: AppHandle, webview: Webview, forward: bool) {
     tabs::step_history(&app, webview.label(), forward);
 }
 
+/// The calling tab bar's search button: its window's visible tab opens the
+/// cards' search.
+#[tauri::command]
+pub fn open_tab_search(app: AppHandle, webview: Webview) {
+    tabs::open_search(&app, webview.label());
+}
+
 /// The calling tab drew its first frame since it was shown (В5).
 #[tauri::command]
 pub fn tab_painted(app: AppHandle, webview: Webview) {
