@@ -1147,6 +1147,84 @@ describe("Grid — no collapse after add / revisit", () => {
     );
   });
 
+  // SPEC_GRID_LAYOUT_READINESS.md, К1, К3: a card that grows within the same
+  // view keeps every card in its column, moves only the cards under it, and
+  // the move is marked smooth; a new width lays the feed out anew, at once.
+  // The pictures have no preview yet: their envelopes take the shape their
+  // rows declare (SPEC_CARD_MEDIA_GEOMETRY.md), and the first one's grows.
+  it("keeps the columns when a card grows, and moves only its own column smoothly", async () => {
+    vi.useFakeTimers();
+    // jsdom has no Web Animations: record which cards are moved.
+    const moved: string[] = [];
+    const animate = vi.fn(function (this: HTMLElement) {
+      moved.push(this.getAttribute("data-feed-grid-item-slug") ?? "?");
+      return {} as Animation;
+    });
+    Object.defineProperty(HTMLElement.prototype, "animate", { configurable: true, value: animate });
+    const sizes: Array<[number, number]> = [
+      [1000, 500], [800, 600], [900, 900], [600, 800], [1000, 700],
+      [700, 700], [800, 500], [600, 900], [900, 600],
+    ];
+    const picture = (id: number, [width, height]: [number, number]) => makeBlock(id, {
+      block_type: "image",
+      title: null,
+      body: "",
+      media_file: `p${id}.jpg`,
+      width,
+      height,
+    });
+    const blocks = sizes.map((size, index) => picture(9800 + index, size));
+
+    const { rerender } = render(<Grid {...BASE_PROPS} blocks={blocks} currentTag="grow" />);
+    act(() => {
+      triggerResize(900, 4000);
+    });
+    await flushAsync();
+    const before = new Map(readRenderedPositions().map((position) => [position.slug, position]));
+    expect(before.size).toBe(9);
+
+    // The first picture turns out portrait: its envelope grows.
+    rerender(
+      <Grid
+        {...BASE_PROPS}
+        blocks={blocks.map((block, index) => (index === 0 ? picture(9800, [500, 1000]) : block))}
+        currentTag="grow"
+      />,
+    );
+    await flushAsync();
+    const after = new Map(readRenderedPositions().map((position) => [position.slug, position]));
+    const grown = after.get("block-9800")!.height - before.get("block-9800")!.height;
+    expect(grown).toBeGreaterThan(0);
+    const grownLeft = before.get("block-9800")!.left;
+    let movedCount = 0;
+    for (const [slug, was] of before) {
+      const now = after.get(slug)!;
+      expect(now.left).toBe(was.left);
+      if (slug !== "block-9800" && was.left === grownLeft) {
+        expect(now.top).toBe(was.top + grown);
+        movedCount += 1;
+      } else {
+        expect(now.top).toBe(was.top);
+      }
+    }
+    expect(movedCount).toBeGreaterThan(0);
+    // Exactly the cards that shifted travel there; nothing else is touched.
+    expect([...moved].sort()).toEqual(
+      [...before.keys()]
+        .filter((slug) => slug !== "block-9800" && before.get(slug)!.left === grownLeft)
+        .sort(),
+    );
+
+    // A new width is a new view: laid out anew, nothing travels.
+    moved.length = 0;
+    act(() => {
+      triggerResize(1200, 4000);
+    });
+    await flushAsync();
+    expect(moved).toEqual([]);
+    delete (HTMLElement.prototype as { animate?: unknown }).animate;
+  });
+
   it("preserves the viewport anchor when cards are removed from different feed positions", async () => {
     vi.useFakeTimers();
 

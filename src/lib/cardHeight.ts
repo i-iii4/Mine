@@ -15,7 +15,7 @@
 import type { LightBlock } from "@/types";
 import type { WordWidths } from "@/types/fontMetrics";
 import { countLines } from "./wordWrap";
-import { deriveCardLayoutDescriptor, type CardLayoutDescriptor } from "./cardLayout";
+import { deriveCardLayoutDescriptor, type CardLayoutDescriptor, type CardLayoutMedia } from "./cardLayout";
 import {
   CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX,
   CONTENT_CARD_SINGLE_LINE_HEIGHT_PX,
@@ -26,7 +26,7 @@ import {
   type CardTextLine,
 } from "./cardTypography";
 import { CARD_COLLECTION_PILLS_HEIGHT_PX, shownCollections } from "./cardCollections";
-import { PROVISIONAL_MEDIA_ASPECT } from "./cardAspect";
+import { provisionalMediaAspect } from "./cardAspect";
 import type { FeedShow } from "./feedDisplay";
 
 export interface FeedPlaybackSurfaceEnvelope {
@@ -79,8 +79,9 @@ const TEXT_MAX_LINES_ALONE = 8;
  * descriptor gives it: one picture, one video or a whole gallery alike. A
  * shape not measured yet takes the provisional envelope.
  */
-function mediaHeight(iw: number, aspectRatio: number | null): number {
-  return Math.round(iw / Math.max(aspectRatio ?? PROVISIONAL_MEDIA_ASPECT, 0.01));
+function mediaHeight(iw: number, media: CardLayoutMedia): number {
+  const shape = media.aspectRatio ?? provisionalMediaAspect(media.declaredAspectRatio);
+  return Math.round(iw / Math.max(shape, 0.01));
 }
 
 /** Width the text part's lines wrap at: inside its 8px sides (Д25). */
@@ -144,7 +145,7 @@ export function computeFeedPlaybackSurfaceEnvelope(
   const media = descriptor.media;
   if (!media || media.paint.kind !== "video") return null;
   const iw = innerWidth(columnWidth);
-  const height = mediaHeight(iw, media.aspectRatio);
+  const height = mediaHeight(iw, media);
   return {
     topOffsetPx: CARD_BORDER_TOP,
     // Media without a text part under it fills the card, which is never
@@ -183,7 +184,7 @@ export function computeCardHeight(
 ): number {
   const descriptor = deriveCardLayoutDescriptor(block, show);
   const iw = innerWidth(columnWidth);
-  const media = descriptor.media ? mediaHeight(iw, descriptor.media.aspectRatio) : 0;
+  const media = descriptor.media ? mediaHeight(iw, descriptor.media) : 0;
   const lines = textPartLines(block, descriptor, iw, wordWidths);
   const first = lines[0];
   const last = lines[lines.length - 1];

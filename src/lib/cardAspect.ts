@@ -24,6 +24,17 @@
 /// they did not, and disagreed by a factor of three.
 export const PROVISIONAL_MEDIA_ASPECT = 16 / 9;
 
+/// The envelope a media slot takes while its artifact is not measured: the
+/// shape its card's row declares (`width` and `height`, written by the note
+/// or found by the indexer), clamped like any media, or the provisional shape
+/// when the row declares none (SPEC_CARD_MEDIA_GEOMETRY.md, «Пропорция
+/// конверта из заметки», user's decision of 08.10.2026). Still a provisional
+/// state: the measured artifact redraws the card. The height the layout
+/// reserves and the shape the surface paints both read it here.
+export function provisionalMediaAspect(declaredAspectRatio: number | null): number {
+  return declaredAspectRatio === null ? PROVISIONAL_MEDIA_ASPECT : clampCardAspect(declaredAspectRatio);
+}
+
 /// Tallest shape a card may take: height at most twice its width.
 export const MIN_CARD_ASPECT = 1 / 2;
 /// Widest shape a card may take: width at most twice its height.

@@ -51,6 +51,9 @@ export function buildBlockLayoutSignature(block: LightBlock): BlockLayoutSignatu
     `first=${block.first_image ?? ""}`,
     `urls=${hashString(block.media_urls ?? "")}`,
     `dims=${block.media_dimensions ?? ""}`,
+    // The row's declared size shapes the envelope of an unmeasured media slot
+    // (SPEC_CARD_MEDIA_GEOMETRY.md, «Пропорция конверта из заметки»).
+    `size=${block.width ?? ""}x${block.height ?? ""}`,
     `preview=${previewManifestSignature(block.preview_manifest)}`,
   ].join("|");
 }

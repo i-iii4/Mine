@@ -1012,6 +1012,17 @@
       "command": "test:frontend"
     },
     {
+      "paths": [
+        "src/lib/cardAspect.ts",
+        "src/lib/cardAspect.test.ts",
+        "src/lib/masonryLayout.ts",
+        "src/lib/masonryLayout.test.ts"
+      ],
+      "requirement": "SPEC_GRID_LAYOUT_READINESS.md## Колонка карточки",
+      "tests": ["src/lib/cardAspect.test.ts", "src/lib/masonryLayout.test.ts", "src/lib/cardHeight.test.ts", "src/components/Grid.test.tsx"],
+      "command": "test:frontend"
+    },
+    {
       "paths": ["src-tauri/src/clipper_registration.rs"],
       "requirement": "SPEC_CLIPPER.md#**К4. Рукопожатие версий.**",
       "tests": ["src-tauri/src/clipper_registration.rs", "src-tauri/src/commands/clipper_setup.rs"],

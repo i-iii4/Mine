@@ -44,8 +44,12 @@ export interface CardLayoutMedia {
   items: CardLayoutMediaItem[];
   /// The painted artifact's shape clamped from 1:2 to 2:1, the gallery's
   /// shape, or null while the artifact is not measured: the slot then takes
-  /// the provisional envelope (`PROVISIONAL_MEDIA_ASPECT`).
+  /// the provisional envelope (`provisionalMediaAspect`).
   aspectRatio: number | null;
+  /// The shape the card's row declares for its own picture or video
+  /// (`width`, `height`), the envelope's shape while `aspectRatio` is null;
+  /// null for media the row's size does not describe.
+  declaredAspectRatio: number | null;
   visibleCount: number;
   totalCount: number;
   paint: CardMediaPaint;
@@ -312,6 +316,7 @@ function previewPictureMedia(
   return {
     items,
     aspectRatio: singleArtifactAspectRatio(previewManifest, items),
+    declaredAspectRatio: null,
     visibleCount: items.length,
     totalCount: items.length + previewManifest.overflowCount,
     paint: { kind: "preview" },
@@ -341,6 +346,7 @@ function mediaRecordContent(
       media: {
         items,
         aspectRatio: singleArtifactAspectRatio(previewManifest, items),
+        declaredAspectRatio: aspectRatioFromDimensions(block.width, block.height),
         visibleCount: items.length,
         totalCount: items.length,
         paint: { kind: "video" },
@@ -358,6 +364,7 @@ function mediaRecordContent(
         // Null means the artifact has not been produced yet, and stays null:
         // the provisional envelope is the consumer's, not invented here.
         aspectRatio: artifactAspect === null ? null : clampCardAspect(artifactAspect),
+        declaredAspectRatio: aspectRatioFromDimensions(block.width, block.height),
         visibleCount: items.length,
         totalCount: items.length,
         paint: { kind: "preview" },
@@ -429,6 +436,7 @@ function socialContent(
         // The shape of the image the card paints, clamped like every single
         // media (Г4.5, Д1.2); null while that image is not measured.
         aspectRatio: singleMediaAspectRatio(previewManifest, item),
+        declaredAspectRatio: null,
         visibleCount: 1,
         totalCount: 1,
         paint: item.isVideo ? { kind: "video" } : { kind: "tile", item },
@@ -442,6 +450,7 @@ function socialContent(
     media: {
       items,
       aspectRatio: galleryAspectRatio(Math.min(4, totalCount)),
+      declaredAspectRatio: null,
       visibleCount: Math.min(4, totalCount),
       totalCount,
       paint: { kind: "gallery" },
@@ -485,7 +494,7 @@ function articleContent(
       : { kind: "tile", item: items[0] ?? null };
   return {
     source: "article",
-    media: { items, aspectRatio, visibleCount: items.length, totalCount, paint },
+    media: { items, aspectRatio, declaredAspectRatio: null, visibleCount: items.length, totalCount, paint },
     text,
   };
 }

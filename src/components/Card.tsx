@@ -15,7 +15,7 @@ import {
   type CardLayoutText,
 } from "@/lib/cardLayout";
 import { FeedShowContext, useFeedDisplay } from "@/lib/feedDisplay";
-import { PROVISIONAL_MEDIA_ASPECT } from "@/lib/cardAspect";
+import { provisionalMediaAspect } from "@/lib/cardAspect";
 import {
   PreviewsPendingContext,
   cardPreviewState,
@@ -980,7 +980,7 @@ export const CardSkeleton = memo(function CardSkeleton({
         {descriptor.media && (
           <div
             className="mt-3 w-full rounded-[2px] bg-accent"
-            style={{ aspectRatio: `${descriptor.media.aspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
+            style={{ aspectRatio: `${descriptor.media.aspectRatio ?? provisionalMediaAspect(descriptor.media.declaredAspectRatio)}` }}
           />
         )}
         {textShown && descriptor.text.author && (
@@ -1163,7 +1163,7 @@ function CardMediaSlot({
       className={fills ? "h-full w-full" : "w-full"}
       contentClassName="flex items-center justify-center"
       liftOutline={fills}
-      style={{ aspectRatio: `${media.aspectRatio ?? PROVISIONAL_MEDIA_ASPECT}` }}
+      style={{ aspectRatio: `${media.aspectRatio ?? provisionalMediaAspect(media.declaredAspectRatio)}` }}
       data-card-preview-geometry={media.aspectRatio === null ? "pending" : undefined}
       contentInCloud={block.content_in_cloud}
     >

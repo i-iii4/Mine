@@ -65,7 +65,6 @@ async function main() {
         // another variant of it, and counting the two together would turn
         // these numbers into a running total nobody can reason about.
         installStep: !!document.querySelector("[data-empty-space-install-step]"),
-        disclaimers: document.querySelectorAll("[data-cloud-disclaimer]").length,
         spaceUnavailable: !!document.querySelector("[data-space-unavailable]"),
         onboarding: !!document.querySelector("[data-empty-space-onboarding]"),
         activityIndicators: document.querySelectorAll(
@@ -116,17 +115,14 @@ async function main() {
       `after ${BADGE_WAIT_MS}ms`,
     );
     check("the extension install step is drawn", report.installStep);
-    check(
-      "the iCloud explanation is drawn both ways",
-      report.disclaimers === 2,
-      `${report.disclaimers} of 2`,
-    );
     check("the unavailable-space screen is drawn", report.spaceUnavailable);
     check("the empty-space onboarding is drawn", report.onboarding);
+    // One indicator since 08.10.2026: indexing. The iCloud download icon is
+    // gone (SPEC_CLOUD_STORAGE.md, Х14).
     check(
-      "all three indicator combinations are drawn",
-      report.activityIndicators === 3,
-      `${report.activityIndicators} of 3`,
+      "the indexing indicator is drawn",
+      report.activityIndicators === 1,
+      `${report.activityIndicators} of 1`,
     );
     check(
       "the activity indicators are also drawn in their real context",

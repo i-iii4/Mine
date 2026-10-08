@@ -30,6 +30,38 @@ describe("masonryLayout", () => {
     expect(layout.totalHeight).toBe(202);
   });
 
+  // SPEC_GRID_LAYOUT_READINESS.md, К1: a card that grows moves only the
+  // cards under it in its own column; without the memory the whole feed
+  // reshuffles into other columns.
+  it("keeps every card in its column when one card's height changes", () => {
+    const heights = [100, 120, 80, 90, 110, 70, 60];
+    const before = computeMasonryLayout(heights, 900, MIN_COL, GAP);
+    const columns = before.positions.map((position) => position.column);
+
+    const grown = [...heights];
+    grown[0] = 300;
+    const reshuffled = computeMasonryLayout(grown, 900, MIN_COL, GAP);
+    expect(reshuffled.positions.map((position) => position.column)).not.toEqual(columns);
+
+    const kept = computeMasonryLayout(grown, 900, MIN_COL, GAP, (index) => columns[index]);
+    expect(kept.positions.map((position) => position.column)).toEqual(columns);
+    for (const position of kept.positions) {
+      const was = before.positions[position.index]!;
+      if (position.column === columns[0] && position.index > 0) {
+        expect(position.top).toBe(was.top + 200);
+      } else if (position.index > 0) {
+        expect(position.top).toBe(was.top);
+      }
+    }
+  });
+
+  it("puts a card the memory does not name, or names past the columns, into the shortest column", () => {
+    const layout = computeMasonryLayout([100, 120, 80, 90], 900, MIN_COL, GAP, (index) =>
+      index === 3 ? 7 : index === 2 ? undefined : index,
+    );
+    expect(layout.positions.map((position) => position.column)).toEqual([0, 1, 2, 2]);
+  });
+
   it("derives max width from the next min-width threshold while preserving the configured gap", () => {
     const layout = computeMasonryLayout([100, 100, 100], 1000, MIN_COL, GAP);
 

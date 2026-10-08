@@ -194,6 +194,26 @@ describe("computeCardHeight — image", () => {
     expect(computeCardHeight(block, 280, null)).toBe(Math.round(278 / PROVISIONAL_MEDIA_ASPECT) + CARD_BORDER);
   });
 
+  // SPEC_CARD_MEDIA_GEOMETRY.md, «Пропорция конверта из заметки» (08.10.2026):
+  // until the artifact is measured, the envelope takes the shape the row
+  // declares, clamped like any media; the measured artifact then wins.
+  it("reserves the envelope at the shape the row declares while the artifact is not measured", () => {
+    const portrait = makeBlock({ block_type: "image", width: 600, height: 900, thumbnail: "thumb.jpg" });
+    expect(computeCardHeight(portrait, 280, null)).toBe(Math.round(278 / (600 / 900)) + CARD_BORDER);
+
+    const strip = makeBlock({ block_type: "image", width: 100, height: 1000, thumbnail: "thumb.jpg" });
+    expect(computeCardHeight(strip, 280, null)).toBe(Math.round(278 / (1 / 2)) + CARD_BORDER);
+
+    const measured = makeBlock({
+      block_type: "image",
+      media_file: "photo.jpg",
+      width: 600,
+      height: 900,
+      preview_manifest: artifactManifest(1000, 500),
+    });
+    expect(computeCardHeight(measured, 280, null)).toBe(Math.round(278 / 2) + CARD_BORDER);
+  });
+
   it("uses card_kind media with image metadata even when legacy type says article", () => {
     const block = makeBlock({
       card_kind: "media",

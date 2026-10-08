@@ -30,6 +30,7 @@ import { GroupSelectionCommands } from "./GroupSelectionCommands";
 import { GroupSelectionCardMenu } from "./GroupSelectionCardMenu";
 import { GroupSelectionContextMenu } from "./GroupSelectionContextMenu";
 import { DeleteSelectedCardsDialog } from "./DeleteSelectedCardsDialog";
+import { prefersReducedMotion } from "@/lib/motion";
 import { MergeCardsDialog } from "./MergeCardsDialog";
 import {
   computeMasonryLayout,
@@ -352,6 +353,7 @@ function buildLayout(
   wordWidthsMap: Map<number, WordWidths>,
   gap: number,
   show: FeedShow,
+  columnOf?: (index: number) => number | undefined,
 ): MasonryLayout {
   const columnWidth = deriveColumnWidth(parentWidth, gap);
 
@@ -364,7 +366,67 @@ function buildLayout(
     parentWidth,
     COLUMN_MIN_WIDTH,
     gap,
+    columnOf,
   );
+}
+
+/** The columns of the last layout shown, and the view they belong to. */
+interface ColumnMemory {
+  routeKey: string;
+  parentWidth: number;
+  show: FeedShow;
+  /** The cards in the order they were laid out. */
+  order: string[];
+  column: Map<string, number>;
+  /** Where each card stood, to move the ones that shifted (К3). */
+  top: Map<string, number>;
+  /** Every height was exact. Columns of a layout made on the worst-case
+   *  text heights that stand in while fonts load are not kept: the first
+   *  exact layout balances the columns anew. */
+  exact: boolean;
+}
+
+/** How a card moves to its new place within the same view (К3): the
+ *  segmented control's calm curve, DESIGN_SYSTEM.md. */
+const CARD_MOVE_MS = 200;
+const CARD_MOVE_EASING = "cubic-bezier(0.37, 0, 0.63, 1)";
+/** At most this many cards move smoothly at once; past it they jump. */
+const CARD_MOVE_LIMIT = 120;
+
+/**
+ * Where each card stood on the last layout, when the view is the same one:
+ * the same route, width and presentation, and the cards that remain in the
+ * order they had (SPEC_GRID_LAYOUT_READINESS.md, К1, К2). Null when the view
+ * changed: the feed is then laid out anew.
+ */
+function rememberedColumns(
+  memory: ColumnMemory | null,
+  blocks: readonly LightBlock[],
+  routeKey: string,
+  parentWidth: number,
+  show: FeedShow,
+): ((index: number) => number | undefined) | null {
+  if (
+    memory === null
+    || !memory.exact
+    || memory.routeKey !== routeKey
+    || Math.abs(memory.parentWidth - parentWidth) > 0.5
+    || memory.show !== show
+  ) {
+    return null;
+  }
+  const present = new Set(blocks.map((block) => block.slug));
+  const kept = memory.order.filter((slug) => present.has(slug));
+  let next = 0;
+  for (const block of blocks) {
+    if (!memory.column.has(block.slug)) continue;
+    if (kept[next] !== block.slug) return null;
+    next += 1;
+  }
+  return (index) => {
+    const slug = blocks[index]?.slug;
+    return slug === undefined ? undefined : memory.column.get(slug);
+  };
 }
 
 // ─── Heavy autoplay pool arbitration ───────────────────────────────────────
@@ -972,6 +1034,13 @@ export function Grid({
     [generationKey],
   );
 
+  // The columns of the layout on screen: a card keeps its column while the
+  // view is the same, so a height change moves only its own column (К1).
+  const columnMemoryRef = useRef<ColumnMemory | null>(null);
+  const columnOf = useMemo(
+    () => rememberedColumns(columnMemoryRef.current, blocks, routeKey, parentWidth, show),
+    [blocks, parentWidth, routeKey, show],
+  );
   // The visible layout always belongs to the current generation. Production
   // heights come from deterministic card geometry only; measured DOM heights
   // are never fed back into layout because that feedback loop is what caused
@@ -987,16 +1056,66 @@ export function Grid({
     }
 
     if (!allCurrentGenerationDeterministic) {
-      return buildLayout(blocks, parentWidth, wordWidthsMap, layoutGap, show);
+      return buildLayout(blocks, parentWidth, wordWidthsMap, layoutGap, show, columnOf ?? undefined);
     }
 
     const cached = layoutCache.get(generationKey);
     if (cached) return cached;
 
-    const fresh = buildLayout(blocks, parentWidth, wordWidthsMap, layoutGap, show);
+    const fresh = buildLayout(blocks, parentWidth, wordWidthsMap, layoutGap, show, columnOf ?? undefined);
     layoutCache.set(generationKey, fresh);
     return fresh;
-  }, [allCurrentGenerationDeterministic, blocks, generationKey, layoutGap, parentWidth, show, wordWidthsMap]);
+  }, [allCurrentGenerationDeterministic, blocks, columnOf, generationKey, layoutGap, parentWidth, show, wordWidthsMap]);
+  // A layout of the same view moves the mounted cards that shifted over
+  // 200ms, each from where it stood; a new view stands at once (К3). Only
+  // those cards are touched: switching a transition on for the whole feed
+  // made every change restyle every card, and cost the scroll its frames.
+  const layoutMovesSmoothly = columnOf !== null;
+  useLayoutEffect(() => {
+    const previous = columnMemoryRef.current;
+    const column = new Map<string, number>();
+    const top = new Map<string, number>();
+    const scrollElement = parentRef.current;
+    let moving = 0;
+    for (const position of layout.positions) {
+      const slug = blocks[position.index]?.slug;
+      if (slug === undefined) continue;
+      column.set(slug, position.column);
+      top.set(slug, position.top);
+      const was = previous?.top.get(slug);
+      if (
+        !layoutMovesSmoothly
+        || was === undefined
+        || was === position.top
+        || scrollElement === null
+        || moving >= CARD_MOVE_LIMIT
+        || prefersReducedMotion()
+      ) {
+        continue;
+      }
+      const element = scrollElement.querySelector<HTMLElement>(
+        `[data-feed-grid-item-slug="${CSS.escape(slug)}"]`,
+      );
+      if (element === null || typeof element.animate !== "function") continue;
+      moving += 1;
+      element.animate(
+        [
+          { transform: `translate3d(${position.left}px, ${was}px, 0)` },
+          { transform: `translate3d(${position.left}px, ${position.top}px, 0)` },
+        ],
+        { duration: CARD_MOVE_MS, easing: CARD_MOVE_EASING },
+      );
+    }
+    columnMemoryRef.current = {
+      routeKey,
+      parentWidth,
+      show,
+      order: blocks.map((block) => block.slug),
+      column,
+      top,
+      exact: allCurrentGenerationDeterministic,
+    };
+  }, [allCurrentGenerationDeterministic, blocks, layout, layoutMovesSmoothly, parentWidth, routeKey, show]);
 
   useEffect(() => {
     onColumnCountChange?.(layout.columnCount);

@@ -2,9 +2,20 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_CARD_ASPECT,
   MIN_CARD_ASPECT,
+  PROVISIONAL_MEDIA_ASPECT,
   cardAspectCrops,
   clampCardAspect,
+  provisionalMediaAspect,
 } from "./cardAspect";
+
+describe("provisionalMediaAspect", () => {
+  it("takes the shape the row declares, clamped, and the provisional one without it", () => {
+    expect(provisionalMediaAspect(600 / 900)).toBe(600 / 900);
+    expect(provisionalMediaAspect(10)).toBe(MAX_CARD_ASPECT);
+    expect(provisionalMediaAspect(0.1)).toBe(MIN_CARD_ASPECT);
+    expect(provisionalMediaAspect(null)).toBe(PROVISIONAL_MEDIA_ASPECT);
+  });
+});
 
 describe("clampCardAspect", () => {
   it("leaves ordinary photographic shapes untouched", () => {

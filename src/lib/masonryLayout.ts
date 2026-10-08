@@ -44,11 +44,19 @@ export function getMasonryColumnWidth(
   return Math.max(1, Math.floor(innerWidth / columnCount));
 }
 
+/**
+ * Lay the items out in columns, each into the shortest one. `columnOf`, when
+ * given, names the column an item stood in on the last layout of the same
+ * view: it stays there, so a card whose height changed moves only the cards
+ * under it in its own column (SPEC_GRID_LAYOUT_READINESS.md, К1). An item it
+ * does not name, or names past the column count, takes the shortest column.
+ */
 export function computeMasonryLayout(
   itemHeights: number[],
   containerWidth: number,
   minColumnWidth: number,
   gap: number,
+  columnOf?: (index: number) => number | undefined,
 ): MasonryLayout {
   const columnCount = getMasonryColumnCount(containerWidth, minColumnWidth, gap);
   const safeGap = clampPositive(gap);
@@ -73,9 +81,14 @@ export function computeMasonryLayout(
     const height = Math.max(1, rawHeight);
     let targetColumn = 0;
 
-    for (let i = 1; i < columnCount; i += 1) {
-      if (columnHeights[i]! < columnHeights[targetColumn]!) {
-        targetColumn = i;
+    const remembered = columnOf?.(index);
+    if (remembered !== undefined && remembered >= 0 && remembered < columnCount) {
+      targetColumn = remembered;
+    } else {
+      for (let i = 1; i < columnCount; i += 1) {
+        if (columnHeights[i]! < columnHeights[targetColumn]!) {
+          targetColumn = i;
+        }
       }
     }
 
