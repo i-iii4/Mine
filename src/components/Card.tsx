@@ -24,9 +24,11 @@ import {
 import { normalizeFeedPlayback } from "@/lib/feedPlayback";
 import {
   CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX,
+  CONTENT_CARD_SINGLE_LINE_HEIGHT_PX,
   CONTENT_CARD_TITLE_CLASSES,
   EDGE_TEXT_SIDE_PX,
   cardTextGap,
+  cardTextStackHeight,
   EDGE_VISUAL_GAP_PX,
   edgeTextBottom,
   edgeTextTop,
@@ -45,7 +47,7 @@ import { CardCollectionsRow, CardHoverMenu } from "./CardHoverMenu";
 import { EDGE_FADE_WIDTH, createTopFadeMaskStyle } from "@/lib/edgeFade";
 import { buttonVariants } from "@/components/ui/button";
 import { collectionRefLabel } from "@/lib/collections";
-import { CardCollectionsContext, shownCollections, useCollectionOrder } from "@/lib/cardCollections";
+import { CARD_COLLECTION_PILLS_HEIGHT_PX, CardCollectionsContext, shownCollections, useCollectionOrder } from "@/lib/cardCollections";
 import { FeedVideoSurface } from "./FeedVideoSurface";
 import { FeedVideoPoster } from "./FeedVideoPoster";
 import { PlayBadge } from "./PlayBadge";
@@ -496,15 +498,89 @@ function collectionsRowLiftStyle(textPart: boolean): CSSProperties {
   return { "--card-lift": `${COLLECTIONS_ROW_REACH_PX - ownSpace}px` } as CSSProperties;
 }
 
+/// The most of its card a lift caption takes, the room for the row of
+/// collections included: the media keeps the rest (С8.7).
+const LIFT_CAPTION_MAX_SHARE = 0.6;
+
+/// The room a lift caption keeps under its last line for the row of
+/// collections: the caption's own bottom padding already reads as the gap
+/// above the row.
+const LIFT_CAPTION_ROW_ROOM_PX = COLLECTIONS_ROW_REACH_PX - EDGE_VISUAL_GAP_PX;
+
+/// A lift caption's text runs to two lines at most (С8.7).
+const LIFT_CAPTION_TEXT_MAX_LINES = 2;
+
+const LIFT_CAPTION_TEXT_CLAMP_CLASS: Record<number, string> = {
+  1: "line-clamp-1",
+  2: "line-clamp-2",
+};
+
+/// What a lift caption shows: its title, how many lines of its text, its
+/// author and its pills.
+interface LiftCaptionLines {
+  title: boolean;
+  textLines: number;
+  author: boolean;
+  pills: boolean;
+}
+
+/// The caption's line boxes, top to bottom, as its text stack paints them.
+function liftCaptionStack(lines: LiftCaptionLines): Array<{ line: CardTextLine; height: number }> {
+  const stack: Array<{ line: CardTextLine; height: number }> = [];
+  if (lines.title) stack.push({ line: "title", height: CONTENT_CARD_SINGLE_LINE_HEIGHT_PX });
+  if (lines.textLines > 0) stack.push({ line: "preview", height: lines.textLines * CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX });
+  if (lines.author) stack.push({ line: "author", height: CONTENT_CARD_SINGLE_LINE_HEIGHT_PX });
+  if (lines.pills) stack.push({ line: "pills", height: CARD_COLLECTION_PILLS_HEIGHT_PX });
+  return stack;
+}
+
+/// How tall a caption showing these lines stands, the row's room included.
+function liftCaptionHeight(lines: LiftCaptionLines): number {
+  const stack = liftCaptionStack(lines);
+  const first = stack[0];
+  const last = stack[stack.length - 1];
+  if (!first || !last) return LIFT_CAPTION_ROW_ROOM_PX;
+  return edgeTextTop(first.line) + cardTextStackHeight(stack) + edgeTextBottom(last.line) + LIFT_CAPTION_ROW_ROOM_PX;
+}
+
+/// The lines of a lift caption that fit under its cap, whole lines from the
+/// top: the title, the text a line at a time up to two, the author, the
+/// pills, until the next one would pass the cap (С8.7). No line is ever cut
+/// through: text cut short ends in an ellipsis. The first line stays even
+/// when it alone passes the cap, which only a column narrower than the
+/// feed's own can make. A card not laid out yet has no cap and shows all.
+function fitLiftCaption(text: CardLayoutText, pills: boolean, capPx: number | null): LiftCaptionLines {
+  const growth: LiftCaptionLines[] = [];
+  let lines: LiftCaptionLines = { title: false, textLines: 0, author: false, pills: false };
+  const grow = (next: LiftCaptionLines) => {
+    lines = next;
+    growth.push(next);
+  };
+  if (text.title) grow({ ...lines, title: true });
+  if (text.text) {
+    for (let count = 1; count <= LIFT_CAPTION_TEXT_MAX_LINES; count += 1) grow({ ...lines, textLines: count });
+  }
+  if (text.author) grow({ ...lines, author: true });
+  if (pills) grow({ ...lines, pills: true });
+  if (capPx === null) return lines;
+  let fitted = growth[0] ?? lines;
+  for (const candidate of growth) {
+    if (liftCaptionHeight(candidate) > capPx) break;
+    fitted = candidate;
+  }
+  return fitted;
+}
+
 /// `Media` shows a card's media alone. A lift reveals the card's own text
 /// under it, rising with the action row: its title, text and author, clamped
 /// shorter than in `Cards` (title and author one line, text two) so the media
 /// keeps the card (SPEC_CARD_STATES.md, С8.7). Nothing is put in place of a
 /// text the card does not have (SPEC_CARD_UNIFIED.md, Е12). The lift is as
 /// tall as this caption, so its height is handed to the frame as
-/// `--card-lift`; it never takes more than 60% of the card, and text past
-/// that is cut. Under the caption it keeps room for the row of collections:
-/// the caption's own bottom padding already reads as the gap above the row.
+/// `--card-lift`; it never takes more than 60% of the card: past that the
+/// caption keeps the whole lines that fit (`fitLiftCaption`), never a line
+/// cut under the media. Under the caption it keeps room for the row of
+/// collections.
 function MediaLiftCaption({
   block,
   text,
@@ -517,29 +593,35 @@ function MediaLiftCaption({
   inFlow?: boolean;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
+  // The caption's cap: 60% of the card, once the card has a height. A
+  // preview's caption has none, it stands under the media.
+  const [capPx, setCapPx] = useState<number | null>(null);
   useLayoutEffect(() => {
     if (inFlow) return;
     const panel = panelRef.current;
     const frame = panel?.closest<HTMLElement>("[data-feed-card-frame]");
-    if (!panel || !frame) return;
-    const apply = () => frame.style.setProperty("--card-lift", `${panel.offsetHeight}px`);
+    const content = panel?.closest<HTMLElement>("[data-card-frame-content]");
+    if (!panel || !frame || !content) return;
+    const apply = () => {
+      frame.style.setProperty("--card-lift", `${panel.offsetHeight}px`);
+      setCapPx(content.clientHeight > 0 ? content.clientHeight * LIFT_CAPTION_MAX_SHARE : null);
+    };
     apply();
     if (typeof ResizeObserver === "undefined") {
       return () => frame.style.removeProperty("--card-lift");
     }
     const observer = new ResizeObserver(apply);
     observer.observe(panel);
+    observer.observe(content);
     return () => {
       observer.disconnect();
       frame.style.removeProperty("--card-lift");
     };
   }, [inFlow]);
 
-  const lines: CardTextLine[] = [];
-  if (text.title) lines.push("title");
-  if (text.text) lines.push("preview");
-  if (text.author) lines.push("author");
-  if (shownCollections(block).length > 0) lines.push("pills");
+  const collections = shownCollections(block);
+  const fitted = fitLiftCaption(text, collections.length > 0, capPx);
+  const lines = liftCaptionStack(fitted).map(({ line }) => line);
   const first = lines[0];
   const last = lines[lines.length - 1];
   const gapBefore = textGapsFor(lines);
@@ -549,31 +631,26 @@ function MediaLiftCaption({
       ref={panelRef}
       data-card-caption=""
       data-card-lift={inFlow ? undefined : "caption"}
-      className={inFlow
-        ? "relative flex flex-col"
-        : "absolute inset-x-0 bottom-0 flex max-h-[60%] flex-col justify-end overflow-hidden"}
+      className={inFlow ? "relative flex flex-col" : "absolute inset-x-0 bottom-0 flex flex-col"}
     >
       {first && last && (
         <div
-          // Never shrinks: past the 60% cap the panel clips its top, so the last
-          // line, its gap and the row under it keep their places.
-          className="shrink-0"
           style={{ paddingInline: EDGE_TEXT_SIDE_PX, paddingTop: edgeTextTop(first), paddingBottom: edgeTextBottom(last) }}
         >
-          {text.title && (
+          {fitted.title && (
             <p className={cn("truncate", CONTENT_CARD_TITLE_CLASSES)} style={contentCardSingleLineTextStyle}>
               {text.title}
             </p>
           )}
-          {text.text && (
+          {fitted.textLines > 0 && (
             <p
-              className="line-clamp-2 text-sm text-muted-foreground"
+              className={cn(LIFT_CAPTION_TEXT_CLAMP_CLASS[fitted.textLines], "text-sm text-muted-foreground")}
               style={{ ...contentCardPreviewTextStyle, marginTop: gapBefore("preview") }}
             >
               {text.text}
             </p>
           )}
-          {text.author && (
+          {fitted.author && (
             <p
               className="truncate text-sm text-muted-foreground"
               style={{ ...contentCardSingleLineTextStyle, marginTop: gapBefore("author") }}
@@ -581,10 +658,12 @@ function MediaLiftCaption({
               {text.author}
             </p>
           )}
-          <CardCollectionPills collections={shownCollections(block)} style={{ marginTop: gapBefore("pills") }} />
+          {fitted.pills && (
+            <CardCollectionPills collections={collections} style={{ marginTop: gapBefore("pills") }} />
+          )}
         </div>
       )}
-      <div className="shrink-0" style={{ height: COLLECTIONS_ROW_REACH_PX - EDGE_VISUAL_GAP_PX }} />
+      <div style={{ height: LIFT_CAPTION_ROW_ROOM_PX }} />
     </div>
   );
 }

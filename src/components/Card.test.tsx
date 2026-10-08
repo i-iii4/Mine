@@ -2531,6 +2531,68 @@ describe("Card lift on hover (SPEC_CARD_STATES.md, С8)", () => {
       .querySelector("[data-feed-card-frame]")?.getAttribute("style") ?? "")).toBe(false);
   });
 
+  it("fits a Media caption under its 60% cap in whole lines, never a line cut under the media (С8.7)", () => {
+    const tile = {
+      source_path: "Media/one.jpg", preview_path: "post.preview-1.jpg", width: 800, height: 400,
+      preview_width: 800, preview_height: 400, is_video: false, is_video_poster: false,
+    };
+    const post = (overrides: Partial<LightBlock>) => block({
+      block_type: "article", card_kind: "article", url: null, body: "Words\n\n![](Media/one.jpg)",
+      preview_text: "Words of the post, long enough to run over two lines of a narrow card",
+      preview_manifest: JSON.stringify({
+        kind: "image", primary_preview_path: "post.jpg", width: 800, height: 400,
+        preview_width: 800, preview_height: 400, tiles: [tile], overflow_count: 0,
+      }),
+      ...overrides,
+    });
+    const full = post({ title: "A post with media", author: "Mira Holt" });
+    const textOnly = post({ title: null, content_heading: null, display_title: null, author: null });
+    let cardHeight = 0;
+    // jsdom lays nothing out: the card's content box reports the height the
+    // feed would give the card.
+    const height = vi.spyOn(Element.prototype, "clientHeight", "get").mockImplementation(function (this: Element) {
+      return this.hasAttribute("data-card-frame-content") ? cardHeight : 0;
+    });
+    /// What the lifted card's caption shows at this card height.
+    const captionAt = (value: LightBlock, frameContentHeight: number) => {
+      cardHeight = frameContentHeight;
+      const { container, unmount } = render(
+        <FeedShowContext.Provider value="media">
+          <Card block={value} vaultPath={VAULT} onClick={vi.fn()} {...menuProps} />
+        </FeedShowContext.Provider>,
+      );
+      const caption = container.querySelector("[data-card-caption]")!;
+      const lines = Array.from(caption.querySelectorAll("p")).map((line) => line.textContent);
+      const text = Array.from(caption.querySelectorAll("p")).find((line) => line.textContent === value.preview_text);
+      const shown = {
+        title: lines.includes("A post with media"),
+        textLines: text?.classList.contains("line-clamp-2") ? 2 : text?.classList.contains("line-clamp-1") ? 1 : 0,
+        author: lines.includes("Mira Holt"),
+      };
+      unmount();
+      return shown;
+    };
+    try {
+      // Edge gaps 12 or 10, title and author 16, text 20 a line, 8 between
+      // groups, 26 for the row: everything stands 138px, under 60% of 240.
+      expect(captionAt(full, 240)).toEqual({ title: true, textLines: 2, author: true });
+      // 60% of 200 is 120: the author goes, two lines of text stay (112).
+      expect(captionAt(full, 200)).toEqual({ title: true, textLines: 2, author: false });
+      // 60% of 160 is 96: one line of text, ended by an ellipsis (92).
+      expect(captionAt(full, 160)).toEqual({ title: true, textLines: 1, author: false });
+      // 60% of 112 is 67.2: the title alone (66).
+      expect(captionAt(full, 112)).toEqual({ title: true, textLines: 0, author: false });
+      // Shorter still, the first line stays whole: never a cut one.
+      expect(captionAt(full, 90)).toEqual({ title: true, textLines: 0, author: false });
+      // A wide picture with text alone, as a 2:1 gallery 112px tall: one
+      // whole line (66) where two (86) would pass the cap.
+      expect(captionAt(textOnly, 112)).toEqual({ title: false, textLines: 1, author: false });
+      expect(captionAt(textOnly, 150)).toEqual({ title: false, textLines: 2, author: false });
+    } finally {
+      height.mockRestore();
+    }
+  });
+
   it("moves the media window and its picture plane, and keeps the cloud badge outside them", () => {
     const { container } = render(
       <Card block={block({ block_type: "image", media_file: "photo.jpg" })} vaultPath={VAULT} onClick={vi.fn()} {...menuProps} />,
