@@ -115,7 +115,7 @@ export function GroupSelectionCardMenu({
           data-feed-grid-batch-menu=""
         >
           <div
-            className="px-2 py-1.5 font-mono text-sm text-muted-foreground"
+            className="px-plate py-1.5 font-mono text-sm text-muted-foreground"
             data-feed-grid-batch-menu-count=""
           >
             {selectedElementCountLabel(selectedBlocks.length)}
@@ -171,7 +171,7 @@ export function GroupSelectionCardMenu({
           {actions.actionError && (
             <>
               <DropdownMenuSeparator />
-              <div className="px-2 py-1.5 text-sm text-destructive">
+              <div className="px-plate py-1.5 text-sm text-destructive">
                 {actions.actionError}
               </div>
             </>

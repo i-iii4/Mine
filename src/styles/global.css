@@ -834,6 +834,20 @@ body {
   --spacing-s5: 32px;
   --spacing-s6: 48px;
   --spacing-s7: 64px;
+  /* Surface insets (DESIGN_SYSTEM.md, «Система отступов поверхностей»): a
+     plate (a row's light, a menu item, a button, a field) stands
+     --spacing-surface off the edge of its surface and off the plate beside
+     it; what a plate holds stands --spacing-plate off its sides. Text with no
+     plate under it sits in a row padded like a plate, inside the surface's
+     own padding: their sum, never a number of its own, so everything a
+     surface holds keeps one vertical, lit or not. */
+  --spacing-surface: var(--spacing-s1);
+  --spacing-plate: var(--spacing-s2);
+  /* A row of a surface, its content centered: an ordinary row (a menu item,
+     a box heading, a metadata row) and a card row, whose 32px thumbnail
+     keeps 6px above and below (`CardRow`). */
+  --spacing-row: var(--spacing-s5);
+  --spacing-card-row: 44px;
   --text-sm: 12px;
   --text-sm--line-height: 16px;
   --text-base: 14px;

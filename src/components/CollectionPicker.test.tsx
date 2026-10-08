@@ -102,8 +102,8 @@ describe("CollectionPicker", () => {
     const picker = container.querySelector("[data-collection-picker]") as HTMLElement;
     const input = screen.getByPlaceholderText("Search collections...");
 
-    expect(input.parentElement).toHaveClass("border-b", "border-border", "p-1");
-    expect(input).toHaveClass("border-none", "bg-transparent", "rounded-0", "px-2", "py-0");
+    expect(input.parentElement).toHaveClass("border-b", "border-border", "p-surface");
+    expect(input).toHaveClass("border-none", "bg-transparent", "rounded-0", "px-plate", "py-0");
     expect(input).not.toHaveClass("focus-visible:border-border-accent");
     expect(input).toHaveAttribute("autocomplete", "off");
     expect(input).toHaveAttribute("autocorrect", "off");

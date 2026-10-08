@@ -570,7 +570,7 @@ export function SearchOverlay({
         <DropdownMenuPortalContainerProvider container={menuContainer}>
         <DialogTitle className="sr-only">Search elements</DialogTitle>
 
-        <div className="flex shrink-0 items-center gap-1 border-b border-border p-1">
+        <div className="flex shrink-0 items-center gap-surface border-b border-border p-surface">
           <Input
             ref={inputRef}
             variant="ghost"
@@ -578,7 +578,7 @@ export function SearchOverlay({
             onChange={(event) => onQueryChange(event.target.value)}
             onKeyDown={handleInputKeyDown}
             placeholder="Search elements…"
-            className="h-8 min-w-0 flex-1 rounded-0 px-2"
+            className="h-row min-w-0 flex-1 rounded-0 px-plate"
             role="combobox"
             aria-expanded={rows.length > 0}
             aria-controls="search-overlay-listbox"
@@ -614,7 +614,7 @@ export function SearchOverlay({
             id="search-overlay-listbox"
             role="listbox"
             aria-label="Search results"
-            className="min-w-0 flex-1 overflow-y-auto p-1"
+            className="min-w-0 flex-1 overflow-y-auto p-surface"
             data-search-results-top-fade={resultsTopFade.scrolled ? "true" : undefined}
             // Rows that slide under a resting pointer, and a pointer gone
             // from the list, show no commands (SPEC_CARD_STATES.md, С7.5).
@@ -640,10 +640,11 @@ export function SearchOverlay({
               ? recentGroups.map((group) => (
                   <div key={group.label} role="presentation">
                     {/* Dynamic date sections (Notion convention): the label
-                        is derived from saved_at, never typed in. */}
+                        is derived from saved_at, never typed in. A row of
+                        the list, its text at the rows' thumbnails. */}
                     <div
                       role="presentation"
-                      className="px-2 pb-1 pt-2 text-sm text-muted-foreground"
+                      className="flex h-row items-center px-plate text-sm text-muted-foreground"
                       data-search-overlay-recent-label=""
                     >
                       {group.label}
@@ -688,7 +689,7 @@ export function SearchOverlay({
                   className="shrink-0"
                   data-search-overlay-metadata
                 >
-                  <MetadataRow label="Date">
+                  <MetadataRow label="Date" spacing="compact">
                     <span className={cn(METADATA_VALUE_BASE_CLASSES, "truncate")}>
                       {new Date(activeBlock.saved_at).toLocaleDateString("ru-RU", {
                         day: "numeric",
@@ -698,7 +699,7 @@ export function SearchOverlay({
                     </span>
                   </MetadataRow>
                   {activeBlock.url && isSafeUrl(activeBlock.url) && domainFromUrl(activeBlock.url) && (
-                    <MetadataRow label="Source">
+                    <MetadataRow label="Source" spacing="compact">
                       <MetadataLinkValue
                         value={domainFromUrl(activeBlock.url)}
                         onClick={() => void openUrl(activeBlock.url!)}
@@ -706,14 +707,14 @@ export function SearchOverlay({
                     </MetadataRow>
                   )}
                   {activeBlock.author && (
-                    <MetadataRow label="Author">
+                    <MetadataRow label="Author" spacing="compact">
                       <span className={cn(METADATA_VALUE_BASE_CLASSES, "truncate")}>
                         {activeBlock.author}
                       </span>
                     </MetadataRow>
                   )}
                   {activeTags && activeTags.length > 0 && (
-                    <MetadataRow label="Collections">
+                    <MetadataRow label="Collections" spacing="compact">
                       <span className={cn(METADATA_VALUE_BASE_CLASSES, "whitespace-normal")}>
                         {activeTags.join(", ")}
                       </span>

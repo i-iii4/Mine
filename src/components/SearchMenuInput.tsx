@@ -19,7 +19,7 @@ export const SearchMenuInput = forwardRef<HTMLInputElement, SearchMenuInputProps
     ...props
   }, ref) {
     return (
-      <div className={cn("shrink-0 border-b border-border p-1", wrapperClassName)}>
+      <div className={cn("shrink-0 border-b border-border p-surface", wrapperClassName)}>
         <Input
           ref={ref}
           {...SEARCH_INPUT_SUPPRESSION_PROPS}
@@ -27,7 +27,7 @@ export const SearchMenuInput = forwardRef<HTMLInputElement, SearchMenuInputProps
           variant="ghost"
           controlSize={controlSize}
           className={cn(
-            "rounded-0 px-2 py-0 hover:placeholder:text-muted-foreground focus:placeholder:text-muted-foreground",
+            "rounded-0 px-plate py-0 hover:placeholder:text-muted-foreground focus:placeholder:text-muted-foreground",
             inputClassName,
           )}
         />

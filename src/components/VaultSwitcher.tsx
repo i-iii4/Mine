@@ -83,7 +83,7 @@ function UnavailableSpaceRow({
 }) {
   return (
     <div
-      className="group flex h-[var(--menu-row-height)] items-center gap-2 px-2 text-base text-muted-foreground"
+      className="group flex h-[var(--menu-row-height)] items-center gap-2 px-plate text-base text-muted-foreground"
       title={space.path}
       data-vault-switcher-unavailable={space.path}
     >
@@ -435,7 +435,7 @@ export function VaultSwitcher({
           <QuantizedMenuScrollArea
             rowCount={Math.max(visibleVaults.length + visibleUnavailable.length, 1)}
             maxRows={8}
-            innerClassName="p-1"
+            innerClassName="p-surface"
           >
             {visibleVaults.length > 0 ? (
               visibleVaults.map((path, index) => (
@@ -454,7 +454,7 @@ export function VaultSwitcher({
                 />
               ))
             ) : visibleUnavailable.length === 0 ? (
-              <div className="flex h-[var(--menu-row-height)] items-center gap-2 px-2 text-base text-muted-foreground">
+              <div className="flex h-[var(--menu-row-height)] items-center gap-2 px-plate text-base text-muted-foreground">
                 <MenuIconSlot />
                 No other spaces
               </div>
@@ -484,7 +484,7 @@ export function VaultSwitcher({
                 </DropdownMenuItem>
               ))
             ) : visibleUnavailable.length === 0 ? (
-              <div className="flex items-center gap-2 px-2 py-1.5 text-base text-muted-foreground">
+              <div className="flex items-center gap-2 px-plate py-1.5 text-base text-muted-foreground">
                 <MenuIconSlot />
                 No other spaces
               </div>
@@ -499,7 +499,7 @@ export function VaultSwitcher({
           </div>
         )}
         {isTopChrome ? (
-          <div className="border-t border-border p-1" data-vault-switcher-pinned-actions="">
+          <div className="border-t border-border p-surface" data-vault-switcher-pinned-actions="">
             <SearchMenuAction
               id={`${actionIdPrefix}-space-action-${revealActionIndex}`}
               active={activeIndex === revealActionIndex}

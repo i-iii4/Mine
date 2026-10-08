@@ -324,10 +324,10 @@ Settings → Appearance; [SPEC_FEED_DISPLAY.md](SPEC_FEED_DISPLAY.md), Д17).
 
 | Токен | Значение | Утилита | Где |
 |---|---|---|---|
-| `--spacing-s1` | 4px | `p-s1`, `gap-s1` | Внутренний отступ мелких элементов (теги, бейджи) |
-| `--spacing-s2` | 8px | `p-s2`, `gap-s2` | Отступ внутри кнопки, инпута |
+| `--spacing-s1` | 4px | `p-s1`, `gap-s1` | Поле поверхности (`--spacing-surface`): от края поверхности до плашки и между плашками |
+| `--spacing-s2` | 8px | `p-s2`, `gap-s2` | Поле плашки (`--spacing-plate`): от края плашки до её содержимого |
 | `--spacing-s3` | 16px | `p-s3`, `gap-s3` | Отступ между элементами внутри карточки |
-| `--spacing-s4` | 24px | `p-s4`, `gap-s4` | Padding внутри карточки от края |
+| `--spacing-s4` | 24px | `p-s4`, `gap-s4` | Зазор между коробками панели открытой карточки (`gap-6`), поле страницы настроек |
 | `--spacing-s5` | 32px | `p-s5`, `gap-s5` | Расстояние между карточками (gap сетки) |
 | `--spacing-s6` | 48px | `p-s6`, `gap-s6` | Отступ между секциями |
 | `--spacing-s7` | 64px | `p-s7`, `gap-s7` | Верхний/нижний отступ страницы |
@@ -335,6 +335,66 @@ Settings → Appearance; [SPEC_FEED_DISPLAY.md](SPEC_FEED_DISPLAY.md), Д17).
 **Примечание:** токены spacing определяют разрешённую шкалу. Числовые утилиты Tailwind (`p-2`, `gap-8`) допустимы, если их значение совпадает со шкалой. Недопустимые значения: 20px (`p-5`), 28px (`gap-7`), 40px — их нет в шкале.
 
 Grid gap (32px) задан JS-константой `GAP` в `Grid.tsx`, потому что участвует в расчёте колонок. Соответствует `--spacing-s5`.
+
+### Система отступов поверхностей
+
+Решение пользователя 08.10.2026: три числа вместо прежних `4`, `6`, `8`, `10`
+и `16` вокруг подсветок и кнопок, которые не подчинялись никакому правилу.
+
+1. **Поле поверхности 4.** Каждая плашка (подсветка строки `state-active`,
+   пункт меню, кнопка, поле ввода) стоит в 4 пикселях от края своей
+   поверхности: коробки открытой карточки, панели поиска, меню. Соседние
+   плашки стоят в 4 пикселях друг от друга. Строки списка идут вплотную, без
+   зазора.
+2. **Поле плашки 8.** Содержимое плашки (миниатюра, значок, текст, кнопки
+   строки) стоит в 8 пикселях от её левого и правого края. По вертикали
+   содержимое стоит по центру ряда постоянной высоты: обычный ряд 32, ряд
+   карточки (`CardRow` с миниатюрой 32) 44.
+3. **Текст без плашки стоит в 12 пикселях (4 и 8) от края поверхности:**
+   подписи коробок (`Related notes`, подписи связей), подписи и значения
+   сведений, подписи дат в поиске. Подпись ведёт себя как ряд 32 на поле 4,
+   поэтому и сверху её текст стоит в 12 пикселях. Так всё содержимое
+   поверхности стоит на одной вертикали, есть под ним подсветка или нет.
+
+Пиксели считаются от внутреннего края рамки.
+
+| Токен | Значение | Утилиты | Что задаёт |
+|---|---|---|---|
+| `--spacing-surface` | `--spacing-s1`, 4px | `p-surface`, `gap-surface`, `mt-surface`, `-mx-surface`, `my-surface` | поле поверхности |
+| `--spacing-plate` | `--spacing-s2`, 8px | `px-plate`, `py-plate`, `pl-plate`, `pr-plate`, `left-plate`, `right-plate` | поле плашки |
+| `--spacing-row` | `--spacing-s5`, 32px | `h-row`, `min-h-row` | обычный ряд |
+| `--spacing-card-row` | 44px | `h-card-row` | ряд карточки: миниатюра 32 и по 6 сверху и снизу |
+
+Владелец один: `@theme` в `src/styles/global.css`, `cn` знает эти имена
+(`src/lib/utils.ts`). Отдельного токена для 12 нет: текст без плашки стоит в
+ряду с полем плашки внутри поля поверхности, и сумма получается вложением, а
+не числом.
+
+| Поверхность | Плашки на поле 4 | Содержимое на поле 8 | Текст на 12 |
+|---|---|---|---|
+| Коробки открытой карточки (`DetailPanelCard`, `p-surface`): сведения, Related notes, связи; оба вида, рядом и мобильный | подсветки строк; `Show all` и `Show N more` рядом 32 в конце списка; кнопки `Source` и `Connect` с зазором 4, на 4 ниже последней строки сведений | миниатюра и кнопки строки | подписи коробок рядом 32; подписи и значения сведений рядами 32, разделители от 12 до 12 |
+| Поиск | поле ввода, подсветки строк | текст поля, миниатюра, кнопки строки | подписи дат рядом 32 |
+| Меню: `DropdownMenu`, `ContextMenu`, поле поиска меню (`SearchMenuInput`), переключатели пространства и коллекции, `CollectionPicker` | пункты рядом 32, поле поиска | значок и текст пункта | подписи групп |
+
+Низ коробки открытой карточки стоит в 4 пикселях под последней плашкой:
+строкой, `Show all` или кнопками.
+
+Вне системы, и почему:
+
+- Зазор между коробками 24 (`gap-6`): это расстояние между поверхностями, а
+  не внутри одной.
+- Отступ коробок от страницы `--card-content-pad`: ритм страницы, а не
+  поверхности.
+- Колонка превью поиска 16 (`p-4 gap-4`): в ней карточка, а не список. Её
+  сведения стоят плотными строками без плашек (`MetadataRow`
+  `spacing="compact"`, шаг 24).
+- Кнопки в углах карточки ленты стоят в 8 пикселях от её края (`right-2
+  top-2`, край хрома `--chrome-edge-pad`): это кнопки поверх содержимого, а
+  не плашки в списке.
+- Подписи групп в меню (`px-plate py-1.5 font-mono text-sm`) высотой 28, а
+  не 32: меню при вводе системы не сдвинулись ни на пиксель.
+- Разделитель сведений толщиной 1 пиксель лежит на нижней кромке ряда 32: до
+  текста над ним 7 пикселей, до текста под ним 8.
 
 ## Типографика
 
@@ -1938,12 +1998,19 @@ normal card interaction contract.
 фиксированная (не дышит при наборе): ширина `min(960px, 100vw−4rem)`, высота
 `min(640px, 76vh)`, прижата к верхней зоне внимания (`top: 12vh`).
 
-- Header — канон `SearchMenuInput`: `border-b border-border p-1` +
-  `Input ghost h-8 rounded-0 px-2 text-base`, без иконки лупы; справа счётчик
+- Отступы панели подчиняются системе поверхностей (раздел «Система отступов
+  поверхностей»): плашки на 4 от края, их содержимое на 8 внутри, текст без
+  плашки на 12.
+- Header по канону `SearchMenuInput`: `border-b border-border p-surface` +
+  `Input ghost h-row rounded-0 px-plate text-base`, без иконки лупы; справа счётчик
   результатов (голое число, `text-sm text-tertiary-foreground`, как счётчики
   каналов) и clear `✕` (`h-6 w-6 rounded-1`,
   hover `bg-component-fill-hover text-foreground`) при непустом query.
-- Список результатов: строки `rounded-1 px-2 py-1.5`, flex с миниатюрой слева —
+- Список результатов `p-surface`; без запроса строки сгруппированы по датам,
+  подпись даты это ряд `h-row px-plate` с текстом по центру, на 12 от края
+  панели, как миниатюры строк.
+- Строки результатов: `rounded-1`, ряд карточки `h-card-row` (44) с полями
+  `px-plate`, flex с миниатюрой слева:
   стандартный `MicroPreviewThumbnail` в слоте `size-8 shrink-0 overflow-hidden
   bg-component-fill` (text-миниатюры получают `dark:invert`). Строка это
   общий компонент `CardRow`, его же показывает Related notes открытой
@@ -1985,8 +2052,9 @@ normal card interaction contract.
   активных элементов (с 06.10.2026, «Hover Preview Surfaces» ниже,
   SPEC_CARD_STATES.md, С10); при поиске она подсвечивает совпадение так же,
   как карточка ленты. Поверх превью ничего не лежит: команды карточки живут
-  в строках списка. Зона метаданных: язык metadata-card Detail
-  (`rounded-1 border border-border bg-accent`, строки — общий `MetadataRow`):
+  в строках списка. Зона метаданных: голый список общего `MetadataRow` в
+  плотном виде (`spacing="compact"`: строки через 8, разделитель между ними),
+  без рамки и фона, потому что колонка держит карточку, а не плашки:
   Date, Type, Source (домен, кликабельный `MetadataLinkValue`), Author,
   Collections (lazy, оптимистичное обновление при Connect); пустые строки
   скрываются.
@@ -2101,8 +2169,8 @@ they must never widen the dialog or overlap footer actions.
 
 `DropdownMenuTrigger > DropdownMenuContent > DropdownMenuItem`.
 
-Content: `rounded-1 border bg-card p-1 text-card-foreground` в разметке, но стоит на `--popover`: правило в `global.css` ставит меню и подменю фон и `--surface` плавающего слоя (раздел «Поверхности»); тень единая для всплывающих элементов (см. «Всплывающие элементы»).
-Item: `rounded-1 px-2 py-1.5 text-base cursor-default`.
+Content: `rounded-1 border bg-card p-surface text-card-foreground` в разметке, но стоит на `--popover`: правило в `global.css` ставит меню и подменю фон и `--surface` плавающего слоя (раздел «Поверхности»); тень единая для всплывающих элементов (см. «Всплывающие элементы»).
+Item: `rounded-1 min-h-row px-plate text-base cursor-default`: ряд 32 на поле поверхности, значок и текст на поле плашки (раздел «Система отступов поверхностей»).
 Item hover/focus uses the active surface swatch: `focus:state-active focus:text-foreground`. Submenu trigger open state uses the same `state-active`. Item `variant="destructive"`: красный текст (`text-destructive`), тот же hover/focus фон (`focus:state-active`).
 Width follows one rule for every menu, submenu and context menu
 (`[data-floating-menu]`, «Всплывающие элементы»; 07.10.2026): the longest
@@ -2115,7 +2183,7 @@ invalid.
 не сдвигает текст на `pl-8` и не рисует кружок: текущий пункт несёт галочку
 `Check` 13px в обычном `MenuIconSlot`, у остальных слот пустой, как в меню
 macOS. Текстовая колонка совпадает с остальными строками меню. Подпись группы
-выбора повторяет заголовок меню выделения: `px-2 py-1.5 font-mono text-sm
+выбора повторяет заголовок меню выделения: `px-plate py-1.5 font-mono text-sm
 text-muted-foreground`; группы разделены `DropdownMenuSeparator`. Меню, где
 выбор применяется сразу, остаётся открытым (`onSelect` с `preventDefault`).
 Первое такое меню: `Display` ленты.
@@ -2147,7 +2215,7 @@ Content: `rounded-1 bg-foreground text-background px-3 py-1.5 text-sm`. Стре
 
 `ContextMenuTrigger > ContextMenuContent > ContextMenuItem`.
 
-Content: `rounded-1 border bg-card p-1 text-card-foreground` в разметке, но стоит на `--popover`: правило в `global.css` ставит меню и подменю фон и `--surface` плавающего слоя (раздел «Поверхности»); тень единая для всплывающих элементов (см. «Всплывающие элементы»). Item: `rounded-1 px-2 py-1.5 text-base`. Item `variant="destructive"`: красный текст (`text-destructive`), стандартный ховер-фон (`focus:bg-accent`). Поддерживает: CheckboxItem, RadioItem, Sub (подменю), Label, Separator, Shortcut.
+Content: `rounded-1 border bg-card p-surface text-card-foreground` в разметке, но стоит на `--popover`: правило в `global.css` ставит меню и подменю фон и `--surface` плавающего слоя (раздел «Поверхности»); тень единая для всплывающих элементов (см. «Всплывающие элементы»). Item: `rounded-1 min-h-row px-plate text-base`. Item `variant="destructive"`: красный текст (`text-destructive`), стандартный ховер-фон (`focus:bg-accent`). Поддерживает: CheckboxItem, RadioItem, Sub (подменю), Label, Separator, Shortcut.
 
 ### Card Hover Menu
 
@@ -2266,7 +2334,7 @@ Article media-only paragraphs:
 
 CollectionPicker membership rows:
 - Search uses the shared `SearchMenuInput` contract: `border-b border-border
-  p-1` wrapper plus `Input variant="ghost"` with `rounded-0 px-2 py-0`.
+  p-surface` wrapper plus `Input variant="ghost"` with `rounded-0 px-plate py-0`.
   It is a menu header, not a standalone input pill. This matches
   `Search spaces` and `Search collections`.
 - Checkbox не используется.
@@ -2397,11 +2465,12 @@ Related notes preview:
 - Related notes упакованы в карточку, как сведения над ними (решение
   пользователя 07.10.2026): одна оболочка `DetailPanelCard` на обе, с той же
   рамкой, радиусом, фоном `bg-card` и `min-width: 240px`, зазор между ними
-  `gap-6`. Подпись `Related notes` внутри сверху, как подписи сведений:
-  `px-2 pt-4`. Список строк `p-1`, строка с `framed` даёт себе отступ 4
-  пикселя, а не 8: миниатюра стоит на 8 пикселях от рамки, как `Resolution`,
-  команды строки кончаются там же, где значения, а свет строки держится в 4
-  пикселях от рамки со всех сторон. Без связанных заметок карточки нет.
+  `gap-6`. Отступы по системе поверхностей (раздел «Система отступов
+  поверхностей», 08.10.2026): коробка держит `p-surface`, подпись
+  `Related notes` это ряд 32 (`h-row px-plate`) наверху, строки идут под ней
+  вплотную. Свет строки стоит в 4 пикселях от рамки, миниатюра и кнопки
+  строки в 8 пикселях от краёв света, то есть в 12 от рамки, на одной
+  вертикали с подписью и с `Resolution`. Без связанных заметок карточки нет.
 - Строка заметки это строка поиска (`CardRow`, решение пользователя
   07.10.2026): без своего фона и рамки, имя файла и тусклым начало текста;
   под указателем и при фокусе клавиатуры строка светится `state-active` и
@@ -2434,16 +2503,19 @@ Related notes preview:
 - Та же коробка, что у Related notes, своей поверхности нет: на каждую связь
   своя `DetailPanelCard` следующей карточкой панели, зазор `gap-6`. Порядок:
   сведения, Related notes, `Same URL`, затем автор или сайт.
-- Подпись внутри сверху тем же классом и с теми же отступами, что
-  `Related notes` (`METADATA_LABEL_CLASSES`, `px-2 pt-4`). Автор это кнопка
+- Подпись внутри сверху тем же классом и тем же рядом, что
+  `Related notes` (`METADATA_LABEL_CLASSES` в ряду `h-row px-plate`). Автор это кнопка
   с видом подписи: подчёркивание при наведении, курсор стрелка (действие
   внутри Mine), подсказка `All cards by <автор>`. Сайт и `Same URL` текстом.
   Длинная подпись обрезается многоточием.
-- Строки те же, что у Related notes (`CardRow` с `framed`, список `p-1`),
+- Строки те же, что у Related notes (`CardRow`, общий список строк панели),
   превью при наведении по тем же правилам.
 - Последняя строка коробки, когда строк больше пяти: `Show all` у автора,
-  `Show N more` у адреса и сайта, тем же классом, что подпись, слева с её
-  отступом, снизу `pb-4`, подчёркивание при наведении.
+  `Show N more` у адреса и сайта. Это плашка списка, как строки над ней: ряд
+  32 (`h-row px-plate rounded-1`) вплотную под строками, тем же классом, что
+  подпись, текст на вертикали миниатюр; под указателем и при фокусе
+  клавиатуры светится `state-active` и поднимает текст до основной ступени.
+  Коробка кончается в 4 пикселях под ней.
 
 Article inline image hover preview:
 - Это отдельный функциональный блок, не часть текущего Related notes preview.
@@ -2554,7 +2626,7 @@ container/radius/spacing standard. Focus surface может отличаться
 
 ### Контейнер (Content)
 
-`rounded-1 border border-border bg-card text-card-foreground p-1` в разметке;
+`rounded-1 border border-border bg-card text-card-foreground p-surface` в разметке;
 меню, подменю и подсказки стоят на `--popover` (правило в `global.css`, раздел
 «Поверхности»). С 07.10.2026 это уровень 1 закона цвета, цвет хрома, в обеих
 темах (решение пользователя: «уровень яркости должен быть равен второму
@@ -2700,7 +2772,7 @@ container. Запрещено писать shadow-local самодельные d
 
 ### Пункты (Item)
 
-`rounded-1 px-2 py-1.5 text-base`. `DropdownMenu` использует
+`rounded-1 min-h-row px-plate text-base`. `DropdownMenu` использует
 `focus:state-active`; `DropdownMenuSubTrigger[data-state=open]` использует тот же
 `state-active`. `ContextMenu` использует тот же relative `state-active` для item,
 checkbox, radio и open submenu states. Все menu hover/focus surfaces выводятся

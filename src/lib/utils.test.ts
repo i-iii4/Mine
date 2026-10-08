@@ -6,7 +6,7 @@ import { cn } from "./utils";
 
 const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../styles/global.css"), "utf8");
 const tokens = (prefix: string) =>
-  [...new Set([...css.matchAll(new RegExp(`--${prefix}-([a-z0-9]+):`, "g"))].map((match) => match[1]))];
+  [...new Set([...css.matchAll(new RegExp(`--${prefix}-([a-z0-9-]+):`, "g"))].map((match) => match[1]))];
 
 describe("cn with the project's design tokens", () => {
   it("lets a later radius token replace an earlier one", () => {

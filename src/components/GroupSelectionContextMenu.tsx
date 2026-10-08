@@ -67,7 +67,7 @@ export function GroupSelectionContextMenu({
   return (
     <ContextMenuContent data-feed-grid-selection-context-menu="">
       <div
-        className="px-2 py-1.5 font-mono text-sm text-muted-foreground"
+        className="px-plate py-1.5 font-mono text-sm text-muted-foreground"
         data-feed-grid-selection-context-menu-count=""
       >
         {selectedElementCountLabel(selectedBlocks.length)}
@@ -114,7 +114,7 @@ export function GroupSelectionContextMenu({
       {actions.actionError && (
         <>
           <ContextMenuSeparator />
-          <div className="px-2 py-1.5 text-sm text-destructive">
+          <div className="px-plate py-1.5 text-sm text-destructive">
             {actions.actionError}
           </div>
         </>

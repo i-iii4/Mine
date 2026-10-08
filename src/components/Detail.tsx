@@ -895,7 +895,7 @@ function MetadataPanel({
           data-metadata-sections
         >
           <DetailPanelCard data-detail-metadata-card>
-            <div className="px-2 pb-4 pt-4" data-detail-metadata-card-content>
+            <div className="px-plate" data-detail-metadata-card-content>
               <MetadataTable>
                 {displayBlock.width != null && displayBlock.height != null && (
                   <MetadataField
@@ -967,14 +967,17 @@ const DELETE_MEDIA_CONNECTED_CARDS_MAX_HEIGHT_PX =
 type MetadataValueMode = "truncate" | "wrap";
 
 /**
- * A card of the open card's panel: the metadata with its buttons, and the
- * Related notes. The card's surface, the level of the second chrome row, in
- * both themes (user's decision of 06.10.2026); 8 px inset inside.
+ * A card of the open card's panel: the metadata with its buttons, the
+ * Related notes, the association blocks. The card's surface, the level of
+ * the second chrome row, in both themes (user's decision of 06.10.2026).
+ * Its plates (row lights, buttons) stand the surface's inset off the frame,
+ * and what has no plate under it stands the plate's inset further in
+ * (DESIGN_SYSTEM.md, «Система отступов поверхностей»).
  */
 function DetailPanelCard({ className, style, ...props }: HTMLAttributes<HTMLElement>) {
   return (
     <section
-      className={cn("overflow-hidden rounded-[var(--radius-card)] border border-border bg-card", className)}
+      className={cn("overflow-hidden rounded-[var(--radius-card)] border border-border bg-card p-surface", className)}
       style={{ minWidth: DETAIL_METADATA_CARD_MIN_WIDTH_PX, ...style }}
       data-detail-panel-card
       {...props}
@@ -1070,7 +1073,7 @@ function DetailActionRow({
   }, [block, connectOpen]);
 
   return (
-    <div className="flex min-w-0 items-center gap-2 px-2 pb-2" data-detail-action-row>
+    <div className="mt-surface flex min-w-0 items-center gap-surface" data-detail-action-row>
       {block.url && isSafeUrl(block.url) && (
         <Button
           type="button"
@@ -1183,9 +1186,10 @@ function PanelCardRows({
   }, []);
 
   return (
-    // The rows' light keeps 4 px off the frame on every side.
+    // Rows flush one under the other; the card's own inset keeps their
+    // light off the frame.
     <div
-      className="flex w-full min-w-0 flex-col p-1"
+      className="flex w-full min-w-0 flex-col"
       onWheel={() => setPointerRowKey(null)}
       data-related-notes-list={related ? "" : undefined}
       data-card-association-list={related ? undefined : ""}
@@ -1202,7 +1206,6 @@ function PanelCardRows({
               row={deriveSearchResultRow({ slug, preview_text: null })}
               preview={null}
               active={false}
-              framed
               item={{ as: "static" }}
               data-related-note-item={related ? "placeholder" : undefined}
               data-card-association-item={related ? undefined : "placeholder"}
@@ -1228,7 +1231,6 @@ function PanelCardRows({
               : microPreviewFromLightBlock(block, resolvedThumbsRoot)}
             active={actionsShown}
             actionsReservePx={actionsShown ? cardRowActionsReservePx(block) : 0}
-            framed
             onPointerMove={() => {
               if (menuRowKey === null && pointerRowKey !== rowKey) setPointerRowKey(rowKey);
             }}
@@ -1281,6 +1283,13 @@ function PanelCardRows({
 }
 
 /**
+ * The heading of a card of the panel: a row of the card at its top, the
+ * text over the rows' thumbnails and the metadata labels, 12 px off the
+ * frame across and down.
+ */
+const PANEL_CARD_HEADING_CLASSES = "flex h-row min-w-0 items-center px-plate";
+
+/**
  * The open card's Related notes in a card of the panel, like the metadata
  * above it: the label inside, then the panel's rows.
  */
@@ -1298,9 +1307,7 @@ function RelatedNotesSection({
   });
   return (
     <DetailPanelCard data-related-notes-block>
-      {/* A label of the card, at the metadata labels' inset and over the
-          rows' thumbnails. */}
-      <div className={cn(METADATA_LABEL_CLASSES, "px-2 pt-4")}>Related notes</div>
+      <div className={cn(METADATA_LABEL_CLASSES, PANEL_CARD_HEADING_CLASSES)}>Related notes</div>
       <PanelCardRows
         listKey="related"
         rows={rows}
@@ -1334,11 +1341,11 @@ function CardAssociationSection({
     : null;
   return (
     <DetailPanelCard aria-label={heading} data-card-association-block={group.kind}>
-      {openFeed ? (
-        <div className="flex min-w-0 px-2 pt-4">
-          {/* A label that acts, like the metadata's Source value: no face of
-              its own, underlined under the pointer, the arrow cursor of an
-              action inside Mine. */}
+      <div className={PANEL_CARD_HEADING_CLASSES}>
+        {openFeed ? (
+          // A label that acts, like the metadata's Source value: no face of
+          // its own, underlined under the pointer, the arrow cursor of an
+          // action inside Mine.
           <button
             type="button"
             onClick={openFeed}
@@ -1348,16 +1355,16 @@ function CardAssociationSection({
           >
             {heading}
           </button>
-        </div>
-      ) : (
-        <div
-          className={cn(METADATA_LABEL_CLASSES, "truncate px-2 pt-4")}
-          title={heading}
-          data-card-association-heading=""
-        >
-          {heading}
-        </div>
-      )}
+        ) : (
+          <div
+            className={cn(METADATA_LABEL_CLASSES, "min-w-0 truncate")}
+            title={heading}
+            data-card-association-heading=""
+          >
+            {heading}
+          </div>
+        )}
+      </div>
       <PanelCardRows
         listKey={group.kind}
         rows={group.blocks.map((block) => ({ slug: block.slug, block }))}
@@ -1365,16 +1372,19 @@ function CardAssociationSection({
         {...rowProps}
       />
       {hidden > 0 && (
-        <div className="flex min-w-0 px-2 pb-4">
-          <button
-            type="button"
-            onClick={openFeed ?? (() => onExpand(group.kind))}
-            className={cn(METADATA_LABEL_CLASSES, "text-left hover:underline")}
-            data-card-association-more={openFeed ? "feed" : "expand"}
-          >
-            {openFeed ? SHOW_ALL_LABEL : showMoreLabel(hidden)}
-          </button>
-        </div>
+        // The list's last row: a plate like the rows above it, lit under
+        // the pointer and the keyboard, its text over their thumbnails.
+        <button
+          type="button"
+          onClick={openFeed ?? (() => onExpand(group.kind))}
+          className={cn(
+            METADATA_LABEL_CLASSES,
+            "flex h-row w-full min-w-0 items-center rounded-1 px-plate outline-none hover:state-active hover:text-foreground focus-visible:state-active focus-visible:text-foreground",
+          )}
+          data-card-association-more={openFeed ? "feed" : "expand"}
+        >
+          {openFeed ? SHOW_ALL_LABEL : showMoreLabel(hidden)}
+        </button>
       )}
     </DetailPanelCard>
   );
@@ -2461,7 +2471,7 @@ function MediaAssetMenuItems({
       </Item>
 
       {actionError && (
-        <div className="px-2 py-1.5 text-sm text-destructive">
+        <div className="px-plate py-1.5 text-sm text-destructive">
           {actionError}
         </div>
       )}
@@ -2652,7 +2662,7 @@ function CreateCardCollectionPicker<TPayload>({
         rowSize="default"
         paddingY="compact"
         className="min-h-0 flex-1"
-        innerClassName="px-1 py-0.5"
+        innerClassName="px-surface py-0.5"
       >
         {filtered.map((item) => {
           const pending = pendingTag === item.tag;

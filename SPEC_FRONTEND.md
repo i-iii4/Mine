@@ -1448,17 +1448,16 @@ Image media expansion:
 - Metadata labels используют `text-sm leading-4 text-muted-foreground`;
   значения — `text-sm leading-4 text-foreground`, matching feed-card text scale.
 - `FILENAME`, `Rename…` и `TAGS` не рендерятся в metadata panel. Metadata
-  table и action row живут в одном framed rail card:
-  `overflow-hidden rounded-1 border border-border bg-accent`. Радиус 3px
-  следует interface-surface contract; surface использует тот же `bg-accent`,
-  что нижний action bar.
-  Metadata content использует `px-2 pb-4 pt-4`: horizontal inset matches the
-  action row inset, while top/bottom spacing preserves the compact table rhythm.
-  Action row использует card-hover action inset contract `px-2 pb-2` и `gap-2`,
-  matching `CardHoverMenu` `left-2 right-2 bottom-2 gap-2`; поэтому кнопки не
-  выровнены по текстовому padding, как и в оригинальной карточке на главной.
-  Кнопки на `bg-accent` surface используют более тёмный component fill
-  `bg-component-fill-inner`. В row остаются только `Source` и `Connect`;
+  table и action row живут в одной коробке `DetailPanelCard`:
+  `overflow-hidden rounded-[var(--radius-card)] border border-border bg-card
+  p-surface`. Отступы коробки следуют системе поверхностей
+  (DESIGN_SYSTEM.md, «Система отступов поверхностей», 08.10.2026): плашки
+  (кнопки, свет строк) на 4 от рамки, их содержимое на 8 внутри, текст без
+  плашки на 12. Metadata content `px-plate`: подписи и значения на 12 от
+  рамки; строки `MetadataRow` рядами 32 (`py-plate`, текст по центру),
+  разделитель на нижней кромке ряда от 12 до 12. Action row `mt-surface
+  gap-surface`: кнопки на 4 от рамки, друг от друга, от последней строки и от
+  низа коробки. В row остаются только `Source` и `Connect`;
   обе кнопки `flex-1` и занимают всю ширину карточки. Overflow menu остаётся в
   верхнем chrome Detail, а не внутри metadata card.
   `RELATED NOTES` это вторая такая же карточка ниже (решение пользователя
@@ -1479,12 +1478,11 @@ Image media expansion:
   (`preview_text` без повтора имени, `deriveSearchResultRow`). Своего фона и
   рамки у строки нет: она светится `state-active` только под указателем и
   при фокусе клавиатуры. Подпись `Related notes` стоит внутри карточки
-  сверху, как подписи сведений (`px-2 pt-4`), над миниатюрами. Список `p-1`,
-  строки идут без зазора, по 44 пикселя; строка с `framed` берёт
-  `--card-row-pad-x` 4 пикселя вместо 8, и её команды держат тот же отступ
-  справа. Так миниатюра стоит на 8 пикселях от рамки, как подписи сведений,
-  правая кнопка кончается там же, где значения, а свет строки не касается
-  рамки.
+  сверху рядом 32 (`h-row px-plate`), её текст на 12 от рамки по горизонтали
+  и вертикали, над миниатюрами. Строки идут под ней без зазора, по 44
+  пикселя (`h-card-row px-plate`), свет строки на 4 от рамки, миниатюра и
+  команды строки на 8 от краёв света. Так миниатюра стоит на 12 от рамки, как
+  подписи сведений, а правая кнопка кончается там же, где значения.
   Миниатюра это общий `MicroPreviewThumbnail`: рисуется, только когда
   `IndexedBlock.thumb_format` подтверждает микропревью, дописывает
   `?m=<thumb_mtime>` против кеша и получает PNG `dark:invert`, как миниатюры
@@ -1543,7 +1541,7 @@ Image media expansion:
   лежат в `src/lib/cardAssociations.ts`: `Same URL`, автор как написан
   (кнопка: лента автора, подсказка `All cards by <автор>`), хост сайта
   текстом. Строки это общий список строк панели `PanelCardRows`, тот же, что
-  у Related notes (`CardRow` с `framed`, команды под указателем, превью при
+  у Related notes (`CardRow`, команды под указателем, превью при
   наведении); ключ строки содержит список, поэтому одна карточка в двух
   списках это две строки. Больше пяти строк: у автора `Show all` открывает
   ленту автора, у адреса и сайта `Show N more` раскрывает блок на месте до

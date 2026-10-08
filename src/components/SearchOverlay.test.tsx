@@ -224,6 +224,8 @@ describe("SearchOverlay", () => {
 
     // Rows are grouped into dynamic date sections derived from saved_at.
     expect(await screen.findByText("Today")).toBeInTheDocument();
+    // A row of the list, its text at the rows' thumbnails.
+    expect(screen.getByText("Today")).toHaveClass("flex", "h-row", "items-center", "px-plate");
     expect(screen.getByText("Yesterday")).toBeInTheDocument();
     expect(screen.getByText("fresh")).toBeInTheDocument();
     // The header count is a query-result number — hidden in recent mode.
@@ -843,6 +845,9 @@ describe("SearchOverlay", () => {
       document.querySelector("[data-search-overlay-metadata]") as HTMLElement,
     );
     expect(metadata.getByText("Date")).toBeInTheDocument();
+    // The pane holds a card, not a list: its rows stay compact lines.
+    expect(metadata.getByText("Date").closest("[data-metadata-row]"))
+      .toHaveAttribute("data-metadata-row-spacing", "compact");
     // The type taxonomy is gone (decision 044): no Type row anywhere.
     expect(metadata.queryByText("Type")).toBeNull();
     expect(metadata.getByText("example.com")).toBeInTheDocument();

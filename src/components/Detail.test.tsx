@@ -885,15 +885,19 @@ describe("Detail", () => {
     expect(dateLabel).not.toHaveClass("font-semibold", "uppercase", "tracking-widest");
     expect(dateLabel).toHaveClass("whitespace-nowrap");
     expect(dateLabel.closest("[data-metadata-row]")?.tagName).toBe("DIV");
+    // A row of the box's surface: 32 px, its line centered, the separator
+    // on its bottom edge.
     expect(dateLabel.closest("[data-metadata-row]")).toHaveClass(
       "relative",
       "grid",
       "w-full",
       "grid-cols-[max-content_minmax(0,1fr)]",
       "gap-x-4",
-      "pb-2",
+      "py-plate",
+      "after:bottom-0",
       "after:border-border",
     );
+    expect(dateLabel.closest("[data-metadata-row]")).toHaveAttribute("data-metadata-row-spacing", "row");
     const metadataRows = container.querySelectorAll("[data-metadata-row]");
     expect(metadataRows.length).toBeGreaterThan(0);
     expect(dateLabel.closest("[data-metadata-row]")?.lastElementChild?.firstElementChild).toHaveClass(
@@ -1117,8 +1121,9 @@ describe("Detail", () => {
     await waitFor(() => {
       const label = screen.getByText("Related notes");
       expect(label.closest("[data-metadata-row]")).toBeNull();
-      // A label of the card, at the metadata labels' 8 px inset.
-      expect(label).toHaveClass("font-mono", "text-muted-foreground", "px-2", "pt-4");
+      // A row of the card at its top, the text at the metadata labels'
+      // inset across and down.
+      expect(label).toHaveClass("font-mono", "text-muted-foreground", "flex", "h-row", "items-center", "px-plate");
       const relatedCard = label.parentElement;
       expect(relatedCard).toHaveAttribute("data-related-notes-block");
       expect(relatedCard?.parentElement).toHaveAttribute("data-metadata-sections");
@@ -1129,11 +1134,12 @@ describe("Detail", () => {
       expect(metadataCard).toHaveAttribute("data-detail-panel-card");
       expect(relatedCard?.className).toBe(metadataCard?.className);
       expect(relatedCard).toHaveStyle({ minWidth: "240px" });
-      // The rows stand 4 px inside the frame and pad 4 px: thumbnails at the
-      // labels' inset, the light off the frame.
+      // The card holds its rows at the surface's inset; the rows stand flush
+      // and pad the plate's inset, so thumbnails meet the labels' vertical.
+      expect(relatedCard).toHaveClass("p-surface");
       const list = relatedCard?.querySelector("[data-related-notes-list]");
-      expect(list).toHaveClass("p-1");
-      expect(list?.querySelector("[data-card-row]")).toHaveClass("[--card-row-pad-x:var(--spacing-s1)]");
+      expect(list).not.toHaveClass("p-1");
+      expect(list?.querySelector("[data-card-row] > button")).toHaveClass("h-card-row", "px-plate");
     });
   });
 
@@ -1175,14 +1181,16 @@ describe("Detail", () => {
     const actionRow = container.querySelector("[data-detail-action-row]");
     const relatedNotesBlock = container.querySelector("[data-related-notes-block]");
     expect(sections).toHaveClass("gap-6");
+    // Plates of the box: 4 px off the frame, off each other and off the
+    // row above.
     expect(actionRow).toHaveClass(
       "min-w-0",
       "flex",
       "items-center",
-      "gap-2",
-      "px-2",
-      "pb-2",
+      "gap-surface",
+      "mt-surface",
     );
+    expect(actionRow).not.toHaveClass("px-2", "pb-2");
     const metadataCard = actionRow?.closest("[data-detail-metadata-card]");
     expect(metadataCard?.querySelector("[data-metadata-table]")).not.toBeNull();
     expect(metadataCard?.nextElementSibling).toBe(relatedNotesBlock);
@@ -1221,10 +1229,12 @@ describe("Detail", () => {
       "border",
       "border-border",
       "bg-card",
+      "p-surface",
     );
     expect(metadataCard).toHaveStyle({ minWidth: "240px" });
     const metadataContent = metadataCard?.querySelector("[data-detail-metadata-card-content]");
-    expect(metadataContent).toHaveClass("px-2", "pb-4", "pt-4");
+    expect(metadataContent).toHaveClass("px-plate");
+    expect(metadataContent).not.toHaveClass("pt-4", "pb-4");
     expect(metadataCard?.querySelector("[data-metadata-table]")).not.toBeNull();
     expect(metadataCard?.querySelector("[data-detail-action-row]")).not.toBeNull();
   });
@@ -2560,7 +2570,7 @@ describe("Detail", () => {
     expect(wrapper).toHaveClass("relative", "rounded-1");
     expect(wrapper).not.toHaveClass("state-active");
     expect(wrapper.className).not.toMatch(/(?:^|\s)(?:bg-|border(?:\s|-|$))/);
-    expect(row).toHaveClass("flex", "items-center", "gap-2", "px-(--card-row-pad-x)", "py-1.5");
+    expect(row).toHaveClass("flex", "h-card-row", "items-center", "gap-2", "px-plate");
     expect(row.querySelector("[data-card-row-line]")).toHaveClass("font-sans", "text-base");
 
     const img = row.querySelector("img");
@@ -3198,9 +3208,11 @@ describe("Detail association blocks", () => {
     expect(address).toHaveAttribute("data-detail-panel-card");
     expect(address?.className).toBe(related?.className);
     expect(address).toHaveAttribute("data-card-association-block", "address");
-    expect(within(address as HTMLElement).getByText("Same URL")).toHaveClass("px-2", "pt-4");
-    expect(address?.querySelector("[data-card-association-list] [data-card-row]"))
-      .toHaveClass("[--card-row-pad-x:var(--spacing-s1)]");
+    const sameUrl = within(address as HTMLElement).getByText("Same URL");
+    expect(sameUrl).toHaveClass("min-w-0", "truncate");
+    expect(sameUrl.parentElement).toHaveClass("flex", "h-row", "items-center", "px-plate");
+    expect(address?.querySelector("[data-card-association-list] [data-card-row] > button"))
+      .toHaveClass("h-card-row", "px-plate");
   });
 
   it("names the author on a button that opens the author's feed, and so does Show all", async () => {
@@ -3213,7 +3225,12 @@ describe("Detail association blocks", () => {
 
     const author = container.querySelector('[data-card-association-block="author"]') as HTMLElement;
     expect(author.querySelectorAll('[data-card-association-item="button"]')).toHaveLength(5);
-    fireEvent.click(within(author).getByRole("button", { name: "Show all" }));
+    const showAll = within(author).getByRole("button", { name: "Show all" });
+    // The list's last row: a plate lit under the pointer, flush under the
+    // rows, its text at their thumbnails.
+    expect(showAll).toHaveClass("h-row", "w-full", "rounded-1", "px-plate", "hover:state-active");
+    expect(showAll.previousElementSibling).toHaveAttribute("data-card-association-list");
+    fireEvent.click(showAll);
     expect(onOpenAuthorFeed).toHaveBeenCalledTimes(2);
   });
 

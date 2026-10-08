@@ -76,7 +76,7 @@ function DisplayGroup<T extends string>({
   return (
     <>
       {/* Same caption as the selection menu's count header. */}
-      <div id={labelId} className="px-2 py-1.5 font-mono text-sm text-muted-foreground">
+      <div id={labelId} className="px-plate py-1.5 font-mono text-sm text-muted-foreground">
         {label}
       </div>
       <DropdownMenuRadioGroup

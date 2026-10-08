@@ -10,7 +10,10 @@ const twMerge = extendTailwindMerge({
   extend: {
     theme: {
       radius: ["0", "1", "2", "card", "media", "pill", "round"],
-      spacing: ["s1", "s2", "s3", "s4", "s5", "s6", "s7"],
+      spacing: [
+        "s1", "s2", "s3", "s4", "s5", "s6", "s7",
+        "surface", "plate", "row", "card-row",
+      ],
     },
   },
 })

@@ -377,7 +377,7 @@ export function CollectionPicker({
         rowSize={rowSize}
         paddingY={listPadding}
         className="min-h-0 flex-1"
-        innerClassName={cn(layout === "edge" ? "p-1" : "px-1 py-0.5")}
+        innerClassName={cn(layout === "edge" ? "p-surface" : "px-surface py-0.5")}
       >
         {filtered.map((tc, rowIndex) => {
           const hasTag = optimisticTags.includes(tc.tag);
@@ -399,7 +399,7 @@ export function CollectionPicker({
                 // The trailing inset matches the button's vertical breathing
                 // room ((row height − button height) / 2) so the action sits
                 // evenly inside the row on both row sizes (menu and clipper).
-                "flex h-[var(--menu-row-height)] w-full items-center gap-2 rounded-1 pl-2 pr-[calc((var(--menu-row-height)-24px)/2)] text-base",
+                "flex h-[var(--menu-row-height)] w-full items-center gap-2 rounded-1 pl-plate pr-[calc((var(--menu-row-height)-24px)/2)] text-base",
                 isActive && "state-active",
               )}
               data-collection-picker-row=""
@@ -466,7 +466,7 @@ export function CollectionPicker({
               createAndAssign();
             }}
             className={cn(
-              "flex h-[var(--menu-row-height)] w-full items-center gap-2 rounded-1 px-2 text-base font-normal text-foreground hover:state-active",
+              "flex h-[var(--menu-row-height)] w-full items-center gap-2 rounded-1 px-plate text-base font-normal text-foreground hover:state-active",
               createActive && "state-active",
             )}
             data-collection-picker-create=""
@@ -480,7 +480,7 @@ export function CollectionPicker({
         )}
 
         {filtered.length === 0 && !canCreate && (
-          <p className="flex h-[var(--menu-row-height)] items-center justify-center px-2 text-sm text-muted-foreground">
+          <p className="flex h-[var(--menu-row-height)] items-center justify-center px-plate text-sm text-muted-foreground">
             No collections
           </p>
         )}
@@ -675,7 +675,7 @@ export function BatchCollectionPicker({
         rowCount={listRowCount}
         paddingY="compact"
         className="min-h-0 flex-1"
-        innerClassName="px-1 py-0.5"
+        innerClassName="px-surface py-0.5"
       >
         {filtered.map((tc, rowIndex) => {
           const membership = batchMembershipState(selectedSlugs, tagLookup, pendingStates, tc.tag);
@@ -695,7 +695,7 @@ export function BatchCollectionPicker({
                 }
               }}
               className={cn(
-                "flex h-[var(--menu-row-height)] w-full items-center gap-2 rounded-1 pl-2 pr-[calc((var(--menu-row-height)-24px)/2)] text-base",
+                "flex h-[var(--menu-row-height)] w-full items-center gap-2 rounded-1 pl-plate pr-[calc((var(--menu-row-height)-24px)/2)] text-base",
                 isActive && "state-active",
               )}
               data-batch-collection-row=""
@@ -764,7 +764,7 @@ export function BatchCollectionPicker({
               createAndAssign();
             }}
             className={cn(
-              "flex h-[var(--menu-row-height)] w-full items-center gap-2 rounded-1 px-2 text-base font-normal text-foreground hover:state-active",
+              "flex h-[var(--menu-row-height)] w-full items-center gap-2 rounded-1 px-plate text-base font-normal text-foreground hover:state-active",
               createActive && "state-active",
             )}
             data-collection-picker-create=""
@@ -778,7 +778,7 @@ export function BatchCollectionPicker({
         )}
 
         {filtered.length === 0 && !canCreate && (
-          <p className="flex h-[var(--menu-row-height)] items-center justify-center px-2 text-sm text-muted-foreground">
+          <p className="flex h-[var(--menu-row-height)] items-center justify-center px-plate text-sm text-muted-foreground">
             No collections
           </p>
         )}

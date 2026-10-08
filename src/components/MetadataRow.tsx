@@ -36,19 +36,38 @@ export function MetadataLinkValue({
   );
 }
 
+/**
+ * How rows stack. `row`: a row of a surface (the open card's metadata box),
+ * 32 px with its line centered, the separator on its bottom edge; a wrapped
+ * value grows it. `compact`: lines 8 px apart with the separator between
+ * them, for a column that holds no plates (the search preview).
+ */
+export type MetadataRowSpacing = "row" | "compact";
+
+const METADATA_ROW_SPACING_CLASSES: Record<MetadataRowSpacing, string> = {
+  row: "py-plate after:bottom-0",
+  compact: "pb-2 after:bottom-1 last:pb-0",
+};
+
 interface MetadataRowProps {
   label: string;
   children: ReactNode;
+  spacing?: MetadataRowSpacing;
 }
 
 export function MetadataRow({
   label,
   children,
+  spacing = "row",
 }: MetadataRowProps) {
   return (
     <div
-      className="relative grid w-full grid-cols-[max-content_minmax(0,1fr)] items-start gap-x-4 pb-2 after:absolute after:bottom-1 after:left-0 after:right-0 after:border-t after:border-border last:pb-0 last:after:hidden"
+      className={cn(
+        "relative grid w-full grid-cols-[max-content_minmax(0,1fr)] items-start gap-x-4 after:absolute after:left-0 after:right-0 after:border-t after:border-border last:after:hidden",
+        METADATA_ROW_SPACING_CLASSES[spacing],
+      )}
       data-metadata-row
+      data-metadata-row-spacing={spacing}
     >
       <div className={METADATA_LABEL_CLASSES}>
         {label}

@@ -72,7 +72,7 @@ describe("Display menu (SPEC_FEED_DISPLAY.md, Д1 to Д3)", () => {
   it("keeps every row on the menu's text column, the check in the leading icon slot", async () => {
     await openMenu();
     for (const item of screen.getAllByRole("menuitemradio")) {
-      expect(item).toHaveClass("px-2", "py-1.5", "text-base");
+      expect(item).toHaveClass("min-h-row", "px-plate", "text-base");
       expect(item).not.toHaveClass("pl-8");
       expect(item.firstElementChild).toHaveAttribute("data-card-menu-icon-slot");
     }

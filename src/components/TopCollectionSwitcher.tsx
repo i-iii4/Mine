@@ -304,7 +304,7 @@ export function TopCollectionSwitcher({
           <QuantizedMenuScrollArea
             rowCount={Math.max(visibleItems.length, 1)}
             maxRows={8}
-            innerClassName="p-1"
+            innerClassName="p-surface"
           >
             {visibleItems.length > 0 ? (
               visibleItems.map((item, index) => (
@@ -321,12 +321,12 @@ export function TopCollectionSwitcher({
                 </SearchMenuAction>
               ))
             ) : (
-              <div className="flex h-[var(--menu-row-height)] items-center px-2 text-base text-muted-foreground">
+              <div className="flex h-[var(--menu-row-height)] items-center px-plate text-base text-muted-foreground">
                 No collections
               </div>
             )}
           </QuantizedMenuScrollArea>
-          <div className="border-t border-border p-1" data-top-collection-create="">
+          <div className="border-t border-border p-surface" data-top-collection-create="">
             <SearchMenuAction
               id={`${actionIdPrefix}-collection-action-${createActionIndex}`}
               active={activeIndex === createActionIndex}
