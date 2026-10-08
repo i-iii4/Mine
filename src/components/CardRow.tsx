@@ -29,7 +29,7 @@ import type { SearchMatch } from "@/types";
 
 /**
  * The row's item: the thumbnail and the line, centered in a card row of a
- * surface (44 px). Its content stands the plate's inset off the row's
+ * surface (40 px). Its content stands the plate's inset off the row's
  * sides; the row's commands keep the same distance from its right end
  * (DESIGN_SYSTEM.md, «Система отступов поверхностей»).
  */

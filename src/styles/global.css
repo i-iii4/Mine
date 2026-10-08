@@ -845,9 +845,10 @@ body {
   --spacing-plate: var(--spacing-s2);
   /* A row of a surface, its content centered: an ordinary row (a menu item,
      a box heading, a metadata row) and a card row, whose 32px thumbnail
-     keeps 6px above and below (`CardRow`). */
+     keeps 4px above and below (`CardRow`; the chrome row's 40, user's
+     decision of 08.10.2026). */
   --spacing-row: var(--spacing-s5);
-  --spacing-card-row: 44px;
+  --spacing-card-row: 40px;
   --text-sm: 12px;
   --text-sm--line-height: 16px;
   --text-base: 14px;
