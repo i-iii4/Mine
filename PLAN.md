@@ -2613,6 +2613,7 @@ Related notes, у автора своя лента. Контракт:
 | 41.6 | Канал YouTube | DONE 07.10.2026 | oEmbed по идентификатору видео в фоновом скрипте, `@handle` в `author` при любом виде сохранения, срок 3 с; тесты |
 | 41.7 | Документы | DONE 07.10.2026 | SPEC_FRONTEND, SPEC_TABS, SPEC_STORAGE, SPEC_CLIPPER, DESIGN_SYSTEM, ARCHITECTURE |
 | 41.8 | Живая приёмка | TODO | за пользователем |
+| 41.9 | Все строки связей | DONE 08.10.2026 | решение пользователя: блоки связей показывают все строки сразу; `read_card_associations` одним чтением отдаёт до `CARD_ASSOCIATION_MAX_ROWS = 200` строк без счётчика и раскрытия, группа больше 200 показывает 200 самых новых; `Show all`, `Show N more` и раскрытие убраны, лента автора по подписи; тесты, SPEC_CARD_ASSOCIATIONS, SPEC_FRONTEND, DESIGN_SYSTEM |
 
 ### Backlog
 

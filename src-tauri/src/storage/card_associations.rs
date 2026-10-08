@@ -14,7 +14,7 @@ use std::collections::{HashSet, VecDeque};
 use anyhow::{Context, Result};
 use mine_core::links::{note_name_key, obsidian_target_name_keys, LinkIndex, LinkResolution, LinkSyntax};
 use rusqlite::{params, types::Value, Connection, OptionalExtension};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::domain::block::{parse_markdown_document, Block, DateTime};
 use crate::domain::card_association::{
@@ -30,11 +30,9 @@ use crate::storage::projection::{read_projection_snapshot, ProjectionRevision};
 /// with every change to normalization, the platform list or inheritance:
 /// [`backfill_association_index`] derives older rows again.
 pub const ASSOCIATION_INDEX_VERSION: i64 = 1;
-/// Rows a group of the open card shows before `Show all` or `Show N more`.
-pub const CARD_ASSOCIATION_PREVIEW_ROWS: usize = 5;
-/// Rows an expanded group shows: the search's bound, past which the tail is
-/// not reachable.
-pub const CARD_ASSOCIATION_EXPANDED_ROWS: usize = 200;
+/// Rows a group of the open card shows: all of them up to the search's bound.
+/// Past it the newest stay; the author's others are in the author's feed.
+pub const CARD_ASSOCIATION_MAX_ROWS: usize = 200;
 /// Steps an inherited author is followed back through extracted cards.
 pub const ASSOCIATION_SOURCE_CHAIN_MAX_STEPS: usize = 8;
 /// The order of the open card's association groups, top to bottom. A card is
@@ -46,10 +44,9 @@ pub const CARD_ASSOCIATION_ORDER: [CardAssociationKind; 3] = [
 ];
 
 const CHANNEL_CARD_KIND: &str = "channel";
-const TOTAL_COLUMN: &str = "association_total";
 
 /// One rule relating two cards.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, specta::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum CardAssociationKind {
     Address,
@@ -64,10 +61,8 @@ pub struct CardAssociationGroup {
     /// The author as written on the open card (own or inherited), the site,
     /// or the address key.
     pub label: String,
-    /// Cards of the group after every exclusion.
-    pub total: usize,
-    /// Newest first: at most [`CARD_ASSOCIATION_PREVIEW_ROWS`], or
-    /// [`CARD_ASSOCIATION_EXPANDED_ROWS`] for an expanded kind.
+    /// Cards of the group after every exclusion, newest first: all of them,
+    /// at most [`CARD_ASSOCIATION_MAX_ROWS`].
     pub blocks: Vec<LightBlock>,
 }
 
@@ -274,13 +269,12 @@ pub fn read_card_associations(
     conn: &Connection,
     slug: &str,
     exclude_slugs: &[String],
-    expanded: &[CardAssociationKind],
 ) -> Result<CardAssociations> {
     read_projection_snapshot(conn, |conn, generation| {
         Ok(CardAssociations {
             generation,
             slug: slug.to_string(),
-            groups: association_groups(conn, slug, exclude_slugs, expanded)?,
+            groups: association_groups(conn, slug, exclude_slugs)?,
         })
     })
 }
@@ -496,7 +490,7 @@ impl GroupRule {
 }
 
 /// The query of one group and its values: the group's rows outside every
-/// earlier group, newest first, with the group's total in every row.
+/// earlier group, newest first.
 /// `?1` body preview length, `?2` open card id, `?3` excluded slugs as JSON,
 /// `?4` row limit, `?5` this group's value, `?6` on earlier groups' values.
 fn group_query(
@@ -504,14 +498,13 @@ fn group_query(
     earlier: &[GroupRule],
     open_id: i64,
     exclude: &str,
-    limit: usize,
 ) -> Result<(String, Vec<Value>)> {
     let mut conditions = vec![rule.member_sql(5)];
     let mut values: Vec<Value> = vec![
         Value::Integer(LIGHT_BLOCK_BODY_PREVIEW_CHARS),
         Value::Integer(open_id),
         Value::Text(exclude.to_string()),
-        Value::Integer(i64::try_from(limit)?),
+        Value::Integer(i64::try_from(CARD_ASSOCIATION_MAX_ROWS)?),
         Value::Text(rule.value.clone()),
     ];
     for group in earlier {
@@ -519,7 +512,7 @@ fn group_query(
         conditions.push(group.outside_sql(values.len()));
     }
     let sql = format!(
-        "SELECT {columns}, COUNT(*) OVER () AS {TOTAL_COLUMN}
+        "SELECT {columns}
            FROM blocks b
           WHERE b.card_kind != 'channel'
             AND b.id != ?2
@@ -538,7 +531,6 @@ fn association_groups(
     conn: &Connection,
     slug: &str,
     exclude_slugs: &[String],
-    expanded: &[CardAssociationKind],
 ) -> Result<Vec<CardAssociationGroup>> {
     let open = conn
         .query_row(
@@ -594,20 +586,10 @@ fn association_groups(
     let exclude = serde_json::to_string(exclude_slugs)?;
     let mut groups = Vec::new();
     for (position, rule) in rules.iter().enumerate() {
-        let limit = if expanded.contains(&rule.kind) {
-            CARD_ASSOCIATION_EXPANDED_ROWS
-        } else {
-            CARD_ASSOCIATION_PREVIEW_ROWS
-        };
-        let (sql, values) = group_query(rule, &rules[..position], open.id, &exclude, limit)?;
+        let (sql, values) = group_query(rule, &rules[..position], open.id, &exclude)?;
         let mut stmt = conn.prepare(&sql)?;
-        let mut total = 0usize;
         let blocks = stmt
-            .query_map(rusqlite::params_from_iter(values), |row| {
-                let index = row.as_ref().column_index(TOTAL_COLUMN)?;
-                total = usize::try_from(row.get::<_, i64>(index)?).unwrap_or(0);
-                light_block_from_row(row)
-            })?
+            .query_map(rusqlite::params_from_iter(values), light_block_from_row)?
             .collect::<rusqlite::Result<Vec<_>>>()
             .with_context(|| format!("failed to read the {:?} group of {slug}", rule.kind))?;
         if blocks.is_empty() {
@@ -616,7 +598,6 @@ fn association_groups(
         groups.push(CardAssociationGroup {
             kind: rule.kind,
             label: rule.label.clone(),
-            total,
             blocks,
         });
     }
@@ -706,7 +687,7 @@ mod tests {
         }
     }
 
-    type GroupView = (CardAssociationKind, String, usize, Vec<String>);
+    type GroupView = (CardAssociationKind, String, Vec<String>);
 
     fn author_of(conn: &Connection, slug: &str) -> Option<String> {
         conn.query_row(
@@ -718,17 +699,12 @@ mod tests {
     }
 
     fn groups(conn: &Connection, slug: &str) -> Vec<GroupView> {
-        groups_with(conn, slug, &[], &[])
+        groups_with(conn, slug, &[])
     }
 
-    fn groups_with(
-        conn: &Connection,
-        slug: &str,
-        exclude: &[&str],
-        expanded: &[CardAssociationKind],
-    ) -> Vec<GroupView> {
+    fn groups_with(conn: &Connection, slug: &str, exclude: &[&str]) -> Vec<GroupView> {
         let exclude: Vec<String> = exclude.iter().map(|slug| slug.to_string()).collect();
-        read_card_associations(conn, slug, &exclude, expanded)
+        read_card_associations(conn, slug, &exclude)
             .unwrap()
             .groups
             .into_iter()
@@ -736,18 +712,16 @@ mod tests {
                 (
                     group.kind,
                     group.label,
-                    group.total,
                     group.blocks.into_iter().map(|block| block.slug).collect(),
                 )
             })
             .collect()
     }
 
-    fn view(kind: CardAssociationKind, label: &str, total: usize, slugs: &[&str]) -> GroupView {
+    fn view(kind: CardAssociationKind, label: &str, slugs: &[&str]) -> GroupView {
         (
             kind,
             label.to_string(),
-            total,
             slugs.iter().map(|slug| slug.to_string()).collect(),
         )
     }
@@ -997,8 +971,8 @@ mod tests {
         assert_eq!(
             groups(&conn, "Cards/Open"),
             vec![
-                view(CardAssociationKind::Address, post, 1, &["Cards/Piece"]),
-                view(CardAssociationKind::Author, "@kotecinho", 2, &["Cards/Other post", "Cards/No address"]),
+                view(CardAssociationKind::Address, post, &["Cards/Piece"]),
+                view(CardAssociationKind::Author, "@kotecinho", &["Cards/Other post", "Cards/No address"]),
             ]
         );
         // Without an address the author group keeps cards without one.
@@ -1007,7 +981,6 @@ mod tests {
             vec![view(
                 CardAssociationKind::Author,
                 "@kotecinho",
-                3,
                 &["Cards/Open", "Cards/Piece", "Cards/Other post"],
             )]
         );
@@ -1021,8 +994,8 @@ mod tests {
         Card::new("Cards/Kept").author("@a").write(&conn);
         Card::new("Collections/A").author("@a").collection().write(&conn);
         assert_eq!(
-            groups_with(&conn, "Cards/Open", &["Cards/Related"], &[]),
-            vec![view(CardAssociationKind::Author, "@a", 1, &["Cards/Kept"])]
+            groups_with(&conn, "Cards/Open", &["Cards/Related"]),
+            vec![view(CardAssociationKind::Author, "@a", &["Cards/Kept"])]
         );
     }
 
@@ -1039,8 +1012,8 @@ mod tests {
         assert_eq!(
             groups(&conn, "Cards/Open"),
             vec![
-                view(CardAssociationKind::Address, "https://niklasrosen.se/a", 1, &["Cards/Same"]),
-                view(CardAssociationKind::Site, "niklasrosen.se", 1, &["Cards/Page"]),
+                view(CardAssociationKind::Address, "https://niklasrosen.se/a", &["Cards/Same"]),
+                view(CardAssociationKind::Site, "niklasrosen.se", &["Cards/Page"]),
             ]
         );
         assert!(groups(&conn, "Cards/Authored").is_empty());
@@ -1048,22 +1021,30 @@ mod tests {
     }
 
     #[test]
-    fn a_group_shows_five_newest_rows_and_its_total_or_all_when_expanded() {
+    fn a_group_shows_all_its_rows_newest_first_up_to_its_bound() {
         let conn = db::open_memory().unwrap();
         Card::new("Cards/Open").url("https://door.link/").at("2026-02-01T00:00:00Z").write(&conn);
-        let slugs: Vec<String> = (1..=8).map(|day| format!("Cards/Save {day}")).collect();
-        let dates: Vec<String> = (1..=8).map(|day| format!("2026-01-{day:02}T00:00:00Z")).collect();
-        for (slug, date) in slugs.iter().zip(&dates) {
-            Card::new(slug).url("https://door.link").at(date).write(&conn);
+        let save = |step: usize| {
+            let slug = format!("Cards/Save {step}");
+            let date = format!("2026-01-01T{:02}:{:02}:00Z", step / 60, step % 60);
+            Card::new(&slug).url("https://door.link").at(&date).write(&conn);
+        };
+        for step in 1..=8 {
+            save(step);
         }
-        let preview = groups(&conn, "Cards/Open");
-        assert_eq!(preview[0].2, 8);
         assert_eq!(
-            preview[0].3,
-            ["Cards/Save 8", "Cards/Save 7", "Cards/Save 6", "Cards/Save 5", "Cards/Save 4"]
+            groups(&conn, "Cards/Open")[0].2,
+            (1..=8).rev().map(|step| format!("Cards/Save {step}")).collect::<Vec<_>>()
         );
-        let expanded = groups_with(&conn, "Cards/Open", &[], &[CardAssociationKind::Address]);
-        assert_eq!(expanded[0].3.len(), 8);
+
+        // Past the bound the newest stay and the oldest is left out.
+        for step in 9..=CARD_ASSOCIATION_MAX_ROWS + 1 {
+            save(step);
+        }
+        let bounded = &groups(&conn, "Cards/Open")[0].2;
+        assert_eq!(bounded.len(), CARD_ASSOCIATION_MAX_ROWS);
+        assert_eq!(bounded[0], format!("Cards/Save {}", CARD_ASSOCIATION_MAX_ROWS + 1));
+        assert_eq!(bounded[CARD_ASSOCIATION_MAX_ROWS - 1], "Cards/Save 2");
     }
 
     #[test]
@@ -1134,8 +1115,7 @@ mod tests {
             (rule(CardAssociationKind::Site, "x"), vec![], "idx_blocks_association_site"),
         ];
         for (current, earlier, index) in cases {
-            let (sql, _) =
-                group_query(&current, &earlier, 1, "[]", CARD_ASSOCIATION_PREVIEW_ROWS).unwrap();
+            let (sql, _) = group_query(&current, &earlier, 1, "[]").unwrap();
             let group = plan(&sql);
             assert!(group.contains(index), "{group}");
             assert!(!group.lines().any(|line| line.trim() == "SCAN b"), "{group}");

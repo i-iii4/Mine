@@ -16,7 +16,6 @@ import type {
   TabView,
   IndexedBlock,
   GridSnapshot,
-  CardAssociationKind,
   CardAssociations,
   FeedOrder,
   SearchPageToken,
@@ -224,13 +223,9 @@ export const listGridBlocks = (
   });
 
 /** The open card's associations (SPEC_CARD_ASSOCIATIONS.md): `exclude_slugs`
- *  are its Related notes, `expanded` the groups read past their first rows. */
-export const listCardAssociations = (
-  slug: string,
-  exclude_slugs: string[],
-  expanded: CardAssociationKind[],
-) =>
-  invoke<CardAssociations>("list_card_associations", { slug, exclude_slugs, expanded });
+ *  are its Related notes. */
+export const listCardAssociations = (slug: string, exclude_slugs: string[]) =>
+  invoke<CardAssociations>("list_card_associations", { slug, exclude_slugs });
 
 export const searchGridBlocks = (
   current_tag: string | undefined,

@@ -3134,13 +3134,8 @@ describe("Detail association blocks", () => {
     };
   }
 
-  function group(
-    kind: CardAssociationKind,
-    label: string,
-    slugs: string[],
-    total = slugs.length,
-  ): CardAssociationGroup {
-    return { kind, label, total, blocks: slugs.map((slug) => light(slug)) };
+  function group(kind: CardAssociationKind, label: string, slugs: string[]): CardAssociationGroup {
+    return { kind, label, blocks: slugs.map((slug) => light(slug)) };
   }
 
   function renderOpenCard(props: Partial<Parameters<typeof Detail>[0]> = {}) {
@@ -3174,7 +3169,7 @@ describe("Detail association blocks", () => {
       slug: "open",
       groups: [
         group("address", "https://x.com/kotecinho/status/1", ["piece"]),
-        group("author", "@kotecinho", ["one", "two", "three", "four", "five"], 9),
+        group("author", "@kotecinho", ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]),
       ],
     });
   });
@@ -3195,7 +3190,7 @@ describe("Detail association blocks", () => {
     });
     expect(container.querySelector("[data-detail-layout-mode]")).toHaveAttribute("data-detail-layout-mode", mode);
     // Related notes are left out of the read: the panel shows them already.
-    expect(listCardAssociationsMock).toHaveBeenCalledWith("open", ["related"], []);
+    expect(listCardAssociationsMock).toHaveBeenCalledWith("open", ["related"]);
 
     const sections = container.querySelector("[data-metadata-sections]")!;
     const cards = [...sections.children];
@@ -3215,7 +3210,7 @@ describe("Detail association blocks", () => {
       .toHaveClass("h-card-row", "pl-card-thumb-inset", "pr-plate");
   });
 
-  it("names the author on a button that opens the author's feed, and so does Show all", async () => {
+  it("names the author on a button that opens the author's feed and shows every row", async () => {
     const onOpenAuthorFeed = vi.fn();
     const { container } = renderOpenCard({ onOpenAuthorFeed });
     const heading = await screen.findByRole("button", { name: "@kotecinho" });
@@ -3223,27 +3218,19 @@ describe("Detail association blocks", () => {
     fireEvent.click(heading);
     expect(onOpenAuthorFeed).toHaveBeenCalledWith("@kotecinho");
 
+    // Every row at once, nothing after the list.
     const author = container.querySelector('[data-card-association-block="author"]') as HTMLElement;
-    expect(author.querySelectorAll('[data-card-association-item="button"]')).toHaveLength(5);
-    const showAll = within(author).getByRole("button", { name: "Show all" });
-    // The list's last row: a plate lit under the pointer, flush under the
-    // rows, its text at their thumbnails.
-    expect(showAll).toHaveClass("h-row", "w-full", "rounded-1", "px-plate", "hover:state-active");
-    expect(showAll.previousElementSibling).toHaveAttribute("data-card-association-list");
-    fireEvent.click(showAll);
-    expect(onOpenAuthorFeed).toHaveBeenCalledTimes(2);
+    expect(author.querySelectorAll('[data-card-association-item="button"]')).toHaveLength(9);
+    expect(author.lastElementChild).toHaveAttribute("data-card-association-list");
+    expect(within(author).queryByRole("button", { name: /^Show / })).toBeNull();
   });
 
-  it("names a site by its host as text and opens its other rows in place", async () => {
-    listCardAssociationsMock.mockImplementation(async (_slug, _exclude, expanded) => ({
+  it("names a site by its host as text and shows every row", async () => {
+    listCardAssociationsMock.mockResolvedValue({
       generation: 5,
       slug: "open",
-      groups: [
-        expanded.includes("site")
-          ? group("site", "niklasrosen.se", ["a", "b", "c", "d", "e", "f", "g"], 7)
-          : group("site", "niklasrosen.se", ["a", "b", "c", "d", "e"], 7),
-      ],
-    }));
+      groups: [group("site", "niklasrosen.se", ["a", "b", "c", "d", "e", "f", "g"])],
+    });
     const { container } = renderOpenCard({
       block: block({ slug: "open", url: "https://niklasrosen.se/x", related_notes: [] }),
     });
@@ -3254,13 +3241,9 @@ describe("Detail association blocks", () => {
     });
     expect(within(site).queryByRole("button", { name: "niklasrosen.se" })).toBeNull();
     expect(within(site).getByText("niklasrosen.se")).toBeInTheDocument();
-
-    fireEvent.click(within(site).getByRole("button", { name: "Show 2 more" }));
-    await waitFor(() => {
-      expect(site.querySelectorAll('[data-card-association-item="button"]')).toHaveLength(7);
-    });
-    expect(listCardAssociationsMock).toHaveBeenLastCalledWith("open", [], ["site"]);
-    expect(within(site).queryByRole("button", { name: /more/ })).toBeNull();
+    expect(site.querySelectorAll('[data-card-association-item="button"]')).toHaveLength(7);
+    expect(site.lastElementChild).toHaveAttribute("data-card-association-list");
+    expect(within(site).queryByRole("button", { name: /^Show / })).toBeNull();
   });
 
   it("opens a row's card and shows its commands under the pointer", async () => {
@@ -3284,7 +3267,7 @@ describe("Detail association blocks", () => {
     listCardAssociationsMock.mockResolvedValue({
       generation: 5,
       slug: "open",
-      groups: [{ kind: "author", label: "@kotecinho", total: 2, blocks: ["one", "two"].map(written) }],
+      groups: [{ kind: "author", label: "@kotecinho", blocks: ["one", "two"].map(written) }],
     });
     const { container } = renderOpenCard();
     const author = await waitFor(() => {

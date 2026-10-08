@@ -53,12 +53,8 @@ export type CardAssociationGroup = { kind: CardAssociationKind;
  */
 label: string;
 /**
- * Cards of the group after every exclusion.
- */
-total: number;
-/**
- * Newest first: at most [`CARD_ASSOCIATION_PREVIEW_ROWS`], or
- * [`CARD_ASSOCIATION_EXPANDED_ROWS`] for an expanded kind.
+ * Cards of the group after every exclusion, newest first: all of them,
+ * at most [`CARD_ASSOCIATION_MAX_ROWS`].
  */
 blocks: LightBlock[] }
 

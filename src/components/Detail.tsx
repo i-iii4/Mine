@@ -81,7 +81,6 @@ import {
 import { Input } from "@/components/ui/input";
 import type {
   CardAssociationGroup,
-  CardAssociationKind,
   DeleteMediaAssetPlan,
   IndexedBlock,
   LightBlock,
@@ -153,13 +152,7 @@ import { microPreviewFromIndexedBlock, microPreviewFromLightBlock } from "./Micr
 import { CardRow } from "./CardRow";
 import { CardRowActions, cardRowActionsReservePx } from "./CardRowActions";
 import { deriveSearchResultRow } from "@/lib/searchResultRow";
-import {
-  associationHeading,
-  authorFeedHint,
-  hiddenAssociationRows,
-  showMoreLabel,
-  SHOW_ALL_LABEL,
-} from "@/lib/cardAssociations";
+import { associationHeading, authorFeedHint } from "@/lib/cardAssociations";
 import { useCardAssociations } from "@/hooks/useCardAssociations";
 import type { ImagePreviewRequest, ImagePreviewSibling } from "./ImagePreviewOverlay";
 import { copyTextToClipboard } from "@/lib/clipboard";
@@ -750,7 +743,7 @@ function MetadataPanel({
     () => (isIndexedBlock(displayBlock) ? relatedNotes.map(baseRelatedNoteSlug) : null),
     [displayBlock, relatedNotes],
   );
-  const associations = useCardAssociations(displayBlock.slug, associationExclusions);
+  const associationGroups = useCardAssociations(displayBlock.slug, associationExclusions);
   const resolvedThumbsRoot = thumbsRootPath ?? fallbackThumbsRoot(vaultPath);
   const [relatedNoteBlocks, setRelatedNoteBlocks] = useState<Map<string, IndexedBlock | null> | null>(null);
   const [hoveredRelatedNote, setHoveredRelatedNote] = useState<HoveredRelatedNote | null>(null);
@@ -795,13 +788,13 @@ function MetadataPanel({
     for (const [slug, relatedBlock] of relatedNoteBlocks ?? []) {
       if (relatedBlock) byslug.set(slug, relatedBlock);
     }
-    for (const group of associations.groups) {
+    for (const group of associationGroups) {
       for (const associated of group.blocks) {
         if (!byslug.has(associated.slug)) byslug.set(associated.slug, associated);
       }
     }
     return byslug;
-  }, [associations.groups, relatedNoteBlocks]);
+  }, [associationGroups, relatedNoteBlocks]);
   const hoveredRelatedNoteBlock = hoveredRelatedNote
     ? panelRowBlocks.get(hoveredRelatedNote.slug) ?? null
     : null;
@@ -949,12 +942,11 @@ function MetadataPanel({
               {...panelRowProps}
             />
           )}
-          {associations.groups.map((group) => (
+          {associationGroups.map((group) => (
             <CardAssociationSection
               key={group.kind}
               group={group}
               onOpenAuthorFeed={onOpenAuthorFeed}
-              onExpand={associations.expand}
               {...panelRowProps}
             />
           ))}
@@ -1329,22 +1321,18 @@ function RelatedNotesSection({
 
 /**
  * One association block of the open card (SPEC_CARD_ASSOCIATIONS.md): the
- * same card of the panel as Related notes, its heading inside, the panel's
- * rows, and a last row for the cards it holds back. The author heading and
- * `Show all` open the author's feed; an address or site block opens in place.
+ * same card of the panel as Related notes, its heading inside, then every
+ * row of the group. The author heading opens the author's feed.
  */
 function CardAssociationSection({
   group,
   onOpenAuthorFeed,
-  onExpand,
   ...rowProps
 }: PanelRowsProps & {
   group: CardAssociationGroup;
   onOpenAuthorFeed?: (author: string) => void;
-  onExpand: (kind: CardAssociationKind) => void;
 }) {
   const heading = associationHeading(group);
-  const hidden = hiddenAssociationRows(group);
   const openFeed = group.kind === "author" && onOpenAuthorFeed
     ? () => onOpenAuthorFeed(group.label)
     : null;
@@ -1380,21 +1368,6 @@ function CardAssociationSection({
         kind="association"
         {...rowProps}
       />
-      {hidden > 0 && (
-        // The list's last row: a plate like the rows above it, lit under
-        // the pointer and the keyboard, its text over their thumbnails.
-        <button
-          type="button"
-          onClick={openFeed ?? (() => onExpand(group.kind))}
-          className={cn(
-            METADATA_LABEL_CLASSES,
-            "flex h-row w-full min-w-0 items-center rounded-1 px-plate outline-none hover:state-active hover:text-foreground focus-visible:state-active focus-visible:text-foreground",
-          )}
-          data-card-association-more={openFeed ? "feed" : "expand"}
-        >
-          {openFeed ? SHOW_ALL_LABEL : showMoreLabel(hidden)}
-        </button>
-      )}
     </DetailPanelCard>
   );
 }
