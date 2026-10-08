@@ -1013,12 +1013,33 @@ pub fn delete_user_files(paths: &[PathBuf]) -> Result<()> {
     }
     #[cfg(all(not(test), not(target_os = "ios")))]
     {
-        trash::delete_all(paths).context("failed to move files to the system Trash")
+        system_trash()
+            .delete_all(paths)
+            .context("failed to move files to the system Trash")
     }
     #[cfg(all(not(test), target_os = "ios"))]
     {
         anyhow::bail!("system Trash is unavailable; files were not deleted")
     }
+}
+
+/// How Mine reaches the system Trash. On macOS the file manager moves the
+/// file itself, the way the Trash of any app does. The crate's default asks
+/// Finder through an Apple Event instead: that needs the person's consent to
+/// let Mine control Finder, is refused outright to a build macOS cannot
+/// identify (a development build, the `mine` CLI under a terminal), and costs
+/// an `osascript` process per file (08.10.2026).
+#[cfg(not(target_os = "ios"))]
+#[cfg_attr(all(test, not(target_os = "macos")), allow(dead_code))]
+fn system_trash() -> trash::TrashContext {
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+    let mut context = trash::TrashContext::default();
+    #[cfg(target_os = "macos")]
+    {
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        context.set_delete_method(DeleteMethod::NsFileManager);
+    }
+    context
 }
 
 /// The Trash of unit tests: a folder in the system temp directory. A file
@@ -1717,6 +1738,18 @@ mod tests {
         let missing = root.path().join("missing.jpg");
         assert!(delete_user_files(&[keep.clone(), missing]).is_err());
         assert_eq!(std::fs::read(keep).expect("file preserved"), b"keep");
+    }
+
+    /// Finder refuses the Apple Event of a build it cannot identify, so every
+    /// delete of the development copy failed (08.10.2026).
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn system_trash_moves_files_without_asking_finder() {
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        assert!(matches!(
+            system_trash().delete_method(),
+            DeleteMethod::NsFileManager
+        ));
     }
 
     #[test]

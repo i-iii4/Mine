@@ -370,7 +370,8 @@ impl From<crate::storage::source_mutation::SourceMutationError> for CommandError
                     path: path.display().to_string(),
                 }
             }
-            error => Self::Internal(error.to_string()),
+            // Down to the reason the system gave, as for `anyhow::Error`.
+            error => Self::Internal(format!("{error:#}")),
         }
     }
 }

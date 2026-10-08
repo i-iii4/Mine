@@ -665,12 +665,21 @@ enum SourceMutationKind {
 enum SourceMutationError {
     Validate { path: PathBuf, reason: String },
     Changed { path: PathBuf, preserved: Option<PathBuf> },
-    Stage { path: PathBuf, source: io::Error },
-    CommitFile { path: PathBuf, source: io::Error },
-    CommitIndex { operation: &'static str, source: rusqlite::Error },
-    Rollback { original: Box<SourceMutationError>, failures: Vec<PathBuf> },
+    Stage { path: PathBuf, source: anyhow::Error },
+    CommitFile { path: PathBuf, source: anyhow::Error },
+    CommitIndex { operation: &'static str, source: anyhow::Error },
+    Rollback { original: String, failures: Vec<PathBuf> },
 }
 ```
+
+- Текст ошибки для человека строится форматом `{:#}`, как у `anyhow::Error`:
+  шаг Mine (`delete <path>`) и под ним все причины до ответа системы.
+  Обычный `{}` останавливается на шаге Mine и для сообщения пользователю не
+  годится: 08.10.2026 диалог удаления показал путь без причины отказа.
+  Причины остаются доступны через `source()`, поэтому код, который ищет в
+  цепочке ошибку SQLite или `SourceChanged`, находит её как прежде.
+  `CommandError::from` и помощники `internal_*_error` в `commands/blocks.rs`
+  пишут сообщение в этом формате; `Rollback.original` хранит его же.
 
 - New/replacement files use same-directory temp + file `fsync` + atomic rename;
   create-new additionally rejects an occupied destination before commit.
@@ -1017,7 +1026,20 @@ rename_derived_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str) ->
 
 ### Поведение delete_block_files
 
-- User-owned source files удаляются через OS Trash, с fallback на `remove_file` для iCloud placeholder/failure случаев.
+- User-owned source files удаляются только в системную Корзину
+  (`files::delete_user_files`). Отказ Корзины никогда не превращается в
+  окончательное удаление: файл остаётся на месте, операция сообщает причину.
+- На macOS файл переносит в Корзину `NSFileManager trashItemAtURL`
+  (`DeleteMethod::NsFileManager` крейта `trash`), как Корзина любого
+  приложения. Способ крейта по умолчанию, команда Finder через Apple Event
+  (`osascript`), запрещён: он требует согласия человека на управление Finder,
+  а сборке, которую macOS не может опознать (разработческая копия, CLI `mine`
+  из терминала), Finder отказывает сразу (`errAEEventNotPermitted`, -1743), и
+  каждый файл стоит отдельного процесса `osascript`. Случай 08.10.2026: в
+  разработческой копии отказывало каждое удаление. Через `NSFileManager`
+  файл в iCloud Drive уходит в Корзину за время от 10 до 30 мс.
+- Ограничение: Finder может не предложить «Put Back» для файла, перенесённого
+  `NSFileManager`; файл возвращается из Корзины перетаскиванием.
 - `delete_block_files` сохраняет legacy contract: удаляет `.md`, slug-owned primary media `<slug>.<ext>` и derived thumbnail.
 - `delete_block_files_with_media_paths` получает уже проверенный higher-level deletion plan и удаляет `.md`, перечисленные media paths и derived thumbnail.
 - Shared/orphan решение не принимается в storage layer; оно принадлежит `commands::blocks::prepare_delete_block`.

@@ -2122,7 +2122,7 @@ pub(crate) fn delete_blocks_inner(
             .map(SourceFileWrite::delete)
             .collect(),
     )
-    .map_err(|error| CommandError::Internal(error.to_string()))?;
+    .map_err(CommandError::from)?;
     let removed = staged
         .commit_with_index(conn, "delete_blocks", |index_conn| {
             let mut removed = 0;
@@ -2131,7 +2131,7 @@ pub(crate) fn delete_blocks_inner(
             }
             Ok(removed)
         })
-        .map_err(|error| CommandError::Internal(error.to_string()))?;
+        .map_err(CommandError::from)?;
     for slug in &slugs {
         let thumb = vault.thumb_path(slug);
         if thumb.exists() {
@@ -2194,13 +2194,13 @@ pub(crate) fn delete_block_inner(
             .map(SourceFileWrite::delete)
             .collect(),
     )
-    .map_err(|error| CommandError::Internal(error.to_string()))?;
+    .map_err(CommandError::from)?;
 
     let removed = staged
         .commit_with_index(conn, "delete_block", |index_conn| {
             index::remove_block(index_conn, slug)
         })
-        .map_err(|error| CommandError::Internal(error.to_string()))?;
+        .map_err(CommandError::from)?;
 
     let thumb_path = vault.thumb_path(slug);
     if thumb_path.exists() {
@@ -4889,27 +4889,30 @@ fn file_saved_at(path: &std::path::Path) -> DateTime {
         .unwrap_or_else(|_| DateTime::new("1970-01-01T00:00:00Z").unwrap())
 }
 
+// The `internal_*_error` helpers render `{:#}`: an `anyhow::Error` or a
+// `SourceMutationError` then carries every cause down to the reason the
+// system gave, not just Mine's own step (08.10.2026).
 fn internal_extract_error(error: impl std::fmt::Display) -> InlineMediaExtractError {
     InlineMediaExtractError::Internal {
-        message: error.to_string(),
+        message: format!("{error:#}"),
     }
 }
 
 fn internal_media_asset_error(error: impl std::fmt::Display) -> MediaAssetActionError {
     MediaAssetActionError::Internal {
-        message: error.to_string(),
+        message: format!("{error:#}"),
     }
 }
 
 fn internal_text_selection_error(error: impl std::fmt::Display) -> TextSelectionExtractError {
     TextSelectionExtractError::Internal {
-        message: error.to_string(),
+        message: format!("{error:#}"),
     }
 }
 
 fn internal_merge_error(error: impl std::fmt::Display) -> MergeBlocksError {
     MergeBlocksError::Internal {
-        message: error.to_string(),
+        message: format!("{error:#}"),
     }
 }
 
@@ -4925,7 +4928,7 @@ fn merge_mutation_error(error: SourceMutationError) -> MergeBlocksError {
 
 fn internal_rename_error(error: impl std::fmt::Display) -> RenameBlockError {
     RenameBlockError::Internal {
-        message: error.to_string(),
+        message: format!("{error:#}"),
     }
 }
 
@@ -5213,6 +5216,46 @@ mod tests {
             assert!(vault.block_path(slug).exists());
             assert!(index::get_block(&conn, slug).unwrap().is_some());
         }
+    }
+
+    /// A repeated delete finds a file already gone: it removes the card from
+    /// the index and deletes the rest instead of failing.
+    #[test]
+    fn batch_delete_of_a_card_whose_file_is_gone_removes_its_row() {
+        let (_root, _derived, vault, conn) = make_vault();
+        for slug in ["one", "two"] {
+            persist_block(&conn, &vault, &article(slug, "Gone"));
+        }
+        std::fs::remove_file(vault.block_path("one")).unwrap();
+        assert_eq!(
+            delete_blocks_inner(None, &conn, &vault, vec!["one".into(), "two".into()]).unwrap(),
+            2
+        );
+        for slug in ["one", "two"] {
+            assert!(!vault.block_path(slug).exists());
+            assert!(index::get_block(&conn, slug).unwrap().is_none());
+        }
+    }
+
+    /// A failed delete says why the system refused, not only which step of
+    /// Mine failed: the dialog showed `delete <path>` and nothing else
+    /// (08.10.2026).
+    #[test]
+    fn batch_delete_failure_names_the_system_reason() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_root, _derived, vault, conn) = make_vault();
+        persist_block(&conn, &vault, &article("one", "Keep me"));
+        let folder = vault.block_path("one").parent().unwrap().to_path_buf();
+        let mode = std::fs::metadata(&folder).unwrap().permissions().mode();
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let result = delete_blocks_inner(None, &conn, &vault, vec!["one".into()]);
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(mode)).unwrap();
+        let Err(CommandError::Internal(message)) = result else {
+            panic!("a read-only folder refuses the delete: {result:?}");
+        };
+        assert!(message.contains("Permission denied"), "{message}");
+        assert!(vault.block_path("one").exists());
+        assert!(index::get_block(&conn, "one").unwrap().is_some());
     }
     use crate::domain::article_audio::prepare_article_speech;
     use crate::storage::{article_audio as article_audio_storage, db};

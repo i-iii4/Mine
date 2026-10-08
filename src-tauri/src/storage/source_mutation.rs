@@ -232,38 +232,76 @@ impl SourceFileWrite {
 
 #[derive(Debug, Error)]
 pub enum SourceMutationError {
-    #[error("invalid source mutation for {path}: {reason}")]
     Validate { path: PathBuf, reason: String },
     /// The file no longer holds what the operation was built from. Nothing
     /// was overwritten; the other version stays.
-    #[error("{} changed outside Mine; nothing was overwritten{}", path.display(), preserved_note(preserved))]
     Changed {
         path: PathBuf,
         preserved: Option<PathBuf>,
     },
-    #[error("failed to stage source mutation for {path}: {source}")]
     Stage {
         path: PathBuf,
         #[source]
         source: anyhow::Error,
     },
-    #[error("failed to publish source mutation for {path}: {source}")]
     CommitFile {
         path: PathBuf,
         #[source]
         source: anyhow::Error,
     },
-    #[error("failed to commit source index operation '{operation}': {source}")]
     CommitIndex {
         operation: &'static str,
         #[source]
         source: anyhow::Error,
     },
-    #[error("source mutation rollback was incomplete after: {original}")]
     Rollback {
         original: String,
         failures: Vec<PathBuf>,
     },
+}
+
+/// `{}` names the failure and Mine's own step under it, such as
+/// `delete <path>`; `{:#}` goes on down the causes to the reason the system
+/// gave, the way anyhow renders a chain. A person reads the alternate form:
+/// the plain one showed a failed delete with no reason at all (08.10.2026).
+/// The causes stay reachable through `source()`, so code that walks them
+/// still finds the error it looks for.
+impl std::fmt::Display for SourceMutationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let cause = match self {
+            Self::Validate { path, reason } => {
+                return write!(f, "invalid source mutation for {}: {reason}", path.display());
+            }
+            Self::Changed { path, preserved } => {
+                return write!(
+                    f,
+                    "{} changed outside Mine; nothing was overwritten{}",
+                    path.display(),
+                    preserved_note(preserved)
+                );
+            }
+            Self::Rollback { original, .. } => {
+                return write!(f, "source mutation rollback was incomplete after: {original}");
+            }
+            Self::Stage { path, source } => {
+                write!(f, "failed to stage source mutation for {}", path.display())?;
+                source
+            }
+            Self::CommitFile { path, source } => {
+                write!(f, "failed to publish source mutation for {}", path.display())?;
+                source
+            }
+            Self::CommitIndex { operation, source } => {
+                write!(f, "failed to commit source index operation '{operation}'")?;
+                source
+            }
+        };
+        if f.alternate() {
+            write!(f, ": {cause:#}")
+        } else {
+            write!(f, ": {cause}")
+        }
+    }
 }
 
 fn preserved_note(preserved: &Option<PathBuf>) -> String {
@@ -499,7 +537,7 @@ fn fail_commit(
         error
     } else {
         SourceMutationError::Rollback {
-            original: error.to_string(),
+            original: format!("{error:#}"),
             failures,
         }
     }
@@ -1142,7 +1180,7 @@ fn rollback_after_index_failure<T>(
     committed: CommittedSourceMutation,
     original: SourceMutationError,
 ) -> std::result::Result<T, SourceMutationError> {
-    let original_message = original.to_string();
+    let original_message = format!("{original:#}");
     match committed.rollback(&original_message) {
         Ok(()) => Err(original),
         Err(SourceMutationError::Rollback { failures, .. }) => Err(SourceMutationError::Rollback {
@@ -1231,6 +1269,29 @@ mod tests {
     fn failing_index(conn: &Connection) -> Result<()> {
         conn.execute_batch("SELECT 1")?;
         anyhow::bail!("injected index failure")
+    }
+
+    /// The dialog showed `delete <path>` and no reason: the plain form stops
+    /// at Mine's own step (08.10.2026).
+    #[test]
+    fn failed_publication_reads_down_to_the_system_reason() {
+        let refusal = std::io::Error::other("Not authorized to send Apple events to Finder. (-1743)");
+        let error = SourceMutationError::CommitFile {
+            path: PathBuf::from("/vault/Cards/Note.md"),
+            source: anyhow::Error::new(refusal)
+                .context("failed to move files to the system Trash")
+                .context("delete /vault/Cards/Note.md"),
+        };
+        assert_eq!(
+            format!("{error:#}"),
+            "failed to publish source mutation for /vault/Cards/Note.md: \
+             delete /vault/Cards/Note.md: failed to move files to the system Trash: \
+             Not authorized to send Apple events to Finder. (-1743)"
+        );
+        // Code that walks the causes still finds them, each once.
+        assert!(std::error::Error::source(&error).is_some());
+        let walked = format!("{:#}", anyhow::Error::new(error));
+        assert_eq!(walked.matches("(-1743)").count(), 1, "{walked}");
     }
 
     #[test]
