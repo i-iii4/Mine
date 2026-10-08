@@ -1,7 +1,8 @@
-// A card row's commands (SPEC_SEARCH_OVERLAY.md, «Команды строки»): Connect,
-// Source and More in a row at the row's right end. They are the feed card's
-// own controls (CardHoverMenu.tsx), so the row does what the card does. A
-// search result and a related note of the open card show them alike.
+// A card row's commands (SPEC_SEARCH_OVERLAY.md, «Команды строки»): More,
+// Source and Connect in a row at the row's right end, Connect at the edge.
+// They are the feed card's own controls (CardHoverMenu.tsx), so the row does
+// what the card does. A search result and a related note of the open card
+// show them alike.
 
 import { useEffect, useRef, useState, type ComponentProps } from "react";
 import {
@@ -111,16 +112,6 @@ export function CardRowActions<TBlock extends LightBlock | IndexedBlock>({
       inert={!shown}
       aria-hidden={shown ? undefined : true}
     >
-      <CardConnectMenu
-        block={block}
-        tags={tags}
-        currentTag={currentTag}
-        onToggleTag={onToggleTag}
-        onCreateAndAssign={onCreateAndAssign}
-        onOpenChange={setConnectOpen}
-        onCloseAutoFocus={onMenuCloseAutoFocus}
-      />
-      {cardRowHasSource(block) && <CardSourceButton url={block.url!} />}
       <CardMoreMenu
         block={block}
         vaultPath={vaultPath}
@@ -135,6 +126,16 @@ export function CardRowActions<TBlock extends LightBlock | IndexedBlock>({
         triggerSize="icon-xs"
         triggerShortcut={moreMenuShortcut}
         onOpenChange={setMoreOpen}
+        onCloseAutoFocus={onMenuCloseAutoFocus}
+      />
+      {cardRowHasSource(block) && <CardSourceButton url={block.url!} />}
+      <CardConnectMenu
+        block={block}
+        tags={tags}
+        currentTag={currentTag}
+        onToggleTag={onToggleTag}
+        onCreateAndAssign={onCreateAndAssign}
+        onOpenChange={setConnectOpen}
         onCloseAutoFocus={onMenuCloseAutoFocus}
       />
     </div>

@@ -2744,7 +2744,7 @@ describe("Detail", () => {
     expect(first!.querySelector("[data-card-row-actions]")).toBeNull();
     fireEvent.pointerMove(first!);
     expect(first).toHaveClass("state-active");
-    expect(commands(first!)).toEqual(["Connect", "Source", "Card actions"]);
+    expect(commands(first!)).toEqual(["Card actions", "Source", "Connect"]);
     expect(first!.querySelector("[data-card-row-actions]")).toHaveAttribute("data-visible", "true");
     // The text stops short of three buttons: 3 × 24 + 2 × 4 + 8.
     expect((first!.querySelector("[data-card-row-text]") as HTMLElement).style.paddingRight).toBe("88px");
@@ -2754,7 +2754,7 @@ describe("Detail", () => {
     fireEvent.pointerMove(second!);
     expect(first!.querySelector("[data-card-row-actions]")).toBeNull();
     expect(first).not.toHaveClass("state-active");
-    expect(commands(second!)).toEqual(["Connect", "Card actions"]);
+    expect(commands(second!)).toEqual(["Card actions", "Connect"]);
     // A name alone stops short of two buttons: 2 × 24 + 4 + 8.
     expect((second!.querySelector("[data-card-row-name]") as HTMLElement).style.maxWidth).toBe("calc(100% - 60px)");
 

@@ -1014,7 +1014,7 @@ describe("SearchOverlay result row commands", () => {
     expect(rowOf(0).querySelector("[data-card-row-actions]")).toHaveAttribute("data-visible", "false");
 
     hover(0);
-    expect(rowCommands(0)).toEqual(["Connect", "Source", "Card actions"]);
+    expect(rowCommands(0)).toEqual(["Card actions", "Source", "Connect"]);
     const actions = rowOf(0).querySelector("[data-card-row-actions]") as HTMLElement;
     expect(actions).toHaveAttribute("data-visible", "true");
     expect(actions).toHaveClass("gap-1", "transition-opacity", "duration-[var(--hover-intent-fade-in)]");
@@ -1032,7 +1032,7 @@ describe("SearchOverlay result row commands", () => {
     hover(1);
     expect(option(1)).toHaveAttribute("aria-selected", "true");
     expect(rowOf(0).querySelector("[data-card-row-actions]")).toBeNull();
-    expect(rowCommands(1)).toEqual(["Connect", "Card actions"]);
+    expect(rowCommands(1)).toEqual(["Card actions", "Connect"]);
     expect((option(1).querySelector("[data-card-row-text]") as HTMLElement).style.paddingRight).toBe("60px");
   });
 
@@ -1049,7 +1049,7 @@ describe("SearchOverlay result row commands", () => {
     expect((option(1).querySelector("[data-card-row-text]") as HTMLElement).style.paddingRight).toBe("");
 
     hover(1);
-    expect(rowCommands(1)).toEqual(["Connect", "Card actions"]);
+    expect(rowCommands(1)).toEqual(["Card actions", "Connect"]);
     fireEvent.wheel(listbox);
     expect(rowCommands(1)).toEqual([]);
 
