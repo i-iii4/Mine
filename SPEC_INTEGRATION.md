@@ -158,6 +158,17 @@ sequential callers on a clean generation take a lock-only fast path and perform
 no filesystem inventory. A bounded periodic safety audit exists only to catch a
 missed watcher event and never blocks a readable route snapshot.
 
+**Ход первого прохода (с 08.10.2026, SPEC_CLOUD_STORAGE.md, Х28).** Ход
+`(обработано, всего)` принадлежит самому первому проходу пространства, а не
+тому, кто его позвал. Проход, начатый, пока у пространства нет прочитанного
+снимка (`AwaitFirstGeneration`), шлёт `vault-sync-progress` при любом
+зачинщике: чтении ленты, фоновом дозаполнении при открытии
+(`start_index_metadata_backfill`) или синхронизации. Присоединившиеся к нему
+чтения ленты ничего не шлют сами: они ждут проход, который уже считает вслух.
+Раньше первый проход почти всегда начинало дозаполнение, без счётчика, и
+уведомление О13 не получало ни одного события. Проходы при готовом снимке
+(фоновая сверка, аудит) молчат, как прежде.
+
 ### Route-facing read sequence
 
 The following commands use one shared helper before their final query:
