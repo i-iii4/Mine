@@ -748,8 +748,15 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
           as it did in the tab page's chrome (В43). With the tabs filling the
           row it stands right after +, 4 px apart like neighbouring chrome
           buttons: the + slot's own padding. The search button stands just
-          before the logo, 4 px apart (user's decision of 07.10.2026). */}
-      <ChromeActions data-tab-bar-settings="">
+          before the logo, 4 px apart (user's decision of 07.10.2026). Like
+          every slot of the row, the pair and the edge inset after it move the
+          window: the inset is padding of the slot, not a margin outside it. */}
+      <ChromeActions
+        {...windowDrag}
+        windowEdge={false}
+        className="h-full pr-[var(--chrome-edge-pad)]"
+        data-tab-bar-settings=""
+      >
         <Button
           type="button"
           variant="chrome"

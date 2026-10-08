@@ -119,6 +119,9 @@ beforeEach(() => {
   menu.open.mockClear();
   menu.actions = null;
   menu.create.mockClear();
+  settingsMenu.open.mockClear();
+  settingsMenu.actions = null;
+  settingsMenu.create.mockClear();
   spies = [
     vi.spyOn(Element.prototype, "clientWidth", "get").mockImplementation(function (this: Element) {
       return this.hasAttribute("data-tab-zone") ? zoneWidth : 0;
@@ -189,8 +192,9 @@ describe("tab bar row (В43)", () => {
     renderBar(barState([tab("a")]));
     const settings = screen.getByRole("button", { name: SETTINGS_MENU_LABEL });
     expect(settings.querySelector("[data-mine-logo]")).not.toBeNull();
-    // At the window's right edge, inset like every chrome row's last button.
-    expect(settings.closest("[data-chrome-actions]")?.className).toContain("mr-[var(--chrome-edge-pad)]");
+    // At the window's right edge, inset like every chrome row's last button;
+    // the inset is the slot's padding, so it moves the window too.
+    expect(settings.closest("[data-chrome-actions]")?.className).toContain("pr-[var(--chrome-edge-pad)]");
 
     fireEvent.click(settings);
     await act(async () => {});
@@ -683,6 +687,32 @@ describe("window drag (В23)", () => {
     fireEvent.click(button);
     expect(commands.startWindowDrag).toHaveBeenCalledTimes(1);
     expect(commands.newTab).not.toHaveBeenCalled();
+  });
+
+  it("drags the window from search and the logo without opening them", () => {
+    renderBar(barState([tab("a")]));
+    for (const name of [SEARCH_LABEL, SETTINGS_MENU_LABEL]) {
+      const button = screen.getByRole("button", { name });
+      const gesture = press(button, 1200);
+      gesture.move(1220);
+      gesture.release(1220);
+      fireEvent.click(button);
+    }
+    expect(commands.startWindowDrag).toHaveBeenCalledTimes(2);
+    expect(commands.openTabSearch).not.toHaveBeenCalled();
+    expect(settingsMenu.open).not.toHaveBeenCalled();
+  });
+
+  it("drags the window from the edge inset after the logo", () => {
+    const { container } = renderBar(barState([tab("a")]));
+    const slot = container.querySelector<HTMLElement>("[data-tab-bar-settings]");
+    if (!slot) throw new Error("no settings slot");
+    expect(slot.className).toContain("pr-[var(--chrome-edge-pad)]");
+    expect(slot.className).not.toContain("mr-[var(--chrome-edge-pad)]");
+    const gesture = press(slot, 1270);
+    gesture.move(1290);
+    gesture.release(1290);
+    expect(commands.startWindowDrag).toHaveBeenCalledTimes(1);
   });
 
   it("does not drag the window from a tab", () => {
