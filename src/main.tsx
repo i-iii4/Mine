@@ -110,6 +110,8 @@ const connectIconsRoute = import.meta.env.DEV && window.location.pathname === "/
 const textLadderRoute = import.meta.env.DEV && window.location.pathname === "/__text-ladder";
 // One slice of the window with macOS buttons and with the retro tile, in both themes.
 const buttonsDecisionRoute = import.meta.env.DEV && window.location.pathname === "/__buttons-decision";
+// The first opening of a space from iCloud: notice, cards and feed, for acceptance.
+const cloudOpenRoute = import.meta.env.DEV && window.location.pathname === "/__cloud-open";
 const nativeShellSmokeRoute = new URLSearchParams(window.location.search)
   .has("mine-native-shell-smoke");
 const auditRoute = feedScrollAuditRoute
@@ -233,6 +235,15 @@ function Root() {
     );
   }
 
+  if (cloudOpenRoute) {
+    installAuditTauriMocks();
+    return (
+      <React.Suspense fallback={null}>
+        <CloudOpenPage />
+      </React.Suspense>
+    );
+  }
+
   if (auditRoute) {
     return AuditRoute ? <AuditRoute /> : null;
   }
@@ -268,6 +279,11 @@ const TextLadderPage = React.lazy(async () => {
 const ButtonsDecisionPage = React.lazy(async () => {
   const mod = await import("./dev/ButtonsDecisionPage");
   return { default: mod.ButtonsDecisionPage };
+});
+
+const CloudOpenPage = React.lazy(async () => {
+  const mod = await import("./dev/CloudOpenPage");
+  return { default: mod.CloudOpenPage };
 });
 
 function NativeShellSmokeRoute() {
