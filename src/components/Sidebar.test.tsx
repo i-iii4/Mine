@@ -198,17 +198,21 @@ describe("Sidebar", () => {
       .map((node) => node.getAttribute("data-sidebar-row-key"));
     expect(keys.slice(0, 3)).toEqual(["all", "create-channel", "tag:alpha"]);
     expect(container.querySelector("[data-sidebar-rows]")).toBeInTheDocument();
-    // A row of the table like the others (07.10.2026): its own seam, the name
-    // in the name column under the column's fade, an empty previews' cell and
-    // the count's cell, the plus where a count stands.
+    // A row of the table with its own seam, one cell across the whole row
+    // (08.10.2026): the label runs to the plus, no column line crosses it,
+    // the plus where a count stands.
     expect(row).toHaveAttribute("data-sidebar-row-surface");
     const label = within(row).getByText("New Collection");
     expect(label).toHaveAttribute("data-sidebar-row-text", "");
-    expect(label).toHaveClass("w-[var(--sidebar-name-col)]", "shrink-0", "overflow-hidden");
-    expect(label).toHaveAttribute("data-sidebar-title-fade-width");
-    expect(row.querySelector("[data-sidebar-preview-rail]")).not.toBeNull();
-    expect(row.querySelector("[data-sidebar-preview-rail]")?.childElementCount).toBe(0);
-    expect(row.querySelector("[data-sidebar-meta-cell]")).not.toBeNull();
+    expect(label).toHaveClass("min-w-0", "flex-1", "truncate");
+    expect(label).not.toHaveClass("w-[var(--sidebar-name-col)]");
+    expect(row.querySelector("[data-sidebar-preview-rail]")).toBeNull();
+    expect(row.querySelector("[data-sidebar-meta-cell]")).toBeNull();
+    // Lifted over the list's column lines on the table's surface, as the
+    // name being typed in this row is; its seam is its own `::after`.
+    expect(container.querySelector("[data-sidebar-guidelines]")).not.toBeNull();
+    expect(row).toHaveClass("z-10", "bg-sidebar");
+    expect(row).not.toHaveAttribute("data-sidebar-row-editing");
     const plus = row.querySelector("[data-sidebar-create-channel-plus]");
     expect(plus?.parentElement).toHaveClass("absolute", "right-[var(--sidebar-row-pad-x)]", "w-8");
   });
@@ -245,6 +249,7 @@ describe("Sidebar", () => {
     );
     expect(createRow).toHaveAttribute("data-sidebar-row-surface", "");
     expect(createRow).toHaveAttribute("data-sidebar-row-seam-accent", "true");
+    expect(createRow).toHaveClass("z-10", "bg-sidebar");
     expect(createRow?.querySelector("[data-sidebar-editable-row-full-width]")).toBeInTheDocument();
     expect(createRow?.querySelector("[data-sidebar-preview-rail]")).not.toBeInTheDocument();
     expect(createRow?.querySelector("[data-sidebar-empty-preview-rail]")).not.toBeInTheDocument();
@@ -301,6 +306,72 @@ describe("Sidebar", () => {
 
     expect(onCreateChannel).toHaveBeenCalledWith("Research");
     await waitFor(() => expect(onSetCreatingChannel).toHaveBeenCalledWith(false));
+  });
+
+  it("keeps the Create action unavailable until a name is typed", async () => {
+    const onSetCreatingChannel = vi.fn();
+    const onCreateChannel = vi.fn();
+    renderSidebar({
+      ...defaultProps,
+      width: 600,
+      isCreatingChannel: true,
+      onSetCreatingChannel,
+      onCreateChannel,
+    });
+
+    const input = screen.getByRole("textbox", { name: "Имя нового канала" });
+    const createAction = screen.getByRole("button", { name: "Create" });
+    const shortcut = createAction.querySelector("[data-sidebar-inline-submit-shortcut]");
+    // The look of «Недоступно»: the tertiary step, the glyph too, no pointer.
+    expect(createAction).toBeDisabled();
+    expect(createAction).toHaveClass("disabled:pointer-events-none", "disabled:text-tertiary-foreground");
+    expect(shortcut).toHaveClass("text-tertiary-foreground");
+    fireEvent.click(createAction);
+    expect(onCreateChannel).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: "Research" } });
+    expect(createAction).toBeEnabled();
+    expect(shortcut).toHaveClass("text-muted-foreground");
+    expect(shortcut).not.toHaveClass("text-tertiary-foreground");
+
+    // Spaces are no name.
+    fireEvent.change(input, { target: { value: "   " } });
+    expect(createAction).toBeDisabled();
+
+    // Enter on an empty field still closes it.
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onCreateChannel).not.toHaveBeenCalled();
+    await waitFor(() => expect(onSetCreatingChannel).toHaveBeenCalledWith(false));
+  });
+
+  it("opens the Create action available when the filter gave the name", () => {
+    renderSidebar({
+      ...defaultProps,
+      width: 600,
+      isCreatingChannel: true,
+      searchQuery: "Arch",
+    });
+
+    expect(screen.getByRole("button", { name: "Create" })).toBeEnabled();
+  });
+
+  it("keeps the Save action unavailable while the new name is empty", () => {
+    const onRenameTag = vi.fn();
+    renderSidebar({ ...defaultProps, width: 600, onRenameTag });
+
+    fireEvent.doubleClick(screen.getByRole("link", { name: /alpha/ }));
+    const input = screen.getByRole("textbox", { name: "Переименовать alpha" });
+    const saveAction = screen.getByRole("button", { name: "Save" });
+    expect(saveAction).toBeEnabled();
+
+    fireEvent.change(input, { target: { value: "" } });
+    expect(saveAction).toBeDisabled();
+    expect(saveAction.querySelector("[data-sidebar-inline-submit-shortcut]")).toHaveClass(
+      "text-tertiary-foreground",
+    );
+
+    fireEvent.change(input, { target: { value: "gamma" } });
+    expect(saveAction).toBeEnabled();
   });
 
   it("renames a channel with an inline editor without replacing row geometry", () => {

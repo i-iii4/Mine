@@ -1109,6 +1109,9 @@ type SidebarRowFrameProps = {
   isSidebarRowSeamAccent: boolean;
   surface?: boolean;
   isEditing?: boolean;
+  /** The row is one cell across the whole row, as an edited name is: it lies
+   *  over the list's column lines (`data-sidebar-guidelines`). */
+  spansRow?: boolean;
   className?: string;
   style?: CSSProperties;
   nodeRef?: (node: HTMLDivElement | null) => void;
@@ -1126,6 +1129,7 @@ const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(functio
   isSidebarRowSeamAccent,
   surface,
   isEditing = false,
+  spansRow = isEditing,
   className,
   style,
   nodeRef,
@@ -1158,7 +1162,9 @@ const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(functio
       data-sidebar-text-drop-tag={textDropTag}
       className={cn(
         "group relative rounded-1",
-        isEditing && "z-10 bg-sidebar",
+        // Lifted over the column lines on the table's own surface; its seam
+        // (`::after`) paints over that surface and stays.
+        spansRow && "z-10 bg-sidebar",
         className,
       )}
     >
@@ -1925,6 +1931,9 @@ function NewChannelRow({
       // card is over it (07.10.2026).
       surface={!compact}
       isEditing={isEditing}
+      // The name being typed and the drop target alike are one cell across
+      // the row: no column line crosses them (08.10.2026).
+      spansRow
       nodeRef={setNodeRef}
       data-sidebar-new-channel-row=""
     >
@@ -1954,10 +1963,11 @@ function NewChannelRow({
   );
 }
 
-/// The drop target that founds a collection with the dragged card. It is a
-/// row of the table like the others (user's report of 07.10.2026: the label
-/// ran across the column lines): the name in the name column, cut by the
-/// column's fade; an empty previews' cell; the plus where a count stands.
+/// The drop target that founds a collection with the dragged card: a row of
+/// the table with its own seam, made of one cell across the whole row (user's
+/// decision of 08.10.2026: the name column cut the label). The row lies over
+/// the column lines (`spansRow`), so the label never crosses one; the plus
+/// stands where a count stands.
 function SidebarCreateChannelRowBody({
   compact,
   isEditing,
@@ -1990,14 +2000,17 @@ function SidebarCreateChannelRowBody({
     <div
       className={cn(
         SIDEBAR_ROW_BOX_CLASS,
-        "pl-[var(--sidebar-row-pad-x)] font-sans text-base text-muted-foreground",
+        // The label runs to the plus: the row's inset, then the plus's 32px.
+        "pl-[var(--sidebar-row-pad-x)] pr-[calc(var(--sidebar-row-pad-x)+2rem)] font-sans text-base text-muted-foreground",
         // A slow pointer lights it like any row (С7.10); the keyboard at once.
         !isEditing && "group-focus-within:text-foreground",
       )}
       data-sidebar-create-channel-row-body
     >
-      <SidebarRowTitleCell>{CREATE_COLLECTION_ROW_LABEL}</SidebarRowTitleCell>
-      <SidebarPreviewRail>{null}</SidebarPreviewRail>
+      {/* Set 1px in like every row's name. */}
+      <span data-sidebar-row-text="" className="min-w-0 flex-1 translate-x-px truncate text-left">
+        {CREATE_COLLECTION_ROW_LABEL}
+      </span>
       <span
         aria-hidden="true"
         className="absolute inset-y-0 right-[var(--sidebar-row-pad-x)] flex w-8 -translate-x-px items-center justify-end"
@@ -2167,6 +2180,9 @@ function InlineChannelNameEditor({
   edit: NameEdit;
 }) {
   const ref = useRef<HTMLInputElement>(null);
+  // The field stays uncontrolled; only whether it holds a name is kept, so
+  // the submit button is unavailable until one is typed (08.10.2026).
+  const [isEmpty, setIsEmpty] = useState(() => defaultValue.trim() === "");
 
   useEffect(() => {
     const input = ref.current;
@@ -2207,7 +2223,10 @@ function InlineChannelNameEditor({
         onPointerDown={(e) => {
           e.stopPropagation();
         }}
-        onChange={(e) => edit.change(e.currentTarget.value)}
+        onChange={(e) => {
+          setIsEmpty(e.currentTarget.value.trim() === "");
+          edit.change(e.currentTarget.value);
+        }}
         onKeyDown={(e) => {
           if (e.key === "Enter") {
             e.preventDefault();
@@ -2226,11 +2245,15 @@ function InlineChannelNameEditor({
           type="button"
           aria-label={submitAction.label}
           aria-keyshortcuts={submitAction.shortcutKey}
+          // An empty name has nothing to submit: the button is unavailable
+          // (DESIGN_SYSTEM.md, «Недоступно»), Enter still closes the field.
+          disabled={isEmpty}
           // Placed like a row's Connect button: 8px from the zone's edges,
           // the zone's width less those 8px on both sides.
           className={cn(
             SIDEBAR_ROW_ACTION_BUTTON_CLASS,
             "absolute top-1/2 z-10 -translate-y-1/2 gap-[1ch] px-[1ch]",
+            "disabled:pointer-events-none disabled:text-tertiary-foreground",
           )}
           style={{
             right: SIDEBAR_ROW_ACTION_BUTTON_INSET,
@@ -2249,8 +2272,11 @@ function InlineChannelNameEditor({
         >
           <span>{submitAction.label}</span>
           <span
-            // Set like the bottom bar's hotkeys.
-            className="font-mono text-sm font-normal text-muted-foreground"
+            // Set like the bottom bar's hotkeys; dims with the button.
+            className={cn(
+              "font-mono text-sm font-normal",
+              isEmpty ? "text-tertiary-foreground" : "text-muted-foreground",
+            )}
             data-sidebar-inline-submit-shortcut=""
           >
             {submitAction.shortcut}
