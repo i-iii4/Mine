@@ -3,7 +3,8 @@
 //
 // Production components only: the opening notice in each of its states, the
 // feed cards before and after their previews, and one window that plays the
-// whole opening on a loop with the real Grid, notice and bottom bar.
+// whole opening on a loop with the real Grid, notice and bottom bar: the
+// feed appears whole after the notes, then the previews arrive scattered.
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ActionButton } from "@/components/ActionButton";
@@ -117,8 +118,6 @@ const BETWEEN_TICKS = 4;
 const PREVIEW_TICKS = FEED.length;
 const HOLD_TICKS = 20;
 const LOOP_TICKS = NOTES_TICKS + BETWEEN_TICKS + PREVIEW_TICKS + HOLD_TICKS;
-/** Notes commit in parts: the feed fills a part at a time. */
-const PART = 6;
 
 function useLoopTick(): number {
   const [tick, setTick] = useState(0);
@@ -140,7 +139,9 @@ function OpeningWindow() {
   const previewsPending = tick >= NOTES_TICKS && previewTick < PREVIEW_TICKS;
   const previewsArrived = Math.max(0, Math.min(previewTick, PREVIEW_TICKS));
 
-  const shown = notesProcessed === null ? FEED.length : Math.floor(notesProcessed / PART) * PART;
+  // The index commits in one piece: the feed stays empty while the notes
+  // are read and appears whole once they are (SPEC_CLOUD_STORAGE.md, Х26).
+  const shown = notesProcessed === null ? FEED.length : 0;
   const arrived = useMemo(() => new Set(ARRIVAL_ORDER.slice(0, previewsArrived)), [previewsArrived]);
   const previewed = useMemo(
     () => FEED.map(({ block, actual }) => (actual === null ? block : withPreview(block, actual))),

@@ -112,6 +112,8 @@ const textLadderRoute = import.meta.env.DEV && window.location.pathname === "/__
 const buttonsDecisionRoute = import.meta.env.DEV && window.location.pathname === "/__buttons-decision";
 // The first opening of a space from iCloud: notice, cards and feed, for acceptance.
 const cloudOpenRoute = import.meta.env.DEV && window.location.pathname === "/__cloud-open";
+// The onboarding screen by screen: first launch, opening a folder, an empty one.
+const onboardingRoute = import.meta.env.DEV && window.location.pathname === "/__onboarding";
 const nativeShellSmokeRoute = new URLSearchParams(window.location.search)
   .has("mine-native-shell-smoke");
 const auditRoute = feedScrollAuditRoute
@@ -244,6 +246,15 @@ function Root() {
     );
   }
 
+  if (onboardingRoute) {
+    installAuditTauriMocks();
+    return (
+      <React.Suspense fallback={null}>
+        <OnboardingPage />
+      </React.Suspense>
+    );
+  }
+
   if (auditRoute) {
     return AuditRoute ? <AuditRoute /> : null;
   }
@@ -284,6 +295,11 @@ const ButtonsDecisionPage = React.lazy(async () => {
 const CloudOpenPage = React.lazy(async () => {
   const mod = await import("./dev/CloudOpenPage");
   return { default: mod.CloudOpenPage };
+});
+
+const OnboardingPage = React.lazy(async () => {
+  const mod = await import("./dev/OnboardingPage");
+  return { default: mod.OnboardingPage };
 });
 
 function NativeShellSmokeRoute() {
