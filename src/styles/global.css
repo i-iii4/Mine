@@ -849,6 +849,12 @@ body {
      decision of 08.10.2026). */
   --spacing-row: var(--spacing-s5);
   --spacing-card-row: 40px;
+  /* The card row's thumbnail, and its inset from the row's left end: the
+     space left above and below it, so the light frames it evenly (user's
+     decision of 08.10.2026). Text and the row's commands keep the plate's
+     inset. */
+  --spacing-card-thumb: var(--spacing-s5);
+  --spacing-card-thumb-inset: calc((var(--spacing-card-row) - var(--spacing-card-thumb)) / 2);
   --text-sm: 12px;
   --text-sm--line-height: 16px;
   --text-base: 14px;

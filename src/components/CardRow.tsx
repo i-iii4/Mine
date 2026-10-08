@@ -29,11 +29,11 @@ import type { SearchMatch } from "@/types";
 
 /**
  * The row's item: the thumbnail and the line, centered in a card row of a
- * surface (40 px). Its content stands the plate's inset off the row's
- * sides; the row's commands keep the same distance from its right end
- * (DESIGN_SYSTEM.md, «Система отступов поверхностей»).
+ * surface (40 px). The thumbnail stands as far off the row's left end as off
+ * its top and bottom; the right end keeps the plate's inset, as do the
+ * row's commands (DESIGN_SYSTEM.md, «Система отступов поверхностей»).
  */
-const CARD_ROW_ITEM_CLASSES = "flex h-card-row cursor-default items-center gap-2 px-plate";
+const CARD_ROW_ITEM_CLASSES = "flex h-card-row cursor-default items-center gap-2 pl-card-thumb-inset pr-plate";
 
 /**
  * One line (user's decision of 06.10.2026): the file name, then the note's
@@ -248,7 +248,7 @@ export function CardRow({
     <>
       <div
         aria-hidden="true"
-        className="size-8 shrink-0 overflow-hidden bg-component-fill"
+        className="size-card-thumb shrink-0 overflow-hidden bg-component-fill"
       >
         {preview && (
           <MicroPreviewThumbnail

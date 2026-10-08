@@ -12,7 +12,7 @@ const twMerge = extendTailwindMerge({
       radius: ["0", "1", "2", "card", "media", "pill", "round"],
       spacing: [
         "s1", "s2", "s3", "s4", "s5", "s6", "s7",
-        "surface", "plate", "row", "card-row",
+        "surface", "plate", "row", "card-row", "card-thumb", "card-thumb-inset",
       ],
     },
   },

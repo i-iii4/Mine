@@ -1139,7 +1139,7 @@ describe("Detail", () => {
       expect(relatedCard).toHaveClass("p-surface");
       const list = relatedCard?.querySelector("[data-related-notes-list]");
       expect(list).not.toHaveClass("p-1");
-      expect(list?.querySelector("[data-card-row] > button")).toHaveClass("h-card-row", "px-plate");
+      expect(list?.querySelector("[data-card-row] > button")).toHaveClass("h-card-row", "pl-card-thumb-inset", "pr-plate");
     });
   });
 
@@ -2570,7 +2570,7 @@ describe("Detail", () => {
     expect(wrapper).toHaveClass("relative", "rounded-1");
     expect(wrapper).not.toHaveClass("state-active");
     expect(wrapper.className).not.toMatch(/(?:^|\s)(?:bg-|border(?:\s|-|$))/);
-    expect(row).toHaveClass("flex", "h-card-row", "items-center", "gap-2", "px-plate");
+    expect(row).toHaveClass("flex", "h-card-row", "items-center", "gap-2", "pl-card-thumb-inset", "pr-plate");
     expect(row.querySelector("[data-card-row-line]")).toHaveClass("font-sans", "text-base");
 
     const img = row.querySelector("img");
@@ -3212,7 +3212,7 @@ describe("Detail association blocks", () => {
     expect(sameUrl).toHaveClass("min-w-0", "truncate");
     expect(sameUrl.parentElement).toHaveClass("flex", "h-row", "items-center", "px-plate");
     expect(address?.querySelector("[data-card-association-list] [data-card-row] > button"))
-      .toHaveClass("h-card-row", "px-plate");
+      .toHaveClass("h-card-row", "pl-card-thumb-inset", "pr-plate");
   });
 
   it("names the author on a button that opens the author's feed, and so does Show all", async () => {
