@@ -1073,7 +1073,11 @@ function DetailActionRow({
   }, [block, connectOpen]);
 
   return (
-    <div className="mt-surface flex min-w-0 items-center gap-surface" data-detail-action-row>
+    // Buttons standing on the box, not in a row, keep 8 px off its edge like
+    // the feed card's and the chrome's buttons (user's decision of
+    // 08.10.2026): the box's 4 plus their own 4. Still 4 apart and 4 under
+    // the last row.
+    <div className="m-surface flex min-w-0 items-center gap-surface" data-detail-action-row>
       {block.url && isSafeUrl(block.url) && (
         <Button
           type="button"

@@ -1181,14 +1181,14 @@ describe("Detail", () => {
     const actionRow = container.querySelector("[data-detail-action-row]");
     const relatedNotesBlock = container.querySelector("[data-related-notes-block]");
     expect(sections).toHaveClass("gap-6");
-    // Plates of the box: 4 px off the frame, off each other and off the
-    // row above.
+    // Buttons on the box: 8 px off the frame (its 4 and their own 4), 4 off
+    // each other and off the row above.
     expect(actionRow).toHaveClass(
       "min-w-0",
       "flex",
       "items-center",
       "gap-surface",
-      "mt-surface",
+      "m-surface",
     );
     expect(actionRow).not.toHaveClass("px-2", "pb-2");
     const metadataCard = actionRow?.closest("[data-detail-metadata-card]");
