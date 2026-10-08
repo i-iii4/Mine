@@ -1127,7 +1127,7 @@ describe("Detail", () => {
       const relatedCard = label.parentElement;
       expect(relatedCard).toHaveAttribute("data-related-notes-block");
       expect(relatedCard?.parentElement).toHaveAttribute("data-metadata-sections");
-      expect(relatedCard?.parentElement).toHaveClass("gap-6");
+      expect(relatedCard?.parentElement).toHaveClass("gap-[var(--edge-rhythm,32px)]");
       // One card shell for both: the two cannot drift apart.
       const metadataCard = document.querySelector("[data-detail-metadata-card]");
       expect(relatedCard).toHaveAttribute("data-detail-panel-card");
@@ -1180,7 +1180,7 @@ describe("Detail", () => {
     const sections = container.querySelector("[data-metadata-sections]");
     const actionRow = container.querySelector("[data-detail-action-row]");
     const relatedNotesBlock = container.querySelector("[data-related-notes-block]");
-    expect(sections).toHaveClass("gap-6");
+    expect(sections).toHaveClass("gap-[var(--edge-rhythm,32px)]");
     // Buttons on the box: 8 px off the frame (its 4 and their own 4), 4 off
     // each other and off the row above.
     expect(actionRow).toHaveClass(

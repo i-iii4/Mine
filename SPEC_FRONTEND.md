@@ -1463,7 +1463,7 @@ Image media expansion:
   `RELATED NOTES` это вторая такая же карточка ниже (решение пользователя
   07.10.2026): обе рисует одна оболочка `DetailPanelCard`
   (`data-detail-panel-card`: рамка, радиус, `bg-card`, `min-width: 240px`),
-  зазор между карточками `gap-6`. Без связанных заметок второй карточки нет.
+  зазор между карточками `--edge-rhythm`, как между карточками ленты (настройка Spacing, решение пользователя 08.10.2026). Без связанных заметок второй карточки нет.
 - Для `article` author не дублируется над body; в открытой странице author
   показывается только в metadata panel
 - `RELATED NOTES` is a derived note-graph view, not raw `Mine Related Notes`

@@ -889,7 +889,10 @@ function MetadataPanel({
         )}
 
         <div
-          className="flex min-w-0 flex-col gap-6"
+          // The boxes stand as far apart as the feed's cards and the page's
+          // edge: the interface spacing, Display's Spacing (user's decision
+          // of 08.10.2026).
+          className="flex min-w-0 flex-col gap-[var(--edge-rhythm,32px)]"
           onPointerMove={(event) => rowPointer.move(null, event.clientX, event.clientY)}
           onPointerLeave={() => rowPointer.leave()}
           data-metadata-sections
