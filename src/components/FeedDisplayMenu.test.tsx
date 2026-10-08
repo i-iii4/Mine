@@ -71,8 +71,12 @@ describe("Display menu (SPEC_FEED_DISPLAY.md, Д1 to Д3)", () => {
 
   it("keeps every row on the menu's text column, the check in the leading icon slot", async () => {
     await openMenu();
+    // A surface of plates: items at its inset, its radius the items' plus
+    // that inset.
+    expect(screen.getAllByRole("menuitemradio")[0].closest("[data-floating-menu]"))
+      .toHaveClass("p-surface", "rounded-surface");
     for (const item of screen.getAllByRole("menuitemradio")) {
-      expect(item).toHaveClass("min-h-row", "px-plate", "text-base");
+      expect(item).toHaveClass("min-h-row", "px-plate", "rounded-1", "text-base");
       expect(item).not.toHaveClass("pl-8");
       expect(item.firstElementChild).toHaveAttribute("data-card-menu-icon-slot");
     }

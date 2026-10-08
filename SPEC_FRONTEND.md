@@ -1449,8 +1449,9 @@ Image media expansion:
   значения — `text-sm leading-4 text-foreground`, matching feed-card text scale.
 - `FILENAME`, `Rename…` и `TAGS` не рендерятся в metadata panel. Metadata
   table и action row живут в одной коробке `DetailPanelCard`:
-  `overflow-hidden rounded-[var(--radius-card)] border border-border bg-card
-  p-surface`. Отступы коробки следуют системе поверхностей
+  `overflow-hidden rounded-surface border border-border bg-card
+  p-surface`. Угол коробки 7 (`--radius-surface`: радиус плашки 3 и поле 4,
+  08.10.2026), настройка `Card corners` его не меняет. Отступы коробки следуют системе поверхностей
   (DESIGN_SYSTEM.md, «Система отступов поверхностей», 08.10.2026): плашки
   (кнопки, свет строк) на 4 от рамки, их содержимое на 8 внутри, текст без
   плашки на 12. Metadata content `px-plate`: подписи и значения на 12 от
