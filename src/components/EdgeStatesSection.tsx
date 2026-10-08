@@ -335,7 +335,7 @@ export function EdgeStatesSection() {
                 566 elements · 1.2 GB
               </span>
               <span className="ml-auto">
-                <ActivityIndicators cloudPending={12} indexing onRevealSpace={() => {}} />
+                <ActivityIndicators indexing />
               </span>
             </div>
             <div className="h-24 bg-background" />
@@ -343,46 +343,34 @@ export function EdgeStatesSection() {
         </StateCase>
 
         <StateCase
-          name="Индикаторы крупно"
-          when="Две разные работы — две разные иконки. Одна крутилка сказала бы только «занято». Нажмите облако: пояснение настоящее."
+          name="Индикатор крупно"
+          when="Индексация пространства. Иконки загрузки из iCloud больше нет: о ней говорят метки облака на карточках и уведомление открытия (Х14)."
         >
           <div className="flex items-center gap-4">
-            <ActivityIndicators cloudPending={12} indexing onRevealSpace={() => {}} />
-            <span className="font-mono text-sm text-muted-foreground">
-              загрузка из iCloud + индексация
-            </span>
-          </div>
-          <div className="mt-3 flex items-center gap-4">
-            <ActivityIndicators cloudPending={0} indexing />
-            <span className="font-mono text-sm text-muted-foreground">только индексация</span>
-          </div>
-          <div className="mt-3 flex items-center gap-4">
-            <ActivityIndicators cloudPending={3} indexing={false} onRevealSpace={() => {}} />
-            <span className="font-mono text-sm text-muted-foreground">только загрузка</span>
+            <ActivityIndicators indexing />
+            <span className="font-mono text-sm text-muted-foreground">индексация</span>
           </div>
         </StateCase>
 
         <StateCase
           name="Тост открытия пространства"
-          when="Открытие дольше секунды: одна карточка в правом нижнем углу ведёт обе фазы, сначала индексацию заметок, затем подготовку превью. Числа вместо бесконечного индикатора. Пока лента пуста, есть кнопка другой папки: папка открывается без подтверждения."
+          when="Открытие дольше секунды: одна карточка в правом нижнем углу ведёт обе фазы, сначала индексацию заметок, затем подготовку превью. Числа вместо бесконечного индикатора, закрыть нельзя: уходит сама. Кнопка другой папки только у папки, ставшей пространством сейчас, пока лента пуста."
         >
           <div className="grid gap-4">
             <Variant caption="заметки, лента пуста">
               <IndexingProgress
                 spaceName="Mine"
                 step={{ phase: "notes", count: { processed: 284, total: 674 } }}
-                onClose={() => {}}
                 onChooseAnother={() => {}}
               />
             </Variant>
             <Variant caption="между фазами: превью ещё считают работу">
-              <IndexingProgress spaceName="Mine" step={{ phase: "previews", count: null }} onClose={() => {}} />
+              <IndexingProgress spaceName="Mine" step={{ phase: "previews", count: null }} />
             </Variant>
             <Variant caption="превью, лента уже с карточками">
               <IndexingProgress
                 spaceName="Mine"
                 step={{ phase: "previews", count: { processed: 312, total: 643 } }}
-                onClose={() => {}}
               />
             </Variant>
           </div>

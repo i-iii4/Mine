@@ -1442,6 +1442,23 @@
     },
     {
       "paths": [
+        "src/components/ui/progress.tsx",
+        "src/components/NotificationCard.tsx"
+      ],
+      "requirement": "DESIGN_SYSTEM.md### Уведомления",
+      "tests": ["src/components/IndexingProgress.test.tsx", "src/components/NotificationCard.test.tsx"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src-tauri/src/storage/icloud_downloads.rs"
+      ],
+      "requirement": "SPEC_CLOUD_STORAGE.md## Первое открытие пространства из облака",
+      "tests": ["src-tauri/src/storage/reconcile.rs", "src-tauri/src/commands/freshness.rs"],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
         "src/components/Sidebar.tsx",
         "src/components/Sidebar.test.tsx",
         "src/components/MicroPreviewThumbnail.tsx",

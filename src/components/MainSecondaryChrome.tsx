@@ -41,16 +41,12 @@ function MainSecondaryStatsLeft({
   collectionCount,
   onCreateCollection,
   sidebarCollapsed,
-  cloudPending,
   indexing,
-  onRevealSpace,
 }: {
   collectionCount: number;
   onCreateCollection?: () => void;
   sidebarCollapsed: boolean;
-  cloudPending: number;
   indexing: boolean;
-  onRevealSpace?: () => void;
 }) {
   if (sidebarCollapsed) return null;
 
@@ -69,11 +65,7 @@ function MainSecondaryStatsLeft({
       <span data-main-secondary-collection-count="" className="min-w-0 truncate whitespace-nowrap">
         {formatPluralCount(collectionCount, "collection", "collections")}
       </span>
-      <ActivityIndicators
-        cloudPending={cloudPending}
-        indexing={indexing}
-        onRevealSpace={onRevealSpace}
-      />
+      <ActivityIndicators indexing={indexing} />
       {onCreateCollection && (
         // 8px from the column's edge, the inset the sidebar rows give their
         // Connect button, and the filter's clear button above.
@@ -256,9 +248,7 @@ export function MainSecondaryTopBar({
   onRequestDelete,
   onDetailClose,
   detailMenuOpenRequestSequence,
-  cloudPending = 0,
   indexing = false,
-  onRevealSpace,
   placement = "top",
   part = "both",
   selectionActive = false,
@@ -272,12 +262,8 @@ export function MainSecondaryTopBar({
   /// sidebar's filter leaves. Defaults to every collection.
   collectionCount?: number;
   stats: VaultStats | null;
-  /// Cards whose content iCloud is currently holding.
-  cloudPending?: number;
   /// Whether the space is being indexed right now.
   indexing?: boolean;
-  /// Reveal the space folder so the user can mark it Keep Downloaded.
-  onRevealSpace?: () => void;
   detailBlock?: LightBlock | IndexedBlock | null;
   detailEntered?: boolean;
   viewMode: MainViewMode;
@@ -345,9 +331,7 @@ export function MainSecondaryTopBar({
           collectionCount={collectionCount ?? tags.length}
           onCreateCollection={onCreateCollection}
           sidebarCollapsed={sidebarCollapsed}
-          cloudPending={cloudPending}
           indexing={indexing}
-          onRevealSpace={onRevealSpace}
         />
       </div>
     </div>

@@ -755,7 +755,16 @@ export type UpdateStatus = { stage: UpdateStage; version: string | null; notes: 
  */
 export type VaultChangedPayload = { path: string; renames: SpaceRename[] }
 
-export type VaultOpenResult = { indexed: number; errors: number; sync_in_progress: boolean; derived_store_ready: boolean; bootstrapped_from_legacy: boolean; migration_required: boolean; thumbs_root: string }
+export type VaultOpenResult = { indexed: number; errors: number; sync_in_progress: boolean;
+/**
+ * The index holds a finished snapshot. False while the first pass
+ * builds it: the opening notice is then the only sign (Х28).
+ */
+derived_store_ready: boolean;
+/**
+ * The folder became a space in this opening (SPEC_ONBOARDING.md, О12).
+ */
+space_created: boolean; thumbs_root: string }
 
 export type VaultStats = { totalFileCount: number; markdownFileCount: number; mediaFileCount: number; sourceBytes: number; currentCollectionCardCount: number; currentCollection: string | null; updatedAtMs: number }
 

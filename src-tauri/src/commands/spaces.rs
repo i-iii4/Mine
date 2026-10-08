@@ -51,8 +51,10 @@ pub struct OpenSpace {
     /// (SPEC_TABS.md, В7).
     synced: AtomicBool,
     closed: AtomicBool,
-    /// Space notices closed during this opening (SPEC_TABS.md, В20).
-    dismissed_notices: Mutex<BTreeSet<String>>,
+    /// The folder became a space in this opening: it had no identity before
+    /// the person chose it. Only such a folder may be the wrong one, so only
+    /// its opening offers another (SPEC_ONBOARDING.md, О12, О13).
+    created: AtomicBool,
 }
 
 impl OpenSpace {
@@ -67,7 +69,7 @@ impl OpenSpace {
             root_watch_started: AtomicBool::new(false),
             synced: AtomicBool::new(false),
             closed: AtomicBool::new(false),
-            dismissed_notices: Mutex::new(BTreeSet::new()),
+            created: AtomicBool::new(false),
         }
     }
 
@@ -102,15 +104,14 @@ impl OpenSpace {
         self.closed.load(Ordering::SeqCst)
     }
 
-    /// Record a space notice closed in this opening (В20): the next lead tab
-    /// does not show it again.
-    pub fn dismiss_notice(&self, notice: &str) {
-        lock(&self.dismissed_notices).insert(notice.to_string());
+    /// Record that the folder became a space in this opening.
+    pub fn mark_created(&self) {
+        self.created.store(true, Ordering::SeqCst);
     }
 
-    /// Whether a space notice was closed in this opening.
-    pub fn notice_dismissed(&self, notice: &str) -> bool {
-        lock(&self.dismissed_notices).contains(notice)
+    /// Whether the folder became a space in this opening.
+    pub fn created(&self) -> bool {
+        self.created.load(Ordering::SeqCst)
     }
 
     /// Claim the folder watch for this opening; `true` once.

@@ -9,9 +9,11 @@
 // share one card: it changes its title from one phase to the next and never
 // leaves the corner in between. It appears only once the opening has run for
 // `INDEXING_NOTICE_DELAY_MS`, counted from the start of the first phase: the
-// short passes that follow every saved file would otherwise blink it.
+// short passes that follow every saved file would otherwise blink it. It has
+// no close button: closing hid the count and stopped nothing, so the notice
+// goes when the opening is over (О13, user's decision of 08.10.2026).
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { NotificationCard } from "@/components/NotificationCard";
@@ -54,31 +56,22 @@ export function openingStep(
 }
 
 /**
- * Whether the opening notice shows: an opening that has run past the delay
- * and was not hidden. `active` must stay true from the first phase to the
- * last: the delay and hiding then span the whole opening, and a notice that
- * appeared for the notes stays up for the previews. Hiding lasts until the
- * opening ends.
+ * Whether the opening notice shows: an opening that has run past the delay.
+ * `active` must stay true from the first phase to the last: the delay then
+ * spans the whole opening, and a notice that appeared for the notes stays up
+ * for the previews.
  */
-export function useIndexingNotice(active: boolean): {
-  visible: boolean;
-  hide: () => void;
-} {
+export function useIndexingNotice(active: boolean): boolean {
   const [due, setDue] = useState(false);
-  const [hidden, setHidden] = useState(false);
   useEffect(() => {
     if (!active) {
       setDue(false);
-      setHidden(false);
       return;
     }
     const timer = window.setTimeout(() => setDue(true), INDEXING_NOTICE_DELAY_MS);
     return () => window.clearTimeout(timer);
   }, [active]);
-  // Stable, so a caller may hide the notice from an effect: a tab that starts
-  // leading its space hides a notice the previous lead closed (SPEC_TABS.md, В20).
-  const hide = useCallback(() => setHidden(true), []);
-  return { visible: active && due && !hidden, hide };
+  return active && due;
 }
 
 /** The notice's title for a phase of opening `spaceName`. */
@@ -90,18 +83,18 @@ interface IndexingProgressProps {
   /** The space's folder name: the thing being opened, by name. */
   spaceName: string;
   step: IndexingStep;
-  onClose: () => void;
-  /** The way out of a folder chosen by mistake, while the count shows what it
-   *  holds: a folder opens without a confirmation step (О12). */
+  /** The way out of a folder that became a space just now and may be the
+   *  wrong one, while the count shows what it holds: a folder opens without
+   *  a confirmation step (О12). */
   onChooseAnother?: () => void;
 }
 
 /** The opening notice: one card in the corner for both phases (О13). */
-export function IndexingProgress({ spaceName, step, onClose, onChooseAnother }: IndexingProgressProps) {
+export function IndexingProgress({ spaceName, step, onChooseAnother }: IndexingProgressProps) {
   const title = indexingTitle(step.phase, spaceName);
   const { count } = step;
   return (
-    <NotificationCard title={title} onClose={onClose} closeLabel="Hide">
+    <NotificationCard title={title}>
       <div className="grid gap-2" data-indexing-progress="" data-indexing-phase={step.phase}>
         {count === null ? <UncountedBar title={title} /> : <CountedBar title={title} count={count} />}
         {onChooseAnother && (

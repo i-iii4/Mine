@@ -39,10 +39,28 @@ pub struct VaultOpenResult {
     pub indexed: usize,
     pub errors: usize,
     pub sync_in_progress: bool,
+    /// The index holds a finished snapshot. False while the first pass
+    /// builds it: the opening notice is then the only sign (Х28).
     pub derived_store_ready: bool,
-    pub bootstrapped_from_legacy: bool,
-    pub migration_required: bool,
+    /// The folder became a space in this opening (SPEC_ONBOARDING.md, О12).
+    pub space_created: bool,
     pub thumbs_root: String,
+}
+
+impl VaultOpenResult {
+    /// The one answer to opening a space, whether this call opened it or
+    /// another tab already had (SPEC_VAULT_LIFECYCLE.md, П31): the two paths
+    /// cannot tell different stories about the same index.
+    fn opened(indexed: usize, derived_store_ready: bool, space: &OpenSpace, vault: &VaultLayout) -> Self {
+        Self {
+            indexed,
+            errors: 0,
+            sync_in_progress: false,
+            derived_store_ready,
+            space_created: space.created(),
+            thumbs_root: vault.thumbs_dir().to_string_lossy().into_owned(),
+        }
+    }
 }
 
 
@@ -955,15 +973,7 @@ fn reuse_open_space(
                     ),
                 );
                 append_startup_trace(app, "startup", "milestone=local_snapshot_opened");
-                return Ok(Some(VaultOpenResult {
-                    indexed,
-                    errors: 0,
-                    sync_in_progress: false,
-                    derived_store_ready: ready,
-                    bootstrapped_from_legacy: false,
-                    migration_required: false,
-                    thumbs_root: vs.vault.thumbs_dir().to_string_lossy().into_owned(),
-                }));
+                return Ok(Some(VaultOpenResult::opened(indexed, ready, space, &vs.vault)));
             }
         }
     }
@@ -991,6 +1001,9 @@ fn initialize_vault(
         }
     }
 
+    // Whether choosing the folder makes it a space now, read before the
+    // identity is written: only such a folder may be the wrong one (О12).
+    let becomes_space = matches!(opening, SpaceOpening::Chosen) && !holds_space_identity(Path::new(path));
     let vault = resolve_runtime_vault_layout(app, Path::new(path), opening)?;
     let vault_id = layout_space_id(&vault).ok_or_else(|| {
         CommandError::Internal(format!("the space at {path} has no identity"))
@@ -1037,9 +1050,6 @@ fn initialize_vault(
     std::fs::create_dir_all(vault.mine_dir())
         .map_err(|e| CommandError::Internal(format!("failed to create Mine metadata dir: {e}")))?;
 
-    // The shared pre-B0 database may still belong to another running component.
-    // Rebuild from documents in our own generation instead of copying its WAL.
-    let bootstrapped_from_legacy = false;
     if bootstrapped_thumbs_from_legacy {
         append_startup_trace(
             app,
@@ -1096,7 +1106,6 @@ fn initialize_vault(
         db::open_vault_index(vault).map_err(|error| CommandError::Internal(error.to_string()))?;
     let root_watch_layout = vault.clone();
     let derived_store_ready = db::index_is_ready(&conn)?;
-    let migration_required = !derived_store_ready;
     append_startup_trace(
         app,
         "initialize_vault",
@@ -1137,7 +1146,10 @@ fn initialize_vault(
         }
     };
 
-    let thumbs_root = vault.thumbs_dir().to_string_lossy().into_owned();
+    if becomes_space {
+        space.mark_created();
+    }
+    let opened = VaultOpenResult::opened(indexed, derived_store_ready, &space, &vault);
     space.publish(VaultState { conn, vault }, prepared_watcher);
     // Switching away can miss watcher events for this vault. Every selection
     // therefore invalidates the in-memory clean generation; the existing local
@@ -1165,18 +1177,7 @@ fn initialize_vault(
     }
     drop(_opening);
 
-    Ok((
-        lease,
-        VaultOpenResult {
-            indexed,
-            errors: 0,
-            sync_in_progress: false,
-            derived_store_ready,
-            bootstrapped_from_legacy,
-            migration_required,
-            thumbs_root,
-        },
-    ))
+    Ok((lease, opened))
 }
 
 /// How often the open space's folder is checked for still being there.
@@ -1453,10 +1454,16 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
                 }
             };
 
-            let freshness = app_for_thread
-                .state::<AppState>()
-                .freshness
-                .reconcile(&vault);
+            // Opening a space with no index starts its first pass here, before
+            // the feed asks: the pass counts out loud, as one the feed starts
+            // would, or the opening notice gets no number (О13; Х28).
+            let coordinator = &app_for_thread.state::<AppState>().freshness;
+            let freshness = if coordinator.awaits_first_generation(&path_for_thread) {
+                let emit_progress = sync_progress_emitter(&app_for_thread, path_for_thread.clone());
+                coordinator.reconcile_with_progress(&vault, &emit_progress)
+            } else {
+                coordinator.reconcile(&vault)
+            };
             if let Some(recovered) = freshness.recovered_vault {
                 if let Err(error) = super::state::adopt_recovered_projection(&app_for_thread, &vault, recovered.clone(), ()) {
                     log::warn!("backfill recovery adoption skipped: {error}");
@@ -2002,6 +2009,14 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
     }
 }
 
+/// Whether the folder at `root` already carries a space identity, its own or
+/// the legacy marker. Only the names are looked at: an identity still in
+/// iCloud counts.
+fn holds_space_identity(root: &Path) -> bool {
+    let base = VaultLayout::new(root.to_path_buf());
+    base.vault_id_path().exists() || base.legacy_vault_id_path().exists()
+}
+
 fn resolve_runtime_vault_layout(
     app: &AppHandle,
     root: &Path,
@@ -2502,6 +2517,24 @@ mod tests {
             cfg["known_vaults"],
             serde_json::json!([other.path().to_str().unwrap(), canonical])
         );
+    }
+
+    /// О12: only a folder with no identity, its own or the legacy marker,
+    /// becomes a space when chosen, and only its opening offers another.
+    #[test]
+    fn a_folder_holds_a_space_identity_by_either_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        assert!(!holds_space_identity(dir.path()));
+
+        std::fs::create_dir_all(vault.legacy_arena_dir()).unwrap();
+        std::fs::write(vault.legacy_vault_id_path(), "legacy\n").unwrap();
+        assert!(holds_space_identity(dir.path()));
+
+        std::fs::remove_file(vault.legacy_vault_id_path()).unwrap();
+        std::fs::create_dir_all(vault.mine_dir()).unwrap();
+        std::fs::write(vault.vault_id_path(), "own\n").unwrap();
+        assert!(holds_space_identity(dir.path()));
     }
 
     #[test]

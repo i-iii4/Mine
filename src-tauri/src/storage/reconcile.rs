@@ -53,6 +53,22 @@ impl FileStamp {
 pub struct DependencyStamp {
     pub vault_relative_path: String,
     pub file: Option<FileStamp>,
+    /// The file's contents were in iCloud when the note was read, so what
+    /// the index derives from them (its size) is missing. Their arrival
+    /// makes the note stale; their eviction does not (SPEC_CLOUD_STORAGE.md,
+    /// Х25).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub offloaded: bool,
+}
+
+impl DependencyStamp {
+    fn read(vault_relative_path: String, absolute: &Path) -> Self {
+        Self {
+            vault_relative_path,
+            file: FileStamp::read(absolute).ok(),
+            offloaded: crate::storage::media_dimensions::is_content_offloaded(absolute),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -307,6 +323,30 @@ fn reconcile_source_pass(
     let total_paths = paths.len();
     let stored = load_source_states(conn).map_err(ReconcileError::State)?;
     let indexed_kinds = load_indexed_kinds(conn).map_err(ReconcileError::State)?;
+    // Notes new to the index whose contents are in iCloud: ask for all of them
+    // at once, so iCloud brings them side by side and the reads below wait for
+    // each far less than one by one (SPEC_CLOUD_STORAGE.md, Х24). A note the
+    // index already knows is not brought back this way: iCloud took it to
+    // free space, and nothing here needs it unless it changed.
+    let cloud_notes = paths
+        .iter()
+        .filter(|path| {
+            vault
+                .slug_for_path(path)
+                .is_ok_and(|slug| !stored.contains_key(&slug))
+        })
+        .filter(|path| crate::storage::media_dimensions::is_content_offloaded(path))
+        .collect::<Vec<_>>();
+    if !cloud_notes.is_empty() {
+        let accepted = crate::storage::icloud_downloads::request_downloads(
+            cloud_notes.iter().map(|path| path.as_path()),
+        );
+        log::info!(
+            "requested {accepted} of {} new notes from iCloud for {}",
+            cloud_notes.len(),
+            vault.root().display()
+        );
+    }
 
     let mut live_slugs = BTreeSet::new();
     // Collection names backed by a channel document this pass saw on disk —
@@ -617,10 +657,7 @@ pub(crate) fn rederive_source_dependencies(
     for (relative, absolute) in current {
         dependencies
             .entry(relative.clone())
-            .or_insert_with(|| DependencyStamp {
-                vault_relative_path: relative,
-                file: FileStamp::read(&absolute).ok(),
-            });
+            .or_insert_with(|| DependencyStamp::read(relative, &absolute));
     }
     stamp.dependencies = dependencies.into_values().collect();
     write_source_state(conn, &block.slug, kind, &stamp)
@@ -696,10 +733,7 @@ fn prepare_source(
         markdown: markdown_stamp,
         dependencies: dependency_paths
             .into_iter()
-            .map(|(relative, absolute)| DependencyStamp {
-                vault_relative_path: relative,
-                file: FileStamp::read(&absolute).ok(),
-            })
+            .map(|(relative, absolute)| DependencyStamp::read(relative, &absolute))
             .collect(),
     };
     let mut block = parsed.block;
@@ -824,8 +858,12 @@ fn insert_dependency(
 
 fn dependencies_changed(vault: &VaultLayout, dependencies: &[DependencyStamp]) -> bool {
     dependencies.iter().any(|dependency| {
-        let current = FileStamp::read(&vault.root().join(&dependency.vault_relative_path)).ok();
+        let path = vault.root().join(&dependency.vault_relative_path);
+        let current = FileStamp::read(&path).ok();
         current != dependency.file
+            || (dependency.offloaded
+                && current.is_some()
+                && !crate::storage::media_dimensions::is_content_offloaded(&path))
     })
 }
 
@@ -951,6 +989,65 @@ mod tests {
         // Still ready: reopening under the new name shows it at once (П31).
         assert!(db::index_is_ready(&conn).unwrap());
         assert_eq!(std::fs::read(vault.thumb_path("Note")).unwrap(), b"preview");
+    }
+
+    /// Х25: a picture whose contents are in iCloud gives the index no size,
+    /// and indexing it is not what brings it down. Once its contents arrive,
+    /// the next pass reads the size, though the file's size and date are
+    /// what they were.
+    #[test]
+    fn a_picture_in_icloud_gets_its_size_once_its_contents_arrive() {
+        const PICTURE_LEN: u64 = 64 * 1024;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("Mobile Documents").join("Space");
+        std::fs::create_dir_all(&root).unwrap();
+        let vault = VaultLayout::with_derived_root(root.clone(), tmp.path().join("derived"));
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        let picture = root.join("cloud.png");
+        // iCloud keeps the name and the size and frees the blocks.
+        std::fs::File::create(&picture).unwrap().set_len(PICTURE_LEN).unwrap();
+        let modified = std::fs::metadata(&picture).unwrap().modified().unwrap();
+        std::fs::write(
+            root.join("Cloud.md"),
+            "---\ntype: image\nfile: \"[[cloud.png]]\"\n---\n",
+        )
+        .unwrap();
+        let size = |conn: &Connection| -> (Option<i64>, Option<i64>, Option<String>) {
+            conn.query_row(
+                "SELECT width, height, media_dimensions FROM blocks WHERE slug = 'Cloud'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap()
+        };
+
+        reconcile_vault(&conn, &vault).unwrap();
+        assert!(
+            crate::storage::media_dimensions::is_content_offloaded(&picture),
+            "indexing did not bring the picture down"
+        );
+        assert_eq!(size(&conn), (None, None, None));
+
+        // The contents arrive: the same size and date, blocks on disk.
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::RgbImage::new(3, 2)
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .unwrap();
+        let mut bytes = bytes.into_inner();
+        bytes.resize(usize::try_from(PICTURE_LEN).unwrap(), 0);
+        std::fs::write(&picture, &bytes).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&picture)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+        assert!(!crate::storage::media_dimensions::is_content_offloaded(&picture));
+
+        reconcile_vault(&conn, &vault).unwrap();
+        let (width, height, media) = size(&conn);
+        assert_eq!((width, height), (Some(3), Some(2)));
+        assert!(media.is_some_and(|json| json.contains("[3,2]")));
     }
 
     /// The first index of a large space must speak in numbers (О13): the

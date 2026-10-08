@@ -296,8 +296,6 @@ import {
   reportTabView,
   tabPainted,
   setWindowSidebar,
-  dismissSpaceNotice,
-  spaceNoticeDismissed,
   newTab,
 } from "@/lib/commands";
 import { ArticleAudioGatewayProvider } from "@/lib/articleAudioGateway";
@@ -398,10 +396,6 @@ const DETAIL_COMPACT_CHROME_EXIT_MS = 260;
 /// scrolled to before it starts at the top instead (SPEC_TABS.md, В40):
 /// GRID_PAGE_SIZE cards each.
 const SCROLL_RESTORE_PAGE_LIMIT = 25;
-/// The space notice for the opening's progress (О13), as the backend names
-/// it when it remembers the notice closed (SPEC_TABS.md, В20).
-const INDEXING_SPACE_NOTICE = "indexing";
-
 /// `vault-changed`. A command's news names what it renamed (SPEC_TABS.md,
 /// В17); the watcher's names nothing, and a preview pass's carries
 /// `preview_only` and no renames at all.
@@ -1030,6 +1024,24 @@ export function AppWithVault({
     observer.observe(bar);
     return () => observer.disconnect();
   }, [remeasureBottomBar, bottomActionBarHidden]);
+  // The bar's height, for what stands above it: notifications keep the
+  // feed's inset over the bar instead of covering it (DESIGN_SYSTEM.md,
+  // «Уведомления»). No bar, no height.
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    const bar = bottomBarRef.current;
+    const publish = () => {
+      root.style.setProperty("--bottom-bar-height", `${bar?.offsetHeight ?? 0}px`);
+    };
+    publish();
+    if (!bar) return () => root.style.removeProperty("--bottom-bar-height");
+    const observer = new ResizeObserver(publish);
+    observer.observe(bar);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty("--bottom-bar-height");
+    };
+  }, [bottomActionBarHidden]);
   // The set of entries changes with state (focus, selection, open element), so
   // the bar is measured again after every commit; the setter ignores a result
   // that did not change.
@@ -1141,32 +1153,10 @@ export function AppWithVault({
     previewsPending,
     previewPass?.count ?? null,
   );
-  const indexingCountNotice = useIndexingNotice(indexingStep !== null);
-  // The space's notices belong to its lead tab (SPEC_TABS.md, В19, В20). A
-  // notice closed there stays closed for the space's opening: the backend
-  // remembers it, and a tab that starts leading asks.
-  const { hide: hideIndexingNotice } = indexingCountNotice;
+  // The notice cannot be closed: it goes when the opening is over (О13).
+  const indexingNoticeVisible = useIndexingNotice(indexingStep !== null);
   const leadRef = useRef(lead);
   leadRef.current = lead;
-  useEffect(() => {
-    if (!tabPage || !lead) return;
-    let cancelled = false;
-    void spaceNoticeDismissed(INDEXING_SPACE_NOTICE)
-      .then((dismissed) => {
-        if (!cancelled && dismissed) hideIndexingNotice();
-      })
-      .catch((error: unknown) => console.error("Could not read the space's closed notices:", error));
-    return () => {
-      cancelled = true;
-    };
-  }, [hideIndexingNotice, lead, tabPage]);
-  const closeIndexingNotice = useCallback(() => {
-    hideIndexingNotice();
-    if (!tabPage) return;
-    void dismissSpaceNotice(INDEXING_SPACE_NOTICE).catch((error: unknown) => {
-      console.error("Could not record the closed notice:", error);
-    });
-  }, [hideIndexingNotice, tabPage]);
   // A count belongs to the pass that sent it: the next pass starts from none.
   useEffect(() => {
     if (!isSyncing) setSyncProgress(null);
@@ -1188,7 +1178,12 @@ export function AppWithVault({
   // Whether this space still owes the empty-feed onboarding (О14, О15); null
   // until the space's own index answers.
   const [spaceOnboardingOwed, setSpaceOnboardingOwed] = useState<boolean | null>(null);
-  const [migrationRequired, setMigrationRequired] = useState(false);
+  // The space opened with no finished index: its first pass builds it, and
+  // once that pass lands every route reads the new snapshot (Х28).
+  const [indexBuiltOnOpen, setIndexBuiltOnOpen] = useState(false);
+  // The folder became a space in this opening (О12): only then may it be the
+  // wrong one, and the opening notice offers another.
+  const [spaceCreated, setSpaceCreated] = useState(false);
   const [thumbsRootPath, setThumbsRootPath] = useState<string | null>(null);
   const activeDragBlock = activeDragBlocks[0] ?? null;
   const renderedDragBlocks = useMemo(() => {
@@ -2169,11 +2164,11 @@ export function AppWithVault({
             vaultPath,
             indexed: result.indexed,
             derivedStoreReady: result.derived_store_ready,
-            bootstrappedFromLegacy: result.bootstrapped_from_legacy,
-            migrationRequired: result.migration_required,
+            spaceCreated: result.space_created,
             elapsedMs: Math.round(performance.now() - started),
           });
-          setMigrationRequired(result.migration_required);
+          setIndexBuiltOnOpen(!result.derived_store_ready);
+          setSpaceCreated(result.space_created);
           setThumbsRootPath(result.thumbs_root);
           setVaultReady(true);
         }
@@ -2776,9 +2771,9 @@ export function AppWithVault({
       setIndexingError(null);
       invalidateRouteSnapshots();
       setIndexRereadAfterLoadId(loadRequestIdRef.current);
-      if (migrationRequired) {
+      if (indexBuiltOnOpen) {
         void reloadAllSnapshots().finally(() => {
-          setMigrationRequired(false);
+          setIndexBuiltOnOpen(false);
         });
         return;
       }
@@ -2796,7 +2791,7 @@ export function AppWithVault({
         unlisten.then((fn) => fn());
       }
     };
-  }, [bumpThumbVersion, bumpFeedThumbVersion, invalidateRouteSnapshots, invalidateRoutesForTags, migrationRequired, reloadAllSnapshots, requestVaultStatsRefresh, scheduleRefresh, vaultReady]);
+  }, [bumpThumbVersion, bumpFeedThumbVersion, invalidateRouteSnapshots, indexBuiltOnOpen, invalidateRoutesForTags, reloadAllSnapshots, requestVaultStatsRefresh, scheduleRefresh, vaultReady]);
 
   useEffect(() => {
     return () => {
@@ -4301,11 +4296,6 @@ export function AppWithVault({
     );
   }
 
-  const showPreparingLibrary =
-    migrationRequired
-    && !loadError
-    && (isSyncing || (blocks.length === 0 && tags.length === 0 && channels.length === 0));
-
   // An error takes the feed's place only when the feed has nothing to show:
   // with this route's cards on screen it is a notice over them and the cards
   // stay (SPEC_AUDIT_FIXES.md, Д2.2). A space that did not open has nothing
@@ -4322,7 +4312,7 @@ export function AppWithVault({
     : feedErrors.slice(feedShowsCards ? 0 : 1).filter(({ notice }) => notice.open);
   // The space's own notices show in its lead tab only (SPEC_TABS.md, В19);
   // a tab's errors are its own and show wherever they happened.
-  const showIndexingNotice = lead && indexingCountNotice.visible && indexingStep !== null;
+  const showIndexingNotice = lead && indexingNoticeVisible && indexingStep !== null;
   const showFirstCardMarker = lead && firstCardSlug !== null;
   const showNotifications = feedErrorNotices.length > 0
     || selectionCardError !== null
@@ -4339,9 +4329,7 @@ export function AppWithVault({
             ? filterSidebarTags(orderedTags, sidebarSearchQuery).length
             : orderedTags.length}
           stats={vaultStats}
-          cloudPending={blocks.filter((item) => item.content_in_cloud).length}
           indexing={isSyncing}
-          onRevealSpace={() => void revealItemInDir(vaultPath)}
           detailBlock={renderedDetailBlock}
           detailEntered={compactDetailChromeEntered}
           viewMode={feedViewMode}
@@ -4485,11 +4473,7 @@ export function AppWithVault({
                   {!metadataRowAtBottom && (
                     // Icon buttons 4px apart, 8px from the column's line.
                     <div className="mr-2 flex shrink-0 items-center gap-1" data-sidebar-top-search-actions="">
-                      <ActivityIndicators
-                        cloudPending={blocks.filter((item) => item.content_in_cloud).length}
-                        indexing={isSyncing}
-                        onRevealSpace={() => void revealItemInDir(vaultPath)}
-                      />
+                      <ActivityIndicators indexing={isSyncing} />
                       <Button
                         type="button"
                         variant="chrome"
@@ -4628,20 +4612,6 @@ export function AppWithVault({
         {blockingError !== null && (
           <div className="flex h-full items-center justify-center p-8" data-feed-error-block="">
             <p className="text-sm text-destructive">{blockingError}</p>
-          </div>
-        )}
-        {!loadError && showPreparingLibrary && (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/96 px-[var(--edge-rhythm,32px)]">
-            <div className="max-w-md text-center">
-              <p className="text-base font-medium text-foreground">Preparing library…</p>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Creating a local index and preview cache for this vault. The shell is ready;
-                the first usable snapshot will appear as soon as the initial rebuild commits.
-              </p>
-              <p className="mt-4 text-sm text-muted-foreground">
-                Steps: Creating local index → Scanning markdown → Generating previews
-              </p>
-            </div>
           </div>
         )}
         <Routes>
@@ -4784,14 +4754,14 @@ export function AppWithVault({
             )}
             {showIndexingNotice && indexingStep !== null && (
               // The opening counts out loud in the corner (О13): one card,
-              // notes and then previews. A folder whose feed is still empty
-              // may be the wrong one: it opened without a confirmation, so
-              // the way out sits next to its count (О12).
+              // notes and then previews. A folder that became a space just
+              // now and whose feed is still empty may be the wrong one: it
+              // opened without a confirmation, so the way out sits next to
+              // its count (О12). A space that already was one is not.
               <IndexingProgress
                 spaceName={vaultPath.replace(/\/+$/, "").split("/").pop() ?? vaultPath}
                 step={indexingStep}
-                onClose={closeIndexingNotice}
-                onChooseAnother={blocks.length === 0 ? () => void handleSwitchVault() : undefined}
+                onChooseAnother={spaceCreated && blocks.length === 0 ? () => void handleSwitchVault() : undefined}
               />
             )}
             {showFirstCardMarker && firstCardSlug !== null && (

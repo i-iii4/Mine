@@ -83,8 +83,6 @@ const commandMocks = vi.hoisted(() => ({
   setWindowSidebar: vi.fn<(sidebar: SidebarLayout) => Promise<void>>(async () => {}),
   startWindowDrag: vi.fn<() => Promise<void>>(async () => {}),
   reportWindowSurface: vi.fn<(color: string) => Promise<void>>(async () => {}),
-  dismissSpaceNotice: vi.fn<(notice: string) => Promise<void>>(async () => {}),
-  spaceNoticeDismissed: vi.fn<(notice: string) => Promise<boolean>>(async () => false),
   newTab: vi.fn<(vaultId?: string) => Promise<void>>(async () => {}),
   activateAdjacentTab: vi.fn<(forward: boolean) => Promise<void>>(async () => {}),
 }));
@@ -165,8 +163,6 @@ vi.mock("@/lib/commands", () => ({
   setWindowSidebar: commandMocks.setWindowSidebar,
   startWindowDrag: commandMocks.startWindowDrag,
   reportWindowSurface: commandMocks.reportWindowSurface,
-  dismissSpaceNotice: commandMocks.dismissSpaceNotice,
-  spaceNoticeDismissed: commandMocks.spaceNoticeDismissed,
   newTab: commandMocks.newTab,
   activateAdjacentTab: commandMocks.activateAdjacentTab,
 }));
@@ -518,8 +514,7 @@ function vaultOpenResult(overrides: Partial<VaultOpenResult> = {}): VaultOpenRes
     indexed: 2,
     sync_in_progress: false,
     derived_store_ready: true,
-    bootstrapped_from_legacy: false,
-    migration_required: false,
+    space_created: false,
     thumbs_root: "/derived/thumbs",
     ...overrides,
   };
@@ -552,7 +547,6 @@ describe("AppWithVault", () => {
     commandMocks.getGridRows.mockResolvedValue({ path: "/vault", generation: 1, blocks: [] });
     vi.mocked(isTauri).mockReturnValue(false);
     commandMocks.getTabBootstrap.mockResolvedValue(null);
-    commandMocks.spaceNoticeDismissed.mockResolvedValue(false);
     setTabVisible(true);
     localStorage.clear();
     sidebarResizeState.width = 300;
@@ -2703,11 +2697,10 @@ describe("AppWithVault", () => {
     ]);
   });
 
-  it("shows migration overlay until the first sync finishes for a fresh derived store", async () => {
+  it("opens a space with no finished index without covering the window, and reads it again once built (Х28)", async () => {
     commandMocks.openVault.mockResolvedValue(
       vaultOpenResult({
         derived_store_ready: false,
-        migration_required: true,
       }),
     );
 
@@ -2717,8 +2710,10 @@ describe("AppWithVault", () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText("Preparing library…")).toBeInTheDocument();
-    expect(screen.getByText(/Creating local index/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId("grid")).toBeInTheDocument());
+    // The opening notice is the only sign; no screen covers the feed (П31).
+    expect(screen.queryByText("Preparing library…")).toBeNull();
+    const readsBefore = commandMocks.listGridBlocks.mock.calls.length;
 
     fireEvent(
       window,
@@ -2734,8 +2729,9 @@ describe("AppWithVault", () => {
       }),
     );
 
+    // The first pass landed: every route reads the snapshot it built.
     await waitFor(() => {
-      expect(screen.queryByText("Preparing library…")).not.toBeInTheDocument();
+      expect(commandMocks.listGridBlocks.mock.calls.length).toBeGreaterThan(readsBefore);
     });
   });
 
@@ -3859,7 +3855,7 @@ describe("AppWithVault", () => {
       expect(screen.queryByTestId("detail-title")).toBeNull();
     });
 
-    it("keeps the space's notices and preview work to its lead tab (В19, В20)", async () => {
+    it("keeps the space's notices and preview work to its lead tab (В19)", async () => {
       const commands = await import("@/lib/commands");
       vi.mocked(commands.firstCardMarkerPending).mockResolvedValue(true);
       commandMocks.listGridBlocks.mockImplementation(async () => gridSnapshot([]));
@@ -3883,42 +3879,41 @@ describe("AppWithVault", () => {
         expect(screen.queryByText("Indexing “vault”")).toBeNull();
         expect(screen.queryByText("This card is a file")).toBeNull();
         expect(vi.mocked(commands.completeFirstCardMarker)).not.toHaveBeenCalled();
-        expect(commandMocks.spaceNoticeDismissed).not.toHaveBeenCalled();
 
-        // This tab starts leading: it asks whether the notice was closed.
+        // This tab starts leading: the notice shows here, and it cannot be
+        // closed: closing would hide the work and stop nothing (О13).
         rerender(view(true));
         await act(async () => {
           await vi.advanceTimersByTimeAsync(0);
         });
-        expect(commandMocks.spaceNoticeDismissed).toHaveBeenCalledWith("indexing");
         expect(vi.mocked(useThumbnailUpgrade)).toHaveBeenLastCalledWith(true);
         expect(screen.getByText("Indexing “vault”")).toBeInTheDocument();
-
-        // Closed here: the backend keeps it closed for the next lead.
-        fireEvent.click(screen.getByRole("button", { name: "Hide" }));
-        expect(commandMocks.dismissSpaceNotice).toHaveBeenCalledWith("indexing");
-        expect(screen.queryByText("Indexing “vault”")).toBeNull();
+        expect(screen.queryByRole("button", { name: "Hide" })).toBeNull();
       } finally {
         vi.useRealTimers();
         vi.mocked(commands.firstCardMarkerPending).mockResolvedValue(false);
       }
     });
 
-    it("hides the indexing notice another lead already closed (В20)", async () => {
-      commandMocks.spaceNoticeDismissed.mockResolvedValue(true);
-      renderTab({ lead: true });
-      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
-      await waitFor(() => expect(commandMocks.spaceNoticeDismissed).toHaveBeenCalledWith("indexing"));
+    it("offers another folder only while a folder that became a space just now shows nothing (О12)", async () => {
+      commandMocks.listGridBlocks.mockImplementation(async () => gridSnapshot([]));
+      for (const created of [true, false]) {
+        commandMocks.openVault.mockResolvedValue(vaultOpenResult({ space_created: created }));
+        const { unmount } = renderTab({ lead: true });
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:0"));
 
-      vi.useFakeTimers();
-      try {
-        send("vault-sync-progress", { path: "/vault", processed: 10, total: 643 });
-        await act(async () => {
-          await vi.advanceTimersByTimeAsync(INDEXING_NOTICE_DELAY_MS);
-        });
-        expect(screen.queryByText("Indexing “vault”")).toBeNull();
-      } finally {
-        vi.useRealTimers();
+        vi.useFakeTimers();
+        try {
+          send("vault-sync-progress", { path: "/vault", processed: 10, total: 643 });
+          await act(async () => {
+            await vi.advanceTimersByTimeAsync(INDEXING_NOTICE_DELAY_MS);
+          });
+          expect(screen.getByText("Indexing “vault”")).toBeInTheDocument();
+          expect(screen.queryByRole("button", { name: "Choose another folder" }) !== null).toBe(created);
+        } finally {
+          vi.useRealTimers();
+        }
+        unmount();
       }
     });
 

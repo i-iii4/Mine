@@ -72,9 +72,14 @@ impl PreviewDimensions {
 }
 
 /// Extract (width, height) from an image file header. Returns None on any
-/// error (missing file, unsupported format, corrupt header). Header-only
-/// read — does not decode the full image.
+/// error (missing file, unsupported format, corrupt header), and for a file
+/// whose contents are in iCloud: reading its header would bring the whole
+/// file down, and no size is worth that wait (SPEC_CLOUD_STORAGE.md, Х25).
+/// Header-only read — does not decode the full image.
 pub fn extract_image_dimensions(path: &Path) -> Option<(u32, u32)> {
+    if is_content_offloaded(path) {
+        return None;
+    }
     // The format is sniffed, never taken from the name. Derived artifacts all
     // live under a `.jpg` path while their contents follow rule П6 — a picture
     // that uses its alpha channel is PNG inside — and trusting the extension
@@ -135,9 +140,13 @@ pub fn extract_preview_dimensions(path: &Path) -> Option<PreviewDimensions> {
 /// will render at.
 ///
 /// Returns None on any error (missing file, not an MP4, no video track,
-/// corrupt header). Other container formats (WebM, MOV) are not supported
-/// here; the frontend falls back to a 16:9 aspect ratio for them.
+/// corrupt header), and for a file whose contents are in iCloud (Х25). Other
+/// container formats (WebM, MOV) are not supported here; the frontend falls
+/// back to a 16:9 aspect ratio for them.
 pub fn extract_video_dimensions(path: &Path) -> Option<(u32, u32)> {
+    if is_content_offloaded(path) {
+        return None;
+    }
     let file = std::fs::File::open(path).ok()?;
     let size = file.metadata().ok()?.len();
     let reader = std::io::BufReader::new(file);

@@ -107,6 +107,16 @@ impl FreshnessCoordinator {
         FreshnessRouteAction::ReadCommitted
     }
 
+    /// Whether the space has no readable snapshot yet: its next pass is the
+    /// first one, which the feed waits on and which counts out loud whoever
+    /// starts it (SPEC_INTEGRATION.md, «Ход первого прохода»).
+    pub fn awaits_first_generation(&self, vault_path: &str) -> bool {
+        let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state
+            .get(vault_path)
+            .is_none_or(|entry| entry.last_result.is_none() && !entry.committed_snapshot_available)
+    }
+
     pub fn reconcile(&self, vault: &VaultLayout) -> FreshnessOutcome {
         self.reconcile_with_progress(vault, &|_, _| {})
     }
@@ -515,6 +525,34 @@ mod tests {
         assert_eq!(std::fs::read_dir(root).unwrap().count(), 1);
         let conn = crate::storage::db::open_read_only(&recovered.index_db_path()).unwrap();
         assert_eq!(crate::storage::index::list_blocks(&conn).unwrap().len(), 1);
+    }
+
+    /// Х28: a space with no readable snapshot awaits its first pass, whoever
+    /// starts it; a finished pass or an existing snapshot ends the wait, and
+    /// the passes after it no longer count out loud.
+    #[test]
+    fn a_space_awaits_its_first_pass_until_one_finishes_or_a_snapshot_exists() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("source");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("Card.md"), "A card.\n").unwrap();
+        let vault = VaultLayout::with_derived_root(root.clone(), temp.path().join("derived"));
+        let vault = crate::storage::db::resolve_vault_index(vault).unwrap();
+        let path = root.to_string_lossy().into_owned();
+
+        let coordinator = FreshnessCoordinator::default();
+        assert!(coordinator.awaits_first_generation(&path));
+        let seen = Mutex::new(0usize);
+        let outcome = coordinator.reconcile_with_progress(&vault, &|_, _| {
+            *seen.lock().unwrap() += 1;
+        });
+        assert!(outcome.result.is_ok());
+        assert!(*seen.lock().unwrap() > 0, "the first pass counts out loud");
+        assert!(!coordinator.awaits_first_generation(&path));
+
+        let reopened = FreshnessCoordinator::default();
+        reopened.mark_committed_snapshot_available(&path);
+        assert!(!reopened.awaits_first_generation(&path));
     }
 
     #[test]

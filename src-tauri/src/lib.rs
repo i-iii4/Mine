@@ -121,8 +121,6 @@ pub fn run() {
             commands::tabs::report_window_surface,
             commands::tabs::show_space,
             commands::tabs::spaces_in_tabs,
-            commands::tabs::dismiss_space_notice,
-            commands::tabs::space_notice_dismissed,
             commands::tabs::move_tab_to_new_window,
             commands::tabs::begin_tab_drag,
             commands::tabs::report_drop_slot,

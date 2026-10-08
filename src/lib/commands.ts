@@ -803,14 +803,6 @@ export const showSpace = (path: string, goEverything: boolean) =>
 /** The identities of every space some tab shows (В69). */
 export const spacesInTabs = () => invoke<string[]>("spaces_in_tabs");
 
-/** A notice of this tab's space was closed in this opening (В20). */
-export const dismissSpaceNotice = (notice: string) =>
-  invoke<void>("dismiss_space_notice", { notice });
-
-/** Whether a notice of this tab's space was closed in this opening (В20). */
-export const spaceNoticeDismissed = (notice: string) =>
-  invoke<boolean>("space_notice_dismissed", { notice });
-
 /** This tab bar reports the slot under a dragged tab from another window,
  *  or `null` when none (В63). Sent while `tabbar-drop-hover` arrives. */
 export const reportDropSlot = (index: number | null) =>

@@ -167,24 +167,6 @@ pub fn spaces_in_tabs(app: AppHandle) -> Vec<String> {
     tabs::spaces_in_tabs(&app)
 }
 
-/// A notice of the calling tab's space was closed in this opening (В20).
-#[tauri::command]
-pub fn dismiss_space_notice(app: AppHandle, webview: Webview, notice: String) {
-    let state = app.state::<super::state::AppState>();
-    if let Some(space) = state.space_for(webview.label()) {
-        space.dismiss_notice(&notice);
-    }
-}
-
-/// Whether a notice of the calling tab's space was closed in this opening.
-#[tauri::command]
-pub fn space_notice_dismissed(app: AppHandle, webview: Webview, notice: String) -> bool {
-    let state = app.state::<super::state::AppState>();
-    state
-        .space_for(webview.label())
-        .is_some_and(|space| space.notice_dismissed(&notice))
-}
-
 /// Move `tab_id` into a window of its own (В50, В65).
 #[tauri::command]
 pub fn move_tab_to_new_window(app: AppHandle, tab_id: TabId) {

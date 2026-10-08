@@ -150,8 +150,6 @@ pub const COMMAND_EFFECTS: &[(&str, Effect)] = &[
     ("report_window_surface", Effect::Reads),
     ("show_space", Effect::Reads),
     ("spaces_in_tabs", Effect::Reads),
-    ("dismiss_space_notice", Effect::Reads),
-    ("space_notice_dismissed", Effect::Reads),
     ("move_tab_to_new_window", Effect::Reads),
     ("begin_tab_drag", Effect::Reads),
     ("report_drop_slot", Effect::Reads),
