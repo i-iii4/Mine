@@ -895,7 +895,9 @@ function MetadataPanel({
           data-metadata-sections
         >
           <DetailPanelCard data-detail-metadata-card>
-            <div className="px-plate" data-detail-metadata-card-content>
+            {/* 8 px off the frame across, like the feed card's text (user's
+                decision of 08.10.2026): the card's 4 and this 4. */}
+            <div className="px-surface" data-detail-metadata-card-content>
               <MetadataTable>
                 {displayBlock.width != null && displayBlock.height != null && (
                   <MetadataField
@@ -1288,10 +1290,10 @@ function PanelCardRows({
 
 /**
  * The heading of a card of the panel: a row of the card at its top, the
- * text over the rows' thumbnails and the metadata labels, 12 px off the
- * frame across and down.
+ * text 8 px off the frame across like the feed card's text and the metadata
+ * labels (user's decision of 08.10.2026), over the rows' thumbnails.
  */
-const PANEL_CARD_HEADING_CLASSES = "flex h-row min-w-0 items-center px-plate";
+const PANEL_CARD_HEADING_CLASSES = "flex h-row min-w-0 items-center px-surface";
 
 /**
  * The open card's Related notes in a card of the panel, like the metadata

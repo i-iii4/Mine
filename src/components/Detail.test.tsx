@@ -1123,7 +1123,7 @@ describe("Detail", () => {
       expect(label.closest("[data-metadata-row]")).toBeNull();
       // A row of the card at its top, the text at the metadata labels'
       // inset across and down.
-      expect(label).toHaveClass("font-mono", "text-muted-foreground", "flex", "h-row", "items-center", "px-plate");
+      expect(label).toHaveClass("font-mono", "text-muted-foreground", "flex", "h-row", "items-center", "px-surface");
       const relatedCard = label.parentElement;
       expect(relatedCard).toHaveAttribute("data-related-notes-block");
       expect(relatedCard?.parentElement).toHaveAttribute("data-metadata-sections");
@@ -1233,7 +1233,7 @@ describe("Detail", () => {
     );
     expect(metadataCard).toHaveStyle({ minWidth: "240px" });
     const metadataContent = metadataCard?.querySelector("[data-detail-metadata-card-content]");
-    expect(metadataContent).toHaveClass("px-plate");
+    expect(metadataContent).toHaveClass("px-surface");
     expect(metadataContent).not.toHaveClass("pt-4", "pb-4");
     expect(metadataCard?.querySelector("[data-metadata-table]")).not.toBeNull();
     expect(metadataCard?.querySelector("[data-detail-action-row]")).not.toBeNull();
@@ -3210,7 +3210,7 @@ describe("Detail association blocks", () => {
     expect(address).toHaveAttribute("data-card-association-block", "address");
     const sameUrl = within(address as HTMLElement).getByText("Same URL");
     expect(sameUrl).toHaveClass("min-w-0", "truncate");
-    expect(sameUrl.parentElement).toHaveClass("flex", "h-row", "items-center", "px-plate");
+    expect(sameUrl.parentElement).toHaveClass("flex", "h-row", "items-center", "px-surface");
     expect(address?.querySelector("[data-card-association-list] [data-card-row] > button"))
       .toHaveClass("h-card-row", "pl-card-thumb-inset", "pr-plate");
   });
