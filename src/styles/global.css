@@ -1183,6 +1183,12 @@ body {
   --sidebar-nav-pad-x: max(var(--edge-rhythm, 32px), 16px);   /* sidebar table inset from panel edges */
   --sidebar-nav-pad-top: max(var(--edge-rhythm, 32px), 16px); /* sidebar table inset from the top chrome */
   --sidebar-row-pad-x: 0px;    /* inner row padding: text left / count right */
+  /* Where a sidebar row's name starts, measured from the panel's left edge
+     (the window edge): the table inset plus the row's own padding, 16px in
+     alt. The bottom bar's left end stands on it, so its first button's plate
+     sits under the names (user's decision of 07.10.2026); derived, not a
+     literal, so the two cannot drift. */
+  --sidebar-label-inset: calc(var(--sidebar-nav-pad-x) + var(--sidebar-row-pad-x));
   /* One visual zone — the distance between two guidelines, or between a
      guideline and the panel edge. That is what the eye compares, so the model
      measures zones rather than column boxes: a box model left the middle zone
@@ -1229,7 +1235,8 @@ body {
      first control's plate, or to plain text where a row has no control; the
      same 8px the card keeps round its buttons (Card actions, Connect). The
      16px it was came from the 32px chrome and is gone. Detached from the
-     feed rhythm. One name, one place to change it. */
+     feed rhythm. One name, one place to change it. One exception: the
+     bottom bar's left end follows --sidebar-label-inset. */
   --chrome-edge-pad: 8px;
   /* Interior inset of the expanded card (Detail): side columns and the top
      offset of the content. Follows the feed rhythm but never drops below

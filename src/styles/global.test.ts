@@ -87,6 +87,12 @@ describe("menus and the chrome inset", () => {
     expect(css).toMatch(/--top-collection-pad-x: var\(--chrome-edge-pad\);/);
     expect(css).toMatch(/--main-secondary-pad-x: var\(--chrome-edge-pad\);/);
   });
+
+  it("derives the bottom bar's left inset from where the sidebar names start", () => {
+    expect(css.match(/--sidebar-label-inset:\s*[^;]+;/g)).toEqual([
+      "--sidebar-label-inset: calc(var(--sidebar-nav-pad-x) + var(--sidebar-row-pad-x));",
+    ]);
+  });
 });
 
 // The previews' right edge (SPEC_FRONTEND.md, «Thumbnail strip»; user's

@@ -4840,13 +4840,15 @@ export function AppWithVault({
 
       {!bottomActionBarHidden && !metadataRowAtBottom && (
         <ChromeRow separator="top"
-          // Stands under the sidebar column, so it follows the chrome edge pad:
-          // the app-wide rhythm in the primary design, 16px in alt, where the
-          // sidebar rows are already on 16 and these buttons must line up under
-          // them. Symmetric on both sides — a bar whose two ends obey different
-          // rules reads as a layout mistake.
+          // The left end stands under the sidebar column: the first button's
+          // plate lines up under the row names (--sidebar-label-inset, 16px),
+          // the one exception to the 8px chrome inset (user's decision of
+          // 07.10.2026). It stays there with the sidebar hidden: the first
+          // entry is Show/Hide Sidebar itself, and the button just clicked
+          // must not jump under the pointer. The right end is ordinary
+          // chrome, on --chrome-edge-pad.
           ref={bottomBarRef}
-          className="gap-2 bg-accent px-[var(--chrome-edge-pad)]"
+          className="gap-2 bg-accent pl-[var(--sidebar-label-inset)] pr-[var(--chrome-edge-pad)]"
           data-bottom-action-bar=""
         >
           {/* Same command as the View menu item and the two-finger swipe. It

@@ -1692,6 +1692,26 @@ describe("AppWithVault", () => {
     expect(findEntry()?.textContent).toBe(before);
   });
 
+  // User's decision of 07.10.2026: the bar's first plate stands under the
+  // sidebar row names, its right end on the chrome inset; the toggle does
+  // not move when it hides the sidebar.
+  it.each([false, true])("puts the bottom bar's left end under the sidebar names (collapsed: %s)", async (collapsed) => {
+    sidebarResizeState.collapsed = collapsed;
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    const bar = document.querySelector("[data-bottom-action-bar]") as HTMLElement;
+    expect(bar).toHaveClass("pl-[var(--sidebar-label-inset)]", "pr-[var(--chrome-edge-pad)]");
+    expect(bar.className).not.toContain("px-[");
+  });
+
   it("opens the settings window from the bottom action bar", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
