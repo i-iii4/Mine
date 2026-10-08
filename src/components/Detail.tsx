@@ -9,6 +9,7 @@ import {
   useMemo,
   type ComponentType,
   type CSSProperties,
+  type HTMLAttributes,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
@@ -860,13 +861,7 @@ function MetadataPanel({
         )}
 
         <div className="flex min-w-0 flex-col gap-6" data-metadata-sections>
-          <section
-            // The card's surface, the level of the second chrome row, in
-            // both themes (user's decision of 06.10.2026).
-            className="overflow-hidden rounded-[var(--radius-card)] border border-border bg-card"
-            style={{ minWidth: DETAIL_METADATA_CARD_MIN_WIDTH_PX }}
-            data-detail-metadata-card
-          >
+          <DetailPanelCard data-detail-metadata-card>
             <div className="px-2 pb-4 pt-4" data-detail-metadata-card-content>
               <MetadataTable>
                 {displayBlock.width != null && displayBlock.height != null && (
@@ -907,7 +902,7 @@ function MetadataPanel({
               onToggleTag={onToggleTag}
               onCreateAndAssign={onCreateAndAssign}
             />
-          </section>
+          </DetailPanelCard>
 
           {relatedNotes.length > 0 && (
             <RelatedNotesSection
@@ -939,6 +934,22 @@ const DELETE_MEDIA_CONNECTED_CARDS_MAX_HEIGHT_PX =
   + (DELETE_MEDIA_CONNECTED_CARDS_VISIBLE_COUNT - 1) * CARD_REFERENCE_ROW_GAP_PX;
 
 type MetadataValueMode = "truncate" | "wrap";
+
+/**
+ * A card of the open card's panel: the metadata with its buttons, and the
+ * Related notes. The card's surface, the level of the second chrome row, in
+ * both themes (user's decision of 06.10.2026); 8 px inset inside.
+ */
+function DetailPanelCard({ className, style, ...props }: HTMLAttributes<HTMLElement>) {
+  return (
+    <section
+      className={cn("overflow-hidden rounded-[var(--radius-card)] border border-border bg-card", className)}
+      style={{ minWidth: DETAIL_METADATA_CARD_MIN_WIDTH_PX, ...style }}
+      data-detail-panel-card
+      {...props}
+    />
+  );
+}
 
 function MetadataTable({ children }: { children: ReactNode }) {
   return (
@@ -1074,10 +1085,11 @@ function DetailActionRow({
 
 /**
  * The open card's Related notes: the search's own rows (`CardRow`, user's
- * decision of 07.10.2026). Each row shows the note's file name and, dimmed,
- * the start of its text; under the pointer the row lights up and shows the
- * card's commands (Connect, Source, More) at its right end, as a search
- * result does. A press elsewhere on the row opens the note.
+ * decision of 07.10.2026) in a card of the panel, like the metadata above
+ * it. Each row shows the note's file name and, dimmed, the start of its
+ * text; under the pointer the row lights up and shows the card's commands
+ * (Connect, Source, More) at its right end, as a search result does. A press
+ * elsewhere on the row opens the note.
  */
 function RelatedNotesSection({
   relatedNotes,
@@ -1124,11 +1136,13 @@ function RelatedNotesSection({
   }, []);
 
   return (
-    <section className="flex min-w-0 flex-col gap-1" data-related-notes-block>
-      {/* Over the rows' thumbnails, as a date section over search results. */}
-      <div className={cn(METADATA_LABEL_CLASSES, "px-2")}>Related notes</div>
+    <DetailPanelCard data-related-notes-block>
+      {/* A label of the card, at the metadata labels' inset and over the
+          rows' thumbnails. */}
+      <div className={cn(METADATA_LABEL_CLASSES, "px-2 pt-4")}>Related notes</div>
+      {/* The rows' light keeps 4 px off the frame on every side. */}
       <div
-        className="flex w-full min-w-0 flex-col"
+        className="flex w-full min-w-0 flex-col p-1"
         onWheel={() => setPointerRowKey(null)}
         data-related-notes-list
       >
@@ -1146,6 +1160,7 @@ function RelatedNotesSection({
                 row={deriveSearchResultRow({ slug: baseSlug, preview_text: null })}
                 preview={null}
                 active={false}
+                framed
                 item={{ as: "static" }}
                 data-related-note-item="placeholder"
               />
@@ -1168,6 +1183,7 @@ function RelatedNotesSection({
               preview={microPreviewFromIndexedBlock(relatedBlock, resolvedThumbsRoot)}
               active={actionsShown}
               actionsReservePx={actionsShown ? cardRowActionsReservePx(relatedBlock) : 0}
+              framed
               onPointerMove={() => {
                 if (menuRowKey === null && pointerRowKey !== rowKey) setPointerRowKey(rowKey);
               }}
@@ -1215,7 +1231,7 @@ function RelatedNotesSection({
           );
         })}
       </div>
-    </section>
+    </DetailPanelCard>
   );
 }
 

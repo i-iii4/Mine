@@ -1448,8 +1448,10 @@ Image media expansion:
   `bg-component-fill-inner`. В row остаются только `Source` и `Connect`;
   обе кнопки `flex-1` и занимают всю ширину карточки. Overflow menu остаётся в
   верхнем chrome Detail, а не внутри metadata card.
-  `RELATED NOTES` остаётся отдельной sibling section ниже; внешний vertical
-  rhythm между framed block и `RELATED NOTES` остаётся `gap-6`.
+  `RELATED NOTES` это вторая такая же карточка ниже (решение пользователя
+  07.10.2026): обе рисует одна оболочка `DetailPanelCard`
+  (`data-detail-panel-card`: рамка, радиус, `bg-card`, `min-width: 240px`),
+  зазор между карточками `gap-6`. Без связанных заметок второй карточки нет.
 - Для `article` author не дублируется над body; в открытой странице author
   показывается только в metadata panel
 - `RELATED NOTES` is a derived note-graph view, not raw `Mine Related Notes`
@@ -1461,10 +1463,15 @@ Image media expansion:
   контракт в [SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md), «Строка
   результата» и «Команды строки»). Миниатюра 32 пикселя, имя файла заметки
   (`getFileName`, не видимый заголовок), за ним тусклым начало её текста
-  (`preview_text` без повтора имени, `deriveSearchResultRow`). Ни фона, ни
-  рамки: строка светится `state-active` только под указателем и при фокусе
-  клавиатуры. Подпись `Related notes` стоит с отступом `px-2`, над
-  миниатюрами, строки идут без зазора, по 44 пикселя.
+  (`preview_text` без повтора имени, `deriveSearchResultRow`). Своего фона и
+  рамки у строки нет: она светится `state-active` только под указателем и
+  при фокусе клавиатуры. Подпись `Related notes` стоит внутри карточки
+  сверху, как подписи сведений (`px-2 pt-4`), над миниатюрами. Список `p-1`,
+  строки идут без зазора, по 44 пикселя; строка с `framed` берёт
+  `--card-row-pad-x` 4 пикселя вместо 8, и её команды держат тот же отступ
+  справа. Так миниатюра стоит на 8 пикселях от рамки, как подписи сведений,
+  правая кнопка кончается там же, где значения, а свет строки не касается
+  рамки.
   Миниатюра это общий `MicroPreviewThumbnail`: рисуется, только когда
   `IndexedBlock.thumb_format` подтверждает микропревью, дописывает
   `?m=<thumb_mtime>` против кеша и получает PNG `dark:invert`, как миниатюры

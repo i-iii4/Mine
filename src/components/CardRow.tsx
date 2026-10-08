@@ -29,9 +29,11 @@ import type { SearchMatch } from "@/types";
 
 /**
  * The row's item: the thumbnail and the line, the geometry of a menu item.
- * The thumbnail and the padding make every row 44 px tall.
+ * The thumbnail and the padding make every row 44 px tall. The inline
+ * padding is the row's `--card-row-pad-x`; the row's commands keep the same
+ * distance from its right end.
  */
-const CARD_ROW_ITEM_CLASSES = "flex cursor-default items-center gap-2 px-2 py-1.5";
+const CARD_ROW_ITEM_CLASSES = "flex cursor-default items-center gap-2 px-(--card-row-pad-x) py-1.5";
 
 /**
  * One line (user's decision of 06.10.2026): the file name, then the note's
@@ -221,6 +223,12 @@ interface CardRowProps extends Omit<HTMLAttributes<HTMLDivElement>, "children"> 
   actions?: ReactNode;
   /** What the line leaves free at its end while the commands show. */
   actionsReservePx?: number;
+  /**
+   * The row stands 4 px inside a framed box (the open card's Related notes)
+   * and pads 4 px, not 8: its thumbnail and commands keep to the box's 8 px
+   * inset, and its light stays off the frame.
+   */
+  framed?: boolean;
   rowRef?: Ref<HTMLDivElement>;
 }
 
@@ -238,6 +246,7 @@ export function CardRow({
   item,
   actions,
   actionsReservePx = 0,
+  framed = false,
   rowRef,
   className,
   ...rowProps
@@ -280,6 +289,7 @@ export function CardRow({
       role="none"
       className={cn(
         "relative rounded-1",
+        framed ? "[--card-row-pad-x:var(--spacing-s1)]" : "[--card-row-pad-x:var(--spacing-s2)]",
         active && "state-active",
         item.as === "button" && "has-[:focus-visible]:state-active",
         className,

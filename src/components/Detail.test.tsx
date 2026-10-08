@@ -1071,7 +1071,7 @@ describe("Detail", () => {
     expect(rail?.parentElement).toHaveClass("pt-[var(--card-content-pad)]");
   });
 
-  it("keeps related notes as a separate block below the metadata table", async () => {
+  it("packs related notes into a card of the panel like the metadata card", async () => {
     getBlockMock.mockImplementation(async (slug: string) => {
       if (slug === "related-note") {
         return block({
@@ -1106,10 +1106,23 @@ describe("Detail", () => {
     await waitFor(() => {
       const label = screen.getByText("Related notes");
       expect(label.closest("[data-metadata-row]")).toBeNull();
-      expect(label.parentElement).toHaveAttribute("data-related-notes-block");
-      expect(label.parentElement).toHaveClass("flex", "flex-col", "gap-1");
-      expect(label.parentElement?.parentElement).toHaveAttribute("data-metadata-sections");
-      expect(label.parentElement?.parentElement).toHaveClass("gap-6");
+      // A label of the card, at the metadata labels' 8 px inset.
+      expect(label).toHaveClass("font-mono", "text-muted-foreground", "px-2", "pt-4");
+      const relatedCard = label.parentElement;
+      expect(relatedCard).toHaveAttribute("data-related-notes-block");
+      expect(relatedCard?.parentElement).toHaveAttribute("data-metadata-sections");
+      expect(relatedCard?.parentElement).toHaveClass("gap-6");
+      // One card shell for both: the two cannot drift apart.
+      const metadataCard = document.querySelector("[data-detail-metadata-card]");
+      expect(relatedCard).toHaveAttribute("data-detail-panel-card");
+      expect(metadataCard).toHaveAttribute("data-detail-panel-card");
+      expect(relatedCard?.className).toBe(metadataCard?.className);
+      expect(relatedCard).toHaveStyle({ minWidth: "240px" });
+      // The rows stand 4 px inside the frame and pad 4 px: thumbnails at the
+      // labels' inset, the light off the frame.
+      const list = relatedCard?.querySelector("[data-related-notes-list]");
+      expect(list).toHaveClass("p-1");
+      expect(list?.querySelector("[data-card-row]")).toHaveClass("[--card-row-pad-x:var(--spacing-s1)]");
     });
   });
 
@@ -2523,7 +2536,7 @@ describe("Detail", () => {
     expect(wrapper).toHaveClass("relative", "rounded-1");
     expect(wrapper).not.toHaveClass("state-active");
     expect(wrapper.className).not.toMatch(/(?:^|\s)(?:bg-|border(?:\s|-|$))/);
-    expect(row).toHaveClass("flex", "items-center", "gap-2", "px-2", "py-1.5");
+    expect(row).toHaveClass("flex", "items-center", "gap-2", "px-(--card-row-pad-x)", "py-1.5");
     expect(row.querySelector("[data-card-row-line]")).toHaveClass("font-sans", "text-base");
 
     const img = row.querySelector("img");
@@ -2681,6 +2694,8 @@ describe("Detail", () => {
     );
 
     expect(screen.queryByText("Related notes")).not.toBeInTheDocument();
+    // No related notes, no empty card.
+    expect(document.querySelectorAll("[data-detail-panel-card]")).toHaveLength(1);
 
     window.dispatchEvent(new Event("vault-refreshed"));
 
