@@ -6,8 +6,11 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Version of `windows.json` this build reads and writes.
-pub const SAVED_WINDOWS_VERSION: u32 = 1;
+/// Version of `windows.json` this build reads and writes. Version 2 added the
+/// author place (`TabLocation::Author`, SPEC_CARD_ASSOCIATIONS.md): a build
+/// that reads only version 1 sets such a file aside as newer instead of
+/// reading it as corrupt. Version 1 is a subset and reads as it is.
+pub const SAVED_WINDOWS_VERSION: u32 = 2;
 /// Height of the tab bar row: 30 px of content and a 1 px separator, the
 /// rows of the chrome (DESIGN_SYSTEM.md, ChromeRow).
 pub const TAB_BAR_HEIGHT_PX: u32 = 31;
@@ -292,6 +295,22 @@ impl Default for TabView {
 pub enum TabLocation {
     Everything,
     Collection { tag: String },
+    /// The cards of one author, named as written on the card the person came
+    /// from; compared by `card_association::author_key`
+    /// (SPEC_CARD_ASSOCIATIONS.md, «Лента автора»).
+    Author { author: String },
+}
+
+impl TabLocation {
+    /// What the place is called in the path and on its tab: the collection,
+    /// the author, or nothing for Everything.
+    pub fn label(&self) -> Option<&str> {
+        match self {
+            TabLocation::Everything => None,
+            TabLocation::Collection { tag } => Some(tag),
+            TabLocation::Author { author } => Some(author),
+        }
+    }
 }
 
 /// How the feed is laid out.
@@ -997,6 +1016,38 @@ mod tests {
             parse("{\"version\":9,\"windows\":[]}"),
             Err(ReadIssue::Newer { found: 9 })
         );
+        assert_eq!(
+            parse("{\"version\":3,\"windows\":[]}"),
+            Err(ReadIssue::Newer { found: 3 })
+        );
+    }
+
+    #[test]
+    fn an_author_place_survives_a_write_and_a_read() {
+        let mut value = saved(vec![window("w1", vec![tab("a", "x")], "a")]);
+        value.set_view(
+            &TabId("a".into()),
+            TabView {
+                location: TabLocation::Author { author: "@kotecinho".into() },
+                ..TabView::default()
+            },
+        );
+        let text = serde_json::to_string(&value).unwrap();
+        assert!(text.contains("\"kind\":\"author\""));
+        let read = parse(&text).unwrap();
+        assert_eq!(
+            read.windows[0].tabs[0].view.location,
+            TabLocation::Author { author: "@kotecinho".into() }
+        );
+        assert_eq!(read.windows[0].tabs[0].view.location.label(), Some("@kotecinho"));
+    }
+
+    #[test]
+    fn a_version_one_file_reads_as_it_is() {
+        let mut value = saved(vec![window("w1", vec![tab("a", "x")], "a")]);
+        value.version = 1;
+        let text = serde_json::to_string(&value).unwrap();
+        assert_eq!(parse(&text).unwrap().windows, value.windows);
     }
 
     #[test]

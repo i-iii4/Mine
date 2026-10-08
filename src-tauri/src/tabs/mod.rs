@@ -66,8 +66,9 @@ pub struct TabBarTab {
     pub id: TabId,
     /// The space's folder name; `None` for a tab choosing a space.
     pub space_name: Option<String>,
-    /// The collection the tab is in; `None` on Everything.
-    pub collection: Option<String>,
+    /// The place the tab is in, as its path names it: the collection or the
+    /// author (SPEC_CARD_ASSOCIATIONS.md); `None` on Everything.
+    pub place: Option<String>,
     /// The title of the card open in the tab; `None` with no card open.
     pub card: Option<String>,
     /// The tab has a page now.
@@ -711,10 +712,7 @@ pub fn bar_state(app: &AppHandle, window_id: &WindowId) -> Option<TabBarState> {
                 TabSpace::Space { vault_id } => paths.get(vault_id).map(|path| folder_name(path)),
                 TabSpace::Picker => None,
             },
-            collection: match &tab.view.location {
-                crate::domain::windows::TabLocation::Collection { tag } => Some(tag.clone()),
-                crate::domain::windows::TabLocation::Everything => None,
-            },
+            place: tab.view.location.label().map(str::to_string),
             card: open_card_title(&tab.view),
             live: live.contains(&tab.id),
             history: history.get(&tab.id).copied().unwrap_or_default(),

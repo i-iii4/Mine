@@ -19,8 +19,9 @@
 
 // Standalone writing engine (О1–О4): saves clips straight to the granted
 // folder when the native host is not there. Classic script, attaches to
-// globalThis — the same convention every lib/ file follows.
-importScripts("generated/save-core/mine_core.js", "lib/mineCore.js", "lib/saveProtocol.js", "lib/standaloneVault.js");
+// globalThis — the same convention every lib/ file follows. youtubeSource
+// answers the channel of a YouTube clip.
+importScripts("generated/save-core/mine_core.js", "lib/mineCore.js", "lib/saveProtocol.js", "lib/standaloneVault.js", "lib/youtubeSource.js");
 
 const HOST_NAME = "com.mine.clipper.v1";
 // Must match extension/popup/popup-layout.css body { width: 360px }
@@ -1018,6 +1019,32 @@ async function resolveAuthenticatedTweetVideo({ tweetUrl, tweetId }) {
   });
 }
 
+// ── YouTube channel ───────────────────────────────────────────────────────
+//
+// The author of a YouTube clip is the channel of the video its address names
+// (SPEC_CARD_ASSOCIATIONS.md, «Клиппер: канал YouTube»). oEmbed answers for
+// exactly that video id; the page's markup may still describe the video shown
+// before an in-page navigation. Asked here, where <all_urls> reaches YouTube
+// from any page host, and without cookies. Any failure answers no channel:
+// the clip is saved without an author.
+async function resolveYoutubeChannel(sourceUrl) {
+  const youtube = globalThis.MineYoutubeSource;
+  const endpoint = youtube.youtubeOEmbedUrl(sourceUrl);
+  if (!endpoint) return { channel: null };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), youtube.YOUTUBE_CHANNEL_TIMEOUT_MS);
+  try {
+    const response = await fetch(endpoint, { credentials: "omit", signal: controller.signal });
+    if (!response.ok) return { channel: null };
+    return { channel: youtube.youtubeChannelFromOEmbed(await response.json()) };
+  } catch (error) {
+    console.warn("[Mine] YouTube channel unavailable:", String(error?.message ?? error));
+    return { channel: null };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 // ── Message handler (from popup) ──────────────────────────────────────────
 
 function extensionBackgroundFailure(error) {
@@ -1238,6 +1265,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.action === "resolveAuthenticatedTweetVideo") {
     resolveAuthenticatedTweetVideo(msg.payload ?? {}).then(sendResponse);
+    return true; // async response
+  }
+
+  if (msg.action === "resolveYoutubeChannel") {
+    resolveYoutubeChannel(msg.sourceUrl).then(sendResponse, () => sendResponse({ channel: null }));
     return true; // async response
   }
 

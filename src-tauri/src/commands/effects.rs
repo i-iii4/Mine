@@ -70,6 +70,7 @@ pub const COMMAND_EFFECTS: &[(&str, Effect)] = &[
     ("get_grid_rows", Effect::Reads),
     ("list_graph_snapshot", Effect::Reads),
     ("get_block", Effect::Reads),
+    ("list_card_associations", Effect::Reads),
     ("resolve_note_link", Effect::Reads),
     ("create_block", Effect::ChangesSources),
     ("extract_inline_media", Effect::ChangesSources),

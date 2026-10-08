@@ -1,6 +1,8 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -166,5 +168,126 @@ describe("DropdownMenu", () => {
     } finally {
       width.mockRestore();
     }
+  });
+});
+
+// DESIGN_SYSTEM.md, «Открытое меню»: the pointer's hover passes under an open
+// menu; a press outside only closes it (src/lib/openMenus.ts).
+describe("DropdownMenu over the page", () => {
+  function renderMenuOverPage(under: { onPointerEnter?: () => void; onPointerDown?: () => void; onClick?: () => void } = {}) {
+    render(
+      <>
+        <button type="button" {...under}>Under the menu</button>
+        <DropdownMenu>
+          <DropdownMenuTrigger>Open menu</DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuItem>Action item</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </>,
+    );
+    return { trigger: screen.getByText("Open menu"), under: screen.getByText("Under the menu") };
+  }
+
+  it("lets the hover reach what lies under the open menu", async () => {
+    const user = userEvent.setup();
+    const onPointerEnter = vi.fn();
+    const { trigger, under } = renderMenuOverPage({ onPointerEnter });
+
+    await user.click(trigger);
+    expect(screen.getByText("Action item")).toBeInTheDocument();
+    // A modal menu set `pointer-events: none` here; user-event refuses to
+    // hover through it.
+    expect(document.body.style.pointerEvents).toBe("");
+    await user.hover(under);
+
+    expect(onPointerEnter).toHaveBeenCalled();
+    expect(screen.getByText("Action item")).toBeInTheDocument();
+  });
+
+  it("closes on a press outside, and neither the press nor its click acts there", async () => {
+    const user = userEvent.setup();
+    const onPointerDown = vi.fn();
+    const onClick = vi.fn();
+    const { trigger, under } = renderMenuOverPage({ onPointerDown, onClick });
+
+    await user.click(trigger);
+    await user.click(under);
+
+    await waitFor(() => expect(screen.queryByText("Action item")).not.toBeInTheDocument());
+    expect(onPointerDown).not.toHaveBeenCalled();
+    expect(onClick).not.toHaveBeenCalled();
+    // As the modal menu did, the focus goes back to the trigger.
+    await waitFor(() => expect(trigger).toHaveFocus());
+
+    // With the menu closed the next click is the page's again.
+    await user.click(under);
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds the rest of the press that opened it", async () => {
+    const user = userEvent.setup();
+    const onRowClick = vi.fn();
+    render(
+      // A trigger inside a clickable row: opening the menu does not open the row.
+      <div role="presentation" onClick={onRowClick}>
+        <DropdownMenu>
+          <DropdownMenuTrigger>Open menu</DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuItem>Action item</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>,
+    );
+
+    await user.click(screen.getByText("Open menu"));
+
+    expect(screen.getByText("Action item")).toBeInTheDocument();
+    expect(onRowClick).not.toHaveBeenCalled();
+  });
+
+  it("closes on Escape and gives the focus back to its trigger", async () => {
+    const user = userEvent.setup();
+    const { trigger } = renderMenuOverPage();
+
+    await user.click(trigger);
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => expect(screen.queryByText("Action item")).not.toBeInTheDocument());
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it("scrolls nothing under it with the wheel", async () => {
+    const user = userEvent.setup();
+    const { trigger, under } = renderMenuOverPage();
+
+    await user.click(trigger);
+
+    expect(fireEvent.wheel(under, { deltaY: 40 })).toBe(false);
+    expect(fireEvent.wheel(screen.getByText("Action item"), { deltaY: 40 })).toBe(true);
+  });
+
+  it("closes only itself when it is open over a dialog", async () => {
+    const user = userEvent.setup();
+    render(
+      <Dialog open>
+        <DialogContent>
+          <DialogTitle>Dialog title</DialogTitle>
+          <DialogDescription>Dialog text</DialogDescription>
+          <DropdownMenu>
+            <DropdownMenuTrigger>Open menu</DropdownMenuTrigger>
+            <DropdownMenuContent>
+              <DropdownMenuItem>Action item</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </DialogContent>
+      </Dialog>,
+    );
+
+    await user.click(screen.getByText("Open menu"));
+    await user.click(screen.getByText("Dialog text"));
+
+    await waitFor(() => expect(screen.queryByText("Action item")).not.toBeInTheDocument());
+    expect(screen.getByText("Dialog title")).toBeInTheDocument();
   });
 });

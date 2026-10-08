@@ -28,16 +28,64 @@ export function sameTabView(left: TabView, right: TabView): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+const COLLECTION_ROUTE_PREFIX = "/channel/";
+const AUTHOR_ROUTE_PREFIX = "/author/";
+/** The cache and history key of Everything; a collection keys by its tag. */
+const EVERYTHING_PLACE_KEY = "__all__";
+/** An author's key starts with a character no collection name holds, so an
+ *  author never shares a key with a collection of the same name. */
+const AUTHOR_PLACE_KEY_PREFIX = "\u0000author:";
+
 /** The route of a place in the space. */
 export function tabLocationPath(location: TabLocation): string {
-  return location.kind === "collection"
-    ? `/channel/${encodeURIComponent(location.tag)}`
-    : "/";
+  switch (location.kind) {
+    case "collection":
+      return `${COLLECTION_ROUTE_PREFIX}${encodeURIComponent(location.tag)}`;
+    case "author":
+      return `${AUTHOR_ROUTE_PREFIX}${encodeURIComponent(location.author)}`;
+    case "everything":
+      return "/";
+  }
+}
+
+/** The place a route shows: a collection, an author's cards
+ *  (SPEC_CARD_ASSOCIATIONS.md, «Лента автора») or Everything. */
+export function tabLocationFromPath(pathname: string): TabLocation {
+  if (pathname.startsWith(COLLECTION_ROUTE_PREFIX)) {
+    return { kind: "collection", tag: decodeURIComponent(pathname.slice(COLLECTION_ROUTE_PREFIX.length)) };
+  }
+  if (pathname.startsWith(AUTHOR_ROUTE_PREFIX)) {
+    return { kind: "author", author: decodeURIComponent(pathname.slice(AUTHOR_ROUTE_PREFIX.length)) };
+  }
+  return { kind: "everything" };
 }
 
 /** The place in the space of the collection `tag`, or Everything. */
 export function tabLocationOf(tag: string | undefined): TabLocation {
   return tag === undefined ? { kind: "everything" } : { kind: "collection", tag };
+}
+
+/** One string per place: the key of its cached feed and of its history
+ *  entries. A collection keys by its tag, as it always did. */
+export function placeKey(location: TabLocation): string {
+  switch (location.kind) {
+    case "collection":
+      return location.tag;
+    case "author":
+      return `${AUTHOR_PLACE_KEY_PREFIX}${location.author}`;
+    case "everything":
+      return EVERYTHING_PLACE_KEY;
+  }
+}
+
+/** Whether a place key is an author's feed. */
+export function isAuthorPlaceKey(key: string): boolean {
+  return key.startsWith(AUTHOR_PLACE_KEY_PREFIX);
+}
+
+/** The collection a place is, if it is one. */
+export function locationCollection(location: TabLocation): string | undefined {
+  return location.kind === "collection" ? location.tag : undefined;
 }
 
 export interface TabViewReporter {

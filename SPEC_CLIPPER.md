@@ -380,6 +380,35 @@ Popup и save() используют одну чистую функцию — `r
 
 Контракт этой функции зафиксирован unit-тестом `extension/popup/lib/resolveContentBody.test.ts` (7 кейсов). Любое изменение приоритетов обязано обновить тест в том же коммите.
 
+### 3a.1. Автор клипа
+
+С 07.10.2026 (SPEC_CARD_ASSOCIATIONS.md, «Клиппер: канал YouTube») `author`
+запроса `save_block` решает одна чистая функция
+`resolveCaptureAuthor(kind, metadata, article, youtubeChannel)`
+(`extension/popup/lib/captureResult.ts`):
+
+1. **Адрес захвата YouTube** (`MineYoutubeSource.parse(metadata.url)`):
+   автор это канал видео при любом виде сохранения (содержимое, ссылка,
+   снимок экрана, картинка), `null`, пока канал неизвестен. Подпись страницы
+   (`byline` Defuddle, `<meta name="author">`) для YouTube не берётся: после
+   перехода внутри YouTube разметка может ещё описывать прежнее видео
+   (правило 1 выше).
+2. **Любой другой адрес**: автор страницы (`metadata.author`), а когда
+   сохраняется статья (`resolveContentBody` даёт source `"article"`), её
+   `byline`. Это прежние правила, вынесенные в функцию без изменений.
+
+Канал спрашивает фоновый скрипт: сообщение
+`resolveYoutubeChannel { sourceUrl }`, запрос oEmbed
+`https://www.youtube.com/oembed?format=json&url=<sourceUrl>` для
+идентификатора видео из адреса, без куки, срок
+`YOUTUBE_CHANNEL_TIMEOUT_MS` (3000 мс). Автор записывается как `@handle` из
+`author_url` ответа, как авторы X и Instagram; без такого адреса берётся
+`author_name` (`youtubeChannelFromOEmbed` в `extension/lib/youtubeSource.js`).
+Popup спрашивает канал один раз на захват, рядом с извлечением статьи; Save
+ждёт ответа не дольше того же срока. Любой отказ сохраняет клип без автора и
+сохранение не останавливает. Карточки YouTube, сохранённые раньше, остаются
+без автора: файлы при чтении не переписываются.
+
 ### 3b. Content extraction lifecycle
 
 `detectedType` — это только стартовая рекомендация для UI, а не доказательство,

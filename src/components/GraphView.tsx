@@ -13,7 +13,8 @@ import ForceGraph2D, {
 } from "react-force-graph-2d";
 import { getBlock, listGraphSnapshot } from "@/lib/commands";
 import { fallbackThumbsRoot } from "@/lib/assets";
-import { getHoverPreviewOpenDelay } from "@/lib/hoverPreviewTiming";
+import { useHoverIntent } from "@/hooks/useHoverIntent";
+import { useHoverPreviewOpener } from "@/hooks/useHoverPreviewOpener";
 import type { GraphPreferences } from "@/lib/graphPreferences";
 import { ReadOnlyCardPreview } from "./Card";
 import { Button } from "./ui/button";
@@ -171,8 +172,10 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   const imageVersionFrameRef = useRef<number | null>(null);
   const loadSequenceRef = useRef(0);
   const acceptedRevisionRef = useRef<ProjectionRevision | null>(null);
-  const previewOpenTimerRef = useRef<number | null>(null);
-  const lastPreviewOpenedAtRef = useRef<number | null>(null);
+  // The pointer's speed over the graph: a card's preview waits for it to
+  // rest, by the shared card preview rule (SPEC_CARD_STATES.md, С7.10).
+  const nodePointer = useHoverIntent();
+  const previewOpener = useHoverPreviewOpener(nodePointer.isSlow);
   const lastPointerPointRef = useRef<GraphCardMenuPoint | null>(null);
   const graphScaleRef = useRef(1);
 
@@ -731,18 +734,12 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     if (fit) glideCamera(fit, GRAPH_INITIAL_FIT_DURATION_MS);
   }, [aimCenterForce, focusNodeId, glideCamera, graphData.nodes, size, zoomBounds]);
 
-  const clearPreviewOpenTimer = useCallback(() => {
-    if (previewOpenTimerRef.current === null) return;
-    window.clearTimeout(previewOpenTimerRef.current);
-    previewOpenTimerRef.current = null;
-  }, []);
-
   const closePreview = useCallback(() => {
-    clearPreviewOpenTimer();
+    previewOpener.hide();
     setHoverPreviewTarget(null);
     setHoverPreviewBlock(null);
     setHoverPreviewPosition(null);
-  }, [clearPreviewOpenTimer]);
+  }, [previewOpener]);
 
   const openPreview = useCallback((node: GraphCanvasNode) => {
     if (node.kind !== "card" || !node.slug) return;
@@ -759,32 +756,17 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       return;
     }
 
-    clearPreviewOpenTimer();
     setHoverPreviewTarget(null);
     setHoverPreviewBlock(null);
     setHoverPreviewPosition(null);
-
-    const delay = getHoverPreviewOpenDelay(lastPreviewOpenedAtRef.current);
-    if (delay <= 0) {
-      openPreview(node);
-      return;
-    }
-
-    previewOpenTimerRef.current = window.setTimeout(() => {
-      previewOpenTimerRef.current = null;
-      openPreview(node);
-    }, delay);
-  }, [clearPreviewOpenTimer, closePreview, hoverPreviewFrozen, openPreview]);
-
-  useEffect(() => () => {
-    clearPreviewOpenTimer();
-  }, [clearPreviewOpenTimer]);
+    previewOpener.request(() => openPreview(node));
+  }, [closePreview, hoverPreviewFrozen, openPreview, previewOpener]);
 
   useEffect(() => {
     if (hoverPreviewFrozen) {
-      clearPreviewOpenTimer();
+      previewOpener.cancel();
     }
-  }, [clearPreviewOpenTimer, hoverPreviewFrozen]);
+  }, [hoverPreviewFrozen, previewOpener]);
 
   const pointerIsInsidePreviewNode = useCallback((target: GraphPreviewTarget) => {
     const point = lastPointerPointRef.current;
@@ -837,7 +819,6 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
 
     const loaded = loadedBlocksBySlug.get(hoverPreviewTarget.slug);
     if (loaded) {
-      lastPreviewOpenedAtRef.current = Date.now();
       setHoverPreviewBlock(loaded);
       return () => {
         cancelled = true;
@@ -847,9 +828,6 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     void getBlock(hoverPreviewTarget.slug)
       .then((block) => {
         if (cancelled) return;
-        if (block) {
-          lastPreviewOpenedAtRef.current = Date.now();
-        }
         setHoverPreviewBlock(block);
       })
       .catch(() => {
@@ -1045,6 +1023,8 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       className="absolute inset-0 overflow-hidden bg-background"
       onWheelCapture={yieldCameraToGesture}
       onPointerDownCapture={yieldCameraToGesture}
+      onPointerMove={(event) => nodePointer.move(null, event.clientX, event.clientY)}
+      onPointerLeave={() => nodePointer.leave()}
       onContextMenu={(event) => event.preventDefault()}
       data-graph-view=""
       data-graph-snapshot-route={snapshot?.current_collection ?? "__library__"}

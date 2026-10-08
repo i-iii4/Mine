@@ -764,12 +764,19 @@ cannot resolve overlaps in Mine's real vaults.
 
 ### Hover
 
-Card hover opens a sidebar-compatible preview. It must use the same timing
-contract as Sidebar thumbnail hover:
+Card hover opens a sidebar-compatible preview. Its timing is the shared card
+preview rule (SPEC_CARD_STATES.md, С7.10, user's decision 08.10.2026), owned
+by `HoverPreviewOpener` in `src/lib/hoverPreviewTiming.ts` and wired through
+`useHoverPreviewOpener`, the same as the sidebar and the open card's rows:
 
 - cold open delay: `HOVER_PREVIEW_COLD_OPEN_DELAY_MS = 500`;
+- then a resting pointer: the graph container feeds its own hover-intent
+  engine (`useHoverIntent`), and the preview waits while its `isSlow` is
+  false, so a pointer passing over nodes opens nothing;
 - warm open delay: `HOVER_PREVIEW_WARM_OPEN_DELAY_MS = 0`;
-- warm window: `HOVER_PREVIEW_WARM_WINDOW_MS = 800`.
+- warm window: `HOVER_PREVIEW_WARM_WINDOW_MS = 800`, counted from when a
+  preview was last on screen, not from when it opened: a preview read for a
+  while still hands over to the next node at once.
 
 Rules:
 
@@ -823,10 +830,13 @@ Graph View must never dispatch synthetic `contextmenu` events from card nodes:
 cards are painted on Canvas, and WebView can route synthetic context menus to
 the system/page menu instead of Mine's app menu.
 
-The point menu must install a transparent dismiss layer below
-`DropdownMenuContent` and above the graph canvas. The first click or context
-click outside the dropdown closes the menu only; it must not reach the canvas,
-open another card, navigate a collection, or replace the frozen hover preview.
+The first click or context click outside the point menu closes the menu only;
+it must not reach the canvas, open another card, navigate a collection, or
+replace the frozen hover preview. Every menu does this through the shared
+outside-press guard (`src/lib/openMenus.ts`, DESIGN_SYSTEM.md «Открытое меню»),
+so the point menu installs no layer of its own over the window: hover keeps
+working everywhere outside the graph, while the graph itself stays frozen as
+above. The point menu counts as a context menu for SPEC_CARD_STATES.md С7.8.
 
 Collection node click:
 
@@ -952,7 +962,9 @@ neighbor count for assistive technology.
 ### Frontend Unit
 
 - card node paint uses a screen-fixed 32px square with no corner radius.
-- card hover uses `getHoverPreviewOpenDelay` from shared sidebar timing.
+- card hover uses the shared `HoverPreviewOpener`: a moving pointer opens
+  nothing past the delay, and a preview read past the warm window hands over
+  to the next node at once.
 - card hover open/close does not change node opacity, link color, card size, or
   card labels.
 - Graph View renders no graph-local search, scope selector, or settings trigger.

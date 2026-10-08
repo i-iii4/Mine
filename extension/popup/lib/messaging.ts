@@ -1,5 +1,6 @@
 // Native messaging adapter — typed wrapper over chrome.runtime.sendMessage.
 // Replaces FIFO queue with Map<id, callback> (fixes CRIT-7 from audit).
+import "../../lib/youtubeSource.js";
 import type { SaveExecutor, SaveOutcome } from "../../../src/types/generated";
 
 export interface NativeRequest {
@@ -102,6 +103,62 @@ export async function getClipperLaunch(): Promise<ClipperLaunch | null> {
       },
     );
   });
+}
+
+/** How long Save waits for a YouTube channel that has not answered yet; the
+ *  background request has the same bound (SPEC_CARD_ASSOCIATIONS.md,
+ *  «Клиппер: канал YouTube»). */
+export const YOUTUBE_CHANNEL_TIMEOUT_MS = globalThis.MineYoutubeSource.YOUTUBE_CHANNEL_TIMEOUT_MS;
+
+/** What background answers to `resolveYoutubeChannel`. */
+interface YoutubeChannelReply {
+  channel?: unknown;
+}
+
+/**
+ * Asks background for the channel of the YouTube video at `sourceUrl`.
+ * Every failure, a stopped background included, answers `null`: the clip is
+ * then saved without an author, never held back.
+ */
+export function requestYoutubeChannel(sourceUrl: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage(
+        { target: "background", action: "resolveYoutubeChannel", sourceUrl },
+        (response: YoutubeChannelReply | undefined) => {
+          if (chrome.runtime.lastError) {
+            resolve(null);
+            return;
+          }
+          const channel = typeof response?.channel === "string" ? response.channel.trim() : "";
+          resolve(channel || null);
+        },
+      );
+    } catch (error) {
+      // An invalidated extension context throws here instead of calling back.
+      console.warn("[Mine] YouTube channel request failed:", error);
+      resolve(null);
+    }
+  });
+}
+
+/**
+ * The channel answer, waited for at most `timeoutMs`. No answer by then or a
+ * failed request give `null`, so Save goes on without an author.
+ */
+export async function waitForYoutubeChannel(
+  answer: Promise<string | null>,
+  timeoutMs: number = YOUTUBE_CHANNEL_TIMEOUT_MS,
+): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), timeoutMs);
+  });
+  try {
+    return await Promise.race([answer.catch(() => null), deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export interface KnownVaultsResponse extends NativeResponse {

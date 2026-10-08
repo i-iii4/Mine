@@ -2,6 +2,7 @@
 /// Depends on domain/ for types. Does not depend on commands/ or watcher/.
 pub mod article_audio;
 pub mod block_queries;
+pub mod card_associations;
 pub mod channel_index;
 pub mod clipper_connection;
 pub mod clipper_uploads;

@@ -553,6 +553,14 @@ body.sidebar-resizing ::selection {
   max-width: min(300px, var(--floating-menu-available-width));
 }
 
+/* No menu is modal, and a press outside an open one only closes it
+   (src/lib/openMenus.ts, DESIGN_SYSTEM.md, «Открытое меню»). A press inside
+   a frame never reaches the page to be held, so while a menu is on the page
+   a frame lets the pointer through to the page. */
+html[data-menu-open] iframe {
+  pointer-events: none;
+}
+
 /* Hide scrollbars in WebKit (Tauri/Safari) */
 .overflow-y-auto::-webkit-scrollbar {
   display: none;

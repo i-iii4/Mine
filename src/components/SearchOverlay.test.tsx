@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
-import type { GridSnapshot, LightBlock, SearchMatch } from "@/types";
+import type { GridSnapshot, LightBlock, SearchMatch, TabLocation } from "@/types";
 import { TOP_FADE_HEIGHT } from "@/lib/edgeFade";
 import {
   SearchOverlay,
@@ -17,12 +17,13 @@ const listGridBlocksMock = vi.fn<(
 ) => Promise<GridSnapshot>>();
 
 vi.mock("@/lib/commands", () => ({
+  // Recent mode reads Everything: the mock hears no tag.
   listGridBlocks: (
-    tag?: string,
+    place: TabLocation,
     offset?: number,
     limit?: number,
     query?: string,
-  ) => listGridBlocksMock(tag, offset, limit, query),
+  ) => listGridBlocksMock(place.kind === "collection" ? place.tag : undefined, offset, limit, query),
   searchGridBlocks: async (tag: string | undefined, query: string, limit: number) => {
     const grid = await listGridBlocksMock(tag, 0, limit, query);
     return {

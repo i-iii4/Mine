@@ -44,6 +44,39 @@ export type CaptureRequest = { slug?: string; block_type: string; intent?: Captu
 selection?: boolean }
 
 /**
+ * The cards related to the open card by one rule.
+ */
+export type CardAssociationGroup = { kind: CardAssociationKind;
+/**
+ * The author as written on the open card (own or inherited), the site,
+ * or the address key.
+ */
+label: string;
+/**
+ * Cards of the group after every exclusion.
+ */
+total: number;
+/**
+ * Newest first: at most [`CARD_ASSOCIATION_PREVIEW_ROWS`], or
+ * [`CARD_ASSOCIATION_EXPANDED_ROWS`] for an expanded kind.
+ */
+blocks: LightBlock[] }
+
+/**
+ * One rule relating two cards.
+ */
+export type CardAssociationKind = "address" | "author" | "site"
+
+/**
+ * The open card's association groups under one projection revision.
+ */
+export type CardAssociations = { generation: ProjectionRevision; slug: string;
+/**
+ * In [`CARD_ASSOCIATION_ORDER`]; a group with no cards is left out.
+ */
+groups: CardAssociationGroup[] }
+
+/**
  * Runtime card category derived from the Markdown document shape.
  *
  * `type` remains legacy source metadata in frontmatter. Feed/detail rendering
@@ -569,9 +602,10 @@ export type TabBarTab = { id: TabId;
  */
 space_name: string | null;
 /**
- * The collection the tab is in; `None` on Everything.
+ * The place the tab is in, as its path names it: the collection or the
+ * author (SPEC_CARD_ASSOCIATIONS.md); `None` on Everything.
  */
-collection: string | null;
+place: string | null;
 /**
  * The title of the card open in the tab; `None` with no card open.
  */
@@ -623,7 +657,13 @@ export type TabId = string
 /**
  * Where in the space a tab is.
  */
-export type TabLocation = { kind: "everything" } | { kind: "collection"; tag: string }
+export type TabLocation = { kind: "everything" } | { kind: "collection"; tag: string } |
+/**
+ * The cards of one author, named as written on the card the person came
+ * from; compared by `card_association::author_key`
+ * (SPEC_CARD_ASSOCIATIONS.md, «Лента автора»).
+ */
+{ kind: "author"; author: string }
 
 /**
  * What a tab shows.

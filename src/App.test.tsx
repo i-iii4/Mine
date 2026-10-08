@@ -10,7 +10,7 @@ import { act, render, screen, waitFor, fireEvent, within } from "@testing-librar
 import { MemoryRouter } from "react-router";
 import { isTauri } from "@tauri-apps/api/core";
 
-import type { ChannelDto, DeleteBlockPlan, GridSnapshot, IndexedBlock, LightBlock, SidebarLayout, TabBootstrap, TabView, TaxonomySnapshot, VaultOpenResult, VaultStats } from "@/types";
+import type { ChannelDto, DeleteBlockPlan, GridSnapshot, IndexedBlock, LightBlock, SidebarLayout, TabBootstrap, TabLocation, TabView, TaxonomySnapshot, VaultOpenResult, VaultStats } from "@/types";
 import { App, AppWithVault } from "./App";
 import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
 import { SEARCH_OVERLAY_RECENT_LIMIT, SEARCH_OVERLAY_RESULT_LIMIT } from "@/components/SearchOverlay";
@@ -55,6 +55,10 @@ const commandMocks = vi.hoisted(() => ({
   startStartupMaintenance: vi.fn<() => Promise<boolean>>(),
   sweepVaultThumbnails: vi.fn<() => Promise<number>>(),
   listGridBlocks: vi.fn<(tag?: string, offset?: number, limit?: number, query?: string) => Promise<GridSnapshot>>(),
+  // Every place a feed read asked for, as sent: the mock above hears a
+  // collection's tag (`undefined` on Everything and in an author's feed).
+  gridPlaces: [] as TabLocation[],
+  listCardAssociations: vi.fn(async (slug: string) => ({ generation: 1, slug, groups: [] })),
   createBlock: vi.fn(async () => ({}) as IndexedBlock),
   readClipboardPayload: vi.fn(async () => ({ kind: "empty" }) as const),
   listTaxonomySnapshot: vi.fn<() => Promise<TaxonomySnapshot>>(),
@@ -116,7 +120,11 @@ vi.mock("@/lib/commands", () => ({
   recordStartupMilestone: commandMocks.recordStartupMilestone,
   startStartupMaintenance: commandMocks.startStartupMaintenance,
   sweepVaultThumbnails: commandMocks.sweepVaultThumbnails,
-  listGridBlocks: commandMocks.listGridBlocks,
+  listGridBlocks: (place: TabLocation, ...rest: [offset?: number, limit?: number, order?: string]) => {
+    commandMocks.gridPlaces.push(place);
+    return commandMocks.listGridBlocks(place.kind === "collection" ? place.tag : undefined, ...rest);
+  },
+  listCardAssociations: commandMocks.listCardAssociations,
   getGridRows: commandMocks.getGridRows,
   searchGridBlocks: async (tag: string | undefined, query: string, limit: number) => {
     const grid = await commandMocks.listGridBlocks(tag, 0, limit, query);
@@ -251,6 +259,7 @@ vi.mock("@/components/Grid", async () => {
   function MockGrid({
     blocks,
     currentTag,
+    location,
     routeSnapshotReady,
     detailOpen,
     keyboardNavigationDisabled,
@@ -274,6 +283,7 @@ vi.mock("@/components/Grid", async () => {
     onScrollPositionChange?: (read: () => { slug: string; offset_px: number } | null) => void;
     blocks: LightBlock[];
     currentTag?: string;
+    location?: TabLocation;
     routeSnapshotReady?: boolean;
     detailOpen?: boolean;
     keyboardNavigationDisabled?: boolean;
@@ -295,7 +305,9 @@ vi.mock("@/components/Grid", async () => {
     }, [blocks.length, hasMoreBlocks, loadingMoreBlocks, onLoadMoreBlocks]);
     return (
       <div>
-        <div data-testid="grid">{`${currentTag ?? "__all__"}:${blocks.length}`}</div>
+        <div data-testid="grid">
+          {`${location?.kind === "author" ? `author ${location.author}` : currentTag ?? "__all__"}:${blocks.length}`}
+        </div>
         <div data-testid="grid-indexing">{String(Boolean(vaultIndexing))}</div>
         <div data-testid="grid-scroll-restore">
           {restoreScrollAnchor ? `${restoreScrollAnchor.slug}:${restoreScrollAnchor.offset_px}` : "none"}
@@ -361,11 +373,13 @@ vi.mock("@/components/Detail", () => ({
     topChromeMode,
     onClose,
     onRequestDelete,
+    onOpenAuthorFeed,
   }: {
     block: LightBlock | IndexedBlock;
     topChromeMode?: "classic" | "external";
     onClose: () => void;
     onRequestDelete: (slug: string) => void;
+    onOpenAuthorFeed?: (author: string) => void;
   }) => (
     <div
       role="dialog"
@@ -385,6 +399,10 @@ vi.mock("@/components/Detail", () => ({
       {/* A related note's row deletes another card. */}
       <button type="button" onClick={() => onRequestDelete("beta-block")}>
         Delete related note
+      </button>
+      {/* The author heading of an association block. */}
+      <button type="button" onClick={() => onOpenAuthorFeed?.("@kotecinho")}>
+        Open author feed
       </button>
     </div>
   ),
@@ -529,6 +547,7 @@ function bottomBarEntry(label: string): HTMLElement | null {
 describe("AppWithVault", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    commandMocks.gridPlaces.length = 0;
     gridScroll.atEnd = false;
     commandMocks.getGridRows.mockResolvedValue({ path: "/vault", generation: 1, blocks: [] });
     vi.mocked(isTauri).mockReturnValue(false);
@@ -830,6 +849,38 @@ describe("AppWithVault", () => {
 
     await waitFor(() => {
       expect(firstPageReads).toBe(2);
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+  });
+
+  // SPEC_CARD_ASSOCIATIONS.md, «Лента автора».
+  it("opens an author's feed from the open card and leaves it through the sidebar", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+    await screen.findByRole("dialog", { name: "alpha-block.md" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Open author feed" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("author @kotecinho:");
+    });
+    // The card closes on the way; the feed reads that author's cards.
+    expect(screen.queryByRole("dialog", { name: "alpha-block.md" })).toBeNull();
+    expect(commandMocks.gridPlaces).toContainEqual({ kind: "author", author: "@kotecinho" });
+    // The path names the author, the sidebar marks no row, no graph.
+    expect(screen.getByRole("button", { name: "Switch collection: @kotecinho" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Everything 2/ })).not.toHaveAttribute("aria-current", "page");
+    expect(document.querySelector("[data-main-view-mode-switcher] [role='tablist']")).toBeNull();
+
+    fireEvent.click(screen.getByRole("link", { name: /Everything 2/ }));
+    await waitFor(() => {
       expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
     });
   });
@@ -3735,6 +3786,54 @@ describe("AppWithVault", () => {
       send("tab-history-go", { forward: true });
       await waitFor(() => expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block"));
       await waitFor(() => expect(commandMocks.reportTabHistory).toHaveBeenLastCalledWith(true, true));
+    });
+
+    it("steps back from an author's feed to the card it opened from (SPEC_CARD_ASSOCIATIONS.md)", async () => {
+      commandMocks.getBlock.mockImplementation(async (slug: string) => indexedBlock(1, slug, slug));
+      renderTab({}, "/channel/alpha");
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1"));
+      await waitFor(() => expect(commandMocks.reportTabHistory).toHaveBeenLastCalledWith(false, false));
+      fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+      await waitFor(() => expect(commandMocks.reportTabHistory).toHaveBeenLastCalledWith(true, false));
+      // The card's page is a lazily loaded module: the place is recorded
+      // before it shows, and its first load can outlast the default wait on
+      // a busy run.
+      await waitFor(
+        () => expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block"),
+        { timeout: 5000 },
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Open author feed" }));
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("author @kotecinho:"));
+      // The tab remembers the author's feed as its place.
+      await waitFor(() => {
+        expect(commandMocks.reportTabView).toHaveBeenLastCalledWith(expect.objectContaining({
+          location: { kind: "author", author: "@kotecinho" },
+          open_card: null,
+        }));
+      }, { timeout: 2000 });
+      // The tab records a place two frames after it settles (В81): once the
+      // card has closed, three frames from now the author's feed is in the
+      // history, whatever a busy run did to the report's timer.
+      await waitFor(() => expect(screen.queryByTestId("detail-title")).toBeNull());
+      await act(async () => {
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+        });
+      });
+
+      send("tab-history-go", { forward: false });
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1"));
+      await waitFor(() => expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block"));
+      await waitFor(() => expect(commandMocks.reportTabHistory).toHaveBeenLastCalledWith(true, true));
+    });
+
+    it("returns to an author's feed, a grid even when the tab's mode is Graph", async () => {
+      const view = tabView({ location: { kind: "author", author: "@kotecinho" }, mode: "graph" });
+      renderTab({ restore: { path: "/vault", view, saved: view } });
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("author @kotecinho:"));
+      expect(screen.queryByTestId("graph-view")).toBeNull();
+      expect(commandMocks.gridPlaces[0]).toEqual({ kind: "author", author: "@kotecinho" });
     });
 
     it("labels its tab with the open card's title (В47)", async () => {

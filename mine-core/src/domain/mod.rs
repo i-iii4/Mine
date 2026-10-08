@@ -5,6 +5,7 @@
 
 pub mod article_audio;
 pub mod block;
+pub mod card_association;
 pub mod channel;
 pub mod collection;
 pub mod markdown;

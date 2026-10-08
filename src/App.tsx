@@ -37,7 +37,10 @@ import {
   WINDOW_SIDEBAR_CHANGED_EVENT,
   afterTwoFrames,
   createTabViewReporter,
-  tabLocationOf,
+  isAuthorPlaceKey,
+  locationCollection,
+  placeKey,
+  tabLocationFromPath,
   tabLocationPath,
   takeLegacyTabState,
   type TabViewReporter,
@@ -205,13 +208,13 @@ const POINT_OVERLAY_MODIFIERS: Modifier[] = [snapToCursor];
 
 const BATCH_TAG_REFRESH_DELAY_MS = 750;
 function fetchGridBlocks(
-  tag: string | undefined,
+  place: TabLocation,
   offset: number,
   limit: number,
   // The feed's order, as chosen in the Display panel (SPEC_FEED_DISPLAY.md, Д8).
   order: FeedOrder = getFeedDisplay().sort,
 ) {
-  return listGridBlocks(tag, offset, limit, order);
+  return listGridBlocks(place, offset, limit, order);
 }
 
 import type {
@@ -235,6 +238,7 @@ import type {
   TabBootstrap,
   TabHistoryStep,
   ChromeRows,
+  TabLocation,
   TabView,
   TabVisibility,
   VaultChangedPayload,
@@ -864,14 +868,20 @@ export function AppWithVault({
   useEffect(() => {
     if (placeRestoredRef.current) return;
     placeRestoredRef.current = true;
-    if (restoreView?.location.kind === "collection") {
+    if (restoreView && restoreView.location.kind !== "everything") {
       navigate(tabLocationPath(restoreView.location), { replace: true });
     }
   }, [navigate, restoreView]);
 
-  const currentTag = location.pathname.startsWith("/channel/")
-    ? decodeURIComponent(location.pathname.slice("/channel/".length))
-    : undefined;
+  // The place the route shows: Everything, a collection or an author's cards
+  // (SPEC_CARD_ASSOCIATIONS.md, «Лента автора»). `currentTag` is the
+  // collection, if the place is one; reads, caches and history go by place.
+  const currentLocation = useMemo(() => tabLocationFromPath(location.pathname), [location.pathname]);
+  const currentPlaceKey = placeKey(currentLocation);
+  const currentTag = locationCollection(currentLocation);
+  // An author's feed is a grid: no graph is drawn for it, and the tab keeps
+  // its own mode for the places that have one.
+  const onAuthorPlace = currentLocation.kind === "author";
 
   const [blocks, setBlocks] = useState<LightBlock[]>([]);
   // Cards whose action menu is open. While a menu is open its card stays in the
@@ -936,6 +946,8 @@ export function AppWithVault({
   const [scrollEdgeFade, setScrollEdgeFade] = useState(getStoredScrollEdgeFade);
   // Grid or Graph is the tab's own (SPEC_TABS.md, В78).
   const [mainViewMode, setMainViewMode] = useState<MainViewMode>(() => restoreView?.mode ?? "grid");
+  // What the feed area draws: the tab's mode, a grid in an author's feed.
+  const feedViewMode: MainViewMode = onAuthorPlace ? "grid" : mainViewMode;
   const [imagePreview, setImagePreview] = useState<ImagePreviewRequest | null>(null);
   const [isCreatingChannel, setIsCreatingChannel] = useState(false);
   const [isNamingCollection, setIsNamingCollection] = useState(false);
@@ -1085,6 +1097,10 @@ export function AppWithVault({
   vaultPathRef.current = vaultPath;
   const currentTagRef = useRef(currentTag);
   currentTagRef.current = currentTag;
+  const currentLocationRef = useRef(currentLocation);
+  currentLocationRef.current = currentLocation;
+  const currentPlaceKeyRef = useRef(currentPlaceKey);
+  currentPlaceKeyRef.current = currentPlaceKey;
   const blocksRef = useRef(blocks);
   blocksRef.current = blocks;
   const loadRequestIdRef = useRef(0);
@@ -1180,7 +1196,7 @@ export function AppWithVault({
     return activeDragBlocks.map((block) => current.get(block.slug) ?? block);
   }, [activeDragBlocks, blocks]);
 
-  const routeKeyFor = useCallback((tag?: string) => tag ?? "__all__", []);
+  const routeKeyFor = useCallback((place: TabLocation) => placeKey(place), []);
 
   const cancelPendingDetailClose = useCallback(() => {
     if (detailCloseTimerRef.current !== null) {
@@ -1231,12 +1247,12 @@ export function AppWithVault({
   }, []);
 
   const previewRowRevisionsRef = useRef(new Map<string, number>());
-  const applyGridSnapshot = useCallback((tag: string | undefined, grid: GridSnapshot): boolean => {
+  const applyGridSnapshot = useCallback((place: TabLocation, grid: GridSnapshot): boolean => {
     if (!projectionRevisionOwner.accept("grid", grid.generation)) {
       return false;
     }
     gridGenerationRef.current = grid.generation;
-    const routeKey = routeKeyFor(tag);
+    const routeKey = routeKeyFor(place);
     const currentBySlug = new Map(blocksRef.current.map((block) => [block.slug, block]));
     const incoming = grid.blocks.map((block) =>
       (previewRowRevisionsRef.current.get(block.slug) ?? -1) > grid.generation
@@ -1269,11 +1285,11 @@ export function AppWithVault({
     previewRowRevisionsRef.current.clear();
     if (!vaultReady) return;
     const path = vaultPath;
-    const tag = currentTag;
+    const place = currentPlaceKey;
     const queue = createPreviewRowQueue({
       fetch: (slugs) => getGridRows(path, slugs),
       apply: (snapshot) => {
-        if (snapshot.path !== vaultPathRef.current || currentTagRef.current !== tag) return;
+        if (snapshot.path !== vaultPathRef.current || currentPlaceKeyRef.current !== place) return;
         if (snapshot.generation < (gridGenerationRef.current ?? -1)) return;
         invalidateRouteSnapshots();
         const replacements = new Map(snapshot.blocks.filter((block) => {
@@ -1290,7 +1306,7 @@ export function AppWithVault({
     });
     previewRowsRef.current = queue;
     return () => { queue.dispose(); previewRowsRef.current = null; };
-  }, [vaultPath, currentTag, vaultReady, invalidateRouteSnapshots, projectionRevisionOwner]);
+  }, [vaultPath, currentPlaceKey, vaultReady, invalidateRouteSnapshots, projectionRevisionOwner]);
 
   useEffect(() => {
     unseenPreviewSlugsRef.current.clear();
@@ -1346,7 +1362,7 @@ export function AppWithVault({
 
   const activeBlocks = blocks;
   const gridRouteSnapshotReady =
-    gridSnapshotIdentity?.routeKey === routeKeyFor(currentTag);
+    gridSnapshotIdentity?.routeKey === routeKeyFor(currentLocation);
   const renderedDetailBlock = selectedBlock ?? closingDetailBlock;
   // The menu the bar's Command entry opens, and so the chord it shows: over an
   // open element its own command, in the feed the selection's or the card's.
@@ -1536,7 +1552,7 @@ export function AppWithVault({
   // A failed route read is read again on its own, a bounded number of times.
   // The retry re-reads the whole loaded range of the route that failed; any
   // newer read cancels it, and a route or space change leaves it unanswered.
-  const scheduleGridRetry = useCallback((tag: string | undefined) => {
+  const scheduleGridRetry = useCallback((place: TabLocation) => {
     cancelGridRetry();
     const attempt = gridRetryAttemptsRef.current;
     const delay = FEED_READ_RETRY_DELAYS_MS[attempt];
@@ -1545,17 +1561,19 @@ export function AppWithVault({
     const pathAtStart = vaultPathRef.current;
     gridRetryTimerRef.current = window.setTimeout(() => {
       gridRetryTimerRef.current = null;
-      if (vaultPathRef.current !== pathAtStart || currentTagRef.current !== tag) return;
-      void loadGridSnapshotRef.current({ tag, preserveLoadedRange: true, retry: true });
+      if (vaultPathRef.current !== pathAtStart || currentPlaceKeyRef.current !== placeKey(place)) return;
+      void loadGridSnapshotRef.current({ place, preserveLoadedRange: true, retry: true });
     }, delay);
   }, [cancelGridRetry]);
 
   const invalidateRoutesForTags = useCallback((affectedTags: readonly string[]) => {
-    const allRouteKey = routeKeyFor(undefined);
-    routeSnapshotCacheRef.current.delete(allRouteKey);
-    warmRoutePageBufferRef.current.delete(allRouteKey);
-    for (const tag of affectedTags) {
-      const routeKey = routeKeyFor(tag);
+    // Everything and every author's feed hold these cards too.
+    const routeKeys = [
+      routeKeyFor({ kind: "everything" }),
+      ...[...routeSnapshotCacheRef.current.keys()].filter(isAuthorPlaceKey),
+      ...affectedTags.map((tag) => routeKeyFor({ kind: "collection", tag })),
+    ];
+    for (const routeKey of routeKeys) {
       routeSnapshotCacheRef.current.delete(routeKey);
       warmRoutePageBufferRef.current.delete(routeKey);
     }
@@ -1563,13 +1581,13 @@ export function AppWithVault({
   }, [routeKeyFor]);
 
   const loadGridSnapshot = useCallback(async ({
-    tag = currentTagRef.current,
+    place = currentLocationRef.current,
     preferCachedRoute = false,
     invalidateCachedRoutes = false,
     preserveLoadedRange = false,
     retry = false,
   }: {
-    tag?: string;
+    place?: TabLocation;
     preferCachedRoute?: boolean;
     invalidateCachedRoutes?: boolean;
     /**
@@ -1592,8 +1610,8 @@ export function AppWithVault({
     paginationRequestRef.current = null;
     setLoadingMoreBlocks(false);
     const pathAtStart = vaultPathRef.current;
-    const tagAtStart = tag;
-    const routeKey = routeKeyFor(tagAtStart);
+    const placeAtStart = place;
+    const routeKey = routeKeyFor(placeAtStart);
     const orderAtStart = getFeedDisplay().sort;
     const started = performance.now();
     if (invalidateCachedRoutes) {
@@ -1603,14 +1621,14 @@ export function AppWithVault({
       const cached = routeSnapshotCacheRef.current.get(routeKey);
       // Cached routes are dropped whenever the order changes, so a cached list
       // is a list in the current order.
-      if (cached && applyGridSnapshot(tagAtStart, cached)) {
+      if (cached && applyGridSnapshot(placeAtStart, cached)) {
         shownListRef.current = { routeKey, order: orderAtStart };
         setGridLoadError(null);
       }
     }
     console.info("[startup] loadGrid:start", {
       requestId,
-      tag: tagAtStart ?? "__all__",
+      place: routeKey,
       preferCachedRoute,
     });
     // The refresh path always targets the current route, so the loaded block
@@ -1619,15 +1637,15 @@ export function AppWithVault({
     const loadedCount = preserveLoadedRange ? blocksRef.current.length : 0;
     const pageLimit = refreshPageLimit(loadedCount, GRID_PAGE_SIZE);
     try {
-      const grid = await fetchGridBlocks(tagAtStart, 0, pageLimit, orderAtStart);
+      const grid = await fetchGridBlocks(placeAtStart, 0, pageLimit, orderAtStart);
       if (
         loadRequestIdRef.current !== requestId
         || vaultPathRef.current !== pathAtStart
-        || currentTagRef.current !== tagAtStart
+        || currentPlaceKeyRef.current !== routeKey
       ) {
         return false;
       }
-      if (!applyGridSnapshot(tagAtStart, grid)) {
+      if (!applyGridSnapshot(placeAtStart, grid)) {
         return false;
       }
       shownListRef.current = { routeKey, order: orderAtStart };
@@ -1648,17 +1666,17 @@ export function AppWithVault({
       if (
         loadRequestIdRef.current === requestId
         && vaultPathRef.current === pathAtStart
-        && currentTagRef.current === tagAtStart
+        && currentPlaceKeyRef.current === routeKey
       ) {
         console.error("[LOAD_GRID] FAILED:", msg, err);
         // The list on screen stays. Paging waits for the retry: the next page
         // continues the list only once it is read again (Д1.4).
         setGridLoadError(msg);
-        scheduleGridRetry(tagAtStart);
+        scheduleGridRetry(placeAtStart);
       }
       console.error("[startup] loadGrid:failed", {
         requestId,
-        tag: tagAtStart ?? "__all__",
+        place: routeKey,
         elapsedMs: Math.round(performance.now() - started),
         error: msg,
       });
@@ -1937,13 +1955,13 @@ export function AppWithVault({
     if (delay === undefined) return;
     pageRetryAttemptsRef.current = attempt + 1;
     const pathAtStart = vaultPathRef.current;
-    const tagAtStart = currentTagRef.current;
+    const placeKeyAtStart = currentPlaceKeyRef.current;
     const routeLoadRequestIdAtStart = loadRequestIdRef.current;
     pageRetryTimerRef.current = window.setTimeout(() => {
       pageRetryTimerRef.current = null;
       if (
         vaultPathRef.current !== pathAtStart
-        || currentTagRef.current !== tagAtStart
+        || currentPlaceKeyRef.current !== placeKeyAtStart
         || loadRequestIdRef.current !== routeLoadRequestIdAtStart
       ) {
         return;
@@ -1970,7 +1988,8 @@ export function AppWithVault({
     const requestToken = {};
     paginationRequestRef.current = requestToken;
     const pathAtStart = vaultPathRef.current;
-    const tagAtStart = currentTagRef.current;
+    const placeAtStart = currentLocationRef.current;
+    const placeKeyAtStart = placeKey(placeAtStart);
     const offsetAtStart = blocksRef.current.length;
     const routeLoadRequestIdAtStart = loadRequestIdRef.current;
     const generationAtStart = gridGenerationRef.current;
@@ -1978,10 +1997,10 @@ export function AppWithVault({
     const orderAtStart = shownListRef.current?.order ?? getFeedDisplay().sort;
     setLoadingMoreBlocks(true);
     try {
-      const grid = await fetchGridBlocks(tagAtStart, offsetAtStart, GRID_PAGE_SIZE, orderAtStart);
+      const grid = await fetchGridBlocks(placeAtStart, offsetAtStart, GRID_PAGE_SIZE, orderAtStart);
       if (
         vaultPathRef.current !== pathAtStart
-        || currentTagRef.current !== tagAtStart
+        || currentPlaceKeyRef.current !== placeKeyAtStart
         || loadRequestIdRef.current !== routeLoadRequestIdAtStart
       ) {
         return;
@@ -1995,7 +2014,7 @@ export function AppWithVault({
         if (grid.generation > (acceptedGeneration ?? -1)) {
           invalidateRouteSnapshots();
           void loadGridSnapshotRef.current({
-            tag: tagAtStart,
+            place: placeAtStart,
             invalidateCachedRoutes: true,
             preserveLoadedRange: true,
           });
@@ -2006,7 +2025,7 @@ export function AppWithVault({
         const seen = new Set(prev.map((block) => block.id));
         const appended = grid.blocks.filter((block) => !seen.has(block.id));
         const nextBlocks = appended.length > 0 ? [...prev, ...appended] : prev;
-        routeSnapshotCacheRef.current.set(routeKeyFor(tagAtStart), {
+        routeSnapshotCacheRef.current.set(placeKeyAtStart, {
           generation: grid.generation,
           blocks: nextBlocks,
           total_blocks: grid.total_blocks,
@@ -2024,7 +2043,7 @@ export function AppWithVault({
       const msg = err instanceof Error ? err.message : String(err);
       if (
         vaultPathRef.current === pathAtStart
-        && currentTagRef.current === tagAtStart
+        && currentPlaceKeyRef.current === placeKeyAtStart
         && loadRequestIdRef.current === routeLoadRequestIdAtStart
       ) {
         console.error("[LOAD_MORE] FAILED:", msg, err);
@@ -2039,13 +2058,13 @@ export function AppWithVault({
       }
       if (
         vaultPathRef.current === pathAtStart
-        && currentTagRef.current === tagAtStart
+        && currentPlaceKeyRef.current === placeKeyAtStart
         && loadRequestIdRef.current === routeLoadRequestIdAtStart
       ) {
         setLoadingMoreBlocks(false);
       }
     }
-  }, [appliedRouteLoadId, gridLoadError, hasMoreBlocks, invalidateRouteSnapshots, routeKeyFor, schedulePageRetry]);
+  }, [appliedRouteLoadId, gridLoadError, hasMoreBlocks, invalidateRouteSnapshots, schedulePageRetry]);
   const loadNextPageRef = useRef(loadNextPage);
   loadNextPageRef.current = loadNextPage;
 
@@ -2059,7 +2078,7 @@ export function AppWithVault({
   useEffect(() => {
     if (
       !vaultReady
-      || mainViewMode !== "grid"
+      || feedViewMode !== "grid"
       || !gridRouteSnapshotReady
       || blocks.length === 0
       || !hasMoreBlocks
@@ -2071,20 +2090,19 @@ export function AppWithVault({
     ) {
       return;
     }
-    const routeKey = routeKeyFor(currentTag);
+    const routeKey = currentPlaceKey;
     if (warmRoutePageBufferRef.current.has(routeKey)) return;
     warmRoutePageBufferRef.current.add(routeKey);
     void loadMoreBlocks();
   }, [
     appliedRouteLoadId,
     blocks.length,
-    currentTag,
+    currentPlaceKey,
+    feedViewMode,
     gridLoadError,
     gridRouteSnapshotReady,
     hasMoreBlocks,
     loadMoreBlocks,
-    mainViewMode,
-    routeKeyFor,
     vaultReady,
   ]);
 
@@ -2183,25 +2201,25 @@ export function AppWithVault({
     }
     let cancelled = false;
     let cancelPostPaint: (() => void) | null = null;
-    const initialTag = currentTag;
+    const initialPlace = currentLocationRef.current;
 
     setIsSyncing(true);
     initialRouteLoadDoneRef.current = false;
     void (async () => {
       const [gridLoaded] = await Promise.all([
-        loadGridSnapshotRef.current({ tag: initialTag }),
+        loadGridSnapshotRef.current({ place: initialPlace }),
         loadTaxonomySnapshotRef.current(),
-        loadVaultStatsRef.current(initialTag),
+        loadVaultStatsRef.current(locationCollection(initialPlace)),
       ]);
       if (cancelled) return;
       initialRouteLoadDoneRef.current = true;
-      const activeTag = currentTagRef.current;
-      const activeRouteKey = routeKeyFor(activeTag);
+      const activePlace = currentLocationRef.current;
+      const activeRouteKey = routeKeyFor(activePlace);
       lastRevalidatedRouteKeyRef.current = activeRouteKey;
       let routeCommitted = gridLoaded;
-      if (activeTag !== initialTag) {
+      if (activeRouteKey !== routeKeyFor(initialPlace)) {
         routeCommitted = await loadGridSnapshotRef.current({
-          tag: activeTag,
+          place: activePlace,
           preferCachedRoute: true,
         });
         if (cancelled) return;
@@ -2376,8 +2394,8 @@ export function AppWithVault({
   const reportedHistoryRef = useRef<{ back: boolean; forward: boolean } | null>(null);
   const handleDetailCloseRef = useRef<() => void>(() => {});
   const selectedSlug = selectedBlock?.slug ?? null;
-  const placeRef = useRef<Place>({ tag: null, card: null });
-  placeRef.current = { tag: currentTag ?? null, card: selectedSlug };
+  const placeRef = useRef<Place>({ location: { kind: "everything" }, card: null });
+  placeRef.current = { location: currentLocation, card: selectedSlug };
 
   const reportPlaceHistory = useCallback(() => {
     if (!tabPage) return;
@@ -2406,7 +2424,7 @@ export function AppWithVault({
       }
       reportPlaceHistory();
     });
-  }, [currentTag, reportPlaceHistory, selectedSlug, viewRestored]);
+  }, [currentPlaceKey, reportPlaceHistory, selectedSlug, viewRestored]);
 
   /// Go to `target`, unless a later step took over while its card was read.
   const goToPlace = useCallback(async (target: Place, latest: () => boolean) => {
@@ -2418,11 +2436,11 @@ export function AppWithVault({
       });
     if (!latest()) return;
     const current = placeRef.current;
-    const routeChanges = target.tag !== current.tag;
+    const routeChanges = placeKey(target.location) !== placeKey(current.location);
     if (routeChanges) {
       // The place's card opens over its route instead of being closed by it.
       if (block) keepDetailOnRouteChangeRef.current = true;
-      navigate(tabLocationPath(tabLocationOf(target.tag ?? undefined)));
+      navigate(tabLocationPath(target.location));
     }
     if (block) openDetailBlock(block);
     else if (!routeChanges && current.card !== null) handleDetailCloseRef.current();
@@ -2469,7 +2487,7 @@ export function AppWithVault({
     restoreView?.scroll_anchor && restoreView.mode === "grid"
       ? {
           anchor: restoreView.scroll_anchor,
-          routeKey: restoreView.location.kind === "collection" ? restoreView.location.tag : "__all__",
+          routeKey: placeKey(restoreView.location),
         }
       : null
   ));
@@ -2485,7 +2503,7 @@ export function AppWithVault({
   ), [blocks, pendingScroll]);
   useEffect(() => {
     if (!pendingScroll || !initialLoadsDone) return;
-    if (mainViewMode !== "grid" || routeKeyFor(currentTag) !== pendingScroll.routeKey || gridLoadError !== null) {
+    if (feedViewMode !== "grid" || currentPlaceKey !== pendingScroll.routeKey || gridLoadError !== null) {
       setPendingScroll(null);
       return;
     }
@@ -2498,16 +2516,15 @@ export function AppWithVault({
     setPendingScroll(null);
   }, [
     appliedRouteLoadId,
-    currentTag,
+    currentPlaceKey,
+    feedViewMode,
     gridLoadError,
     gridRouteSnapshotReady,
     hasMoreBlocks,
     initialLoadsDone,
     loadMoreBlocks,
     loadingMoreBlocks,
-    mainViewMode,
     pendingScroll,
-    routeKeyFor,
     scrollRestoreAnchor,
   ]);
   const handleScrollAnchorRestored = useCallback(() => setPendingScroll(null), []);
@@ -2519,12 +2536,12 @@ export function AppWithVault({
     readScrollPositionRef.current = read;
     reporterRef.current?.schedule();
   }, []);
-  const tabViewInputRef = useRef({ currentTag, mainViewMode, selectedBlock, sidebarSearchQuery });
-  tabViewInputRef.current = { currentTag, mainViewMode, selectedBlock, sidebarSearchQuery };
+  const tabViewInputRef = useRef({ currentLocation, mainViewMode, selectedBlock, sidebarSearchQuery });
+  tabViewInputRef.current = { currentLocation, mainViewMode, selectedBlock, sidebarSearchQuery };
   const readTabView = useCallback((): TabView => {
     const input = tabViewInputRef.current;
     return {
-      location: tabLocationOf(input.currentTag),
+      location: input.currentLocation,
       mode: input.mainViewMode,
       open_card: input.selectedBlock
         ? {
@@ -2567,7 +2584,7 @@ export function AppWithVault({
   }, [readTabView, tabPage, viewRestored]);
   useEffect(() => {
     reporterRef.current?.schedule();
-  }, [currentTag, mainViewMode, pendingScroll, selectedBlock?.slug, sidebarSearchQuery]);
+  }, [currentPlaceKey, mainViewMode, pendingScroll, selectedBlock?.slug, sidebarSearchQuery]);
 
   // The space was opened from outside and this tab shows it (В72).
   useEffect(() => {
@@ -2590,16 +2607,16 @@ export function AppWithVault({
     if (!initialRouteLoadDoneRef.current) {
       return;
     }
-    const routeKey = routeKeyFor(currentTag);
+    const routeKey = routeKeyFor(currentLocation);
     if (lastRevalidatedRouteKeyRef.current === routeKey) {
       return;
     }
     lastRevalidatedRouteKeyRef.current = routeKey;
     void loadGridSnapshotRef.current({
-      tag: currentTag,
+      place: currentLocation,
       preferCachedRoute: true,
     });
-  }, [currentTag, routeKeyFor, vaultReady]);
+  }, [currentLocation, routeKeyFor, vaultReady]);
 
   useEffect(() => {
     if (!vaultReady) {
@@ -2898,12 +2915,12 @@ export function AppWithVault({
   /// ⌘-click and ⇧⌘-click: the place in a new tab or a new window of this
   /// space, in this tab's mode (SPEC_TABS.md, В82).
   const openPlaceElsewhere = useCallback((
-    tag: string | undefined,
+    place: TabLocation,
     card: LightBlock | null,
     newWindow: boolean,
   ) => {
     const view: TabView = {
-      location: tabLocationOf(tag),
+      location: place,
       mode: mainViewMode,
       open_card: card ? { slug: card.slug, title: getNavigationLabel(card) } : null,
       scroll_anchor: null,
@@ -2914,12 +2931,11 @@ export function AppWithVault({
     });
   }, [mainViewMode]);
   const handleOpenBlockElsewhere = useCallback(
-    (block: LightBlock, newWindow: boolean) => openPlaceElsewhere(currentTag, block, newWindow),
-    [currentTag, openPlaceElsewhere],
+    (block: LightBlock, newWindow: boolean) => openPlaceElsewhere(currentLocation, block, newWindow),
+    [currentLocation, openPlaceElsewhere],
   );
   const handleOpenRouteElsewhere = useCallback((to: string, newWindow: boolean) => {
-    const tag = to.startsWith("/channel/") ? decodeURIComponent(to.slice("/channel/".length)) : undefined;
-    openPlaceElsewhere(tag, null, newWindow);
+    openPlaceElsewhere(tabLocationFromPath(to), null, newWindow);
   }, [openPlaceElsewhere]);
 
   const handleOpenSettings = useCallback((section?: SettingsSection) => {
@@ -3138,6 +3154,17 @@ export function AppWithVault({
       });
   }, [openDetailBlock]);
 
+  // The open card's author heading: the feed of that author's cards. Opened
+  // from that feed already, it only closes the card (SPEC_CARD_ASSOCIATIONS.md).
+  const handleOpenAuthorFeed = useCallback((author: string) => {
+    const target: TabLocation = { kind: "author", author };
+    if (placeKey(target) === currentPlaceKeyRef.current) {
+      handleDetailCloseRef.current();
+      return;
+    }
+    navigate(tabLocationPath(target));
+  }, [navigate]);
+
   // ── Tag management ──────────────────────────────────────────────────────
 
   // A refused rename rejects: the sidebar keeps the name's field and shows
@@ -3230,11 +3257,13 @@ export function AppWithVault({
       e.preventDefault();
       // With a card open the key did switch All / Connected, gone now.
       if (renderedDetailBlock) return;
+      // An author's feed has no graph to switch to.
+      if (onAuthorPlace) return;
       handleMainViewModeChange(mainViewMode === "grid" ? "graph" : "grid");
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [handleMainViewModeChange, mainViewMode, renderedDetailBlock]);
+  }, [handleMainViewModeChange, mainViewMode, onAuthorPlace, renderedDetailBlock]);
 
   // ── ⌘V — paste into the feed ──────────────────────────────────────────
   //
@@ -4315,7 +4344,8 @@ export function AppWithVault({
           onRevealSpace={() => void revealItemInDir(vaultPath)}
           detailBlock={renderedDetailBlock}
           detailEntered={compactDetailChromeEntered}
-          viewMode={mainViewMode}
+          viewMode={feedViewMode}
+          viewModeSwitch={!onAuthorPlace}
           onViewModeChange={handleMainViewModeChange}
           vaultPath={vaultPath}
           tags={orderedTags}
@@ -4482,6 +4512,7 @@ export function AppWithVault({
         <div data-tauri-drag-region className="flex h-full min-w-0 flex-1 items-center">
           <TopCollectionSwitcher
             currentTag={currentTag}
+            currentAuthor={currentLocation.kind === "author" ? currentLocation.author : undefined}
             orderedTags={orderedTags}
             onNavigate={handleTopCollectionNavigate}
             onCreateCollection={handleTopCollectionCreate}
@@ -4627,7 +4658,8 @@ export function AppWithVault({
                 thumbVersions={feedThumbVersions}
                 tags={orderedTags}
                 currentTag={currentTag}
-                viewMode={mainViewMode}
+                location={currentLocation}
+                viewMode={feedViewMode}
                 graphPreferences={graphPreferences}
                 scrollEdgeFade={scrollEdgeFade}
                 routeSnapshotReady={gridRouteSnapshotReady}
@@ -4671,6 +4703,7 @@ export function AppWithVault({
           >
             <Route index element={<AllBlocksPage />} />
             <Route path="channel/:tag" element={<ChannelPage />} />
+            <Route path="author/:author" element={<AuthorPage />} />
           </Route>
         </Routes>
 
@@ -4701,6 +4734,7 @@ export function AppWithVault({
               onSourceVideoDownloaded={handleSourceVideoDownloaded}
               onOpenImagePreview={setImagePreview}
               onOpenRelatedNote={handleOpenRelatedNote}
+              onOpenAuthorFeed={handleOpenAuthorFeed}
               onTextSelectionDrop={handleTextSelectionDrop}
               onCreateChannelAndTextSelectionCard={handleTextSelectionCreateChannelAndCard}
               onTextSelectionDelete={handleTextSelectionDelete}
@@ -5006,14 +5040,18 @@ export function AppWithVault({
         onCreate={handleCreateChannel}
       />
 
-      <Suspense fallback={null}>
-        <DropZone
-          currentTag={currentTag}
-          onBlocksCreated={() => {
-            void reloadAllSnapshots();
-          }}
-        />
-      </Suspense>
+      {/* An author's feed is a computed selection a dropped file cannot
+          join: the drop zone stays off there (SPEC_CARD_ASSOCIATIONS.md). */}
+      {!onAuthorPlace && (
+        <Suspense fallback={null}>
+          <DropZone
+            currentTag={currentTag}
+            onBlocksCreated={() => {
+              void reloadAllSnapshots();
+            }}
+          />
+        </Suspense>
+      )}
       <ImagePreviewOverlay
         preview={imagePreview}
         onClose={() => setImagePreview(null)}
@@ -5086,6 +5124,8 @@ interface RouteContext {
   thumbVersions: ReadonlyMap<string, number>;
   tags: TagCount[];
   currentTag?: string;
+  /** The place the feed shows (SPEC_CARD_ASSOCIATIONS.md, «Лента автора»). */
+  location: TabLocation;
   viewMode: MainViewMode;
   graphPreferences: GraphPreferences;
   scrollEdgeFade: boolean;
@@ -5167,6 +5207,13 @@ function AllBlocksPage() {
       />
     );
   }
+  return <Grid {...ctx} blocks={ctx.blocks} />;
+}
+
+/** One author's cards: always a grid, no graph is drawn for them
+ *  (SPEC_CARD_ASSOCIATIONS.md, «Лента автора»). */
+function AuthorPage() {
+  const ctx = useRouteCtx();
   return <Grid {...ctx} blocks={ctx.blocks} />;
 }
 

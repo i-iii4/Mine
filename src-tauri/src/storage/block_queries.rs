@@ -8,7 +8,9 @@ use mine_core::links::{LinkIndex, LinkResolution, LinkSyntax};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::domain::card_association::author_key;
 use crate::domain::search::{SearchFilter, SearchQuery};
+use crate::domain::windows::TabLocation;
 use crate::storage::index::{
     parse_block_type_row, parse_card_kind_row, parse_related_notes_json, row_to_preview_block,
     IndexedBlock, LightBlock, PendingThumbUpgradeBlock, PreviewBlock, TagCount, ThumbFormat,
@@ -29,7 +31,7 @@ pub enum FeedOrder {
 }
 
 impl FeedOrder {
-    fn order_by(self, column_prefix: &str) -> String {
+    pub(crate) fn order_by(self, column_prefix: &str) -> String {
         let direction = match self {
             FeedOrder::Newest => "DESC",
             FeedOrder::Oldest => "ASC",
@@ -109,18 +111,34 @@ pub fn list_grid_blocks(
     offset: usize,
     limit: usize,
 ) -> Result<(Vec<LightBlock>, bool)> {
-    list_grid_blocks_filtered(conn, tag, offset, limit, None, FeedOrder::Newest)
+    let filter = tag.map_or(GridFilter::All, GridFilter::Collection);
+    list_grid_blocks_filtered(conn, filter, offset, limit, FeedOrder::Newest)
 }
 
-/// The feed in the person's chosen order.
+/// The feed of a place in the person's chosen order: Everything, a
+/// collection, or one author's cards (SPEC_CARD_ASSOCIATIONS.md, «Лента по
+/// месту»). An author that normalizes to nothing has no cards.
 pub fn list_grid_blocks_in_order(
     conn: &Connection,
-    tag: Option<&str>,
+    location: &TabLocation,
     offset: usize,
     limit: usize,
     order: FeedOrder,
 ) -> Result<(Vec<LightBlock>, bool)> {
-    list_grid_blocks_filtered(conn, tag, offset, limit, None, order)
+    match location {
+        TabLocation::Everything => {
+            list_grid_blocks_filtered(conn, GridFilter::All, offset, limit, order)
+        }
+        TabLocation::Collection { tag } => {
+            list_grid_blocks_filtered(conn, GridFilter::Collection(tag), offset, limit, order)
+        }
+        TabLocation::Author { author } => match author_key(author) {
+            Some(key) => {
+                list_grid_blocks_filtered(conn, GridFilter::AuthorKey(&key), offset, limit, order)
+            }
+            None => Ok((Vec::new(), false)),
+        },
+    }
 }
 
 /// Fetch only requested rows using exactly the feed's preview visibility rules.
@@ -128,81 +146,100 @@ pub fn grid_rows_by_slug(conn: &Connection, slugs: &[String]) -> Result<Vec<Ligh
     if slugs.is_empty() {
         return Ok(Vec::new());
     }
-    Ok(list_grid_blocks_filtered(conn, None, 0, slugs.len(), Some(slugs), FeedOrder::Newest)?.0)
+    Ok(list_grid_blocks_filtered(
+        conn,
+        GridFilter::Slugs(slugs),
+        0,
+        slugs.len(),
+        FeedOrder::Newest,
+    )?
+    .0)
+}
+
+/// Which cards a feed query reads.
+enum GridFilter<'a> {
+    All,
+    Collection(&'a str),
+    /// Cards whose association author key is this one.
+    AuthorKey(&'a str),
+    Slugs(&'a [String]),
+}
+
+/// The columns of a `LightBlock` row of the blocks table aliased `alias`,
+/// under the feed's preview visibility rules. `?1` is the body preview
+/// length, so a query binds `LIGHT_BLOCK_BODY_PREVIEW_CHARS` first. The feed,
+/// the open card's associations and every other `LightBlock` list read one
+/// row model.
+pub(crate) fn grid_row_columns_sql(alias: &str) -> String {
+    let b = alias;
+    let collections = collections_column_sql(&format!("{b}.id"));
+    format!(
+        "{b}.id, {b}.slug, {b}.block_type, {b}.card_kind, {b}.title, {b}.content_heading, {b}.display_title, COALESCE({b}.fallback_label, {b}.slug), {b}.url, {b}.media_file,
+         {b}.thumbnail, {b}.saved_at, {b}.width, {b}.height, {b}.author,
+         CASE WHEN {b}.card_kind = 'article' THEN SUBSTR({b}.body, 1, ?1) ELSE '' END,
+         {b}.preview_text, {b}.first_image, {b}.media_urls, {b}.media_dimensions,
+         CASE WHEN {b}.preview_state = 'ready'
+                   OR ({b}.preview_state = 'stale' AND {b}.preview_source_stamp IS NOT NULL)
+              THEN {b}.preview_manifest END,
+         CASE WHEN {b}.preview_state = 'ready'
+                   OR ({b}.preview_state = 'stale' AND {b}.preview_source_stamp IS NOT NULL)
+              THEN {b}.feed_playback END,
+         CASE WHEN {b}.preview_state != 'ready' THEN {b}.preview_error_kind END,
+         {collections}"
+    )
+}
+
+/// The page query of one author's feed, for query plan tests.
+#[cfg(test)]
+pub(crate) fn author_feed_sql(order: FeedOrder) -> String {
+    grid_filter_sql(&GridFilter::AuthorKey(""), order)
+}
+
+/// A feed page query: `?1` body preview length, `?2` row limit, `?3` offset,
+/// `?4` the filter's value.
+fn grid_filter_sql(filter: &GridFilter<'_>, order: FeedOrder) -> String {
+    let columns = grid_row_columns_sql("b");
+    let order_by = order.order_by("b.");
+    let (join, condition) = match filter {
+        GridFilter::All => ("", ""),
+        GridFilter::Collection(_) => (
+            "INNER JOIN block_tags bt ON bt.block_id = b.id",
+            "AND bt.tag = ?4",
+        ),
+        GridFilter::AuthorKey(_) => ("", "AND b.association_author_key = ?4"),
+        GridFilter::Slugs(_) => ("", "AND b.slug IN (SELECT value FROM json_each(?4))"),
+    };
+    format!(
+        "SELECT {columns}
+         FROM blocks b
+         {join}
+         WHERE b.card_kind != 'channel' {condition}
+         ORDER BY {order_by}
+         LIMIT ?2 OFFSET ?3"
+    )
 }
 
 fn list_grid_blocks_filtered(
     conn: &Connection,
-    tag: Option<&str>,
+    filter: GridFilter<'_>,
     offset: usize,
     limit: usize,
-    slugs: Option<&[String]>,
     order: FeedOrder,
 ) -> Result<(Vec<LightBlock>, bool)> {
     let fetch_limit = limit.saturating_add(1);
-    let tagged_order = order.order_by("b.");
-    let plain_order = order.order_by("");
-    let sql = match tag {
-        Some(_) => {
-            let collections = collections_column_sql("b.id");
-            format!("SELECT b.id, b.slug, b.block_type, b.card_kind, b.title, b.content_heading, b.display_title, COALESCE(b.fallback_label, b.slug), b.url, b.media_file,
-                    b.thumbnail, b.saved_at, b.width, b.height, b.author,
-                    CASE WHEN b.card_kind = 'article' THEN SUBSTR(b.body, 1, ?1) ELSE '' END,
-                    b.preview_text, b.first_image, b.media_urls, b.media_dimensions,
-                    CASE WHEN b.preview_state = 'ready'
-                              OR (b.preview_state = 'stale' AND b.preview_source_stamp IS NOT NULL)
-                         THEN b.preview_manifest END,
-                    CASE WHEN b.preview_state = 'ready'
-                              OR (b.preview_state = 'stale' AND b.preview_source_stamp IS NOT NULL)
-                         THEN b.feed_playback END,
-                    CASE WHEN b.preview_state != 'ready' THEN b.preview_error_kind END,
-                    {collections}
-             FROM blocks b
-             INNER JOIN block_tags bt ON bt.block_id = b.id
-             WHERE b.card_kind != 'channel' AND bt.tag = ?2
-             ORDER BY {tagged_order}
-             LIMIT ?3 OFFSET ?4")
-        }
-        None => {
-            let filter = if slugs.is_some() { "AND slug IN (SELECT value FROM json_each(?4))" } else { "" };
-            let collections = collections_column_sql("blocks.id");
-            format!("SELECT id, slug, block_type, card_kind, title, content_heading, display_title, COALESCE(fallback_label, slug), url, media_file,
-                    thumbnail, saved_at, width, height, author,
-                    CASE WHEN card_kind = 'article' THEN SUBSTR(body, 1, ?1) ELSE '' END,
-                    preview_text, first_image, media_urls, media_dimensions,
-                    CASE WHEN preview_state = 'ready'
-                              OR (preview_state = 'stale' AND preview_source_stamp IS NOT NULL)
-                         THEN preview_manifest END,
-                    CASE WHEN preview_state = 'ready'
-                              OR (preview_state = 'stale' AND preview_source_stamp IS NOT NULL)
-                         THEN feed_playback END,
-                    CASE WHEN preview_state != 'ready' THEN preview_error_kind END,
-                    {collections}
-             FROM blocks
-             WHERE card_kind != 'channel'
-               {filter}
-             ORDER BY {plain_order}
-             LIMIT ?2 OFFSET ?3")
-        }
-    };
+    let sql = grid_filter_sql(&filter, order);
 
     let mut stmt = conn.prepare(&sql)?;
-
-    let mut blocks = match tag {
-        Some(tag) => stmt
+    let value = match filter {
+        GridFilter::All => None,
+        GridFilter::Collection(tag) => Some(tag.to_string()),
+        GridFilter::AuthorKey(key) => Some(key.to_string()),
+        GridFilter::Slugs(slugs) => Some(serde_json::to_string(slugs)?),
+    };
+    let mut blocks = match value {
+        Some(value) => stmt
             .query_map(
-                params![LIGHT_BLOCK_BODY_PREVIEW_CHARS, tag, fetch_limit, offset],
-                light_block_from_row,
-            )?
-            .collect::<Result<Vec<_>, _>>()?,
-        None if slugs.is_some() => stmt
-            .query_map(
-                params![
-                    LIGHT_BLOCK_BODY_PREVIEW_CHARS,
-                    fetch_limit,
-                    offset,
-                    slugs.map(serde_json::to_string).transpose()?
-                ],
+                params![LIGHT_BLOCK_BODY_PREVIEW_CHARS, fetch_limit, offset, value],
                 light_block_from_row,
             )?
             .collect::<Result<Vec<_>, _>>()?,

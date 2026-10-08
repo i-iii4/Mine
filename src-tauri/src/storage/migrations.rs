@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 5;
+pub const CURRENT_SCHEMA_VERSION: i64 = 6;
 pub const GRAPH_LINK_INDEX_VERSION: i64 = 2;
 
 const BLOCK_COLUMNS: &[(&str, &str)] = &[
@@ -53,6 +53,13 @@ const BLOCK_COLUMNS: &[(&str, &str)] = &[
     ("thumb_format", "TEXT"),
     ("thumb_mtime", "INTEGER"),
     ("indexed_at", "TEXT"),
+    ("note_name", "TEXT"),
+    ("extraction_source_name", "TEXT"),
+    ("association_author", "TEXT"),
+    ("association_author_key", "TEXT"),
+    ("association_site", "TEXT"),
+    ("association_address", "TEXT"),
+    ("association_index_version", "INTEGER"),
 ];
 
 const SOURCE_INDEX_STATE_COLUMNS: &[(&str, &str)] = &[
@@ -136,6 +143,11 @@ const REQUIRED_INDEXES: &[&str] = &[
     "idx_search_chunks_slug",
     "idx_search_embeddings_model",
     "idx_vault_conflicts_base_slug",
+    "idx_blocks_note_name",
+    "idx_blocks_extraction_source_name",
+    "idx_blocks_association_author",
+    "idx_blocks_association_site",
+    "idx_blocks_association_address",
 ];
 
 const REQUIRED_TRIGGERS: &[&str] = &[
@@ -192,6 +204,7 @@ pub fn migrate_and_validate(conn: &Connection) -> Result<()> {
                     INSERT INTO index_build_state (singleton, ready) VALUES (1, 0);",
                     )
                     .context("failed to create index build state")?,
+                6 => migrate_v5_to_v6(conn)?,
                 _ => bail!("missing SQLite migration implementation for version {target}"),
             }
             conn.pragma_update(None, "user_version", target)
@@ -617,6 +630,32 @@ fn migrate_v3_to_v4(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Card association columns (SPEC_CARD_ASSOCIATIONS.md, «Модель данных»).
+/// Existing rows keep them empty until `backfill_association_index` reads
+/// their notes; until then no association is shown, none is wrong.
+fn migrate_v5_to_v6(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "ALTER TABLE blocks ADD COLUMN note_name TEXT;
+         ALTER TABLE blocks ADD COLUMN extraction_source_name TEXT;
+         ALTER TABLE blocks ADD COLUMN association_author TEXT;
+         ALTER TABLE blocks ADD COLUMN association_author_key TEXT;
+         ALTER TABLE blocks ADD COLUMN association_site TEXT;
+         ALTER TABLE blocks ADD COLUMN association_address TEXT;
+         ALTER TABLE blocks ADD COLUMN association_index_version INTEGER;
+         CREATE INDEX idx_blocks_note_name ON blocks(note_name);
+         CREATE INDEX idx_blocks_extraction_source_name ON blocks(extraction_source_name)
+             WHERE extraction_source_name IS NOT NULL;
+         CREATE INDEX idx_blocks_association_author ON blocks(association_author_key, saved_at)
+             WHERE association_author_key IS NOT NULL;
+         CREATE INDEX idx_blocks_association_site ON blocks(association_site, saved_at)
+             WHERE association_site IS NOT NULL;
+         CREATE INDEX idx_blocks_association_address ON blocks(association_address, saved_at)
+             WHERE association_address IS NOT NULL;",
+    )
+    .context("failed to add card association columns")?;
+    Ok(())
+}
+
 fn add_column_if_missing(conn: &Connection, name: &str, declaration: &str) -> Result<bool> {
     if block_columns(conn)?.contains_key(name) {
         return Ok(false);
@@ -858,6 +897,46 @@ mod tests {
                 |row| row.get::<_, bool>(0)
             )
             .unwrap());
+    }
+
+    #[test]
+    fn version_six_adds_empty_association_columns_without_losing_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON; BEGIN IMMEDIATE")
+            .unwrap();
+        migrate_v0_to_v1(&conn).unwrap();
+        migrate_v1_to_v2(&conn).unwrap();
+        migrate_v2_to_v3(&conn).unwrap();
+        migrate_v3_to_v4(&conn).unwrap();
+        conn.pragma_update(None, "user_version", 4).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+        conn.execute(
+            "INSERT INTO blocks (slug, block_type, saved_at, author, url)
+             VALUES ('Cards/Post', 'article', '2026-01-01T00:00:00Z', '@a', 'https://x.com/a/status/1')",
+            [],
+        )
+        .unwrap();
+
+        migrate_and_validate(&conn).unwrap();
+
+        assert_eq!(user_version(&conn).unwrap(), CURRENT_SCHEMA_VERSION);
+        let (author, version): (Option<String>, Option<i64>) = conn
+            .query_row(
+                "SELECT association_author_key, association_index_version
+                 FROM blocks WHERE slug = 'Cards/Post'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((author, version), (None, None));
+    }
+
+    #[test]
+    fn a_schema_without_an_association_index_is_refused() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_and_validate(&conn).unwrap();
+        conn.execute_batch("DROP INDEX idx_blocks_association_author").unwrap();
+        assert!(validate_schema(&conn).is_err());
     }
 
     #[test]

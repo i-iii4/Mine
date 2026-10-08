@@ -37,6 +37,7 @@ import {
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { CardCollectionsContext } from "@/lib/cardCollections";
 import { EDGE_FADE_WIDTH, createRightFadeMaskStyle } from "@/lib/edgeFade";
+import { useContextMenuPresence } from "@/lib/openMenus";
 
 interface CardMenuActionsProps<TBlock extends LightBlock | IndexedBlock> {
   block: TBlock;
@@ -75,7 +76,6 @@ interface CardMenuDropdownContentProps<TBlock extends LightBlock | IndexedBlock>
   menuOpen: boolean;
   onCloseAutoFocus?: ComponentProps<typeof DropdownMenuContent>["onCloseAutoFocus"];
   onKeyDownCapture?: (event: ReactKeyboardEvent) => void;
-  onPointerDownOutside?: ComponentProps<typeof DropdownMenuContent>["onPointerDownOutside"];
 }
 
 type CardHoverMenuProps = CardMenuActionsProps<LightBlock>;
@@ -261,7 +261,6 @@ function CardMenuDropdownContent<TBlock extends LightBlock | IndexedBlock>({
   onRequestDelete,
   onCloseAutoFocus,
   onKeyDownCapture,
-  onPointerDownOutside,
 }: CardMenuDropdownContentProps<TBlock>) {
   const hasUrl = block.url != null && isSafeUrl(block.url);
   const filePath = `${vaultPath}/${block.slug}.md`;
@@ -290,7 +289,6 @@ function CardMenuDropdownContent<TBlock extends LightBlock | IndexedBlock>({
       align="end"
       onCloseAutoFocus={onCloseAutoFocus}
       onKeyDownCapture={onKeyDownCapture}
-      onPointerDownOutside={onPointerDownOutside}
     >
       <DropdownMenuSub open={connectSubmenuOpen} onOpenChange={setConnectSubmenuOpen}>
         <DropdownMenuSubTrigger ref={connectTriggerRef}>
@@ -398,71 +396,40 @@ export function CardPointMenu<TBlock extends LightBlock | IndexedBlock>({
     setMenuOpen(true);
   }, [openRequestSequence]);
 
-  const handleDismissLayerClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    updateMenuOpen(false);
-  }, [updateMenuOpen]);
-
-  const handleDismissLayerContextMenu = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    updateMenuOpen(false);
-  }, [updateMenuOpen]);
-
-  const stopDismissLayerPointer = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    event.stopPropagation();
-  }, []);
+  // A right click opened it: a context menu in all but its anchor. The first
+  // press outside only closes it, as every menu's (src/lib/openMenus.ts).
+  useContextMenuPresence(menuOpen);
 
   return (
-    <>
-      {menuOpen ? (
-        <div
-          aria-hidden="true"
-          className="fixed inset-0 z-40 bg-transparent"
-          data-card-point-menu-dismiss-layer=""
-          onPointerDown={stopDismissLayerPointer}
-          onPointerUp={stopDismissLayerPointer}
-          onClick={handleDismissLayerClick}
-          onContextMenu={handleDismissLayerContextMenu}
-        />
-      ) : null}
-      <div
-        className="fixed z-50 size-px"
-        style={{ left: x, top: y }}
-        data-card-point-menu-anchor=""
-      >
-        <DropdownMenu open={menuOpen} onOpenChange={updateMenuOpen} modal={false}>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              aria-hidden="true"
-              tabIndex={-1}
-              className="size-px min-h-0 min-w-0 border-0 bg-transparent p-0 opacity-0"
-              data-card-point-menu-trigger=""
-            />
-          </DropdownMenuTrigger>
-          <CardMenuDropdownContent
-            block={block}
-            vaultPath={vaultPath}
-            tags={tags}
-            currentTag={currentTag}
-            menuOpen={menuOpen}
-            onToggleTag={onToggleTag}
-            onCreateAndAssign={onCreateAndAssign}
-            onRequestRename={onRequestRename}
-            onRequestDelete={onRequestDelete}
-            onCloseAutoFocus={(event) => event.preventDefault()}
-            onPointerDownOutside={(event) => {
-              const target = event.target;
-              if (target instanceof Element && target.closest("[data-card-point-menu-dismiss-layer]")) {
-                event.preventDefault();
-              }
-            }}
+    <div
+      className="fixed z-50 size-px"
+      style={{ left: x, top: y }}
+      data-card-point-menu-anchor=""
+    >
+      <DropdownMenu open={menuOpen} onOpenChange={updateMenuOpen} modal={false}>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-hidden="true"
+            tabIndex={-1}
+            className="size-px min-h-0 min-w-0 border-0 bg-transparent p-0 opacity-0"
+            data-card-point-menu-trigger=""
           />
-        </DropdownMenu>
-      </div>
-    </>
+        </DropdownMenuTrigger>
+        <CardMenuDropdownContent
+          block={block}
+          vaultPath={vaultPath}
+          tags={tags}
+          currentTag={currentTag}
+          menuOpen={menuOpen}
+          onToggleTag={onToggleTag}
+          onCreateAndAssign={onCreateAndAssign}
+          onRequestRename={onRequestRename}
+          onRequestDelete={onRequestDelete}
+          onCloseAutoFocus={(event) => event.preventDefault()}
+        />
+      </DropdownMenu>
+    </div>
   );
 }
 

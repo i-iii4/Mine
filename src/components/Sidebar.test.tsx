@@ -1164,6 +1164,53 @@ describe("Sidebar", () => {
     expect(firstThumbnail).toHaveAttribute("data-sidebar-preview-active", "true");
   });
 
+  it("hands a preview read past the warm window to the next thumbnail at once", async () => {
+    // The warm window runs from when the preview left the screen, not from
+    // when it opened (SPEC_CARD_STATES.md, С7.10).
+    vi.useFakeTimers();
+    vi.mocked(invoke)
+      .mockResolvedValueOnce(previewBlock("alpha-a"))
+      .mockResolvedValueOnce(previewBlock("alpha-b"));
+    const previews = new Map([
+      ["alpha", ["alpha-a", "alpha-b"].map((slug) => ({
+        url: `asset://localhost/thumbs/${slug}.jpg`,
+        text: false,
+        hasThumb: true,
+        slug,
+      }))],
+    ]);
+    const { container } = renderSidebar({
+      ...defaultProps,
+      width: 600,
+      vaultPath: "/vault",
+      thumbsRootPath: "/vault/.mine/cache/thumbs",
+      channelPreviews: previews,
+    });
+    const [firstThumbnail, secondThumbnail] = container.querySelectorAll('[data-sidebar-preview-thumbnail="trigger"]');
+    const preview = () => container.querySelector("[data-sidebar-thumbnail-hover-preview]");
+
+    fireEvent.pointerEnter(firstThumbnail!);
+    await act(async () => {
+      vi.advanceTimersByTime(HOVER_PREVIEW_COLD_OPEN_DELAY_MS);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(preview()).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(HOVER_PREVIEW_WARM_WINDOW_MS * 3);
+    });
+    fireEvent.pointerLeave(firstThumbnail!);
+    expect(preview()).not.toBeInTheDocument();
+    fireEvent.pointerEnter(secondThumbnail!);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(preview()).toBeInTheDocument();
+    expect(secondThumbnail).toHaveAttribute("data-sidebar-preview-active", "true");
+  });
+
   it("does not open the sidebar hover preview while a drag is in flight", async () => {
     vi.useFakeTimers();
     const previews = new Map([

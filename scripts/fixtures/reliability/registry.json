@@ -1920,6 +1920,110 @@
       "requirement": "DESIGN_SYSTEM.md#### Нажатие",
       "tests": ["src/components/MenuTextTrigger.test.tsx"],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "extension/lib/youtubeSource.js",
+        "extension/lib/youtubeSource.d.ts",
+        "extension/lib/youtubeSource.test.ts",
+        "extension/background.js",
+        "extension/background.messaging.test.ts",
+        "extension/popup/lib/captureResult.ts",
+        "extension/popup/lib/captureResult.test.ts",
+        "extension/popup/lib/messaging.ts",
+        "extension/popup/lib/messaging.test.ts",
+        "extension/popup/hooks/useClipperState.ts",
+        "extension/popup/hooks/useClipperState.standalone.test.tsx",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/background.js",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/youtubeSource.js"
+      ],
+      "requirement": "SPEC_CARD_ASSOCIATIONS.md## Клиппер: канал YouTube",
+      "tests": [
+        "extension/lib/youtubeSource.test.ts",
+        "extension/background.messaging.test.ts",
+        "extension/popup/lib/captureResult.test.ts",
+        "extension/popup/lib/messaging.test.ts",
+        "extension/popup/hooks/useClipperState.standalone.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "mine-core/src/domain/card_association.rs",
+        "mine-core/src/domain/mod.rs",
+        "mine-core/src/links.rs",
+        "src-tauri/src/domain/card_association.rs",
+        "src-tauri/src/domain/mod.rs",
+        "src-tauri/src/domain/vault.rs",
+        "src-tauri/src/storage/card_associations.rs",
+        "src-tauri/src/storage/mod.rs",
+        "src-tauri/src/storage/index.rs",
+        "src-tauri/src/storage/block_queries.rs",
+        "src-tauri/src/storage/migrations.rs",
+        "src-tauri/src/storage/projection.rs",
+        "src-tauri/src/storage/cold_space_audit.rs",
+        "src-tauri/src/commands/card_associations.rs",
+        "src-tauri/src/commands/mod.rs",
+        "src-tauri/src/commands/blocks.rs",
+        "src-tauri/src/commands/effects.rs",
+        "src-tauri/src/commands/vault.rs",
+        "src-tauri/src/lib.rs",
+        "src-tauri/src/bindings.rs",
+        "src/types/generated.ts"
+      ],
+      "requirement": "SPEC_CARD_ASSOCIATIONS.md## Модель данных",
+      "tests": [
+        "mine-core/src/domain/card_association.rs",
+        "mine-core/src/links.rs",
+        "src-tauri/src/storage/card_associations.rs",
+        "src-tauri/src/storage/migrations.rs",
+        "src-tauri/src/commands/effects.rs"
+      ],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src/lib/cardAssociations.ts",
+        "src/hooks/useCardAssociations.ts",
+        "src/components/Detail.tsx",
+        "src/components/Detail.test.tsx",
+        "src/lib/commands.ts"
+      ],
+      "requirement": "SPEC_CARD_ASSOCIATIONS.md## Открытая карточка",
+      "tests": [
+        "src/components/Detail.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src-tauri/src/domain/windows.rs",
+        "src-tauri/src/tabs/mod.rs",
+        "src/App.tsx",
+        "src/App.test.tsx",
+        "src/components/Grid.tsx",
+        "src/components/MainSecondaryChrome.tsx",
+        "src/components/TopCollectionSwitcher.tsx",
+        "src/components/SearchOverlay.tsx",
+        "src/components/SearchOverlay.test.tsx",
+        "src/lib/tabPage.ts",
+        "src/lib/tabPage.test.ts",
+        "src/lib/placeHistory.ts",
+        "src/lib/placeHistory.test.ts",
+        "src/tabbar/tabLabel.ts",
+        "src/tabbar/tabLabel.test.ts",
+        "src/tabbar/TabBar.test.tsx",
+        "src/tabbar/TabBarApp.test.tsx"
+      ],
+      "requirement": "SPEC_CARD_ASSOCIATIONS.md## Лента автора",
+      "tests": [
+        "src/App.test.tsx",
+        "src/lib/tabPage.test.ts",
+        "src/lib/placeHistory.test.ts",
+        "src/tabbar/tabLabel.test.ts",
+        "src-tauri/src/domain/windows.rs"
+      ],
+      "command": "test:frontend"
     }
   ],
   "release": null

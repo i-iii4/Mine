@@ -4,13 +4,35 @@ import { ContextMenu as ContextMenuPrimitive } from "radix-ui"
 
 import { MenuIconSlot } from "@/components/ui/menu-icon-slot"
 import { FLOATING_LAYER_EDGE_PX, useHeldMenuWidth } from "@/lib/floatingLayer"
+import { useContextMenuPresence, useMenuSurface } from "@/lib/openMenus"
 import { cn } from "@/lib/utils"
 
 
+// Never modal, as DropdownMenu. While it is open the pointer's answers hold
+// (SPEC_CARD_STATES.md, С7.8), wherever the right click was.
 function ContextMenu({
+  onOpenChange,
   ...props
-}: React.ComponentProps<typeof ContextMenuPrimitive.Root>) {
-  return <ContextMenuPrimitive.Root data-slot="context-menu" {...props} />
+}: Omit<React.ComponentProps<typeof ContextMenuPrimitive.Root>, "modal"> & {
+  modal?: false
+}) {
+  const [open, setOpen] = React.useState(false)
+  useContextMenuPresence(open)
+  const handleOpenChange = React.useCallback(
+    (next: boolean) => {
+      setOpen(next)
+      onOpenChange?.(next)
+    },
+    [onOpenChange]
+  )
+  return (
+    <ContextMenuPrimitive.Root
+      data-slot="context-menu"
+      {...props}
+      modal={false}
+      onOpenChange={handleOpenChange}
+    />
+  )
 }
 
 function ContextMenuTrigger({
@@ -104,9 +126,12 @@ function ContextMenuContent({
   className,
   collisionPadding = FLOATING_LAYER_EDGE_PX,
   ref,
+  onPointerDownOutside,
+  onCloseAutoFocus,
   ...props
 }: React.ComponentProps<typeof ContextMenuPrimitive.Content>) {
-  const holdWidth = useHeldMenuWidth(ref)
+  const surface = useMenuSurface("context", ref, { onPointerDownOutside, onCloseAutoFocus })
+  const holdWidth = useHeldMenuWidth(surface.ref)
   return (
     <ContextMenuPrimitive.Portal>
       <ContextMenuPrimitive.Content
@@ -114,6 +139,8 @@ function ContextMenuContent({
         data-slot="context-menu-content"
         data-floating-menu=""
         collisionPadding={collisionPadding}
+        onPointerDownOutside={surface.onPointerDownOutside}
+        onCloseAutoFocus={surface.onCloseAutoFocus}
         className={cn(
           "bg-card text-card-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 max-h-(--radix-context-menu-content-available-height) origin-(--radix-context-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-1 border p-1 shadow-md",
           className

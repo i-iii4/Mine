@@ -163,12 +163,14 @@ collection `Ideas`:
 ```markdown
 ---
 type: article
+url: "https://example.com/source-article"
 Mine Collections:
   - "[[Ideas]]"
 Mine Related Notes:
   - "[[Source Article#^attention-is-selection]]"
 saved_at: 2026-05-01T14:30:00Z
 source: text-selection-extraction
+author: "Source Author"
 ---
 
 selection is a way of making value visible
@@ -179,10 +181,18 @@ Fields:
 | Field | Required | Value |
 |---|---:|---|
 | `type` | yes | `article` |
+| `url` | no | The source card's `url`, copied when it has one |
 | `Mine Collections` | yes | Target collection from sidebar drop as quoted Obsidian wikilink |
 | `Mine Related Notes` | yes | Source note block reference as quoted Obsidian wikilink |
 | `saved_at` | yes | Creation time |
 | `source` | yes | Literal `text-selection-extraction` |
+| `author` | no | The source card's `author`, copied when it has one |
+
+The example showed neither `url` nor `author` until 07.10.2026, while the
+code already copied both (`extract_text_selection_inner`). An extracted card
+without its own author still takes the source's for card associations
+([SPEC_CARD_ASSOCIATIONS.md](SPEC_CARD_ASSOCIATIONS.md), «Наследование
+автора»).
 
 The body contains the selected text snapshot only. It should not include a
 manual backlink paragraph because provenance already lives in `Mine Related

@@ -12,9 +12,12 @@ import type {
   TabBarState,
   TabBootstrap,
   TabId,
+  TabLocation,
   TabView,
   IndexedBlock,
   GridSnapshot,
+  CardAssociationKind,
+  CardAssociations,
   FeedOrder,
   SearchPageToken,
   SearchSnapshot,
@@ -208,17 +211,26 @@ export const listBlocks = () =>
   invoke<LightBlock[]>("list_blocks");
 
 export const listGridBlocks = (
-  current_tag?: string,
+  location: TabLocation,
   offset?: number,
   limit?: number,
   order?: FeedOrder,
 ) =>
   invoke<GridSnapshot>("list_grid_blocks", {
-    current_tag: current_tag ?? null,
+    location,
     offset: offset ?? null,
     limit: limit ?? null,
     order: order ?? null,
   });
+
+/** The open card's associations (SPEC_CARD_ASSOCIATIONS.md): `exclude_slugs`
+ *  are its Related notes, `expanded` the groups read past their first rows. */
+export const listCardAssociations = (
+  slug: string,
+  exclude_slugs: string[],
+  expanded: CardAssociationKind[],
+) =>
+  invoke<CardAssociations>("list_card_associations", { slug, exclude_slugs, expanded });
 
 export const searchGridBlocks = (
   current_tag: string | undefined,

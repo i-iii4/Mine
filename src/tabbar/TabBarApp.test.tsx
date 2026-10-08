@@ -48,7 +48,7 @@ function emitToPage(event: string, payload: unknown) {
 function barState(overrides: Partial<TabBarState> = {}): TabBarState {
   return {
     window_id: "w1",
-    tabs: [{ id: "a", space_name: "Mine", collection: null, live: true }],
+    tabs: [{ id: "a", space_name: "Mine", place: null, live: true }],
     active_tab: "a",
     sidebar: { width_px: 240, collapsed: false },
     fullscreen: false,
@@ -106,8 +106,8 @@ describe("tab bar page", () => {
 
     emitToPage("tabbar-state", barState({
       tabs: [
-        { id: "a", space_name: "Mine", collection: null, live: true },
-        { id: "b", space_name: "Archive", collection: "Posters", live: false },
+        { id: "a", space_name: "Mine", place: null, live: true },
+        { id: "b", space_name: "Archive", place: "Posters", live: false },
       ],
       active_tab: "b",
     }));
@@ -120,7 +120,7 @@ describe("tab bar page", () => {
     const answer = deferredBootstrap();
     render(<TabBarApp />);
 
-    emitToPage("tabbar-state", barState({ tabs: [{ id: "n", space_name: "Newer", collection: null, live: true }], active_tab: "n" }));
+    emitToPage("tabbar-state", barState({ tabs: [{ id: "n", space_name: "Newer", place: null, live: true }], active_tab: "n" }));
     await answer(barState());
 
     expect(screen.getByRole("tab", { name: /Newer/ })).toBeInTheDocument();

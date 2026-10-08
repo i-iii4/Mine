@@ -146,6 +146,7 @@ local-arena/
 │   │   ├── domain/             # Чистая бизнес-логика (без Tauri, без SQLite)
 │   │   │   ├── mod.rs
 │   │   │   ├── block.rs        # Block, BlockType, frontmatter parsing
+│   │   │   ├── card_association.rs # Правила связей карточек: автор, сайт, адрес (путь к mine-core)
 │   │   │   ├── channel.rs      # Channel (promoted tag)
 │   │   │   ├── collection.rs   # Collection helpers
 │   │   │   ├── markdown.rs     # Чистые Markdown-трансформации body
@@ -164,6 +165,7 @@ local-arena/
 │   │   │   ├── root_guard.rs   # Страж корня: массовые удаления только при живом корне с тем же vault_id
 │   │   │   ├── source_mutation.rs # Атомарные multi-file мутации source с rollback
 │   │   │   ├── block_queries.rs # Block read models + row hydration
+│   │   │   ├── card_associations.rs # Столбцы связей, унаследованный автор, группы открытой карточки
 │   │   │   ├── channel_index.rs # Collection persistence owner
 │   │   │   ├── vault_conflicts.rs # Vault filename conflict queries
 │   │   │   ├── projection.rs   # ProjectionRevision + atomic route snapshots
@@ -205,6 +207,7 @@ local-arena/
 │   │       ├── native_shell_smoke.rs # Packaged WKWebView IPC smoke report
 │   │       ├── window_chrome.rs # Заголовок пункта View по боковому меню последнего окна
 │   │       ├── blocks.rs       # → вызывает domain + storage
+│   │       ├── card_associations.rs # list_card_associations: связи открытой карточки
 │   │       ├── channels.rs     # list/create/delete/reorder channels
 │   │       ├── conflicts.rs    # Vault conflict resolution
 │   │       ├── clipper_recovery.rs # Recovery pending uploads расширения

@@ -18,7 +18,9 @@ function eventSink(register?: (listener: unknown) => void) {
   return { addListener: vi.fn((listener: unknown) => register?.(listener)) };
 }
 
-function background(apiMode: BrowserApiMode, options: { standaloneVault?: Record<string, unknown> } = {}) {
+type Fetch = (url: string, init?: { credentials?: string; signal?: AbortSignal }) => Promise<unknown>;
+
+function background(apiMode: BrowserApiMode, options: { standaloneVault?: Record<string, unknown>; fetch?: Fetch } = {}) {
   let receiveRuntimeMessage: MessageListener = () => undefined;
   const installListeners: Array<() => void> = [];
   let receiveNativeMessage: (message: Message) => void = () => undefined;
@@ -85,7 +87,9 @@ function background(apiMode: BrowserApiMode, options: { standaloneVault?: Record
     },
   };
 
+  const fetch = vi.fn(options.fetch ?? (async () => ({ ok: true, json: async () => ({ buildId: "worker-build", commit: "worker-commit" }) })));
   const context = createContext({
+    AbortController,
     MineStandaloneVault: options.standaloneVault,
     TextEncoder,
     URL,
@@ -95,9 +99,10 @@ function background(apiMode: BrowserApiMode, options: { standaloneVault?: Record
     importScripts: vi.fn(),
     setTimeout,
     clearTimeout,
-    fetch: vi.fn(async () => ({ ok: true, json: async () => ({ buildId: "worker-build", commit: "worker-commit" }) })),
+    fetch,
   });
   runInContext(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib/saveProtocol.js"), "utf8"), context);
+  runInContext(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib/youtubeSource.js"), "utf8"), context);
   runInContext(source, context);
 
   function dispatch(message: Message, sender: { url?: string; tab?: { id: number; windowId?: number } } = {}) {
@@ -116,6 +121,7 @@ function background(apiMode: BrowserApiMode, options: { standaloneVault?: Record
     createWindow,
     dispatch,
     disconnectNative,
+    fetch,
     nativePort,
     receiveNativeMessage: (message: Message) => receiveNativeMessage(message),
   };
@@ -233,6 +239,65 @@ describe("background browser API failures", () => {
 
     expect(request.keepAlive).toBe(true);
     await expect(request.response).resolves.toMatchObject({ ok: false, error: "tab API unavailable" });
+  });
+});
+
+// SPEC_CARD_ASSOCIATIONS.md, «Клиппер: канал YouTube».
+describe("YouTube channel of a clip", () => {
+  const oEmbed = `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent("https://www.youtube.com/watch?v=9KDDhAOyv9k")}`;
+  const ask = (sourceUrl: unknown) => ({ target: "background", action: "resolveYoutubeChannel", sourceUrl });
+
+  it("answers the channel handle oEmbed gives for the video, asked without cookies", async () => {
+    const worker = background("promise", { fetch: async () => ({ ok: true, json: async () => ({
+      author_name: "Kotecinho Channel", author_url: "https://www.youtube.com/@kotecinho",
+    }) }) });
+    const request = worker.dispatch(ask("https://youtu.be/9KDDhAOyv9k?si=tracking"));
+    expect(request.keepAlive).toBe(true);
+    await expect(request.response).resolves.toEqual({ channel: "@kotecinho" });
+    expect(worker.fetch).toHaveBeenCalledWith(oEmbed, expect.objectContaining({ credentials: "omit", signal: expect.anything() }));
+  });
+
+  it("answers no channel for an address that is not a YouTube video, without a request", async () => {
+    const worker = background("promise");
+    await expect(worker.dispatch(ask("https://example.com/watch?v=9KDDhAOyv9k")).response).resolves.toEqual({ channel: null });
+    await expect(worker.dispatch(ask(undefined)).response).resolves.toEqual({ channel: null });
+    expect(worker.fetch).not.toHaveBeenCalled();
+  });
+
+  it("answers no channel when oEmbed refuses the video", async () => {
+    const worker = background("promise", { fetch: async () => ({ ok: false, status: 401, json: async () => ({}) }) });
+    await expect(worker.dispatch(ask("https://www.youtube.com/watch?v=9KDDhAOyv9k")).response).resolves.toEqual({ channel: null });
+    expect(worker.fetch).toHaveBeenCalledOnce();
+  });
+
+  it("answers no channel when the request fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const worker = background("promise", { fetch: async () => { throw new Error("offline"); } });
+    await expect(worker.dispatch(ask("https://www.youtube.com/watch?v=9KDDhAOyv9k")).response).resolves.toEqual({ channel: null });
+    expect(warn).toHaveBeenCalledWith("[Mine] YouTube channel unavailable:", "offline");
+    warn.mockRestore();
+  });
+
+  it("gives up after the bound and answers no channel", async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const worker = background("promise", {
+        fetch: (_url, init) => new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        }),
+      });
+      const settled = vi.fn();
+      const answered = worker.dispatch(ask("https://www.youtube.com/watch?v=9KDDhAOyv9k")).response.then(settled);
+      await vi.advanceTimersByTimeAsync(2_999);
+      expect(settled).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await answered;
+      expect(settled).toHaveBeenCalledWith({ channel: null });
+    } finally {
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
   });
 });
 

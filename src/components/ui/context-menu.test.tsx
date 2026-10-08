@@ -1,5 +1,8 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
+
+import { subscribeContextMenus } from "@/lib/openMenus";
 
 import {
   ContextMenu,
@@ -76,5 +79,64 @@ describe("ContextMenu", () => {
       "data-[disabled]:text-tertiary-foreground",
       "data-[disabled]:[&_svg:not([class*='text-'])]:text-tertiary-foreground",
     );
+  });
+});
+
+// DESIGN_SYSTEM.md, «Открытое меню» (src/lib/openMenus.ts).
+describe("ContextMenu over the page", () => {
+  function renderContextMenu(under: { onPointerEnter?: () => void; onClick?: () => void } = {}) {
+    render(
+      <>
+        <button type="button" {...under}>Under the menu</button>
+        <ContextMenu>
+          <ContextMenuTrigger>Open context menu</ContextMenuTrigger>
+          <ContextMenuContent>
+            <ContextMenuItem>Action item</ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
+      </>,
+    );
+    fireEvent.contextMenu(screen.getByText("Open context menu"));
+    expect(screen.getByText("Action item")).toBeInTheDocument();
+    return screen.getByText("Under the menu");
+  }
+
+  it("lets the hover reach what lies under it", async () => {
+    const user = userEvent.setup();
+    const onPointerEnter = vi.fn();
+    const under = renderContextMenu({ onPointerEnter });
+
+    expect(document.body.style.pointerEvents).toBe("");
+    await user.hover(under);
+
+    expect(onPointerEnter).toHaveBeenCalled();
+    expect(screen.getByText("Action item")).toBeInTheDocument();
+  });
+
+  it("closes on a press outside without acting there", async () => {
+    const user = userEvent.setup();
+    const onClick = vi.fn();
+    const under = renderContextMenu({ onClick });
+
+    await user.click(under);
+
+    await waitFor(() => expect(screen.queryByText("Action item")).not.toBeInTheDocument());
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it("holds the pointer's answers while it is open (SPEC_CARD_STATES.md, С7.8)", async () => {
+    const user = userEvent.setup();
+    const listener = vi.fn();
+    const unsubscribe = subscribeContextMenus(listener);
+    try {
+      renderContextMenu();
+      expect(listener).toHaveBeenLastCalledWith(true);
+
+      await user.keyboard("{Escape}");
+
+      await waitFor(() => expect(listener).toHaveBeenLastCalledWith(false));
+    } finally {
+      unsubscribe();
+    }
   });
 });

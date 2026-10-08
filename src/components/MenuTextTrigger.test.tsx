@@ -1,11 +1,6 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 import { MenuTextTrigger } from "./MenuTextTrigger";
-
-// The trigger's box in the viewport, and a point in it and one outside.
-const TRIGGER_BOX = { left: 10, top: 0, right: 110, bottom: 24, width: 100, height: 24, x: 10, y: 0, toJSON: () => ({}) };
-const INSIDE = { clientX: 50, clientY: 12 };
-const OUTSIDE = { clientX: 400, clientY: 300 };
 
 function renderChevronTrigger(menuState: "open" | "closed", surface: "topChrome" | "clipperHeader" = "topChrome") {
   const element = (state: "open" | "closed") => (
@@ -13,7 +8,6 @@ function renderChevronTrigger(menuState: "open" | "closed", surface: "topChrome"
   );
   const view = render(element(menuState));
   const trigger = screen.getByRole("button", { name: "Switch collection" });
-  trigger.getBoundingClientRect = () => TRIGGER_BOX;
   return { ...view, trigger, setState: (state: "open" | "closed") => view.rerender(element(state)) };
 }
 
@@ -90,100 +84,16 @@ describe("MenuTextTrigger in the top chrome with its menu open", () => {
     expect(chevron?.parentElement).toHaveAttribute("data-chrome-plate");
   });
 
-  it("keeps the plate lit while the pointer stays over it through the click that closes the menu", () => {
+  it("keeps the plate lit from the open menu, and from hover through the click that closes it", () => {
     const { trigger, setState } = renderChevronTrigger("closed");
     setState("open");
     expect(trigger).toHaveAttribute("data-state", "open");
-    // The plate lights from the flag exactly as from hover and the open menu.
+    // No menu is modal, so the trigger keeps its hover under its own open
+    // menu (src/lib/openMenus.ts): hover and the open state are the plate's
+    // only lights.
     expect(trigger.querySelector("[data-chrome-plate]")).toHaveClass(
       "group-hover:state-active",
-      "group-data-[pointer-inside]:state-active",
-      "group-data-[pointer-inside]:text-foreground",
       "group-data-[state=open]:state-active",
     );
-
-    // The modal menu hides the trigger from hit testing: the pointer is
-    // followed by geometry from the document.
-    fireEvent.pointerMove(document.body, INSIDE);
-    expect(trigger).toHaveAttribute("data-pointer-inside");
-    // The closing press lands on the page root, over the trigger's box.
-    fireEvent.pointerDown(document.documentElement, INSIDE);
-    setState("closed");
-    expect(trigger).toHaveAttribute("data-state", "closed");
-    expect(trigger).toHaveAttribute("data-pointer-inside");
-    fireEvent.pointerUp(document.documentElement, INSIDE);
-    fireEvent.pointerMove(document.body, { clientX: 60, clientY: 12 });
-    expect(trigger).toHaveAttribute("data-pointer-inside");
-
-    // Leaving ends it, and the listeners go with it.
-    fireEvent.pointerMove(document.body, OUTSIDE);
-    expect(trigger).not.toHaveAttribute("data-pointer-inside");
-    fireEvent.pointerMove(document.body, INSIDE);
-    expect(trigger).not.toHaveAttribute("data-pointer-inside");
-  });
-
-  it("goes off on close when the pointer is elsewhere, and stops following", () => {
-    const { trigger, setState } = renderChevronTrigger("closed");
-    setState("open");
-    fireEvent.pointerMove(document.body, INSIDE);
-    // A click outside the trigger closes the menu.
-    fireEvent.pointerDown(document.documentElement, OUTSIDE);
-    setState("closed");
-    expect(trigger).not.toHaveAttribute("data-pointer-inside");
-    fireEvent.pointerMove(document.body, INSIDE);
-    expect(trigger).not.toHaveAttribute("data-pointer-inside");
-  });
-
-  it("goes off on a keyboard close when the pointer never was over it", () => {
-    const { trigger, setState } = renderChevronTrigger("closed");
-    setState("open");
-    expect(trigger).not.toHaveAttribute("data-pointer-inside");
-    setState("closed");
-    fireEvent.pointerMove(document.body, INSIDE);
-    expect(trigger).not.toHaveAttribute("data-pointer-inside");
-  });
-
-  it("starts lit when the menu opens under the pointer", () => {
-    const { trigger, setState } = renderChevronTrigger("closed");
-    const matches = trigger.matches.bind(trigger);
-    vi.spyOn(trigger, "matches").mockImplementation((selector) => selector === ":hover" || matches(selector));
-    setState("open");
-    expect(trigger).toHaveAttribute("data-pointer-inside");
-  });
-
-  it("lets go when the pointer leaves the page", () => {
-    const { trigger, setState } = renderChevronTrigger("closed");
-    setState("open");
-    fireEvent.pointerMove(document.body, INSIDE);
-    setState("closed");
-    expect(trigger).toHaveAttribute("data-pointer-inside");
-    fireEvent.pointerOut(document.body, { relatedTarget: null });
-    expect(trigger).not.toHaveAttribute("data-pointer-inside");
-  });
-
-  it("keeps no hover for a touch", () => {
-    const { trigger, setState } = renderChevronTrigger("closed");
-    setState("open");
-    fireEvent.pointerMove(document.body, { ...INSIDE, pointerType: "touch" });
-    expect(trigger).not.toHaveAttribute("data-pointer-inside");
-  });
-
-  it("removes its listeners when the trigger goes away", () => {
-    const { trigger, setState, unmount } = renderChevronTrigger("closed");
-    setState("open");
-    fireEvent.pointerMove(document.body, INSIDE);
-    setState("closed");
-    const removed = vi.spyOn(document, "removeEventListener");
-    unmount();
-    const types = removed.mock.calls.map(([type]) => type);
-    expect(types).toEqual(expect.arrayContaining(["pointermove", "pointerdown", "pointerup", "pointerout"]));
-    expect(trigger).not.toHaveAttribute("data-pointer-inside");
-    removed.mockRestore();
-  });
-
-  it("follows the pointer only in the top chrome", () => {
-    const { trigger } = renderChevronTrigger("open", "clipperHeader");
-    fireEvent.pointerMove(document.body, INSIDE);
-    expect(trigger).not.toHaveAttribute("data-pointer-inside");
   });
 });

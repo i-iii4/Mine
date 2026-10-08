@@ -45,7 +45,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { NAME_REFUSED_SHAKE_MS, useNameEdit, type NameEdit } from "@/hooks/useNameEdit";
 import { collectionRefLabel } from "@/lib/collections";
 import { SIDEBAR_ROW_HOVER_SEAM_ENABLED } from "@/lib/featureFlags";
-import { getHoverPreviewOpenDelay } from "@/lib/hoverPreviewTiming";
 import {
   buildSidebarRowOrder,
   filterSidebarTags,
@@ -69,8 +68,8 @@ import {
 } from "@/lib/collectionHover";
 import { scheduleAfterOptimisticUiUpdate } from "@/lib/groupSelection";
 import { publishCollectionOrder } from "@/lib/cardCollections";
-import { HOVER_INTENT } from "@/lib/hoverIntent";
 import { HoverIntentDragWatch, useHoverIntent } from "@/hooks/useHoverIntent";
+import { useHoverPreviewOpener } from "@/hooks/useHoverPreviewOpener";
 import { TopFadeScrim } from "./TopFadeScrim";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { ReadOnlyCardPreview } from "./Card";
@@ -330,9 +329,7 @@ const SidebarCore = memo(function SidebarCore({
   const topFade = useTopFadeMask(navRef, scrollEdgeFade);
   const previewTriggerRefs = useRef(new Map<string, HTMLElement>());
   const previewRef = useRef<HTMLDivElement | null>(null);
-  const previewOpenTimerRef = useRef<number | null>(null);
   const previewCloseTimerRef = useRef<number | null>(null);
-  const lastPreviewOpenedAtRef = useRef<number | null>(null);
   const lastPointerPointRef = useRef<CardMenuPoint | null>(null);
   const previousHoverPreviewFrozenRef = useRef(hoverPreviewFrozen);
   // Mirror the live drag state so the deferred open timer can read the current
@@ -376,6 +373,8 @@ const SidebarCore = memo(function SidebarCore({
   const rowIntent = useHoverIntent(({ chosen }) => {
     setHoveredCollectionRow(feedRowKey(chosen));
   });
+  // The big preview's delay, resting pointer and warm window (С7.10).
+  const previewOpener = useHoverPreviewOpener(rowIntent.isSlow);
   // The row under the pointer, set on every move without delay or speed gate.
   // After the list scrolls, a report at the pointer's same point is the list
   // moving, not the pointer (WebKit repeats it): no row lights until the
@@ -522,13 +521,6 @@ const SidebarCore = memo(function SidebarCore({
       previewTriggerRefs.current.set(key, node);
     } else {
       previewTriggerRefs.current.delete(key);
-    }
-  }, []);
-
-  const clearPreviewOpenTimer = useCallback(() => {
-    if (previewOpenTimerRef.current !== null) {
-      window.clearTimeout(previewOpenTimerRef.current);
-      previewOpenTimerRef.current = null;
     }
   }, []);
 
@@ -687,10 +679,10 @@ const SidebarCore = memo(function SidebarCore({
   }, [clearSidebarKeyboardFocusTimer]);
 
   const closePreview = useCallback(() => {
-    clearPreviewOpenTimer();
+    previewOpener.hide();
     clearPreviewCloseTimer();
     setHoveredPreview(null);
-  }, [clearPreviewCloseTimer, clearPreviewOpenTimer]);
+  }, [clearPreviewCloseTimer, previewOpener]);
 
   const requestPreviewClose = useCallback(() => {
     if (hoverPreviewFrozen) return;
@@ -716,37 +708,16 @@ const SidebarCore = memo(function SidebarCore({
   const schedulePreviewOpen = useCallback((target: SidebarPreviewTarget) => {
     if (hoverPreviewFrozen) return;
     if (isDropDraggingRef.current || isTagDraggingRef.current) return;
-    clearPreviewOpenTimer();
     clearPreviewCloseTimer();
     setHoveredPreview(null);
-    // The big preview also waits for a slow pointer (С7.10): past its delay,
-    // a pointer still sweeping the row is checked again a moment later.
-    const openWhenSlow = () => {
-      if (rowIntent.isSlow()) {
-        openPreview(target);
-        return;
-      }
-      previewOpenTimerRef.current = window.setTimeout(() => {
-        previewOpenTimerRef.current = null;
-        openWhenSlow();
-      }, HOVER_INTENT.velocityWindowMs);
-    };
-    const delay = getHoverPreviewOpenDelay(lastPreviewOpenedAtRef.current);
-    if (delay <= 0) {
-      openWhenSlow();
-      return;
-    }
-    previewOpenTimerRef.current = window.setTimeout(() => {
-      previewOpenTimerRef.current = null;
-      openWhenSlow();
-    }, delay);
-  }, [clearPreviewCloseTimer, clearPreviewOpenTimer, hoverPreviewFrozen, openPreview, rowIntent]);
+    previewOpener.request(() => openPreview(target));
+  }, [clearPreviewCloseTimer, hoverPreviewFrozen, openPreview, previewOpener]);
 
   useEffect(() => {
     if (hoverPreviewFrozen) {
-      clearPreviewOpenTimer();
+      previewOpener.cancel();
     }
-  }, [clearPreviewOpenTimer, hoverPreviewFrozen]);
+  }, [hoverPreviewFrozen, previewOpener]);
 
   const pointerIsInsidePreviewTrigger = useCallback((target: SidebarPreviewTarget) => {
     const point = lastPointerPointRef.current;
@@ -780,7 +751,7 @@ const SidebarCore = memo(function SidebarCore({
 
   const openPreviewCardMenu = useCallback((target: SidebarPreviewTarget, point: CardMenuPoint) => {
     if (!onOpenCardMenu) return;
-    clearPreviewOpenTimer();
+    previewOpener.cancel();
     clearPreviewCloseTimer();
     void getBlock(target.slug)
       .then((block) => {
@@ -791,13 +762,12 @@ const SidebarCore = memo(function SidebarCore({
       .catch((error) => {
         void error;
       });
-  }, [clearPreviewCloseTimer, clearPreviewOpenTimer, onOpenCardMenu]);
+  }, [clearPreviewCloseTimer, onOpenCardMenu, previewOpener]);
 
   useEffect(() => () => {
-    clearPreviewOpenTimer();
     clearPreviewCloseTimer();
     clearSidebarRowSwitchFrame();
-  }, [clearPreviewCloseTimer, clearPreviewOpenTimer, clearSidebarRowSwitchFrame]);
+  }, [clearPreviewCloseTimer, clearSidebarRowSwitchFrame]);
 
   useEffect(() => {
     if (!hoveredPreview) {
@@ -823,9 +793,6 @@ const SidebarCore = memo(function SidebarCore({
     void getBlock(hoveredPreview.slug)
       .then((block) => {
         if (cancelled) return;
-        if (block) {
-          lastPreviewOpenedAtRef.current = Date.now();
-        }
         setHoverPreviewBlock(block);
       })
       .catch(() => {

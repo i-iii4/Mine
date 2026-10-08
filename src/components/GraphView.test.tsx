@@ -11,6 +11,8 @@ import type {
   LightBlock,
 } from "@/types";
 import { GraphView, type GraphViewHandle } from "./GraphView";
+import { HOVER_INTENT } from "@/lib/hoverIntent";
+import { HOVER_PREVIEW_COLD_OPEN_DELAY_MS, HOVER_PREVIEW_WARM_WINDOW_MS } from "@/lib/hoverPreviewTiming";
 
 type MockGraphNode = GraphNode & {
   x?: number;
@@ -103,9 +105,19 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
   revealItemInDir: vi.fn(),
 }));
 
-vi.mock("@/lib/hoverPreviewTiming", () => ({
-  getHoverPreviewOpenDelay: vi.fn(() => 0),
-}));
+// A card's preview opens at once, except in the test of its timing, which runs
+// the shared rule itself.
+const previewTimingMocks = vi.hoisted(() => ({ real: false }));
+vi.mock("@/lib/hoverPreviewTiming", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/hoverPreviewTiming")>();
+  class TestHoverPreviewOpener extends actual.HoverPreviewOpener {
+    override request(show: () => void) {
+      if (previewTimingMocks.real) super.request(show);
+      else show();
+    }
+  }
+  return { ...actual, HoverPreviewOpener: TestHoverPreviewOpener };
+});
 
 vi.mock("react-force-graph-2d", async () => {
   const React = await import("react");
@@ -754,6 +766,62 @@ describe("GraphView", () => {
 
     expect(commandMocks.getBlock).not.toHaveBeenCalledWith(beta.slug);
     expect(container.querySelector("[data-graph-card-hover-preview]")).toBeInTheDocument();
+  });
+
+  it("times a card's preview by the shared card preview rule", async () => {
+    const alpha = makeBlock({ slug: "alpha-card", title: "Alpha card" });
+    const beta = makeBlock({ id: 2, slug: "beta-card", title: "Beta card" });
+    const cardNode = (block: LightBlock): GraphNode => ({
+      id: `card:${block.slug}`,
+      kind: "card",
+      label: block.title ?? block.slug,
+      slug: block.slug,
+      collection_ref: null,
+      card_kind: "article",
+      block_type: "article",
+      thumbnail: null,
+      preview_manifest: null,
+      degree: 1,
+    });
+    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes([cardNode(alpha), cardNode(beta)]));
+    const { container } = renderGraph({ loadedBlocks: [alpha, beta] });
+    const alphaNode = await screen.findByRole("button", { name: "Alpha card" });
+    const betaNode = screen.getByRole("button", { name: "Beta card" });
+    const preview = () => container.querySelector("[data-graph-card-hover-preview]");
+    const settle = async (ms: number) => {
+      await act(async () => {
+        vi.advanceTimersByTime(ms);
+        await Promise.resolve();
+      });
+    };
+
+    previewTimingMocks.real = true;
+    vi.useFakeTimers({
+      toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "performance", "Date", "requestAnimationFrame", "cancelAnimationFrame"],
+    });
+    try {
+      // The graph feeds the pointer's speed: a pointer still moving over the
+      // node past the delay opens nothing until it rests.
+      fireEvent.mouseEnter(alphaNode);
+      for (let elapsed = 0; elapsed < HOVER_PREVIEW_COLD_OPEN_DELAY_MS + 100; elapsed += 16) {
+        await settle(16);
+        fireEvent.pointerMove(alphaNode, { clientX: 100 + elapsed, clientY: 10 });
+      }
+      expect(preview()).toBeNull();
+      await settle(HOVER_INTENT.velocityWindowMs * 2);
+      expect(preview()).toBeInTheDocument();
+
+      // Read long past the warm window, it hands over to the next node at once.
+      await settle(HOVER_PREVIEW_WARM_WINDOW_MS * 3);
+      fireEvent.mouseLeave(alphaNode);
+      expect(preview()).toBeNull();
+      fireEvent.mouseEnter(betaNode);
+      await settle(0);
+      expect(preview()).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+      previewTimingMocks.real = false;
+    }
   });
 
   it("reheats the force simulation when hover preview freeze is released", async () => {

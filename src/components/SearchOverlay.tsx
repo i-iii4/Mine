@@ -142,7 +142,7 @@ export function SearchOverlay({
       const sequence = ++requestSequenceRef.current;
       const queryKey = searchQuery ?? "";
       const request = searchQuery === null
-        ? listGridBlocks(undefined, 0, SEARCH_OVERLAY_RECENT_LIMIT)
+        ? listGridBlocks({ kind: "everything" }, 0, SEARCH_OVERLAY_RECENT_LIMIT)
         : searchGridBlocks(undefined, searchQuery, SEARCH_OVERLAY_RESULT_LIMIT);
       void request
         .then((snapshot) => {

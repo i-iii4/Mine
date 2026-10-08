@@ -23,6 +23,7 @@ use crate::domain::channel::Channel;
 #[cfg(test)]
 use crate::domain::search::{SearchFilter, SearchQuery};
 use crate::domain::vault::{validate_slug, VaultLayout};
+use crate::storage::card_associations;
 use crate::storage::db;
 use crate::storage::media_dimensions::{
     build_media_dimensions_json, build_media_dimensions_json_from_sources,
@@ -1422,6 +1423,7 @@ fn upsert_block_inner(
         )
         .ok();
 
+    let is_new_row = existing_row.is_none();
     let existing_dims = existing_row.as_ref().and_then(|(dims, _)| *dims);
     let existing_thumb_format = existing_row.and_then(|(_, thumb_format)| thumb_format);
 
@@ -1613,14 +1615,32 @@ fn upsert_block_inner(
         .context("failed to insert related-note link")?;
     }
 
+    // Card associations (SPEC_CARD_ASSOCIATIONS.md): this row's keys, then
+    // the cards extracted from it when its author changed or its name is
+    // new and may now resolve their source links.
+    let author_change = card_associations::write_row_keys(conn, block_id, block)?;
+    if is_new_row || author_change.changed() {
+        if let Some(name) = mine_core::links::note_name_key(&block.slug) {
+            card_associations::refresh_inherited_authors(conn, &[name])?;
+        }
+    }
+
     Ok(block_id)
 }
 
 /// Remove a block from the index by slug. Returns true if a block was removed.
 pub fn remove_block(conn: &Connection, slug: &str) -> Result<bool> {
+    let name = card_associations::note_name_of(conn, slug)?;
     let count = conn
         .execute("DELETE FROM blocks WHERE slug = ?1", [slug])
         .context("failed to delete block")?;
+    // Cards extracted from it lose the author they took from it, or take the
+    // one of a note their link names now.
+    if count > 0 {
+        if let Some(name) = name {
+            card_associations::refresh_inherited_authors(conn, &[name])?;
+        }
+    }
     Ok(count > 0)
 }
 
@@ -2519,12 +2539,20 @@ pub fn rename_slug(conn: &Connection, old_slug: &str, new_slug: &str) -> Result<
         anyhow::bail!("rename target slug '{}' already exists in index", new_slug);
     }
 
+    let old_name = card_associations::note_name_of(conn, old_slug)?;
     let affected = conn
         .execute(
             "UPDATE blocks SET slug = ?1, indexed_at = datetime('now') WHERE slug = ?2",
             params![new_slug, old_slug],
         )
         .context("failed to update slug")?;
+    if affected > 0 {
+        // Source links name notes by path: the old name may stop resolving,
+        // the new one may start.
+        let new_name = card_associations::write_note_name(conn, new_slug)?;
+        let names: Vec<String> = old_name.into_iter().chain(new_name).collect();
+        card_associations::refresh_inherited_authors(conn, &names)?;
+    }
     Ok(affected > 0)
 }
 
@@ -3324,7 +3352,7 @@ mod tests {
         }
         let slugs = |order: FeedOrder, offset: usize, limit: usize| {
             let (blocks, has_more) =
-                list_grid_blocks_in_order(&conn, None, offset, limit, order).unwrap();
+                list_grid_blocks_in_order(&conn, &crate::domain::windows::TabLocation::Everything, offset, limit, order).unwrap();
             (blocks.into_iter().map(|block| block.slug).collect::<Vec<_>>(), has_more)
         };
 
@@ -3381,7 +3409,10 @@ mod tests {
                 .clone()
         };
         let feed = |tag: Option<&str>| {
-            read_grid_snapshot(&conn, tag, 0, 10, FeedOrder::Newest).unwrap().blocks
+            let location = tag.map_or(crate::domain::windows::TabLocation::Everything, |tag: &str| {
+                crate::domain::windows::TabLocation::Collection { tag: tag.to_string() }
+            });
+            read_grid_snapshot(&conn, &location, 0, 10, FeedOrder::Newest).unwrap().blocks
         };
         let sidebar_order = ["Zines", "Art", "Cities", "Pageless"];
 

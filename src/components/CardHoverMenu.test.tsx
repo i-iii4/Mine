@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CardHoverMenu, CardMoreMenu, CardPointMenu } from "./CardHoverMenu";
@@ -302,36 +303,72 @@ describe("CardHoverMenu", () => {
   });
 
   it("captures the first outside click on CardPointMenu before it reaches the app", async () => {
+    const user = userEvent.setup();
     const onOpenChange = vi.fn();
+    const onAppPointerEnter = vi.fn();
+    const onAppClick = vi.fn();
 
     render(
-      <CardPointMenu
-        block={makeBlock()}
-        vaultPath="/vault"
-        tags={[]}
-        x={144}
-        y={188}
-        openRequestSequence={1}
-        onToggleTag={vi.fn()}
-        onCreateAndAssign={vi.fn()}
-        onRequestRename={vi.fn()}
-        onRequestDelete={vi.fn()}
-        onOpenChange={onOpenChange}
-      />,
+      <>
+        <button type="button" onPointerEnter={onAppPointerEnter} onClick={onAppClick}>
+          App control
+        </button>
+        <CardPointMenu
+          block={makeBlock()}
+          vaultPath="/vault"
+          tags={[]}
+          x={144}
+          y={188}
+          openRequestSequence={1}
+          onToggleTag={vi.fn()}
+          onCreateAndAssign={vi.fn()}
+          onRequestRename={vi.fn()}
+          onRequestDelete={vi.fn()}
+          onOpenChange={onOpenChange}
+        />
+      </>,
     );
 
     expect(await screen.findByText("Connect")).toBeInTheDocument();
+    // No layer covers the window: the app still answers the hover.
+    await user.hover(screen.getByText("App control"));
+    expect(onAppPointerEnter).toHaveBeenCalled();
 
-    const dismissLayer = document.querySelector("[data-card-point-menu-dismiss-layer]");
-    expect(dismissLayer).toBeInTheDocument();
-    fireEvent.pointerDown(dismissLayer!);
-    fireEvent.pointerUp(dismissLayer!);
-    fireEvent.click(dismissLayer!);
+    await user.click(screen.getByText("App control"));
 
     await waitFor(() => {
       expect(onOpenChange).toHaveBeenCalledWith(false);
       expect(screen.queryByText("Connect")).not.toBeInTheDocument();
     });
+    expect(onAppClick).not.toHaveBeenCalled();
+  });
+
+  it("keeps the card held by the menu it opened while the pointer goes elsewhere", async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <>
+        <button type="button">Elsewhere</button>
+        <CardHoverMenu
+          block={makeBlock()}
+          vaultPath="/vault"
+          tags={[]}
+          onToggleTag={vi.fn()}
+          onCreateAndAssign={vi.fn()}
+          onRequestRename={vi.fn()}
+          onRequestDelete={vi.fn()}
+        />
+      </>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Card actions" }));
+    expect(await screen.findByText("Rename…")).toBeInTheDocument();
+    await user.hover(screen.getByText("Elsewhere"));
+
+    // A pointer-opened menu holds the card's buttons and its bottom row,
+    // which carries the lift (SPEC_CARD_STATES.md, С8).
+    expect(container.querySelector("[data-card-hover-more-action]")).toHaveClass("pointer-events-auto", "opacity-100");
+    expect(container.querySelector("[data-card-hover-bottom-actions]")).toHaveClass("pointer-events-auto", "opacity-100");
+    expect(screen.getByText("Rename…")).toBeInTheDocument();
   });
 
   it("closes the overflow menu from Command-K inside the menu surface", async () => {

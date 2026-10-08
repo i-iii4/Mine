@@ -6,6 +6,7 @@ import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui"
 
 import { MenuIconSlot } from "@/components/ui/menu-icon-slot"
 import { FLOATING_LAYER_EDGE_PX, useHeldMenuWidth } from "@/lib/floatingLayer"
+import { useMenuSurface } from "@/lib/openMenus"
 import { cn } from "@/lib/utils"
 
 
@@ -25,10 +26,14 @@ function DropdownMenuPortalContainerProvider({
   )
 }
 
+// Never modal: a modal menu turns the pointer off for everything under it, and
+// the hover with it. src/lib/openMenus.ts keeps the rest of what modal did.
 function DropdownMenu({
   ...props
-}: React.ComponentProps<typeof DropdownMenuPrimitive.Root>) {
-  return <DropdownMenuPrimitive.Root data-slot="dropdown-menu" {...props} />
+}: Omit<React.ComponentProps<typeof DropdownMenuPrimitive.Root>, "modal"> & {
+  modal?: false
+}) {
+  return <DropdownMenuPrimitive.Root data-slot="dropdown-menu" {...props} modal={false} />
 }
 
 function DropdownMenuPortal({
@@ -85,9 +90,12 @@ function DropdownMenuContent({
   sideOffset = 4,
   collisionPadding = FLOATING_LAYER_EDGE_PX,
   ref,
+  onPointerDownOutside,
+  onCloseAutoFocus,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Content>) {
-  const holdWidth = useHeldMenuWidth(ref)
+  const surface = useMenuSurface("dropdown", ref, { onPointerDownOutside, onCloseAutoFocus })
+  const holdWidth = useHeldMenuWidth(surface.ref)
   return (
     <DropdownMenuPortal>
       <DropdownMenuPrimitive.Content
@@ -96,6 +104,8 @@ function DropdownMenuContent({
         data-floating-menu=""
         sideOffset={sideOffset}
         collisionPadding={collisionPadding}
+        onPointerDownOutside={surface.onPointerDownOutside}
+        onCloseAutoFocus={surface.onCloseAutoFocus}
         className={cn(
           "bg-card text-card-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 max-h-(--radix-dropdown-menu-content-available-height) origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-1 border p-1 shadow-md",
           className

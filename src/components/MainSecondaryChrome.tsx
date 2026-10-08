@@ -97,11 +97,15 @@ function MainSecondaryStatsLeft({
 function MainSecondaryStatsRight({
   stats,
   viewMode,
+  viewModeSwitch = true,
   onViewModeChange,
   afterPath = false,
 }: {
   stats: VaultStats | null;
   viewMode: MainViewMode;
+  /// Whether the place has a graph to switch to: an author's feed is a grid
+  /// only (SPEC_CARD_ASSOCIATIONS.md, «Лента автора»).
+  viewModeSwitch?: boolean;
   onViewModeChange: (value: MainViewMode) => void;
   /// Right after the path's last pill in the row above (interface version 2):
   /// 12 px, so the count stands 20 px from the chevron, the gap between the
@@ -125,7 +129,7 @@ function MainSecondaryStatsRight({
         className="flex h-full min-w-0 items-center justify-end font-mono text-sm leading-none text-tertiary-foreground"
       >
         <ChromeActions data-main-view-mode-switcher="" data-feed-display={feedDisplay ? "" : undefined}>
-          <MainViewModeTabs value={viewMode} onChange={onViewModeChange} />
+          {viewModeSwitch && <MainViewModeTabs value={viewMode} onChange={onViewModeChange} />}
           {feedDisplay && <FeedDisplayMenu />}
         </ChromeActions>
       </div>
@@ -147,10 +151,12 @@ function MainSecondaryStatsRight({
           {cardCount}
         </span>
       )}
-      <div className="flex shrink-0 items-center gap-2" data-main-view-mode-switcher="">
-        <span className="shrink-0 font-mono text-sm text-tertiary-foreground">View:</span>
-        <MainViewModeTabs value={viewMode} onChange={onViewModeChange} />
-      </div>
+      {viewModeSwitch && (
+        <div className="flex shrink-0 items-center gap-2" data-main-view-mode-switcher="">
+          <span className="shrink-0 font-mono text-sm text-tertiary-foreground">View:</span>
+          <MainViewModeTabs value={viewMode} onChange={onViewModeChange} />
+        </div>
+      )}
       {/* On the Mine button's axis: the same icon button and edge inset as
           the logo in the row above (SPEC_FEED_DISPLAY.md, Д1). */}
       {feedDisplay && (
@@ -237,6 +243,7 @@ export function MainSecondaryTopBar({
   detailBlock,
   detailEntered,
   viewMode,
+  viewModeSwitch = true,
   onViewModeChange,
   vaultPath,
   tags,
@@ -274,6 +281,8 @@ export function MainSecondaryTopBar({
   detailBlock?: LightBlock | IndexedBlock | null;
   detailEntered?: boolean;
   viewMode: MainViewMode;
+  /// Whether `Grid / Graph` is offered: not in an author's feed.
+  viewModeSwitch?: boolean;
   onViewModeChange: (value: MainViewMode) => void;
   vaultPath: string;
   tags: TagCount[];
@@ -372,6 +381,7 @@ export function MainSecondaryTopBar({
         <MainSecondaryStatsRight
           stats={stats}
           viewMode={viewMode}
+          viewModeSwitch={viewModeSwitch}
           onViewModeChange={onViewModeChange}
           afterPath={part === "content"}
         />

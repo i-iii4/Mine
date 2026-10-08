@@ -43,6 +43,10 @@ type CollectionSwitcherItem = {
 
 interface TopCollectionSwitcherProps {
   currentTag?: string;
+  /// The author whose cards the feed shows, as written on the card the
+  /// person came from: the path names it, and no listed place is current
+  /// (SPEC_CARD_ASSOCIATIONS.md, «Лента автора»).
+  currentAuthor?: string;
   orderedTags: readonly TagCount[];
   onNavigate: (tag?: string) => void;
   onCreateCollection: (tag: string) => void | Promise<void>;
@@ -53,16 +57,19 @@ interface TopCollectionSwitcherProps {
   joinsNext?: boolean;
 }
 
-function currentCollectionLabel(currentTag?: string): string {
+function currentPlaceLabel(currentTag?: string, currentAuthor?: string): string {
+  if (currentAuthor !== undefined) return currentAuthor;
   return currentTag ? collectionRefLabel(currentTag) : "Everything";
 }
 
-function collectionKey(tag?: string): string {
-  return tag ? `tag:${tag}` : "__all__";
+function currentPlaceKey(currentTag?: string, currentAuthor?: string): string {
+  if (currentAuthor !== undefined) return `author:${currentAuthor}`;
+  return currentTag ? `tag:${currentTag}` : "__all__";
 }
 
 export function TopCollectionSwitcher({
   currentTag,
+  currentAuthor,
   orderedTags,
   onNavigate,
   onCreateCollection,
@@ -84,8 +91,8 @@ export function TopCollectionSwitcher({
   });
   // The menu lines up with the trigger's plate, not with its box.
   const menuAlignOffset = useMenuAlignToPlate(topChromeTrigger.triggerProps.ref, open);
-  const currentKey = collectionKey(currentTag);
-  const label = currentCollectionLabel(currentTag);
+  const currentKey = currentPlaceKey(currentTag, currentAuthor);
+  const label = currentPlaceLabel(currentTag, currentAuthor);
   const trimmedQuery = query.trim().replace(/\s+/g, " ");
 
   const items = useMemo<CollectionSwitcherItem[]>(() => {

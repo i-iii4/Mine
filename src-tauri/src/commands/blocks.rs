@@ -428,14 +428,15 @@ pub async fn list_blocks(webview: tauri::Webview, app: AppHandle) -> Result<Vec<
     .map_err(|error| CommandError::Internal(format!("list_blocks task join failed: {error}")))?
 }
 
-/// List only the blocks required by the current grid route, plus the total
-/// non-channel block count for the sidebar "Everything" row.
+/// List only the blocks required by the place the feed shows (Everything, a
+/// collection or an author), plus the total non-channel block count for the
+/// sidebar "Everything" row.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn list_grid_blocks(
     webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
-    current_tag: Option<String>,
+    location: crate::domain::windows::TabLocation,
     offset: Option<usize>,
     limit: Option<usize>,
     order: Option<crate::storage::block_queries::FeedOrder>,
@@ -444,8 +445,8 @@ pub async fn list_grid_blocks(
         &app,
         "list_grid_blocks",
         &format!(
-            "start tag={} offset={} limit={}",
-            current_tag.as_deref().unwrap_or("__all__"),
+            "start place={} offset={} limit={}",
+            location.label().unwrap_or("__all__"),
             offset.unwrap_or(0),
             limit.unwrap_or(200)
         ),
@@ -455,13 +456,12 @@ pub async fn list_grid_blocks(
     let page_offset = offset.unwrap_or(0);
     let page_limit = limit.unwrap_or(200).max(1);
     let app_for_query = app.clone();
-    let current_tag_for_task = current_tag.clone();
     let snapshot =
         tauri::async_runtime::spawn_blocking(move || -> Result<GridSnapshot, CommandError> {
             read_owned_projection(&app_for_query, &vault, |conn| {
                 Ok(projection::read_grid_snapshot(
                     conn,
-                    current_tag_for_task.as_deref(),
+                    &location,
                     page_offset,
                     page_limit,
                     order.unwrap_or_default(),
@@ -1516,7 +1516,9 @@ fn extract_inline_media_inner(
             related_notes: vec![source_link],
             source_media: Some(media_link),
             saved_at,
-            source: Some("inline-media-extraction".to_string()),
+            source: Some(
+                crate::domain::card_association::INLINE_MEDIA_EXTRACTION_SOURCE.to_string(),
+            ),
             width: None,
             height: None,
             author: None,
@@ -1738,7 +1740,9 @@ fn extract_text_selection_inner(
             related_notes: vec![format!("{}#^{}", source_link, block_id)],
             source_media: None,
             saved_at,
-            source: Some("text-selection-extraction".to_string()),
+            source: Some(
+                crate::domain::card_association::TEXT_SELECTION_EXTRACTION_SOURCE.to_string(),
+            ),
             width: None,
             height: None,
             author: source_block.frontmatter.author.clone(),

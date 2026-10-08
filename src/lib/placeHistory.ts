@@ -1,10 +1,13 @@
 // The places a tab went through, for the tab bar's back and forward buttons
-// (SPEC_TABS.md, В81). A place is where the tab stands: Everything or a
-// collection, and the card open there, if any.
+// (SPEC_TABS.md, В81). A place is where the tab stands: Everything, a
+// collection or an author's cards, and the card open there, if any.
 
-/** Where a tab stands: the collection (`null` for Everything) and the open card. */
+import type { TabLocation } from "@/types";
+import { placeKey } from "./tabPage";
+
+/** Where a tab stands: its place in the space and the open card. */
 export interface Place {
-  tag: string | null;
+  location: TabLocation;
   card: string | null;
 }
 
@@ -21,7 +24,7 @@ export const PLACE_HISTORY_LIMIT = 100;
 export const EMPTY_PLACE_HISTORY: PlaceHistory = { entries: [], index: -1 };
 
 export function samePlace(a: Place, b: Place): boolean {
-  return a.tag === b.tag && a.card === b.card;
+  return placeKey(a.location) === placeKey(b.location) && a.card === b.card;
 }
 
 /** The tab came to `place` by itself: the places ahead are dropped and

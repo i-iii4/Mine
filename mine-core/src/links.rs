@@ -425,6 +425,44 @@ pub fn relative_markdown_path(note: &str, target: &str) -> String {
         .join("/")
 }
 
+/// The name a note answers to in an Obsidian link: the last segment of its
+/// path without `.md`, in NFC (`Cards/Foo` gives `Foo`).
+///
+/// An Obsidian target resolves only to notes whose last segment it names
+/// (`LinkIndex::resolve_obsidian_target` compares exact paths, path suffixes
+/// and bare names, all ending in that segment), so this name selects every
+/// note a target can reach without listing the space
+/// (SPEC_CARD_ASSOCIATIONS.md, «Имена для поиска исходной»).
+#[must_use]
+pub fn note_name_key(note_path_without_ext: &str) -> Option<String> {
+    let path = normalize_path(note_path_without_ext)?;
+    path.rsplit('/').next().map(str::to_string)
+}
+
+/// The note names an Obsidian link target can resolve to: its last segment
+/// without a trailing `.md` first, then the segment as written when it ends
+/// in `.md`. Fragment and alias are dropped as resolution drops them; `None`
+/// targets (external, empty) name no note.
+///
+/// A note named by either key is a candidate; a [`LinkIndex`] built from the
+/// candidates resolves the target exactly as one built from every note.
+#[must_use]
+pub fn obsidian_target_name_keys(raw_target: &str) -> Vec<String> {
+    let Some(target) = parse_target(raw_target, LinkSyntax::Obsidian) else {
+        return Vec::new();
+    };
+    let Some(path) = normalize_path(target.strip_prefix('/').unwrap_or(&target)) else {
+        return Vec::new();
+    };
+    let Some(last) = path.rsplit('/').next() else {
+        return Vec::new();
+    };
+    match last.strip_suffix(".md") {
+        Some(stem) if !stem.is_empty() => vec![stem.to_string(), last.to_string()],
+        _ => vec![last.to_string()],
+    }
+}
+
 fn result_for(paths: &[String]) -> LinkResolution {
     match paths {
         [] => LinkResolution::Missing,
@@ -769,5 +807,70 @@ mod tests {
             LinkResolution::Ambiguous(_)
         ));
         assert_eq!(index.shortest_link("Media/café.jpg", false), None);
+    }
+
+    #[test]
+    fn a_note_answers_to_the_last_segment_of_its_path() {
+        assert_eq!(note_name_key("Cards/Foo").as_deref(), Some("Foo"));
+        assert_eq!(note_name_key("Foo").as_deref(), Some("Foo"));
+        assert_eq!(note_name_key("Cards/cafe\u{301}").as_deref(), Some("café"));
+        assert_eq!(note_name_key(""), None);
+    }
+
+    #[test]
+    fn a_target_names_its_last_segment_without_fragment_alias_or_md() {
+        assert_eq!(obsidian_target_name_keys("Foo"), vec!["Foo"]);
+        assert_eq!(obsidian_target_name_keys("Cards/Foo"), vec!["Foo"]);
+        assert_eq!(obsidian_target_name_keys("Foo#^abc"), vec!["Foo"]);
+        assert_eq!(obsidian_target_name_keys("Foo|alias"), vec!["Foo"]);
+        assert_eq!(obsidian_target_name_keys("Foo.md"), vec!["Foo", "Foo.md"]);
+        assert_eq!(obsidian_target_name_keys("cafe\u{301}"), vec!["café"]);
+        assert!(obsidian_target_name_keys("https://example.com/a").is_empty());
+        assert!(obsidian_target_name_keys("").is_empty());
+    }
+
+    /// Resolving among the notes a target names gives the answer of the
+    /// whole space: the candidate lookup of card associations depends on it.
+    #[test]
+    fn resolution_among_named_candidates_equals_resolution_among_all_notes() {
+        let notes = [
+            "Cards/Foo",
+            "Archive/Foo",
+            "Cards/Bar",
+            "Cards/Deep/Baz",
+            "Qux",
+            "Cards/cafe\u{301}",
+            "Collections/Ideas",
+        ];
+        let paths: Vec<String> = notes.iter().map(|note| format!("{note}.md")).collect();
+        let everything = LinkIndex::new(&paths);
+        let targets = [
+            "Foo",
+            "Cards/Foo",
+            "Archive/Foo#^id",
+            "Bar|label",
+            "Bar.md",
+            "Old/Bar",
+            "Deep/Baz",
+            "Qux",
+            "café",
+            "Ideas",
+            "Missing",
+            "Foo.md",
+        ];
+        for target in targets {
+            let keys = obsidian_target_name_keys(target);
+            let candidates: Vec<&String> = notes
+                .iter()
+                .zip(&paths)
+                .filter(|(note, _)| note_name_key(note).is_some_and(|name| keys.contains(&name)))
+                .map(|(_, path)| path)
+                .collect();
+            assert_eq!(
+                LinkIndex::new(candidates).resolve("Cards/Source.md", target, LinkSyntax::Obsidian),
+                everything.resolve("Cards/Source.md", target, LinkSyntax::Obsidian),
+                "target {target}"
+            );
+        }
     }
 }

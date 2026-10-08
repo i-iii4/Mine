@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useDndContext } from "@dnd-kit/core";
 import { HoverIntent, type HoverIntentState } from "@/lib/hoverIntent";
+import { subscribeContextMenus } from "@/lib/openMenus";
+
+const ignoreAnswers = () => {};
 
 /** Why a surface is not answering the pointer right now (С7.8). */
 export type HoverIntentSuspension = "window" | "drag" | "menu" | "context-menu";
@@ -19,11 +22,13 @@ export interface HoverIntentHandle {
 /**
  * One hover-intent engine for one surface, the feed or the sidebar
  * (SPEC_CARD_STATES.md, С7). `onChange` receives the calmed answers; the
- * window losing focus clears them and holds new ones until it returns.
+ * window losing focus clears them and holds new ones until it returns, and
+ * so does a context menu, wherever it opened, until it closes (С7.8).
  * Render `<HoverIntentDragWatch>` inside the surface to hold them during a
- * drag as well.
+ * drag as well. A surface that reads only the pointer's speed (`isSlow`, for
+ * a hover preview's resting pointer) passes no `onChange`.
  */
-export function useHoverIntent(onChange: (state: HoverIntentState) => void): HoverIntentHandle {
+export function useHoverIntent(onChange: (state: HoverIntentState) => void = ignoreAnswers): HoverIntentHandle {
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const engineRef = useRef<HoverIntent | null>(null);
@@ -54,6 +59,8 @@ export function useHoverIntent(onChange: (state: HoverIntentState) => void): Hov
       engineRef.current?.dispose();
     };
   }, [suspend]);
+
+  useEffect(() => subscribeContextMenus((open) => suspend("context-menu", open)), [suspend]);
 
   return useMemo(() => ({
     move: (target, x, y) => engine().move(target, x, y),

@@ -31,6 +31,8 @@ import {
   type ContextMenuData,
   pickVaultFolder,
   revealVault,
+  requestYoutubeChannel,
+  waitForYoutubeChannel,
 } from "../lib/messaging";
 
 // Detection: when PopupApp runs as a content-script overlay, chrome.tabs /
@@ -49,7 +51,7 @@ export const MINE_TOO_OLD = "This clipper needs a newer Mine. Open the updated M
  *  the collections of the folder it was in no longer go with it (Г3.2). */
 export const DESTINATION_CHANGED_DURING_SAVE = "The folder changed before this clip was saved. Nothing was saved: check the folder and collections, then save again.";
 
-import { resolveCaptureResult } from "../lib/captureResult";
+import { resolveCaptureAuthor, resolveCaptureResult, youtubeCaptureSourceUrl } from "../lib/captureResult";
 import {
   articleExtractionStateForResult,
   articleHasPreviewMedia,
@@ -226,6 +228,10 @@ export function useClipperState() {
   const articleExtractionPromiseRef = useRef<Promise<ArticleData | null> | null>(null);
   const deferredArticleRef = useRef<ArticleData | null>(null);
   const extractionEpochRef = useRef(0);
+  // The channel of a YouTube capture: asked once per capture, beside its
+  // extraction, for the video its address names; Save awaits the answer for
+  // a bounded time (SPEC_CARD_ASSOCIATIONS.md, «Клиппер: канал YouTube»).
+  const youtubeChannelRef = useRef<{ sourceUrl: string; answer: Promise<string | null> } | null>(null);
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -239,6 +245,10 @@ export function useClipperState() {
     if (value !== metadataRef.current) {
       extractionEpochRef.current += 1;
       articleExtractionPromiseRef.current = null;
+      const youtubeSourceUrl = youtubeCaptureSourceUrl(value);
+      youtubeChannelRef.current = youtubeSourceUrl
+        ? { sourceUrl: youtubeSourceUrl, answer: requestYoutubeChannel(youtubeSourceUrl) }
+        : null;
     }
     metadataRef.current = value;
     setMetadata(value);
@@ -1371,9 +1381,16 @@ export function useClipperState() {
       };
     }
     const saveMetadata = metadata;
+    // The channel of this capture's video, awaited beside the extraction and
+    // never longer than its bound: no answer saves the clip without an author.
+    const youtubeRequest = youtubeChannelRef.current;
+    const youtubeChannel = youtubeRequest && youtubeRequest.sourceUrl === youtubeCaptureSourceUrl(saveMetadata)
+      ? waitForYoutubeChannel(youtubeRequest.answer)
+      : null;
     if (currentType === "content" && contentModeNeedsArticleExtraction(saveMetadata)) {
       await ensureArticleLoaded();
     }
+    const channel = youtubeChannel ? await youtubeChannel : null;
     // A destination check still out, such as the one a folder change starts,
     // decides where the clip goes before Save reads it.
     while (nativeStatusPromiseRef.current) await nativeStatusPromiseRef.current;
@@ -1412,7 +1429,7 @@ export function useClipperState() {
       body: "",
       tags: chosenTags.length > 0 ? chosenTags : null,
       image_url: null,
-      author: saveMetadata.author || null,
+      author: resolveCaptureAuthor(currentType, saveMetadata, articleDataRef.current, channel),
       width: null,
       height: null,
     };
@@ -1429,9 +1446,6 @@ export function useClipperState() {
       payload.body = resolved.text;
       // Both executors save a selection as shown (SPEC_AUDIT_FIXES.md, Ф5).
       if (resolved.source === "selection") payload.selection = true;
-      if (resolved.source === "article" && resolved.byline) {
-        payload.author = resolved.byline;
-      }
       // Posters travel with the body so the host can fall back to one when a
       // video turns out to be too large to store. They cost nothing when every
       // video saves normally, and the popup is the only place that knows them.

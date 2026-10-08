@@ -80,6 +80,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import type {
+  CardAssociationGroup,
+  CardAssociationKind,
   DeleteMediaAssetPlan,
   IndexedBlock,
   LightBlock,
@@ -109,7 +111,8 @@ import { TopFadeScrim } from "./TopFadeScrim";
 import { getDisplayTitle, getFallbackLabel, getNavigationLabel } from "@/lib/displayTitle";
 import { copyMediaAssetToClipboard, getBlock, icloudDownloadProgress, prepareDeleteMediaAsset, resolveNoteLink } from "@/lib/commands";
 import { collectionRefLabel } from "@/lib/collections";
-import { getHoverPreviewOpenDelay } from "@/lib/hoverPreviewTiming";
+import { useHoverIntent, type HoverIntentHandle } from "@/hooks/useHoverIntent";
+import { useHoverPreviewOpener } from "@/hooks/useHoverPreviewOpener";
 import {
   findPreviewTileForSource,
   normalizeDetailPreviewManifest,
@@ -146,10 +149,18 @@ import {
 } from "./CollectionPicker";
 import { QuantizedMenuScrollArea } from "./QuantizedMenuScrollArea";
 import { SearchMenuInput } from "./SearchMenuInput";
-import { microPreviewFromIndexedBlock } from "./MicroPreviewThumbnail";
+import { microPreviewFromIndexedBlock, microPreviewFromLightBlock } from "./MicroPreviewThumbnail";
 import { CardRow } from "./CardRow";
 import { CardRowActions, cardRowActionsReservePx } from "./CardRowActions";
 import { deriveSearchResultRow } from "@/lib/searchResultRow";
+import {
+  associationHeading,
+  authorFeedHint,
+  hiddenAssociationRows,
+  showMoreLabel,
+  SHOW_ALL_LABEL,
+} from "@/lib/cardAssociations";
+import { useCardAssociations } from "@/hooks/useCardAssociations";
 import type { ImagePreviewRequest, ImagePreviewSibling } from "./ImagePreviewOverlay";
 import { copyTextToClipboard } from "@/lib/clipboard";
 
@@ -206,6 +217,8 @@ interface DetailProps {
   onSourceVideoDownloaded?: () => Promise<void>;
   onOpenImagePreview?: (preview: ImagePreviewRequest) => void;
   onOpenRelatedNote: (slug: string) => void;
+  /** Opens the feed of one author's cards (SPEC_CARD_ASSOCIATIONS.md). */
+  onOpenAuthorFeed?: (author: string) => void;
   onTextSelectionDrop?: (payload: MineTextSelectionDragPayload, tag: string) => void;
   onCreateChannelAndTextSelectionCard?: (
     payload: MineTextSelectionDragPayload,
@@ -373,6 +386,7 @@ export function Detail({
   onSourceVideoDownloaded = noopSourceVideoDownloaded,
   onOpenImagePreview = noopOpenImagePreview,
   onOpenRelatedNote,
+  onOpenAuthorFeed,
   onTextSelectionDrop,
   onCreateChannelAndTextSelectionCard = noopTextSelectionCreate,
   onTextSelectionDelete,
@@ -629,6 +643,7 @@ export function Detail({
                   onRequestRename={onRequestRename}
                   onRequestDelete={onRequestDelete}
                   onOpenRelatedNote={onOpenRelatedNote}
+                  onOpenAuthorFeed={onOpenAuthorFeed}
                 />
               </div>
             ) : (
@@ -670,6 +685,7 @@ export function Detail({
                   onRequestRename={onRequestRename}
                   onRequestDelete={onRequestDelete}
                   onOpenRelatedNote={onOpenRelatedNote}
+                  onOpenAuthorFeed={onOpenAuthorFeed}
                 />
               </div>
             </div>
@@ -695,6 +711,7 @@ interface MetadataPanelProps {
   onRequestRename: (block: LightBlock | IndexedBlock) => void;
   onRequestDelete: (slug: string) => void;
   onOpenRelatedNote: (slug: string) => void;
+  onOpenAuthorFeed?: (author: string) => void;
 }
 
 function MetadataPanel({
@@ -710,11 +727,13 @@ function MetadataPanel({
   onRequestRename,
   onRequestDelete,
   onOpenRelatedNote,
+  onOpenAuthorFeed,
 }: MetadataPanelProps) {
   const relatedNoteRowRefs = useRef(new Map<string, HTMLElement>());
   const hoverPreviewRef = useRef<HTMLDivElement | null>(null);
-  const hoverPreviewOpenTimerRef = useRef<number | null>(null);
-  const lastHoverPreviewOpenedAtRef = useRef<number | null>(null);
+  // The pointer's speed over the panel's rows: a preview waits for it to rest.
+  const rowPointer = useHoverIntent();
+  const rowPreviewOpener = useHoverPreviewOpener(rowPointer.isSlow);
   const displayBlock = fullBlock ?? block;
   const indexWarning = getIndexWarning(displayBlock);
   const relatedNotes = useMemo(
@@ -725,6 +744,13 @@ function MetadataPanel({
     [displayBlock],
   );
   const relatedNotesKey = relatedNotes.join("\u0000");
+  // The association blocks never repeat a Related note; they wait for the
+  // full card, which knows its Related notes (SPEC_CARD_ASSOCIATIONS.md).
+  const associationExclusions = useMemo(
+    () => (isIndexedBlock(displayBlock) ? relatedNotes.map(baseRelatedNoteSlug) : null),
+    [displayBlock, relatedNotes],
+  );
+  const associations = useCardAssociations(displayBlock.slug, associationExclusions);
   const resolvedThumbsRoot = thumbsRootPath ?? fallbackThumbsRoot(vaultPath);
   const [relatedNoteBlocks, setRelatedNoteBlocks] = useState<Map<string, IndexedBlock | null> | null>(null);
   const [hoveredRelatedNote, setHoveredRelatedNote] = useState<HoveredRelatedNote | null>(null);
@@ -753,44 +779,31 @@ function MetadataPanel({
     };
   }, [relatedNotes, relatedNotesKey]);
 
-  const cancelHoverPreviewOpen = useCallback(() => {
-    if (hoverPreviewOpenTimerRef.current == null) return;
-    window.clearTimeout(hoverPreviewOpenTimerRef.current);
-    hoverPreviewOpenTimerRef.current = null;
-  }, []);
-
-  const showRelatedNotePreview = useCallback((note: HoveredRelatedNote) => {
-    lastHoverPreviewOpenedAtRef.current = Date.now();
-    setHoveredRelatedNote(note);
-  }, []);
-
   const openRelatedNotePreview = useCallback((note: HoveredRelatedNote) => {
-    cancelHoverPreviewOpen();
-    const delay = getHoverPreviewOpenDelay(lastHoverPreviewOpenedAtRef.current);
-    if (delay <= 0) {
-      showRelatedNotePreview(note);
-      return;
-    }
     setHoveredRelatedNote(null);
-    hoverPreviewOpenTimerRef.current = window.setTimeout(() => {
-      hoverPreviewOpenTimerRef.current = null;
-      showRelatedNotePreview(note);
-    }, delay);
-  }, [cancelHoverPreviewOpen, showRelatedNotePreview]);
+    rowPreviewOpener.request(() => setHoveredRelatedNote(note));
+  }, [rowPreviewOpener]);
 
   const requestCloseRelatedNotePreview = useCallback(() => {
-    cancelHoverPreviewOpen();
+    rowPreviewOpener.hide();
     setHoveredRelatedNote(null);
-  }, [cancelHoverPreviewOpen]);
+  }, [rowPreviewOpener]);
 
-  useEffect(() => {
-    return () => {
-      cancelHoverPreviewOpen();
-    };
-  }, [cancelHoverPreviewOpen]);
-
+  // Every card a row of the panel shows, for the row's hover preview.
+  const panelRowBlocks = useMemo(() => {
+    const byslug = new Map<string, LightBlock | IndexedBlock>();
+    for (const [slug, relatedBlock] of relatedNoteBlocks ?? []) {
+      if (relatedBlock) byslug.set(slug, relatedBlock);
+    }
+    for (const group of associations.groups) {
+      for (const associated of group.blocks) {
+        if (!byslug.has(associated.slug)) byslug.set(associated.slug, associated);
+      }
+    }
+    return byslug;
+  }, [associations.groups, relatedNoteBlocks]);
   const hoveredRelatedNoteBlock = hoveredRelatedNote
-    ? relatedNoteBlocks?.get(hoveredRelatedNote.slug) ?? null
+    ? panelRowBlocks.get(hoveredRelatedNote.slug) ?? null
     : null;
 
   useEffect(() => {
@@ -830,6 +843,21 @@ function MetadataPanel({
   }, [hoveredRelatedNote, hoverPreviewPosition, hoveredRelatedNoteBlock]);
 
 
+  const panelRowProps: PanelRowsProps = {
+    resolvedThumbsRoot,
+    vaultPath,
+    tags,
+    currentTag,
+    onToggleTag,
+    onCreateAndAssign,
+    onRequestRename,
+    onRequestDelete,
+    onOpenRow: onOpenRelatedNote,
+    rowRefs: relatedNoteRowRefs,
+    onRowPreviewEnter: openRelatedNotePreview,
+    onRowPreviewLeave: requestCloseRelatedNotePreview,
+  };
+
   return (
     <>
       {hoverPreviewPosition && hoveredRelatedNoteBlock && (
@@ -860,7 +888,12 @@ function MetadataPanel({
           />
         )}
 
-        <div className="flex min-w-0 flex-col gap-6" data-metadata-sections>
+        <div
+          className="flex min-w-0 flex-col gap-6"
+          onPointerMove={(event) => rowPointer.move(null, event.clientX, event.clientY)}
+          onPointerLeave={() => rowPointer.leave()}
+          data-metadata-sections
+        >
           <DetailPanelCard data-detail-metadata-card>
             <div className="px-2 pb-4 pt-4" data-detail-metadata-card-content>
               <MetadataTable>
@@ -908,20 +941,18 @@ function MetadataPanel({
             <RelatedNotesSection
               relatedNotes={relatedNotes}
               relatedNoteBlocks={relatedNoteBlocks}
-              resolvedThumbsRoot={resolvedThumbsRoot}
-              vaultPath={vaultPath}
-              tags={tags}
-              currentTag={currentTag}
-              onToggleTag={onToggleTag}
-              onCreateAndAssign={onCreateAndAssign}
-              onRequestRename={onRequestRename}
-              onRequestDelete={onRequestDelete}
-              onOpenRelatedNote={onOpenRelatedNote}
-              relatedNoteRowRefs={relatedNoteRowRefs}
-              onRelatedNotePreviewEnter={openRelatedNotePreview}
-              onRelatedNotePreviewLeave={requestCloseRelatedNotePreview}
+              {...panelRowProps}
             />
           )}
+          {associations.groups.map((group) => (
+            <CardAssociationSection
+              key={group.kind}
+              group={group}
+              onOpenAuthorFeed={onOpenAuthorFeed}
+              onExpand={associations.expand}
+              {...panelRowProps}
+            />
+          ))}
         </div>
       </div>
     </>
@@ -1083,32 +1114,8 @@ function DetailActionRow({
   );
 }
 
-/**
- * The open card's Related notes: the search's own rows (`CardRow`, user's
- * decision of 07.10.2026) in a card of the panel, like the metadata above
- * it. Each row shows the note's file name and, dimmed, the start of its
- * text; under the pointer the row lights up and shows the card's commands
- * (Connect, Source, More) at its right end, as a search result does. A press
- * elsewhere on the row opens the note.
- */
-function RelatedNotesSection({
-  relatedNotes,
-  relatedNoteBlocks,
-  resolvedThumbsRoot,
-  vaultPath,
-  tags,
-  currentTag,
-  onToggleTag,
-  onCreateAndAssign,
-  onRequestRename,
-  onRequestDelete,
-  onOpenRelatedNote,
-  relatedNoteRowRefs,
-  onRelatedNotePreviewEnter,
-  onRelatedNotePreviewLeave,
-}: {
-  relatedNotes: string[];
-  relatedNoteBlocks: Map<string, IndexedBlock | null> | null;
+/** What every row list of the panel needs from the open card. */
+interface PanelRowsProps {
   resolvedThumbsRoot: string;
   vaultPath: string;
   tags: TagCount[];
@@ -1117,11 +1124,51 @@ function RelatedNotesSection({
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
   onRequestRename: (block: LightBlock | IndexedBlock) => void;
   onRequestDelete: (slug: string) => void;
-  onOpenRelatedNote: (slug: string) => void;
-  relatedNoteRowRefs: { current: Map<string, HTMLElement> };
-  onRelatedNotePreviewEnter: (note: HoveredRelatedNote) => void;
-  onRelatedNotePreviewLeave: () => void;
+  /** Opens the card of a row. */
+  onOpenRow: (slug: string) => void;
+  rowRefs: { current: Map<string, HTMLElement> };
+  onRowPreviewEnter: (note: HoveredRelatedNote) => void;
+  onRowPreviewLeave: () => void;
+}
+
+/** One row of a panel list: the slug it opens and its card, `null` while the
+ *  card is not read or when the link names no card. */
+interface PanelRow {
+  slug: string;
+  block: LightBlock | IndexedBlock | null;
+}
+
+/**
+ * The rows of a card of the panel: the search's own rows (`CardRow`, user's
+ * decision of 07.10.2026), shared by Related notes and the association
+ * blocks. Under the pointer a row lights up and shows the card's commands
+ * (Connect, Source, More) at its right end, as a search result does; a press
+ * elsewhere on the row opens the card. Row keys carry `listKey`, so one card
+ * in two lists is two rows for the pointer, the menu and the preview.
+ */
+function PanelCardRows({
+  listKey,
+  rows,
+  kind,
+  resolvedThumbsRoot,
+  vaultPath,
+  tags,
+  currentTag,
+  onToggleTag,
+  onCreateAndAssign,
+  onRequestRename,
+  onRequestDelete,
+  onOpenRow,
+  rowRefs,
+  onRowPreviewEnter,
+  onRowPreviewLeave,
+}: PanelRowsProps & {
+  listKey: string;
+  rows: readonly PanelRow[];
+  /** Which list this is, named by its data attributes for tests. */
+  kind: "related" | "association";
 }) {
+  const related = kind === "related";
   // The row the pointer is on, by row identity: a note linked twice is two
   // rows. Leaving the row or turning the wheel lets go of it.
   const [pointerRowKey, setPointerRowKey] = useState<string | null>(null);
@@ -1136,101 +1183,199 @@ function RelatedNotesSection({
   }, []);
 
   return (
+    // The rows' light keeps 4 px off the frame on every side.
+    <div
+      className="flex w-full min-w-0 flex-col p-1"
+      onWheel={() => setPointerRowKey(null)}
+      data-related-notes-list={related ? "" : undefined}
+      data-card-association-list={related ? undefined : ""}
+    >
+      {rows.map(({ slug, block }, index) => {
+        const rowKey = `${listKey}:${index}:${slug}`;
+
+        if (!block) {
+          // Still loading, or a link to a note that is gone: the name
+          // alone, dimmed, nothing to open.
+          return (
+            <CardRow
+              key={rowKey}
+              row={deriveSearchResultRow({ slug, preview_text: null })}
+              preview={null}
+              active={false}
+              framed
+              item={{ as: "static" }}
+              data-related-note-item={related ? "placeholder" : undefined}
+              data-card-association-item={related ? undefined : "placeholder"}
+            />
+          );
+        }
+
+        const holdsMenu = menuRowKey === rowKey;
+        const actionsShown = holdsMenu || (menuRowKey === null && pointerRowKey === rowKey);
+        return (
+          <CardRow
+            key={rowKey}
+            rowRef={(node) => {
+              if (node) {
+                rowRefs.current.set(rowKey, node);
+              } else {
+                rowRefs.current.delete(rowKey);
+              }
+            }}
+            row={deriveSearchResultRow(block)}
+            preview={isIndexedBlock(block)
+              ? microPreviewFromIndexedBlock(block, resolvedThumbsRoot)
+              : microPreviewFromLightBlock(block, resolvedThumbsRoot)}
+            active={actionsShown}
+            actionsReservePx={actionsShown ? cardRowActionsReservePx(block) : 0}
+            framed
+            onPointerMove={() => {
+              if (menuRowKey === null && pointerRowKey !== rowKey) setPointerRowKey(rowKey);
+            }}
+            onPointerLeave={() => {
+              setPointerRowKey((current) => (current === rowKey ? null : current));
+            }}
+            onPointerDown={(event) => {
+              event.stopPropagation();
+            }}
+            onMouseEnter={() => {
+              if (menuRowKey === null) onRowPreviewEnter({ rowKey, slug });
+            }}
+            onMouseLeave={onRowPreviewLeave}
+            item={{
+              as: "button",
+              props: {
+                onClick: (event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onOpenRow(slug);
+                },
+              },
+            }}
+            actions={(actionsShown || pointerRowKey === rowKey) && (
+              <CardRowActions
+                block={block}
+                vaultPath={vaultPath}
+                tags={tags}
+                currentTag={currentTag}
+                visible={actionsShown}
+                onToggleTag={onToggleTag}
+                onCreateAndAssign={onCreateAndAssign}
+                onRequestRename={onRequestRename}
+                onRequestDelete={onRequestDelete}
+                onMenuOpenChange={(_slug, open) => {
+                  setMenuRowKey((current) => (open ? rowKey : current === rowKey ? null : current));
+                  // The card preview steps aside for the menu.
+                  if (open) onRowPreviewLeave();
+                }}
+                onMenuCloseAutoFocus={handleMenuCloseAutoFocus}
+              />
+            )}
+            data-related-note-item={related ? "button" : undefined}
+            data-card-association-item={related ? undefined : "button"}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * The open card's Related notes in a card of the panel, like the metadata
+ * above it: the label inside, then the panel's rows.
+ */
+function RelatedNotesSection({
+  relatedNotes,
+  relatedNoteBlocks,
+  ...rowProps
+}: PanelRowsProps & {
+  relatedNotes: string[];
+  relatedNoteBlocks: Map<string, IndexedBlock | null> | null;
+}) {
+  const rows = relatedNotes.map((note) => {
+    const slug = baseRelatedNoteSlug(note);
+    return { slug, block: relatedNoteBlocks?.get(slug) ?? null };
+  });
+  return (
     <DetailPanelCard data-related-notes-block>
       {/* A label of the card, at the metadata labels' inset and over the
           rows' thumbnails. */}
       <div className={cn(METADATA_LABEL_CLASSES, "px-2 pt-4")}>Related notes</div>
-      {/* The rows' light keeps 4 px off the frame on every side. */}
-      <div
-        className="flex w-full min-w-0 flex-col p-1"
-        onWheel={() => setPointerRowKey(null)}
-        data-related-notes-list
-      >
-        {relatedNotes.map((slug, index) => {
-          const baseSlug = baseRelatedNoteSlug(slug);
-          const rowKey = `${index}:${slug}`;
-          const relatedBlock = relatedNoteBlocks?.get(baseSlug) ?? null;
+      <PanelCardRows
+        listKey="related"
+        rows={rows}
+        kind="related"
+        {...rowProps}
+      />
+    </DetailPanelCard>
+  );
+}
 
-          if (!relatedBlock) {
-            // Still loading, or a link to a note that is gone: the name
-            // alone, dimmed, nothing to open.
-            return (
-              <CardRow
-                key={rowKey}
-                row={deriveSearchResultRow({ slug: baseSlug, preview_text: null })}
-                preview={null}
-                active={false}
-                framed
-                item={{ as: "static" }}
-                data-related-note-item="placeholder"
-              />
-            );
-          }
-
-          const holdsMenu = menuRowKey === rowKey;
-          const actionsShown = holdsMenu || (menuRowKey === null && pointerRowKey === rowKey);
-          return (
-            <CardRow
-              key={rowKey}
-              rowRef={(node) => {
-                if (node) {
-                  relatedNoteRowRefs.current.set(rowKey, node);
-                } else {
-                  relatedNoteRowRefs.current.delete(rowKey);
-                }
-              }}
-              row={deriveSearchResultRow(relatedBlock)}
-              preview={microPreviewFromIndexedBlock(relatedBlock, resolvedThumbsRoot)}
-              active={actionsShown}
-              actionsReservePx={actionsShown ? cardRowActionsReservePx(relatedBlock) : 0}
-              framed
-              onPointerMove={() => {
-                if (menuRowKey === null && pointerRowKey !== rowKey) setPointerRowKey(rowKey);
-              }}
-              onPointerLeave={() => {
-                setPointerRowKey((current) => (current === rowKey ? null : current));
-              }}
-              onPointerDown={(event) => {
-                event.stopPropagation();
-              }}
-              onMouseEnter={() => {
-                if (menuRowKey === null) onRelatedNotePreviewEnter({ rowKey, slug: baseSlug });
-              }}
-              onMouseLeave={onRelatedNotePreviewLeave}
-              item={{
-                as: "button",
-                props: {
-                  onClick: (event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    onOpenRelatedNote(baseSlug);
-                  },
-                },
-              }}
-              actions={(actionsShown || pointerRowKey === rowKey) && (
-                <CardRowActions
-                  block={relatedBlock}
-                  vaultPath={vaultPath}
-                  tags={tags}
-                  currentTag={currentTag}
-                  visible={actionsShown}
-                  onToggleTag={onToggleTag}
-                  onCreateAndAssign={onCreateAndAssign}
-                  onRequestRename={onRequestRename}
-                  onRequestDelete={onRequestDelete}
-                  onMenuOpenChange={(_slug, open) => {
-                    setMenuRowKey((current) => (open ? rowKey : current === rowKey ? null : current));
-                    // The card preview steps aside for the menu.
-                    if (open) onRelatedNotePreviewLeave();
-                  }}
-                  onMenuCloseAutoFocus={handleMenuCloseAutoFocus}
-                />
-              )}
-              data-related-note-item="button"
-            />
-          );
-        })}
-      </div>
+/**
+ * One association block of the open card (SPEC_CARD_ASSOCIATIONS.md): the
+ * same card of the panel as Related notes, its heading inside, the panel's
+ * rows, and a last row for the cards it holds back. The author heading and
+ * `Show all` open the author's feed; an address or site block opens in place.
+ */
+function CardAssociationSection({
+  group,
+  onOpenAuthorFeed,
+  onExpand,
+  ...rowProps
+}: PanelRowsProps & {
+  group: CardAssociationGroup;
+  onOpenAuthorFeed?: (author: string) => void;
+  onExpand: (kind: CardAssociationKind) => void;
+}) {
+  const heading = associationHeading(group);
+  const hidden = hiddenAssociationRows(group);
+  const openFeed = group.kind === "author" && onOpenAuthorFeed
+    ? () => onOpenAuthorFeed(group.label)
+    : null;
+  return (
+    <DetailPanelCard aria-label={heading} data-card-association-block={group.kind}>
+      {openFeed ? (
+        <div className="flex min-w-0 px-2 pt-4">
+          {/* A label that acts, like the metadata's Source value: no face of
+              its own, underlined under the pointer, the arrow cursor of an
+              action inside Mine. */}
+          <button
+            type="button"
+            onClick={openFeed}
+            title={authorFeedHint(group.label)}
+            className={cn(METADATA_LABEL_CLASSES, "min-w-0 truncate text-left hover:underline")}
+            data-card-association-heading=""
+          >
+            {heading}
+          </button>
+        </div>
+      ) : (
+        <div
+          className={cn(METADATA_LABEL_CLASSES, "truncate px-2 pt-4")}
+          title={heading}
+          data-card-association-heading=""
+        >
+          {heading}
+        </div>
+      )}
+      <PanelCardRows
+        listKey={group.kind}
+        rows={group.blocks.map((block) => ({ slug: block.slug, block }))}
+        kind="association"
+        {...rowProps}
+      />
+      {hidden > 0 && (
+        <div className="flex min-w-0 px-2 pb-4">
+          <button
+            type="button"
+            onClick={openFeed ?? (() => onExpand(group.kind))}
+            className={cn(METADATA_LABEL_CLASSES, "text-left hover:underline")}
+            data-card-association-more={openFeed ? "feed" : "expand"}
+          >
+            {openFeed ? SHOW_ALL_LABEL : showMoreLabel(hidden)}
+          </button>
+        </div>
+      )}
     </DetailPanelCard>
   );
 }
@@ -1248,6 +1393,7 @@ function CardReferenceList({
   referenceRowRefs,
   onReferencePreviewEnter,
   onReferencePreviewLeave,
+  referencePointer,
 }: {
   references: string[];
   referenceBlocks: Map<string, IndexedBlock | null> | null;
@@ -1257,9 +1403,16 @@ function CardReferenceList({
   referenceRowRefs: { current: Map<string, HTMLElement> };
   onReferencePreviewEnter: (note: HoveredRelatedNote) => void;
   onReferencePreviewLeave: () => void;
+  /** The pointer's speed over the rows, for the preview's resting pointer. */
+  referencePointer: HoverIntentHandle;
 }) {
   return (
-    <div className="flex w-full min-w-0 flex-col gap-1" data-card-reference-list>
+    <div
+      className="flex w-full min-w-0 flex-col gap-1"
+      onPointerMove={(event) => referencePointer.move(null, event.clientX, event.clientY)}
+      onPointerLeave={() => referencePointer.leave()}
+      data-card-reference-list
+    >
       {references.map((slug, index) => {
         const baseSlug = baseRelatedNoteSlug(slug);
         const rowKey = `${index}:${slug}`;
@@ -1337,7 +1490,7 @@ export function hoverPreviewBounds(anchor: Element): HoverPreviewBounds {
  * Beside the row when the area has room on its right, else on its left. A
  * row as wide as the area (the stacked view) has room on neither side: the
  * preview then stands under the row, or over it when there is no room below,
- * starting at the row's left edge. The preview never leaves the area.
+ * its right edge on the row's right edge. The preview never leaves the area.
  */
 export function computeHoverPreviewPosition(
   triggerRect: Pick<DOMRect, "left" | "right" | "top" | "bottom">,
@@ -1363,7 +1516,7 @@ export function computeHoverPreviewPosition(
   }
   const fitsBelow = triggerRect.bottom + HOVER_CARD_GAP + previewHeight <= maxBottom;
   return {
-    left: Math.max(minLeft, Math.min(triggerRect.left, maxRight - HOVER_CARD_WIDTH)),
+    left: Math.max(minLeft, Math.min(triggerRect.right - HOVER_CARD_WIDTH, maxRight - HOVER_CARD_WIDTH)),
     top: fitsBelow
       ? triggerRect.bottom + HOVER_CARD_GAP
       : Math.max(minTop, triggerRect.top - HOVER_CARD_GAP - previewHeight),
@@ -2864,8 +3017,8 @@ function MediaAssetReferenceCards({
 }) {
   const relatedNoteRowRefs = useRef(new Map<string, HTMLElement>());
   const hoverPreviewRef = useRef<HTMLDivElement | null>(null);
-  const hoverPreviewOpenTimerRef = useRef<number | null>(null);
-  const lastHoverPreviewOpenedAtRef = useRef<number | null>(null);
+  const referencePointer = useHoverIntent();
+  const referencePreviewOpener = useHoverPreviewOpener(referencePointer.isSlow);
   const relatedNotes = useMemo(() => references.map((reference) => reference.slug), [references]);
   const relatedNotesKey = relatedNotes.join("\u0000");
   const fallbackLabels = useMemo(
@@ -2905,41 +3058,15 @@ function MediaAssetReferenceCards({
     };
   }, [relatedNotes, relatedNotesKey]);
 
-  const cancelHoverPreviewOpen = useCallback(() => {
-    if (hoverPreviewOpenTimerRef.current == null) return;
-    window.clearTimeout(hoverPreviewOpenTimerRef.current);
-    hoverPreviewOpenTimerRef.current = null;
-  }, []);
-
-  const showRelatedNotePreview = useCallback((note: HoveredRelatedNote) => {
-    lastHoverPreviewOpenedAtRef.current = Date.now();
-    setHoveredRelatedNote(note);
-  }, []);
-
   const openRelatedNotePreview = useCallback((note: HoveredRelatedNote) => {
-    cancelHoverPreviewOpen();
-    const delay = getHoverPreviewOpenDelay(lastHoverPreviewOpenedAtRef.current);
-    if (delay <= 0) {
-      showRelatedNotePreview(note);
-      return;
-    }
     setHoveredRelatedNote(null);
-    hoverPreviewOpenTimerRef.current = window.setTimeout(() => {
-      hoverPreviewOpenTimerRef.current = null;
-      showRelatedNotePreview(note);
-    }, delay);
-  }, [cancelHoverPreviewOpen, showRelatedNotePreview]);
+    referencePreviewOpener.request(() => setHoveredRelatedNote(note));
+  }, [referencePreviewOpener]);
 
   const requestCloseRelatedNotePreview = useCallback(() => {
-    cancelHoverPreviewOpen();
+    referencePreviewOpener.hide();
     setHoveredRelatedNote(null);
-  }, [cancelHoverPreviewOpen]);
-
-  useEffect(() => {
-    return () => {
-      cancelHoverPreviewOpen();
-    };
-  }, [cancelHoverPreviewOpen]);
+  }, [referencePreviewOpener]);
 
   const hoveredRelatedNoteBlock = hoveredRelatedNote
     ? relatedNoteBlocks?.get(hoveredRelatedNote.slug) ?? null
@@ -3016,6 +3143,7 @@ function MediaAssetReferenceCards({
         referenceRowRefs={relatedNoteRowRefs}
         onReferencePreviewEnter={openRelatedNotePreview}
         onReferencePreviewLeave={requestCloseRelatedNotePreview}
+        referencePointer={referencePointer}
       />
     </>
   );

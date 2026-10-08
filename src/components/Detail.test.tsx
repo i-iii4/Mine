@@ -9,18 +9,24 @@ import {
   detailLayoutIsStacked,
   hoverPreviewBounds,
 } from "./Detail";
-import type { IndexedBlock, MediaAssetRef } from "@/types";
+import type { CardAssociationGroup, CardAssociationKind, IndexedBlock, LightBlock, MediaAssetRef } from "@/types";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { COLLECTION_PICKER_CONTENT_CLASS } from "./CollectionPicker";
-import { cancelSourceVideoDownload, copyMediaAssetToClipboard, getBlock, icloudDownloadProgress, prepareDeleteMediaAsset, resolveNoteLink, sourceVideoDownloadStatus, startSourceVideoDownload, youtubePlayerUrl } from "@/lib/commands";
+import { cancelSourceVideoDownload, copyMediaAssetToClipboard, getBlock, icloudDownloadProgress, listCardAssociations, prepareDeleteMediaAsset, resolveNoteLink, sourceVideoDownloadStatus, startSourceVideoDownload, youtubePlayerUrl } from "@/lib/commands";
 import {
   HOVER_PREVIEW_COLD_OPEN_DELAY_MS,
   HOVER_PREVIEW_WARM_WINDOW_MS,
 } from "@/lib/hoverPreviewTiming";
+import { HOVER_INTENT } from "@/lib/hoverIntent";
+
+/** Fake timers that also drive the hover-intent clock (performance.now). */
+const INTENT_TIMERS = {
+  toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "performance", "Date", "requestAnimationFrame", "cancelAnimationFrame"],
+} as const;
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(),
@@ -69,6 +75,7 @@ vi.mock("@/lib/commands", () => ({
   startSourceVideoDownload: vi.fn(async () => null),
   cancelSourceVideoDownload: vi.fn(async () => null),
   sourceVideoDownloadStatus: vi.fn(async () => null),
+  listCardAssociations: vi.fn(async (slug: string) => ({ generation: 1, slug, groups: [] })),
 }));
 
 function cardKindForBlockType(blockType: IndexedBlock["block_type"]): IndexedBlock["card_kind"] {
@@ -1035,12 +1042,16 @@ describe("Detail", () => {
       .toEqual({ left: 664 - 8 - 240, top: 221 });
     // Stacked: the row spans the column, no room on either side within the
     // area. The preview used to open left at 103 and lie 211px under the
-    // sidebar (07.10.2026); it now stands over the row, at its left edge.
+    // sidebar (07.10.2026); it now stands over the row, its right edge on
+    // the row's right edge (08.10.2026).
     expect(computeHoverPreviewPosition({ left: 351, right: 963, top: 744, bottom: 788 }, 306, area))
-      .toEqual({ left: 351, top: 744 - 8 - 306 });
+      .toEqual({ left: 963 - 240, top: 744 - 8 - 306 });
     // Under the row when there is room below.
     expect(computeHoverPreviewPosition({ left: 351, right: 963, top: 200, bottom: 244 }, 306, area))
-      .toEqual({ left: 351, top: 244 + 8 });
+      .toEqual({ left: 963 - 240, top: 244 + 8 });
+    // A row narrower than the preview: the area's left margin holds it in.
+    expect(computeHoverPreviewPosition({ left: 330, right: 500, top: 200, bottom: 244 }, 306, { ...area, right: 520 }))
+      .toEqual({ left: 314 + 16, top: 244 + 8 });
     // A row outside an open card (a dialog) has the whole window.
     expect(hoverPreviewBounds(document.body)).toEqual({ left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight });
   });
@@ -2109,7 +2120,20 @@ describe("Detail", () => {
     expect(hoverPreview).not.toBeNull();
     expect(hoverPreview?.parentElement).toBe(document.body);
     expect(dialog.contains(hoverPreview)).toBe(false);
+    // Read long past the warm window, it still hands over to the next row at
+    // once: the window runs from when the preview left the screen.
+    act(() => {
+      vi.advanceTimersByTime(HOVER_PREVIEW_WARM_WINDOW_MS * 3);
+    });
     fireEvent.mouseLeave(photoRow);
+    expect(document.querySelector("[data-related-note-hover-preview]")).toBeNull();
+    fireEvent.mouseEnter(sourceRow);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(document.querySelector("[data-related-note-hover-preview]")).not.toBeNull();
+    fireEvent.mouseLeave(sourceRow);
     expect(document.querySelector("[data-related-note-hover-preview]")).toBeNull();
     vi.useRealTimers();
 
@@ -3062,5 +3086,263 @@ describe("Detail", () => {
 
     expect(progressMock.mock.calls.length).toBe(callsWhileWaiting);
     expect(container.querySelector("[data-detail-cloud-state]")).toBeNull();
+  });
+});
+
+// SPEC_CARD_ASSOCIATIONS.md, «Открытая карточка»: blocks of cards related to
+// the open one by address, author or site, under Related notes, in both views.
+describe("Detail association blocks", () => {
+  const initialViewportWidth = window.innerWidth;
+  const listCardAssociationsMock = vi.mocked(listCardAssociations);
+
+  function light(slug: string): LightBlock {
+    return {
+      id: slug.length + 100,
+      slug,
+      block_type: "article",
+      card_kind: "article",
+      title: null,
+      content_heading: null,
+      display_title: null,
+      fallback_label: slug,
+      url: null,
+      media_file: null,
+      thumbnail: null,
+      saved_at: "2026-01-01T00:00:00Z",
+      width: null,
+      height: null,
+      author: null,
+      body: "",
+      preview_text: null,
+      first_image: null,
+      media_urls: null,
+      media_dimensions: null,
+      preview_manifest: null,
+      feed_playback: null,
+      collections: [],
+      search_match: null,
+    };
+  }
+
+  function group(
+    kind: CardAssociationKind,
+    label: string,
+    slugs: string[],
+    total = slugs.length,
+  ): CardAssociationGroup {
+    return { kind, label, total, blocks: slugs.map((slug) => light(slug)) };
+  }
+
+  function renderOpenCard(props: Partial<Parameters<typeof Detail>[0]> = {}) {
+    return render(
+      <Detail
+        block={block({ slug: "open", author: "@kotecinho", related_notes: ["related"] })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={vi.fn()}
+        {...props}
+      />,
+    );
+  }
+
+  beforeEach(() => {
+    getBlockMock.mockReset();
+    getBlockMock.mockImplementation(async (slug: string) => (
+      slug === "related" ? block({ id: 2, slug: "related", fallback_label: "related" }) : null
+    ));
+    listCardAssociationsMock.mockReset();
+    listCardAssociationsMock.mockResolvedValue({
+      generation: 5,
+      slug: "open",
+      groups: [
+        group("address", "https://x.com/kotecinho/status/1", ["piece"]),
+        group("author", "@kotecinho", ["one", "two", "three", "four", "five"], 9),
+      ],
+    });
+  });
+
+  afterEach(() => {
+    setViewportWidth(initialViewportWidth);
+  });
+
+  it.each([
+    ["rail", 1400],
+    ["stacked", 900],
+  ])("stand under Related notes in the %s view, each in the panel's card", async (mode, width) => {
+    setViewportWidth(width);
+    const { container } = renderOpenCard();
+
+    await waitFor(() => {
+      expect(container.querySelectorAll("[data-card-association-block]")).toHaveLength(2);
+    });
+    expect(container.querySelector("[data-detail-layout-mode]")).toHaveAttribute("data-detail-layout-mode", mode);
+    // Related notes are left out of the read: the panel shows them already.
+    expect(listCardAssociationsMock).toHaveBeenCalledWith("open", ["related"], []);
+
+    const sections = container.querySelector("[data-metadata-sections]")!;
+    const cards = [...sections.children];
+    const related = container.querySelector("[data-related-notes-block]");
+    const [address, author] = container.querySelectorAll("[data-card-association-block]");
+    expect(cards.indexOf(related!)).toBe(1);
+    expect(cards.indexOf(address!)).toBe(2);
+    expect(cards.indexOf(author!)).toBe(3);
+    // The same card as Related notes: one shell, the heading inside.
+    expect(address).toHaveAttribute("data-detail-panel-card");
+    expect(address?.className).toBe(related?.className);
+    expect(address).toHaveAttribute("data-card-association-block", "address");
+    expect(within(address as HTMLElement).getByText("Same URL")).toHaveClass("px-2", "pt-4");
+    expect(address?.querySelector("[data-card-association-list] [data-card-row]"))
+      .toHaveClass("[--card-row-pad-x:var(--spacing-s1)]");
+  });
+
+  it("names the author on a button that opens the author's feed, and so does Show all", async () => {
+    const onOpenAuthorFeed = vi.fn();
+    const { container } = renderOpenCard({ onOpenAuthorFeed });
+    const heading = await screen.findByRole("button", { name: "@kotecinho" });
+    expect(heading).toHaveAttribute("title", "All cards by @kotecinho");
+    fireEvent.click(heading);
+    expect(onOpenAuthorFeed).toHaveBeenCalledWith("@kotecinho");
+
+    const author = container.querySelector('[data-card-association-block="author"]') as HTMLElement;
+    expect(author.querySelectorAll('[data-card-association-item="button"]')).toHaveLength(5);
+    fireEvent.click(within(author).getByRole("button", { name: "Show all" }));
+    expect(onOpenAuthorFeed).toHaveBeenCalledTimes(2);
+  });
+
+  it("names a site by its host as text and opens its other rows in place", async () => {
+    listCardAssociationsMock.mockImplementation(async (_slug, _exclude, expanded) => ({
+      generation: 5,
+      slug: "open",
+      groups: [
+        expanded.includes("site")
+          ? group("site", "niklasrosen.se", ["a", "b", "c", "d", "e", "f", "g"], 7)
+          : group("site", "niklasrosen.se", ["a", "b", "c", "d", "e"], 7),
+      ],
+    }));
+    const { container } = renderOpenCard({
+      block: block({ slug: "open", url: "https://niklasrosen.se/x", related_notes: [] }),
+    });
+    const site = await waitFor(() => {
+      const found = container.querySelector('[data-card-association-block="site"]');
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+    expect(within(site).queryByRole("button", { name: "niklasrosen.se" })).toBeNull();
+    expect(within(site).getByText("niklasrosen.se")).toBeInTheDocument();
+
+    fireEvent.click(within(site).getByRole("button", { name: "Show 2 more" }));
+    await waitFor(() => {
+      expect(site.querySelectorAll('[data-card-association-item="button"]')).toHaveLength(7);
+    });
+    expect(listCardAssociationsMock).toHaveBeenLastCalledWith("open", [], ["site"]);
+    expect(within(site).queryByRole("button", { name: /more/ })).toBeNull();
+  });
+
+  it("opens a row's card and shows its commands under the pointer", async () => {
+    const onOpenRelatedNote = vi.fn();
+    const { container } = renderOpenCard({ onOpenRelatedNote });
+    const address = await waitFor(() => {
+      const found = container.querySelector('[data-card-association-block="address"]');
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+    const row = address.querySelector('[data-card-association-item="button"]') as HTMLElement;
+    fireEvent.pointerMove(row);
+    expect(await within(address).findByRole("button", { name: "Connect" })).toBeInTheDocument();
+    fireEvent.click(within(row).getByText("piece"));
+    expect(onOpenRelatedNote).toHaveBeenCalledWith("piece");
+  });
+
+  it("times a row's preview by the shared card preview rule", async () => {
+    setViewportWidth(1400);
+    const written = (slug: string) => ({ ...light(slug), body: `Body of ${slug}` });
+    listCardAssociationsMock.mockResolvedValue({
+      generation: 5,
+      slug: "open",
+      groups: [{ kind: "author", label: "@kotecinho", total: 2, blocks: ["one", "two"].map(written) }],
+    });
+    const { container } = renderOpenCard();
+    const author = await waitFor(() => {
+      const found = container.querySelector('[data-card-association-block="author"]');
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+    const [one, two] = Array.from(
+      author.querySelectorAll<HTMLElement>('[data-card-association-item="button"]'),
+    );
+    const preview = () => document.querySelector("[data-related-note-hover-preview]");
+    const settle = async (ms: number) => {
+      await act(async () => {
+        vi.advanceTimersByTime(ms);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    };
+
+    vi.useFakeTimers(INTENT_TIMERS);
+    try {
+      // The panel feeds the pointer's speed: a pointer still moving along the
+      // row past the delay opens nothing until it rests.
+      fireEvent.mouseEnter(one!);
+      for (let elapsed = 0; elapsed < HOVER_PREVIEW_COLD_OPEN_DELAY_MS + 100; elapsed += 16) {
+        await settle(16);
+        fireEvent.pointerMove(one!, { clientX: 100 + elapsed, clientY: 10 });
+      }
+      expect(preview()).toBeNull();
+      await settle(HOVER_INTENT.velocityWindowMs * 2);
+      expect(preview()).toHaveTextContent("Body of one");
+
+      // Read long past the warm window, it hands over to the next row at once.
+      await settle(HOVER_PREVIEW_WARM_WINDOW_MS * 3);
+      fireEvent.mouseLeave(one!);
+      expect(preview()).toBeNull();
+      fireEvent.mouseEnter(two!);
+      await settle(0);
+      expect(preview()).toHaveTextContent("Body of two");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reads again on vault-refreshed and keeps a newer answer over an older one", async () => {
+    setViewportWidth(1400);
+    let refreshed = false;
+    listCardAssociationsMock.mockImplementation(async () => (
+      refreshed
+        ? { generation: 3, slug: "open", groups: [group("address", "u", ["older"])] }
+        : { generation: 9, slug: "open", groups: [group("address", "u", ["newer"])] }
+    ));
+    renderOpenCard();
+    expect(await screen.findByText("newer")).toBeInTheDocument();
+    const callsBefore = listCardAssociationsMock.mock.calls.length;
+    refreshed = true;
+    act(() => {
+      window.dispatchEvent(new Event("vault-refreshed"));
+    });
+    await waitFor(() => expect(listCardAssociationsMock.mock.calls.length).toBeGreaterThan(callsBefore));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText("newer")).toBeInTheDocument();
+    expect(screen.queryByText("older")).toBeNull();
+  });
+
+  it("draws no block for a card without associations or when the read fails", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    listCardAssociationsMock.mockRejectedValue(new Error("index busy"));
+    const { container } = renderOpenCard();
+    await waitFor(() => expect(listCardAssociationsMock).toHaveBeenCalled());
+    await waitFor(() => expect(error).toHaveBeenCalled());
+    expect(container.querySelector("[data-card-association-block]")).toBeNull();
+    expect(await screen.findByText("Related notes")).toBeInTheDocument();
+    error.mockRestore();
   });
 });

@@ -3,7 +3,11 @@ import type { TabView } from "@/types";
 import {
   TAB_VIEW_REPORT_DEBOUNCE_MS,
   createTabViewReporter,
+  isAuthorPlaceKey,
+  locationCollection,
+  placeKey,
   sameTabView,
+  tabLocationFromPath,
   tabLocationOf,
   tabLocationPath,
   takeLegacyTabState,
@@ -162,5 +166,23 @@ describe("tab view helpers", () => {
       .toBe(`/channel/${encodeURIComponent("Красивый веб")}`);
     expect(tabLocationOf(undefined)).toEqual({ kind: "everything" });
     expect(tabLocationOf("x")).toEqual({ kind: "collection", tag: "x" });
+  });
+
+  it("maps an author's feed to its route and back (SPEC_CARD_ASSOCIATIONS.md)", () => {
+    const author = { kind: "author", author: "@kotecinho/x y" } as const;
+    expect(tabLocationPath(author)).toBe(`/author/${encodeURIComponent("@kotecinho/x y")}`);
+    expect(tabLocationFromPath(tabLocationPath(author))).toEqual(author);
+    expect(tabLocationFromPath("/channel/Art")).toEqual({ kind: "collection", tag: "Art" });
+    expect(tabLocationFromPath("/")).toEqual({ kind: "everything" });
+  });
+
+  it("keys an author apart from a collection of the same name", () => {
+    const author = placeKey({ kind: "author", author: "Art" });
+    expect(author).not.toBe(placeKey({ kind: "collection", tag: "Art" }));
+    expect(isAuthorPlaceKey(author)).toBe(true);
+    expect(isAuthorPlaceKey(placeKey({ kind: "collection", tag: "Art" }))).toBe(false);
+    expect(placeKey({ kind: "everything" })).toBe("__all__");
+    expect(locationCollection({ kind: "author", author: "Art" })).toBeUndefined();
+    expect(locationCollection({ kind: "collection", tag: "Art" })).toBe("Art");
   });
 });

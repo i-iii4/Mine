@@ -380,11 +380,18 @@ After successful deletion:
 |---|---|---|
 | `/` | AllBlocks | Все блоки (по умолчанию после выбора vault) |
 | `/channel/:tag` | ChannelView | Blocks filtered by percent-encoded `CollectionRef` |
+| `/author/:author` | AuthorPage | Карточки одного автора, имя как написано, в процентной записи; только сетка (SPEC_CARD_ASSOCIATIONS.md, «Лента автора») |
 
 Route params encode `CollectionRef`, derived from the Obsidian wikilink target,
 not a normalized tag. The URL currently keeps `/channel/:tag` for compatibility,
 but the value is a percent-encoded page ref such as `Красивый веб`, not
 `красивый-веб`.
+
+Маршрут и место вкладки одно и то же: `tabLocationFromPath` читает из пути
+`TabLocation` (Everything, коллекция, автор), `tabLocationPath` пишет путь
+обратно, `placeKey` даёт строку места для кэша ленты и истории мест
+(`src/lib/tabPage.ts`). `currentTag` в `App.tsx` остаётся коллекцией места,
+если место коллекция; чтения, кэш и история идут по месту.
 
 Vault-пикер — не маршрут, а состояние: если `vaultPath === null`, показываем пикер поверх.
 
@@ -580,9 +587,12 @@ Hover на thumbnail открывает только read-only card preview. Pre
 интерактивен (`pointer-events: none`), не содержит `Source` / `Connect` /
 `More`, не имеет hover bridge и закрывается сразу, когда pointer уходит с
 thumbnail. Выделение строки и outline thumbnail остаются локальными состояниями
-trigger'а и не переносятся на popup. Cold open delay — `500ms`; если предыдущий
-preview был открыт в течение `800ms` warm window, следующий thumbnail открывает
-preview с `0ms` delay.
+trigger'а и не переносятся на popup. Время открытия задаёт общее правило
+превью карточки (SPEC_CARD_STATES.md, С7.10; `HoverPreviewOpener` в
+`src/lib/hoverPreviewTiming.ts`): cold open delay `500ms`, затем
+остановившийся указатель; в течение `800ms` warm window после того, как
+preview последний раз был на экране, следующий thumbnail открывает preview с
+`0ms` delay.
 Right/context click на thumbnail открывает app-level карточное меню
 (`CardPointMenu`) для конкретного блока из preview strip. Thumbnail обязан
 `preventDefault()` и `stopPropagation()` для `contextmenu`, чтобы событие не
@@ -1226,6 +1236,9 @@ Image media expansion:
   in the dropdown at all: no duplicated current label, no checkmark, no radio
   marker, no selected/current row. Selecting an item immediately navigates to
   `/` or `/channel/:tag`; the switcher derives current state only from route.
+  In an author's feed (`/author/:author`) the pill names the author as written
+  (`currentAuthor`), and every destination, Everything included, is listed
+  (SPEC_CARD_ASSOCIATIONS.md, «Лента автора»).
   The search input remains the only focus owner while the dropdown is open:
   pointer hover over destination rows must not blur or move focus out of the
   input. Destination rows and the pinned create action are menu-styled buttons
@@ -1495,14 +1508,21 @@ Image media expansion:
   it. It opens right of the row when the area has room there, else left,
   and flips upward when it would overflow below. In the stacked view the row
   spans the column and neither side has room: the preview then stands under
-  the row, or over it when there is no room below, starting at the row's
-  left edge (07.10.2026: it used to open left by the window's edge and lie
-  under the sidebar, 211 of its 240 px at a 1000 px window). It closes when
+  the row, or over it when there is no room below, its right edge on the
+  row's right edge (user's decision 08.10.2026; 07.10.2026 it moved off the
+  window's left edge, where it lay under the sidebar, 211 of its 240 px at a
+  1000 px window). It closes when
   the pointer leaves the row. While a row's menu is open the preview stays
   closed. It is non-interactive
   (`pointer-events: none`), has no hover bridge, and does not show
-  `Source` / `Connect` / `More`. Timing matches sidebar thumbnails: `500ms`
-  cold open delay, `0ms` warm delay inside an `800ms` warm window.
+  `Source` / `Connect` / `More`. Timing is the shared card preview rule, the
+  sidebar's big preview included (`HoverPreviewOpener` in
+  `src/lib/hoverPreviewTiming.ts`, SPEC_CARD_STATES.md, С7.10): `500ms`
+  cold open delay, then a resting pointer (`HOVER_INTENT.maxSpeed`), so a
+  pointer passing over the rows opens nothing; `0ms` warm delay inside an
+  `800ms` warm window counted from when a preview was last on screen, so the
+  next row's preview replaces the shown one at once (user's decision
+  08.10.2026). The association blocks' rows share this.
 - Article inline image hover preview is a separate, not-yet-implemented feature.
   It must not be added by copying the related-notes implementation. The required
   contract is: image wrapper gets the same button-like hover/focus outline
@@ -1514,6 +1534,23 @@ Image media expansion:
 - Open Detail must refresh its hydrated `IndexedBlock` snapshot on
   `vault-refreshed`, so a newly added connector/link updates `RELATED NOTES`
   in-place without closing and reopening the page.
+- Блоки связей (с 07.10.2026, контракт
+  [SPEC_CARD_ASSOCIATIONS.md](SPEC_CARD_ASSOCIATIONS.md), «Открытая карточка»):
+  под Related notes, в обоих видах (рядом и мобильном), каждая связь своей
+  коробкой `DetailPanelCard`, той же, что у Related notes, подпись внутри.
+  Порядок и предел строк задаёт бэкенд (`CARD_ASSOCIATION_ORDER`,
+  `CARD_ASSOCIATION_PREVIEW_ROWS` в `storage/card_associations.rs`), подписи
+  лежат в `src/lib/cardAssociations.ts`: `Same URL`, автор как написан
+  (кнопка: лента автора, подсказка `All cards by <автор>`), хост сайта
+  текстом. Строки это общий список строк панели `PanelCardRows`, тот же, что
+  у Related notes (`CardRow` с `framed`, команды под указателем, превью при
+  наведении); ключ строки содержит список, поэтому одна карточка в двух
+  списках это две строки. Больше пяти строк: у автора `Show all` открывает
+  ленту автора, у адреса и сайта `Show N more` раскрывает блок на месте до
+  200 строк. Данные читает `useCardAssociations` после загрузки полной
+  карточки (исключаются её Related notes), снова на `vault-refreshed`; ответ с
+  поколением проекции меньше показанного отбрасывается. Ошибка чтения
+  блоков не рисует.
 - После успешного rename Detail продолжает показывать тот же блок уже под новым slug; visible title меняется только если изменился body H1 or legacy `frontmatter.title`, а filename-only surfaces используют новый `fallback_label`
 - Markdown body H1 не полагается на prose-default sizes; Detail задаёт `text-lg leading-6 font-semibold` для `h1` и `text-base leading-5 font-semibold` для `h2-h6`, чтобы article typography не выходила за рамки дизайн-системы
 - Кнопка X справа вверху, Esc для закрытия. Escape не должен закрывать Detail,

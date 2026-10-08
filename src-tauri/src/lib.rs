@@ -168,6 +168,7 @@ pub fn run() {
             commands::blocks::get_grid_rows,
             commands::graph::list_graph_snapshot,
             commands::blocks::get_block,
+            commands::card_associations::list_card_associations,
             commands::blocks::resolve_note_link,
             commands::blocks::create_block,
             commands::blocks::extract_inline_media,

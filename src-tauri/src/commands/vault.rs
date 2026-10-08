@@ -1504,6 +1504,25 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
                     return;
                 }
             };
+            // Card associations derived by older rules, or never: a failure
+            // leaves them unshown, not wrong, and the next pass retries.
+            let associations_updated =
+                match crate::storage::card_associations::backfill_association_index(&conn, &vault) {
+                    Ok(updated) => updated,
+                    Err(err) => {
+                        log::warn!(
+                            "association index backfill failed for {}: {:#}",
+                            path_for_thread,
+                            err
+                        );
+                        append_startup_trace(
+                            &app_for_thread,
+                            "index_metadata_backfill",
+                            &format!("associations_failed path={} err={:#}", path_for_thread, err),
+                        );
+                        0
+                    }
+                };
             // A staging directory may only belong to a save happening right
             // now, so anything older is a leftover from a crash between the
             // upload and the card. Age is the whole test: the previous sweep
@@ -1632,6 +1651,7 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
 
             let total_updated = media_updated
                 + collections_updated
+                + associations_updated
                 + preview_updated
                 + thumb_updated
                 + playback_updated
@@ -1659,9 +1679,10 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
             }
 
             log::info!(
-                "index metadata backfill: media={} collections={} preview={} thumb={} playback={} preview_text={} search={} for {}",
+                "index metadata backfill: media={} collections={} associations={} preview={} thumb={} playback={} preview_text={} search={} for {}",
                 media_updated,
                 collections_updated,
+                associations_updated,
                 preview_updated,
                 thumb_updated,
                 playback_updated,
@@ -1673,10 +1694,11 @@ fn start_index_metadata_backfill(app: AppHandle, path: String) {
                 &app_for_thread,
                 "index_metadata_backfill",
                 &format!(
-                    "updated path={} media={} collections={} preview={} thumb={} playback={} preview_text={} search={}",
+                    "updated path={} media={} collections={} associations={} preview={} thumb={} playback={} preview_text={} search={}",
                     path_for_thread,
                     media_updated,
                     collections_updated,
+                    associations_updated,
                     preview_updated,
                     thumb_updated,
                     playback_updated,

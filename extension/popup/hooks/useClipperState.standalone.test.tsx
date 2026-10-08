@@ -1334,3 +1334,69 @@ describe("a clip lives only in the open clipper (SPEC_CLIPPER_DRAFTS_REMOVAL.md,
     expect(standalone.standaloneSave).not.toHaveBeenCalled();
   });
 });
+
+describe("the channel is the author of a YouTube clip (SPEC_CARD_ASSOCIATIONS.md, «Клиппер: канал YouTube»)", () => {
+  const sourceUrl = "https://www.youtube.com/watch?v=9KDDhAOyv9k";
+  const video: messaging.PageMetadata = { url: sourceUrl, documentUrl: sourceUrl, captureGeneration: "yt:1", title: "Video",
+    description: "", image: "https://i.ytimg.com/vi/9KDDhAOyv9k/maxresdefault.jpg", author: null, ogType: null, favicon: null,
+    selection: "", detectedType: "video", isArticle: false };
+  const channelRequests = () => vi.mocked(chrome.runtime.sendMessage).mock.calls
+    .map(([message]) => message as unknown as Record<string, unknown>)
+    .filter((message) => message.action === "resolveYoutubeChannel");
+  const savedAuthor = () => (standalone.standaloneSave.mock.calls[0]![0] as { author?: unknown }).author;
+
+  /** Background answers the channel request with `reply`; `undefined` never answers. */
+  function channelReply(reply?: { channel: unknown }) {
+    vi.mocked(chrome.runtime.sendMessage).mockImplementation(((message: { action?: string }, callback?: (response: unknown) => void) => {
+      if (message.action === "resolveYoutubeChannel" && reply) callback?.(reply);
+    }) as unknown as typeof chrome.runtime.sendMessage);
+  }
+
+  beforeEach(() => {
+    sendToNative.mockResolvedValue({ ok: false, error: "No helper" });
+    standalone.getStandaloneStatus.mockResolvedValue({ configured: true, folderName: "Mine", permission: "granted", bindingId: "browser-original" });
+    standalone.standaloneSave.mockResolvedValue({ ok: true, outcome: "committed", slug: "Cards/Video" });
+    vi.spyOn(messaging, "extractMetadata").mockResolvedValue(video);
+    // Defuddle's byline may name the video shown before an in-page navigation.
+    vi.spyOn(messaging, "extractArticleAsync").mockResolvedValue({ title: "Video", content: "Transcript", byline: "Previous video channel",
+      excerpt: "", documentUrl: sourceUrl, sourceUrl, captureGeneration: "yt:1" });
+  });
+
+  it.each(["content", "link"] as const)("asks once at capture and saves the channel as the author of %s", async (kind) => {
+    channelReply({ channel: "@kotecinho" });
+    const { result } = renderHook(() => useClipperState());
+    await settled(result);
+    expect(channelRequests()).toEqual([{ target: "background", action: "resolveYoutubeChannel", sourceUrl }]);
+    act(() => result.current.setCurrentType(kind));
+    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+    expect(savedAuthor()).toBe("@kotecinho");
+    expect(channelRequests()).toHaveLength(1);
+  });
+
+  it("saves without an author when the channel request fails", async () => {
+    channelReply({ channel: null });
+    const { result } = renderHook(() => useClipperState());
+    await settled(result);
+    await waitFor(() => expect(result.current.articleExtractionState).toBe("ready"));
+    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+    expect(savedAuthor()).toBeNull();
+  });
+
+  it("waits for a channel that never answers no longer than the bound, then saves without an author", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    channelReply();
+    const { result } = renderHook(() => useClipperState());
+    await settled(result);
+    act(() => result.current.setCurrentType("link"));
+    let saving: ReturnType<typeof result.current.save> = Promise.resolve(undefined);
+    act(() => { saving = result.current.save(); });
+    // The clock also follows real time here, so the checks keep a margin.
+    await act(async () => { await vi.advanceTimersByTimeAsync(messaging.YOUTUBE_CHANNEL_TIMEOUT_MS / 2); });
+    expect(standalone.standaloneSave).not.toHaveBeenCalled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(messaging.YOUTUBE_CHANNEL_TIMEOUT_MS / 2); });
+    let saved: Awaited<typeof saving>;
+    await act(async () => { saved = await saving; });
+    expect(saved!).toMatchObject({ ok: true });
+    expect(savedAuthor()).toBeNull();
+  });
+});

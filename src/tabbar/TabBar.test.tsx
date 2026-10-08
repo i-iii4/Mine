@@ -72,10 +72,10 @@ const available = () => zoneWidth - NEW_TAB_SLOT_PX;
 function tab(
   id: string,
   space_name: string | null = "Mine",
-  collection: string | null = null,
+  place: string | null = null,
   overrides: Partial<TabBarTab> = {},
 ): TabBarTab {
-  return { id, space_name, collection, card: null, live: true, history: { back: false, forward: false }, ...overrides };
+  return { id, space_name, place, card: null, live: true, history: { back: false, forward: false }, ...overrides };
 }
 
 function barState(tabs: TabBarTab[], overrides: Partial<TabBarState> = {}): TabBarState {

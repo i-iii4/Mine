@@ -12,9 +12,10 @@ import {
   type PlaceHistory,
 } from "./placeHistory";
 
-const everything: Place = { tag: null, card: null };
-const alpha: Place = { tag: "alpha", card: null };
-const alphaCard: Place = { tag: "alpha", card: "alpha-block" };
+const everything: Place = { location: { kind: "everything" }, card: null };
+const alpha: Place = { location: { kind: "collection", tag: "alpha" }, card: null };
+const alphaCard: Place = { location: { kind: "collection", tag: "alpha" }, card: "alpha-block" };
+const collection = (tag: string): Place => ({ location: { kind: "collection", tag }, card: null });
 
 function through(...places: Place[]): PlaceHistory {
   return places.reduce(recordPlace, EMPTY_PLACE_HISTORY);
@@ -46,16 +47,16 @@ describe("place history", () => {
 
   it("drops the places ahead when the tab goes somewhere new", () => {
     const back = stepPlace(through(everything, alpha, alphaCard), false)!.history;
-    const elsewhere = recordPlace(back, { tag: "beta", card: null });
-    expect(elsewhere.entries).toEqual([everything, alpha, { tag: "beta", card: null }]);
+    const elsewhere = recordPlace(back, collection("beta"));
+    expect(elsewhere.entries).toEqual([everything, alpha, collection("beta")]);
     expect(historyDirections(elsewhere)).toEqual({ back: true, forward: false });
   });
 
   it("keeps the newest places within the limit", () => {
-    const places = Array.from({ length: PLACE_HISTORY_LIMIT + 5 }, (_, index) => ({ tag: `t${index}`, card: null }));
+    const places = Array.from({ length: PLACE_HISTORY_LIMIT + 5 }, (_, index) => collection(`t${index}`));
     const history = through(...places);
     expect(history.entries).toHaveLength(PLACE_HISTORY_LIMIT);
-    expect(history.entries[0]).toEqual({ tag: "t5", card: null });
+    expect(history.entries[0]).toEqual(collection("t5"));
     expect(history.index).toBe(PLACE_HISTORY_LIMIT - 1);
   });
 
@@ -64,5 +65,12 @@ describe("place history", () => {
     const settled = settlePlace(back, alpha);
     expect(settled.entries).toEqual([everything, alpha, alpha]);
     expect(settled.index).toBe(1);
+  });
+
+  it("tells an author's cards from a collection of the same name", () => {
+    const author: Place = { location: { kind: "author", author: "alpha" }, card: null };
+    const history = through(alpha, author);
+    expect(history.entries).toEqual([alpha, author]);
+    expect(recordPlace(history, { location: { kind: "author", author: "alpha" }, card: null })).toBe(history);
   });
 });

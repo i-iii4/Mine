@@ -2,8 +2,9 @@
 
 Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md) | [SPEC_TABS.md](SPEC_TABS.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_CARD_STATES.md](SPEC_CARD_STATES.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)
 
-Статус: правила утверждены пользователем 07.10.2026; реализация не начата,
-Phase 41 в [PLAN.md](PLAN.md).
+Статус: правила утверждены пользователем 07.10.2026; реализовано 07.10.2026
+(этапы от 41.1 до 41.7, Phase 41 в [PLAN.md](PLAN.md)), живая приёмка за
+пользователем.
 
 ## Цель
 
@@ -267,7 +268,13 @@ pub fn card_association_keys(block: &Block) -> CardAssociationKeys;
 ## Модель данных
 
 Миграция `CURRENT_SCHEMA_VERSION` с 5 на 6 (`storage/migrations.rs`), одна
-транзакция, как остальные шаги. Столбцы добавляются в `blocks`: связи
+транзакция, как остальные шаги. Ключ поколения индекса `INDEX_GENERATION`
+меняется на `schema-6-semantics-1` (`domain/vault.rs`, SPEC_STORAGE.md):
+выбор базы не мигрирует базу другой схемы, а откладывает её и строит новую,
+поэтому сборка схемы 6 получает своё поколение и строит индекс из файлов один
+раз, а сборка схемы 5 продолжает пользоваться своим. Новый индекс заполняет
+столбцы связей обычной записью строк; дозаполнение ниже нужно базам, перешедшим
+миграцией, и каждому подъёму версии правил. Столбцы добавляются в `blocks`: связи
 описывают одну карточку, а изменение строки `blocks` уже продвигает
 поколение проекции триггерами `projection_blocks_*`.
 
@@ -323,9 +330,9 @@ CREATE INDEX idx_blocks_association_address ON blocks(association_address, saved
 ```rust
 // storage/card_associations.rs
 /// Write the association columns of one row from its card; returns the
-/// row's association author key before and after.
+/// row's association author (as written) before and after.
 pub(crate) fn write_row_keys(conn: &Connection, block_id: i64, block: &Block)
-    -> Result<AuthorKeyChange>;
+    -> Result<AuthorChange>;
 
 /// Recompute the inherited author of every extracted card without its own
 /// author whose source may be one of the notes named `names`, and of the
@@ -336,7 +343,7 @@ pub(crate) fn refresh_inherited_authors(conn: &Connection, names: &[String])
 
 | Событие | Что пересчитывается |
 |---|---|
-| Запись карточки (`upsert_block_inner`) | Её столбцы; её автор (свой или по цепочке). Если ключ автора изменился: `refresh_inherited_authors([note_name])` |
+| Запись карточки (`upsert_block_inner`) | Её столбцы; её автор (свой или по цепочке). Если автор изменился, в том числе только написание: `refresh_inherited_authors([note_name])`, подпись вытащенных карточек следует за исходной |
 | Новая карточка | То же; плюс `refresh_inherited_authors([note_name])` всегда: новое имя может сделать ссылку чужой вытащенной карточки найденной или неоднозначной |
 | Удаление (`remove_block`) | `note_name` читается до удаления; после: `refresh_inherited_authors([note_name])` |
 | Переименование (`rename_slug`) | Новый `note_name`; `refresh_inherited_authors([старое имя, новое имя])`. Переименование в приложении переписывает `Mine Related Notes` вытащенных карточек, их записи приходят обычным путём |
@@ -619,6 +626,7 @@ notes и блоками связей; копия запрещена. Ключ с
   пользователь не уйдёт.
 - Бросить файлы в ленту автора нельзя: зона сброса там не включается. Новый
   файл автора не получает и в этой ленте не появился бы.
+- Клавиша переключения `Grid / Graph` в ленте автора ничего не делает.
 
 ### Как выйти
 

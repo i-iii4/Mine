@@ -8,6 +8,7 @@ pub mod article_audio;
 mod article_audio_desktop;
 pub mod blocks;
 pub mod app_open;
+pub mod card_associations;
 pub mod channels;
 pub mod clipboard;
 pub mod clipper_setup;

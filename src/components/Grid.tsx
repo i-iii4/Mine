@@ -14,7 +14,8 @@ import {
   ContextMenu,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import type { LightBlock, ScrollAnchor as TabScrollAnchor, TagCount } from "@/types";
+import type { LightBlock, ScrollAnchor as TabScrollAnchor, TabLocation, TagCount } from "@/types";
+import { placeKey } from "@/lib/tabPage";
 import { useTabVisible } from "@/lib/tabVisibility";
 import { TopFadeScrim } from "./TopFadeScrim";
 import { useDensity } from "@/lib/density";
@@ -223,6 +224,11 @@ interface GridProps {
   thumbVersions?: ReadonlyMap<string, number>;
   tags: TagCount[];
   currentTag?: string;
+  /** The place the feed shows; without it, the collection `currentTag` or
+   *  Everything. An author's feed is no collection and no Everything: an
+   *  empty one shows the empty collection's line, never the onboarding
+   *  (SPEC_CARD_ASSOCIATIONS.md, «Лента автора»). */
+  location?: TabLocation;
   /** Opens a collection, as its sidebar row does; a card's collection pill
    *  calls it (SPEC_CARD_STATES.md, С9). */
   onNavigateCollection?: (collectionRef?: string) => void;
@@ -482,6 +488,7 @@ export function Grid({
   thumbVersions,
   tags,
   currentTag,
+  location,
   onNavigateCollection,
   routeSnapshotReady = true,
   scrollToTop,
@@ -513,6 +520,10 @@ export function Grid({
   restoreScrollAnchor = null,
   onScrollAnchorRestored,
 }: GridProps) {
+  // The place this feed shows: the key of its layout, scroll and selection
+  // memory, and whether it is Everything (the only place with onboarding).
+  const routeKey = location ? placeKey(location) : (currentTag ?? "__all__");
+  const onEverything = location ? location.kind === "everything" : !currentTag;
   // A hidden tab plays nothing; shown again, the feed's own rules decide
   // what plays (SPEC_TABS.md, В41).
   const tabVisible = useTabVisible();
@@ -636,7 +647,7 @@ export function Grid({
   // Scroll to top on explicit signal or channel change.
   useEffect(() => {
     parentRef.current?.scrollTo(0, 0);
-  }, [scrollToTop, currentTag]);
+  }, [scrollToTop, routeKey]);
 
   // Measure parent dimensions.
   useEffect(() => {
@@ -815,7 +826,7 @@ export function Grid({
   const generationKey = useMemo<LayoutGenerationKey>(
     () => buildLayoutGenerationKey({
       blocks,
-      routeKey: currentTag ?? "__all__",
+      routeKey,
       columnWidth,
       columnCount,
       // The module-level layoutCache must never serve a layout computed with
@@ -823,7 +834,7 @@ export function Grid({
       layoutGap,
       show,
     }),
-    [blocks, columnCount, columnWidth, currentTag, layoutGap, show],
+    [blocks, columnCount, columnWidth, routeKey, layoutGap, show],
   );
   const heightDriftBlocksById = useMemo(() => {
     const map = new Map<number, LightBlock>();
@@ -1123,7 +1134,7 @@ export function Grid({
   ]);
 
   const showEmptyChannelPlaceholder = Boolean(
-    currentTag &&
+    !onEverything &&
     routeSnapshotReady &&
     blocks.length === 0,
   );
@@ -1131,7 +1142,7 @@ export function Grid({
   // the first screen a new user sees and the only place the clipper can be
   // introduced. See SPEC_ONBOARDING.md О14.
   const showEmptySpaceOnboarding = Boolean(
-    !currentTag &&
+    onEverything &&
     routeSnapshotReady &&
     blocks.length === 0 &&
     !firstIndexProgress &&
@@ -1141,7 +1152,7 @@ export function Grid({
   );
   // The space had cards and they are all gone: an empty feed, not a new space.
   const showEmptyFeedPlaceholder = Boolean(
-    !currentTag &&
+    onEverything &&
     routeSnapshotReady &&
     blocks.length === 0 &&
     !firstIndexProgress &&
@@ -1150,7 +1161,6 @@ export function Grid({
 
   useLayoutEffect(() => {
     const scrollElement = parentRef.current;
-    const routeKey = currentTag ?? "__all__";
     const previous = scrollAnchorSnapshotRef.current;
 
     if (
@@ -1223,7 +1233,7 @@ export function Grid({
     };
   }, [
     blocks,
-    currentTag,
+    routeKey,
     focusedSlug,
     layout,
     parentWidth,
@@ -1439,7 +1449,7 @@ export function Grid({
     setPinnedActionMenuSlug(null);
     setSelectedSlugs(new Set());
     setMarqueeSelection(null);
-  }, [currentTag]);
+  }, [routeKey]);
 
   useEffect(() => {
     if (focusedSlug && !blocksBySlug.has(focusedSlug)) {
@@ -2243,7 +2253,7 @@ export function Grid({
   // A new column count or collection moves every card under the pointer (С7.5).
   useEffect(() => {
     cardIntent.displace();
-  }, [cardIntent, columnCount, columnWidth, currentTag]);
+  }, [cardIntent, columnCount, columnWidth, routeKey]);
 
   // The sidebar describes and edits the whole selection (SPEC_CARD_STATES.md, С6).
   useEffect(() => {
@@ -2329,9 +2339,10 @@ export function Grid({
     <CardCollectionsContext.Provider value={cardCollections}>
     <div className="relative h-full">
     {/* An open right-click menu holds the pointer's answers like the card's
-        own menus do (С7.8): the card under it drops its hover and its lift
-        at once, though WebKit keeps `:hover` until the pointer moves. */}
-    <ContextMenu onOpenChange={(open) => cardIntent.suspend("context-menu", open)}>
+        own menus do (С7.8, useHoverIntent): the card under it drops its hover
+        and its lift at once, though WebKit keeps `:hover` until the pointer
+        moves. */}
+    <ContextMenu>
       <ContextMenuTrigger asChild>
         <div
           ref={topFade.ref}

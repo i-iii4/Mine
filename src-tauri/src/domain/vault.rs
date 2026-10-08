@@ -13,7 +13,7 @@ pub use mine_core::domain::vault::{
 
 /// Compatibility of the complete derived read model, independent of app version.
 /// Change this key when schema or projection semantics cease to be compatible.
-pub const INDEX_GENERATION: &str = "schema-5-semantics-1";
+pub const INDEX_GENERATION: &str = "schema-6-semantics-1";
 
 /// A reduced size of a block's thumbnail.
 ///
@@ -564,7 +564,7 @@ mod tests {
     fn index_db_path() {
         assert_eq!(
             layout().index_db_path(),
-            PathBuf::from("/vault/.mine/indexes/schema-5-semantics-1/index.db")
+            PathBuf::from("/vault/.mine/indexes/schema-6-semantics-1/index.db")
         );
     }
 
@@ -639,7 +639,7 @@ mod tests {
         assert_eq!(layout.derived_root(), Path::new("/local-derived/vault-123"));
         assert_eq!(
             layout.index_db_path(),
-            PathBuf::from("/local-derived/vault-123/indexes/schema-5-semantics-1/index.db")
+            PathBuf::from("/local-derived/vault-123/indexes/schema-6-semantics-1/index.db")
         );
         assert_eq!(
             layout.legacy_index_db_path(),
