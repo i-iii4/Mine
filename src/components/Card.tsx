@@ -505,9 +505,20 @@ function collectionsRowLiftStyle(textPart: boolean): CSSProperties {
 /// `--card-lift`; it never takes more than 60% of the card, and text past
 /// that is cut. Under the caption it keeps room for the row of collections:
 /// the caption's own bottom padding already reads as the gap above the row.
-function MediaLiftCaption({ block, text }: { block: LightBlock; text: CardLayoutText }) {
+function MediaLiftCaption({
+  block,
+  text,
+  inFlow = false,
+}: {
+  block: LightBlock;
+  text: CardLayoutText;
+  /** A preview's caption (С10): it stands under the media in the card's
+   *  flow, the card taller by it, instead of rising over the media. */
+  inFlow?: boolean;
+}) {
   const panelRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
+    if (inFlow) return;
     const panel = panelRef.current;
     const frame = panel?.closest<HTMLElement>("[data-feed-card-frame]");
     if (!panel || !frame) return;
@@ -522,7 +533,7 @@ function MediaLiftCaption({ block, text }: { block: LightBlock; text: CardLayout
       observer.disconnect();
       frame.style.removeProperty("--card-lift");
     };
-  }, []);
+  }, [inFlow]);
 
   const lines: CardTextLine[] = [];
   if (text.title) lines.push("title");
@@ -536,8 +547,11 @@ function MediaLiftCaption({ block, text }: { block: LightBlock; text: CardLayout
   return (
     <div
       ref={panelRef}
-      data-card-lift="caption"
-      className="absolute inset-x-0 bottom-0 flex max-h-[60%] flex-col justify-end overflow-hidden"
+      data-card-caption=""
+      data-card-lift={inFlow ? undefined : "caption"}
+      className={inFlow
+        ? "relative flex flex-col"
+        : "absolute inset-x-0 bottom-0 flex max-h-[60%] flex-col justify-end overflow-hidden"}
     >
       {first && last && (
         <div
@@ -586,11 +600,14 @@ const CARD_SHADOW_CLASS: Record<CardShadow, string | null> = {
 
 /// A card drawn outside the feed is the feed's own card: the presentation the
 /// feed shows now (`Show`), the same title rule, media geometry, surface and
-/// corner (SPEC_CARD_STATES.md, С10). Nothing in it can be pressed. `raised`
-/// stands it in the feed card's final hover state at once (С8): its content
-/// lifted, a bare media card's caption up, its collections at the bottom as
-/// text, and no Source, More or Connect. A dragged card stays at rest, as the
-/// feed card does under a drag (С8.5).
+/// corner (SPEC_CARD_STATES.md, С10). Nothing in it can be pressed.
+/// `unfolded` shows everything the feed card's lift brings up, without the
+/// lift (07.10.2026): a preview has no further hover to reveal more, so its
+/// content stays whole from its top, a bare media card's caption stands
+/// under the media, and the card is taller by the room its row of
+/// collections needs, the row at the bottom as text, with no Source, More
+/// or Connect. A dragged card stays at rest, as the feed card does under a
+/// drag (С8.5).
 function StaticCard({
   block,
   vaultPath,
@@ -598,7 +615,7 @@ function StaticCard({
   width,
   shadow,
   thumbVersion,
-  raised,
+  unfolded,
 }: {
   block: LightBlock;
   vaultPath: string;
@@ -606,7 +623,7 @@ function StaticCard({
   width: number;
   shadow: CardShadow;
   thumbVersion?: number;
-  raised: boolean;
+  unfolded: boolean;
 }) {
   const { show } = useFeedDisplay();
   const descriptor = useMemo(() => deriveCardLayoutDescriptor(block, show), [block, show]);
@@ -616,38 +633,57 @@ function StaticCard({
   const reservedHeight = descriptor.media !== null && !descriptor.textUnderMedia
     ? computeCardHeight(block, width, null, show)
     : undefined;
+  const content = (
+    <CardContent
+      block={block}
+      vaultPath={vaultPath}
+      thumbsRootPath={thumbsRootPath}
+      allowPlayback={false}
+      thumbVersion={thumbVersion}
+      priority={true}
+    />
+  );
 
   return (
     <FeedShowContext.Provider value={show}>
       <CardFrame
         data-card-preview=""
-        data-card-lift-pinned={raised ? "" : undefined}
+        data-card-preview-unfolded={unfolded ? "" : undefined}
         className={cn(
           "pointer-events-none",
           CARD_SHADOW_CLASS[shadow],
         )}
-        style={{ width, height: reservedHeight, ...(raised ? cardLiftStyle(block, descriptor) : undefined) }}
+        // Unfolded, the frame takes its height from what it holds: the
+        // media's reserved box, then the caption or the row's room.
+        style={{ width, height: unfolded ? undefined : reservedHeight }}
       >
-        <CardContent
-          block={block}
-          vaultPath={vaultPath}
-          thumbsRootPath={thumbsRootPath}
-          allowPlayback={false}
-          thumbVersion={thumbVersion}
-          priority={true}
-        />
-        {raised && <CardLiftCaption block={block} descriptor={descriptor} />}
-        {raised && <RaisedCollectionsRow collections={block.collections} />}
+        {unfolded ? (
+          <>
+            {reservedHeight === undefined
+              ? content
+              : <div data-card-preview-media-box="" style={{ height: reservedHeight }}>{content}</div>}
+            {hasLiftCaption(descriptor)
+              ? <MediaLiftCaption block={block} text={descriptor.text} inFlow />
+              : <div aria-hidden="true" data-card-preview-row-room="" style={collectionsRowRoomStyle(block, descriptor)} />}
+            <PreviewCollectionsRow collections={block.collections} />
+          </>
+        ) : content}
       </CardFrame>
     </FeedShowContext.Provider>
   );
 }
 
-/// The row of collections a raised card shows where the feed card's row
-/// stands after its lift (С8.9): the same names in the sidebar's order, as
-/// text, with no Connect plus. It keeps the row's 24px, which the lift counts
-/// (С8.1).
-function RaisedCollectionsRow({ collections }: { collections: readonly string[] }) {
+/// The room an unfolded preview keeps under its content for the row of
+/// collections: exactly the lift the feed card rises by to bring the row up
+/// (С8.1), so the gap from the last line to the row's letters is the feed's.
+function collectionsRowRoomStyle(block: LightBlock, descriptor: CardLayoutDescriptor): CSSProperties {
+  return { height: `var(--card-lift)`, ...collectionsRowLiftStyle(hasTextPart(block, descriptor)) };
+}
+
+/// The row of collections an unfolded preview shows where the feed card's
+/// row stands after its lift (С8.9): the same names in the sidebar's order,
+/// as text, with no Connect plus. It keeps the row's 24px.
+function PreviewCollectionsRow({ collections }: { collections: readonly string[] }) {
   const order = useCollectionOrder();
   return (
     <div
@@ -660,7 +696,8 @@ function RaisedCollectionsRow({ collections }: { collections: readonly string[] 
 }
 
 /// A card shown on hover (graph, sidebar, related notes) or as the search
-/// result's preview: the feed card in its final hover state (С10). A preview
+/// result's preview: the feed card unfolded, everything its lift would bring
+/// up shown without the lift (С10; 07.10.2026). A preview
 /// floating over the window carries a shadow; one standing in a pane of its
 /// own does not.
 export function ReadOnlyCardPreview({
@@ -691,7 +728,7 @@ export function ReadOnlyCardPreview({
       width={width}
       shadow={shadow}
       thumbVersion={thumbVersion}
-      raised
+      unfolded
     />
   );
 }
@@ -719,7 +756,7 @@ export function DragCardPreview({
       width={width}
       shadow={shadow}
       thumbVersion={thumbVersion}
-      raised={false}
+      unfolded={false}
     />
   );
 }

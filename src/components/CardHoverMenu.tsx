@@ -640,7 +640,7 @@ export function CardSourceButton({ url, onPress }: { url: string; onPress?: () =
 }
 
 /// Connect as a plus with the collection picker. The card's bottom row and a
-/// search result row show the same menu.
+/// card row of a list (search, Related notes) show the same menu.
 export function CardConnectMenu({
   block,
   tags,
@@ -650,7 +650,7 @@ export function CardConnectMenu({
   className,
   onOpenChange,
   onCloseAutoFocus,
-}: Pick<CardMenuActionsProps<LightBlock>, "block" | "tags" | "currentTag" | "onToggleTag" | "onCreateAndAssign"> & {
+}: Pick<CardMenuActionsProps<LightBlock | IndexedBlock>, "block" | "tags" | "currentTag" | "onToggleTag" | "onCreateAndAssign"> & {
   className?: string;
   onOpenChange?: (open: boolean) => void;
   /** Where focus goes when the picker closes; the plus by default. */

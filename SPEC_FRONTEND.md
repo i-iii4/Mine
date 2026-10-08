@@ -920,7 +920,8 @@ Frontend rules:
 - `Delete` opens a media-level confirmation that shows the exact media preview
   and all cards/notes returned by `prepare_delete_media_asset`;
 - the media-level delete confirmation must not grow or overflow horizontally:
-  connected-card rows use the related-note row component, but every wrapper in
+  connected-card rows use the card-reference row component (`CardReferenceRow`,
+  the Merge dialog's row), but every wrapper in
   the dialog/list chain is `min-w-0` and long titles truncate inside the fixed
   AlertDialog width;
 - image drag uses `type: "media_asset"` and drops on sidebar collections call
@@ -1388,24 +1389,27 @@ Image media expansion:
   и fixed-слой (метаданные). Оба слоя используют один Detail grid contract,
   чтобы article column, fixed metadata rail и invisible spacer сохраняли одну
   горизонтальную систему.
-- Detail grid: `grid w-full
-  grid-cols-[minmax(2rem,1fr)_minmax(400px,48rem)_minmax(2rem,1fr)_20rem_2rem]`.
-  Правая колонка `2rem` фиксирует `32px` inset от правого края viewport;
-  metadata rail занимает fixed `20rem` inspector column before it.
-- Metadata rail width is fixed at `20rem` (`320px`) for articles, images and
-  videos. Detail does not resize the rail from viewport thresholds or media
-  dimensions.
-- Article/media column has a comfortable minimum of `400px`. When the measured
-  Detail container width drops below `816px` (`400px` article minimum +
-  `20rem` rail + three `2rem` grid insets), Detail switches to stacked layout
-  instead of shrinking article text further.
-- Stacked layout uses
-  `grid-cols-[var(--edge-rhythm,32px)_minmax(240px,1fr)_var(--edge-rhythm,32px)]`:
-  the article/media column remains centered with `max-w-[48rem]`, and
-  metadata/Connected Cards render as a full-width scroll-flow row below the
-  primary content, offset by `mt-[var(--edge-rhythm,32px)]` — the same density
-  token as the side insets. The fixed metadata overlay layer is not rendered in
-  stacked mode.
+- Панель не отнимает место у содержимого (решение пользователя 07.10.2026).
+  У содержимого открытой карточки есть полный размер, и рядом с панелью оно
+  всегда стоит в нём, никогда не сжимаясь из-за панели. Полный размер один для
+  любой карточки (видов карточек нет, SPEC_CARD_UNIFIED.md): колонка чтения
+  `48rem` (`768px`); если содержимое это одна картинка, то её собственный
+  размер, когда он меньше колонки: натуральная ширина или ширина при высоте
+  `85vh` (`DetailImage`), `min(768, w, 0.85 × высота окна × w / h)`.
+- Рядом: `grid w-full` с колонками `minmax(pad,1fr) | W | minmax(pad,1fr) |
+  20rem | pad`, где `W` полный размер содержимого в px, `pad` это
+  `--card-content-pad`. Правая колонка `pad` даёт отступ от правого края;
+  панель занимает постоянную колонку `20rem` (`320px`) перед ней. Лишнее место
+  уходит в две гибкие колонки вокруг содержимого, содержимое по центру
+  слева от панели.
+- Перестройка: как только ширина контейнера меньше `3 × pad + W + 320`, то
+  есть зазор между содержимым и панелью дошёл до минимума `pad`, вид сразу
+  становится «мобильным» (stacked), без промежуточного сжатия содержимого.
+- Мобильный вид: `grid-cols-[var(--card-content-pad)_minmax(0,1fr)_var(--card-content-pad)]`;
+  содержимое по центру шириной `W` (если окно уже, по ширине окна без
+  отступов); под ним метаданные, кнопки и Related notes той же ширины `W`,
+  по центру, с отступом сверху `mt-[var(--card-content-pad)]`; прокрутка
+  вертикальная. Фиксированный слой метаданных в мобильном виде не рисуется.
 - Metadata card itself has `min-width: 240px`, so the `Source` / `Connect`
   action row cannot squeeze below its content minimum.
 - Article column lives in column 2 (`col-start-2`) and is centered inside the
@@ -1452,17 +1456,43 @@ Image media expansion:
   frontmatter. It shows the union of direct note links from the current note
   and backlinks from other notes, excludes `channel` docs and self-links, and
   deduplicates by base slug.
-- `RELATED NOTES` rows use a compact button-shell with persistent fill/border,
-  `8x8` thumbnail on the left, and filename fallback label on the right.
-  The thumbnail is the shared `MicroPreviewThumbnail` component: it renders only
-  when `IndexedBlock.thumb_format` confirms a real micro-preview, appends
-  `?m=<thumb_mtime>` for cache busting, and applies the same PNG `dark:invert`
-  contract as sidebar thumbnails.
+- Строки `RELATED NOTES` это строки поиска один в один (решение пользователя
+  07.10.2026): общий компонент `CardRow` (`src/components/CardRow.tsx`,
+  контракт в [SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md), «Строка
+  результата» и «Команды строки»). Миниатюра 32 пикселя, имя файла заметки
+  (`getFileName`, не видимый заголовок), за ним тусклым начало её текста
+  (`preview_text` без повтора имени, `deriveSearchResultRow`). Ни фона, ни
+  рамки: строка светится `state-active` только под указателем и при фокусе
+  клавиатуры. Подпись `Related notes` стоит с отступом `px-2`, над
+  миниатюрами, строки идут без зазора, по 44 пикселя.
+  Миниатюра это общий `MicroPreviewThumbnail`: рисуется, только когда
+  `IndexedBlock.thumb_format` подтверждает микропревью, дописывает
+  `?m=<thumb_mtime>` против кеша и получает PNG `dark:invert`, как миниатюры
+  бокового меню.
+  Под указателем строка показывает у правого края команды карточки ленты
+  (`CardRowActions`): `Connect`, `Source` (только при безопасном адресе) и
+  `More`. Действия те же, что у ленты и поиска: `Connect` через
+  `onToggleTag` и `onCreateAndAssign`, `Rename…` и `Delete` открывают
+  диалоги App. Удаление заметки из строки не закрывает открытую карточку:
+  App закрывает её, только если удалена она сама. Открытое меню держит свою
+  строку и её свет; уход указателя и колесо прячут команды. Закрытое меню
+  не возвращает фокус на скрытую кнопку, фокус остаётся у страницы, и
+  клавиши открытой карточки работают. `⌘K` в открытой карточке открывает
+  меню самой карточки, поэтому подсказка `More` в строке его не называет.
+  Нажатие на строку вне команд открывает заметку. Ссылка на заметку, которой
+  нет (или ещё не загруженная), показывает одно имя тусклым и не нажимается.
   Hover can show a read-only feed-style card preview. The preview uses
   `rounded-1`, is keyed by row identity rather than base slug so repeated
-  backlinks position independently, opens right when viewport space allows and
-  left otherwise, flips upward when it would overflow below, and closes when
-  the pointer leaves the row trigger. It is non-interactive
+  backlinks position independently and never leaves the open card's own area
+  (`[data-detail-root]`): beyond it the sidebar and the window chrome cover
+  it. It opens right of the row when the area has room there, else left,
+  and flips upward when it would overflow below. In the stacked view the row
+  spans the column and neither side has room: the preview then stands under
+  the row, or over it when there is no room below, starting at the row's
+  left edge (07.10.2026: it used to open left by the window's edge and lie
+  under the sidebar, 211 of its 240 px at a 1000 px window). It closes when
+  the pointer leaves the row. While a row's menu is open the preview stays
+  closed. It is non-interactive
   (`pointer-events: none`), has no hover bridge, and does not show
   `Source` / `Connect` / `More`. Timing matches sidebar thumbnails: `500ms`
   cold open delay, `0ms` warm delay inside an `800ms` warm window.
@@ -1642,8 +1672,8 @@ Image media expansion:
   destructive `Delete`; the icon-only `X` clear button is the rightmost
   control.
 - `Merge` opens the reorder-first dialog from
-  [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md). The dialog reuses the same
-  card-reference row visual as Detail `RELATED NOTES`, lets the user reorder
+  [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md). The dialog reuses the shared
+  card-reference row (`CardReferenceRow`), lets the user reorder
   selected cards by a drag handle, and commits through one backend
   `mergeBlocks(orderedSlugs)` command. Frontend must not implement merge as
   create-plus-N-deletes.

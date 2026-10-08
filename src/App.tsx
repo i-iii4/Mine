@@ -4189,8 +4189,12 @@ export function AppWithVault({
 
   const performDeleteBlock = useCallback(
     async (slug: string, deleteUnusedMedia: boolean) => {
-      setSelectedBlock(null);
-      setSelectedBlockAnchor(null);
+      // The open card closes when it is the one deleted. A card deleted from
+      // a row over it (a related note, a search result) leaves it open.
+      if (selectedBlockRef.current?.slug === slug) {
+        setSelectedBlock(null);
+        setSelectedBlockAnchor(null);
+      }
       // Optimistic notice for overlay-owned result sets (search): the row
       // disappears immediately; the later "vault-refreshed" confirms the
       // truth (and self-heals the list if the delete failed).

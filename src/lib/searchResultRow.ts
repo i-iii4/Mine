@@ -49,7 +49,13 @@ const SNIPPET_MATCH_FIELDS: ReadonlySet<SearchMatch["field"]> = new Set([
   "semantic",
 ]);
 
-export function deriveSearchResultRow(block: LightBlock): SearchResultRow {
+/** What the row reads: a search result, or any card without a match (an open
+ *  card's related note), whose row shows its preview text. */
+export type SearchResultRowSource = Pick<LightBlock, "slug" | "preview_text"> & {
+  search_match?: SearchMatch | null;
+};
+
+export function deriveSearchResultRow(block: SearchResultRowSource): SearchResultRow {
   const title = getFileName(block);
   const match = block.search_match ?? null;
 

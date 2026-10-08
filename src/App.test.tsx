@@ -382,6 +382,10 @@ vi.mock("@/components/Detail", () => ({
       <button type="button" onClick={() => onRequestDelete(block.slug)}>
         Delete detail
       </button>
+      {/* A related note's row deletes another card. */}
+      <button type="button" onClick={() => onRequestDelete("beta-block")}>
+        Delete related note
+      </button>
     </div>
   ),
 }));
@@ -2713,6 +2717,38 @@ describe("AppWithVault", () => {
     // Optimistic notice for overlay-owned result sets fires on confirm.
     expect(deletedSlugs).toEqual(["alpha-block"]);
     window.removeEventListener("block-deleted", onBlockDeleted);
+    // The deleted card was the open one: it closes.
+    expect(document.querySelector("[data-detail-root]")).toBeNull();
+  });
+
+  it("keeps the open card open when a row over it deletes another card", async () => {
+    commandMocks.prepareDeleteBlock.mockResolvedValue({
+      slug: "beta-block",
+      markdown_file: "beta-block.md",
+      unused_media: [],
+      shared_media: [],
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete related note" }));
+    expect(await screen.findByText("Delete element?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => {
+      expect(commandMocks.deleteBlock).toHaveBeenCalledWith("beta-block", false);
+    });
+    expect(document.querySelector("[data-detail-root]")).not.toBeNull();
+    expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
   });
 
   it("updates the open detail when block:renamed arrives", async () => {

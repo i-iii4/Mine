@@ -157,17 +157,20 @@ selection невозможен — модальность забирает кл�
 
 - Контейнер: `overflow-y-auto p-1` (паддинг как у menu content).
 - Строка результата (геометрия пункта меню, одна строка текста; решение
-  пользователя от 06.10.2026, образец: список поиска Notion):
+  пользователя от 06.10.2026, образец: список поиска Notion). Это общий
+  компонент `CardRow` (`src/components/CardRow.tsx`): ту же строку
+  показывает Related notes открытой карточки (решение пользователя
+  07.10.2026, SPEC_FRONTEND.md, Detail). Поиск даёт ей пункт `option`,
+  Related notes кнопку; всё остальное, включая команды строки, общее:
   - контейнер `rounded-1 px-2 py-1.5 cursor-default`, flex `items-center
     gap-2`; все строки одной высоты: миниатюра 32 пикселя и отступы дают
     44 пикселя при любом содержимом;
   - **миниатюра**: слот `size-8 shrink-0 overflow-hidden bg-component-fill` со
-    стандартным `MicroPreviewThumbnail` — тот же компонент и паттерн, что
-    related-notes reference row. Модель — `microPreviewFromLightBlock`:
+    стандартным `MicroPreviewThumbnail`. Модель — `microPreviewFromLightBlock`:
     thumb по slug (пайплайн миниатюр гарантирует файл), text-миниатюры
     определяются по `preview_manifest.kind === "text"` и получают
     `dark:invert`; ошибка загрузки скрывает `img`, остаётся placeholder-слот;
-  - **строка текста**: `p` с классами `flex min-w-0 flex-1 items-baseline
+  - **строка текста**: `span` с классами `flex min-w-0 flex-1 items-baseline
     gap-1 font-sans text-base`, то есть шрифт и размер строк коллекций в
     боковом меню (14 пикселей, высота строки 20). В ней два участка: имя и
     текст. Знака между ними нет (точку и тире пользователь отверг), их
@@ -282,11 +285,13 @@ selection невозможен — модальность забирает кл�
   карточки.
 - Это компоненты карточки, а не их копии: `CardConnectMenu`,
   `CardSourceButton` и `CardMoreMenu` из `src/components/CardHoverMenu.tsx`;
-  `src/components/SearchResultRowActions.tsx` только расставляет их в ряд.
+  `src/components/CardRowActions.tsx` только расставляет их в ряд, для
+  поиска и для Related notes одинаково.
   Кнопки `Button variant="raised" size="icon-xs"` (24 пикселя), зазор 4
   пикселя (`gap-1`), подписи как на карточке: `Connect`, `Source`,
-  `Card actions`. Подсказка `More` называет `⌘K`: здесь он открывает меню
-  именно этой строки.
+  `Card actions`. В поиске подсказка `More` называет `⌘K`: здесь он
+  открывает меню именно этой строки. В Related notes подсказка без `⌘K`:
+  там он открывает меню самой открытой карточки.
 - Когда видны: строка активна и указатель на ней (реальный `pointermove`),
   либо открыто меню этой строки. Стрелки, прокрутка колесом под неподвижным
   указателем, уход указателя из списка и новая выдача прячут команды до
@@ -306,9 +311,9 @@ selection невозможен — модальность забирает кл�
   ширину: его доля 75% строки прежняя. Имя без текста получает
   `max-width: calc(100% - 60px)` (или 88), окно вокруг отметки
   пересчитывается под эту ширину, поэтому отметка не уходит под кнопки.
-- Строение: обёртка строки (`role="none"`, `relative`, `state-active`
-  активной) и два соседа внутри: `role="option"` с миниатюрой и текстом и
-  слой команд. Команды не вложены в `option`: нажатие на них не доходит до
+- Строение (`CardRow`): обёртка строки (`role="none"`, `relative`,
+  `state-active` активной) и два соседа внутри: `role="option"` с миниатюрой
+  и текстом и слой команд. Команды не вложены в `option`: нажатие на них не доходит до
   открытия карточки, доступное имя `option` остаётся именем результата.
   Нажатие в любом другом месте строки открывает карточку, как раньше.
   Обёртка передаёт поверхность активной строки обоим соседям, поэтому
@@ -511,7 +516,7 @@ SPEC_SEARCH) промежуточное состояние не успевает
 | `src/components/SearchOverlay.tsx` | Новый компонент: Dialog-поверхность, header, список, превью, клавиатура |
 | `src/lib/searchResultRow.ts` | Новый чистый маппер `deriveSearchResultRow(block)` → `{ title, titleMatch, snippet, snippetMatch }` по правилам Match Metadata (тестируемое ядро строк списка). С 06.10.2026 также `nameMatch`, `text`, `textMatch` (текст строки без повтора имени), `windowNameAroundMark` (окно имени вокруг отметки) и с 07.10.2026 `windowTextAroundMark` (окно текста вокруг отметки) |
 | `src/App.tsx` | Состояние `{open, query}`; `surface-search-shortcut: "main"` и `Search elements` открывают overlay; демонтаж эффекта грид-фильтрации; `openDetailBlock` из результата |
-| `src/components/SearchResultRowActions.tsx` | С 06.10.2026: команды строки (`Connect`, `Source`, `More`) из компонентов карточки, видимость, отклик на `⌘K`, поле под команды (`searchRowActionsReservePx`) |
+| `src/components/CardRow.tsx`, `src/components/CardRowActions.tsx` | С 06.10.2026: команды строки (`Connect`, `Source`, `More`) из компонентов карточки, видимость, отклик на `⌘K`, поле под команды (`cardRowActionsReservePx`); с 07.10.2026 строка и команды вынесены в общий `CardRow`, его же показывает Related notes открытой карточки (прежний `SearchResultRowActions.tsx` переименован в `CardRowActions.tsx`) |
 | `src/components/CardHoverMenu.tsx` | С 06.10.2026: `CardConnectMenu` и `CardSourceButton` вынесены из `CardHoverMenu` для строки поиска; `CardMoreMenu` и `CardConnectMenu` принимают `onCloseAutoFocus` |
 | `SPEC_SEARCH.md` | Правки секций Main/Grid Search, Keyboard Contract, Frontend Data Flow, Test Contract (см. «Отношение к SPEC_SEARCH.md») |
 | `DESIGN_SYSTEM.md` | Раздел Search Overlay: геометрия панели, строка результата, счётчик, превью |

@@ -452,9 +452,9 @@ select,
   transform: translateY(0);
 }
 
-/* A card preview (hover, search) stands in the final hover state from its
-   first frame (SPEC_CARD_STATES.md, С10): nothing in it moves, neither when
-   it appears nor when it changes cards, with or without reduced motion. */
+/* A card preview (hover, search) stands unfolded from its first frame
+   (SPEC_CARD_STATES.md, С10): nothing in it moves, neither when it appears
+   nor when it changes cards, with or without reduced motion. */
 [data-card-preview] [data-card-lift],
 [data-card-preview] [data-card-lift-fade],
 [data-card-preview] [data-card-media-outline] {

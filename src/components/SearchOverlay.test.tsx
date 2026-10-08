@@ -380,16 +380,17 @@ describe("SearchOverlay", () => {
 
     for (const option of [plain!, repeated!, bare!]) {
       // One line: a single line element, nothing that clamps or wraps.
-      const lines = option.querySelectorAll("[data-search-result-line]");
+      const lines = option.querySelectorAll("[data-card-row-line]");
       expect(lines).toHaveLength(1);
       expect(lines[0]).toHaveClass("flex", "font-sans", "text-base", "items-baseline", "gap-1");
-      expect(option.querySelectorAll("p")).toHaveLength(1);
+      // The thumbnail and the line, nothing else.
+      expect(option.children).toHaveLength(2);
       expect(option.querySelector(".line-clamp-1, .line-clamp-2")).toBeNull();
       expect(option.querySelector(".text-sm")).toBeNull();
     }
 
-    const name = plain!.querySelector("[data-search-result-name]")!;
-    const text = plain!.querySelector("[data-search-result-text]")!;
+    const name = plain!.querySelector("[data-card-row-name]")!;
+    const text = plain!.querySelector("[data-card-row-text]")!;
     expect(name).toHaveTextContent(/^alpha$/);
     expect(name).toHaveClass("truncate", "min-w-0", "text-foreground");
     // The name keeps at most three quarters of the line, so the text starts.
@@ -398,17 +399,17 @@ describe("SearchOverlay", () => {
     expect(text).toHaveTextContent(/^Preview alpha$/);
     expect(text).toHaveClass("truncate", "min-w-0", "flex-1", "text-muted-foreground");
     // No separator glyph between the name and the text.
-    expect(plain!.querySelector("[data-search-result-line]")!.textContent).toBe("alphaPreview alpha");
+    expect(plain!.querySelector("[data-card-row-line]")!.textContent).toBe("alphaPreview alpha");
 
     // The text does not repeat the name.
-    expect(repeated!.querySelector("[data-search-result-name]")).toHaveTextContent(/^Шуховская башня$/);
-    expect(repeated!.querySelector("[data-search-result-text]")).toHaveTextContent(/^гиперболоидная сетка$/);
+    expect(repeated!.querySelector("[data-card-row-name]")).toHaveTextContent(/^Шуховская башня$/);
+    expect(repeated!.querySelector("[data-card-row-text]")).toHaveTextContent(/^гиперболоидная сетка$/);
 
     // No text: the name alone takes the whole line.
-    const bareName = bare!.querySelector("[data-search-result-name]")!;
+    const bareName = bare!.querySelector("[data-card-row-name]")!;
     expect(bareName).toHaveTextContent(/^1\.0 \(5\)$/);
     expect((bareName as HTMLElement).style.maxWidth).toBe("");
-    expect(bare!.querySelector("[data-search-result-text]")).toBeNull();
+    expect(bare!.querySelector("[data-card-row-text]")).toBeNull();
   });
 
   it("keeps a deep mark of a long name in view: head, ellipsis, the words up to the mark (06.10.2026)", async () => {
@@ -416,7 +417,7 @@ describe("SearchOverlay", () => {
     const start = post.indexOf("glor");
     // Layout stand-ins: a 480px line and an 8px monospace font.
     const widthSpy = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) {
-      return this.hasAttribute("data-search-result-line") ? 480 : 0;
+      return this.hasAttribute("data-card-row-line") ? 480 : 0;
     });
     const canvasSpy = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
       font: "",
@@ -432,12 +433,12 @@ describe("SearchOverlay", () => {
       renderOverlay({ query: "glor" });
 
       const option = await screen.findByRole("option");
-      const name = option.querySelector("[data-search-result-name]")!;
-      await waitFor(() => expect(name).toHaveAttribute("data-search-result-name-window"));
+      const name = option.querySelector("[data-card-row-name]")!;
+      await waitFor(() => expect(name).toHaveAttribute("data-card-row-name-window"));
       // 75% of 480px less the slack holds 44 characters.
       expect(name.textContent).toBe("Every sea king…that carries a wager for glor");
       expect(name.querySelector("mark")).toHaveTextContent(/^glor$/);
-      expect(option.querySelector("[data-search-result-text]")).toHaveTextContent(/^Something else entirely$/);
+      expect(option.querySelector("[data-card-row-text]")).toHaveTextContent(/^Something else entirely$/);
     } finally {
       widthSpy.mockRestore();
       canvasSpy.mockRestore();
@@ -449,8 +450,8 @@ describe("SearchOverlay", () => {
     const start = Array.from(excerpt.slice(0, excerpt.indexOf("known"))).length;
     // Layout stand-ins: a 320px text and an 8px monospace font.
     const widthSpy = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) {
-      if (this.hasAttribute("data-search-result-line")) return 640;
-      return this.hasAttribute("data-search-result-text") ? 320 : 0;
+      if (this.hasAttribute("data-card-row-line")) return 640;
+      return this.hasAttribute("data-card-row-text") ? 320 : 0;
     });
     const canvasSpy = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
       font: "",
@@ -465,8 +466,8 @@ describe("SearchOverlay", () => {
       renderOverlay({ query: "known" });
 
       const option = await screen.findByRole("option");
-      const text = option.querySelector("[data-search-result-text]")!;
-      await waitFor(() => expect(text).toHaveAttribute("data-search-result-text-window"));
+      const text = option.querySelector("[data-card-row-text]")!;
+      await waitFor(() => expect(text).toHaveAttribute("data-card-row-text-window"));
       // 320px less the slack holds 39 characters: the rest from `operations`
       // on fits whole.
       expect(text.textContent).toBe("…operations in parallel, known as GPUs.");
@@ -497,7 +498,7 @@ describe("SearchOverlay", () => {
     renderOverlay({ query: "башня" });
 
     const option = await screen.findByRole("option");
-    const title = option.querySelector("[data-search-result-name]")!;
+    const title = option.querySelector("[data-card-row-name]")!;
     expect(title).toHaveTextContent(/^Шуховская башня$/);
     const mark = within(option).getByText("башня");
     expect(mark.tagName).toBe("MARK");
@@ -992,7 +993,7 @@ describe("SearchOverlay result row commands", () => {
   }
 
   function rowOf(index: number): HTMLElement {
-    return option(index).closest("[data-search-result-row]") as HTMLElement;
+    return option(index).closest("[data-card-row]") as HTMLElement;
   }
 
   function rowCommands(index: number): string[] {
@@ -1010,11 +1011,11 @@ describe("SearchOverlay result row commands", () => {
     await renderRows();
     // The active row holds its commands hidden until the pointer comes.
     expect(rowCommands(0)).toEqual([]);
-    expect(rowOf(0).querySelector("[data-search-row-actions]")).toHaveAttribute("data-visible", "false");
+    expect(rowOf(0).querySelector("[data-card-row-actions]")).toHaveAttribute("data-visible", "false");
 
     hover(0);
     expect(rowCommands(0)).toEqual(["Connect", "Source", "Card actions"]);
-    const actions = rowOf(0).querySelector("[data-search-row-actions]") as HTMLElement;
+    const actions = rowOf(0).querySelector("[data-card-row-actions]") as HTMLElement;
     expect(actions).toHaveAttribute("data-visible", "true");
     expect(actions).toHaveClass("gap-1", "transition-opacity", "duration-[var(--hover-intent-fade-in)]");
     for (const button of within(actions).getAllByRole("button")) {
@@ -1023,16 +1024,16 @@ describe("SearchOverlay result row commands", () => {
     }
     // The text stops short of three 24 px buttons, two 4 px gaps and the
     // row's 8 px gap; the name keeps its place.
-    const text = option(0).querySelector("[data-search-result-text]") as HTMLElement;
+    const text = option(0).querySelector("[data-card-row-text]") as HTMLElement;
     expect(text.style.paddingRight).toBe("88px");
-    expect((option(0).querySelector("[data-search-result-name]") as HTMLElement).style.maxWidth).toBe("75%");
+    expect((option(0).querySelector("[data-card-row-name]") as HTMLElement).style.maxWidth).toBe("75%");
 
     // The pointer moves on: the commands go with it, Source only with a link.
     hover(1);
     expect(option(1)).toHaveAttribute("aria-selected", "true");
-    expect(rowOf(0).querySelector("[data-search-row-actions]")).toBeNull();
+    expect(rowOf(0).querySelector("[data-card-row-actions]")).toBeNull();
     expect(rowCommands(1)).toEqual(["Connect", "Card actions"]);
-    expect((option(1).querySelector("[data-search-result-text]") as HTMLElement).style.paddingRight).toBe("60px");
+    expect((option(1).querySelector("[data-card-row-text]") as HTMLElement).style.paddingRight).toBe("60px");
   });
 
   it("hides the commands when the arrows, the wheel or leaving the list take the row from the pointer", async () => {
@@ -1045,7 +1046,7 @@ describe("SearchOverlay result row commands", () => {
     expect(option(1)).toHaveAttribute("aria-selected", "true");
     expect(rowCommands(0)).toEqual([]);
     expect(rowCommands(1)).toEqual([]);
-    expect((option(1).querySelector("[data-search-result-text]") as HTMLElement).style.paddingRight).toBe("");
+    expect((option(1).querySelector("[data-card-row-text]") as HTMLElement).style.paddingRight).toBe("");
 
     hover(1);
     expect(rowCommands(1)).toEqual(["Connect", "Card actions"]);
@@ -1055,7 +1056,7 @@ describe("SearchOverlay result row commands", () => {
     hover(1);
     fireEvent.pointerLeave(listbox);
     expect(rowCommands(1)).toEqual([]);
-    expect(rowOf(1).querySelector("[data-search-row-actions]")).toHaveClass("duration-[var(--hover-intent-fade-out)]");
+    expect(rowOf(1).querySelector("[data-card-row-actions]")).toHaveClass("duration-[var(--hover-intent-fade-out)]");
   });
 
   it("stops a name alone short of the commands", async () => {
@@ -1064,8 +1065,8 @@ describe("SearchOverlay result row commands", () => {
     await waitFor(() => {
       expect(screen.getAllByRole("option")).toHaveLength(1);
     });
-    const name = option(0).querySelector("[data-search-result-name]") as HTMLElement;
-    expect(option(0).querySelector("[data-search-result-text]")).toBeNull();
+    const name = option(0).querySelector("[data-card-row-name]") as HTMLElement;
+    expect(option(0).querySelector("[data-card-row-text]")).toBeNull();
     expect(name.style.maxWidth).toBe("");
     hover(0);
     expect(name.style.maxWidth).toBe("calc(100% - 60px)");
@@ -1112,7 +1113,7 @@ describe("SearchOverlay result row commands", () => {
     fireEvent.pointerLeave(screen.getByRole("listbox"));
     hover(1);
     expect(option(0)).toHaveAttribute("aria-selected", "true");
-    expect(rowOf(0).querySelector("[data-search-row-actions]")).toHaveAttribute("data-visible", "true");
+    expect(rowOf(0).querySelector("[data-card-row-actions]")).toHaveAttribute("data-visible", "true");
 
     fireEvent.click(picker);
     expect(onToggleTag).toHaveBeenCalledWith("alpha", "design", false);
@@ -1135,7 +1136,7 @@ describe("SearchOverlay result row commands", () => {
     expect(screen.getByRole("dialog").contains(rename)).toBe(true);
     const more = within(rowOf(1)).getByRole("button", { name: "Card actions" });
     expect(more).toHaveAttribute("aria-expanded", "true");
-    expect(rowOf(1).querySelector("[data-search-row-actions]")).toHaveAttribute("data-visible", "true");
+    expect(rowOf(1).querySelector("[data-card-row-actions]")).toHaveAttribute("data-visible", "true");
 
     // The open menu holds its row against the pointer.
     hover(0);

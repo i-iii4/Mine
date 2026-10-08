@@ -1,7 +1,14 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { Detail, MediaAssetCollectionPicker } from "./Detail";
+import {
+  Detail,
+  MediaAssetCollectionPicker,
+  computeHoverPreviewPosition,
+  detailContentFullWidth,
+  detailLayoutIsStacked,
+  hoverPreviewBounds,
+} from "./Detail";
 import type { IndexedBlock, MediaAssetRef } from "@/types";
 import {
   DropdownMenu,
@@ -889,6 +896,9 @@ describe("Detail", () => {
   });
 
   it("uses one detail canvas grid for content spacer and fixed rail", () => {
+    // Wide enough for the 768px reading column, the 320px panel and three
+    // 32px insets (1184px).
+    setViewportWidth(1400);
     const { container } = render(
       <Detail
         block={block({
@@ -921,22 +931,16 @@ describe("Detail", () => {
     );
     const spacer = container.querySelector("[data-detail-metadata-spacer]");
     expect(spacer).toHaveClass("col-start-4", "min-w-0");
-    expect(spacer?.parentElement).toHaveClass(
-      "w-full",
-      "grid",
-      "grid-cols-[minmax(var(--card-content-pad),1fr)_minmax(400px,48rem)_minmax(var(--card-content-pad),1fr)_20rem_var(--card-content-pad)]",
-      "pt-[var(--card-content-pad)]",
-    );
-    expect(rail?.parentElement).toHaveClass(
-      "w-full",
-      "grid",
-      "grid-cols-[minmax(var(--card-content-pad),1fr)_minmax(400px,48rem)_minmax(var(--card-content-pad),1fr)_20rem_var(--card-content-pad)]",
-      "pt-[var(--card-content-pad)]",
-    );
+    // The content's column is its full width; the panel never narrows it.
+    const columns = "minmax(var(--card-content-pad),1fr) 768px minmax(var(--card-content-pad),1fr) 320px var(--card-content-pad)";
+    for (const grid of [spacer?.parentElement, rail?.parentElement]) {
+      expect(grid).toHaveClass("w-full", "grid", "pt-[var(--card-content-pad)]");
+      expect((grid as HTMLElement).style.gridTemplateColumns).toBe(columns);
+    }
   });
 
-  it("stacks metadata below content once the article would shrink under 400px", async () => {
-    setViewportWidth(815);
+  it("stacks at once when the full-width content, the panel and three insets do not fit", async () => {
+    setViewportWidth(1183);
 
     const { container } = render(
       <Detail
@@ -967,26 +971,82 @@ describe("Detail", () => {
     const stackedMetadataRow = container.querySelector("[data-detail-stacked-metadata-row]");
 
     expect(scrollGrid).toHaveClass(
-      "grid-cols-[var(--card-content-pad)_minmax(240px,1fr)_var(--card-content-pad)]",
+      "grid-cols-[var(--card-content-pad)_minmax(0,1fr)_var(--card-content-pad)]",
       "pt-[var(--card-content-pad)]",
       "pb-20",
     );
-    expect(articleColumn).toHaveClass(
+    // Content centred at its full width, the panel's sections under it at
+    // the same width.
+    expect(articleColumn).toHaveClass("col-start-2", "mx-auto", "w-full");
+    expect((articleColumn as HTMLElement).style.maxWidth).toBe("768px");
+    expect(stackedMetadataRow).toHaveClass(
       "col-start-2",
       "mx-auto",
       "w-full",
-      "max-w-[48rem]",
-    );
-    expect(stackedMetadataRow).toHaveClass(
-      "col-start-2",
       "mt-[var(--card-content-pad)]",
       "min-w-0",
     );
+    expect((stackedMetadataRow as HTMLElement).style.maxWidth).toBe("768px");
     expect(container.querySelector("[data-detail-fixed-metadata-layer]")).toBeNull();
     expect(container.querySelector("[data-detail-metadata-spacer]")).toBeNull();
   });
 
+  it("keeps the content beside the panel up to the last pixel that fits", () => {
+    setViewportWidth(1184);
+    const { container } = render(
+      <Detail
+        block={block({ body: "Article body" })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={vi.fn()}
+      />,
+    );
+    expect(container.querySelector("[data-detail-layout-mode]")).toHaveAttribute("data-detail-layout-mode", "rail");
+  });
+
+  it("takes a lone picture's own size as the content's full width", () => {
+    const picture = block({ card_kind: "media", block_type: "image", media_file: "Media/p.jpg", width: 880, height: 1100 });
+    // Natural width under the column, and short of the 85vh limit.
+    expect(detailContentFullWidth({ ...picture, width: 600, height: 400 }, 1000)).toBe(600);
+    // The 85vh limit: 0.85 × 800 × 880 / 1100 = 544.
+    expect(detailContentFullWidth(picture, 800)).toBe(544);
+    // Never wider than the reading column.
+    expect(detailContentFullWidth({ ...picture, width: 4000, height: 1000 }, 1000)).toBe(768);
+    // Text keeps the reading column whatever its size.
+    expect(detailContentFullWidth(block({ body: "Article body" }), 400)).toBe(768);
+    // The stacking rule: 3 × pad + content + 320.
+    expect(detailLayoutIsStacked(3 * 16 + 544 + 320, 16, 544)).toBe(false);
+    expect(detailLayoutIsStacked(3 * 16 + 544 + 319, 16, 544)).toBe(true);
+  });
+
+  it("keeps a related note's card preview inside the open card's area", () => {
+    // The open card right of a 314px sidebar in a 1000 × 900 window.
+    const area = { left: 314, top: 0, right: 1000, bottom: 900 };
+    // Beside the panel's row: room on the left, the preview opens there.
+    expect(computeHoverPreviewPosition({ left: 664, right: 984, top: 221, bottom: 265 }, 306, area))
+      .toEqual({ left: 664 - 8 - 240, top: 221 });
+    // Stacked: the row spans the column, no room on either side within the
+    // area. The preview used to open left at 103 and lie 211px under the
+    // sidebar (07.10.2026); it now stands over the row, at its left edge.
+    expect(computeHoverPreviewPosition({ left: 351, right: 963, top: 744, bottom: 788 }, 306, area))
+      .toEqual({ left: 351, top: 744 - 8 - 306 });
+    // Under the row when there is room below.
+    expect(computeHoverPreviewPosition({ left: 351, right: 963, top: 200, bottom: 244 }, 306, area))
+      .toEqual({ left: 351, top: 244 + 8 });
+    // A row outside an open card (a dialog) has the whole window.
+    expect(hoverPreviewBounds(document.body)).toEqual({ left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight });
+  });
+
   it("compensates classic detail chrome so article and rail start at the 64px detail inset", () => {
+    setViewportWidth(1400);
     const { container } = render(
       <Detail
         block={block({ body: "Article body" })}
@@ -1084,7 +1144,7 @@ describe("Detail", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Related Note")).toBeInTheDocument();
+      expect(container.querySelector('[data-related-note-item="button"]')).not.toBeNull();
     });
 
     const sections = container.querySelector("[data-metadata-sections]");
@@ -2017,9 +2077,9 @@ describe("Detail", () => {
     expect(within(dialog).queryByText("Inline media")).not.toBeInTheDocument();
     expect(within(dialog).queryByText("2 cards reference this file.")).not.toBeInTheDocument();
     expect(within(dialog).queryByText("photo.jpg")).not.toBeInTheDocument();
-    expect(photoRow).toHaveAttribute("data-related-note-item", "button");
+    expect(photoRow).toHaveAttribute("data-card-reference-item", "button");
     expect(photoRow).toHaveClass("bg-component-fill");
-    expect(sourceRow).toHaveAttribute("data-related-note-item", "button");
+    expect(sourceRow).toHaveAttribute("data-card-reference-item", "button");
     expect(dialog.querySelector("img")).toHaveAttribute(
       "src",
       "asset://localhost//tmp/test-vault/photo.jpg",
@@ -2115,15 +2175,13 @@ describe("Detail", () => {
     const dialog = await screen.findByRole("alertdialog", { name: "Delete media file?" });
     const row = await within(dialog).findByRole("button", { name: longTitle });
     const scrollArea = dialog.querySelector("[data-delete-media-connected-cards-scroll]");
-    const section = row.closest("[data-related-notes-block]");
-    const list = row.closest("[data-related-notes-list]");
+    const list = row.closest("[data-card-reference-list]");
     // The row also holds the thumbnail wrapper span, so match the label class
     // rather than the first span in document order.
     const label = row.querySelector("span.flex-1");
 
     expect(dialog).toHaveClass("min-w-0", "overflow-hidden");
     expect(scrollArea).toHaveClass("min-w-0", "overflow-y-auto");
-    expect(section).toHaveClass("min-w-0");
     expect(list).toHaveClass("w-full", "min-w-0");
     expect(row).toHaveClass("w-full", "min-w-0", "overflow-hidden");
     expect(label).toHaveClass("min-w-0", "flex-1", "truncate");
@@ -2393,7 +2451,7 @@ describe("Detail", () => {
     );
   });
 
-  it("renders related notes as sidebar-sized rows with thumbnail and filename", async () => {
+  it("renders related notes as search rows: thumbnail, file name, dimmed text, no fill", async () => {
     vi.useFakeTimers();
     getBlockMock.mockImplementation(async (slug: string) => {
       if (slug === "related-note") {
@@ -2404,6 +2462,7 @@ describe("Detail", () => {
           display_title: "First line from note body",
           fallback_label: "Related Note",
           title: null,
+          preview_text: "Notes on related things",
           thumb_format: "png",
           thumb_mtime: 123,
         });
@@ -2416,6 +2475,7 @@ describe("Detail", () => {
           display_title: "Second note body",
           fallback_label: "Second Note",
           title: null,
+          preview_text: "Second note, continued here",
           thumb_format: "jpeg",
           thumb_mtime: 456,
         });
@@ -2447,40 +2507,33 @@ describe("Detail", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(screen.getByText("Related Note")).toBeInTheDocument();
-    expect(screen.getByText("Second Note")).toBeInTheDocument();
+    // The search's row (SPEC_SEARCH_OVERLAY.md): the file name, not the
+    // visible title, then the note's text that does not repeat it.
     expect(screen.queryByText("First line from note body")).not.toBeInTheDocument();
-
-    const row = screen.getByRole("button", { name: "Related Note" });
-    expect(row).toHaveAttribute("data-related-note-item", "button");
-    expect(row).toHaveClass(
-      "rounded-1",
-      "border",
-      "border-border",
-      "bg-component-fill",
-      "p-[3px]",
-      "font-sans",
-      "text-base",
-      "text-muted-foreground",
-    );
-    expect(row).toHaveClass(
-      "hover:outline-1",
-      "hover:-outline-offset-1",
-      "hover:outline-component-fill-hover",
-      "focus-visible:outline-1",
-      "focus-visible:-outline-offset-1",
-      "focus-visible:outline-component-fill-hover",
-    );
+    const row = screen.getByRole("button", { name: /^related-note/ });
+    const wrapper = row.closest("[data-card-row]") as HTMLElement;
+    expect(wrapper).toHaveAttribute("data-related-note-item", "button");
+    expect(row.querySelector("[data-card-row-name]")).toHaveTextContent(/^related-note$/);
+    expect(row.querySelector("[data-card-row-name]")).toHaveClass("text-foreground");
+    expect(row.querySelector("[data-card-row-text]")).toHaveTextContent(/^Notes on related things$/);
+    expect(row.querySelector("[data-card-row-text]")).toHaveClass("text-muted-foreground");
+    const secondRow = screen.getByRole("button", { name: /^second-note/ });
+    expect(secondRow.querySelector("[data-card-row-text]")).toHaveTextContent(/^continued here$/);
+    // No fill, no border: a row lights up only under the pointer.
+    expect(wrapper).toHaveClass("relative", "rounded-1");
+    expect(wrapper).not.toHaveClass("state-active");
+    expect(wrapper.className).not.toMatch(/(?:^|\s)(?:bg-|border(?:\s|-|$))/);
+    expect(row).toHaveClass("flex", "items-center", "gap-2", "px-2", "py-1.5");
+    expect(row.querySelector("[data-card-row-line]")).toHaveClass("font-sans", "text-base");
 
     const img = row.querySelector("img");
-    // A related-note row is 32 pixels like the sidebar strip, so it reads the
-    // micro level rather than the 640px thumbnail behind it.
+    // A row is 32 pixels like the sidebar strip, so it reads the micro level
+    // rather than the 640px thumbnail behind it.
     expect(img).toHaveAttribute(
       "src",
       "asset://localhost//tmp/thumbs/related-note.micro.jpg?m=123",
     );
     expect(img).toHaveClass("dark:invert");
-    expect(row.querySelector("div.flex.h-8.w-full.items-center.gap-2.overflow-hidden")).not.toBeNull();
 
     fireEvent.mouseEnter(row);
     await act(async () => {
@@ -2498,13 +2551,13 @@ describe("Detail", () => {
     expect(relatedPreview).not.toBeNull();
     expect(relatedPreview).toHaveClass("pointer-events-none");
     expect(relatedPreview?.querySelector("button")).toBeNull();
-    // The feed's own card in its final hover state (SPEC_CARD_STATES.md, С10).
-    expect(relatedPreview?.querySelector("[data-card-preview]")).toHaveAttribute("data-card-lift-pinned");
+    // The feed's own card unfolded, no lift (SPEC_CARD_STATES.md, С10).
+    expect(relatedPreview?.querySelector("[data-card-preview]")).toHaveAttribute("data-card-preview-unfolded");
+    expect(relatedPreview?.querySelector("[data-card-preview]")).not.toHaveAttribute("data-card-lift-pinned");
     expect(relatedPreview?.querySelector("[data-card-preview-collections]")).not.toBeNull();
     expect(relatedPreview).not.toHaveTextContent("Connect");
     expect(document.querySelector("[data-related-note-hover-bridge]")).not.toBeInTheDocument();
 
-    const secondRow = screen.getByRole("button", { name: "Second Note" });
     fireEvent.mouseLeave(row);
     expect(document.querySelector("[data-related-note-hover-preview]")).toBeNull();
     fireEvent.mouseEnter(secondRow);
@@ -2580,7 +2633,7 @@ describe("Detail", () => {
       await Promise.resolve();
     });
 
-    const row = screen.getByRole("button", { name: "Related Note" });
+    const row = screen.getByRole("button", { name: "related-note" });
     fireEvent.focus(row);
     await act(async () => {
       await Promise.resolve();
@@ -2633,9 +2686,108 @@ describe("Detail", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Related notes")).toBeInTheDocument();
-      expect(screen.getByText("Related Note")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "related-note" })).toBeInTheDocument();
     });
     expect(screen.queryByText("First line from note body")).not.toBeInTheDocument();
+  });
+
+  it("gives a related note the card's commands under the pointer, as a search result row", async () => {
+    getBlockMock.mockImplementation(async (slug: string) => {
+      if (slug === "related-note") {
+        return block({
+          id: 2,
+          slug: "related-note",
+          title: null,
+          preview_text: "Notes on related things",
+        });
+      }
+      if (slug === "plain-note") {
+        return block({ id: 3, slug: "plain-note", title: null, url: null });
+      }
+      return null;
+    });
+    const onOpenRelatedNote = vi.fn();
+    const onRequestRename = vi.fn();
+    const onRequestDelete = vi.fn();
+    const { container } = render(
+      <Detail
+        block={block({ related_notes: ["related-note", "plain-note", "gone-note"] })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={onRequestRename}
+        onRequestDelete={onRequestDelete}
+        onOpenRelatedNote={onOpenRelatedNote}
+      />,
+    );
+    await waitFor(() => {
+      expect(container.querySelectorAll('[data-related-note-item="button"]')).toHaveLength(2);
+    });
+    const [first, second] = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-related-note-item="button"]'),
+    );
+    const commands = (row: HTMLElement) =>
+      within(row).queryAllByRole("button").map((button) => button.getAttribute("aria-label")).filter(Boolean);
+
+    // A link to a note that is gone: the name alone, dimmed, nothing to press.
+    const gone = container.querySelector('[data-related-note-item="placeholder"]') as HTMLElement;
+    expect(gone.querySelector("[data-card-row-name]")).toHaveTextContent(/^gone-note$/);
+    expect(gone.querySelector("[data-card-row-name]")).toHaveClass("text-muted-foreground");
+    expect(within(gone).queryByRole("button")).toBeNull();
+
+    // At rest, no commands and no light.
+    expect(first!.querySelector("[data-card-row-actions]")).toBeNull();
+    fireEvent.pointerMove(first!);
+    expect(first).toHaveClass("state-active");
+    expect(commands(first!)).toEqual(["Connect", "Source", "Card actions"]);
+    expect(first!.querySelector("[data-card-row-actions]")).toHaveAttribute("data-visible", "true");
+    // The text stops short of three buttons: 3 × 24 + 2 × 4 + 8.
+    expect((first!.querySelector("[data-card-row-text]") as HTMLElement).style.paddingRight).toBe("88px");
+
+    // The pointer moves on: the commands go with it, Source only with a link.
+    fireEvent.pointerLeave(first!);
+    fireEvent.pointerMove(second!);
+    expect(first!.querySelector("[data-card-row-actions]")).toBeNull();
+    expect(first).not.toHaveClass("state-active");
+    expect(commands(second!)).toEqual(["Connect", "Card actions"]);
+    // A name alone stops short of two buttons: 2 × 24 + 4 + 8.
+    expect((second!.querySelector("[data-card-row-name]") as HTMLElement).style.maxWidth).toBe("calc(100% - 60px)");
+
+    // The menu holds its row; the pointer on its way out moves nothing.
+    fireEvent.pointerLeave(second!);
+    fireEvent.pointerMove(first!);
+    fireEvent.pointerDown(within(first!).getByRole("button", { name: "Card actions" }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Rename…" }));
+    expect(onRequestRename).toHaveBeenCalledWith(expect.objectContaining({ slug: "related-note" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("menuitem", { name: "Rename…" })).not.toBeInTheDocument();
+    });
+
+    fireEvent.pointerMove(first!);
+    fireEvent.pointerDown(within(first!).getByRole("button", { name: "Card actions" }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    await screen.findByRole("menuitem", { name: "Delete" });
+    fireEvent.pointerLeave(first!);
+    fireEvent.pointerMove(second!);
+    expect(first!.querySelector("[data-card-row-actions]")).toHaveAttribute("data-visible", "true");
+    expect(second!.querySelector("[data-card-row-actions]")).toBeNull();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+    expect(onRequestDelete).toHaveBeenCalledWith("related-note");
+
+    // The commands never open the note; the rest of the row does.
+    expect(onOpenRelatedNote).not.toHaveBeenCalled();
+    fireEvent.click(within(first!).getByRole("button", { name: /^related-note/ }));
+    expect(onOpenRelatedNote).toHaveBeenCalledWith("related-note");
   });
 
   // A file whose contents iCloud is holding is a state of the file, not a

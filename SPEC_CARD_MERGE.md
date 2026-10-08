@@ -102,15 +102,15 @@ fixed. Only the repeated row list scrolls.
 
 ### Card Row Reuse
 
-Rows must reuse the same visual component as `RELATED NOTES` in the Detail
-right rail: compact shell, `MicroPreviewThumbnail`, thumbnail on the left, and
-filename/display label on the right.
+Rows reuse the shared card-reference row `CardReferenceRow`: compact shell,
+`MicroPreviewThumbnail`, thumbnail on the left, and filename/display label on
+the right. The Detail media delete confirmation lists its connected cards with
+the same row. Detail `RELATED NOTES` used it until 07.10.2026; it now shows the
+search's row (`CardRow`, SPEC_FRONTEND.md).
 
 Implementation requirement:
 
-- extract the current related-note row visual into a shared component, for
-  example `CardReferenceRow`;
-- use it from both `RelatedNotesSection` and `MergeCardsDialog`;
+- use `CardReferenceRow` from `MergeCardsDialog`;
 - do not duplicate row classes or rebuild a lookalike row in the merge dialog.
 
 Merge-specific additions:

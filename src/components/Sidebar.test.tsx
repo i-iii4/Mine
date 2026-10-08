@@ -1103,10 +1103,11 @@ describe("Sidebar", () => {
     expect(hoverPreview).toBeInTheDocument();
     expect(hoverPreview).toHaveClass("pointer-events-none");
     expect(hoverPreview!.querySelector("button")).toBeNull();
-    // The feed's own card in its final hover state (SPEC_CARD_STATES.md,
-    // С10): the post's whole gallery and its text, lifted, with its
-    // collections as text at the bottom.
-    expect(hoverPreview!.querySelector("[data-card-preview]")).toHaveAttribute("data-card-lift-pinned");
+    // The feed's own card unfolded (SPEC_CARD_STATES.md, С10): the post's
+    // whole gallery and its text, no lift, with its collections as text at
+    // the bottom.
+    expect(hoverPreview!.querySelector("[data-card-preview]")).toHaveAttribute("data-card-preview-unfolded");
+    expect(hoverPreview!.querySelector("[data-card-preview]")).not.toHaveAttribute("data-card-lift-pinned");
     const hoverImages = hoverPreview!.querySelectorAll("[data-card-media-tile] img");
     expect(Array.from(hoverImages, (image) => image.getAttribute("src"))).toEqual([
       "asset://localhost//vault/.mine/cache/thumbs/alpha-a.preview-1.jpg",

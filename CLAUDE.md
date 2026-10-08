@@ -250,6 +250,7 @@ local-arena/
 │   │   ├── MainSecondaryChrome.tsx # Main route secondary chrome
 │   │   ├── FeedDisplayMenu.tsx # Кнопка Display и панель: Sort, Show, Spacing (SPEC_FEED_DISPLAY)
 │   │   ├── Card.tsx            # Одна карточка для всех видов записей: слот медиа и текстовая часть (SPEC_CARD_UNIFIED.md)
+│   │   ├── CardRow.tsx         # Карточка одной строкой списка: строки поиска и Related notes; команды строки в CardRowActions.tsx
 │   │   ├── Sidebar.tsx         # Каналы, счётчики, навигация, кнопка импорта
 │   │   ├── Detail.tsx          # Lightbox: просмотр, коллекции, навигация стрелками
 │   │   ├── VaultPicker.tsx     # Выбор vault через нативный диалог

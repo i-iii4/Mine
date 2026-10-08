@@ -146,26 +146,31 @@ import {
 import { QuantizedMenuScrollArea } from "./QuantizedMenuScrollArea";
 import { SearchMenuInput } from "./SearchMenuInput";
 import { microPreviewFromIndexedBlock } from "./MicroPreviewThumbnail";
+import { CardRow } from "./CardRow";
+import { CardRowActions, cardRowActionsReservePx } from "./CardRowActions";
+import { deriveSearchResultRow } from "@/lib/searchResultRow";
 import type { ImagePreviewRequest, ImagePreviewSibling } from "./ImagePreviewOverlay";
 import { copyTextToClipboard } from "@/lib/clipboard";
 
-// Layout constants shared by scroll content and fixed metadata. The rail is
-// anchored to the right edge with a fixed 20rem inspector width, while the
-// article/media column is centered in the remaining space to its left.
-// Side columns, the gap between article and rail, and the top offset all follow
-// the app-wide edge rhythm.
-const DETAIL_RAIL_LAYOUT_CLASSES =
-  "grid w-full grid-cols-[minmax(var(--card-content-pad),1fr)_minmax(400px,48rem)_minmax(var(--card-content-pad),1fr)_20rem_var(--card-content-pad)] pt-[var(--card-content-pad)]";
+// The open card's layout (SPEC_FRONTEND.md, Detail; user's decision of
+// 07.10.2026): the side panel never takes space from the content. The content
+// stands at its full width beside the fixed 20rem panel while three insets,
+// that width and the panel fit; past that the view stacks at once, content
+// centred and the panel's sections under it at the same width. Scroll content
+// and fixed metadata share one grid; insets and the top offset follow the
+// app-wide edge rhythm.
+const DETAIL_RAIL_GRID_CLASSES = "grid w-full pt-[var(--card-content-pad)]";
 const DETAIL_STACKED_LAYOUT_CLASSES =
-  "grid w-full grid-cols-[var(--card-content-pad)_minmax(240px,1fr)_var(--card-content-pad)] pt-[var(--card-content-pad)]";
-const DETAIL_MIN_ARTICLE_WIDTH_PX = 400;
-const DETAIL_FIXED_RAIL_WIDTH_PX = 320;
-const DETAIL_GRID_INSET_WIDTH_PX = 32;
+  "grid w-full grid-cols-[var(--card-content-pad)_minmax(0,1fr)_var(--card-content-pad)] pt-[var(--card-content-pad)]";
+/// The reading column, `48rem`: the content's full width, unless a lone
+/// picture's own size is smaller.
+const DETAIL_CONTENT_MAX_WIDTH_PX = 768;
+const DETAIL_RAIL_WIDTH_PX = 320;
+/// `--card-content-pad` until its probe is measured: the default edge rhythm.
+const DETAIL_CONTENT_PAD_FALLBACK_PX = 32;
+/// A picture in the open card is at most `85vh` tall (DetailImage).
+const DETAIL_MEDIA_MAX_VIEWPORT_HEIGHT_SHARE = 0.85;
 const DETAIL_METADATA_CARD_MIN_WIDTH_PX = 240;
-const DETAIL_STACKED_BREAKPOINT_PX =
-  DETAIL_MIN_ARTICLE_WIDTH_PX +
-  DETAIL_FIXED_RAIL_WIDTH_PX +
-  DETAIL_GRID_INSET_WIDTH_PX * 3;
 const DETAIL_BOTTOM_SAFE_SPACE_CLASS = "pb-20";
 const HOVER_CARD_WIDTH = 240;
 const HOVER_CARD_FALLBACK_HEIGHT = 320;
@@ -226,6 +231,13 @@ type HoverPreviewPosition = {
   left: number;
 };
 
+type HoverPreviewBounds = {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+};
+
 type HoveredRelatedNote = {
   rowKey: string;
   slug: string;
@@ -265,38 +277,76 @@ function getElementLayoutWidth(node: HTMLElement): number {
   return window.innerWidth;
 }
 
-function useDetailStackedLayout() {
+/**
+ * The content's full width in the open card (SPEC_FRONTEND.md, Detail): the
+ * reading column, or a lone picture's own size when it is smaller (its
+ * natural width, or the width it takes at `85vh`, as DetailImage draws it).
+ * One rule for every card: what decides is the content, not a kind.
+ */
+export function detailContentFullWidth(
+  block: LightBlock | IndexedBlock,
+  viewportHeight: number,
+): number {
+  if (deriveCardContent(block).source !== "image") return DETAIL_CONTENT_MAX_WIDTH_PX;
+  const manifest = normalizeDetailPreviewManifest(block.preview_manifest);
+  const width = block.width ?? manifest?.width ?? null;
+  const height = block.height ?? manifest?.height ?? null;
+  if (!width || !height || width <= 0 || height <= 0 || viewportHeight <= 0) {
+    return DETAIL_CONTENT_MAX_WIDTH_PX;
+  }
+  const atHeightLimit = (DETAIL_MEDIA_MAX_VIEWPORT_HEIGHT_SHARE * viewportHeight * width) / height;
+  return Math.max(1, Math.round(Math.min(DETAIL_CONTENT_MAX_WIDTH_PX, width, atHeightLimit)));
+}
+
+/** Whether the content at full width, the panel and three insets do not fit. */
+export function detailLayoutIsStacked(
+  containerWidth: number,
+  contentPadPx: number,
+  contentWidth: number,
+): boolean {
+  return containerWidth < 3 * contentPadPx + contentWidth + DETAIL_RAIL_WIDTH_PX;
+}
+
+/** The open card's container width, `--card-content-pad` and the window's
+ *  height, kept current as the window and the edge rhythm change. */
+function useDetailLayoutMetrics() {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [containerWidth, setContainerWidth] = useState<number | null>(null);
+  const padProbeRef = useRef<HTMLDivElement>(null);
+  const [metrics, setMetrics] = useState<
+    { width: number; pad: number; viewportHeight: number } | null
+  >(null);
 
   useEffect(() => {
     const node = containerRef.current;
     if (!node) return;
-
-    const updateWidth = () => {
-      setContainerWidth(getElementLayoutWidth(node));
+    const measure = () => {
+      const pad = padProbeRef.current?.getBoundingClientRect().width ?? 0;
+      const next = {
+        width: getElementLayoutWidth(node),
+        pad: pad > 0 ? pad : DETAIL_CONTENT_PAD_FALLBACK_PX,
+        viewportHeight: window.innerHeight,
+      };
+      setMetrics((current) => (
+        current
+        && current.width === next.width
+        && current.pad === next.pad
+        && current.viewportHeight === next.viewportHeight
+          ? current
+          : next
+      ));
     };
-
-    updateWidth();
-
-    if (typeof ResizeObserver !== "undefined") {
-      const observer = new ResizeObserver((entries) => {
-        const entryWidth = entries[0]?.contentRect.width ?? 0;
-        setContainerWidth(entryWidth > 0 ? entryWidth : getElementLayoutWidth(node));
-      });
-      observer.observe(node);
-      return () => observer.disconnect();
-    }
-
-    window.addEventListener("resize", updateWidth);
-    return () => window.removeEventListener("resize", updateWidth);
+    measure();
+    window.addEventListener("resize", measure);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(node);
+    if (padProbeRef.current) observer?.observe(padProbeRef.current);
+    return () => {
+      window.removeEventListener("resize", measure);
+      observer?.disconnect();
+    };
   }, []);
 
-  return {
-    containerRef,
-    isStackedLayout:
-      containerWidth !== null && containerWidth < DETAIL_STACKED_BREAKPOINT_PX,
-  };
+  return { containerRef, padProbeRef, metrics };
 }
 
 export function Detail({
@@ -334,13 +384,33 @@ export function Detail({
   const [topMenuOpen, setTopMenuOpen] = useState(false);
   const displayBlock = fullBlock ?? block;
   const currentBlockSlugRef = useRef(block.slug);
-  const { containerRef: detailLayoutRef, isStackedLayout } = useDetailStackedLayout();
+  const {
+    containerRef: detailLayoutRef,
+    padProbeRef: detailPadProbeRef,
+    metrics: detailLayoutMetrics,
+  } = useDetailLayoutMetrics();
+  const contentWidth = detailContentFullWidth(
+    displayBlock,
+    detailLayoutMetrics?.viewportHeight ?? window.innerHeight,
+  );
+  const isStackedLayout = detailLayoutMetrics !== null
+    && detailLayoutIsStacked(detailLayoutMetrics.width, detailLayoutMetrics.pad, contentWidth);
   const layoutClasses = isStackedLayout
     ? DETAIL_STACKED_LAYOUT_CLASSES
-    : DETAIL_RAIL_LAYOUT_CLASSES;
+    : DETAIL_RAIL_GRID_CLASSES;
+  // Beside the panel the content's column is exactly its full width; the
+  // spare room goes to the two flexible tracks around it.
+  const layoutStyle: CSSProperties | undefined = isStackedLayout
+    ? undefined
+    : {
+        gridTemplateColumns: `minmax(var(--card-content-pad),1fr) ${contentWidth}px minmax(var(--card-content-pad),1fr) ${DETAIL_RAIL_WIDTH_PX}px var(--card-content-pad)`,
+      };
   const articleColumnClasses = isStackedLayout
-    ? "col-start-2 min-w-0 mx-auto w-full max-w-[48rem]"
+    ? "col-start-2 min-w-0 mx-auto w-full"
     : "col-start-2 min-w-0";
+  const stackedColumnStyle: CSSProperties | undefined = isStackedLayout
+    ? { maxWidth: contentWidth }
+    : undefined;
 
   useEffect(() => {
     setFullBlock(isIndexedBlock(block) ? block : null);
@@ -493,7 +563,15 @@ export function Detail({
           isClosing && "opacity-0",
         )}
         data-detail-layout-mode={isStackedLayout ? "stacked" : "rail"}
+        data-detail-content-width={contentWidth}
       >
+        {/* Measures `--card-content-pad` for the stacking rule. */}
+        <div
+          ref={detailPadProbeRef}
+          aria-hidden="true"
+          className="pointer-events-none invisible absolute top-0 left-0 h-0 w-[var(--card-content-pad)]"
+          data-detail-pad-probe
+        />
         <TopFadeScrim scrolled={topFade.scrolled} surface="detail" color="var(--background)" />
         {/* Layer 1: Scrollable content + invisible spacer */}
         <div
@@ -505,9 +583,10 @@ export function Detail({
         >
           <div
             className={cn(layoutClasses, DETAIL_BOTTOM_SAFE_SPACE_CLASS)}
+            style={layoutStyle}
             data-detail-layout-grid="scroll"
           >
-            <div className={articleColumnClasses} data-detail-article-column>
+            <div className={articleColumnClasses} style={stackedColumnStyle} data-detail-article-column>
               <BlockContent
                 block={block}
                 fullBlock={fullBlock}
@@ -532,7 +611,8 @@ export function Detail({
             </div>
             {isStackedLayout ? (
               <div
-                className="col-start-2 mt-[var(--card-content-pad)] min-w-0"
+                className="col-start-2 mx-auto mt-[var(--card-content-pad)] w-full min-w-0"
+                style={stackedColumnStyle}
                 data-detail-stacked-metadata-row
               >
                 <MetadataPanel
@@ -545,6 +625,8 @@ export function Detail({
                   currentTag={currentTag}
                   onToggleTag={onToggleTag}
                   onCreateAndAssign={onCreateAndAssign}
+                  onRequestRename={onRequestRename}
+                  onRequestDelete={onRequestDelete}
                   onOpenRelatedNote={onOpenRelatedNote}
                 />
               </div>
@@ -566,6 +648,7 @@ export function Detail({
           >
             <div
               className={layoutClasses}
+              style={layoutStyle}
               data-detail-layout-grid="metadata"
             >
               <div className="col-start-2 min-w-0" />
@@ -583,6 +666,8 @@ export function Detail({
                   currentTag={currentTag}
                   onToggleTag={onToggleTag}
                   onCreateAndAssign={onCreateAndAssign}
+                  onRequestRename={onRequestRename}
+                  onRequestDelete={onRequestDelete}
                   onOpenRelatedNote={onOpenRelatedNote}
                 />
               </div>
@@ -606,6 +691,8 @@ interface MetadataPanelProps {
   currentTag?: string;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
+  onRequestRename: (block: LightBlock | IndexedBlock) => void;
+  onRequestDelete: (slug: string) => void;
   onOpenRelatedNote: (slug: string) => void;
 }
 
@@ -619,9 +706,11 @@ function MetadataPanel({
   currentTag,
   onToggleTag,
   onCreateAndAssign,
+  onRequestRename,
+  onRequestDelete,
   onOpenRelatedNote,
 }: MetadataPanelProps) {
-  const relatedNoteButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const relatedNoteRowRefs = useRef(new Map<string, HTMLElement>());
   const hoverPreviewRef = useRef<HTMLDivElement | null>(null);
   const hoverPreviewOpenTimerRef = useRef<number | null>(null);
   const lastHoverPreviewOpenedAtRef = useRef<number | null>(null);
@@ -708,7 +797,7 @@ function MetadataPanel({
       setHoverPreviewPosition(null);
       return;
     }
-    const button = relatedNoteButtonRefs.current.get(hoveredRelatedNote.rowKey);
+    const button = relatedNoteRowRefs.current.get(hoveredRelatedNote.rowKey);
     if (!button) {
       setHoverPreviewPosition(null);
       return;
@@ -718,19 +807,19 @@ function MetadataPanel({
     const previewHeight =
       hoverPreviewRef.current?.getBoundingClientRect().height ??
       HOVER_CARD_FALLBACK_HEIGHT;
-    setHoverPreviewPosition(computeHoverPreviewPosition(triggerRect, previewHeight));
+    setHoverPreviewPosition(computeHoverPreviewPosition(triggerRect, previewHeight, hoverPreviewBounds(button)));
   }, [hoveredRelatedNote, hoveredRelatedNoteBlock]);
 
   useEffect(() => {
     if (!hoveredRelatedNote || !hoverPreviewPosition || !hoverPreviewRef.current) {
       return;
     }
-    const button = relatedNoteButtonRefs.current.get(hoveredRelatedNote.rowKey);
+    const button = relatedNoteRowRefs.current.get(hoveredRelatedNote.rowKey);
     if (!button) return;
 
     const triggerRect = button.getBoundingClientRect();
     const previewHeight = hoverPreviewRef.current.getBoundingClientRect().height;
-    const nextPosition = computeHoverPreviewPosition(triggerRect, previewHeight);
+    const nextPosition = computeHoverPreviewPosition(triggerRect, previewHeight, hoverPreviewBounds(button));
     if (
       Math.abs(nextPosition.top - hoverPreviewPosition.top) > 1 ||
       Math.abs(nextPosition.left - hoverPreviewPosition.left) > 1
@@ -825,8 +914,15 @@ function MetadataPanel({
               relatedNotes={relatedNotes}
               relatedNoteBlocks={relatedNoteBlocks}
               resolvedThumbsRoot={resolvedThumbsRoot}
+              vaultPath={vaultPath}
+              tags={tags}
+              currentTag={currentTag}
+              onToggleTag={onToggleTag}
+              onCreateAndAssign={onCreateAndAssign}
+              onRequestRename={onRequestRename}
+              onRequestDelete={onRequestDelete}
               onOpenRelatedNote={onOpenRelatedNote}
-              relatedNoteButtonRefs={relatedNoteButtonRefs}
+              relatedNoteRowRefs={relatedNoteRowRefs}
               onRelatedNotePreviewEnter={openRelatedNotePreview}
               onRelatedNotePreviewLeave={requestCloseRelatedNotePreview}
             />
@@ -976,80 +1072,226 @@ function DetailActionRow({
   );
 }
 
+/**
+ * The open card's Related notes: the search's own rows (`CardRow`, user's
+ * decision of 07.10.2026). Each row shows the note's file name and, dimmed,
+ * the start of its text; under the pointer the row lights up and shows the
+ * card's commands (Connect, Source, More) at its right end, as a search
+ * result does. A press elsewhere on the row opens the note.
+ */
 function RelatedNotesSection({
-  label = "Related notes",
   relatedNotes,
   relatedNoteBlocks,
-  fallbackLabels,
   resolvedThumbsRoot,
+  vaultPath,
+  tags,
+  currentTag,
+  onToggleTag,
+  onCreateAndAssign,
+  onRequestRename,
+  onRequestDelete,
   onOpenRelatedNote,
-  relatedNoteButtonRefs,
+  relatedNoteRowRefs,
   onRelatedNotePreviewEnter,
   onRelatedNotePreviewLeave,
 }: {
-  label?: string | null;
   relatedNotes: string[];
   relatedNoteBlocks: Map<string, IndexedBlock | null> | null;
-  fallbackLabels?: Map<string, string>;
   resolvedThumbsRoot: string;
+  vaultPath: string;
+  tags: TagCount[];
+  currentTag?: string;
+  onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
+  onCreateAndAssign: (tag: string, blockSlug: string) => void;
+  onRequestRename: (block: LightBlock | IndexedBlock) => void;
+  onRequestDelete: (slug: string) => void;
   onOpenRelatedNote: (slug: string) => void;
-  relatedNoteButtonRefs: { current: Map<string, HTMLButtonElement> };
+  relatedNoteRowRefs: { current: Map<string, HTMLElement> };
   onRelatedNotePreviewEnter: (note: HoveredRelatedNote) => void;
   onRelatedNotePreviewLeave: () => void;
 }) {
+  // The row the pointer is on, by row identity: a note linked twice is two
+  // rows. Leaving the row or turning the wheel lets go of it.
+  const [pointerRowKey, setPointerRowKey] = useState<string | null>(null);
+  // The row whose menu is open holds its commands and its light; the
+  // pointer on its way to the menu moves nothing (SPEC_CARD_STATES.md, С7.8).
+  const [menuRowKey, setMenuRowKey] = useState<string | null>(null);
+
+  // A closed row menu gives focus back to the page, not to its hidden
+  // button: the open card's own keys keep working.
+  const handleMenuCloseAutoFocus = useCallback((event: Event) => {
+    event.preventDefault();
+  }, []);
+
   return (
     <section className="flex min-w-0 flex-col gap-1" data-related-notes-block>
-      {label !== null && <div className={METADATA_LABEL_CLASSES}>{label}</div>}
-      <div className="flex w-full min-w-0 flex-col gap-1" data-related-notes-list>
+      {/* Over the rows' thumbnails, as a date section over search results. */}
+      <div className={cn(METADATA_LABEL_CLASSES, "px-2")}>Related notes</div>
+      <div
+        className="flex w-full min-w-0 flex-col"
+        onWheel={() => setPointerRowKey(null)}
+        data-related-notes-list
+      >
         {relatedNotes.map((slug, index) => {
           const baseSlug = baseRelatedNoteSlug(slug);
           const rowKey = `${index}:${slug}`;
           const relatedBlock = relatedNoteBlocks?.get(baseSlug) ?? null;
-          const rowLabel = relatedBlock
-            ? getFallbackLabel(relatedBlock)
-            : fallbackLabels?.get(baseSlug) ?? baseSlug;
 
           if (!relatedBlock) {
+            // Still loading, or a link to a note that is gone: the name
+            // alone, dimmed, nothing to open.
             return (
-              <CardReferenceRow
-                key={slug}
-                label={rowLabel}
+              <CardRow
+                key={rowKey}
+                row={deriveSearchResultRow({ slug: baseSlug, preview_text: null })}
                 preview={null}
-                className="text-muted-foreground"
+                active={false}
+                item={{ as: "static" }}
                 data-related-note-item="placeholder"
               />
             );
           }
 
+          const holdsMenu = menuRowKey === rowKey;
+          const actionsShown = holdsMenu || (menuRowKey === null && pointerRowKey === rowKey);
           return (
-            <CardReferenceButton
+            <CardRow
               key={rowKey}
-              label={rowLabel}
+              rowRef={(node) => {
+                if (node) {
+                  relatedNoteRowRefs.current.set(rowKey, node);
+                } else {
+                  relatedNoteRowRefs.current.delete(rowKey);
+                }
+              }}
+              row={deriveSearchResultRow(relatedBlock)}
               preview={microPreviewFromIndexedBlock(relatedBlock, resolvedThumbsRoot)}
+              active={actionsShown}
+              actionsReservePx={actionsShown ? cardRowActionsReservePx(relatedBlock) : 0}
+              onPointerMove={() => {
+                if (menuRowKey === null && pointerRowKey !== rowKey) setPointerRowKey(rowKey);
+              }}
+              onPointerLeave={() => {
+                setPointerRowKey((current) => (current === rowKey ? null : current));
+              }}
               onPointerDown={(event) => {
                 event.stopPropagation();
               }}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                onOpenRelatedNote(baseSlug);
+              onMouseEnter={() => {
+                if (menuRowKey === null) onRelatedNotePreviewEnter({ rowKey, slug: baseSlug });
               }}
-              className="text-muted-foreground"
-              ref={(node) => {
-                if (node) {
-                  relatedNoteButtonRefs.current.set(rowKey, node);
-                } else {
-                  relatedNoteButtonRefs.current.delete(rowKey);
-                }
-              }}
-              onMouseEnter={() => onRelatedNotePreviewEnter({ rowKey, slug: baseSlug })}
               onMouseLeave={onRelatedNotePreviewLeave}
+              item={{
+                as: "button",
+                props: {
+                  onClick: (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onOpenRelatedNote(baseSlug);
+                  },
+                },
+              }}
+              actions={(actionsShown || pointerRowKey === rowKey) && (
+                <CardRowActions
+                  block={relatedBlock}
+                  vaultPath={vaultPath}
+                  tags={tags}
+                  currentTag={currentTag}
+                  visible={actionsShown}
+                  onToggleTag={onToggleTag}
+                  onCreateAndAssign={onCreateAndAssign}
+                  onRequestRename={onRequestRename}
+                  onRequestDelete={onRequestDelete}
+                  onMenuOpenChange={(_slug, open) => {
+                    setMenuRowKey((current) => (open ? rowKey : current === rowKey ? null : current));
+                    // The card preview steps aside for the menu.
+                    if (open) onRelatedNotePreviewLeave();
+                  }}
+                  onMenuCloseAutoFocus={handleMenuCloseAutoFocus}
+                />
+              )}
               data-related-note-item="button"
             />
           );
         })}
       </div>
     </section>
+  );
+}
+
+/**
+ * Cards that reference a media file, in its delete confirmation: compact
+ * card-reference rows that open the card.
+ */
+function CardReferenceList({
+  references,
+  referenceBlocks,
+  fallbackLabels,
+  resolvedThumbsRoot,
+  onOpenReference,
+  referenceRowRefs,
+  onReferencePreviewEnter,
+  onReferencePreviewLeave,
+}: {
+  references: string[];
+  referenceBlocks: Map<string, IndexedBlock | null> | null;
+  fallbackLabels: Map<string, string>;
+  resolvedThumbsRoot: string;
+  onOpenReference: (slug: string) => void;
+  referenceRowRefs: { current: Map<string, HTMLElement> };
+  onReferencePreviewEnter: (note: HoveredRelatedNote) => void;
+  onReferencePreviewLeave: () => void;
+}) {
+  return (
+    <div className="flex w-full min-w-0 flex-col gap-1" data-card-reference-list>
+      {references.map((slug, index) => {
+        const baseSlug = baseRelatedNoteSlug(slug);
+        const rowKey = `${index}:${slug}`;
+        const referenceBlock = referenceBlocks?.get(baseSlug) ?? null;
+        const rowLabel = referenceBlock
+          ? getFallbackLabel(referenceBlock)
+          : fallbackLabels.get(baseSlug) ?? baseSlug;
+
+        if (!referenceBlock) {
+          return (
+            <CardReferenceRow
+              key={slug}
+              label={rowLabel}
+              preview={null}
+              className="text-muted-foreground"
+              data-card-reference-item="placeholder"
+            />
+          );
+        }
+
+        return (
+          <CardReferenceButton
+            key={rowKey}
+            label={rowLabel}
+            preview={microPreviewFromIndexedBlock(referenceBlock, resolvedThumbsRoot)}
+            onPointerDown={(event) => {
+              event.stopPropagation();
+            }}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onOpenReference(baseSlug);
+            }}
+            className="text-muted-foreground"
+            ref={(node) => {
+              if (node) {
+                referenceRowRefs.current.set(rowKey, node);
+              } else {
+                referenceRowRefs.current.delete(rowKey);
+              }
+            }}
+            onMouseEnter={() => onReferencePreviewEnter({ rowKey, slug: baseSlug })}
+            onMouseLeave={onReferencePreviewLeave}
+            data-card-reference-item="button"
+          />
+        );
+      })}
+    </div>
   );
 }
 
@@ -1061,33 +1303,54 @@ function baseRelatedNoteSlug(target: string): string {
   return target.split("#", 1)[0] ?? target;
 }
 
-function computeHoverPreviewPosition(
-  triggerRect: DOMRect,
+/**
+ * Where a row's card preview may stand: the open card's own area. Beyond it
+ * the sidebar and the window's chrome cover the preview. A row outside an
+ * open card (a dialog over the window) has the whole window.
+ */
+export function hoverPreviewBounds(anchor: Element): HoverPreviewBounds {
+  const area = anchor.closest("[data-detail-root]");
+  if (area) {
+    const rect = area.getBoundingClientRect();
+    return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+  }
+  return { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+}
+
+/**
+ * Beside the row when the area has room on its right, else on its left. A
+ * row as wide as the area (the stacked view) has room on neither side: the
+ * preview then stands under the row, or over it when there is no room below,
+ * starting at the row's left edge. The preview never leaves the area.
+ */
+export function computeHoverPreviewPosition(
+  triggerRect: Pick<DOMRect, "left" | "right" | "top" | "bottom">,
   previewHeight: number,
+  bounds: HoverPreviewBounds,
 ): HoverPreviewPosition {
-  const viewportWidth = window.innerWidth;
-  const viewportHeight = window.innerHeight;
-  const canOpenRight =
-    viewportWidth - triggerRect.right - HOVER_CARD_GAP - HOVER_CARD_VIEWPORT_MARGIN >=
-    HOVER_CARD_WIDTH;
-  const left = canOpenRight
-    ? triggerRect.right + HOVER_CARD_GAP
-    : Math.max(
-        HOVER_CARD_VIEWPORT_MARGIN,
-        triggerRect.left - HOVER_CARD_GAP - HOVER_CARD_WIDTH,
-      );
-  const canOpenDown =
-    triggerRect.top + previewHeight <=
-    viewportHeight - HOVER_CARD_VIEWPORT_MARGIN;
-  const top = canOpenDown
-    ? Math.max(HOVER_CARD_VIEWPORT_MARGIN, triggerRect.top)
-    : Math.max(
-        HOVER_CARD_VIEWPORT_MARGIN,
-        triggerRect.bottom - previewHeight,
-      );
+  const minLeft = bounds.left + HOVER_CARD_VIEWPORT_MARGIN;
+  const maxRight = bounds.right - HOVER_CARD_VIEWPORT_MARGIN;
+  const minTop = bounds.top + HOVER_CARD_VIEWPORT_MARGIN;
+  const maxBottom = bounds.bottom - HOVER_CARD_VIEWPORT_MARGIN;
+  const fitsRight = triggerRect.right + HOVER_CARD_GAP + HOVER_CARD_WIDTH <= maxRight;
+  const fitsLeft = triggerRect.left - HOVER_CARD_GAP - HOVER_CARD_WIDTH >= minLeft;
+  if (fitsRight || fitsLeft) {
+    const canOpenDown = triggerRect.top + previewHeight <= maxBottom;
+    return {
+      left: fitsRight
+        ? triggerRect.right + HOVER_CARD_GAP
+        : triggerRect.left - HOVER_CARD_GAP - HOVER_CARD_WIDTH,
+      top: canOpenDown
+        ? Math.max(minTop, triggerRect.top)
+        : Math.max(minTop, triggerRect.bottom - previewHeight),
+    };
+  }
+  const fitsBelow = triggerRect.bottom + HOVER_CARD_GAP + previewHeight <= maxBottom;
   return {
-    top,
-    left,
+    left: Math.max(minLeft, Math.min(triggerRect.left, maxRight - HOVER_CARD_WIDTH)),
+    top: fitsBelow
+      ? triggerRect.bottom + HOVER_CARD_GAP
+      : Math.max(minTop, triggerRect.top - HOVER_CARD_GAP - previewHeight),
   };
 }
 
@@ -2583,7 +2846,7 @@ function MediaAssetReferenceCards({
   thumbsRootPath: string;
   onOpenRelatedNote: (slug: string) => void;
 }) {
-  const relatedNoteButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const relatedNoteRowRefs = useRef(new Map<string, HTMLElement>());
   const hoverPreviewRef = useRef<HTMLDivElement | null>(null);
   const hoverPreviewOpenTimerRef = useRef<number | null>(null);
   const lastHoverPreviewOpenedAtRef = useRef<number | null>(null);
@@ -2671,7 +2934,7 @@ function MediaAssetReferenceCards({
       setHoverPreviewPosition(null);
       return;
     }
-    const button = relatedNoteButtonRefs.current.get(hoveredRelatedNote.rowKey);
+    const button = relatedNoteRowRefs.current.get(hoveredRelatedNote.rowKey);
     if (!button) {
       setHoverPreviewPosition(null);
       return;
@@ -2681,19 +2944,19 @@ function MediaAssetReferenceCards({
     const previewHeight =
       hoverPreviewRef.current?.getBoundingClientRect().height ??
       HOVER_CARD_FALLBACK_HEIGHT;
-    setHoverPreviewPosition(computeHoverPreviewPosition(triggerRect, previewHeight));
+    setHoverPreviewPosition(computeHoverPreviewPosition(triggerRect, previewHeight, hoverPreviewBounds(button)));
   }, [hoveredRelatedNote, hoveredRelatedNoteBlock]);
 
   useEffect(() => {
     if (!hoveredRelatedNote || !hoverPreviewPosition || !hoverPreviewRef.current) {
       return;
     }
-    const button = relatedNoteButtonRefs.current.get(hoveredRelatedNote.rowKey);
+    const button = relatedNoteRowRefs.current.get(hoveredRelatedNote.rowKey);
     if (!button) return;
 
     const triggerRect = button.getBoundingClientRect();
     const previewHeight = hoverPreviewRef.current.getBoundingClientRect().height;
-    const nextPosition = computeHoverPreviewPosition(triggerRect, previewHeight);
+    const nextPosition = computeHoverPreviewPosition(triggerRect, previewHeight, hoverPreviewBounds(button));
     if (
       Math.abs(nextPosition.top - hoverPreviewPosition.top) > 1 ||
       Math.abs(nextPosition.left - hoverPreviewPosition.left) > 1
@@ -2728,16 +2991,15 @@ function MediaAssetReferenceCards({
       {hoverPreview && typeof document !== "undefined"
         ? createPortal(hoverPreview, document.body)
         : null}
-      <RelatedNotesSection
-        label={null}
-        relatedNotes={relatedNotes}
-        relatedNoteBlocks={relatedNoteBlocks}
+      <CardReferenceList
+        references={relatedNotes}
+        referenceBlocks={relatedNoteBlocks}
         fallbackLabels={fallbackLabels}
         resolvedThumbsRoot={thumbsRootPath}
-        onOpenRelatedNote={onOpenRelatedNote}
-        relatedNoteButtonRefs={relatedNoteButtonRefs}
-        onRelatedNotePreviewEnter={openRelatedNotePreview}
-        onRelatedNotePreviewLeave={requestCloseRelatedNotePreview}
+        onOpenReference={onOpenRelatedNote}
+        referenceRowRefs={relatedNoteRowRefs}
+        onReferencePreviewEnter={openRelatedNotePreview}
+        onReferencePreviewLeave={requestCloseRelatedNotePreview}
       />
     </>
   );

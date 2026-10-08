@@ -688,10 +688,11 @@ describe("GraphView", () => {
     await waitFor(() => {
       expect(container.querySelector("[data-graph-card-hover-preview]")).toBeInTheDocument();
     });
-    // The feed's own card in its final hover state, with nothing to press
+    // The feed's own card unfolded, no lift, with nothing to press
     // (SPEC_CARD_STATES.md, С10).
     const preview = container.querySelector("[data-graph-card-hover-preview]")!;
-    expect(preview.querySelector("[data-card-preview]")).toHaveAttribute("data-card-lift-pinned");
+    expect(preview.querySelector("[data-card-preview]")).toHaveAttribute("data-card-preview-unfolded");
+    expect(preview.querySelector("[data-card-preview]")).not.toHaveAttribute("data-card-lift-pinned");
     expect(preview.querySelector("[data-card-preview-collections]")).not.toBeNull();
     expect(preview.querySelector("button")).toBeNull();
 

@@ -2618,6 +2618,9 @@ describe("Card previews show the feed card in its final hover state (SPEC_CARD_S
   /// hint (a preview loads at once, a feed card as it scrolls in).
   const contentOf = (frame: HTMLElement, own: string) => {
     frame.querySelectorAll(own).forEach((node) => node.remove());
+    // An unfolded preview holds a bare media card's media in the box the
+    // feed reserves for it; the content inside is the feed card's own.
+    frame.querySelectorAll("[data-card-preview-media-box]").forEach((box) => box.replaceWith(...Array.from(box.childNodes)));
     frame.querySelectorAll("[loading]").forEach((node) => node.removeAttribute("loading"));
     return frame.innerHTML;
   };
@@ -2634,25 +2637,34 @@ describe("Card previews show the feed card in its final hover state (SPEC_CARD_S
     setFeedShow(show);
     for (const [, make] of samples) {
       const value = make();
+      // The caption is the feed card's lift caption over its media, and the
+      // preview's caption under it: compared as the content around them.
       const feed = contentOf(
         frameIn(parse(feedMarkup(value, show))),
-        "[data-card-hover-overlay], [data-card-hover-more-action], [data-card-hover-bottom-actions]",
+        "[data-card-hover-overlay], [data-card-hover-more-action], [data-card-hover-bottom-actions], [data-card-caption]",
       );
-      const preview = contentOf(frameIn(parse(previewMarkup(value))), "[data-card-preview-collections]");
+      const preview = contentOf(
+        frameIn(parse(previewMarkup(value))),
+        "[data-card-preview-collections], [data-card-preview-row-room], [data-card-caption]",
+      );
       expect(preview).toBe(feed);
     }
   });
 
-  it.each(samples)("stands %s lifted from its first frame, by the feed card's lift", (_kind, make) => {
+  it.each(samples)("stands %s unfolded: no lift, its content whole from the top, the row's room the feed card's lift", (_kind, make) => {
     const value = make();
     const feedFrame = frameIn(parse(feedMarkup(value, "cards")));
     const previewFrame = frameIn(parse(previewMarkup(value)));
     expect(previewFrame.hasAttribute("data-card-preview")).toBe(true);
-    expect(previewFrame.hasAttribute("data-card-lift-pinned")).toBe(true);
-    // Pinned, not hovered: it needs no pointer to stay up.
+    expect(previewFrame.hasAttribute("data-card-preview-unfolded")).toBe(true);
+    // Nothing rises or fades in a preview: there is no hover to reveal more.
+    expect(previewFrame.hasAttribute("data-card-lift-pinned")).toBe(false);
     expect(previewFrame.hasAttribute("data-card-lift-hover")).toBe(false);
-    const liftOf = (frame: HTMLElement) => /--card-lift:\s*([0-9.]+)px/.exec(frame.getAttribute("style") ?? "")?.[1] ?? null;
-    expect(liftOf(previewFrame)).toBe(liftOf(feedFrame));
+    expect(previewFrame.getAttribute("style") ?? "").not.toContain("--card-lift");
+    const liftOf = (element: Element | null) => /--card-lift:\s*([0-9.]+)px/.exec(element?.getAttribute("style") ?? "")?.[1] ?? null;
+    const room = previewFrame.querySelector("[data-card-preview-row-room]");
+    expect(room).not.toBeNull();
+    expect(liftOf(room)).toBe(liftOf(feedFrame));
   });
 
   it("has nothing to press: no buttons, collections as text in the sidebar's order", () => {
@@ -2677,12 +2689,12 @@ describe("Card previews show the feed card in its final hover state (SPEC_CARD_S
       .toHaveTextContent("No collections");
   });
 
-  it("brings up a picture's caption in Media with the feed's title rule: its own H1, never a legacy title or the file", () => {
+  it("shows a picture's caption under it in Media with the feed's title rule: its own H1, never a legacy title or the file", () => {
     setFeedShow("media");
     const { container, rerender } = render(
       <ReadOnlyCardPreview block={picture()} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" />,
     );
-    expect(container.querySelector("[data-card-lift='caption']")).toHaveTextContent("Sunset");
+    expect(container.querySelector("[data-card-caption]")).toHaveTextContent("Sunset");
 
     rerender(
       <ReadOnlyCardPreview
@@ -2693,7 +2705,7 @@ describe("Card previews show the feed card in its final hover state (SPEC_CARD_S
     );
     // Without a heading of its own the picture has no text: no caption, and
     // nothing put in its place (Е12).
-    expect(container.querySelector("[data-card-lift='caption']")).toBeNull();
+    expect(container.querySelector("[data-card-caption]")).toBeNull();
     expect(container).not.toHaveTextContent("Legacy title");
   });
 
@@ -2701,19 +2713,39 @@ describe("Card previews show the feed card in its final hover state (SPEC_CARD_S
     const { container } = render(
       <ReadOnlyCardPreview block={picture()} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" />,
     );
-    expect(container.querySelector("[data-card-lift='caption']")).toBeNull();
+    expect(container.querySelector("[data-card-caption]")).toBeNull();
     expect(container.querySelector("[data-card-lift='text']")).toHaveTextContent("Sunset");
   });
 
-  it("reserves a bare picture's height exactly as the feed does at the preview's width", () => {
+  it("reserves a bare picture's height exactly as the feed does at the preview's width, its caption under it", () => {
     setFeedShow("media");
     const value = mediaPost();
     const { container } = render(
       <ReadOnlyCardPreview block={value} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" width={288} />,
     );
-    expect(frameIn(document)).toHaveStyle({ height: `${computeCardHeight(value, 288, null, "media")}px` });
-    // `Media` shows the post's media alone and lifts its text as the caption.
-    expect(container.querySelector("[data-card-lift='caption']")).toHaveTextContent("A post with media");
+    const box = container.querySelector<HTMLElement>("[data-card-preview-media-box]");
+    expect(box).toHaveStyle({ height: `${computeCardHeight(value, 288, null, "media")}px` });
+    // The frame grows by the caption instead of covering the media with it.
+    expect(frameIn(document).style.height).toBe("");
+    // `Media` shows the post's media alone; the preview puts its text under it,
+    // in the card's flow, not as the lift's caption over the media.
+    const caption = container.querySelector("[data-card-caption]");
+    expect(caption).toHaveTextContent("A post with media");
+    expect(caption).not.toHaveAttribute("data-card-lift");
+    expect(caption?.previousElementSibling).toBe(box);
+  });
+
+  it("starts a text post's preview at its first line: no lift, no top fade", () => {
+    const { container } = render(
+      <ReadOnlyCardPreview block={textPost()} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" width={288} />,
+    );
+    const frame = frameIn(document);
+    expect(frame).not.toHaveAttribute("data-card-lift-pinned");
+    // The fade wrapper rests with its ramp above the edge (global.css): only a
+    // pinned or hovered lift slides it in.
+    expect(container.querySelector("[data-card-lift-fade]")).not.toBeNull();
+    expect(container.querySelector("[data-card-preview-row-room]")).not.toBeNull();
+    expect(container.querySelector("[data-card-preview-collections]")).not.toBeNull();
   });
 
   it("leaves a dragged card at rest, as the feed card under a drag (С8.5)", () => {
@@ -2723,7 +2755,7 @@ describe("Card previews show the feed card in its final hover state (SPEC_CARD_S
     const frame = container.querySelector("[data-feed-card-frame]")!;
     expect(frame).toHaveAttribute("data-card-preview");
     expect(frame).not.toHaveAttribute("data-card-lift-pinned");
-    expect(container.querySelector("[data-card-lift='caption']")).toBeNull();
+    expect(container.querySelector("[data-card-caption]")).toBeNull();
     expect(container.querySelector("[data-card-preview-collections]")).toBeNull();
   });
 

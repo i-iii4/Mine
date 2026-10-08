@@ -1906,10 +1906,11 @@
     },
     {
       "paths": [
-        "src/components/SearchResultRowActions.tsx"
+        "src/components/CardRow.tsx",
+        "src/components/CardRowActions.tsx"
       ],
       "requirement": "SPEC_SEARCH_OVERLAY.md### Команды строки",
-      "tests": ["src/components/SearchOverlay.test.tsx"],
+      "tests": ["src/components/SearchOverlay.test.tsx", "src/components/Detail.test.tsx"],
       "command": "test:frontend"
     },
     {
