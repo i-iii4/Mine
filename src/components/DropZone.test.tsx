@@ -9,17 +9,28 @@ type DragDropPayload =
   | { type: "drop"; paths: string[]; position: { x: number; y: number } }
   | { type: "leave" };
 
+/** What the backend sends the tab its window shows (`tab-file-drag`). */
+type TabFileDragPayload =
+  | { kind: "enter"; paths: string[] }
+  | { kind: "over" }
+  | { kind: "drop"; paths: string[] }
+  | { kind: "leave" };
+
 const mocks = vi.hoisted(() => ({
   createBlock: vi.fn(),
-  dragHandler: null as null | ((event: { payload: DragDropPayload }) => void),
-  onDragDropEvent: vi.fn(),
+  dragHandler: null as null | ((event: { payload: TabFileDragPayload }) => void),
+  listen: vi.fn(),
   unlisten: vi.fn(),
 }));
 
-// Drops reach the page through its own webview (SPEC_TABS.md, В22).
+// Drops reach the page as the backend routes them to the tab its window
+// shows, never through the page's own drag events (SPEC_TABS.md, В22).
 vi.mock("@tauri-apps/api/webview", () => ({
   getCurrentWebview: () => ({
-    onDragDropEvent: mocks.onDragDropEvent,
+    listen: mocks.listen,
+    onDragDropEvent: () => {
+      throw new Error("a page's own drag events are not heard");
+    },
   }),
 }));
 
@@ -27,9 +38,13 @@ vi.mock("@/lib/commands", () => ({
   createBlock: mocks.createBlock,
 }));
 
+/** A drag as the window saw it, delivered as the backend routes it. */
 function emitDrag(payload: DragDropPayload) {
+  const routed: TabFileDragPayload = payload.type === "enter" || payload.type === "drop"
+    ? { kind: payload.type, paths: payload.paths }
+    : { kind: payload.type };
   act(() => {
-    mocks.dragHandler?.({ payload });
+    mocks.dragHandler?.({ payload: routed });
   });
 }
 
@@ -37,9 +52,9 @@ describe("DropZone", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.dragHandler = null;
-    mocks.onDragDropEvent.mockImplementation(
-      async (handler: (event: { payload: DragDropPayload }) => void) => {
-        mocks.dragHandler = handler;
+    mocks.listen.mockImplementation(
+      async (event: string, handler: (event: { payload: TabFileDragPayload }) => void) => {
+        if (event === "tab-file-drag") mocks.dragHandler = handler;
         return mocks.unlisten;
       },
     );
@@ -102,17 +117,17 @@ describe("DropZone", () => {
 
   it("does not resubscribe when its completion callback changes", async () => {
     const view = render(<DropZone onBlocksCreated={vi.fn()} />);
-    await waitFor(() => expect(mocks.onDragDropEvent).toHaveBeenCalledOnce());
+    await waitFor(() => expect(mocks.listen).toHaveBeenCalledOnce());
 
     view.rerender(<DropZone onBlocksCreated={vi.fn()} />);
 
-    expect(mocks.onDragDropEvent).toHaveBeenCalledOnce();
+    expect(mocks.listen).toHaveBeenCalledOnce();
   });
 
   it("unsubscribes when registration resolves after unmount", async () => {
     let finishRegistration!: (unlisten: () => void) => void;
-    mocks.onDragDropEvent.mockImplementation(
-      (handler: (event: { payload: DragDropPayload }) => void) => {
+    mocks.listen.mockImplementation(
+      (_event: string, handler: (event: { payload: TabFileDragPayload }) => void) => {
         mocks.dragHandler = handler;
         return new Promise<() => void>((resolve) => {
           finishRegistration = resolve;
@@ -120,7 +135,7 @@ describe("DropZone", () => {
       },
     );
     const view = render(<DropZone onBlocksCreated={vi.fn()} />);
-    await waitFor(() => expect(mocks.onDragDropEvent).toHaveBeenCalledOnce());
+    await waitFor(() => expect(mocks.listen).toHaveBeenCalledOnce());
 
     view.unmount();
     finishRegistration(mocks.unlisten);

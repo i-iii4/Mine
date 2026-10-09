@@ -35,7 +35,7 @@ use crate::domain::windows::{
 };
 use crate::tabs::drag::DropHover;
 use crate::tabs::{
-    SpaceLead, TabBarState, TabBarTab, TabBootstrap, TabHistory, TabHistoryStep, TabVisibility,
+    SpaceLead, TabBarState, TabBarTab, TabBootstrap, TabFileDrag, TabHistory, TabHistoryStep, TabVisibility,
 };
 use crate::updater::{UpdateError, UpdateStage, UpdateStatus};
 use crate::commands::cloud_recommendation::CloudRecommendationState;
@@ -84,6 +84,7 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<TabHistoryStep>()
         .register::<TabBootstrap>()
         .register::<TabVisibility>()
+        .register::<TabFileDrag>()
         .register::<SpaceLead>()
         .register::<VaultChangedPayload>()
         .register::<SpaceRename>()

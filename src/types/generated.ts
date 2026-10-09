@@ -636,6 +636,11 @@ fresh_start: boolean;
 chrome_rows: ChromeRows }
 
 /**
+ * What the shown tab hears of a file drag over its window.
+ */
+export type TabFileDrag = { kind: "enter"; paths: string[] } | { kind: "over" } | { kind: "drop"; paths: string[] } | { kind: "leave" }
+
+/**
  * Whether a tab's page can go back and forward through its places (В81).
  */
 export type TabHistory = { back: boolean; forward: boolean }

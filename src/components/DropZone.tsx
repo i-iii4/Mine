@@ -1,8 +1,13 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
 
 import { createBlock } from "@/lib/commands";
+import { listenPage } from "@/lib/pageEvents";
 import { fileNameToTitle, inferBlockType } from "@/lib/pasteImport";
+import type { TabFileDrag } from "@/types";
+
+/** Files dragged over the window, sent by the backend to the tab the window
+ *  shows (SPEC_TABS.md, В22; src-tauri/src/tabs/mod.rs, `TAB_FILE_DRAG_EVENT`). */
+export const TAB_FILE_DRAG_EVENT = "tab-file-drag";
 
 interface DropZoneProps {
   currentTag?: string;
@@ -64,29 +69,32 @@ export function DropZone({ currentTag, onBlocksCreated }: DropZoneProps) {
     let disposed = false;
     let unlisten: (() => void) | undefined;
 
-    // The page's own drops: a tab is a child page of its window, and a
-    // window-level listener there hears nothing (SPEC_TABS.md, В22).
-    getCurrentWebview()
-      .onDragDropEvent((event) => {
-        if (event.payload.type === "enter") {
-          fileDragActiveRef.current = event.payload.paths.length > 0;
-          setDragging(fileDragActiveRef.current);
-        } else if (event.payload.type === "over") {
-          if (!fileDragActiveRef.current) return;
-          setDragging(true);
-        } else if (event.payload.type === "drop") {
-          const shouldHandleDrop = fileDragActiveRef.current || event.payload.paths.length > 0;
-          fileDragActiveRef.current = false;
-          if (shouldHandleDrop) {
-            handleDrop(event.payload.paths);
-          } else {
-            setDragging(false);
-          }
-        } else if (event.payload.type === "leave") {
-          fileDragActiveRef.current = false;
+    // Drops on the window, as the backend routes them to the tab it shows.
+    // The page's own drag events are not heard: the pages of a window share
+    // its frame, and AppKit hands a drag to one of them, not always the one
+    // shown, so files dropped on a tab used to join the window's first tab
+    // (SPEC_TABS.md, В22, 09.10.2026).
+    listenPage<TabFileDrag>(TAB_FILE_DRAG_EVENT, (event) => {
+      const drag = event.payload;
+      if (drag.kind === "enter") {
+        fileDragActiveRef.current = drag.paths.length > 0;
+        setDragging(fileDragActiveRef.current);
+      } else if (drag.kind === "over") {
+        if (!fileDragActiveRef.current) return;
+        setDragging(true);
+      } else if (drag.kind === "drop") {
+        const shouldHandleDrop = fileDragActiveRef.current || drag.paths.length > 0;
+        fileDragActiveRef.current = false;
+        if (shouldHandleDrop) {
+          handleDrop(drag.paths);
+        } else {
           setDragging(false);
         }
-      })
+      } else {
+        fileDragActiveRef.current = false;
+        setDragging(false);
+      }
+    })
       .then((fn) => {
         if (disposed) {
           fn();

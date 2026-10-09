@@ -4,6 +4,8 @@
 //! Pure: no files, no screens, no webviews. The shell applies the outcome of
 //! each operation to real windows; the store writes the value to disk.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 /// Version of `windows.json` this build reads and writes. Version 2 added the
@@ -399,6 +401,15 @@ impl SavedWindows {
         self.windows
             .iter()
             .find(|window| window.tabs.iter().any(|candidate| &candidate.id == tab))
+    }
+
+    /// The tab the window of `tab` shows: `shown` holds what each window
+    /// shows now, and the model's active tab answers for a window missing
+    /// from it. Files dropped on a window go there, whichever of its pages
+    /// received them (SPEC_TABS.md, В22).
+    pub fn shown_beside(&self, tab: &TabId, shown: &BTreeMap<WindowId, TabId>) -> Option<TabId> {
+        let window = self.window_of(tab)?;
+        Some(shown.get(&window.id).cloned().unwrap_or_else(|| window.active_tab.clone()))
     }
 
     fn window_of_mut(&mut self, tab: &TabId) -> Option<&mut SavedWindow> {
@@ -842,6 +853,21 @@ pub fn parse(text: &str) -> Result<SavedWindows, ReadIssue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn files_dropped_on_any_page_of_a_window_go_to_the_tab_it_shows() {
+        let model = saved(vec![
+            window("w", vec![tab("first", "x"), tab("shown", "y")], "first"),
+            window("v", vec![tab("other", "x")], "other"),
+        ]);
+        let shown = BTreeMap::from([(WindowId("w".into()), TabId("shown".into()))]);
+        // The window's first page received the drop; the tab it shows takes it.
+        assert_eq!(model.shown_beside(&TabId("first".into()), &shown), Some(TabId("shown".into())));
+        assert_eq!(model.shown_beside(&TabId("shown".into()), &shown), Some(TabId("shown".into())));
+        // A window not yet in `shown` answers with its active tab.
+        assert_eq!(model.shown_beside(&TabId("other".into()), &shown), Some(TabId("other".into())));
+        assert_eq!(model.shown_beside(&TabId("gone".into()), &shown), None);
+    }
 
     #[test]
     fn the_tall_row_takes_the_compact_title_bar() {

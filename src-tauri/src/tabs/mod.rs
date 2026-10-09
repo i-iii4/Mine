@@ -134,6 +134,23 @@ pub struct TabVisibility {
     pub visible: bool,
 }
 
+/// `tab-file-drag`: files dragged over a window, sent to the tab the window
+/// shows (В22). The pages of a window share its frame, and AppKit hands a
+/// file drag to one of them, not always the one shown: files dropped on the
+/// visible tab reached the window's first page and joined that tab's space
+/// and collection (09.10.2026).
+pub const TAB_FILE_DRAG_EVENT: &str = "tab-file-drag";
+
+/// What the shown tab hears of a file drag over its window.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TabFileDrag {
+    Enter { paths: Vec<String> },
+    Over,
+    Drop { paths: Vec<String> },
+    Leave,
+}
+
 /// `space-lead-changed`: the tab became or stopped being its space's lead.
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct SpaceLead {
@@ -486,12 +503,46 @@ fn create_page(app: &AppHandle, window: &Window, tab: &TabId) -> anyhow::Result<
     )?;
     native::clear_page_background(&page);
     crate::frame_context_menu::register_page(&page);
+    route_file_drags(app, &page, tab);
     let shell = shell(app);
     let mut live = lock(&shell.live);
     live.pages.retain(|candidate| candidate != tab);
     live.pages.insert(0, tab.clone());
     drop(live);
     Ok(page)
+}
+
+/// Send what `tab`'s page hears of a file drag to the tab its window shows
+/// now, looked up at each step: the page may have moved to another window
+/// since it was created (В22).
+fn route_file_drags(app: &AppHandle, page: &Webview, tab: &TabId) {
+    let handle = app.clone();
+    let receiver = tab.clone();
+    page.on_webview_event(move |event| {
+        let tauri::WebviewEvent::DragDrop(drag) = event else {
+            return;
+        };
+        let Some(message) = file_drag_message(drag) else {
+            return;
+        };
+        let shell = shell(&handle);
+        let shown = lock(&shell.live).shown.clone();
+        let Some(target) = shell.snapshot().shown_beside(&receiver, &shown) else {
+            return;
+        };
+        space_events::emit_to_labels(&handle, [target.label()], TAB_FILE_DRAG_EVENT, message);
+    });
+}
+
+fn file_drag_message(drag: &tauri::DragDropEvent) -> Option<TabFileDrag> {
+    let text = |paths: &[PathBuf]| paths.iter().map(|path| path.to_string_lossy().into_owned()).collect();
+    match drag {
+        tauri::DragDropEvent::Enter { paths, .. } => Some(TabFileDrag::Enter { paths: text(paths) }),
+        tauri::DragDropEvent::Over { .. } => Some(TabFileDrag::Over),
+        tauri::DragDropEvent::Drop { paths, .. } => Some(TabFileDrag::Drop { paths: text(paths) }),
+        tauri::DragDropEvent::Leave => Some(TabFileDrag::Leave),
+        _ => None,
+    }
 }
 
 /// The page a tab loads; the native shell check asks for its report there.
