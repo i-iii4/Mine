@@ -66,6 +66,8 @@ import {
   DndContext,
   DragOverlay,
   PointerSensor,
+  useDndContext,
+  useDroppable,
   useSensor,
   useSensors,
   type DragStartEvent,
@@ -303,7 +305,10 @@ import { desktopArticleAudioGateway } from "@/lib/articleAudioDesktopGateway";
 import { ARTICLE_AUDIO_ENABLED } from "@/lib/featureFlags";
 import {
   isDropOnSourceCollection,
+  isSidebarThumbnailDragId,
   lightBlockFromIndexed,
+  openCollectionDropId,
+  openCollectionDropTag,
   resolveBlockDragBlocks,
   resolveBlockDragSlugs,
   uniqueDragSlugs,
@@ -3687,6 +3692,24 @@ export function AppWithVault({
     [attachBlocksToTag, reloadAllSnapshots],
   );
 
+  /// A card dropped on the open collection's feed or graph joins it as on its
+  /// sidebar row; one already in it stays as it is, and no command runs
+  /// (SPEC_FRONTEND.md, «Бросок миниатюры в открытую коллекцию»).
+  const handleCardDropOnOpenCollection = useCallback(
+    async (slug: string, tag: string) => {
+      let card: IndexedBlock | null;
+      try {
+        card = await getBlock(slug);
+      } catch (err) {
+        console.error("Failed to read the dropped card:", err);
+        return;
+      }
+      if (!card || card.tags.includes(tag)) return;
+      await handleCardDrop(slug, tag);
+    },
+    [handleCardDrop],
+  );
+
   const handleCardsDrop = useCallback(
     async (slugs: string[], tag: string) => {
       try {
@@ -4037,6 +4060,16 @@ export function AppWithVault({
         return;
       }
 
+      // Card from a sidebar thumbnail dropped on the open collection's feed
+      // or graph; the target takes no other drag.
+      const openCollectionTag = openCollectionDropTag(overId);
+      if (!activeIsTag && openCollectionTag !== null) {
+        // Taken from this collection's own row: it is there.
+        if (activeData?.type === "block" && activeData.sourceTag === openCollectionTag) return;
+        void handleCardDropOnOpenCollection(activeSlug, openCollectionTag);
+        return;
+      }
+
       // Card dropped on tag
       if (!activeIsTag && overId.startsWith("tag:")) {
         // Back on the collection whose row it was taken from: it is there.
@@ -4052,6 +4085,7 @@ export function AppWithVault({
       beginCreateChannelFromDrop,
       clearBlockDrag,
       handleCardDrop,
+      handleCardDropOnOpenCollection,
       handleCardsDrop,
       handleMediaAssetDrop,
       handleReorderTag,
@@ -4708,6 +4742,12 @@ export function AppWithVault({
           </Route>
         </Routes>
 
+        {/* A sidebar thumbnail's card joins the open collection when dropped
+            on its feed or graph; an open card covers both. */}
+        {currentTag !== undefined && !renderedDetailBlock && (
+          <OpenCollectionDropTarget tag={currentTag} />
+        )}
+
         {renderedDetailBlock && (
           <Suspense fallback={null}>
             <Detail
@@ -5171,6 +5211,32 @@ interface RouteContext {
   onScrollPositionChange: (read: () => ScrollAnchor | null) => void;
   restoreScrollAnchor: ScrollAnchor | null;
   onScrollAnchorRestored: () => void;
+}
+
+/// The open collection's feed or graph as a drop target for the card of a
+/// sidebar thumbnail (SPEC_FRONTEND.md, «Бросок миниатюры в открытую
+/// коллекцию»). It covers the right part of the window, lets the pointer
+/// through, and is off for every other drag. While the card is over it, it
+/// wears the design system's isolated drop target frame.
+function OpenCollectionDropTarget({ tag }: { tag: string }) {
+  const { active } = useDndContext();
+  const carriesThumbnail = active !== null && isSidebarThumbnailDragId(active.id);
+  const { setNodeRef, isOver } = useDroppable({
+    id: openCollectionDropId(tag),
+    disabled: !carriesThumbnail,
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      aria-hidden="true"
+      className={cn(
+        "pointer-events-none absolute inset-0 z-20",
+        isOver && "ring-2 ring-ring ring-inset",
+      )}
+      data-open-collection-drop={tag}
+      data-open-collection-drop-over={isOver ? "true" : undefined}
+    />
+  );
 }
 
 function PageShell(props: RouteContext) {

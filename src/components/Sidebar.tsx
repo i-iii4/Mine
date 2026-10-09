@@ -69,7 +69,7 @@ import {
 } from "@/lib/collectionHover";
 import { scheduleAfterOptimisticUiUpdate } from "@/lib/groupSelection";
 import { publishCollectionOrder } from "@/lib/cardCollections";
-import type { BlockDragData } from "@/lib/blockDrag";
+import { SIDEBAR_THUMBNAIL_DRAG_ID_PREFIX, type BlockDragData } from "@/lib/blockDrag";
 import { HoverIntentDragWatch, useHoverIntent } from "@/hooks/useHoverIntent";
 import { useHoverPreviewOpener } from "@/hooks/useHoverPreviewOpener";
 import { TopFadeScrim } from "./TopFadeScrim";
@@ -2065,7 +2065,7 @@ function sidebarPreviewPlaceholderCount(count: number, shown: number): number {
 /// The id a thumbnail drags under: the strip's own key for it, so the card
 /// standing in several rows and in the feed has a distinct id at each place.
 function sidebarThumbnailDragId(previewKey: string): string {
-  return `sidebar-thumbnail:${previewKey}`;
+  return `${SIDEBAR_THUMBNAIL_DRAG_ID_PREFIX}${previewKey}`;
 }
 
 /// A strip's live thumbnail: a hover opens the card's preview, a click the

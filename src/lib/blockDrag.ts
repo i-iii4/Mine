@@ -14,6 +14,30 @@ export interface BlockDragData {
   sourceTag?: string;
 }
 
+/** Drag ids of sidebar strip thumbnails start with this: one card stands in
+ *  the feed and in several strips, and each place drags under its own id. */
+export const SIDEBAR_THUMBNAIL_DRAG_ID_PREFIX = "sidebar-thumbnail:";
+
+export function isSidebarThumbnailDragId(activeId: string | number): boolean {
+  return String(activeId).startsWith(SIDEBAR_THUMBNAIL_DRAG_ID_PREFIX);
+}
+
+/** Drop id of the open collection's feed or graph, the right part of the
+ *  window (SPEC_FRONTEND.md, «Бросок миниатюры в открытую коллекцию»). */
+const OPEN_COLLECTION_DROP_ID_PREFIX = "open-collection:";
+
+export function openCollectionDropId(tag: string): string {
+  return `${OPEN_COLLECTION_DROP_ID_PREFIX}${tag}`;
+}
+
+/** The collection a drop on the right part of the window names, or `null`
+ *  when the drop went elsewhere. */
+export function openCollectionDropTag(overId: string): string | null {
+  return overId.startsWith(OPEN_COLLECTION_DROP_ID_PREFIX)
+    ? overId.slice(OPEN_COLLECTION_DROP_ID_PREFIX.length)
+    : null;
+}
+
 /**
  * Whether a card is dropped back on the collection whose row it was taken
  * from. It is already there, so the drop changes nothing.

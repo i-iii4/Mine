@@ -252,7 +252,9 @@ vi.mock("@/components/SidebarResizeHandle", () => ({
 const gridScroll = vi.hoisted(() => ({ atEnd: false }));
 
 // The card thumbnails the Sidebar mock shows in its collection rows.
-const sidebarMockState = vi.hoisted(() => ({ thumbnails: [] as Array<{ tag: string; slug: string }> }));
+const sidebarMockState = vi.hoisted(() => ({
+  thumbnails: [] as Array<{ tag: string; slug: string; dragId?: string }>,
+}));
 
 vi.mock("@/components/Grid", async () => {
   const { useEffect } = await vi.importActual<typeof import("react")>("react");
@@ -453,10 +455,11 @@ vi.mock("@/components/Sidebar", async () => {
     );
   }
   /// A strip thumbnail as the real Sidebar drags it (Sidebar.test.tsx checks
-  /// that shape): only the card's slug and the row's collection.
-  function MockThumbnail({ tag, slug }: { tag: string; slug: string }) {
+  /// that shape): only the card's slug and the row's collection. `dragId`
+  /// stands in another draggable under its own id, a feed card's.
+  function MockThumbnail({ tag, slug, dragId }: { tag: string; slug: string; dragId?: string }) {
     const { listeners, setNodeRef } = useDraggable({
-      id: `sidebar-thumbnail:tag:${tag}:${slug}:0`,
+      id: dragId ?? `sidebar-thumbnail:tag:${tag}:${slug}:0`,
       data: { type: "block", slug, sourceTag: tag },
     });
     return <span ref={setNodeRef} {...listeners} data-sidebar-mock-thumbnail={slug} />;
@@ -494,7 +497,12 @@ vi.mock("@/components/Sidebar", async () => {
                 {sidebarMockState.thumbnails
                   .filter((thumbnail) => thumbnail.tag === tag.tag)
                   .map((thumbnail) => (
-                    <MockThumbnail key={thumbnail.slug} tag={thumbnail.tag} slug={thumbnail.slug} />
+                    <MockThumbnail
+                      key={thumbnail.slug}
+                      tag={thumbnail.tag}
+                      slug={thumbnail.slug}
+                      dragId={thumbnail.dragId}
+                    />
                   ))}
               </MockCollectionRow>
             ))}
@@ -1928,13 +1936,13 @@ describe("AppWithVault", () => {
       Reflect.deleteProperty(document, "elementsFromPoint");
     });
 
-    async function renderWithThumbnail() {
+    async function renderWithThumbnail(path = "/", feed = "__all__:2") {
       render(
-        <MemoryRouter initialEntries={["/"]}>
+        <MemoryRouter initialEntries={[path]}>
           <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
         </MemoryRouter>,
       );
-      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent(feed));
       return waitFor(() => {
         const thumbnail = document.querySelector('[data-sidebar-mock-thumbnail="gamma-card"]');
         expect(thumbnail).not.toBeNull();
@@ -2020,6 +2028,132 @@ describe("AppWithVault", () => {
 
       expect(document.querySelector("[data-card-preview]")).toHaveTextContent("delta-card");
       expect(document.querySelector("[data-card-preview]")).not.toHaveTextContent("gamma-card");
+    });
+
+    describe("on the open collection's feed or graph (SPEC_FRONTEND.md, «Бросок миниатюры в открытую коллекцию»)", () => {
+      /// Where the right part of the window stands; jsdom lays nothing out.
+      const MAIN_RECT = { x: 300, y: 64, left: 300, top: 64, right: 1200, bottom: 800, width: 900, height: 736 };
+      /// A point over the feed, away from every sidebar row.
+      const OVER_FEED = { clientX: 600, clientY: 400 };
+
+      const dropTarget = () => document.querySelector<HTMLElement>("[data-open-collection-drop]");
+
+      /// The open collection's drop target, placed where the right part is.
+      function placeDropTarget(tag: string): HTMLElement {
+        const target = dropTarget();
+        expect(target).toHaveAttribute("data-open-collection-drop", tag);
+        Object.defineProperty(target!, "getBoundingClientRect", {
+          configurable: true,
+          value: () => ({ ...MAIN_RECT, toJSON: () => MAIN_RECT }),
+        });
+        return target!;
+      }
+
+      function moveOverFeed() {
+        elementsUnderPointer = [];
+        fireEvent.pointerMove(document, { isPrimary: true, ...OVER_FEED });
+      }
+
+      function dropOnFeed() {
+        moveOverFeed();
+        fireEvent.pointerUp(document, { isPrimary: true, ...OVER_FEED });
+      }
+
+      it("connects the card to the open collection and frames the right part while over it", async () => {
+        const thumbnail = await renderWithThumbnail("/channel/beta", "beta:1");
+        const target = placeDropTarget("beta");
+        expect(target).not.toHaveClass("ring-2");
+
+        pickUp(thumbnail);
+        moveOverFeed();
+        await waitFor(() => expect(target).toHaveAttribute("data-open-collection-drop-over", "true"));
+        expect(target).toHaveClass("ring-2", "ring-ring", "ring-inset", "pointer-events-none");
+
+        fireEvent.pointerUp(document, { isPrimary: true, ...OVER_FEED });
+        await waitFor(() => expect(commandMocks.addTag).toHaveBeenCalledWith("gamma-card", "beta"));
+        expect(commandMocks.addTag).toHaveBeenCalledTimes(1);
+        expect(target).not.toHaveAttribute("data-open-collection-drop-over");
+        expect(target).not.toHaveClass("ring-2");
+      });
+
+      it("changes nothing for a card already in the open collection", async () => {
+        commandMocks.getBlock.mockImplementation(async (slug: string) => ({
+          ...indexedBlock(7, slug),
+          tags: ["beta"],
+        }));
+        const thumbnail = await renderWithThumbnail("/channel/beta", "beta:1");
+        placeDropTarget("beta");
+
+        pickUp(thumbnail);
+        dropOnFeed();
+
+        // The drop reads the card's collections from the index, then stops.
+        await waitFor(() => expect(commandMocks.getBlock).toHaveBeenCalledTimes(2));
+        await act(async () => {
+          await Promise.resolve();
+        });
+        expect(commandMocks.addTag).not.toHaveBeenCalled();
+      });
+
+      it("changes nothing for a thumbnail from the open collection's own row", async () => {
+        sidebarMockState.thumbnails = [{ tag: "beta", slug: "gamma-card" }];
+        const thumbnail = await renderWithThumbnail("/channel/beta", "beta:1");
+        placeDropTarget("beta");
+
+        pickUp(thumbnail);
+        const readsAtPickUp = commandMocks.getBlock.mock.calls.length;
+        dropOnFeed();
+
+        await act(async () => {
+          await Promise.resolve();
+        });
+        expect(commandMocks.getBlock).toHaveBeenCalledTimes(readsAtPickUp);
+        expect(commandMocks.addTag).not.toHaveBeenCalled();
+      });
+
+      it("takes no other drag", async () => {
+        // A feed card's drag: its id is its slug, not a thumbnail's.
+        sidebarMockState.thumbnails = [{ tag: "alpha", slug: "gamma-card", dragId: "gamma-card" }];
+        const card = await renderWithThumbnail("/channel/beta", "beta:1");
+        const target = placeDropTarget("beta");
+
+        pickUp(card);
+        dropOnFeed();
+
+        await act(async () => {
+          await Promise.resolve();
+        });
+        expect(target).not.toHaveAttribute("data-open-collection-drop-over");
+        expect(commandMocks.addTag).not.toHaveBeenCalled();
+      });
+
+      it("is no target on Everything, in an author's feed or under an open card", async () => {
+        const { unmount } = render(
+          <MemoryRouter initialEntries={["/"]}>
+            <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+          </MemoryRouter>,
+        );
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+        expect(dropTarget()).toBeNull();
+
+        fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+        await screen.findByRole("dialog", { name: "alpha-block.md" });
+        fireEvent.click(screen.getByRole("button", { name: "Open author feed" }));
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("author @kotecinho:"));
+        expect(dropTarget()).toBeNull();
+        unmount();
+
+        render(
+          <MemoryRouter initialEntries={["/channel/beta"]}>
+            <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+          </MemoryRouter>,
+        );
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("beta:1"));
+        expect(dropTarget()).not.toBeNull();
+        fireEvent.click(screen.getByRole("button", { name: "Open beta-block" }));
+        await screen.findByRole("dialog", { name: "beta-block.md" });
+        expect(dropTarget()).toBeNull();
+      });
     });
   });
 
