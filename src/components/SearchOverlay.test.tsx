@@ -1028,10 +1028,11 @@ describe("SearchOverlay result row commands", () => {
       expect(button).toHaveAttribute("data-variant", "raised");
       expect(button).toHaveAttribute("data-size", "icon-xs");
     }
-    // The text stops short of three 24 px buttons, two 4 px gaps and the
-    // row's 8 px gap; the name keeps its place.
-    const text = option(0).querySelector("[data-card-row-text]") as HTMLElement;
-    expect(text.style.paddingRight).toBe("88px");
+    // The line stops short of three 24 px buttons, two 4 px gaps and the
+    // row's 8 px gap; the name takes its share of what is left.
+    const line = option(0).querySelector("[data-card-row-line]") as HTMLElement;
+    expect(line.style.paddingRight).toBe("88px");
+    expect((option(0).querySelector("[data-card-row-text]") as HTMLElement).style.paddingRight).toBe("");
     expect((option(0).querySelector("[data-card-row-name]") as HTMLElement).style.maxWidth).toBe("75%");
 
     // The pointer moves on: the commands go with it, Source only with a link.
@@ -1039,7 +1040,7 @@ describe("SearchOverlay result row commands", () => {
     expect(option(1)).toHaveAttribute("aria-selected", "true");
     expect(rowOf(0).querySelector("[data-card-row-actions]")).toBeNull();
     expect(rowCommands(1)).toEqual(["Card actions", "Connect"]);
-    expect((option(1).querySelector("[data-card-row-text]") as HTMLElement).style.paddingRight).toBe("60px");
+    expect((option(1).querySelector("[data-card-row-line]") as HTMLElement).style.paddingRight).toBe("60px");
   });
 
   it("hides the commands when the arrows, the wheel or leaving the list take the row from the pointer", async () => {
@@ -1052,7 +1053,7 @@ describe("SearchOverlay result row commands", () => {
     expect(option(1)).toHaveAttribute("aria-selected", "true");
     expect(rowCommands(0)).toEqual([]);
     expect(rowCommands(1)).toEqual([]);
-    expect((option(1).querySelector("[data-card-row-text]") as HTMLElement).style.paddingRight).toBe("");
+    expect((option(1).querySelector("[data-card-row-line]") as HTMLElement).style.paddingRight).toBe("");
 
     hover(1);
     expect(rowCommands(1)).toEqual(["Card actions", "Connect"]);
@@ -1072,10 +1073,40 @@ describe("SearchOverlay result row commands", () => {
       expect(screen.getAllByRole("option")).toHaveLength(1);
     });
     const name = option(0).querySelector("[data-card-row-name]") as HTMLElement;
+    const line = option(0).querySelector("[data-card-row-line]") as HTMLElement;
     expect(option(0).querySelector("[data-card-row-text]")).toBeNull();
-    expect(name.style.maxWidth).toBe("");
+    expect(line.style.paddingRight).toBe("");
     hover(0);
-    expect(name.style.maxWidth).toBe("calc(100% - 60px)");
+    expect(line.style.paddingRight).toBe("60px");
+    expect(name.style.maxWidth).toBe("");
+  });
+
+  it("shows no text where only a cut letter would fit beside a long name (09.10.2026)", async () => {
+    // Layout stand-ins: a 6px text room and an 8px monospace font, the room
+    // a long name and three buttons leave.
+    const widthSpy = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) {
+      if (this.hasAttribute("data-card-row-line")) return 480;
+      return this.hasAttribute("data-card-row-text") ? 6 : 0;
+    });
+    const canvasSpy = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      font: "",
+      measureText: (text: string) => ({ width: Array.from(text).length * 8 }),
+    } as unknown as CanvasRenderingContext2D);
+    try {
+      listGridBlocksMock.mockResolvedValue(snapshot([
+        makeBlock(1, "Cards/NCSA Mosaic, 1993. The browser that put pictures on the web", {
+          preview_text: "pictures inline with text",
+        }),
+      ]));
+      renderOverlay({ query: "mosaic" });
+
+      const text = (await screen.findByRole("option")).querySelector("[data-card-row-text]")!;
+      await waitFor(() => expect(text).toHaveAttribute("data-card-row-text-hidden"));
+      expect(text.textContent).toBe("");
+    } finally {
+      widthSpy.mockRestore();
+      canvasSpy.mockRestore();
+    }
   });
 
   it("Source opens the link; a command never opens the card, the rest of the row does", async () => {

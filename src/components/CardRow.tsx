@@ -46,7 +46,10 @@ const CARD_ROW_LINE_CLASSES = "flex min-w-0 flex-1 items-baseline gap-1 font-san
 /**
  * With text after it, the name takes what it needs up to three quarters of
  * the line and truncates past that, so the text always starts. Alone, the
- * name takes the whole line.
+ * name takes the whole line. The line is what the row's buttons leave: their
+ * reserve comes off the line before the name takes its share (09.10.2026).
+ * Taken off the text's share instead, the reserve left the text a few pixels
+ * beside a long name, room for a cut letter and no ellipsis.
  */
 const NAME_SHARE = 0.75;
 const nameWithTextStyle = { maxWidth: `${NAME_SHARE * 100}%` } as const;
@@ -73,8 +76,8 @@ function measureInFontOf(element: HTMLElement): ((text: string) => number) | nul
  * The row's name. When the line cuts the name before its first mark, the
  * name keeps its head and skips to the words that lead up to the mark
  * (`windowNameAroundMark`), so a result never hides why it matched.
- * A name alone on its line stops `endReservePx` short of the line's end
- * while the row's buttons stand there.
+ * `endReservePx` is the line's end the row's buttons cover: the line holds
+ * it as padding, so the room is what is left of the line.
  */
 function CardRowName({
   name,
@@ -92,7 +95,6 @@ function CardRowName({
   const ref = useRef<HTMLSpanElement>(null);
   const [fitted, setFitted] = useState<MarkWindow | null>(null);
   const ranges = match && match.excerpt === name && match.ranges.length > 0 ? match.ranges : null;
-  const reservePx = withText ? 0 : endReservePx;
 
   useLayoutEffect(() => {
     const span = ref.current;
@@ -102,13 +104,13 @@ function CardRowName({
       return;
     }
     const fit = () => {
-      const lineWidth = line.clientWidth;
+      const lineWidth = line.clientWidth - endReservePx;
       const measure = lineWidth > 0 ? measureInFontOf(span) : null;
       if (!measure) {
         setFitted(null);
         return;
       }
-      const room = (withText ? lineWidth * NAME_SHARE : lineWidth - reservePx) - NAME_FIT_SLACK_PX;
+      const room = (withText ? lineWidth * NAME_SHARE : lineWidth) - NAME_FIT_SLACK_PX;
       setFitted(windowNameAroundMark(name, ranges, room, measure));
     };
     fit();
@@ -121,15 +123,13 @@ function CardRowName({
     });
     observer.observe(line);
     return () => observer.disconnect();
-  }, [name, ranges, reservePx, withText]);
+  }, [name, ranges, endReservePx, withText]);
 
   return (
     <span
       ref={ref}
       className={cn("min-w-0 truncate", muted ? "text-muted-foreground" : "text-foreground")}
-      style={withText
-        ? nameWithTextStyle
-        : reservePx > 0 ? { maxWidth: `calc(100% - ${reservePx}px)` } : undefined}
+      style={withText ? nameWithTextStyle : undefined}
       data-card-row-name=""
       data-card-row-name-window={fitted ? "" : undefined}
     >
@@ -145,36 +145,36 @@ function CardRowName({
  * first mark, the text starts at the words just before the mark
  * (`windowTextAroundMark`), as the name does, so a match in the note's text is
  * never hidden past the line's end (07.10.2026). Its room is its own width,
- * which follows the name's, less the buttons' reserve.
+ * what the name and the buttons leave. A room too narrow for the text's first
+ * letter and an ellipsis shows nothing: a cut letter or a lone ellipsis says
+ * nothing about the note (09.10.2026).
  */
 function CardRowText({
   text,
   match,
-  endReservePx,
 }: {
   text: string;
   match: SearchMatch | null;
-  endReservePx: number;
 }) {
   const ref = useRef<HTMLSpanElement>(null);
   const [fitted, setFitted] = useState<MarkWindow | null>(null);
+  const [tooNarrow, setTooNarrow] = useState(false);
   const ranges = match && match.excerpt === text && match.ranges.length > 0 ? match.ranges : null;
 
   useLayoutEffect(() => {
     const span = ref.current;
-    if (!span || !ranges) {
-      setFitted(null);
-      return;
-    }
+    if (!span) return;
     const fit = () => {
       const spanWidth = span.clientWidth;
       const measure = spanWidth > 0 ? measureInFontOf(span) : null;
       if (!measure) {
         setFitted(null);
+        setTooNarrow(false);
         return;
       }
-      const room = spanWidth - endReservePx - NAME_FIT_SLACK_PX;
-      setFitted(windowTextAroundMark(text, ranges, room, measure));
+      const shortest = `${Array.from(text)[0] ?? ""}\u2026`;
+      setTooNarrow(spanWidth < measure(shortest));
+      setFitted(ranges ? windowTextAroundMark(text, ranges, spanWidth - NAME_FIT_SLACK_PX, measure) : null);
     };
     fit();
     if (typeof ResizeObserver === "undefined") return;
@@ -186,19 +186,21 @@ function CardRowText({
     });
     observer.observe(span);
     return () => observer.disconnect();
-  }, [text, ranges, endReservePx]);
+  }, [text, ranges]);
 
   return (
     <span
       ref={ref}
       className="min-w-0 flex-1 truncate text-muted-foreground"
-      style={endReservePx > 0 ? { paddingRight: endReservePx } : undefined}
       data-card-row-text=""
       data-card-row-text-window={fitted ? "" : undefined}
+      data-card-row-text-hidden={tooNarrow ? "" : undefined}
     >
-      {fitted && match
-        ? renderSearchHighlightedText(fitted.text, { ...match, excerpt: fitted.text, ranges: fitted.ranges })
-        : renderSearchHighlightedText(text, match)}
+      {tooNarrow
+        ? null
+        : fitted && match
+          ? renderSearchHighlightedText(fitted.text, { ...match, excerpt: fitted.text, ranges: fitted.ranges })
+          : renderSearchHighlightedText(text, match)}
     </span>
   );
 }
@@ -261,7 +263,11 @@ export function CardRow({
           />
         )}
       </div>
-      <span className={CARD_ROW_LINE_CLASSES} data-card-row-line="">
+      <span
+        className={CARD_ROW_LINE_CLASSES}
+        style={actionsReservePx > 0 ? { paddingRight: actionsReservePx } : undefined}
+        data-card-row-line=""
+      >
         <CardRowName
           name={row.title}
           match={row.nameMatch}
@@ -270,7 +276,7 @@ export function CardRow({
           muted={item.as === "static"}
         />
         {row.text !== null && (
-          <CardRowText text={row.text} match={row.textMatch} endReservePx={actionsReservePx} />
+          <CardRowText text={row.text} match={row.textMatch} />
         )}
       </span>
     </>

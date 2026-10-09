@@ -240,7 +240,6 @@ local-arena/
 │   │   ├── FirstCardMarker.tsx # Одноразовая пометка первой карточки (О19)
 │   │   ├── CloudRecommendation.tsx # Рекомендация Keep Downloaded по журналу ожиданий
 │   │   ├── CloudBadge.tsx      # Метка «содержимое в iCloud» в левом верхнем углу карточки
-│   │   ├── ActivityIndicators.tsx # Загрузка из iCloud и индексация в верхней панели
 │   │   ├── IndexingProgress.tsx # Уведомление о ходе индексации в правом нижнем углу
 │   │   ├── SpaceUnavailable.tsx # Экран недоступной папки: missing и access_denied
 │   │   ├── EmptySpaceOnboarding.tsx # Два пути наполнения пустого пространства

@@ -29,6 +29,9 @@ export function NotificationAnchor({ children }: { children: ReactNode }) {
 
 interface NotificationCardProps {
   title: string;
+  /** What stands on the title's line at its right end: the count of a notice
+   *  of work in progress. */
+  aside?: ReactNode;
   /** Closing for good. A notice of work in progress has none: closing it
    *  would hide the work and stop nothing (SPEC_ONBOARDING.md, О13). */
   onClose?: () => void;
@@ -38,6 +41,7 @@ interface NotificationCardProps {
 
 export function NotificationCard({
   title,
+  aside,
   onClose,
   closeLabel = "Dismiss",
   children,
@@ -49,16 +53,19 @@ export function NotificationCard({
       className="w-80 rounded-1 border border-border bg-popover p-3 text-popover-foreground shadow-md [overflow-wrap:anywhere]"
       data-notification-card=""
     >
-      <div className="flex items-start justify-between gap-2">
+      {/* The title and what stands beside it share a baseline; the close
+          button keeps to the top. */}
+      <div className="flex items-baseline gap-2">
         {/* A line of the interface, set like a menu item: the notice is on
             the same floating plane as menus, not a heading of a section. */}
-        <p className="text-base text-foreground">{title}</p>
+        <p className="min-w-0 flex-1 text-base text-foreground">{title}</p>
+        {aside}
         {onClose && (
           <Button
             variant="ghost"
             size="icon-xs"
             aria-label={closeLabel}
-            className="-mr-1 -mt-1 shrink-0"
+            className="-mr-1 -mt-1 shrink-0 self-start"
             onClick={onClose}
           >
             <X className="size-[13px]" />

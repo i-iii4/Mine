@@ -60,17 +60,9 @@ async function main() {
       const out = {
         height: Math.round(section.getBoundingClientRect().height),
         badgeVisible: !!document.querySelector("[data-card-cloud-badge]"),
-        // Variants are counted outside the context frames: a case that draws
-        // where a component lives (a settings page, a window top bar) is not
-        // another variant of it, and counting the two together would turn
-        // these numbers into a running total nobody can reason about.
         installStep: !!document.querySelector("[data-empty-space-install-step]"),
         spaceUnavailable: !!document.querySelector("[data-space-unavailable]"),
         onboarding: !!document.querySelector("[data-empty-space-onboarding]"),
-        activityIndicators: document.querySelectorAll(
-          "[data-main-secondary-activity]:not([data-showcase-context] *)",
-        ).length,
-        contexts: document.querySelectorAll("[data-showcase-context]").length,
         overflowX:
           document.documentElement.scrollWidth > document.documentElement.clientWidth,
         clipped: [],
@@ -117,18 +109,6 @@ async function main() {
     check("the extension install step is drawn", report.installStep);
     check("the unavailable-space screen is drawn", report.spaceUnavailable);
     check("the empty-space onboarding is drawn", report.onboarding);
-    // One indicator since 08.10.2026: indexing. The iCloud download icon is
-    // gone (SPEC_CLOUD_STORAGE.md, Х14).
-    check(
-      "the indexing indicator is drawn",
-      report.activityIndicators === 1,
-      `${report.activityIndicators} of 1`,
-    );
-    check(
-      "the activity indicators are also drawn in their real context",
-      report.contexts === 1,
-      `${report.contexts} of 1`,
-    );
     check(
       "no boxed screen is cut off by its frame",
       report.clipped.length === 0,

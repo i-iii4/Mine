@@ -20,7 +20,6 @@ import {
 } from "react-router";
 import { Plus, X } from "lucide-react";
 import { AppSettingsMenu } from "@/components/AppSettingsMenu";
-import { ActivityIndicators } from "@/components/ActivityIndicators";
 import { Button } from "@/components/ui/button";
 import { ChromeRow, ChromeShell } from "@/components/ChromeRow";
 import type { SettingsSection } from "@/lib/settingsSections";
@@ -4324,7 +4323,6 @@ export function AppWithVault({
             ? filterSidebarTags(orderedTags, sidebarSearchQuery).length
             : orderedTags.length}
           stats={vaultStats}
-          indexing={isSyncing}
           detailBlock={renderedDetailBlock}
           detailEntered={compactDetailChromeEntered}
           viewMode={feedViewMode}
@@ -4468,7 +4466,6 @@ export function AppWithVault({
                   {!metadataRowAtBottom && (
                     // Icon buttons 4px apart, 8px from the column's line.
                     <div className="mr-2 flex shrink-0 items-center gap-1" data-sidebar-top-search-actions="">
-                      <ActivityIndicators indexing={isSyncing} />
                       <Button
                         type="button"
                         variant="chrome"

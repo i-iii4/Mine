@@ -20,7 +20,6 @@ const server = await createServer({
         import { createRoot } from "react-dom/client";
         import { AppSettingsMenu } from "/src/components/AppSettingsMenu.tsx";
         import { TopCollectionSwitcher } from "/src/components/TopCollectionSwitcher.tsx";
-        import { ActivityIndicators } from "/src/components/ActivityIndicators.tsx";
         import { applyActionButtonStyle } from "/src/lib/actionButtonStyle.ts";
         import { MainSecondaryTopBar, CompactDetailTopMenu } from "/src/components/MainSecondaryChrome.tsx";
         import { ActionButton } from "/src/components/ActionButton.tsx";
@@ -54,7 +53,6 @@ const server = await createServer({
           return React.createElement(ChromeShell, { style: { "--sidebar-width": "300px" } },
           React.createElement(ChromeRow, { as: "header", separator: "bottom", className: "bg-chrome" },
             React.createElement(TopCollectionSwitcher, { orderedTags: [], onNavigate: noop, onCreateCollection: noop }),
-            React.createElement(ActivityIndicators, { cloudPending: 1, indexing: false }),
             React.createElement("div", { className: "flex-1" }),
             detail && bottomMetadata && React.createElement(CompactDetailTopMenu, { ...props, block, cardTitle: "Audit", onClose: props.onDetailClose, menuOpenRequestSequence: 0, entered: true }),
             React.createElement(AppSettingsMenu, { onSelectSection: id => { window.selectedSection = id; } })
@@ -227,7 +225,7 @@ try {
       // Regression: identical visual plates formerly anchored to 30px and
       // 24px targets, leaving 3px and 0px below the same divider.
       const gaps = [];
-      for (const selector of ['[data-top-collection-switcher]', '[data-top-chrome-settings-menu] button', '[data-activity-indicator="cloud"]']) {
+      for (const selector of ['[data-top-collection-switcher]', '[data-top-chrome-settings-menu] button']) {
         const target = page.locator(selector);
         const box = await target.boundingBox();
         assert.equal(box.height, 30);

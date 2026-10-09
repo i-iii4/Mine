@@ -14,7 +14,6 @@ import type {
   TagCount,
   VaultStats,
 } from "@/types";
-import { ActivityIndicators } from "./ActivityIndicators";
 import { ChromeRow, ChromeActions } from "./ChromeRow";
 import { CardMoreMenu } from "./CardHoverMenu";
 import { ChromeCloseButton } from "./ChromeCloseButton";
@@ -41,12 +40,10 @@ function MainSecondaryStatsLeft({
   collectionCount,
   onCreateCollection,
   sidebarCollapsed,
-  indexing,
 }: {
   collectionCount: number;
   onCreateCollection?: () => void;
   sidebarCollapsed: boolean;
-  indexing: boolean;
 }) {
   if (sidebarCollapsed) return null;
 
@@ -65,7 +62,6 @@ function MainSecondaryStatsLeft({
       <span data-main-secondary-collection-count="" className="min-w-0 truncate whitespace-nowrap">
         {formatPluralCount(collectionCount, "collection", "collections")}
       </span>
-      <ActivityIndicators indexing={indexing} />
       {onCreateCollection && (
         // 8px from the column's edge, the inset the sidebar rows give their
         // Connect button, and the filter's clear button above.
@@ -248,7 +244,6 @@ export function MainSecondaryTopBar({
   onRequestDelete,
   onDetailClose,
   detailMenuOpenRequestSequence,
-  indexing = false,
   placement = "top",
   part = "both",
   selectionActive = false,
@@ -262,8 +257,6 @@ export function MainSecondaryTopBar({
   /// sidebar's filter leaves. Defaults to every collection.
   collectionCount?: number;
   stats: VaultStats | null;
-  /// Whether the space is being indexed right now.
-  indexing?: boolean;
   detailBlock?: LightBlock | IndexedBlock | null;
   detailEntered?: boolean;
   viewMode: MainViewMode;
@@ -331,7 +324,6 @@ export function MainSecondaryTopBar({
           collectionCount={collectionCount ?? tags.length}
           onCreateCollection={onCreateCollection}
           sidebarCollapsed={sidebarCollapsed}
-          indexing={indexing}
         />
       </div>
     </div>

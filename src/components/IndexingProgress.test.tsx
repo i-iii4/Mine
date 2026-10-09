@@ -86,6 +86,19 @@ describe("IndexingProgress", () => {
     expect(screen.queryByRole("button")).toBeNull();
   });
 
+  it("puts the count on the title's line and leaves the bar the last line on its own", () => {
+    const { container } = render(<IndexingProgress spaceName="Mine" step={notes(1284, 3000)} />);
+    const titleLine = screen.getByText("Indexing “Mine”").parentElement;
+    expect(titleLine).toContainElement(screen.getByText("1284 / 3000"));
+    const bar = screen.getByRole("progressbar");
+    expect(titleLine).not.toContainElement(bar);
+    // Nothing but the bar takes room in its line: the announcement is
+    // screen-reader only.
+    const progress = container.querySelector("[data-indexing-progress]");
+    const visible = [...(progress?.children ?? [])].filter((child) => !child.classList.contains("sr-only"));
+    expect(visible).toEqual([bar]);
+  });
+
   it("counts the previews with the same bar and the same voice", () => {
     render(
       <IndexingProgress

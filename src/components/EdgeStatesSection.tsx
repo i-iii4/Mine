@@ -14,7 +14,6 @@
 
 import type { ReactNode } from "react";
 import { CloudDownload, Play, RefreshCw } from "lucide-react";
-import { ActivityIndicators } from "@/components/ActivityIndicators";
 import { Card, CardPreviewPendingSurface, CardSourcelessSurface } from "@/components/Card";
 import { SidebarTagRowDragPreview } from "@/components/Sidebar";
 import { computeCardHeight } from "@/lib/cardHeight";
@@ -318,38 +317,6 @@ export function EdgeStatesSection() {
               previewUnreadable
             />
           </CardFrame>
-        </StateCase>
-
-        <StateCase
-          name="Индикаторы в верхней панели — на целом экране"
-          when="Место индикаторов: правый край верхней панели, рядом со сведениями пространства. Ниже — те же индикаторы крупно."
-        >
-          {/* Marked as context: this draws where a component lives, not one of
-              its variants, so the variant counters in the browser audit skip
-              it instead of being bumped every time a context is added. */}
-          <div className="overflow-hidden rounded-1 border border-border" data-showcase-context="">
-            <div className="flex h-8 items-center gap-3 border-b border-border bg-chrome px-3">
-              <span className="w-20 shrink-0" aria-hidden="true" />
-              <span className="text-base font-semibold text-foreground">Mine</span>
-              <span className="font-mono text-sm text-tertiary-foreground">
-                566 elements · 1.2 GB
-              </span>
-              <span className="ml-auto">
-                <ActivityIndicators indexing />
-              </span>
-            </div>
-            <div className="h-24 bg-background" />
-          </div>
-        </StateCase>
-
-        <StateCase
-          name="Индикатор крупно"
-          when="Индексация пространства. Иконки загрузки из iCloud больше нет: о ней говорят метки облака на карточках и уведомление открытия (Х14)."
-        >
-          <div className="flex items-center gap-4">
-            <ActivityIndicators indexing />
-            <span className="font-mono text-sm text-muted-foreground">индексация</span>
-          </div>
         </StateCase>
 
         <StateCase

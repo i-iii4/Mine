@@ -2795,8 +2795,8 @@ describe("Detail", () => {
     expect(first).toHaveClass("state-active");
     expect(commands(first!)).toEqual(["Card actions", "Source", "Connect"]);
     expect(first!.querySelector("[data-card-row-actions]")).toHaveAttribute("data-visible", "true");
-    // The text stops short of three buttons: 3 × 24 + 2 × 4 + 8.
-    expect((first!.querySelector("[data-card-row-text]") as HTMLElement).style.paddingRight).toBe("88px");
+    // The line stops short of three buttons: 3 × 24 + 2 × 4 + 8.
+    expect((first!.querySelector("[data-card-row-line]") as HTMLElement).style.paddingRight).toBe("88px");
 
     // The pointer moves on: the commands go with it, Source only with a link.
     fireEvent.pointerLeave(first!);
@@ -2805,7 +2805,7 @@ describe("Detail", () => {
     expect(first).not.toHaveClass("state-active");
     expect(commands(second!)).toEqual(["Card actions", "Connect"]);
     // A name alone stops short of two buttons: 2 × 24 + 4 + 8.
-    expect((second!.querySelector("[data-card-row-name]") as HTMLElement).style.maxWidth).toBe("calc(100% - 60px)");
+    expect((second!.querySelector("[data-card-row-line]") as HTMLElement).style.paddingRight).toBe("60px");
 
     // The menu holds its row; the pointer on its way out moves nothing.
     fireEvent.pointerLeave(second!);

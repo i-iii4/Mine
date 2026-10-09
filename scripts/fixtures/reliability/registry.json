@@ -1554,7 +1554,6 @@
       "paths": [
         "extension/popup/components/ClipperOverflowMenu.tsx",
         "extension/popup/components/VaultSelect.tsx",
-        "src/components/ActivityIndicators.tsx",
         "src/components/ArticleAudioControls.tsx",
         "src/components/CardContextMenu.tsx",
         "src/components/CloudBadge.tsx",

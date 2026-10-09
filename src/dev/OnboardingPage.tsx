@@ -11,7 +11,6 @@ import { MemoryRouter } from "react-router";
 import { Plus } from "lucide-react";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { ActionButton } from "@/components/ActionButton";
-import { ActivityIndicators } from "@/components/ActivityIndicators";
 import { ChromeRow, ChromeShell } from "@/components/ChromeRow";
 import { Grid } from "@/components/Grid";
 import { IndexingProgress, type IndexingStep } from "@/components/IndexingProgress";
@@ -297,7 +296,6 @@ function SpacePage({ path, blocks, totalBlocks, previews, indexing, previewsPend
                       className="h-full min-w-0 flex-1 rounded-0 bg-transparent px-3 py-0 font-mono text-sm text-muted-foreground placeholder:text-muted-foreground"
                     />
                     <div className="mr-2 flex shrink-0 items-center gap-1">
-                      <ActivityIndicators indexing={indexing !== null} />
                       <Button
                         type="button"
                         variant="chrome"
@@ -325,7 +323,6 @@ function SpacePage({ path, blocks, totalBlocks, previews, indexing, previewsPend
                   sidebarCollapsed={false}
                   sidebarResizing={false}
                   stats={null}
-                  indexing={indexing !== null}
                   viewMode="grid"
                   onViewModeChange={noop}
                   vaultPath={path}
@@ -433,12 +430,13 @@ const PICKER_IN_FRAME_CSS = `
 }
 `;
 
-function Step({ number, caption, children }: { number: number; caption: string; children: ReactNode }) {
+/** One screen. `label` is its number, or the step it branches from. */
+function Step({ label, caption, children }: { label: string; caption: string; children: ReactNode }) {
   return (
-    <section className="grid gap-3" data-onboarding-step={number}>
+    <section className="grid gap-3" data-onboarding-step={label}>
       {children}
       <p className="flex gap-2 text-sm text-muted-foreground">
-        <span className="tabular-nums text-foreground">{number}</span>
+        <span className="tabular-nums text-foreground">{label}</span>
         <span>{caption}</span>
       </p>
     </section>
@@ -456,7 +454,7 @@ export function OnboardingPage() {
     <main className="h-full overflow-y-auto bg-background p-8 text-foreground">
       <style>{PICKER_IN_FRAME_CSS}</style>
       <div className="grid gap-12">
-        <Step number={1} caption="Первый запуск">
+        <Step label="1" caption="Первый запуск">
           <Window spaceName={null}>
             <VaultPicker onVaultSelected={noop} />
           </Window>
@@ -464,7 +462,7 @@ export function OnboardingPage() {
 
         <Between>Системный диалог выбора папки</Between>
 
-        <Step number={2} caption="Индексация заметок">
+        <Step label="2" caption="Индексация заметок">
           <Window spaceName={folderName(NOTES_FOLDER)}>
             <SpacePage
               path={NOTES_FOLDER}
@@ -478,7 +476,7 @@ export function OnboardingPage() {
           </Window>
         </Step>
 
-        <Step number={3} caption="Подготовка превью">
+        <Step label="3" caption="Подготовка превью">
           <Window spaceName={folderName(NOTES_FOLDER)}>
             <SpacePage
               path={NOTES_FOLDER}
@@ -492,7 +490,7 @@ export function OnboardingPage() {
           </Window>
         </Step>
 
-        <Step number={4} caption="Готово">
+        <Step label="4" caption="Готово">
           <Window spaceName={folderName(NOTES_FOLDER)}>
             <SpacePage
               path={NOTES_FOLDER}
@@ -506,9 +504,8 @@ export function OnboardingPage() {
           </Window>
         </Step>
 
-        <Between>Системный диалог выбора папки</Between>
-
-        <Step number={5} caption="Пустая папка">
+        {/* Another way the folder chosen at step 1 can go: not a step after 4. */}
+        <Step label="1 →" caption="Пустая папка">
           <Window spaceName={folderName(EMPTY_FOLDER)}>
             <SpacePage
               path={EMPTY_FOLDER}

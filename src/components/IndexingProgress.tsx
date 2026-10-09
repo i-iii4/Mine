@@ -84,16 +84,30 @@ interface IndexingProgressProps {
   step: IndexingStep;
 }
 
-/** The opening notice: one card in the corner for both phases (О13). */
+/**
+ * The opening notice: one card in the corner for both phases (О13). The count
+ * stands on the title's line and the bar is the card's last line on its own,
+ * so the bar keeps the card's inset on its left and below alike (user's
+ * decision of 09.10.2026). Beside the count, the bar sat in the middle of the
+ * count's taller line: 13px from the card's left edge, 17px from its bottom.
+ */
 export function IndexingProgress({ spaceName, step }: IndexingProgressProps) {
   const title = indexingTitle(step.phase, spaceName);
   const { count } = step;
   return (
-    <NotificationCard title={title}>
-      <div className="grid" data-indexing-progress="" data-indexing-phase={step.phase}>
+    <NotificationCard title={title} aside={count === null ? undefined : <CountText count={count} />}>
+      <div data-indexing-progress="" data-indexing-phase={step.phase}>
         {count === null ? <UncountedBar title={title} /> : <CountedBar title={title} count={count} />}
       </div>
     </NotificationCard>
+  );
+}
+
+function CountText({ count: { processed, total } }: { count: IndexingCount }) {
+  return (
+    <p className="shrink-0 text-sm text-muted-foreground tabular-nums" data-indexing-progress-count="">
+      {processed} / {total}
+    </p>
   );
 }
 
@@ -105,22 +119,16 @@ function CountedBar({ title, count: { processed, total } }: { title: string; cou
   const tenths = Math.floor(share * 10) * 10;
   return (
     <>
-      <div className="flex items-center gap-3">
-        {/* The shared bar draws the share as a percentage; a screen reader
-            hears the count itself, so the count overrides the percentage
-            the primitive would announce. */}
-        <Progress
-          className="flex-1"
-          value={share * 100}
-          aria-label={title}
-          aria-valuemax={total}
-          aria-valuenow={shown}
-          aria-valuetext={`${shown} of ${total}`}
-        />
-        <p className="shrink-0 text-sm text-muted-foreground tabular-nums" data-indexing-progress-count="">
-          {processed} / {total}
-        </p>
-      </div>
+      {/* The shared bar draws the share as a percentage; a screen reader
+          hears the count itself, so the count overrides the percentage the
+          primitive would announce. */}
+      <Progress
+        value={share * 100}
+        aria-label={title}
+        aria-valuemax={total}
+        aria-valuenow={shown}
+        aria-valuetext={`${shown} of ${total}`}
+      />
       <p className="sr-only" role="status" aria-live="polite" data-indexing-progress-announcement="">
         {`${title}: ${tenths}%`}
       </p>
