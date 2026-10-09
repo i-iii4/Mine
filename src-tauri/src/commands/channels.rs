@@ -189,6 +189,30 @@ pub fn check_collection_name(webview: tauri::Webview, state: State<'_, AppState>
     check_collection_name_inner(&vs.conn, &vs.vault, old_tag.as_deref(), &new_tag)
 }
 
+/// Where a collection's page lives, for Reveal in Finder: the absolute path of
+/// the page the collection's rename and deletion act on, or none when no page
+/// is found. A bare name shared by several pages is ambiguous, as it is for
+/// those mutations, and answers with that error. Reads only.
+#[tauri::command(async)]
+pub fn collection_page_path(webview: tauri::Webview, state: State<'_, AppState>, tag: String) -> Result<Option<String>, CommandError> {
+    let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
+    let vault_state = space
+        .vault_state
+        .lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+    collection_page_path_inner(&vs.conn, &vs.vault, &tag)
+}
+
+pub(crate) fn collection_page_path_inner(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    tag: &str,
+) -> Result<Option<String>, CommandError> {
+    Ok(collection_document_for_mutation(conn, vault, tag)?
+        .map(|page| page.path.to_string_lossy().into_owned()))
+}
+
 pub(crate) fn check_collection_name_inner(
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
@@ -1071,6 +1095,24 @@ mod tests {
             .map(|channel| channel.tag)
             .collect();
         assert_eq!(listed, ["Photos"]);
+    }
+
+    #[test]
+    fn a_collection_page_is_found_where_it_lives_for_reveal_in_finder() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Collections")).unwrap();
+        std::fs::write(
+            dir.path().join("Collections").join("Design.md"),
+            "---\ntype: channel\nsaved_at: 2026-04-25T14:00:40Z\n---\n",
+        )
+        .unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        assert_eq!(
+            collection_page_path_inner(&conn, &vault, "Design").unwrap(),
+            Some(dir.path().join("Collections").join("Design.md").to_string_lossy().into_owned())
+        );
+        assert_eq!(collection_page_path_inner(&conn, &vault, "Missing").unwrap(), None);
     }
 
     #[test]

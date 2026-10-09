@@ -1285,7 +1285,7 @@ describe("GraphView", () => {
     expect(painted).toBeLessThanOrEqual(100);
   });
 
-  it("outlines a card on hover, in the same highlight the pills use", async () => {
+  it("lights a card's frame on hover, in the same highlight the pills use", async () => {
     commandMocks.listGraphSnapshot.mockResolvedValue(
       makeSnapshot(graphCardNode("alpha-card", "Alpha card")),
     );
@@ -1311,9 +1311,14 @@ describe("GraphView", () => {
       return drawn;
     };
 
-    expect(strokes()).toEqual([]);
+    // No picture is loaded here: the card stands on the chrome with the
+    // line for a frame (09.10.2026), and the pointer lights that frame.
+    const rest = strokes();
+    expect(rest).toHaveLength(1);
     fireEvent.mouseEnter(card);
-    expect(strokes()).toHaveLength(1);
+    const hovered = strokes();
+    expect(hovered).toHaveLength(1);
+    expect(hovered[0]).not.toBe(rest[0]);
   });
 
   it("draws no text under a card, selected or not", async () => {

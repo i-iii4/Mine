@@ -1582,6 +1582,16 @@
     },
     {
       "paths": [
+        "src/components/graph/canvas.ts",
+        "src/components/graph/contracts.ts",
+        "src/components/graph/paintCardNode.test.ts"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#### Карточка на графе",
+      "tests": ["src/components/graph/paintCardNode.test.ts", "src/components/GraphView.test.tsx"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
         "src/components/ScreenState.tsx",
         "src/components/ScreenState.test.tsx",
         "src/components/SpaceUnavailable.tsx",

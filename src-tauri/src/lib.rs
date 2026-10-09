@@ -202,6 +202,7 @@ pub fn run() {
             commands::channels::reorder_channels,
             commands::channels::rename_channel,
             commands::channels::check_collection_name,
+            commands::channels::collection_page_path,
             commands::channels::delete_channel,
             commands::channels::list_channel_previews,
             commands::import::list_arena_channels,

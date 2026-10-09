@@ -962,7 +962,6 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
         // Size no longer animates, so the level follows it directly.
         targetScreenSize: nodeScreenSizeAt(globalScale),
         hovered: hoveredCardId === node.id,
-        theme,
         canvasTheme,
         imageCache: imageCacheRef.current,
         thumbsRootPath: resolvedThumbsRoot,

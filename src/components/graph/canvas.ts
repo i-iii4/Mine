@@ -24,7 +24,6 @@ export function paintCardNode(
   node: PositionedGraphCanvasNode,
   options: {
     globalScale: number;
-    theme: "light" | "dark";
     canvasTheme: GraphCanvasTheme;
     imageCache: Map<string, HTMLImageElement>;
     thumbsRootPath: string;
@@ -40,7 +39,6 @@ export function paintCardNode(
     targetScreenSize: number;
   },
 ) {
-  const palette = GRAPH_PALETTE[options.theme];
   const size = options.screenSize / options.globalScale;
   const x = node.x - size / 2;
   const y = node.y - size / 2;
@@ -75,39 +73,68 @@ export function paintCardNode(
   // ceiling a square corner reads as sharp against everything else in the
   // interface, which is rounded.
   const radius = cardCornerRadius(options.screenSize) / options.globalScale;
-  ctx.beginPath();
+  const textPreview = image !== null && isTextPreview(node);
   roundedRectPath(ctx, x, y, size, size, radius);
-  if (image) {
+  if (image && !textPreview) {
     ctx.save();
     ctx.clip();
-    if (isTextPreview(node)) {
-      // A text thumb is a transparent PNG; with no fill it draws straight onto
-      // the graph background, which is darker than a card. Fill first, then
-      // set the filter: `invert(1)` applies to everything drawn after it, so a
-      // fill on the wrong side of this line would invert into white.
-      ctx.fillStyle = options.canvasTheme.textPreviewFill;
-      ctx.fill();
-      if (options.theme === "dark") {
-        ctx.filter = "invert(1)";
-      }
-    }
     drawImageCover(ctx, image, x, y, size, size);
     ctx.restore();
-    ctx.filter = "none";
   } else {
-    ctx.fillStyle = palette.cardFill;
+    // A text thumbnail and a card with no picture stand on the second level
+    // of the chrome, `--chrome`, the plane of the page row under the tab bar
+    // (user's decision of 09.10.2026). The text is the foreground: the glyphs
+    // of the thumbnail take `--foreground` (`tintedTextPreview`).
+    ctx.fillStyle = options.canvasTheme.chromeFill;
     ctx.fill();
+    if (image) {
+      ctx.save();
+      ctx.clip();
+      drawImageCover(ctx, tintedTextPreview(image, options.canvasTheme.foregroundText), x, y, size, size);
+      ctx.restore();
+    }
   }
 
-  // Hover and selection are one highlight, as they are on the collection
-  // pills: the same outline at the same weight.
-  if (options.selected || options.hovered) {
-    ctx.beginPath();
+  // The frame of a secondary button (DESIGN_SYSTEM.md, «Карточка на графе»,
+  // user's decision of 09.10.2026): `--border` at rest on a card drawn on the
+  // chrome, `--component-fill-hover` under the pointer and while selected on
+  // every card, 1px on the card's own outline, the path its picture is
+  // clipped to (the graph audit holds hover to that path). A picture has no
+  // frame at rest: its own edge is the picture's.
+  const highlighted = options.selected || options.hovered;
+  if (highlighted || !image || textPreview) {
     roundedRectPath(ctx, x, y, size, size, radius);
     ctx.lineWidth = 1 / options.globalScale;
-    ctx.strokeStyle = options.canvasTheme.hoverOutline;
+    ctx.strokeStyle = highlighted ? options.canvasTheme.hoverOutline : options.canvasTheme.border;
     ctx.stroke();
   }
+}
+
+/// Text thumbnails tinted with the text colour, one canvas per picture and
+/// colour. The picture carries the glyphs as its alpha channel (thumbnails.rs
+/// draws them on a transparent ground); `source-in` lays the colour over that
+/// coverage, so the text is `--foreground` exactly in both themes. The grey
+/// baked into the picture and inverted for the dark theme read as a muted
+/// step (around 204 and 175 for title and text).
+const tintedTextPreviews = new WeakMap<HTMLImageElement, { color: string; canvas: HTMLCanvasElement }>();
+
+function tintedTextPreview(image: HTMLImageElement, color: string): HTMLImageElement | HTMLCanvasElement {
+  const cached = tintedTextPreviews.get(image);
+  if (cached && cached.color === color) return cached.canvas;
+  const width = image.naturalWidth || image.width;
+  const height = image.naturalHeight || image.height;
+  if (typeof document === "undefined" || width <= 0 || height <= 0) return image;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) return image;
+  context.drawImage(image, 0, 0);
+  context.globalCompositeOperation = "source-in";
+  context.fillStyle = color;
+  context.fillRect(0, 0, width, height);
+  tintedTextPreviews.set(image, { color, canvas });
+  return canvas;
 }
 
 /// Corner radius for a card drawn at this on-screen size, in screen pixels.
@@ -224,14 +251,14 @@ function isTextPreview(node: GraphCanvasNode): boolean {
 
 function drawImageCover(
   ctx: CanvasRenderingContext2D,
-  image: HTMLImageElement,
+  image: HTMLImageElement | HTMLCanvasElement,
   x: number,
   y: number,
   width: number,
   height: number,
 ) {
-  const imageWidth = image.naturalWidth || image.width;
-  const imageHeight = image.naturalHeight || image.height;
+  const imageWidth = image instanceof HTMLImageElement ? image.naturalWidth || image.width : image.width;
+  const imageHeight = image instanceof HTMLImageElement ? image.naturalHeight || image.height : image.height;
   if (imageWidth <= 0 || imageHeight <= 0) return;
 
   const scale = Math.max(width / imageWidth, height / imageHeight);
@@ -281,12 +308,6 @@ export function readGraphCanvasTheme(mode: "light" | "dark"): GraphCanvasTheme {
   const mutedText = resolvedCanvasColor(mutedStyle.color, fallback.mutedText);
   const hoverOutline = resolvedCanvasColor(mutedStyle.outlineColor, fallback.hoverOutline);
 
-  probe.style.backgroundColor = "var(--card)";
-  const textPreviewFill = resolvedCanvasColor(
-    getComputedStyle(probe).backgroundColor,
-    fallback.textPreviewFill,
-  );
-
   probe.style.color = "var(--foreground)";
   const foregroundText = resolvedCanvasColor(
     getComputedStyle(probe).color,
@@ -299,7 +320,6 @@ export function readGraphCanvasTheme(mode: "light" | "dark"): GraphCanvasTheme {
     // The graph's links are the interface's lines (user's decision of
     // 07.10.2026): `--border`, not a colour of their own.
     linkDefault: border,
-    textPreviewFill,
     chromeFill,
     border,
     mutedText,
@@ -312,7 +332,6 @@ function graphCanvasThemeFallback(mode: "light" | "dark"): GraphCanvasTheme {
   return mode === "dark"
     ? {
         ...GRAPH_PALETTE.dark,
-        textPreviewFill: "#0f0f0f",
         chromeFill: "#1a1a1a",
         border: "#2a2a2a",
         linkDefault: "#2a2a2a",
@@ -322,7 +341,6 @@ function graphCanvasThemeFallback(mode: "light" | "dark"): GraphCanvasTheme {
       }
     : {
         ...GRAPH_PALETTE.light,
-        textPreviewFill: "#fcfcfc",
         chromeFill: "#fcfcfc",
         border: "#eeeeee",
         linkDefault: "#eeeeee",

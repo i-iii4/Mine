@@ -578,8 +578,8 @@ A, B, C), приглушение цветом (D), scroll edge effect macOS и i
 не hover-gated state; ordinary sidebar и link-editor режим видят один и тот же
 край.
 Hover navigation row не должен менять background. Обычный sidebar count slot не
-должен заменяться hover-многоточием или другим action trigger; Rename/Delete
-остаются в `ContextMenu` строки. Active route не должен иметь отдельный
+должен заменяться hover-многоточием или другим action trigger; Rename, Reveal
+in Finder и Delete остаются в `ContextMenu` строки. Active route не должен иметь отдельный
 selected background. Hover/selection меняют только яркость текста строки; ни
 thumbnail strip, ни preview cards не должны участвовать в этом contract и не
 могут менять ширину, opacity или layout.

@@ -487,6 +487,11 @@ export const checkCollectionName = async (
   }
 };
 
+/** The absolute path of a collection's page, or null when none is found;
+ *  reads only. Reveal in Finder shows it. */
+export const collectionPagePath = (tag: string) =>
+  invoke<string | null>("collection_page_path", { tag });
+
 export const deleteTagFromAll = (tag: string) =>
   invoke<void>("delete_tag_from_all", { tag });
 

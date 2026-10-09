@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { MemoryRouter } from "react-router";
 import { DndContext } from "@dnd-kit/core";
 import { invoke } from "@tauri-apps/api/core";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar, SidebarTagRowDragPreview } from "./Sidebar";
 import type { IndexedBlock, TagCount } from "@/types";
@@ -52,6 +53,8 @@ function rest(ms = HOVER_INTENT.velocityWindowMs + 10) {
 const dndContextState = vi.hoisted(() => ({
   over: null as { id: string } | null,
 }));
+
+vi.mock("@tauri-apps/plugin-opener", () => ({ revealItemInDir: vi.fn() }));
 
 vi.mock("@dnd-kit/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@dnd-kit/core")>();
@@ -1013,6 +1016,35 @@ describe("Sidebar", () => {
     expect(await screen.findByRole("menu")).toBeInTheDocument();
     expect(screen.getByText("Rename")).toBeInTheDocument();
     expect(screen.getByText("Delete")).toBeInTheDocument();
+  });
+
+  it("reveals the collection's page in Finder from its menu (09.10.2026)", async () => {
+    vi.mocked(invoke).mockImplementation(async (command) =>
+      command === "collection_page_path" ? "/vault/Collections/alpha.md" : null);
+    const { container } = renderSidebar({ ...defaultProps, width: 600 });
+
+    const row = container.querySelector('[data-sidebar-row-key="tag:alpha"]') as HTMLElement;
+    fireEvent.contextMenu(row, { clientX: 32, clientY: 48 });
+
+    const items = (await screen.findAllByRole("menuitem")).map((item) => item.textContent);
+    expect(items).toEqual(["Rename", "Reveal in Finder", "Delete"]);
+    const reveal = screen.getByRole("menuitem", { name: "Reveal in Finder" });
+    await waitFor(() => expect(reveal).not.toHaveAttribute("data-disabled"));
+    expect(invoke).toHaveBeenCalledWith("collection_page_path", { tag: "alpha" });
+    fireEvent.click(reveal);
+    expect(revealItemInDir).toHaveBeenCalledWith("/vault/Collections/alpha.md");
+  });
+
+  it("offers no Reveal in Finder for a collection without a page", async () => {
+    vi.mocked(invoke).mockImplementation(async () => null);
+    const { container } = renderSidebar({ ...defaultProps, width: 600 });
+
+    const row = container.querySelector('[data-sidebar-row-key="tag:alpha"]') as HTMLElement;
+    fireEvent.contextMenu(row, { clientX: 32, clientY: 48 });
+
+    const reveal = await screen.findByRole("menuitem", { name: "Reveal in Finder" });
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("collection_page_path", { tag: "alpha" }));
+    expect(reveal).toHaveAttribute("data-disabled");
   });
 
   it("closes a frozen thumbnail hover preview when the card menu closes away from the thumbnail", async () => {

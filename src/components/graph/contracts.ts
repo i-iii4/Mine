@@ -30,15 +30,12 @@ export type GraphCardMenuPoint = {
 };
 
 export type GraphPalette = {
-  cardFill: string;
   linkDefault: string;
 };
 
 export type GraphCanvasTheme = GraphPalette & {
-  /// Background for a text thumbnail, read from the `--card` token so the
-  /// graph matches the feed. Distinct from `cardFill`, which paints a node
-  /// that has no thumbnail at all.
-  textPreviewFill: string;
+  /// `--chrome`: the collection pills, and a card with a text thumbnail or
+  /// with no picture (09.10.2026).
   chromeFill: string;
   border: string;
   mutedText: string;
@@ -153,11 +150,9 @@ export const GRAPH_INITIAL_FIT_DURATION_MS = 250;
 
 export const GRAPH_PALETTE: Record<"light" | "dark", GraphPalette> = {
   dark: {
-    cardFill: "#181818",
     linkDefault: "#282828",
   },
   light: {
-    cardFill: "#f4f4f4",
     linkDefault: "#d8d8d8",
   },
 };

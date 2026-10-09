@@ -106,6 +106,7 @@ pub const COMMAND_EFFECTS: &[(&str, Effect)] = &[
     ("reorder_channels", Effect::ChangesSources),
     ("rename_channel", Effect::ChangesSources),
     ("check_collection_name", Effect::Reads),
+    ("collection_page_path", Effect::Reads),
     ("delete_channel", Effect::ChangesSources),
     ("list_channel_previews", Effect::Reads),
     ("list_arena_channels", Effect::Reads),

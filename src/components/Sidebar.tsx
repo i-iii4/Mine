@@ -21,7 +21,8 @@ import { NavLink, useLocation } from "react-router";
 import { useDndContext, useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { FolderOpen, Pencil, Plus, Trash2 } from "lucide-react";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { bindingLabel } from "@/lib/commandBinding";
 import {
   ContextMenu,
@@ -40,7 +41,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import type { IndexedBlock, LightBlock, TagCount, PreviewCard } from "@/types";
-import { getBlock, nameRefusal } from "@/lib/commands";
+import { collectionPagePath, getBlock, nameRefusal } from "@/lib/commands";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { NAME_REFUSED_SHAKE_MS, useNameEdit, type NameEdit } from "@/hooks/useNameEdit";
 import { collectionRefLabel } from "@/lib/collections";
@@ -1738,6 +1739,14 @@ const TagNavItem = memo(function TagNavItem({
 }) {
   const location = useLocation();
   const [deleteOpen, setDeleteOpen] = useState(false);
+  // The collection's page, looked up as its menu opens: `undefined` until the
+  // answer, null when there is no page to show.
+  const [pagePath, setPagePath] = useState<string | null | undefined>(undefined);
+  const findPage = useCallback((open: boolean) => {
+    if (!open) return;
+    setPagePath(undefined);
+    collectionPagePath(tag).then(setPagePath, () => setPagePath(null));
+  }, [tag]);
   const isLinkEditor = !!linkEditor;
   // The parent hands out one callback for every row; each row binds its own tag.
   const startRename = useCallback(() => onDoubleClick(tag), [onDoubleClick, tag]);
@@ -1810,7 +1819,7 @@ const TagNavItem = memo(function TagNavItem({
 
   return (
     <>
-      <ContextMenu>
+      <ContextMenu onOpenChange={findPage}>
         <ContextMenuTrigger asChild>
           <SidebarRowFrame
             compact={compact}
@@ -1868,6 +1877,18 @@ const TagNavItem = memo(function TagNavItem({
           <ContextMenuItem onSelect={startRename}>
             <Pencil className="size-[13px]" />
             Rename
+          </ContextMenuItem>
+          {/* The collection is a page in the folder: it opens where the
+              cards' Reveal in Finder opens theirs, with the space's icon. */}
+          <ContextMenuItem
+            disabled={!pagePath}
+            onSelect={() => {
+              if (pagePath) void revealItemInDir(pagePath);
+            }}
+            data-sidebar-collection-reveal=""
+          >
+            <FolderOpen className="size-[13px]" />
+            Reveal in Finder
           </ContextMenuItem>
           <ContextMenuItem variant="destructive" onSelect={() => setDeleteOpen(true)}>
             <Trash2 className="size-[13px]" />

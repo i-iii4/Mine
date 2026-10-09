@@ -718,8 +718,11 @@ Allowed:
 
 - cache and draw only derived thumbnails from the thumbnail store;
 - use cover crop, clipped to the small square node shape;
-- invert text-preview thumbnails in dark theme so article/text previews remain
-  legible on the dark canvas.
+- tint text-preview thumbnails with `--foreground` on a `--chrome` fill, the
+  glyphs taken from the thumbnail's alpha, so article/text previews read as
+  the interface's text in both themes (09.10.2026; until then the baked grey
+  was inverted in the dark theme and read as a muted step). DESIGN_SYSTEM.md,
+  «Карточка на графе».
 
 Not allowed:
 
