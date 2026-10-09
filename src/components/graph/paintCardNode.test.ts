@@ -83,8 +83,8 @@ describe("paintCardNode", () => {
     expect(paint(card("image"), false)).toEqual(["fill chrome", "stroke border"]);
   });
 
-  it("leaves a picture unframed at rest", () => {
-    expect(paint(card("image"), true)).toEqual(["image"]);
+  it("frames a picture at rest with the same line", () => {
+    expect(paint(card("image"), true)).toEqual(["image", "stroke border"]);
   });
 
   it("lights the frame under the pointer and while selected, on every card", () => {

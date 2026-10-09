@@ -342,7 +342,15 @@ async function installCardHoverProbe(canvas, target) {
     const colorProbe = document.createElement("span");
     colorProbe.className = "bg-chrome";
     colorProbe.style.outlineColor = "var(--component-fill-hover)";
+    colorProbe.style.borderColor = "var(--border)";
+    colorProbe.style.borderStyle = "solid";
+    colorProbe.style.borderWidth = "1px";
     document.body.appendChild(colorProbe);
+    // Every card carries a frame at rest, `--border`, and the pointer lights
+    // it, `--component-fill-hover` (DESIGN_SYSTEM.md, «Карточка на графе»):
+    // the rest frame on the same path is allowed, only the lit one counts.
+    maskContext.strokeStyle = getComputedStyle(colorProbe).borderTopColor;
+    const restColor = maskContext.strokeStyle;
     maskContext.strokeStyle = getComputedStyle(colorProbe).outlineColor;
     const expectedColor = maskContext.strokeStyle;
     colorProbe.remove();
@@ -377,13 +385,14 @@ async function installCardHoverProbe(canvas, target) {
       if (thumbnailPath && pathKey() === thumbnailPath) {
         const transform = this.getTransform();
         const cssScale = Math.hypot(transform.a, transform.b) / devicePixelRatio;
+        const lit = this.strokeStyle === expectedColor;
         if (Math.abs(this.lineWidth * cssScale - 1) > 1e-6
-          || this.strokeStyle !== expectedColor || this.globalAlpha !== 1
+          || (!lit && this.strokeStyle !== restColor) || this.globalAlpha !== 1
           || this.getLineDash().length !== 0 || this.shadowBlur !== 0
           || this.shadowOffsetX !== 0 || this.shadowOffsetY !== 0
           || this.globalCompositeOperation !== "source-over") {
           if (probe.errors.length === 0) probe.errors.push({
-            width: this.lineWidth * cssScale, color: this.strokeStyle, expectedColor,
+            width: this.lineWidth * cssScale, color: this.strokeStyle, expectedColor, restColor,
             alpha: this.globalAlpha, dash: this.getLineDash(), shadow: this.shadowBlur,
             shadowX: this.shadowOffsetX, shadowY: this.shadowOffsetY,
             composition: this.globalCompositeOperation,
@@ -397,7 +406,7 @@ async function installCardHoverProbe(canvas, target) {
         maskContext.beginPath();
         for (const [name, ...values] of commands) maskContext[name](...values);
         maskContext.stroke();
-        probe.strokes += 1;
+        if (lit) probe.strokes += 1;
       }
       return original.apply(this, args);
     });

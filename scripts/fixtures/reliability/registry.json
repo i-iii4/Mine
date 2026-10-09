@@ -1584,7 +1584,8 @@
       "paths": [
         "src/components/graph/canvas.ts",
         "src/components/graph/contracts.ts",
-        "src/components/graph/paintCardNode.test.ts"
+        "src/components/graph/paintCardNode.test.ts",
+        "scripts/graph-view-audit.mjs"
       ],
       "requirement": "DESIGN_SYSTEM.md#### Карточка на графе",
       "tests": ["src/components/graph/paintCardNode.test.ts", "src/components/GraphView.test.tsx"],

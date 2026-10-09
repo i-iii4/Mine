@@ -95,19 +95,16 @@ export function paintCardNode(
     }
   }
 
-  // The frame of a secondary button (DESIGN_SYSTEM.md, «Карточка на графе»,
-  // user's decision of 09.10.2026): `--border` at rest on a card drawn on the
-  // chrome, `--component-fill-hover` under the pointer and while selected on
-  // every card, 1px on the card's own outline, the path its picture is
-  // clipped to (the graph audit holds hover to that path). A picture has no
-  // frame at rest: its own edge is the picture's.
+  // The frame of a secondary button on every card, a picture too
+  // (DESIGN_SYSTEM.md, «Карточка на графе», user's decision of 09.10.2026):
+  // `--border` at rest, `--component-fill-hover` under the pointer and while
+  // selected, 1px on the card's own outline, the path its picture is clipped
+  // to (the graph audit holds hover to that path).
   const highlighted = options.selected || options.hovered;
-  if (highlighted || !image || textPreview) {
-    roundedRectPath(ctx, x, y, size, size, radius);
-    ctx.lineWidth = 1 / options.globalScale;
-    ctx.strokeStyle = highlighted ? options.canvasTheme.hoverOutline : options.canvasTheme.border;
-    ctx.stroke();
-  }
+  roundedRectPath(ctx, x, y, size, size, radius);
+  ctx.lineWidth = 1 / options.globalScale;
+  ctx.strokeStyle = highlighted ? options.canvasTheme.hoverOutline : options.canvasTheme.border;
+  ctx.stroke();
 }
 
 /// Text thumbnails tinted with the text colour, one canvas per picture and
