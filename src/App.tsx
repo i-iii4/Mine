@@ -302,6 +302,8 @@ import { scheduleAfterNextPaint, whenCardsRendered } from "@/lib/startup";
 import { desktopArticleAudioGateway } from "@/lib/articleAudioDesktopGateway";
 import { ARTICLE_AUDIO_ENABLED } from "@/lib/featureFlags";
 import {
+  isDropOnSourceCollection,
+  lightBlockFromIndexed,
   resolveBlockDragBlocks,
   resolveBlockDragSlugs,
   uniqueDragSlugs,
@@ -1086,7 +1088,16 @@ export function AppWithVault({
     rowKey: string;
     sequence: number;
   } | null>(null);
+  /// The cards the DragOverlay draws. Empty for a moment when the drag began
+  /// on a sidebar thumbnail whose card is not in the feed: it is being read.
   const [activeDragBlocks, setActiveDragBlocks] = useState<LightBlock[]>([]);
+  /// A card is being dragged, from its first frame: the sidebar takes the drop
+  /// before the card a thumbnail carries has been read (SPEC_FRONTEND.md,
+  /// «Перетаскивание миниатюры»).
+  const [blockDragActive, setBlockDragActive] = useState(false);
+  /// Counts card drags, so a card read that lands after its drag ended draws
+  /// nothing.
+  const blockDragSequenceRef = useRef(0);
   const [activeDragTag, setActiveDragTag] = useState<string | null>(null);
   /// Which dressing the DragOverlay wears. Set on drag start and deliberately
   /// NOT reset on drag end: the drop animation outlives the drag state, and
@@ -1181,7 +1192,6 @@ export function AppWithVault({
   // once that pass lands every route reads the new snapshot (Х28).
   const [indexBuiltOnOpen, setIndexBuiltOnOpen] = useState(false);
   const [thumbsRootPath, setThumbsRootPath] = useState<string | null>(null);
-  const activeDragBlock = activeDragBlocks[0] ?? null;
   const renderedDragBlocks = useMemo(() => {
     const current = new Map(blocks.map((block) => [block.slug, block]));
     return activeDragBlocks.map((block) => current.get(block.slug) ?? block);
@@ -3872,6 +3882,13 @@ export function AppWithVault({
     [invalidateRouteSnapshots, scheduleRefresh],
   );
 
+  /// Ends the card part of a drag; a card read still on its way draws nothing.
+  const clearBlockDrag = useCallback(() => {
+    blockDragSequenceRef.current += 1;
+    setActiveDragBlocks([]);
+    setBlockDragActive(false);
+  }, []);
+
   const handleDndStart = useCallback(
     (event: DragStartEvent) => {
       const id = String(event.active.id);
@@ -3884,7 +3901,7 @@ export function AppWithVault({
         setActiveDragMediaAsset({
           src: data.imageSrc ?? "",
         });
-        setActiveDragBlocks([]);
+        clearBlockDrag();
         setActiveDragTag(null);
         setActiveDragTextSelection(null);
         setOverlayDressing("point");
@@ -3899,7 +3916,7 @@ export function AppWithVault({
         setActiveDragTextSelection({
           selectedText: textSelectionPayload.selectedText,
         });
-        setActiveDragBlocks([]);
+        clearBlockDrag();
         setActiveDragTag(null);
         setActiveDragMediaAsset(null);
         setOverlayDressing("point");
@@ -3907,7 +3924,7 @@ export function AppWithVault({
       }
       if (id.startsWith("tag:")) {
         setActiveDragTag(id.slice(4));
-        setActiveDragBlocks([]);
+        clearBlockDrag();
         setActiveDragMediaAsset(null);
         setActiveDragTextSelection(null);
         setOverlayDressing("row");
@@ -3915,19 +3932,38 @@ export function AppWithVault({
         if (data?.type === "block") {
           data.clearSelectionOnDragStart?.();
         }
-        setActiveDragBlocks(resolveBlockDragBlocks(id, data, blocks));
+        const sequence = blockDragSequenceRef.current + 1;
+        blockDragSequenceRef.current = sequence;
+        const dragBlocks = resolveBlockDragBlocks(id, data, blocks);
+        setActiveDragBlocks(dragBlocks);
+        setBlockDragActive(true);
         setActiveDragTag(null);
         setActiveDragMediaAsset(null);
         setActiveDragTextSelection(null);
         setOverlayDressing("point");
+        // A sidebar thumbnail carries only its slug. Its card is the feed's
+        // when the feed holds it; otherwise it is read now, and the overlay
+        // shows it once it lands, unless the drag is over by then
+        // (SPEC_FRONTEND.md, «Перетаскивание миниатюры»).
+        const slug = data?.type === "block" ? data.slug : undefined;
+        if (dragBlocks.length === 0 && slug) {
+          void getBlock(slug)
+            .then((block) => {
+              if (!block || blockDragSequenceRef.current !== sequence) return;
+              setActiveDragBlocks([lightBlockFromIndexed(block)]);
+            })
+            .catch((error: unknown) => {
+              console.error("Failed to read the dragged card:", error);
+            });
+        }
       }
     },
-    [blocks],
+    [blocks, clearBlockDrag],
   );
 
   const handleDndEnd = useCallback(
     (event: DragEndEvent) => {
-      setActiveDragBlocks([]);
+      clearBlockDrag();
       setActiveDragTag(null);
       setActiveDragMediaAsset(null);
       setActiveDragTextSelection(null);
@@ -4003,6 +4039,8 @@ export function AppWithVault({
 
       // Card dropped on tag
       if (!activeIsTag && overId.startsWith("tag:")) {
+        // Back on the collection whose row it was taken from: it is there.
+        if (isDropOnSourceCollection(activeData, overId)) return;
         if (activeSlugs.length > 1) {
           handleCardsDrop(activeSlugs, overId.slice(4));
         } else {
@@ -4012,6 +4050,7 @@ export function AppWithVault({
     },
     [
       beginCreateChannelFromDrop,
+      clearBlockDrag,
       handleCardDrop,
       handleCardsDrop,
       handleMediaAssetDrop,
@@ -4021,15 +4060,15 @@ export function AppWithVault({
   );
 
   const handleDndCancel = useCallback(() => {
-    setActiveDragBlocks([]);
+    clearBlockDrag();
     setActiveDragTag(null);
     setActiveDragMediaAsset(null);
     setActiveDragTextSelection(null);
     clearActiveMineTextSelectionDragPayload();
-  }, []);
+  }, [clearBlockDrag]);
 
   useStaleDragRecovery(
-    activeDragBlocks.length > 0
+    blockDragActive
       || activeDragTag !== null
       || activeDragMediaAsset !== null
       || activeDragTextSelection !== null,
@@ -4539,7 +4578,7 @@ export function AppWithVault({
         channelPreviews={channelPreviews}
         totalBlocks={totalBlocks}
         isDropDragging={
-          activeDragBlock !== null
+          blockDragActive
           || activeDragMediaAsset !== null
           || activeDragTextSelection !== null
         }
@@ -4584,7 +4623,7 @@ export function AppWithVault({
           minWidth={sidebarMinWidthPx}
           maxWidth={sidebarMaxWidthPx}
           disabled={
-            activeDragBlock !== null
+            blockDragActive
             || activeDragMediaAsset !== null
             || activeDragTag !== null
             || activeDragTextSelection !== null
@@ -4626,7 +4665,7 @@ export function AppWithVault({
                 scrollEdgeFade={scrollEdgeFade}
                 routeSnapshotReady={gridRouteSnapshotReady}
                 scrollToTop={scrollToTopSignal}
-                blockDragActive={activeDragBlocks.length > 0}
+                blockDragActive={blockDragActive}
                 detailOpen={Boolean(renderedDetailBlock)}
                 selectedBlockSlug={renderedDetailBlock?.slug ?? null}
                 keyboardNavigationDisabled={gridKeyboardNavigationDisabled}

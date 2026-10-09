@@ -1,7 +1,15 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { DndContext } from "@dnd-kit/core";
+import type { ComponentProps } from "react";
+import {
+  DndContext,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
 import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -1550,6 +1558,164 @@ describe("Sidebar", () => {
     expect(preview.querySelector('[data-sidebar-preview-thumbnail="trigger"]')).toBeNull();
   });
 
+});
+
+describe("dragging a thumbnail (SPEC_FRONTEND.md, «Перетаскивание миниатюры»)", () => {
+  /// The app's drag threshold (App.tsx): a thumbnail starts where a feed card does.
+  const DRAG_DISTANCE_PX = 8;
+
+  function ThumbnailDragTree({
+    props,
+    onDragStart,
+    onDragEnd,
+  }: {
+    props: ComponentProps<typeof Sidebar>;
+    onDragStart: (event: DragStartEvent) => void;
+    onDragEnd: (event: DragEndEvent) => void;
+  }) {
+    const sensors = useSensors(
+      useSensor(PointerSensor, { activationConstraint: { distance: DRAG_DISTANCE_PX } }),
+    );
+    return (
+      <MemoryRouter>
+        <TooltipProvider>
+          <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
+            <Sidebar {...props} />
+          </DndContext>
+        </TooltipProvider>
+      </MemoryRouter>
+    );
+  }
+
+  const previews = new Map([
+    ["alpha", [{ slug: "alpha-a", url: "/thumbs/alpha-a.jpg", text: false, hasThumb: true }]],
+    ["__all__", [{ slug: "all-a", url: "/thumbs/all-a.jpg", text: false, hasThumb: true }]],
+  ]);
+
+  function renderDragTree(overrides: Partial<ComponentProps<typeof Sidebar>> = {}) {
+    const onDragStart = vi.fn<(event: DragStartEvent) => void>();
+    const onDragEnd = vi.fn<(event: DragEndEvent) => void>();
+    const view = render(
+      <ThumbnailDragTree
+        props={{ ...defaultProps, width: 600, channelPreviews: previews, ...overrides }}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+      />,
+    );
+    const thumbnailOf = (rowKey: string) => view.container.querySelector(
+      `[data-sidebar-row-key="${rowKey}"] [data-sidebar-preview-thumbnail="trigger"]`,
+    ) as HTMLElement;
+    return { ...view, onDragStart, onDragEnd, thumbnailOf };
+  }
+
+  function press(element: Element, button = 0) {
+    fireEvent.pointerDown(element, { isPrimary: true, button, clientX: 100, clientY: 100 });
+  }
+
+  function moveBy(dx: number) {
+    fireEvent.pointerMove(document, { isPrimary: true, clientX: 100 + dx, clientY: 100 });
+  }
+
+  /// dnd-kit drops a finished drag's document listeners, the click blocker
+  /// among them, this long after the release.
+  const DND_KIT_LISTENER_RELEASE_MS = 50;
+
+  beforeEach(() => {
+    vi.mocked(invoke).mockReset();
+  });
+
+  // A drag left open would swallow the next test's click.
+  afterEach(async () => {
+    fireEvent.pointerUp(document, { isPrimary: true });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, DND_KIT_LISTENER_RELEASE_MS + 1));
+    });
+  });
+
+  it("carries its card, not the row it stands in, once moved past the feed's threshold", () => {
+    const { container, onDragStart, onDragEnd, thumbnailOf } = renderDragTree();
+    const thumbnail = thumbnailOf("tag:alpha");
+
+    press(thumbnail);
+    moveBy(DRAG_DISTANCE_PX - 1);
+    expect(onDragStart).not.toHaveBeenCalled();
+
+    moveBy(DRAG_DISTANCE_PX + 4);
+    expect(onDragStart).toHaveBeenCalledOnce();
+    const { active } = onDragStart.mock.calls[0]![0];
+    expect(String(active.id)).toBe("sidebar-thumbnail:tag:alpha:alpha-a:0");
+    expect(active.data.current).toEqual({ type: "block", slug: "alpha-a", sourceTag: "alpha" });
+    // The source dims like a dragged feed card; its row stays where it is.
+    expect(thumbnail).toHaveAttribute("data-sidebar-preview-dragging", "true");
+    expect(thumbnail).toHaveClass("opacity-30");
+    const row = container.querySelector('[data-sidebar-row-key="tag:alpha"]') as HTMLElement;
+    expect(row).not.toHaveClass("opacity-0");
+
+    fireEvent.pointerUp(document, { isPrimary: true, clientX: 112, clientY: 100 });
+    expect(onDragEnd).toHaveBeenCalledOnce();
+    expect(thumbnail).not.toHaveAttribute("data-sidebar-preview-dragging");
+  });
+
+  it("names no collection for a card taken from Everything", () => {
+    const { onDragStart, thumbnailOf } = renderDragTree();
+
+    press(thumbnailOf("all"));
+    moveBy(DRAG_DISTANCE_PX + 4);
+
+    expect(onDragStart.mock.calls[0]![0].active.data.current).toEqual({
+      type: "block",
+      slug: "all-a",
+      sourceTag: undefined,
+    });
+  });
+
+  it("stays a click below the threshold and opens the card", async () => {
+    vi.mocked(invoke).mockResolvedValue(previewBlock("alpha-a"));
+    const onOpenBlock = vi.fn();
+    const { onDragStart, thumbnailOf } = renderDragTree({ onOpenBlock });
+    const thumbnail = thumbnailOf("tag:alpha");
+
+    press(thumbnail);
+    moveBy(DRAG_DISTANCE_PX - 1);
+    fireEvent.pointerUp(document, { isPrimary: true, clientX: 107, clientY: 100 });
+    fireEvent.click(thumbnail);
+
+    expect(onDragStart).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(onOpenBlock).toHaveBeenCalledWith(expect.objectContaining({ slug: "alpha-a" }));
+    });
+  });
+
+  it("starts nothing on a right press, which still opens the card's menu", async () => {
+    vi.mocked(invoke).mockResolvedValue(previewBlock("alpha-a"));
+    const onOpenCardMenu = vi.fn();
+    const { onDragStart, thumbnailOf } = renderDragTree({ onOpenCardMenu });
+    const thumbnail = thumbnailOf("tag:alpha");
+
+    press(thumbnail, 2);
+    moveBy(DRAG_DISTANCE_PX + 4);
+    fireEvent.contextMenu(thumbnail, { clientX: 100, clientY: 100 });
+
+    expect(onDragStart).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(onOpenCardMenu).toHaveBeenCalledWith(
+        expect.objectContaining({ slug: "alpha-a" }),
+        { x: 100, y: 100 },
+      );
+    });
+  });
+
+  it("lets a press beside the thumbnails still reorder the row", () => {
+    const { container, onDragStart } = renderDragTree();
+    const rowName = container.querySelector(
+      '[data-sidebar-row-key="tag:alpha"] [data-sidebar-title-fade-width]',
+    ) as HTMLElement;
+
+    press(rowName);
+    moveBy(DRAG_DISTANCE_PX + 4);
+
+    expect(String(onDragStart.mock.calls[0]![0].active.id)).toBe("tag:alpha");
+  });
 });
 
 describe("sidebar thumbnail placeholders while previews load", () => {

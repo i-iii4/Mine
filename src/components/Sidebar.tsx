@@ -18,7 +18,7 @@ import {
   type Ref,
 } from "react";
 import { NavLink, useLocation } from "react-router";
-import { useDndContext, useDroppable } from "@dnd-kit/core";
+import { useDndContext, useDraggable, useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { FolderOpen, Pencil, Plus, Trash2 } from "lucide-react";
@@ -69,6 +69,7 @@ import {
 } from "@/lib/collectionHover";
 import { scheduleAfterOptimisticUiUpdate } from "@/lib/groupSelection";
 import { publishCollectionOrder } from "@/lib/cardCollections";
+import type { BlockDragData } from "@/lib/blockDrag";
 import { HoverIntentDragWatch, useHoverIntent } from "@/hooks/useHoverIntent";
 import { useHoverPreviewOpener } from "@/hooks/useHoverPreviewOpener";
 import { TopFadeScrim } from "./TopFadeScrim";
@@ -1253,6 +1254,7 @@ function SidebarRowBody({
   previewsPending,
   previewKeyPrefix,
   rowKey,
+  sourceTag,
   onPreviewEnter,
   onPreviewLeave,
   onPreviewClick,
@@ -1279,6 +1281,8 @@ function SidebarRowBody({
   previewsPending: boolean;
   previewKeyPrefix: string;
   rowKey: string;
+  /** The row's collection; absent on Everything. */
+  sourceTag?: string;
   onPreviewEnter: (target: SidebarPreviewTarget) => void;
   onPreviewLeave: () => void;
   onPreviewClick: (target: SidebarPreviewTarget) => void;
@@ -1366,6 +1370,7 @@ function SidebarRowBody({
               previewsPending={previewsPending}
               previewKeyPrefix={previewKeyPrefix}
               rowKey={rowKey}
+              sourceTag={sourceTag}
               onPreviewEnter={onPreviewEnter}
               onPreviewLeave={onPreviewLeave}
               onPreviewClick={onPreviewClick}
@@ -1846,6 +1851,7 @@ const TagNavItem = memo(function TagNavItem({
               previewsPending={previewsPending}
               previewKeyPrefix={previewKeyPrefix}
               rowKey={rowKey}
+              sourceTag={tag}
               onPreviewEnter={onPreviewEnter}
               onPreviewLeave={onPreviewLeave}
               onPreviewClick={onPreviewClick}
@@ -2056,12 +2062,109 @@ function sidebarPreviewPlaceholderCount(count: number, shown: number): number {
   return Math.max(0, Math.min(count, SIDEBAR_PREVIEW_SLOTS) - shown);
 }
 
+/// The id a thumbnail drags under: the strip's own key for it, so the card
+/// standing in several rows and in the feed has a distinct id at each place.
+function sidebarThumbnailDragId(previewKey: string): string {
+  return `sidebar-thumbnail:${previewKey}`;
+}
+
+/// A strip's live thumbnail: a hover opens the card's preview, a click the
+/// card, a right click its menu, and a drag past the feed's threshold carries
+/// the card to a collection like a feed card (SPEC_FRONTEND.md,
+/// «Перетаскивание миниатюры», 09.10.2026).
+function SidebarPreviewThumbnail({
+  card,
+  target,
+  sourceTag,
+  isPreviewActive,
+  onPreviewEnter,
+  onPreviewLeave,
+  onPreviewClick,
+  onPreviewContextMenu,
+  onPreviewTriggerRef,
+}: {
+  card: PreviewCard;
+  target: SidebarPreviewTarget;
+  /** The row's collection; absent on Everything. */
+  sourceTag?: string;
+  isPreviewActive: boolean;
+  onPreviewEnter: (target: SidebarPreviewTarget) => void;
+  onPreviewLeave: () => void;
+  onPreviewClick: (target: SidebarPreviewTarget) => void;
+  onPreviewContextMenu?: (target: SidebarPreviewTarget, point: CardMenuPoint) => void;
+  onPreviewTriggerRef: (key: string, node: HTMLElement | null) => void;
+}) {
+  // Only the slug: the card itself is the feed's, or is read when the drag
+  // begins (App, handleDndStart).
+  const { listeners, setNodeRef, isDragging } = useDraggable({
+    id: sidebarThumbnailDragId(target.key),
+    data: {
+      type: "block",
+      slug: target.slug,
+      sourceTag,
+    } satisfies BlockDragData,
+  });
+  // dnd-kit types its listeners as a plain map of functions; with the pointer
+  // sensor alone the map holds `onPointerDown`, a React pointer handler.
+  const dragPointerListener = (listeners as {
+    onPointerDown?: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  } | undefined)?.onPointerDown;
+  const setTileRef = useCallback((node: HTMLDivElement | null) => {
+    setNodeRef(node);
+    onPreviewTriggerRef(target.key, node);
+  }, [onPreviewTriggerRef, setNodeRef, target.key]);
+  return (
+    // No `attributes` from dnd-kit: they would make every thumbnail a tab stop
+    // and a button, and the keyboard reaches the list by its rows.
+    <div
+      ref={setTileRef}
+      className={cn(
+        SIDEBAR_PREVIEW_TILE_CLASS,
+        "outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover",
+        isPreviewActive &&
+          "outline-1 -outline-offset-1 outline-component-fill-hover",
+        // The source dims as a dragged feed card does.
+        isDragging && "opacity-30",
+      )}
+      onPointerEnter={() => onPreviewEnter(target)}
+      onPointerLeave={onPreviewLeave}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onPreviewClick(target);
+      }}
+      onContextMenu={(event) => {
+        if (!onPreviewContextMenu) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onPreviewContextMenu(target, { x: event.clientX, y: event.clientY });
+      }}
+      onPointerDown={(event) => {
+        dragPointerListener?.(event);
+        // The row behind is a sortable collection: a press on a thumbnail
+        // belongs to the card, and the row it stands in does not move.
+        event.stopPropagation();
+      }}
+      data-sidebar-preview-thumbnail="trigger"
+      data-sidebar-preview-active={isPreviewActive ? "true" : undefined}
+      data-sidebar-preview-dragging={isDragging ? "true" : undefined}
+    >
+      <MicroPreviewThumbnail
+        preview={microPreviewFromPreviewCard(card)}
+        loading="lazy"
+        draggable={false}
+      />
+    </div>
+  );
+}
+
 function SidebarPreviewStrip({
   cards,
   count,
   previewsPending = false,
   previewKeyPrefix,
   rowKey,
+  sourceTag,
   onPreviewEnter,
   onPreviewLeave,
   onPreviewClick,
@@ -2078,6 +2181,8 @@ function SidebarPreviewStrip({
   previewsPending?: boolean;
   previewKeyPrefix: string;
   rowKey: string;
+  /** The row's collection, which a thumbnail dragged back onto keeps as is. */
+  sourceTag?: string;
   onPreviewEnter: (target: SidebarPreviewTarget) => void;
   onPreviewLeave: () => void;
   onPreviewClick: (target: SidebarPreviewTarget) => void;
@@ -2111,61 +2216,35 @@ function SidebarPreviewStrip({
         const canPreview = allowHoverPreview
           && card.hasThumb
           && !!card.slug;
-        const isPreviewActive = activePreviewKey === previewKey;
+        if (!canPreview || !card.slug) {
+          // The lifted copy of a row draws its media without behaviour.
+          return (
+            <div
+              key={previewKey}
+              className={SIDEBAR_PREVIEW_TILE_CLASS}
+              data-sidebar-preview-thumbnail="placeholder"
+            >
+              <MicroPreviewThumbnail
+                preview={microPreviewFromPreviewCard(card)}
+                loading="lazy"
+                draggable={false}
+              />
+            </div>
+          );
+        }
         return (
-          <div
+          <SidebarPreviewThumbnail
             key={previewKey}
-            ref={(node) => {
-              if (canPreview) {
-                onPreviewTriggerRef(previewKey, node);
-              }
-            }}
-            className={cn(
-              SIDEBAR_PREVIEW_TILE_CLASS,
-              canPreview &&
-                "outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover",
-              isPreviewActive &&
-                "outline-1 -outline-offset-1 outline-component-fill-hover",
-            )}
-            onPointerEnter={() => {
-              if (card.slug && canPreview) {
-                onPreviewEnter({ key: previewKey, rowKey, slug: card.slug });
-              }
-            }}
-            onPointerLeave={() => {
-              if (canPreview) {
-                onPreviewLeave();
-              }
-            }}
-            onClick={(event) => {
-              if (!card.slug || !canPreview) return;
-              event.preventDefault();
-              event.stopPropagation();
-              onPreviewClick({ key: previewKey, rowKey, slug: card.slug });
-            }}
-            onContextMenu={(event) => {
-              if (!card.slug || !canPreview || !onPreviewContextMenu) return;
-              event.preventDefault();
-              event.stopPropagation();
-              onPreviewContextMenu(
-                { key: previewKey, rowKey, slug: card.slug },
-                { x: event.clientX, y: event.clientY },
-              );
-            }}
-            onPointerDown={(event) => {
-              if (canPreview) {
-                event.stopPropagation();
-              }
-            }}
-            data-sidebar-preview-thumbnail={canPreview ? "trigger" : "placeholder"}
-            data-sidebar-preview-active={isPreviewActive ? "true" : undefined}
-          >
-            <MicroPreviewThumbnail
-              preview={microPreviewFromPreviewCard(card)}
-              loading="lazy"
-              draggable={false}
-            />
-          </div>
+            card={card}
+            target={{ key: previewKey, rowKey, slug: card.slug }}
+            sourceTag={sourceTag}
+            isPreviewActive={activePreviewKey === previewKey}
+            onPreviewEnter={onPreviewEnter}
+            onPreviewLeave={onPreviewLeave}
+            onPreviewClick={onPreviewClick}
+            onPreviewContextMenu={onPreviewContextMenu}
+            onPreviewTriggerRef={onPreviewTriggerRef}
+          />
         );
       })}
       {Array.from({ length: placeholderCount }, (_, index) => (

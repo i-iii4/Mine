@@ -39,6 +39,7 @@ import { buildFeedVideoPosterCandidates } from "@/lib/feedVideoPoster";
 import { getNavigationLabel } from "@/lib/displayTitle";
 import { renderSearchHighlightedText, searchExcerptText } from "@/lib/searchHighlight";
 import {
+  lightBlockFromIndexed,
   uniqueDragBlocks,
   type BlockDragData,
 } from "@/lib/blockDrag";
@@ -796,8 +797,7 @@ export function ReadOnlyCardPreview({
 }) {
   const block: LightBlock =
     "related_notes" in sourceBlock
-      // A full block names its collections as `tags`.
-      ? { ...sourceBlock, search_match: null, collections: sourceBlock.tags }
+      ? lightBlockFromIndexed(sourceBlock)
       : sourceBlock;
   return (
     <StaticCard

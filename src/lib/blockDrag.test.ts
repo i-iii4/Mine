@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import type { LightBlock } from "@/types";
+import type { IndexedBlock, LightBlock } from "@/types";
 import {
+  isDropOnSourceCollection,
+  lightBlockFromIndexed,
   resolveBlockDragBlocks,
   resolveBlockDragSlugs,
   uniqueDragBlocks,
@@ -69,6 +71,37 @@ describe("block drag helpers", () => {
       dragBlocks: [alpha, beta, alpha],
     };
     expect(resolveBlockDragBlocks("alpha", data, [])).toEqual([alpha, beta]);
+  });
+
+  it("knows a card dropped back on the collection whose row it came from", () => {
+    const fromAlpha: Partial<BlockDragData> = { type: "block", slug: "alpha", sourceTag: "alpha-tag" };
+    expect(isDropOnSourceCollection(fromAlpha, "tag:alpha-tag")).toBe(true);
+    expect(isDropOnSourceCollection(fromAlpha, "tag:beta-tag")).toBe(false);
+    expect(isDropOnSourceCollection(fromAlpha, "create-channel")).toBe(false);
+    // A feed card and a card from Everything name no collection.
+    expect(isDropOnSourceCollection({ type: "block", slug: "alpha" }, "tag:alpha-tag")).toBe(false);
+    expect(isDropOnSourceCollection(undefined, "tag:alpha-tag")).toBe(false);
+  });
+
+  it("gives a card read in full the feed's shape", () => {
+    const full = {
+      ...block("alpha"),
+      content_heading: null,
+      display_title: null,
+      fallback_label: "alpha",
+      preview_text: null,
+      thumb_format: null,
+      thumb_mtime: 0,
+      related_notes: [],
+      body_hash: null,
+      origin: null,
+      index_warning: null,
+      tags: ["alpha-tag", "beta-tag"],
+    } as IndexedBlock;
+    const light = lightBlockFromIndexed(full);
+    expect(light.collections).toEqual(["alpha-tag", "beta-tag"]);
+    expect(light.search_match).toBeNull();
+    expect(light.slug).toBe("alpha");
   });
 
   it("can carry a clear-selection callback for ungrouped drags", () => {

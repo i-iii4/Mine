@@ -5,7 +5,7 @@ import { isTabVisible, setTabVisible } from "@/lib/tabVisibility";
 import { TAB_VIEW_REPORT_DEBOUNCE_MS } from "@/lib/tabPage";
 import { useThumbnailUpgrade } from "@/hooks/useThumbnailUpgrade";
 import type { ReactNode } from "react";
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act, render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { isTauri } from "@tauri-apps/api/core";
@@ -71,6 +71,7 @@ const commandMocks = vi.hoisted(() => ({
   deleteBlocks: vi.fn<(slugs: string[]) => Promise<number>>(),
   mergeBlocks: vi.fn<(orderedSlugs: string[]) => Promise<unknown>>(),
   getBlock: vi.fn(),
+  addTag: vi.fn(async (_slug: string, _tag: string) => undefined),
   extractInlineMedia: vi.fn(),
   extractTextSelection: vi.fn(),
   deleteTextSelection: vi.fn(),
@@ -145,7 +146,7 @@ vi.mock("@/lib/commands", () => ({
   checkCollectionName: vi.fn(async () => null),
   renameBlockFile: commandMocks.renameBlockFile,
   deleteTagFromAll: vi.fn(),
-  addTag: vi.fn(),
+  addTag: commandMocks.addTag,
   removeTag: vi.fn(),
   prepareDeleteBlock: commandMocks.prepareDeleteBlock,
   deleteBlock: commandMocks.deleteBlock,
@@ -249,6 +250,9 @@ vi.mock("@/components/SidebarResizeHandle", () => ({
 // The feed scrolled to its end: like the real Grid there, the mock asks for the
 // next page whenever there is more and nothing is loading.
 const gridScroll = vi.hoisted(() => ({ atEnd: false }));
+
+// The card thumbnails the Sidebar mock shows in its collection rows.
+const sidebarMockState = vi.hoisted(() => ({ thumbnails: [] as Array<{ tag: string; slug: string }> }));
 
 vi.mock("@/components/Grid", async () => {
   const { useEffect } = await vi.importActual<typeof import("react")>("react");
@@ -437,17 +441,39 @@ vi.mock("@/components/ActionButton", () => ({
 
 vi.mock("@/components/Sidebar", async () => {
   const { Link } = await vi.importActual<typeof import("react-router")>("react-router");
+  const { useDraggable, useDroppable } = await vi.importActual<typeof import("@dnd-kit/core")>("@dnd-kit/core");
+  /// A collection row as the real one takes a drop: `tag:<name>`, marked for
+  /// the pointer's hit test (`sidebarDropIdFromPoint`).
+  function MockCollectionRow({ tag, children }: { tag: string; children: ReactNode }) {
+    const { setNodeRef } = useDroppable({ id: `tag:${tag}` });
+    return (
+      <div ref={setNodeRef} data-sidebar-row="" data-sidebar-row-key={`tag:${tag}`}>
+        {children}
+      </div>
+    );
+  }
+  /// A strip thumbnail as the real Sidebar drags it (Sidebar.test.tsx checks
+  /// that shape): only the card's slug and the row's collection.
+  function MockThumbnail({ tag, slug }: { tag: string; slug: string }) {
+    const { listeners, setNodeRef } = useDraggable({
+      id: `sidebar-thumbnail:tag:${tag}:${slug}:0`,
+      data: { type: "block", slug, sourceTag: tag },
+    });
+    return <span ref={setNodeRef} {...listeners} data-sidebar-mock-thumbnail={slug} />;
+  }
   return {
     Sidebar: ({
       orderedTags,
       totalBlocks,
       searchQuery = "",
       topRow = null,
+      isDropDragging = false,
     }: {
       orderedTags: Array<{ tag: string; count: number }>;
       totalBlocks: number;
       searchQuery?: string;
       topRow?: ReactNode;
+      isDropDragging?: boolean;
     }) => {
       const normalizedSearchQuery = searchQuery.trim().toLowerCase();
       const showEverything = !normalizedSearchQuery
@@ -455,15 +481,22 @@ vi.mock("@/components/Sidebar", async () => {
         || "__all__".includes(normalizedSearchQuery);
 
       return (
-        <nav data-sidebar-mock="">
+        <nav data-sidebar-mock="" data-sidebar-mock-drop-dragging={String(isDropDragging)}>
           {topRow}
           {showEverything && <Link to="/">Everything {totalBlocks}</Link>}
           {orderedTags
             .filter((tag) => !normalizedSearchQuery || tag.tag.toLowerCase().includes(normalizedSearchQuery))
             .map((tag) => (
-              <Link key={tag.tag} to={`/channel/${encodeURIComponent(tag.tag)}`}>
-                {tag.tag}
-              </Link>
+              <MockCollectionRow key={tag.tag} tag={tag.tag}>
+                <Link to={`/channel/${encodeURIComponent(tag.tag)}`}>
+                  {tag.tag}
+                </Link>
+                {sidebarMockState.thumbnails
+                  .filter((thumbnail) => thumbnail.tag === tag.tag)
+                  .map((thumbnail) => (
+                    <MockThumbnail key={thumbnail.slug} tag={thumbnail.tag} slug={thumbnail.slug} />
+                  ))}
+              </MockCollectionRow>
             ))}
         </nav>
       );
@@ -543,6 +576,7 @@ describe("AppWithVault", () => {
     vi.clearAllMocks();
     commandMocks.gridPlaces.length = 0;
     gridScroll.atEnd = false;
+    sidebarMockState.thumbnails = [];
     commandMocks.getGridRows.mockResolvedValue({ path: "/vault", generation: 1, blocks: [] });
     vi.mocked(isTauri).mockReturnValue(false);
     commandMocks.getTabBootstrap.mockResolvedValue(null);
@@ -1865,6 +1899,128 @@ describe("AppWithVault", () => {
     );
     // The row's own content comes back: Grid and Graph, no count.
     expect(within(secondaryContentSegment!).getByRole("tablist", { name: "View mode" })).toBeInTheDocument();
+  });
+
+  describe("a sidebar thumbnail dragged to a collection (SPEC_FRONTEND.md, «Перетаскивание миниатюры»)", () => {
+    /// The app's drag threshold, the feed card's.
+    const DRAG_DISTANCE_PX = 8;
+    /// dnd-kit drops a finished drag's document listeners, the click blocker
+    /// among them, this long after the release.
+    const DND_KIT_LISTENER_RELEASE_MS = 50;
+    /// What the pointer's hit test finds (jsdom has no layout to ask).
+    let elementsUnderPointer: Element[] = [];
+
+    beforeEach(() => {
+      // A card in alpha's strip that the feed does not hold.
+      sidebarMockState.thumbnails = [{ tag: "alpha", slug: "gamma-card" }];
+      elementsUnderPointer = [];
+      Object.defineProperty(document, "elementsFromPoint", {
+        configurable: true,
+        value: () => elementsUnderPointer,
+      });
+    });
+
+    afterEach(async () => {
+      fireEvent.pointerUp(document, { isPrimary: true });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, DND_KIT_LISTENER_RELEASE_MS + 1));
+      });
+      Reflect.deleteProperty(document, "elementsFromPoint");
+    });
+
+    async function renderWithThumbnail() {
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+      return waitFor(() => {
+        const thumbnail = document.querySelector('[data-sidebar-mock-thumbnail="gamma-card"]');
+        expect(thumbnail).not.toBeNull();
+        return thumbnail as HTMLElement;
+      });
+    }
+
+    const sidebar = () => document.querySelector("[data-sidebar-mock]") as HTMLElement;
+
+    function pickUp(thumbnail: HTMLElement) {
+      fireEvent.pointerDown(thumbnail, { isPrimary: true, button: 0, clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(document, { isPrimary: true, clientX: 10 + DRAG_DISTANCE_PX + 4, clientY: 10 });
+    }
+
+    function dropOn(tag: string) {
+      elementsUnderPointer = [document.querySelector(`[data-sidebar-row-key="tag:${tag}"]`)!];
+      fireEvent.pointerMove(document, { isPrimary: true, clientX: 40, clientY: 12 });
+      fireEvent.pointerUp(document, { isPrimary: true, clientX: 40, clientY: 12 });
+    }
+
+    it("travels as the feed's card and connects it to the collection it is dropped on", async () => {
+      const read = deferred<IndexedBlock>();
+      commandMocks.getBlock.mockImplementation(async (slug: string) => (
+        slug === "gamma-card" ? read.promise : indexedBlock(1, slug, slug)
+      ));
+      const thumbnail = await renderWithThumbnail();
+
+      pickUp(thumbnail);
+      // The sidebar takes the drop from the first frame, before the card is read.
+      expect(sidebar()).toHaveAttribute("data-sidebar-mock-drop-dragging", "true");
+      expect(commandMocks.getBlock).toHaveBeenCalledWith("gamma-card");
+      expect(document.querySelector("[data-card-preview]")).toBeNull();
+
+      await act(async () => {
+        read.resolve(indexedBlock(7, "gamma-card"));
+        await read.promise;
+      });
+      await waitFor(() => expect(document.querySelector("[data-card-preview]")).not.toBeNull());
+
+      dropOn("beta");
+      await waitFor(() => expect(commandMocks.addTag).toHaveBeenCalledWith("gamma-card", "beta"));
+      expect(sidebar()).toHaveAttribute("data-sidebar-mock-drop-dragging", "false");
+    });
+
+    it("changes nothing when dropped back on its own collection", async () => {
+      const thumbnail = await renderWithThumbnail();
+
+      pickUp(thumbnail);
+      dropOn("alpha");
+
+      expect(sidebar()).toHaveAttribute("data-sidebar-mock-drop-dragging", "false");
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(commandMocks.addTag).not.toHaveBeenCalled();
+    });
+
+    it("keeps a card read that lands after its drag ended out of the next drag", async () => {
+      sidebarMockState.thumbnails = [
+        { tag: "alpha", slug: "gamma-card" },
+        { tag: "beta", slug: "delta-card" },
+      ];
+      const read = deferred<IndexedBlock>();
+      commandMocks.getBlock.mockImplementation(async (slug: string) => (
+        slug === "gamma-card" ? read.promise : indexedBlock(8, slug, slug)
+      ));
+      const gamma = await renderWithThumbnail();
+
+      pickUp(gamma);
+      fireEvent.pointerUp(document, { isPrimary: true, clientX: 22, clientY: 10 });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, DND_KIT_LISTENER_RELEASE_MS + 1));
+      });
+      pickUp(document.querySelector('[data-sidebar-mock-thumbnail="delta-card"]') as HTMLElement);
+      await waitFor(() => {
+        expect(document.querySelector("[data-card-preview]")).toHaveTextContent("delta-card");
+      });
+
+      await act(async () => {
+        read.resolve(indexedBlock(7, "gamma-card"));
+        await read.promise;
+      });
+
+      expect(document.querySelector("[data-card-preview]")).toHaveTextContent("delta-card");
+      expect(document.querySelector("[data-card-preview]")).not.toHaveTextContent("gamma-card");
+    });
   });
 
   describe("the top rows (DESIGN_SYSTEM.md, «Верхние ряды»)", () => {

@@ -1,12 +1,38 @@
-import type { LightBlock } from "@/types";
+import type { IndexedBlock, LightBlock } from "@/types";
 
 export interface BlockDragData {
   type: "block";
   slug: string;
-  block: LightBlock;
+  /** The card itself. A source that shows only a thumbnail (a sidebar row's
+   *  strip) leaves it out; the drag then takes the card from the feed or reads
+   *  it by its slug (SPEC_FRONTEND.md, «Перетаскивание миниатюры»). */
+  block?: LightBlock;
   dragSlugs?: string[];
   dragBlocks?: LightBlock[];
   clearSelectionOnDragStart?: () => void;
+  /** The collection whose sidebar row the card was taken from. */
+  sourceTag?: string;
+}
+
+/**
+ * Whether a card is dropped back on the collection whose row it was taken
+ * from. It is already there, so the drop changes nothing.
+ */
+export function isDropOnSourceCollection(
+  data: Partial<BlockDragData> | undefined,
+  overId: string,
+): boolean {
+  return data?.type === "block"
+    && data.sourceTag !== undefined
+    && overId === `tag:${data.sourceTag}`;
+}
+
+/**
+ * A card read in full, in the shape the feed draws: the full block names its
+ * collections `tags` and carries no search match.
+ */
+export function lightBlockFromIndexed(block: IndexedBlock): LightBlock {
+  return { ...block, search_match: null, collections: block.tags };
 }
 
 export function uniqueDragSlugs(slugs: readonly string[]): string[] {
