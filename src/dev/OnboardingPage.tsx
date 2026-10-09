@@ -451,7 +451,9 @@ function Between({ children }: { children: ReactNode }) {
 
 export function OnboardingPage() {
   return (
-    <main className="min-h-screen bg-background p-8 text-foreground">
+    // The document never scrolls (global.css, native app scroll contract):
+    // the page is its own scroll pane.
+    <main className="h-full overflow-y-auto bg-background p-8 text-foreground">
       <style>{PICKER_IN_FRAME_CSS}</style>
       <div className="grid gap-12">
         <Step number={1} caption="Первый запуск">

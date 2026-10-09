@@ -262,7 +262,9 @@ const CARD_STATES: { label: string; block: LightBlock }[] = [
 
 export function CloudOpenPage() {
   return (
-    <main className="min-h-screen bg-background p-8 text-foreground">
+    // The document never scrolls (global.css, native app scroll contract):
+    // the page is its own scroll pane.
+    <main className="h-full overflow-y-auto bg-background p-8 text-foreground">
       <div className="grid gap-12">
         <div className="flex flex-wrap items-start gap-6">
           <Labeled label="заметки">
