@@ -2113,6 +2113,19 @@
         "src-tauri/src/domain/windows.rs"
       ],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src-tauri/src/markdown_selection.rs",
+        "src-tauri/src/commands/blocks.rs",
+        "src-tauri/src/lib.rs"
+      ],
+      "requirement": "SPEC_TEXT_SELECTION_EXTRACTION.md## Удаление выделенного текста",
+      "tests": [
+        "src-tauri/src/markdown_selection.rs",
+        "src-tauri/src/commands/blocks.rs"
+      ],
+      "command": "test:rust"
     }
   ],
   "release": null

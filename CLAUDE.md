@@ -131,6 +131,7 @@ local-arena/
 │   │   ├── asset_protocol.rs   # Custom asset:// protocol: async body, respond на main thread, basename fallback
 │   │   ├── bindings.rs         # Rust-owned IPC DTO contract для Specta-экспорта
 │   │   ├── net.rs              # validate_fetch_url и сетевые утилиты (native host, импорт)
+│   │   ├── markdown_selection.rs # Выделение в отрисованном тексте статьи: байты исходника, диапазоны Delete Text
 │   │   ├── util.rs             # Общие утилиты приложения и native host
 │   │   ├── app_config.rs       # Единственный владелец config.json: блокировка, сохранение чужих ключей, поколение
 │   │   ├── space_registry.rs   # Реестр пространств по vault_id, восстановление, поиск переехавшей папки

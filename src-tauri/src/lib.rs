@@ -20,6 +20,7 @@ mod frame_context_menu;
 #[cfg(feature = "desktop")]
 mod import;
 pub mod markdown_images;
+pub mod markdown_selection;
 #[cfg(feature = "desktop")]
 pub mod mcp;
 pub mod net;

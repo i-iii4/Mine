@@ -7,11 +7,60 @@
 первым одинаковым абзацем в другом месте запрещена. При отсутствии диапазона
 допустимо только однозначное совпадение.
 
+Выделение сравнивается с отрисованным текстом заметки, а не с её исходником.
+Ядро читает тело стандартным разбором Markdown (`pulldown_cmark` с теми же
+расширениями, что у отрисовки: таблицы, зачёркивание, сноски, списки задач,
+wikilinks) и помнит для каждого видимого символа его байты в исходнике
+([markdown_selection.rs](src-tauri/src/markdown_selection.rs)). Читатель видит
+`x.com`, в заметке стоит `[x.com](<https://…>)`; картинка и горизонтальная черта
+не дают текста вовсе. Пробельные последовательности сравниваются как один
+пробел, граница блоков читается как пробел.
+
+Выделение начинается внутри переданного блока. Если этот блок является абзацем
+с картинкой без текста, выделение начинается с первого текста после него. Два
+совпадения там, где начинается выделение, считаются неоднозначностью.
+
+Случай 09.10.2026: в склеенной карточке строка `Source:` записана ссылкой
+Markdown ([SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md), «Body Sections»). Выделение
+строк `Source:` и `Author:` вместе искалось в исходнике буквально, не находилось
+и отклонялось с `unsupported_selection_shape`. Формат склейки верен и не
+менялся; исправлено чтение выделения.
+
 Удаление проверяет hash тела и сохраняет frontmatter и остальные байты файла.
-Неоднозначные совпадения внутри одного абзаца и неподдерживаемое выделение
-отклоняются без записи; это не универсальный редактор форматированного Markdown.
-Открытое меню сохраняет снимок при смене фокуса и DOM-выделения. При ошибке
-показывается сообщение, при успехе меню закрывается.
+Неоднозначные совпадения и неподдерживаемое выделение отклоняются без записи;
+это не универсальный редактор форматированного Markdown. Правила удаления
+описаны в разделе «Удаление выделенного текста». Открытое меню сохраняет снимок
+при смене фокуса и DOM-выделения. При ошибке показывается сообщение, при успехе
+меню закрывается.
+
+## Удаление выделенного текста
+
+Delete Text убирает из заметки то, что выделено в отрисованном тексте:
+
+1. Удаляется всё от первого до последнего выделенного символа, вместе с
+   картинками, чертами и разметкой между ними.
+2. Ссылка, wikilink, жирный и курсивный текст, зачёркивание и код в строке,
+   чей видимый текст выделен целиком, удаляются вместе со своей разметкой:
+   пустой `[](…)` в заметке не остаётся.
+3. Если видимый текст такой конструкции выделен частично, её разметка остаётся
+   вокруг невыделенной части: из `[example page](…)` при выделении `exam`
+   остаётся `[ple page](…)`.
+4. Абзацы, заголовки, пункты списков и цитаты, через которые проходит
+   выделение, сливаются, как в текстовом редакторе.
+5. Блок кода, блок HTML и таблицу выделение забирает целиком или не выходит за
+   пределы одного блока кода или одной ячейки. Иначе удаление отклоняется без
+   записи: остаток такого блока отрисовался бы иначе.
+6. Символ, записанный в исходнике иначе (`&amp;`, `\*`), удаляется только
+   целиком.
+7. Картинка до первого или после последнего выделенного символа остаётся:
+   удаляется не больше, чем выделено.
+8. Пустые строки, оставшиеся между блоками, не сжимаются; отрисовка от них не
+   меняется.
+
+Create Element привязывает выделение к первому блоку и тогда, когда дальше оно
+уходит в текст, который ядро читает иначе, чем отрисовка (номер сноски):
+достаточно, чтобы часть выделения до границы блока совпала с концом текста
+блока или чтобы первые слова выделения стояли в блоке буквально.
 
 Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
@@ -258,8 +307,9 @@ re-read the file and verify the hash/range before writing.
    return a stale-selection error.
 4. Verify `first_block_start..first_block_end` identifies a supported Markdown
    block; if no range is provided, locate an unambiguous `selected_text` in the
-   current source body and use the block containing it. An invalid supplied
-   range must not fall back to a different matching paragraph.
+   rendered text of the current source body and use the block containing it.
+   An invalid supplied range must not fall back to a different matching
+   paragraph.
 5. Reuse an existing block id on that Markdown block, or generate and insert a
    unique block id.
 6. Suppress watcher events for the source file during the in-app source patch.
@@ -379,6 +429,7 @@ The resulting files are useful outside Mine:
 |---|---|
 | source patch | append block id to paragraph, reuse existing id, unique suffix, preserve unrelated bytes |
 | selection validation | empty selection, stale body hash, unsupported code/table/html shapes |
+| rendered selection | selection across links, wikilinks, images and rules; the merged card of 09.10.2026 byte for byte; link selected whole or in part; code block and table cut apart; entity selected whole |
 | block serialization | new card with `Mine Related Notes: [[Source#^id]]` |
 | index | related note with block reference indexed and returned by `get_block` |
 | rename | source rename preserves `#^id` in body links and `Mine Related Notes` |

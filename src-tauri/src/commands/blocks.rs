@@ -28,6 +28,7 @@ use crate::domain::markdown::{
     rename_inline_media_references, retarget_markdown_destinations, retarget_wikilinks,
 };
 use crate::domain::source_patch::apply_block_changes;
+use crate::markdown_selection::{RenderedBody, SelectionMappingError};
 use mine_core::links::{link_file_part, NoteMoves};
 use unicode_normalization::UnicodeNormalization;
 use crate::domain::vault::{
@@ -1847,55 +1848,38 @@ fn delete_text_selection_inner(
         return Err(TextSelectionExtractError::StaleSelection);
     }
 
-    let (block_start, block_end) = validated_source_block_range(
+    let deletions = text_selection_deletion_ranges(
         &source_block.body,
         first_block_start,
         first_block_end,
         selected_text,
     )?;
-    let (selection_start, selection_end) =
-        selected_text_source_span(&source_block.body[block_start..], selected_text)
-            .map(|(start, end)| (block_start + start, block_start + end))
-            .ok_or_else(|| TextSelectionExtractError::UnsupportedSelectionShape {
-                reason: "selected text could not be located in the current source body".to_string(),
-            })?;
-    if selection_start < block_start || selection_start >= block_end {
-        return Err(TextSelectionExtractError::UnsupportedSelectionShape {
-            reason: "selected text does not belong to the provided source block range".to_string(),
-        });
-    }
-    if selection_end < block_end
-        && selected_text_source_span(&source_block.body[selection_end..block_end], selected_text)
-            .is_some()
-    {
-        return Err(TextSelectionExtractError::UnsupportedSelectionShape {
-            reason: "selection is ambiguous inside the source block".into(),
-        });
-    }
 
     let body_start_offset = source_body_start_offset(&content, &source_origin)?;
-    let content_start = body_start_offset
-        .checked_add(selection_start)
-        .ok_or_else(|| TextSelectionExtractError::UnsafeSourcePatch {
-            reason: "source patch start offset overflowed".to_string(),
-        })?;
-    let content_end = body_start_offset
-        .checked_add(selection_end)
-        .ok_or_else(|| TextSelectionExtractError::UnsafeSourcePatch {
-            reason: "source patch end offset overflowed".to_string(),
-        })?;
-    if content_start > content_end
-        || content_end > content.len()
-        || !content.is_char_boundary(content_start)
-        || !content.is_char_boundary(content_end)
-    {
-        return Err(TextSelectionExtractError::UnsafeSourcePatch {
-            reason: "source patch range is not a valid UTF-8 boundary".to_string(),
-        });
-    }
-
     let mut updated = content.clone();
-    updated.replace_range(content_start..content_end, "");
+    // Back to front, so the ranges still ahead keep their offsets.
+    for deletion in deletions.iter().rev() {
+        let content_start = body_start_offset.checked_add(deletion.start).ok_or_else(|| {
+            TextSelectionExtractError::UnsafeSourcePatch {
+                reason: "source patch start offset overflowed".to_string(),
+            }
+        })?;
+        let content_end = body_start_offset.checked_add(deletion.end).ok_or_else(|| {
+            TextSelectionExtractError::UnsafeSourcePatch {
+                reason: "source patch end offset overflowed".to_string(),
+            }
+        })?;
+        if content_start > content_end
+            || content_end > updated.len()
+            || !updated.is_char_boundary(content_start)
+            || !updated.is_char_boundary(content_end)
+        {
+            return Err(TextSelectionExtractError::UnsafeSourcePatch {
+                reason: "source patch range is not a valid UTF-8 boundary".to_string(),
+            });
+        }
+        updated.replace_range(content_start..content_end, "");
+    }
     let reparsed = parse_markdown_document(&read_slug, &updated, file_saved_at(&source_path))
         .map_err(|e| TextSelectionExtractError::Internal {
             message: format!("failed to parse patched source block: {e}"),
@@ -4423,38 +4407,96 @@ fn validate_inline_media_ref(media_ref: &str) -> Result<(), InlineMediaExtractEr
     Ok(())
 }
 
+/// The first selected block a request names: `None` for `0..0`, which names
+/// none, and an error for a range that is not a block of `body`.
+fn supplied_source_block(
+    body: &str,
+    first_block_start: usize,
+    first_block_end: usize,
+) -> Result<Option<std::ops::Range<usize>>, TextSelectionExtractError> {
+    if first_block_start < first_block_end
+        && first_block_end <= body.len()
+        && body.is_char_boundary(first_block_start)
+        && body.is_char_boundary(first_block_end)
+    {
+        return Ok(Some(first_block_start..first_block_end));
+    }
+    if first_block_start == 0 && first_block_end == 0 {
+        return Ok(None);
+    }
+    Err(TextSelectionExtractError::UnsupportedSelectionShape {
+        reason: "selected text could not be located in the current source body".to_string(),
+    })
+}
+
+fn selection_mapping_error(error: SelectionMappingError) -> TextSelectionExtractError {
+    let reason = match error {
+        SelectionMappingError::NotFound => {
+            "selected text could not be located in the current source body"
+        }
+        SelectionMappingError::Ambiguous => "selection is ambiguous inside the source block",
+        SelectionMappingError::CutsBlock => {
+            "selection cuts a code block, a table or an HTML block apart"
+        }
+    };
+    TextSelectionExtractError::UnsupportedSelectionShape {
+        reason: reason.to_string(),
+    }
+}
+
+/// The source block that anchors an extracted selection.
+///
+/// The selection is read as rendered text (`markdown_selection`), so it may
+/// cross links, images and rules. A selection running past its first block
+/// into text read differently still anchors there, and so does one whose
+/// first words stand in that block as written, the reading before rendered
+/// text existed. A range the selection does not start in is refused, never
+/// replaced by another paragraph with the same text.
 fn validated_source_block_range(
     body: &str,
     first_block_start: usize,
     first_block_end: usize,
     selected_text: &str,
 ) -> Result<(usize, usize), TextSelectionExtractError> {
-    if first_block_start < first_block_end
-        && first_block_end <= body.len()
-        && body.is_char_boundary(first_block_start)
-        && body.is_char_boundary(first_block_end)
-    {
-        if range_matches_selection_start(body, first_block_start, first_block_end, selected_text) {
-            return Ok((first_block_start, first_block_end));
-        }
-        return Err(TextSelectionExtractError::UnsupportedSelectionShape {
-            reason: "selected text does not match the provided source block range".to_string(),
-        });
-    }
-
-    if first_block_start == 0 && first_block_end == 0 {
-        if let Some((selection_start, selection_end)) =
-            selected_text_source_span(body, selected_text)
-        {
-            if selected_text_source_span(&body[selection_end..], selected_text).is_none() {
-                return Ok(markdown_block_range_containing(body, selection_start));
+    let rendered = RenderedBody::parse(body);
+    match supplied_source_block(body, first_block_start, first_block_end)? {
+        Some(block) => {
+            if rendered.starts_in_block(block.clone(), selected_text)
+                || range_matches_selection_start(body, block.start, block.end, selected_text)
+            {
+                Ok((block.start, block.end))
+            } else {
+                Err(TextSelectionExtractError::UnsupportedSelectionShape {
+                    reason: "selected text does not match the provided source block range"
+                        .to_string(),
+                })
             }
         }
+        None => {
+            let selection = rendered
+                .locate(None, selected_text)
+                .map_err(selection_mapping_error)?;
+            Ok(markdown_block_range_containing(body, selection.start))
+        }
     }
+}
 
-    Err(TextSelectionExtractError::UnsupportedSelectionShape {
-        reason: "selected text could not be located in the current source body".to_string(),
-    })
+/// Body ranges, ascending, whose removal deletes the selected rendered text
+/// (SPEC_TEXT_SELECTION_EXTRACTION.md, «Удаление выделенного текста»).
+fn text_selection_deletion_ranges(
+    body: &str,
+    first_block_start: usize,
+    first_block_end: usize,
+    selected_text: &str,
+) -> Result<Vec<std::ops::Range<usize>>, TextSelectionExtractError> {
+    let first_block = supplied_source_block(body, first_block_start, first_block_end)?;
+    let rendered = RenderedBody::parse(body);
+    let selection = rendered
+        .locate(first_block, selected_text)
+        .map_err(selection_mapping_error)?;
+    rendered
+        .deletion_ranges(selection)
+        .map_err(selection_mapping_error)
 }
 
 fn find_selection_start(body: &str, selected_text: &str) -> Option<usize> {
@@ -4473,33 +4515,9 @@ fn find_normalized_selection_start(body: &str, selected_text: &str) -> Option<us
     normalized.offsets.get(char_start).copied()
 }
 
-fn selected_text_source_span(body: &str, selected_text: &str) -> Option<(usize, usize)> {
-    if let Some(start) = body.find(selected_text) {
-        return Some((start, start + selected_text.len()));
-    }
-
-    let needle = normalize_inline_whitespace(selected_text);
-    if needle.is_empty() {
-        return None;
-    }
-    let normalized = normalize_inline_whitespace_with_spans(body);
-    let normalized_start = normalized.text.find(&needle)?;
-    let char_start = normalized.text[..normalized_start].chars().count();
-    let char_count = needle.chars().count();
-    let char_end = char_start.checked_add(char_count)?;
-    let source_start = normalized.spans.get(char_start)?.0;
-    let source_end = normalized.spans.get(char_end.checked_sub(1)?)?.1;
-    Some((source_start, source_end))
-}
-
 struct NormalizedSource {
     text: String,
     offsets: Vec<usize>,
-}
-
-struct NormalizedSpanSource {
-    text: String,
-    spans: Vec<(usize, usize)>,
 }
 
 fn normalize_inline_whitespace_with_offsets(value: &str) -> NormalizedSource {
@@ -4527,37 +4545,6 @@ fn normalize_inline_whitespace_with_offsets(value: &str) -> NormalizedSource {
     }
 
     NormalizedSource { text, offsets }
-}
-
-fn normalize_inline_whitespace_with_spans(value: &str) -> NormalizedSpanSource {
-    let mut text = String::new();
-    let mut spans = Vec::new();
-    let mut pending_space_start: Option<usize> = None;
-    let mut pending_space_end = 0;
-
-    for (offset, ch) in value.char_indices() {
-        let ch_end = offset + ch.len_utf8();
-        if ch.is_whitespace() {
-            if !text.is_empty() {
-                if pending_space_start.is_none() {
-                    pending_space_start = Some(offset);
-                }
-                pending_space_end = ch_end;
-            }
-            continue;
-        }
-
-        if let Some(space_start) = pending_space_start.take() {
-            if !text.ends_with(' ') {
-                text.push(' ');
-                spans.push((space_start, pending_space_end));
-            }
-        }
-        text.push(ch);
-        spans.push((offset, ch_end));
-    }
-
-    NormalizedSpanSource { text, spans }
 }
 
 fn range_matches_selection_start(
@@ -6936,7 +6923,9 @@ mod tests {
             compute_body_hash(&source.body),
         )
         .unwrap();
-        assert_eq!(result.body, "Текст **жирный** и [](https://example.org)");
+        // All of the link's text is selected: the link goes, no empty `[](…)`
+        // stays behind in the note.
+        assert_eq!(result.body, "Текст **жирный** и ");
     }
 
     #[test]
@@ -7016,6 +7005,121 @@ mod tests {
         .unwrap();
 
         assert_eq!(indexed.body, "Alpha  delta.\n\nSecond paragraph.");
+    }
+
+    /// The merged card of 09.10.2026 byte for byte: card merge writes each
+    /// section's `Source:` as a Markdown link, so the rendered text the reader
+    /// selects (`x.com`) is not the text of the note (`[x.com](<…>)`).
+    const MERGED_WOOLROOL_NOTE: &str = "---\nurl: https://x.com/WoolRool/status/1983915769260839212\nsaved_at: 2026-10-09T18:45:39\nsource: card-merge\nauthor: \"@WoolRool\"\n---\n![[(1) WoolRool🔞 (@WoolRool) X.jpg]]\n\nSource: [x.com](<https://x.com/WoolRool/status/1983915769260839212>)\n\nAuthor: @WoolRool\n\n---\n\n![[@WoolRool (image 1).jpg]]\n\nSource: [x.com](<https://x.com/WoolRool/status/2026674550063157523>)\n\nAuthor: @WoolRool";
+    const MERGED_WOOLROOL_SLUG: &str = "Cards/(1) WoolRool🔞 (@WoolRool) X — merged";
+
+    fn merged_woolrool_vault() -> (
+        tempfile::TempDir,
+        tempfile::TempDir,
+        VaultLayout,
+        rusqlite::Connection,
+        String,
+    ) {
+        let (root, derived, vault, conn) = make_vault();
+        std::fs::create_dir_all(vault.root().join("Cards")).unwrap();
+        std::fs::write(vault.block_path(MERGED_WOOLROOL_SLUG), MERGED_WOOLROOL_NOTE).unwrap();
+        let parsed = parse_markdown_document(
+            MERGED_WOOLROOL_SLUG,
+            MERGED_WOOLROOL_NOTE,
+            DateTime::new("2026-10-09T18:45:39Z").unwrap(),
+        )
+        .unwrap();
+        // The hash the index holds for the user's note: the copy is exact.
+        assert_eq!(compute_body_hash(&parsed.block.body), "0add7b01f72bbf09");
+        index::upsert_block(&conn, &parsed.block, Some(vault.root())).unwrap();
+        (root, derived, vault, conn, parsed.block.body)
+    }
+
+    /// Byte range of the `nth` line equal to or starting with `prefix`, the
+    /// range Detail sends for the rendered paragraph of that line.
+    fn line_range(body: &str, prefix: &str, nth: usize) -> (usize, usize) {
+        let mut offset = 0;
+        let mut seen = 0;
+        for line in body.split_inclusive('\n') {
+            let text = line.trim_end_matches('\n');
+            if text.starts_with(prefix) {
+                if seen == nth {
+                    return (offset, offset + text.len());
+                }
+                seen += 1;
+            }
+            offset += line.len();
+        }
+        panic!("no line {nth} starting with {prefix:?}");
+    }
+
+    #[test]
+    fn delete_text_selection_removes_merged_source_and_author_lines() {
+        let (_root, _derived, vault, conn, body) = merged_woolrool_vault();
+        let (start, end) = line_range(&body, "Source:", 0);
+
+        let indexed = delete_text_selection_inner(
+            &conn,
+            &vault,
+            MERGED_WOOLROOL_SLUG.to_string(),
+            "Source: x.com\n\nAuthor: @WoolRool".to_string(),
+            start,
+            end,
+            compute_body_hash(&body),
+        )
+        .unwrap();
+
+        let expected_body = body.replacen(
+            "Source: [x.com](<https://x.com/WoolRool/status/1983915769260839212>)\n\nAuthor: @WoolRool",
+            "",
+            1,
+        );
+        assert_eq!(indexed.body, expected_body);
+        let after = std::fs::read_to_string(vault.block_path(MERGED_WOOLROOL_SLUG)).unwrap();
+        assert_eq!(after, MERGED_WOOLROOL_NOTE.replacen(&body, &expected_body, 1));
+    }
+
+    #[test]
+    fn delete_text_selection_across_merged_sections_removes_rule_and_media_between() {
+        let (_root, _derived, vault, conn, body) = merged_woolrool_vault();
+        let (start, end) = line_range(&body, "Author:", 0);
+
+        let indexed = delete_text_selection_inner(
+            &conn,
+            &vault,
+            MERGED_WOOLROOL_SLUG.to_string(),
+            "Author: @WoolRool\n\nSource: x.com".to_string(),
+            start,
+            end,
+            compute_body_hash(&body),
+        )
+        .unwrap();
+
+        // The rule and the second image lie inside the selection and go with
+        // it; the link the selection covers entirely goes whole.
+        assert_eq!(
+            indexed.body,
+            "![[(1) WoolRool🔞 (@WoolRool) X.jpg]]\n\nSource: [x.com](<https://x.com/WoolRool/status/1983915769260839212>)\n\n\n\nAuthor: @WoolRool"
+        );
+    }
+
+    #[test]
+    fn delete_text_selection_of_one_merged_author_line_still_works() {
+        let (_root, _derived, vault, conn, body) = merged_woolrool_vault();
+        let (start, end) = line_range(&body, "Author:", 1);
+
+        let indexed = delete_text_selection_inner(
+            &conn,
+            &vault,
+            MERGED_WOOLROOL_SLUG.to_string(),
+            "Author: @WoolRool".to_string(),
+            start,
+            end,
+            compute_body_hash(&body),
+        )
+        .unwrap();
+
+        assert_eq!(indexed.body, body[..start]);
     }
 
     #[test]
