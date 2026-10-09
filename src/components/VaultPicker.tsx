@@ -2,14 +2,16 @@
 //
 // One line and one button (SPEC_ONBOARDING.md, О9 to О12, as revised
 // 01.10.2026). The folder chosen in the system dialog is the decision: it opens
-// at once, and what it holds shows as the first index counts out loud (О13).
-// The column has the width and place of that count, so the screen does not
-// jump between the two.
+// at once, and what it holds shows as the first index counts out loud in the
+// notification corner (О13). The screen has the layout of every screen that
+// stands in for the window (ScreenState): the line is its text, with no title,
+// since it says one thing.
 
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { selectVault } from "@/lib/commands";
 import { Button } from "@/components/ui/button";
+import { ScreenState } from "@/components/ScreenState";
 
 interface VaultPickerProps {
   onVaultSelected: (path: string) => void;
@@ -40,21 +42,24 @@ export function VaultPicker({ onVaultSelected, onBack }: VaultPickerProps) {
   };
 
   return (
-    <div className="grid h-screen w-screen place-items-center bg-background" data-vault-picker="">
-      <div className="grid w-80 gap-4">
-        <p className="text-sm text-foreground">Mine keeps your cards as files in a folder.</p>
-        <div className="flex items-center gap-2">
-          <Button onClick={() => void choose()} disabled={loading}>
-            {loading ? "Opening…" : "Choose folder"}
-          </Button>
-          {onBack && (
-            <Button variant="secondary" onClick={onBack} disabled={loading}>
-              Back
+    <div className="grid h-screen w-screen place-items-center bg-background px-[var(--edge-rhythm,32px)]" data-vault-picker="">
+      <ScreenState
+        description="Mine keeps your cards as files in a folder."
+        actions={
+          <>
+            <Button onClick={() => void choose()} disabled={loading}>
+              {loading ? "Opening…" : "Choose folder"}
             </Button>
-          )}
-        </div>
+            {onBack && (
+              <Button variant="secondary" onClick={onBack} disabled={loading}>
+                Back
+              </Button>
+            )}
+          </>
+        }
+      >
         {error && <p className="text-sm text-destructive">{error}</p>}
-      </div>
+      </ScreenState>
     </div>
   );
 }

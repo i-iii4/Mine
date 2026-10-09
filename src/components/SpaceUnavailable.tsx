@@ -13,6 +13,7 @@
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Button } from "@/components/ui/button";
+import { ScreenState } from "@/components/ScreenState";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { forgetUnavailableVault, listSpaces, selectVault } from "@/lib/commands";
 import type { SpaceEntry, UnavailableVaultReason } from "@/types";
@@ -120,68 +121,68 @@ export function SpaceUnavailable({
     <div
       // Fills its container rather than the viewport: the app gives it the
       // whole window, the design-system showcase gives it a box.
-      className="flex size-full min-h-80 items-center justify-center bg-background"
+      className="flex size-full min-h-80 items-center justify-center bg-background px-[var(--edge-rhythm,32px)]"
       data-space-unavailable=""
     >
-      {/* max-w-lg so each variant's action row fits on one line — a wrapped
-          row of buttons reads as two rows of controls, which is not a row. */}
-      <div className="flex max-w-lg flex-col items-start gap-6 text-left">
-        <div className="grid gap-2">
-          <h1 className="text-lg font-semibold text-foreground">
-            {accessDenied ? "No access to the folder" : "Folder unavailable"}
-          </h1>
-          <p className="text-base text-muted-foreground">
-            {/* Only provable claims: "no folder at the path" is the read result,
-                "Mine did not move or delete anything" is a property of the code,
-                and the denial is quoted as the system's, not asserted as state —
-                a PermissionDenied can come from a parent while the folder itself
-                is gone, so "the folder is right here" was never knowledge. */}
-            {accessDenied
-              ? `macOS is not letting Mine read the “${folderName(path)}” folder. Open System Settings, go to Privacy & Security, Files and Folders, and allow access for Mine.`
-              : `There is no “${folderName(path)}” folder at the saved path. This happens when it is renamed, moved or its drive is disconnected. Mine did not move or delete anything.`}
-          </p>
+      {/* The column is as wide as a dialog (ScreenState), so each variant's
+          action row fits on one line: a wrapped row of buttons reads as two
+          rows of controls, which is not a row.
+
+          Only provable claims in the text: "no folder at the path" is the
+          read result, "Mine did not move or delete anything" is a property of
+          the code, and the denial is quoted as the system's, not asserted as
+          state. A PermissionDenied can come from a parent while the folder
+          itself is gone, so "the folder is right here" was never knowledge.
+
+          One primary, the rest secondary, one row per variant. Access denied
+          has one real answer, grant access, so "create new space" is not
+          offered there; forgetting stays as the only way out of the screen. */}
+      <ScreenState
+        title={accessDenied ? "No access to the folder" : "Folder unavailable"}
+        description={accessDenied
+          ? `macOS is not letting Mine read the “${folderName(path)}” folder. Open System Settings, go to Privacy & Security, Files and Folders, and allow access for Mine.`
+          : `There is no “${folderName(path)}” folder at the saved path. This happens when it is renamed, moved or its drive is disconnected. Mine did not move or delete anything.`}
+        detail={
           <p className="font-mono text-sm text-muted-foreground" data-space-unavailable-path>
             {path}
           </p>
-        </div>
-
-        {/* One primary, the rest secondary, one row per variant. Access denied
-            has one real answer — grant access — so "create new space" is not
-            offered there; forgetting stays as the only way out of the screen. */}
-        <div className="flex items-center gap-2">
-          {accessDenied ? (
-            <>
-              <Button
-                onClick={() => void openUrl(PRIVACY_SETTINGS_URL)}
-                disabled={busy}
-                data-space-unavailable-open-settings=""
-              >
-                Open System Settings
-              </Button>
-              <Button variant="secondary" onClick={() => void retry()} disabled={busy}>
-                Try again
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button onClick={() => void locate()} disabled={busy}>
-                Locate folder…
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => (onCreateNew ? onCreateNew() : void locate())}
-                disabled={busy}
-                data-space-unavailable-create=""
-              >
-                Create new space
-              </Button>
-            </>
-          )}
-          <Button variant="secondary" onClick={() => void forget()} disabled={busy}>
-            Forget this space
-          </Button>
-        </div>
-
+        }
+        actions={
+          <>
+            {accessDenied ? (
+              <>
+                <Button
+                  onClick={() => void openUrl(PRIVACY_SETTINGS_URL)}
+                  disabled={busy}
+                  data-space-unavailable-open-settings=""
+                >
+                  Open System Settings
+                </Button>
+                <Button variant="secondary" onClick={() => void retry()} disabled={busy}>
+                  Try again
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button onClick={() => void locate()} disabled={busy}>
+                  Locate folder…
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => (onCreateNew ? onCreateNew() : void locate())}
+                  disabled={busy}
+                  data-space-unavailable-create=""
+                >
+                  Create new space
+                </Button>
+              </>
+            )}
+            <Button variant="secondary" onClick={() => void forget()} disabled={busy}>
+              Forget this space
+            </Button>
+          </>
+        }
+      >
         {/* Missing only: telling someone whose folder is visible but locked to
             "find it" would be noise. "Reading positions" used to be promised
             here — no such feature exists, the line now claims only what the
@@ -229,7 +230,7 @@ export function SpaceUnavailable({
         )}
 
         {error && <p className="text-sm text-destructive">{error}</p>}
-      </div>
+      </ScreenState>
     </div>
   );
 }

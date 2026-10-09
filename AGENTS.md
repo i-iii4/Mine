@@ -242,6 +242,7 @@ local-arena/
 │   │   ├── CloudBadge.tsx      # Метка «содержимое в iCloud» в левом верхнем углу карточки
 │   │   ├── IndexingProgress.tsx # Уведомление о ходе индексации в правом нижнем углу
 │   │   ├── SpaceUnavailable.tsx # Экран недоступной папки: missing и access_denied
+│   │   ├── ScreenState.tsx     # Общая раскладка полноэкранных состояний: колонка, заголовок, текст, кнопки
 │   │   ├── EmptySpaceOnboarding.tsx # Два пути наполнения пустого пространства
 │   │   └── EdgeStatesSection.tsx # Витрина краевых состояний (гейт test:edge-states)
 │   ├── hooks/                  # useSidebarResize, useGridScroll, useChannelPreviewsEvents, useProjectionRevisionOwner, useThumbnailUpgrade и др.

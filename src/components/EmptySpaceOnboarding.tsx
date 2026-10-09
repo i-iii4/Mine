@@ -20,6 +20,7 @@
 import { useState } from "react";
 import { Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ScreenState } from "@/components/ScreenState";
 
 /** How a browser takes the extension while it is not in the store. */
 export const EXTENSION_INSTALL_STEP =
@@ -41,21 +42,17 @@ export function EmptySpaceOnboarding({
   const [stepsOpen, setStepsOpen] = useState(initialStepsOpen);
   return (
     <div
-      className="grid place-items-center"
+      className="grid place-items-center px-[var(--edge-rhythm,32px)]"
       style={{ minHeight: Math.max(320, viewportHeight) }}
       data-empty-space-onboarding=""
     >
       {/* One column, one accent. The two-column arrangement gave the second
           half no action, so it read as an unfinished half of the first; the
           way that needs no button is a line of text, not a column. */}
-      <div className="w-full max-w-md px-8 text-left">
-        <p className="text-lg font-semibold text-foreground">Nothing here yet</p>
-        <p className="mt-1 text-base text-muted-foreground">
-          Everything you save becomes plain files in your folder. The extension
-          brings pages, images and videos straight into this space.
-        </p>
-
-        <div className="mt-6">
+      <ScreenState
+        title="Nothing here yet"
+        description="Everything you save becomes plain files in your folder. The extension brings pages, images and videos straight into this space."
+        actions={
           <Button
             onClick={() => {
               setStepsOpen(true);
@@ -65,18 +62,17 @@ export function EmptySpaceOnboarding({
             <Download className="size-[13px]" />
             Install the extension
           </Button>
-        </div>
-
+        }
+      >
         {stepsOpen && (
-          <p className="mt-3 text-sm text-foreground" role="status" data-empty-space-install-step="">
+          <p className="text-sm text-foreground" role="status" data-empty-space-install-step="">
             {EXTENSION_INSTALL_STEP}
           </p>
         )}
-
-        <p className="mt-4 text-sm text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           Or drag images, videos and documents straight into this window.
         </p>
-      </div>
+      </ScreenState>
     </div>
   );
 }
