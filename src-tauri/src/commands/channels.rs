@@ -221,7 +221,7 @@ pub(crate) fn check_collection_name_inner(
 ) -> Result<(), CommandError> {
     match old_tag {
         Some(old_tag) => CollectionRename::plan(conn, vault, old_tag, new_tag).map(|_| ()),
-        None => new_collection_name(conn, new_tag).map(|_| ()),
+        None => new_collection_name(conn, vault, new_tag).map(|_| ()),
     }
 }
 
@@ -233,7 +233,7 @@ pub(crate) fn create_channel_inner(
     let now = crate::commands::state::now_saved_at();
     let dt = DateTime::new(&now).map_err(|e| CommandError::Internal(e.to_string()))?;
 
-    let tag = new_collection_name(conn, tag)?;
+    let tag = new_collection_name(conn, vault, tag)?;
     // A note of that name elsewhere in the space keeps its name: the new
     // page takes the first free one, so links by name stay unambiguous
     // (SPEC_IDENTITY_ROBUSTNESS.md, «Запись и уникальность имён»).
@@ -572,30 +572,45 @@ fn typed_collection_name(raw: &str) -> Result<String, CommandError> {
 
 /// The name of a new collection, or why it is refused: the shared rules, no
 /// folder, no other collection called that.
-fn new_collection_name(conn: &rusqlite::Connection, raw: &str) -> Result<String, CommandError> {
+fn new_collection_name(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    raw: &str,
+) -> Result<String, CommandError> {
     let name = typed_collection_name(raw)?;
     if name.contains('/') {
         return Err(CommandError::NameRefused(
             "A new collection cannot be in a folder: type its name without /.".into(),
         ));
     }
-    refuse_collection_called(conn, &name, None)?;
+    refuse_collection_called(conn, vault, &name, None)?;
     Ok(name)
 }
 
 /// Refuses `name` when another collection is called that, letter case aside
 /// (Obsidian finds a note by its name in any case). `renamed` is the
 /// collection being renamed: its own name is not in the way.
+///
+/// A collection is its page (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К1): an
+/// index row whose page is gone from disk holds no name. Such a row lasts
+/// while no watcher saw the page go: for the CLI and the MCP with the app
+/// closed, in the app until its watcher hears of it. Only a row with the
+/// name sends the check to the disk; a page that cannot be read keeps the
+/// name taken.
 fn refuse_collection_called(
     conn: &rusqlite::Connection,
+    vault: &VaultLayout,
     name: &str,
     renamed: Option<&str>,
 ) -> Result<(), CommandError> {
     let lowered = name.to_lowercase();
-    let taken = index::list_channels(conn)?
-        .iter()
-        .any(|channel| Some(channel.tag.as_str()) != renamed && channel.tag.to_lowercase() == lowered);
-    if taken {
+    for channel in index::list_channels(conn)? {
+        if Some(channel.tag.as_str()) == renamed || channel.tag.to_lowercase() != lowered {
+            continue;
+        }
+        if matches!(collection_pages_on_disk(vault, &channel.tag), Ok(pages) if pages.is_empty()) {
+            continue;
+        }
         return Err(CommandError::NameRefused(format!(
             "A collection named \"{}\" already exists.",
             name.rsplit('/').next().unwrap_or(name)
@@ -659,7 +674,7 @@ impl CollectionRename {
                 page_move: None,
             });
         }
-        refuse_collection_called(conn, &new, Some(&old))?;
+        refuse_collection_called(conn, vault, &new, Some(&old))?;
 
         // Rename in place: a collection that lives in its own folder must
         // stay there, so the new page is written beside the old one rather
@@ -874,13 +889,13 @@ struct CollectionPage {
     read: Vec<u8>,
 }
 
-/// Resolve a collection mutation to one source page. A bare name shared by
-/// multiple collection pages is ambiguous and must not mutate either page.
-fn collection_document_for_mutation(
-    conn: &rusqlite::Connection,
+/// The collection pages on disk `collection_ref` can name: the notes with
+/// its file name (its path, for a path-qualified one) and `type: channel`,
+/// found by the files, not by the index.
+fn collection_pages_on_disk(
     vault: &VaultLayout,
     collection_ref: &str,
-) -> Result<Option<CollectionPage>, CommandError> {
+) -> Result<Vec<CollectionPage>, CommandError> {
     let candidates =
         crate::storage::media_refs::collection_document_candidates(vault, collection_ref).map_err(
             |error| CommandError::Internal(format!("find collection documents: {error}")),
@@ -900,6 +915,17 @@ fn collection_document_for_mutation(
             });
         }
     }
+    Ok(pages)
+}
+
+/// Resolve a collection mutation to one source page. A bare name shared by
+/// multiple collection pages is ambiguous and must not mutate either page.
+fn collection_document_for_mutation(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    collection_ref: &str,
+) -> Result<Option<CollectionPage>, CommandError> {
+    let mut pages = collection_pages_on_disk(vault, collection_ref)?;
     if let Some(source_slug) = index::channel_source_slug(conn, collection_ref)? {
         if let Some(position) = pages.iter().position(|page| page.slug == source_slug) {
             return Ok(Some(pages.swap_remove(position)));
@@ -953,7 +979,7 @@ pub(crate) fn import_collection(
     {
         return Ok(ImportCollection::Page(collection_ref));
     }
-    Ok(ImportCollection::Create(new_collection_name(conn, name)?))
+    Ok(ImportCollection::Create(new_collection_name(conn, vault, name)?))
 }
 
 /// The one check every path that writes a new link into `Mine Collections`
@@ -1531,6 +1557,40 @@ mod tests {
 
         assert_eq!(create(" Books.md ").unwrap().tag, "Books");
         assert!(vault.block_path("Collections/Books").exists());
+    }
+
+    /// SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К1 (10.10.2026): an index row whose
+    /// page left while no watcher saw it holds no name. The name check and
+    /// the creation take the name again and write the page under it, not
+    /// under a free one; a page that is there keeps refusing it, in any case.
+    #[test]
+    fn a_collection_whose_page_left_unwatched_can_be_created_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = standard_space(dir.path());
+        std::fs::write(vault.block_path("Collections/Photos"), WRITTEN_PAGE).unwrap();
+        let state = app_state(&vault);
+        let main_space = state.space_for("main").expect("main tab");
+        let guard = main_space.vault_state.lock().unwrap();
+        let vs = guard.as_ref().unwrap();
+        assert_eq!(
+            refusal(create_channel_inner(&vs.conn, &vs.vault, "Photos")),
+            "A collection named \"Photos\" already exists."
+        );
+
+        std::fs::remove_file(vault.block_path("Collections/Photos")).unwrap();
+        assert!(index::list_channels(&vs.conn).unwrap().iter().any(|channel| channel.tag == "Photos"));
+        assert!(check_collection_name_inner(&vs.conn, &vs.vault, None, "Photos").is_ok());
+        assert!(check_collection_name_inner(&vs.conn, &vs.vault, None, "photos").is_ok());
+        assert_eq!(create_channel_inner(&vs.conn, &vs.vault, "Photos").unwrap().tag, "Photos");
+        let page = std::fs::read_to_string(vault.block_path("Collections/Photos")).unwrap();
+        assert!(page.contains("type: channel"), "{page}");
+
+        let before = space_files(&vault);
+        assert_eq!(
+            refusal(create_channel_inner(&vs.conn, &vs.vault, "photos")),
+            "A collection named \"photos\" already exists."
+        );
+        assert_eq!(space_files(&vault), before);
     }
 
     /// 05.10.2026: a rename to a name a card already has in the page's folder

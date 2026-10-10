@@ -1237,8 +1237,11 @@ fn handle_list_channels(vault: &VaultLayout) {
 /// The popup needs collection names and card counts, and the index has both
 /// (SPEC_CLIPPER.md, К3). The answer never waits for the space: no source
 /// pass, no reading of card files, which on an iCloud space would wait for
-/// every card to download. Without a finished index the names come from the
-/// collections folder listing, counts are unknown and `indexing` is set.
+/// every card to download. Only the collection pages the index names are
+/// looked at, and one iCloud keeps off this Mac is not read
+/// ([`collection_page_on_disk`]). Without a finished index the names come
+/// from the collections folder listing, counts are unknown and `indexing` is
+/// set.
 fn list_channels_response(vault: &VaultLayout) -> serde_json::Value {
     match read_indexed_channels(vault) {
         Ok(Some(channels)) => serde_json::json!({ "ok": true, "channels": channels }),
@@ -1270,10 +1273,22 @@ fn read_indexed_channels(vault: &VaultLayout) -> anyhow::Result<Option<Vec<Chann
     if !db::index_is_ready(&conn)? {
         return Ok(None);
     }
-    Ok(Some(merge_channels_and_tags(
-        index::list_channels(&conn)?,
-        index::get_all_tags(&conn)?,
-    )))
+    // A row is where to look for the page, not the page: one removed while
+    // no watcher saw it leaves its row behind, and is not offered
+    // (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К1).
+    let indexed = index::channel_page_slugs(&conn)?;
+    let channels = index::list_channels(&conn)?
+        .into_iter()
+        .filter(|channel| {
+            collection_page_on_disk(
+                vault,
+                &channel.tag,
+                indexed.get(&channel.tag).map(String::as_str),
+                CloudRead::NoWait,
+            )
+        })
+        .collect();
+    Ok(Some(merge_channels_and_tags(channels, index::get_all_tags(&conn)?)))
 }
 
 /// Collection names from the collections folder: a directory listing, no
@@ -1332,55 +1347,90 @@ fn index_in_background(vault: &VaultLayout) {
 }
 
 /// The collections among `selected` that have a page, by the facts this
-/// helper can see (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7): a note
-/// `<collections folder>/<name>.md` (`<root>/<name>.md` in a flat space, the
-/// name's own path for a path-qualified one) with `type: channel`, or a
-/// `channels` row of a ready index. The rule over these facts is the core's
-/// (`mine_core::save::require_collection_pages`).
+/// helper can see (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К1, К7): a note with
+/// `type: channel` on disk ([`collection_page_on_disk`]). The rule over these
+/// facts is the core's (`mine_core::save::require_collection_pages`).
 fn collections_with_pages(vault: &VaultLayout, selected: &[String]) -> Vec<String> {
-    let indexed = match indexed_collection_pages(vault) {
-        Ok(indexed) => indexed,
-        Err(error) => {
-            host_log(&format!("collection pages: the index cannot be read: {error:#}"));
-            HashSet::new()
-        }
-    };
+    let indexed = indexed_page_slugs(vault);
     selected
         .iter()
-        .filter(|collection| indexed.contains(*collection) || collection_page_on_disk(vault, collection))
+        .filter(|collection| {
+            let collection_ref = normalize_collection_ref(collection);
+            collection_page_on_disk(
+                vault,
+                &collection_ref,
+                indexed.get(&collection_ref).map(String::as_str),
+                CloudRead::Wait,
+            )
+        })
         .cloned()
         .collect()
 }
 
-/// The collection pages of a ready index; none while there is no index.
-fn indexed_collection_pages(vault: &VaultLayout) -> anyhow::Result<HashSet<String>> {
-    let Some(selected) = db::existing_selected_index(vault)? else {
-        return Ok(HashSet::new());
+/// Where a ready index last saw each collection page
+/// ([`index::channel_page_slugs`]); none while there is no ready index, or
+/// when it cannot be read: the disk then answers alone.
+fn indexed_page_slugs(vault: &VaultLayout) -> HashMap<String, String> {
+    let read = || -> anyhow::Result<HashMap<String, String>> {
+        let Some(selected) = db::existing_selected_index(vault)? else {
+            return Ok(HashMap::new());
+        };
+        let conn = db::open_read_only(&selected.index_db_path())?;
+        if !db::index_is_ready(&conn)? {
+            return Ok(HashMap::new());
+        }
+        index::channel_page_slugs(&conn)
     };
-    let conn = db::open_read_only(&selected.index_db_path())?;
-    if !db::index_is_ready(&conn)? {
-        return Ok(HashSet::new());
-    }
-    Ok(index::list_channels(&conn)?.into_iter().map(|channel| channel.tag).collect())
+    read().unwrap_or_else(|error| {
+        host_log(&format!("collection pages: the index cannot be read: {error:#}"));
+        HashMap::new()
+    })
 }
 
-/// Whether the page of `collection` is on disk where a new collection page
-/// of the space goes: a note with `type: channel`.
-fn collection_page_on_disk(vault: &VaultLayout, collection: &str) -> bool {
-    let mut slugs = vec![vault.new_collection_slug(collection)];
+/// Whether the page of `collection` is on disk: a note with `type: channel`
+/// where the index last saw it (`indexed`), where a new collection page of
+/// the space goes, or at the name's own path for a path-qualified name. The
+/// index only says where to look: its row outlives a page removed while no
+/// watcher saw it (a space the app has not open), and a collection is its
+/// page (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К1).
+///
+/// With [`CloudRead::NoWait`] a note whose contents iCloud keeps off this
+/// Mac counts without being read: its type is known only by downloading it,
+/// and the clipper's list never waits for that. The Save reads it
+/// ([`CloudRead::Wait`]).
+fn collection_page_on_disk(
+    vault: &VaultLayout,
+    collection: &str,
+    indexed: Option<&str>,
+    read: CloudRead,
+) -> bool {
+    let mut slugs: Vec<String> = indexed.map(str::to_string).into_iter().collect();
+    slugs.push(vault.new_collection_slug(collection));
     if collection.contains('/') {
         slugs.push(collection.to_string());
     }
-    slugs.iter().any(|slug| {
-        let Ok(content) = std::fs::read_to_string(vault.block_path(slug)) else {
-            return false;
-        };
-        let Ok(read_at) = DateTime::new(&now_saved_at()) else {
-            return false;
-        };
-        parse_markdown_document(slug, &content, read_at)
-            .is_ok_and(|parsed| parsed.block.frontmatter.block_type == BlockType::Channel)
-    })
+    slugs
+        .iter()
+        .filter(|slug| mine_core::domain::vault::validate_slug(slug).is_ok())
+        .any(|slug| {
+            let path = vault.block_path(slug);
+            if !path.is_file() {
+                return false;
+            }
+            if read == CloudRead::NoWait
+                && mine_lib::storage::media_dimensions::is_content_offloaded(&path)
+            {
+                return true;
+            }
+            let Ok(content) = std::fs::read_to_string(&path) else {
+                return false;
+            };
+            let Ok(read_at) = DateTime::new(&now_saved_at()) else {
+                return false;
+            };
+            parse_markdown_document(slug, &content, read_at)
+                .is_ok_and(|parsed| parsed.block.frontmatter.block_type == BlockType::Channel)
+        })
 }
 
 /// The collections the clipper offers: the collection pages, in the sidebar's
@@ -2006,12 +2056,15 @@ fn handle_create_channel(vault: &VaultLayout, params: serde_json::Value) {
         Ok(tag) => tag,
         Err(error) => return send_error(&format!("invalid collection ref: {error}")),
     };
-    match index::list_channels(&conn) {
-        Ok(channels) if channels.iter().any(|channel| channel.tag == tag) => {
-            return send_error(&format!("channel already exists: {tag}"));
-        }
-        Ok(_) => {}
+    // Whether the collection is there is the disk's answer: a page removed
+    // while no watcher saw it leaves its index row behind, and its name is
+    // free again (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К1).
+    let indexed = match index::channel_page_slugs(&conn) {
+        Ok(indexed) => indexed,
         Err(error) => return send_error(&format!("failed to inspect collections: {error}")),
+    };
+    if collection_page_on_disk(vault, &tag, indexed.get(&tag).map(String::as_str), CloudRead::Wait) {
+        return send_error(&format!("channel already exists: {tag}"));
     }
 
     let existing = match files::scan_vault_file_paths(vault) {
@@ -2039,7 +2092,9 @@ fn handle_create_channel(vault: &VaultLayout, params: serde_json::Value) {
         log::warn!("channel file created; identity enrollment deferred: {error:#}");
     }
 
-    if let Err(e) = index::upsert_channel(&conn, &channel) {
+    // The row names the page just written, also over the row of a page that
+    // left: the next look finds this one.
+    if let Err(e) = index::upsert_channel_with_source(&conn, &channel, Some(block.slug.as_str())) {
         return send_error(&format!("failed to create channel: {e}"));
     }
 
@@ -3868,20 +3923,166 @@ mod tests {
     }
 
     /// К7: a page the ready index knows counts even where a new page would
-    /// not be written (a legacy page at the root of a laid-out space).
+    /// not be written (a legacy page at the root of a laid-out space): the
+    /// index says where the file is. Without the file the row counts for
+    /// nothing.
     #[test]
     fn a_save_finds_a_page_through_a_ready_index() {
         let (_tmp, vault) = sc2_temp_vault();
         let vault = vault.with_write_layout(mine_lib::domain::vault::VaultWriteLayout::standard());
         std::fs::write(vault.root().join("Legacy.md"), "---\ntype: channel\n---\n").unwrap();
-        {
-            let (vault, conn, _) = db::open_vault_index(vault.clone()).unwrap();
-            mine_lib::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
-        }
+        ready_index(&vault);
+        assert!(listed_collections(&vault).contains(&"Legacy".to_string()));
         let mut request = sc2_link_request("into-legacy");
         request["tags"] = serde_json::json!(["Legacy"]);
         let response = sc0_save_response(&vault, request);
         assert_eq!(response["outcome"], "committed", "{response}");
+
+        std::fs::remove_file(vault.root().join("Legacy.md")).unwrap();
+        assert_eq!(indexed_collections(&vault), ["Legacy"]);
+        assert!(listed_collections(&vault).is_empty());
+        let mut request = sc2_link_request("into-legacy-gone");
+        request["tags"] = serde_json::json!(["Legacy"]);
+        let response = sc0_save_response(&vault, request);
+        assert_eq!(response["code"], "collection_not_found", "{response}");
+    }
+
+    /// Live acceptance 10.10.2026 (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К1,
+    /// К7): a collection made in the clipper for a space no app watches, its
+    /// page then sent to the Trash. The index keeps the row, since no
+    /// watcher saw the page go, but a row is no page: the Save is refused
+    /// before any effect and the list no longer offers the collection. The
+    /// page back from the Trash, both see it again.
+    #[test]
+    fn a_collection_whose_page_left_unwatched_is_neither_saved_into_nor_listed() {
+        let (_tmp, vault) = sc2_temp_vault();
+        let vault = vault.with_write_layout(mine_lib::domain::vault::VaultWriteLayout::standard());
+        for folder in ["Cards", "Collections"] {
+            std::fs::create_dir_all(vault.root().join(folder)).unwrap();
+        }
+        ready_index(&vault);
+        let created = create_channel_response(&vault, "Проверка 44");
+        assert_eq!(created["ok"], true, "{created}");
+        assert_eq!(created["tag"], "Проверка 44");
+        let page = vault.block_path("Collections/Проверка 44");
+        let page_bytes = std::fs::read(&page).unwrap();
+        assert_eq!(listed_collections(&vault), ["Проверка 44"]);
+
+        std::fs::remove_file(&page).unwrap();
+        assert_eq!(indexed_collections(&vault), ["Проверка 44"]);
+        let files_before = files::scan_vault_file_paths(&vault).unwrap();
+        let mut request = sc2_link_request("into-trashed");
+        request["tags"] = serde_json::json!(["Проверка 44"]);
+        let response = sc0_save_response(&vault, request);
+        assert_eq!(response["ok"], false, "{response}");
+        assert_eq!(response["code"], "collection_not_found");
+        assert_eq!(response["collection"], "Проверка 44");
+        assert_eq!(response["outcome"], "not_committed");
+        assert_eq!(response["terminal_rejected"], true);
+        assert_eq!(files::scan_vault_file_paths(&vault).unwrap(), files_before);
+        assert!(listed_collections(&vault).is_empty());
+
+        std::fs::write(&page, &page_bytes).unwrap();
+        assert_eq!(listed_collections(&vault), ["Проверка 44"]);
+        let mut request = sc2_link_request("into-restored");
+        request["tags"] = serde_json::json!(["Проверка 44"]);
+        let response = sc0_save_response(&vault, request);
+        assert_eq!(response["outcome"], "committed", "{response}");
+        let card = std::fs::read_to_string(vault.block_path(response["slug"].as_str().unwrap())).unwrap();
+        assert!(card.contains("\"[[Проверка 44]]\""), "{card}");
+    }
+
+    /// A note that is no longer a collection page (its `type: channel` taken
+    /// out while no watcher saw it) is no page either: the row of the ready
+    /// index counts for nothing, for the Save and for the list.
+    #[test]
+    fn a_note_that_stopped_being_a_page_is_neither_saved_into_nor_listed() {
+        let (_tmp, vault) = sc2_temp_vault();
+        let vault = vault.with_write_layout(mine_lib::domain::vault::VaultWriteLayout::standard());
+        std::fs::create_dir_all(vault.root().join("Collections")).unwrap();
+        let page = vault.block_path("Collections/Art");
+        std::fs::write(&page, "---\ntype: channel\n---\n").unwrap();
+        ready_index(&vault);
+        assert_eq!(listed_collections(&vault), ["Art"]);
+
+        std::fs::write(&page, "Just a note now\n").unwrap();
+        assert_eq!(indexed_collections(&vault), ["Art"]);
+        assert!(listed_collections(&vault).is_empty());
+        let mut request = sc2_link_request("into-former-page");
+        request["tags"] = serde_json::json!(["Art"]);
+        let response = sc0_save_response(&vault, request);
+        assert_eq!(response["code"], "collection_not_found", "{response}");
+    }
+
+    /// The clipper's `create_channel` asks the disk whether the page is
+    /// there, not the index: a collection whose page left while no watcher
+    /// saw it is created again under its own name, and a page that is there
+    /// still refuses a second one.
+    #[test]
+    fn a_collection_whose_page_left_unwatched_can_be_created_again() {
+        let (_tmp, vault) = sc2_temp_vault();
+        let vault = vault.with_write_layout(mine_lib::domain::vault::VaultWriteLayout::standard());
+        for folder in ["Cards", "Collections"] {
+            std::fs::create_dir_all(vault.root().join(folder)).unwrap();
+        }
+        ready_index(&vault);
+        assert_eq!(create_channel_response(&vault, "Проверка 44")["ok"], true);
+        let page = vault.block_path("Collections/Проверка 44");
+        std::fs::remove_file(&page).unwrap();
+
+        let again = create_channel_response(&vault, "Проверка 44");
+        assert_eq!(again["ok"], true, "{again}");
+        assert_eq!(again["tag"], "Проверка 44");
+        let written = std::fs::read_to_string(&page).unwrap();
+        assert!(written.contains("type: channel"), "{written}");
+        assert_eq!(listed_collections(&vault), ["Проверка 44"]);
+
+        let files_before = files::scan_vault_file_paths(&vault).unwrap();
+        let third = create_channel_response(&vault, "Проверка 44");
+        assert_eq!(third["ok"], false, "{third}");
+        assert!(third["error"].as_str().unwrap().contains("already exists"), "{third}");
+        assert_eq!(files::scan_vault_file_paths(&vault).unwrap(), files_before);
+    }
+
+    /// Build the space's index and mark it ready, as the app or the helper's
+    /// background build leaves it.
+    fn ready_index(vault: &VaultLayout) {
+        let (vault, conn, _) = db::open_vault_index(vault.clone()).unwrap();
+        mine_lib::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        index::backfill_collection_index(&conn, &vault).unwrap();
+    }
+
+    /// The collections the ready index has rows for, whatever the disk holds.
+    fn indexed_collections(vault: &VaultLayout) -> Vec<String> {
+        let selected = db::existing_selected_index(vault).unwrap().expect("a ready index");
+        let conn = db::open_read_only(&selected.index_db_path()).unwrap();
+        index::list_channels(&conn).unwrap().into_iter().map(|channel| channel.tag).collect()
+    }
+
+    /// The collections `list_channels` offers the clipper.
+    fn listed_collections(vault: &VaultLayout) -> Vec<String> {
+        let response = list_channels_response(vault);
+        assert_eq!(response["ok"], true, "{response}");
+        assert!(response.get("indexing").is_none(), "{response}");
+        response["channels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|channel| channel["tag"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    fn create_channel_response(vault: &VaultLayout, tag: &str) -> serde_json::Value {
+        SC0_RESPONSE_CAPTURE.with(|capture| {
+            assert!(capture.borrow().is_none(), "SC0 captures must not nest");
+            *capture.borrow_mut() = Some(Vec::new());
+        });
+        handle_create_channel(vault, serde_json::json!({ "tag": tag }));
+        let responses = SC0_RESPONSE_CAPTURE.with(|capture| {
+            capture.borrow_mut().take().expect("SC0 capture was enabled")
+        });
+        assert_eq!(responses.len(), 1, "create_channel emits exactly one response");
+        serde_json::from_str(&responses[0]).expect("host serializes a valid response")
     }
 
     fn sc2_link_request(id: &str) -> serde_json::Value {

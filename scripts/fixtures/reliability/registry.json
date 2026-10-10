@@ -2290,6 +2290,7 @@
         "src-tauri/src/import/importer.rs",
         "src-tauri/src/mcp.rs",
         "src-tauri/src/storage/block_queries.rs",
+        "src-tauri/src/storage/channel_index.rs",
         "src-tauri/src/storage/graph.rs",
         "src-tauri/src/storage/index.rs",
         "src-tauri/src/storage/search_engine.rs",

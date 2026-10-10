@@ -1817,6 +1817,36 @@ mod mutation_tests {
     /// show it, `connect`, `card create --collection` and
     /// `cards --collection` refuse it with code 4 and write nothing, and
     /// `disconnect` takes the link off.
+    /// SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К1 (10.10.2026): with the app
+    /// closed nothing drops the index row of a page sent to the Trash. The
+    /// row is no page: a connect to it refuses before any write, and
+    /// `collection create` takes the name again.
+    #[test]
+    fn a_collection_whose_page_left_with_the_app_closed_is_no_collection_for_writes() {
+        let (_dir, env, root) = fixture();
+        let out = run(&env, &args(&["collection", "create", "Reading"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        std::fs::remove_file(root.join("Reading.md")).unwrap();
+        let before = space_snapshot(&root);
+
+        let out = run(&env, &args(&["connect", "Cards/plain", "Reading"]));
+        assert_eq!(out.code, EXIT_NOT_FOUND, "{}", out.stderr);
+        let out = run(
+            &env,
+            &args(&["card", "create", "--title", "Into the Trash", "--collection", "Reading"]),
+        );
+        assert_eq!(out.code, EXIT_NOT_FOUND, "{}", out.stderr);
+        assert_eq!(space_snapshot(&root), before);
+
+        let out = run(&env, &args(&["collection", "create", "Reading"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        assert!(out.stdout.contains("created collection Reading\n"), "{}", out.stdout);
+        let page = std::fs::read_to_string(root.join("Reading.md")).unwrap();
+        assert!(page.contains("type: channel"), "{page}");
+        let out = run(&env, &args(&["collection", "create", "Reading"]));
+        assert_ne!(out.code, EXIT_OK, "a page that is there keeps its name");
+    }
+
     #[test]
     fn a_name_without_a_page_is_no_collection_for_the_cli() {
         let (_dir, env, root) = fixture();

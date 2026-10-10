@@ -114,6 +114,19 @@ pub fn channel_source_slug(conn: &Connection, tag: &str) -> Result<Option<String
     Ok(source.flatten())
 }
 
+/// Where the index last saw each collection's page: the collection ref to the
+/// page's slug (`source_slug`, or the ref itself for a row from before that
+/// column). Only where to look: the row outlives a page removed while no
+/// watcher saw it, and a collection is its page, the file
+/// (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К1).
+pub fn channel_page_slugs(conn: &Connection) -> Result<std::collections::HashMap<String, String>> {
+    let mut stmt = conn.prepare("SELECT tag, COALESCE(source_slug, tag) FROM channels")?;
+    let slugs = stmt
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
+        .collect::<std::result::Result<_, _>>()?;
+    Ok(slugs)
+}
+
 pub fn list_channels(conn: &Connection) -> Result<Vec<Channel>> {
     let mut stmt = conn.prepare(
         "SELECT tag, description, color, icon, position, created_at
