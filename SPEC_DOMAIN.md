@@ -28,6 +28,7 @@ collection_ref_from_canonical_value(raw: &str) -> Option<String>
 collection_wikilink_value(collection_ref: &str) -> String
 render_collections(collections: &[String]) -> String
 patch_collections_frontmatter(content: &str, collections: &[String]) -> Result<String, String>
+list_collections(pages: &[CollectionPage], memberships: &[Vec<String>]) -> Vec<CollectionCount>
 ```
 
 ### Behavior
@@ -47,6 +48,14 @@ Mine Collections:
 
 - `patch_collections_frontmatter` preserves user-owned `tags` and unknown YAML
   fields while surgically replacing only `Mine Collections`.
+- Коллекция существует только как страница с `type: channel` (решение
+  пользователя 10.10.2026, [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md),
+  К1 и К9). `list_collections` отдаёт только страницы: в ручном порядке
+  (`position`, затем имя), у каждой счётчик карточек, пустая страница со
+  счётчиком 0. Значение `Mine Collections`, цель которого не совпадает ни с
+  одной страницей, в список не входит и ни в одном счётчике не считается.
+  Часть `named_only` (коллекции, которые называют только карточки) убирается
+  при реализации (PLAN.md, Phase 44).
 
 ## domain/tag
 
@@ -118,8 +127,12 @@ enum TagError {
 
 ## domain/channel
 
-Канал — promoted collection page, отображаемая в боковой панели как постоянный
-пункт навигации.
+Канал это страница коллекции (файл `.md` с `type: channel`) и строка
+бокового меню. Коллекция существует только как такая страница: название в
+`Mine Collections` без страницы каналом не становится и коллекцией не
+считается (решение пользователя 10.10.2026,
+[SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md), К1 и
+К2).
 
 ### Типы
 
@@ -295,7 +308,8 @@ type:image tag:design sunset tokyo
 
 - `type:X` — фильтр по derived card kind. X = media, article, channel; legacy
   aliases image/link/video/file map to media
-- `tag:X` — фильтр по тегу
+- `tag:X`: фильтр по коллекции; учитывается только членство в коллекции со
+  страницей ([SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md), К9)
 - Всё остальное — свободный текст для lexical + semantic search
 - Несколько фильтров одного типа: AND (все должны совпасть)
 - Неизвестные фильтры (например `foo:bar`) — трактуются как текст

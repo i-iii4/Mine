@@ -70,9 +70,15 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_SEARCH.md](SPEC_SE
 |---|---|
 | `mine spaces` | Известные пространства, активное помечено |
 | `mine search <query> [--space P] [--limit N]` | Гибридный поиск, результат со слагом и именем файла |
-| `mine collections [--space P]` | Коллекции со счётчиками |
-| `mine cards --collection C [--limit N --offset K]` | Карточки коллекции |
-| `mine card <slug>` | Полная карточка: frontmatter, body, абсолютные пути медиа |
+| `mine collections [--space P]` | Страницы коллекций со счётчиками карточек; пустая страница со счётчиком 0, имя без страницы не выводится |
+| `mine cards --collection C [--limit N --offset K]` | Карточки коллекции; имя без страницы отвечает кодом 4 |
+| `mine card <slug>` | Полная карточка: frontmatter, body, абсолютные пути медиа; в `collections` только коллекции со страницей |
+
+Коллекция существует только как страница с `type: channel` (решение
+пользователя 10.10.2026, [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md),
+К1, К2 и К9). Ссылку `Mine Collections` на имя без страницы чтения CLI и MCP
+не показывают и не считают; в файле она остаётся. Реализация ждёт команды
+пользователя (PLAN.md, Phase 44).
 
 Согласование с решением 044: в выводе нет поля `type`. Карточка описывается
 содержимым — `body`, список медиа с путями, `url` — и производным
@@ -127,6 +133,20 @@ JSON, и его описание называет `name` именем резул
 **Защищённые поля:** `Mine Collections` — только через connect/disconnect;
 `file` — только профильными медиа-операциями; `saved_at` неизменяем;
 произвольные YAML-ключи писать нельзя.
+
+**Присоединение только к странице (решение 10.10.2026).** `mine connect`,
+инструмент MCP `connect`, `mine card create --collection` и `card_create` с
+`collection` отказывают, если у коллекции нет страницы с `type: channel`:
+новый вариант `MutationError::CollectionNotFound { collection }`, код
+возврата 4, в stderr `no collection "<имя>": its page does not exist; create
+it with mine collection create`, файл карточки не меняется. MCP возвращает
+`isError: true` с этим текстом. Страница ищется тем же поиском, что у
+`mine collection rename` и `delete`. `disconnect` снимает ссылку и без
+страницы. Страницу создают только `mine collection create` и инструмент MCP
+`collection_create`. Контракт: [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md),
+К5, К7 и К8. Сейчас `set_collection_membership` в
+[cli_mutations.rs](src-tauri/src/cli_mutations.rs) пишет ссылку на любое имя
+без проверки; реализация ждёт команды пользователя (PLAN.md, Phase 44).
 
 **Защита тела.** Набор медиа-вставок `![[…]]` до записи обязан совпадать с
 набором после; потеря вставки — отказ с перечнем потерянных, сознательное
@@ -231,6 +251,12 @@ watcher приложения видит те же изменения и сход
 - MCP: вызов без `space` получает пространство, закреплённое первым, вызов
   с `space` действует на названное
   (`a_call_without_a_space_keeps_the_space_pinned_first` в `mcp.rs`);
+- коллекция только со страницей (решение 10.10.2026, Phase 44): фикстура
+  получает страницу `Nature.md` с `type: channel`, на которую сейчас ссылается
+  карточка без страницы; `connect`, `card create --collection` и
+  `cards --collection` по имени без страницы отвечают кодом 4 и ничего не
+  пишут; `disconnect` такой ссылки её снимает; `collections` и `card` её не
+  показывают; MCP `connect` к имени без страницы возвращает `isError: true`;
 - параллельный прогон с открытым на запись индексом — покрыт: открытое
   соединение второй стороны и удерживаемая write-транзакция, которую CLI
   пережидает по `busy_timeout`.

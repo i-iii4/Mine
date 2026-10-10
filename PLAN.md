@@ -2652,6 +2652,33 @@ Progress).
 | 43.8 | Переключатели X и Instagram | DONE 10.10.2026 | пункты `Mine on X` и `Mine on Instagram` в меню «…», срабатывают без перезагрузки страницы |
 | 43.9 | Проверки и приёмка | IN PROGRESS | тесты без окна и сборка расширения пройдены, Mine.app пересобран и установлен; живая приёмка за пользователем |
 
+### Phase 44: коллекция только как страница
+
+Решение пользователя 10.10.2026: коллекция существует только как файл `.md`
+с `type: channel`. Ссылку `Mine Collections` на имя без страницы Mine нигде не
+показывает, не считает и не трогает; страницу создают только явные команды;
+`connect` без страницы отказывает. Контракт:
+[SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md),
+раздел «Коллекция существует только как страница» (К1 по К11, проверки);
+решение 055 в [ARCHITECTURE.md](ARCHITECTURE.md). Реализация ждёт отдельной
+команды пользователя. Данные: на 10.10.2026 коллекций без страницы во всех
+трёх пространствах ноль (страниц 30, 4 и 3), миграция не нужна.
+
+| # | Срез | Статус | Содержание |
+|---|---|---|---|
+| 44.1 | Решение и документы | DONE 10.10.2026 | решение записано: SPEC_COLLECTIONS_OBSIDIAN_LINKS (К1 по К11, проверки), SPEC_DOMAIN, SPEC_STORAGE, SPEC_INTEGRATION, SPEC_FRONTEND, SPEC_GRAPH_VIEW, SPEC_CLIPPER, SPEC_AI_ACCESS, SPEC_PRD, SPEC_USECASES, SPEC_CARD_STATES, SPEC_TABS, SPEC_INLINE_MEDIA_EXTRACTION, SPEC_MEDIA_ASSET_ACTIONS, SPEC_TEXT_SELECTION_EXTRACTION, DESIGN_SYSTEM, ARCHITECTURE (055), CLAUDE.md |
+| 44.2 | Членство в индексе | TODO | одно общее условие членства (строка `block_tags` с парой в `channels`) в `block_queries.rs`; его берут `get_all_tags`, `collections_column_sql`, `IndexedBlock.tags`, `list_block_collections`, `list_grid_blocks` и `list_preview_blocks_by_tag` коллекции, `count_current_collection_cards`, фильтр `tag:`; тесты: ссылка без страницы не видна, появление страницы возвращает членство без переиндексации карточки, удаление прячет (К3, К9) |
+| 44.3 | Список коллекций в ядре и помощнике | TODO | `list_collections` в `mine-core` без части `named_only`; `merge_channels_and_tags` в `native_host.rs` без имён из карточек; тест ядра нативно и в WASM, тест помощника (К9) |
+| 44.4 | Перестановка без создания страниц | TODO | `reorder_channels_blocking`: элемент без страницы пропускается; убрать ветку `None if !tag.contains('/')`, `SourceFileWrite::create`, `Channel::new` для отсутствующей строки и документацию «Tags without channel entries are auto-created»; тест: файлы пространства до и после совпадают, позиции страниц записаны (К6) |
+| 44.5 | Присоединение требует страницы: приложение | TODO | `CommandError::CollectionNotFound { collection }` и такой же вариант у `InlineMediaExtractError`, `MediaAssetActionError`, `TextSelectionExtractError`; один помощник проверки через `collection_document_for_mutation` в `add_tag`, `create_block`, `extract_inline_media`, `create_media_asset_card`, `extract_text_selection`; переименование без страницы отвечает тем же вариантом; `remove_tag` без проверки; привязки Specta; тесты отказа и сохранения ссылок без страницы при других записях (К2, К7, К8) |
+| 44.6 | Присоединение требует страницы: CLI и MCP | TODO | `MutationError::CollectionNotFound { collection }`, код 4, проверка в `set_collection_membership` и `card create --collection`; `cards --collection` без страницы отвечает кодом 4; `collections` из страниц со счётчиками, пустая страница со счётчиком 0; `card` без ссылок без страницы; фикстура `cli.rs` получает страницу `Nature.md`, новые тесты CLI и MCP (К7, К9) |
+| 44.7 | Явное создание в выборе коллекций и импорте | TODO | `Create collection` в выборе коллекций карточки и группового выделения: `createChannel`, затем присоединение (`handleCreateTagFromMenu`, `handleCreateTagFromBatchMenu`); импорт Are.na берёт или создаёт страницу до записи карточек, отказ имени в `errors`; тесты (К5) |
+| 44.8 | Интерфейс | TODO | `orderedTags` только из `channels` (часть `noPos` убрана); место коллекции проверяется по `channels`; Reveal in Finder недоступен только до ответа; отказ присоединения перечитывает снимки; тесты Vitest (К9, К10) |
+| 44.9 | Граф | TODO | `build_graph_snapshot`: узлы коллекций только из `channels`, ребро членства только к ним; тест (К9) |
+| 44.10 | Клиппер | TODO | `SaveErrorCode::CollectionNotFound`; проверка страниц выбранных коллекций обоими исполнителями до эффектов; попап показывает причину и перечитывает список; тесты ядра, помощника и `test:clipper-worker` (К7) |
+| 44.11 | Документы и коммит | TODO | статусы в SPEC_COLLECTIONS_OBSIDIAN_LINKS и затронутых спецификациях, PLAN.md, запись DEVLOG в коммите |
+| 44.12 | Живая приёмка | TODO | за пользователем: удалить страницу коллекции в Finder и вернуть её из Корзины; перестановка не создаёт файлов; Reveal in Finder у любой коллекции |
+
 ### Backlog
 
 | Task | Description |

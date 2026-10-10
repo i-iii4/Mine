@@ -46,7 +46,7 @@
 - `SPEC_IDENTITY_ROBUSTNESS.md` — спецификация укрепления filename-based identity: rename detection через content hash, iCloud conflict UX, NFC normalization, semantic filename collision suffix — без служебных id во frontmatter
 - `SPEC_OBSIDIAN_WIKILINKS.md` — inline media в body как Obsidian wikilink `![[name|alt]]`; один canonical syntax на write, оба syntax на read, render preprocessor в frontend, опциональная migration CLI для legacy блоков
 - `SPEC_OBSIDIAN_MARKDOWN_COMPAT.md` — совместимость с обычными Obsidian `.md` без Mine frontmatter: implicit article read-model, optional metadata overlay, no rewrite on read
-- `SPEC_COLLECTIONS_OBSIDIAN_LINKS.md` — implemented migration: collections as Obsidian pages, `Mine Collections` values as quoted wikilinks, legacy formats handled by CLI migration
+- [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_COLLECTIONS_OBSIDIAN_LINKS.md>): коллекции как страницы Obsidian, членство в `Mine Collections` ссылками в кавычках, старые форматы переводит CLI миграции (реализовано); решение 10.10.2026: коллекция существует только как страница с `type: channel`, ссылку на имя без страницы Mine не показывает и не трогает, страницу побочным действием не создаёт, `connect` без страницы отказывает; реализация в Phase 44 ждёт команды пользователя
 - `SPEC_SEARCH.md` — Hybrid Search: FTS5 lexical/alias retrieval, searchable metadata chunks, chunk fuzzy matching, локальные multilingual semantic embeddings (fastembed), deterministic fusion/rerank
 - `SPEC_SEARCH_OVERLAY.md` — поиск по блокам: модальный overlay (`Cmd+F`), список результатов с подсветкой первого совпадения, превью-карточка справа; заменяет невидимый грид-фильтр main search
 - `SPEC_SETTINGS_WINDOW.md` — отдельное окно настроек: Appearance / Spaces / Orphans (сироты-медиа с batch delete/convert), межоконная синхронизация
@@ -148,7 +148,7 @@ local-arena/
 │   │   │   ├── mod.rs
 │   │   │   ├── block.rs        # Block, BlockType, frontmatter parsing
 │   │   │   ├── card_association.rs # Правила связей карточек: автор, сайт, адрес (путь к mine-core)
-│   │   │   ├── channel.rs      # Channel (promoted tag)
+│   │   │   ├── channel.rs      # Channel: страница коллекции (type: channel); коллекция существует только как страница
 │   │   │   ├── collection.rs   # Collection helpers
 │   │   │   ├── markdown.rs     # Чистые Markdown-трансформации body
 │   │   │   ├── article_audio.rs # PreparedArticleSpeech: speakable text, text_hash

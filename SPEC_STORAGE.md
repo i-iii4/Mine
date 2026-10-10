@@ -276,7 +276,10 @@ struct TagCount {
 `collections` несёт коллекции карточки так, как их хранит таблица связей
 (`block_tags.tag`, те же ссылки, что `TagCount::tag` и текущая коллекция
 маршрута), в порядке бокового меню: по `channels.position`, затем по имени в
-байтовом порядке SQLite; связь без страницы коллекции идёт последней. Каждый
+байтовом порядке SQLite. В список входят только коллекции со страницей:
+ссылка на имя без страницы в строку ленты не попадает (решение пользователя
+10.10.2026, [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md),
+К9; сейчас такая связь идёт последней, это убирается в Phase 44). Каждый
 запрос `LightBlock` собирает их одним коррелированным подзапросом
 `json_group_array` (`collections_column_sql` в
 [block_queries.rs](src-tauri/src/storage/block_queries.rs)), поэтому страница
@@ -832,6 +835,29 @@ column names for compatibility, but their semantic value is now
 `CollectionRef`: the Obsidian wikilink target stored in `Mine Collections`, not
 a normalized tag. Legacy normalized values are migration inputs only.
 
+### Членство в коллекции (решение 10.10.2026)
+
+Коллекция существует только как страница с `type: channel`
+([SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md), К1,
+К3 и К9). Реализация ждёт команды пользователя (PLAN.md, Phase 44).
+
+- `block_tags` хранит каждую ссылку `Mine Collections` карточки, как сейчас:
+  это отражение файла, а не членство. `upsert_block` не проверяет страницы.
+- Членство это строка `block_tags`, для которой есть строка `channels` с тем
+  же `tag`. Одно общее условие (общий фрагмент SQL в
+  [block_queries.rs](src-tauri/src/storage/block_queries.rs)) применяют все
+  чтения, которые показывают или считают коллекции: `get_all_tags`,
+  `collections_column_sql`, `IndexedBlock.tags` у `get_block`,
+  `list_block_collections`, `list_grid_blocks` и `list_preview_blocks_by_tag`
+  для коллекции, `count_current_collection_cards`, фильтр `tag:` в
+  `search_blocks`, `build_graph_snapshot`.
+- Страница появилась в `channels` (создана, возвращена из Корзины, пришла
+  синхронизацией): членство её карточек видно сразу, без переиндексации
+  карточек. Строка `channels` удалена вместе со страницей: членство пропадает,
+  `block_tags` не меняется.
+- Ни одна запись `Mine Collections` не строится из индекса: она читает текст
+  файла, поэтому ссылки без страницы при записи не теряются (К2).
+
 ### Collection filenames
 
 - Collection pages are `.md` files with `type: channel`.
@@ -853,7 +879,8 @@ a normalized tag. Legacy normalized values are migration inputs only.
 - Свободный текст: `WHERE blocks_fts MATCH ?`
 - Фильтр type/card kind: against derived runtime card kind, not raw
   `frontmatter.type`
-- Фильтр tag: `JOIN block_tags WHERE tag = ?`
+- Фильтр tag: `JOIN block_tags WHERE tag = ?`, только при паре в `channels`
+  (членство по разделу «Членство в коллекции»)
 - Комбинация: AND между фильтрами
 
 ### Поведение Grid search
@@ -961,7 +988,8 @@ scan_source_vault_file_stats(vault: &VaultLayout) -> Result<SourceVaultFileStats
 - `current_collection = None` (`Everything`) считает все indexed rows, где
   `card_kind != channel`.
 - `Some(collection_ref)` считает indexed non-channel rows, связанные с этим
-  `CollectionRef` через `block_tags`.
+  `CollectionRef` через `block_tags`, если у него есть страница в `channels`;
+  без страницы маршрута коллекции нет.
 - Surface/Grid search query не влияет на `current_collection_card_count`.
 - Count строится из SQLite read-model, а не из текущего frontend массива
   карточек, чтобы virtualized/paginated Grid не становился источником истины.

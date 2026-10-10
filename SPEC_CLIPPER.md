@@ -1248,8 +1248,12 @@ dropped, so the post never reaches a later clipper.
 
 Список коллекций папки браузера строится тем же правилом, что у приложения
 (`mine_core::domain::collection::list_collections`): страницы коллекций по
-ручному порядку, затем коллекции, которые называют только карточки, по
-числу карточек; у каждой счётчик карточек.
+ручному порядку; у каждой счётчик карточек. Коллекция существует только как
+страница (решение пользователя 10.10.2026,
+[SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md), К1 и
+К9): имена, которые называют только карточки, в список не входят. Сейчас
+ядро добавляет их после страниц по числу карточек; это убирается при
+реализации (PLAN.md, Phase 44).
 
 ### Что показано, то и сохранено (Ф5)
 
@@ -1645,7 +1649,7 @@ preview — локальная карточка `rounded-1 border border-border 
 Channel picker не имеет собственной clipper-разметки. `ChannelList` является
 только adapter `ChannelInfo[] -> TagCount[]` и рендерит общий
 `CollectionPicker`. **Порядок коллекций канонический** — ровно тот, что отдал
-backend (`list_channels`: sidebar positions, затем positionless-теги): расширение
+backend (`list_channels`: страницы коллекций по позициям бокового меню, имён без страницы в списке нет): расширение
 не пересортировывает список (бывшая recent/count-приоритезация удалена — во
 всех списках коллекций приложения и расширения один ручной порядок сайдбара).
 Используется тот же `SearchMenuInput`
@@ -1970,12 +1974,15 @@ status и не отменяет Save. Запись не имеет параме�
 Список коллекций из vault. Current API name remains `list_channels`.
 Values are collection refs from Obsidian page targets, not normalized tags.
 
-Ответ строится как union двух источников:
+Ответ строится только из страниц коллекций (`type: channel`, таблица
+`channels`). Коллекция существует только как страница (решение пользователя
+10.10.2026, [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md),
+К1 и К9): имена из `Mine Collections` карточек без страницы в ответ не
+входят. Сейчас ответ добавляет их (`merge_channels_and_tags` в
+[native_host.rs](src-tauri/src/bin/native_host.rs)); это убирается при
+реализации (PLAN.md, Phase 44).
 
-- promoted channel documents (`type: channel`) из таблицы `channels`;
-- collection refs, которые уже используются non-channel блоками.
-
-Пустой promoted channel обязан возвращаться с `block_count: 0`: channel document сам по себе является достаточным источником истины для списка коллекций, даже если watcher ещё не успел посчитать блоки.
+Пустая страница коллекции обязана возвращаться с `block_count: 0`: страница сама по себе является достаточным источником истины для списка коллекций, даже если watcher ещё не успел посчитать блоки.
 
 ```json
 {
@@ -2015,8 +2022,8 @@ Native host обязан открывать тот же local derived index, ч�
 с legacy `.arena/index.db`, иначе clipper видит stale channels по сравнению с
 desktop app.
 
-`list_channels` returns promoted channels + used collection refs from one
-index. Legacy normalized tags are migration inputs only.
+`list_channels` отдаёт страницы коллекций из одного индекса, без имён, которые
+называют только карточки. Legacy normalized tags are migration inputs only.
 
 #### `save_block`
 
@@ -2069,6 +2076,20 @@ Response:
 а файловый handle находится по `binding_id`, не по `vault_path`.
 Legacy native-запросы без явного ID остаются совместимым входом, но не
 рекомендуемым способом нового retry.
+
+**Коллекции только со страницей (решение пользователя 10.10.2026).** Оба
+исполнителя до эффектов проверяют, что у каждой коллекции из `tags` есть
+страница с `type: channel`. Факты собирает исполнитель: помощник ищет файл
+`<папка коллекций>/<имя>.md` (в плоском пространстве `<корень>/<имя>.md`) или
+строку `channels` готового индекса, папка браузера ищет тот же файл через
+свой доступ к папке. Правило проверки одно, в ядре. Нет страницы: ничего не
+записано, ответ `outcome: not_committed`, `terminal_rejected: true`, новый код
+ядра `SaveErrorCode::CollectionNotFound` (`collection_not_found`) с именем
+коллекции. Попап показывает причину под списком коллекций и перечитывает
+`list_channels`; коллекция без страницы уходит из выбора, клип остаётся в
+открытом клиппере, повторный Save сохраняет без неё. Контракт:
+[SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md), К7;
+реализация ждёт команды пользователя (PLAN.md, Phase 44).
 
 #### `get_save_operation`
 
@@ -2757,6 +2778,7 @@ bun run test:frontend -- extension/popup extension/lib/standaloneVault.test.ts
 | 11 | Lost save acknowledgement | Тот же operation ID проверяется/возвращает прежний receipt; ни duplicate, ни другой executor |
 | 12 | Source commit without index | Повреждённый/недоступный SQLite не отменяет сохранённые исходники |
 | 13 | Registration | Dev key выводит точный allowlisted ID; wrong path/wildcard не считается регистрацией; binary replacement сохраняет старый inode |
+| 14 | Коллекции только со страницей (Phase 44) | `list_channels` без имён, которые называют только карточки; `save_block` с коллекцией без страницы ничего не пишет и отвечает `collection_not_found` |
 
 ### Extension (manual)
 

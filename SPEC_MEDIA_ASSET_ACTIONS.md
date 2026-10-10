@@ -612,9 +612,16 @@ enum MediaAssetActionError {
     NameTaken { target: String },
     InvalidFilename { reason: String },
     ClipboardUnsupported { media_ref: String },
+    CollectionNotFound { collection: String },
     Internal { message: String },
 }
 ```
+
+`CollectionNotFound`: `create_media_asset_card` получил коллекцию, у которой
+нет страницы с `type: channel`; ничего не записано. Коллекция существует
+только как страница (решение пользователя 10.10.2026,
+[SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md), К7;
+реализация в PLAN.md, Phase 44).
 
 ## Frontend Contract
 

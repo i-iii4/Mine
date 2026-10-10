@@ -214,6 +214,12 @@ fallback only; new write paths do not create it.
 `Mine Collections`, где каждое значение является quoted Obsidian wikilink на
 страницу коллекции.
 
+Коллекция существует только как страница: файл `.md` с `type: channel`
+(решение пользователя 10.10.2026, решение 055 ниже,
+[SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)).
+Ссылку на имя без страницы Mine не показывает, не считает и не трогает;
+появилась страница, и карточки снова в коллекции.
+
 | Действие пользователя | Что происходит |
 |---|---|
 | Сохраняет блок в коллекции | `Mine Collections` получает quoted wikilink, например `- "[[Красивый веб]]"` |
@@ -221,9 +227,13 @@ fallback only; new write paths do not create it.
 | Создаёт коллекцию | Создаётся `.md` page с `type: channel`; filename остаётся человекочитаемым |
 | Открывает коллекцию | Показываются все блоки со ссылкой на эту collection page |
 | Блок в нескольких коллекциях | Несколько wikilinks в `Mine Collections` — никаких симлинков |
+| Переставляет коллекции | `position` пишется только в существующие страницы; новых файлов нет |
+| Присоединяет к имени без страницы | Отказ `CollectionNotFound`, файл карточки не меняется |
+| Удаляет страницу вне Mine | Коллекция пропадает из списков, ссылки в карточках остаются; вернул файл, и членство вернулось |
 
-Список коллекций и порядок восстанавливаются из collection pages и
-`Mine Collections`. SQLite остаётся local derived index.
+Список коллекций, порядок и счётчики восстанавливаются только из collection
+pages; членство берётся из `Mine Collections` и считается, только если у цели
+ссылки есть страница. SQLite остаётся local derived index.
 
 ### Vault — файловая структура
 
@@ -605,7 +615,7 @@ iOS UI contract:
 
 ### Frontend rendering model
 
-- `App.tsx` больше не хранит в памяти весь корпус `LightBlock` ради клиентской фильтрации. Горячий путь: `list_grid_blocks(current_tag)`, backend сразу отдаёт карточки текущего маршрута и исключает channel-документы. Каждая строка несёт `collections`: ссылки коллекций карточки в порядке бокового меню, одним подзапросом на страницу, для ряда коллекций карточки (SPEC_CARD_STATES.md, С8.9). Полный блок догружается через `get_block(slug)` только когда открыт Connect, context menu или Detail.
+- `App.tsx` больше не хранит в памяти весь корпус `LightBlock` ради клиентской фильтрации. Горячий путь: `list_grid_blocks(current_tag)`, backend сразу отдаёт карточки текущего маршрута и исключает channel-документы. Каждая строка несёт `collections`: ссылки коллекций карточки, у которых есть страница (решение 055), в порядке бокового меню, одним подзапросом на страницу, для ряда коллекций карточки (SPEC_CARD_STATES.md, С8.9). Полный блок догружается через `get_block(slug)` только когда открыт Connect, context menu или Detail.
 - Surface Search имеет отдельный route-facing read model: `Cmd+F` открывает overlay, непустой query идёт в `search_grid_blocks`, а обычный `list_grid_blocks` и Grid snapshot под overlay не меняются. `SearchSnapshot` несёт `ProjectionRevision`, независимый `SearchRevision` и opaque cursor, связанный также с query fingerprint; несовпадение любой части сбрасывает pagination на offset zero. Retrieval остаётся в `storage::search_engine`: SQLite FTS5 lexical/alias retrieval, searchable metadata chunks (`author`, `url` без видимого highlight), chunk-based fuzzy matching, local multilingual `fastembed` semantic vectors и deterministic fusion/rerank. Single-token Latin queries are strict, bypass semantic embedding work and do not inject semantic-only cards without a visible match; semantic-only retrieval is reserved for Cyrillic cross-language and multi-token semantic queries. Отдельной Search route/palette нет; `Shift+Cmd+F` фильтрует только sidebar taxonomy. Полный контракт: [SPEC_SEARCH.md](SPEC_SEARCH.md).
 - Открытие vault двухфазное: `select_vault` / `get_vault_path` поднимают SQLite,
   watcher и последний индексированный snapshot сразу, а единый
@@ -927,8 +937,10 @@ Tauri event → Frontend обновляет UI
     │
     ├──► Клик по коллекции → фильтр: показать все блоки со ссылкой на эту collection page
     │
-    └──► «Создать канал» → создаётся/patch'ится .md page с type: channel
-         (отображается в sidebar как постоянный пункт навигации)
+    ├──► «Создать канал» (только явная команда) → создаётся .md page с type: channel
+    │    (отображается в sidebar как постоянный пункт навигации)
+    │
+    └──► Перестановка → patch `position` только в существующих pages, без новых файлов
 ```
 
 ## SQLite schema (индекс)
@@ -1425,7 +1437,9 @@ resets the app's drag state before the click that follows.
 
 A drop applies the new order optimistically (`applyPendingTagOrder` over the
 vault order) and writes to `reorder_channels` afterwards, dropping the optimistic
-order once the reload confirms it or the write fails. Waiting for the round trip
+order once the reload confirms it or the write fails. `reorder_channels` пишет
+`position` только в существующие страницы коллекций и файлов не создаёт
+(решение 055). Waiting for the round trip
 before moving the row made every drop read as a snap-back followed by a jump.
 
 Детальная спецификация: [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md).
@@ -2426,3 +2440,32 @@ none`, и указатель не доходит ни до чего под ме�
 | Оставить модальность и перебить `pointer-events` у `body` правилом `!important` | Не выбрано: спор со стилем библиотеки, нижние слои Radix остаются без указателя |
 | Прозрачный слой во всё окно под меню (как было у меню точки графа) | Не выбрано: слой перекрывает наведение так же, как `pointer-events: none` |
 | `modal={false}` на каждом месте вызова без общего модуля | Не выбрано: щелчок вне меню доходит до того, что под ним, и правило держится на памяти каждого вызова |
+
+### 055: Коллекция существует только как страница
+
+Решение пользователя 10.10.2026. Контракт:
+[SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md), раздел
+«Коллекция существует только как страница». Реализация ждёт команды
+пользователя ([PLAN.md](PLAN.md), Phase 44).
+
+1. **Страница и есть коллекция.** Список коллекций, счётчики, выбор
+   коллекций, граф, CLI и MCP строятся из страниц с `type: channel` (таблица
+   `channels`). Ссылка `Mine Collections` на имя без страницы остаётся в файле
+   и в `block_tags`, но членством не считается и нигде не показывается. В
+   Obsidian она видна как неразрешённая.
+2. **Членство вычисляется при чтении.** `block_tags` по-прежнему хранит каждую
+   ссылку файла; членство это пара с `channels`, одно общее условие запросов.
+   Поэтому появление страницы возвращает карточки в коллекцию без записи в
+   карточки и без их переиндексации, а удаление страницы вне Mine прячет
+   коллекцию, ничего не переписывая.
+3. **Страницу создаёт только явная команда.** Перестановка пишет `position`
+   только в существующие страницы; присоединение к имени без страницы
+   отказывает типизированной ошибкой `CollectionNotFound`; отсоединение
+   работает и без страницы.
+
+| Вариант | Результат выбора |
+|---|---|
+| Страница как единственный источник коллекции, членство через пару с `channels` | Принято: один список во всех местах, возврат файла возвращает членство без записи |
+| Показывать имена из карточек без страницы отдельной частью списка (как было) | Не выбрано: коллекция без файла, которой нет в Obsidian; перестановка создавала ей страницу побочным действием |
+| Отбрасывать ссылки без страницы при индексации карточки | Не выбрано: появление страницы потребовало бы переиндексировать все карточки |
+| Удалять или переписывать ссылки без страницы | Не выбрано: Mine не трогает данные пользователя, которые не может показать; ссылка остаётся видимой в Obsidian |

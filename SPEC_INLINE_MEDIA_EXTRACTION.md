@@ -199,11 +199,18 @@ enum InlineMediaExtractError {
     MediaNotReferenced { media_ref: String, source_slug: String },
     MediaNotFound { media_ref: String },
     UnsupportedMediaType { media_ref: String },
+    CollectionNotFound { collection: String },
     Internal { message: String },
 }
 ```
 
 Фронтенд должен показать неразрушающую inline-ошибку или toast. Ошибка не закрывает `Detail`.
+
+`CollectionNotFound`: у целевой коллекции нет страницы с `type: channel`,
+ничего не записано. Коллекция существует только как страница (решение
+пользователя 10.10.2026,
+[SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md), К7;
+реализация в PLAN.md, Phase 44).
 
 ## Контракт фронтенда
 

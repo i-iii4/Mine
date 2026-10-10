@@ -155,6 +155,14 @@ Graph View materializes only real objects. A plain note link whose target does
 not resolve to an indexed card or collection is omitted together with its edge.
 Missing targets are neither graph nodes nor a Graph filter.
 
+Узел коллекции строится только из строки `channels`, то есть из страницы
+коллекции. Значение `Mine Collections`, цель которого не совпадает ни с одной
+страницей, не даёт ни узла, ни ребра членства (решение пользователя
+10.10.2026, [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md),
+К1, К2 и К9). Сейчас `build_graph_snapshot` в
+[graph.rs](src-tauri/src/storage/graph.rs) создаёт узел и по ссылке карточки;
+это убирается при реализации (PLAN.md, Phase 44).
+
 ## Edge Types
 
 ```typescript
@@ -177,6 +185,10 @@ Source data:
 
 - `block_tags.tag` where semantic value is `CollectionRef`;
 - `channels.tag` for collection metadata.
+
+Ребро членства есть, только если у `block_tags.tag` есть пара в
+`channels.tag` (членство по К9 в
+[SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)).
 
 Graph edge:
 
@@ -371,6 +383,7 @@ Collection edges:
 SELECT b.slug, bt.tag
 FROM block_tags bt
 JOIN blocks b ON b.id = bt.block_id
+JOIN channels c ON c.tag = bt.tag
 WHERE b.card_kind != 'channel'
 ```
 
@@ -950,6 +963,8 @@ neighbor count for assistive technology.
 
 - `build_graph_snapshot` returns collection nodes and membership edges from
   `Mine Collections` / `block_tags`.
+- Ссылка `Mine Collections` на имя без страницы не даёт ни узла коллекции, ни
+  ребра; появление страницы с этим именем добавляет и узел, и ребро.
 - Wikilinks become directed block edges.
 - Missing wikilink and related-note targets are omitted together with their
   edges.

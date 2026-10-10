@@ -339,12 +339,19 @@ enum TextSelectionExtractError {
     UnsupportedSelectionShape { reason: String },
     UnsafeSourcePatch { reason: String },
     InvalidCollectionRef { reason: String },
+    CollectionNotFound { collection: String },
     Internal { message: String },
 }
 ```
 
 Frontend should show a non-destructive inline error/toast. The source `Detail`
 stays open.
+
+`CollectionNotFound`: у `target_tag` нет страницы с `type: channel`, ничего не
+записано (ни новая карточка, ни правка исходной статьи). Коллекция существует
+только как страница (решение пользователя 10.10.2026,
+[SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md), К7;
+реализация в PLAN.md, Phase 44).
 
 ## Frontend Contract
 

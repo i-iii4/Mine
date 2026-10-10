@@ -100,6 +100,12 @@ interface TagCount {
 }
 ```
 
+`TagCount` и поле `tags` у `IndexedBlock` несут только коллекции, у которых
+есть страница (решение пользователя 10.10.2026,
+[SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md), К9).
+`addTag` к имени без страницы отказывает с `CommandError` вида
+`collection_not_found` (К7); `removeTag` страницу не проверяет (К8).
+
 ### VaultStats
 
 ```typescript
@@ -459,7 +465,16 @@ opacity, ни layout. Вход/выход text-state анимируется
 мгновенно через `data-sidebar-row-switching="true"` на один animation frame.
 Каналы отсортированы по `channels.position`.
 `channels` является source of truth для порядка; legacy `tags` используется
-только как физическое имя текущего индекса. Runtime использует `CollectionRef`
+только как физическое имя текущего индекса. Строки списка (`orderedTags` в
+`App`) берутся только из `channels`, то есть из страниц коллекций: названия
+из `Mine Collections` карточек без страницы в список не входят (решение
+пользователя 10.10.2026,
+[SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md), К1,
+К2 и К9). Сейчас `orderedTags` добавляет их частью `noPos`; она убирается
+при реализации (PLAN.md, Phase 44). Место `/channel/<имя>` существует, только
+если имя есть в `channels`; иначе место становится Everything. Перестановка
+вызывает `reorderChannels` только со страницами, и бэкенд пишет `position`
+только в существующие страницы, файлов не создавая (К6). Runtime использует `CollectionRef`
 из `Mine Collections` wikilinks. Изменение количества карточек в канале не
 должно менять порядок каналов в sidebar.
 Если локальный индекс был создан старой версией, `block_tags` может временно
@@ -730,7 +745,13 @@ mr-2"`, `8px` от правого края колонки, которая выз
 карточки, `Create collection` в переключателе коллекций верхней панели,
 создание из перетащенного медиа или выделенного текста, расширение)
 `reorderChannels` не вызывают: коллекция получает `MAX(position) + 1` и встаёт
-в конец списка.
+в конец списка. Каждый путь создания сначала создаёт страницу коллекции
+(`createChannel`), затем присоединяет карточку. `Create collection` в меню
+`Connect` карточки и группового выделения сейчас вызывает только `addTag`
+(`handleCreateTagFromMenu`, `handleCreateTagFromBatchMenu`) и пишет ссылку без
+страницы; при реализации он получает `createChannel` перед присоединением
+([SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md), К5;
+PLAN.md, Phase 44).
 
 Тот же правый segment держит единственный main view-mode switcher:
 `View:` + пилюля `Grid / Graph` (`Tabs` chrome, размер `row`; DESIGN_SYSTEM.md,
@@ -1064,7 +1085,10 @@ Image media expansion:
   дёргался под курсором.
 - `Enter` на active row выполняет `Connect`/`Disconnect`, оставляя меню
   пригодным для дальнейшей навигации. `Enter` на active `Create collection`
-  создаёт канал и присоединяет текущую карточку.
+  создаёт канал и присоединяет текущую карточку: сначала страница коллекции
+  (`createChannel`), затем `addTag`; присоединения к имени без страницы не
+  бывает ([SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md),
+  К5 и К7).
 - `Escape` внутри submenu закрывает только Connect submenu и возвращает фокус
   на parent `Connect` item в overflow menu. В standalone DropdownMenu content
   `Escape` отдаётся родительскому меню.
