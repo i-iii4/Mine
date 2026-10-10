@@ -2,7 +2,7 @@
 //!
 //! Executors supply prepared media, observed files, time and operation identity.
 //! No operation here reads a filesystem, clock, database or network.
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -82,6 +82,10 @@ pub enum SaveExecutor {
 pub struct SaveError {
     pub code: SaveErrorCode,
     pub message: String,
+    /// The collection a [`SaveErrorCode::CollectionNotFound`] names, so a
+    /// client never reads it out of `message`; none for every other code.
+    #[serde(default)]
+    pub collection: Option<String>,
 }
 
 /// Stable failure categories; clients never infer state from error text.
@@ -91,6 +95,10 @@ pub enum SaveErrorCode {
     InvalidRequest,
     InvalidPath,
     InvalidCollection,
+    /// A collection the capture names has no page (`type: channel`): a
+    /// collection exists only as its page, and nothing was written
+    /// (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
+    CollectionNotFound,
     MissingContent,
     MissingMedia,
     NameConflict,
@@ -107,7 +115,34 @@ fn failure(code: SaveErrorCode, message: impl ToString) -> SaveError {
     SaveError {
         code,
         message: message.to_string(),
+        collection: None,
     }
+}
+
+/// The one rule both executors apply before any effect of a capture
+/// (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7): every collection the capture
+/// names has a page. The executor gathers the facts: `with_pages` holds the
+/// collections among `selected` it found a page for (a `<collections
+/// folder>/<name>.md` note with `type: channel`, or a `channels` row of a
+/// ready index). The first collection without a page refuses the capture
+/// with [`SaveErrorCode::CollectionNotFound`] naming it.
+pub fn require_collection_pages(selected: &[String], with_pages: &[String]) -> Result<(), SaveError> {
+    let found: BTreeSet<String> = with_pages
+        .iter()
+        .map(|page| normalize_collection_ref(page))
+        .collect();
+    for collection in selected {
+        let collection_ref = normalize_collection_ref(collection);
+        if collection_ref.is_empty() || found.contains(&collection_ref) {
+            continue;
+        }
+        return Err(SaveError {
+            code: SaveErrorCode::CollectionNotFound,
+            message: format!("collection \"{collection_ref}\" has no page; nothing was written"),
+            collection: Some(collection_ref),
+        });
+    }
+    Ok(())
 }
 
 /// Normalize and validate collection references while preserving their order.
@@ -466,6 +501,13 @@ pub enum CoreCommand {
         pages: Vec<crate::domain::collection::CollectionPage>,
         memberships: Vec<Vec<String>>,
     },
+    /// Whether every collection a capture names has a page
+    /// ([`require_collection_pages`]); `with_pages` are the ones the
+    /// executor found a page for.
+    CollectionPages {
+        selected: Vec<String>,
+        with_pages: Vec<String>,
+    },
     Advance {
         phase: SavePhase,
         evidence: SaveEvidence,
@@ -571,6 +613,10 @@ pub fn execute(command: CoreCommand) -> Result<serde_json::Value, SaveError> {
         CoreCommand::Collections { pages, memberships } => Ok(json!(
             crate::domain::collection::list_collections(&pages, &memberships)
         )),
+        CoreCommand::CollectionPages { selected, with_pages } => {
+            require_collection_pages(&selected, &with_pages)?;
+            Ok(json!(null))
+        }
         CoreCommand::Advance { phase, evidence } => Ok(json!(next_save_action(phase, &evidence))),
         CoreCommand::Fingerprint { value } => {
             let value = serde_json::from_str(&value)
@@ -594,6 +640,29 @@ pub fn execute_json(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// К7 (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md): a capture whose collections
+    /// all have pages passes; the first one without a page refuses it with
+    /// `collection_not_found` naming that collection.
+    #[test]
+    fn a_capture_needs_a_page_for_every_collection() {
+        let selected = vec!["Art".to_string(), "[[Pageless]]".to_string(), "Gone".to_string()];
+        assert!(require_collection_pages(&selected[..1], &["Art".into()]).is_ok());
+        assert!(require_collection_pages(&[], &[]).is_ok());
+
+        let refused = require_collection_pages(&selected, &["Art".into(), "Gone".into()]).unwrap_err();
+        assert_eq!(refused.code, SaveErrorCode::CollectionNotFound);
+        assert_eq!(refused.collection.as_deref(), Some("Pageless"));
+        assert_eq!(refused.message, "collection \"Pageless\" has no page; nothing was written");
+
+        let reply: serde_json::Value = serde_json::from_str(&execute_json(
+            r#"{"op":"collection_pages","selected":["Art","Pageless"],"with_pages":["Art"]}"#,
+        ))
+        .unwrap();
+        assert_eq!(reply["ok"], false);
+        assert_eq!(reply["error"]["code"], "collection_not_found");
+        assert_eq!(reply["error"]["collection"], "Pageless");
+    }
+
     #[test]
     fn new_filename_is_unique_across_unrelated_folders_by_extension() {
         let layout = VaultWriteLayout::standard();

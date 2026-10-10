@@ -47,11 +47,27 @@ impl FeedOrder {
 /// query puts it among its positional columns.
 const COLLECTIONS_COLUMN: &str = "collections";
 
-/// The `collections` column of a `LightBlock` query: the card's membership
-/// refs as a JSON array in sidebar order, by the collection's `position` and
-/// then by name, with a ref that has no collection page after every listed
-/// one. Name order is SQLite's binary order, the same byte order the sidebar
-/// list (`list_channels`) breaks position ties with.
+/// The one condition that makes a `block_tags` row a collection membership
+/// (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К9): a collection page with the same
+/// ref is in `channels`. `block_tags` mirrors every `Mine Collections` link of
+/// a file; a link whose name has no page stays there and is never shown or
+/// counted, and a page that appears (created, restored from the Trash, synced)
+/// makes its cards members again without touching or reindexing them (К3).
+///
+/// Every read that shows or counts collections joins through this fragment
+/// and has no filter of its own. `channels.tag` is unique, so the join never
+/// repeats a row. `block_tags` is the alias of the `block_tags` row, `page`
+/// the alias the join gives the collection page.
+pub(crate) fn collection_membership_join_sql(block_tags: &str, page: &str) -> String {
+    format!("JOIN channels {page} ON {page}.tag = {block_tags}.tag")
+}
+
+/// The `collections` column of a `LightBlock` query: the card's collections
+/// (memberships, [`collection_membership_join_sql`]) as a JSON array in
+/// sidebar order, by the collection's `position` and then by name. Name order
+/// is SQLite's binary order, the same byte order the sidebar list
+/// (`list_channels`) breaks position ties with. A link whose name has no page
+/// is not in the list.
 ///
 /// One correlated aggregate per row over `block_tags`' `(block_id, tag)` key
 /// and the unique `channels.tag`, so a page of cards stays one statement and
@@ -60,11 +76,12 @@ const COLLECTIONS_COLUMN: &str = "collections";
 /// `block_id` is the outer query's qualified block id (`blocks.id`, `b.id`):
 /// unqualified, `id` would bind to `channels.id` inside the subquery.
 pub(crate) fn collections_column_sql(block_id: &str) -> String {
+    let membership = collection_membership_join_sql("membership", "collection");
     format!(
         "(SELECT json_group_array(membership.tag
-                    ORDER BY collection.position IS NULL, collection.position, membership.tag)
+                    ORDER BY collection.position, membership.tag)
           FROM block_tags membership
-          LEFT JOIN channels collection ON collection.tag = membership.tag
+          {membership}
           WHERE membership.block_id = {block_id}) AS {COLLECTIONS_COLUMN}"
     )
 }
@@ -201,13 +218,19 @@ fn grid_filter_sql(filter: &GridFilter<'_>, order: FeedOrder) -> String {
     let columns = grid_row_columns_sql("b");
     let order_by = order.order_by("b.");
     let (join, condition) = match filter {
-        GridFilter::All => ("", ""),
+        GridFilter::All => (String::new(), ""),
         GridFilter::Collection(_) => (
-            "INNER JOIN block_tags bt ON bt.block_id = b.id",
+            format!(
+                "INNER JOIN block_tags bt ON bt.block_id = b.id {}",
+                collection_membership_join_sql("bt", "page")
+            ),
             "AND bt.tag = ?4",
         ),
-        GridFilter::AuthorKey(_) => ("", "AND b.association_author_key = ?4"),
-        GridFilter::Slugs(_) => ("", "AND b.slug IN (SELECT value FROM json_each(?4))"),
+        GridFilter::AuthorKey(_) => (String::new(), "AND b.association_author_key = ?4"),
+        GridFilter::Slugs(_) => (
+            String::new(),
+            "AND b.slug IN (SELECT value FROM json_each(?4))",
+        ),
     };
     format!(
         "SELECT {columns}
@@ -336,7 +359,8 @@ pub fn list_slugs_by_media_file(conn: &Connection, media_file: &str) -> Result<V
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
-/// Return the newest previewable blocks per tag.
+/// Return the newest previewable blocks per collection, members only
+/// ([`collection_membership_join_sql`]).
 pub fn list_preview_blocks_by_tag(
     conn: &Connection,
     limit: usize,
@@ -346,7 +370,8 @@ pub fn list_preview_blocks_by_tag(
     }
 
     let limit = i64::try_from(limit).context("preview limit does not fit i64")?;
-    let mut stmt = conn.prepare(
+    let membership = collection_membership_join_sql("bt", "page");
+    let mut stmt = conn.prepare(&format!(
         "SELECT tag, slug, thumb_format, thumb_mtime, preview_manifest
          FROM (
              SELECT bt.tag AS tag,
@@ -359,12 +384,13 @@ pub fn list_preview_blocks_by_tag(
                         ORDER BY b.saved_at DESC
                     ) AS row_num
              FROM block_tags bt
+             {membership}
              JOIN blocks b ON b.id = bt.block_id
              WHERE b.slug != '' AND b.card_kind != 'channel' AND b.thumb_format IS NOT NULL
          )
          WHERE row_num <= ?1
-         ORDER BY tag, row_num",
-    )?;
+         ORDER BY tag, row_num"
+    ))?;
 
     let rows = stmt.query_map([limit], |row| {
         Ok((row.get::<_, String>(0)?, row_to_preview_block(row, 1)?))
@@ -468,7 +494,12 @@ pub fn list_blocks(conn: &Connection) -> Result<Vec<IndexedBlock>> {
     collect_blocks(conn, &mut stmt, &[] as &[&dyn rusqlite::types::ToSql])
 }
 
-/// List blocks with a specific tag, ordered by saved_at descending.
+/// Every note whose `Mine Collections` names `tag`, ordered by saved_at
+/// descending, whether the collection has a page or not.
+///
+/// This is the mirror of the files, not membership: the rename and deletion
+/// of a collection read it to find each file they rewrite. Reads that show or
+/// count collections go through [`collection_membership_join_sql`] instead.
 pub fn list_blocks_by_tag(conn: &Connection, tag: &str) -> Result<Vec<IndexedBlock>> {
     let mut stmt = conn.prepare(
         "SELECT b.id, b.slug, b.block_type, b.card_kind, b.title, b.content_heading, b.display_title, COALESCE(b.fallback_label, b.slug), b.description, b.url,
@@ -484,12 +515,18 @@ pub fn list_blocks_by_tag(conn: &Connection, tag: &str) -> Result<Vec<IndexedBlo
     collect_blocks(conn, &mut stmt, &[&tag as &dyn rusqlite::types::ToSql])
 }
 
-/// Get all tags with their block counts, ordered by count descending.
+/// Every collection with members and how many notes are in it, ordered by
+/// count descending, then by name. Only memberships count
+/// ([`collection_membership_join_sql`]): a link whose name has no page is in
+/// no count, and a page no note names is not here (the collection list itself
+/// comes from `channels`).
 pub fn get_all_tags(conn: &Connection) -> Result<Vec<TagCount>> {
-    let mut stmt = conn.prepare(
-        "SELECT tag, count(*) as cnt FROM block_tags
-         GROUP BY tag ORDER BY cnt DESC, tag ASC",
-    )?;
+    let membership = collection_membership_join_sql("bt", "page");
+    let mut stmt = conn.prepare(&format!(
+        "SELECT bt.tag, count(*) as cnt FROM block_tags bt
+         {membership}
+         GROUP BY bt.tag ORDER BY cnt DESC, bt.tag ASC"
+    ))?;
     let tags = stmt
         .query_map([], |row| {
             Ok(TagCount {
@@ -502,16 +539,19 @@ pub fn get_all_tags(conn: &Connection) -> Result<Vec<TagCount>> {
 }
 
 /// Every card's collections as `(block id, collection)` pairs, collection
-/// documents excluded. The interface keeps them to answer, instantly and in
-/// both directions, which collections a hovered card is in and which cards a
-/// hovered collection holds (SPEC_CARD_STATES.md, С3 and С4).
+/// documents excluded, members only ([`collection_membership_join_sql`]).
+/// The interface keeps them to answer, instantly and in both directions,
+/// which collections a hovered card is in and which cards a hovered
+/// collection holds (SPEC_CARD_STATES.md, С3 and С4).
 pub fn list_block_collections(conn: &Connection) -> Result<Vec<(i64, String)>> {
-    let mut stmt = conn.prepare(
+    let membership = collection_membership_join_sql("bt", "page");
+    let mut stmt = conn.prepare(&format!(
         "SELECT bt.block_id, bt.tag FROM block_tags bt
+         {membership}
          JOIN blocks b ON b.id = bt.block_id
          WHERE b.card_kind != 'channel'
-         ORDER BY bt.block_id, bt.tag",
-    )?;
+         ORDER BY bt.block_id, bt.tag"
+    ))?;
     let pairs = stmt
         .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?
         .collect::<Result<Vec<_>, _>>()?;
@@ -523,7 +563,8 @@ pub fn list_block_collections(conn: &Connection) -> Result<Vec<(i64, String)>> {
 /// Builds SQL dynamically:
 /// - Free text: JOIN blocks_fts WHERE MATCH ?
 /// - Type filter: WHERE card_kind = ?
-/// - Tag filter: JOIN block_tags WHERE tag = ?
+/// - Tag filter: JOIN block_tags WHERE tag = ?, members only
+///   ([`collection_membership_join_sql`])
 /// - Multiple filters: AND between all conditions
 pub fn search_blocks(conn: &Connection, query: &SearchQuery) -> Result<Vec<IndexedBlock>> {
     if query.is_empty() {
@@ -548,8 +589,10 @@ pub fn search_blocks(conn: &Connection, query: &SearchQuery) -> Result<Vec<Index
             SearchFilter::Tag(tag) => {
                 let alias = format!("bt{}", tag_alias_idx);
                 joins.push(format!(
-                    "JOIN block_tags {a} ON {a}.block_id = b.id",
-                    a = alias
+                    "JOIN block_tags {a} ON {a}.block_id = b.id {membership}",
+                    a = alias,
+                    membership =
+                        collection_membership_join_sql(&alias, &format!("page{tag_alias_idx}"))
                 ));
                 conditions.push(format!("{}.tag = ?{}", alias, param_values.len() + 1));
                 param_values.push(tag.clone());
@@ -783,8 +826,12 @@ fn row_to_block(row: &rusqlite::Row<'_>) -> rusqlite::Result<IndexedBlock> {
     })
 }
 
+/// The collections of one note, members only ([`collection_membership_join_sql`]).
 pub(crate) fn get_tags_for_block(conn: &Connection, block_id: i64) -> Result<Vec<String>> {
-    let mut stmt = conn.prepare("SELECT tag FROM block_tags WHERE block_id = ?1 ORDER BY tag")?;
+    let membership = collection_membership_join_sql("bt", "page");
+    let mut stmt = conn.prepare(&format!(
+        "SELECT bt.tag FROM block_tags bt {membership} WHERE bt.block_id = ?1 ORDER BY bt.tag"
+    ))?;
     let tags = stmt
         .query_map([block_id], |row| row.get(0))?
         .collect::<Result<Vec<String>, _>>()?;
@@ -804,12 +851,13 @@ fn collect_blocks(
         return Ok(blocks);
     }
 
-    // Batch: fetch all tags in one query instead of N+1
+    // Batch: fetch all collections (members only) in one query instead of N+1
     let ids: Vec<i64> = blocks.iter().map(|b| b.id).collect();
     let placeholders: String = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
     let sql = format!(
-        "SELECT block_id, tag FROM block_tags WHERE block_id IN ({}) ORDER BY tag",
-        placeholders
+        "SELECT bt.block_id, bt.tag FROM block_tags bt {membership}
+         WHERE bt.block_id IN ({placeholders}) ORDER BY bt.tag",
+        membership = collection_membership_join_sql("bt", "page"),
     );
     let mut tag_stmt = conn.prepare(&sql)?;
     let id_params: Vec<&dyn rusqlite::types::ToSql> = ids

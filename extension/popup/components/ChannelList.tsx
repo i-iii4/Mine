@@ -32,8 +32,9 @@ export function ChannelList({
   createError = null,
   onRetry,
 }: ChannelListProps) {
-  // Canonical collection order: exactly what the backend returns — sidebar
-  // positions first, positionless tags after (single source of ordering).
+  // Canonical collection order: exactly what the backend returns, the
+  // collection pages by sidebar position (single source of ordering; a name
+  // without a page is no collection, SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К1).
   const tags = useMemo<PickerTag[]>(() => {
     return channels.map((channel) => ({
       tag: channel.tag,

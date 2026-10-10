@@ -49,6 +49,17 @@ describe("packaged classic-worker save core", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
+  // К7 (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md): the refusal carries the code and
+  // the collection it names, never only words.
+  it("carries the collection a collection_not_found names", async () => {
+    const { context } = worker();
+    const failure = await runInContext(`MineCore.call({op:"collection_pages",
+      selected:["Art","Pageless"], with_pages:["Art"]}).then(() => null, (error) => error)`, context);
+    expect(failure.code).toBe("collection_not_found");
+    expect(failure.collection).toBe("Pageless");
+    expect(failure.message).toBe("collection \"Pageless\" has no page; nothing was written");
+  });
+
   it("reports missing generated glue explicitly", async () => {
     const { context, fetch } = worker(false, false);
     await expect(runInContext(`MineCore.call({op:"fingerprint",value:"{}"})`, context))

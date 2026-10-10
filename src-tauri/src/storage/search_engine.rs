@@ -16,7 +16,7 @@ use std::{
 #[cfg(all(not(target_os = "ios"), not(test)))]
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 
-use crate::storage::block_queries::collections_column_sql;
+use crate::storage::block_queries::{collection_membership_join_sql, collections_column_sql};
 use crate::storage::index::{
     light_block_from_row, LightBlock, SearchMatch, SearchMatchField, SearchMatchKind,
     SearchTextRange, LIGHT_BLOCK_BODY_PREVIEW_CHARS,
@@ -41,6 +41,16 @@ const DESCRIPTION_EXCERPT_BEFORE_CHARS: usize = 80;
 const DESCRIPTION_EXCERPT_AFTER_CHARS: usize = 140;
 const BODY_CHUNK_TARGET_CHARS: usize = 900;
 const BODY_CHUNK_OVERLAP_CHARS: usize = 120;
+
+/// The join that narrows a search to the members of the route's collection
+/// (`bt.tag = ?`): a link whose name has no collection page is no membership
+/// (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К9).
+fn collection_route_join_sql() -> String {
+    format!(
+        " INNER JOIN block_tags bt ON bt.block_id = b.id {}",
+        collection_membership_join_sql("bt", "page")
+    )
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SearchNeedle {
@@ -301,7 +311,7 @@ fn grid_search_sql(
         Value::Text(plan.candidate_fts5_query()),
     ];
     if tag.is_some() {
-        sql.push_str(" INNER JOIN block_tags bt ON bt.block_id = b.id");
+        sql.push_str(&collection_route_join_sql());
     }
 
     sql.push_str(" WHERE b.card_kind != 'channel' AND blocks_fts MATCH ?2");
@@ -800,7 +810,7 @@ fn semantic_candidates(
          INNER JOIN blocks b ON b.id = c.block_id",
     );
     if tag.is_some() {
-        sql.push_str(" INNER JOIN block_tags bt ON bt.block_id = b.id");
+        sql.push_str(&collection_route_join_sql());
     }
     sql.push_str(
         " WHERE b.card_kind != 'channel'
@@ -874,7 +884,7 @@ fn fuzzy_candidates(
          INNER JOIN blocks b ON b.id = c.block_id",
     );
     if tag.is_some() {
-        sql.push_str(" INNER JOIN block_tags bt ON bt.block_id = b.id");
+        sql.push_str(&collection_route_join_sql());
     }
     sql.push_str(" WHERE b.card_kind != 'channel'");
     let mut params = Vec::<Value>::new();
@@ -948,7 +958,7 @@ fn metadata_candidates(
          INNER JOIN blocks b ON b.id = c.block_id",
     );
     if tag.is_some() {
-        sql.push_str(" INNER JOIN block_tags bt ON bt.block_id = b.id");
+        sql.push_str(&collection_route_join_sql());
     }
     sql.push_str(" WHERE b.card_kind != 'channel' AND c.field IN ('author', 'url')");
     let mut params = Vec::<Value>::new();
@@ -2293,6 +2303,14 @@ mod tests {
     #[test]
     fn semantic_only_result_uses_excerpt_without_fake_highlight() {
         let conn = test_conn();
+        // The route's collection has a page: its links are memberships
+        // (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К9).
+        crate::storage::index::upsert_channel(
+            &conn,
+            &crate::domain::channel::Channel::new("research", DateTime::new("2026-01-01T00:00:00Z").unwrap())
+                .unwrap(),
+        )
+        .unwrap();
         upsert_block(
             &conn,
             &make_block_full(

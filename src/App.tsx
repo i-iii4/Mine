@@ -274,6 +274,7 @@ import {
   deleteTagFromAll,
   addTag,
   removeTag,
+  isCollectionNotFound,
   deleteBlock,
   deleteBlocks,
   mergeBlocks,
@@ -1346,10 +1347,12 @@ export function AppWithVault({
 
   // The collection this tab is moving to because another tab renamed it.
   const followedCollectionRef = useRef<string | null>(null);
-  // Redirect if navigated to a channel that doesn't exist (check both tags and
-  // channels). Judged once collections were read at least once, even when the
-  // space has none: a restored tab or another tab's deletion can leave this
-  // tab in a collection that is gone (SPEC_TABS.md, В18).
+  // Redirect if navigated to a collection that doesn't exist: one without a
+  // page in `channels`, whatever cards link its name (a collection exists
+  // only as its page, SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К1). Judged once
+  // collections were read at least once, even when the space has none: a
+  // restored tab, another tab's deletion or a page deleted outside Mine can
+  // leave this tab in a collection that is gone (SPEC_TABS.md, В18).
   useEffect(() => {
     if (suppressRedirectRef.current) return;
     // Following a renamed collection: the new route lands after the renamed
@@ -1359,12 +1362,10 @@ export function AppWithVault({
       if (currentTag !== followed) return;
       followedCollectionRef.current = null;
     }
-    if (currentTag && taxonomyLoaded
-      && !tags.some((t) => t.tag === currentTag)
-      && !channels.some((c) => c.tag === currentTag)) {
+    if (currentTag && taxonomyLoaded && !channels.some((c) => c.tag === currentTag)) {
       navigate("/");
     }
-  }, [currentTag, tags, channels, navigate, taxonomyLoaded]);
+  }, [currentTag, channels, navigate, taxonomyLoaded]);
 
   const activeBlocks = blocks;
   const gridRouteSnapshotReady =
@@ -3210,12 +3211,15 @@ export function AppWithVault({
     [currentTag, navigate, reloadAllSnapshots],
   );
 
-  // ── Ordered tags: channels by position, then remaining alphabetically ──
+  // ── Ordered tags: the collection pages by position ──
 
+  // The collections of the sidebar and of every collection list: the
+  // collection pages (`channels`) by position. A collection exists only as
+  // its page, so a name cards link without one is no row and in no count
+  // (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К1, К2 and К9).
   const orderedTags = useMemo(() => {
     const tagCounts = new Map(tags.map((tc) => [tc.tag, tc.count]));
-    const channelTags = new Set(channels.map((ch) => ch.tag));
-    const withPos = [...channels]
+    const pages = [...channels]
       .sort((a, b) => (
         a.position - b.position
         || a.tag.localeCompare(b.tag)
@@ -3224,10 +3228,8 @@ export function AppWithVault({
         tag: ch.tag,
         count: tagCounts.get(ch.tag) ?? ch.block_count,
       }));
-    const noPos = tags.filter((tc) => !channelTags.has(tc.tag));
-    noPos.sort((a, b) => a.tag.localeCompare(b.tag));
 
-    return applyPendingTagOrder([...withPos, ...noPos], pendingTagOrder);
+    return applyPendingTagOrder(pages, pendingTagOrder);
   }, [tags, channels, pendingTagOrder]);
 
   const handleTopCollectionNavigate = useCallback((tag?: string) => {
@@ -3738,18 +3740,27 @@ export function AppWithVault({
         }, 0, { force: true });
       } catch (err) {
         console.error("Failed to create media asset card:", err);
+        // The collection's page went (deleted outside Mine): the lists read
+        // again and it leaves them, as after any refused connect (К7).
+        if (isCollectionNotFound(err)) await reloadAllSnapshots();
       }
     },
-    [invalidateRoutesForTags, scheduleRefresh],
+    [invalidateRoutesForTags, reloadAllSnapshots, scheduleRefresh],
   );
 
   const handleMediaAssetCreateCard = useCallback(
     async (asset: MediaAssetRef, tag: string) => {
-      const block = await createMediaAssetCard({
-        source_slug: asset.source_slug,
-        media_ref: asset.media_ref,
-        target_tag: tag,
-      });
+      let block: IndexedBlock;
+      try {
+        block = await createMediaAssetCard({
+          source_slug: asset.source_slug,
+          media_ref: asset.media_ref,
+          target_tag: tag,
+        });
+      } catch (err) {
+        if (isCollectionNotFound(err)) await reloadAllSnapshots();
+        throw err;
+      }
       invalidateRoutesForTags(block.tags);
       scheduleRefresh({
         grid: currentTagRef.current === undefined || block.tags.includes(currentTagRef.current),
@@ -3757,7 +3768,7 @@ export function AppWithVault({
         previews: true,
       }, 0, { force: true });
     },
-    [invalidateRoutesForTags, scheduleRefresh],
+    [invalidateRoutesForTags, reloadAllSnapshots, scheduleRefresh],
   );
 
   const handleMediaAssetCreateChannelAndCard = useCallback(
@@ -3862,10 +3873,12 @@ export function AppWithVault({
         }, 0, { force: true });
       } catch (err) {
         console.error("Failed to extract text selection:", err);
+        // The collection's page went: the lists read again (К7).
+        if (isCollectionNotFound(err)) await reloadAllSnapshots();
         throw err;
       }
     },
-    [invalidateRoutesForTags, scheduleRefresh],
+    [invalidateRoutesForTags, reloadAllSnapshots, scheduleRefresh],
   );
 
   const handleTextSelectionCreateChannelAndCard = useCallback(
@@ -4148,9 +4161,14 @@ export function AppWithVault({
     [reloadAllSnapshots, selectedBlock?.slug],
   );
 
+  // `Create collection` in a card's collection picker makes the collection's
+  // page first, then connects the card to the collection that page is: a
+  // collection exists only as its page, and a connect to a name without one
+  // is refused (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К5 and К7).
   const handleCreateTagFromMenu = useCallback(
-    async (tag: string, blockSlug: string) => {
+    async (requested: string, blockSlug: string) => {
       try {
+        const { tag } = await createChannel(requested);
         await addTag(blockSlug, tag);
         if (selectedBlock?.slug === blockSlug) {
           setSelectedBlockTags((current) => (
@@ -4227,8 +4245,11 @@ export function AppWithVault({
     [invalidateRoutesForTags, scheduleRefresh, selectedBlock],
   );
 
+  // The group selection's `Create collection`: the page first, then the
+  // selected cards join the collection it is (К5 and К7).
   const handleCreateTagFromBatchMenu = useCallback(
-    async (tag: string, slugs: string[]) => {
+    async (requested: string, slugs: string[]) => {
+      const { tag } = await createChannel(requested);
       await handleBatchSetTag(slugs, tag, true);
     },
     [handleBatchSetTag],

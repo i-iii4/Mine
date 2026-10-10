@@ -194,7 +194,32 @@
   }
   function failed(id, failure, outcome = "not_committed") {
     return { ok: false, outcome, operation_id: id, executor_id: "browser", standalone: true,
-      code: failure?.code ?? "storage_error", error: String(failure?.message ?? failure) };
+      code: failure?.code ?? "storage_error", error: String(failure?.message ?? failure),
+      ...(typeof failure?.collection === "string" ? { collection: failure.collection } : {}) };
+  }
+  // The collections among `tags` whose page is in the folder: a note
+  // `<collections folder>/<name>.md` (also the name's own path for a
+  // path-qualified one) with `type: channel`. These are the facts; the rule
+  // over them is the core's, the same the helper applies
+  // (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
+  async function collectionsWithPages(handle, layout, tags) {
+    const found = [];
+    for (const tag of tags) {
+      const slugs = [join(layout.collections, tag), ...(tag.includes("/") ? [tag] : [])];
+      for (const slug of slugs) {
+        let markdown;
+        try { markdown = await (await (await fileAt(handle, `${slug}.md`)).getFile()).text(); }
+        catch (failure) {
+          // No such note, or a name the folder cannot hold: no page there.
+          if (missing(failure) || failure?.name === "TypeError") continue;
+          throw failure;
+        }
+        try {
+          if ((await core({ op: "inspect", slug, markdown })).collection) { found.push(tag); break; }
+        } catch (failure) { if (failure.code !== "invalid_request") throw failure; }
+      }
+    }
+    return found;
   }
   const unknown = id => failed(id, error("operation_unknown", "Save outcome is unknown. Check the original folder; Mine will not create another copy."), "unknown");
   async function advance(record, binding, store, options, execute) {
@@ -296,6 +321,13 @@
       if (request.binding_id && request.binding_id !== binding.id) throw error("binding_mismatch", "The selected folder changed before this save began");
       await requirePermission(binding.handle);
       const { layout, newSpace } = await resolveLayout(binding.handle);
+      if (kind === "capture") {
+        // A clip joins only collections that have a page: one without
+        // refuses the save before any effect (К7).
+        const tags = request.tags ?? [];
+        await core({ op: "collection_pages", selected: tags,
+          with_pages: await collectionsWithPages(binding.handle, layout, tags) });
+      }
       const media = kind === "capture" ? await preparedMedia(request, options) : null;
       const namingLayout = kind === "collection" ? { ...layout, cards: layout.collections } : layout;
       const paths = await existingPaths(binding.handle);
@@ -374,8 +406,10 @@
       const binding = await selectedBinding(options);
       if (!binding) throw error("folder_required", "Choose a folder first");
       await requirePermission(binding.handle);
-      // The same list the app shows: collection pages in their manual order,
-      // collections only cards name, and how many cards each holds.
+      // The same list the app shows: collection pages in their manual order
+      // and how many cards each holds. A collection exists only as its page:
+      // a name cards link without one is not listed
+      // (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К1 and К9).
       const pages = [];
       const memberships = [];
       async function scan(handle, prefix = "") {

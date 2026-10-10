@@ -159,9 +159,10 @@ Missing targets are neither graph nodes nor a Graph filter.
 коллекции. Значение `Mine Collections`, цель которого не совпадает ни с одной
 страницей, не даёт ни узла, ни ребра членства (решение пользователя
 10.10.2026, [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md),
-К1, К2 и К9). Сейчас `build_graph_snapshot` в
-[graph.rs](src-tauri/src/storage/graph.rs) создаёт узел и по ссылке карточки;
-это убирается при реализации (PLAN.md, Phase 44).
+К1, К2 и К9). `build_graph_snapshot` в
+[graph.rs](src-tauri/src/storage/graph.rs) берёт членство через общее условие
+индекса (`collection_membership_join_sql`); до 10.10.2026 он создавал узел и
+по ссылке карточки (реализовано 10.10.2026, PLAN.md, Phase 44).
 
 ## Edge Types
 

@@ -1251,9 +1251,8 @@ dropped, so the post never reaches a later clipper.
 ручному порядку; у каждой счётчик карточек. Коллекция существует только как
 страница (решение пользователя 10.10.2026,
 [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md), К1 и
-К9): имена, которые называют только карточки, в список не входят. Сейчас
-ядро добавляет их после страниц по числу карточек; это убирается при
-реализации (PLAN.md, Phase 44).
+К9): имена, которые называют только карточки, в список не входят
+(реализовано 10.10.2026, PLAN.md, Phase 44).
 
 ### Что показано, то и сохранено (Ф5)
 
@@ -1978,9 +1977,9 @@ Values are collection refs from Obsidian page targets, not normalized tags.
 `channels`). Коллекция существует только как страница (решение пользователя
 10.10.2026, [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md),
 К1 и К9): имена из `Mine Collections` карточек без страницы в ответ не
-входят. Сейчас ответ добавляет их (`merge_channels_and_tags` в
-[native_host.rs](src-tauri/src/bin/native_host.rs)); это убирается при
-реализации (PLAN.md, Phase 44).
+входят (`merge_channels_and_tags` в
+[native_host.rs](src-tauri/src/bin/native_host.rs); реализовано 10.10.2026,
+PLAN.md, Phase 44).
 
 Пустая страница коллекции обязана возвращаться с `block_count: 0`: страница сама по себе является достаточным источником истины для списка коллекций, даже если watcher ещё не успел посчитать блоки.
 
@@ -2089,7 +2088,13 @@ Legacy native-запросы без явного ID остаются совме�
 `list_channels`; коллекция без страницы уходит из выбора, клип остаётся в
 открытом клиппере, повторный Save сохраняет без неё. Контракт:
 [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md), К7;
-реализация ждёт команды пользователя (PLAN.md, Phase 44).
+реализовано 10.10.2026 (PLAN.md, Phase 44). Правило:
+`mine_core::save::require_collection_pages`, у папки браузера команда ядра
+`collection_pages`. Ответ отказа несёт `code: collection_not_found` и
+`collection` (имя), у `SaveError` то же имя в поле `collection`; у имени с
+путём оба исполнителя ищут ещё `<корень>/<имя>.md`. Причина стоит в месте
+ошибки создания коллекции под списком (`data-clipper-collection-error`), над
+Save второй строки нет; следующий Save её снимает.
 
 #### `get_save_operation`
 
@@ -2778,7 +2783,7 @@ bun run test:frontend -- extension/popup extension/lib/standaloneVault.test.ts
 | 11 | Lost save acknowledgement | Тот же operation ID проверяется/возвращает прежний receipt; ни duplicate, ни другой executor |
 | 12 | Source commit without index | Повреждённый/недоступный SQLite не отменяет сохранённые исходники |
 | 13 | Registration | Dev key выводит точный allowlisted ID; wrong path/wildcard не считается регистрацией; binary replacement сохраняет старый inode |
-| 14 | Коллекции только со страницей (Phase 44) | `list_channels` без имён, которые называют только карточки; `save_block` с коллекцией без страницы ничего не пишет и отвечает `collection_not_found` |
+| 14 | Коллекции только со страницей (Phase 44) | `list_channels` без имён, которые называют только карточки; `save_block` с коллекцией без страницы ничего не пишет и отвечает `collection_not_found` (`list_channels_offers_pages_only_not_names_cards_link`, `a_save_into_a_collection_without_a_page_writes_nothing`, `a_save_finds_a_page_through_a_ready_index` в `native_host.rs`) |
 
 ### Extension (manual)
 

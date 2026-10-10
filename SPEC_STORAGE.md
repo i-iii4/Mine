@@ -279,7 +279,7 @@ struct TagCount {
 байтовом порядке SQLite. В список входят только коллекции со страницей:
 ссылка на имя без страницы в строку ленты не попадает (решение пользователя
 10.10.2026, [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md),
-К9; сейчас такая связь идёт последней, это убирается в Phase 44). Каждый
+К9; реализовано 10.10.2026, Phase 44). Каждый
 запрос `LightBlock` собирает их одним коррелированным подзапросом
 `json_group_array` (`collections_column_sql` в
 [block_queries.rs](src-tauri/src/storage/block_queries.rs)), поэтому страница
@@ -839,7 +839,13 @@ a normalized tag. Legacy normalized values are migration inputs only.
 
 Коллекция существует только как страница с `type: channel`
 ([SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md), К1,
-К3 и К9). Реализация ждёт команды пользователя (PLAN.md, Phase 44).
+К3 и К9). Реализовано 10.10.2026 (PLAN.md, Phase 44): общее условие это
+`collection_membership_join_sql` в
+[block_queries.rs](src-tauri/src/storage/block_queries.rs), соединение
+`block_tags` со строкой `channels` того же `tag`; его же берёт поиск по месту
+коллекции в `search_engine.rs`. `list_blocks_by_tag` остаётся отражением
+файлов без условия: по нему переименование и удаление коллекции находят
+файлы, которые переписывают.
 
 - `block_tags` хранит каждую ссылку `Mine Collections` карточки, как сейчас:
   это отражение файла, а не членство. `upsert_block` не проверяет страницы.

@@ -1715,6 +1715,15 @@ mod tests {
 
         let block = index::get_block(&conn, "note").unwrap().unwrap();
         assert_eq!(block.block_type, BlockType::Article);
+        // No page called "design" yet: the link is no collection
+        // (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К2).
+        assert!(block.tags.is_empty());
+
+        // The page arrives: the note is in the collection without being
+        // indexed again (К3).
+        write_md_file(&vault, "design", "channel", &[]);
+        index_md_file(&conn, &vault, &vault.block_path("design"), None).unwrap();
+        let block = index::get_block(&conn, "note").unwrap().unwrap();
         assert_eq!(block.tags, vec!["design"]);
     }
 

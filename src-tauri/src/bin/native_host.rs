@@ -20,7 +20,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-use mine_lib::domain::block::{Block, BlockType, DateTime, Frontmatter};
+use mine_lib::domain::block::{parse_markdown_document, Block, BlockType, DateTime, Frontmatter};
 use mine_lib::domain::channel::Channel;
 use mine_lib::domain::collection::{normalize_collection_ref, validate_collection_ref};
 use mine_lib::domain::vault::VaultLayout;
@@ -1331,6 +1331,62 @@ fn index_in_background(vault: &VaultLayout) {
     }
 }
 
+/// The collections among `selected` that have a page, by the facts this
+/// helper can see (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7): a note
+/// `<collections folder>/<name>.md` (`<root>/<name>.md` in a flat space, the
+/// name's own path for a path-qualified one) with `type: channel`, or a
+/// `channels` row of a ready index. The rule over these facts is the core's
+/// (`mine_core::save::require_collection_pages`).
+fn collections_with_pages(vault: &VaultLayout, selected: &[String]) -> Vec<String> {
+    let indexed = match indexed_collection_pages(vault) {
+        Ok(indexed) => indexed,
+        Err(error) => {
+            host_log(&format!("collection pages: the index cannot be read: {error:#}"));
+            HashSet::new()
+        }
+    };
+    selected
+        .iter()
+        .filter(|collection| indexed.contains(*collection) || collection_page_on_disk(vault, collection))
+        .cloned()
+        .collect()
+}
+
+/// The collection pages of a ready index; none while there is no index.
+fn indexed_collection_pages(vault: &VaultLayout) -> anyhow::Result<HashSet<String>> {
+    let Some(selected) = db::existing_selected_index(vault)? else {
+        return Ok(HashSet::new());
+    };
+    let conn = db::open_read_only(&selected.index_db_path())?;
+    if !db::index_is_ready(&conn)? {
+        return Ok(HashSet::new());
+    }
+    Ok(index::list_channels(&conn)?.into_iter().map(|channel| channel.tag).collect())
+}
+
+/// Whether the page of `collection` is on disk where a new collection page
+/// of the space goes: a note with `type: channel`.
+fn collection_page_on_disk(vault: &VaultLayout, collection: &str) -> bool {
+    let mut slugs = vec![vault.new_collection_slug(collection)];
+    if collection.contains('/') {
+        slugs.push(collection.to_string());
+    }
+    slugs.iter().any(|slug| {
+        let Ok(content) = std::fs::read_to_string(vault.block_path(slug)) else {
+            return false;
+        };
+        let Ok(read_at) = DateTime::new(&now_saved_at()) else {
+            return false;
+        };
+        parse_markdown_document(slug, &content, read_at)
+            .is_ok_and(|parsed| parsed.block.frontmatter.block_type == BlockType::Channel)
+    })
+}
+
+/// The collections the clipper offers: the collection pages, in the sidebar's
+/// manual order, each with how many cards are in it. A collection exists only
+/// as its page (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К1 and К9): a name that
+/// cards link without a page is not offered, and an empty page counts 0.
 fn merge_channels_and_tags(channels: Vec<Channel>, tags: Vec<index::TagCount>) -> Vec<ChannelInfo> {
     let mut counts: HashMap<String, usize> = HashMap::new();
     for tag in &tags {
@@ -1342,7 +1398,7 @@ fn merge_channels_and_tags(channels: Vec<Channel>, tags: Vec<index::TagCount>) -
     }
 
     let mut seen: HashSet<String> = HashSet::new();
-    let mut infos = Vec::with_capacity(channels.len() + tags.len());
+    let mut infos = Vec::with_capacity(channels.len());
 
     for channel in channels {
         let tag = normalize_collection_ref(&channel.tag);
@@ -1352,19 +1408,6 @@ fn merge_channels_and_tags(channels: Vec<Channel>, tags: Vec<index::TagCount>) -
         let block_count = counts.get(&tag).copied().unwrap_or(0);
         seen.insert(tag.clone());
         infos.push(ChannelInfo { tag, block_count });
-    }
-
-    for tag in tags {
-        let collection_ref = normalize_collection_ref(&tag.tag);
-        if collection_ref.is_empty() || seen.contains(&collection_ref) {
-            continue;
-        }
-        let block_count = counts.get(&collection_ref).copied().unwrap_or(tag.count);
-        infos.push(ChannelInfo {
-            tag: collection_ref.clone(),
-            block_count,
-        });
-        seen.insert(collection_ref);
     }
 
     infos
@@ -1602,6 +1645,22 @@ fn save_block_with_store(
     if let Err(error) = validation {
         let mut response = operation_failure(&id, "not_committed", "invalid_request", error);
         response["terminal_rejected"] = serde_json::json!(true);
+        return match locked.reject(&mut record, response.clone()) {
+            Ok(()) => response,
+            Err(error) => operation_failure(&id, "unknown", "operation_unknown", error),
+        };
+    }
+    // Every collection the clip joins has a page, by the core's rule over
+    // the facts this helper sees; without one nothing is written and the
+    // refusal is terminal (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
+    let tags = p.tags.clone().unwrap_or_default();
+    if let Err(error) =
+        mine_core::save::require_collection_pages(&tags, &collections_with_pages(vault, &tags))
+    {
+        let mut response =
+            operation_failure(&id, "not_committed", "collection_not_found", &error.message);
+        response["terminal_rejected"] = serde_json::json!(true);
+        response["collection"] = serde_json::json!(error.collection);
         return match locked.reject(&mut record, response.clone()) {
             Ok(()) => response,
             Err(error) => operation_failure(&id, "unknown", "operation_unknown", error),
@@ -3774,6 +3833,57 @@ mod tests {
         ));
     }
 
+    /// К7 (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md): a clip into a collection
+    /// without a page is refused before any effect, terminally, with
+    /// `collection_not_found` naming the collection; nothing is written.
+    #[test]
+    fn a_save_into_a_collection_without_a_page_writes_nothing() {
+        let (_tmp, vault) = sc2_temp_vault();
+        let vault = vault.with_write_layout(mine_lib::domain::vault::VaultWriteLayout::standard());
+        std::fs::create_dir_all(vault.root().join("Collections")).unwrap();
+        std::fs::write(vault.root().join("Collections/Art.md"), "---\ntype: channel\n---\n").unwrap();
+        // A note with the name that is no collection page is no page.
+        std::fs::write(vault.root().join("Collections/Notes.md"), "Just a note\n").unwrap();
+        let files_before = files::scan_vault_file_paths(&vault).unwrap();
+
+        for missing in ["Pageless", "Notes"] {
+            let mut request = sc2_link_request(&format!("into-{missing}"));
+            request["tags"] = serde_json::json!(["Art", missing]);
+            let response = sc0_save_response(&vault, request);
+            assert_eq!(response["ok"], false, "{response}");
+            assert_eq!(response["code"], "collection_not_found");
+            assert_eq!(response["collection"], missing);
+            assert_eq!(response["outcome"], "not_committed");
+            assert_eq!(response["terminal_rejected"], true);
+            assert_eq!(files::scan_vault_file_paths(&vault).unwrap(), files_before);
+        }
+
+        // Saved again without it, the clip is written into the page there is.
+        let mut request = sc2_link_request("into-art");
+        request["tags"] = serde_json::json!(["Art"]);
+        let response = sc0_save_response(&vault, request);
+        assert_eq!(response["outcome"], "committed", "{response}");
+        let card = std::fs::read_to_string(vault.block_path(response["slug"].as_str().unwrap())).unwrap();
+        assert!(card.contains("\"[[Art]]\""), "{card}");
+    }
+
+    /// К7: a page the ready index knows counts even where a new page would
+    /// not be written (a legacy page at the root of a laid-out space).
+    #[test]
+    fn a_save_finds_a_page_through_a_ready_index() {
+        let (_tmp, vault) = sc2_temp_vault();
+        let vault = vault.with_write_layout(mine_lib::domain::vault::VaultWriteLayout::standard());
+        std::fs::write(vault.root().join("Legacy.md"), "---\ntype: channel\n---\n").unwrap();
+        {
+            let (vault, conn, _) = db::open_vault_index(vault.clone()).unwrap();
+            mine_lib::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        }
+        let mut request = sc2_link_request("into-legacy");
+        request["tags"] = serde_json::json!(["Legacy"]);
+        let response = sc0_save_response(&vault, request);
+        assert_eq!(response["outcome"], "committed", "{response}");
+    }
+
     fn sc2_link_request(id: &str) -> serde_json::Value {
         serde_json::json!({"operation_id":id,"block_type":"link","title":"Local link",
             "url":"https://example.com","body":"","tags":[]})
@@ -4424,6 +4534,35 @@ mod tests {
         assert_eq!(response["ok"], true);
         assert!(response.get("indexing").is_none());
         assert_eq!(response["channels"], serde_json::json!([{ "tag": "Art", "block_count": 1 }]));
+    }
+
+    /// К1, К9 (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md): `list_channels` offers the
+    /// collection pages only; a name a card links without a page is neither
+    /// listed nor counted.
+    #[test]
+    fn list_channels_offers_pages_only_not_names_cards_link() {
+        let (_tmp, vault) = k3_space_with_collection();
+        std::fs::write(vault.root().join("Collections/Empty.md"), "---\ntype: channel\nposition: 1\n---\n")
+            .unwrap();
+        std::fs::write(
+            vault.root().join("Cards/Loose.md"),
+            "---\nsaved_at: 2026-09-29T10:00:00\nMine Collections:\n  - \"[[Pageless]]\"\n  - \"[[Art]]\"\n---\n# Loose\n",
+        )
+        .unwrap();
+        {
+            let (vault, conn, _) = db::open_vault_index(vault.clone()).unwrap();
+            mine_lib::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+            index::backfill_collection_index(&conn, &vault).unwrap();
+        }
+        let response = list_channels_response(&vault);
+        assert_eq!(response["ok"], true);
+        assert_eq!(
+            response["channels"],
+            serde_json::json!([
+                { "tag": "Art", "block_count": 2 },
+                { "tag": "Empty", "block_count": 0 },
+            ])
+        );
     }
 
     #[test]
@@ -5205,8 +5344,10 @@ mod tests {
         );
     }
 
+    /// К1, К9 (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md): a name cards link without
+    /// a page is not offered.
     #[test]
-    fn merge_channels_and_tags_keeps_unpromoted_used_tags() {
+    fn merge_channels_and_tags_offers_only_collection_pages() {
         let infos = merge_channels_and_tags(
             vec![test_channel("design")],
             vec![
@@ -5223,16 +5364,10 @@ mod tests {
 
         assert_eq!(
             infos,
-            vec![
-                ChannelInfo {
-                    tag: "design".to_string(),
-                    block_count: 1,
-                },
-                ChannelInfo {
-                    tag: "local-first".to_string(),
-                    block_count: 2,
-                },
-            ]
+            vec![ChannelInfo {
+                tag: "design".to_string(),
+                block_count: 1,
+            }]
         );
     }
 

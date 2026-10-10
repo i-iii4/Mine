@@ -2274,6 +2274,92 @@
         "scripts/clipper-worker-smoke.mjs"
       ],
       "command": "test:clipper-worker"
+    },
+    {
+      "paths": [
+        "mine-core/src/domain/collection.rs",
+        "mine-core/src/save.rs",
+        "mine-core/tests/save-fixtures.json",
+        "src-tauri/src/bin/native_host.rs",
+        "src-tauri/src/cli.rs",
+        "src-tauri/src/cli_mutations.rs",
+        "src-tauri/src/commands/blocks.rs",
+        "src-tauri/src/commands/channels.rs",
+        "src-tauri/src/commands/state.rs",
+        "src-tauri/src/commands/tags.rs",
+        "src-tauri/src/import/importer.rs",
+        "src-tauri/src/mcp.rs",
+        "src-tauri/src/storage/block_queries.rs",
+        "src-tauri/src/storage/graph.rs",
+        "src-tauri/src/storage/index.rs",
+        "src-tauri/src/storage/search_engine.rs",
+        "src-tauri/src/storage/vault_stats.rs",
+        "src-tauri/src/watcher/handler.rs",
+        "src/types/generated.ts"
+      ],
+      "requirement": "SPEC_COLLECTIONS_OBSIDIAN_LINKS.md#Коллекция существует только как страница (решение 10.10.2026)",
+      "tests": [
+        "src-tauri/src/storage/index.rs",
+        "src-tauri/src/commands/tags.rs",
+        "src-tauri/src/commands/channels.rs",
+        "src-tauri/src/commands/blocks.rs",
+        "src-tauri/src/cli.rs",
+        "src-tauri/src/cli_mutations.rs",
+        "src-tauri/src/mcp.rs",
+        "src-tauri/src/storage/graph.rs",
+        "src-tauri/src/import/importer.rs",
+        "src-tauri/src/bin/native_host.rs",
+        "mine-core/src/domain/collection.rs",
+        "mine-core/src/save.rs"
+      ],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "mine-core/src/save.rs",
+        "mine-core/tests/save-fixtures.json",
+        "extension/lib/mineCore.js",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/mineCore.js"
+      ],
+      "requirement": "SPEC_COLLECTIONS_OBSIDIAN_LINKS.md#Коллекция существует только как страница (решение 10.10.2026)",
+      "tests": [
+        "mine-core/tests/save-fixtures.json",
+        "scripts/test-save-core.mjs"
+      ],
+      "command": "test:save-core"
+    },
+    {
+      "paths": [
+        "extension/lib/mineCore.js",
+        "extension/lib/mineCore.test.ts",
+        "extension/lib/standaloneVault.js",
+        "extension/lib/standaloneVault.test.ts",
+        "extension/popup/PopupApp.tsx",
+        "extension/popup/PopupApp.test.tsx",
+        "extension/popup/components/ChannelList.tsx",
+        "extension/popup/hooks/useClipperState.ts",
+        "extension/popup/hooks/useClipperState.standalone.test.tsx",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/mineCore.js",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/standaloneVault.js",
+        "scripts/clipper-worker-smoke.mjs",
+        "scripts/fixtures/reliability/registry.json",
+        "src/App.tsx",
+        "src/App.test.tsx",
+        "src/components/Detail.tsx",
+        "src/components/Sidebar.tsx",
+        "src/components/Sidebar.test.tsx",
+        "src/lib/commands.ts"
+      ],
+      "requirement": "SPEC_COLLECTIONS_OBSIDIAN_LINKS.md#Коллекция существует только как страница (решение 10.10.2026)",
+      "tests": [
+        "src/App.test.tsx",
+        "src/components/Sidebar.test.tsx",
+        "extension/lib/mineCore.test.ts",
+        "extension/lib/standaloneVault.test.ts",
+        "extension/popup/PopupApp.test.tsx",
+        "extension/popup/hooks/useClipperState.standalone.test.tsx"
+      ],
+      "command": "test:frontend"
     }
   ],
   "release": null

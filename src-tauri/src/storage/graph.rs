@@ -301,6 +301,9 @@ fn build_graph_model(conn: &Connection, options: &GraphOptions) -> Result<GraphM
     }
 
     if options.include_collections {
+        // Collection nodes come from the pages alone, and a membership edge
+        // only reaches one of them: a link whose name has no page makes
+        // neither node nor edge (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К9).
         for channel in index::list_channels(conn)? {
             model.collection_refs.insert(channel.tag.clone());
             insert_collection_node(&mut model.nodes, &channel.tag);
@@ -309,8 +312,6 @@ fn build_graph_model(conn: &Connection, options: &GraphOptions) -> Result<GraphM
             if !model.card_slugs.contains(&slug) {
                 continue;
             }
-            model.collection_refs.insert(collection_ref.clone());
-            insert_collection_node(&mut model.nodes, &collection_ref);
             insert_or_increment_edge(
                 &mut model.links,
                 GraphLinkKind::CollectionMembership,
@@ -584,14 +585,19 @@ fn load_cards(conn: &Connection) -> Result<Vec<CardRow>> {
     Ok(rows)
 }
 
+/// Every card's memberships as `(slug, collection)`: members only, through
+/// the one membership condition of the index
+/// ([`crate::storage::block_queries::collection_membership_join_sql`]).
 fn load_memberships(conn: &Connection) -> Result<Vec<(String, String)>> {
-    let mut stmt = conn.prepare(
+    let membership = crate::storage::block_queries::collection_membership_join_sql("bt", "page");
+    let mut stmt = conn.prepare(&format!(
         "SELECT b.slug, bt.tag
          FROM block_tags bt
+         {membership}
          JOIN blocks b ON b.id = bt.block_id
          WHERE b.card_kind != 'channel'
-         ORDER BY bt.tag ASC, b.slug ASC",
-    )?;
+         ORDER BY bt.tag ASC, b.slug ASC"
+    ))?;
     let rows = stmt
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -745,6 +751,49 @@ mod tests {
             .any(|node| node.id == "collection:Design"));
         assert_eq!(snapshot.links[0].kind, GraphLinkKind::CollectionMembership);
         assert!(!snapshot.links[0].directed);
+    }
+
+    /// К9 (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md): a link whose name has no
+    /// collection page makes neither a collection node nor an edge; the page
+    /// appearing makes both.
+    #[test]
+    fn a_link_without_a_collection_page_is_neither_node_nor_edge() {
+        let conn = db::open_memory().unwrap();
+        insert_block(&conn, "first", "", &[]);
+        seed_collection(&conn, "Design");
+        attach(&conn, "first", "Design");
+        attach(&conn, "first", "Pageless");
+        let collection_ids = |snapshot: &GraphSnapshot| {
+            snapshot
+                .nodes
+                .iter()
+                .filter(|node| node.kind == GraphNodeKind::Collection)
+                .map(|node| node.id.clone())
+                .collect::<Vec<_>>()
+        };
+        let membership_targets = |snapshot: &GraphSnapshot| {
+            snapshot
+                .links
+                .iter()
+                .filter(|link| link.kind == GraphLinkKind::CollectionMembership)
+                .map(|link| link.source.clone())
+                .collect::<Vec<_>>()
+        };
+
+        let snapshot = graph_snapshot(&conn, &library_scope(), &options()).unwrap();
+        assert_eq!(collection_ids(&snapshot), vec!["collection:Design"]);
+        assert_eq!(membership_targets(&snapshot), vec!["collection:Design"]);
+
+        seed_collection(&conn, "Pageless");
+        let snapshot = graph_snapshot(&conn, &library_scope(), &options()).unwrap();
+        assert_eq!(
+            collection_ids(&snapshot),
+            vec!["collection:Design", "collection:Pageless"]
+        );
+        assert_eq!(
+            membership_targets(&snapshot),
+            vec!["collection:Design", "collection:Pageless"]
+        );
     }
 
     #[test]

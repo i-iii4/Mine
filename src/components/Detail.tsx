@@ -4082,6 +4082,10 @@ function mediaAssetErrorMessage(error: unknown): string {
         return typeof typed.reason === "string" ? typed.reason : "Invalid filename.";
       case "clipboard_unsupported":
         return "Native media copy is not supported on this platform.";
+      case "collection_not_found":
+        return typeof typed.collection === "string"
+          ? `Collection “${typed.collection}” has no page; nothing was written.`
+          : "The collection has no page; nothing was written.";
       case "internal":
         return typeof typed.message === "string" ? typed.message : "Media action failed.";
     }

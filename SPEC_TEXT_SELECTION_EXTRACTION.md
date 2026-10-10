@@ -351,7 +351,7 @@ stays open.
 записано (ни новая карточка, ни правка исходной статьи). Коллекция существует
 только как страница (решение пользователя 10.10.2026,
 [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md), К7;
-реализация в PLAN.md, Phase 44).
+реализовано 10.10.2026, PLAN.md, Phase 44).
 
 ## Frontend Contract
 

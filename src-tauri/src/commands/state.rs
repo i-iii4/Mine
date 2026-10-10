@@ -351,6 +351,11 @@ pub enum CommandError {
     /// the user under the name (05.10.2026). Nothing was written.
     #[error("{0}")]
     NameRefused(String),
+    /// A card was to be connected to `collection`, but the collection has no
+    /// page (`type: channel`): a collection exists only as its page. Nothing
+    /// was written (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
+    #[error("collection \"{collection}\" has no page; nothing was written")]
+    CollectionNotFound { collection: String },
     #[error("{0}")]
     Internal(String),
 }

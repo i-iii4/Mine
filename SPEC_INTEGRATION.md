@@ -504,7 +504,7 @@ Boundary:
    ничего не записано. `remove_tag` страницу не проверяет. Решение
    пользователя 10.10.2026,
    [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md), К7
-   и К8; реализация в PLAN.md, Phase 44.
+   и К8; реализовано 10.10.2026, PLAN.md, Phase 44.
 3. Добавить или убрать одну ссылку в `Mine Collections`
    (`patch_collections_frontmatter`); остальные ссылки, в том числе на имена
    без страницы, остаются на своих местах.

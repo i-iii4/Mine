@@ -294,7 +294,46 @@
     }
   },
   {
-    "name": "collections from pages and card membership",
+    "name": "capture with a page for every collection passes",
+    "command": {
+      "op": "collection_pages",
+      "selected": [
+        "Art",
+        "[[Travel]]"
+      ],
+      "with_pages": [
+        "Travel",
+        "Art"
+      ]
+    },
+    "expected": {
+      "ok": true,
+      "value": null
+    }
+  },
+  {
+    "name": "capture into a collection without a page is rejected",
+    "command": {
+      "op": "collection_pages",
+      "selected": [
+        "Art",
+        "Pageless"
+      ],
+      "with_pages": [
+        "Art"
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "error": {
+        "code": "collection_not_found",
+        "message": "collection \"Pageless\" has no page; nothing was written",
+        "collection": "Pageless"
+      }
+    }
+  },
+  {
+    "name": "collections are pages only, a name without a page is in no list",
     "command": {
       "op": "collections",
       "pages": [
@@ -305,6 +344,10 @@
         {
           "slug": "Collections/Art",
           "position": 0
+        },
+        {
+          "slug": "Collections/Empty",
+          "position": 2
         }
       ],
       "memberships": [
@@ -329,8 +372,8 @@
           "block_count": 1
         },
         {
-          "tag": "Recipes",
-          "block_count": 2
+          "tag": "Empty",
+          "block_count": 0
         }
       ]
     }

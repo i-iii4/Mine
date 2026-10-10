@@ -1043,7 +1043,30 @@ describe("Sidebar", () => {
     expect(revealItemInDir).toHaveBeenCalledWith("/vault/Collections/alpha.md");
   });
 
-  it("offers no Reveal in Finder for a collection without a page", async () => {
+  // К10 (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md): the item waits for the answer
+  // and is there as soon as the path is.
+  it("keeps Reveal in Finder unavailable only until the page's path arrives", async () => {
+    let answer: (path: string | null) => void = () => {};
+    vi.mocked(invoke).mockImplementation((command) => (
+      command === "collection_page_path"
+        ? new Promise((resolve) => { answer = resolve; })
+        : Promise.resolve(null)
+    ));
+    const { container } = renderSidebar({ ...defaultProps, width: 600 });
+
+    const row = container.querySelector('[data-sidebar-row-key="tag:alpha"]') as HTMLElement;
+    fireEvent.contextMenu(row, { clientX: 32, clientY: 48 });
+
+    const reveal = await screen.findByRole("menuitem", { name: "Reveal in Finder" });
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("collection_page_path", { tag: "alpha" }));
+    expect(reveal).toHaveAttribute("data-disabled");
+    await act(async () => answer("/vault/Collections/alpha.md"));
+    await waitFor(() => expect(reveal).not.toHaveAttribute("data-disabled"));
+  });
+
+  // К10: a path-less answer comes only from a race with the page deleted
+  // outside Mine (or a name two pages share); the item stays unavailable.
+  it("offers no Reveal in Finder when the page went while the menu opened", async () => {
     vi.mocked(invoke).mockImplementation(async () => null);
     const { container } = renderSidebar({ ...defaultProps, width: 600 });
 

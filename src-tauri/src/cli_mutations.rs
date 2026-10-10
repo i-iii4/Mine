@@ -37,15 +37,55 @@ pub struct MutationOutcome {
 pub enum MutationError {
     Usage(String),
     NotFound(String),
+    /// A card was to be connected to `collection`, which has no page
+    /// (`type: channel`): a collection exists only as its page, and nothing
+    /// was written (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
+    CollectionNotFound { collection: String },
     Refused(String),
     Internal(String),
 }
 
 impl MutationError {
-    pub fn message(&self) -> &str {
+    pub fn message(&self) -> String {
         match self {
-            Self::Usage(m) | Self::NotFound(m) | Self::Refused(m) | Self::Internal(m) => m,
+            Self::Usage(m) | Self::NotFound(m) | Self::Refused(m) | Self::Internal(m) => m.clone(),
+            Self::CollectionNotFound { collection } => collection_not_found_message(collection),
         }
+    }
+}
+
+/// What the CLI and MCP say when a collection has no page: the name, that
+/// its page does not exist, and the command that makes one.
+pub fn collection_not_found_message(collection: &str) -> String {
+    format!(
+        "no collection \"{collection}\": its page does not exist; create it with mine collection create"
+    )
+}
+
+/// The page check every CLI path that writes a new link into
+/// `Mine Collections` runs before it writes: the one the app runs
+/// ([`crate::commands::channels::require_collection_page`]), found the way
+/// `mine collection rename` and `delete` find a page. No page is
+/// [`MutationError::CollectionNotFound`]; anything else (an ambiguous bare
+/// name, an unreadable page) is internal, as it is for those commands.
+#[cfg(feature = "desktop")]
+pub fn require_collection_page(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    collection: &str,
+) -> Result<(), MutationError> {
+    let collection_ref = normalize_collection_ref(collection);
+    if collection_ref.is_empty() {
+        return Err(MutationError::Usage("empty collection name".into()));
+    }
+    crate::domain::collection::validate_collection_ref(&collection_ref)
+        .map_err(MutationError::Usage)?;
+    match crate::commands::channels::require_collection_page(conn, vault, &collection_ref) {
+        Ok(()) => Ok(()),
+        Err(crate::commands::state::CommandError::CollectionNotFound { collection }) => {
+            Err(MutationError::CollectionNotFound { collection })
+        }
+        Err(error) => Err(MutationError::Internal(error.to_string())),
     }
 }
 
@@ -267,17 +307,29 @@ pub fn set_body(
 
 /// Connect or disconnect a card and a collection — the only door to
 /// `Mine Collections`.
+///
+/// Connecting needs the collection's page: `collection_page` answers whether
+/// the normalized name has one ([`require_collection_page`] in the CLI), and
+/// a refusal stops the connect before anything is written, even when the
+/// card already names it. Disconnecting takes the link off whether the page
+/// exists or not (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7 and К8). The new
+/// list is built from the card's text, so links to names without a page
+/// stay where they are (К2).
 pub fn set_collection_membership(
     vault: &VaultLayout,
     slug: &str,
     collection: &str,
     connected: bool,
     dry_run: bool,
+    collection_page: impl FnOnce(&str) -> Result<(), MutationError>,
 ) -> Result<MutationOutcome, MutationError> {
     let (path, content) = read_card(vault, slug)?;
     let collection_ref = normalize_collection_ref(collection);
     if collection_ref.is_empty() {
         return Err(MutationError::Usage("empty collection name".into()));
+    }
+    if connected {
+        collection_page(&collection_ref)?;
     }
     let parsed = parse_markdown_document(slug, &content, DateTime::new("2000-01-01").unwrap())
         .map_err(|e| MutationError::Refused(format!("card does not parse: {e}")))?;
@@ -349,6 +401,43 @@ mod tests {
         (dir, vault)
     }
 
+    /// The page check of a space where every collection has a page.
+    fn page_exists(_collection: &str) -> Result<(), MutationError> {
+        Ok(())
+    }
+
+    /// The page check of a space where no collection has a page.
+    fn no_page(collection: &str) -> Result<(), MutationError> {
+        Err(MutationError::CollectionNotFound {
+            collection: collection.to_string(),
+        })
+    }
+
+    /// К7 (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md): a connect the page check
+    /// refuses writes nothing, even when the card already names it; К8: a
+    /// disconnect never asks for the page.
+    #[test]
+    fn connect_needs_the_page_and_disconnect_does_not() {
+        let source = "---\nsaved_at: 2026-07-10\nMine Collections:\n  - \"[[Pageless]]\"\n---\nBody\n";
+        let (_dir, vault) = space_with_card(source);
+
+        for name in ["Design", "Pageless"] {
+            let refused = set_collection_membership(&vault, "Note", name, true, false, no_page);
+            assert!(
+                matches!(&refused, Err(MutationError::CollectionNotFound { collection }) if collection == name),
+                "connect to {name} was not refused"
+            );
+            assert_eq!(std::fs::read_to_string(vault.block_path("Note")).unwrap(), source);
+        }
+
+        let removed = set_collection_membership(&vault, "Note", "Pageless", false, false, |_: &str| {
+            panic!("disconnect asked for the page")
+        });
+        assert!(removed.is_ok());
+        let written = std::fs::read_to_string(vault.block_path("Note")).unwrap();
+        assert!(!written.contains("Pageless"), "{written}");
+    }
+
     /// Г1.5: `mine connect` on a card whose properties are a flow mapping
     /// writes the membership inside the braces; the file stays valid YAML.
     #[test]
@@ -356,7 +445,7 @@ mod tests {
         let (_dir, vault) =
             space_with_card("---\n{aliases: [A], saved_at: 2026-07-10}\n---\nBody\n");
 
-        assert!(set_collection_membership(&vault, "Note", "Design", true, false).is_ok());
+        assert!(set_collection_membership(&vault, "Note", "Design", true, false, page_exists).is_ok());
 
         let written = std::fs::read_to_string(vault.block_path("Note")).unwrap();
         assert_eq!(
@@ -377,7 +466,7 @@ mod tests {
         let source = "---\n  aliases: [A]\n  saved_at: 2026-07-10\n---\nBody\n";
         let (_dir, vault) = space_with_card(source);
 
-        let refused = set_collection_membership(&vault, "Note", "Design", true, false);
+        let refused = set_collection_membership(&vault, "Note", "Design", true, false, page_exists);
 
         assert!(matches!(refused, Err(MutationError::Refused(_))));
         assert_eq!(std::fs::read_to_string(vault.block_path("Note")).unwrap(), source);

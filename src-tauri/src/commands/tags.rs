@@ -6,6 +6,7 @@ use rusqlite::Connection;
 use std::path::PathBuf;
 use tauri::{AppHandle, State};
 
+use crate::commands::channels::require_collection_page;
 use crate::commands::state::{tab_layout, ensure_vault_fresh, AppState, CommandError};
 use crate::domain::block::{parse_markdown_document, Block, DateTime};
 use crate::domain::collection::{
@@ -94,6 +95,12 @@ pub fn remove_tag(webview: tauri::Webview, state: State<'_, AppState>, slug: Str
 }
 
 /// Connect the card `slug` to the collection `tag`, or disconnect it.
+///
+/// Connecting needs the collection's page and refuses before anything is
+/// written without one; disconnecting takes the link off whether the page
+/// exists or not (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7 and К8). The new
+/// list is built from the card's text, never from the index, so links to
+/// names without a page stay where they are (К2).
 fn set_block_membership(
     conn: &Connection,
     vault: &VaultLayout,
@@ -110,6 +117,9 @@ fn set_block_membership(
     }
     if !collection_ref.is_empty() {
         validate_collection_ref(&collection_ref).map_err(CommandError::Internal)?;
+    }
+    if connected {
+        require_collection_page(conn, vault, &collection_ref)?;
     }
 
     let path = vault.block_path(slug);
@@ -286,6 +296,9 @@ fn rename_tag_unannounced(
     if normalized_old == normalized_new {
         return Ok(());
     }
+    // Every card gains a link to the new name: like any new link, it needs
+    // that collection's page (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
+    require_collection_page(&vs.conn, &vs.vault, &normalized_new)?;
 
     let affected_blocks = index::list_blocks_by_tag(&vs.conn, &normalized_old)?;
     rewrite_collection_membership(&vs.conn, &vs.vault, &affected_blocks, |tags| {
@@ -469,6 +482,17 @@ mod tests {
         (dir, vault, conn)
     }
 
+    /// A collection page `<name>.md` at the root of the space, indexed: only a
+    /// collection with a page is one (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К1).
+    fn collection_page(vault: &VaultLayout, conn: &Connection, name: &str) {
+        let source = "---\ntype: channel\nsaved_at: 2026-07-10T00:00:00Z\n---\n";
+        let path = vault.block_path(name);
+        std::fs::write(&path, source).unwrap();
+        let parsed = parse_markdown_document(name, source, file_saved_at(&path)).unwrap();
+        index::upsert_block(conn, &parsed.block, Some(vault.root())).unwrap();
+        index::upsert_channel_from_block_in_vault(conn, vault, &parsed.block).unwrap();
+    }
+
     /// The membership Mine reads from the card on disk, after checking that
     /// its properties are still valid YAML.
     fn membership_on_disk(vault: &VaultLayout) -> Vec<String> {
@@ -488,6 +512,7 @@ mod tests {
         let (_dir, vault, conn) = space_with_card(
             "---\n{aliases: [A], saved_at: 2026-07-10T00:00:00Z}\n---\nBody",
         );
+        collection_page(&vault, &conn, "Design");
 
         set_block_membership(&conn, &vault, "Note", "Design", true).unwrap();
 
@@ -513,6 +538,7 @@ mod tests {
     fn properties_the_writer_would_break_are_refused_and_left_alone() {
         let source = "---\n  aliases: [A]\n  saved_at: 2026-07-10T00:00:00Z\n---\nBody";
         let (_dir, vault, conn) = space_with_card(source);
+        collection_page(&vault, &conn, "Design");
 
         let refused = set_block_membership(&conn, &vault, "Note", "Design", true);
 
@@ -541,6 +567,7 @@ mod tests {
             let parsed = parse_markdown_document(slug, source, file_saved_at(&path)).unwrap();
             index::upsert_block(&conn, &parsed.block, Some(vault.root())).unwrap();
         }
+        collection_page(&vault, &conn, "Old");
         let affected = index::list_blocks_by_tag(&conn, "Old").unwrap();
         assert_eq!(affected.len(), 2);
 
@@ -589,6 +616,7 @@ mod tests {
         let original_parsed =
             parse_markdown_document("Note", original, file_saved_at(&path)).unwrap();
         index::upsert_block(&conn, &original_parsed.block, Some(vault.root())).unwrap();
+        collection_page(&vault, &conn, "Old");
         let rewrite = MembershipRewrite::prepare(
             &vault,
             "Note",
@@ -634,6 +662,7 @@ mod tests {
             let parsed = parse_markdown_document(slug, &content, file_saved_at(&path)).unwrap();
             index::upsert_block(&conn, &parsed.block, Some(vault.root())).unwrap();
         }
+        collection_page(&vault, &conn, "Old");
         conn.execute_batch(
             "CREATE TRIGGER reject_second_bulk_update
              BEFORE UPDATE ON blocks
@@ -661,5 +690,117 @@ mod tests {
                 vec!["Old"]
             );
         }
+    }
+
+    /// The links of the card on disk, in file order, pages or not.
+    fn links_on_disk(vault: &VaultLayout) -> Vec<String> {
+        let path = vault.block_path("Note");
+        let source = std::fs::read_to_string(&path).unwrap();
+        parse_markdown_document("Note", &source, file_saved_at(&path))
+            .unwrap()
+            .block
+            .frontmatter
+            .tags
+    }
+
+    /// К7 (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md): connecting to a name without
+    /// a page refuses with `CollectionNotFound`, and the card stays byte for
+    /// byte; nothing reaches the index.
+    #[test]
+    fn connecting_to_a_name_without_a_page_refuses_and_writes_nothing() {
+        let source = "---\nsaved_at: 2026-07-10T00:00:00Z\n---\nBody";
+        let (_dir, vault, conn) = space_with_card(source);
+
+        let refused = set_block_membership(&conn, &vault, "Note", "Pageless", true);
+
+        match refused {
+            Err(CommandError::CollectionNotFound { collection }) => assert_eq!(collection, "Pageless"),
+            other => panic!("expected CollectionNotFound, got {other:?}"),
+        }
+        assert_eq!(std::fs::read_to_string(vault.block_path("Note")).unwrap(), source);
+        assert!(index::list_blocks_by_tag(&conn, "Pageless").unwrap().is_empty());
+        // A note of that name that is no collection page is no page either.
+        std::fs::write(vault.block_path("Pageless"), "---\ntype: article\n---\nJust a note").unwrap();
+        assert!(matches!(
+            set_block_membership(&conn, &vault, "Note", "Pageless", true),
+            Err(CommandError::CollectionNotFound { .. })
+        ));
+        assert_eq!(std::fs::read_to_string(vault.block_path("Note")).unwrap(), source);
+    }
+
+    /// К7: the page is found on disk, as rename and delete find it, even when
+    /// the index has not seen it yet.
+    #[test]
+    fn connecting_finds_a_page_the_index_has_not_seen() {
+        let (_dir, vault, conn) = space_with_card("---\nsaved_at: 2026-07-10T00:00:00Z\n---\nBody");
+        std::fs::write(
+            vault.block_path("Fresh"),
+            "---\ntype: channel\nsaved_at: 2026-07-10T00:00:00Z\n---\n",
+        )
+        .unwrap();
+
+        set_block_membership(&conn, &vault, "Note", "Fresh", true).unwrap();
+
+        assert_eq!(links_on_disk(&vault), vec!["Fresh"]);
+    }
+
+    /// К7: a bare name two pages share is ambiguous and refuses with the
+    /// ambiguity error rename and delete give; the card is untouched.
+    #[test]
+    fn connecting_to_an_ambiguous_name_refuses_like_rename_and_delete() {
+        let source = "---\nsaved_at: 2026-07-10T00:00:00Z\n---\nBody";
+        let (_dir, vault, conn) = space_with_card(source);
+        for folder in ["A", "B"] {
+            std::fs::create_dir_all(vault.root().join(folder)).unwrap();
+            std::fs::write(
+                vault.block_path(&format!("{folder}/Design")),
+                "---\ntype: channel\nsaved_at: 2026-07-10T00:00:00Z\n---\n",
+            )
+            .unwrap();
+        }
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        let refused = set_block_membership(&conn, &vault, "Note", "Design", true);
+
+        match refused {
+            Err(CommandError::Internal(message)) => assert!(message.contains("ambiguous"), "{message}"),
+            other => panic!("expected the ambiguity error, got {other:?}"),
+        }
+        assert_eq!(std::fs::read_to_string(vault.block_path("Note")).unwrap(), source);
+    }
+
+    /// К8: disconnecting takes off a link whose collection has no page.
+    #[test]
+    fn disconnecting_a_link_without_a_page_takes_it_off() {
+        let (_dir, vault, conn) = space_with_card(
+            "---\nsaved_at: 2026-07-10T00:00:00Z\nMine Collections:\n  - \"[[Pageless]]\"\n---\nBody",
+        );
+
+        set_block_membership(&conn, &vault, "Note", "Pageless", false).unwrap();
+
+        assert!(links_on_disk(&vault).is_empty());
+        assert!(index::list_blocks_by_tag(&conn, "Pageless").unwrap().is_empty());
+    }
+
+    /// К2: connecting and disconnecting another collection leaves a link
+    /// whose name has no page where it is: the write is built from the file.
+    #[test]
+    fn other_membership_writes_keep_a_link_without_a_page_in_place() {
+        let (_dir, vault, conn) = space_with_card(
+            "---\nsaved_at: 2026-07-10T00:00:00Z\nMine Collections:\n  - \"[[First]]\"\n  - \"[[Pageless]]\"\n  - \"[[Last]]\"\n---\nBody",
+        );
+        for name in ["First", "Last", "Design"] {
+            collection_page(&vault, &conn, name);
+        }
+
+        set_block_membership(&conn, &vault, "Note", "Design", true).unwrap();
+        assert_eq!(links_on_disk(&vault), vec!["First", "Pageless", "Last", "Design"]);
+
+        set_block_membership(&conn, &vault, "Note", "First", false).unwrap();
+        assert_eq!(links_on_disk(&vault), vec!["Pageless", "Last", "Design"]);
+        // The index shows the collections with pages only, and still
+        // mirrors the link (К9).
+        assert_eq!(index::get_block(&conn, "Note").unwrap().unwrap().tags, vec!["Design", "Last"]);
+        assert_eq!(index::list_blocks_by_tag(&conn, "Pageless").unwrap().len(), 1);
     }
 }

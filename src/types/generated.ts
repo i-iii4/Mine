@@ -158,7 +158,13 @@ export type CommandError = { kind: "no_vault" } |
  * follows or because it is taken. The message says why and is read by
  * the user under the name (05.10.2026). Nothing was written.
  */
-{ kind: "name_refused"; message: string } | { kind: "internal"; message: string }
+{ kind: "name_refused"; message: string } |
+/**
+ * A card was to be connected to `collection`, but the collection has no
+ * page (`type: channel`): a collection exists only as its page. Nothing
+ * was written (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
+ */
+{ kind: "collection_not_found"; message: { collection: string } } | { kind: "internal"; message: string }
 
 /**
  * Commands supported by the JSON/WASM bridge, generated into TypeScript.
@@ -167,7 +173,13 @@ export type CoreCommand = { op: "capture"; request: CaptureRequest } | { op: "na
 /**
  * The collection list of a space read without an index.
  */
-{ op: "collections"; pages: CollectionPage[]; memberships: string[][] } | { op: "advance"; phase: SavePhase; evidence: SaveEvidence } | { op: "fingerprint"; value: string }
+{ op: "collections"; pages: CollectionPage[]; memberships: string[][] } |
+/**
+ * Whether every collection a capture names has a page
+ * ([`require_collection_pages`]); `with_pages` are the ones the
+ * executor found a page for.
+ */
+{ op: "collection_pages"; selected: string[]; with_pages: string[] } | { op: "advance"; phase: SavePhase; evidence: SaveEvidence } | { op: "fingerprint"; value: string }
 
 export type CreateBlockParams = { block_type: string; title: string | null; url: string | null; tags: string[]; file_path: string | null;
 /**
@@ -309,7 +321,12 @@ export type ImportProgress = { channel_slug: string; current: number; total: num
  */
 export type IndexedBlock = { id: number; slug: string; block_type: BlockType; card_kind: CardKind; title: string | null; content_heading: string | null; display_title: string | null; fallback_label: string; description: string | null; url: string | null; media_file: string | null; thumbnail: string | null; saved_at: string; source: string | null; width: number | null; height: number | null; author: string | null; body: string; preview_text: string | null; first_image: string | null; media_urls: string | null; media_dimensions: string | null; preview_manifest: string | null; feed_playback: string | null; thumb_format: ThumbFormat | null; thumb_mtime: number; related_notes: string[]; body_hash: string | null; origin: string | null; index_warning: string | null; tags: string[] }
 
-export type InlineMediaExtractError = { kind: "no_vault" } | { kind: "source_not_found"; source_slug: string } | { kind: "source_not_article"; source_slug: string; block_type: string } | { kind: "invalid_media_ref"; reason: string } | { kind: "media_not_referenced"; media_ref: string; source_slug: string } | { kind: "media_not_found"; media_ref: string } | { kind: "unsupported_media_type"; media_ref: string } | { kind: "internal"; message: string }
+export type InlineMediaExtractError = { kind: "no_vault" } | { kind: "source_not_found"; source_slug: string } | { kind: "source_not_article"; source_slug: string; block_type: string } | { kind: "invalid_media_ref"; reason: string } | { kind: "media_not_referenced"; media_ref: string; source_slug: string } | { kind: "media_not_found"; media_ref: string } | { kind: "unsupported_media_type"; media_ref: string } |
+/**
+ * The target collection has no page; nothing was written
+ * (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
+ */
+{ kind: "collection_not_found"; collection: string } | { kind: "internal"; message: string }
 
 /**
  * A lightweight block for list/grid views. Body is truncated (max 500 chars),
@@ -349,7 +366,12 @@ collections: string[]; search_match: SearchMatch | null }
  */
 export type MainViewMode = "grid" | "graph"
 
-export type MediaAssetActionError = { kind: "no_vault" } | { kind: "invalid_media_ref"; reason: string } | { kind: "media_not_found"; media_ref: string } | { kind: "unsupported_media_kind"; media_ref: string } | { kind: "name_taken"; target: string } | { kind: "invalid_filename"; reason: string } | { kind: "clipboard_unsupported"; media_ref: string } | { kind: "internal"; message: string }
+export type MediaAssetActionError = { kind: "no_vault" } | { kind: "invalid_media_ref"; reason: string } | { kind: "media_not_found"; media_ref: string } | { kind: "unsupported_media_kind"; media_ref: string } | { kind: "name_taken"; target: string } | { kind: "invalid_filename"; reason: string } | { kind: "clipboard_unsupported"; media_ref: string } |
+/**
+ * The target collection has no page; nothing was written
+ * (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
+ */
+{ kind: "collection_not_found"; collection: string } | { kind: "internal"; message: string }
 
 export type MediaAssetMutationResult = { media_ref: string; new_media_ref: string | null; affected_slugs: string[] }
 
@@ -456,12 +478,23 @@ export type SaveAction = "publish_media" | "publish_markdown" | "persist_receipt
 /**
  * A machine-readable core failure, safe to expose across the native/WASM bridge.
  */
-export type SaveError = { code: SaveErrorCode; message: string }
+export type SaveError = { code: SaveErrorCode; message: string;
+/**
+ * The collection a [`SaveErrorCode::CollectionNotFound`] names, so a
+ * client never reads it out of `message`; none for every other code.
+ */
+collection?: string | null }
 
 /**
  * Stable failure categories; clients never infer state from error text.
  */
-export type SaveErrorCode = "invalid_request" | "invalid_path" | "invalid_collection" | "missing_content" | "missing_media" | "name_conflict" | "unknown_outcome"
+export type SaveErrorCode = "invalid_request" | "invalid_path" | "invalid_collection" |
+/**
+ * A collection the capture names has no page (`type: channel`): a
+ * collection exists only as its page, and nothing was written
+ * (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
+ */
+"collection_not_found" | "missing_content" | "missing_media" | "name_conflict" | "unknown_outcome"
 
 /**
  * Filesystem observations, never optimistic predictions.
@@ -701,7 +734,12 @@ export type TaxonomySnapshot = { generation: ProjectionRevision; tags: TagCount[
  */
 memberships: BlockCollection[] }
 
-export type TextSelectionExtractError = { kind: "no_vault" } | { kind: "source_not_found"; source_slug: string } | { kind: "source_not_article"; source_slug: string; block_type: string } | { kind: "empty_selection" } | { kind: "stale_selection" } | { kind: "unsupported_selection_shape"; reason: string } | { kind: "unsafe_source_patch"; reason: string } | { kind: "invalid_collection_ref"; reason: string } | { kind: "internal"; message: string }
+export type TextSelectionExtractError = { kind: "no_vault" } | { kind: "source_not_found"; source_slug: string } | { kind: "source_not_article"; source_slug: string; block_type: string } | { kind: "empty_selection" } | { kind: "stale_selection" } | { kind: "unsupported_selection_shape"; reason: string } | { kind: "unsafe_source_patch"; reason: string } | { kind: "invalid_collection_ref"; reason: string } |
+/**
+ * The target collection has no page; nothing was written, neither the
+ * new card nor the source article (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
+ */
+{ kind: "collection_not_found"; collection: string } | { kind: "internal"; message: string }
 
 export type ThumbFormat = "jpeg" | "png"
 

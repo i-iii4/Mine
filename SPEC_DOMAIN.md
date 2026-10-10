@@ -54,8 +54,13 @@ Mine Collections:
   (`position`, затем имя), у каждой счётчик карточек, пустая страница со
   счётчиком 0. Значение `Mine Collections`, цель которого не совпадает ни с
   одной страницей, в список не входит и ни в одном счётчике не считается.
-  Часть `named_only` (коллекции, которые называют только карточки) убирается
-  при реализации (PLAN.md, Phase 44).
+  Части `named_only` (коллекции, которые называют только карточки) больше
+  нет (реализовано 10.10.2026, PLAN.md, Phase 44).
+- `require_collection_pages(selected, with_pages)` в `mine_core::save`: правило
+  обоих исполнителей клиппера. Каждая коллекция сохранения должна иметь
+  страницу; первая без страницы отказывает с `SaveErrorCode::CollectionNotFound`
+  и именем в `SaveError.collection`
+  ([SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md), К7).
 
 ## domain/tag
 

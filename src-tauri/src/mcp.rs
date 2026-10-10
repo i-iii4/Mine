@@ -184,7 +184,7 @@ Each result is named by its file name (`name`); `title` is the note's H1 or lega
         schema: || schema(&[], vec![
             prop("title", "string", "Card title"),
             prop("url", "string", "Source URL"),
-            prop("collection", "string", "Collection to connect the card to"),
+            prop("collection", "string", "Existing collection to connect the card to; refused when it has no page"),
             prop("file", "string", "Absolute path of a media file to copy in"),
             prop("body", "string", "Markdown body"),
             space_prop(),
@@ -222,7 +222,7 @@ Each result is named by its file name (`name`); `title` is the note's H1 or lega
     },
     ToolSpec {
         name: "connect",
-        description: "Add a card to a collection",
+        description: "Add a card to an existing collection; refused when the collection has no page (collection_create makes one)",
         schema: || schema(&["slug", "collection"], vec![
             slug_prop(),
             prop("collection", "string", "Collection name"),
@@ -605,6 +605,29 @@ mod tests {
         let result = call(&env, "connect", json!({ "slug": "MCP Card", "collection": "MCP Shelf" }));
         assert_eq!(result["isError"], false, "{}", text_of(&result));
         assert!(std::fs::read_to_string(root.join("MCP Card.md")).unwrap().contains("[[MCP Shelf]]"));
+    }
+
+    /// К7 (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md): `connect` to a name without a
+    /// page is a tool failure with the CLI's words, and the card stays as it
+    /// was.
+    #[test]
+    fn connect_to_a_name_without_a_page_is_a_tool_failure() {
+        let (_dir, env, root) = fixture();
+        let before = std::fs::read(root.join("Cards/plain.md")).unwrap();
+
+        let result = call(&env, "connect", json!({ "slug": "Cards/plain", "collection": "Pageless" }));
+
+        assert_eq!(result["isError"], true);
+        assert!(
+            text_of(&result).contains("no collection \"Pageless\": its page does not exist"),
+            "{}",
+            text_of(&result)
+        );
+        assert_eq!(std::fs::read(root.join("Cards/plain.md")).unwrap(), before);
+
+        let result = call(&env, "card_create", json!({ "title": "Nowhere", "collection": "Pageless" }));
+        assert_eq!(result["isError"], true);
+        assert!(!root.join("Nowhere.md").exists());
     }
 
     #[test]

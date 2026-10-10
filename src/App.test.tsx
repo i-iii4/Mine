@@ -148,6 +148,8 @@ vi.mock("@/lib/commands", () => ({
   deleteTagFromAll: vi.fn(),
   addTag: commandMocks.addTag,
   removeTag: vi.fn(),
+  isCollectionNotFound: (error: unknown) => Boolean(error) && typeof error === "object"
+    && (error as { kind?: unknown }).kind === "collection_not_found",
   prepareDeleteBlock: commandMocks.prepareDeleteBlock,
   deleteBlock: commandMocks.deleteBlock,
   deleteBlocks: commandMocks.deleteBlocks,
@@ -279,7 +281,11 @@ vi.mock("@/components/Grid", async () => {
     restoreScrollAnchor,
     onScrollAnchorRestored,
     onScrollPositionChange,
+    onCreateAndAssign,
+    onCreateAndAssignBatch,
   }: {
+    onCreateAndAssign?: (tag: string, blockSlug: string) => void | Promise<void>;
+    onCreateAndAssignBatch?: (tag: string, slugs: string[]) => void | Promise<void>;
     restoreScrollAnchor?: { slug: string; offset_px: number } | null;
     onScrollAnchorRestored?: () => void;
     onScrollPositionChange?: (read: () => { slug: string; offset_px: number } | null) => void;
@@ -346,6 +352,16 @@ vi.mock("@/components/Grid", async () => {
         </button>
         <button type="button" onClick={() => onCardMenuShortcutChange?.(() => {})}>
           Report card menu
+        </button>
+        {/* `Create collection` in a card's picker and in the group selection's. */}
+        <button type="button" onClick={() => void onCreateAndAssign?.("gamma", "alpha-block")}>
+          Create gamma for alpha-block
+        </button>
+        <button
+          type="button"
+          onClick={() => void onCreateAndAssignBatch?.("gamma", ["alpha-block", "beta-block"])}
+        >
+          Create gamma for the selection
         </button>
         {blocks.map((item) => (
           <div key={`${item.slug}-title`} data-testid={`grid-title-${item.slug}`}>
@@ -2774,6 +2790,132 @@ describe("AppWithVault", () => {
     });
   });
 
+  describe("a collection exists only as its page (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)", () => {
+    /// The taxonomy of a space where cards also link `pageless`, a name with
+    /// no collection page.
+    function withPagelessLink() {
+      commandMocks.listTaxonomySnapshot.mockResolvedValue({
+        generation: 1,
+        tags: [
+          { tag: "pageless", count: 3 },
+          { tag: "alpha", count: 1 },
+          { tag: "beta", count: 1 },
+        ],
+        channels: ["alpha", "beta"].map((tag, position) => ({
+          tag,
+          title: tag,
+          description: null,
+          color: null,
+          icon: null,
+          position,
+          created_at: "2026-04-17T00:00:00Z",
+          block_count: 1,
+        })),
+        total_blocks: 2,
+      });
+    }
+
+    it("lists only the collection pages in the sidebar and the top switcher (К1, К9)", async () => {
+      withPagelessLink();
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+
+      const sidebar = document.querySelector("[data-sidebar-mock]") as HTMLElement;
+      expect(within(sidebar).getAllByRole("link").map((link) => link.textContent)).toEqual([
+        "Everything 2",
+        "alpha",
+        "beta",
+      ]);
+
+      fireEvent.click(screen.getByRole("button", { name: "Switch collection: Everything" }));
+      await screen.findByRole("textbox", { name: "Search collections" });
+      expect(screen.getByRole("menuitem", { name: "alpha" })).toBeInTheDocument();
+      expect(screen.getByRole("menuitem", { name: "beta" })).toBeInTheDocument();
+      expect(screen.queryByRole("menuitem", { name: "pageless" })).not.toBeInTheDocument();
+    });
+
+    it("makes the place of a name without a page Everything (К1, В18)", async () => {
+      withPagelessLink();
+      render(
+        <MemoryRouter initialEntries={["/channel/pageless"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+      expect(screen.getByRole("button", { name: "Switch collection: Everything" })).toBeInTheDocument();
+    });
+
+    it("creates the page before a card's Create collection connects the card (К5)", async () => {
+      // The page takes the first free name; the card joins that collection.
+      commandMocks.createChannel.mockImplementationOnce(async (tag: string) => ({
+        tag: `${tag} (2)`,
+        description: null,
+        color: null,
+        icon: null,
+        position: 2,
+        created_at: "2026-04-17T00:00:00Z",
+        block_count: 0,
+      }));
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+
+      fireEvent.click(screen.getByRole("button", { name: "Create gamma for alpha-block" }));
+
+      await waitFor(() => expect(commandMocks.addTag).toHaveBeenCalledWith("alpha-block", "gamma (2)"));
+      expect(commandMocks.createChannel).toHaveBeenCalledWith("gamma");
+      expect(commandMocks.createChannel.mock.invocationCallOrder[0]).toBeLessThan(
+        commandMocks.addTag.mock.invocationCallOrder[0]!,
+      );
+      expect(commandMocks.addTag).toHaveBeenCalledTimes(1);
+    });
+
+    it("creates the page before the group selection's Create collection connects the cards (К5)", async () => {
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+
+      fireEvent.click(screen.getByRole("button", { name: "Create gamma for the selection" }));
+
+      await waitFor(() => expect(commandMocks.addTag).toHaveBeenCalledTimes(2));
+      expect(commandMocks.createChannel).toHaveBeenCalledWith("gamma");
+      expect(commandMocks.addTag).toHaveBeenNthCalledWith(1, "alpha-block", "gamma");
+      expect(commandMocks.addTag).toHaveBeenNthCalledWith(2, "beta-block", "gamma");
+      expect(commandMocks.createChannel.mock.invocationCallOrder[0]).toBeLessThan(
+        commandMocks.addTag.mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it("connects nothing when the page cannot be made (К5)", async () => {
+      commandMocks.createChannel.mockRejectedValueOnce(new Error("A collection named \"gamma\" already exists."));
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+      const taxonomyReads = commandMocks.listTaxonomySnapshot.mock.calls.length;
+
+      fireEvent.click(screen.getByRole("button", { name: "Create gamma for alpha-block" }));
+
+      await waitFor(() => {
+        expect(commandMocks.listTaxonomySnapshot.mock.calls.length).toBeGreaterThan(taxonomyReads);
+      });
+      expect(commandMocks.addTag).not.toHaveBeenCalled();
+    });
+  });
+
   it("opens sidebar search from the native Shift-Command-F menu accelerator event", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
@@ -2978,11 +3120,12 @@ describe("AppWithVault", () => {
       expect(screen.getByRole("link", { name: "alpha" })).toBeInTheDocument();
     });
 
+    // "loose" has no collection page: cards name it, but it is no
+    // collection and no row (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К1).
     expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual([
       "Everything 2",
       "alpha",
       "beta",
-      "loose",
     ]);
   });
 

@@ -10,7 +10,7 @@ import "./standaloneVault.js";
 const wasm = createRequire(import.meta.url)("../../output/playwright/save-core-node/mine_core.js");
 const call = async (command: unknown) => {
   const result = JSON.parse(wasm.execute_json(JSON.stringify(command)));
-  if (!result.ok) throw Object.assign(new Error(result.error.message), { code: result.error.code });
+  if (!result.ok) throw Object.assign(new Error(result.error.message), { code: result.error.code, ...(typeof result.error.collection === "string" ? { collection: result.error.collection } : {}) });
   return result.value;
 };
 type Reply = { ok: boolean; outcome?: string; code?: string; slug?: string; tag?: string; resumable?: boolean; channels?: { tag: string }[] };
@@ -81,7 +81,7 @@ let folder: FakeDirectory;
 let store: MemoryStore;
 const options = (): Options => ({ directory: folder, store });
 const request = (extra = {}) => ({ operation_id: "save-1", binding_id: "test-vault", executor_id: "browser",
-  block_type: "article", title: "Article", body: "Content", tags: ["Collections/Reference"],
+  block_type: "article", title: "Article", body: "Content", tags: [],
   saved_at: "2026-08-31T12:00:00Z", ...extra });
 beforeEach(() => {
   folder = new FakeDirectory("Mine"); store = new MemoryStore();
@@ -101,11 +101,40 @@ describe("browser executor backed by actual WASM", () => {
     expect(folder.files.size).toBe(0); expect(folder.directories.size).toBe(0);
   });
   it("writes canonical Markdown and shared collection references", async () => {
-    expect(await vault.saveStandaloneBlock(request(), options())).toMatchObject({ ok: true, slug: "Cards/Article" });
+    const mine = await folder.getDirectoryHandle(".mine", { create: true });
+    mine.files.set("layout.json", new FakeFile(JSON.stringify({ cards: "Cards", media: "Media", collections: "Collections" })));
+    const collections = await folder.getDirectoryHandle("Collections", { create: true });
+    collections.files.set("Reference.md", new FakeFile("---\ntype: channel\n---\n"));
+    expect(await vault.saveStandaloneBlock(request({ tags: ["Collections/Reference"] }), options()))
+      .toMatchObject({ ok: true, slug: "Cards/Article" });
     const markdown = await folder.text("Cards/Article.md");
     expect(markdown).toContain("# Article\n\nContent");
     expect(markdown).toContain("[[Collections/Reference]]");
     expect(markdown).not.toContain("type:"); expect(markdown).not.toContain("title:");
+  });
+  // К7 (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md): a clip into a collection whose
+  // page is gone writes nothing; the refusal is terminal and names it, and a
+  // save without it goes through.
+  it("refuses a clip into a collection without a page before any effect (К7)", async () => {
+    const created = await vault.createStandaloneChannel("Reference", null, options());
+    expect(created).toMatchObject({ ok: true, tag: "Reference" });
+    const collections = await folder.getDirectoryHandle("Collections");
+    collections.files.delete("Reference.md");
+    collections.files.set("Note.md", new FakeFile("A plain note, no collection page"));
+    const paths = async () => (await vault.existingStems(folder)).sort();
+    const before = await paths();
+
+    for (const tag of ["Reference", "Note"]) {
+      expect(await vault.saveStandaloneBlock(request({ operation_id: `into-${tag}`, tags: [tag] }), options()))
+        .toMatchObject({ ok: false, outcome: "not_committed", terminal_rejected: true,
+          code: "collection_not_found", collection: tag });
+    }
+    expect(await paths()).toEqual(before);
+    expect(await vault.lookupOperation("into-Reference", "test-vault", options()))
+      .toMatchObject({ code: "collection_not_found", terminal_rejected: true });
+
+    expect(await vault.saveStandaloneBlock(request({ operation_id: "no-collection", tags: [] }), options()))
+      .toMatchObject({ ok: true, slug: "Cards/Article" });
   });
   it("saves a selection as shown, without the page title above it (Ф5)", async () => {
     expect(await vault.saveStandaloneBlock(request({ body: "Selected words", selection: true }), options()))
@@ -246,13 +275,14 @@ describe("browser executor backed by actual WASM", () => {
     expect(await folder.text("Cards/Article.md")).toContain('"[[Reference]]"');
     expect(await vault.listStandaloneChannels(options())).toEqual({ ok: true, channels: [{ tag: "Reference", block_count: 1 }] });
   });
-  it("lists collections the way the app does: pages in order, card-only names, counts (А3.12)", async () => {
+  it("lists collections the way the app does: pages only, in order, with counts (А3.12, К1, К9)", async () => {
     folder.files.set("Travel.md", new FakeFile("---\ntype: channel\nposition: 1\nsaved_at: 2026-08-31T12:00:00Z\n---\n"));
     folder.files.set("Art.md", new FakeFile("---\ntype: channel\nposition: 0\nsaved_at: 2026-08-31T12:00:00Z\n---\n"));
     folder.files.set("Trip.md", new FakeFile("---\nMine Collections:\n  - \"[[Travel]]\"\n  - \"[[Recipes]]\"\n---\nText"));
     folder.files.set("Soup.md", new FakeFile("---\nMine Collections:\n  - \"[[Recipes]]\"\n---\nText"));
+    // "Recipes" has no page: cards name it, but it is no collection.
     expect(await vault.listStandaloneChannels(options())).toEqual({ ok: true, channels: [
-      { tag: "Art", block_count: 0 }, { tag: "Travel", block_count: 1 }, { tag: "Recipes", block_count: 2 },
+      { tag: "Art", block_count: 0 }, { tag: "Travel", block_count: 1 },
     ] });
   });
   it("creates a collection only in the folder named when it was asked for (Ф6)", async () => {

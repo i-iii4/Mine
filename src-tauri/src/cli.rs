@@ -401,10 +401,39 @@ fn cmd_search(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
     Ok(out)
 }
 
+/// The collections of the space with how many cards each holds: the
+/// collection pages, an empty one with 0, most cards first, then by name. A
+/// name cards link without a page is no collection and is not listed
+/// (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К1 and К9).
+fn collection_counts(conn: &rusqlite::Connection) -> anyhow::Result<Vec<crate::storage::index::TagCount>> {
+    let counts: std::collections::HashMap<String, usize> = block_queries::get_all_tags(conn)?
+        .into_iter()
+        .map(|tag| (tag.tag, tag.count))
+        .collect();
+    let mut collections: Vec<crate::storage::index::TagCount> = crate::storage::index::list_channels(conn)?
+        .into_iter()
+        .map(|channel| crate::storage::index::TagCount {
+            count: counts.get(&channel.tag).copied().unwrap_or(0),
+            tag: channel.tag,
+        })
+        .collect();
+    collections.sort_by(|left, right| right.count.cmp(&left.count).then_with(|| left.tag.cmp(&right.tag)));
+    Ok(collections)
+}
+
+/// Whether `collection` is a collection of the indexed space: it has a page
+/// (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К1).
+fn collection_has_page(conn: &rusqlite::Connection, collection: &str) -> anyhow::Result<bool> {
+    let collection_ref = crate::domain::collection::normalize_collection_ref(collection);
+    Ok(crate::storage::index::list_channels(conn)?
+        .iter()
+        .any(|channel| channel.tag == collection_ref))
+}
+
 fn cmd_collections(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
     let vault = resolve_space(env, flags.space.as_deref())?;
     let (vault, conn) = open_index(&vault)?;
-    let tags = db::read_vault_projection_from(&conn, &vault, block_queries::get_all_tags)
+    let tags = db::read_vault_projection_from(&conn, &vault, collection_counts)
         .map(|(_, value)| value)
         .map_err(|e| CliError::internal(format!("collections: {e:#}")))?;
     if flags.json {
@@ -433,11 +462,19 @@ fn cmd_cards(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
     };
     let vault = resolve_space(env, flags.space.as_deref())?;
     let (vault, conn) = open_index(&vault)?;
-    let (blocks, has_more) = db::read_vault_projection_from(&conn, &vault, |conn| {
-        block_queries::list_grid_blocks(conn, Some(collection), flags.offset, flags.limit)
+    let listed = db::read_vault_projection_from(&conn, &vault, |conn| {
+        if !collection_has_page(conn, collection)? {
+            return Ok(None);
+        }
+        block_queries::list_grid_blocks(conn, Some(collection), flags.offset, flags.limit).map(Some)
     })
     .map(|(_, value)| value)
     .map_err(|e| CliError::internal(format!("cards: {e:#}")))?;
+    let Some((blocks, has_more)) = listed else {
+        return Err(CliError::not_found(cli_mutations::collection_not_found_message(
+            &crate::domain::collection::normalize_collection_ref(collection),
+        )));
+    };
     if flags.json {
         let rows: Vec<_> = blocks.iter().map(light_block_json).collect();
         return Ok(format!(
@@ -546,10 +583,12 @@ fn cmd_card(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
 
 impl From<MutationError> for CliError {
     fn from(e: MutationError) -> Self {
-        let message = e.message().to_string();
+        let message = e.message();
         match e {
             MutationError::Usage(_) => CliError::usage(message),
-            MutationError::NotFound(_) => CliError::not_found(message),
+            MutationError::NotFound(_) | MutationError::CollectionNotFound { .. } => {
+                CliError::not_found(message)
+            }
             MutationError::Refused(_) => CliError {
                 code: EXIT_USAGE,
                 message,
@@ -661,12 +700,20 @@ fn cmd_membership(env: &CliEnv, flags: &Flags, connected: bool) -> Result<String
         ));
     };
     let vault = resolve_space(env, flags.space.as_deref())?;
+    // A connect needs the collection's page, found the way `collection
+    // rename` and `delete` find it (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
     let outcome = cli_mutations::set_collection_membership(
         &vault,
         slug,
         collection,
         connected,
         flags.dry_run,
+        |collection_ref| {
+            let (indexed, conn) = open_index(&vault).map_err(|error| {
+                MutationError::Internal(format!("collection page: {}", error.message))
+            })?;
+            cli_mutations::require_collection_page(&conn, &indexed, collection_ref)
+        },
     )?;
     if !outcome.dry_run {
         reindex_card(&vault, slug);
@@ -748,6 +795,12 @@ fn cmd_card_create(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
         if !std::path::Path::new(f).is_file() {
             return Err(CliError::usage(format!("--file {f}: no such file")));
         }
+    }
+    // A card created into a collection links it only when it has a page;
+    // the check runs before anything is written
+    // (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
+    if let Some(collection) = flags.collection.as_deref() {
+        cli_mutations::require_collection_page(&conn, &vault, collection)?;
     }
     let name = crate::commands::blocks::select_capture_name(
         &conn,
@@ -1000,13 +1053,21 @@ pub(crate) mod tests {
     use crate::domain::block::parse_markdown_document;
     use crate::domain::block::DateTime;
 
-    /// A disposable app-data dir + one initialized space with two cards.
+    /// A disposable app-data dir + one initialized space with two cards and
+    /// the page of the collection `Nature` one of them is in: a collection
+    /// exists only as its page (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К1).
     pub(crate) fn fixture() -> (tempfile::TempDir, CliEnv, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
         let app_data = dir.path().join("appdata");
         let vault_root = dir.path().join("Space");
         std::fs::create_dir_all(vault_root.join(".mine")).unwrap();
         std::fs::create_dir_all(vault_root.join("Cards")).unwrap();
+        std::fs::create_dir_all(vault_root.join("Collections")).unwrap();
+        std::fs::write(
+            vault_root.join("Collections/Nature.md"),
+            "---\ntype: channel\nposition: 0\nsaved_at: 2026-01-01T00:00:00Z\n---\n",
+        )
+        .unwrap();
         std::fs::write(vault_root.join(".mine/vault-id"), "testspace").unwrap();
 
         std::fs::create_dir_all(&app_data).unwrap();
@@ -1735,6 +1796,98 @@ mod mutation_tests {
         assert_eq!(out.code, EXIT_OK);
         assert!(out.stdout.contains("would apply"));
         assert_eq!(card_content(&root, "Cards/sunset"), before);
+    }
+
+    /// Every file of the space with its bytes, `.mine` aside.
+    fn space_snapshot(root: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+        let vault = VaultLayout::new(root.to_path_buf());
+        let mut paths = crate::storage::files::scan_vault_file_paths(&vault).unwrap();
+        paths.sort();
+        paths
+            .into_iter()
+            .map(|path| {
+                let bytes = std::fs::read(root.join(&path)).unwrap();
+                (path, bytes)
+            })
+            .collect()
+    }
+
+    /// К1, К2, К7, К8, К9 (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) through the
+    /// CLI: a name a card links without a page is no collection. Reads do not
+    /// show it, `connect`, `card create --collection` and
+    /// `cards --collection` refuse it with code 4 and write nothing, and
+    /// `disconnect` takes the link off.
+    #[test]
+    fn a_name_without_a_page_is_no_collection_for_the_cli() {
+        let (_dir, env, root) = fixture();
+        let loose = "---\nsaved_at: 2026-01-03T00:00:00Z\nMine Collections:\n  - \"[[Pageless]]\"\n  - \"[[Nature]]\"\n---\nA loose note.";
+        std::fs::write(root.join("Cards/loose.md"), loose).unwrap();
+        {
+            let vault = resolve_space(&env, None).map_err(|error| error.message).unwrap();
+            let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+            let parsed = crate::domain::block::parse_markdown_document(
+                "Cards/loose",
+                loose,
+                DateTime::new("2026-01-03T00:00:00Z").unwrap(),
+            )
+            .unwrap();
+            crate::storage::index::upsert_block(&conn, &parsed.block, None).unwrap();
+        }
+        let refusal = "no collection \"Pageless\": its page does not exist; create it with mine collection create";
+        let before = space_snapshot(&root);
+
+        let out = run(&env, &args(&["connect", "Cards/plain", "Pageless"]));
+        assert_eq!(out.code, EXIT_NOT_FOUND, "{}", out.stderr);
+        assert!(out.stderr.contains(refusal), "{}", out.stderr);
+
+        let out = run(&env, &args(&["cards", "--collection", "Pageless"]));
+        assert_eq!(out.code, EXIT_NOT_FOUND, "{}", out.stdout);
+        assert!(out.stderr.contains(refusal), "{}", out.stderr);
+
+        let out = run(
+            &env,
+            &args(&["card", "create", "--title", "Into nowhere", "--collection", "Pageless"]),
+        );
+        assert_eq!(out.code, EXIT_NOT_FOUND, "{}", out.stderr);
+        assert!(out.stderr.contains(refusal), "{}", out.stderr);
+        assert_eq!(space_snapshot(&root), before, "a refused command wrote a file");
+
+        let out = run(&env, &args(&["collections", "--json"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        let value: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+        assert_eq!(value["collections"], json!([{ "name": "Nature", "count": 2 }]));
+
+        let out = run(&env, &args(&["card", "Cards/loose", "--json"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        let value: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+        assert_eq!(value["collections"], json!(["Nature"]));
+        let out = run(&env, &args(&["card", "Cards/loose"]));
+        assert!(!out.stdout.contains("Pageless"), "{}", out.stdout);
+
+        let out = run(&env, &args(&["disconnect", "Cards/loose", "Pageless"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        let after = card_content(&root, "Cards/loose");
+        assert!(!after.contains("Pageless"), "{after}");
+        assert!(after.contains("[[Nature]]"), "{after}");
+    }
+
+    /// К1: an empty collection page is a collection with a count of 0.
+    #[test]
+    fn an_empty_collection_page_is_listed_with_zero() {
+        let (_dir, env, _root) = fixture();
+        let out = run(&env, &args(&["collection", "create", "Empty shelf"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+
+        let out = run(&env, &args(&["collections", "--json"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        let value: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+        assert_eq!(
+            value["collections"],
+            json!([{ "name": "Nature", "count": 1 }, { "name": "Empty shelf", "count": 0 }])
+        );
+        let out = run(&env, &args(&["cards", "--collection", "Empty shelf"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        assert!(out.stdout.contains("no cards in this collection"));
     }
 
     #[test]

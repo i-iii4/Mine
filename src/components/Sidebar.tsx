@@ -1745,7 +1745,10 @@ const TagNavItem = memo(function TagNavItem({
   const location = useLocation();
   const [deleteOpen, setDeleteOpen] = useState(false);
   // The collection's page, looked up as its menu opens: `undefined` until the
-  // answer, null when there is no page to show.
+  // answer. Every row is a page (a collection exists only as one), so null
+  // comes only from a race with the page deleted outside Mine, or from a name
+  // several pages share; the watcher then updates the list
+  // (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К10).
   const [pagePath, setPagePath] = useState<string | null | undefined>(undefined);
   const findPage = useCallback((open: boolean) => {
     if (!open) return;

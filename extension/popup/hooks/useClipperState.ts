@@ -1483,6 +1483,23 @@ export function useClipperState() {
     setSelectedTags((prev) => (prev.includes(tag) ? prev : [...prev, tag]));
   }, [refreshChannels, setSelectedTags]);
 
+  /// A Save refused because a collection the clip joins has no page (its page
+  /// went after the clipper opened): nothing was written. The reason stands
+  /// under the collection list, the list is read again, the collection
+  /// leaves the selection, and the clip stays open: a Save again saves it
+  /// without that collection (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
+  /// `null` for any other refusal.
+  const collectionRefusal = useCallback((result: NativeResponse) => {
+    if (result.code !== "collection_not_found") return null;
+    const collection = typeof result.collection === "string" ? result.collection : null;
+    setCollectionError(collection
+      ? `Collection “${collection}” has no page, so nothing was saved. Save again to save the clip without it.`
+      : "A chosen collection has no page, so nothing was saved.");
+    if (collection) setSelectedTags((prev) => prev.filter((tag) => tag !== collection));
+    void refreshChannels();
+    return { ok: false as const, error: null, shownWithCollections: true as const };
+  }, [refreshChannels, setSelectedTags]);
+
   /// A Save has ended: a destination check held back during it runs now (Г3.2).
   const endSaving = useCallback(() => {
     savingRef.current = false;
@@ -1498,6 +1515,8 @@ export function useClipperState() {
 
     savingRef.current = true;
     setSaving(true);
+    // A refusal shown under the collections belongs to the Save before.
+    setCollectionError(null);
     // Folder moves seen when Save was pressed. A move before the clip is
     // written takes the collections away from it: the Save stops and the
     // editor names both folders, as В4.4 has it (Г3.2).
@@ -1524,7 +1543,8 @@ export function useClipperState() {
         await clearPendingSave(pending);
         operationRef.current = null;
         setPendingOperation(false);
-        return { ok: false as const, error: result.error ?? "This save was rejected before writing any files. You can edit the clip and try again." };
+        return collectionRefusal(result)
+          ?? { ok: false as const, error: result.error ?? "This save was rejected before writing any files. You can edit the clip and try again." };
       }
       return { ok: false as const, error: identityStateMessage(result.folder_state) ?? "Could not confirm the save. Please retry." };
     }
@@ -1765,7 +1785,8 @@ export function useClipperState() {
       await clearPendingSave(operation);
       operationRef.current = null;
       setPendingOperation(false);
-      return { ok: false as const, error: result.error ?? "This save was rejected before writing any files. You can edit the clip and try again." };
+      return collectionRefusal(result)
+        ?? { ok: false as const, error: result.error ?? "This save was rejected before writing any files. You can edit the clip and try again." };
     }
     return { ok: false as const, error: identityStateMessage(result.folder_state) ?? "Could not confirm the save. Please retry." };
     } catch (cause) {
@@ -1786,6 +1807,7 @@ export function useClipperState() {
     previousOperation,
     allowDifferentClip,
     confirmSavedOperation,
+    collectionRefusal,
   ]);
 
   const switchVault = useCallback(async (vaultPath: string) => {

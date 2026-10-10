@@ -276,8 +276,11 @@ pub struct ReorderItem {
     pub position: u32,
 }
 
-/// Reorder channels by setting new positions for each tag.
-/// Tags without channel entries are auto-created.
+/// Reorder collections by writing each moved one's new `position` into its
+/// page. Only existing pages are written: an item without a page is skipped
+/// and no file is created, the other positions still apply, and the list read
+/// afterwards shows what is really there (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md,
+/// К6).
 ///
 /// Off the main thread: it writes one document per moved collection, and a
 /// synchronous command held the window still until the last write landed,
@@ -320,7 +323,6 @@ fn reorder_channels_blocking(
         .into_iter()
         .map(|channel| (channel.tag.clone(), channel))
         .collect::<HashMap<_, _>>();
-    let now = crate::commands::state::now_saved_at();
     let mut seen = std::collections::HashSet::new();
     let mut planned_channels = Vec::with_capacity(items.len());
     let mut writes = Vec::with_capacity(items.len());
@@ -335,29 +337,23 @@ fn reorder_channels_blocking(
                 "duplicate collection in reorder: {tag}"
             )));
         }
+        // Only a collection with a page is reordered: the reorder never
+        // creates one (К6). The list read after it shows what is there.
+        let Some(existing) = existing_by_tag.get(&tag) else {
+            continue;
+        };
         // A collection that keeps its place keeps its document untouched.
-        if existing_by_tag
-            .get(&tag)
-            .is_some_and(|existing| existing.position == item.position)
-        {
+        if existing.position == item.position {
             continue;
         }
-        let mut channel = if let Some(existing) = existing_by_tag.get(&tag) {
-            existing.clone()
-        } else {
-            let dt = DateTime::new(&now).map_err(|e| CommandError::Internal(e.to_string()))?;
-            Channel::new(&tag, dt).map_err(|e| CommandError::Internal(e.to_string()))?
-        };
+        let mut channel = existing.clone();
         channel.position = item.position;
-        let path = match collection_document_for_mutation(&vs.conn, &vs.vault, &tag)? {
-            Some(page) => page.path,
-            None if !tag.contains('/') => vs.vault.block_path(&vs.vault.new_collection_slug(&tag)),
-            None => {
-                return Err(CommandError::Internal(format!(
-                    "collection document '{tag}' not found"
-                )))
-            }
+        // The page went since the index saw it (deleted outside Mine): no
+        // page, nothing to write; the watcher drops the row.
+        let Some(page) = collection_document_for_mutation(&vs.conn, &vs.vault, &tag)? else {
+            continue;
         };
+        let path = page.path;
         // A reorder may only write the collection's own document: the file's
         // stem is the collection's name. A tag that resolves to a file with a
         // different stem is a stale index row aimed at another collection's
@@ -379,23 +375,23 @@ fn reorder_channels_blocking(
             .slug_for_path(&path)
             .map_err(|error| CommandError::Internal(error.to_string()))?;
         // The page is the user's note: its text, properties and membership
-        // stay; only `position` changes.
-        writes.push(if path.exists() {
-            let (_, content) = files::read_block_file(&vs.vault, &path)?;
-            let before = parse_markdown_document(&source_slug, &content, channel.created_at.clone())
-                .map_err(|error| CommandError::Internal(error.to_string()))?
-                .block;
-            let mut after = before.clone();
-            after.frontmatter.position = Some(channel.position);
-            let patched = apply_block_changes(&content, &before, &after).map_err(|_| {
-                CommandError::FrontmatterNotWritable {
-                    path: path.display().to_string(),
-                }
-            })?;
-            SourceFileWrite::replace(path, content.into_bytes(), patched.into_bytes())
-        } else {
-            SourceFileWrite::create(path, serialize_block(&channel_to_block(&channel)).into_bytes())
-        });
+        // stay; only `position` changes. The write replaces exactly the bytes
+        // the page was found with, so a page edited or removed since refuses
+        // the reorder instead of being recreated.
+        let content = String::from_utf8(page.read).map_err(|error| {
+            CommandError::Internal(format!("collection page is not UTF-8: {error}"))
+        })?;
+        let before = parse_markdown_document(&source_slug, &content, channel.created_at.clone())
+            .map_err(|error| CommandError::Internal(error.to_string()))?
+            .block;
+        let mut after = before.clone();
+        after.frontmatter.position = Some(channel.position);
+        let patched = apply_block_changes(&content, &before, &after).map_err(|_| {
+            CommandError::FrontmatterNotWritable {
+                path: path.display().to_string(),
+            }
+        })?;
+        writes.push(SourceFileWrite::replace(path, content.into_bytes(), patched.into_bytes()));
         planned_channels.push((channel, source_slug));
     }
 
@@ -511,13 +507,16 @@ pub(crate) fn rename_channel_inner(
         created_at: existing.created_at.clone(),
     };
 
+    // The page went since the plan found it: the rename never makes a new
+    // one in its place (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К5).
+    if !old_path.exists() {
+        return Err(CommandError::CollectionNotFound {
+            collection: normalized_old,
+        });
+    }
     // The page carries no name inside it: renaming the collection is
     // renaming the file, its text and properties move unchanged.
     writes.push(match page_rewrite {
-        _ if !old_path.exists() => SourceFileWrite::create(
-            new_path,
-            serialize_block(&channel_to_block(&new_channel)).into_bytes(),
-        ),
         Some((expected, bytes)) => {
             SourceFileWrite::rename_with_bytes(old_path.clone(), new_path, expected, bytes)
         }
@@ -646,10 +645,12 @@ impl CollectionRename {
             _ => requested,
         };
         validate_collection_ref(&new).map_err(CommandError::Internal)?;
+        // A collection exists only as its page: without one there is nothing
+        // to rename, and no page is made for it (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md).
         let existing = index::list_channels(conn)?
             .into_iter()
             .find(|channel| channel.tag == old)
-            .ok_or_else(|| CommandError::Internal(format!("channel '{old_tag}' not found")))?;
+            .ok_or_else(|| CommandError::CollectionNotFound { collection: old.clone() })?;
         if new == old {
             return Ok(Self {
                 old,
@@ -665,7 +666,7 @@ impl CollectionRename {
         // than in the vault root.
         let from = collection_document_for_mutation(conn, vault, &old)?
             .map(|page| page.path)
-            .ok_or_else(|| CommandError::Internal(format!("collection document '{old}' not found")))?;
+            .ok_or_else(|| CommandError::CollectionNotFound { collection: old.clone() })?;
         let file_name = format!("{}.md", new.rsplit('/').next().unwrap_or(&new));
         let to = from
             .parent()
@@ -926,6 +927,56 @@ fn collection_document_for_mutation(
     Ok(result)
 }
 
+/// The collection an Are.na import writes its cards into
+/// (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К5).
+pub(crate) enum ImportCollection {
+    /// The page of that name is there: its collection is reused.
+    Page(String),
+    /// No page yet: one is made under this name, which the rules of a new
+    /// collection name let through, the way `create_channel` makes it.
+    Create(String),
+}
+
+/// Where an import of a channel called `name` puts its cards: the page with
+/// this name when there is one (found as rename and delete find it),
+/// otherwise a new page. A name the rules of a new collection refuse
+/// refuses the import of this channel, before any card is written.
+pub(crate) fn import_collection(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    name: &str,
+) -> Result<ImportCollection, CommandError> {
+    let collection_ref = normalize_collection_ref(name);
+    if !collection_ref.is_empty()
+        && validate_collection_ref(&collection_ref).is_ok()
+        && collection_document_for_mutation(conn, vault, &collection_ref)?.is_some()
+    {
+        return Ok(ImportCollection::Page(collection_ref));
+    }
+    Ok(ImportCollection::Create(new_collection_name(conn, name)?))
+}
+
+/// The one check every path that writes a new link into `Mine Collections`
+/// runs before it writes (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7): the
+/// collection `collection_ref` has a page. The page is found the way the
+/// rename, the deletion and Reveal in Finder find it
+/// ([`collection_document_for_mutation`]): by the files on disk, not only by
+/// the index row. No page refuses with [`CommandError::CollectionNotFound`];
+/// a bare name shared by several pages refuses with the same ambiguity error
+/// those commands give. Disconnecting needs no page (К8) and never calls it.
+pub(crate) fn require_collection_page(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    collection_ref: &str,
+) -> Result<(), CommandError> {
+    match collection_document_for_mutation(conn, vault, collection_ref)? {
+        Some(_) => Ok(()),
+        None => Err(CommandError::CollectionNotFound {
+            collection: collection_ref.to_string(),
+        }),
+    }
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 /// Convert a Channel to a Block with type: channel for writing to .md file.
@@ -1012,6 +1063,100 @@ mod tests {
         assert!(games.contains("position: 1"), "{games}");
         let cities = std::fs::read_to_string(vault.block_path("Collections/Cities")).unwrap();
         assert!(cities.contains("position: 2"), "{cities}");
+    }
+
+    /// Every file path of the space, relative to its root, sorted.
+    fn space_paths(vault: &VaultLayout) -> Vec<String> {
+        let mut paths = files::scan_vault_file_paths(vault).unwrap();
+        paths.sort();
+        paths
+    }
+
+    /// К6 (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md): a reorder that names a
+    /// collection without a page creates no file; the pages that moved get
+    /// their positions.
+    #[test]
+    fn a_reorder_creates_no_page_for_a_name_without_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::with_derived_root(dir.path().join("space"), dir.path().join("derived"))
+            .with_write_layout(crate::domain::vault::VaultWriteLayout::standard());
+        std::fs::create_dir_all(vault.root().join("Collections")).unwrap();
+        std::fs::create_dir_all(vault.root().join("Cards")).unwrap();
+        for (name, position) in [("Art", 0), ("Cities", 1)] {
+            std::fs::write(
+                vault.block_path(&format!("Collections/{name}")),
+                format!("---\ntype: channel\nposition: {position}\nsaved_at: 2026-04-25T14:00:40Z\n---\n"),
+            )
+            .unwrap();
+        }
+        // A card links a name that has no page.
+        std::fs::write(
+            vault.block_path("Cards/Loose"),
+            "---\nsaved_at: 2026-04-25T14:00:40Z\nMine Collections:\n  - \"[[Pageless]]\"\n---\nBody",
+        )
+        .unwrap();
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        let state = AppState::new();
+        let main_space = state.open_space_for_test("main", crate::commands::state::VaultState {
+            conn,
+            vault: vault.clone(),
+        });
+        let files_before = space_paths(&vault);
+
+        reorder_channels_blocking(
+            &main_space,
+            vec![
+                ReorderItem { tag: "Pageless".into(), position: 0 },
+                ReorderItem { tag: "Cities".into(), position: 1 },
+                ReorderItem { tag: "Art".into(), position: 2 },
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(space_paths(&vault), files_before, "the reorder created a file");
+        let cities = std::fs::read_to_string(vault.block_path("Collections/Cities")).unwrap();
+        assert!(cities.contains("position: 1"), "{cities}");
+        let art = std::fs::read_to_string(vault.block_path("Collections/Art")).unwrap();
+        assert!(art.contains("position: 2"), "{art}");
+        let guard = main_space.vault_state.lock().unwrap();
+        let conn = &guard.as_ref().unwrap().conn;
+        let listed: Vec<(String, u32)> = index::list_channels(conn)
+            .unwrap()
+            .into_iter()
+            .map(|channel| (channel.tag, channel.position))
+            .collect();
+        assert_eq!(listed, vec![("Cities".to_string(), 1), ("Art".to_string(), 2)]);
+    }
+
+    /// «Что не меняется» (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md): a rename needs
+    /// the page; without one it refuses with `CollectionNotFound`, writes
+    /// nothing and makes no page.
+    #[test]
+    fn renaming_a_collection_without_a_page_refuses_and_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::with_derived_root(dir.path().join("space"), dir.path().join("derived"));
+        std::fs::create_dir_all(vault.root()).unwrap();
+        std::fs::write(
+            vault.block_path("Loose"),
+            "---\nsaved_at: 2026-04-25T14:00:40Z\nMine Collections:\n  - \"[[Pageless]]\"\n---\nBody",
+        )
+        .unwrap();
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        let before = space_files(&vault);
+
+        let refused = rename_channel_inner(None, &conn, &vault, "Pageless", "Renamed");
+
+        match refused {
+            Err(CommandError::CollectionNotFound { collection }) => assert_eq!(collection, "Pageless"),
+            other => panic!("expected CollectionNotFound, got {other:?}"),
+        }
+        assert_eq!(space_files(&vault), before);
+        assert!(matches!(
+            check_collection_name_inner(&conn, &vault, Some("Pageless"), "Renamed"),
+            Err(CommandError::CollectionNotFound { .. })
+        ));
     }
 
     #[test]

@@ -24,6 +24,9 @@
       if (!response.ok) {
         const error = new Error(response.error.message);
         error.code = response.error.code;
+        // The collection a `collection_not_found` names; clients never read
+        // it out of the message.
+        if (typeof response.error.collection === "string") error.collection = response.error.collection;
         throw error;
       }
       return response.value;

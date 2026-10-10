@@ -72,6 +72,14 @@ import { createSelectionStamps } from "./spaceSelection";
 function isCommandError(error: unknown): error is CommandError {
   if (!error || typeof error !== "object" || !("kind" in error)) return false;
   const kind = (error as { kind?: unknown }).kind;
+  if (kind === "collection_not_found") {
+    // Commands with their own error type name the collection at the top
+    // level (`{ kind, collection }`); only the shared error carries it in
+    // `message`.
+    const message = (error as { message?: unknown }).message;
+    return typeof message === "object" && message !== null
+      && typeof (message as { collection?: unknown }).collection === "string";
+  }
   return kind === "no_vault"
     || kind === "space_changed"
     || kind === "source_changed"
@@ -79,6 +87,16 @@ function isCommandError(error: unknown): error is CommandError {
     || kind === "space_identity_unreadable"
     || kind === "name_refused"
     || kind === "internal";
+}
+
+/** Whether `error` is a connect refused because the collection has no page,
+ *  from any command: the shared `CommandError` or a command's own error type
+ *  (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7). The interface then reads its
+ *  snapshots again, and the collection leaves every list. */
+export function isCollectionNotFound(error: unknown): boolean {
+  const cause = error instanceof Error && "cause" in error ? error.cause : error;
+  return Boolean(cause) && typeof cause === "object"
+    && (cause as { kind?: unknown }).kind === "collection_not_found";
 }
 
 /** Why a typed name was refused, when `error` is such a refusal: the words
@@ -106,6 +124,8 @@ function commandErrorMessage(error: CommandError): string {
       return `The properties of “${noteName(error.message.path)}” are written in a form Mine cannot edit in place; nothing was changed.`;
     case "space_identity_unreadable":
       return `Mine cannot read the identity file of “${noteName(error.message.path)}”, so it did not open the space and changed nothing. Check access to the folder, or wait until iCloud downloads it.`;
+    case "collection_not_found":
+      return `Collection “${error.message.collection}” has no page; nothing was written.`;
     case "name_refused":
     case "internal":
       return error.message;

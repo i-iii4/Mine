@@ -361,6 +361,74 @@ async function checkHeaderDragBySpaceName(worker) {
   }
 }
 
+// A collection exists only as its page (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md,
+// К1, К7, К9). The browser folder lists the pages only, not a name a card
+// links without one; a Save into a collection whose page was deleted after
+// the clipper opened writes nothing, says why under the collection list, and
+// a Save again saves the clip without it.
+async function checkCollectionsArePages(worker) {
+  const listed = await worker.evaluate(async () => {
+    const adapter = globalThis.MineStandaloneVault;
+    const created = await adapter.createStandaloneChannel('Vanishing');
+    if (!created.ok) throw new Error(JSON.stringify(created));
+    const folder = await adapter.loadDirectoryHandle();
+    const cards = await folder.getDirectoryHandle('Cards');
+    const loose = await (await cards.getFileHandle('Loose note.md', { create: true })).createWritable();
+    await loose.write('---\nMine Collections:\n  - "[[Pageless]]"\n---\nA note linking a name without a page.\n');
+    await loose.close();
+    const status = await adapter.getStandaloneStatus();
+    await chrome.storage.local.set({ mineSaveDestination: { executor: 'browser', bindingId: status.bindingId } });
+    return (await adapter.listStandaloneChannels()).channels.map((channel) => channel.tag);
+  });
+  assert.ok(listed.includes('Vanishing') && listed.includes('Worker collection'), JSON.stringify(listed));
+  assert.ok(!listed.includes('Pageless'), `a name without a page is listed: ${JSON.stringify(listed)}`);
+
+  const cardNames = () => worker.evaluate(async () => {
+    const folder = await globalThis.MineStandaloneVault.loadDirectoryHandle();
+    const names = [];
+    for await (const name of (await folder.getDirectoryHandle('Cards')).keys()) names.push(name);
+    return names.sort();
+  });
+  const cardsBefore = await cardNames();
+  const { popup, source } = await openClipperWindow(worker, {
+    metadata: { url: 'https://example.test/vanishing', title: 'Vanishing check',
+      description: null, image: null, author: null, ogType: 'article',
+      favicon: null, selection: '', detectedType: 'article', isArticle: true },
+    article: { title: 'Vanishing check', content: 'A clip whose collection page goes.', byline: null, excerpt: null },
+  });
+  try {
+    await popup.getByRole('button', { name: 'Connect Vanishing', exact: true }).click({ timeout: 15_000 });
+    // The page goes after the clipper opened, as a deletion in Finder would.
+    await worker.evaluate(async () => {
+      const folder = await globalThis.MineStandaloneVault.loadDirectoryHandle();
+      await (await folder.getDirectoryHandle('Collections')).removeEntry('Vanishing.md');
+    });
+    await popup.getByRole('button', { name: 'Save to 1 collection', exact: true }).click({ timeout: 15_000 });
+    const reason = popup.locator('[data-clipper-collection-error]');
+    await reason.waitFor({ state: 'visible', timeout: 15_000 });
+    assert.ok((await reason.textContent()).includes('“Vanishing”'), await reason.textContent());
+    assert.equal(await popup.locator('[data-clipper-save-error]').count(), 0);
+    assert.deepEqual(await cardNames(), cardsBefore, 'a refused Save wrote a card');
+    // The list is read again without it, and the clip is still open.
+    await popup.getByRole('button', { name: 'Connect Vanishing', exact: true }).waitFor({ state: 'detached', timeout: 15_000 });
+    await popup.getByRole('button', { name: 'Save', exact: true }).click({ timeout: 15_000 });
+    await popup.locator('[data-clipper-saved]').waitFor({ state: 'visible', timeout: 15_000 });
+  } catch (error) {
+    throw new Error(`Save into a collection without a page: ${await popup.locator('body').innerText()}`, { cause: error });
+  } finally {
+    await popup.close();
+    await source.close();
+    await worker.evaluate(async () => chrome.storage.local.remove(['mineSaveDestination']));
+  }
+  const saved = await worker.evaluate(async () => {
+    const folder = await globalThis.MineStandaloneVault.loadDirectoryHandle();
+    const cards = await folder.getDirectoryHandle('Cards');
+    return (await (await cards.getFileHandle('Vanishing check.md')).getFile()).text();
+  });
+  assert.ok(saved.includes('A clip whose collection page goes.'), saved);
+  assert.ok(!saved.includes('[[Vanishing]]'), saved);
+}
+
 try {
   let worker = await launch();
   const results = await worker.evaluate(async (commands) => {
@@ -368,7 +436,10 @@ try {
     const replies = [];
     for (const command of commands) {
       try { replies.push({ ok: true, value: await globalThis.MineCore.call(command) }); }
-      catch (error) { replies.push({ ok: false, error: { code: error.code, message: error.message } }); }
+      catch (error) {
+        replies.push({ ok: false, error: { code: error.code, message: error.message,
+          ...(typeof error.collection === 'string' ? { collection: error.collection } : {}) } });
+      }
     }
     return replies;
   }, fixtures.map(fixture => fixture.command));
@@ -564,6 +635,7 @@ try {
   assert.deepEqual(finalCapture.pending, []);
   await checkOverlayAcrossPages(worker);
   await checkHeaderDragBySpaceName(worker);
+  await checkCollectionsArePages(worker);
   Object.assign(report, { ok: true, scope: 'chromium-extension-worker-wasm',
     fixtures: fixtures.length, headless: true, temporaryProfile: true,
     persistedHandleBlobReceipt: true, browserRestarts: 3, popupSaveToFile: true,
@@ -573,6 +645,7 @@ try {
     overlayLeavesPageWorking: true, overlayClipAcrossNewDocument: true, screenshotOfShownPageForOriginalCard: true,
     overlayMovedResizedKeptAndFitted: true, overlayResizedByTopLeftCorner: true,
     overlayDraggedBySpaceName: true, spaceMenuOpensOnClickNotDrag: true, openClipClearedAfterSave: true,
+    collectionsListedAsPagesOnly: true, saveIntoCollectionWithoutPageWritesNothing: true,
     filesystem: 'OPFS-not-OS-folder' });
 } catch (error) {
   report.error = error.stack ?? String(error);

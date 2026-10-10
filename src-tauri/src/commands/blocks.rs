@@ -238,6 +238,11 @@ pub enum InlineMediaExtractError {
     #[error("unsupported media type for '{media_ref}'")]
     UnsupportedMediaType { media_ref: String },
 
+    /// The target collection has no page; nothing was written
+    /// (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
+    #[error("collection \"{collection}\" has no page; nothing was written")]
+    CollectionNotFound { collection: String },
+
     #[error("{message}")]
     Internal { message: String },
 }
@@ -266,6 +271,11 @@ pub enum MediaAssetActionError {
     #[cfg_attr(target_os = "macos", allow(dead_code))]
     #[error("native media copy is not supported for '{media_ref}'")]
     ClipboardUnsupported { media_ref: String },
+
+    /// The target collection has no page; nothing was written
+    /// (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
+    #[error("collection \"{collection}\" has no page; nothing was written")]
+    CollectionNotFound { collection: String },
 
     #[error("{message}")]
     Internal { message: String },
@@ -300,6 +310,11 @@ pub enum TextSelectionExtractError {
 
     #[error("invalid collection reference: {reason}")]
     InvalidCollectionRef { reason: String },
+
+    /// The target collection has no page; nothing was written, neither the
+    /// new card nor the source article (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
+    #[error("collection \"{collection}\" has no page; nothing was written")]
+    CollectionNotFound { collection: String },
 
     #[error("{message}")]
     Internal { message: String },
@@ -588,6 +603,14 @@ pub(crate) fn create_block_inner(
     vault: &VaultLayout,
     params: CreateBlockParams,
 ) -> Result<IndexedBlock, CommandError> {
+    // A card created straight into collections links only collections that
+    // have a page; the check runs before anything is written
+    // (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
+    let collections = mine_core::save::normalize_collections(&params.tags)
+        .map_err(|error| CommandError::Internal(error.to_string()))?;
+    for collection in &collections {
+        crate::commands::channels::require_collection_page(conn, vault, collection)?;
+    }
     let name = if let Some(source) = params.file_path.as_deref() {
         let ext = Path::new(source)
             .extension()
@@ -638,7 +661,7 @@ pub(crate) fn create_block_inner(
         block_type: params.block_type,
         title: params.title,
         url: params.url,
-        tags: params.tags,
+        tags: collections,
         file: media_file,
         body: params.body.unwrap_or_default(),
         saved_at: crate::util::now_saved_at(),
@@ -1416,6 +1439,23 @@ pub async fn delete_text_selection(webview: tauri::Webview, app: AppHandle, stat
     outcome
 }
 
+/// [`crate::commands::channels::require_collection_page`] for a command with
+/// its own error type: no page becomes that type's `CollectionNotFound`, any
+/// other failure (an ambiguous name, an unreadable page) its `Internal`.
+fn require_target_collection_page<E>(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    collection_ref: &str,
+    not_found: impl FnOnce(String) -> E,
+    internal: impl FnOnce(String) -> E,
+) -> Result<(), E> {
+    match crate::commands::channels::require_collection_page(conn, vault, collection_ref) {
+        Ok(()) => Ok(()),
+        Err(CommandError::CollectionNotFound { collection }) => Err(not_found(collection)),
+        Err(error) => Err(internal(error.to_string())),
+    }
+}
+
 fn extract_inline_media_inner(
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
@@ -1436,6 +1476,13 @@ fn extract_inline_media_inner(
     }
     validate_collection_ref(&target_tag)
         .map_err(|reason| InlineMediaExtractError::InvalidMediaRef { reason })?;
+    require_target_collection_page(
+        conn,
+        vault,
+        &target_tag,
+        |collection| InlineMediaExtractError::CollectionNotFound { collection },
+        |message| InlineMediaExtractError::Internal { message },
+    )?;
 
     let source_path = vault.block_path(&source_slug);
     if !source_path.exists() {
@@ -1560,6 +1607,13 @@ fn create_media_asset_card_inner(
     if !target_tag.is_empty() {
         validate_collection_ref(&target_tag)
             .map_err(|reason| MediaAssetActionError::InvalidMediaRef { reason })?;
+        require_target_collection_page(
+            conn,
+            vault,
+            &target_tag,
+            |collection| MediaAssetActionError::CollectionNotFound { collection },
+            |message| MediaAssetActionError::Internal { message },
+        )?;
     }
 
     let source_block = source_slug
@@ -1636,6 +1690,13 @@ fn extract_text_selection_inner(
     if !target_tag.is_empty() {
         validate_collection_ref(&target_tag)
             .map_err(|reason| TextSelectionExtractError::InvalidCollectionRef { reason })?;
+        require_target_collection_page(
+            conn,
+            vault,
+            &target_tag,
+            |collection| TextSelectionExtractError::CollectionNotFound { collection },
+            |message| TextSelectionExtractError::Internal { message },
+        )?;
     }
 
     let selected_text = selected_text.trim();
@@ -5318,6 +5379,19 @@ mod tests {
         index::upsert_block(conn, block, Some(vault.root())).unwrap();
     }
 
+    /// A collection page `<name>.md` at the root of the space, written and
+    /// indexed: only a collection with a page is one
+    /// (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К1).
+    fn collection_page(conn: &rusqlite::Connection, vault: &VaultLayout, name: &str) {
+        let mut page = article(name, "");
+        page.frontmatter.block_type = BlockType::Channel;
+        page.frontmatter.title = None;
+        page.frontmatter.url = None;
+        page.frontmatter.tags = Vec::new();
+        persist_block(conn, vault, &page);
+        index::upsert_channel_from_block_in_vault(conn, vault, &page).unwrap();
+    }
+
     #[test]
     fn desktop_create_uses_shared_names_for_disk_only_card_and_media_conflicts() {
         let (_root, _derived, vault, conn) = make_vault();
@@ -5356,6 +5430,7 @@ mod tests {
     #[test]
     fn desktop_create_preserves_pasted_body_and_shared_collection_normalization() {
         let (_root, _derived, vault, conn) = make_vault();
+        collection_page(&conn, &vault, "Чтение");
         let created = create_block_inner(
             &conn,
             &vault,
@@ -5424,6 +5499,8 @@ mod tests {
     #[test]
     fn merge_blocks_inner_creates_ordered_article_and_preserves_media_files() {
         let (_root, _derived, vault, conn) = make_vault();
+        collection_page(&conn, &vault, "notes");
+        collection_page(&conn, &vault, "visual");
         let state = AppState::new();
         let mut first = article("First Card", "Alpha body");
         first.frontmatter.author = Some("Alice".to_string());
@@ -5727,6 +5804,7 @@ mod tests {
     #[test]
     fn extract_inline_media_inner_references_existing_image_and_indexes_related_note() {
         let (_root, _derived, vault, conn) = make_vault();
+        collection_page(&conn, &vault, "Mood Board");
         let source = article("Source Article", "Intro\n\n![[photo.png]]\n\nOutro");
         persist_block(&conn, &vault, &source);
         std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
@@ -5776,6 +5854,7 @@ mod tests {
     #[test]
     fn extract_inline_media_inner_avoids_owned_filename_collision_for_shared_media() {
         let (_root, _derived, vault, conn) = make_vault();
+        collection_page(&conn, &vault, "Mood Board");
         let source = article("Source Article", "Intro\n\n![[photo.png]]\n\nOutro");
         persist_block(&conn, &vault, &source);
         std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
@@ -5808,6 +5887,8 @@ mod tests {
     #[test]
     fn create_media_asset_card_inner_creates_standalone_media_card_without_connecting_source() {
         let (_root, _derived, vault, conn) = make_vault();
+        collection_page(&conn, &vault, "Mood Board");
+        collection_page(&conn, &vault, "notes");
         let source = article("Source Article", "Intro\n\n![[photo.png]]\n\nOutro");
         persist_block(&conn, &vault, &source);
         std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
@@ -5838,6 +5919,7 @@ mod tests {
     #[test]
     fn create_media_asset_card_inner_always_creates_a_new_media_card() {
         let (_root, _derived, vault, conn) = make_vault();
+        collection_page(&conn, &vault, "Mood Board");
         let mut existing = image("Existing Photo", "photo.png");
         existing.frontmatter.tags = vec!["Existing".to_string()];
         persist_block(&conn, &vault, &existing);
@@ -6718,6 +6800,7 @@ mod tests {
     #[test]
     fn extract_inline_media_inner_rejects_unreferenced_media() {
         let (_root, _derived, vault, conn) = make_vault();
+        collection_page(&conn, &vault, "Mood Board");
         let source = article("Source Article", "No embeds here.");
         persist_block(&conn, &vault, &source);
         std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
@@ -6740,6 +6823,7 @@ mod tests {
     #[test]
     fn extract_text_selection_inner_creates_snapshot_and_anchors_source() {
         let (_root, _derived, vault, conn) = make_vault();
+        collection_page(&conn, &vault, "Quotes");
         let source = article(
             "Source Article",
             "First paragraph with useful sentence.\n\nSecond paragraph.",
@@ -6784,9 +6868,134 @@ mod tests {
         assert_ne!(source_after.body_hash.as_deref(), Some(body_hash.as_str()));
     }
 
+    /// Every file of the space with its bytes: what a refusal must leave.
+    fn space_snapshot(vault: &VaultLayout) -> Vec<(String, Vec<u8>)> {
+        let mut paths = files::scan_vault_file_paths(vault).unwrap();
+        paths.sort();
+        paths
+            .into_iter()
+            .map(|path| {
+                let bytes = std::fs::read(vault.root().join(&path)).unwrap();
+                (path, bytes)
+            })
+            .collect()
+    }
+
+    /// К7 (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md): every command that creates a
+    /// card straight into a collection refuses a collection without a page
+    /// with `CollectionNotFound`, before writing anything.
+    #[test]
+    fn creating_a_card_into_a_collection_without_a_page_writes_nothing() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let source = article(
+            "Source Article",
+            "First paragraph with useful sentence.\n\n![[photo.png]]\n\nOutro",
+        );
+        let body_hash = compute_body_hash(&source.body);
+        persist_block(&conn, &vault, &source);
+        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
+        let before = space_snapshot(&vault);
+        let pageless = || "Pageless".to_string();
+
+        let created = create_block_inner(
+            &conn,
+            &vault,
+            CreateBlockParams {
+                block_type: "article".into(),
+                title: Some("New Note".into()),
+                url: None,
+                tags: vec![pageless()],
+                file_path: None,
+                body: Some("Body".into()),
+            },
+        );
+        assert!(
+            matches!(&created, Err(CommandError::CollectionNotFound { collection }) if collection == "Pageless"),
+            "{created:?}"
+        );
+
+        let inline = extract_inline_media_inner(
+            &conn,
+            &vault,
+            "Source Article".to_string(),
+            "photo.png".to_string(),
+            pageless(),
+        );
+        assert!(
+            matches!(&inline, Err(InlineMediaExtractError::CollectionNotFound { collection }) if collection == "Pageless"),
+            "{inline:?}"
+        );
+
+        let asset = create_media_asset_card_inner(
+            &conn,
+            &vault,
+            "photo.png".to_string(),
+            pageless(),
+            Some("Source Article".to_string()),
+        );
+        assert!(
+            matches!(&asset, Err(MediaAssetActionError::CollectionNotFound { collection }) if collection == "Pageless"),
+            "{asset:?}"
+        );
+
+        let selection = extract_text_selection_inner(
+            &conn,
+            &vault,
+            "Source Article".to_string(),
+            pageless(),
+            "useful sentence".to_string(),
+            0,
+            0,
+            body_hash,
+        );
+        assert!(
+            matches!(&selection, Err(TextSelectionExtractError::CollectionNotFound { collection }) if collection == "Pageless"),
+            "{selection:?}"
+        );
+
+        assert_eq!(space_snapshot(&vault), before, "a refused creation wrote a file");
+        let notes: i64 = conn
+            .query_row("SELECT COUNT(*) FROM blocks", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(notes, 1, "a refused creation reached the index");
+    }
+
+    /// К2 and «Что не меняется» (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md): a merge
+    /// unites the cards' `Mine Collections` with the links whose names have
+    /// no page; the merged card shows only the collections with a page.
+    #[test]
+    fn merging_cards_keeps_links_without_a_page() {
+        let (_root, _derived, vault, conn) = make_vault();
+        collection_page(&conn, &vault, "notes");
+        let mut first = article("First Card", "Alpha body");
+        first.frontmatter.tags = vec!["notes".to_string(), "Pageless".to_string()];
+        let mut second = article("Second Card", "Beta body");
+        second.frontmatter.tags = vec!["Elsewhere".to_string()];
+        persist_block(&conn, &vault, &first);
+        persist_block(&conn, &vault, &second);
+
+        let mutation = merge_blocks_inner(
+            None,
+            &conn,
+            &vault,
+            vec!["First Card".to_string(), "Second Card".to_string()],
+        )
+        .unwrap();
+
+        let (_, merged) = files::read_block_file(
+            &vault,
+            &vault.block_path(&mutation.result.merged_slug),
+        )
+        .unwrap();
+        let merged = crate::domain::block::parse_block(&mutation.result.merged_slug, &merged).unwrap();
+        assert_eq!(merged.frontmatter.tags, vec!["notes", "Pageless", "Elsewhere"]);
+        assert_eq!(mutation.result.block.tags, vec!["notes"]);
+    }
+
     #[test]
     fn extract_text_selection_inner_reuses_existing_block_id() {
         let (_root, _derived, vault, conn) = make_vault();
+        collection_page(&conn, &vault, "Quotes");
         let source = article(
             "Source Article",
             "Paragraph with anchor. ^manual-anchor\n\nOther paragraph.",
@@ -7125,6 +7334,7 @@ mod tests {
     #[test]
     fn extract_text_selection_inner_accepts_japanese_with_source_byte_range() {
         let (_root, _derived, vault, conn) = make_vault();
+        collection_page(&conn, &vault, "Quotes");
         let source = article(
             "Source Article",
             "これは日本語の文章です。\n\nSecond paragraph.",
@@ -7156,6 +7366,7 @@ mod tests {
     #[test]
     fn extract_text_selection_inner_accepts_japanese_rendered_paragraph_selection() {
         let (_root, _derived, vault, conn) = make_vault();
+        collection_page(&conn, &vault, "Quotes");
         let source = article(
             "Source Article",
             "コットンのように粗野な質感でもなく、ナイロンのような光沢感もない、周囲の環境に馴染むような控えめな質感が特徴のコットン・ナイロン。\n軽量でありながら適度にハリのある素材感は、着用した時のシルエット形成にも寄与している。 ^this-cot-2\n\nThis cotton-nylon blend is characterized by a subtle text.",
@@ -7187,6 +7398,7 @@ mod tests {
     #[test]
     fn extract_text_selection_inner_rejects_stale_hash() {
         let (_root, _derived, vault, conn) = make_vault();
+        collection_page(&conn, &vault, "Quotes");
         let source = article("Source Article", "Current body.");
         persist_block(&conn, &vault, &source);
 

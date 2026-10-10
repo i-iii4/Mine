@@ -95,9 +95,11 @@ export function PopupApp() {
       setSaved(true);
       setSaveWarning(result.warning ?? null);
       if (!result.warning) setTimeout(closeClipper, 1200);
-    } else {
+    } else if (!("shownWithCollections" in result)) {
       setSaveError(result.error ?? "Failed to save");
     }
+    // A collection without a page tells why under the collection list, not
+    // here (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
   }, [clipper.save, closeClipper]);
 
   // Cmd+Enter to save, the arrows to change the type, Escape to close the

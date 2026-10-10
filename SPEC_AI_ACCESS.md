@@ -77,8 +77,8 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_SEARCH.md](SPEC_SE
 Коллекция существует только как страница с `type: channel` (решение
 пользователя 10.10.2026, [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md),
 К1, К2 и К9). Ссылку `Mine Collections` на имя без страницы чтения CLI и MCP
-не показывают и не считают; в файле она остаётся. Реализация ждёт команды
-пользователя (PLAN.md, Phase 44).
+не показывают и не считают; в файле она остаётся. Реализовано 10.10.2026
+(PLAN.md, Phase 44).
 
 Согласование с решением 044: в выводе нет поля `type`. Карточка описывается
 содержимым — `body`, список медиа с путями, `url` — и производным
@@ -144,9 +144,9 @@ it with mine collection create`, файл карточки не меняется
 `mine collection rename` и `delete`. `disconnect` снимает ссылку и без
 страницы. Страницу создают только `mine collection create` и инструмент MCP
 `collection_create`. Контракт: [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md),
-К5, К7 и К8. Сейчас `set_collection_membership` в
-[cli_mutations.rs](src-tauri/src/cli_mutations.rs) пишет ссылку на любое имя
-без проверки; реализация ждёт команды пользователя (PLAN.md, Phase 44).
+К5, К7 и К8. Проверку делает `set_collection_membership` в
+[cli_mutations.rs](src-tauri/src/cli_mutations.rs) до записи; реализовано
+10.10.2026 (PLAN.md, Phase 44).
 
 **Защита тела.** Набор медиа-вставок `![[…]]` до записи обязан совпадать с
 набором после; потеря вставки — отказ с перечнем потерянных, сознательное
@@ -252,11 +252,16 @@ watcher приложения видит те же изменения и сход
   с `space` действует на названное
   (`a_call_without_a_space_keeps_the_space_pinned_first` в `mcp.rs`);
 - коллекция только со страницей (решение 10.10.2026, Phase 44): фикстура
-  получает страницу `Nature.md` с `type: channel`, на которую сейчас ссылается
-  карточка без страницы; `connect`, `card create --collection` и
+  получила страницу `Collections/Nature.md` с `type: channel`, на которую
+  ссылается карточка `Cards/sunset`; `connect`, `card create --collection` и
   `cards --collection` по имени без страницы отвечают кодом 4 и ничего не
   пишут; `disconnect` такой ссылки её снимает; `collections` и `card` её не
-  показывают; MCP `connect` к имени без страницы возвращает `isError: true`;
+  показывают; пустая страница в `collections` со счётчиком 0
+  (`a_name_without_a_page_is_no_collection_for_the_cli`,
+  `an_empty_collection_page_is_listed_with_zero` в `cli.rs`,
+  `connect_needs_the_page_and_disconnect_does_not` в `cli_mutations.rs`); MCP
+  `connect` и `card_create` к имени без страницы возвращают `isError: true`
+  (`connect_to_a_name_without_a_page_is_a_tool_failure` в `mcp.rs`);
 - параллельный прогон с открытым на запись индексом — покрыт: открытое
   соединение второй стороны и удерживаемая write-транзакция, которую CLI
   пережидает по `busy_timeout`.

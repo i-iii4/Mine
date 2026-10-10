@@ -92,10 +92,12 @@ pub struct CollectionCount {
 }
 
 /// The collections of a space from its notes alone, by the rule the index
-/// follows: collection pages in their manual order (position, then name),
-/// then collections that only cards name, most used first. `memberships`
-/// holds each card's `Mine Collections`. A space read without an index (the
-/// browser folder) lists the same collections the app does.
+/// follows: a collection exists only as its page (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md,
+/// К1 and К9), so the list is the collection pages in their manual order
+/// (position, then name), each with how many cards are in it; a page no card
+/// names counts 0. `memberships` holds each card's `Mine Collections`; a link
+/// whose name has no page is in no list and no count. A space read without an
+/// index (the browser folder) lists the same collections the app does.
 pub fn list_collections(pages: &[CollectionPage], memberships: &[Vec<String>]) -> Vec<CollectionCount> {
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     for card in memberships {
@@ -120,7 +122,7 @@ pub fn list_collections(pages: &[CollectionPage], memberships: &[Vec<String>]) -
         .collect();
     listed.sort();
     let mut seen = BTreeSet::new();
-    let mut out = Vec::with_capacity(listed.len() + counts.len());
+    let mut out = Vec::with_capacity(listed.len());
     for (_, tag) in listed {
         if seen.insert(tag.clone()) {
             out.push(CollectionCount {
@@ -129,13 +131,6 @@ pub fn list_collections(pages: &[CollectionPage], memberships: &[Vec<String>]) -
             });
         }
     }
-    let mut named_only: Vec<(&String, &usize)> =
-        counts.iter().filter(|(tag, _)| !seen.contains(*tag)).collect();
-    named_only.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
-    out.extend(named_only.into_iter().map(|(tag, count)| CollectionCount {
-        tag: tag.clone(),
-        block_count: *count,
-    }));
     out
 }
 
@@ -546,8 +541,11 @@ mod tests {
         }
     }
 
+    /// К1 and К9 (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md): only pages are
+    /// collections, empty ones with a count of 0; names cards link without a
+    /// page are in no list and no count.
     #[test]
-    fn collections_list_pages_in_manual_order_then_named_only_by_use() {
+    fn collections_list_only_pages_in_manual_order() {
         let pages = vec![
             CollectionPage { slug: "Collections/Travel".into(), position: Some(1) },
             CollectionPage { slug: "Collections/Art".into(), position: Some(0) },
@@ -564,10 +562,10 @@ mod tests {
                 CollectionCount { tag: "Art".into(), block_count: 0 },
                 CollectionCount { tag: "Travel".into(), block_count: 2 },
                 CollectionCount { tag: "Empty".into(), block_count: 0 },
-                CollectionCount { tag: "Recipes".into(), block_count: 2 },
-                CollectionCount { tag: "Books".into(), block_count: 1 },
             ]
         );
+        // Cards alone make no collection.
+        assert!(list_collections(&[], &memberships).is_empty());
     }
 
     #[test]

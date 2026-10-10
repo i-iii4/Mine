@@ -470,8 +470,7 @@ opacity, ни layout. Вход/выход text-state анимируется
 из `Mine Collections` карточек без страницы в список не входят (решение
 пользователя 10.10.2026,
 [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md), К1,
-К2 и К9). Сейчас `orderedTags` добавляет их частью `noPos`; она убирается
-при реализации (PLAN.md, Phase 44). Место `/channel/<имя>` существует, только
+К2 и К9; часть `noPos` убрана 10.10.2026, PLAN.md, Phase 44). Место `/channel/<имя>` существует, только
 если имя есть в `channels`; иначе место становится Everything. Перестановка
 вызывает `reorderChannels` только со страницами, и бэкенд пишет `position`
 только в существующие страницы, файлов не создавая (К6). Runtime использует `CollectionRef`
@@ -747,10 +746,11 @@ mr-2"`, `8px` от правого края колонки, которая выз
 `reorderChannels` не вызывают: коллекция получает `MAX(position) + 1` и встаёт
 в конец списка. Каждый путь создания сначала создаёт страницу коллекции
 (`createChannel`), затем присоединяет карточку. `Create collection` в меню
-`Connect` карточки и группового выделения сейчас вызывает только `addTag`
-(`handleCreateTagFromMenu`, `handleCreateTagFromBatchMenu`) и пишет ссылку без
-страницы; при реализации он получает `createChannel` перед присоединением
-([SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md), К5;
+`Connect` карточки и группового выделения (`handleCreateTagFromMenu`,
+`handleCreateTagFromBatchMenu`) вызывает `createChannel`, затем присоединяет
+к коллекции, которую вернула страница (первое свободное имя, если имя занято
+заметкой); до 10.10.2026 он вызывал только `addTag` и писал ссылку без
+страницы ([SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md), К5;
 PLAN.md, Phase 44).
 
 Тот же правый segment держит единственный main view-mode switcher:

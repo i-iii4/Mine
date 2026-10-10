@@ -854,6 +854,45 @@ describe("standalone mode decision", () => {
     expect(standalone.standaloneLookup).not.toHaveBeenCalled();
   });
 
+  // К7 (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md): a Save into a collection whose
+  // page went after the clipper opened writes nothing. The reason stands under
+  // the collection list, the list is read again, the collection leaves the
+  // selection, the clip stays open, and a Save again saves it without it.
+  it("drops a collection without a page, says why under the list, and saves again without it (К7)", async () => {
+    sendToNative.mockResolvedValue({ ok: false, error: "No helper connection" });
+    standalone.getStandaloneStatus.mockResolvedValue({ configured: true, folderName: "Mine", permission: "granted", bindingId: "browser-original" });
+    standalone.standaloneListChannels.mockResolvedValue({ ok: true, channels: [
+      { tag: "Art", block_count: 1 }, { tag: "Gone", block_count: 0 },
+    ] });
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.saveMode).toBe("standalone"));
+    await waitFor(() => expect(result.current.channels).toHaveLength(2));
+    act(() => result.current.setCurrentType("link"));
+    act(() => { result.current.toggleTag("Art"); });
+    act(() => { result.current.toggleTag("Gone"); });
+    expect(result.current.selectedTags).toEqual(["Art", "Gone"]);
+    standalone.standaloneListChannels.mockResolvedValue({ ok: true, channels: [{ tag: "Art", block_count: 1 }] });
+    standalone.standaloneSave.mockResolvedValueOnce({
+      ok: false, outcome: "not_committed", terminal_rejected: true, code: "collection_not_found",
+      collection: "Gone", error: "collection \"Gone\" has no page; nothing was written",
+    });
+
+    let reply: unknown;
+    await act(async () => { reply = await result.current.save(); });
+
+    expect(reply).toMatchObject({ ok: false, shownWithCollections: true });
+    expect(result.current.collectionError).toContain("“Gone”");
+    expect(result.current.selectedTags).toEqual(["Art"]);
+    await waitFor(() => expect(result.current.channels.map((channel) => channel.tag)).toEqual(["Art"]));
+    expect(result.current.state).toBe("main");
+    expect(result.current.pendingOperation).toBe(false);
+
+    standalone.standaloneSave.mockResolvedValueOnce({ ok: true, outcome: "committed", slug: "Cards/Page" });
+    await act(async () => { await result.current.save(); });
+    expect(standalone.standaloneSave.mock.calls[1]![0]).toMatchObject({ tags: ["Art"] });
+    expect(result.current.collectionError).toBeNull();
+  });
+
   it("regrants the original operation binding after permission loss", async () => {
     sendToNative.mockResolvedValue({ ok: false, error: "No helper connection" });
     standalone.getStandaloneStatus.mockResolvedValue({ configured: true, folderName: "Mine", permission: "granted", bindingId: "browser-original" });

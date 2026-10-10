@@ -2699,6 +2699,15 @@ mod tests {
         }
     }
 
+    /// Collection pages in `channels` for `names`: a link is a membership only
+    /// while its collection has a page (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К9).
+    fn collection_pages(conn: &Connection, names: &[&str]) {
+        let created = DateTime::new("2026-01-01T00:00:00Z").unwrap();
+        for name in names {
+            upsert_channel(conn, &Channel::new(name, created.clone()).unwrap()).unwrap();
+        }
+    }
+
     fn media_test_block(body: &str) -> Block {
         make_block_full("note", "article", None, "2026-01-15T12:00:00Z", &[], body)
     }
@@ -2724,6 +2733,7 @@ mod tests {
     #[test]
     fn upsert_insert_new_block() {
         let conn = test_conn();
+        collection_pages(&conn, &["photography"]);
         let block = make_block("sunset", &["photography"]);
         let id = upsert_block(&conn, &block, None).unwrap();
         assert!(id > 0);
@@ -2737,6 +2747,7 @@ mod tests {
     #[test]
     fn upsert_update_existing_block() {
         let conn = test_conn();
+        collection_pages(&conn, &["old-tag", "new-tag"]);
         let block1 = make_block_full(
             "sunset",
             "image",
@@ -2767,6 +2778,7 @@ mod tests {
     #[test]
     fn upsert_replaces_tags() {
         let conn = test_conn();
+        collection_pages(&conn, &["a", "b", "c", "x", "y"]);
         let block = make_block("test", &["a", "b", "c"]);
         upsert_block(&conn, &block, None).unwrap();
 
@@ -2895,6 +2907,7 @@ mod tests {
     #[test]
     fn get_block_with_all_fields() {
         let conn = test_conn();
+        collection_pages(&conn, &["design", "web"]);
         let mut block = make_block_full(
             "full",
             "article",
@@ -3112,6 +3125,7 @@ mod tests {
     #[test]
     fn get_all_tags_with_counts() {
         let conn = test_conn();
+        collection_pages(&conn, &["design", "web", "photo"]);
         upsert_block(&conn, &make_block("a", &["design", "web"]), None).unwrap();
         upsert_block(&conn, &make_block("b", &["design"]), None).unwrap();
         upsert_block(&conn, &make_block("c", &["photo"]), None).unwrap();
@@ -3130,6 +3144,7 @@ mod tests {
     #[test]
     fn block_collections_pair_every_card_with_each_of_its_collections() {
         let conn = test_conn();
+        collection_pages(&conn, &["design", "web"]);
         let a = upsert_block(&conn, &make_block("a", &["design", "web"]), None).unwrap();
         let b = upsert_block(&conn, &make_block("b", &["design"]), None).unwrap();
         upsert_block(&conn, &make_block("c", &[]), None).unwrap();
@@ -3147,6 +3162,202 @@ mod tests {
         let conn = test_conn();
         let tags = get_all_tags(&conn).unwrap();
         assert!(tags.is_empty());
+    }
+
+    /// What every read that shows or counts collections sees of one name.
+    #[derive(Debug, PartialEq, Eq)]
+    struct CollectionReadings {
+        counted: bool,
+        on_feed_row: bool,
+        on_indexed_block: bool,
+        on_listed_block: bool,
+        in_hover_pairs: bool,
+        feed_cards: usize,
+        route_count: u64,
+        tag_filter_hits: usize,
+        search_route_hits: usize,
+        previews: bool,
+    }
+
+    fn collection_readings(conn: &Connection, name: &str) -> CollectionReadings {
+        use crate::storage::block_queries::list_block_collections;
+        let named = |tags: &[String]| tags.iter().any(|tag| tag == name);
+        let card = get_block(conn, "card").unwrap().unwrap();
+        CollectionReadings {
+            counted: get_all_tags(conn).unwrap().iter().any(|tag| tag.tag == name),
+            on_feed_row: list_blocks_light(conn)
+                .unwrap()
+                .iter()
+                .any(|block| block.slug == "card" && named(&block.collections)),
+            on_indexed_block: named(&card.tags),
+            on_listed_block: list_blocks(conn)
+                .unwrap()
+                .iter()
+                .any(|block| block.slug == "card" && named(&block.tags)),
+            in_hover_pairs: list_block_collections(conn)
+                .unwrap()
+                .iter()
+                .any(|(id, tag)| *id == card.id && tag == name),
+            feed_cards: list_grid_blocks(conn, Some(name), 0, 10).unwrap().0.len(),
+            route_count: crate::storage::vault_stats::count_current_collection_cards(
+                conn,
+                Some(name),
+            )
+            .unwrap(),
+            tag_filter_hits: search_blocks(
+                conn,
+                &crate::domain::search::parse_search_query(&format!("tag:{name}")),
+            )
+            .unwrap()
+            .len(),
+            search_route_hits: list_grid_blocks_with_query(conn, Some(name), 0, 10, Some("Aristotle"))
+                .unwrap()
+                .0
+                .len(),
+            previews: list_preview_blocks_by_tag(conn, 10).unwrap().contains_key(name),
+        }
+    }
+
+    /// К3 (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md): the page deleted outside
+    /// Mine hides the collection; its file returned (from the Trash, a
+    /// backup, a sync) brings the collection back with every card. The
+    /// cards' files are never written.
+    #[test]
+    fn a_page_deleted_and_returned_outside_mine_hides_and_restores_the_collection() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = crate::domain::vault::VaultLayout::new(dir.path().to_path_buf());
+        let page = "---\ntype: channel\nposition: 0\nsaved_at: 2026-01-01T00:00:00Z\n---\n";
+        let card = "---\nsaved_at: 2026-01-01T00:00:00Z\nMine Collections:\n  - \"[[Design]]\"\n---\nBody";
+        std::fs::write(vault.block_path("Design"), page).unwrap();
+        std::fs::write(vault.block_path("Card"), card).unwrap();
+        let conn = crate::storage::db::open_or_create(&vault.index_db_path()).unwrap();
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        let seen = |conn: &Connection| {
+            (
+                get_block(conn, "Card").unwrap().unwrap().tags,
+                get_all_tags(conn).unwrap().into_iter().map(|t| t.tag).collect::<Vec<_>>(),
+                list_channels(conn).unwrap().into_iter().map(|c| c.tag).collect::<Vec<_>>(),
+            )
+        };
+        let member = (vec!["Design".to_string()], vec!["Design".to_string()], vec!["Design".to_string()]);
+        assert_eq!(seen(&conn), member);
+
+        std::fs::remove_file(vault.block_path("Design")).unwrap();
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        assert_eq!(seen(&conn), (Vec::new(), Vec::new(), Vec::new()));
+        assert_eq!(std::fs::read_to_string(vault.block_path("Card")).unwrap(), card);
+
+        std::fs::write(vault.block_path("Design"), page).unwrap();
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        assert_eq!(seen(&conn), member);
+        assert_eq!(std::fs::read_to_string(vault.block_path("Card")).unwrap(), card);
+    }
+
+    /// К4 (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md): two pages with one file name
+    /// are collections by their paths, so a bare `[[Name]]` matches neither
+    /// and is no membership; a link by path is.
+    #[test]
+    fn a_bare_link_to_a_name_two_pages_share_is_no_membership() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = crate::domain::vault::VaultLayout::new(dir.path().to_path_buf());
+        for folder in ["A", "B"] {
+            std::fs::create_dir_all(vault.root().join(folder)).unwrap();
+            std::fs::write(
+                vault.block_path(&format!("{folder}/Design")),
+                "---\ntype: channel\nsaved_at: 2026-01-01T00:00:00Z\n---\n",
+            )
+            .unwrap();
+        }
+        std::fs::write(
+            vault.block_path("Card"),
+            "---\nsaved_at: 2026-01-01T00:00:00Z\nMine Collections:\n  - \"[[Design]]\"\n  - \"[[A/Design]]\"\n---\nBody",
+        )
+        .unwrap();
+        let conn = crate::storage::db::open_or_create(&vault.index_db_path()).unwrap();
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        let pages: Vec<String> = list_channels(&conn).unwrap().into_iter().map(|c| c.tag).collect();
+        assert_eq!(pages, vec!["A/Design", "B/Design"]);
+        assert_eq!(get_block(&conn, "Card").unwrap().unwrap().tags, vec!["A/Design"]);
+        let counted: Vec<String> = get_all_tags(&conn).unwrap().into_iter().map(|t| t.tag).collect();
+        assert_eq!(counted, vec!["A/Design"]);
+    }
+
+    /// К3 and К9 (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md): `block_tags` mirrors
+    /// every link of the file, membership is that row paired with a page in
+    /// `channels`. A link whose name has no page is shown and counted nowhere;
+    /// the page appearing makes the card a member without touching the card's
+    /// row, and the page going hides it again.
+    #[test]
+    fn a_link_without_a_collection_page_is_a_membership_only_while_the_page_exists() {
+        let conn = test_conn();
+        let created = DateTime::new("2026-01-01T00:00:00Z").unwrap();
+        upsert_channel(&conn, &Channel::new("Design", created.clone()).unwrap()).unwrap();
+        upsert_block(
+            &conn,
+            &make_block_full(
+                "card",
+                "article",
+                None,
+                "2026-02-01T00:00:00Z",
+                &["Design", "Pageless"],
+                "Aristotle notes",
+            ),
+            None,
+        )
+        .unwrap();
+        sync_test_jpeg_thumb(&conn, "card");
+        let mirror = |conn: &Connection| -> Vec<String> {
+            let mut stmt = conn
+                .prepare("SELECT tag FROM block_tags ORDER BY tag")
+                .unwrap();
+            stmt.query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        let links = vec!["Design".to_string(), "Pageless".to_string()];
+        let member = CollectionReadings {
+            counted: true,
+            on_feed_row: true,
+            on_indexed_block: true,
+            on_listed_block: true,
+            in_hover_pairs: true,
+            feed_cards: 1,
+            route_count: 1,
+            tag_filter_hits: 1,
+            search_route_hits: 1,
+            previews: true,
+        };
+        let nowhere = CollectionReadings {
+            counted: false,
+            on_feed_row: false,
+            on_indexed_block: false,
+            on_listed_block: false,
+            in_hover_pairs: false,
+            feed_cards: 0,
+            route_count: 0,
+            tag_filter_hits: 0,
+            search_route_hits: 0,
+            previews: false,
+        };
+
+        assert_eq!(collection_readings(&conn, "Design"), member);
+        assert_eq!(collection_readings(&conn, "Pageless"), nowhere);
+        // The file's link stays mirrored: the rename and deletion of a
+        // collection still find every file that names it.
+        assert_eq!(list_blocks_by_tag(&conn, "Pageless").unwrap().len(), 1);
+
+        // The page appears (created, restored, synced): the card is a member.
+        upsert_channel(&conn, &Channel::new("Pageless", created).unwrap()).unwrap();
+        assert_eq!(collection_readings(&conn, "Pageless"), member);
+        assert_eq!(mirror(&conn), links);
+
+        // The page goes: the collection is hidden again, the link stays.
+        assert!(remove_channel(&conn, "Pageless").unwrap());
+        assert_eq!(collection_readings(&conn, "Pageless"), nowhere);
+        assert_eq!(collection_readings(&conn, "Design"), member);
+        assert_eq!(mirror(&conn), links);
     }
 
     // ── search_blocks ────────────────────────────────────────────────────
@@ -3234,6 +3445,7 @@ mod tests {
     #[test]
     fn search_by_tag_filter() {
         let conn = test_conn();
+        collection_pages(&conn, &["design", "web"]);
         upsert_block(&conn, &make_block("a", &["design"]), None).unwrap();
         upsert_block(&conn, &make_block("b", &["web"]), None).unwrap();
 
@@ -3249,6 +3461,7 @@ mod tests {
     #[test]
     fn search_combined_text_and_filters() {
         let conn = test_conn();
+        collection_pages(&conn, &["photo"]);
         upsert_block(
             &conn,
             &make_block_full(
@@ -3301,6 +3514,7 @@ mod tests {
     #[test]
     fn search_multiple_tag_filters_is_and() {
         let conn = test_conn();
+        collection_pages(&conn, &["design", "web"]);
         upsert_block(&conn, &make_block("both", &["design", "web"]), None).unwrap();
         upsert_block(&conn, &make_block("one", &["design"]), None).unwrap();
 
@@ -3437,7 +3651,8 @@ mod tests {
         let member = |tags: &[&str]| {
             make_block_full("member", "article", None, "2026-02-01T00:00:00Z", tags, "Aristotle notes")
         };
-        // "Pageless" has no collection page: it follows every listed collection.
+        // "Pageless" has no collection page: it is no collection and not on
+        // the card (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К2).
         upsert_block(&conn, &member(&["Cities", "Pageless", "Art", "Zines"]), None).unwrap();
         upsert_block(
             &conn,
@@ -3459,7 +3674,7 @@ mod tests {
             });
             read_grid_snapshot(&conn, &location, 0, 10, FeedOrder::Newest).unwrap().blocks
         };
-        let sidebar_order = ["Zines", "Art", "Cities", "Pageless"];
+        let sidebar_order = ["Zines", "Art", "Cities"];
 
         assert_eq!(collections_of(&feed(None), "member"), sidebar_order);
         assert!(collections_of(&feed(None), "loose").is_empty());
@@ -3597,6 +3812,7 @@ mod tests {
     #[test]
     fn list_grid_blocks_with_query_filters_route_and_returns_match_excerpt() {
         let conn = test_conn();
+        collection_pages(&conn, &["alpha", "beta"]);
         // The title field is the file name, without its folder.
         upsert_block(
             &conn,
@@ -3730,6 +3946,7 @@ mod tests {
     #[test]
     fn list_grid_blocks_with_query_matches_cross_language_alias_phrase() {
         let conn = test_conn();
+        collection_pages(&conn, &["research", "other"]);
         // The file name holds none of the phrase: the alias match is the body's.
         upsert_block(
             &conn,
@@ -4541,6 +4758,7 @@ mod tests {
     #[test]
     fn list_grid_blocks_filters_channels_and_tag() {
         let conn = test_conn();
+        collection_pages(&conn, &["design", "web"]);
         upsert_block(&conn, &make_block("design-a", &["design"]), None).unwrap();
         upsert_block(&conn, &make_block("design-b", &["design", "web"]), None).unwrap();
         upsert_block(&conn, &make_block("web-only", &["web"]), None).unwrap();
@@ -4656,6 +4874,7 @@ mod tests {
     #[test]
     fn sync_thumb_metadata_and_preview_queries_use_db_columns() {
         let conn = test_conn();
+        collection_pages(&conn, &["design"]);
         upsert_block(&conn, &make_block("design-a", &["design"]), None).unwrap();
         upsert_block(&conn, &make_block("design-b", &["design"]), None).unwrap();
 
@@ -5234,6 +5453,7 @@ mod tests {
         .unwrap();
 
         let conn = test_conn();
+        collection_pages(&conn, &["design", "typography", "Design", "Типография"]);
         conn.execute(
             "INSERT INTO blocks (slug, block_type, title, saved_at, body)
              VALUES ('Obsidian Tags', 'article', 'Obsidian Tags', '2026-01-01T00:00:00Z', 'Body')",

@@ -52,6 +52,24 @@ describe("clipper preview", () => {
     expect(state.retryChannels).toHaveBeenCalledOnce();
     expect(screen.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
   });
+  // К7 (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md): a Save refused for a collection
+  // without a page says why under the collection list, not above Save.
+  it("shows a refused collection's reason under the list, not above Save", async () => {
+    const reason = "Collection “Gone” has no page, so nothing was saved. Save again to save the clip without it.";
+    state.save.mockResolvedValue({ ok: false, error: null, shownWithCollections: true });
+    const withReason = state as typeof state & { collectionError?: string | null };
+    withReason.collectionError = reason;
+    try {
+      const { container } = render(<PopupApp />);
+      expect(container.querySelector("[data-clipper-collection-error]")).toHaveTextContent(reason);
+      fireEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
+      await vi.waitFor(() => expect(state.save).toHaveBeenCalledOnce());
+      await Promise.resolve();
+      expect(container.querySelector("[data-clipper-save-error]")).toBeNull();
+    } finally {
+      withReason.collectionError = null;
+    }
+  });
   it("shows an empty list only after a successful load", () => {
     render(<PopupApp />);
     expect(screen.getByText("No collections")).toBeInTheDocument();

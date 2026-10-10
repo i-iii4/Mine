@@ -55,11 +55,18 @@ pub fn count_current_collection_cards(
     current_collection: Option<&str>,
 ) -> Result<u64> {
     if let Some(collection_ref) = current_collection {
+        // Members only: a name without a collection page is no place
+        // (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К9).
+        let membership =
+            crate::storage::block_queries::collection_membership_join_sql("bt", "page");
         let count: i64 = conn.query_row(
-            "SELECT COUNT(DISTINCT b.id)
-             FROM blocks b
-             JOIN block_tags bt ON bt.block_id = b.id
-             WHERE b.card_kind != 'channel' AND bt.tag = ?1",
+            &format!(
+                "SELECT COUNT(DISTINCT b.id)
+                 FROM blocks b
+                 JOIN block_tags bt ON bt.block_id = b.id
+                 {membership}
+                 WHERE b.card_kind != 'channel' AND bt.tag = ?1"
+            ),
             params![collection_ref],
             |row| row.get(0),
         )?;
@@ -216,16 +223,17 @@ mod tests {
             &make_block("beta", BlockType::Image, "", &["Other"]),
             &vault,
         );
-        insert_block(
-            &conn,
-            &make_block("Design", BlockType::Channel, "", &[]),
-            &vault,
-        );
+        let page = make_block("Design", BlockType::Channel, "", &[]);
+        insert_block(&conn, &page, &vault);
+        index::upsert_channel_from_block(&conn, &page).unwrap();
 
         assert_eq!(count_current_collection_cards(&conn, None).unwrap(), 2);
         assert_eq!(
             count_current_collection_cards(&conn, Some("Design")).unwrap(),
             1,
         );
+        // "Other" has no page: no collection, no members
+        // (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К9).
+        assert_eq!(count_current_collection_cards(&conn, Some("Other")).unwrap(), 0);
     }
 }

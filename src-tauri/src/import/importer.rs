@@ -42,8 +42,14 @@ pub struct ImportProgress {
 /// Import all blocks from an Are.na channel into the vault.
 ///
 /// - `channel_slug`: Are.na channel slug (from URL)
-/// - `tag`: local tag to assign to all imported blocks
+/// - `tag`: the local collection all imported blocks join
 /// - `on_progress`: called for each block with progress info
+///
+/// A collection exists only as its page (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md,
+/// К5): before any card is written the import takes the page called `tag`,
+/// or makes one the way `create_channel` does. A name the rules of a new
+/// collection refuse stops this channel before the download, with the reason
+/// in `errors`.
 pub fn import_channel<F>(
     conn: &Connection,
     vault: &VaultLayout,
@@ -55,8 +61,55 @@ where
     F: Fn(ImportProgress),
 {
     let _write = crate::storage::source_mutation::begin_write()?;
+    let target = match crate::commands::channels::import_collection(conn, vault, tag) {
+        Ok(target) => target,
+        Err(error) => return Ok(refused_channel(channel_slug, tag, &error)),
+    };
     let arena_blocks = arena_api::fetch_channel_blocks(channel_slug)
         .with_context(|| format!("failed to fetch channel {}", channel_slug))?;
+    import_blocks(conn, vault, channel_slug, tag, target, &arena_blocks, on_progress)
+}
+
+/// The result of a channel whose collection could not be had: nothing
+/// imported, the reason the only error.
+fn refused_channel(
+    channel_slug: &str,
+    tag: &str,
+    error: &crate::commands::state::CommandError,
+) -> ImportChannelResult {
+    ImportChannelResult {
+        channel_slug: channel_slug.to_string(),
+        channel_title: tag.to_string(),
+        imported: 0,
+        skipped: 0,
+        errors: vec![error.to_string()],
+    }
+}
+
+/// Write the fetched blocks of one channel as cards of its collection: the
+/// collection's page first (reused or made), then the cards.
+fn import_blocks<F>(
+    conn: &Connection,
+    vault: &VaultLayout,
+    channel_slug: &str,
+    tag: &str,
+    target: crate::commands::channels::ImportCollection,
+    arena_blocks: &[ArenaBlock],
+    on_progress: F,
+) -> Result<ImportChannelResult>
+where
+    F: Fn(ImportProgress),
+{
+    let collection = match target {
+        crate::commands::channels::ImportCollection::Page(collection) => collection,
+        crate::commands::channels::ImportCollection::Create(name) => {
+            match crate::commands::channels::create_channel_inner(conn, vault, &name) {
+                Ok(page) => page.tag,
+                Err(error) => return Ok(refused_channel(channel_slug, tag, &error)),
+            }
+        }
+    };
+    let tag = collection.as_str();
 
     let total = arena_blocks.len();
     let mut imported = 0;
@@ -361,6 +414,99 @@ mod tests {
         import_single_block(&conn, &vault, &block, "Reading", &mut HashSet::new()).unwrap();
         assert!(vault.block_path("Notes/Imported/Example").exists());
         assert!(!vault.block_path("Example").exists());
+    }
+
+    fn text_blocks() -> Vec<ArenaBlock> {
+        ["First", "Second"]
+            .iter()
+            .enumerate()
+            .map(|(id, title)| {
+                serde_json::from_value(serde_json::json!({
+                    "id": id, "title": title, "content": format!("{title} text"), "class": "Text",
+                    "created_at": "2026-04-25T14:00:40Z"
+                }))
+                .unwrap()
+            })
+            .collect()
+    }
+
+    fn standard_space() -> (tempfile::TempDir, VaultLayout, Connection) {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::with_derived_root(dir.path().join("space"), dir.path().join("derived"))
+            .with_write_layout(crate::domain::vault::VaultWriteLayout::standard());
+        for folder in ["Cards", "Collections", "Media"] {
+            std::fs::create_dir_all(vault.root().join(folder)).unwrap();
+        }
+        let conn = crate::storage::db::open_or_create(&vault.index_db_path()).unwrap();
+        (dir, vault, conn)
+    }
+
+    /// The collection pages of the space: `.md` notes with `type: channel`.
+    fn collection_pages(vault: &VaultLayout) -> Vec<String> {
+        let mut pages: Vec<String> = files::scan_vault_file_paths(vault)
+            .unwrap()
+            .into_iter()
+            .filter(|path| path.ends_with(".md"))
+            .filter(|path| {
+                std::fs::read_to_string(vault.root().join(path))
+                    .unwrap()
+                    .contains("type: channel")
+            })
+            .collect();
+        pages.sort();
+        pages
+    }
+
+    /// К5 (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md): a channel without a page gets
+    /// one, made as `create_channel` makes it, and its cards link it.
+    #[test]
+    fn importing_a_channel_without_a_page_makes_the_page() {
+        let (_dir, vault, conn) = standard_space();
+
+        let target = crate::commands::channels::import_collection(&conn, &vault, "Reading").unwrap();
+        assert!(matches!(&target, crate::commands::channels::ImportCollection::Create(name) if name == "Reading"));
+        let result = import_blocks(&conn, &vault, "reading", "Reading", target, &text_blocks(), |_| {}).unwrap();
+
+        assert_eq!(result.imported, 2, "{:?}", result.errors);
+        assert_eq!(result.channel_title, "Reading");
+        assert_eq!(collection_pages(&vault), vec!["Collections/Reading.md".to_string()]);
+        let card = std::fs::read_to_string(vault.block_path("Cards/First")).unwrap();
+        assert!(card.contains("\"[[Reading]]\""), "{card}");
+        let counts = index::get_all_tags(&conn).unwrap();
+        assert_eq!(counts.len(), 1);
+        assert_eq!((counts[0].tag.as_str(), counts[0].count), ("Reading", 2));
+    }
+
+    /// К5: a channel whose page is there reuses it; no second page.
+    #[test]
+    fn importing_a_channel_with_a_page_reuses_it() {
+        let (_dir, vault, conn) = standard_space();
+        crate::commands::channels::create_channel_inner(&conn, &vault, "Reading").unwrap();
+
+        let target = crate::commands::channels::import_collection(&conn, &vault, "Reading").unwrap();
+        assert!(matches!(&target, crate::commands::channels::ImportCollection::Page(name) if name == "Reading"));
+        let result = import_blocks(&conn, &vault, "reading", "Reading", target, &text_blocks(), |_| {}).unwrap();
+
+        assert_eq!(result.imported, 2, "{:?}", result.errors);
+        assert_eq!(collection_pages(&vault), vec!["Collections/Reading.md".to_string()]);
+    }
+
+    /// К5: a name the rules of a new collection refuse stops the channel
+    /// before the download and before any card, with the reason in `errors`.
+    #[test]
+    fn a_refused_collection_name_stops_the_channel_before_any_card() {
+        let (_dir, vault, conn) = standard_space();
+        let files_before = files::scan_vault_file_paths(&vault).unwrap();
+
+        let result = import_channel(&conn, &vault, "unreachable-channel", "Shelf/Reading", |_| {
+            panic!("a refused channel reported progress")
+        })
+        .unwrap();
+
+        assert_eq!((result.imported, result.skipped), (0, 0));
+        assert_eq!(result.errors.len(), 1);
+        assert!(result.errors[0].contains("folder"), "{:?}", result.errors);
+        assert_eq!(files::scan_vault_file_paths(&vault).unwrap(), files_before);
     }
 
     #[test]
